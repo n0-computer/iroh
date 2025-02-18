@@ -4419,7 +4419,22 @@
 <a href="#4418" id="4418">4418</a>
 <a href="#4419" id="4419">4419</a>
 <a href="#4420" id="4420">4420</a>
-<a href="#4421" id="4421">4421</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4421" id="4421">4421</a>
+<a href="#4422" id="4422">4422</a>
+<a href="#4423" id="4423">4423</a>
+<a href="#4424" id="4424">4424</a>
+<a href="#4425" id="4425">4425</a>
+<a href="#4426" id="4426">4426</a>
+<a href="#4427" id="4427">4427</a>
+<a href="#4428" id="4428">4428</a>
+<a href="#4429" id="4429">4429</a>
+<a href="#4430" id="4430">4430</a>
+<a href="#4431" id="4431">4431</a>
+<a href="#4432" id="4432">4432</a>
+<a href="#4433" id="4433">4433</a>
+<a href="#4434" id="4434">4434</a>
+<a href="#4435" id="4435">4435</a>
+<a href="#4436" id="4436">4436</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4490,7 +4505,7 @@
 <span class="kw">use crate</span>::{
     defaults::timeouts::NET_REPORT_TIMEOUT,
     disco::{<span class="self">self</span>, CallMeMaybe, SendAddr},
-    discovery::{Discovery, DiscoveryItem, DiscoverySubscribers},
+    discovery::{Discovery, DiscoveryItem, DiscoverySubscribers, NodeData},
     dns::DnsResolver,
     key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
     watchable::{Watchable, Watcher},
@@ -5908,7 +5923,10 @@
     /// Called whenever our addresses or home relay node changes.
     </span><span class="kw">fn </span>publish_my_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) {
         <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>discovery) = <span class="self">self</span>.discovery {
-            discovery.publish(<span class="self">self</span>.my_relay().as_ref(), <span class="kw-2">&amp;</span><span class="self">self</span>.direct_addrs.sockaddrs());
+            <span class="kw">let </span>relay_url = <span class="self">self</span>.my_relay();
+            <span class="kw">let </span>direct_addrs = <span class="self">self</span>.direct_addrs.sockaddrs();
+            <span class="kw">let </span>data = NodeData::new(relay_url, direct_addrs);
+            discovery.publish(<span class="kw-2">&amp;</span>data);
         }
     }
 }
@@ -6239,19 +6257,28 @@
     /// Only the first close does anything. Any later closes return nil.
     /// Polling the socket ([`AsyncUdpSocket::poll_recv`]) will return [`Poll::Pending`]
     /// indefinitely after this call.
-    ///
-    /// This will not wait for the [`quinn::Endpoint`] to drain connections.
-    ///
-    /// To ensure no data is lost, design protocols so that the last *sender*
-    /// of data in the protocol calls [`crate::endpoint::Connection::closed`], and `await`s until
-    /// it receives a "close" message from the *receiver*. Once the *receiver*
-    /// gets the last data in the protocol, it should call [`crate::endpoint::Connection::close`]
-    /// to inform the *sender* that all data has been received.
     </span><span class="attr">#[instrument(skip_all, fields(me = %<span class="self">self</span>.msock.me))]
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>close(<span class="kw-2">&amp;</span><span class="self">self</span>) {
         <span class="macro">trace!</span>(<span class="string">"magicsock closing..."</span>);
         <span class="comment">// Initiate closing all connections, and refuse future connections.
         </span><span class="self">self</span>.endpoint.close(<span class="number">0u16</span>.into(), <span class="string">b""</span>);
+
+        <span class="comment">// In the history of this code, this call had been
+        // - removed: https://github.com/n0-computer/iroh/pull/1753
+        // - then added back in: https://github.com/n0-computer/iroh/pull/2227/files#diff-ba27e40e2986a3919b20f6b412ad4fe63154af648610ea5d9ed0b5d5b0e2d780R573
+        // - then removed again: https://github.com/n0-computer/iroh/pull/3165
+        // and finally added back in together with this comment.
+        // So before removing this call, please consider carefully.
+        // Among other things, this call tries its best to make sure that any queued close frames
+        // (e.g. via the call to `endpoint.close(...)` above), are flushed out to the sockets
+        // *and acknowledged* (or time out with the "probe timeout" of usually 3 seconds).
+        // This allows the other endpoints for these connections to be notified to release
+        // their resources, or - depending on the protocol - that all data was received.
+        // With the current quinn API, this is the only way to ensure protocol code can use
+        // connection close codes, and close the endpoint properly.
+        // If this call is skipped, then connections that protocols close just shortly before the
+        // call to `Endpoint::close` will in most cases cause connection time-outs on remote ends.
+        </span><span class="self">self</span>.endpoint.wait_idle().<span class="kw">await</span>;
 
         <span class="kw">if </span><span class="self">self</span>.msock.is_closed() {
             <span class="kw">return</span>;
@@ -6753,12 +6780,15 @@
                 // forever like we do with the other branches that yield `Option`s
                 </span><span class="prelude-val">Some</span>(discovery_item) = discovery_events.next() =&gt; {
                     <span class="macro">trace!</span>(<span class="string">"tick: discovery event, address discovered: {discovery_item:?}"</span>);
+                    <span class="kw">let </span>provenance = discovery_item.provenance();
+                    <span class="kw">let </span>node_addr = discovery_item.to_node_addr();
                     <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = <span class="self">self</span>.msock.add_node_addr(
-                        discovery_item.node_addr.clone(),
+                        node_addr,
                         Source::Discovery {
-                            name: discovery_item.provenance.into()
+                            name: provenance.to_string()
                         }) {
-                        <span class="macro">warn!</span>(<span class="question-mark">?</span>discovery_item.node_addr, <span class="string">"unable to add discovered node address to the node map: {e:?}"</span>);
+                        <span class="kw">let </span>node_addr = discovery_item.to_node_addr();
+                        <span class="macro">warn!</span>(<span class="question-mark">?</span>node_addr, <span class="string">"unable to add discovered node address to the node map: {e:?}"</span>);
                     }
                     <span class="comment">// Send the discovery item to the subscribers of the discovery broadcast stream.
                     </span><span class="self">self</span>.msock.discovery_subscribers.send(discovery_item);

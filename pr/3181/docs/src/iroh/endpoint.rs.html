@@ -2545,7 +2545,66 @@
 <a href="#2544" id="2544">2544</a>
 <a href="#2545" id="2545">2545</a>
 <a href="#2546" id="2546">2546</a>
-<a href="#2547" id="2547">2547</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2547" id="2547">2547</a>
+<a href="#2548" id="2548">2548</a>
+<a href="#2549" id="2549">2549</a>
+<a href="#2550" id="2550">2550</a>
+<a href="#2551" id="2551">2551</a>
+<a href="#2552" id="2552">2552</a>
+<a href="#2553" id="2553">2553</a>
+<a href="#2554" id="2554">2554</a>
+<a href="#2555" id="2555">2555</a>
+<a href="#2556" id="2556">2556</a>
+<a href="#2557" id="2557">2557</a>
+<a href="#2558" id="2558">2558</a>
+<a href="#2559" id="2559">2559</a>
+<a href="#2560" id="2560">2560</a>
+<a href="#2561" id="2561">2561</a>
+<a href="#2562" id="2562">2562</a>
+<a href="#2563" id="2563">2563</a>
+<a href="#2564" id="2564">2564</a>
+<a href="#2565" id="2565">2565</a>
+<a href="#2566" id="2566">2566</a>
+<a href="#2567" id="2567">2567</a>
+<a href="#2568" id="2568">2568</a>
+<a href="#2569" id="2569">2569</a>
+<a href="#2570" id="2570">2570</a>
+<a href="#2571" id="2571">2571</a>
+<a href="#2572" id="2572">2572</a>
+<a href="#2573" id="2573">2573</a>
+<a href="#2574" id="2574">2574</a>
+<a href="#2575" id="2575">2575</a>
+<a href="#2576" id="2576">2576</a>
+<a href="#2577" id="2577">2577</a>
+<a href="#2578" id="2578">2578</a>
+<a href="#2579" id="2579">2579</a>
+<a href="#2580" id="2580">2580</a>
+<a href="#2581" id="2581">2581</a>
+<a href="#2582" id="2582">2582</a>
+<a href="#2583" id="2583">2583</a>
+<a href="#2584" id="2584">2584</a>
+<a href="#2585" id="2585">2585</a>
+<a href="#2586" id="2586">2586</a>
+<a href="#2587" id="2587">2587</a>
+<a href="#2588" id="2588">2588</a>
+<a href="#2589" id="2589">2589</a>
+<a href="#2590" id="2590">2590</a>
+<a href="#2591" id="2591">2591</a>
+<a href="#2592" id="2592">2592</a>
+<a href="#2593" id="2593">2593</a>
+<a href="#2594" id="2594">2594</a>
+<a href="#2595" id="2595">2595</a>
+<a href="#2596" id="2596">2596</a>
+<a href="#2597" id="2597">2597</a>
+<a href="#2598" id="2598">2598</a>
+<a href="#2599" id="2599">2599</a>
+<a href="#2600" id="2600">2600</a>
+<a href="#2601" id="2601">2601</a>
+<a href="#2602" id="2602">2602</a>
+<a href="#2603" id="2603">2603</a>
+<a href="#2604" id="2604">2604</a>
+<a href="#2605" id="2605">2605</a>
+<a href="#2606" id="2606">2606</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -3596,17 +3655,32 @@
     /// of `0` and an empty reason.  Though it is best practice to close those
     /// explicitly before with a custom error code and reason.
     ///
-    /// This will not wait for the [`quinn::Endpoint`] to drain connections.
+    /// It will then make a best effort to wait for all close notifications to be
+    /// acknowledged by the peers, re-transmitting them if needed. This ensures the
+    /// peers are aware of the closed connections instead of having to wait for a timeout
+    /// on the connection. Once all connections are closed or timed out, the future
+    /// finishes.
     ///
-    /// To ensure no data is lost, design protocols so that the last *sender*
-    /// of data in the protocol calls [`Connection::closed`], and `await`s until
-    /// it receives a "close" message from the *receiver*. Once the *receiver*
-    /// gets the last data in the protocol, it should call [`Connection::close`]
-    /// to inform the *sender* that all data has been received.
+    /// The maximum time-out that this future will wait for depends on QUIC transport
+    /// configurations of non-drained connections at the time of calling, and their current
+    /// estimates of round trip time. With default parameters and a conservative estimate
+    /// of round trip time, this call's future should take 3 seconds to resolve in cases of
+    /// bad connectivity or failed connections. In the usual case, this call's future should
+    /// return much more quickly.
     ///
-    /// Be aware however that the underlying UDP sockets are only closed
-    /// on [`Drop`], bearing in mind the [`Endpoint`] is only dropped once all the clones
-    /// are dropped.
+    /// It is highly recommended you *do* wait for this close call to finish, if possible.
+    /// Not doing so will make connections that were still open while closing the endpoint
+    /// time out on the remote end. Thus remote ends will assume connections to have failed
+    /// even if all application data was transmitted successfully.
+    ///
+    /// Note: Someone used to closing TCP sockets might wonder why it is necessary to wait
+    /// for timeouts when closing QUIC endpoints, while they don't have to do this for TCP
+    /// sockets. This is due to QUIC and its acknowledgments being implemented in user-land,
+    /// while TCP sockets usually get closed and drained by the operating system in the
+    /// kernel during the "Time-Wait" period of the TCP socket.
+    ///
+    /// Be aware however that the underlying UDP sockets are only closed once all clones of
+    /// the the respective [`Endpoint`] are dropped.
     </span><span class="kw">pub async fn </span>close(<span class="kw-2">&amp;</span><span class="self">self</span>) {
         <span class="kw">if </span><span class="self">self</span>.is_closed() {
             <span class="kw">return</span>;
@@ -4120,16 +4194,21 @@
     ///
     /// # Gracefully closing a connection
     ///
-    /// Only the peer last **receiving** application data can be certain that all data is
-    /// delivered.
+    /// Only the peer last receiving application data can be certain that all data is
+    /// delivered. The only reliable action it can then take is to close the connection,
+    /// potentially with a custom error code. The delivery of the final CONNECTION_CLOSE
+    /// frame is very likely if both endpoints stay online long enough, calling
+    /// [`Endpoint::close`] will wait to provide sufficient time. Otherwise, the remote peer
+    /// will time out the connection, provided that the idle timeout is not disabled.
     ///
-    /// To communicate to the last **sender** of the application data that all the data was received, we recommend designing protocols that follow this pattern:
+    /// The sending side can not guarantee all stream data is delivered to the remote
+    /// application. It only knows the data is delivered to the QUIC stack of the remote
+    /// endpoint. Once the local side sends a CONNECTION_CLOSE frame in response to calling
+    /// [`close`] the remote endpoint may drop any data it received but is as yet
+    /// undelivered to the application, including data that was acknowledged as received to
+    /// the local endpoint.
     ///
-    /// 1) The **sender** sends the last data. It then calls [`Connection::closed`]. This will wait until it receives a CONNECTION_CLOSE frame from the other side.
-    /// 2) The **receiver** receives the last data. It then calls [`Connection::close`] and provides an error_code and/or reason.
-    /// 3) The **sender** checks that the error_code is the expected error code.
-    ///
-    /// If the `close`/`closed` dance is not done, or is interrupted at any point, the connection will eventually time out, provided that the idle timeout is not disabled.
+    /// [`close`]: Connection::close
     </span><span class="attr">#[inline]
     </span><span class="kw">pub fn </span>close(<span class="kw-2">&amp;</span><span class="self">self</span>, error_code: VarInt, reason: <span class="kw-2">&amp;</span>[u8]) {
         <span class="self">self</span>.inner.close(error_code, reason)
@@ -5088,6 +5167,45 @@
         </span>connect_client_0rtt_expect_ok(<span class="kw-2">&amp;</span>client, server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>, <span class="bool-val">false</span>).<span class="kw">await</span><span class="question-mark">?</span>;
 
         client.close().<span class="kw">await</span>;
+
+        <span class="prelude-val">Ok</span>(())
+    }
+
+    <span class="attr">#[tokio::test]
+    #[traced_test]
+    </span><span class="kw">async fn </span>graceful_close() -&gt; testresult::TestResult {
+        <span class="kw">let </span>client = Endpoint::builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>server = Endpoint::builder()
+            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
+            .bind()
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>server_addr = server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>server_task = tokio::spawn(<span class="kw">async move </span>{
+            <span class="kw">let </span>incoming = server.accept().<span class="kw">await</span>.unwrap();
+            <span class="kw">let </span>conn = incoming.<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.accept_bi().<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="kw">let </span>msg = recv.read_to_end(<span class="number">1_000</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+            send.write_all(<span class="kw-2">&amp;</span>msg).<span class="kw">await</span><span class="question-mark">?</span>;
+            send.finish()<span class="question-mark">?</span>;
+            <span class="kw">let </span>close_reason = conn.closed().<span class="kw">await</span>;
+            testresult::TestResult::Ok(close_reason)
+        });
+
+        <span class="kw">let </span>conn = client.connect(server_addr, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.open_bi().<span class="kw">await</span><span class="question-mark">?</span>;
+        send.write_all(<span class="string">b"Hello, world!"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        send.finish()<span class="question-mark">?</span>;
+        recv.read_to_end(<span class="number">1_000</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        conn.close(<span class="number">42u32</span>.into(), <span class="string">b"thanks, bye!"</span>);
+        client.close().<span class="kw">await</span>;
+
+        <span class="kw">let </span>close_err = server_task.<span class="kw">await</span><span class="question-mark">??</span>;
+        <span class="kw">let </span>ConnectionError::ApplicationClosed(app_close) = close_err <span class="kw">else </span>{
+            <span class="macro">panic!</span>(<span class="string">"Unexpected close reason: {close_err:?}"</span>);
+        };
+
+        <span class="macro">assert_eq!</span>(app_close.error_code, <span class="number">42u32</span>.into());
+        <span class="macro">assert_eq!</span>(app_close.reason.as_ref(), <span class="string">b"thanks, bye!"</span>);
 
         <span class="prelude-val">Ok</span>(())
     }
