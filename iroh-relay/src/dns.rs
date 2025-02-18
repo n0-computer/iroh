@@ -8,11 +8,12 @@ use std::{
 
 use anyhow::{bail, Context, Result};
 use hickory_resolver::{Resolver, TokioResolver};
-use iroh_base::{NodeAddr, NodeId};
+use iroh_base::NodeId;
 use n0_future::{
     time::{self, Duration},
     StreamExt,
 };
+use node_info::NodeInfo;
 use url::Url;
 
 pub mod node_info;
@@ -215,18 +216,18 @@ impl DnsResolver {
     ///
     /// To lookup nodes that published their node info to the DNS servers run by n0,
     /// pass [`N0_DNS_NODE_ORIGIN_PROD`] as `origin`.
-    pub async fn lookup_node_by_id(&self, node_id: &NodeId, origin: &str) -> Result<NodeAddr> {
+    pub async fn lookup_node_by_id(&self, node_id: &NodeId, origin: &str) -> Result<NodeInfo> {
         let attrs =
             node_info::TxtAttrs::<node_info::IrohAttr>::lookup_by_id(self, node_id, origin).await?;
-        let info: node_info::NodeInfo = attrs.into();
-        Ok(info.into())
+        let info = attrs.into();
+        Ok(info)
     }
 
     /// Looks up node info by DNS name.
-    pub async fn lookup_node_by_domain_name(&self, name: &str) -> Result<NodeAddr> {
+    pub async fn lookup_node_by_domain_name(&self, name: &str) -> Result<NodeInfo> {
         let attrs = node_info::TxtAttrs::<node_info::IrohAttr>::lookup_by_name(self, name).await?;
-        let info: node_info::NodeInfo = attrs.into();
-        Ok(info.into())
+        let info = attrs.into();
+        Ok(info)
     }
 
     /// Looks up node info by DNS name in a staggered fashion.
@@ -239,7 +240,7 @@ impl DnsResolver {
         &self,
         name: &str,
         delays_ms: &[u64],
-    ) -> Result<NodeAddr> {
+    ) -> Result<NodeInfo> {
         let f = || self.lookup_node_by_domain_name(name);
         stagger_call(f, delays_ms).await
     }
@@ -255,7 +256,7 @@ impl DnsResolver {
         node_id: &NodeId,
         origin: &str,
         delays_ms: &[u64],
-    ) -> Result<NodeAddr> {
+    ) -> Result<NodeInfo> {
         let f = || self.lookup_node_by_id(node_id, origin);
         stagger_call(f, delays_ms).await
     }

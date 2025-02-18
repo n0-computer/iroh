@@ -93,6 +93,7 @@
 //! # }
 //! ```
 //!
+//! [`NodeAddr`]: iroh_base::NodeAddr
 //! [`RelayUrl`]: crate::RelayUrl
 //! [`Builder::discovery`]: crate::endpoint::Builder::discovery
 //! [`DnsDiscovery`]: dns::DnsDiscovery
@@ -104,10 +105,11 @@
 //! [`LocalSwarmDiscovery`]: local_swarm_discovery::LocalSwarmDiscovery
 //! [`StaticProvider`]: static_provider::StaticProvider
 
-use std::{collections::BTreeSet, net::SocketAddr, sync::Arc};
+use std::sync::Arc;
 
 use anyhow::{anyhow, ensure, Result};
-use iroh_base::{NodeAddr, NodeId, RelayUrl};
+use iroh_base::{NodeAddr, NodeId};
+pub use iroh_relay::dns::node_info::{NodeData, NodeInfo};
 use n0_future::{
     stream::{Boxed as BoxStream, StreamExt},
     task::{self, AbortOnDropHandle},
@@ -134,7 +136,7 @@ pub mod static_provider;
 /// looked up by other nodes.
 ///
 /// The published addressing information can include both a [`RelayUrl`] and/or direct
-/// addresses.
+/// addresses. See [`NodeData`] for details.
 ///
 /// To allow for discovery, the [`super::Endpoint`] will call `publish` whenever
 /// discovery information changes. If a discovery mechanism requires a periodic
@@ -142,14 +144,14 @@ pub mod static_provider;
 ///
 /// [`RelayUrl`]: crate::RelayUrl
 pub trait Discovery: std::fmt::Debug + Send + Sync {
-    /// Publishes the given [`RelayUrl`] and direct addreesses to the discovery mechanism.
+    /// Publishes the given [`NodeData`] to the discovery mechanism.
     ///
     /// This is fire and forget, since the [`Endpoint`] can not wait for successful
     /// publishing. If publishing is async, the implementation should start it's own task.
     ///
     /// This will be called from a tokio task, so it is safe to spawn new tasks.
     /// These tasks will be run on the runtime of the [`super::Endpoint`].
-    fn publish(&self, _url: Option<&RelayUrl>, _addrs: &BTreeSet<SocketAddr>) {}
+    fn publish(&self, _data: &NodeData) {}
 
     /// Resolves the [`DiscoveryItem`] for the given [`NodeId`].
     ///
@@ -192,20 +194,86 @@ pub trait Discovery: std::fmt::Debug + Send + Sync {
 
 impl<T: Discovery> Discovery for Arc<T> {}
 
-/// The results returned from [`Discovery::resolve`].
+/// Node discovery results from [`Discovery`] services.
+///
+/// This is the item in the streams returned from [`Discovery::resolve`] and
+/// [`Discovery::subscribe`]. It contains the [`NodeData`] about the discovered node,
+/// and some additional metadata about the discovery.
+///
+/// This struct derefs to [`NodeData`], so you can access the methods from [`NodeData`]
+/// directly from [`DiscoveryItem`].
 #[derive(Debug, Clone)]
 pub struct DiscoveryItem {
-    /// The [`NodeId`] whose address we have discovered
-    pub node_addr: NodeAddr,
+    /// The node info for the node, as discovered by the the discovery service.
+    node_info: NodeInfo,
     /// A static string to identify the discovery source.
     ///
     /// Should be uniform per discovery service.
-    pub provenance: &'static str,
+    provenance: &'static str,
     /// Optional timestamp when this node address info was last updated.
     ///
     /// Must be microseconds since the unix epoch.
     // TODO(ramfox): this is currently unused. As we develop more `DiscoveryService`s, we may discover that we do not need this. It is only truly relevant when comparing `relay_urls`, since we can attempt to dial any number of socket addresses, but expect each node to have one "home relay" that we will attempt to contact them on. This means we would need some way to determine which relay url to choose between, if more than one relay url is reported.
-    pub last_updated: Option<u64>,
+    last_updated: Option<u64>,
+}
+
+impl DiscoveryItem {
+    /// Creates a new [`DiscoveryItem`] from a [`NodeInfo`].
+    pub fn new(node_info: NodeInfo, provenance: &'static str, last_updated: Option<u64>) -> Self {
+        Self {
+            node_info,
+            provenance,
+            last_updated,
+        }
+    }
+
+    /// Returns the node id of the discovered node.
+    pub fn node_id(&self) -> NodeId {
+        self.node_info.node_id
+    }
+
+    /// Returns the [`NodeInfo`] for the discovered node.
+    pub fn node_info(&self) -> &NodeInfo {
+        &self.node_info
+    }
+
+    /// Returns the provenance of this discovery item.
+    ///
+    /// The provenance is a static string which identifies the discovery service that produced
+    /// this discovery item.
+    pub fn provenance(&self) -> &'static str {
+        self.provenance
+    }
+
+    /// Returns the optional timestamp when this node info was last updated.
+    ///
+    /// The value is microseconds since the unix epoch.
+    pub fn last_updated(&self) -> Option<u64> {
+        self.last_updated
+    }
+
+    /// Converts into a [`NodeAddr`] by cloning the needed fields.
+    pub fn to_node_addr(&self) -> NodeAddr {
+        self.node_info.to_node_addr()
+    }
+
+    /// Converts into a [`NodeAddr`] without cloning.
+    pub fn into_node_addr(self) -> NodeAddr {
+        self.node_info.into_node_addr()
+    }
+}
+
+impl std::ops::Deref for DiscoveryItem {
+    type Target = NodeData;
+    fn deref(&self) -> &Self::Target {
+        &self.node_info.data
+    }
+}
+
+impl From<DiscoveryItem> for NodeInfo {
+    fn from(item: DiscoveryItem) -> Self {
+        item.node_info
+    }
 }
 
 /// A discovery service that combines multiple discovery sources.
@@ -244,9 +312,9 @@ where
 }
 
 impl Discovery for ConcurrentDiscovery {
-    fn publish(&self, url: Option<&RelayUrl>, addrs: &BTreeSet<SocketAddr>) {
+    fn publish(&self, data: &NodeData) {
         for service in &self.services {
-            service.publish(url, addrs);
+            service.publish(data);
         }
     }
 
@@ -402,12 +470,14 @@ impl DiscoveryTask {
         loop {
             match stream.next().await {
                 Some(Ok(r)) => {
-                    if r.node_addr.is_empty() {
-                        debug!(provenance = %r.provenance, "empty address found");
+                    let provenance = r.provenance;
+                    let node_addr = r.into_node_addr();
+                    if node_addr.is_empty() {
+                        debug!(%provenance, "empty address found");
                         continue;
                     }
-                    debug!(provenance = %r.provenance, addr = ?r.node_addr, "new address found");
-                    ep.add_node_addr_with_source(r.node_addr, r.provenance).ok();
+                    debug!(%provenance, addr = ?node_addr, "new address found");
+                    ep.add_node_addr_with_source(node_addr, provenance).ok();
                     if let Some(tx) = on_first_tx.take() {
                         tx.send(Ok(())).ok();
                     }
@@ -442,7 +512,7 @@ mod tests {
     };
 
     use anyhow::Context;
-    use iroh_base::SecretKey;
+    use iroh_base::{NodeAddr, SecretKey};
     use quinn::{IdleTimeout, TransportConfig};
     use rand::Rng;
     use testresult::TestResult;
@@ -452,7 +522,7 @@ mod tests {
     use super::*;
     use crate::{endpoint::ConnectOptions, RelayMode};
 
-    type InfoStore = HashMap<NodeId, (Option<RelayUrl>, BTreeSet<SocketAddr>, u64)>;
+    type InfoStore = HashMap<NodeId, (NodeData, u64)>;
 
     #[derive(Debug, Clone, Default)]
     struct TestDiscoveryShared {
@@ -491,7 +561,7 @@ mod tests {
     }
 
     impl Discovery for TestDiscovery {
-        fn publish(&self, url: Option<&RelayUrl>, addrs: &BTreeSet<SocketAddr>) {
+        fn publish(&self, data: &NodeData) {
             if !self.publish {
                 return;
             }
@@ -500,7 +570,7 @@ mod tests {
                 .nodes
                 .lock()
                 .unwrap()
-                .insert(self.node_id, (url.cloned(), addrs.clone(), now));
+                .insert(self.node_id, (data.clone(), now));
         }
 
         fn resolve(
@@ -513,21 +583,18 @@ mod tests {
                 let port: u16 = rand::thread_rng().gen_range(10_000..20_000);
                 // "240.0.0.0/4" is reserved and unreachable
                 let addr: SocketAddr = format!("240.0.0.1:{port}").parse().unwrap();
-                Some((None, BTreeSet::from([addr]), ts))
+                let data = NodeData::new(None, BTreeSet::from([addr]));
+                Some((data, ts))
             } else {
                 self.shared.nodes.lock().unwrap().get(&node_id).cloned()
             };
             let stream = match addr_info {
-                Some((url, addrs, ts)) => {
-                    let item = DiscoveryItem {
-                        node_addr: NodeAddr {
-                            node_id,
-                            relay_url: url,
-                            direct_addresses: addrs,
-                        },
-                        provenance: "test-disco",
-                        last_updated: Some(ts),
-                    };
+                Some((data, ts)) => {
+                    let item = DiscoveryItem::new(
+                        NodeInfo::from_parts(node_id, data),
+                        "test-disco",
+                        Some(ts),
+                    );
                     let delay = self.delay;
                     let fut = async move {
                         time::sleep(delay).await;
@@ -549,7 +616,7 @@ mod tests {
     #[derive(Debug)]
     struct EmptyDiscovery;
     impl Discovery for EmptyDiscovery {
-        fn publish(&self, _url: Option<&RelayUrl>, _addrs: &BTreeSet<SocketAddr>) {}
+        fn publish(&self, _data: &NodeData) {}
 
         fn resolve(
             &self,
@@ -771,7 +838,7 @@ mod test_dns_pkarr {
     use tracing_test::traced_test;
 
     use crate::{
-        discovery::pkarr::PkarrPublisher,
+        discovery::{pkarr::PkarrPublisher, NodeData},
         dns::{node_info::NodeInfo, DnsResolver},
         test_utils::{
             dns_server::run_dns_server, pkarr_dns_state::State, run_relay_server, DnsPkarrServer,
@@ -789,11 +856,8 @@ mod test_dns_pkarr {
         let (nameserver, _dns_drop_guard) = run_dns_server(state.clone()).await?;
 
         let secret_key = SecretKey::generate(rand::thread_rng());
-        let node_info = NodeInfo::new(
-            secret_key.public(),
-            Some("https://relay.example".parse().unwrap()),
-            Default::default(),
-        );
+        let node_info = NodeInfo::new(secret_key.public())
+            .with_relay_url(Some("https://relay.example".parse().unwrap()));
         let signed_packet = node_info.to_pkarr_signed_packet(&secret_key, 30)?;
         state.upsert(signed_packet)?;
 
@@ -802,7 +866,7 @@ mod test_dns_pkarr {
             .lookup_node_by_id(&node_info.node_id, &origin)
             .await?;
 
-        assert_eq!(resolved, node_info.into());
+        assert_eq!(resolved, node_info);
 
         Ok(())
     }
@@ -821,8 +885,9 @@ mod test_dns_pkarr {
 
         let resolver = DnsResolver::with_nameserver(dns_pkarr_server.nameserver);
         let publisher = PkarrPublisher::new(secret_key, dns_pkarr_server.pkarr_url.clone());
+        let data = NodeData::new(relay_url.clone(), Default::default());
         // does not block, update happens in background task
-        publisher.update_addr_info(relay_url.as_ref(), &Default::default());
+        publisher.update_node_data(&data);
         // wait until our shared state received the update from pkarr publishing
         dns_pkarr_server.on_node(&node_id, PUBLISH_TIMEOUT).await?;
         let resolved = resolver.lookup_node_by_id(&node_id, &origin).await?;
@@ -833,7 +898,7 @@ mod test_dns_pkarr {
             direct_addresses: Default::default(),
         };
 
-        assert_eq!(resolved, expected);
+        assert_eq!(resolved.to_node_addr(), expected);
         Ok(())
     }
 

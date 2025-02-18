@@ -69,7 +69,7 @@ use crate::endpoint::PathSelection;
 use crate::{
     defaults::timeouts::NET_REPORT_TIMEOUT,
     disco::{self, CallMeMaybe, SendAddr},
-    discovery::{Discovery, DiscoveryItem},
+    discovery::{Discovery, DiscoveryItem, NodeData},
     dns::DnsResolver,
     key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
     watchable::{Watchable, Watcher},
@@ -1479,7 +1479,10 @@ impl MagicSock {
     /// Called whenever our addresses or home relay node changes.
     fn publish_my_addr(&self) {
         if let Some(ref discovery) = self.discovery {
-            discovery.publish(self.my_relay().as_ref(), &self.direct_addrs.sockaddrs());
+            let relay_url = self.my_relay();
+            let direct_addrs = self.direct_addrs.sockaddrs();
+            let data = NodeData::new(relay_url, direct_addrs);
+            discovery.publish(&data);
         }
     }
 }
@@ -2332,12 +2335,14 @@ impl Actor {
                 // forever like we do with the other branches that yield `Option`s
                 Some(discovery_item) = discovery_events.next() => {
                     trace!("tick: discovery event, address discovered: {discovery_item:?}");
+                    let provenance = discovery_item.provenance();
+                    let node_addr = discovery_item.into_node_addr();
                     if let Err(e) = self.msock.add_node_addr(
-                        discovery_item.node_addr.clone(),
+                        node_addr.clone(),
                         Source::Discovery {
-                            name: discovery_item.provenance.into()
+                            name: provenance.to_string()
                         }) {
-                        warn!(?discovery_item.node_addr, "unable to add discovered node address to the node map: {e:?}");
+                        warn!(?node_addr, "unable to add discovered node address to the node map: {e:?}");
                     }
                 }
             }
