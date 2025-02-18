@@ -159,6 +159,7 @@ impl StaticProvider {
                     .data
                     .add_direct_addresses(data.direct_addresses().iter().copied());
                 existing.data.set_relay_url(data.relay_url().cloned());
+                existing.data.set_user_data(data.user_data().cloned());
                 existing.last_updated = last_updated;
             }
             Entry::Vacant(entry) => {
@@ -240,12 +241,14 @@ mod tests {
             relay_url: Some("https://example.com".parse()?),
             direct_addresses: Default::default(),
         };
-        let node_info = NodeInfo::from(addr.clone());
+        let user_data = Some("foobar".parse().unwrap());
+        let node_info = NodeInfo::from(addr.clone()).with_user_data(user_data.clone());
         discovery.add_node_info(node_info.clone());
 
         let back = discovery.get_node_info(key.public()).context("no addr")?;
 
         assert_eq!(back, node_info);
+        assert_eq!(back.user_data(), user_data.as_ref());
         assert_eq!(back.into_node_addr(), addr);
 
         let removed = discovery
