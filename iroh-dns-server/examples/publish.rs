@@ -77,7 +77,7 @@ async fn main() -> Result<()> {
     println!("publish to {pkarr_relay} ...");
 
     let pkarr = PkarrRelayClient::new(pkarr_relay);
-    let node_info = NodeInfo::new(node_id, Some(args.relay_url), Default::default());
+    let node_info = NodeInfo::new(node_id).with_relay_url(Some(args.relay_url.into()));
     let signed_packet = node_info.to_pkarr_signed_packet(&secret_key, 30)?;
     pkarr.publish(&signed_packet).await?;
 

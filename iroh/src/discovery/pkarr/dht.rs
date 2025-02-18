@@ -5,14 +5,10 @@
 //! overview of pkarr.
 //!
 //! [pkarr module]: super
-use std::{
-    collections::BTreeSet,
-    net::SocketAddr,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
-use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
+use iroh_base::{NodeId, SecretKey};
 use n0_future::{
     boxed::BoxStream,
     stream::StreamExt,
@@ -25,7 +21,7 @@ use url::Url;
 use crate::{
     discovery::{
         pkarr::{DEFAULT_PKARR_TTL, N0_DNS_PKARR_RELAY_PROD},
-        Discovery, DiscoveryItem,
+        Discovery, DiscoveryItem, NodeData,
     },
     dns::node_info::NodeInfo,
     Endpoint,
@@ -96,14 +92,8 @@ impl Inner {
         match maybe_packet {
             Some(signed_packet) => match NodeInfo::from_pkarr_signed_packet(&signed_packet) {
                 Ok(node_info) => {
-                    let node_addr: NodeAddr = node_info.into();
-
-                    tracing::info!("discovered node info from relay {:?}", node_addr);
-                    Some(Ok(DiscoveryItem {
-                        node_addr,
-                        provenance: "relay",
-                        last_updated: None,
-                    }))
+                    tracing::info!("discovered node info from relay {:?}", node_info);
+                    Some(Ok(DiscoveryItem::new(node_info, "relay", None)))
                 }
                 Err(_err) => {
                     tracing::debug!("failed to parse signed packet as node info");
@@ -281,21 +271,16 @@ impl DhtDiscovery {
 }
 
 impl Discovery for DhtDiscovery {
-    fn publish(&self, url: Option<&RelayUrl>, addrs: &BTreeSet<SocketAddr>) {
+    fn publish(&self, data: &NodeData) {
         let Some(keypair) = &self.0.secret_key else {
             tracing::debug!("no keypair set, not publishing");
             return;
         };
-        tracing::debug!("publishing {:?}, {:?}", url, addrs);
-        let info = NodeInfo {
-            node_id: keypair.public(),
-            relay_url: url.cloned().map(Url::from),
-            direct_addresses: if self.0.include_direct_addresses {
-                addrs.clone()
-            } else {
-                Default::default()
-            },
-        };
+        tracing::debug!("publishing {data:?}");
+        let mut info = NodeInfo::from_parts(keypair.public(), data.clone());
+        if !self.0.include_direct_addresses {
+            info.clear_direct_addresses();
+        }
         let Ok(signed_packet) = info.to_pkarr_signed_packet(keypair, self.0.ttl) else {
             tracing::warn!("failed to create signed packet");
             return;
@@ -352,7 +337,8 @@ mod tests {
 
         let relay_url: RelayUrl = Url::parse("https://example.com")?.into();
 
-        discovery.publish(Some(&relay_url), &Default::default());
+        let data = NodeData::default().with_relay_url(Some(relay_url.clone()));
+        discovery.publish(&data);
 
         // publish is fire and forget, so we have no way to wait until it is done.
         tokio::time::timeout(Duration::from_secs(30), async move {
@@ -365,8 +351,8 @@ mod tests {
                     .collect::<Vec<_>>()
                     .await;
                 for item in items.into_iter().flatten() {
-                    if let Some(url) = item.node_addr.relay_url {
-                        found_relay_urls.insert(url);
+                    if let Some(url) = item.relay_url() {
+                        found_relay_urls.insert(url.clone());
                     }
                 }
                 if found_relay_urls.contains(&relay_url) {

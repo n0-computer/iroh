@@ -44,21 +44,21 @@
 //! [`DnsDiscovery`]: crate::discovery::dns::DnsDiscovery
 //! [`DhtDiscovery`]: dht::DhtDiscovery
 
-use std::{collections::BTreeSet, net::SocketAddr, sync::Arc};
+use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Result};
-use iroh_base::{NodeId, RelayUrl, SecretKey};
+use iroh_base::{NodeId, SecretKey};
 use n0_future::{
     boxed::BoxStream,
     task::{self, AbortOnDropHandle},
     time::{self, Duration, Instant},
 };
 use pkarr::SignedPacket;
-use tracing::{debug, error_span, info, warn, Instrument};
+use tracing::{debug, error_span, warn, Instrument};
 use url::Url;
 
 use crate::{
-    discovery::{Discovery, DiscoveryItem},
+    discovery::{Discovery, DiscoveryItem, NodeData},
     dns::node_info::NodeInfo,
     endpoint::force_staging_infra,
     watchable::{Disconnected, Watchable, Watcher},
@@ -193,22 +193,20 @@ impl PkarrPublisher {
     /// Publishes the addressing information about this node to a pkarr relay.
     ///
     /// This is a nonblocking function, the actual update is performed in the background.
-    pub fn update_addr_info(&self, url: Option<&RelayUrl>, addrs: &BTreeSet<SocketAddr>) {
-        let (relay_url, direct_addresses) = if let Some(relay_url) = url {
-            // Only publish relay url, and no direct addrs
-            let url = relay_url.clone();
-            (Some(url.into()), Default::default())
-        } else {
-            (None, addrs.clone())
-        };
-        let info = NodeInfo::new(self.node_id, relay_url, direct_addresses);
+    pub fn update_node_data(&self, data: &NodeData) {
+        let mut data = data.clone();
+        if data.relay_url().is_some() {
+            // If relay url is set: only publish relay url, and no direct addrs.
+            data.clear_direct_addresses();
+        }
+        let info = NodeInfo::from_parts(self.node_id, data);
         self.watchable.set(Some(info)).ok();
     }
 }
 
 impl Discovery for PkarrPublisher {
-    fn publish(&self, url: Option<&RelayUrl>, addrs: &BTreeSet<SocketAddr>) {
-        self.update_addr_info(url, addrs);
+    fn publish(&self, data: &NodeData) {
+        self.update_node_data(data);
     }
 }
 
@@ -266,11 +264,8 @@ impl PublisherService {
     }
 
     async fn publish_current(&self, info: NodeInfo) -> Result<()> {
-        info!(
-            relay_url = ?info
-                .relay_url
-                .as_ref()
-                .map(|s| s.as_str()),
+        debug!(
+            data = ?info.data,
             pkarr_relay = %self.pkarr_client.pkarr_relay_url,
             "Publish node info to pkarr"
         );
@@ -332,11 +327,7 @@ impl Discovery for PkarrResolver {
         let fut = async move {
             let signed_packet = pkarr_client.resolve(node_id).await?;
             let info = NodeInfo::from_pkarr_signed_packet(&signed_packet)?;
-            let item = DiscoveryItem {
-                node_addr: info.into(),
-                provenance: "pkarr",
-                last_updated: None,
-            };
+            let item = DiscoveryItem::new(info, "pkarr", None);
             Ok(item)
         };
         let stream = n0_future::stream::once_future(fut);

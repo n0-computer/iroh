@@ -29,9 +29,9 @@ fn benchmark_dns_server(c: &mut Criterion) {
                     let node_id = secret_key.public();
 
                     let pkarr_relay = LOCALHOST_PKARR.parse().expect("valid url");
-                    let relay_url = Some("http://localhost:8080".parse().unwrap());
                     let pkarr = PkarrRelayClient::new(pkarr_relay);
-                    let node_info = NodeInfo::new(node_id, relay_url, Default::default());
+                    let relay_url = "http://localhost:8080".parse().unwrap();
+                    let node_info = NodeInfo::new(node_id).with_relay_url(Some(relay_url));
                     let signed_packet = node_info.to_pkarr_signed_packet(&secret_key, 30).unwrap();
 
                     let start = std::time::Instant::now();
