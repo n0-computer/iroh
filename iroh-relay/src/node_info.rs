@@ -32,12 +32,7 @@
 //! [`N0_DNS_NODE_ORIGIN_PROD`]: crate::dns::N0_DNS_NODE_ORIGIN_PROD
 //! [`N0_DNS_NODE_ORIGIN_STAGING`]: crate::dns::N0_DNS_NODE_ORIGIN_STAGING
 
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    hash::Hash,
-    net::SocketAddr,
-    str::FromStr,
-};
+use std::{collections::BTreeSet, net::SocketAddr, str::FromStr};
 
 use anyhow::{anyhow, Result};
 #[cfg(not(wasm_browser))]
@@ -170,17 +165,10 @@ impl From<IrohTxtAttrs> for NodeInfo {
 impl From<&IrohTxtAttrs> for NodeInfo {
     fn from(attrs: &IrohTxtAttrs) -> Self {
         let node_id = attrs.node_id();
-        let attrs = attrs.attrs();
-        let relay_url = attrs
-            .get(&IrohAttr::Relay)
-            .into_iter()
-            .flatten()
-            .next()
-            .and_then(|s| Url::parse(s).ok());
+        let relay_url = attrs.relay.as_ref().and_then(|url| Url::parse(url).ok());
         let direct_addresses = attrs
-            .get(&IrohAttr::Addr)
-            .into_iter()
-            .flatten()
+            .addrs
+            .iter()
             .filter_map(|s| SocketAddr::from_str(s).ok())
             .collect();
         let data = NodeData {
@@ -313,19 +301,10 @@ fn node_id_from_hickory_name(name: &hickory_resolver::proto::rr::Name) -> Option
     Some(node_id)
 }
 
-/// The attributes supported by iroh for [`IROH_TXT_NAME`] DNS resource records.
-///
-/// The resource record uses the lower-case names.
-#[derive(
-    Debug, strum::Display, strum::AsRefStr, strum::EnumString, Hash, Eq, PartialEq, Ord, PartialOrd,
-)]
-#[strum(serialize_all = "kebab-case")]
-pub(crate) enum IrohAttr {
-    /// URL of home relay.
-    Relay,
-    /// Direct address.
-    Addr,
-}
+/// The "relay" attribute supported by iroh for [`IROH_TXT_NAME`] DNS resource records.
+const TXT_ATTR_RELAY: &str = "relay";
+/// The "addr" attribute supported by iroh for [`IROH_TXT_NAME`] DNS resource records.
+const TXT_ATTR_ADDR: &str = "addr";
 
 /// Attributes parsed from [`IROH_TXT_NAME`] TXT records.
 ///
@@ -335,52 +314,45 @@ pub(crate) enum IrohAttr {
 #[derive(Debug)]
 pub(crate) struct IrohTxtAttrs {
     node_id: NodeId,
-    attrs: BTreeMap<IrohAttr, Vec<String>>,
+    relay: Option<String>,
+    addrs: Vec<String>,
 }
 
 impl From<&NodeInfo> for IrohTxtAttrs {
     fn from(info: &NodeInfo) -> Self {
-        let mut attrs = vec![];
-        if let Some(relay_url) = &info.data.relay_url {
-            attrs.push((IrohAttr::Relay, relay_url.to_string()));
+        Self {
+            node_id: info.node_id,
+            relay: info.relay_url.as_ref().map(|url| url.to_string()),
+            addrs: info
+                .direct_addresses
+                .iter()
+                .map(|addr| addr.to_string())
+                .collect(),
         }
-        for addr in &info.data.direct_addresses {
-            attrs.push((IrohAttr::Addr, addr.to_string()));
-        }
-        Self::from_parts(info.node_id, attrs.into_iter())
     }
 }
 
 impl IrohTxtAttrs {
-    /// Creates [`TxtAttrs`] from a node id and an iterator of key-value pairs.
-    pub(crate) fn from_parts(
-        node_id: NodeId,
-        pairs: impl Iterator<Item = (IrohAttr, String)>,
-    ) -> Self {
-        let mut attrs: BTreeMap<IrohAttr, Vec<String>> = BTreeMap::new();
-        for (k, v) in pairs {
-            attrs.entry(k).or_default().push(v);
-        }
-        Self { attrs, node_id }
-    }
-
-    /// Creates [`TxtAttrs`] from a node id and an iterator of "{key}={value}" strings.
-    pub(crate) fn from_strings(
-        node_id: NodeId,
-        strings: impl Iterator<Item = String>,
-    ) -> Result<Self> {
-        let mut attrs: BTreeMap<IrohAttr, Vec<String>> = BTreeMap::new();
+    /// Creates [`IrohTxtAttrs`] from a node id and an iterator of "{key}={value}" strings.
+    pub(crate) fn from_strings(node_id: NodeId, strings: impl Iterator<Item = String>) -> Self {
+        let mut relay_url: Option<String> = None;
+        let mut addrs: Vec<String> = Vec::new();
         for s in strings {
             let mut parts = s.split('=');
             let (Some(key), Some(value)) = (parts.next(), parts.next()) else {
                 continue;
             };
-            let Ok(attr) = IrohAttr::from_str(key) else {
-                continue;
-            };
-            attrs.entry(attr).or_default().push(value.to_string());
+            match key {
+                TXT_ATTR_RELAY => relay_url = Some(value.to_string()),
+                TXT_ATTR_ADDR => addrs.push(value.to_string()),
+                _ => continue,
+            }
         }
-        Ok(Self { attrs, node_id })
+        Self {
+            node_id,
+            relay: relay_url,
+            addrs,
+        }
     }
 
     #[cfg(not(wasm_browser))]
@@ -409,11 +381,6 @@ impl IrohTxtAttrs {
         IrohTxtAttrs::lookup(resolver, name).await
     }
 
-    /// Returns the parsed attributes.
-    pub(crate) fn attrs(&self) -> &BTreeMap<IrohAttr, Vec<String>> {
-        &self.attrs
-    }
-
     /// Returns the node id.
     pub(crate) fn node_id(&self) -> NodeId {
         self.node_id
@@ -439,7 +406,7 @@ impl IrohTxtAttrs {
         });
 
         let txt_strs = txt_data.filter_map(|s| String::try_from(s.clone()).ok());
-        Self::from_strings(node_id, txt_strs)
+        Ok(Self::from_strings(node_id, txt_strs))
     }
 
     /// Parses a TXT records lookup.
@@ -481,13 +448,16 @@ impl IrohTxtAttrs {
             }
         });
 
-        Self::from_strings(queried_node_id, strings)
+        Ok(Self::from_strings(queried_node_id, strings))
     }
 
     fn to_txt_strings(&self) -> impl Iterator<Item = String> + '_ {
-        self.attrs
-            .iter()
-            .flat_map(move |(k, vs)| vs.iter().map(move |v| format!("{k}={v}")))
+        self.relay
+            .as_ref()
+            .map(|url| (TXT_ATTR_RELAY, url))
+            .into_iter()
+            .chain(self.addrs.iter().map(|addr| (TXT_ATTR_ADDR, addr)))
+            .map(|(k, v)| format!("{k}={v}"))
     }
 
     /// Creates a [`pkarr::SignedPacket`]
