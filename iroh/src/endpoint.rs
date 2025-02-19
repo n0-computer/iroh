@@ -2317,6 +2317,8 @@ mod tests {
         let ep1_nodeid = ep1.node_id();
         let ep2_nodeid = ep2.node_id();
 
+        // wait for the direct addresses to be initialized.
+        ep1.direct_addresses().initialized().await.unwrap();
         let ep1_nodeaddr = ep1.node_addr().await.unwrap();
         tracing::info!(
             "node id 1 {ep1_nodeid}, relay URL {:?}",
