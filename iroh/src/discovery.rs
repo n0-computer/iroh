@@ -646,7 +646,7 @@ mod tests {
         };
         let ep1_addr = NodeAddr::new(ep1.node_id());
         // wait for our address to be updated and thus published at least once
-        ep1.node_addr().await?;
+        ep1.node_addr_initialized().await;
         let _conn = ep2.connect(ep1_addr, TEST_ALPN).await?;
         Ok(())
     }
@@ -672,7 +672,7 @@ mod tests {
         };
         let ep1_addr = NodeAddr::new(ep1.node_id());
         // wait for out address to be updated and thus published at least once
-        ep1.node_addr().await.context("waiting for NodeAddr")?;
+        ep1.node_addr_initialized().await;
         let _conn = ep2
             .connect(ep1_addr, TEST_ALPN)
             .await
@@ -704,7 +704,7 @@ mod tests {
             new_endpoint(secret, disco).await
         };
         // wait for out address to be updated and thus published at least once
-        ep1.node_addr().await?;
+        ep1.node_addr_initialized().await;
         let _conn = ep2.connect(ep1.node_id(), TEST_ALPN).await?;
         Ok(())
     }
@@ -726,7 +726,7 @@ mod tests {
             new_endpoint(secret, disco).await
         };
         // wait for out address to be updated and thus published at least once
-        ep1.node_addr().await?;
+        ep1.node_addr();
 
         // 10x faster test via a 3s idle timeout instead of the 30s default
         let mut config = TransportConfig::default();
@@ -759,7 +759,7 @@ mod tests {
             new_endpoint(secret, disco).await
         };
         // wait for out address to be updated and thus published at least once
-        ep1.node_addr().await?;
+        ep1.node_addr();
         let ep1_wrong_addr = NodeAddr {
             node_id: ep1.node_id(),
             relay_url: None,
