@@ -35,6 +35,8 @@ async fn main() -> anyhow::Result<()> {
     println!("node id: {me}");
     println!("node listening addresses:");
 
+    endpoint.direct_addresses().initialized().await?;
+    endpoint.home_relay().initialized().await?;
     let node_addr = endpoint.node_addr();
     let local_addrs = node_addr
         .direct_addresses
