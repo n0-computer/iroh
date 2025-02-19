@@ -143,10 +143,9 @@ jobs:
       - uses: taiki-e/install-action@cross
 
       - name: test
-        run: cross test --all --target ${{ matrix.target }} -- --test-threads=12
+        run: RUST_BACKTRACE=1 cross test --all --target ${{ matrix.target }} -- --test-threads=12
         env:
           RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG' }}
-          RUST_BACKTRACE: 1
 
   wasm_build:
     name: Build wasm32
@@ -184,7 +183,6 @@ jobs:
       - name: Ensure no 'import "env"' in iroh-net-report Wasm
         run: |
           ! wasm-tools print --skeleton target/wasm32-unknown-unknown/debug/iroh_net_report.wasm | grep 'import "env"'
-      
 
   check_semver:
     runs-on: ubuntu-latest
