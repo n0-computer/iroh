@@ -6,7 +6,7 @@ use anyhow::Result;
 use hickory_server::proto::rr::{Name, RecordSet, RecordType, RrKey};
 use iroh_metrics::inc;
 use lru::LruCache;
-use pkarr::{mainline::dht::DhtSettings, PkarrClient, SignedPacket};
+use pkarr::{Client as PkarrClient, SignedPacket};
 use tokio::sync::Mutex;
 use tracing::{debug, trace};
 use ttl_cache::TtlCache;
@@ -66,10 +66,7 @@ impl ZoneStore {
         let pkarr_client = match bootstrap {
             BootstrapOption::Default => PkarrClient::builder().build().unwrap(),
             BootstrapOption::Custom(bootstrap) => PkarrClient::builder()
-                .dht_settings(DhtSettings {
-                    bootstrap: Some(bootstrap),
-                    ..Default::default()
-                })
+                .dht(|builder| builder.bootstrap(&bootstrap))
                 .build()
                 .unwrap(),
         };
@@ -116,9 +113,9 @@ impl ZoneStore {
             //
             // it will be cached for some time.
             debug!("DHT resolve {}", key.to_z32());
-            let packet_opt = pkarr.as_ref().clone().as_async().resolve(&key).await?;
+            let packet_opt = pkarr.resolve(&key).await;
             if let Some(packet) = packet_opt {
-                debug!("DHT resolve successful {:?}", packet.packet());
+                debug!("DHT resolve successful {:?}", packet);
                 return self
                     .cache
                     .lock()
@@ -249,12 +246,12 @@ impl CachedZone {
             signed_packet_to_hickory_records_without_origin(signed_packet, |_| true)?;
         Ok(Self {
             records,
-            timestamp: signed_packet.timestamp(),
+            timestamp: signed_packet.timestamp().into(),
         })
     }
 
     fn is_newer_than(&self, signed_packet: &SignedPacket) -> bool {
-        self.timestamp > signed_packet.timestamp()
+        self.timestamp > signed_packet.timestamp().into()
     }
 
     fn resolve(&self, name: &Name, record_type: RecordType) -> Option<Arc<RecordSet>> {
