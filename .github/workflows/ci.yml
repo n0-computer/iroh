@@ -146,6 +146,7 @@ jobs:
         run: cross test --all --target ${{ matrix.target }} -- --test-threads=12
         env:
           RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG' }}
+          RUST_BACKTRACE: 1
 
   wasm_build:
     name: Build wasm32
