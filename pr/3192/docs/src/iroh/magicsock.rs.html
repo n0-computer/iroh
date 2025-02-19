@@ -4419,10 +4419,7 @@
 <a href="#4418" id="4418">4418</a>
 <a href="#4419" id="4419">4419</a>
 <a href="#4420" id="4420">4420</a>
-<a href="#4421" id="4421">4421</a>
-<a href="#4422" id="4422">4422</a>
-<a href="#4423" id="4423">4423</a>
-<a href="#4424" id="4424">4424</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4421" id="4421">4421</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -7927,10 +7924,7 @@
         }));
 
         <span class="macro">println!</span>(<span class="string">"first conn!"</span>);
-        <span class="kw">let </span>conn = m1
-            .endpoint
-            .connect(m2.endpoint.node_addr(), ALPN)
-            .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>conn = m1.endpoint.connect(m2.endpoint.node_addr(), ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="macro">println!</span>(<span class="string">"Closing first conn"</span>);
         conn.close(<span class="number">0u32</span>.into(), <span class="string">b"bye lolz"</span>);
         conn.closed().<span class="kw">await</span>;

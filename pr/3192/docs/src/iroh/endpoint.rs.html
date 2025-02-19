@@ -2629,7 +2629,12 @@
 <a href="#2628" id="2628">2628</a>
 <a href="#2629" id="2629">2629</a>
 <a href="#2630" id="2630">2630</a>
-<a href="#2631" id="2631">2631</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2631" id="2631">2631</a>
+<a href="#2632" id="2632">2632</a>
+<a href="#2633" id="2633">2633</a>
+<a href="#2634" id="2634">2634</a>
+<a href="#2635" id="2635">2635</a>
+<a href="#2636" id="2636">2636</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -3473,6 +3478,7 @@
     ///
     /// If you want to wait until a non-empty node address is available, you can await
     /// [`Self::node_addr_initialized`] beforehand.
+    ///
     /// ```no_run
     /// # use iroh::{Endpoint, NodeAddr};
     /// # async fn wrapper() -&gt; testresult::TestResult {
@@ -3481,8 +3487,10 @@
     /// let node_addr = ep.node_addr();
     /// assert!(!node_addr.is_empty());
     /// # Ok(())
+    /// ```
     ///
     /// If you need an address with direct addresses, you can wait for those to be initialized instead:
+    ///
     /// ```no_run
     /// # use iroh::{Endpoint, NodeAddr};
     /// # async fn wrapper() -&gt; testresult::TestResult {
@@ -3492,7 +3500,9 @@
     /// assert!(!node_addr.direct_addresses.is_empty());
     /// # Ok(())
     /// # }
-    /// Similarily, if you only care about the home relay, use `Endpoint::home_relay` and wait
+    /// ```
+    ///
+    /// Similarly, if you only care about the home relay, use `Endpoint::home_relay` and wait
     /// for it to be initialized.
     </span><span class="kw">pub fn </span>node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; NodeAddr {
         <span class="kw">let </span>addrs = <span class="self">self
