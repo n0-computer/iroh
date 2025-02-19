@@ -23,7 +23,8 @@ const ALPN: &[u8] = b"iroh-example/echo/0";
 #[tokio::main]
 async fn main() -> Result<()> {
     let router = accept_side().await?;
-    let node_addr = router.endpoint().node_addr().await?;
+    router.endpoint().node_addr_initialized().await;
+    let node_addr = router.endpoint().node_addr();
 
     connect_side(node_addr).await?;
 
