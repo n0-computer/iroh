@@ -134,6 +134,34 @@ impl NodeData {
     pub fn set_relay_url(&mut self, relay_url: Option<RelayUrl>) {
         self.relay_url = relay_url
     }
+
+    fn from_kv_strings(strings: impl Iterator<Item = String>) -> Self {
+        let mut relay_url: Option<RelayUrl> = None;
+        let mut direct_addresses: BTreeSet<SocketAddr> = BTreeSet::new();
+        for s in strings {
+            let mut parts = s.split('=');
+            let (Some(key), Some(value)) = (parts.next(), parts.next()) else {
+                continue;
+            };
+            match key {
+                TXT_ATTR_RELAY => {
+                    if let Ok(url) = Url::parse(value) {
+                        relay_url = Some(url.into());
+                    }
+                }
+                TXT_ATTR_ADDR => {
+                    if let Ok(addr) = SocketAddr::from_str(value) {
+                        direct_addresses.insert(addr);
+                    }
+                }
+                _ => continue,
+            }
+        }
+        Self {
+            relay_url,
+            direct_addresses,
+        }
+    }
 }
 
 impl From<NodeAddr> for NodeData {
@@ -154,23 +182,6 @@ pub struct NodeInfo {
     pub node_id: NodeId,
     /// The information published about the node.
     pub data: NodeData,
-}
-
-impl From<IrohTxtAttrs> for NodeInfo {
-    fn from(attrs: IrohTxtAttrs) -> Self {
-        (&attrs).into()
-    }
-}
-
-impl From<&IrohTxtAttrs> for NodeInfo {
-    fn from(attrs: &IrohTxtAttrs) -> Self {
-        let node_id = attrs.node_id();
-        let data = NodeData {
-            relay_url: attrs.relay.clone(),
-            direct_addresses: attrs.addrs.clone(),
-        };
-        Self { node_id, data }
-    }
 }
 
 impl From<NodeInfo> for NodeAddr {
@@ -228,21 +239,99 @@ impl NodeInfo {
         }
     }
 
-    fn to_attrs(&self) -> IrohTxtAttrs {
-        self.into()
+    /// Looks up attributes by [`NodeId`] and origin domain.
+    #[cfg(not(wasm_browser))]
+    pub(crate) async fn lookup_by_id(
+        resolver: &DnsResolver,
+        node_id: &NodeId,
+        origin: &str,
+    ) -> Result<Self> {
+        let name = node_domain(node_id, origin)?;
+        Self::lookup(resolver, name).await
+    }
+
+    /// Looks up attributes by DNS name.
+    #[cfg(not(wasm_browser))]
+    pub(crate) async fn lookup_by_name(resolver: &DnsResolver, name: &str) -> Result<Self> {
+        let name = Name::from_str(name)?;
+        Self::lookup(resolver, name).await
     }
 
     #[cfg(not(wasm_browser))]
+    async fn lookup(resolver: &DnsResolver, name: Name) -> Result<Self> {
+        let name = ensure_iroh_txt_label(name)?;
+        let lookup = resolver.lookup_txt(name, DNS_TIMEOUT).await?;
+        Self::from_txt_lookup(lookup)
+    }
+
     /// Parses a [`NodeInfo`] from a TXT records lookup.
+    #[cfg(not(wasm_browser))]
     pub fn from_txt_lookup(lookup: crate::dns::TxtLookup) -> Result<Self> {
-        let attrs = IrohTxtAttrs::from_txt_lookup(lookup)?;
-        Ok(attrs.into())
+        let queried_node_id = node_id_from_hickory_name(lookup.0.query().name())
+            .ok_or_else(|| anyhow!("invalid DNS answer: not a query for _iroh.z32encodedpubkey"))?;
+
+        let strings = lookup.0.as_lookup().record_iter().filter_map(|record| {
+            match node_id_from_hickory_name(record.name()) {
+                // Filter out only TXT record answers that match the node_id we searched for.
+                Some(n) if n == queried_node_id => match record.data().as_txt() {
+                    Some(txt) => Some(txt.to_string()),
+                    None => {
+                        warn!(
+                            ?queried_node_id,
+                            data = ?record.data(),
+                            "unexpected record type for DNS discovery query"
+                        );
+                        None
+                    }
+                },
+                Some(answered_node_id) => {
+                    warn!(
+                        ?queried_node_id,
+                        ?answered_node_id,
+                        "unexpected node ID answered for DNS query"
+                    );
+                    None
+                }
+                None => {
+                    warn!(
+                        ?queried_node_id,
+                        name = ?record.name(),
+                        "unexpected answer record name for DNS query"
+                    );
+                    None
+                }
+            }
+        });
+
+        let data = NodeData::from_kv_strings(strings);
+        Ok(Self {
+            node_id: queried_node_id,
+            data,
+        })
     }
 
     /// Parses a [`NodeInfo`] from a [`pkarr::SignedPacket`].
     pub fn from_pkarr_signed_packet(packet: &pkarr::SignedPacket) -> Result<Self> {
-        let attrs = IrohTxtAttrs::from_pkarr_signed_packet(packet)?;
-        Ok(attrs.into())
+        use pkarr::dns::{
+            rdata::RData,
+            {self},
+        };
+        let pubkey = packet.public_key();
+        let pubkey_z32 = pubkey.to_z32();
+        let node_id = NodeId::from(*pubkey.verifying_key());
+        let zone = dns::Name::new(&pubkey_z32)?;
+        let inner = packet.packet();
+        let txt_data = inner.answers.iter().filter_map(|rr| match &rr.rdata {
+            RData::TXT(txt) => match rr.name.without(&zone) {
+                Some(name) if name.to_string() == IROH_TXT_NAME => Some(txt),
+                Some(_) | None => None,
+            },
+            _ => None,
+        });
+
+        let txt_strs = txt_data.filter_map(|s| String::try_from(s.clone()).ok());
+        let data = NodeData::from_kv_strings(txt_strs);
+        Ok(Self { node_id, data })
     }
 
     /// Creates a [`pkarr::SignedPacket`].
@@ -253,12 +342,47 @@ impl NodeInfo {
         secret_key: &SecretKey,
         ttl: u32,
     ) -> Result<pkarr::SignedPacket> {
-        self.to_attrs().to_pkarr_signed_packet(secret_key, ttl)
+        let packet = self.to_pkarr_dns_packet(ttl)?;
+        let keypair = pkarr::Keypair::from_secret_key(&secret_key.to_bytes());
+        let signed_packet = pkarr::SignedPacket::from_packet(&keypair, &packet)
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        Ok(signed_packet)
+    }
+
+    fn to_pkarr_dns_packet(&self, ttl: u32) -> Result<pkarr::dns::Packet<'static>> {
+        use pkarr::dns::{self, rdata};
+        let name = dns::Name::new(IROH_TXT_NAME)?.into_owned();
+
+        let mut packet = dns::Packet::new_reply(0);
+        for s in self.to_txt_strings() {
+            let mut txt = rdata::TXT::new();
+            txt.add_string(&s)?;
+            let rdata = rdata::RData::TXT(txt.into_owned());
+            packet.answers.push(dns::ResourceRecord::new(
+                name.clone(),
+                dns::CLASS::IN,
+                ttl,
+                rdata,
+            ));
+        }
+        Ok(packet)
     }
 
     /// Converts into a list of `{key}={value}` strings.
     pub fn to_txt_strings(&self) -> Vec<String> {
-        self.to_attrs().to_txt_strings().collect()
+        self.data
+            .relay_url
+            .as_ref()
+            .map(|url| (TXT_ATTR_RELAY, url.to_string()))
+            .into_iter()
+            .chain(
+                self.data
+                    .direct_addresses
+                    .iter()
+                    .map(|addr| (TXT_ATTR_ADDR, addr.to_string())),
+            )
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect()
     }
 }
 
@@ -300,203 +424,6 @@ const TXT_ATTR_RELAY: &str = "relay";
 /// The "addr" attribute supported by iroh for [`IROH_TXT_NAME`] DNS resource records.
 const TXT_ATTR_ADDR: &str = "addr";
 
-/// Attributes parsed from [`IROH_TXT_NAME`] TXT records.
-///
-/// This struct is generic over the key type. When using with [`String`], this will parse
-/// all attributes. Can also be used with an enum, if it implements [`FromStr`] and
-/// [`Display`].
-#[derive(Debug)]
-pub(crate) struct IrohTxtAttrs {
-    node_id: NodeId,
-    relay: Option<RelayUrl>,
-    addrs: BTreeSet<SocketAddr>,
-}
-
-impl From<&NodeInfo> for IrohTxtAttrs {
-    fn from(info: &NodeInfo) -> Self {
-        Self {
-            node_id: info.node_id,
-            relay: info.relay_url.clone(),
-            addrs: info.direct_addresses.clone(),
-        }
-    }
-}
-
-impl IrohTxtAttrs {
-    /// Creates [`IrohTxtAttrs`] from a node id and an iterator of "{key}={value}" strings.
-    pub(crate) fn from_strings(node_id: NodeId, strings: impl Iterator<Item = String>) -> Self {
-        let mut relay: Option<RelayUrl> = None;
-        let mut addrs: BTreeSet<SocketAddr> = BTreeSet::new();
-        for s in strings {
-            let mut parts = s.split('=');
-            let (Some(key), Some(value)) = (parts.next(), parts.next()) else {
-                continue;
-            };
-            match key {
-                TXT_ATTR_RELAY => {
-                    if let Ok(url) = Url::parse(value) {
-                        relay = Some(url.into());
-                    }
-                }
-                TXT_ATTR_ADDR => {
-                    if let Ok(addr) = SocketAddr::from_str(value) {
-                        addrs.insert(addr);
-                    }
-                }
-                _ => continue,
-            }
-        }
-        Self {
-            node_id,
-            relay,
-            addrs,
-        }
-    }
-
-    #[cfg(not(wasm_browser))]
-    async fn lookup(resolver: &DnsResolver, name: Name) -> Result<Self> {
-        let name = ensure_iroh_txt_label(name)?;
-        let lookup = resolver.lookup_txt(name, DNS_TIMEOUT).await?;
-        let attrs = Self::from_txt_lookup(lookup)?;
-        Ok(attrs)
-    }
-
-    /// Looks up attributes by [`NodeId`] and origin domain.
-    #[cfg(not(wasm_browser))]
-    pub(crate) async fn lookup_by_id(
-        resolver: &DnsResolver,
-        node_id: &NodeId,
-        origin: &str,
-    ) -> Result<Self> {
-        let name = node_domain(node_id, origin)?;
-        IrohTxtAttrs::lookup(resolver, name).await
-    }
-
-    /// Looks up attributes by DNS name.
-    #[cfg(not(wasm_browser))]
-    pub(crate) async fn lookup_by_name(resolver: &DnsResolver, name: &str) -> Result<Self> {
-        let name = Name::from_str(name)?;
-        IrohTxtAttrs::lookup(resolver, name).await
-    }
-
-    /// Returns the node id.
-    pub(crate) fn node_id(&self) -> NodeId {
-        self.node_id
-    }
-
-    /// Parses a [`pkarr::SignedPacket`].
-    pub(crate) fn from_pkarr_signed_packet(packet: &pkarr::SignedPacket) -> Result<Self> {
-        use pkarr::dns::{
-            rdata::RData,
-            {self},
-        };
-        let pubkey = packet.public_key();
-        let pubkey_z32 = pubkey.to_z32();
-        let node_id = NodeId::from(*pubkey.verifying_key());
-        let zone = dns::Name::new(&pubkey_z32)?;
-        let inner = packet.packet();
-        let txt_data = inner.answers.iter().filter_map(|rr| match &rr.rdata {
-            RData::TXT(txt) => match rr.name.without(&zone) {
-                Some(name) if name.to_string() == IROH_TXT_NAME => Some(txt),
-                Some(_) | None => None,
-            },
-            _ => None,
-        });
-
-        let txt_strs = txt_data.filter_map(|s| String::try_from(s.clone()).ok());
-        Ok(Self::from_strings(node_id, txt_strs))
-    }
-
-    /// Parses a TXT records lookup.
-    #[cfg(not(wasm_browser))]
-    pub(crate) fn from_txt_lookup(lookup: crate::dns::TxtLookup) -> Result<Self> {
-        let queried_node_id = node_id_from_hickory_name(lookup.0.query().name())
-            .ok_or_else(|| anyhow!("invalid DNS answer: not a query for _iroh.z32encodedpubkey"))?;
-
-        let strings = lookup.0.as_lookup().record_iter().filter_map(|record| {
-            match node_id_from_hickory_name(record.name()) {
-                // Filter out only TXT record answers that match the node_id we searched for.
-                Some(n) if n == queried_node_id => match record.data().as_txt() {
-                    Some(txt) => Some(txt.to_string()),
-                    None => {
-                        warn!(
-                            ?queried_node_id,
-                            data = ?record.data(),
-                            "unexpected record type for DNS discovery query"
-                        );
-                        None
-                    }
-                },
-                Some(answered_node_id) => {
-                    warn!(
-                        ?queried_node_id,
-                        ?answered_node_id,
-                        "unexpected node ID answered for DNS query"
-                    );
-                    None
-                }
-                None => {
-                    warn!(
-                        ?queried_node_id,
-                        name = ?record.name(),
-                        "unexpected answer record name for DNS query"
-                    );
-                    None
-                }
-            }
-        });
-
-        Ok(Self::from_strings(queried_node_id, strings))
-    }
-
-    fn to_txt_strings(&self) -> impl Iterator<Item = String> + '_ {
-        self.relay
-            .as_ref()
-            .map(|url| (TXT_ATTR_RELAY, url.to_string()))
-            .into_iter()
-            .chain(
-                self.addrs
-                    .iter()
-                    .map(|addr| (TXT_ATTR_ADDR, addr.to_string())),
-            )
-            .map(|(k, v)| format!("{k}={v}"))
-    }
-
-    /// Creates a [`pkarr::SignedPacket`]
-    ///
-    /// This constructs a DNS packet and signs it with a [`SecretKey`].
-    pub(crate) fn to_pkarr_signed_packet(
-        &self,
-        secret_key: &SecretKey,
-        ttl: u32,
-    ) -> Result<pkarr::SignedPacket> {
-        let packet = self.to_pkarr_dns_packet(ttl)?;
-        let keypair = pkarr::Keypair::from_secret_key(&secret_key.to_bytes());
-        let signed_packet = pkarr::SignedPacket::from_packet(&keypair, &packet)
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-        Ok(signed_packet)
-    }
-
-    fn to_pkarr_dns_packet(&self, ttl: u32) -> Result<pkarr::dns::Packet<'static>> {
-        use pkarr::dns::{self, rdata};
-        let name = dns::Name::new(IROH_TXT_NAME)?.into_owned();
-
-        let mut packet = dns::Packet::new_reply(0);
-        for s in self.to_txt_strings() {
-            let mut txt = rdata::TXT::new();
-            txt.add_string(&s)?;
-            let rdata = rdata::RData::TXT(txt.into_owned());
-            packet.answers.push(dns::ResourceRecord::new(
-                name.clone(),
-                dns::CLASS::IN,
-                ttl,
-                rdata,
-            ));
-        }
-        Ok(packet)
-    }
-}
-
 #[cfg(not(wasm_browser))]
 fn ensure_iroh_txt_label(name: Name) -> Result<Name, ProtoError> {
     if name.iter().next() == Some(IROH_TXT_NAME.as_bytes()) {
@@ -532,21 +459,6 @@ mod tests {
     use testresult::TestResult;
 
     use super::{NodeData, NodeIdExt, NodeInfo};
-
-    #[test]
-    fn txt_attr_roundtrip() {
-        let node_data = NodeData::new(
-            Some("https://example.com".parse().unwrap()),
-            ["127.0.0.1:1234".parse().unwrap()].into_iter().collect(),
-        );
-        let node_id = "vpnk377obfvzlipnsfbqba7ywkkenc4xlpmovt5tsfujoa75zqia"
-            .parse()
-            .unwrap();
-        let expected = NodeInfo::from_parts(node_id, node_data);
-        let attrs = expected.to_attrs();
-        let actual = NodeInfo::from(&attrs);
-        assert_eq!(expected, actual);
-    }
 
     #[test]
     fn signed_packet_roundtrip() {
