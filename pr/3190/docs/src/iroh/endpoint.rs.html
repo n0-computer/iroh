@@ -2582,7 +2582,9 @@
 <a href="#2581" id="2581">2581</a>
 <a href="#2582" id="2582">2582</a>
 <a href="#2583" id="2583">2583</a>
-<a href="#2584" id="2584">2584</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2584" id="2584">2584</a>
+<a href="#2585" id="2585">2585</a>
+<a href="#2586" id="2586">2586</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -4901,6 +4903,8 @@
         <span class="kw">let </span>ep1_nodeid = ep1.node_id();
         <span class="kw">let </span>ep2_nodeid = ep2.node_id();
 
+        <span class="comment">// wait for the direct addresses to be initialized.
+        </span>ep1.direct_addresses().initialized().<span class="kw">await</span>.unwrap();
         <span class="kw">let </span>ep1_nodeaddr = ep1.node_addr().<span class="kw">await</span>.unwrap();
         <span class="macro">tracing::info!</span>(
             <span class="string">"node id 1 {ep1_nodeid}, relay URL {:?}"</span>,
