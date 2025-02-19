@@ -2549,9 +2549,9 @@ checksum = "227748d55f2f0ab4735d87fd623798cb6b664512fe979705f829c9f81c934465"
 
 [[package]]
 name = "mainline"
-version = "5.2.0"
+version = "5.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed4c696a31f9ac71d7a1c7e10945cc041758b9b6a716ea48c18f2372e067e9db"
+checksum = "fb915972046c6df12b1292ed24f7382ed21facd440f9f6ca9c38e0b702217009"
 dependencies = [
  "crc",
  "document-features",
@@ -3123,9 +3123,8 @@ checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
 
 [[package]]
 name = "pkarr"
-version = "3.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e314b1f8490a5b423ec7b8cb715319f50ce3d4cca425dda7cba96a61c8dc73a7"
+version = "3.3.1"
+source = "git+https://github.com/Frando/pkarr.git?branch=no-async-compat#efd9c003d449417e032a9ef705ac68c419c81f70"
 dependencies = [
  "async-compat",
  "base32",
@@ -5351,7 +5350,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
