@@ -12,7 +12,6 @@ use n0_future::{
     task::{self, AbortOnDropHandle},
     time::{self, Duration, Instant},
 };
-use netwatch::ip::is_unicast_link_local;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{debug, event, info, instrument, trace, warn, Level};
@@ -1041,6 +1040,7 @@ impl NodeState {
     }
 
     /// Marks this node as having received a UDP payload message.
+    #[cfg(not(wasm_browser))]
     pub(super) fn receive_udp(&mut self, addr: IpPort, now: Instant) {
         let Some(state) = self.udp_paths.paths.get_mut(&addr) else {
             debug_assert!(false, "node map inconsistency by_ip_port <-> direct addr");
@@ -1432,6 +1432,12 @@ pub enum ConnectionType {
     #[default]
     #[display("none")]
     None,
+}
+
+/// Returns true if the address is a unicast address with link-local scope, as defined in RFC 4291.
+// Copied from std lib, not stable yet
+pub const fn is_unicast_link_local(addr: std::net::Ipv6Addr) -> bool {
+    (addr.segments()[0] & 0xffc0) == 0xfe80
 }
 
 #[cfg(test)]

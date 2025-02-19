@@ -30,11 +30,13 @@ use pin_project::pin_project;
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
+#[cfg(not(wasm_browser))]
+use crate::{discovery::dns::DnsDiscovery, dns::DnsResolver};
 use crate::{
     discovery::{
-        dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryTask,
+        pkarr::{PkarrPublisher, PkarrResolver},
+        ConcurrentDiscovery, Discovery, DiscoveryTask,
     },
-    dns::DnsResolver,
     magicsock::{self, Handle, NodeIdMappedAddr},
     tls,
     watchable::Watcher,
@@ -113,6 +115,7 @@ pub struct Builder {
     proxy_url: Option<Url>,
     /// List of known nodes. See [`Builder::known_nodes`].
     node_map: Option<Vec<NodeAddr>>,
+    #[cfg(not(wasm_browser))]
     dns_resolver: Option<DnsResolver>,
     #[cfg(any(test, feature = "test-utils"))]
     insecure_skip_relay_cert_verify: bool,
@@ -135,6 +138,7 @@ impl Default for Builder {
             discovery: Default::default(),
             proxy_url: None,
             node_map: None,
+            #[cfg(not(wasm_browser))]
             dns_resolver: None,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
@@ -163,6 +167,7 @@ impl Builder {
             keylog: self.keylog,
             secret_key: secret_key.clone(),
         };
+        #[cfg(not(wasm_browser))]
         let dns_resolver = self.dns_resolver.unwrap_or_default();
         let discovery = self
             .discovery
@@ -184,6 +189,7 @@ impl Builder {
             node_map: self.node_map,
             discovery,
             proxy_url: self.proxy_url,
+            #[cfg(not(wasm_browser))]
             dns_resolver,
             server_config,
             #[cfg(any(test, feature = "test-utils"))]
@@ -332,8 +338,18 @@ impl Builder {
         self.discovery.push(Box::new(|secret_key| {
             Some(Box::new(PkarrPublisher::n0_dns(secret_key.clone())))
         }));
-        self.discovery
-            .push(Box::new(|_| Some(Box::new(DnsDiscovery::n0_dns()))));
+        // Resolve using HTTPS requests to our DNS server's /pkarr path in browsers
+        #[cfg(wasm_browser)]
+        {
+            self.discovery
+                .push(Box::new(|_| Some(Box::new(PkarrResolver::n0_dns()))));
+        }
+        // Resolve using DNS queries outside browsers.
+        #[cfg(not(wasm_browser))]
+        {
+            self.discovery
+                .push(Box::new(|_| Some(Box::new(DnsDiscovery::n0_dns()))));
+        }
         self
     }
 
@@ -411,6 +427,7 @@ impl Builder {
     /// host system's DNS configuration. You can pass a custom instance of [`DnsResolver`]
     /// here to use a differently configured DNS resolver for this endpoint, or to share
     /// a [`DnsResolver`] between multiple endpoints.
+    #[cfg(not(wasm_browser))]
     pub fn dns_resolver(mut self, dns_resolver: DnsResolver) -> Self {
         self.dns_resolver = Some(dns_resolver);
         self
@@ -917,6 +934,7 @@ impl Endpoint {
     ///
     /// The [`Endpoint`] always binds on an IPv4 address and also tries to bind on an IPv6
     /// address if available.
+    #[cfg(not(wasm_browser))]
     pub fn bound_sockets(&self) -> (SocketAddr, Option<SocketAddr>) {
         self.msock.local_addr()
     }
@@ -988,6 +1006,7 @@ impl Endpoint {
     /// Returns the DNS resolver used in this [`Endpoint`].
     ///
     /// See [`Builder::dns_resolver`].
+    #[cfg(not(wasm_browser))]
     pub fn dns_resolver(&self) -> &DnsResolver {
         self.msock.dns_resolver()
     }

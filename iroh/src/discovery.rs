@@ -109,9 +109,10 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, ensure, Result};
 use iroh_base::{NodeAddr, NodeId};
-pub use iroh_relay::dns::node_info::{NodeData, NodeInfo};
+pub use iroh_relay::node_info::{NodeData, NodeInfo};
 use n0_future::{
-    stream::{Boxed as BoxStream, StreamExt},
+    boxed::BoxStream,
+    stream::StreamExt,
     task::{self, AbortOnDropHandle},
     time::{self, Duration},
 };
@@ -120,6 +121,7 @@ use tracing::{debug, error_span, warn, Instrument};
 
 use crate::Endpoint;
 
+#[cfg(not(wasm_browser))]
 pub mod dns;
 
 #[cfg(feature = "discovery-local-network")]
@@ -496,12 +498,6 @@ impl DiscoveryTask {
     }
 }
 
-impl Drop for DiscoveryTask {
-    fn drop(&mut self) {
-        self.task.abort();
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::{
@@ -839,7 +835,8 @@ mod test_dns_pkarr {
 
     use crate::{
         discovery::{pkarr::PkarrPublisher, NodeData},
-        dns::{node_info::NodeInfo, DnsResolver},
+        dns::DnsResolver,
+        node_info::NodeInfo,
         test_utils::{
             dns_server::run_dns_server, pkarr_dns_state::State, run_relay_server, DnsPkarrServer,
         },

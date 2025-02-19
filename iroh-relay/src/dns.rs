@@ -13,10 +13,9 @@ use n0_future::{
     time::{self, Duration},
     StreamExt,
 };
-use node_info::NodeInfo;
 use url::Url;
 
-pub mod node_info;
+use crate::node_info::NodeInfo;
 
 /// The n0 testing DNS node origin, for production.
 pub const N0_DNS_NODE_ORIGIN_PROD: &str = "dns.iroh.link";
@@ -217,17 +216,12 @@ impl DnsResolver {
     /// To lookup nodes that published their node info to the DNS servers run by n0,
     /// pass [`N0_DNS_NODE_ORIGIN_PROD`] as `origin`.
     pub async fn lookup_node_by_id(&self, node_id: &NodeId, origin: &str) -> Result<NodeInfo> {
-        let attrs =
-            node_info::TxtAttrs::<node_info::IrohAttr>::lookup_by_id(self, node_id, origin).await?;
-        let info = attrs.into();
-        Ok(info)
+        crate::node_info::NodeInfo::lookup_by_id(self, node_id, origin).await
     }
 
     /// Looks up node info by DNS name.
     pub async fn lookup_node_by_domain_name(&self, name: &str) -> Result<NodeInfo> {
-        let attrs = node_info::TxtAttrs::<node_info::IrohAttr>::lookup_by_name(self, name).await?;
-        let info = attrs.into();
-        Ok(info)
+        crate::node_info::NodeInfo::lookup_by_name(self, name).await
     }
 
     /// Looks up node info by DNS name in a staggered fashion.
@@ -276,7 +270,7 @@ impl From<TokioResolver> for DnsResolver {
 
 /// TXT records returned from [`DnsResolver::lookup_txt`]
 #[derive(Debug, Clone)]
-pub struct TxtLookup(hickory_resolver::lookup::TxtLookup);
+pub struct TxtLookup(pub(crate) hickory_resolver::lookup::TxtLookup);
 
 impl From<hickory_resolver::lookup::TxtLookup> for TxtLookup {
     fn from(value: hickory_resolver::lookup::TxtLookup) -> Self {

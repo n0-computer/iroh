@@ -32,20 +32,17 @@
 //! [`N0_DNS_NODE_ORIGIN_PROD`]: crate::dns::N0_DNS_NODE_ORIGIN_PROD
 //! [`N0_DNS_NODE_ORIGIN_STAGING`]: crate::dns::N0_DNS_NODE_ORIGIN_STAGING
 
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    fmt::Display,
-    hash::Hash,
-    net::SocketAddr,
-    str::FromStr,
-};
+use std::{collections::BTreeSet, net::SocketAddr, str::FromStr};
 
 use anyhow::{anyhow, Result};
+#[cfg(not(wasm_browser))]
 use hickory_resolver::{proto::ProtoError, Name};
 use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
+#[cfg(not(wasm_browser))]
 use tracing::warn;
 use url::Url;
 
+#[cfg(not(wasm_browser))]
 use crate::{defaults::timeouts::DNS_TIMEOUT, dns::DnsResolver};
 
 /// The DNS name for the iroh TXT record.
@@ -137,6 +134,34 @@ impl NodeData {
     pub fn set_relay_url(&mut self, relay_url: Option<RelayUrl>) {
         self.relay_url = relay_url
     }
+
+    fn from_kv_strings(strings: impl Iterator<Item = String>) -> Self {
+        let mut relay_url: Option<RelayUrl> = None;
+        let mut direct_addresses: BTreeSet<SocketAddr> = BTreeSet::new();
+        for s in strings {
+            let mut parts = s.split('=');
+            let (Some(key), Some(value)) = (parts.next(), parts.next()) else {
+                continue;
+            };
+            match key {
+                TXT_ATTR_RELAY => {
+                    if let Ok(url) = Url::parse(value) {
+                        relay_url = Some(url.into());
+                    }
+                }
+                TXT_ATTR_ADDR => {
+                    if let Ok(addr) = SocketAddr::from_str(value) {
+                        direct_addresses.insert(addr);
+                    }
+                }
+                _ => continue,
+            }
+        }
+        Self {
+            relay_url,
+            direct_addresses,
+        }
+    }
 }
 
 impl From<NodeAddr> for NodeData {
@@ -157,36 +182,6 @@ pub struct NodeInfo {
     pub node_id: NodeId,
     /// The information published about the node.
     pub data: NodeData,
-}
-
-impl From<TxtAttrs<IrohAttr>> for NodeInfo {
-    fn from(attrs: TxtAttrs<IrohAttr>) -> Self {
-        (&attrs).into()
-    }
-}
-
-impl From<&TxtAttrs<IrohAttr>> for NodeInfo {
-    fn from(attrs: &TxtAttrs<IrohAttr>) -> Self {
-        let node_id = attrs.node_id();
-        let attrs = attrs.attrs();
-        let relay_url = attrs
-            .get(&IrohAttr::Relay)
-            .into_iter()
-            .flatten()
-            .next()
-            .and_then(|s| Url::parse(s).ok());
-        let direct_addresses = attrs
-            .get(&IrohAttr::Addr)
-            .into_iter()
-            .flatten()
-            .filter_map(|s| SocketAddr::from_str(s).ok())
-            .collect();
-        let data = NodeData {
-            relay_url: relay_url.map(Into::into),
-            direct_addresses,
-        };
-        Self { node_id, data }
-    }
 }
 
 impl From<NodeInfo> for NodeAddr {
@@ -244,196 +239,34 @@ impl NodeInfo {
         }
     }
 
-    fn to_attrs(&self) -> TxtAttrs<IrohAttr> {
-        self.into()
-    }
-
-    /// Parses a [`NodeInfo`] from a TXT records lookup.
-    pub fn from_txt_lookup(lookup: super::TxtLookup) -> Result<Self> {
-        let attrs = TxtAttrs::from_txt_lookup(lookup)?;
-        Ok(attrs.into())
-    }
-
-    /// Parses a [`NodeInfo`] from a [`pkarr::SignedPacket`].
-    pub fn from_pkarr_signed_packet(packet: &pkarr::SignedPacket) -> Result<Self> {
-        let attrs = TxtAttrs::from_pkarr_signed_packet(packet)?;
-        Ok(attrs.into())
-    }
-
-    /// Creates a [`pkarr::SignedPacket`].
-    ///
-    /// This constructs a DNS packet and signs it with a [`SecretKey`].
-    pub fn to_pkarr_signed_packet(
-        &self,
-        secret_key: &SecretKey,
-        ttl: u32,
-    ) -> Result<pkarr::SignedPacket> {
-        self.to_attrs().to_pkarr_signed_packet(secret_key, ttl)
-    }
-
-    /// Converts into a list of `{key}={value}` strings.
-    pub fn to_txt_strings(&self) -> Vec<String> {
-        self.to_attrs().to_txt_strings().collect()
-    }
-}
-
-impl std::ops::Deref for NodeInfo {
-    type Target = NodeData;
-    fn deref(&self) -> &Self::Target {
-        &self.data
-    }
-}
-
-impl std::ops::DerefMut for NodeInfo {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.data
-    }
-}
-
-/// Parses a [`NodeId`] from iroh DNS name.
-///
-/// Takes a [`hickory_resolver::proto::rr::Name`] DNS name and expects the first label to be
-/// [`IROH_TXT_NAME`] and the second label to be a z32 encoded [`NodeId`]. Ignores
-/// subsequent labels.
-fn node_id_from_hickory_name(name: &hickory_resolver::proto::rr::Name) -> Option<NodeId> {
-    if name.num_labels() < 2 {
-        return None;
-    }
-    let mut labels = name.iter();
-    let label = std::str::from_utf8(labels.next().expect("num_labels checked")).ok()?;
-    if label != IROH_TXT_NAME {
-        return None;
-    }
-    let label = std::str::from_utf8(labels.next().expect("num_labels checked")).ok()?;
-    let node_id = NodeId::from_z32(label).ok()?;
-    Some(node_id)
-}
-
-/// The attributes supported by iroh for [`IROH_TXT_NAME`] DNS resource records.
-///
-/// The resource record uses the lower-case names.
-#[derive(
-    Debug, strum::Display, strum::AsRefStr, strum::EnumString, Hash, Eq, PartialEq, Ord, PartialOrd,
-)]
-#[strum(serialize_all = "kebab-case")]
-pub(super) enum IrohAttr {
-    /// URL of home relay.
-    Relay,
-    /// Direct address.
-    Addr,
-}
-
-/// Attributes parsed from [`IROH_TXT_NAME`] TXT records.
-///
-/// This struct is generic over the key type. When using with [`String`], this will parse
-/// all attributes. Can also be used with an enum, if it implements [`FromStr`] and
-/// [`Display`].
-#[derive(Debug)]
-pub(super) struct TxtAttrs<T> {
-    node_id: NodeId,
-    attrs: BTreeMap<T, Vec<String>>,
-}
-
-impl From<&NodeInfo> for TxtAttrs<IrohAttr> {
-    fn from(info: &NodeInfo) -> Self {
-        let mut attrs = vec![];
-        if let Some(relay_url) = &info.data.relay_url {
-            attrs.push((IrohAttr::Relay, relay_url.to_string()));
-        }
-        for addr in &info.data.direct_addresses {
-            attrs.push((IrohAttr::Addr, addr.to_string()));
-        }
-        Self::from_parts(info.node_id, attrs.into_iter())
-    }
-}
-
-impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
-    /// Creates [`TxtAttrs`] from a node id and an iterator of key-value pairs.
-    pub(super) fn from_parts(node_id: NodeId, pairs: impl Iterator<Item = (T, String)>) -> Self {
-        let mut attrs: BTreeMap<T, Vec<String>> = BTreeMap::new();
-        for (k, v) in pairs {
-            attrs.entry(k).or_default().push(v);
-        }
-        Self { attrs, node_id }
-    }
-
-    /// Creates [`TxtAttrs`] from a node id and an iterator of "{key}={value}" strings.
-    pub(super) fn from_strings(
-        node_id: NodeId,
-        strings: impl Iterator<Item = String>,
-    ) -> Result<Self> {
-        let mut attrs: BTreeMap<T, Vec<String>> = BTreeMap::new();
-        for s in strings {
-            let mut parts = s.split('=');
-            let (Some(key), Some(value)) = (parts.next(), parts.next()) else {
-                continue;
-            };
-            let Ok(attr) = T::from_str(key) else {
-                continue;
-            };
-            attrs.entry(attr).or_default().push(value.to_string());
-        }
-        Ok(Self { attrs, node_id })
-    }
-
-    async fn lookup(resolver: &DnsResolver, name: Name) -> Result<Self> {
-        let name = ensure_iroh_txt_label(name)?;
-        let lookup = resolver.lookup_txt(name, DNS_TIMEOUT).await?;
-        let attrs = Self::from_txt_lookup(lookup)?;
-        Ok(attrs)
-    }
-
     /// Looks up attributes by [`NodeId`] and origin domain.
-    pub(super) async fn lookup_by_id(
+    #[cfg(not(wasm_browser))]
+    pub(crate) async fn lookup_by_id(
         resolver: &DnsResolver,
         node_id: &NodeId,
         origin: &str,
     ) -> Result<Self> {
         let name = node_domain(node_id, origin)?;
-        TxtAttrs::lookup(resolver, name).await
+        Self::lookup(resolver, name).await
     }
 
     /// Looks up attributes by DNS name.
-    pub(super) async fn lookup_by_name(resolver: &DnsResolver, name: &str) -> Result<Self> {
+    #[cfg(not(wasm_browser))]
+    pub(crate) async fn lookup_by_name(resolver: &DnsResolver, name: &str) -> Result<Self> {
         let name = Name::from_str(name)?;
-        TxtAttrs::lookup(resolver, name).await
+        Self::lookup(resolver, name).await
     }
 
-    /// Returns the parsed attributes.
-    pub(super) fn attrs(&self) -> &BTreeMap<T, Vec<String>> {
-        &self.attrs
+    #[cfg(not(wasm_browser))]
+    async fn lookup(resolver: &DnsResolver, name: Name) -> Result<Self> {
+        let name = ensure_iroh_txt_label(name)?;
+        let lookup = resolver.lookup_txt(name, DNS_TIMEOUT).await?;
+        Self::from_txt_lookup(lookup)
     }
 
-    /// Returns the node id.
-    pub(super) fn node_id(&self) -> NodeId {
-        self.node_id
-    }
-
-    /// Parses a [`pkarr::SignedPacket`].
-    pub(super) fn from_pkarr_signed_packet(packet: &pkarr::SignedPacket) -> Result<Self> {
-        use pkarr::dns::{
-            rdata::RData,
-            {self},
-        };
-        let pubkey = packet.public_key();
-        let pubkey_z32 = pubkey.to_z32();
-        let node_id = NodeId::from(*pubkey.verifying_key());
-        let zone = dns::Name::new(&pubkey_z32)?;
-        let inner = packet.packet();
-        let txt_data = inner.answers.iter().filter_map(|rr| match &rr.rdata {
-            RData::TXT(txt) => match rr.name.without(&zone) {
-                Some(name) if name.to_string() == IROH_TXT_NAME => Some(txt),
-                Some(_) | None => None,
-            },
-            _ => None,
-        });
-
-        let txt_strs = txt_data.filter_map(|s| String::try_from(s.clone()).ok());
-        Self::from_strings(node_id, txt_strs)
-    }
-
-    /// Parses a TXT records lookup.
-    pub(super) fn from_txt_lookup(lookup: super::TxtLookup) -> Result<Self> {
+    /// Parses a [`NodeInfo`] from a TXT records lookup.
+    #[cfg(not(wasm_browser))]
+    pub fn from_txt_lookup(lookup: crate::dns::TxtLookup) -> Result<Self> {
         let queried_node_id = node_id_from_hickory_name(lookup.0.query().name())
             .ok_or_else(|| anyhow!("invalid DNS answer: not a query for _iroh.z32encodedpubkey"))?;
 
@@ -470,26 +303,49 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
             }
         });
 
-        Self::from_strings(queried_node_id, strings)
+        let data = NodeData::from_kv_strings(strings);
+        Ok(Self {
+            node_id: queried_node_id,
+            data,
+        })
     }
 
-    fn to_txt_strings(&self) -> impl Iterator<Item = String> + '_ {
-        self.attrs
-            .iter()
-            .flat_map(move |(k, vs)| vs.iter().map(move |v| format!("{k}={v}")))
+    /// Parses a [`NodeInfo`] from a [`pkarr::SignedPacket`].
+    pub fn from_pkarr_signed_packet(packet: &pkarr::SignedPacket) -> Result<Self> {
+        use pkarr::dns::{
+            rdata::RData,
+            {self},
+        };
+        let pubkey = packet.public_key();
+        let pubkey_z32 = pubkey.to_z32();
+        let node_id = NodeId::from(*pubkey.verifying_key());
+        let zone = dns::Name::new(&pubkey_z32)?;
+        let inner = packet.packet();
+        let txt_data = inner.answers.iter().filter_map(|rr| match &rr.rdata {
+            RData::TXT(txt) => match rr.name.without(&zone) {
+                Some(name) if name.to_string() == IROH_TXT_NAME => Some(txt),
+                Some(_) | None => None,
+            },
+            _ => None,
+        });
+
+        let txt_strs = txt_data.filter_map(|s| String::try_from(s.clone()).ok());
+        let data = NodeData::from_kv_strings(txt_strs);
+        Ok(Self { node_id, data })
     }
 
-    /// Creates a [`pkarr::SignedPacket`]
+    /// Creates a [`pkarr::SignedPacket`].
     ///
     /// This constructs a DNS packet and signs it with a [`SecretKey`].
-    pub(super) fn to_pkarr_signed_packet(
+    pub fn to_pkarr_signed_packet(
         &self,
         secret_key: &SecretKey,
         ttl: u32,
     ) -> Result<pkarr::SignedPacket> {
         let packet = self.to_pkarr_dns_packet(ttl)?;
         let keypair = pkarr::Keypair::from_secret_key(&secret_key.to_bytes());
-        let signed_packet = pkarr::SignedPacket::from_packet(&keypair, &packet)?;
+        let signed_packet = pkarr::SignedPacket::from_packet(&keypair, &packet)
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         Ok(signed_packet)
     }
 
@@ -511,8 +367,64 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         }
         Ok(packet)
     }
+
+    /// Converts into a list of `{key}={value}` strings.
+    pub fn to_txt_strings(&self) -> Vec<String> {
+        self.data
+            .relay_url
+            .as_ref()
+            .map(|url| (TXT_ATTR_RELAY, url.to_string()))
+            .into_iter()
+            .chain(
+                self.data
+                    .direct_addresses
+                    .iter()
+                    .map(|addr| (TXT_ATTR_ADDR, addr.to_string())),
+            )
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect()
+    }
 }
 
+impl std::ops::Deref for NodeInfo {
+    type Target = NodeData;
+    fn deref(&self) -> &Self::Target {
+        &self.data
+    }
+}
+
+impl std::ops::DerefMut for NodeInfo {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.data
+    }
+}
+
+/// Parses a [`NodeId`] from iroh DNS name.
+///
+/// Takes a [`hickory_resolver::proto::rr::Name`] DNS name and expects the first label to be
+/// [`IROH_TXT_NAME`] and the second label to be a z32 encoded [`NodeId`]. Ignores
+/// subsequent labels.
+#[cfg(not(wasm_browser))]
+fn node_id_from_hickory_name(name: &hickory_resolver::proto::rr::Name) -> Option<NodeId> {
+    if name.num_labels() < 2 {
+        return None;
+    }
+    let mut labels = name.iter();
+    let label = std::str::from_utf8(labels.next().expect("num_labels checked")).ok()?;
+    if label != IROH_TXT_NAME {
+        return None;
+    }
+    let label = std::str::from_utf8(labels.next().expect("num_labels checked")).ok()?;
+    let node_id = NodeId::from_z32(label).ok()?;
+    Some(node_id)
+}
+
+/// The "relay" attribute supported by iroh for [`IROH_TXT_NAME`] DNS resource records.
+const TXT_ATTR_RELAY: &str = "relay";
+/// The "addr" attribute supported by iroh for [`IROH_TXT_NAME`] DNS resource records.
+const TXT_ATTR_ADDR: &str = "addr";
+
+#[cfg(not(wasm_browser))]
 fn ensure_iroh_txt_label(name: Name) -> Result<Name, ProtoError> {
     if name.iter().next() == Some(IROH_TXT_NAME.as_bytes()) {
         Ok(name)
@@ -521,6 +433,7 @@ fn ensure_iroh_txt_label(name: Name) -> Result<Name, ProtoError> {
     }
 }
 
+#[cfg(not(wasm_browser))]
 fn node_domain(node_id: &NodeId, origin: &str) -> Result<Name> {
     let domain = format!("{}.{}", NodeId::to_z32(node_id), origin);
     let domain = Name::from_str(&domain)?;
@@ -546,21 +459,6 @@ mod tests {
     use testresult::TestResult;
 
     use super::{NodeData, NodeIdExt, NodeInfo};
-
-    #[test]
-    fn txt_attr_roundtrip() {
-        let node_data = NodeData::new(
-            Some("https://example.com".parse().unwrap()),
-            ["127.0.0.1:1234".parse().unwrap()].into_iter().collect(),
-        );
-        let node_id = "vpnk377obfvzlipnsfbqba7ywkkenc4xlpmovt5tsfujoa75zqia"
-            .parse()
-            .unwrap();
-        let expected = NodeInfo::from_parts(node_id, node_data);
-        let attrs = expected.to_attrs();
-        let actual = NodeInfo::from(&attrs);
-        assert_eq!(expected, actual);
-    }
 
     #[test]
     fn signed_packet_roundtrip() {
