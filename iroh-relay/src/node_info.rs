@@ -165,15 +165,9 @@ impl From<IrohTxtAttrs> for NodeInfo {
 impl From<&IrohTxtAttrs> for NodeInfo {
     fn from(attrs: &IrohTxtAttrs) -> Self {
         let node_id = attrs.node_id();
-        let relay_url = attrs.relay.as_ref().and_then(|url| Url::parse(url).ok());
-        let direct_addresses = attrs
-            .addrs
-            .iter()
-            .filter_map(|s| SocketAddr::from_str(s).ok())
-            .collect();
         let data = NodeData {
-            relay_url: relay_url.map(Into::into),
-            direct_addresses,
+            relay_url: attrs.relay.clone(),
+            direct_addresses: attrs.addrs.clone(),
         };
         Self { node_id, data }
     }
@@ -314,20 +308,16 @@ const TXT_ATTR_ADDR: &str = "addr";
 #[derive(Debug)]
 pub(crate) struct IrohTxtAttrs {
     node_id: NodeId,
-    relay: Option<String>,
-    addrs: Vec<String>,
+    relay: Option<RelayUrl>,
+    addrs: BTreeSet<SocketAddr>,
 }
 
 impl From<&NodeInfo> for IrohTxtAttrs {
     fn from(info: &NodeInfo) -> Self {
         Self {
             node_id: info.node_id,
-            relay: info.relay_url.as_ref().map(|url| url.to_string()),
-            addrs: info
-                .direct_addresses
-                .iter()
-                .map(|addr| addr.to_string())
-                .collect(),
+            relay: info.relay_url.clone(),
+            addrs: info.direct_addresses.clone(),
         }
     }
 }
@@ -335,22 +325,30 @@ impl From<&NodeInfo> for IrohTxtAttrs {
 impl IrohTxtAttrs {
     /// Creates [`IrohTxtAttrs`] from a node id and an iterator of "{key}={value}" strings.
     pub(crate) fn from_strings(node_id: NodeId, strings: impl Iterator<Item = String>) -> Self {
-        let mut relay_url: Option<String> = None;
-        let mut addrs: Vec<String> = Vec::new();
+        let mut relay: Option<RelayUrl> = None;
+        let mut addrs: BTreeSet<SocketAddr> = BTreeSet::new();
         for s in strings {
             let mut parts = s.split('=');
             let (Some(key), Some(value)) = (parts.next(), parts.next()) else {
                 continue;
             };
             match key {
-                TXT_ATTR_RELAY => relay_url = Some(value.to_string()),
-                TXT_ATTR_ADDR => addrs.push(value.to_string()),
+                TXT_ATTR_RELAY => {
+                    if let Ok(url) = Url::parse(value) {
+                        relay = Some(url.into());
+                    }
+                }
+                TXT_ATTR_ADDR => {
+                    if let Ok(addr) = SocketAddr::from_str(value) {
+                        addrs.insert(addr);
+                    }
+                }
                 _ => continue,
             }
         }
         Self {
             node_id,
-            relay: relay_url,
+            relay,
             addrs,
         }
     }
@@ -454,9 +452,13 @@ impl IrohTxtAttrs {
     fn to_txt_strings(&self) -> impl Iterator<Item = String> + '_ {
         self.relay
             .as_ref()
-            .map(|url| (TXT_ATTR_RELAY, url))
+            .map(|url| (TXT_ATTR_RELAY, url.to_string()))
             .into_iter()
-            .chain(self.addrs.iter().map(|addr| (TXT_ATTR_ADDR, addr)))
+            .chain(
+                self.addrs
+                    .iter()
+                    .map(|addr| (TXT_ATTR_ADDR, addr.to_string())),
+            )
             .map(|(k, v)| format!("{k}={v}"))
     }
 
