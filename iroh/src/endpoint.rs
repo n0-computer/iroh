@@ -842,6 +842,7 @@ impl Endpoint {
     ///
     /// If you want to wait until a non-empty node address is available, you can await
     /// [`Self::node_addr_initialized`] beforehand.
+    ///
     /// ```no_run
     /// # use iroh::{Endpoint, NodeAddr};
     /// # async fn wrapper() -> testresult::TestResult {
@@ -850,8 +851,10 @@ impl Endpoint {
     /// let node_addr = ep.node_addr();
     /// assert!(!node_addr.is_empty());
     /// # Ok(())
+    /// ```
     ///
     /// If you need an address with direct addresses, you can wait for those to be initialized instead:
+    ///
     /// ```no_run
     /// # use iroh::{Endpoint, NodeAddr};
     /// # async fn wrapper() -> testresult::TestResult {
@@ -861,7 +864,9 @@ impl Endpoint {
     /// assert!(!node_addr.direct_addresses.is_empty());
     /// # Ok(())
     /// # }
-    /// Similarily, if you only care about the home relay, use `Endpoint::home_relay` and wait
+    /// ```
+    ///
+    /// Similarly, if you only care about the home relay, use `Endpoint::home_relay` and wait
     /// for it to be initialized.
     pub fn node_addr(&self) -> NodeAddr {
         let addrs = self

@@ -3503,10 +3503,7 @@ mod tests {
         }));
 
         println!("first conn!");
-        let conn = m1
-            .endpoint
-            .connect(m2.endpoint.node_addr(), ALPN)
-            .await?;
+        let conn = m1.endpoint.connect(m2.endpoint.node_addr(), ALPN).await?;
         println!("Closing first conn");
         conn.close(0u32.into(), b"bye lolz");
         conn.closed().await;
