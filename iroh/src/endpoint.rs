@@ -851,6 +851,7 @@ impl Endpoint {
     /// let node_addr = ep.node_addr();
     /// assert!(!node_addr.is_empty());
     /// # Ok(())
+    /// # }
     /// ```
     ///
     /// If you need an address with direct addresses, you can wait for those to be initialized instead:
