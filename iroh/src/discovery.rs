@@ -109,7 +109,7 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, ensure, Result};
 use iroh_base::{NodeAddr, NodeId};
-pub use iroh_relay::dns::node_info::{NodeData, NodeInfo};
+pub use iroh_relay::node_info::{NodeData, NodeInfo};
 use n0_future::{
     boxed::BoxStream,
     stream::StreamExt,

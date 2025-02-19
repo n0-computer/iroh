@@ -34,7 +34,6 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fmt::Display,
     hash::Hash,
     net::SocketAddr,
     str::FromStr,
@@ -162,14 +161,14 @@ pub struct NodeInfo {
     pub data: NodeData,
 }
 
-impl From<TxtAttrs<IrohAttr>> for NodeInfo {
-    fn from(attrs: TxtAttrs<IrohAttr>) -> Self {
+impl From<IrohTxtAttrs> for NodeInfo {
+    fn from(attrs: IrohTxtAttrs) -> Self {
         (&attrs).into()
     }
 }
 
-impl From<&TxtAttrs<IrohAttr>> for NodeInfo {
-    fn from(attrs: &TxtAttrs<IrohAttr>) -> Self {
+impl From<&IrohTxtAttrs> for NodeInfo {
+    fn from(attrs: &IrohTxtAttrs) -> Self {
         let node_id = attrs.node_id();
         let attrs = attrs.attrs();
         let relay_url = attrs
@@ -247,20 +246,20 @@ impl NodeInfo {
         }
     }
 
-    fn to_attrs(&self) -> TxtAttrs<IrohAttr> {
+    fn to_attrs(&self) -> IrohTxtAttrs {
         self.into()
     }
 
     #[cfg(not(wasm_browser))]
     /// Parses a [`NodeInfo`] from a TXT records lookup.
     pub fn from_txt_lookup(lookup: crate::dns::TxtLookup) -> Result<Self> {
-        let attrs = TxtAttrs::from_txt_lookup(lookup)?;
+        let attrs = IrohTxtAttrs::from_txt_lookup(lookup)?;
         Ok(attrs.into())
     }
 
     /// Parses a [`NodeInfo`] from a [`pkarr::SignedPacket`].
     pub fn from_pkarr_signed_packet(packet: &pkarr::SignedPacket) -> Result<Self> {
-        let attrs = TxtAttrs::from_pkarr_signed_packet(packet)?;
+        let attrs = IrohTxtAttrs::from_pkarr_signed_packet(packet)?;
         Ok(attrs.into())
     }
 
@@ -334,12 +333,12 @@ pub(crate) enum IrohAttr {
 /// all attributes. Can also be used with an enum, if it implements [`FromStr`] and
 /// [`Display`].
 #[derive(Debug)]
-pub(crate) struct TxtAttrs<T> {
+pub(crate) struct IrohTxtAttrs {
     node_id: NodeId,
-    attrs: BTreeMap<T, Vec<String>>,
+    attrs: BTreeMap<IrohAttr, Vec<String>>,
 }
 
-impl From<&NodeInfo> for TxtAttrs<IrohAttr> {
+impl From<&NodeInfo> for IrohTxtAttrs {
     fn from(info: &NodeInfo) -> Self {
         let mut attrs = vec![];
         if let Some(relay_url) = &info.data.relay_url {
@@ -352,10 +351,13 @@ impl From<&NodeInfo> for TxtAttrs<IrohAttr> {
     }
 }
 
-impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
+impl IrohTxtAttrs {
     /// Creates [`TxtAttrs`] from a node id and an iterator of key-value pairs.
-    pub(crate) fn from_parts(node_id: NodeId, pairs: impl Iterator<Item = (T, String)>) -> Self {
-        let mut attrs: BTreeMap<T, Vec<String>> = BTreeMap::new();
+    pub(crate) fn from_parts(
+        node_id: NodeId,
+        pairs: impl Iterator<Item = (IrohAttr, String)>,
+    ) -> Self {
+        let mut attrs: BTreeMap<IrohAttr, Vec<String>> = BTreeMap::new();
         for (k, v) in pairs {
             attrs.entry(k).or_default().push(v);
         }
@@ -367,13 +369,13 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         node_id: NodeId,
         strings: impl Iterator<Item = String>,
     ) -> Result<Self> {
-        let mut attrs: BTreeMap<T, Vec<String>> = BTreeMap::new();
+        let mut attrs: BTreeMap<IrohAttr, Vec<String>> = BTreeMap::new();
         for s in strings {
             let mut parts = s.split('=');
             let (Some(key), Some(value)) = (parts.next(), parts.next()) else {
                 continue;
             };
-            let Ok(attr) = T::from_str(key) else {
+            let Ok(attr) = IrohAttr::from_str(key) else {
                 continue;
             };
             attrs.entry(attr).or_default().push(value.to_string());
@@ -397,18 +399,18 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         origin: &str,
     ) -> Result<Self> {
         let name = node_domain(node_id, origin)?;
-        TxtAttrs::lookup(resolver, name).await
+        IrohTxtAttrs::lookup(resolver, name).await
     }
 
     /// Looks up attributes by DNS name.
     #[cfg(not(wasm_browser))]
     pub(crate) async fn lookup_by_name(resolver: &DnsResolver, name: &str) -> Result<Self> {
         let name = Name::from_str(name)?;
-        TxtAttrs::lookup(resolver, name).await
+        IrohTxtAttrs::lookup(resolver, name).await
     }
 
     /// Returns the parsed attributes.
-    pub(crate) fn attrs(&self) -> &BTreeMap<T, Vec<String>> {
+    pub(crate) fn attrs(&self) -> &BTreeMap<IrohAttr, Vec<String>> {
         &self.attrs
     }
 
