@@ -43,4 +43,4 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(iroh_docsrs)", "cfg(iroh_l
 unused-async = "warn"
 
 [patch.crates-io]
-pkarr = { git = "https://github.com/Frando/pkarr.git", branch = "no-async-compat" }
+pkarr = { git = "https://github.com/Nuhvi/pkarr.git", branch = "fix/update_async_compat" }
