@@ -836,8 +836,17 @@ impl Endpoint {
     /// The returned [`NodeAddr`] will have the current [`RelayUrl`] and direct addresses
     /// as they would be returned by [`Endpoint::home_relay`] and
     /// [`Endpoint::direct_addresses`].
+    ///
+    /// This function is async because it waits for either the node's direct addresses
+    /// or the node's home relay are initialized.
     pub async fn node_addr(&self) -> Result<NodeAddr> {
-        let addrs = self.direct_addresses().initialized().await?;
+        // Wait for either the home relay or the direct addresses to be ready.
+        n0_future::future::race(
+            async { self.direct_addresses().initialized().await.map(|_| ()) },
+            async { self.home_relay().initialized().await.map(|_| ()) },
+        )
+        .await?;
+        let addrs = self.direct_addresses().get()?.unwrap_or_default();
         let relay = self.home_relay().get()?;
         Ok(NodeAddr::from_parts(
             self.node_id(),
@@ -2308,6 +2317,8 @@ mod tests {
         let ep1_nodeid = ep1.node_id();
         let ep2_nodeid = ep2.node_id();
 
+        // wait for the direct addresses to be initialized.
+        ep1.direct_addresses().initialized().await.unwrap();
         let ep1_nodeaddr = ep1.node_addr().await.unwrap();
         tracing::info!(
             "node id 1 {ep1_nodeid}, relay URL {:?}",
