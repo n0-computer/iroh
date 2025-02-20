@@ -12,6 +12,9 @@ keywords = ["quic", "networking", "holepunching", "p2p"]
 # Sadly this also needs to be updated in .github/workflows/ci.yml
 rust-version = "1.81"
 
+[lib]
+crate-type = ["lib", "cdylib"]
+
 [lints]
 workspace = true
 
