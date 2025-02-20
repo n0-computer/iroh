@@ -51,6 +51,8 @@ async fn connect_side(addr: NodeAddr) -> Result<()> {
     let response = recv.read_to_end(1000).await?;
     assert_eq!(&response, b"Hello, world!");
 
+    conn.close(0u32.into(), b"bye!");
+
     Ok(())
 }
 
