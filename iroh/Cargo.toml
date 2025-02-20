@@ -123,6 +123,11 @@ instant = { version = "0.1", features = ["wasm-bindgen"] }
 time = { version = "0.3", features = ["wasm-bindgen"] }
 
 [dev-dependencies]
+testresult = "0.4.0"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber-wasm = "0.1.0"
+
+[target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dev-dependencies]
 axum = { version = "0.7" }
 clap = { version = "4", features = ["derive"] }
 futures-lite = "2.6"
@@ -138,11 +143,12 @@ tokio = { version = "1", features = [
     "time",
     "test-util",
 ] }
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 serde_json = "1"
-testresult = "0.4.0"
 iroh-relay = { path = "../iroh-relay", default-features = false, features = ["test-utils", "server"] }
 tracing-test = "0.2.5"
+
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dev-dependencies]
+wasm-bindgen-test = "0.3"
 
 [build-dependencies]
 cfg_aliases = { version = "0.2" }
@@ -164,6 +170,10 @@ examples = [
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "iroh_docsrs"]
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
 
 [[example]]
 name = "listen"
