@@ -355,6 +355,7 @@ impl PkarrRelayClient {
 
     /// Resolves a [`SignedPacket`] for the given [`NodeId`].
     pub async fn resolve(&self, node_id: NodeId) -> anyhow::Result<SignedPacket> {
+        // We map the error to string, as in browsers the error is !Send
         let public_key = pkarr::PublicKey::try_from(node_id.as_bytes())
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         let mut url = self.pkarr_relay_url.clone();
@@ -372,6 +373,7 @@ impl PkarrRelayClient {
         }
 
         let payload = response.bytes().await?;
+        // We map the error to string, as in browsers the error is !Send
         Ok(SignedPacket::from_relay_payload(&public_key, &payload)
             .map_err(|e| anyhow::anyhow!(e.to_string()))?)
     }

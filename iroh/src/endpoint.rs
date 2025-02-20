@@ -30,13 +30,12 @@ use pin_project::pin_project;
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
+#[cfg(wasm_browser)]
+use crate::discovery::pkarr::PkarrResolver;
 #[cfg(not(wasm_browser))]
 use crate::{discovery::dns::DnsDiscovery, dns::DnsResolver};
 use crate::{
-    discovery::{
-        pkarr::{PkarrPublisher, PkarrResolver},
-        ConcurrentDiscovery, Discovery, DiscoveryTask,
-    },
+    discovery::{pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryTask},
     magicsock::{self, Handle, NodeIdMappedAddr},
     tls,
     watchable::Watcher,

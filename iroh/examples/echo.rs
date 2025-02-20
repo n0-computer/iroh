@@ -52,7 +52,6 @@ async fn connect_side(addr: NodeAddr) -> Result<()> {
     assert_eq!(&response, b"Hello, world!");
 
     conn.close(0u32.into(), b"bye!");
-    conn.closed().await;
 
     Ok(())
 }

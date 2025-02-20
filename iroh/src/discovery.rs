@@ -109,7 +109,6 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, ensure, Result};
 use iroh_base::{NodeAddr, NodeId};
-pub use iroh_relay::dns::node_info::{NodeData, NodeInfo};
 use n0_future::{
     boxed::BoxStream,
     stream::StreamExt,
@@ -120,6 +119,8 @@ use tokio::sync::oneshot;
 use tracing::{debug, error_span, warn, Instrument};
 
 use crate::Endpoint;
+
+pub use crate::node_info::{NodeData, NodeInfo};
 
 #[cfg(not(wasm_browser))]
 pub mod dns;
@@ -354,7 +355,7 @@ const MAX_AGE: Duration = Duration::from_secs(10);
 /// A wrapper around a tokio task which runs a node discovery.
 pub(super) struct DiscoveryTask {
     on_first_rx: oneshot::Receiver<Result<()>>,
-    task: AbortOnDropHandle<()>,
+    _task: AbortOnDropHandle<()>,
 }
 
 impl DiscoveryTask {
@@ -369,7 +370,7 @@ impl DiscoveryTask {
             ),
         );
         Ok(Self {
-            task: AbortOnDropHandle::new(task),
+            _task: AbortOnDropHandle::new(task),
             on_first_rx,
         })
     }
@@ -413,7 +414,7 @@ impl DiscoveryTask {
             ),
         );
         Ok(Some(Self {
-            task: AbortOnDropHandle::new(task),
+            _task: AbortOnDropHandle::new(task),
             on_first_rx,
         }))
     }

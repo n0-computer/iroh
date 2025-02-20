@@ -43,7 +43,7 @@ use n0_future::{
     FutureExt, StreamExt,
 };
 #[cfg(not(wasm_browser))]
-use net_report::{IpMappedAddr, IpMappedAddresses, QuicConfig, MAPPED_ADDR_PORT};
+use net_report::{IpMappedAddr, IpMappedAddresses, QuicConfig};
 #[cfg(not(wasm_browser))]
 use netwatch::{interfaces, ip::LocalAddresses, netmon, UdpSocket};
 use quinn::{AsyncUdpSocket, ServerConfig};
@@ -1732,7 +1732,7 @@ impl Handle {
 
         let secret_encryption_key = secret_ed_box(secret_key.secret());
 
-        let inner = Arc::new(MagicSock {
+        let msock = Arc::new(MagicSock {
             me,
             port: AtomicU16::new(port),
             secret_key,
@@ -1780,7 +1780,7 @@ impl Handle {
         let endpoint = quinn::Endpoint::new_with_abstract_socket(
             endpoint_config,
             Some(server_config),
-            inner.clone(),
+            msock.clone(),
             #[cfg(not(wasm_browser))]
             Arc::new(quinn::TokioRuntime),
             #[cfg(wasm_browser)]
@@ -1789,7 +1789,7 @@ impl Handle {
 
         let mut actor_tasks = JoinSet::default();
 
-        let relay_actor = RelayActor::new(inner.clone(), relay_datagram_recv_queue);
+        let relay_actor = RelayActor::new(msock.clone(), relay_datagram_recv_queue);
         let relay_actor_cancel_token = relay_actor.cancel_token();
         actor_tasks.spawn(
             async move {
@@ -1801,20 +1801,17 @@ impl Handle {
         );
 
         #[cfg(not(wasm_browser))]
-        {
-            actor_tasks.spawn({
-                let inner = inner.clone();
-                async move {
-                    while let Some((dst, dst_key, msg)) = udp_disco_receiver.recv().await {
-                        if let Err(err) = inner.send_disco_message_udp(dst, dst_key, &msg).await {
-                            warn!(%dst, node = %dst_key.fmt_short(), ?err, "failed to send disco message (UDP)");
-                        }
+        let _ = actor_tasks.spawn({
+            let msock = msock.clone();
+            async move {
+                while let Some((dst, dst_key, msg)) = udp_disco_receiver.recv().await {
+                    if let Err(err) = msock.send_disco_message_udp(dst, dst_key, &msg).await {
+                        warn!(%dst, node = %dst_key.fmt_short(), ?err, "failed to send disco message (UDP)");
                     }
                 }
-            });
-        }
+            }
+        });
 
-        let inner2 = inner.clone();
         #[cfg(not(wasm_browser))]
         let network_monitor = netmon::Monitor::new().await?;
         let qad_endpoint = endpoint.clone();
@@ -1845,14 +1842,15 @@ impl Handle {
         #[cfg(wasm_browser)]
         let net_report_config = net_report::Options::default();
 
-        actor_tasks.spawn(
+        actor_tasks.spawn({
+            let msock = msock.clone();
             async move {
                 let actor = Actor {
                     msg_receiver: actor_receiver,
                     msg_sender: actor_sender,
                     relay_actor_sender,
                     relay_actor_cancel_token,
-                    msock: inner2,
+                    msock,
                     periodic_re_stun_timer: new_re_stun_timer(false),
                     net_info_last: None,
                     #[cfg(not(wasm_browser))]
@@ -1872,11 +1870,11 @@ impl Handle {
                     warn!("relay handler errored: {:?}", err);
                 }
             }
-            .instrument(info_span!("actor")),
-        );
+            .instrument(info_span!("actor"))
+        });
 
         let c = Handle {
-            msock: inner,
+            msock,
             actor_tasks: Arc::new(Mutex::new(actor_tasks)),
             endpoint,
         };
