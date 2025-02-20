@@ -118,9 +118,8 @@ use n0_future::{
 use tokio::sync::oneshot;
 use tracing::{debug, error_span, warn, Instrument};
 
-use crate::Endpoint;
-
 pub use crate::node_info::{NodeData, NodeInfo};
+use crate::Endpoint;
 
 #[cfg(not(wasm_browser))]
 pub mod dns;

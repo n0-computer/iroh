@@ -374,8 +374,8 @@ impl PkarrRelayClient {
 
         let payload = response.bytes().await?;
         // We map the error to string, as in browsers the error is !Send
-        Ok(SignedPacket::from_relay_payload(&public_key, &payload)
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?)
+        SignedPacket::from_relay_payload(&public_key, &payload)
+            .map_err(|e| anyhow::anyhow!(e.to_string()))
     }
 
     /// Publishes a [`SignedPacket`].
