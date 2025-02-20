@@ -2591,8 +2591,7 @@
 <a href="#2590" id="2590">2590</a>
 <a href="#2591" id="2591">2591</a>
 <a href="#2592" id="2592">2592</a>
-<a href="#2593" id="2593">2593</a>
-<a href="#2594" id="2594">2594</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2593" id="2593">2593</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -2624,13 +2623,12 @@
 <span class="kw">use </span>tracing::{debug, instrument, trace, warn};
 <span class="kw">use </span>url::Url;
 
+<span class="attr">#[cfg(wasm_browser)]
+</span><span class="kw">use </span><span class="kw">crate</span>::discovery::pkarr::PkarrResolver;
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">use crate</span>::{discovery::dns::DnsDiscovery, dns::DnsResolver};
 <span class="kw">use crate</span>::{
-    discovery::{
-        pkarr::{PkarrPublisher, PkarrResolver},
-        ConcurrentDiscovery, Discovery, DiscoveryTask,
-    },
+    discovery::{pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryTask},
     magicsock::{<span class="self">self</span>, Handle, NodeIdMappedAddr},
     tls,
     watchable::Watcher,

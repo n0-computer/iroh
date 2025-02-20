@@ -400,7 +400,9 @@
 <a href="#399" id="399">399</a>
 <a href="#400" id="400">400</a>
 <a href="#401" id="401">401</a>
-<a href="#402" id="402">402</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service which publishes and resolves node information using a [pkarr] relay.
+<a href="#402" id="402">402</a>
+<a href="#403" id="403">403</a>
+<a href="#404" id="404">404</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service which publishes and resolves node information using a [pkarr] relay.
 //!
 //! Public-Key Addressable Resource Records, [pkarr], is a system which allows publishing
 //! [DNS Resource Records] owned by a particular [`SecretKey`] under a name derived from its
@@ -757,7 +759,8 @@
 
     <span class="doccomment">/// Resolves a [`SignedPacket`] for the given [`NodeId`].
     </span><span class="kw">pub async fn </span>resolve(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; anyhow::Result&lt;SignedPacket&gt; {
-        <span class="kw">let </span>public_key = pkarr::PublicKey::try_from(node_id.as_bytes())
+        <span class="comment">// We map the error to string, as in browsers the error is !Send
+        </span><span class="kw">let </span>public_key = pkarr::PublicKey::try_from(node_id.as_bytes())
             .map_err(|e| <span class="macro">anyhow::anyhow!</span>(e.to_string()))<span class="question-mark">?</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>url = <span class="self">self</span>.pkarr_relay_url.clone();
         url.path_segments_mut()
@@ -774,8 +777,9 @@
         }
 
         <span class="kw">let </span>payload = response.bytes().<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(SignedPacket::from_relay_payload(<span class="kw-2">&amp;</span>public_key, <span class="kw-2">&amp;</span>payload)
-            .map_err(|e| <span class="macro">anyhow::anyhow!</span>(e.to_string()))<span class="question-mark">?</span>)
+        <span class="comment">// We map the error to string, as in browsers the error is !Send
+        </span>SignedPacket::from_relay_payload(<span class="kw-2">&amp;</span>public_key, <span class="kw-2">&amp;</span>payload)
+            .map_err(|e| <span class="macro">anyhow::anyhow!</span>(e.to_string()))
     }
 
     <span class="doccomment">/// Publishes a [`SignedPacket`].

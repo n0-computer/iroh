@@ -1063,7 +1063,6 @@
 
 <span class="kw">use </span>anyhow::{anyhow, ensure, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>iroh_base::{NodeAddr, NodeId};
-<span class="kw">pub use </span>iroh_relay::node_info::{NodeData, NodeInfo};
 <span class="kw">use </span>n0_future::{
     boxed::BoxStream,
     stream::StreamExt,
@@ -1073,6 +1072,7 @@
 <span class="kw">use </span>tokio::sync::oneshot;
 <span class="kw">use </span>tracing::{debug, error_span, warn, Instrument};
 
+<span class="kw">pub use </span><span class="kw">crate</span>::node_info::{NodeData, NodeInfo};
 <span class="kw">use </span><span class="kw">crate</span>::Endpoint;
 
 <span class="attr">#[cfg(not(wasm_browser))]
@@ -1308,7 +1308,7 @@
 <span class="doccomment">/// A wrapper around a tokio task which runs a node discovery.
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>DiscoveryTask {
     on_first_rx: oneshot::Receiver&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;,
-    task: AbortOnDropHandle&lt;()&gt;,
+    _task: AbortOnDropHandle&lt;()&gt;,
 }
 
 <span class="kw">impl </span>DiscoveryTask {
@@ -1323,7 +1323,7 @@
             ),
         );
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
-            task: AbortOnDropHandle::new(task),
+            _task: AbortOnDropHandle::new(task),
             on_first_rx,
         })
     }
@@ -1367,7 +1367,7 @@
             ),
         );
         <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="self">Self </span>{
-            task: AbortOnDropHandle::new(task),
+            _task: AbortOnDropHandle::new(task),
             on_first_rx,
         }))
     }

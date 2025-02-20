@@ -4595,9 +4595,7 @@
 <a href="#4594" id="4594">4594</a>
 <a href="#4595" id="4595">4595</a>
 <a href="#4596" id="4596">4596</a>
-<a href="#4597" id="4597">4597</a>
-<a href="#4598" id="4598">4598</a>
-<a href="#4599" id="4599">4599</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4597" id="4597">4597</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4642,7 +4640,7 @@
     FutureExt, StreamExt,
 };
 <span class="attr">#[cfg(not(wasm_browser))]
-</span><span class="kw">use </span>net_report::{IpMappedAddr, IpMappedAddresses, QuicConfig, MAPPED_ADDR_PORT};
+</span><span class="kw">use </span>net_report::{IpMappedAddr, IpMappedAddresses, QuicConfig};
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">use </span>netwatch::{interfaces, ip::LocalAddresses, netmon, UdpSocket};
 <span class="kw">use </span>quinn::{AsyncUdpSocket, ServerConfig};
@@ -6331,7 +6329,7 @@
 
         <span class="kw">let </span>secret_encryption_key = secret_ed_box(secret_key.secret());
 
-        <span class="kw">let </span>inner = Arc::new(MagicSock {
+        <span class="kw">let </span>msock = Arc::new(MagicSock {
             me,
             port: AtomicU16::new(port),
             secret_key,
@@ -6379,7 +6377,7 @@
         <span class="kw">let </span>endpoint = quinn::Endpoint::new_with_abstract_socket(
             endpoint_config,
             <span class="prelude-val">Some</span>(server_config),
-            inner.clone(),
+            msock.clone(),
             <span class="attr">#[cfg(not(wasm_browser))]
             </span>Arc::new(quinn::TokioRuntime),
             <span class="attr">#[cfg(wasm_browser)]
@@ -6388,7 +6386,7 @@
 
         <span class="kw">let </span><span class="kw-2">mut </span>actor_tasks = JoinSet::default();
 
-        <span class="kw">let </span>relay_actor = RelayActor::new(inner.clone(), relay_datagram_recv_queue);
+        <span class="kw">let </span>relay_actor = RelayActor::new(msock.clone(), relay_datagram_recv_queue);
         <span class="kw">let </span>relay_actor_cancel_token = relay_actor.cancel_token();
         actor_tasks.spawn(
             <span class="kw">async move </span>{
@@ -6400,20 +6398,17 @@
         );
 
         <span class="attr">#[cfg(not(wasm_browser))]
-        </span>{
-            actor_tasks.spawn({
-                <span class="kw">let </span>inner = inner.clone();
-                <span class="kw">async move </span>{
-                    <span class="kw">while let </span><span class="prelude-val">Some</span>((dst, dst_key, msg)) = udp_disco_receiver.recv().<span class="kw">await </span>{
-                        <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = inner.send_disco_message_udp(dst, dst_key, <span class="kw-2">&amp;</span>msg).<span class="kw">await </span>{
-                            <span class="macro">warn!</span>(%dst, node = %dst_key.fmt_short(), <span class="question-mark">?</span>err, <span class="string">"failed to send disco message (UDP)"</span>);
-                        }
+        </span><span class="kw">let _ </span>= actor_tasks.spawn({
+            <span class="kw">let </span>msock = msock.clone();
+            <span class="kw">async move </span>{
+                <span class="kw">while let </span><span class="prelude-val">Some</span>((dst, dst_key, msg)) = udp_disco_receiver.recv().<span class="kw">await </span>{
+                    <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = msock.send_disco_message_udp(dst, dst_key, <span class="kw-2">&amp;</span>msg).<span class="kw">await </span>{
+                        <span class="macro">warn!</span>(%dst, node = %dst_key.fmt_short(), <span class="question-mark">?</span>err, <span class="string">"failed to send disco message (UDP)"</span>);
                     }
                 }
-            });
-        }
+            }
+        });
 
-        <span class="kw">let </span>inner2 = inner.clone();
         <span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">let </span>network_monitor = netmon::Monitor::new().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>qad_endpoint = endpoint.clone();
@@ -6444,14 +6439,15 @@
         <span class="attr">#[cfg(wasm_browser)]
         </span><span class="kw">let </span>net_report_config = net_report::Options::default();
 
-        actor_tasks.spawn(
+        actor_tasks.spawn({
+            <span class="kw">let </span>msock = msock.clone();
             <span class="kw">async move </span>{
                 <span class="kw">let </span>actor = Actor {
                     msg_receiver: actor_receiver,
                     msg_sender: actor_sender,
                     relay_actor_sender,
                     relay_actor_cancel_token,
-                    msock: inner2,
+                    msock,
                     periodic_re_stun_timer: new_re_stun_timer(<span class="bool-val">false</span>),
                     net_info_last: <span class="prelude-val">None</span>,
                     <span class="attr">#[cfg(not(wasm_browser))]
@@ -6471,11 +6467,11 @@
                     <span class="macro">warn!</span>(<span class="string">"relay handler errored: {:?}"</span>, err);
                 }
             }
-            .instrument(<span class="macro">info_span!</span>(<span class="string">"actor"</span>)),
-        );
+            .instrument(<span class="macro">info_span!</span>(<span class="string">"actor"</span>))
+        });
 
         <span class="kw">let </span>c = Handle {
-            msock: inner,
+            msock,
             actor_tasks: Arc::new(Mutex::new(actor_tasks)),
             endpoint,
         };
