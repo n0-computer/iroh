@@ -2194,7 +2194,7 @@ impl AsyncUdpSocket for MagicSock {
         #[cfg(not(wasm_browser))]
         match &*self.local_addrs.read().expect("not poisoned") {
             (ipv4, None) => {
-                // Pretend to be IPv6, because our QuinnMappedAddrs
+                // Pretend to be IPv6, because our `MappedAddr`s
                 // need to be IPv6.
                 let ip: IpAddr = match ipv4.ip() {
                     IpAddr::V4(ip) => ip.to_ipv6_mapped().into(),
@@ -2204,7 +2204,7 @@ impl AsyncUdpSocket for MagicSock {
             }
             (_, Some(ipv6)) => Ok(*ipv6),
         }
-        // Again, we need to pretend we're IPv6, because of our QuinnMappedAddrs.
+        // Again, we need to pretend we're IPv6, because of our `MappedAddr`s.
         #[cfg(wasm_browser)]
         return Ok(SocketAddr::new(std::net::Ipv6Addr::LOCALHOST.into(), 0));
     }

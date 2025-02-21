@@ -48,6 +48,7 @@ use iroh_relay::{
     PingTracker, MAX_PACKET_SIZE,
 };
 use n0_future::{
+    boxed::BoxFuture,
     task::JoinSet,
     time::{self, Duration, Instant, MissedTickBehavior},
     FuturesUnorderedBounded, SinkExt, StreamExt,
@@ -402,7 +403,7 @@ impl ActiveRelayActor {
     /// The future only completes once the connection is established and retries
     /// connections.  It currently does not ever return `Err` as the retries continue
     /// forever.
-    fn dial_relay(&self) -> BoxedFut<Result<Client>> {
+    fn dial_relay(&self) -> BoxFuture<Result<Client>> {
         let backoff: ExponentialBackoff<backoff::SystemClock> = ExponentialBackoffBuilder::new()
             .with_initial_interval(Duration::from_millis(10))
             .with_max_interval(Duration::from_secs(5))
@@ -427,6 +428,9 @@ impl ActiveRelayActor {
             }
         };
 
+        // We implement our own `Sleeper` here, so that we can use the `backoff`
+        // crate with our own implementation of `time::sleep` (from `n0_future`)
+        // that works in browsers.
         struct Sleeper;
 
         impl backoff::future::Sleeper for Sleeper {
@@ -437,6 +441,10 @@ impl ActiveRelayActor {
             }
         }
 
+        // Because we're using a lower-level backoff API, we need to provide a
+        // backoff::Notify implementation. By default backoff has one that
+        // doesn't do anything, but it doesn't expose that API. So we implement
+        // it here ourselves.
         struct NoopNotify;
 
         impl<E> backoff::Notify<E> for NoopNotify {
@@ -1217,12 +1225,6 @@ impl Iterator for PacketSplitIter {
         }
     }
 }
-
-#[cfg(not(wasm_browser))]
-type BoxedFut<T> = Pin<Box<dyn Future<Output = T> + Send>>;
-
-#[cfg(wasm_browser)]
-type BoxedFut<T> = Pin<Box<dyn Future<Output = T>>>;
 
 #[cfg(test)]
 mod tests {
