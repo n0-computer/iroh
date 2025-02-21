@@ -122,11 +122,12 @@ wasm-bindgen-futures = "0.4"
 instant = { version = "0.1", features = ["wasm-bindgen"] }
 time = { version = "0.3", features = ["wasm-bindgen"] }
 
+# target-common test/dev dependencies
 [dev-dependencies]
 testresult = "0.4.0"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-tracing-subscriber-wasm = "0.1.0"
 
+# *non*-wasm-in-browser test/dev dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dev-dependencies]
 axum = { version = "0.7" }
 clap = { version = "4", features = ["derive"] }
@@ -147,7 +148,9 @@ serde_json = "1"
 iroh-relay = { path = "../iroh-relay", default-features = false, features = ["test-utils", "server"] }
 tracing-test = "0.2.5"
 
+# wasm-in-browser test/dev dependencies
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dev-dependencies]
+tracing-subscriber-wasm = "0.1.0"
 wasm-bindgen-test = "0.3"
 
 [build-dependencies]
