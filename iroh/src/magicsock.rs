@@ -744,6 +744,7 @@ impl MagicSock {
 
     /// NOTE: Receiving on a [`Self::closed`] socket will return [`Poll::Pending`] indefinitely.
     #[instrument(skip_all)]
+    #[cfg(not(wasm_browser))]
     fn poll_recv(
         &self,
         cx: &mut Context,
@@ -758,7 +759,6 @@ impl MagicSock {
         // Three macros to help polling: they return if they get a result, execution
         // continues if they were Pending and we need to poll others (or finally return
         // Pending).
-        #[cfg(not(wasm_browser))]
         macro_rules! poll_ipv4 {
             () => {
                 match self.pconn4.poll_recv(cx, bufs, metas)? {
@@ -770,7 +770,6 @@ impl MagicSock {
                 }
             };
         }
-        #[cfg(not(wasm_browser))]
         macro_rules! poll_ipv6 {
             () => {
                 if let Some(ref pconn) = self.pconn6 {
@@ -793,9 +792,7 @@ impl MagicSock {
             };
         }
 
-        #[cfg(not(wasm_browser))]
         let counter = self.poll_recv_counter.fetch_add(1, Ordering::Relaxed);
-        #[cfg(not(wasm_browser))]
         match counter % 3 {
             0 => {
                 // order of polling: UDPv4, UDPv6, relay
@@ -819,11 +816,17 @@ impl MagicSock {
                 Poll::Pending
             }
         }
-        #[cfg(wasm_browser)]
-        {
-            poll_relay!();
-            Poll::Pending
-        }
+    }
+
+    /// poll_recv in browsers is "just" polling the relay receive path
+    #[cfg(wasm_browser)]
+    fn poll_recv(
+        &self,
+        cx: &mut Context,
+        bufs: &mut [io::IoSliceMut<'_>],
+        metas: &mut [quinn_udp::RecvMeta],
+    ) -> Poll<io::Result<usize>> {
+        self.poll_recv_relay(cx, bufs, metas)
     }
 
     /// Process datagrams received from UDP sockets.
