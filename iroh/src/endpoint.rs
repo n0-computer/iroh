@@ -382,7 +382,7 @@ impl Builder {
         self
     }
 
-    /// Sets the user-defined data to be published in discovery services with this node's addresses.
+    /// Sets the initial user-defined data to be published in discovery services for this node.
     ///
     /// When using discovery services, this string of [`UserData`] will be published together
     /// with the node's addresses and relay URL. When other nodes discover this node,
@@ -1034,9 +1034,13 @@ impl Endpoint {
 
     // # Methods to update internal state.
 
-    /// Sets the user-defined data to be published in discovery services with this node's addresses.
+    /// Sets the initial user-defined data to be published in discovery services for this node.
     ///
-    /// See [`Builder::user_data_for_discovery`] for details.
+    /// If the user-defined data passed to this function is different to the previous one,
+    /// the endpoint will republish its node info to the configured discovery services.
+    ///
+    /// See also [`Builder::user_data_for_discovery`] for setting an initial value when
+    /// building the endpoint.
     pub fn set_user_data_for_discovery(&self, user_data: Option<UserData>) {
         self.msock.set_user_data_for_discovery(user_data);
     }
