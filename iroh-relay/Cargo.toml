@@ -11,7 +11,9 @@ keywords = ["networking", "holepunching", "p2p"]
 rust-version = "1.81"
 
 [lib]
-crate-type = ["lib", "cdylib"] # cdylib is needed for Wasm support
+# We need "cdylib" to actually generate .wasm files when we run with --target=wasm32-unknown-unknown.
+# It would be nice if we could make this target-dependent, but we can't (yet): https://github.com/rust-lang/cargo/issues/12260
+crate-type = ["lib", "cdylib"]
 
 [lints]
 workspace = true

@@ -12,7 +12,6 @@ use n0_future::{
     task::{self, AbortOnDropHandle},
     time::{self, Duration, Instant},
 };
-use netwatch::ip::is_unicast_link_local;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{debug, event, info, instrument, trace, warn, Level};
@@ -471,9 +470,14 @@ impl NodeState {
         #[cfg(any(test, feature = "test-utils"))]
         if self.path_selection == PathSelection::RelayOnly && !dst.is_relay() {
             // don't attempt any hole punching in relay only mode
-            warn!("in `RealyOnly` mode, ignoring request to start a hole punching attempt.");
+            warn!("in `RelayOnly` mode, ignoring request to start a hole punching attempt.");
             return None;
         }
+        #[cfg(wasm_browser)]
+        if !dst.is_relay() {
+            return None; // Similar to `RelayOnly` mode, we don't send UDP pings for hole-punching.
+        }
+
         let tx_id = stun::TransactionId::default();
         trace!(tx = %HEXLOWER.encode(&tx_id), %dst, ?purpose,
                dst = %self.node_id.fmt_short(), "start ping");
@@ -621,6 +625,7 @@ impl NodeState {
             warn!("in `RelayOnly` mode, ignoring request to respond to a hole punching attempt.");
             return ping_msgs;
         }
+
         self.prune_direct_addresses();
         let mut ping_dsts = String::from("[");
         self.udp_paths
@@ -1041,6 +1046,7 @@ impl NodeState {
     }
 
     /// Marks this node as having received a UDP payload message.
+    #[cfg(not(wasm_browser))]
     pub(super) fn receive_udp(&mut self, addr: IpPort, now: Instant) {
         let Some(state) = self.udp_paths.paths.get_mut(&addr) else {
             debug_assert!(false, "node map inconsistency by_ip_port <-> direct addr");
@@ -1432,6 +1438,12 @@ pub enum ConnectionType {
     #[default]
     #[display("none")]
     None,
+}
+
+/// Returns true if the address is a unicast address with link-local scope, as defined in RFC 4291.
+// Copied from std lib, not stable yet
+pub const fn is_unicast_link_local(addr: std::net::Ipv6Addr) -> bool {
+    (addr.segments()[0] & 0xffc0) == 0xfe80
 }
 
 #[cfg(test)]

@@ -109,9 +109,9 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, ensure, Result};
 use iroh_base::{NodeAddr, NodeId};
-pub use iroh_relay::dns::node_info::{NodeData, NodeInfo, UserData};
 use n0_future::{
-    stream::{Boxed as BoxStream, StreamExt},
+    boxed::BoxStream,
+    stream::StreamExt,
     task::{self, AbortOnDropHandle},
     time::{self, Duration},
     Stream, TryStreamExt,
@@ -119,8 +119,10 @@ use n0_future::{
 use tokio::sync::oneshot;
 use tracing::{debug, error_span, warn, Instrument};
 
+pub use crate::node_info::{NodeData, NodeInfo, UserData};
 use crate::Endpoint;
 
+#[cfg(not(wasm_browser))]
 pub mod dns;
 
 #[cfg(feature = "discovery-local-network")]
@@ -353,7 +355,7 @@ const MAX_AGE: Duration = Duration::from_secs(10);
 /// A wrapper around a tokio task which runs a node discovery.
 pub(super) struct DiscoveryTask {
     on_first_rx: oneshot::Receiver<Result<()>>,
-    task: AbortOnDropHandle<()>,
+    _task: AbortOnDropHandle<()>,
 }
 
 impl DiscoveryTask {
@@ -368,7 +370,7 @@ impl DiscoveryTask {
             ),
         );
         Ok(Self {
-            task: AbortOnDropHandle::new(task),
+            _task: AbortOnDropHandle::new(task),
             on_first_rx,
         })
     }
@@ -412,7 +414,7 @@ impl DiscoveryTask {
             ),
         );
         Ok(Some(Self {
-            task: AbortOnDropHandle::new(task),
+            _task: AbortOnDropHandle::new(task),
             on_first_rx,
         }))
     }
@@ -496,12 +498,6 @@ impl DiscoveryTask {
             let err = anyhow!("Discovery produced no results for {}", node_id.fmt_short());
             tx.send(Err(err)).ok();
         }
-    }
-}
-
-impl Drop for DiscoveryTask {
-    fn drop(&mut self) {
-        self.task.abort();
     }
 }
 
@@ -943,14 +939,15 @@ mod tests {
 mod test_dns_pkarr {
     use anyhow::Result;
     use iroh_base::{NodeAddr, SecretKey};
-    use iroh_relay::{dns::node_info::UserData, RelayMap};
+    use iroh_relay::{node_info::UserData, RelayMap};
     use n0_future::time::Duration;
     use tokio_util::task::AbortOnDropHandle;
     use tracing_test::traced_test;
 
     use crate::{
         discovery::{pkarr::PkarrPublisher, NodeData},
-        dns::{node_info::NodeInfo, DnsResolver},
+        dns::DnsResolver,
+        node_info::NodeInfo,
         test_utils::{
             dns_server::run_dns_server, pkarr_dns_state::State, run_relay_server, DnsPkarrServer,
         },

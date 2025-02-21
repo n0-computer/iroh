@@ -30,12 +30,15 @@ use pin_project::pin_project;
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
+#[cfg(wasm_browser)]
+use crate::discovery::pkarr::PkarrResolver;
+#[cfg(not(wasm_browser))]
+use crate::{discovery::dns::DnsDiscovery, dns::DnsResolver};
 use crate::{
     discovery::{
-        dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryItem,
-        DiscoverySubscribers, DiscoveryTask, Lagged, UserData,
+        pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryItem, DiscoverySubscribers,
+        DiscoveryTask, Lagged, UserData,
     },
-    dns::DnsResolver,
     magicsock::{self, Handle, NodeIdMappedAddr},
     tls,
     watchable::Watcher,
@@ -115,6 +118,7 @@ pub struct Builder {
     proxy_url: Option<Url>,
     /// List of known nodes. See [`Builder::known_nodes`].
     node_map: Option<Vec<NodeAddr>>,
+    #[cfg(not(wasm_browser))]
     dns_resolver: Option<DnsResolver>,
     #[cfg(any(test, feature = "test-utils"))]
     insecure_skip_relay_cert_verify: bool,
@@ -138,6 +142,7 @@ impl Default for Builder {
             discovery_user_data: Default::default(),
             proxy_url: None,
             node_map: None,
+            #[cfg(not(wasm_browser))]
             dns_resolver: None,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
@@ -166,6 +171,7 @@ impl Builder {
             keylog: self.keylog,
             secret_key: secret_key.clone(),
         };
+        #[cfg(not(wasm_browser))]
         let dns_resolver = self.dns_resolver.unwrap_or_default();
         let discovery = self
             .discovery
@@ -188,6 +194,7 @@ impl Builder {
             discovery,
             discovery_user_data: self.discovery_user_data,
             proxy_url: self.proxy_url,
+            #[cfg(not(wasm_browser))]
             dns_resolver,
             server_config,
             #[cfg(any(test, feature = "test-utils"))]
@@ -336,8 +343,18 @@ impl Builder {
         self.discovery.push(Box::new(|secret_key| {
             Some(Box::new(PkarrPublisher::n0_dns(secret_key.clone())))
         }));
-        self.discovery
-            .push(Box::new(|_| Some(Box::new(DnsDiscovery::n0_dns()))));
+        // Resolve using HTTPS requests to our DNS server's /pkarr path in browsers
+        #[cfg(wasm_browser)]
+        {
+            self.discovery
+                .push(Box::new(|_| Some(Box::new(PkarrResolver::n0_dns()))));
+        }
+        // Resolve using DNS queries outside browsers.
+        #[cfg(not(wasm_browser))]
+        {
+            self.discovery
+                .push(Box::new(|_| Some(Box::new(DnsDiscovery::n0_dns()))));
+        }
         self
     }
 
@@ -428,6 +445,7 @@ impl Builder {
     /// host system's DNS configuration. You can pass a custom instance of [`DnsResolver`]
     /// here to use a differently configured DNS resolver for this endpoint, or to share
     /// a [`DnsResolver`] between multiple endpoints.
+    #[cfg(not(wasm_browser))]
     pub fn dns_resolver(mut self, dns_resolver: DnsResolver) -> Self {
         self.dns_resolver = Some(dns_resolver);
         self
@@ -853,14 +871,30 @@ impl Endpoint {
     /// The returned [`NodeAddr`] will have the current [`RelayUrl`] and direct addresses
     /// as they would be returned by [`Endpoint::home_relay`] and
     /// [`Endpoint::direct_addresses`].
+    ///
+    /// In browsers, because direct addresses are unavailable, this will only wait for
+    /// the home relay to be available before returning.
     pub async fn node_addr(&self) -> Result<NodeAddr> {
-        let addrs = self.direct_addresses().initialized().await?;
-        let relay = self.home_relay().get()?;
-        Ok(NodeAddr::from_parts(
-            self.node_id(),
-            relay,
-            addrs.into_iter().map(|x| x.addr),
-        ))
+        #[cfg(not(wasm_browser))]
+        {
+            // Outside browsers, we preserve the "old" behavior of waiting for direct
+            // addresses and then adding the relay URL (should we have it)
+            let addrs = self.direct_addresses().initialized().await?;
+            let relay = self.home_relay().get()?;
+            Ok(NodeAddr::from_parts(
+                self.node_id(),
+                relay,
+                addrs.into_iter().map(|x| x.addr),
+            ))
+        }
+        #[cfg(wasm_browser)]
+        {
+            // In browsers, there will never be any direct addresses, so we wait
+            // for the home relay instead. This make the `NodeAddr` have *some* way
+            // of connecting to us.
+            let relay = self.home_relay().initialized().await?;
+            Ok(NodeAddr::new(self.node_id()).with_relay_url(relay))
+        }
     }
 
     /// Returns a [`Watcher`] for the [`RelayUrl`] of the Relay server used as home relay.
@@ -934,6 +968,7 @@ impl Endpoint {
     ///
     /// The [`Endpoint`] always binds on an IPv4 address and also tries to bind on an IPv6
     /// address if available.
+    #[cfg(not(wasm_browser))]
     pub fn bound_sockets(&self) -> (SocketAddr, Option<SocketAddr>) {
         self.msock.local_addr()
     }
@@ -1033,6 +1068,7 @@ impl Endpoint {
     /// Returns the DNS resolver used in this [`Endpoint`].
     ///
     /// See [`Builder::dns_resolver`].
+    #[cfg(not(wasm_browser))]
     pub fn dns_resolver(&self) -> &DnsResolver {
         self.msock.dns_resolver()
     }

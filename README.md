@@ -76,6 +76,9 @@ send.finish()?;
 let response = recv.read_to_end(1000).await?;
 assert_eq!(&response, b"Hello, world!");
 
+// As the side receiving the last application data - say goodbye
+conn.close(0u32.into(), b"bye!");
+
 // Close the endpoint and all its connections
 endpoint.close().await;
 ```

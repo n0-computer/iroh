@@ -370,12 +370,10 @@ pub(crate) mod pkarr_dns_state {
 
     use anyhow::{bail, Result};
     use iroh_base::NodeId;
+    use iroh_relay::node_info::{NodeIdExt, NodeInfo, IROH_TXT_NAME};
     use pkarr::SignedPacket;
 
-    use crate::{
-        dns::node_info::{NodeIdExt, NodeInfo, IROH_TXT_NAME},
-        test_utils::dns_server::QueryHandler,
-    };
+    use crate::test_utils::dns_server::QueryHandler;
 
     #[derive(Debug, Clone)]
     pub struct State {
