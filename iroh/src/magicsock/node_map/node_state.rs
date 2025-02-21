@@ -625,8 +625,6 @@ impl NodeState {
             warn!("in `RelayOnly` mode, ignoring request to respond to a hole punching attempt.");
             return ping_msgs;
         }
-        #[cfg(wasm_browser)]
-        return ping_msgs; // Similar to `RelayOnly` mode, in browsers we don't respond to hole punching attempts.
 
         self.prune_direct_addresses();
         let mut ping_dsts = String::from("[");
