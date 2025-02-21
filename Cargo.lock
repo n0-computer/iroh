@@ -2549,9 +2549,9 @@ checksum = "227748d55f2f0ab4735d87fd623798cb6b664512fe979705f829c9f81c934465"
 
 [[package]]
 name = "mainline"
-version = "5.2.1"
+version = "5.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb915972046c6df12b1292ed24f7382ed21facd440f9f6ca9c38e0b702217009"
+checksum = "d20596de02883daff9a64c0c02bb4371c44dc7988cd07ecb61d166281c7733d3"
 dependencies = [
  "crc",
  "document-features",
@@ -2559,8 +2559,8 @@ dependencies = [
  "ed25519-dalek",
  "flume",
  "futures-lite",
+ "getrandom 0.2.15",
  "lru 0.13.0",
- "rand 0.9.0",
  "serde",
  "serde_bencode",
  "serde_bytes",
@@ -3123,8 +3123,9 @@ checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
 
 [[package]]
 name = "pkarr"
-version = "3.3.1"
-source = "git+https://github.com/Frando/pkarr.git?branch=no-async-compat#efd9c003d449417e032a9ef705ac68c419c81f70"
+version = "3.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "453379a59cb020743a64857c42466c2e8848470ebc1f9a26bd6f5155cb312d65"
 dependencies = [
  "async-compat",
  "base32",

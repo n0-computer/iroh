@@ -35,7 +35,7 @@ iroh-metrics = { version = "0.31", default-features = false }
 n0-future = "0.1.2"
 num_enum = "0.7"
 pin-project = "1"
-pkarr = { version = "3", default-features = false, features = ["signed_packet"] }
+pkarr = { version = "3.4", default-features = false, features = ["signed_packet"] }
 postcard = { version = "1", default-features = false, features = [
     "alloc",
     "use-std",
