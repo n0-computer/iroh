@@ -740,7 +740,12 @@
 <a href="#739" id="739">739</a>
 <a href="#740" id="740">740</a>
 <a href="#741" id="741">741</a>
-<a href="#742" id="742">742</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
+<a href="#742" id="742">742</a>
+<a href="#743" id="743">743</a>
+<a href="#744" id="744">744</a>
+<a href="#745" id="745">745</a>
+<a href="#746" id="746">746</a>
+<a href="#747" id="747">747</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
 
 </span><span class="kw">use </span>std::{future::Future, num::NonZeroU32, pin::Pin, sync::Arc, task::Poll, time::Duration};
 
@@ -952,6 +957,10 @@
 
 <span class="kw">impl </span>Actor {
     <span class="kw">async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>, done: CancellationToken) {
+        <span class="comment">// Note the accept and disconnects metrics must be in a pair.  Technically the
+        // connection is accepted long before this in the HTTP server, but it is clearer to
+        // handle the metric here.
+        </span><span class="macro">inc!</span>(Metrics, accepts);
         <span class="kw">match </span><span class="self">self</span>.run_inner(done).<span class="kw">await </span>{
             <span class="prelude-val">Err</span>(e) =&gt; {
                 <span class="macro">warn!</span>(<span class="string">"actor errored {e:#?}, exiting"</span>);
@@ -962,6 +971,7 @@
         }
 
         <span class="self">self</span>.clients.unregister(<span class="self">self</span>.connection_id, <span class="self">self</span>.node_id);
+        <span class="macro">inc!</span>(Metrics, disconnects);
     }
 
     <span class="kw">async fn </span>run_inner(<span class="kw-2">&amp;mut </span><span class="self">self</span>, done: CancellationToken) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {

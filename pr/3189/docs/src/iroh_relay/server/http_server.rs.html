@@ -1149,8 +1149,7 @@
 <a href="#1148" id="1148">1148</a>
 <a href="#1149" id="1149">1149</a>
 <a href="#1150" id="1150">1150</a>
-<a href="#1151" id="1151">1151</a>
-<a href="#1152" id="1152">1152</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#1151" id="1151">1151</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::HashMap, future::Future, net::SocketAddr, pin::Pin, sync::Arc, time::Duration,
 };
 
@@ -1703,7 +1702,6 @@
             rate_limit: <span class="self">self</span>.rate_limit,
         };
         <span class="macro">trace!</span>(<span class="string">"accept: create client"</span>);
-        <span class="macro">inc!</span>(Metrics, accepts);
         <span class="kw">let </span>node_id = client_conn_builder.node_id;
         <span class="macro">trace!</span>(node_id = node_id.fmt_short(), <span class="string">"create client"</span>);
 
