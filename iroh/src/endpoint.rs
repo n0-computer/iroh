@@ -32,7 +32,7 @@ use url::Url;
 
 use crate::{
     discovery::{
-        dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery,
+        dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryItem,
         DiscoverySubscribers, DiscoveryTask, Lagged, UserData,
     },
     dns::DnsResolver,
