@@ -2604,7 +2604,10 @@
 <a href="#2603" id="2603">2603</a>
 <a href="#2604" id="2604">2604</a>
 <a href="#2605" id="2605">2605</a>
-<a href="#2606" id="2606">2606</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2606" id="2606">2606</a>
+<a href="#2607" id="2607">2607</a>
+<a href="#2608" id="2608">2608</a>
+<a href="#2609" id="2609">2609</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -3571,7 +3574,9 @@
     /// The stream does not yield information about nodes that are added manually to the endpoint's
     /// addressbook by calling [`Endpoint::add_node_addr`] or by supplying a full [`NodeAddr`] to
     /// [`Endpoint::connect`]. It also does not yield information about nodes that we only
-    /// know about because they connected to us.
+    /// know about because they connected to us. When using the [`StaticProvider`] discovery,
+    /// discovery info is only emitted once connecting to a node added to the static provider, not
+    /// at the time of adding it to the static provider.
     ///
     /// The stream should be processed in a loop. If the stream is not processed fast enough,
     /// [`Lagged`] may be yielded, indicating that items were missed.
@@ -3580,6 +3585,7 @@
     /// the endpoint knows about at a specific point in time.
     ///
     /// [`LocalSwarmDiscovery`]: crate::discovery::local_swarm_discovery::LocalSwarmDiscovery
+    /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
     </span><span class="kw">pub fn </span>discovery_stream(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Stream&lt;Item = <span class="prelude-ty">Result</span>&lt;DiscoveryItem, Lagged&gt;&gt; {
         <span class="self">self</span>.msock.discovery_subscribers().subscribe()
     }
