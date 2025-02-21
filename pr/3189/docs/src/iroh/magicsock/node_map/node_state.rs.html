@@ -1751,9 +1751,7 @@
 <a href="#1750" id="1750">1750</a>
 <a href="#1751" id="1751">1751</a>
 <a href="#1752" id="1752">1752</a>
-<a href="#1753" id="1753">1753</a>
-<a href="#1754" id="1754">1754</a>
-<a href="#1755" id="1755">1755</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#1753" id="1753">1753</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{btree_map::Entry, BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
@@ -2380,10 +2378,8 @@
             <span class="macro">warn!</span>(<span class="string">"in `RelayOnly` mode, ignoring request to respond to a hole punching attempt."</span>);
             <span class="kw">return </span>ping_msgs;
         }
-        <span class="attr">#[cfg(wasm_browser)]
-        </span><span class="kw">return </span>ping_msgs; <span class="comment">// Similar to `RelayOnly` mode, in browsers we don't respond to hole punching attempts.
 
-        </span><span class="self">self</span>.prune_direct_addresses();
+        <span class="self">self</span>.prune_direct_addresses();
         <span class="kw">let </span><span class="kw-2">mut </span>ping_dsts = String::from(<span class="string">"["</span>);
         <span class="self">self</span>.udp_paths
             .paths
