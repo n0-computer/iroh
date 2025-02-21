@@ -33,7 +33,7 @@ use url::Url;
 use crate::{
     discovery::{
         dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery,
-        DiscoverySubscribers, DiscoveryTask, DiscoveryTask, Lagged, UserData,
+        DiscoverySubscribers, DiscoveryTask, Lagged, UserData,
     },
     dns::DnsResolver,
     magicsock::{self, Handle, NodeIdMappedAddr},
