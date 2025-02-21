@@ -1,3 +1,14 @@
+//! Basic integration tests for iroh that can be run both in browsers & natively.
+//!
+//! At the moment, these tests unfortunately interact with deployed services, specifically
+//! the "real" DNS server infrastructure and "real" relays.
+//!
+//! The main reason is that running rust code natively and simultaneously in node.js via
+//! wasm-bindgen-test is not trivial. We want to avoid a situation where you need to
+//! remember to run *another* binary simulatenously to running `cargo test --test integration`.
+//!
+//! In the past we've hit relay rate-limits from all the tests in our CI, but I expect
+//! we won't hit these with only this integration test.
 use iroh::{
     discovery::{pkarr::PkarrResolver, Discovery},
     Endpoint,
