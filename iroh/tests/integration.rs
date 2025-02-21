@@ -5,7 +5,7 @@
 //!
 //! The main reason is that running rust code natively and simultaneously in node.js via
 //! wasm-bindgen-test is not trivial. We want to avoid a situation where you need to
-//! remember to run *another* binary simulatenously to running `cargo test --test integration`.
+//! remember to run *another* binary simultaneously to running `cargo test --test integration`.
 //!
 //! In the past we've hit relay rate-limits from all the tests in our CI, but I expect
 //! we won't hit these with only this integration test.
