@@ -470,9 +470,14 @@ impl NodeState {
         #[cfg(any(test, feature = "test-utils"))]
         if self.path_selection == PathSelection::RelayOnly && !dst.is_relay() {
             // don't attempt any hole punching in relay only mode
-            warn!("in `RealyOnly` mode, ignoring request to start a hole punching attempt.");
+            warn!("in `RelayOnly` mode, ignoring request to start a hole punching attempt.");
             return None;
         }
+        #[cfg(wasm_browser)]
+        if !dst.is_relay() {
+            return None; // Similar to `RelayOnly` mode, we don't send UDP pings for hole-punching.
+        }
+
         let tx_id = stun::TransactionId::default();
         trace!(tx = %HEXLOWER.encode(&tx_id), %dst, ?purpose,
                dst = %self.node_id.fmt_short(), "start ping");
@@ -620,6 +625,9 @@ impl NodeState {
             warn!("in `RelayOnly` mode, ignoring request to respond to a hole punching attempt.");
             return ping_msgs;
         }
+        #[cfg(wasm_browser)]
+        return ping_msgs; // Similar to `RelayOnly` mode, in browsers we don't respond to hole punching attempts.
+
         self.prune_direct_addresses();
         let mut ping_dsts = String::from("[");
         self.udp_paths
