@@ -4438,7 +4438,16 @@
 <a href="#4437" id="4437">4437</a>
 <a href="#4438" id="4438">4438</a>
 <a href="#4439" id="4439">4439</a>
-<a href="#4440" id="4440">4440</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4440" id="4440">4440</a>
+<a href="#4441" id="4441">4441</a>
+<a href="#4442" id="4442">4442</a>
+<a href="#4443" id="4443">4443</a>
+<a href="#4444" id="4444">4444</a>
+<a href="#4445" id="4445">4445</a>
+<a href="#4446" id="4446">4446</a>
+<a href="#4447" id="4447">4447</a>
+<a href="#4448" id="4448">4448</a>
+<a href="#4449" id="4449">4449</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -6276,19 +6285,28 @@
     /// Only the first close does anything. Any later closes return nil.
     /// Polling the socket ([`AsyncUdpSocket::poll_recv`]) will return [`Poll::Pending`]
     /// indefinitely after this call.
-    ///
-    /// This will not wait for the [`quinn::Endpoint`] to drain connections.
-    ///
-    /// To ensure no data is lost, design protocols so that the last *sender*
-    /// of data in the protocol calls [`crate::endpoint::Connection::closed`], and `await`s until
-    /// it receives a "close" message from the *receiver*. Once the *receiver*
-    /// gets the last data in the protocol, it should call [`crate::endpoint::Connection::close`]
-    /// to inform the *sender* that all data has been received.
     </span><span class="attr">#[instrument(skip_all, fields(me = %<span class="self">self</span>.msock.me))]
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>close(<span class="kw-2">&amp;</span><span class="self">self</span>) {
         <span class="macro">trace!</span>(<span class="string">"magicsock closing..."</span>);
         <span class="comment">// Initiate closing all connections, and refuse future connections.
         </span><span class="self">self</span>.endpoint.close(<span class="number">0u16</span>.into(), <span class="string">b""</span>);
+
+        <span class="comment">// In the history of this code, this call had been
+        // - removed: https://github.com/n0-computer/iroh/pull/1753
+        // - then added back in: https://github.com/n0-computer/iroh/pull/2227/files#diff-ba27e40e2986a3919b20f6b412ad4fe63154af648610ea5d9ed0b5d5b0e2d780R573
+        // - then removed again: https://github.com/n0-computer/iroh/pull/3165
+        // and finally added back in together with this comment.
+        // So before removing this call, please consider carefully.
+        // Among other things, this call tries its best to make sure that any queued close frames
+        // (e.g. via the call to `endpoint.close(...)` above), are flushed out to the sockets
+        // *and acknowledged* (or time out with the "probe timeout" of usually 3 seconds).
+        // This allows the other endpoints for these connections to be notified to release
+        // their resources, or - depending on the protocol - that all data was received.
+        // With the current quinn API, this is the only way to ensure protocol code can use
+        // connection close codes, and close the endpoint properly.
+        // If this call is skipped, then connections that protocols close just shortly before the
+        // call to `Endpoint::close` will in most cases cause connection time-outs on remote ends.
+        </span><span class="self">self</span>.endpoint.wait_idle().<span class="kw">await</span>;
 
         <span class="kw">if </span><span class="self">self</span>.msock.is_closed() {
             <span class="kw">return</span>;
