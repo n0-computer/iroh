@@ -852,14 +852,30 @@ impl Endpoint {
     /// The returned [`NodeAddr`] will have the current [`RelayUrl`] and direct addresses
     /// as they would be returned by [`Endpoint::home_relay`] and
     /// [`Endpoint::direct_addresses`].
+    ///
+    /// In browsers, because direct addresses are unavailable, this will only wait for
+    /// the home relay to be available before returning.
     pub async fn node_addr(&self) -> Result<NodeAddr> {
-        let addrs = self.direct_addresses().initialized().await?;
-        let relay = self.home_relay().get()?;
-        Ok(NodeAddr::from_parts(
-            self.node_id(),
-            relay,
-            addrs.into_iter().map(|x| x.addr),
-        ))
+        #[cfg(not(wasm_browser))]
+        {
+            // Outside browsers, we preserve the "old" behavior of waiting for direct
+            // addresses and then adding the relay URL (should we have it)
+            let addrs = self.direct_addresses().initialized().await?;
+            let relay = self.home_relay().get()?;
+            Ok(NodeAddr::from_parts(
+                self.node_id(),
+                relay,
+                addrs.into_iter().map(|x| x.addr),
+            ))
+        }
+        #[cfg(wasm_browser)]
+        {
+            // In browsers, there will never be any direct addresses, so we wait
+            // for the home relay instead. This make the `NodeAddr` have *some* way
+            // of connecting to us.
+            let relay = self.home_relay().initialized().await?;
+            Ok(NodeAddr::new(self.node_id()).with_relay_url(relay))
+        }
     }
 
     /// Returns a [`Watcher`] for the [`RelayUrl`] of the Relay server used as home relay.
