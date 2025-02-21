@@ -1341,7 +1341,7 @@ impl MagicSock {
             }
             #[cfg(wasm_browser)]
             SendAddr::Udp(addr) => {
-                error!(?addr, "Asked to send on UDP in browser code");
+                warn!(?addr, "Asked to send on UDP in browser code");
             }
             SendAddr::Relay(ref url) => {
                 if !self.send_disco_message_relay(url, dst_key, msg) {
