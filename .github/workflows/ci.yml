@@ -165,6 +165,12 @@ jobs:
       - name: Add wasm target
         run: rustup target add wasm32-unknown-unknown
 
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@main
+      
+      - name: Install wasm-bindgen-test-runner
+        run: cargo binstall wasm-bindgen-cli --locked --no-confirm
+
       - name: Install wasm-tools
         uses: bytecodealliance/actions/wasm-tools/setup@v1
 
