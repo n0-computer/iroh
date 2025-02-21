@@ -497,7 +497,15 @@
 <a href="#496" id="496">496</a>
 <a href="#497" id="497">497</a>
 <a href="#498" id="498">498</a>
-<a href="#499" id="499">499</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service that uses an mdns-like service to discover local nodes.
+<a href="#499" id="499">499</a>
+<a href="#500" id="500">500</a>
+<a href="#501" id="501">501</a>
+<a href="#502" id="502">502</a>
+<a href="#503" id="503">503</a>
+<a href="#504" id="504">504</a>
+<a href="#505" id="505">505</a>
+<a href="#506" id="506">506</a>
+<a href="#507" id="507">507</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service that uses an mdns-like service to discover local nodes.
 //!
 //! This allows you to use an mdns-like swarm discovery service to find address information about nodes that are on your local network, no relay or outside internet needed.
 //! See the [`swarm-discovery`](https://crates.io/crates/swarm-discovery) crate for more details.
@@ -562,7 +570,9 @@
 /// Used in the [`crate::endpoint::Source::Discovery`] enum variant as the `name`.
 </span><span class="kw">pub const </span>NAME: <span class="kw-2">&amp;</span>str = <span class="string">"local.swarm.discovery"</span>;
 
-<span class="kw">const </span>USER_DATA_ATTRIBUTE: <span class="kw-2">&amp;</span>str = <span class="string">"user-data"</span>;
+<span class="doccomment">/// The key of the attribute under which the `UserData` is stored in
+/// the TXT record supported by swarm-discovery.
+</span><span class="kw">const </span>USER_DATA_ATTRIBUTE: <span class="kw-2">&amp;</span>str = <span class="string">"user-data"</span>;
 
 <span class="doccomment">/// How long we will wait before we stop sending discovery items
 </span><span class="kw">const </span>DISCOVERY_DURATION: Duration = Duration::from_secs(<span class="number">10</span>);
@@ -857,7 +867,13 @@
     <span class="comment">// Get the user-defined data from the resolved peer info. We expect an attribute with a value
     // that parses as `UserData`. Otherwise, omit.
     </span><span class="kw">let </span>user_data = <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="prelude-val">Some</span>(user_data)) = peer.txt_attribute(USER_DATA_ATTRIBUTE) {
-        user_data.parse().ok()
+        <span class="kw">match </span>user_data.parse() {
+            <span class="prelude-val">Err</span>(err) =&gt; {
+                <span class="macro">debug!</span>(<span class="string">"failed to parse user data from TXT attribute: {err}"</span>);
+                <span class="prelude-val">None
+            </span>}
+            <span class="prelude-val">Ok</span>(data) =&gt; <span class="prelude-val">Some</span>(data),
+        }
     } <span class="kw">else </span>{
         <span class="prelude-val">None
     </span>};
