@@ -104,7 +104,7 @@ netdev = { version = "0.31.0" }
 netwatch = { version = "0.3" }
 portmapper = { version = "0.3", default-features = false }
 quinn = { package = "iroh-quinn", version = "0.13.0", default-features = false, features = ["platform-verifier", "runtime-tokio", "rustls-ring"] }
-tokio-stream = { version = "0.1.15" }
+tokio-stream = { version = "0.1.15", features = ["sync"] }
 tokio = { version = "1", features = [
     "io-util",
     "macros",
