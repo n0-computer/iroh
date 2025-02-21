@@ -663,7 +663,110 @@
 <a href="#662" id="662">662</a>
 <a href="#663" id="663">663</a>
 <a href="#664" id="664">664</a>
-<a href="#665" id="665">665</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
+<a href="#665" id="665">665</a>
+<a href="#666" id="666">666</a>
+<a href="#667" id="667">667</a>
+<a href="#668" id="668">668</a>
+<a href="#669" id="669">669</a>
+<a href="#670" id="670">670</a>
+<a href="#671" id="671">671</a>
+<a href="#672" id="672">672</a>
+<a href="#673" id="673">673</a>
+<a href="#674" id="674">674</a>
+<a href="#675" id="675">675</a>
+<a href="#676" id="676">676</a>
+<a href="#677" id="677">677</a>
+<a href="#678" id="678">678</a>
+<a href="#679" id="679">679</a>
+<a href="#680" id="680">680</a>
+<a href="#681" id="681">681</a>
+<a href="#682" id="682">682</a>
+<a href="#683" id="683">683</a>
+<a href="#684" id="684">684</a>
+<a href="#685" id="685">685</a>
+<a href="#686" id="686">686</a>
+<a href="#687" id="687">687</a>
+<a href="#688" id="688">688</a>
+<a href="#689" id="689">689</a>
+<a href="#690" id="690">690</a>
+<a href="#691" id="691">691</a>
+<a href="#692" id="692">692</a>
+<a href="#693" id="693">693</a>
+<a href="#694" id="694">694</a>
+<a href="#695" id="695">695</a>
+<a href="#696" id="696">696</a>
+<a href="#697" id="697">697</a>
+<a href="#698" id="698">698</a>
+<a href="#699" id="699">699</a>
+<a href="#700" id="700">700</a>
+<a href="#701" id="701">701</a>
+<a href="#702" id="702">702</a>
+<a href="#703" id="703">703</a>
+<a href="#704" id="704">704</a>
+<a href="#705" id="705">705</a>
+<a href="#706" id="706">706</a>
+<a href="#707" id="707">707</a>
+<a href="#708" id="708">708</a>
+<a href="#709" id="709">709</a>
+<a href="#710" id="710">710</a>
+<a href="#711" id="711">711</a>
+<a href="#712" id="712">712</a>
+<a href="#713" id="713">713</a>
+<a href="#714" id="714">714</a>
+<a href="#715" id="715">715</a>
+<a href="#716" id="716">716</a>
+<a href="#717" id="717">717</a>
+<a href="#718" id="718">718</a>
+<a href="#719" id="719">719</a>
+<a href="#720" id="720">720</a>
+<a href="#721" id="721">721</a>
+<a href="#722" id="722">722</a>
+<a href="#723" id="723">723</a>
+<a href="#724" id="724">724</a>
+<a href="#725" id="725">725</a>
+<a href="#726" id="726">726</a>
+<a href="#727" id="727">727</a>
+<a href="#728" id="728">728</a>
+<a href="#729" id="729">729</a>
+<a href="#730" id="730">730</a>
+<a href="#731" id="731">731</a>
+<a href="#732" id="732">732</a>
+<a href="#733" id="733">733</a>
+<a href="#734" id="734">734</a>
+<a href="#735" id="735">735</a>
+<a href="#736" id="736">736</a>
+<a href="#737" id="737">737</a>
+<a href="#738" id="738">738</a>
+<a href="#739" id="739">739</a>
+<a href="#740" id="740">740</a>
+<a href="#741" id="741">741</a>
+<a href="#742" id="742">742</a>
+<a href="#743" id="743">743</a>
+<a href="#744" id="744">744</a>
+<a href="#745" id="745">745</a>
+<a href="#746" id="746">746</a>
+<a href="#747" id="747">747</a>
+<a href="#748" id="748">748</a>
+<a href="#749" id="749">749</a>
+<a href="#750" id="750">750</a>
+<a href="#751" id="751">751</a>
+<a href="#752" id="752">752</a>
+<a href="#753" id="753">753</a>
+<a href="#754" id="754">754</a>
+<a href="#755" id="755">755</a>
+<a href="#756" id="756">756</a>
+<a href="#757" id="757">757</a>
+<a href="#758" id="758">758</a>
+<a href="#759" id="759">759</a>
+<a href="#760" id="760">760</a>
+<a href="#761" id="761">761</a>
+<a href="#762" id="762">762</a>
+<a href="#763" id="763">763</a>
+<a href="#764" id="764">764</a>
+<a href="#765" id="765">765</a>
+<a href="#766" id="766">766</a>
+<a href="#767" id="767">767</a>
+<a href="#768" id="768">768</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
 //!
 //! Dialing by [`NodeId`] is supported by iroh nodes publishing [Pkarr] records to DNS
 //! servers or the Mainline DHT.  This module supports creating and parsing these records.
@@ -699,7 +802,7 @@
 
 </span><span class="kw">use </span>std::{
     collections::{BTreeMap, BTreeSet},
-    fmt::Display,
+    fmt::{<span class="self">self</span>, Display},
     hash::Hash,
     net::SocketAddr,
     str::FromStr,
@@ -748,7 +851,9 @@
 
 <span class="doccomment">/// Data about a node that may be published to and resolved from discovery services.
 ///
-/// This includes an optional [`RelayUrl`] and a set of direct addresses.
+/// This includes an optional [`RelayUrl`], a set of direct addresses, and the optional
+/// [`UserData`], a string that can be set by applications and is not parsed or used by iroh
+/// itself.
 ///
 /// This struct does not include the node's [`NodeId`], only the data *about* a certain
 /// node. See [`NodeInfo`] for a struct that contains a [`NodeId`] with associated [`NodeData`].
@@ -758,6 +863,8 @@
     </span>relay_url: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;,
     <span class="doccomment">/// Direct addresses where this node can be reached.
     </span>direct_addresses: BTreeSet&lt;SocketAddr&gt;,
+    <span class="doccomment">/// Optional user-defined [`UserData`] for this node.
+    </span>user_data: <span class="prelude-ty">Option</span>&lt;UserData&gt;,
 }
 
 <span class="kw">impl </span>NodeData {
@@ -766,6 +873,7 @@
         <span class="self">Self </span>{
             relay_url,
             direct_addresses,
+            user_data: <span class="prelude-val">None</span>,
         }
     }
 
@@ -781,9 +889,20 @@
         <span class="self">self
     </span>}
 
+    <span class="doccomment">/// Sets the user-defined data and returns the updated node data.
+    </span><span class="kw">pub fn </span>with_user_data(<span class="kw-2">mut </span><span class="self">self</span>, user_data: <span class="prelude-ty">Option</span>&lt;UserData&gt;) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.user_data = user_data;
+        <span class="self">self
+    </span>}
+
     <span class="doccomment">/// Returns the relay URL of the node.
     </span><span class="kw">pub fn </span>relay_url(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>RelayUrl&gt; {
         <span class="self">self</span>.relay_url.as_ref()
+    }
+
+    <span class="doccomment">/// Returns the optional user-defined data of the node.
+    </span><span class="kw">pub fn </span>user_data(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>UserData&gt; {
+        <span class="self">self</span>.user_data.as_ref()
     }
 
     <span class="doccomment">/// Returns the direct addresses of the node.
@@ -805,6 +924,11 @@
     </span><span class="kw">pub fn </span>set_relay_url(<span class="kw-2">&amp;mut </span><span class="self">self</span>, relay_url: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;) {
         <span class="self">self</span>.relay_url = relay_url
     }
+
+    <span class="doccomment">/// Sets the user-defined data of the node data.
+    </span><span class="kw">pub fn </span>set_user_data(<span class="kw-2">&amp;mut </span><span class="self">self</span>, user_data: <span class="prelude-ty">Option</span>&lt;UserData&gt;) {
+        <span class="self">self</span>.user_data = user_data;
+    }
 }
 
 <span class="kw">impl </span>From&lt;NodeAddr&gt; <span class="kw">for </span>NodeData {
@@ -812,8 +936,70 @@
         <span class="self">Self </span>{
             relay_url: node_addr.relay_url,
             direct_addresses: node_addr.direct_addresses,
+            user_data: <span class="prelude-val">None</span>,
         }
     }
+}
+
+<span class="comment">// User-defined data that can be published and resolved through node discovery.
+</span><span class="doccomment">///
+/// Under the hood this is a UTF-8 String is no longer than [`UserData::MAX_LENGTH`] bytes.
+///
+/// Iroh does not keep track of or examine the user-defined data.
+///
+/// `UserData` implements [`FromStr`] and [`TryFrom&lt;String&gt;`], so you can
+/// convert `&amp;str` and `String` into `UserData` easily.
+</span><span class="attr">#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+</span><span class="kw">pub struct </span>UserData(String);
+
+<span class="kw">impl </span>UserData {
+    <span class="doccomment">/// The max byte length allowed for user-defined data.
+    ///
+    /// In DNS discovery services, the user-defined data is stored in a TXT record character string,
+    /// which has a max length of 255 bytes. We need to subtract the `user-data=` prefix,
+    /// which leaves 245 bytes for the actual user-defined data.
+    </span><span class="kw">pub const </span>MAX_LENGTH: usize = <span class="number">245</span>;
+}
+
+<span class="doccomment">/// Error returned when an input value is too long for [`UserData`].
+</span><span class="attr">#[derive(Debug, thiserror::Error)]
+#[error(<span class="string">"User-defined data exceeds max length"</span>)]
+</span><span class="kw">pub struct </span>MaxLengthExceededError;
+
+<span class="kw">impl </span>TryFrom&lt;String&gt; <span class="kw">for </span>UserData {
+    <span class="kw">type </span>Error = MaxLengthExceededError;
+
+    <span class="kw">fn </span>try_from(value: String) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, <span class="self">Self</span>::Error&gt; {
+        <span class="kw">if </span>value.len() &gt; <span class="self">Self</span>::MAX_LENGTH {
+            <span class="prelude-val">Err</span>(MaxLengthExceededError)
+        } <span class="kw">else </span>{
+            <span class="prelude-val">Ok</span>(<span class="self">Self</span>(value))
+        }
+    }
+}
+
+<span class="kw">impl </span>FromStr <span class="kw">for </span>UserData {
+    <span class="kw">type </span><span class="prelude-val">Err </span>= MaxLengthExceededError;
+
+    <span class="kw">fn </span>from_str(s: <span class="kw-2">&amp;</span>str) -&gt; std::result::Result&lt;<span class="self">Self</span>, <span class="self">Self</span>::Err&gt; {
+        <span class="kw">if </span>s.len() &gt; <span class="self">Self</span>::MAX_LENGTH {
+            <span class="prelude-val">Err</span>(MaxLengthExceededError)
+        } <span class="kw">else </span>{
+            <span class="prelude-val">Ok</span>(<span class="self">Self</span>(s.to_string()))
+        }
+    }
+}
+
+<span class="kw">impl </span>fmt::Display <span class="kw">for </span>UserData {
+    <span class="kw">fn </span>fmt(<span class="kw-2">&amp;</span><span class="self">self</span>, f: <span class="kw-2">&amp;mut </span>fmt::Formatter&lt;<span class="lifetime">'_</span>&gt;) -&gt; fmt::Result {
+        <span class="macro">write!</span>(f, <span class="string">"{}"</span>, <span class="self">self</span>.<span class="number">0</span>)
+    }
+}
+
+<span class="kw">impl </span>AsRef&lt;str&gt; <span class="kw">for </span>UserData {
+    <span class="kw">fn </span>as_ref(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>str {
+        <span class="kw-2">&amp;</span><span class="self">self</span>.<span class="number">0
+    </span>}
 }
 
 <span class="doccomment">/// Information about a node that may be published to and resolved from discovery services.
@@ -849,9 +1035,16 @@
             .flatten()
             .filter_map(|s| SocketAddr::from_str(s).ok())
             .collect();
+        <span class="kw">let </span>user_data = attrs
+            .get(<span class="kw-2">&amp;</span>IrohAttr::UserData)
+            .into_iter()
+            .flatten()
+            .next()
+            .and_then(|s| UserData::from_str(s).ok());
         <span class="kw">let </span>data = NodeData {
             relay_url: relay_url.map(Into::into),
             direct_addresses,
+            user_data,
         };
         <span class="self">Self </span>{ node_id, data }
     }
@@ -891,6 +1084,12 @@
     <span class="doccomment">/// Sets the direct addresses and returns the updated node info.
     </span><span class="kw">pub fn </span>with_direct_addresses(<span class="kw-2">mut </span><span class="self">self</span>, direct_addresses: BTreeSet&lt;SocketAddr&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.data = <span class="self">self</span>.data.with_direct_addresses(direct_addresses);
+        <span class="self">self
+    </span>}
+
+    <span class="doccomment">/// Sets the user-defined data and returns the updated node info.
+    </span><span class="kw">pub fn </span>with_user_data(<span class="kw-2">mut </span><span class="self">self</span>, user_data: <span class="prelude-ty">Option</span>&lt;UserData&gt;) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.data = <span class="self">self</span>.data.with_user_data(user_data);
         <span class="self">self
     </span>}
 
@@ -991,6 +1190,8 @@
     </span>Relay,
     <span class="doccomment">/// Direct address.
     </span>Addr,
+    <span class="doccomment">/// User-defined data
+    </span>UserData,
 }
 
 <span class="doccomment">/// Attributes parsed from [`IROH_TXT_NAME`] TXT records.
@@ -1012,6 +1213,9 @@
         }
         <span class="kw">for </span>addr <span class="kw">in </span><span class="kw-2">&amp;</span>info.data.direct_addresses {
             attrs.push((IrohAttr::Addr, addr.to_string()));
+        }
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(user_data) = <span class="kw-2">&amp;</span>info.data.user_data {
+            attrs.push((IrohAttr::UserData, user_data.to_string()));
         }
         <span class="self">Self</span>::from_parts(info.node_id, attrs.into_iter())
     }
@@ -1229,7 +1433,8 @@
         <span class="kw">let </span>node_data = NodeData::new(
             <span class="prelude-val">Some</span>(<span class="string">"https://example.com"</span>.parse().unwrap()),
             [<span class="string">"127.0.0.1:1234"</span>.parse().unwrap()].into_iter().collect(),
-        );
+        )
+        .with_user_data(<span class="prelude-val">Some</span>(<span class="string">"foobar"</span>.parse().unwrap()));
         <span class="kw">let </span>node_id = <span class="string">"vpnk377obfvzlipnsfbqba7ywkkenc4xlpmovt5tsfujoa75zqia"
             </span>.parse()
             .unwrap();
@@ -1246,7 +1451,8 @@
         <span class="kw">let </span>node_data = NodeData::new(
             <span class="prelude-val">Some</span>(<span class="string">"https://example.com"</span>.parse().unwrap()),
             [<span class="string">"127.0.0.1:1234"</span>.parse().unwrap()].into_iter().collect(),
-        );
+        )
+        .with_user_data(<span class="prelude-val">Some</span>(<span class="string">"foobar"</span>.parse().unwrap()));
         <span class="kw">let </span>expected = NodeInfo::from_parts(secret_key.public(), node_data);
         <span class="kw">let </span>packet = expected.to_pkarr_signed_packet(<span class="kw-2">&amp;</span>secret_key, <span class="number">30</span>).unwrap();
         <span class="kw">let </span>actual = NodeInfo::from_pkarr_signed_packet(<span class="kw-2">&amp;</span>packet).unwrap();

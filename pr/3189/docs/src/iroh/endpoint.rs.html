@@ -2643,7 +2643,36 @@
 <a href="#2642" id="2642">2642</a>
 <a href="#2643" id="2643">2643</a>
 <a href="#2644" id="2644">2644</a>
-<a href="#2645" id="2645">2645</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2645" id="2645">2645</a>
+<a href="#2646" id="2646">2646</a>
+<a href="#2647" id="2647">2647</a>
+<a href="#2648" id="2648">2648</a>
+<a href="#2649" id="2649">2649</a>
+<a href="#2650" id="2650">2650</a>
+<a href="#2651" id="2651">2651</a>
+<a href="#2652" id="2652">2652</a>
+<a href="#2653" id="2653">2653</a>
+<a href="#2654" id="2654">2654</a>
+<a href="#2655" id="2655">2655</a>
+<a href="#2656" id="2656">2656</a>
+<a href="#2657" id="2657">2657</a>
+<a href="#2658" id="2658">2658</a>
+<a href="#2659" id="2659">2659</a>
+<a href="#2660" id="2660">2660</a>
+<a href="#2661" id="2661">2661</a>
+<a href="#2662" id="2662">2662</a>
+<a href="#2663" id="2663">2663</a>
+<a href="#2664" id="2664">2664</a>
+<a href="#2665" id="2665">2665</a>
+<a href="#2666" id="2666">2666</a>
+<a href="#2667" id="2667">2667</a>
+<a href="#2668" id="2668">2668</a>
+<a href="#2669" id="2669">2669</a>
+<a href="#2670" id="2670">2670</a>
+<a href="#2671" id="2671">2671</a>
+<a href="#2672" id="2672">2672</a>
+<a href="#2673" id="2673">2673</a>
+<a href="#2674" id="2674">2674</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -2682,7 +2711,7 @@
 <span class="kw">use crate</span>::{
     discovery::{
         pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryItem, DiscoverySubscribers,
-        DiscoveryTask, Lagged,
+        DiscoveryTask, Lagged, UserData,
     },
     magicsock::{<span class="self">self</span>, Handle, NodeIdMappedAddr},
     tls,
@@ -2759,6 +2788,7 @@
     keylog: bool,
     <span class="attr">#[debug(skip)]
     </span>discovery: Vec&lt;DiscoveryBuilder&gt;,
+    discovery_user_data: <span class="prelude-ty">Option</span>&lt;UserData&gt;,
     proxy_url: <span class="prelude-ty">Option</span>&lt;Url&gt;,
     <span class="doccomment">/// List of known nodes. See [`Builder::known_nodes`].
     </span>node_map: <span class="prelude-ty">Option</span>&lt;Vec&lt;NodeAddr&gt;&gt;,
@@ -2783,6 +2813,7 @@
             transport_config,
             keylog: Default::default(),
             discovery: Default::default(),
+            discovery_user_data: Default::default(),
             proxy_url: <span class="prelude-val">None</span>,
             node_map: <span class="prelude-val">None</span>,
             <span class="attr">#[cfg(not(wasm_browser))]
@@ -2835,6 +2866,7 @@
             relay_map,
             node_map: <span class="self">self</span>.node_map,
             discovery,
+            discovery_user_data: <span class="self">self</span>.discovery_user_data,
             proxy_url: <span class="self">self</span>.proxy_url,
             <span class="attr">#[cfg(not(wasm_browser))]
             </span>dns_resolver,
@@ -3038,6 +3070,19 @@
                 .map(|x| Box::new(x) <span class="kw">as _</span>)
                 .ok()
         }));
+        <span class="self">self
+    </span>}
+
+    <span class="doccomment">/// Sets the initial user-defined data to be published in discovery services for this node.
+    ///
+    /// When using discovery services, this string of [`UserData`] will be published together
+    /// with the node's addresses and relay URL. When other nodes discover this node,
+    /// they retrieve the [`UserData`] in addition to the addressing info.
+    ///
+    /// Iroh itself does not interpret the user-defined data in any way, it is purely left
+    /// for applications to parse and use.
+    </span><span class="kw">pub fn </span>user_data_for_discovery(<span class="kw-2">mut </span><span class="self">self</span>, user_data: UserData) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.discovery_user_data = <span class="prelude-val">Some</span>(user_data);
         <span class="self">self
     </span>}
 
@@ -3723,6 +3768,19 @@
     /// the network change itself, there is no harm in calling this function.
     </span><span class="kw">pub async fn </span>network_change(<span class="kw-2">&amp;</span><span class="self">self</span>) {
         <span class="self">self</span>.msock.network_change().<span class="kw">await</span>;
+    }
+
+    <span class="comment">// # Methods to update internal state.
+
+    </span><span class="doccomment">/// Sets the initial user-defined data to be published in discovery services for this node.
+    ///
+    /// If the user-defined data passed to this function is different to the previous one,
+    /// the endpoint will republish its node info to the configured discovery services.
+    ///
+    /// See also [`Builder::user_data_for_discovery`] for setting an initial value when
+    /// building the endpoint.
+    </span><span class="kw">pub fn </span>set_user_data_for_discovery(<span class="kw-2">&amp;</span><span class="self">self</span>, user_data: <span class="prelude-ty">Option</span>&lt;UserData&gt;) {
+        <span class="self">self</span>.msock.set_user_data_for_discovery(user_data);
     }
 
     <span class="comment">// # Methods for terminating the endpoint.

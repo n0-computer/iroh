@@ -259,7 +259,10 @@
 <a href="#258" id="258">258</a>
 <a href="#259" id="259">259</a>
 <a href="#260" id="260">260</a>
-<a href="#261" id="261">261</a></pre></div><pre class="rust"><code><span class="doccomment">//! A static node discovery to manually add node addressing information.
+<a href="#261" id="261">261</a>
+<a href="#262" id="262">262</a>
+<a href="#263" id="263">263</a>
+<a href="#264" id="264">264</a></pre></div><pre class="rust"><code><span class="doccomment">//! A static node discovery to manually add node addressing information.
 //!
 //! Often an application might get node addressing information out-of-band in an
 //! application-specific way.  [`NodeTicket`]'s are one common way used to achieve this.
@@ -421,6 +424,7 @@
                     .data
                     .add_direct_addresses(data.direct_addresses().iter().copied());
                 existing.data.set_relay_url(data.relay_url().cloned());
+                existing.data.set_user_data(data.user_data().cloned());
                 existing.last_updated = last_updated;
             }
             Entry::Vacant(entry) =&gt; {
@@ -502,12 +506,14 @@
             relay_url: <span class="prelude-val">Some</span>(<span class="string">"https://example.com"</span>.parse()<span class="question-mark">?</span>),
             direct_addresses: Default::default(),
         };
-        <span class="kw">let </span>node_info = NodeInfo::from(addr.clone());
+        <span class="kw">let </span>user_data = <span class="prelude-val">Some</span>(<span class="string">"foobar"</span>.parse().unwrap());
+        <span class="kw">let </span>node_info = NodeInfo::from(addr.clone()).with_user_data(user_data.clone());
         discovery.add_node_info(node_info.clone());
 
         <span class="kw">let </span>back = discovery.get_node_info(key.public()).context(<span class="string">"no addr"</span>)<span class="question-mark">?</span>;
 
         <span class="macro">assert_eq!</span>(back, node_info);
+        <span class="macro">assert_eq!</span>(back.user_data(), user_data.as_ref());
         <span class="macro">assert_eq!</span>(back.into_node_addr(), addr);
 
         <span class="kw">let </span>removed = discovery

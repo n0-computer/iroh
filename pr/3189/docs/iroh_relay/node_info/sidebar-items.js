@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["IROH_TXT_NAME"],"struct":["NodeData","NodeInfo"],"trait":["NodeIdExt"]};
+window.SIDEBAR_ITEMS = {"constant":["IROH_TXT_NAME"],"struct":["MaxLengthExceededError","NodeData","NodeInfo","UserData"],"trait":["NodeIdExt"]};
