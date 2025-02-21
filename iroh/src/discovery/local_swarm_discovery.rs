@@ -63,6 +63,8 @@ const N0_LOCAL_SWARM: &str = "iroh.local.swarm";
 /// Used in the [`crate::endpoint::Source::Discovery`] enum variant as the `name`.
 pub const NAME: &str = "local.swarm.discovery";
 
+/// The key of the attribute under which the `UserData` is stored in
+/// the TXT record supported by swarm-discovery.
 const USER_DATA_ATTRIBUTE: &str = "user-data";
 
 /// How long we will wait before we stop sending discovery items
@@ -358,7 +360,13 @@ fn peer_to_discovery_item(peer: &Peer, node_id: &NodeId) -> DiscoveryItem {
     // Get the user-defined data from the resolved peer info. We expect an attribute with a value
     // that parses as `UserData`. Otherwise, omit.
     let user_data = if let Some(Some(user_data)) = peer.txt_attribute(USER_DATA_ATTRIBUTE) {
-        user_data.parse().ok()
+        match user_data.parse() {
+            Err(err) => {
+                debug!("failed to parse user data from TXT attribute: {err}");
+                None
+            }
+            Ok(data) => Some(data),
+        }
     } else {
         None
     };
