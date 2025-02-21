@@ -210,6 +210,10 @@ struct Actor {
 
 impl Actor {
     async fn run(mut self, done: CancellationToken) {
+        // Note the accept and disconnects metrics must be in a pair.  Technically the
+        // connection is accepted long before this in the HTTP server, but it is clearer to
+        // handle the metric here.
+        inc!(Metrics, accepts);
         match self.run_inner(done).await {
             Err(e) => {
                 warn!("actor errored {e:#?}, exiting");
@@ -220,6 +224,7 @@ impl Actor {
         }
 
         self.clients.unregister(self.connection_id, self.node_id);
+        inc!(Metrics, disconnects);
     }
 
     async fn run_inner(&mut self, done: CancellationToken) -> Result<()> {

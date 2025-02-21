@@ -551,7 +551,6 @@ impl Inner {
             rate_limit: self.rate_limit,
         };
         trace!("accept: create client");
-        inc!(Metrics, accepts);
         let node_id = client_conn_builder.node_id;
         trace!(node_id = node_id.fmt_short(), "create client");
 
