@@ -2591,7 +2591,23 @@
 <a href="#2590" id="2590">2590</a>
 <a href="#2591" id="2591">2591</a>
 <a href="#2592" id="2592">2592</a>
-<a href="#2593" id="2593">2593</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2593" id="2593">2593</a>
+<a href="#2594" id="2594">2594</a>
+<a href="#2595" id="2595">2595</a>
+<a href="#2596" id="2596">2596</a>
+<a href="#2597" id="2597">2597</a>
+<a href="#2598" id="2598">2598</a>
+<a href="#2599" id="2599">2599</a>
+<a href="#2600" id="2600">2600</a>
+<a href="#2601" id="2601">2601</a>
+<a href="#2602" id="2602">2602</a>
+<a href="#2603" id="2603">2603</a>
+<a href="#2604" id="2604">2604</a>
+<a href="#2605" id="2605">2605</a>
+<a href="#2606" id="2606">2606</a>
+<a href="#2607" id="2607">2607</a>
+<a href="#2608" id="2608">2608</a>
+<a href="#2609" id="2609">2609</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -3445,14 +3461,30 @@
     /// The returned [`NodeAddr`] will have the current [`RelayUrl`] and direct addresses
     /// as they would be returned by [`Endpoint::home_relay`] and
     /// [`Endpoint::direct_addresses`].
+    ///
+    /// In browsers, because direct addresses are unavailable, this will only wait for
+    /// the home relay to be available before returning.
     </span><span class="kw">pub async fn </span>node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;NodeAddr&gt; {
-        <span class="kw">let </span>addrs = <span class="self">self</span>.direct_addresses().initialized().<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>relay = <span class="self">self</span>.home_relay().get()<span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(NodeAddr::from_parts(
-            <span class="self">self</span>.node_id(),
-            relay,
-            addrs.into_iter().map(|x| x.addr),
-        ))
+        <span class="attr">#[cfg(not(wasm_browser))]
+        </span>{
+            <span class="comment">// Outside browsers, we preserve the "old" behavior of waiting for direct
+            // addresses and then adding the relay URL (should we have it)
+            </span><span class="kw">let </span>addrs = <span class="self">self</span>.direct_addresses().initialized().<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="kw">let </span>relay = <span class="self">self</span>.home_relay().get()<span class="question-mark">?</span>;
+            <span class="prelude-val">Ok</span>(NodeAddr::from_parts(
+                <span class="self">self</span>.node_id(),
+                relay,
+                addrs.into_iter().map(|x| x.addr),
+            ))
+        }
+        <span class="attr">#[cfg(wasm_browser)]
+        </span>{
+            <span class="comment">// In browsers, there will never be any direct addresses, so we wait
+            // for the home relay instead. This make the `NodeAddr` have *some* way
+            // of connecting to us.
+            </span><span class="kw">let </span>relay = <span class="self">self</span>.home_relay().initialized().<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="prelude-val">Ok</span>(NodeAddr::new(<span class="self">self</span>.node_id()).with_relay_url(relay))
+        }
     }
 
     <span class="doccomment">/// Returns a [`Watcher`] for the [`RelayUrl`] of the Relay server used as home relay.
