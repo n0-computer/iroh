@@ -2603,7 +2603,40 @@
 <a href="#2602" id="2602">2602</a>
 <a href="#2603" id="2603">2603</a>
 <a href="#2604" id="2604">2604</a>
-<a href="#2605" id="2605">2605</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2605" id="2605">2605</a>
+<a href="#2606" id="2606">2606</a>
+<a href="#2607" id="2607">2607</a>
+<a href="#2608" id="2608">2608</a>
+<a href="#2609" id="2609">2609</a>
+<a href="#2610" id="2610">2610</a>
+<a href="#2611" id="2611">2611</a>
+<a href="#2612" id="2612">2612</a>
+<a href="#2613" id="2613">2613</a>
+<a href="#2614" id="2614">2614</a>
+<a href="#2615" id="2615">2615</a>
+<a href="#2616" id="2616">2616</a>
+<a href="#2617" id="2617">2617</a>
+<a href="#2618" id="2618">2618</a>
+<a href="#2619" id="2619">2619</a>
+<a href="#2620" id="2620">2620</a>
+<a href="#2621" id="2621">2621</a>
+<a href="#2622" id="2622">2622</a>
+<a href="#2623" id="2623">2623</a>
+<a href="#2624" id="2624">2624</a>
+<a href="#2625" id="2625">2625</a>
+<a href="#2626" id="2626">2626</a>
+<a href="#2627" id="2627">2627</a>
+<a href="#2628" id="2628">2628</a>
+<a href="#2629" id="2629">2629</a>
+<a href="#2630" id="2630">2630</a>
+<a href="#2631" id="2631">2631</a>
+<a href="#2632" id="2632">2632</a>
+<a href="#2633" id="2633">2633</a>
+<a href="#2634" id="2634">2634</a>
+<a href="#2635" id="2635">2635</a>
+<a href="#2636" id="2636">2636</a>
+<a href="#2637" id="2637">2637</a>
+<a href="#2638" id="2638">2638</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -2630,15 +2663,15 @@
 <span class="kw">use </span>data_encoding::BASE32_DNSSEC;
 <span class="kw">use </span>iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
 <span class="kw">use </span>iroh_relay::RelayMap;
-<span class="kw">use </span>n0_future::time::Duration;
+<span class="kw">use </span>n0_future::{time::Duration, Stream};
 <span class="kw">use </span>pin_project::pin_project;
 <span class="kw">use </span>tracing::{debug, instrument, trace, warn};
 <span class="kw">use </span>url::Url;
 
 <span class="kw">use crate</span>::{
     discovery::{
-        dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryTask,
-        UserData,
+        dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryItem,
+        DiscoverySubscribers, DiscoveryTask, Lagged, UserData,
     },
     dns::DnsResolver,
     magicsock::{<span class="self">self</span>, Handle, NodeIdMappedAddr},
@@ -3574,6 +3607,34 @@
         <span class="self">self</span>.msock.list_remote_infos().into_iter()
     }
 
+    <span class="doccomment">/// Returns a stream of all remote nodes discovered through the endpoint's discovery services.
+    ///
+    /// Whenever a node is discovered via the endpoint's discovery service, the corresponding
+    /// [`DiscoveryItem`] is yielded from this stream. This includes nodes discovered actively
+    /// through [`Discovery::resolve`], which is invoked automatically when calling
+    /// [`Endpoint::connect`] for a [`NodeId`] unknown to the endpoint. It also includes
+    /// nodes that the endpoint discovers passively from discovery services that implement
+    /// [`Discovery::subscribe`], which e.g. [`LocalSwarmDiscovery`] does.
+    ///
+    /// The stream does not yield information about nodes that are added manually to the endpoint's
+    /// addressbook by calling [`Endpoint::add_node_addr`] or by supplying a full [`NodeAddr`] to
+    /// [`Endpoint::connect`]. It also does not yield information about nodes that we only
+    /// know about because they connected to us. When using the [`StaticProvider`] discovery,
+    /// discovery info is only emitted once connecting to a node added to the static provider, not
+    /// at the time of adding it to the static provider.
+    ///
+    /// The stream should be processed in a loop. If the stream is not processed fast enough,
+    /// [`Lagged`] may be yielded, indicating that items were missed.
+    ///
+    /// See also [`Endpoint::remote_info_iter`], which returns an iterator over all remotes
+    /// the endpoint knows about at a specific point in time.
+    ///
+    /// [`LocalSwarmDiscovery`]: crate::discovery::local_swarm_discovery::LocalSwarmDiscovery
+    /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
+    </span><span class="kw">pub fn </span>discovery_stream(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Stream&lt;Item = <span class="prelude-ty">Result</span>&lt;DiscoveryItem, Lagged&gt;&gt; {
+        <span class="self">self</span>.msock.discovery_subscribers().subscribe()
+    }
+
     <span class="comment">// # Methods for less common getters.
     //
     // Partially they return things passed into the builder.
@@ -3760,6 +3821,11 @@
                 }
             }
         }
+    }
+
+    <span class="doccomment">/// Returns a reference to the subscribers channel for discovery events.
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>discovery_subscribers(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>DiscoverySubscribers {
+        <span class="self">self</span>.msock.discovery_subscribers()
     }
 
     <span class="attr">#[cfg(test)]

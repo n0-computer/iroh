@@ -4447,7 +4447,19 @@
 <a href="#4446" id="4446">4446</a>
 <a href="#4447" id="4447">4447</a>
 <a href="#4448" id="4448">4448</a>
-<a href="#4449" id="4449">4449</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4449" id="4449">4449</a>
+<a href="#4450" id="4450">4450</a>
+<a href="#4451" id="4451">4451</a>
+<a href="#4452" id="4452">4452</a>
+<a href="#4453" id="4453">4453</a>
+<a href="#4454" id="4454">4454</a>
+<a href="#4455" id="4455">4455</a>
+<a href="#4456" id="4456">4456</a>
+<a href="#4457" id="4457">4457</a>
+<a href="#4458" id="4458">4458</a>
+<a href="#4459" id="4459">4459</a>
+<a href="#4460" id="4460">4460</a>
+<a href="#4461" id="4461">4461</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4518,7 +4530,7 @@
 <span class="kw">use crate</span>::{
     defaults::timeouts::NET_REPORT_TIMEOUT,
     disco::{<span class="self">self</span>, CallMeMaybe, SendAddr},
-    discovery::{Discovery, DiscoveryItem, NodeData, UserData},
+    discovery::{Discovery, DiscoveryItem, DiscoverySubscribers, NodeData, UserData},
     dns::DnsResolver,
     key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
     watchable::{Watchable, Watcher},
@@ -4733,6 +4745,9 @@
     /// May only be used in tests.
     </span><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
     </span>insecure_skip_relay_cert_verify: bool,
+
+    <span class="doccomment">/// Broadcast channel for listening to discovery updates.
+    </span>discovery_subscribers: DiscoverySubscribers,
 }
 
 <span class="kw">impl </span>MagicSock {
@@ -4898,6 +4913,11 @@
             .send(ActorMessage::NetworkChange)
             .<span class="kw">await
             </span>.ok();
+    }
+
+    <span class="doccomment">/// Returns a reference to the subscribers channel for discovery events.
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>discovery_subscribers(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>DiscoverySubscribers {
+        <span class="kw-2">&amp;</span><span class="self">self</span>.discovery_subscribers
     }
 
     <span class="attr">#[cfg(test)]
@@ -6176,6 +6196,7 @@
             dns_resolver,
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>insecure_skip_relay_cert_verify,
+            discovery_subscribers: DiscoverySubscribers::new(),
         });
 
         <span class="kw">let </span><span class="kw-2">mut </span>endpoint_config = quinn::EndpointConfig::default();
@@ -6809,14 +6830,17 @@
                 </span><span class="prelude-val">Some</span>(discovery_item) = discovery_events.next() =&gt; {
                     <span class="macro">trace!</span>(<span class="string">"tick: discovery event, address discovered: {discovery_item:?}"</span>);
                     <span class="kw">let </span>provenance = discovery_item.provenance();
-                    <span class="kw">let </span>node_addr = discovery_item.into_node_addr();
+                    <span class="kw">let </span>node_addr = discovery_item.to_node_addr();
                     <span class="kw">if let </span><span class="prelude-val">Err</span>(e) = <span class="self">self</span>.msock.add_node_addr(
-                        node_addr.clone(),
+                        node_addr,
                         Source::Discovery {
                             name: provenance.to_string()
                         }) {
+                        <span class="kw">let </span>node_addr = discovery_item.to_node_addr();
                         <span class="macro">warn!</span>(<span class="question-mark">?</span>node_addr, <span class="string">"unable to add discovered node address to the node map: {e:?}"</span>);
                     }
+                    <span class="comment">// Send the discovery item to the subscribers of the discovery broadcast stream.
+                    </span><span class="self">self</span>.msock.discovery_subscribers.send(discovery_item);
                 }
             }
         }
