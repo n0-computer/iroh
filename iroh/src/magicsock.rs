@@ -69,7 +69,7 @@ use crate::endpoint::PathSelection;
 use crate::{
     defaults::timeouts::NET_REPORT_TIMEOUT,
     disco::{self, CallMeMaybe, SendAddr},
-    discovery::{Discovery, DiscoveryItem, NodeData},
+    discovery::{Discovery, DiscoveryItem, DiscoverySubscribers, NodeData},
     dns::DnsResolver,
     key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
     watchable::{Watchable, Watcher},
@@ -277,6 +277,9 @@ pub(crate) struct MagicSock {
     /// May only be used in tests.
     #[cfg(any(test, feature = "test-utils"))]
     insecure_skip_relay_cert_verify: bool,
+
+    /// Broadcast channel for listening to discovery updates.
+    discovery_subscribers: DiscoverySubscribers,
 }
 
 impl MagicSock {
@@ -432,6 +435,11 @@ impl MagicSock {
             .send(ActorMessage::NetworkChange)
             .await
             .ok();
+    }
+
+    /// Returns a reference to the subscribers channel for discovery events.
+    pub(crate) fn discovery_subscribers(&self) -> &DiscoverySubscribers {
+        &self.discovery_subscribers
     }
 
     #[cfg(test)]
@@ -1703,6 +1711,7 @@ impl Handle {
             dns_resolver,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify,
+            discovery_subscribers: DiscoverySubscribers::new(),
         });
 
         let mut endpoint_config = quinn::EndpointConfig::default();
@@ -2336,14 +2345,17 @@ impl Actor {
                 Some(discovery_item) = discovery_events.next() => {
                     trace!("tick: discovery event, address discovered: {discovery_item:?}");
                     let provenance = discovery_item.provenance();
-                    let node_addr = discovery_item.into_node_addr();
+                    let node_addr = discovery_item.to_node_addr();
                     if let Err(e) = self.msock.add_node_addr(
-                        node_addr.clone(),
+                        node_addr,
                         Source::Discovery {
                             name: provenance.to_string()
                         }) {
+                        let node_addr = discovery_item.to_node_addr();
                         warn!(?node_addr, "unable to add discovered node address to the node map: {e:?}");
                     }
+                    // Send the discovery item to the subscribers of the discovery broadcast stream.
+                    self.msock.discovery_subscribers.send(discovery_item);
                 }
             }
         }

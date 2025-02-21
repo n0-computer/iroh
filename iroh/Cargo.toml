@@ -83,7 +83,7 @@ tokio-rustls = { version = "0.26", default-features = false, features = [
     "logging",
     "ring",
 ] }
-tokio-stream = { version = "0.1.15" }
+tokio-stream = { version = "0.1.15", features = ["sync"] }
 tokio-util = { version = "0.7", features = ["io-util", "io", "codec", "rt"] }
 tracing = "0.1"
 url = { version = "2.5", features = ["serde"] }
