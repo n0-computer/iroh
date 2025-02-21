@@ -2008,7 +2008,7 @@
 </span><span class="kw">mod </span>test_dns_pkarr {
     <span class="kw">use </span>anyhow::Result;
     <span class="kw">use </span>iroh_base::{NodeAddr, SecretKey};
-    <span class="kw">use </span>iroh_relay::{dns::node_info::UserData, RelayMap};
+    <span class="kw">use </span>iroh_relay::{node_info::UserData, RelayMap};
     <span class="kw">use </span>n0_future::time::Duration;
     <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
     <span class="kw">use </span>tracing_test::traced_test;
