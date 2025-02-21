@@ -5953,7 +5953,7 @@
             }
             <span class="attr">#[cfg(wasm_browser)]
             </span>SendAddr::Udp(addr) =&gt; {
-                <span class="macro">error!</span>(<span class="question-mark">?</span>addr, <span class="string">"Asked to send on UDP in browser code"</span>);
+                <span class="macro">warn!</span>(<span class="question-mark">?</span>addr, <span class="string">"Asked to send on UDP in browser code"</span>);
             }
             SendAddr::Relay(<span class="kw-2">ref </span>url) =&gt; {
                 <span class="kw">if </span>!<span class="self">self</span>.send_disco_message_relay(url, dst_key, msg) {
