@@ -965,7 +965,9 @@ impl Endpoint {
     /// The stream does not yield information about nodes that are added manually to the endpoint's
     /// addressbook by calling [`Endpoint::add_node_addr`] or by supplying a full [`NodeAddr`] to
     /// [`Endpoint::connect`]. It also does not yield information about nodes that we only
-    /// know about because they connected to us.
+    /// know about because they connected to us. When using the [`StaticProvider`] discovery,
+    /// discovery info is only emitted once connecting to a node added to the static provider, not
+    /// at the time of adding it to the static provider.
     ///
     /// The stream should be processed in a loop. If the stream is not processed fast enough,
     /// [`Lagged`] may be yielded, indicating that items were missed.
@@ -974,6 +976,7 @@ impl Endpoint {
     /// the endpoint knows about at a specific point in time.
     ///
     /// [`LocalSwarmDiscovery`]: crate::discovery::local_swarm_discovery::LocalSwarmDiscovery
+    /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
     pub fn discovery_stream(&self) -> impl Stream<Item = Result<DiscoveryItem, Lagged>> {
         self.msock.discovery_subscribers().subscribe()
     }
