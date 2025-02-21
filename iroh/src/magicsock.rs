@@ -72,7 +72,7 @@ use crate::endpoint::PathSelection;
 use crate::{
     defaults::timeouts::NET_REPORT_TIMEOUT,
     disco::{self, CallMeMaybe, SendAddr},
-    discovery::{Discovery, DiscoveryItem, DiscoverySubscribers, NodeData},
+    discovery::{Discovery, DiscoveryItem, DiscoverySubscribers, NodeData, UserData},
     key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
     watchable::{Watchable, Watcher},
 };
@@ -120,6 +120,9 @@ pub(crate) struct Options {
     /// Optional node discovery mechanism.
     pub(crate) discovery: Option<Box<dyn Discovery>>,
 
+    /// Optional user-defined discovery data.
+    pub(crate) discovery_user_data: Option<UserData>,
+
     /// A DNS resolver to use for resolving relay URLs.
     ///
     /// You can use [`crate::dns::DnsResolver::new`] for a resolver
@@ -156,6 +159,7 @@ impl Default for Options {
             relay_map: RelayMap::empty(),
             node_map: None,
             discovery: None,
+            discovery_user_data: None,
             proxy_url: None,
             #[cfg(not(wasm_browser))]
             dns_resolver: DnsResolver::new(),
@@ -271,6 +275,9 @@ pub(crate) struct MagicSock {
 
     /// Optional discovery service
     discovery: Option<Box<dyn Discovery>>,
+
+    /// Optional user-defined discover data.
+    discovery_user_data: RwLock<Option<UserData>>,
 
     /// Our discovered direct addresses.
     direct_addrs: DiscoveredDirectAddrs,
@@ -439,6 +446,16 @@ impl MagicSock {
     /// Reference to optional discovery service
     pub(crate) fn discovery(&self) -> Option<&dyn Discovery> {
         self.discovery.as_ref().map(Box::as_ref)
+    }
+
+    /// Updates the user-defined discovery data for this node.
+    pub(crate) fn set_user_data_for_discovery(&self, user_data: Option<UserData>) {
+        let mut guard = self.discovery_user_data.write().expect("lock poisened");
+        if *guard != user_data {
+            *guard = user_data;
+            drop(guard);
+            self.publish_my_addr();
+        }
     }
 
     /// Call to notify the system of potential network changes.
@@ -1535,7 +1552,12 @@ impl MagicSock {
         if let Some(ref discovery) = self.discovery {
             let relay_url = self.my_relay();
             let direct_addrs = self.direct_addrs.sockaddrs();
-            let data = NodeData::new(relay_url, direct_addrs);
+            let user_data = self
+                .discovery_user_data
+                .read()
+                .expect("lock poisened")
+                .clone();
+            let data = NodeData::new(relay_url, direct_addrs).with_user_data(user_data);
             discovery.publish(&data);
         }
     }
@@ -1681,6 +1703,7 @@ impl Handle {
             relay_map,
             node_map,
             discovery,
+            discovery_user_data,
             #[cfg(not(wasm_browser))]
             dns_resolver,
             proxy_url,
@@ -1771,6 +1794,7 @@ impl Handle {
             ip_mapped_addrs,
             udp_disco_sender,
             discovery,
+            discovery_user_data: RwLock::new(discovery_user_data),
             direct_addrs: Default::default(),
             pending_call_me_maybes: Default::default(),
             direct_addr_update_state: DirectAddrUpdateState::new(),
@@ -4242,6 +4266,7 @@ mod tests {
             relay_map: RelayMap::empty(),
             node_map: None,
             discovery: None,
+            discovery_user_data: None,
             dns_resolver,
             proxy_url: None,
             server_config,

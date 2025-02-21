@@ -119,7 +119,7 @@ use n0_future::{
 use tokio::sync::oneshot;
 use tracing::{debug, error_span, warn, Instrument};
 
-pub use crate::node_info::{NodeData, NodeInfo};
+pub use crate::node_info::{NodeData, NodeInfo, UserData};
 use crate::Endpoint;
 
 #[cfg(not(wasm_browser))]
@@ -939,7 +939,7 @@ mod tests {
 mod test_dns_pkarr {
     use anyhow::Result;
     use iroh_base::{NodeAddr, SecretKey};
-    use iroh_relay::RelayMap;
+    use iroh_relay::{dns::node_info::UserData, RelayMap};
     use n0_future::time::Duration;
     use tokio_util::task::AbortOnDropHandle;
     use tracing_test::traced_test;
@@ -993,20 +993,24 @@ mod test_dns_pkarr {
 
         let resolver = DnsResolver::with_nameserver(dns_pkarr_server.nameserver);
         let publisher = PkarrPublisher::new(secret_key, dns_pkarr_server.pkarr_url.clone());
-        let data = NodeData::new(relay_url.clone(), Default::default());
+        let user_data: UserData = "foobar".parse().unwrap();
+        let data = NodeData::new(relay_url.clone(), Default::default())
+            .with_user_data(Some(user_data.clone()));
         // does not block, update happens in background task
         publisher.update_node_data(&data);
         // wait until our shared state received the update from pkarr publishing
         dns_pkarr_server.on_node(&node_id, PUBLISH_TIMEOUT).await?;
         let resolved = resolver.lookup_node_by_id(&node_id, &origin).await?;
+        println!("resolved {resolved:?}");
 
-        let expected = NodeAddr {
+        let expected_addr = NodeAddr {
             node_id,
             relay_url,
             direct_addresses: Default::default(),
         };
 
-        assert_eq!(resolved.to_node_addr(), expected);
+        assert_eq!(resolved.to_node_addr(), expected_addr);
+        assert_eq!(resolved.user_data(), Some(&user_data));
         Ok(())
     }
 

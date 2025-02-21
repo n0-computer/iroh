@@ -34,7 +34,7 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fmt::Display,
+    fmt::{self, Display},
     hash::Hash,
     net::SocketAddr,
     str::FromStr,
@@ -83,7 +83,9 @@ impl NodeIdExt for NodeId {
 
 /// Data about a node that may be published to and resolved from discovery services.
 ///
-/// This includes an optional [`RelayUrl`] and a set of direct addresses.
+/// This includes an optional [`RelayUrl`], a set of direct addresses, and the optional
+/// [`UserData`], a string that can be set by applications and is not parsed or used by iroh
+/// itself.
 ///
 /// This struct does not include the node's [`NodeId`], only the data *about* a certain
 /// node. See [`NodeInfo`] for a struct that contains a [`NodeId`] with associated [`NodeData`].
@@ -93,6 +95,8 @@ pub struct NodeData {
     relay_url: Option<RelayUrl>,
     /// Direct addresses where this node can be reached.
     direct_addresses: BTreeSet<SocketAddr>,
+    /// Optional user-defined [`UserData`] for this node.
+    user_data: Option<UserData>,
 }
 
 impl NodeData {
@@ -101,6 +105,7 @@ impl NodeData {
         Self {
             relay_url,
             direct_addresses,
+            user_data: None,
         }
     }
 
@@ -116,9 +121,20 @@ impl NodeData {
         self
     }
 
+    /// Sets the user-defined data and returns the updated node data.
+    pub fn with_user_data(mut self, user_data: Option<UserData>) -> Self {
+        self.user_data = user_data;
+        self
+    }
+
     /// Returns the relay URL of the node.
     pub fn relay_url(&self) -> Option<&RelayUrl> {
         self.relay_url.as_ref()
+    }
+
+    /// Returns the optional user-defined data of the node.
+    pub fn user_data(&self) -> Option<&UserData> {
+        self.user_data.as_ref()
     }
 
     /// Returns the direct addresses of the node.
@@ -140,6 +156,11 @@ impl NodeData {
     pub fn set_relay_url(&mut self, relay_url: Option<RelayUrl>) {
         self.relay_url = relay_url
     }
+
+    /// Sets the user-defined data of the node data.
+    pub fn set_user_data(&mut self, user_data: Option<UserData>) {
+        self.user_data = user_data;
+    }
 }
 
 impl From<NodeAddr> for NodeData {
@@ -147,7 +168,69 @@ impl From<NodeAddr> for NodeData {
         Self {
             relay_url: node_addr.relay_url,
             direct_addresses: node_addr.direct_addresses,
+            user_data: None,
         }
+    }
+}
+
+// User-defined data that can be published and resolved through node discovery.
+///
+/// Under the hood this is a UTF-8 String is no longer than [`UserData::MAX_LENGTH`] bytes.
+///
+/// Iroh does not keep track of or examine the user-defined data.
+///
+/// `UserData` implements [`FromStr`] and [`TryFrom<String>`], so you can
+/// convert `&str` and `String` into `UserData` easily.
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct UserData(String);
+
+impl UserData {
+    /// The max byte length allowed for user-defined data.
+    ///
+    /// In DNS discovery services, the user-defined data is stored in a TXT record character string,
+    /// which has a max length of 255 bytes. We need to subtract the `user-data=` prefix,
+    /// which leaves 245 bytes for the actual user-defined data.
+    pub const MAX_LENGTH: usize = 245;
+}
+
+/// Error returned when an input value is too long for [`UserData`].
+#[derive(Debug, thiserror::Error)]
+#[error("User-defined data exceeds max length")]
+pub struct MaxLengthExceededError;
+
+impl TryFrom<String> for UserData {
+    type Error = MaxLengthExceededError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        if value.len() > Self::MAX_LENGTH {
+            Err(MaxLengthExceededError)
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+
+impl FromStr for UserData {
+    type Err = MaxLengthExceededError;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        if s.len() > Self::MAX_LENGTH {
+            Err(MaxLengthExceededError)
+        } else {
+            Ok(Self(s.to_string()))
+        }
+    }
+}
+
+impl fmt::Display for UserData {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl AsRef<str> for UserData {
+    fn as_ref(&self) -> &str {
+        &self.0
     }
 }
 
@@ -184,9 +267,16 @@ impl From<&TxtAttrs<IrohAttr>> for NodeInfo {
             .flatten()
             .filter_map(|s| SocketAddr::from_str(s).ok())
             .collect();
+        let user_data = attrs
+            .get(&IrohAttr::UserData)
+            .into_iter()
+            .flatten()
+            .next()
+            .and_then(|s| UserData::from_str(s).ok());
         let data = NodeData {
             relay_url: relay_url.map(Into::into),
             direct_addresses,
+            user_data,
         };
         Self { node_id, data }
     }
@@ -226,6 +316,12 @@ impl NodeInfo {
     /// Sets the direct addresses and returns the updated node info.
     pub fn with_direct_addresses(mut self, direct_addresses: BTreeSet<SocketAddr>) -> Self {
         self.data = self.data.with_direct_addresses(direct_addresses);
+        self
+    }
+
+    /// Sets the user-defined data and returns the updated node info.
+    pub fn with_user_data(mut self, user_data: Option<UserData>) -> Self {
+        self.data = self.data.with_user_data(user_data);
         self
     }
 
@@ -326,6 +422,8 @@ pub(crate) enum IrohAttr {
     Relay,
     /// Direct address.
     Addr,
+    /// User-defined data
+    UserData,
 }
 
 /// Attributes parsed from [`IROH_TXT_NAME`] TXT records.
@@ -347,6 +445,9 @@ impl From<&NodeInfo> for TxtAttrs<IrohAttr> {
         }
         for addr in &info.data.direct_addresses {
             attrs.push((IrohAttr::Addr, addr.to_string()));
+        }
+        if let Some(user_data) = &info.data.user_data {
+            attrs.push((IrohAttr::UserData, user_data.to_string()));
         }
         Self::from_parts(info.node_id, attrs.into_iter())
     }
@@ -564,7 +665,8 @@ mod tests {
         let node_data = NodeData::new(
             Some("https://example.com".parse().unwrap()),
             ["127.0.0.1:1234".parse().unwrap()].into_iter().collect(),
-        );
+        )
+        .with_user_data(Some("foobar".parse().unwrap()));
         let node_id = "vpnk377obfvzlipnsfbqba7ywkkenc4xlpmovt5tsfujoa75zqia"
             .parse()
             .unwrap();
@@ -581,7 +683,8 @@ mod tests {
         let node_data = NodeData::new(
             Some("https://example.com".parse().unwrap()),
             ["127.0.0.1:1234".parse().unwrap()].into_iter().collect(),
-        );
+        )
+        .with_user_data(Some("foobar".parse().unwrap()));
         let expected = NodeInfo::from_parts(secret_key.public(), node_data);
         let packet = expected.to_pkarr_signed_packet(&secret_key, 30).unwrap();
         let actual = NodeInfo::from_pkarr_signed_packet(&packet).unwrap();

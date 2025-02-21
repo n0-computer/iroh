@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{net::SocketAddr, str::FromStr};
 
 use anyhow::{bail, Result};
 use clap::{Parser, ValueEnum};
@@ -6,6 +6,7 @@ use iroh::{
     discovery::{
         dns::{N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING},
         pkarr::{PkarrRelayClient, N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING},
+        UserData,
     },
     node_info::{NodeIdExt, NodeInfo, IROH_TXT_NAME},
     NodeId, SecretKey,
@@ -39,7 +40,14 @@ struct Cli {
     #[clap(long, conflicts_with = "env")]
     pkarr_relay: Option<Url>,
     /// Home relay server to publish for this node
-    relay_url: Url,
+    #[clap(short, long)]
+    relay_url: Option<Url>,
+    /// Direct addresses to publish for this node
+    #[clap(short, long)]
+    addr: Vec<SocketAddr>,
+    /// User data to publish for this node
+    #[clap(short, long)]
+    user_data: Option<UserData>,
     /// Create a new node secret if IROH_SECRET is unset. Only for development / debugging.
     #[clap(short, long)]
     create: bool,
@@ -72,12 +80,23 @@ async fn main() -> Result<()> {
     };
 
     println!("announce {node_id}:");
-    println!("    relay={}", args.relay_url);
+    if let Some(relay_url) = &args.relay_url {
+        println!("    relay={relay_url}");
+    }
+    for addr in &args.addr {
+        println!("    addr={addr}");
+    }
+    if let Some(user_data) = &args.user_data {
+        println!("    user-data={user_data}");
+    }
     println!();
     println!("publish to {pkarr_relay} ...");
 
     let pkarr = PkarrRelayClient::new(pkarr_relay);
-    let node_info = NodeInfo::new(node_id).with_relay_url(Some(args.relay_url.into()));
+    let node_info = NodeInfo::new(node_id)
+        .with_relay_url(args.relay_url.map(Into::into))
+        .with_direct_addresses(args.addr.into_iter().collect())
+        .with_user_data(args.user_data);
     let signed_packet = node_info.to_pkarr_signed_packet(&secret_key, 30)?;
     pkarr.publish(&signed_packet).await?;
 

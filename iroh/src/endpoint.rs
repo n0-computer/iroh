@@ -37,7 +37,7 @@ use crate::{discovery::dns::DnsDiscovery, dns::DnsResolver};
 use crate::{
     discovery::{
         pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryItem, DiscoverySubscribers,
-        DiscoveryTask, Lagged,
+        DiscoveryTask, Lagged, UserData,
     },
     magicsock::{self, Handle, NodeIdMappedAddr},
     tls,
@@ -114,6 +114,7 @@ pub struct Builder {
     keylog: bool,
     #[debug(skip)]
     discovery: Vec<DiscoveryBuilder>,
+    discovery_user_data: Option<UserData>,
     proxy_url: Option<Url>,
     /// List of known nodes. See [`Builder::known_nodes`].
     node_map: Option<Vec<NodeAddr>>,
@@ -138,6 +139,7 @@ impl Default for Builder {
             transport_config,
             keylog: Default::default(),
             discovery: Default::default(),
+            discovery_user_data: Default::default(),
             proxy_url: None,
             node_map: None,
             #[cfg(not(wasm_browser))]
@@ -190,6 +192,7 @@ impl Builder {
             relay_map,
             node_map: self.node_map,
             discovery,
+            discovery_user_data: self.discovery_user_data,
             proxy_url: self.proxy_url,
             #[cfg(not(wasm_browser))]
             dns_resolver,
@@ -393,6 +396,19 @@ impl Builder {
                 .map(|x| Box::new(x) as _)
                 .ok()
         }));
+        self
+    }
+
+    /// Sets the initial user-defined data to be published in discovery services for this node.
+    ///
+    /// When using discovery services, this string of [`UserData`] will be published together
+    /// with the node's addresses and relay URL. When other nodes discover this node,
+    /// they retrieve the [`UserData`] in addition to the addressing info.
+    ///
+    /// Iroh itself does not interpret the user-defined data in any way, it is purely left
+    /// for applications to parse and use.
+    pub fn user_data_for_discovery(mut self, user_data: UserData) -> Self {
+        self.discovery_user_data = Some(user_data);
         self
     }
 
@@ -1078,6 +1094,19 @@ impl Endpoint {
     /// the network change itself, there is no harm in calling this function.
     pub async fn network_change(&self) {
         self.msock.network_change().await;
+    }
+
+    // # Methods to update internal state.
+
+    /// Sets the initial user-defined data to be published in discovery services for this node.
+    ///
+    /// If the user-defined data passed to this function is different to the previous one,
+    /// the endpoint will republish its node info to the configured discovery services.
+    ///
+    /// See also [`Builder::user_data_for_discovery`] for setting an initial value when
+    /// building the endpoint.
+    pub fn set_user_data_for_discovery(&self, user_data: Option<UserData>) {
+        self.msock.set_user_data_for_discovery(user_data);
     }
 
     // # Methods for terminating the endpoint.
