@@ -1,6 +1,9 @@
 //! The server-side representation of an ongoing client relaying connection.
 
-use std::{future::Future, num::NonZeroU32, pin::Pin, sync::Arc, task::Poll, time::Duration};
+use std::{
+    collections::HashMap, future::Future, num::NonZeroU32, pin::Pin, sync::Arc, task::Poll,
+    time::Duration,
+};
 
 use anyhow::{bail, Context, Result};
 use bytes::Bytes;
@@ -8,6 +11,7 @@ use iroh_base::NodeId;
 use iroh_metrics::{inc, inc_by};
 use n0_future::{FutureExt, Sink, SinkExt, Stream, StreamExt};
 use rand::Rng;
+use time::{Date, OffsetDateTime};
 use tokio::{
     sync::mpsc::{self, error::TrySendError},
     time::MissedTickBehavior,
@@ -105,6 +109,7 @@ impl Client {
             node_id,
             connection_id,
             clients: clients.clone(),
+            client_counter: ClientCounter::default(),
             ping_tracker: PingTracker::default(),
         };
 
@@ -205,6 +210,8 @@ struct Actor {
     connection_id: u64,
     /// Reference to the other connected clients.
     clients: Clients,
+    /// Statistics about the connected clients
+    client_counter: ClientCounter,
     ping_tracker: PingTracker,
 }
 
@@ -214,6 +221,8 @@ impl Actor {
         // connection is accepted long before this in the HTTP server, but it is clearer to
         // handle the metric here.
         inc!(Metrics, accepts);
+        let nc = self.client_counter.update(self.node_id);
+        inc_by!(Metrics, unique_client_keys, nc);
         match self.run_inner(done).await {
             Err(e) => {
                 warn!("actor errored {e:#?}, exiting");
@@ -557,6 +566,42 @@ impl Sink<Frame> for RateLimitedRelayedStream {
     }
 }
 
+/// Counts how many `NodeId`s seen, how many times.
+/// Gets reset every day.
+#[derive(Debug)]
+struct ClientCounter {
+    clients: HashMap<NodeId, usize>,
+    last_clear_date: Date,
+}
+
+impl Default for ClientCounter {
+    fn default() -> Self {
+        Self {
+            clients: HashMap::new(),
+            last_clear_date: OffsetDateTime::now_utc().date(),
+        }
+    }
+}
+
+impl ClientCounter {
+    fn check_and_clear(&mut self) {
+        let today = OffsetDateTime::now_utc().date();
+        if today != self.last_clear_date {
+            self.clients.clear();
+            self.last_clear_date = today;
+        }
+    }
+
+    /// Updates the client counter.
+    fn update(&mut self, client: NodeId) -> u64 {
+        self.check_and_clear();
+        let new_conn = !self.clients.contains_key(&client);
+        let counter = self.clients.entry(client).or_insert(0);
+        *counter += 1;
+        new_conn as u64
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use bytes::Bytes;
@@ -595,6 +640,7 @@ mod tests {
             connection_id: 0,
             node_id,
             clients: clients.clone(),
+            client_counter: ClientCounter::default(),
             ping_tracker: PingTracker::default(),
         };
 

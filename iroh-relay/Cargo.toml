@@ -85,6 +85,7 @@ reloadable-state = { version = "0.1", optional = true }
 rustls-cert-reloadable-resolver = { version = "0.7.1", optional = true }
 rustls-cert-file-reader = { version = "0.4.1", optional = true }
 rustls-pemfile = { version = "2.1", optional = true }
+time = "0.3.37"
 tokio-rustls-acme = { version = "0.6", optional = true }
 tokio-tungstenite = { version = "0.24", default-features = false, optional = true } # keep version in sync with what tokio-tungstenite-wasm depends on
 toml = { version = "0.8", optional = true }
