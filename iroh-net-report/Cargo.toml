@@ -1,6 +1,6 @@
 [package]
 name = "iroh-net-report"
-version = "0.32.0"
+version = "0.33.0"
 edition = "2021"
 readme = "README.md"
 description = "detailed reporting on network conditions"
@@ -24,9 +24,9 @@ workspace = true
 anyhow = "1"
 bytes = "1.7"
 derive_more = { version = "1.0.0", features = ["display"] }
-iroh-base = { version = "0.32.0", path = "../iroh-base", default-features = false, features = ["relay"] }
+iroh-base = { version = "0.33.0", path = "../iroh-base", default-features = false, features = ["relay"] }
 iroh-metrics = { version = "0.31", default-features = false }
-iroh-relay = { version = "0.32", default-features = false, path = "../iroh-relay" }
+iroh-relay = { version = "0.33", default-features = false, path = "../iroh-relay" }
 n0-future = "0.1.2"
 quinn = { package = "iroh-quinn", version = "0.13.0", default-features = false }
 rand = "0.8"
