@@ -788,10 +788,7 @@
 <a href="#787" id="787">787</a>
 <a href="#788" id="788">788</a>
 <a href="#789" id="789">789</a>
-<a href="#790" id="790">790</a>
-<a href="#791" id="791">791</a>
-<a href="#792" id="792">792</a>
-<a href="#793" id="793">793</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
+<a href="#790" id="790">790</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
 
 </span><span class="kw">use </span>std::{
     collections::HashSet, future::Future, num::NonZeroU32, pin::Pin, sync::Arc, task::Poll,
@@ -1360,8 +1357,7 @@
     }
 }
 
-<span class="doccomment">/// Counts how many `NodeId`s seen, how many times.
-/// Gets reset every day.
+<span class="doccomment">/// Tracks how many unique nodes have been seen during the last day.
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">struct </span>ClientCounter {
     clients: HashSet&lt;NodeId&gt;,
@@ -1386,12 +1382,10 @@
         }
     }
 
-    <span class="doccomment">/// Updates the client counter.
+    <span class="doccomment">/// Marks this node as seen, returns whether it is new today or not.
     </span><span class="kw">fn </span>update(<span class="kw-2">&amp;mut </span><span class="self">self</span>, client: NodeId) -&gt; bool {
         <span class="self">self</span>.check_and_clear();
-        <span class="kw">let </span>new_conn = !<span class="self">self</span>.clients.contains(<span class="kw-2">&amp;</span>client);
-        <span class="self">self</span>.clients.insert(client);
-        new_conn
+        <span class="self">self</span>.clients.insert(client)
     }
 }
 
