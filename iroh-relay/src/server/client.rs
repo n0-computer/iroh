@@ -595,7 +595,7 @@ impl ClientCounter {
     /// Marks this node as seen, returns whether it is new today or not.
     fn update(&mut self, client: NodeId) -> bool {
         self.check_and_clear();
-        self.clients.insert(client);
+        self.clients.insert(client)
     }
 }
 
