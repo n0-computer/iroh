@@ -11,16 +11,11 @@ allow = [
     "BSL-1.0",                        # BOSL license
     "ISC",
     "MIT",
-    "OpenSSL",
     "Zlib",
     "MPL-2.0",                        # https://fossa.com/blog/open-source-software-licenses-101-mozilla-public-license-2-0/
     "Unicode-3.0",
 ]
 
-[[licenses.clarify]]
-name = "ring"
-expression = "MIT AND ISC AND OpenSSL"
-license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
 
 [advisories]
 ignore = [
