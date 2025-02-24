@@ -1,7 +1,7 @@
 //! The server-side representation of an ongoing client relaying connection.
 
 use std::{
-    collections::HashMap, future::Future, num::NonZeroU32, pin::Pin, sync::Arc, task::Poll,
+    collections::HashSet, future::Future, num::NonZeroU32, pin::Pin, sync::Arc, task::Poll,
     time::Duration,
 };
 
@@ -571,14 +571,14 @@ impl Sink<Frame> for RateLimitedRelayedStream {
 /// Gets reset every day.
 #[derive(Debug)]
 struct ClientCounter {
-    clients: HashMap<NodeId, usize>,
+    clients: HashSet<NodeId>,
     last_clear_date: Date,
 }
 
 impl Default for ClientCounter {
     fn default() -> Self {
         Self {
-            clients: HashMap::new(),
+            clients: HashSet::new(),
             last_clear_date: OffsetDateTime::now_utc().date(),
         }
     }
@@ -596,8 +596,8 @@ impl ClientCounter {
     /// Updates the client counter.
     fn update(&mut self, client: NodeId) -> bool {
         self.check_and_clear();
-        let new_conn = !self.clients.contains_key(&client);
-        let _ = self.clients.entry(client).or_insert(0);
+        let new_conn = !self.clients.contains(&client);
+        self.clients.insert(client);
         new_conn
     }
 }
