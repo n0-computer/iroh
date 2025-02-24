@@ -794,7 +794,7 @@
 <a href="#793" id="793">793</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
 
 </span><span class="kw">use </span>std::{
-    collections::HashMap, future::Future, num::NonZeroU32, pin::Pin, sync::Arc, task::Poll,
+    collections::HashSet, future::Future, num::NonZeroU32, pin::Pin, sync::Arc, task::Poll,
     time::Duration,
 };
 
@@ -1364,14 +1364,14 @@
 /// Gets reset every day.
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">struct </span>ClientCounter {
-    clients: HashMap&lt;NodeId, usize&gt;,
+    clients: HashSet&lt;NodeId&gt;,
     last_clear_date: Date,
 }
 
 <span class="kw">impl </span>Default <span class="kw">for </span>ClientCounter {
     <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
-            clients: HashMap::new(),
+            clients: HashSet::new(),
             last_clear_date: OffsetDateTime::now_utc().date(),
         }
     }
@@ -1389,8 +1389,8 @@
     <span class="doccomment">/// Updates the client counter.
     </span><span class="kw">fn </span>update(<span class="kw-2">&amp;mut </span><span class="self">self</span>, client: NodeId) -&gt; bool {
         <span class="self">self</span>.check_and_clear();
-        <span class="kw">let </span>new_conn = !<span class="self">self</span>.clients.contains_key(<span class="kw-2">&amp;</span>client);
-        <span class="kw">let _ </span>= <span class="self">self</span>.clients.entry(client).or_insert(<span class="number">0</span>);
+        <span class="kw">let </span>new_conn = !<span class="self">self</span>.clients.contains(<span class="kw-2">&amp;</span>client);
+        <span class="self">self</span>.clients.insert(client);
         new_conn
     }
 }
