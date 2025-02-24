@@ -1014,8 +1014,9 @@
         // connection is accepted long before this in the HTTP server, but it is clearer to
         // handle the metric here.
         </span><span class="macro">inc!</span>(Metrics, accepts);
-        <span class="kw">let </span>nc = <span class="self">self</span>.client_counter.update(<span class="self">self</span>.node_id);
-        <span class="macro">inc_by!</span>(Metrics, unique_client_keys, nc);
+        <span class="kw">if </span><span class="self">self</span>.client_counter.update(<span class="self">self</span>.node_id) {
+            <span class="macro">inc!</span>(Metrics, unique_client_keys);
+        }
         <span class="kw">match </span><span class="self">self</span>.run_inner(done).<span class="kw">await </span>{
             <span class="prelude-val">Err</span>(e) =&gt; {
                 <span class="macro">warn!</span>(<span class="string">"actor errored {e:#?}, exiting"</span>);
@@ -1386,12 +1387,11 @@
     }
 
     <span class="doccomment">/// Updates the client counter.
-    </span><span class="kw">fn </span>update(<span class="kw-2">&amp;mut </span><span class="self">self</span>, client: NodeId) -&gt; u64 {
+    </span><span class="kw">fn </span>update(<span class="kw-2">&amp;mut </span><span class="self">self</span>, client: NodeId) -&gt; bool {
         <span class="self">self</span>.check_and_clear();
         <span class="kw">let </span>new_conn = !<span class="self">self</span>.clients.contains_key(<span class="kw-2">&amp;</span>client);
-        <span class="kw">let </span>counter = <span class="self">self</span>.clients.entry(client).or_insert(<span class="number">0</span>);
-        <span class="kw-2">*</span>counter += <span class="number">1</span>;
-        new_conn <span class="kw">as </span>u64
+        <span class="kw">let _ </span>= <span class="self">self</span>.clients.entry(client).or_insert(<span class="number">0</span>);
+        new_conn
     }
 }
 
