@@ -567,8 +567,7 @@ impl Sink<Frame> for RateLimitedRelayedStream {
     }
 }
 
-/// Counts how many `NodeId`s seen, how many times.
-/// Gets reset every day.
+/// Tracks how many unique nodes have been seen during the last day.
 #[derive(Debug)]
 struct ClientCounter {
     clients: HashSet<NodeId>,
@@ -593,12 +592,10 @@ impl ClientCounter {
         }
     }
 
-    /// Updates the client counter.
+    /// Marks this node as seen, returns whether it is new today or not.
     fn update(&mut self, client: NodeId) -> bool {
         self.check_and_clear();
-        let new_conn = !self.clients.contains(&client);
         self.clients.insert(client);
-        new_conn
     }
 }
 
