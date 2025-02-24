@@ -221,8 +221,9 @@ impl Actor {
         // connection is accepted long before this in the HTTP server, but it is clearer to
         // handle the metric here.
         inc!(Metrics, accepts);
-        let nc = self.client_counter.update(self.node_id);
-        inc_by!(Metrics, unique_client_keys, nc);
+        if self.client_counter.update(self.node_id) {
+            inc!(Metrics, unique_client_keys);
+        }
         match self.run_inner(done).await {
             Err(e) => {
                 warn!("actor errored {e:#?}, exiting");
@@ -593,12 +594,11 @@ impl ClientCounter {
     }
 
     /// Updates the client counter.
-    fn update(&mut self, client: NodeId) -> u64 {
+    fn update(&mut self, client: NodeId) -> bool {
         self.check_and_clear();
         let new_conn = !self.clients.contains_key(&client);
-        let counter = self.clients.entry(client).or_insert(0);
-        *counter += 1;
-        new_conn as u64
+        let _ = self.clients.entry(client).or_insert(0);
+        new_conn
     }
 }
 
