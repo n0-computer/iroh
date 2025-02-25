@@ -3095,7 +3095,7 @@ fn bind_with_fallback(mut addr: SocketAddr) -> anyhow::Result<UdpSocket> {
 
     // Otherwise, try binding with port 0
     addr.set_port(0);
-    Ok(UdpSocket::bind_full(addr).context("failed to bind on fallback port")?)
+    UdpSocket::bind_full(addr).context("failed to bind on fallback port")
 }
 
 /// The discovered direct addresses of this [`MagicSock`].
