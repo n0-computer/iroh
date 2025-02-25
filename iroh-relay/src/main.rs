@@ -534,11 +534,11 @@ async fn maybe_load_tls(
 
             let key_reader = rustls_cert_file_reader::FileReader::new(
                 key_path,
-                rustls_cert_file_reader::Format::DER,
+                rustls_cert_file_reader::Format::PEM,
             );
             let certs_reader = rustls_cert_file_reader::FileReader::new(
                 cert_path,
-                rustls_cert_file_reader::Format::DER,
+                rustls_cert_file_reader::Format::PEM,
             );
 
             let loader: CertifiedKeyLoader<
