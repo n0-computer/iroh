@@ -1,7 +1,4 @@
-use std::{
-    net::SocketAddr,
-    time::{Duration, SystemTime},
-};
+use std::{net::SocketAddr, time::SystemTime};
 
 use chrono::Utc;
 use clap::Parser;
@@ -53,7 +50,7 @@ enum Command {
 /// Using an iroh rpc client, create a tag that is marked to expire at `expiry` for all the given hashes.
 ///
 /// The tag name will be `prefix`- followed by the expiry date in iso8601 format (e.g. `expiry-2025-01-01T12:00:00Z`).
-/// 
+///
 async fn create_expiring_tag(
     iroh: &Iroh,
     hashes: Vec<Hash>,
@@ -81,6 +78,8 @@ async fn create_expiring_tag(
 }
 
 async fn delete_expired_tags(iroh: &Iroh, prefix: String) -> anyhow::Result<()> {
+    // todo: use prefix filter once the tags api becomes more rich.
+    // Scan from `prefix-` to `prefix-<now>` and delete all tags that have expired.
     let mut tags = iroh.tags().list().await?;
     let prefix = format!("{}-", prefix);
     let now = chrono::Utc::now();
@@ -102,6 +101,7 @@ async fn delete_expired_tags(iroh: &Iroh, prefix: String) -> anyhow::Result<()> 
             }
         }
     }
+    // todo: use bulk delete once the tags api becomes more rich.
     for tag in to_delete {
         println!("Deleting expired tag {}", tag);
         iroh.tags().delete(tag).await?;
