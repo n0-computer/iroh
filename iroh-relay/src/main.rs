@@ -309,7 +309,14 @@ struct TlsConfig {
     ///
     /// Defaults to the servers' current working directory.
     cert_dir: Option<PathBuf>,
-    /// Path of where to read the certificate from for the `Manual` `cert_mode`.
+    /// The format of the certificate file.
+    ///
+    /// Defaults to `PEM`.
+    ///
+    /// Only used when `cert_mode` is `Reloading`.
+    #[cfg(feature = "server")]
+    cert_format: Option<relay::CertFormat>,
+    /// Path of where to read the certificate from for the `Manual` and `Reloading` `cert_mode`.
     ///
     /// Defaults to `<cert_dir>/default.crt`.
     ///
@@ -370,6 +377,11 @@ impl TlsConfig {
         self.manual_cert_path
             .clone()
             .unwrap_or_else(|| self.cert_dir().join("default.crt"))
+    }
+
+    #[cfg(feature = "server")]
+    fn cert_format(&self) -> relay::CertFormat {
+        self.cert_format.unwrap_or(relay::CertFormat::PEM)
     }
 
     fn key_path(&self) -> PathBuf {
@@ -530,16 +542,14 @@ async fn maybe_load_tls(
 
             let cert_path = tls.cert_path();
             let key_path = tls.key_path();
+            let cert_format = match tls.cert_format() {
+                relay::CertFormat::PEM => rustls_cert_file_reader::Format::PEM,
+                relay::CertFormat::DER => rustls_cert_file_reader::Format::DER,
+            };
             let interval = relay::DEFAULT_CERT_RELOAD_INTERVAL;
 
-            let key_reader = rustls_cert_file_reader::FileReader::new(
-                key_path,
-                rustls_cert_file_reader::Format::PEM,
-            );
-            let certs_reader = rustls_cert_file_reader::FileReader::new(
-                cert_path,
-                rustls_cert_file_reader::Format::PEM,
-            );
+            let key_reader = rustls_cert_file_reader::FileReader::new(key_path, cert_format);
+            let certs_reader = rustls_cert_file_reader::FileReader::new(cert_path, cert_format);
 
             let loader: CertifiedKeyLoader<
                 Dyn,
