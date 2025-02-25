@@ -57,6 +57,7 @@ clap = { version = "4", features = ["derive"], optional = true }
 indicatif = { version = "0.17", features = ["tokio"], optional = true }
 ref-cast = "1.0.23"
 console = { version = "0.15.5", optional = true }
+chrono = { version = "0.4.39", optional = true }
 
 # Documentation tests
 url = { version = "2.5.0", features = ["serde"] }
@@ -66,10 +67,11 @@ default = ["metrics", "fs-store"]
 metrics = ["iroh-metrics", "iroh-blobs/metrics"]
 fs-store = ["iroh-blobs/fs-store"]
 test = []
-examples = ["dep:clap", "dep:indicatif"]
+examples = ["dep:clap", "dep:indicatif", "dep:chrono"]
 discovery-local-network = ["iroh-net/discovery-local-network", "examples", "dep:console"]
 discovery-pkarr-dht = ["iroh-net/discovery-pkarr-dht"]
 test-utils = ["iroh-net/test-utils"]
+chrono = ["dep:chrono"]
 
 [dev-dependencies]
 anyhow = { version = "1" }
@@ -118,3 +120,7 @@ required-features = ["examples"]
 [[example]]
 name = "local-swarm-discovery"
 required-features = ["discovery-local-network"]
+
+[[example]]
+name = "tag-expiry"
+required-features = ["examples"]
