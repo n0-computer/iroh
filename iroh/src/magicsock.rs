@@ -296,9 +296,9 @@ pub(crate) struct SocketState {
     /// Tracks the mapped IP addresses
     ip_mapped_addrs: IpMappedAddresses,
     /// UDP IPv4 socket
-    pconn4: UdpConn,
+    v4: UdpConn,
     /// UDP IPv6 socket
-    pconn6: Option<UdpConn>,
+    v6: Option<UdpConn>,
     /// Cached version of the Ipv4 and Ipv6 addrs of the current connection.
     local_addrs: std::sync::RwLock<(SocketAddr, Option<SocketAddr>)>,
 }
@@ -762,10 +762,10 @@ impl MagicSock {
     #[cfg(not(wasm_browser))]
     fn conn_for_addr(&self, addr: SocketAddr) -> io::Result<&UdpConn> {
         let sock = match addr {
-            SocketAddr::V4(_) => &self.sockets.pconn4,
+            SocketAddr::V4(_) => &self.sockets.v4,
             SocketAddr::V6(_) => self
                 .sockets
-                .pconn6
+                .v6
                 .as_ref()
                 .ok_or(io::Error::new(io::ErrorKind::Other, "no IPv6 connection"))?,
         };
@@ -791,7 +791,7 @@ impl MagicSock {
         // Pending).
         macro_rules! poll_ipv4 {
             () => {
-                match self.sockets.pconn4.poll_recv(cx, bufs, metas)? {
+                match self.sockets.v4.poll_recv(cx, bufs, metas)? {
                     Poll::Pending | Poll::Ready(0) => {}
                     Poll::Ready(n) => {
                         self.process_udp_datagrams(true, &mut bufs[..n], &mut metas[..n]);
@@ -802,8 +802,8 @@ impl MagicSock {
         }
         macro_rules! poll_ipv6 {
             () => {
-                if let Some(ref pconn) = self.sockets.pconn6 {
-                    match pconn.poll_recv(cx, bufs, metas)? {
+                if let Some(ref socket) = self.sockets.v6 {
+                    match socket.poll_recv(cx, bufs, metas)? {
                         Poll::Pending | Poll::Ready(0) => {}
                         Poll::Ready(n) => {
                             self.process_udp_datagrams(false, &mut bufs[..n], &mut metas[..n]);
@@ -1841,12 +1841,12 @@ impl Handle {
             ep: qad_endpoint,
             client_config,
             ipv4: true,
-            ipv6: actor_sockets.pconn6.is_some(),
+            ipv6: actor_sockets.v6.is_some(),
         });
         #[cfg(not(wasm_browser))]
         let net_report_config = net_report::Options::default()
-            .stun_v4(Some(actor_sockets.pconn4.clone()))
-            .stun_v6(actor_sockets.pconn6.clone())
+            .stun_v4(Some(actor_sockets.v4.clone()))
+            .stun_v6(actor_sockets.v6.clone())
             .quic_config(quic_config);
         #[cfg(wasm_browser)]
         let net_report_config = net_report::Options::default();
@@ -2168,13 +2168,9 @@ impl AsyncUdpSocket for MagicSock {
         // connection.  It checks all paths and returns Poll::Ready as soon as any path is
         // ready.
         #[cfg(not(wasm_browser))]
-        let ipv4_poller = self.sockets.pconn4.create_io_poller();
+        let ipv4_poller = self.sockets.v4.create_io_poller();
         #[cfg(not(wasm_browser))]
-        let ipv6_poller = self
-            .sockets
-            .pconn6
-            .as_ref()
-            .map(|sock| sock.create_io_poller());
+        let ipv6_poller = self.sockets.v6.as_ref().map(|sock| sock.create_io_poller());
         let relay_sender = self.relay_datagram_send_channel.clone();
         Box::pin(IoPoller {
             #[cfg(not(wasm_browser))]
@@ -2220,13 +2216,13 @@ impl AsyncUdpSocket for MagicSock {
 
     #[cfg(not(wasm_browser))]
     fn max_transmit_segments(&self) -> usize {
-        if let Some(pconn6) = self.sockets.pconn6.as_ref() {
+        if let Some(socket) = self.sockets.v6.as_ref() {
             std::cmp::min(
-                pconn6.max_transmit_segments(),
-                self.sockets.pconn4.max_transmit_segments(),
+                socket.max_transmit_segments(),
+                self.sockets.v4.max_transmit_segments(),
             )
         } else {
-            self.sockets.pconn4.max_transmit_segments()
+            self.sockets.v4.max_transmit_segments()
         }
     }
 
@@ -2237,7 +2233,7 @@ impl AsyncUdpSocket for MagicSock {
 
     #[cfg(not(wasm_browser))]
     fn max_receive_segments(&self) -> usize {
-        if let Some(pconn6) = self.sockets.pconn6.as_ref() {
+        if let Some(socket) = self.sockets.v6.as_ref() {
             // `max_receive_segments` controls the size of the `RecvMeta` buffer
             // that quinn creates. Having buffers slightly bigger than necessary
             // isn't terrible, and makes sure a single socket can read the maximum
@@ -2245,11 +2241,11 @@ impl AsyncUdpSocket for MagicSock {
             // but we never get data from both sockets at the same time in `poll_recv`
             // and it's impossible and unnecessary to be refactored that way.
             std::cmp::max(
-                pconn6.max_receive_segments(),
-                self.sockets.pconn4.max_receive_segments(),
+                socket.max_receive_segments(),
+                self.sockets.v4.max_receive_segments(),
             )
         } else {
-            self.sockets.pconn4.max_receive_segments()
+            self.sockets.v4.max_receive_segments()
         }
     }
 
@@ -2260,10 +2256,10 @@ impl AsyncUdpSocket for MagicSock {
 
     #[cfg(not(wasm_browser))]
     fn may_fragment(&self) -> bool {
-        if let Some(pconn6) = self.sockets.pconn6.as_ref() {
-            pconn6.may_fragment() || self.sockets.pconn4.may_fragment()
+        if let Some(socket) = self.sockets.v6.as_ref() {
+            socket.may_fragment() || self.sockets.v4.may_fragment()
         } else {
-            self.sockets.pconn4.may_fragment()
+            self.sockets.v4.may_fragment()
         }
     }
 
@@ -2351,20 +2347,20 @@ struct ActorSocketState {
     port_mapper: portmapper::Client,
 
     // The underlying UDP sockets used to send/rcv packets.
-    pconn4: Arc<UdpSocket>,
-    pconn6: Option<Arc<UdpSocket>>,
+    v4: Arc<UdpSocket>,
+    v6: Option<Arc<UdpSocket>>,
 }
 
 #[cfg(not(wasm_browser))]
 impl ActorSocketState {
     fn bind(addr_v4: Option<SocketAddrV4>, addr_v6: Option<SocketAddrV6>) -> Result<Self> {
         let port_mapper = portmapper::Client::default();
-        let (pconn4, pconn6) = Self::bind_sockets(addr_v4, addr_v6)?;
+        let (v4, v6) = Self::bind_sockets(addr_v4, addr_v6)?;
 
         let this = Self {
             port_mapper,
-            pconn4,
-            pconn6,
+            v4,
+            v6,
         };
 
         let port = this.port_v4();
@@ -2382,7 +2378,7 @@ impl ActorSocketState {
 
     /// Returns the ipv4 port, or 0 if `netwatch::UdpSocket::socket_addr` failed.
     fn port_v4(&self) -> u16 {
-        self.pconn4.local_addr().map_or(0, |p| p.port())
+        self.v4.local_addr().map_or(0, |p| p.port())
     }
 
     fn bind_sockets(
@@ -2390,14 +2386,13 @@ impl ActorSocketState {
         addr_v6: Option<SocketAddrV6>,
     ) -> Result<(Arc<UdpSocket>, Option<Arc<UdpSocket>>)> {
         let addr_v4 = addr_v4.unwrap_or_else(|| SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0));
-        let pconn4 =
-            Arc::new(bind_with_fallback(SocketAddr::V4(addr_v4)).context("bind IPv4 failed")?);
+        let v4 = Arc::new(bind_with_fallback(SocketAddr::V4(addr_v4)).context("bind IPv4 failed")?);
 
-        let ip4_port = pconn4.local_addr()?.port();
+        let ip4_port = v4.local_addr()?.port();
         let ip6_port = ip4_port.checked_add(1).unwrap_or(ip4_port - 1);
         let addr_v6 =
             addr_v6.unwrap_or_else(|| SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, ip6_port, 0, 0));
-        let pconn6 = match bind_with_fallback(SocketAddr::V6(addr_v6)) {
+        let v6 = match bind_with_fallback(SocketAddr::V6(addr_v6)) {
             Ok(sock) => Some(Arc::new(sock)),
             Err(err) => {
                 info!("bind ignoring IPv6 bind failure: {:?}", err);
@@ -2405,20 +2400,20 @@ impl ActorSocketState {
             }
         };
 
-        Ok((pconn4, pconn6))
+        Ok((v4, v6))
     }
 
     fn msock_socket_state(&self) -> Result<SocketState> {
         let ip_mapped_addrs = IpMappedAddresses::default();
 
-        let ipv4_addr = self.pconn4.local_addr()?;
-        let ipv6_addr = self.pconn6.as_ref().and_then(|c| c.local_addr().ok());
+        let ipv4_addr = self.v4.local_addr()?;
+        let ipv6_addr = self.v6.as_ref().and_then(|c| c.local_addr().ok());
 
         let socket_state = SocketState {
             port: AtomicU16::new(self.port_v4()),
             local_addrs: std::sync::RwLock::new((ipv4_addr, ipv6_addr)),
-            pconn4: UdpConn::wrap(self.pconn4.clone()),
-            pconn6: self.pconn6.clone().map(UdpConn::wrap),
+            v4: UdpConn::wrap(self.v4.clone()),
+            v6: self.v6.clone().map(UdpConn::wrap),
             ip_mapped_addrs,
         };
 
@@ -2591,11 +2586,11 @@ impl Actor {
         debug!("link change detected: major? {}", is_major);
 
         if is_major {
-            if let Err(err) = self.sockets.pconn4.rebind() {
+            if let Err(err) = self.sockets.v4.rebind() {
                 warn!("failed to rebind Udp IPv4 socket: {:?}", err);
             };
-            if let Some(ref pconn6) = self.sockets.pconn6 {
-                if let Err(err) = pconn6.rebind() {
+            if let Some(ref socket) = self.sockets.v6 {
+                if let Err(err) = socket.rebind() {
                     warn!("failed to rebind Udp IPv6 socket: {:?}", err);
                 };
             }
@@ -2739,12 +2734,8 @@ impl Actor {
             }
         }
 
-        let local_addr_v4 = self.sockets.pconn4.local_addr().ok();
-        let local_addr_v6 = self
-            .sockets
-            .pconn6
-            .as_ref()
-            .and_then(|c| c.local_addr().ok());
+        let local_addr_v4 = self.sockets.v4.local_addr().ok();
+        let local_addr_v6 = self.sockets.v6.as_ref().and_then(|c| c.local_addr().ok());
 
         let is_unspecified_v4 = local_addr_v4
             .map(|a| a.ip().is_unspecified())
@@ -3088,10 +3079,10 @@ fn bind_with_fallback(mut addr: SocketAddr) -> anyhow::Result<UdpSocket> {
 
     // First try binding a preferred port, if specified
     match UdpSocket::bind_full(addr) {
-        Ok(pconn) => {
-            let local_addr = pconn.local_addr().context("UDP socket not bound")?;
+        Ok(socket) => {
+            let local_addr = socket.local_addr().context("UDP socket not bound")?;
             debug!(%addr, %local_addr, "successfully bound");
-            return Ok(pconn);
+            return Ok(socket);
         }
         Err(err) => {
             debug!(%addr, "failed to bind: {err:#}");
