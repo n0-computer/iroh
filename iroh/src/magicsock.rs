@@ -236,9 +236,6 @@ pub(crate) struct MagicSock {
     /// Encryption key for this node.
     secret_encryption_key: crypto_box::SecretKey,
 
-    /// Preferred port from `Options::port`; 0 means auto.
-    port: AtomicU16,
-
     /// Sockets & related state
     #[cfg(not(wasm_browser))]
     sockets: SocketState,
@@ -294,6 +291,8 @@ pub(crate) struct MagicSock {
 #[cfg(not(wasm_browser))]
 #[derive(Debug)]
 pub(crate) struct SocketState {
+    /// Port configured for the ipv4 socket. Can be 0
+    port: AtomicU16,
     /// Tracks the mapped IP addresses
     ip_mapped_addrs: IpMappedAddresses,
     /// UDP IPv4 socket
@@ -1699,9 +1698,6 @@ impl Handle {
     }
 
     async fn with_name(me: String, opts: Options) -> Result<Self> {
-        #[cfg(not(wasm_browser))]
-        let port_mapper = portmapper::Client::default();
-
         let Options {
             addr_v4,
             addr_v6,
@@ -1721,35 +1717,18 @@ impl Handle {
         } = opts;
 
         #[cfg(not(wasm_browser))]
-        let (pconn4, pconn6) = bind(addr_v4, addr_v6)?;
-        #[cfg(not(wasm_browser))]
-        let port = pconn4.local_addr().map_or(0, |p| p.port());
-        #[cfg(wasm_browser)]
-        let port = 0;
-
-        // NOTE: we can end up with a zero port if `std::net::UdpSocket::socket_addr` fails
-        #[cfg(not(wasm_browser))]
-        match port.try_into() {
-            Ok(non_zero_port) => {
-                port_mapper.update_local_port(non_zero_port);
-            }
-            Err(_zero_port) => debug!("Skipping port mapping with zero local port"),
-        }
-        #[cfg(not(wasm_browser))]
-        let ipv4_addr = pconn4.local_addr()?;
-        #[cfg(not(wasm_browser))]
-        let ipv6_addr = pconn6.as_ref().and_then(|c| c.local_addr().ok());
+        let actor_sockets = ActorSocketState::bind(addr_v4, addr_v6)?;
 
         #[cfg(not(wasm_browser))]
-        let ip_mapped_addrs = IpMappedAddresses::default();
+        let sockets = actor_sockets.msock_socket_state()?;
 
         let net_reporter = net_report::Client::new(
             #[cfg(not(wasm_browser))]
-            Some(port_mapper.clone()),
+            Some(actor_sockets.port_mapper.clone()),
             #[cfg(not(wasm_browser))]
             dns_resolver.clone(),
             #[cfg(not(wasm_browser))]
-            Some(ip_mapped_addrs.clone()),
+            Some(sockets.ip_mapped_addrs.clone()),
         )?;
 
         let (actor_sender, actor_receiver) = mpsc::channel(256);
@@ -1769,17 +1748,11 @@ impl Handle {
 
         let msock = Arc::new(MagicSock {
             me,
-            port: AtomicU16::new(port),
             secret_key,
             secret_encryption_key,
             proxy_url,
             #[cfg(not(wasm_browser))]
-            sockets: SocketState {
-                local_addrs: std::sync::RwLock::new((ipv4_addr, ipv6_addr)),
-                pconn4: UdpConn::wrap(pconn4.clone()),
-                pconn6: pconn6.clone().map(UdpConn::wrap),
-                ip_mapped_addrs,
-            },
+            sockets,
             closing: AtomicBool::new(false),
             closed: AtomicBool::new(false),
             relay_datagram_recv_queue: relay_datagram_recv_queue.clone(),
@@ -1868,12 +1841,12 @@ impl Handle {
             ep: qad_endpoint,
             client_config,
             ipv4: true,
-            ipv6: pconn6.is_some(),
+            ipv6: actor_sockets.pconn6.is_some(),
         });
         #[cfg(not(wasm_browser))]
         let net_report_config = net_report::Options::default()
-            .stun_v4(Some(pconn4.clone()))
-            .stun_v6(pconn6.clone())
+            .stun_v4(Some(actor_sockets.pconn4.clone()))
+            .stun_v6(actor_sockets.pconn6.clone())
             .quic_config(quic_config);
         #[cfg(wasm_browser)]
         let net_report_config = net_report::Options::default();
@@ -1890,11 +1863,7 @@ impl Handle {
                     periodic_re_stun_timer: new_re_stun_timer(false),
                     net_info_last: None,
                     #[cfg(not(wasm_browser))]
-                    sockets: ActorSocketState {
-                        port_mapper,
-                        pconn4,
-                        pconn6,
-                    },
+                    sockets: actor_sockets,
                     no_v4_send: false,
                     net_reporter,
                     #[cfg(not(wasm_browser))]
@@ -2386,6 +2355,77 @@ struct ActorSocketState {
     pconn6: Option<Arc<UdpSocket>>,
 }
 
+#[cfg(not(wasm_browser))]
+impl ActorSocketState {
+    fn bind(addr_v4: Option<SocketAddrV4>, addr_v6: Option<SocketAddrV6>) -> Result<Self> {
+        let port_mapper = portmapper::Client::default();
+        let (pconn4, pconn6) = Self::bind_sockets(addr_v4, addr_v6)?;
+
+        let this = Self {
+            port_mapper,
+            pconn4,
+            pconn6,
+        };
+
+        let port = this.port_v4();
+
+        // NOTE: we can end up with a zero port if `netwatch::UdpSocket::socket_addr` fails
+        match port.try_into() {
+            Ok(non_zero_port) => {
+                this.port_mapper.update_local_port(non_zero_port);
+            }
+            Err(_zero_port) => debug!("Skipping port mapping with zero local port"),
+        }
+
+        Ok(this)
+    }
+
+    /// Returns the ipv4 port, or 0 if `netwatch::UdpSocket::socket_addr` failed.
+    fn port_v4(&self) -> u16 {
+        self.pconn4.local_addr().map_or(0, |p| p.port())
+    }
+
+    fn bind_sockets(
+        addr_v4: Option<SocketAddrV4>,
+        addr_v6: Option<SocketAddrV6>,
+    ) -> Result<(Arc<UdpSocket>, Option<Arc<UdpSocket>>)> {
+        let addr_v4 = addr_v4.unwrap_or_else(|| SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0));
+        let pconn4 =
+            Arc::new(bind_with_fallback(SocketAddr::V4(addr_v4)).context("bind IPv4 failed")?);
+
+        let ip4_port = pconn4.local_addr()?.port();
+        let ip6_port = ip4_port.checked_add(1).unwrap_or(ip4_port - 1);
+        let addr_v6 =
+            addr_v6.unwrap_or_else(|| SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, ip6_port, 0, 0));
+        let pconn6 = match bind_with_fallback(SocketAddr::V6(addr_v6)) {
+            Ok(sock) => Some(Arc::new(sock)),
+            Err(err) => {
+                info!("bind ignoring IPv6 bind failure: {:?}", err);
+                None
+            }
+        };
+
+        Ok((pconn4, pconn6))
+    }
+
+    fn msock_socket_state(&self) -> Result<SocketState> {
+        let ip_mapped_addrs = IpMappedAddresses::default();
+
+        let ipv4_addr = self.pconn4.local_addr()?;
+        let ipv6_addr = self.pconn6.as_ref().and_then(|c| c.local_addr().ok());
+
+        let socket_state = SocketState {
+            port: AtomicU16::new(self.port_v4()),
+            local_addrs: std::sync::RwLock::new((ipv4_addr, ipv6_addr)),
+            pconn4: UdpConn::wrap(self.pconn4.clone()),
+            pconn6: self.pconn6.clone().map(UdpConn::wrap),
+            ip_mapped_addrs,
+        };
+
+        Ok(socket_state)
+    }
+}
+
 impl Actor {
     async fn run(mut self) -> Result<()> {
         // Setup network monitoring
@@ -2679,7 +2719,7 @@ impl Actor {
                 // port locally, assume they might've added a static
                 // port mapping on their router to the same explicit
                 // port that we are running with. Worst case it's an invalid candidate mapping.
-                let port = self.msock.port.load(Ordering::Relaxed);
+                let port = self.msock.sockets.port.load(Ordering::Relaxed);
                 if net_report_report
                     .mapping_varies_by_dest_ip
                     .unwrap_or_default()
@@ -3040,30 +3080,6 @@ fn new_re_stun_timer(initial_delay: bool) -> time::Interval {
         );
         time::interval(d)
     }
-}
-
-/// Initial connection setup.
-#[cfg(not(wasm_browser))]
-fn bind(
-    addr_v4: Option<SocketAddrV4>,
-    addr_v6: Option<SocketAddrV6>,
-) -> Result<(Arc<UdpSocket>, Option<Arc<UdpSocket>>)> {
-    let addr_v4 = addr_v4.unwrap_or_else(|| SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0));
-    let pconn4 = Arc::new(bind_with_fallback(SocketAddr::V4(addr_v4)).context("bind IPv4 failed")?);
-
-    let ip4_port = pconn4.local_addr()?.port();
-    let ip6_port = ip4_port.checked_add(1).unwrap_or(ip4_port - 1);
-    let addr_v6 =
-        addr_v6.unwrap_or_else(|| SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, ip6_port, 0, 0));
-    let pconn6 = match bind_with_fallback(SocketAddr::V6(addr_v6)) {
-        Ok(sock) => Some(Arc::new(sock)),
-        Err(err) => {
-            info!("bind ignoring IPv6 bind failure: {:?}", err);
-            None
-        }
-    };
-
-    Ok((pconn4, pconn6))
 }
 
 #[cfg(not(wasm_browser))]
