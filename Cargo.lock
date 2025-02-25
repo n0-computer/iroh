@@ -2295,7 +2295,6 @@ dependencies = [
  "data-encoding",
  "derive_more",
  "ed25519-dalek",
- "getrandom 0.2.15",
  "postcard",
  "proptest",
  "rand 0.8.5",
