@@ -1717,7 +1717,7 @@ impl Handle {
         #[cfg(not(wasm_browser))]
         let (pconn4, pconn6) = bind(addr_v4, addr_v6)?;
         #[cfg(not(wasm_browser))]
-        let port = pconn4.port();
+        let port = pconn4.local_addr().map_or(0, |p| p.port());
         #[cfg(wasm_browser)]
         let port = 0;
 
@@ -1745,11 +1745,6 @@ impl Handle {
             #[cfg(not(wasm_browser))]
             Some(ip_mapped_addrs.clone()),
         )?;
-
-        #[cfg(not(wasm_browser))]
-        let pconn4_sock = pconn4.as_socket();
-        #[cfg(not(wasm_browser))]
-        let pconn6_sock = pconn6.as_ref().map(|p| p.as_socket());
 
         let (actor_sender, actor_receiver) = mpsc::channel(256);
         let (relay_actor_sender, relay_actor_receiver) = mpsc::channel(256);
@@ -1785,9 +1780,9 @@ impl Handle {
             my_relay: Default::default(),
             net_reporter: net_reporter.addr(),
             #[cfg(not(wasm_browser))]
-            pconn4,
+            pconn4: UdpConn::wrap(pconn4.clone()),
             #[cfg(not(wasm_browser))]
-            pconn6,
+            pconn6: pconn6.clone().map(UdpConn::wrap),
             disco_secrets: DiscoSecrets::default(),
             node_map,
             #[cfg(not(wasm_browser))]
@@ -1868,12 +1863,12 @@ impl Handle {
             ep: qad_endpoint,
             client_config,
             ipv4: true,
-            ipv6: pconn6_sock.is_some(),
+            ipv6: pconn6.is_some(),
         });
         #[cfg(not(wasm_browser))]
         let net_report_config = net_report::Options::default()
-            .stun_v4(Some(pconn4_sock.clone()))
-            .stun_v6(pconn6_sock.clone())
+            .stun_v4(Some(pconn4.clone()))
+            .stun_v6(pconn6.clone())
             .quic_config(quic_config);
         #[cfg(wasm_browser)]
         let net_report_config = net_report::Options::default();
@@ -1892,9 +1887,9 @@ impl Handle {
                     #[cfg(not(wasm_browser))]
                     port_mapper,
                     #[cfg(not(wasm_browser))]
-                    pconn4: pconn4_sock,
+                    pconn4,
                     #[cfg(not(wasm_browser))]
-                    pconn6: pconn6_sock,
+                    pconn6,
                     no_v4_send: false,
                     net_reporter,
                     #[cfg(not(wasm_browser))]
@@ -3027,16 +3022,16 @@ fn new_re_stun_timer(initial_delay: bool) -> time::Interval {
 fn bind(
     addr_v4: Option<SocketAddrV4>,
     addr_v6: Option<SocketAddrV6>,
-) -> Result<(UdpConn, Option<UdpConn>)> {
+) -> Result<(Arc<UdpSocket>, Option<Arc<UdpSocket>>)> {
     let addr_v4 = addr_v4.unwrap_or_else(|| SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0));
-    let pconn4 = UdpConn::bind(SocketAddr::V4(addr_v4)).context("bind IPv4 failed")?;
+    let pconn4 = Arc::new(bind_with_fallback(SocketAddr::V4(addr_v4)).context("bind IPv4 failed")?);
 
     let ip4_port = pconn4.local_addr()?.port();
     let ip6_port = ip4_port.checked_add(1).unwrap_or(ip4_port - 1);
     let addr_v6 =
         addr_v6.unwrap_or_else(|| SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, ip6_port, 0, 0));
-    let pconn6 = match UdpConn::bind(SocketAddr::V6(addr_v6)) {
-        Ok(conn) => Some(conn),
+    let pconn6 = match bind_with_fallback(SocketAddr::V6(addr_v6)) {
+        Ok(sock) => Some(Arc::new(sock)),
         Err(err) => {
             info!("bind ignoring IPv6 bind failure: {:?}", err);
             None
@@ -3044,6 +3039,31 @@ fn bind(
     };
 
     Ok((pconn4, pconn6))
+}
+
+#[cfg(not(wasm_browser))]
+fn bind_with_fallback(mut addr: SocketAddr) -> anyhow::Result<UdpSocket> {
+    debug!(%addr, "binding");
+
+    // First try binding a preferred port, if specified
+    match UdpSocket::bind_full(addr) {
+        Ok(pconn) => {
+            let local_addr = pconn.local_addr().context("UDP socket not bound")?;
+            debug!(%addr, %local_addr, "successfully bound");
+            return Ok(pconn);
+        }
+        Err(err) => {
+            debug!(%addr, "failed to bind: {err:#}");
+            // If that was already the fallback port, then error out
+            if addr.port() == 0 {
+                return Err(err.into());
+            }
+        }
+    }
+
+    // Otherwise, try binding with port 0
+    addr.set_port(0);
+    Ok(UdpSocket::bind_full(addr).context("failed to bind on fallback port")?)
 }
 
 /// The discovered direct addresses of this [`MagicSock`].
@@ -4011,7 +4031,7 @@ mod tests {
     async fn test_two_devices_roundtrip_quinn_rebinding_conn() -> Result<()> {
         fn make_conn(addr: SocketAddr) -> anyhow::Result<quinn::Endpoint> {
             let key = SecretKey::generate(rand::thread_rng());
-            let conn = UdpConn::bind(addr)?;
+            let conn = UdpConn::wrap(Arc::new(bind_with_fallback(addr)?));
 
             let quic_server_config = tls::make_server_config(&key, vec![ALPN.to_vec()], false)?;
             let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
