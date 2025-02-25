@@ -25,9 +25,6 @@ rand_core = { version = "0.6.4", optional = true }
 serde = { version = "1", features = ["derive", "rc"] }
 thiserror = { version = "2", optional = true }
 
-# wasm
-getrandom = { version = "0.2", default-features = false, optional = true }
-
 [dev-dependencies]
 postcard = { version = "1", features = ["use-std"] }
 proptest = "1.0.0"
@@ -44,13 +41,11 @@ key = [
   "dep:ed25519-dalek",
   "dep:url",
   "dep:derive_more",
-  "dep:getrandom",
   "dep:thiserror",
   "dep:data-encoding",
   "dep:rand_core",
   "relay",
 ]
-wasm = ["getrandom?/js"]
 relay = [
   "dep:url",
   "dep:derive_more",
