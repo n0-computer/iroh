@@ -7784,7 +7784,7 @@
 
     <span class="comment">// Otherwise, try binding with port 0
     </span>addr.set_port(<span class="number">0</span>);
-    <span class="prelude-val">Ok</span>(UdpSocket::bind_full(addr).context(<span class="string">"failed to bind on fallback port"</span>)<span class="question-mark">?</span>)
+    UdpSocket::bind_full(addr).context(<span class="string">"failed to bind on fallback port"</span>)
 }
 
 <span class="doccomment">/// The discovered direct addresses of this [`MagicSock`].
