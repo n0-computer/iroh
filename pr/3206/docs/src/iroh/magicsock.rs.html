@@ -4677,7 +4677,8 @@
 <a href="#4676" id="4676">4676</a>
 <a href="#4677" id="4677">4677</a>
 <a href="#4678" id="4678">4678</a>
-<a href="#4679" id="4679">4679</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4679" id="4679">4679</a>
+<a href="#4680" id="4680">4680</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4721,8 +4722,9 @@
     time::{<span class="self">self</span>, Duration, Instant},
     FutureExt, StreamExt,
 };
+<span class="kw">use </span>net_report::IpMappedAddresses;
 <span class="attr">#[cfg(not(wasm_browser))]
-</span><span class="kw">use </span>net_report::{IpMappedAddr, IpMappedAddresses, QuicConfig};
+</span><span class="kw">use </span>net_report::{IpMappedAddr, QuicConfig};
 <span class="kw">use </span>netwatch::{interfaces, netmon};
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">use </span>netwatch::{ip::LocalAddresses, UdpSocket};
@@ -4933,6 +4935,8 @@
     </span>my_relay: Watchable&lt;<span class="prelude-ty">Option</span>&lt;RelayUrl&gt;&gt;,
     <span class="doccomment">/// Tracks the networkmap node entity for each node discovery key.
     </span>node_map: NodeMap,
+    <span class="doccomment">/// Tracks the mapped IP addresses
+    </span>ip_mapped_addrs: IpMappedAddresses,
     <span class="doccomment">/// NetReport client
     </span>net_reporter: net_report::Addr,
     <span class="doccomment">/// The state for an active DiscoKey.
@@ -4973,8 +4977,6 @@
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>SocketState {
     <span class="doccomment">/// Port configured for the ipv4 socket. Can be 0
     </span>port: AtomicU16,
-    <span class="doccomment">/// Tracks the mapped IP addresses
-    </span>ip_mapped_addrs: IpMappedAddresses,
     <span class="doccomment">/// UDP IPv4 socket
     </span>v4: UdpConn,
     <span class="doccomment">/// UDP IPv6 socket
@@ -5341,7 +5343,7 @@
                 </span><span class="kw">let </span><span class="kw-2">mut </span>transmit = transmit.clone();
 
                 <span class="comment">// Get the socket addr
-                </span><span class="kw">match </span><span class="self">self</span>.sockets.ip_mapped_addrs.get_ip_addr(<span class="kw-2">&amp;</span>dest) {
+                </span><span class="kw">match </span><span class="self">self</span>.ip_mapped_addrs.get_ip_addr(<span class="kw-2">&amp;</span>dest) {
                     <span class="prelude-val">Some</span>(addr) =&gt; {
                         <span class="comment">// rewrite target address
                         </span>transmit.destination = addr;
@@ -5628,7 +5630,7 @@
                     <span class="prelude-val">None </span>=&gt; {
                         <span class="comment">// Check if this address is mapped to an IpMappedAddr
                         </span><span class="kw">if let </span><span class="prelude-val">Some</span>(ip_mapped_addr) =
-                            <span class="self">self</span>.sockets.ip_mapped_addrs.get_mapped_addr(<span class="kw-2">&amp;</span>meta.addr)
+                            <span class="self">self</span>.ip_mapped_addrs.get_mapped_addr(<span class="kw-2">&amp;</span>meta.addr)
                         {
                             <span class="macro">trace!</span>(
                                 src = <span class="question-mark">?</span>meta.addr,
@@ -6402,13 +6404,15 @@
         <span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">let </span>sockets = actor_sockets.msock_socket_state()<span class="question-mark">?</span>;
 
+        <span class="kw">let </span>ip_mapped_addrs = IpMappedAddresses::default();
+
         <span class="kw">let </span>net_reporter = net_report::Client::new(
             <span class="attr">#[cfg(not(wasm_browser))]
             </span><span class="prelude-val">Some</span>(actor_sockets.port_mapper.clone()),
             <span class="attr">#[cfg(not(wasm_browser))]
             </span>dns_resolver.clone(),
             <span class="attr">#[cfg(not(wasm_browser))]
-            </span><span class="prelude-val">Some</span>(sockets.ip_mapped_addrs.clone()),
+            </span><span class="prelude-val">Some</span>(ip_mapped_addrs.clone()),
         )<span class="question-mark">?</span>;
 
         <span class="kw">let </span>(actor_sender, actor_receiver) = mpsc::channel(<span class="number">256</span>);
@@ -6445,6 +6449,7 @@
             net_reporter: net_reporter.addr(),
             disco_secrets: DiscoSecrets::default(),
             node_map,
+            ip_mapped_addrs,
             udp_disco_sender,
             discovery,
             discovery_user_data: RwLock::new(discovery_user_data),
@@ -7081,8 +7086,6 @@
     }
 
     <span class="kw">fn </span>msock_socket_state(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;SocketState&gt; {
-        <span class="kw">let </span>ip_mapped_addrs = IpMappedAddresses::default();
-
         <span class="kw">let </span>ipv4_addr = <span class="self">self</span>.v4.local_addr()<span class="question-mark">?</span>;
         <span class="kw">let </span>ipv6_addr = <span class="self">self</span>.v6.as_ref().and_then(|c| c.local_addr().ok());
 
@@ -7091,7 +7094,6 @@
             local_addrs: std::sync::RwLock::new((ipv4_addr, ipv6_addr)),
             v4: UdpConn::wrap(<span class="self">self</span>.v4.clone()),
             v6: <span class="self">self</span>.v6.clone().map(UdpConn::wrap),
-            ip_mapped_addrs,
         };
 
         <span class="prelude-val">Ok</span>(socket_state)

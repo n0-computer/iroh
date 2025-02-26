@@ -1392,9 +1392,7 @@
 <a href="#1391" id="1391">1391</a>
 <a href="#1392" id="1392">1392</a>
 <a href="#1393" id="1393">1393</a>
-<a href="#1394" id="1394">1394</a>
-<a href="#1395" id="1395">1395</a>
-<a href="#1396" id="1396">1396</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
+<a href="#1394" id="1394">1394</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
 //!
 //! NetReport is responsible for finding out the network conditions of the current host, like
 //! whether it is connected to the internet via IPv4 and/or IPv6, what the NAT situation is
@@ -1433,8 +1431,7 @@
 <span class="kw">mod </span>defaults;
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">mod </span>dns;
-<span class="attr">#[cfg(not(wasm_browser))]
-</span><span class="kw">mod </span>ip_mapped_addrs;
+<span class="kw">mod </span>ip_mapped_addrs;
 <span class="kw">mod </span>metrics;
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">mod </span>ping;
@@ -1461,8 +1458,7 @@
     }
 }
 
-<span class="attr">#[cfg(not(wasm_browser))]
-</span><span class="kw">pub use </span>ip_mapped_addrs::{IpMappedAddr, IpMappedAddrError, IpMappedAddresses, MAPPED_ADDR_PORT};
+<span class="kw">pub use </span>ip_mapped_addrs::{IpMappedAddr, IpMappedAddrError, IpMappedAddresses, MAPPED_ADDR_PORT};
 <span class="kw">pub use </span>metrics::Metrics;
 <span class="kw">pub use </span>options::Options;
 <span class="kw">pub use </span>reportgen::QuicConfig;
