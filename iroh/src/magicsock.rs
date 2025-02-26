@@ -2573,17 +2573,17 @@ impl Actor {
 
         if is_major {
             #[cfg(not(wasm_browser))]
-            if let Err(err) = self.sockets.v4.rebind() {
-                warn!("failed to rebind Udp IPv4 socket: {:?}", err);
-            };
-            #[cfg(not(wasm_browser))]
-            if let Some(ref socket) = self.sockets.v6 {
-                if let Err(err) = socket.rebind() {
-                    warn!("failed to rebind Udp IPv6 socket: {:?}", err);
+            {
+                if let Err(err) = self.sockets.v4.rebind() {
+                    warn!("failed to rebind Udp IPv4 socket: {:?}", err);
                 };
+                if let Some(ref socket) = self.sockets.v6 {
+                    if let Err(err) = socket.rebind() {
+                        warn!("failed to rebind Udp IPv6 socket: {:?}", err);
+                    };
+                }
+                self.msock.dns_resolver.clear_cache();
             }
-            #[cfg(not(wasm_browser))]
-            let _ = self.msock.dns_resolver.clear_cache();
             self.msock.re_stun("link-change-major");
             self.close_stale_relay_connections().await;
             self.reset_endpoint_states();
