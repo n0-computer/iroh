@@ -42,7 +42,7 @@ url = { version = "2.4" }
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
 hickory-resolver = "=0.25.0-alpha.5"
 netwatch = { version = "0.3" }
-portmapper = { version = "0.3", default-features = false }
+portmapper = { version = "0.4", default-features = false }
 surge-ping = "0.8.0"
 
 [dev-dependencies]

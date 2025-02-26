@@ -2242,7 +2242,7 @@ dependencies = [
  "indicatif",
  "instant",
  "iroh-base",
- "iroh-metrics 0.32.0",
+ "iroh-metrics",
  "iroh-net-report",
  "iroh-quinn",
  "iroh-quinn-proto",
@@ -2316,7 +2316,7 @@ dependencies = [
  "clap",
  "hdrhistogram",
  "iroh",
- "iroh-metrics 0.32.0",
+ "iroh-metrics",
  "iroh-quinn",
  "n0-future",
  "rcgen",
@@ -2346,7 +2346,7 @@ dependencies = [
  "http 1.2.0",
  "humantime-serde",
  "iroh",
- "iroh-metrics 0.32.0",
+ "iroh-metrics",
  "lru",
  "n0-future",
  "pkarr",
@@ -2379,25 +2379,6 @@ dependencies = [
 
 [[package]]
 name = "iroh-metrics"
-version = "0.31.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "571d177e20f0848a643a2c0f662be0e08968f8743b0776941f83a2152b87a180"
-dependencies = [
- "erased_set",
- "http-body-util",
- "hyper",
- "hyper-util",
- "prometheus-client",
- "reqwest",
- "serde",
- "struct_iterable",
- "thiserror 2.0.11",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "iroh-metrics"
 version = "0.32.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c0f7cd1ffe3b152a5f4f4c1880e01e07d96001f20e02cc143cb7842987c616b3"
@@ -2426,7 +2407,7 @@ dependencies = [
  "futures-lite",
  "hickory-resolver",
  "iroh-base",
- "iroh-metrics 0.32.0",
+ "iroh-metrics",
  "iroh-quinn",
  "iroh-relay",
  "n0-future",
@@ -2521,7 +2502,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "iroh-base",
- "iroh-metrics 0.32.0",
+ "iroh-metrics",
  "iroh-quinn",
  "iroh-quinn-proto",
  "lru",
@@ -3440,18 +3421,17 @@ checksum = "280dc24453071f1b63954171985a0b0d30058d287960968b9b2aca264c8d4ee6"
 
 [[package]]
 name = "portmapper"
-version = "0.3.1"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5469b29e6ce2a27bfc9382720b5f0768993afec9e53b133d8248c8b09406156a"
+checksum = "b715da165f399be093fecb2ca774b00713a3b32f6b27e0752fbf255e3be622af"
 dependencies = [
- "anyhow",
  "base64",
  "bytes",
  "derive_more",
  "futures-lite",
  "futures-util",
  "igd-next",
- "iroh-metrics 0.31.0",
+ "iroh-metrics",
  "libc",
  "netwatch",
  "num_enum",

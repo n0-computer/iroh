@@ -103,7 +103,7 @@ parse-size = { version = "=1.0.0", optional = true } # pinned version to avoid b
 hickory-resolver = { version = "=0.25.0-alpha.5" }
 igd-next = { version = "0.15.1", features = ["aio_tokio"] }
 netdev = { version = "0.31.0" }
-portmapper = { version = "0.3", default-features = false }
+portmapper = { version = "0.4", default-features = false }
 quinn = { package = "iroh-quinn", version = "0.13.0", default-features = false, features = ["platform-verifier", "runtime-tokio", "rustls-ring"] }
 tokio = { version = "1", features = [
     "io-util",
