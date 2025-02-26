@@ -7698,7 +7698,6 @@
     /// will error out soon enough.  Closing them eagerly speeds this up however and allows
     /// re-establishing a relay connection faster.
     </span><span class="kw">async fn </span>close_stale_relay_connections(<span class="kw-2">&amp;</span><span class="self">self</span>) {
-        <span class="macro">tracing::warn!</span>(<span class="string">"Closing stale relay connections"</span>);
         <span class="kw">let </span>ifs = interfaces::State::new().<span class="kw">await</span>;
         <span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">let </span>local_ips = ifs
@@ -7707,7 +7706,8 @@
             .flat_map(|netif| netif.addrs())
             .map(|ipnet| ipnet.addr())
             .collect();
-        <span class="attr">#[cfg(wasm_browser)]
+        <span class="comment">// In browsers, we don't have this information. This will do the right thing in the ActiveRelayActor, though.
+        </span><span class="attr">#[cfg(wasm_browser)]
         </span><span class="kw">let </span>local_ips = Vec::new();
         <span class="self">self</span>.send_relay_actor(RelayActorMessage::MaybeCloseRelaysOnRebind(local_ips));
     }
