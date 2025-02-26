@@ -2242,7 +2242,7 @@ dependencies = [
  "indicatif",
  "instant",
  "iroh-base",
- "iroh-metrics",
+ "iroh-metrics 0.32.0",
  "iroh-net-report",
  "iroh-quinn",
  "iroh-quinn-proto",
@@ -2316,7 +2316,7 @@ dependencies = [
  "clap",
  "hdrhistogram",
  "iroh",
- "iroh-metrics",
+ "iroh-metrics 0.32.0",
  "iroh-quinn",
  "n0-future",
  "rcgen",
@@ -2346,7 +2346,7 @@ dependencies = [
  "http 1.2.0",
  "humantime-serde",
  "iroh",
- "iroh-metrics",
+ "iroh-metrics 0.32.0",
  "lru",
  "n0-future",
  "pkarr",
@@ -2380,7 +2380,27 @@ dependencies = [
 [[package]]
 name = "iroh-metrics"
 version = "0.31.0"
-source = "git+https://github.com/n0-computer/iroh-metrics.git?branch=main#e80bf592da22ae85499cfaf0fdf7877d02cee4f7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "571d177e20f0848a643a2c0f662be0e08968f8743b0776941f83a2152b87a180"
+dependencies = [
+ "erased_set",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "prometheus-client",
+ "reqwest",
+ "serde",
+ "struct_iterable",
+ "thiserror 2.0.11",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "iroh-metrics"
+version = "0.32.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c0f7cd1ffe3b152a5f4f4c1880e01e07d96001f20e02cc143cb7842987c616b3"
 dependencies = [
  "erased_set",
  "http-body-util",
@@ -2406,7 +2426,7 @@ dependencies = [
  "futures-lite",
  "hickory-resolver",
  "iroh-base",
- "iroh-metrics",
+ "iroh-metrics 0.32.0",
  "iroh-quinn",
  "iroh-relay",
  "n0-future",
@@ -2501,7 +2521,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "iroh-base",
- "iroh-metrics",
+ "iroh-metrics 0.32.0",
  "iroh-quinn",
  "iroh-quinn-proto",
  "lru",
@@ -3431,7 +3451,7 @@ dependencies = [
  "futures-lite",
  "futures-util",
  "igd-next",
- "iroh-metrics",
+ "iroh-metrics 0.31.0",
  "libc",
  "netwatch",
  "num_enum",
