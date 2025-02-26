@@ -66,7 +66,7 @@ pub mod portmapper {
 }
 
 #[cfg(not(wasm_browser))]
-pub use ip_mapped_addrs::{IpMappedAddr, IpMappedAddrError, IpMappedAddresses, MAPPED_ADDR_PORT};
+pub use ip_mapped_addrs::{IpMappedAddr, IpMappedAddrError, IpMappedAddresses};
 pub use metrics::Metrics;
 pub use options::Options;
 pub use reportgen::QuicConfig;
