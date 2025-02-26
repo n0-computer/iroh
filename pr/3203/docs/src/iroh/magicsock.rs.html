@@ -4687,7 +4687,8 @@
 <a href="#4686" id="4686">4686</a>
 <a href="#4687" id="4687">4687</a>
 <a href="#4688" id="4688">4688</a>
-<a href="#4689" id="4689">4689</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4689" id="4689">4689</a>
+<a href="#4690" id="4690">4690</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4731,8 +4732,9 @@
     time::{<span class="self">self</span>, Duration, Instant},
     FutureExt, StreamExt,
 };
+<span class="kw">use </span>net_report::IpMappedAddresses;
 <span class="attr">#[cfg(not(wasm_browser))]
-</span><span class="kw">use </span>net_report::{IpMappedAddr, IpMappedAddresses, QuicConfig};
+</span><span class="kw">use </span>net_report::{IpMappedAddr, QuicConfig};
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">use </span>netwatch::{interfaces, ip::LocalAddresses, netmon, UdpSocket};
 <span class="kw">use </span>quinn::{AsyncUdpSocket, ServerConfig};
