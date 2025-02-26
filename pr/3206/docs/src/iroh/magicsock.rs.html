@@ -7251,17 +7251,17 @@
 
         <span class="kw">if </span>is_major {
             <span class="attr">#[cfg(not(wasm_browser))]
-            </span><span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.sockets.v4.rebind() {
-                <span class="macro">warn!</span>(<span class="string">"failed to rebind Udp IPv4 socket: {:?}"</span>, err);
-            };
-            <span class="attr">#[cfg(not(wasm_browser))]
-            </span><span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>socket) = <span class="self">self</span>.sockets.v6 {
-                <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = socket.rebind() {
-                    <span class="macro">warn!</span>(<span class="string">"failed to rebind Udp IPv6 socket: {:?}"</span>, err);
+            </span>{
+                <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.sockets.v4.rebind() {
+                    <span class="macro">warn!</span>(<span class="string">"failed to rebind Udp IPv4 socket: {:?}"</span>, err);
                 };
+                <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>socket) = <span class="self">self</span>.sockets.v6 {
+                    <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = socket.rebind() {
+                        <span class="macro">warn!</span>(<span class="string">"failed to rebind Udp IPv6 socket: {:?}"</span>, err);
+                    };
+                }
+                <span class="self">self</span>.msock.dns_resolver.clear_cache();
             }
-            <span class="attr">#[cfg(not(wasm_browser))]
-            </span><span class="kw">let _ </span>= <span class="self">self</span>.msock.dns_resolver.clear_cache();
             <span class="self">self</span>.msock.re_stun(<span class="string">"link-change-major"</span>);
             <span class="self">self</span>.close_stale_relay_connections().<span class="kw">await</span>;
             <span class="self">self</span>.reset_endpoint_states();
