@@ -990,7 +990,7 @@ impl NodeState {
 
         for peer_sockaddr in &m.my_numbers {
             if let IpAddr::V6(ip) = peer_sockaddr.ip() {
-                if is_unicast_link_local(ip) {
+                if netwatch::ip::is_unicast_link_local(ip) {
                     // We send these out, but ignore them for now.
                     // TODO: teach the ping code to ping on all interfaces for these.
                     continue;
@@ -1438,12 +1438,6 @@ pub enum ConnectionType {
     #[default]
     #[display("none")]
     None,
-}
-
-/// Returns true if the address is a unicast address with link-local scope, as defined in RFC 4291.
-// Copied from std lib, not stable yet
-pub const fn is_unicast_link_local(addr: std::net::Ipv6Addr) -> bool {
-    (addr.segments()[0] & 0xffc0) == 0xfe80
 }
 
 #[cfg(test)]

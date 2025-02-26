@@ -152,6 +152,7 @@ server = [
     "quinn/log",
     "quinn/platform-verifier",
     "quinn/runtime-tokio",
+    "iroh-metrics/service",
 ]
 metrics = ["iroh-metrics/metrics"]
 test-utils = []

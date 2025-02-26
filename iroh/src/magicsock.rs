@@ -45,8 +45,9 @@ use n0_future::{
 use net_report::IpMappedAddresses;
 #[cfg(not(wasm_browser))]
 use net_report::{IpMappedAddr, QuicConfig};
+use netwatch::{interfaces, netmon};
 #[cfg(not(wasm_browser))]
-use netwatch::{interfaces, ip::LocalAddresses, netmon, UdpSocket};
+use netwatch::{ip::LocalAddresses, UdpSocket};
 use quinn::{AsyncUdpSocket, ServerConfig};
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use relay_actor::RelaySendItem;
@@ -1825,7 +1826,6 @@ impl Handle {
             }
         });
 
-        #[cfg(not(wasm_browser))]
         let network_monitor = netmon::Monitor::new().await?;
         let qad_endpoint = endpoint.clone();
 
@@ -1870,7 +1870,6 @@ impl Handle {
                     sockets: actor_sockets,
                     no_v4_send: false,
                     net_reporter,
-                    #[cfg(not(wasm_browser))]
                     network_monitor,
                     net_report_config,
                 };
@@ -2338,7 +2337,6 @@ struct Actor {
     /// The prober that discovers local network conditions, including the closest relay relay and NAT mappings.
     net_reporter: net_report::Client,
 
-    #[cfg(not(wasm_browser))]
     network_monitor: netmon::Monitor,
 }
 
@@ -2425,9 +2423,7 @@ impl ActorSocketState {
 impl Actor {
     async fn run(mut self) -> Result<()> {
         // Setup network monitoring
-        #[cfg(not(wasm_browser))]
         let (link_change_s, mut link_change_r) = mpsc::channel(8);
-        #[cfg(not(wasm_browser))]
         let _token = self
             .network_monitor
             .subscribe(move |is_major| {
@@ -2472,11 +2468,6 @@ impl Actor {
             let direct_addr_heartbeat_timer_tick = direct_addr_heartbeat_timer.tick();
             #[cfg(wasm_browser)]
             let direct_addr_heartbeat_timer_tick = n0_future::future::pending();
-
-            #[cfg(not(wasm_browser))]
-            let link_change_r_recv = link_change_r.recv();
-            #[cfg(wasm_browser)]
-            let link_change_r_recv = n0_future::future::pending();
 
             tokio::select! {
                 msg = self.msg_receiver.recv(), if !receiver_closed => {
@@ -2542,23 +2533,18 @@ impl Actor {
                         self.refresh_direct_addrs(reason).await;
                     }
                 }
-                is_major = link_change_r_recv, if !link_change_closed => {
-                    #[cfg(not(wasm_browser))]
-                    {
-                        let Some(is_major) = is_major else {
-                            trace!("tick: link change receiver closed");
-                            inc!(Metrics, actor_tick_other);
+                is_major = link_change_r.recv(), if !link_change_closed => {
+                    let Some(is_major) = is_major else {
+                        trace!("tick: link change receiver closed");
+                        inc!(Metrics, actor_tick_other);
 
-                            link_change_closed = true;
-                            continue;
-                        };
+                        link_change_closed = true;
+                        continue;
+                    };
 
-                        trace!("tick: link change {}", is_major);
-                        inc!(Metrics, actor_link_change);
-                        self.handle_network_change(is_major).await;
-                    }
-                    #[cfg(wasm_browser)]
-                    let _unused_in_browsers = is_major;
+                    trace!("tick: link change {}", is_major);
+                    inc!(Metrics, actor_link_change);
+                    self.handle_network_change(is_major).await;
                 }
                 // Even if `discovery_events` yields `None`, it could begin to yield
                 // `Some` again in the future, so we don't want to disable this branch
@@ -2582,20 +2568,22 @@ impl Actor {
         }
     }
 
-    #[cfg(not(wasm_browser))]
     async fn handle_network_change(&mut self, is_major: bool) {
         debug!("link change detected: major? {}", is_major);
 
         if is_major {
+            #[cfg(not(wasm_browser))]
             if let Err(err) = self.sockets.v4.rebind() {
                 warn!("failed to rebind Udp IPv4 socket: {:?}", err);
             };
+            #[cfg(not(wasm_browser))]
             if let Some(ref socket) = self.sockets.v6 {
                 if let Err(err) = socket.rebind() {
                     warn!("failed to rebind Udp IPv6 socket: {:?}", err);
                 };
             }
-            self.msock.dns_resolver.clear_cache();
+            #[cfg(not(wasm_browser))]
+            let _ = self.msock.dns_resolver.clear_cache();
             self.msock.re_stun("link-change-major");
             self.close_stale_relay_connections().await;
             self.reset_endpoint_states();
@@ -2649,7 +2637,6 @@ impl Actor {
                 self.finalize_direct_addrs_update(why);
             }
             ActorMessage::NetworkChange => {
-                #[cfg(not(wasm_browser))]
                 self.network_monitor.network_change().await.ok();
             }
             #[cfg(test)]
@@ -3032,15 +3019,18 @@ impl Actor {
     /// The relay connections who's local endpoints no longer exist after a network change
     /// will error out soon enough.  Closing them eagerly speeds this up however and allows
     /// re-establishing a relay connection faster.
-    #[cfg(not(wasm_browser))]
     async fn close_stale_relay_connections(&self) {
         let ifs = interfaces::State::new().await;
+        #[cfg(not(wasm_browser))]
         let local_ips = ifs
             .interfaces
             .values()
             .flat_map(|netif| netif.addrs())
             .map(|ipnet| ipnet.addr())
             .collect();
+        // In browsers, we don't have this information. This will do the right thing in the ActiveRelayActor, though.
+        #[cfg(wasm_browser)]
+        let local_ips = Vec::new();
         self.send_relay_actor(RelayActorMessage::MaybeCloseRelaysOnRebind(local_ips));
     }
 

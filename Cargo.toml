@@ -41,3 +41,7 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(iroh_docsrs)", "cfg(iroh_l
 
 [workspace.lints.clippy]
 unused-async = "warn"
+
+[patch.crates-io]
+netwatch = { git = "https://github.com/n0-computer/net-tools.git", branch = "matheus23/netwatch-wasm" }
+iroh-metrics = { git = "https://github.com/n0-computer/iroh-metrics.git", branch = "main" }

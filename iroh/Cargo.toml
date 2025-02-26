@@ -43,6 +43,7 @@ http = "1"
 iroh-base = { version = "0.33.0", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
 iroh-relay = { version = "0.33", path = "../iroh-relay", default-features = false }
 n0-future = "0.1.2"
+netwatch = { version = "0.3" }
 pin-project = "1"
 pkarr = { version = "2", default-features = false, features = [
     "async",
@@ -102,7 +103,6 @@ parse-size = { version = "=1.0.0", optional = true } # pinned version to avoid b
 hickory-resolver = { version = "=0.25.0-alpha.5" }
 igd-next = { version = "0.15.1", features = ["aio_tokio"] }
 netdev = { version = "0.31.0" }
-netwatch = { version = "0.3" }
 portmapper = { version = "0.3", default-features = false }
 quinn = { package = "iroh-quinn", version = "0.13.0", default-features = false, features = ["platform-verifier", "runtime-tokio", "rustls-ring"] }
 tokio = { version = "1", features = [
