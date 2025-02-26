@@ -42,8 +42,9 @@ use n0_future::{
     time::{self, Duration, Instant},
     FutureExt, StreamExt,
 };
+use net_report::IpMappedAddresses;
 #[cfg(not(wasm_browser))]
-use net_report::{IpMappedAddr, IpMappedAddresses, QuicConfig};
+use net_report::{IpMappedAddr, QuicConfig};
 #[cfg(not(wasm_browser))]
 use netwatch::{interfaces, ip::LocalAddresses, netmon, UdpSocket};
 use quinn::{AsyncUdpSocket, ServerConfig};
@@ -253,6 +254,8 @@ pub(crate) struct MagicSock {
     my_relay: Watchable<Option<RelayUrl>>,
     /// Tracks the networkmap node entity for each node discovery key.
     node_map: NodeMap,
+    /// Tracks the mapped IP addresses
+    ip_mapped_addrs: IpMappedAddresses,
     /// NetReport client
     net_reporter: net_report::Addr,
     /// The state for an active DiscoKey.
@@ -293,8 +296,6 @@ pub(crate) struct MagicSock {
 pub(crate) struct SocketState {
     /// Port configured for the ipv4 socket. Can be 0
     port: AtomicU16,
-    /// Tracks the mapped IP addresses
-    ip_mapped_addrs: IpMappedAddresses,
     /// UDP IPv4 socket
     v4: UdpConn,
     /// UDP IPv6 socket
@@ -661,7 +662,7 @@ impl MagicSock {
                 let mut transmit = transmit.clone();
 
                 // Get the socket addr
-                match self.sockets.ip_mapped_addrs.get_ip_addr(&dest) {
+                match self.ip_mapped_addrs.get_ip_addr(&dest) {
                     Some(addr) => {
                         // rewrite target address
                         transmit.destination = addr;
@@ -948,7 +949,7 @@ impl MagicSock {
                     None => {
                         // Check if this address is mapped to an IpMappedAddr
                         if let Some(ip_mapped_addr) =
-                            self.sockets.ip_mapped_addrs.get_mapped_addr(&meta.addr)
+                            self.ip_mapped_addrs.get_mapped_addr(&meta.addr)
                         {
                             trace!(
                                 src = ?meta.addr,
@@ -1722,13 +1723,15 @@ impl Handle {
         #[cfg(not(wasm_browser))]
         let sockets = actor_sockets.msock_socket_state()?;
 
+        let ip_mapped_addrs = IpMappedAddresses::default();
+
         let net_reporter = net_report::Client::new(
             #[cfg(not(wasm_browser))]
             Some(actor_sockets.port_mapper.clone()),
             #[cfg(not(wasm_browser))]
             dns_resolver.clone(),
             #[cfg(not(wasm_browser))]
-            Some(sockets.ip_mapped_addrs.clone()),
+            Some(ip_mapped_addrs.clone()),
         )?;
 
         let (actor_sender, actor_receiver) = mpsc::channel(256);
@@ -1765,6 +1768,7 @@ impl Handle {
             net_reporter: net_reporter.addr(),
             disco_secrets: DiscoSecrets::default(),
             node_map,
+            ip_mapped_addrs,
             udp_disco_sender,
             discovery,
             discovery_user_data: RwLock::new(discovery_user_data),
@@ -2404,8 +2408,6 @@ impl ActorSocketState {
     }
 
     fn msock_socket_state(&self) -> Result<SocketState> {
-        let ip_mapped_addrs = IpMappedAddresses::default();
-
         let ipv4_addr = self.v4.local_addr()?;
         let ipv6_addr = self.v6.as_ref().and_then(|c| c.local_addr().ok());
 
@@ -2414,7 +2416,6 @@ impl ActorSocketState {
             local_addrs: std::sync::RwLock::new((ipv4_addr, ipv6_addr)),
             v4: UdpConn::wrap(self.v4.clone()),
             v6: self.v6.clone().map(UdpConn::wrap),
-            ip_mapped_addrs,
         };
 
         Ok(socket_state)
