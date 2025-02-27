@@ -175,11 +175,11 @@ impl LocalSwarmDiscovery {
                         for addr in addrs {
                             discovery.add(addr.0, addr.1)
                         }
-                        if let Some(user_data) = data.user_data() {
-                            if let Err(err) = discovery.set_txt_attribute(USER_DATA_ATTRIBUTE.to_string(), Some(user_data.to_string())) {
-                                warn!("Failed to set the user-defined data in local swarm discovery: {err:?}");
-                            }
-                        }
+                        // if let Some(user_data) = data.user_data() {
+                        //     if let Err(err) = discovery.set_txt_attribute(USER_DATA_ATTRIBUTE.to_string(), Some(user_data.to_string())) {
+                        //         warn!("Failed to set the user-defined data in local swarm discovery: {err:?}");
+                        //     }
+                        // }
                         continue;
                     }
                 };
@@ -357,22 +357,23 @@ fn peer_to_discovery_item(peer: &Peer, node_id: &NodeId) -> DiscoveryItem {
         .iter()
         .map(|(ip, port)| SocketAddr::new(*ip, *port))
         .collect();
-    // Get the user-defined data from the resolved peer info. We expect an attribute with a value
-    // that parses as `UserData`. Otherwise, omit.
-    let user_data = if let Some(Some(user_data)) = peer.txt_attribute(USER_DATA_ATTRIBUTE) {
-        match user_data.parse() {
-            Err(err) => {
-                debug!("failed to parse user data from TXT attribute: {err}");
-                None
-            }
-            Ok(data) => Some(data),
-        }
-    } else {
-        None
-    };
-    let node_info = NodeInfo::new(*node_id)
-        .with_direct_addresses(direct_addresses)
-        .with_user_data(user_data);
+    // // Get the user-defined data from the resolved peer info. We expect an attribute with a value
+    // // that parses as `UserData`. Otherwise, omit.
+    // let user_data = if let Some(Some(user_data)) = peer.txt_attribute(USER_DATA_ATTRIBUTE) {
+    //     match user_data.parse() {
+    //         Err(err) => {
+    //             debug!("failed to parse user data from TXT attribute: {err}");
+    //             None
+    //         }
+    //         Ok(data) => Some(data),
+    //     }
+    // } else {
+    //     None
+    // };
+    // let node_info = NodeInfo::new(*node_id)
+    //     .with_direct_addresses(direct_addresses)
+    //     .with_user_data(user_data);
+    let node_info = NodeInfo::new(*node_id).with_direct_addresses(direct_addresses);
     DiscoveryItem::new(node_info, NAME, None)
 }
 
