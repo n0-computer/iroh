@@ -1740,7 +1740,7 @@ dependencies = [
 [[package]]
 name = "hickory-proto"
 version = "0.25.0-alpha.4"
-source = "git+https://github.com/hickory-dns/hickory-dns?rev=82cbee88ca7b9100deeb2845a93ec9674b95c056#82cbee88ca7b9100deeb2845a93ec9674b95c056"
+source = "git+https://github.com/hickory-dns/hickory-dns?rev=de3e782fd9b3fcb24c71189cb4c19cadacae4dfe#de3e782fd9b3fcb24c71189cb4c19cadacae4dfe"
 dependencies = [
  "async-recursion",
  "async-trait",
@@ -1791,11 +1791,11 @@ dependencies = [
 [[package]]
 name = "hickory-resolver"
 version = "0.25.0-alpha.4"
-source = "git+https://github.com/hickory-dns/hickory-dns?rev=82cbee88ca7b9100deeb2845a93ec9674b95c056#82cbee88ca7b9100deeb2845a93ec9674b95c056"
+source = "git+https://github.com/hickory-dns/hickory-dns?rev=de3e782fd9b3fcb24c71189cb4c19cadacae4dfe#de3e782fd9b3fcb24c71189cb4c19cadacae4dfe"
 dependencies = [
  "cfg-if",
  "futures-util",
- "hickory-proto 0.25.0-alpha.4 (git+https://github.com/hickory-dns/hickory-dns?rev=82cbee88ca7b9100deeb2845a93ec9674b95c056)",
+ "hickory-proto 0.25.0-alpha.4 (git+https://github.com/hickory-dns/hickory-dns?rev=de3e782fd9b3fcb24c71189cb4c19cadacae4dfe)",
  "ipconfig",
  "moka",
  "once_cell",
@@ -1814,7 +1814,7 @@ dependencies = [
 [[package]]
 name = "hickory-server"
 version = "0.25.0-alpha.4"
-source = "git+https://github.com/hickory-dns/hickory-dns?rev=82cbee88ca7b9100deeb2845a93ec9674b95c056#82cbee88ca7b9100deeb2845a93ec9674b95c056"
+source = "git+https://github.com/hickory-dns/hickory-dns?rev=de3e782fd9b3fcb24c71189cb4c19cadacae4dfe#de3e782fd9b3fcb24c71189cb4c19cadacae4dfe"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1823,8 +1823,8 @@ dependencies = [
  "enum-as-inner",
  "futures-util",
  "h2",
- "hickory-proto 0.25.0-alpha.4 (git+https://github.com/hickory-dns/hickory-dns?rev=82cbee88ca7b9100deeb2845a93ec9674b95c056)",
- "hickory-resolver 0.25.0-alpha.4 (git+https://github.com/hickory-dns/hickory-dns?rev=82cbee88ca7b9100deeb2845a93ec9674b95c056)",
+ "hickory-proto 0.25.0-alpha.4 (git+https://github.com/hickory-dns/hickory-dns?rev=de3e782fd9b3fcb24c71189cb4c19cadacae4dfe)",
+ "hickory-resolver 0.25.0-alpha.4 (git+https://github.com/hickory-dns/hickory-dns?rev=de3e782fd9b3fcb24c71189cb4c19cadacae4dfe)",
  "http 1.2.0",
  "ipnet",
  "prefix-trie",
@@ -2384,7 +2384,7 @@ dependencies = [
  "derive_more",
  "dirs-next",
  "governor 0.6.3",
- "hickory-resolver 0.25.0-alpha.4 (git+https://github.com/hickory-dns/hickory-dns?rev=82cbee88ca7b9100deeb2845a93ec9674b95c056)",
+ "hickory-resolver 0.25.0-alpha.4 (git+https://github.com/hickory-dns/hickory-dns?rev=de3e782fd9b3fcb24c71189cb4c19cadacae4dfe)",
  "hickory-server",
  "http 1.2.0",
  "humantime-serde",
