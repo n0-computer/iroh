@@ -25,7 +25,7 @@ derive_more = { version = "1.0.0", features = [
 ] }
 dirs-next = "2.0.0"
 governor = "0.6.3" #needs new release of tower_governor for 0.7.0
-hickory-server = { git = "https://github.com/hickory-dns/hickory-dns", rev="de3e782fd9b3fcb24c71189cb4c19cadacae4dfe", features = ["dns-over-rustls", "dns-over-https-rustls"] }
+hickory-server = { git = "https://github.com/hickory-dns/hickory-dns", rev="a1f2bef8b7faf48c1895b3d2af9d105af9d71423", features = ["dns-over-rustls", "dns-over-https-rustls"] }
 http = "1.0.0"
 humantime-serde = "1.1.1"
 iroh-metrics = { version = "0.31.0" }
@@ -60,7 +60,7 @@ z32 = "1.1.1"
 [dev-dependencies]
 criterion = "0.5.1"
 # hickory-resolver = "=0.25.0-alpha.4"
-hickory-resolver = {git = "https://github.com/hickory-dns/hickory-dns", rev="de3e782fd9b3fcb24c71189cb4c19cadacae4dfe"}
+hickory-resolver = {git = "https://github.com/hickory-dns/hickory-dns", rev="a1f2bef8b7faf48c1895b3d2af9d105af9d71423"}
 iroh = { path = "../iroh" }
 pkarr = { version = "2.3.1", features = ["rand"] }
 rand = "0.8"
