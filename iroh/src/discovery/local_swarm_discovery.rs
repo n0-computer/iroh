@@ -65,7 +65,7 @@ pub const NAME: &str = "local.swarm.discovery";
 
 /// The key of the attribute under which the `UserData` is stored in
 /// the TXT record supported by swarm-discovery.
-const USER_DATA_ATTRIBUTE: &str = "user-data";
+// const USER_DATA_ATTRIBUTE: &str = "user-data";
 
 /// How long we will wait before we stop sending discovery items
 const DISCOVERY_DURATION: Duration = Duration::from_secs(10);
