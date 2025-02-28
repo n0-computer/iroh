@@ -37,7 +37,6 @@ use tracing::{debug, error, info_span, trace, warn, Instrument};
 mod defaults;
 #[cfg(not(wasm_browser))]
 mod dns;
-#[cfg(not(wasm_browser))]
 mod ip_mapped_addrs;
 mod metrics;
 #[cfg(not(wasm_browser))]
@@ -65,7 +64,6 @@ pub mod portmapper {
     }
 }
 
-#[cfg(not(wasm_browser))]
 pub use ip_mapped_addrs::{IpMappedAddr, IpMappedAddrError, IpMappedAddresses};
 pub use metrics::Metrics;
 pub use options::Options;
