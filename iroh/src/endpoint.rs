@@ -754,7 +754,7 @@ impl Endpoint {
         let server_name = &format!("{}.iroh.invalid", BASE32_DNSSEC.encode(node_id.as_bytes()));
         let connect = self.msock.endpoint().connect_with(
             client_config,
-            mapped_addr.socket_addr(),
+            mapped_addr.private_socket_addr(),
             server_name,
         )?;
 

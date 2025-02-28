@@ -958,7 +958,7 @@ impl MagicSock {
                                 "UDP recv QUIC address discovery packets",
                             );
                             quic_packets_total += quic_datagram_count;
-                            meta.addr = ip_mapped_addr.socket_addr();
+                            meta.addr = ip_mapped_addr.private_socket_addr();
                         } else {
                             warn!(
                                 src = ?meta.addr,
@@ -980,7 +980,7 @@ impl MagicSock {
                             "UDP recv quic packets",
                         );
                         quic_packets_total += quic_datagram_count;
-                        meta.addr = quic_mapped_addr.socket_addr();
+                        meta.addr = quic_mapped_addr.private_socket_addr();
                     }
                 }
             } else {
@@ -1094,7 +1094,7 @@ impl MagicSock {
         let meta = quinn_udp::RecvMeta {
             len: dm.buf.len(),
             stride: dm.buf.len(),
-            addr: quic_mapped_addr.socket_addr(),
+            addr: quic_mapped_addr.private_socket_addr(),
             dst_ip,
             ecn: None,
         };
@@ -3211,9 +3211,6 @@ fn split_packets(transmit: &quinn_udp::Transmit) -> RelayContents {
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct NodeIdMappedAddr(Ipv6Addr);
 
-/// The dummy port used for all [`NodeIdMappedAddr`]s
-pub const NODE_ID_MAPPED_PORT: u16 = 12345;
-
 /// Can occur when converting a [`SocketAddr`] to an [`NodeIdMappedAddr`]
 #[derive(Debug, thiserror::Error)]
 #[error("Failed to convert")]
@@ -3230,6 +3227,9 @@ impl NodeIdMappedAddr {
     /// The Subnet ID used in our Unique Local Addresses.
     const ADDR_SUBNET: [u8; 2] = [0; 2];
 
+    /// The dummy port used for all [`NodeIdMappedAddr`]s.
+    const NODE_ID_MAPPED_PORT: u16 = 12345;
+
     /// Generates a globally unique fake UDP address.
     ///
     /// This generates and IPv6 Unique Local Address according to RFC 4193.
@@ -3245,9 +3245,15 @@ impl NodeIdMappedAddr {
         Self(Ipv6Addr::from(addr))
     }
 
-    /// Return the [`SocketAddr`] from the [`NodeIdMappedAddr`]
-    pub(crate) fn socket_addr(&self) -> SocketAddr {
-        SocketAddr::new(IpAddr::from(self.0), NODE_ID_MAPPED_PORT)
+    /// Returns a consistent [`SocketAddr`] for the [`NodeIdMappedAddr`].
+    ///
+    /// This socket address does not have a routable IP address.
+    ///
+    /// This uses a made-up port number, since the port does not play a role in looking up
+    /// the node in the [`NodeMap`].  This socket address is only to be used to pass into
+    /// Quinn.
+    pub(crate) fn private_socket_addr(&self) -> SocketAddr {
+        SocketAddr::new(IpAddr::from(self.0), Self::NODE_ID_MAPPED_PORT)
     }
 }
 
@@ -4372,7 +4378,11 @@ mod tests {
             tls::make_client_config(&ep_secret_key, Some(node_id), alpns, None, true)?;
         let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
         client_config.transport_config(transport_config);
-        let connect = ep.connect_with(client_config, mapped_addr.socket_addr(), "localhost")?;
+        let connect = ep.connect_with(
+            client_config,
+            mapped_addr.private_socket_addr(),
+            "localhost",
+        )?;
         let connection = connect.await?;
         Ok(connection)
     }
