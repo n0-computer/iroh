@@ -54,7 +54,7 @@ pub mod testing;
 
 pub use self::{
     metrics::{Metrics, StunMetrics},
-    resolver::{ReloadingResolver, DEFAULT_CERT_RELOAD_INTERVAL},
+    resolver::{CertFormat, ReloadingResolver, DEFAULT_CERT_RELOAD_INTERVAL},
 };
 
 const NO_CONTENT_CHALLENGE_HEADER: &str = "X-Tailscale-Challenge";
