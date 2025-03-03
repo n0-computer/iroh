@@ -264,6 +264,11 @@ impl DiscoveryItem {
     pub fn into_node_addr(self) -> NodeAddr {
         self.node_info.into_node_addr()
     }
+
+    /// Returns any user-defined data.
+    pub fn user_data(&self) -> Option<UserData> {
+        self.node_info().data.user_data().cloned()
+    }
 }
 
 impl std::ops::Deref for DiscoveryItem {
