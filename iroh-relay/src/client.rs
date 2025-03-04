@@ -31,9 +31,9 @@ use crate::{
 
 pub(crate) mod conn;
 #[cfg(not(wasm_browser))]
-mod connect_relay;
-#[cfg(not(wasm_browser))]
 pub(crate) mod streams;
+#[cfg(not(wasm_browser))]
+mod tls;
 #[cfg(not(wasm_browser))]
 mod util;
 
