@@ -2250,7 +2250,7 @@ dependencies = [
  "iroh-relay",
  "n0-future",
  "netdev",
- "netwatch",
+ "netwatch 0.4.0",
  "parse-size",
  "pin-project",
  "pkarr",
@@ -2410,7 +2410,7 @@ dependencies = [
  "iroh-quinn",
  "iroh-relay",
  "n0-future",
- "netwatch",
+ "netwatch 0.4.0",
  "portmapper",
  "pretty_assertions",
  "rand 0.8.5",
@@ -2948,10 +2948,45 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.3.0"
-source = "git+https://github.com/n0-computer/net-tools.git?branch=matheus23/netwatch-wasm#c353457a06e19b2bfa7d95894e63739ed415853a"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "64da82edf903649e6cb6a77b5a6f7fe01387d8865065d411d139018510880302"
+dependencies = [
+ "anyhow",
+ "atomic-waker",
+ "bytes",
+ "derive_more",
+ "futures-lite",
+ "futures-sink",
+ "futures-util",
+ "iroh-quinn-udp",
+ "libc",
+ "netdev",
+ "netlink-packet-core",
+ "netlink-packet-route 0.19.0",
+ "netlink-sys",
+ "once_cell",
+ "rtnetlink 0.13.1",
+ "rtnetlink 0.14.1",
+ "serde",
+ "socket2",
+ "thiserror 2.0.11",
+ "time",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "windows 0.58.0",
+ "wmi",
+]
+
+[[package]]
+name = "netwatch"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b7879c2cfdf30d92f2be89efa3169b3d78107e3ab7f7b9a37157782569314e1"
 dependencies = [
  "atomic-waker",
  "bytes",
+ "cfg_aliases",
  "derive_more",
  "iroh-quinn-udp",
  "js-sys",
@@ -3432,7 +3467,7 @@ dependencies = [
  "igd-next",
  "iroh-metrics",
  "libc",
- "netwatch",
+ "netwatch 0.3.0",
  "num_enum",
  "rand 0.8.5",
  "serde",

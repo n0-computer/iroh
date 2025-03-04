@@ -43,7 +43,7 @@ http = "1"
 iroh-base = { version = "0.33.0", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
 iroh-relay = { version = "0.33", path = "../iroh-relay", default-features = false }
 n0-future = "0.1.2"
-netwatch = { version = "0.3" }
+netwatch = { version = "0.4" }
 pin-project = "1"
 pkarr = { version = "2", default-features = false, features = [
     "async",
