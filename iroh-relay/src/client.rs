@@ -140,10 +140,16 @@ impl ClientBuilder {
     /// Establishes a new connection to the relay server.
     pub async fn connect(&self) -> Result<Client> {
         let (conn, local_addr) = match self.protocol {
+            #[cfg(wasm_browser)]
             Protocol::Websocket => {
                 let conn = self.connect_ws().await?;
                 let local_addr = None;
                 (conn, local_addr)
+            }
+            #[cfg(not(wasm_browser))]
+            Protocol::Websocket => {
+                let (conn, local_addr) = self.connect_tokio_ws().await?;
+                (conn, Some(local_addr))
             }
             #[cfg(not(wasm_browser))]
             Protocol::Relay => {
@@ -167,6 +173,7 @@ impl ClientBuilder {
         Ok(Client { conn, local_addr })
     }
 
+    #[cfg(wasm_browser)]
     async fn connect_ws(&self) -> Result<Conn> {
         let mut dial_url = (*self.url).clone();
         dial_url.set_path(RELAY_PATH);
@@ -181,16 +188,6 @@ impl ClientBuilder {
         let conn = tokio_tungstenite_wasm::connect(dial_url).await?;
         let conn = Conn::new_ws(conn, self.key_cache.clone(), &self.secret_key).await?;
         Ok(conn)
-    }
-
-    fn use_tls(&self) -> bool {
-        // only disable tls if we are explicitly dialing a http url
-        #[allow(clippy::match_like_matches_macro)]
-        match self.url.scheme() {
-            "http" => false,
-            "ws" => false,
-            _ => true,
-        }
     }
 }
 

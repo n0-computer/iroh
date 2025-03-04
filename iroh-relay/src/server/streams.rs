@@ -6,6 +6,7 @@ use std::{
 };
 
 use anyhow::Result;
+use bytes::Bytes;
 use n0_future::{Sink, Stream};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_tungstenite::{tungstenite, WebSocketStream};
@@ -74,7 +75,7 @@ impl Stream for RelayedStream {
             Self::Relay(ref mut framed) => Pin::new(framed).poll_next(cx),
             Self::Ws(ref mut ws, ref cache) => match Pin::new(ws).poll_next(cx) {
                 Poll::Ready(Some(Ok(tungstenite::Message::Binary(vec)))) => {
-                    Poll::Ready(Some(Frame::decode_from_ws_msg(vec, cache)))
+                    Poll::Ready(Some(Frame::decode_from_ws_msg(Bytes::from(vec), cache)))
                 }
                 Poll::Ready(Some(Ok(msg))) => {
                     tracing::warn!(?msg, "Got websocket message of unsupported type, skipping.");
