@@ -4678,7 +4678,17 @@
 <a href="#4677" id="4677">4677</a>
 <a href="#4678" id="4678">4678</a>
 <a href="#4679" id="4679">4679</a>
-<a href="#4680" id="4680">4680</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4680" id="4680">4680</a>
+<a href="#4681" id="4681">4681</a>
+<a href="#4682" id="4682">4682</a>
+<a href="#4683" id="4683">4683</a>
+<a href="#4684" id="4684">4684</a>
+<a href="#4685" id="4685">4685</a>
+<a href="#4686" id="4686">4686</a>
+<a href="#4687" id="4687">4687</a>
+<a href="#4688" id="4688">4688</a>
+<a href="#4689" id="4689">4689</a>
+<a href="#4690" id="4690">4690</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -5639,7 +5649,7 @@
                                 <span class="string">"UDP recv QUIC address discovery packets"</span>,
                             );
                             quic_packets_total += quic_datagram_count;
-                            meta.addr = ip_mapped_addr.socket_addr();
+                            meta.addr = ip_mapped_addr.private_socket_addr();
                         } <span class="kw">else </span>{
                             <span class="macro">warn!</span>(
                                 src = <span class="question-mark">?</span>meta.addr,
@@ -5661,7 +5671,7 @@
                             <span class="string">"UDP recv quic packets"</span>,
                         );
                         quic_packets_total += quic_datagram_count;
-                        meta.addr = quic_mapped_addr.socket_addr();
+                        meta.addr = quic_mapped_addr.private_socket_addr();
                     }
                 }
             } <span class="kw">else </span>{
@@ -5775,7 +5785,7 @@
         <span class="kw">let </span>meta = quinn_udp::RecvMeta {
             len: dm.buf.len(),
             stride: dm.buf.len(),
-            addr: quic_mapped_addr.socket_addr(),
+            addr: quic_mapped_addr.private_socket_addr(),
             dst_ip,
             ecn: <span class="prelude-val">None</span>,
         };
@@ -7881,9 +7891,6 @@
 </span><span class="attr">#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>NodeIdMappedAddr(Ipv6Addr);
 
-<span class="doccomment">/// The dummy port used for all [`NodeIdMappedAddr`]s
-</span><span class="kw">pub const </span>NODE_ID_MAPPED_PORT: u16 = <span class="number">12345</span>;
-
 <span class="doccomment">/// Can occur when converting a [`SocketAddr`] to an [`NodeIdMappedAddr`]
 </span><span class="attr">#[derive(Debug, thiserror::Error)]
 #[error(<span class="string">"Failed to convert"</span>)]
@@ -7900,6 +7907,9 @@
     <span class="doccomment">/// The Subnet ID used in our Unique Local Addresses.
     </span><span class="kw">const </span>ADDR_SUBNET: [u8; <span class="number">2</span>] = [<span class="number">0</span>; <span class="number">2</span>];
 
+    <span class="doccomment">/// The dummy port used for all [`NodeIdMappedAddr`]s.
+    </span><span class="kw">const </span>NODE_ID_MAPPED_PORT: u16 = <span class="number">12345</span>;
+
     <span class="doccomment">/// Generates a globally unique fake UDP address.
     ///
     /// This generates and IPv6 Unique Local Address according to RFC 4193.
@@ -7915,9 +7925,15 @@
         <span class="self">Self</span>(Ipv6Addr::from(addr))
     }
 
-    <span class="doccomment">/// Return the [`SocketAddr`] from the [`NodeIdMappedAddr`]
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>socket_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; SocketAddr {
-        SocketAddr::new(IpAddr::from(<span class="self">self</span>.<span class="number">0</span>), NODE_ID_MAPPED_PORT)
+    <span class="doccomment">/// Returns a consistent [`SocketAddr`] for the [`NodeIdMappedAddr`].
+    ///
+    /// This socket address does not have a routable IP address.
+    ///
+    /// This uses a made-up port number, since the port does not play a role in looking up
+    /// the node in the [`NodeMap`].  This socket address is only to be used to pass into
+    /// Quinn.
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>private_socket_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; SocketAddr {
+        SocketAddr::new(IpAddr::from(<span class="self">self</span>.<span class="number">0</span>), <span class="self">Self</span>::NODE_ID_MAPPED_PORT)
     }
 }
 
@@ -9042,7 +9058,11 @@
             tls::make_client_config(<span class="kw-2">&amp;</span>ep_secret_key, <span class="prelude-val">Some</span>(node_id), alpns, <span class="prelude-val">None</span>, <span class="bool-val">true</span>)<span class="question-mark">?</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
         client_config.transport_config(transport_config);
-        <span class="kw">let </span>connect = ep.connect_with(client_config, mapped_addr.socket_addr(), <span class="string">"localhost"</span>)<span class="question-mark">?</span>;
+        <span class="kw">let </span>connect = ep.connect_with(
+            client_config,
+            mapped_addr.private_socket_addr(),
+            <span class="string">"localhost"</span>,
+        )<span class="question-mark">?</span>;
         <span class="kw">let </span>connection = connect.<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(connection)
     }
