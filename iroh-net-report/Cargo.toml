@@ -25,7 +25,7 @@ anyhow = "1"
 bytes = "1.7"
 derive_more = { version = "1.0.0", features = ["display"] }
 iroh-base = { version = "0.33.0", path = "../iroh-base", default-features = false, features = ["relay"] }
-iroh-metrics = { version = "0.31", default-features = false }
+iroh-metrics = { version = "0.32", default-features = false }
 iroh-relay = { version = "0.33", default-features = false, path = "../iroh-relay" }
 n0-future = "0.1.2"
 quinn = { package = "iroh-quinn", version = "0.13.0", default-features = false }
@@ -41,8 +41,8 @@ url = { version = "2.4" }
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
 hickory-resolver = "=0.25.0-alpha.5"
-netwatch = { version = "0.3" }
-portmapper = { version = "0.3", default-features = false }
+netwatch = { version = "0.4" }
+portmapper = { version = "0.4", default-features = false }
 surge-ping = "0.8.0"
 
 [dev-dependencies]
