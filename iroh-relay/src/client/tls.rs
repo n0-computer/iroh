@@ -1,7 +1,8 @@
-//! Functionality related to `ClientBuilder::connect_relay`.
+//! Functionality related to lower-level tls-based connection establishment.
 //!
-//! This is (1) likely to be phased out over time in favor of websockets, and
-//! (2) doesn't work in the browser - thus separated into its own file.
+//! Primarily to support [`ClientBuilder::connect_relay`].
+//!
+//! This doesn't work in the browser - thus separated into its own file.
 //!
 //! `connect_relay` uses a custom HTTP upgrade header value (see [`HTTP_UPGRADE_PROTOCOL`]),
 //! as opposed to [`WEBSOCKET_UPGRADE_PROTOCOL`].
@@ -35,11 +36,7 @@ use super::{
 use crate::defaults::timeouts::*;
 
 impl ClientBuilder {
-    /// Connects to configured relay using HTTP(S) with an upgrade header
-    /// set to [`HTTP_UPGRADE_PROTOCOL`].
-    ///
-    /// [`HTTP_UPGRADE_PROTOCOL`]: crate::http::HTTP_UPGRADE_PROTOCOL
-    pub(super) async fn connect_relay(&self) -> Result<(Conn, SocketAddr)> {
+    pub(super) async fn connect_maybe_proxied_tls(&self) -> Result<MaybeTlsStream<ProxyStream>> {
         let roots = rustls::RootCertStore {
             roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
         };
@@ -60,7 +57,6 @@ impl ClientBuilder {
         config.resumption = Resumption::default();
         let tls_connector: tokio_rustls::TlsConnector = Arc::new(config).into();
 
-        let url = self.url.clone();
         let tcp_stream = self.dial_url(&tls_connector).await?;
 
         let local_addr = tcp_stream
@@ -69,7 +65,7 @@ impl ClientBuilder {
 
         debug!(server_addr = ?tcp_stream.peer_addr(), %local_addr, "TCP stream connected");
 
-        let response = if self.use_tls() {
+        if self.use_tls() {
             debug!("Starting TLS handshake");
             let hostname = self
                 .tls_servername()
@@ -77,11 +73,21 @@ impl ClientBuilder {
             let hostname = hostname.to_owned();
             let tls_stream = tls_connector.connect(hostname, tcp_stream).await?;
             debug!("tls_connector connect success");
-            Self::start_upgrade(tls_stream, url).await?
+            Ok(MaybeTlsStream::Tls(tls_stream))
         } else {
             debug!("Starting handshake");
-            Self::start_upgrade(tcp_stream, url).await?
-        };
+            Ok(MaybeTlsStream::Raw(tcp_stream))
+        }
+    }
+
+    /// Connects to configured relay using HTTP(S) with an upgrade header
+    /// set to [`HTTP_UPGRADE_PROTOCOL`].
+    ///
+    /// [`HTTP_UPGRADE_PROTOCOL`]: crate::http::HTTP_UPGRADE_PROTOCOL
+    pub(super) async fn connect_relay(&self) -> Result<(Conn, SocketAddr)> {
+        let stream = self.connect_maybe_proxied_tls().await?;
+        let local_addr = stream.as_ref().local_addr()?;
+        let response = Self::start_upgrade(stream, self.url.clone()).await?;
 
         if response.status() != hyper::StatusCode::SWITCHING_PROTOCOLS {
             bail!(
@@ -184,7 +190,7 @@ impl ClientBuilder {
         &self,
         proxy_url: Url,
         tls_connector: &tokio_rustls::TlsConnector,
-    ) -> Result<util::Chain<std::io::Cursor<Bytes>, MaybeTlsStream>> {
+    ) -> Result<util::Chain<std::io::Cursor<Bytes>, MaybeTlsStream<tokio::net::TcpStream>>> {
         use hyper_util::rt::TokioIo;
         use tokio::net::TcpStream;
         debug!(%self.url, %proxy_url, "dial url via proxy");
@@ -266,7 +272,9 @@ impl ClientBuilder {
         }
 
         let upgraded = hyper::upgrade::on(res).await?;
-        let Ok(Parts { io, read_buf, .. }) = upgraded.downcast::<TokioIo<MaybeTlsStream>>() else {
+        let Ok(Parts { io, read_buf, .. }) =
+            upgraded.downcast::<TokioIo<MaybeTlsStream<tokio::net::TcpStream>>>()
+        else {
             bail!("Invalid upgrade");
         };
 
