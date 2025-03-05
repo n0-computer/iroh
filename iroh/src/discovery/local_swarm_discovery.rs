@@ -482,8 +482,8 @@ mod tests {
                 let mut got_ids = BTreeSet::new();
                 while got_ids.len() != num_nodes {
                     if let Some(item) = events.next().await {
-                        if node_ids.contains(&(item.node_id(), item.user_data().cloned())) {
-                            got_ids.insert((item.node_id(), item.user_data().cloned()));
+                        if node_ids.contains(&(item.node_id(), item.user_data())) {
+                            got_ids.insert((item.node_id(), item.user_data()));
                         }
                     } else {
                         anyhow::bail!(
