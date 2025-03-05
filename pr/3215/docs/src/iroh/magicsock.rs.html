@@ -4688,17 +4688,7 @@
 <a href="#4687" id="4687">4687</a>
 <a href="#4688" id="4688">4688</a>
 <a href="#4689" id="4689">4689</a>
-<a href="#4690" id="4690">4690</a>
-<a href="#4691" id="4691">4691</a>
-<a href="#4692" id="4692">4692</a>
-<a href="#4693" id="4693">4693</a>
-<a href="#4694" id="4694">4694</a>
-<a href="#4695" id="4695">4695</a>
-<a href="#4696" id="4696">4696</a>
-<a href="#4697" id="4697">4697</a>
-<a href="#4698" id="4698">4698</a>
-<a href="#4699" id="4699">4699</a>
-<a href="#4700" id="4700">4700</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4690" id="4690">4690</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4745,8 +4735,9 @@
 <span class="kw">use </span>net_report::IpMappedAddresses;
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">use </span>net_report::{IpMappedAddr, QuicConfig};
+<span class="kw">use </span>netwatch::{interfaces, netmon};
 <span class="attr">#[cfg(not(wasm_browser))]
-</span><span class="kw">use </span>netwatch::{interfaces, ip::LocalAddresses, netmon, UdpSocket};
+</span><span class="kw">use </span>netwatch::{ip::LocalAddresses, UdpSocket};
 <span class="kw">use </span>quinn::{AsyncUdpSocket, ServerConfig};
 <span class="kw">use </span>rand::{seq::SliceRandom, Rng, SeedableRng};
 <span class="kw">use </span>relay_actor::RelaySendItem;
@@ -6525,8 +6516,7 @@
             }
         });
 
-        <span class="attr">#[cfg(not(wasm_browser))]
-        </span><span class="kw">let </span>network_monitor = netmon::Monitor::new().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>network_monitor = netmon::Monitor::new().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>qad_endpoint = endpoint.clone();
 
         <span class="comment">// create a client config for the endpoint to use for QUIC address discovery
@@ -6570,8 +6560,7 @@
                     </span>sockets: actor_sockets,
                     no_v4_send: <span class="bool-val">false</span>,
                     net_reporter,
-                    <span class="attr">#[cfg(not(wasm_browser))]
-                    </span>network_monitor,
+                    network_monitor,
                     net_report_config,
                 };
 
@@ -7038,8 +7027,7 @@
     <span class="doccomment">/// The prober that discovers local network conditions, including the closest relay relay and NAT mappings.
     </span>net_reporter: net_report::Client,
 
-    <span class="attr">#[cfg(not(wasm_browser))]
-    </span>network_monitor: netmon::Monitor,
+    network_monitor: netmon::Monitor,
 }
 
 <span class="doccomment">/// Actor state that relies on sockets being available.
@@ -7125,10 +7113,8 @@
 <span class="kw">impl </span>Actor {
     <span class="kw">async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="comment">// Setup network monitoring
-        </span><span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">let </span>(link_change_s, <span class="kw-2">mut </span>link_change_r) = mpsc::channel(<span class="number">8</span>);
-        <span class="attr">#[cfg(not(wasm_browser))]
-        </span><span class="kw">let </span>_token = <span class="self">self
+        <span class="kw">let </span>_token = <span class="self">self
             </span>.network_monitor
             .subscribe(<span class="kw">move </span>|is_major| {
                 <span class="kw">let </span>link_change_s = link_change_s.clone();
@@ -7172,11 +7158,6 @@
             </span><span class="kw">let </span>direct_addr_heartbeat_timer_tick = direct_addr_heartbeat_timer.tick();
             <span class="attr">#[cfg(wasm_browser)]
             </span><span class="kw">let </span>direct_addr_heartbeat_timer_tick = n0_future::future::pending();
-
-            <span class="attr">#[cfg(not(wasm_browser))]
-            </span><span class="kw">let </span>link_change_r_recv = link_change_r.recv();
-            <span class="attr">#[cfg(wasm_browser)]
-            </span><span class="kw">let </span>link_change_r_recv = n0_future::future::pending();
 
             <span class="macro">tokio::select!</span> {
                 msg = <span class="self">self</span>.msg_receiver.recv(), <span class="kw">if </span>!receiver_closed =&gt; {
@@ -7242,23 +7223,18 @@
                         <span class="self">self</span>.refresh_direct_addrs(reason).<span class="kw">await</span>;
                     }
                 }
-                is_major = link_change_r_recv, <span class="kw">if </span>!link_change_closed =&gt; {
-                    <span class="attr">#[cfg(not(wasm_browser))]
-                    </span>{
-                        <span class="kw">let </span><span class="prelude-val">Some</span>(is_major) = is_major <span class="kw">else </span>{
-                            <span class="macro">trace!</span>(<span class="string">"tick: link change receiver closed"</span>);
-                            <span class="macro">inc!</span>(Metrics, actor_tick_other);
+                is_major = link_change_r.recv(), <span class="kw">if </span>!link_change_closed =&gt; {
+                    <span class="kw">let </span><span class="prelude-val">Some</span>(is_major) = is_major <span class="kw">else </span>{
+                        <span class="macro">trace!</span>(<span class="string">"tick: link change receiver closed"</span>);
+                        <span class="macro">inc!</span>(Metrics, actor_tick_other);
 
-                            link_change_closed = <span class="bool-val">true</span>;
-                            <span class="kw">continue</span>;
-                        };
+                        link_change_closed = <span class="bool-val">true</span>;
+                        <span class="kw">continue</span>;
+                    };
 
-                        <span class="macro">trace!</span>(<span class="string">"tick: link change {}"</span>, is_major);
-                        <span class="macro">inc!</span>(Metrics, actor_link_change);
-                        <span class="self">self</span>.handle_network_change(is_major).<span class="kw">await</span>;
-                    }
-                    <span class="attr">#[cfg(wasm_browser)]
-                    </span><span class="kw">let </span>_unused_in_browsers = is_major;
+                    <span class="macro">trace!</span>(<span class="string">"tick: link change {}"</span>, is_major);
+                    <span class="macro">inc!</span>(Metrics, actor_link_change);
+                    <span class="self">self</span>.handle_network_change(is_major).<span class="kw">await</span>;
                 }
                 <span class="comment">// Even if `discovery_events` yields `None`, it could begin to yield
                 // `Some` again in the future, so we don't want to disable this branch
@@ -7282,20 +7258,22 @@
         }
     }
 
-    <span class="attr">#[cfg(not(wasm_browser))]
-    </span><span class="kw">async fn </span>handle_network_change(<span class="kw-2">&amp;mut </span><span class="self">self</span>, is_major: bool) {
+    <span class="kw">async fn </span>handle_network_change(<span class="kw-2">&amp;mut </span><span class="self">self</span>, is_major: bool) {
         <span class="macro">debug!</span>(<span class="string">"link change detected: major? {}"</span>, is_major);
 
         <span class="kw">if </span>is_major {
-            <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.sockets.v4.rebind() {
-                <span class="macro">warn!</span>(<span class="string">"failed to rebind Udp IPv4 socket: {:?}"</span>, err);
-            };
-            <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>socket) = <span class="self">self</span>.sockets.v6 {
-                <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = socket.rebind() {
-                    <span class="macro">warn!</span>(<span class="string">"failed to rebind Udp IPv6 socket: {:?}"</span>, err);
+            <span class="attr">#[cfg(not(wasm_browser))]
+            </span>{
+                <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.sockets.v4.rebind() {
+                    <span class="macro">warn!</span>(<span class="string">"failed to rebind Udp IPv4 socket: {:?}"</span>, err);
                 };
+                <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>socket) = <span class="self">self</span>.sockets.v6 {
+                    <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = socket.rebind() {
+                        <span class="macro">warn!</span>(<span class="string">"failed to rebind Udp IPv6 socket: {:?}"</span>, err);
+                    };
+                }
+                <span class="self">self</span>.msock.dns_resolver.clear_cache();
             }
-            <span class="self">self</span>.msock.dns_resolver.clear_cache();
             <span class="self">self</span>.msock.re_stun(<span class="string">"link-change-major"</span>);
             <span class="self">self</span>.close_stale_relay_connections().<span class="kw">await</span>;
             <span class="self">self</span>.reset_endpoint_states();
@@ -7349,8 +7327,7 @@
                 <span class="self">self</span>.finalize_direct_addrs_update(why);
             }
             ActorMessage::NetworkChange =&gt; {
-                <span class="attr">#[cfg(not(wasm_browser))]
-                </span><span class="self">self</span>.network_monitor.network_change().<span class="kw">await</span>.ok();
+                <span class="self">self</span>.network_monitor.network_change().<span class="kw">await</span>.ok();
             }
             <span class="attr">#[cfg(test)]
             </span>ActorMessage::ForceNetworkChange(is_major) =&gt; {
@@ -7732,15 +7709,18 @@
     /// The relay connections who's local endpoints no longer exist after a network change
     /// will error out soon enough.  Closing them eagerly speeds this up however and allows
     /// re-establishing a relay connection faster.
-    </span><span class="attr">#[cfg(not(wasm_browser))]
     </span><span class="kw">async fn </span>close_stale_relay_connections(<span class="kw-2">&amp;</span><span class="self">self</span>) {
         <span class="kw">let </span>ifs = interfaces::State::new().<span class="kw">await</span>;
-        <span class="kw">let </span>local_ips = ifs
+        <span class="attr">#[cfg(not(wasm_browser))]
+        </span><span class="kw">let </span>local_ips = ifs
             .interfaces
             .values()
             .flat_map(|netif| netif.addrs())
             .map(|ipnet| ipnet.addr())
             .collect();
+        <span class="comment">// In browsers, we don't have this information. This will do the right thing in the ActiveRelayActor, though.
+        </span><span class="attr">#[cfg(wasm_browser)]
+        </span><span class="kw">let </span>local_ips = Vec::new();
         <span class="self">self</span>.send_relay_actor(RelayActorMessage::MaybeCloseRelaysOnRebind(local_ips));
     }
 

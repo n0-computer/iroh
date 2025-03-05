@@ -989,8 +989,8 @@
                 <span class="kw">let </span><span class="kw-2">mut </span>got_ids = BTreeSet::new();
                 <span class="kw">while </span>got_ids.len() != num_nodes {
                     <span class="kw">if let </span><span class="prelude-val">Some</span>(item) = events.next().<span class="kw">await </span>{
-                        <span class="kw">if </span>node_ids.contains(<span class="kw-2">&amp;</span>(item.node_id(), item.user_data().cloned())) {
-                            got_ids.insert((item.node_id(), item.user_data().cloned()));
+                        <span class="kw">if </span>node_ids.contains(<span class="kw-2">&amp;</span>(item.node_id(), item.user_data())) {
+                            got_ids.insert((item.node_id(), item.user_data()));
                         }
                     } <span class="kw">else </span>{
                         <span class="macro">anyhow::bail!</span>(

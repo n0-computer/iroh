@@ -1745,13 +1745,7 @@
 <a href="#1744" id="1744">1744</a>
 <a href="#1745" id="1745">1745</a>
 <a href="#1746" id="1746">1746</a>
-<a href="#1747" id="1747">1747</a>
-<a href="#1748" id="1748">1748</a>
-<a href="#1749" id="1749">1749</a>
-<a href="#1750" id="1750">1750</a>
-<a href="#1751" id="1751">1751</a>
-<a href="#1752" id="1752">1752</a>
-<a href="#1753" id="1753">1753</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#1747" id="1747">1747</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{btree_map::Entry, BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
@@ -2743,7 +2737,7 @@
 
         <span class="kw">for </span>peer_sockaddr <span class="kw">in </span><span class="kw-2">&amp;</span>m.my_numbers {
             <span class="kw">if let </span>IpAddr::V6(ip) = peer_sockaddr.ip() {
-                <span class="kw">if </span>is_unicast_link_local(ip) {
+                <span class="kw">if </span>netwatch::ip::is_unicast_link_local(ip) {
                     <span class="comment">// We send these out, but ignore them for now.
                     // TODO: teach the ping code to ping on all interfaces for these.
                     </span><span class="kw">continue</span>;
@@ -3192,12 +3186,6 @@
     #[display(<span class="string">"none"</span>)]
     </span><span class="prelude-val">None</span>,
 }
-
-<span class="doccomment">/// Returns true if the address is a unicast address with link-local scope, as defined in RFC 4291.
-</span><span class="comment">// Copied from std lib, not stable yet
-</span><span class="kw">pub const fn </span>is_unicast_link_local(addr: std::net::Ipv6Addr) -&gt; bool {
-    (addr.segments()[<span class="number">0</span>] &amp; <span class="number">0xffc0</span>) == <span class="number">0xfe80
-</span>}
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
