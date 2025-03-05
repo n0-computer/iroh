@@ -2723,7 +2723,7 @@
     addr: SocketAddr,
 ) -&gt; SocketAddr {
     <span class="kw">if let </span><span class="prelude-val">Some</span>(ip_mapped_addrs) = ip_mapped_addrs.as_ref() {
-        <span class="kw">return </span>ip_mapped_addrs.get_or_register(addr).socket_addr();
+        <span class="kw">return </span>ip_mapped_addrs.get_or_register(addr).private_socket_addr();
     }
     addr
 }

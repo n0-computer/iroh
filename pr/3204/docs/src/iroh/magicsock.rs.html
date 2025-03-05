@@ -4635,7 +4635,60 @@
 <a href="#4634" id="4634">4634</a>
 <a href="#4635" id="4635">4635</a>
 <a href="#4636" id="4636">4636</a>
-<a href="#4637" id="4637">4637</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4637" id="4637">4637</a>
+<a href="#4638" id="4638">4638</a>
+<a href="#4639" id="4639">4639</a>
+<a href="#4640" id="4640">4640</a>
+<a href="#4641" id="4641">4641</a>
+<a href="#4642" id="4642">4642</a>
+<a href="#4643" id="4643">4643</a>
+<a href="#4644" id="4644">4644</a>
+<a href="#4645" id="4645">4645</a>
+<a href="#4646" id="4646">4646</a>
+<a href="#4647" id="4647">4647</a>
+<a href="#4648" id="4648">4648</a>
+<a href="#4649" id="4649">4649</a>
+<a href="#4650" id="4650">4650</a>
+<a href="#4651" id="4651">4651</a>
+<a href="#4652" id="4652">4652</a>
+<a href="#4653" id="4653">4653</a>
+<a href="#4654" id="4654">4654</a>
+<a href="#4655" id="4655">4655</a>
+<a href="#4656" id="4656">4656</a>
+<a href="#4657" id="4657">4657</a>
+<a href="#4658" id="4658">4658</a>
+<a href="#4659" id="4659">4659</a>
+<a href="#4660" id="4660">4660</a>
+<a href="#4661" id="4661">4661</a>
+<a href="#4662" id="4662">4662</a>
+<a href="#4663" id="4663">4663</a>
+<a href="#4664" id="4664">4664</a>
+<a href="#4665" id="4665">4665</a>
+<a href="#4666" id="4666">4666</a>
+<a href="#4667" id="4667">4667</a>
+<a href="#4668" id="4668">4668</a>
+<a href="#4669" id="4669">4669</a>
+<a href="#4670" id="4670">4670</a>
+<a href="#4671" id="4671">4671</a>
+<a href="#4672" id="4672">4672</a>
+<a href="#4673" id="4673">4673</a>
+<a href="#4674" id="4674">4674</a>
+<a href="#4675" id="4675">4675</a>
+<a href="#4676" id="4676">4676</a>
+<a href="#4677" id="4677">4677</a>
+<a href="#4678" id="4678">4678</a>
+<a href="#4679" id="4679">4679</a>
+<a href="#4680" id="4680">4680</a>
+<a href="#4681" id="4681">4681</a>
+<a href="#4682" id="4682">4682</a>
+<a href="#4683" id="4683">4683</a>
+<a href="#4684" id="4684">4684</a>
+<a href="#4685" id="4685">4685</a>
+<a href="#4686" id="4686">4686</a>
+<a href="#4687" id="4687">4687</a>
+<a href="#4688" id="4688">4688</a>
+<a href="#4689" id="4689">4689</a>
+<a href="#4690" id="4690">4690</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4679,10 +4732,12 @@
     time::{<span class="self">self</span>, Duration, Instant},
     FutureExt, StreamExt,
 };
+<span class="kw">use </span>net_report::IpMappedAddresses;
 <span class="attr">#[cfg(not(wasm_browser))]
-</span><span class="kw">use </span>net_report::{IpMappedAddr, IpMappedAddresses, QuicConfig};
+</span><span class="kw">use </span>net_report::{IpMappedAddr, QuicConfig};
+<span class="kw">use </span>netwatch::{interfaces, netmon};
 <span class="attr">#[cfg(not(wasm_browser))]
-</span><span class="kw">use </span>netwatch::{interfaces, ip::LocalAddresses, netmon, UdpSocket};
+</span><span class="kw">use </span>netwatch::{ip::LocalAddresses, UdpSocket};
 <span class="kw">use </span>quinn::{AsyncUdpSocket, ServerConfig};
 <span class="kw">use </span>rand::{seq::SliceRandom, Rng, SeedableRng};
 <span class="kw">use </span>relay_actor::RelaySendItem;
@@ -4873,12 +4928,9 @@
     <span class="doccomment">/// Encryption key for this node.
     </span>secret_encryption_key: crypto_box::SecretKey,
 
-    <span class="doccomment">/// Cached version of the Ipv4 and Ipv6 addrs of the current connection.
+    <span class="doccomment">/// Sockets &amp; related state
     </span><span class="attr">#[cfg(not(wasm_browser))]
-    </span>local_addrs: std::sync::RwLock&lt;(SocketAddr, <span class="prelude-ty">Option</span>&lt;SocketAddr&gt;)&gt;,
-
-    <span class="doccomment">/// Preferred port from `Options::port`; 0 means auto.
-    </span>port: AtomicU16,
+    </span>sockets: SocketState,
 
     <span class="doccomment">/// Close is in progress (or done)
     </span>closing: AtomicBool,
@@ -4894,14 +4946,7 @@
     <span class="doccomment">/// Tracks the networkmap node entity for each node discovery key.
     </span>node_map: NodeMap,
     <span class="doccomment">/// Tracks the mapped IP addresses
-    </span><span class="attr">#[cfg(not(wasm_browser))]
     </span>ip_mapped_addrs: IpMappedAddresses,
-    <span class="doccomment">/// UDP IPv4 socket
-    </span><span class="attr">#[cfg(not(wasm_browser))]
-    </span>pconn4: UdpConn,
-    <span class="doccomment">/// UDP IPv6 socket
-    </span><span class="attr">#[cfg(not(wasm_browser))]
-    </span>pconn6: <span class="prelude-ty">Option</span>&lt;UdpConn&gt;,
     <span class="doccomment">/// NetReport client
     </span>net_reporter: net_report::Addr,
     <span class="doccomment">/// The state for an active DiscoKey.
@@ -4934,6 +4979,20 @@
 
     <span class="doccomment">/// Broadcast channel for listening to discovery updates.
     </span>discovery_subscribers: DiscoverySubscribers,
+}
+
+<span class="doccomment">/// Sockets and related state, grouped together so we can cfg them out for browsers.
+</span><span class="attr">#[cfg(not(wasm_browser))]
+#[derive(Debug)]
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>SocketState {
+    <span class="doccomment">/// Port configured for the ipv4 socket. Can be 0
+    </span>port: AtomicU16,
+    <span class="doccomment">/// UDP IPv4 socket
+    </span>v4: UdpConn,
+    <span class="doccomment">/// UDP IPv6 socket
+    </span>v6: <span class="prelude-ty">Option</span>&lt;UdpConn&gt;,
+    <span class="doccomment">/// Cached version of the Ipv4 and Ipv6 addrs of the current connection.
+    </span>local_addrs: std::sync::RwLock&lt;(SocketAddr, <span class="prelude-ty">Option</span>&lt;SocketAddr&gt;)&gt;,
 }
 
 <span class="kw">impl </span>MagicSock {
@@ -4976,7 +5035,7 @@
     <span class="doccomment">/// Get the cached version of the Ipv4 and Ipv6 addrs of the current connection.
     </span><span class="attr">#[cfg(not(wasm_browser))]
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>local_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; (SocketAddr, <span class="prelude-ty">Option</span>&lt;SocketAddr&gt;) {
-        <span class="kw-2">*</span><span class="self">self</span>.local_addrs.read().expect(<span class="string">"not poisoned"</span>)
+        <span class="kw-2">*</span><span class="self">self</span>.sockets.local_addrs.read().expect(<span class="string">"not poisoned"</span>)
     }
 
     <span class="doccomment">/// Returns `true` if we have at least one candidate address where we can send packets to.
@@ -5395,9 +5454,10 @@
     <span class="attr">#[cfg(not(wasm_browser))]
     </span><span class="kw">fn </span>conn_for_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, addr: SocketAddr) -&gt; io::Result&lt;<span class="kw-2">&amp;</span>UdpConn&gt; {
         <span class="kw">let </span>sock = <span class="kw">match </span>addr {
-            SocketAddr::V4(<span class="kw">_</span>) =&gt; <span class="kw-2">&amp;</span><span class="self">self</span>.pconn4,
+            SocketAddr::V4(<span class="kw">_</span>) =&gt; <span class="kw-2">&amp;</span><span class="self">self</span>.sockets.v4,
             SocketAddr::V6(<span class="kw">_</span>) =&gt; <span class="self">self
-                </span>.pconn6
+                </span>.sockets
+                .v6
                 .as_ref()
                 .ok_or(io::Error::new(io::ErrorKind::Other, <span class="string">"no IPv6 connection"</span>))<span class="question-mark">?</span>,
         };
@@ -5423,7 +5483,7 @@
         // Pending).
         </span><span class="macro">macro_rules!</span> poll_ipv4 {
             () =&gt; {
-                <span class="kw">match </span><span class="self">self</span>.pconn4.poll_recv(cx, bufs, metas)<span class="question-mark">? </span>{
+                <span class="kw">match </span><span class="self">self</span>.sockets.v4.poll_recv(cx, bufs, metas)<span class="question-mark">? </span>{
                     Poll::Pending | Poll::Ready(<span class="number">0</span>) =&gt; {}
                     Poll::Ready(n) =&gt; {
                         <span class="self">self</span>.process_udp_datagrams(<span class="bool-val">true</span>, <span class="kw-2">&amp;mut </span>bufs[..n], <span class="kw-2">&amp;mut </span>metas[..n]);
@@ -5434,8 +5494,8 @@
         }
         <span class="macro">macro_rules!</span> poll_ipv6 {
             () =&gt; {
-                <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>pconn) = <span class="self">self</span>.pconn6 {
-                    <span class="kw">match </span>pconn.poll_recv(cx, bufs, metas)<span class="question-mark">? </span>{
+                <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>socket) = <span class="self">self</span>.sockets.v6 {
+                    <span class="kw">match </span>socket.poll_recv(cx, bufs, metas)<span class="question-mark">? </span>{
                         Poll::Pending | Poll::Ready(<span class="number">0</span>) =&gt; {}
                         Poll::Ready(n) =&gt; {
                             <span class="self">self</span>.process_udp_datagrams(<span class="bool-val">false</span>, <span class="kw-2">&amp;mut </span>bufs[..n], <span class="kw-2">&amp;mut </span>metas[..n]);
@@ -5589,7 +5649,7 @@
                                 <span class="string">"UDP recv QUIC address discovery packets"</span>,
                             );
                             quic_packets_total += quic_datagram_count;
-                            meta.addr = ip_mapped_addr.socket_addr();
+                            meta.addr = ip_mapped_addr.private_socket_addr();
                         } <span class="kw">else </span>{
                             <span class="macro">warn!</span>(
                                 src = <span class="question-mark">?</span>meta.addr,
@@ -5611,7 +5671,7 @@
                             <span class="string">"UDP recv quic packets"</span>,
                         );
                         quic_packets_total += quic_datagram_count;
-                        meta.addr = quic_mapped_addr.socket_addr();
+                        meta.addr = quic_mapped_addr.private_socket_addr();
                     }
                 }
             } <span class="kw">else </span>{
@@ -5725,7 +5785,7 @@
         <span class="kw">let </span>meta = quinn_udp::RecvMeta {
             len: dm.buf.len(),
             stride: dm.buf.len(),
-            addr: quic_mapped_addr.socket_addr(),
+            addr: quic_mapped_addr.private_socket_addr(),
             dst_ip,
             ecn: <span class="prelude-val">None</span>,
         };
@@ -6330,9 +6390,6 @@
     </span>}
 
     <span class="kw">async fn </span>with_name(me: String, opts: Options) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="attr">#[cfg(not(wasm_browser))]
-        </span><span class="kw">let </span>port_mapper = portmapper::Client::default();
-
         <span class="kw">let </span>Options {
             addr_v4,
             addr_v6,
@@ -6352,41 +6409,21 @@
         } = opts;
 
         <span class="attr">#[cfg(not(wasm_browser))]
-        </span><span class="kw">let </span>(pconn4, pconn6) = bind(addr_v4, addr_v6)<span class="question-mark">?</span>;
-        <span class="attr">#[cfg(not(wasm_browser))]
-        </span><span class="kw">let </span>port = pconn4.port();
-        <span class="attr">#[cfg(wasm_browser)]
-        </span><span class="kw">let </span>port = <span class="number">0</span>;
-
-        <span class="comment">// NOTE: we can end up with a zero port if `std::net::UdpSocket::socket_addr` fails
-        </span><span class="attr">#[cfg(not(wasm_browser))]
-        </span><span class="kw">match </span>port.try_into() {
-            <span class="prelude-val">Ok</span>(non_zero_port) =&gt; {
-                port_mapper.update_local_port(non_zero_port);
-            }
-            <span class="prelude-val">Err</span>(_zero_port) =&gt; <span class="macro">debug!</span>(<span class="string">"Skipping port mapping with zero local port"</span>),
-        }
-        <span class="attr">#[cfg(not(wasm_browser))]
-        </span><span class="kw">let </span>ipv4_addr = pconn4.local_addr()<span class="question-mark">?</span>;
-        <span class="attr">#[cfg(not(wasm_browser))]
-        </span><span class="kw">let </span>ipv6_addr = pconn6.as_ref().and_then(|c| c.local_addr().ok());
+        </span><span class="kw">let </span>actor_sockets = ActorSocketState::bind(addr_v4, addr_v6)<span class="question-mark">?</span>;
 
         <span class="attr">#[cfg(not(wasm_browser))]
-        </span><span class="kw">let </span>ip_mapped_addrs = IpMappedAddresses::default();
+        </span><span class="kw">let </span>sockets = actor_sockets.msock_socket_state()<span class="question-mark">?</span>;
+
+        <span class="kw">let </span>ip_mapped_addrs = IpMappedAddresses::default();
 
         <span class="kw">let </span>net_reporter = net_report::Client::new(
             <span class="attr">#[cfg(not(wasm_browser))]
-            </span><span class="prelude-val">Some</span>(port_mapper.clone()),
+            </span><span class="prelude-val">Some</span>(actor_sockets.port_mapper.clone()),
             <span class="attr">#[cfg(not(wasm_browser))]
             </span>dns_resolver.clone(),
             <span class="attr">#[cfg(not(wasm_browser))]
             </span><span class="prelude-val">Some</span>(ip_mapped_addrs.clone()),
         )<span class="question-mark">?</span>;
-
-        <span class="attr">#[cfg(not(wasm_browser))]
-        </span><span class="kw">let </span>pconn4_sock = pconn4.as_socket();
-        <span class="attr">#[cfg(not(wasm_browser))]
-        </span><span class="kw">let </span>pconn6_sock = pconn6.as_ref().map(|p| p.as_socket());
 
         <span class="kw">let </span>(actor_sender, actor_receiver) = mpsc::channel(<span class="number">256</span>);
         <span class="kw">let </span>(relay_actor_sender, relay_actor_receiver) = mpsc::channel(<span class="number">256</span>);
@@ -6405,12 +6442,11 @@
 
         <span class="kw">let </span>msock = Arc::new(MagicSock {
             me,
-            port: AtomicU16::new(port),
             secret_key,
             secret_encryption_key,
             proxy_url,
             <span class="attr">#[cfg(not(wasm_browser))]
-            </span>local_addrs: std::sync::RwLock::new((ipv4_addr, ipv6_addr)),
+            </span>sockets,
             closing: AtomicBool::new(<span class="bool-val">false</span>),
             closed: AtomicBool::new(<span class="bool-val">false</span>),
             relay_datagram_recv_queue: relay_datagram_recv_queue.clone(),
@@ -6421,14 +6457,9 @@
             relay_map,
             my_relay: Default::default(),
             net_reporter: net_reporter.addr(),
-            <span class="attr">#[cfg(not(wasm_browser))]
-            </span>pconn4,
-            <span class="attr">#[cfg(not(wasm_browser))]
-            </span>pconn6,
             disco_secrets: DiscoSecrets::default(),
             node_map,
-            <span class="attr">#[cfg(not(wasm_browser))]
-            </span>ip_mapped_addrs,
+            ip_mapped_addrs,
             udp_disco_sender,
             discovery,
             discovery_user_data: RwLock::new(discovery_user_data),
@@ -6485,8 +6516,7 @@
             }
         });
 
-        <span class="attr">#[cfg(not(wasm_browser))]
-        </span><span class="kw">let </span>network_monitor = netmon::Monitor::new().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>network_monitor = netmon::Monitor::new().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>qad_endpoint = endpoint.clone();
 
         <span class="comment">// create a client config for the endpoint to use for QUIC address discovery
@@ -6505,12 +6535,12 @@
             ep: qad_endpoint,
             client_config,
             ipv4: <span class="bool-val">true</span>,
-            ipv6: pconn6_sock.is_some(),
+            ipv6: actor_sockets.v6.is_some(),
         });
         <span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">let </span>net_report_config = net_report::Options::default()
-            .stun_v4(<span class="prelude-val">Some</span>(pconn4_sock.clone()))
-            .stun_v6(pconn6_sock.clone())
+            .stun_v4(<span class="prelude-val">Some</span>(actor_sockets.v4.clone()))
+            .stun_v6(actor_sockets.v6.clone())
             .quic_config(quic_config);
         <span class="attr">#[cfg(wasm_browser)]
         </span><span class="kw">let </span>net_report_config = net_report::Options::default();
@@ -6527,15 +6557,10 @@
                     periodic_re_stun_timer: new_re_stun_timer(<span class="bool-val">false</span>),
                     net_info_last: <span class="prelude-val">None</span>,
                     <span class="attr">#[cfg(not(wasm_browser))]
-                    </span>port_mapper,
-                    <span class="attr">#[cfg(not(wasm_browser))]
-                    </span>pconn4: pconn4_sock,
-                    <span class="attr">#[cfg(not(wasm_browser))]
-                    </span>pconn6: pconn6_sock,
+                    </span>sockets: actor_sockets,
                     no_v4_send: <span class="bool-val">false</span>,
                     net_reporter,
-                    <span class="attr">#[cfg(not(wasm_browser))]
-                    </span>network_monitor,
+                    network_monitor,
                     net_report_config,
                 };
 
@@ -6836,9 +6861,9 @@
         // connection.  It checks all paths and returns Poll::Ready as soon as any path is
         // ready.
         </span><span class="attr">#[cfg(not(wasm_browser))]
-        </span><span class="kw">let </span>ipv4_poller = <span class="self">self</span>.pconn4.create_io_poller();
+        </span><span class="kw">let </span>ipv4_poller = <span class="self">self</span>.sockets.v4.create_io_poller();
         <span class="attr">#[cfg(not(wasm_browser))]
-        </span><span class="kw">let </span>ipv6_poller = <span class="self">self</span>.pconn6.as_ref().map(|sock| sock.create_io_poller());
+        </span><span class="kw">let </span>ipv6_poller = <span class="self">self</span>.sockets.v6.as_ref().map(|sock| sock.create_io_poller());
         <span class="kw">let </span>relay_sender = <span class="self">self</span>.relay_datagram_send_channel.clone();
         Box::pin(IoPoller {
             <span class="attr">#[cfg(not(wasm_browser))]
@@ -6865,7 +6890,7 @@
 
     <span class="kw">fn </span>local_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; io::Result&lt;SocketAddr&gt; {
         <span class="attr">#[cfg(not(wasm_browser))]
-        </span><span class="kw">match </span><span class="kw-2">&amp;*</span><span class="self">self</span>.local_addrs.read().expect(<span class="string">"not poisoned"</span>) {
+        </span><span class="kw">match </span><span class="kw-2">&amp;*</span><span class="self">self</span>.sockets.local_addrs.read().expect(<span class="string">"not poisoned"</span>) {
             (ipv4, <span class="prelude-val">None</span>) =&gt; {
                 <span class="comment">// Pretend to be IPv6, because our `MappedAddr`s
                 // need to be IPv6.
@@ -6884,13 +6909,13 @@
 
     <span class="attr">#[cfg(not(wasm_browser))]
     </span><span class="kw">fn </span>max_transmit_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(pconn6) = <span class="self">self</span>.pconn6.as_ref() {
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(socket) = <span class="self">self</span>.sockets.v6.as_ref() {
             std::cmp::min(
-                pconn6.max_transmit_segments(),
-                <span class="self">self</span>.pconn4.max_transmit_segments(),
+                socket.max_transmit_segments(),
+                <span class="self">self</span>.sockets.v4.max_transmit_segments(),
             )
         } <span class="kw">else </span>{
-            <span class="self">self</span>.pconn4.max_transmit_segments()
+            <span class="self">self</span>.sockets.v4.max_transmit_segments()
         }
     }
 
@@ -6901,7 +6926,7 @@
 
     <span class="attr">#[cfg(not(wasm_browser))]
     </span><span class="kw">fn </span>max_receive_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(pconn6) = <span class="self">self</span>.pconn6.as_ref() {
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(socket) = <span class="self">self</span>.sockets.v6.as_ref() {
             <span class="comment">// `max_receive_segments` controls the size of the `RecvMeta` buffer
             // that quinn creates. Having buffers slightly bigger than necessary
             // isn't terrible, and makes sure a single socket can read the maximum
@@ -6909,11 +6934,11 @@
             // but we never get data from both sockets at the same time in `poll_recv`
             // and it's impossible and unnecessary to be refactored that way.
             </span>std::cmp::max(
-                pconn6.max_receive_segments(),
-                <span class="self">self</span>.pconn4.max_receive_segments(),
+                socket.max_receive_segments(),
+                <span class="self">self</span>.sockets.v4.max_receive_segments(),
             )
         } <span class="kw">else </span>{
-            <span class="self">self</span>.pconn4.max_receive_segments()
+            <span class="self">self</span>.sockets.v4.max_receive_segments()
         }
     }
 
@@ -6924,10 +6949,10 @@
 
     <span class="attr">#[cfg(not(wasm_browser))]
     </span><span class="kw">fn </span>may_fragment(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(pconn6) = <span class="self">self</span>.pconn6.as_ref() {
-            pconn6.may_fragment() || <span class="self">self</span>.pconn4.may_fragment()
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(socket) = <span class="self">self</span>.sockets.v6.as_ref() {
+            socket.may_fragment() || <span class="self">self</span>.sockets.v4.may_fragment()
         } <span class="kw">else </span>{
-            <span class="self">self</span>.pconn4.may_fragment()
+            <span class="self">self</span>.sockets.v4.may_fragment()
         }
     }
 
@@ -6987,18 +7012,12 @@
     <span class="doccomment">/// The `NetInfo` provided in the last call to `net_info_func`. It's used to deduplicate calls to netInfoFunc.
     </span>net_info_last: <span class="prelude-ty">Option</span>&lt;NetInfo&gt;,
 
-    <span class="comment">// The underlying UDP sockets used to send/rcv packets.
+    <span class="doccomment">/// Socket state, grouped so we can cfg it out as one for browsers
     </span><span class="attr">#[cfg(not(wasm_browser))]
-    </span>pconn4: Arc&lt;UdpSocket&gt;,
-    <span class="attr">#[cfg(not(wasm_browser))]
-    </span>pconn6: <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;,
+    </span>sockets: ActorSocketState,
 
     <span class="doccomment">/// Configuration for net report
     </span>net_report_config: net_report::Options,
-
-    <span class="doccomment">/// The NAT-PMP/PCP/UPnP prober/client, for requesting port mappings from NAT devices.
-    </span><span class="attr">#[cfg(not(wasm_browser))]
-    </span>port_mapper: portmapper::Client,
 
     <span class="doccomment">/// Whether IPv4 UDP is known to be unable to transmit
     /// at all. This could happen if the socket is in an invalid state
@@ -7008,17 +7027,94 @@
     <span class="doccomment">/// The prober that discovers local network conditions, including the closest relay relay and NAT mappings.
     </span>net_reporter: net_report::Client,
 
-    <span class="attr">#[cfg(not(wasm_browser))]
-    </span>network_monitor: netmon::Monitor,
+    network_monitor: netmon::Monitor,
+}
+
+<span class="doccomment">/// Actor state that relies on sockets being available.
+///
+/// We group these together into their own struct to make it easier to cfg out at once.
+</span><span class="attr">#[cfg(not(wasm_browser))]
+</span><span class="kw">struct </span>ActorSocketState {
+    <span class="doccomment">/// The NAT-PMP/PCP/UPnP prober/client, for requesting port mappings from NAT devices.
+    </span>port_mapper: portmapper::Client,
+
+    <span class="comment">// The underlying UDP sockets used to send/rcv packets.
+    </span>v4: Arc&lt;UdpSocket&gt;,
+    v6: <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;,
+}
+
+<span class="attr">#[cfg(not(wasm_browser))]
+</span><span class="kw">impl </span>ActorSocketState {
+    <span class="kw">fn </span>bind(addr_v4: <span class="prelude-ty">Option</span>&lt;SocketAddrV4&gt;, addr_v6: <span class="prelude-ty">Option</span>&lt;SocketAddrV6&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+        <span class="kw">let </span>port_mapper = portmapper::Client::default();
+        <span class="kw">let </span>(v4, v6) = <span class="self">Self</span>::bind_sockets(addr_v4, addr_v6)<span class="question-mark">?</span>;
+
+        <span class="kw">let </span>this = <span class="self">Self </span>{
+            port_mapper,
+            v4,
+            v6,
+        };
+
+        <span class="kw">let </span>port = this.port_v4();
+
+        <span class="comment">// NOTE: we can end up with a zero port if `netwatch::UdpSocket::socket_addr` fails
+        </span><span class="kw">match </span>port.try_into() {
+            <span class="prelude-val">Ok</span>(non_zero_port) =&gt; {
+                this.port_mapper.update_local_port(non_zero_port);
+            }
+            <span class="prelude-val">Err</span>(_zero_port) =&gt; <span class="macro">debug!</span>(<span class="string">"Skipping port mapping with zero local port"</span>),
+        }
+
+        <span class="prelude-val">Ok</span>(this)
+    }
+
+    <span class="doccomment">/// Returns the ipv4 port, or 0 if `netwatch::UdpSocket::socket_addr` failed.
+    </span><span class="kw">fn </span>port_v4(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u16 {
+        <span class="self">self</span>.v4.local_addr().map_or(<span class="number">0</span>, |p| p.port())
+    }
+
+    <span class="kw">fn </span>bind_sockets(
+        addr_v4: <span class="prelude-ty">Option</span>&lt;SocketAddrV4&gt;,
+        addr_v6: <span class="prelude-ty">Option</span>&lt;SocketAddrV6&gt;,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(Arc&lt;UdpSocket&gt;, <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;)&gt; {
+        <span class="kw">let </span>addr_v4 = addr_v4.unwrap_or_else(|| SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, <span class="number">0</span>));
+        <span class="kw">let </span>v4 = Arc::new(bind_with_fallback(SocketAddr::V4(addr_v4)).context(<span class="string">"bind IPv4 failed"</span>)<span class="question-mark">?</span>);
+
+        <span class="kw">let </span>ip4_port = v4.local_addr()<span class="question-mark">?</span>.port();
+        <span class="kw">let </span>ip6_port = ip4_port.checked_add(<span class="number">1</span>).unwrap_or(ip4_port - <span class="number">1</span>);
+        <span class="kw">let </span>addr_v6 =
+            addr_v6.unwrap_or_else(|| SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, ip6_port, <span class="number">0</span>, <span class="number">0</span>));
+        <span class="kw">let </span>v6 = <span class="kw">match </span>bind_with_fallback(SocketAddr::V6(addr_v6)) {
+            <span class="prelude-val">Ok</span>(sock) =&gt; <span class="prelude-val">Some</span>(Arc::new(sock)),
+            <span class="prelude-val">Err</span>(err) =&gt; {
+                <span class="macro">info!</span>(<span class="string">"bind ignoring IPv6 bind failure: {:?}"</span>, err);
+                <span class="prelude-val">None
+            </span>}
+        };
+
+        <span class="prelude-val">Ok</span>((v4, v6))
+    }
+
+    <span class="kw">fn </span>msock_socket_state(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;SocketState&gt; {
+        <span class="kw">let </span>ipv4_addr = <span class="self">self</span>.v4.local_addr()<span class="question-mark">?</span>;
+        <span class="kw">let </span>ipv6_addr = <span class="self">self</span>.v6.as_ref().and_then(|c| c.local_addr().ok());
+
+        <span class="kw">let </span>socket_state = SocketState {
+            port: AtomicU16::new(<span class="self">self</span>.port_v4()),
+            local_addrs: std::sync::RwLock::new((ipv4_addr, ipv6_addr)),
+            v4: UdpConn::wrap(<span class="self">self</span>.v4.clone()),
+            v6: <span class="self">self</span>.v6.clone().map(UdpConn::wrap),
+        };
+
+        <span class="prelude-val">Ok</span>(socket_state)
+    }
 }
 
 <span class="kw">impl </span>Actor {
     <span class="kw">async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="comment">// Setup network monitoring
-        </span><span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">let </span>(link_change_s, <span class="kw-2">mut </span>link_change_r) = mpsc::channel(<span class="number">8</span>);
-        <span class="attr">#[cfg(not(wasm_browser))]
-        </span><span class="kw">let </span>_token = <span class="self">self
+        <span class="kw">let </span>_token = <span class="self">self
             </span>.network_monitor
             .subscribe(<span class="kw">move </span>|is_major| {
                 <span class="kw">let </span>link_change_s = link_change_s.clone();
@@ -7038,7 +7134,7 @@
         <span class="kw">let </span><span class="kw-2">mut </span>direct_addr_update_receiver =
             <span class="self">self</span>.msock.direct_addr_update_state.running.subscribe();
         <span class="attr">#[cfg(not(wasm_browser))]
-        </span><span class="kw">let </span><span class="kw-2">mut </span>portmap_watcher = <span class="self">self</span>.port_mapper.watch_external_address();
+        </span><span class="kw">let </span><span class="kw-2">mut </span>portmap_watcher = <span class="self">self</span>.sockets.port_mapper.watch_external_address();
 
         <span class="kw">let </span><span class="kw-2">mut </span>discovery_events: BoxStream&lt;DiscoveryItem&gt; = Box::pin(n0_future::stream::empty());
         <span class="kw">if let </span><span class="prelude-val">Some</span>(d) = <span class="self">self</span>.msock.discovery() {
@@ -7062,11 +7158,6 @@
             </span><span class="kw">let </span>direct_addr_heartbeat_timer_tick = direct_addr_heartbeat_timer.tick();
             <span class="attr">#[cfg(wasm_browser)]
             </span><span class="kw">let </span>direct_addr_heartbeat_timer_tick = n0_future::future::pending();
-
-            <span class="attr">#[cfg(not(wasm_browser))]
-            </span><span class="kw">let </span>link_change_r_recv = link_change_r.recv();
-            <span class="attr">#[cfg(wasm_browser)]
-            </span><span class="kw">let </span>link_change_r_recv = n0_future::future::pending();
 
             <span class="macro">tokio::select!</span> {
                 msg = <span class="self">self</span>.msg_receiver.recv(), <span class="kw">if </span>!receiver_closed =&gt; {
@@ -7132,23 +7223,18 @@
                         <span class="self">self</span>.refresh_direct_addrs(reason).<span class="kw">await</span>;
                     }
                 }
-                is_major = link_change_r_recv, <span class="kw">if </span>!link_change_closed =&gt; {
-                    <span class="attr">#[cfg(not(wasm_browser))]
-                    </span>{
-                        <span class="kw">let </span><span class="prelude-val">Some</span>(is_major) = is_major <span class="kw">else </span>{
-                            <span class="macro">trace!</span>(<span class="string">"tick: link change receiver closed"</span>);
-                            <span class="macro">inc!</span>(Metrics, actor_tick_other);
+                is_major = link_change_r.recv(), <span class="kw">if </span>!link_change_closed =&gt; {
+                    <span class="kw">let </span><span class="prelude-val">Some</span>(is_major) = is_major <span class="kw">else </span>{
+                        <span class="macro">trace!</span>(<span class="string">"tick: link change receiver closed"</span>);
+                        <span class="macro">inc!</span>(Metrics, actor_tick_other);
 
-                            link_change_closed = <span class="bool-val">true</span>;
-                            <span class="kw">continue</span>;
-                        };
+                        link_change_closed = <span class="bool-val">true</span>;
+                        <span class="kw">continue</span>;
+                    };
 
-                        <span class="macro">trace!</span>(<span class="string">"tick: link change {}"</span>, is_major);
-                        <span class="macro">inc!</span>(Metrics, actor_link_change);
-                        <span class="self">self</span>.handle_network_change(is_major).<span class="kw">await</span>;
-                    }
-                    <span class="attr">#[cfg(wasm_browser)]
-                    </span><span class="kw">let </span>_unused_in_browsers = is_major;
+                    <span class="macro">trace!</span>(<span class="string">"tick: link change {}"</span>, is_major);
+                    <span class="macro">inc!</span>(Metrics, actor_link_change);
+                    <span class="self">self</span>.handle_network_change(is_major).<span class="kw">await</span>;
                 }
                 <span class="comment">// Even if `discovery_events` yields `None`, it could begin to yield
                 // `Some` again in the future, so we don't want to disable this branch
@@ -7172,20 +7258,22 @@
         }
     }
 
-    <span class="attr">#[cfg(not(wasm_browser))]
-    </span><span class="kw">async fn </span>handle_network_change(<span class="kw-2">&amp;mut </span><span class="self">self</span>, is_major: bool) {
+    <span class="kw">async fn </span>handle_network_change(<span class="kw-2">&amp;mut </span><span class="self">self</span>, is_major: bool) {
         <span class="macro">debug!</span>(<span class="string">"link change detected: major? {}"</span>, is_major);
 
         <span class="kw">if </span>is_major {
-            <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.pconn4.rebind() {
-                <span class="macro">warn!</span>(<span class="string">"failed to rebind Udp IPv4 socket: {:?}"</span>, err);
-            };
-            <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>pconn6) = <span class="self">self</span>.pconn6 {
-                <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = pconn6.rebind() {
-                    <span class="macro">warn!</span>(<span class="string">"failed to rebind Udp IPv6 socket: {:?}"</span>, err);
+            <span class="attr">#[cfg(not(wasm_browser))]
+            </span>{
+                <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.sockets.v4.rebind() {
+                    <span class="macro">warn!</span>(<span class="string">"failed to rebind Udp IPv4 socket: {:?}"</span>, err);
                 };
+                <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>socket) = <span class="self">self</span>.sockets.v6 {
+                    <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = socket.rebind() {
+                        <span class="macro">warn!</span>(<span class="string">"failed to rebind Udp IPv6 socket: {:?}"</span>, err);
+                    };
+                }
+                <span class="self">self</span>.msock.dns_resolver.clear_cache();
             }
-            <span class="self">self</span>.msock.dns_resolver.clear_cache();
             <span class="self">self</span>.msock.re_stun(<span class="string">"link-change-major"</span>);
             <span class="self">self</span>.close_stale_relay_connections().<span class="kw">await</span>;
             <span class="self">self</span>.reset_endpoint_states();
@@ -7215,7 +7303,7 @@
 
                 <span class="self">self</span>.msock.node_map.notify_shutdown();
                 <span class="attr">#[cfg(not(wasm_browser))]
-                </span><span class="self">self</span>.port_mapper.deactivate();
+                </span><span class="self">self</span>.sockets.port_mapper.deactivate();
                 <span class="self">self</span>.relay_actor_cancel_token.cancel();
 
                 <span class="macro">debug!</span>(<span class="string">"shutdown complete"</span>);
@@ -7239,8 +7327,7 @@
                 <span class="self">self</span>.finalize_direct_addrs_update(why);
             }
             ActorMessage::NetworkChange =&gt; {
-                <span class="attr">#[cfg(not(wasm_browser))]
-                </span><span class="self">self</span>.network_monitor.network_change().<span class="kw">await</span>.ok();
+                <span class="self">self</span>.network_monitor.network_change().<span class="kw">await</span>.ok();
             }
             <span class="attr">#[cfg(test)]
             </span>ActorMessage::ForceNetworkChange(is_major) =&gt; {
@@ -7264,7 +7351,7 @@
 
         <span class="macro">debug!</span>(<span class="string">"starting direct addr update ({})"</span>, why);
         <span class="attr">#[cfg(not(wasm_browser))]
-        </span><span class="self">self</span>.port_mapper.procure_mapping();
+        </span><span class="self">self</span>.sockets.port_mapper.procure_mapping();
         <span class="self">self</span>.update_net_info(why).<span class="kw">await</span>;
     }
 
@@ -7278,7 +7365,7 @@
     /// - The local interfaces IP addresses.
     </span><span class="attr">#[cfg(not(wasm_browser))]
     </span><span class="kw">fn </span>update_direct_addresses(<span class="kw-2">&amp;mut </span><span class="self">self</span>, net_report_report: <span class="prelude-ty">Option</span>&lt;Arc&lt;net_report::Report&gt;&gt;) {
-        <span class="kw">let </span>portmap_watcher = <span class="self">self</span>.port_mapper.watch_external_address();
+        <span class="kw">let </span>portmap_watcher = <span class="self">self</span>.sockets.port_mapper.watch_external_address();
 
         <span class="comment">// We only want to have one DirectAddr for each SocketAddr we have.  So we store
         // this as a map of SocketAddr -&gt; DirectAddrType.  At the end we will construct a
@@ -7305,7 +7392,7 @@
                 // port locally, assume they might've added a static
                 // port mapping on their router to the same explicit
                 // port that we are running with. Worst case it's an invalid candidate mapping.
-                </span><span class="kw">let </span>port = <span class="self">self</span>.msock.port.load(Ordering::Relaxed);
+                </span><span class="kw">let </span>port = <span class="self">self</span>.msock.sockets.port.load(Ordering::Relaxed);
                 <span class="kw">if </span>net_report_report
                     .mapping_varies_by_dest_ip
                     .unwrap_or_default()
@@ -7325,8 +7412,8 @@
             }
         }
 
-        <span class="kw">let </span>local_addr_v4 = <span class="self">self</span>.pconn4.local_addr().ok();
-        <span class="kw">let </span>local_addr_v6 = <span class="self">self</span>.pconn6.as_ref().and_then(|c| c.local_addr().ok());
+        <span class="kw">let </span>local_addr_v4 = <span class="self">self</span>.sockets.v4.local_addr().ok();
+        <span class="kw">let </span>local_addr_v6 = <span class="self">self</span>.sockets.v6.as_ref().and_then(|c| c.local_addr().ok());
 
         <span class="kw">let </span>is_unspecified_v4 = local_addr_v4
             .map(|a| a.ip().is_unspecified())
@@ -7512,7 +7599,12 @@
             <span class="self">self</span>.no_v4_send = !r.ipv4_can_send;
 
             <span class="attr">#[cfg(not(wasm_browser))]
-            </span><span class="kw">let </span>have_port_map = <span class="self">self</span>.port_mapper.watch_external_address().borrow().is_some();
+            </span><span class="kw">let </span>have_port_map = <span class="self">self
+                </span>.sockets
+                .port_mapper
+                .watch_external_address()
+                .borrow()
+                .is_some();
             <span class="attr">#[cfg(wasm_browser)]
             </span><span class="kw">let </span>have_port_map = <span class="bool-val">false</span>;
 
@@ -7617,15 +7709,18 @@
     /// The relay connections who's local endpoints no longer exist after a network change
     /// will error out soon enough.  Closing them eagerly speeds this up however and allows
     /// re-establishing a relay connection faster.
-    </span><span class="attr">#[cfg(not(wasm_browser))]
     </span><span class="kw">async fn </span>close_stale_relay_connections(<span class="kw-2">&amp;</span><span class="self">self</span>) {
         <span class="kw">let </span>ifs = interfaces::State::new().<span class="kw">await</span>;
-        <span class="kw">let </span>local_ips = ifs
+        <span class="attr">#[cfg(not(wasm_browser))]
+        </span><span class="kw">let </span>local_ips = ifs
             .interfaces
             .values()
             .flat_map(|netif| netif.addrs())
             .map(|ipnet| ipnet.addr())
             .collect();
+        <span class="comment">// In browsers, we don't have this information. This will do the right thing in the ActiveRelayActor, though.
+        </span><span class="attr">#[cfg(wasm_browser)]
+        </span><span class="kw">let </span>local_ips = Vec::new();
         <span class="self">self</span>.send_relay_actor(RelayActorMessage::MaybeCloseRelaysOnRebind(local_ips));
     }
 
@@ -7659,28 +7754,29 @@
     }
 }
 
-<span class="doccomment">/// Initial connection setup.
-</span><span class="attr">#[cfg(not(wasm_browser))]
-</span><span class="kw">fn </span>bind(
-    addr_v4: <span class="prelude-ty">Option</span>&lt;SocketAddrV4&gt;,
-    addr_v6: <span class="prelude-ty">Option</span>&lt;SocketAddrV6&gt;,
-) -&gt; <span class="prelude-ty">Result</span>&lt;(UdpConn, <span class="prelude-ty">Option</span>&lt;UdpConn&gt;)&gt; {
-    <span class="kw">let </span>addr_v4 = addr_v4.unwrap_or_else(|| SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, <span class="number">0</span>));
-    <span class="kw">let </span>pconn4 = UdpConn::bind(SocketAddr::V4(addr_v4)).context(<span class="string">"bind IPv4 failed"</span>)<span class="question-mark">?</span>;
+<span class="attr">#[cfg(not(wasm_browser))]
+</span><span class="kw">fn </span>bind_with_fallback(<span class="kw-2">mut </span>addr: SocketAddr) -&gt; anyhow::Result&lt;UdpSocket&gt; {
+    <span class="macro">debug!</span>(%addr, <span class="string">"binding"</span>);
 
-    <span class="kw">let </span>ip4_port = pconn4.local_addr()<span class="question-mark">?</span>.port();
-    <span class="kw">let </span>ip6_port = ip4_port.checked_add(<span class="number">1</span>).unwrap_or(ip4_port - <span class="number">1</span>);
-    <span class="kw">let </span>addr_v6 =
-        addr_v6.unwrap_or_else(|| SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, ip6_port, <span class="number">0</span>, <span class="number">0</span>));
-    <span class="kw">let </span>pconn6 = <span class="kw">match </span>UdpConn::bind(SocketAddr::V6(addr_v6)) {
-        <span class="prelude-val">Ok</span>(conn) =&gt; <span class="prelude-val">Some</span>(conn),
+    <span class="comment">// First try binding a preferred port, if specified
+    </span><span class="kw">match </span>UdpSocket::bind_full(addr) {
+        <span class="prelude-val">Ok</span>(socket) =&gt; {
+            <span class="kw">let </span>local_addr = socket.local_addr().context(<span class="string">"UDP socket not bound"</span>)<span class="question-mark">?</span>;
+            <span class="macro">debug!</span>(%addr, %local_addr, <span class="string">"successfully bound"</span>);
+            <span class="kw">return </span><span class="prelude-val">Ok</span>(socket);
+        }
         <span class="prelude-val">Err</span>(err) =&gt; {
-            <span class="macro">info!</span>(<span class="string">"bind ignoring IPv6 bind failure: {:?}"</span>, err);
-            <span class="prelude-val">None
-        </span>}
-    };
+            <span class="macro">debug!</span>(%addr, <span class="string">"failed to bind: {err:#}"</span>);
+            <span class="comment">// If that was already the fallback port, then error out
+            </span><span class="kw">if </span>addr.port() == <span class="number">0 </span>{
+                <span class="kw">return </span><span class="prelude-val">Err</span>(err.into());
+            }
+        }
+    }
 
-    <span class="prelude-val">Ok</span>((pconn4, pconn6))
+    <span class="comment">// Otherwise, try binding with port 0
+    </span>addr.set_port(<span class="number">0</span>);
+    UdpSocket::bind_full(addr).context(<span class="string">"failed to bind on fallback port"</span>)
 }
 
 <span class="doccomment">/// The discovered direct addresses of this [`MagicSock`].
@@ -7795,9 +7891,6 @@
 </span><span class="attr">#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>NodeIdMappedAddr(Ipv6Addr);
 
-<span class="doccomment">/// The dummy port used for all [`NodeIdMappedAddr`]s
-</span><span class="kw">pub const </span>NODE_ID_MAPPED_PORT: u16 = <span class="number">12345</span>;
-
 <span class="doccomment">/// Can occur when converting a [`SocketAddr`] to an [`NodeIdMappedAddr`]
 </span><span class="attr">#[derive(Debug, thiserror::Error)]
 #[error(<span class="string">"Failed to convert"</span>)]
@@ -7814,6 +7907,9 @@
     <span class="doccomment">/// The Subnet ID used in our Unique Local Addresses.
     </span><span class="kw">const </span>ADDR_SUBNET: [u8; <span class="number">2</span>] = [<span class="number">0</span>; <span class="number">2</span>];
 
+    <span class="doccomment">/// The dummy port used for all [`NodeIdMappedAddr`]s.
+    </span><span class="kw">const </span>NODE_ID_MAPPED_PORT: u16 = <span class="number">12345</span>;
+
     <span class="doccomment">/// Generates a globally unique fake UDP address.
     ///
     /// This generates and IPv6 Unique Local Address according to RFC 4193.
@@ -7829,9 +7925,15 @@
         <span class="self">Self</span>(Ipv6Addr::from(addr))
     }
 
-    <span class="doccomment">/// Return the [`SocketAddr`] from the [`NodeIdMappedAddr`]
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>socket_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; SocketAddr {
-        SocketAddr::new(IpAddr::from(<span class="self">self</span>.<span class="number">0</span>), NODE_ID_MAPPED_PORT)
+    <span class="doccomment">/// Returns a consistent [`SocketAddr`] for the [`NodeIdMappedAddr`].
+    ///
+    /// This socket address does not have a routable IP address.
+    ///
+    /// This uses a made-up port number, since the port does not play a role in looking up
+    /// the node in the [`NodeMap`].  This socket address is only to be used to pass into
+    /// Quinn.
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>private_socket_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; SocketAddr {
+        SocketAddr::new(IpAddr::from(<span class="self">self</span>.<span class="number">0</span>), <span class="self">Self</span>::NODE_ID_MAPPED_PORT)
     }
 }
 
@@ -8648,7 +8750,7 @@
     </span><span class="kw">async fn </span>test_two_devices_roundtrip_quinn_rebinding_conn() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">fn </span>make_conn(addr: SocketAddr) -&gt; anyhow::Result&lt;quinn::Endpoint&gt; {
             <span class="kw">let </span>key = SecretKey::generate(rand::thread_rng());
-            <span class="kw">let </span>conn = UdpConn::bind(addr)<span class="question-mark">?</span>;
+            <span class="kw">let </span>conn = UdpConn::wrap(Arc::new(bind_with_fallback(addr)<span class="question-mark">?</span>));
 
             <span class="kw">let </span>quic_server_config = tls::make_server_config(<span class="kw-2">&amp;</span>key, <span class="macro">vec!</span>[ALPN.to_vec()], <span class="bool-val">false</span>)<span class="question-mark">?</span>;
             <span class="kw">let </span><span class="kw-2">mut </span>server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
@@ -8956,7 +9058,11 @@
             tls::make_client_config(<span class="kw-2">&amp;</span>ep_secret_key, <span class="prelude-val">Some</span>(node_id), alpns, <span class="prelude-val">None</span>, <span class="bool-val">true</span>)<span class="question-mark">?</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
         client_config.transport_config(transport_config);
-        <span class="kw">let </span>connect = ep.connect_with(client_config, mapped_addr.socket_addr(), <span class="string">"localhost"</span>)<span class="question-mark">?</span>;
+        <span class="kw">let </span>connect = ep.connect_with(
+            client_config,
+            mapped_addr.private_socket_addr(),
+            <span class="string">"localhost"</span>,
+        )<span class="question-mark">?</span>;
         <span class="kw">let </span>connection = connect.<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(connection)
     }

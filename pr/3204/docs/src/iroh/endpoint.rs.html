@@ -3428,7 +3428,7 @@
         </span><span class="kw">let </span>server_name = <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{}.iroh.invalid"</span>, BASE32_DNSSEC.encode(node_id.as_bytes()));
         <span class="kw">let </span>connect = <span class="self">self</span>.msock.endpoint().connect_with(
             client_config,
-            mapped_addr.socket_addr(),
+            mapped_addr.private_socket_addr(),
             server_name,
         )<span class="question-mark">?</span>;
 

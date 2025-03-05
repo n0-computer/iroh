@@ -182,50 +182,7 @@
 <a href="#181" id="181">181</a>
 <a href="#182" id="182">182</a>
 <a href="#183" id="183">183</a>
-<a href="#184" id="184">184</a>
-<a href="#185" id="185">185</a>
-<a href="#186" id="186">186</a>
-<a href="#187" id="187">187</a>
-<a href="#188" id="188">188</a>
-<a href="#189" id="189">189</a>
-<a href="#190" id="190">190</a>
-<a href="#191" id="191">191</a>
-<a href="#192" id="192">192</a>
-<a href="#193" id="193">193</a>
-<a href="#194" id="194">194</a>
-<a href="#195" id="195">195</a>
-<a href="#196" id="196">196</a>
-<a href="#197" id="197">197</a>
-<a href="#198" id="198">198</a>
-<a href="#199" id="199">199</a>
-<a href="#200" id="200">200</a>
-<a href="#201" id="201">201</a>
-<a href="#202" id="202">202</a>
-<a href="#203" id="203">203</a>
-<a href="#204" id="204">204</a>
-<a href="#205" id="205">205</a>
-<a href="#206" id="206">206</a>
-<a href="#207" id="207">207</a>
-<a href="#208" id="208">208</a>
-<a href="#209" id="209">209</a>
-<a href="#210" id="210">210</a>
-<a href="#211" id="211">211</a>
-<a href="#212" id="212">212</a>
-<a href="#213" id="213">213</a>
-<a href="#214" id="214">214</a>
-<a href="#215" id="215">215</a>
-<a href="#216" id="216">216</a>
-<a href="#217" id="217">217</a>
-<a href="#218" id="218">218</a>
-<a href="#219" id="219">219</a>
-<a href="#220" id="220">220</a>
-<a href="#221" id="221">221</a>
-<a href="#222" id="222">222</a>
-<a href="#223" id="223">223</a>
-<a href="#224" id="224">224</a>
-<a href="#225" id="225">225</a>
-<a href="#226" id="226">226</a>
-<a href="#227" id="227">227</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#184" id="184">184</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     fmt::Debug,
     io,
     net::SocketAddr,
@@ -234,40 +191,28 @@
     task::{Context, Poll},
 };
 
-<span class="kw">use </span>anyhow::{bail, Context <span class="kw">as _</span>};
 <span class="kw">use </span>netwatch::UdpSocket;
 <span class="kw">use </span>quinn::AsyncUdpSocket;
 <span class="kw">use </span>quinn_udp::Transmit;
-<span class="kw">use </span>tracing::debug;
 
-<span class="doccomment">/// A UDP socket implementing Quinn's [`AsyncUdpSocket`].
+<span class="doccomment">/// Wrapper struct to implement Quinn's [`AsyncUdpSocket`] for [`UdpSocket`].
 </span><span class="attr">#[derive(Debug, Clone)]
-</span><span class="kw">pub struct </span>UdpConn {
-    io: Arc&lt;UdpSocket&gt;,
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>UdpConn {
+    inner: Arc&lt;UdpSocket&gt;,
 }
 
 <span class="kw">impl </span>UdpConn {
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>as_socket(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Arc&lt;UdpSocket&gt; {
-        <span class="self">self</span>.io.clone()
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>wrap(inner: Arc&lt;UdpSocket&gt;) -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{ inner }
     }
 
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>as_socket_ref(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>UdpSocket {
-        <span class="kw-2">&amp;</span><span class="self">self</span>.io
-    }
-
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>bind(addr: SocketAddr) -&gt; anyhow::Result&lt;<span class="self">Self</span>&gt; {
-        <span class="kw">let </span>sock = bind(addr)<span class="question-mark">?</span>;
-
-        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{ io: Arc::new(sock) })
-    }
-
-    <span class="kw">pub fn </span>port(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; u16 {
-        <span class="self">self</span>.local_addr().map(|p| p.port()).unwrap_or_default()
+        <span class="kw-2">&amp;</span><span class="self">self</span>.inner
     }
 
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>create_io_poller(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Pin&lt;Box&lt;<span class="kw">dyn </span>quinn::UdpPoller&gt;&gt; {
         Box::pin(IoPoller {
-            io: <span class="self">self</span>.io.clone(),
+            io: <span class="self">self</span>.inner.clone(),
         })
     }
 }
@@ -278,7 +223,7 @@
     }
 
     <span class="kw">fn </span>try_send(<span class="kw-2">&amp;</span><span class="self">self</span>, transmit: <span class="kw-2">&amp;</span>Transmit&lt;<span class="lifetime">'_</span>&gt;) -&gt; io::Result&lt;()&gt; {
-        <span class="self">self</span>.io.try_send_quinn(transmit)
+        <span class="self">self</span>.inner.try_send_quinn(transmit)
     }
 
     <span class="kw">fn </span>poll_recv(
@@ -287,61 +232,24 @@
         bufs: <span class="kw-2">&amp;mut </span>[io::IoSliceMut&lt;<span class="lifetime">'_</span>&gt;],
         meta: <span class="kw-2">&amp;mut </span>[quinn_udp::RecvMeta],
     ) -&gt; Poll&lt;io::Result&lt;usize&gt;&gt; {
-        <span class="self">self</span>.io.poll_recv_quinn(cx, bufs, meta)
+        <span class="self">self</span>.inner.poll_recv_quinn(cx, bufs, meta)
     }
 
     <span class="kw">fn </span>local_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; io::Result&lt;SocketAddr&gt; {
-        <span class="self">self</span>.io.local_addr()
+        <span class="self">self</span>.inner.local_addr()
     }
 
     <span class="kw">fn </span>may_fragment(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-        <span class="self">self</span>.io.may_fragment()
+        <span class="self">self</span>.inner.may_fragment()
     }
 
     <span class="kw">fn </span>max_transmit_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-        <span class="self">self</span>.io.max_gso_segments()
+        <span class="self">self</span>.inner.max_gso_segments()
     }
 
     <span class="kw">fn </span>max_receive_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-        <span class="self">self</span>.io.gro_segments()
+        <span class="self">self</span>.inner.gro_segments()
     }
-}
-
-<span class="kw">fn </span>bind(<span class="kw-2">mut </span>addr: SocketAddr) -&gt; anyhow::Result&lt;UdpSocket&gt; {
-    <span class="macro">debug!</span>(%addr, <span class="string">"binding"</span>);
-
-    <span class="comment">// Build a list of preferred ports.
-    // - Best is the port that the user requested.
-    // - Second best is the port that is currently in use.
-    // - If those fail, fall back to 0.
-
-    </span><span class="kw">let </span><span class="kw-2">mut </span>ports = Vec::new();
-    <span class="kw">if </span>addr.port() != <span class="number">0 </span>{
-        ports.push(addr.port());
-    }
-    <span class="comment">// Backup port
-    </span>ports.push(<span class="number">0</span>);
-    <span class="comment">// Remove duplicates. (All duplicates are consecutive.)
-    </span>ports.dedup();
-    <span class="macro">debug!</span>(<span class="question-mark">?</span>ports, <span class="string">"candidate ports"</span>);
-
-    <span class="kw">for </span>port <span class="kw">in </span><span class="kw-2">&amp;</span>ports {
-        addr.set_port(<span class="kw-2">*</span>port);
-        <span class="kw">match </span>UdpSocket::bind_full(addr) {
-            <span class="prelude-val">Ok</span>(pconn) =&gt; {
-                <span class="kw">let </span>local_addr = pconn.local_addr().context(<span class="string">"UDP socket not bound"</span>)<span class="question-mark">?</span>;
-                <span class="macro">debug!</span>(%addr, %local_addr, <span class="string">"successfully bound"</span>);
-                <span class="kw">return </span><span class="prelude-val">Ok</span>(pconn);
-            }
-            <span class="prelude-val">Err</span>(err) =&gt; {
-                <span class="macro">debug!</span>(%addr, <span class="string">"failed to bind: {err:#}"</span>);
-                <span class="kw">continue</span>;
-            }
-        }
-    }
-
-    <span class="comment">// Failed to bind, including on port 0 (!).
-    </span><span class="macro">bail!</span>(<span class="string">"failed to bind any ports on {:?} (tried {:?})"</span>, addr, ports);
 }
 
 <span class="doccomment">/// Poller for when the socket is writable.
@@ -404,10 +312,16 @@
     </span>}
 
     <span class="kw">async fn </span>rebinding_conn_send_recv(network: IpFamily) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">let </span>m1 = UdpConn::bind(SocketAddr::new(network.unspecified_addr(), <span class="number">0</span>))<span class="question-mark">?</span>;
+        <span class="kw">let </span>m1 = UdpConn::wrap(Arc::new(UdpSocket::bind_full(SocketAddr::new(
+            network.unspecified_addr(),
+            <span class="number">0</span>,
+        ))<span class="question-mark">?</span>));
         <span class="kw">let </span>(m1, _m1_key) = wrap_socket(m1)<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>m2 = UdpConn::bind(SocketAddr::new(network.unspecified_addr(), <span class="number">0</span>))<span class="question-mark">?</span>;
+        <span class="kw">let </span>m2 = UdpConn::wrap(Arc::new(UdpSocket::bind_full(SocketAddr::new(
+            network.unspecified_addr(),
+            <span class="number">0</span>,
+        ))<span class="question-mark">?</span>));
         <span class="kw">let </span>(m2, _m2_key) = wrap_socket(m2)<span class="question-mark">?</span>;
 
         <span class="kw">let </span>m1_addr = SocketAddr::new(network.local_addr(), m1.local_addr()<span class="question-mark">?</span>.port());
