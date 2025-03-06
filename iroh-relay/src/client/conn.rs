@@ -167,6 +167,11 @@ impl Stream for Conn {
                 ref key_cache,
             } => match ready!(Pin::new(conn).poll_next(cx)) {
                 Some(Ok(msg)) => {
+                    if msg.is_close() {
+                        // Indicate the stream is done when we receive a close message.
+                        // Note: We don't have to poll the stream to completion for it to close gracefully.
+                        return Poll::Ready(None);
+                    }
                     if !msg.is_binary() {
                         tracing::warn!(
                             ?msg,

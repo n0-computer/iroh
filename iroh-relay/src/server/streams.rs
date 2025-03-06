@@ -76,6 +76,11 @@ impl Stream for RelayedStream {
             Self::Relay(ref mut framed) => Pin::new(framed).poll_next(cx),
             Self::Ws(ref mut ws, ref cache) => match Pin::new(ws).poll_next(cx) {
                 Poll::Ready(Some(Ok(msg))) => {
+                    if msg.is_close() {
+                        // Indicate the stream is done when we receive a close message.
+                        // Note: We don't have to poll the stream to completion for it to close gracefully.
+                        return Poll::Ready(None);
+                    }
                     if !msg.is_binary() {
                         tracing::warn!(
                             ?msg,
