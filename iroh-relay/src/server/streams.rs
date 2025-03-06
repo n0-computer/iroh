@@ -47,7 +47,7 @@ impl Sink<Frame> for RelayedStream {
             Self::Relay(ref mut framed) => Pin::new(framed).start_send(item),
             Self::Ws(ref mut ws, _) => Pin::new(ws)
                 .start_send(tokio_websockets::Message::binary(
-                    tokio_websockets::Payload::from(item.encode_for_ws_msg())
+                    tokio_websockets::Payload::from(item.encode_for_ws_msg()),
                 ))
                 .map_err(ws_to_io_err),
         }
@@ -77,10 +77,16 @@ impl Stream for RelayedStream {
             Self::Ws(ref mut ws, ref cache) => match Pin::new(ws).poll_next(cx) {
                 Poll::Ready(Some(Ok(msg))) => {
                     if !msg.is_binary() {
-                        tracing::warn!(?msg, "Got websocket message of unsupported type, skipping.");
+                        tracing::warn!(
+                            ?msg,
+                            "Got websocket message of unsupported type, skipping."
+                        );
                         return Poll::Pending;
                     }
-                    Poll::Ready(Some(Frame::decode_from_ws_msg(msg.into_payload().into(), cache)))
+                    Poll::Ready(Some(Frame::decode_from_ws_msg(
+                        msg.into_payload().into(),
+                        cache,
+                    )))
                 }
                 Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e.into()))),
                 Poll::Ready(None) => Poll::Ready(None),
