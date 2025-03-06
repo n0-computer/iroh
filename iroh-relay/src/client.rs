@@ -148,7 +148,7 @@ impl ClientBuilder {
             }
             #[cfg(not(wasm_browser))]
             Protocol::Websocket => {
-                let (conn, local_addr) = self.connect_tokio_ws().await?;
+                let (conn, local_addr) = self.connect_ws().await?;
                 (conn, Some(local_addr))
             }
             #[cfg(not(wasm_browser))]
@@ -189,14 +189,9 @@ impl ClientBuilder {
 
         debug!(%dial_url, "Dialing relay by websocket");
 
-        let (_, ws_stream) = ws_stream_wasm::WsMeta::connect(
-            dial_url.as_str(),
-            None, // no protocols
-        )
-        .await
-        .map_err(|e| anyhow!("Failed to connect websocket: {}", e))?;
-
-        let conn = Conn::new_ws(ws_stream, self.key_cache.clone(), &self.secret_key).await?;
+        let (_, ws_stream) = ws_stream_wasm::WsMeta::connect(dial_url.as_str(), None).await?;
+        let conn =
+            Conn::new_ws_browser(ws_stream, self.key_cache.clone(), &self.secret_key).await?;
         Ok(conn)
     }
 }

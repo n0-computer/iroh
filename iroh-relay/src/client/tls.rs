@@ -6,8 +6,8 @@
 //!
 //! `connect_relay` uses a custom HTTP upgrade header value (see [`HTTP_UPGRADE_PROTOCOL`]),
 //! as opposed to [`WEBSOCKET_UPGRADE_PROTOCOL`].
-//! However, this code path also contains support for HTTP(s) proxies, which is
-//! why it still remains the default code path as of now.
+//!
+//! `connect_ws` however re-uses websockets for framing.
 //!
 //! [`HTTP_UPGRADE_PROTOCOL`]: crate::http::HTTP_UPGRADE_PROTOCOL
 //! [`WEBSOCKET_UPGRADE_PROTOCOL`]: crate::http::WEBSOCKET_UPGRADE_PROTOCOL
@@ -306,18 +306,17 @@ impl ClientBuilder {
         Ok((conn, local_addr))
     }
 
-    pub(super) async fn connect_tokio_ws(&self) -> Result<(Conn, SocketAddr)> {
+    pub(super) async fn connect_ws(&self) -> Result<(Conn, SocketAddr)> {
         let mut dial_url = (*self.url).clone();
         dial_url.set_path(RELAY_PATH);
         // The relay URL is exchanged with the http(s) scheme in tickets and similar.
         // We need to use the ws:// or wss:// schemes when connecting with websockets, though.
-        let dial_scheme = match dial_url.scheme() {
-            "https" => "wss",
-            "http" => "ws",
-            scheme => bail!("Invalid URL scheme: {scheme}"),
-        };
         dial_url
-            .set_scheme(dial_scheme)
+            .set_scheme(match self.url.scheme() {
+                "http" => "ws",
+                "ws" => "ws",
+                _ => "wss",
+            })
             .map_err(|()| anyhow!("Invalid URL"))?;
 
         debug!(%dial_url, "Dialing relay by websocket");
@@ -347,7 +346,7 @@ impl ClientBuilder {
             );
         }
 
-        let conn = Conn::new_tokio_ws(conn, self.key_cache.clone(), &self.secret_key).await?;
+        let conn = Conn::new_ws(conn, self.key_cache.clone(), &self.secret_key).await?;
 
         Ok((conn, local_addr))
     }
