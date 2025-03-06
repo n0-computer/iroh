@@ -7,7 +7,7 @@
 //! `connect_relay` uses a custom HTTP upgrade header value (see [`HTTP_UPGRADE_PROTOCOL`]),
 //! as opposed to [`WEBSOCKET_UPGRADE_PROTOCOL`].
 //!
-//! `connect_ws` however re-uses websockets for framing.
+//! `connect_ws` however reuses websockets for framing.
 //!
 //! [`HTTP_UPGRADE_PROTOCOL`]: crate::http::HTTP_UPGRADE_PROTOCOL
 //! [`WEBSOCKET_UPGRADE_PROTOCOL`]: crate::http::WEBSOCKET_UPGRADE_PROTOCOL
@@ -420,8 +420,8 @@ fn url_port(url: &Url) -> Option<u16> {
     }
 
     match url.scheme() {
-        "http" => Some(80),
-        "https" => Some(443),
+        "http" | "ws" => Some(80),
+        "https" | "wss" => Some(443),
         _ => None,
     }
 }

@@ -14,6 +14,7 @@ allow = [
     "Zlib",
     "MPL-2.0",                        # https://fossa.com/blog/open-source-software-licenses-101-mozilla-public-license-2-0/
     "Unicode-3.0",
+    "Unlicense",                      # https://unlicense.org/
 ]
 
 
