@@ -35,12 +35,9 @@ pub enum ConnSendError {
     Protocol(&'static str),
 }
 
-impl From<tokio_tungstenite_wasm::Error> for ConnSendError {
-    fn from(source: tokio_tungstenite_wasm::Error) -> Self {
-        let io_err = match source {
-            tokio_tungstenite_wasm::Error::Io(io_err) => io_err,
-            _ => std::io::Error::new(std::io::ErrorKind::Other, source.to_string()),
-        };
+impl From<ws_stream_wasm::WsErr> for ConnSendError {
+    fn from(source: ws_stream_wasm::WsErr) -> Self {
+        let io_err = std::io::Error::new(std::io::ErrorKind::Other, source.to_string());
         Self::Io(io_err)
     }
 }
@@ -81,9 +78,10 @@ pub(crate) enum Conn {
         conn: tokio_websockets::WebSocketStream<MaybeTlsStream<ProxyStream>>,
         key_cache: KeyCache,
     },
-    Ws {
+    #[cfg(wasm_browser)]
+    WsBrowser {
         #[debug("WebSocketStream")]
-        conn: tokio_tungstenite_wasm::WebSocketStream,
+        conn: ws_stream_wasm::WsStream,
         key_cache: KeyCache,
     },
 }
@@ -92,11 +90,11 @@ impl Conn {
     /// Constructs a new websocket connection, including the initial server handshake.
     #[cfg(wasm_browser)]
     pub(crate) async fn new_ws(
-        conn: tokio_tungstenite_wasm::WebSocketStream,
+        conn: ws_stream_wasm::WsStream,
         key_cache: KeyCache,
         secret_key: &SecretKey,
     ) -> Result<Self> {
-        let mut conn = Self::Ws { conn, key_cache };
+        let mut conn = Self::WsBrowser { conn, key_cache };
 
         // exchange information with the server
         server_handshake(&mut conn, secret_key).await?;
@@ -182,19 +180,19 @@ impl Stream for Conn {
                 Some(Err(e)) => Poll::Ready(Some(Err(e.into()))),
                 None => Poll::Ready(None),
             },
-            Self::Ws {
+            #[cfg(wasm_browser)]
+            Self::WsBrowser {
                 ref mut conn,
                 ref key_cache,
             } => match ready!(Pin::new(conn).poll_next(cx)) {
-                Some(Ok(tokio_tungstenite_wasm::Message::Binary(vec))) => {
+                Some(ws_stream_wasm::WsMessage::Binary(vec)) => {
                     let frame = Frame::decode_from_ws_msg(Bytes::from(vec), key_cache)?;
                     Poll::Ready(Some(ReceivedMessage::try_from(frame)))
                 }
-                Some(Ok(msg)) => {
+                Some(msg) => {
                     tracing::warn!(?msg, "Got websocket message of unsupported type, skipping.");
                     Poll::Pending
                 }
-                Some(Err(e)) => Poll::Ready(Some(Err(e.into()))),
                 None => Poll::Ready(None),
             },
         }
@@ -210,7 +208,10 @@ impl Sink<Frame> for Conn {
             Self::Relay { ref mut conn } => Pin::new(conn).poll_ready(cx).map_err(Into::into),
             #[cfg(not(wasm_browser))]
             Self::TokioWs { ref mut conn, .. } => Pin::new(conn).poll_ready(cx).map_err(Into::into),
-            Self::Ws { ref mut conn, .. } => Pin::new(conn).poll_ready(cx).map_err(Into::into),
+            #[cfg(wasm_browser)]
+            Self::WsBrowser { ref mut conn, .. } => {
+                Pin::new(conn).poll_ready(cx).map_err(Into::into)
+            }
         }
     }
 
@@ -229,10 +230,9 @@ impl Sink<Frame> for Conn {
                     tokio_websockets::Payload::from(frame.encode_for_ws_msg()),
                 ))
                 .map_err(Into::into),
-            Self::Ws { ref mut conn, .. } => Pin::new(conn)
-                .start_send(tokio_tungstenite_wasm::Message::binary(
-                    frame.encode_for_ws_msg(),
-                ))
+            #[cfg(wasm_browser)]
+            Self::WsBrowser { ref mut conn, .. } => Pin::new(conn)
+                .start_send(ws_stream_wasm::WsMessage::Binary(frame.encode_for_ws_msg()))
                 .map_err(Into::into),
         }
     }
@@ -243,7 +243,10 @@ impl Sink<Frame> for Conn {
             Self::Relay { ref mut conn } => Pin::new(conn).poll_flush(cx).map_err(Into::into),
             #[cfg(not(wasm_browser))]
             Self::TokioWs { ref mut conn, .. } => Pin::new(conn).poll_flush(cx).map_err(Into::into),
-            Self::Ws { ref mut conn, .. } => Pin::new(conn).poll_flush(cx).map_err(Into::into),
+            #[cfg(wasm_browser)]
+            Self::WsBrowser { ref mut conn, .. } => {
+                Pin::new(conn).poll_flush(cx).map_err(Into::into)
+            }
         }
     }
 
@@ -253,7 +256,10 @@ impl Sink<Frame> for Conn {
             Self::Relay { ref mut conn } => Pin::new(conn).poll_close(cx).map_err(Into::into),
             #[cfg(not(wasm_browser))]
             Self::TokioWs { ref mut conn, .. } => Pin::new(conn).poll_flush(cx).map_err(Into::into),
-            Self::Ws { ref mut conn, .. } => Pin::new(conn).poll_close(cx).map_err(Into::into),
+            #[cfg(wasm_browser)]
+            Self::WsBrowser { ref mut conn, .. } => {
+                Pin::new(conn).poll_close(cx).map_err(Into::into)
+            }
         }
     }
 }
@@ -267,7 +273,10 @@ impl Sink<SendMessage> for Conn {
             Self::Relay { ref mut conn } => Pin::new(conn).poll_ready(cx).map_err(Into::into),
             #[cfg(not(wasm_browser))]
             Self::TokioWs { ref mut conn, .. } => Pin::new(conn).poll_ready(cx).map_err(Into::into),
-            Self::Ws { ref mut conn, .. } => Pin::new(conn).poll_ready(cx).map_err(Into::into),
+            #[cfg(wasm_browser)]
+            Self::WsBrowser { ref mut conn, .. } => {
+                Pin::new(conn).poll_ready(cx).map_err(Into::into)
+            }
         }
     }
 
@@ -287,10 +296,9 @@ impl Sink<SendMessage> for Conn {
                     tokio_websockets::Payload::from(frame.encode_for_ws_msg()),
                 ))
                 .map_err(Into::into),
-            Self::Ws { ref mut conn, .. } => Pin::new(conn)
-                .start_send(tokio_tungstenite_wasm::Message::binary(
-                    frame.encode_for_ws_msg(),
-                ))
+            #[cfg(wasm_browser)]
+            Self::WsBrowser { ref mut conn, .. } => Pin::new(conn)
+                .start_send(ws_stream_wasm::WsMessage::Binary(frame.encode_for_ws_msg()))
                 .map_err(Into::into),
         }
     }
@@ -301,7 +309,10 @@ impl Sink<SendMessage> for Conn {
             Self::Relay { ref mut conn } => Pin::new(conn).poll_flush(cx).map_err(Into::into),
             #[cfg(not(wasm_browser))]
             Self::TokioWs { ref mut conn, .. } => Pin::new(conn).poll_flush(cx).map_err(Into::into),
-            Self::Ws { ref mut conn, .. } => Pin::new(conn).poll_flush(cx).map_err(Into::into),
+            #[cfg(wasm_browser)]
+            Self::WsBrowser { ref mut conn, .. } => {
+                Pin::new(conn).poll_flush(cx).map_err(Into::into)
+            }
         }
     }
 
@@ -311,7 +322,10 @@ impl Sink<SendMessage> for Conn {
             Self::Relay { ref mut conn } => Pin::new(conn).poll_close(cx).map_err(Into::into),
             #[cfg(not(wasm_browser))]
             Self::TokioWs { ref mut conn, .. } => Pin::new(conn).poll_close(cx).map_err(Into::into),
-            Self::Ws { ref mut conn, .. } => Pin::new(conn).poll_close(cx).map_err(Into::into),
+            #[cfg(wasm_browser)]
+            Self::WsBrowser { ref mut conn, .. } => {
+                Pin::new(conn).poll_close(cx).map_err(Into::into)
+            }
         }
     }
 }
