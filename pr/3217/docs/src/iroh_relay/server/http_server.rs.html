@@ -1587,7 +1587,7 @@
 
                 <span class="kw">if let </span><span class="prelude-val">Some</span>((key, _version)) = websocket_headers {
                     <span class="prelude-val">Ok</span>(builder
-                        .header(SEC_WEBSOCKET_ACCEPT, <span class="kw-2">&amp;</span>derive_accept_key(<span class="kw-2">&amp;</span>key))
+                        .header(SEC_WEBSOCKET_ACCEPT, derive_accept_key(<span class="kw-2">&amp;</span>key))
                         .header(CONNECTION, <span class="string">"upgrade"</span>)
                         .body(body_full(<span class="string">"switching to websocket protocol"</span>))
                         .expect(<span class="string">"valid body"</span>))

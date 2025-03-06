@@ -464,7 +464,7 @@
 //! `connect_relay` uses a custom HTTP upgrade header value (see [`HTTP_UPGRADE_PROTOCOL`]),
 //! as opposed to [`WEBSOCKET_UPGRADE_PROTOCOL`].
 //!
-//! `connect_ws` however re-uses websockets for framing.
+//! `connect_ws` however reuses websockets for framing.
 //!
 //! [`HTTP_UPGRADE_PROTOCOL`]: crate::http::HTTP_UPGRADE_PROTOCOL
 //! [`WEBSOCKET_UPGRADE_PROTOCOL`]: crate::http::WEBSOCKET_UPGRADE_PROTOCOL
@@ -877,8 +877,8 @@
     }
 
     <span class="kw">match </span>url.scheme() {
-        <span class="string">"http" </span>=&gt; <span class="prelude-val">Some</span>(<span class="number">80</span>),
-        <span class="string">"https" </span>=&gt; <span class="prelude-val">Some</span>(<span class="number">443</span>),
+        <span class="string">"http" </span>| <span class="string">"ws" </span>=&gt; <span class="prelude-val">Some</span>(<span class="number">80</span>),
+        <span class="string">"https" </span>| <span class="string">"wss" </span>=&gt; <span class="prelude-val">Some</span>(<span class="number">443</span>),
         <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
     }
 }
