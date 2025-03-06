@@ -180,13 +180,23 @@ impl ClientBuilder {
         // The relay URL is exchanged with the http(s) scheme in tickets and similar.
         // We need to use the ws:// or wss:// schemes when connecting with websockets, though.
         dial_url
-            .set_scheme(if self.use_tls() { "wss" } else { "ws" })
+            .set_scheme(match self.url.scheme() {
+                "http" => "ws",
+                "ws" => "ws",
+                _ => "wss",
+            })
             .map_err(|()| anyhow!("Invalid URL"))?;
 
         debug!(%dial_url, "Dialing relay by websocket");
 
-        let conn = tokio_tungstenite_wasm::connect(dial_url).await?;
-        let conn = Conn::new_ws(conn, self.key_cache.clone(), &self.secret_key).await?;
+        let (_, ws_stream) = ws_stream_wasm::WsMeta::connect(
+            dial_url.as_str(),
+            None, // no protocols
+        )
+        .await
+        .map_err(|e| anyhow!("Failed to connect websocket: {}", e))?;
+
+        let conn = Conn::new_ws(ws_stream, self.key_cache.clone(), &self.secret_key).await?;
         Ok(conn)
     }
 }
