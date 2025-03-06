@@ -8,7 +8,7 @@ use derive_more::Debug;
 use http::{header::CONNECTION, response::Builder as ResponseBuilder};
 use hyper::{
     body::Incoming,
-    header::{HeaderValue, UPGRADE},
+    header::{HeaderValue, SEC_WEBSOCKET_ACCEPT, UPGRADE},
     service::Service,
     upgrade::Upgraded,
     HeaderMap, Method, Request, Response, StatusCode,
@@ -17,10 +17,6 @@ use iroh_metrics::inc;
 use n0_future::{FutureExt, SinkExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls_acme::AcmeAcceptor;
-use tokio_tungstenite::{
-    tungstenite::{handshake::derive_accept_key, protocol::Role},
-    WebSocketStream,
-};
 use tokio_util::{codec::Framed, sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, debug_span, error, info, info_span, trace, warn, Instrument};
 
@@ -49,6 +45,20 @@ type HyperHandler = Box<
         + Sync
         + 'static,
 >;
+
+/// WebSocket GUID needed for accepting websocket connections, see RFC 6455 (https://www.rfc-editor.org/rfc/rfc6455) section 1.3
+const SEC_WEBSOCKET_ACCEPT_GUID: &[u8] = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+
+/// Derives the accept key for WebSocket handshake according to RFC 6455.
+/// Takes the client's Sec-WebSocket-Key value and returns the calculated accept key.
+fn derive_accept_key(client_key: &HeaderValue) -> String {
+    use sha1::Digest;
+
+    let mut sha1 = sha1::Sha1::new();
+    sha1.update(client_key.as_bytes());
+    sha1.update(SEC_WEBSOCKET_ACCEPT_GUID);
+    data_encoding::BASE64.encode(&sha1.finalize())
+}
 
 /// Creates a new [`BytesBody`] with no content.
 fn body_empty() -> BytesBody {
@@ -413,7 +423,7 @@ impl RelayService {
 
                 if let Some((key, _version)) = websocket_headers {
                     Ok(builder
-                        .header("Sec-WebSocket-Accept", &derive_accept_key(key.as_bytes()))
+                        .header(SEC_WEBSOCKET_ACCEPT, &derive_accept_key(&key))
                         .header(CONNECTION, "upgrade")
                         .body(body_full("switching to websocket protocol"))
                         .expect("valid body"))
@@ -512,10 +522,13 @@ impl Inner {
             }
             Protocol::Websocket => {
                 inc!(Metrics, websocket_accepts);
-                RelayedStream::Ws(
-                    WebSocketStream::from_raw_socket(io, Role::Server, None).await,
-                    self.key_cache.clone(),
-                )
+                // Since we already did the HTTP upgrade in the previous step,
+                // we use tokio-websockets to handle this connection
+                // Create a server builder with default config
+                let builder = tokio_websockets::ServerBuilder::new();
+                // Serve will create a WebSocketStream on an already upgraded connection
+                let websocket = builder.serve(io);
+                RelayedStream::Ws(websocket, self.key_cache.clone())
             }
         };
         trace!("accept: recv client key");
