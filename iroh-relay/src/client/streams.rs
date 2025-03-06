@@ -270,7 +270,7 @@ impl MaybeTlsStream<TcpStream> {
 impl<IO> AsRef<IO> for MaybeTlsStream<IO> {
     fn as_ref(&self) -> &IO {
         match self {
-            Self::Raw(s) => &s,
+            Self::Raw(s) => s,
             Self::Tls(s) => s.get_ref().0,
         }
     }
