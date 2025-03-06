@@ -423,7 +423,7 @@ impl RelayService {
 
                 if let Some((key, _version)) = websocket_headers {
                     Ok(builder
-                        .header(SEC_WEBSOCKET_ACCEPT, &derive_accept_key(&key))
+                        .header(SEC_WEBSOCKET_ACCEPT, derive_accept_key(&key))
                         .header(CONNECTION, "upgrade")
                         .body(body_full("switching to websocket protocol"))
                         .expect("valid body"))
