@@ -97,9 +97,8 @@ let router = Router::builder(endpoint)
 struct Echo;
 
 impl ProtocolHandler for Echo {
-    fn accept(self: Arc<Self>, connecting: Connecting) -> BoxedFuture<Result<()>> {
+    fn accept(&self, connection: Connection) -> BoxedFuture<Result<()>> {
         Box::pin(async move {
-            let connection = connecting.await?;
             let (mut send, mut recv) = connection.accept_bi().await?;
 
             // Echo any bytes received back directly.
