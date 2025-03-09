@@ -3,7 +3,7 @@
 //! This allows you to use an mdns-like swarm discovery service to find address information about nodes that are on your local network, no relay or outside internet needed.
 //! See the [`swarm-discovery`](https://crates.io/crates/swarm-discovery) crate for more details.
 //!
-//! When [`LocalSwarmDiscovery`] is enabled, it's possible to get a list of the locally discovered nodes by filtering a list of `RemoteInfo`s.
+//! When [`MdnsDiscovery`] is enabled, it's possible to get a list of the locally discovered nodes by filtering a list of `RemoteInfo`s.
 //!
 //! ```
 //! use std::time::Duration;
@@ -20,7 +20,7 @@
 //!         .filter(|remote| {
 //!             remote.sources().iter().any(|(source, duration)| {
 //!                 if let Source::Discovery { name } = source {
-//!                     name == iroh::discovery::local_swarm_discovery::NAME && *duration <= recent
+//!                     name == iroh::discovery::mdns::NAME && *duration <= recent
 //!                 } else {
 //!                     false
 //!                 }
@@ -72,7 +72,7 @@ const DISCOVERY_DURATION: Duration = Duration::from_secs(10);
 
 /// Discovery using `swarm-discovery`, a variation on mdns
 #[derive(Debug)]
-pub struct LocalSwarmDiscovery {
+pub struct MdnsDiscovery {
     #[allow(dead_code)]
     handle: AbortOnDropHandle<()>,
     sender: mpsc::Sender<Message>,
@@ -128,8 +128,8 @@ impl Subscribers {
     }
 }
 
-impl LocalSwarmDiscovery {
-    /// Create a new [`LocalSwarmDiscovery`] Service.
+impl MdnsDiscovery {
+    /// Create a new [`MdnsDiscovery`] Service.
     ///
     /// This starts a [`Discoverer`] that broadcasts your addresses and receives addresses from other nodes in your local network.
     ///
@@ -139,16 +139,12 @@ impl LocalSwarmDiscovery {
     /// # Panics
     /// This relies on [`tokio::runtime::Handle::current`] and will panic if called outside of the context of a tokio runtime.
     pub fn new(node_id: NodeId) -> Result<Self> {
-        debug!("Creating new LocalSwarmDiscovery service");
+        debug!("Creating new MdnsDiscovery service");
         let (send, mut recv) = mpsc::channel(64);
         let task_sender = send.clone();
         let rt = tokio::runtime::Handle::current();
-        let discovery = LocalSwarmDiscovery::spawn_discoverer(
-            node_id,
-            task_sender.clone(),
-            BTreeSet::new(),
-            &rt,
-        )?;
+        let discovery =
+            MdnsDiscovery::spawn_discoverer(node_id, task_sender.clone(), BTreeSet::new(), &rt)?;
 
         let local_addrs: Watchable<Option<NodeData>> = Watchable::default();
         let mut addrs_change = local_addrs.watch();
@@ -162,16 +158,16 @@ impl LocalSwarmDiscovery {
             > = HashMap::default();
             let mut timeouts = JoinSet::new();
             loop {
-                trace!(?node_addrs, "LocalSwarmDiscovery Service loop tick");
+                trace!(?node_addrs, "MdnsDiscovery Service loop tick");
                 let msg = tokio::select! {
                     msg = recv.recv() => {
                         msg
                     }
                     Ok(Some(data)) = addrs_change.updated() => {
-                        tracing::trace!(?data, "LocalSwarmDiscovery address changed");
+                        tracing::trace!(?data, "MdnsDiscovery address changed");
                         discovery.remove_all();
                         let addrs =
-                            LocalSwarmDiscovery::socketaddrs_to_addrs(data.direct_addresses());
+                            MdnsDiscovery::socketaddrs_to_addrs(data.direct_addresses());
                         for addr in addrs {
                             discovery.add(addr.0, addr.1)
                         }
@@ -185,8 +181,8 @@ impl LocalSwarmDiscovery {
                 };
                 let msg = match msg {
                     None => {
-                        error!("LocalSwarmDiscovery channel closed");
-                        error!("closing LocalSwarmDiscovery");
+                        error!("MdnsDiscovery channel closed");
+                        error!("closing MdnsDiscovery");
                         timeouts.abort_all();
                         return;
                     }
@@ -197,7 +193,7 @@ impl LocalSwarmDiscovery {
                         trace!(
                             ?discovered_node_id,
                             ?peer_info,
-                            "LocalSwarmDiscovery Message::Discovery"
+                            "MdnsDiscovery Message::Discovery"
                         );
                         let discovered_node_id = match PublicKey::from_str(&discovered_node_id) {
                             Ok(node_id) => node_id,
@@ -217,7 +213,7 @@ impl LocalSwarmDiscovery {
                         if peer_info.is_expiry() {
                             trace!(
                                 ?discovered_node_id,
-                                "removing node from LocalSwarmDiscovery address book"
+                                "removing node from MdnsDiscovery address book"
                             );
                             node_addrs.remove(&discovered_node_id);
                             continue;
@@ -234,7 +230,7 @@ impl LocalSwarmDiscovery {
                         debug!(
                             ?discovered_node_id,
                             ?peer_info,
-                            "adding node to LocalSwarmDiscovery address book"
+                            "adding node to MdnsDiscovery address book"
                         );
 
                         let mut resolved = false;
@@ -258,7 +254,7 @@ impl LocalSwarmDiscovery {
                     Message::Resolve(node_id, sender) => {
                         let id = last_id + 1;
                         last_id = id;
-                        trace!(?node_id, "LocalSwarmDiscovery Message::SendAddrs");
+                        trace!(?node_id, "MdnsDiscovery Message::SendAddrs");
                         if let Some(peer_info) = node_addrs.get(&node_id) {
                             let item = peer_to_discovery_item(peer_info, &node_id);
                             debug!(?item, "sending DiscoveryItem");
@@ -282,7 +278,7 @@ impl LocalSwarmDiscovery {
                         });
                     }
                     Message::Timeout(node_id, id) => {
-                        trace!(?node_id, "LocalSwarmDiscovery Message::Timeout");
+                        trace!(?node_id, "MdnsDiscovery Message::Timeout");
                         if let Some(senders_for_node_id) = senders.get_mut(&node_id) {
                             senders_for_node_id.remove(&id);
                             if senders_for_node_id.is_empty() {
@@ -291,7 +287,7 @@ impl LocalSwarmDiscovery {
                         }
                     }
                     Message::Subscribe(subscriber) => {
-                        trace!("LocalSwarmDiscovery Message::Subscribe");
+                        trace!("MdnsDiscovery Message::Subscribe");
                         subscribers.push(subscriber);
                     }
                 }
@@ -316,7 +312,7 @@ impl LocalSwarmDiscovery {
             trace!(
                 node_id,
                 ?peer,
-                "Received peer information from LocalSwarmDiscovery"
+                "Received peer information from MdnsDiscovery"
             );
 
             let sender = sender.clone();
@@ -326,7 +322,7 @@ impl LocalSwarmDiscovery {
                 sender.send(Message::Discovery(node_id, peer)).await.ok();
             });
         };
-        let addrs = LocalSwarmDiscovery::socketaddrs_to_addrs(&socketaddrs);
+        let addrs = MdnsDiscovery::socketaddrs_to_addrs(&socketaddrs);
         let node_id_str = data_encoding::BASE32_NOPAD
             .encode(node_id.as_bytes())
             .to_ascii_lowercase();
@@ -376,7 +372,7 @@ fn peer_to_discovery_item(peer: &Peer, node_id: &NodeId) -> DiscoveryItem {
     DiscoveryItem::new(node_info, NAME, None)
 }
 
-impl Discovery for LocalSwarmDiscovery {
+impl Discovery for MdnsDiscovery {
     fn resolve(&self, _ep: Endpoint, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem>>> {
         use futures_util::FutureExt;
 
@@ -425,7 +421,7 @@ mod tests {
 
         #[tokio::test]
         #[traced_test]
-        async fn local_swarm_discovery_publish_resolve() -> TestResult {
+        async fn mdns_publish_resolve() -> TestResult {
             let (_, discovery_a) = make_discoverer()?;
             let (node_id_b, discovery_b) = make_discoverer()?;
 
@@ -459,7 +455,7 @@ mod tests {
 
         #[tokio::test]
         #[traced_test]
-        async fn local_swarm_discovery_subscribe() -> TestResult {
+        async fn mdns_subscribe() -> TestResult {
             let num_nodes = 5;
             let mut node_ids = BTreeSet::new();
             let mut discoverers = vec![];
@@ -482,8 +478,8 @@ mod tests {
                 let mut got_ids = BTreeSet::new();
                 while got_ids.len() != num_nodes {
                     if let Some(item) = events.next().await {
-                        if node_ids.contains(&(item.node_id(), item.user_data().cloned())) {
-                            got_ids.insert((item.node_id(), item.user_data().cloned()));
+                        if node_ids.contains(&(item.node_id(), item.user_data())) {
+                            got_ids.insert((item.node_id(), item.user_data()));
                         }
                     } else {
                         anyhow::bail!(
@@ -499,9 +495,9 @@ mod tests {
             Ok(())
         }
 
-        fn make_discoverer() -> Result<(PublicKey, LocalSwarmDiscovery)> {
+        fn make_discoverer() -> Result<(PublicKey, MdnsDiscovery)> {
             let node_id = SecretKey::generate(rand::thread_rng()).public();
-            Ok((node_id, LocalSwarmDiscovery::new(node_id)?))
+            Ok((node_id, MdnsDiscovery::new(node_id)?))
         }
     }
 }
