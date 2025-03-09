@@ -35,16 +35,15 @@ use concurrent_queue::ConcurrentQueue;
 use data_encoding::HEXLOWER;
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_metrics::{inc, inc_by};
-use iroh_relay::{protos::stun, RelayMap};
+use iroh_relay::{protos::stun, IpMappedAddr, IpMappedAddresses, RelayMap};
 use n0_future::{
     boxed::BoxStream,
     task::{self, JoinSet},
     time::{self, Duration, Instant},
     FutureExt, StreamExt,
 };
-use net_report::IpMappedAddresses;
 #[cfg(not(wasm_browser))]
-use net_report::{IpMappedAddr, QuicConfig};
+use net_report::QuicConfig;
 use netwatch::{interfaces, netmon};
 #[cfg(not(wasm_browser))]
 use netwatch::{ip::LocalAddresses, UdpSocket};
@@ -1725,14 +1724,14 @@ impl Handle {
         let sockets = actor_sockets.msock_socket_state()?;
 
         let ip_mapped_addrs = IpMappedAddresses::default();
+        #[cfg(not(wasm_browser))]
+        let dns_resolver = dns_resolver.with_ip_mapped_addresses(ip_mapped_addrs.clone());
 
         let net_reporter = net_report::Client::new(
             #[cfg(not(wasm_browser))]
             Some(actor_sockets.port_mapper.clone()),
             #[cfg(not(wasm_browser))]
             dns_resolver.clone(),
-            #[cfg(not(wasm_browser))]
-            Some(ip_mapped_addrs.clone()),
         )?;
 
         let (actor_sender, actor_receiver) = mpsc::channel(256);

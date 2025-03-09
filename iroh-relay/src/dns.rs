@@ -15,7 +15,7 @@ use n0_future::{
 };
 use url::Url;
 
-use crate::node_info::NodeInfo;
+use crate::{node_info::NodeInfo, IpMappedAddresses, RelayNode};
 
 /// The n0 testing DNS node origin, for production.
 pub const N0_DNS_NODE_ORIGIN_PROD: &str = "dns.iroh.link";
@@ -24,7 +24,10 @@ pub const N0_DNS_NODE_ORIGIN_STAGING: &str = "staging-dns.iroh.link";
 
 /// The DNS resolver used throughout `iroh`.
 #[derive(Debug, Clone)]
-pub struct DnsResolver(TokioResolver);
+pub struct DnsResolver {
+    resolver: TokioResolver,
+    mapped_addrs: Option<IpMappedAddresses>,
+}
 
 impl DnsResolver {
     /// Create a new DNS resolver with sensible cross-platform defaults.
@@ -55,7 +58,10 @@ impl DnsResolver {
         options.ip_strategy = hickory_resolver::config::LookupIpStrategy::Ipv4thenIpv6;
 
         let resolver = Resolver::tokio(config, options);
-        DnsResolver(resolver)
+        DnsResolver {
+            resolver,
+            mapped_addrs: None,
+        }
     }
 
     /// Create a new DNS resolver configured with a single UDP DNS nameserver.
@@ -66,18 +72,29 @@ impl DnsResolver {
             hickory_resolver::proto::xfer::Protocol::Udp,
         );
         config.add_name_server(nameserver_config);
-        DnsResolver(Resolver::tokio(config, Default::default()))
+        DnsResolver {
+            resolver: Resolver::tokio(config, Default::default()),
+            mapped_addrs: None,
+        }
+    }
+
+    /// Add an [`IpMappedAddresses`] map to the [`DnsResolver`].
+    pub fn with_ip_mapped_addresses(self, map: IpMappedAddresses) -> Self {
+        DnsResolver {
+            resolver: self.resolver,
+            mapped_addrs: Some(map),
+        }
     }
 
     /// Removes all entries from the cache.
     pub fn clear_cache(&self) {
-        self.0.clear_cache();
+        self.resolver.clear_cache();
     }
 
     /// Lookup a TXT record.
     pub async fn lookup_txt(&self, host: impl ToString, timeout: Duration) -> Result<TxtLookup> {
         let host = host.to_string();
-        let res = time::timeout(timeout, self.0.txt_lookup(host)).await??;
+        let res = time::timeout(timeout, self.resolver.txt_lookup(host)).await??;
         Ok(TxtLookup(res))
     }
 
@@ -88,7 +105,7 @@ impl DnsResolver {
         timeout: Duration,
     ) -> Result<impl Iterator<Item = IpAddr>> {
         let host = host.to_string();
-        let addrs = time::timeout(timeout, self.0.ipv4_lookup(host)).await??;
+        let addrs = time::timeout(timeout, self.resolver.ipv4_lookup(host)).await??;
         Ok(addrs.into_iter().map(|ip| IpAddr::V4(ip.0)))
     }
 
@@ -99,7 +116,7 @@ impl DnsResolver {
         timeout: Duration,
     ) -> Result<impl Iterator<Item = IpAddr>> {
         let host = host.to_string();
-        let addrs = time::timeout(timeout, self.0.ipv6_lookup(host)).await??;
+        let addrs = time::timeout(timeout, self.resolver.ipv6_lookup(host)).await??;
         Ok(addrs.into_iter().map(|ip| IpAddr::V6(ip.0)))
     }
 
@@ -263,6 +280,82 @@ impl DnsResolver {
         let f = || self.lookup_node_by_id(node_id, origin);
         stagger_call(f, delays_ms).await
     }
+
+    /// Look up a [`RelayNode`] and return an [`IpMappedAddr`].
+    ///
+    /// Uses `[DnsResolver::lookup_ipv4_staggered]`.
+    ///
+    /// Used for establishing ipv4 QUIC connections to relay nodes.
+    pub async fn lookup_relay_node_ipv4(
+        &self,
+        relay: &RelayNode,
+        timeout: Duration,
+        delays_ms: &[u64],
+        port: u16,
+    ) -> Result<SocketAddr> {
+        match self.mapped_addrs.as_ref() {
+            None => bail!("No `Ipmappedaddresses` set"),
+            Some(ip_mapped_addrs) => {
+                let addr = match relay.url.host() {
+                    Some(url::Host::Domain(hostname)) => {
+                        match self
+                            .lookup_ipv4_staggered(hostname, timeout, delays_ms)
+                            .await
+                        {
+                            Ok(mut addrs) => addrs
+                                .next()
+                                .map(|ip| ip.to_canonical())
+                                .map(|addr| SocketAddr::new(addr, port))
+                                .context("No suitable relay addr found")?,
+                            Err(err) => return Err(err.context("No suitable relay addr found")),
+                        }
+                    }
+                    Some(url::Host::Ipv4(addr)) => SocketAddr::new(addr.into(), port),
+                    Some(url::Host::Ipv6(_addr)) => bail!("No suitable relay addr found"),
+                    None => bail!("No valid hostname in RelayUrl"),
+                };
+                Ok(ip_mapped_addrs.get_or_register(addr).private_socket_addr())
+            }
+        }
+    }
+
+    /// Look up a [`RelayNode`] and return an [`IpMappedAddr`].
+    ///
+    /// Uses `[DnsResolver::lookup_ipv6_staggered]`.
+    ///
+    /// Used for establishing ipv6 QUIC connections to relay nodes.
+    pub async fn lookup_relay_node_ipv6(
+        &self,
+        relay: &RelayNode,
+        timeout: Duration,
+        delays_ms: &[u64],
+        port: u16,
+    ) -> Result<SocketAddr> {
+        match self.mapped_addrs.as_ref() {
+            None => bail!("No `Ipmappedaddresses` set"),
+            Some(ip_mapped_addrs) => {
+                let addr = match relay.url.host() {
+                    Some(url::Host::Domain(hostname)) => {
+                        match self
+                            .lookup_ipv6_staggered(hostname, timeout, delays_ms)
+                            .await
+                        {
+                            Ok(mut addrs) => addrs
+                                .next()
+                                .map(|ip| ip.to_canonical())
+                                .map(|addr| SocketAddr::new(addr, port))
+                                .context("No suitable relay addr found")?,
+                            Err(err) => return Err(err.context("No suitable relay addr found")),
+                        }
+                    }
+                    Some(url::Host::Ipv4(_addr)) => bail!("No suitable relay addr found"),
+                    Some(url::Host::Ipv6(addr)) => SocketAddr::new(addr.into(), port),
+                    None => bail!("No valid hostname in RelayUrl"),
+                };
+                Ok(ip_mapped_addrs.get_or_register(addr).private_socket_addr())
+            }
+        }
+    }
 }
 
 impl Default for DnsResolver {
@@ -273,7 +366,10 @@ impl Default for DnsResolver {
 
 impl From<TokioResolver> for DnsResolver {
     fn from(resolver: TokioResolver) -> Self {
-        DnsResolver(resolver)
+        DnsResolver {
+            resolver,
+            mapped_addrs: None,
+        }
     }
 }
 
