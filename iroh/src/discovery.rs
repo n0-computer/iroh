@@ -34,8 +34,8 @@
 //! - The [`PkarrResolver`] which can perform lookups from designated [pkarr relay servers]
 //!   using HTTP.
 //!
-//! - [`LocalSwarmDiscovery`]: local_swarm_discovery::LocalSwarmDiscovery which is an mDNS
-//!   implementation.
+//! - [`MdnsDiscovery`]: mdns::MdnsDiscovery which uses the crate `swarm-discovery`, an
+//!   opinionated mDNS implementation, to discover nodes on the local network.
 //!
 //! - The [`DhtDiscovery`] also uses the [`pkarr`] system but can also publish and lookup
 //!   records to/from the Mainline DHT.
@@ -69,14 +69,14 @@
 //! # }
 //! ```
 //!
-//! To also enable [`LocalSwarmDiscovery`] it can be added as another service in the
+//! To also enable [`MdnsDiscovery`] it can be added as another service in the
 //! [`ConcurrentDiscovery`]:
 //!
 //! ```no_run
 //! # #[cfg(feature = "discovery-local-network")]
 //! # {
 //! # use iroh::discovery::dns::DnsDiscovery;
-//! # use iroh::discovery::local_swarm_discovery::LocalSwarmDiscovery;
+//! # use iroh::discovery::mdns::MdnsDiscovery;
 //! # use iroh::discovery::pkarr::PkarrPublisher;
 //! # use iroh::discovery::ConcurrentDiscovery;
 //! # use iroh::SecretKey;
@@ -86,7 +86,7 @@
 //! let discovery = ConcurrentDiscovery::from_services(vec![
 //!     Box::new(PkarrPublisher::n0_dns(secret_key.clone())),
 //!     Box::new(DnsDiscovery::n0_dns()),
-//!     Box::new(LocalSwarmDiscovery::new(secret_key.public())?),
+//!     Box::new(MdnsDiscovery::new(secret_key.public())?),
 //! ]);
 //! # Ok(())
 //! # }
@@ -102,7 +102,7 @@
 //! [`PkarrPublisher`]: pkarr::PkarrPublisher
 //! [`DhtDiscovery`]: pkarr::dht::DhtDiscovery
 //! [pkarr relay servers]: https://pkarr.org/#servers
-//! [`LocalSwarmDiscovery`]: local_swarm_discovery::LocalSwarmDiscovery
+//! [`MdnsDiscovery`]: mdns::MdnsDiscovery
 //! [`StaticProvider`]: static_provider::StaticProvider
 
 use std::sync::Arc;
@@ -126,7 +126,7 @@ use crate::Endpoint;
 pub mod dns;
 
 #[cfg(feature = "discovery-local-network")]
-pub mod local_swarm_discovery;
+pub mod mdns;
 pub mod pkarr;
 pub mod static_provider;
 
