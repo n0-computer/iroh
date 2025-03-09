@@ -46,11 +46,13 @@ pub(crate) use key_cache::KeyCache;
 
 #[cfg(not(wasm_browser))]
 pub mod dns;
+pub mod ip_mapped_addrs;
 pub mod node_info;
 
 pub use protos::relay::MAX_PACKET_SIZE;
 
 pub use self::{
+    ip_mapped_addrs::{IpMappedAddr, IpMappedAddrError, IpMappedAddresses},
     ping_tracker::PingTracker,
     relay_map::{RelayMap, RelayNode, RelayQuicConfig},
 };

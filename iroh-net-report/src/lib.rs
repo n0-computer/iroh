@@ -37,7 +37,6 @@ use tracing::{debug, error, info_span, trace, warn, Instrument};
 mod defaults;
 #[cfg(not(wasm_browser))]
 mod dns;
-mod ip_mapped_addrs;
 mod metrics;
 #[cfg(not(wasm_browser))]
 mod ping;
@@ -64,7 +63,6 @@ pub mod portmapper {
     }
 }
 
-pub use ip_mapped_addrs::{IpMappedAddr, IpMappedAddrError, IpMappedAddresses};
 pub use metrics::Metrics;
 pub use options::Options;
 pub use reportgen::QuicConfig;
@@ -247,15 +245,12 @@ impl Client {
     pub fn new(
         #[cfg(not(wasm_browser))] port_mapper: Option<portmapper::Client>,
         #[cfg(not(wasm_browser))] dns_resolver: DnsResolver,
-        #[cfg(not(wasm_browser))] ip_mapped_addrs: Option<IpMappedAddresses>,
     ) -> Result<Self> {
         let mut actor = Actor::new(
             #[cfg(not(wasm_browser))]
             port_mapper,
             #[cfg(not(wasm_browser))]
             dns_resolver,
-            #[cfg(not(wasm_browser))]
-            ip_mapped_addrs,
         )?;
         let addr = actor.addr();
         let task = task::spawn(
@@ -478,10 +473,6 @@ struct Actor {
     /// The DNS resolver to use for probes that need to perform DNS lookups
     #[cfg(not(wasm_browser))]
     dns_resolver: DnsResolver,
-
-    /// The [`IpMappedAddresses`] that allows you to do QAD in iroh
-    #[cfg(not(wasm_browser))]
-    ip_mapped_addrs: Option<IpMappedAddresses>,
 }
 
 impl Actor {
@@ -492,7 +483,6 @@ impl Actor {
     fn new(
         #[cfg(not(wasm_browser))] port_mapper: Option<portmapper::Client>,
         #[cfg(not(wasm_browser))] dns_resolver: DnsResolver,
-        #[cfg(not(wasm_browser))] ip_mapped_addrs: Option<IpMappedAddresses>,
     ) -> Result<Self> {
         // TODO: consider an instrumented flume channel so we have metrics.
         let (sender, receiver) = mpsc::channel(32);
@@ -506,8 +496,6 @@ impl Actor {
             current_report_run: None,
             #[cfg(not(wasm_browser))]
             dns_resolver,
-            #[cfg(not(wasm_browser))]
-            ip_mapped_addrs,
         })
     }
 
@@ -569,7 +557,6 @@ impl Actor {
             stun_sock6: opts.stun_sock_v6,
             quic_config: opts.quic_config,
             dns_resolver: self.dns_resolver.clone(),
-            ip_mapped_addrs: self.ip_mapped_addrs.clone(),
         };
         trace!("Attempting probes for protocols {protocols:#?}");
         if self.current_report_run.is_some() {
@@ -1066,7 +1053,7 @@ mod tests {
             stun_utils::serve("127.0.0.1".parse().unwrap()).await?;
 
         let resolver = crate::dns::tests::resolver();
-        let mut client = Client::new(None, resolver.clone(), None)?;
+        let mut client = Client::new(None, resolver.clone())?;
         let dm = stun_utils::relay_map_of([stun_addr].into_iter());
 
         // Note that the ProbePlan will change with each iteration.
@@ -1113,7 +1100,7 @@ mod tests {
 
         // Now create a client and generate a report.
         let resolver = crate::dns::tests::resolver();
-        let mut client = Client::new(None, resolver.clone(), None)?;
+        let mut client = Client::new(None, resolver.clone())?;
 
         let r = client.get_report(dm, None, None, None).await?;
         let mut r: Report = (*r).clone();
@@ -1316,7 +1303,7 @@ mod tests {
         let resolver = crate::dns::tests::resolver();
         for mut tt in tests {
             println!("test: {}", tt.name);
-            let mut actor = Actor::new(None, resolver.clone(), None).unwrap();
+            let mut actor = Actor::new(None, resolver.clone()).unwrap();
             for s in &mut tt.steps {
                 // trigger the timer
                 tokio::time::advance(Duration::from_secs(s.after)).await;
@@ -1351,7 +1338,7 @@ mod tests {
         dbg!(&dm);
 
         let resolver = crate::dns::tests::resolver().clone();
-        let mut client = Client::new(None, resolver, None)?;
+        let mut client = Client::new(None, resolver)?;
 
         // Set up an external socket to send STUN requests from, this will be discovered as
         // our public socket address by STUN.  We send back any packets received on this
