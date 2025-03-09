@@ -1510,6 +1510,11 @@ impl Connecting {
             Err(_) => bail!("unknown handshake type"),
         }
     }
+
+    /// The remote_node_id, this should always be available after a successfull call to ['Connecting::handshake_data'] or ['Connecting::alpn']
+    pub fn remote_node_id(&self) -> Option<NodeId> {
+        self.remote_node_id
+    }
 }
 
 impl Future for Connecting {
