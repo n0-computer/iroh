@@ -60,7 +60,6 @@ use crate::{self as net_report, Report};
 use crate::{
     defaults::timeouts::DNS_TIMEOUT,
     dns::DNS_STAGGERING_MS,
-    ip_mapped_addrs::IpMappedAddresses,
     ping::{PingError, Pinger},
 };
 
@@ -102,8 +101,6 @@ pub(crate) struct SocketState {
     pub(crate) quic_config: Option<QuicConfig>,
     /// The DNS resolver to use for probes that need to resolve DNS records.
     pub(crate) dns_resolver: DnsResolver,
-    /// Optional [`IpMappedAddresses`] used to enable QAD in iroh
-    pub(crate) ip_mapped_addrs: Option<IpMappedAddresses>,
 }
 
 impl Client {
@@ -855,14 +852,7 @@ async fn run_probe(
             let url = node.url.clone();
             match socket_state.quic_config {
                 Some(quic_config) => {
-                    result = run_quic_probe(
-                        quic_config,
-                        url,
-                        relay_addr,
-                        probe,
-                        socket_state.ip_mapped_addrs,
-                    )
-                    .await?;
+                    result = run_quic_probe(quic_config, url, relay_addr, probe).await?;
                 }
                 None => {
                     return Err(ProbeError::AbortSet(
@@ -962,17 +952,6 @@ async fn run_stun_probe(
     }
 }
 
-#[cfg(not(wasm_browser))]
-fn maybe_to_mapped_addr(
-    ip_mapped_addrs: Option<IpMappedAddresses>,
-    addr: SocketAddr,
-) -> SocketAddr {
-    if let Some(ip_mapped_addrs) = ip_mapped_addrs.as_ref() {
-        return ip_mapped_addrs.get_or_register(addr).private_socket_addr();
-    }
-    addr
-}
-
 /// Run a QUIC address discovery probe.
 #[cfg(not(wasm_browser))]
 async fn run_quic_probe(
@@ -980,14 +959,9 @@ async fn run_quic_probe(
     url: RelayUrl,
     relay_addr: SocketAddr,
     probe: Probe,
-    ip_mapped_addrs: Option<IpMappedAddresses>,
 ) -> Result<ProbeReport, ProbeError> {
-    match probe.proto() {
-        ProbeProto::QuicIpv4 => debug_assert!(relay_addr.is_ipv4()),
-        ProbeProto::QuicIpv6 => debug_assert!(relay_addr.is_ipv6()),
-        _ => debug_assert!(false, "wrong probe"),
-    }
-    let relay_addr = maybe_to_mapped_addr(ip_mapped_addrs, relay_addr);
+    // All relay_addrs will likely be IPv6 addresses due to the use of `IpMappedAddrs` in iroh,
+    // so it does not make sense to check if the `SocketAddr` type matches the `Probe` type.
     let host = match url.host_str() {
         Some(host) => host,
         None => {
@@ -1131,11 +1105,6 @@ fn get_port(relay_node: &RelayNode, proto: &ProbeProto) -> Result<u16> {
 /// *proto* specifies the protocol of the probe.  Depending on the protocol we may return
 /// different results.  Obviously IPv4 vs IPv6 but a [`RelayNode`] may also have disabled
 /// some protocols.
-///
-/// If the protocol is `QuicIpv4` or `QuicIpv6`, and `IpMappedAddresses` is not `None`, we
-/// assume that we are running this net report with `iroh`, and need to provide mapped
-/// addresses to the probe in order for it to function in the specialize iroh-quinn
-/// endpoint that expects mapped addresses.
 #[cfg(not(wasm_browser))]
 async fn get_relay_addr(
     dns_resolver: &DnsResolver,
@@ -1148,13 +1117,20 @@ async fn get_relay_addr(
     let port = get_port(relay_node, &proto)?;
 
     match proto {
-        ProbeProto::StunIpv4 | ProbeProto::IcmpV4 | ProbeProto::QuicIpv4 => {
+        ProbeProto::StunIpv4 | ProbeProto::IcmpV4 => {
             relay_lookup_ipv4_staggered(dns_resolver, relay_node, port).await
         }
+        ProbeProto::QuicIpv4 => Ok(dns_resolver
+            .lookup_relay_node_ipv4(relay_node, DNS_TIMEOUT, DNS_STAGGERING_MS, port)
+            .await?),
 
-        ProbeProto::StunIpv6 | ProbeProto::IcmpV6 | ProbeProto::QuicIpv6 => {
+        ProbeProto::StunIpv6 | ProbeProto::IcmpV6 => {
             relay_lookup_ipv6_staggered(dns_resolver, relay_node, port).await
         }
+
+        ProbeProto::QuicIpv6 => Ok(dns_resolver
+            .lookup_relay_node_ipv6(relay_node, DNS_TIMEOUT, DNS_STAGGERING_MS, port)
+            .await?),
 
         ProbeProto::Https => Err(anyhow!("Not implemented")),
     }
@@ -1735,7 +1711,6 @@ mod tests {
             url,
             (Ipv4Addr::LOCALHOST, port).into(),
             probe,
-            None,
         )
         .await
         {

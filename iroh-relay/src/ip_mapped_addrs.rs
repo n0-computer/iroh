@@ -1,3 +1,5 @@
+//! Defines the `IpMappedAddr`  and `IpMappedAddresses`, used in `iroh` to dial relay nodes during Quic Address Discovery.
+
 use std::{
     collections::BTreeMap,
     net::{IpAddr, Ipv6Addr, SocketAddr},
@@ -89,7 +91,7 @@ impl std::fmt::Display for IpMappedAddr {
 pub struct IpMappedAddresses(Arc<std::sync::Mutex<Inner>>);
 
 #[derive(Debug, Default)]
-pub struct Inner {
+struct Inner {
     by_mapped_addr: BTreeMap<IpMappedAddr, SocketAddr>,
     /// Because [`std::net::SocketAddrV6`] contains extra fields besides the IP
     /// address and port (ie, flow_info and scope_id), the a [`std::net::SocketAddrV6`]
