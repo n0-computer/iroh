@@ -129,7 +129,13 @@
 <a href="#128" id="128">128</a>
 <a href="#129" id="129">129</a>
 <a href="#130" id="130">130</a>
-<a href="#131" id="131">131</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#131" id="131">131</a>
+<a href="#132" id="132">132</a>
+<a href="#133" id="133">133</a>
+<a href="#134" id="134">134</a>
+<a href="#135" id="135">135</a>
+<a href="#136" id="136">136</a>
+<a href="#137" id="137">137</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::BTreeMap,
     net::{IpAddr, Ipv6Addr, SocketAddr},
     sync::{
@@ -137,9 +143,6 @@
         Arc,
     },
 };
-
-<span class="doccomment">/// The dummy port used for all mapped addresses
-</span><span class="kw">pub const </span>MAPPED_ADDR_PORT: u16 = <span class="number">12345</span>;
 
 <span class="doccomment">/// Can occur when converting a [`SocketAddr`] to an [`IpMappedAddr`]
 </span><span class="attr">#[derive(Debug, thiserror::Error)]
@@ -163,6 +166,9 @@
     <span class="doccomment">/// The Subnet ID used in our Unique Local Addresses.
     </span><span class="kw">const </span>ADDR_SUBNET: [u8; <span class="number">2</span>] = [<span class="number">0</span>, <span class="number">1</span>];
 
+    <span class="doccomment">/// The dummy port used for all mapped addresses.
+    </span><span class="kw">const </span>MAPPED_ADDR_PORT: u16 = <span class="number">12345</span>;
+
     <span class="doccomment">/// Generates a globally unique fake UDP address.
     ///
     /// This generates a new IPv6 address in the Unique Local Address range (RFC 4193)
@@ -179,9 +185,15 @@
         <span class="self">Self</span>(Ipv6Addr::from(addr))
     }
 
-    <span class="doccomment">/// Return a [`SocketAddr`] from the [`IpMappedAddr`].
-    </span><span class="kw">pub fn </span>socket_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; SocketAddr {
-        SocketAddr::new(IpAddr::from(<span class="self">self</span>.<span class="number">0</span>), MAPPED_ADDR_PORT)
+    <span class="doccomment">/// Returns a consistent [`SocketAddr`] for the [`IpMappedAddr`].
+    ///
+    /// This does not have a routable IP address.
+    ///
+    /// This uses a made-up, but fixed port number.  The [IpMappedAddresses`] map this is
+    /// made for creates a unique [`IpMappedAddr`] for each IP+port and thus does not use
+    /// the port to map back to the original [`SocketAddr`].
+    </span><span class="kw">pub fn </span>private_socket_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; SocketAddr {
+        SocketAddr::new(IpAddr::from(<span class="self">self</span>.<span class="number">0</span>), <span class="self">Self</span>::MAPPED_ADDR_PORT)
     }
 }
 

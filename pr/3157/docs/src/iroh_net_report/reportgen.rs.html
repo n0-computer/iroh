@@ -1674,7 +1674,86 @@
 <a href="#1673" id="1673">1673</a>
 <a href="#1674" id="1674">1674</a>
 <a href="#1675" id="1675">1675</a>
-<a href="#1676" id="1676">1676</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
+<a href="#1676" id="1676">1676</a>
+<a href="#1677" id="1677">1677</a>
+<a href="#1678" id="1678">1678</a>
+<a href="#1679" id="1679">1679</a>
+<a href="#1680" id="1680">1680</a>
+<a href="#1681" id="1681">1681</a>
+<a href="#1682" id="1682">1682</a>
+<a href="#1683" id="1683">1683</a>
+<a href="#1684" id="1684">1684</a>
+<a href="#1685" id="1685">1685</a>
+<a href="#1686" id="1686">1686</a>
+<a href="#1687" id="1687">1687</a>
+<a href="#1688" id="1688">1688</a>
+<a href="#1689" id="1689">1689</a>
+<a href="#1690" id="1690">1690</a>
+<a href="#1691" id="1691">1691</a>
+<a href="#1692" id="1692">1692</a>
+<a href="#1693" id="1693">1693</a>
+<a href="#1694" id="1694">1694</a>
+<a href="#1695" id="1695">1695</a>
+<a href="#1696" id="1696">1696</a>
+<a href="#1697" id="1697">1697</a>
+<a href="#1698" id="1698">1698</a>
+<a href="#1699" id="1699">1699</a>
+<a href="#1700" id="1700">1700</a>
+<a href="#1701" id="1701">1701</a>
+<a href="#1702" id="1702">1702</a>
+<a href="#1703" id="1703">1703</a>
+<a href="#1704" id="1704">1704</a>
+<a href="#1705" id="1705">1705</a>
+<a href="#1706" id="1706">1706</a>
+<a href="#1707" id="1707">1707</a>
+<a href="#1708" id="1708">1708</a>
+<a href="#1709" id="1709">1709</a>
+<a href="#1710" id="1710">1710</a>
+<a href="#1711" id="1711">1711</a>
+<a href="#1712" id="1712">1712</a>
+<a href="#1713" id="1713">1713</a>
+<a href="#1714" id="1714">1714</a>
+<a href="#1715" id="1715">1715</a>
+<a href="#1716" id="1716">1716</a>
+<a href="#1717" id="1717">1717</a>
+<a href="#1718" id="1718">1718</a>
+<a href="#1719" id="1719">1719</a>
+<a href="#1720" id="1720">1720</a>
+<a href="#1721" id="1721">1721</a>
+<a href="#1722" id="1722">1722</a>
+<a href="#1723" id="1723">1723</a>
+<a href="#1724" id="1724">1724</a>
+<a href="#1725" id="1725">1725</a>
+<a href="#1726" id="1726">1726</a>
+<a href="#1727" id="1727">1727</a>
+<a href="#1728" id="1728">1728</a>
+<a href="#1729" id="1729">1729</a>
+<a href="#1730" id="1730">1730</a>
+<a href="#1731" id="1731">1731</a>
+<a href="#1732" id="1732">1732</a>
+<a href="#1733" id="1733">1733</a>
+<a href="#1734" id="1734">1734</a>
+<a href="#1735" id="1735">1735</a>
+<a href="#1736" id="1736">1736</a>
+<a href="#1737" id="1737">1737</a>
+<a href="#1738" id="1738">1738</a>
+<a href="#1739" id="1739">1739</a>
+<a href="#1740" id="1740">1740</a>
+<a href="#1741" id="1741">1741</a>
+<a href="#1742" id="1742">1742</a>
+<a href="#1743" id="1743">1743</a>
+<a href="#1744" id="1744">1744</a>
+<a href="#1745" id="1745">1745</a>
+<a href="#1746" id="1746">1746</a>
+<a href="#1747" id="1747">1747</a>
+<a href="#1748" id="1748">1748</a>
+<a href="#1749" id="1749">1749</a>
+<a href="#1750" id="1750">1750</a>
+<a href="#1751" id="1751">1751</a>
+<a href="#1752" id="1752">1752</a>
+<a href="#1753" id="1753">1753</a>
+<a href="#1754" id="1754">1754</a>
+<a href="#1755" id="1755">1755</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
 //!
 //! It is implemented as an actor with [`Client`] as handle.
 //!
@@ -1705,35 +1784,43 @@
 <span class="kw">use </span>iroh_base::RelayUrl;
 <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
 </span><span class="kw">use </span>iroh_metrics::inc;
+<span class="attr">#[cfg(not(wasm_browser))]
+</span><span class="kw">use </span>iroh_relay::dns::DnsResolver;
 <span class="kw">use </span>iroh_relay::{
     defaults::{DEFAULT_RELAY_QUIC_PORT, DEFAULT_STUN_PORT},
-    dns::DnsResolver,
     http::RELAY_PROBE_PATH,
     protos::stun,
     RelayMap, RelayNode,
 };
+<span class="attr">#[cfg(wasm_browser)]
+</span><span class="kw">use </span>n0_future::future::Pending;
 <span class="kw">use </span>n0_future::{
     task::{<span class="self">self</span>, AbortOnDropHandle, JoinSet},
     time::{<span class="self">self</span>, Duration, Instant},
+    StreamExt <span class="kw">as _</span>,
 };
-<span class="kw">use </span>netwatch::{interfaces, UdpSocket};
+<span class="attr">#[cfg(not(wasm_browser))]
+</span><span class="kw">use </span>netwatch::{interfaces, UdpSocket};
 <span class="kw">use </span>rand::seq::IteratorRandom;
 <span class="kw">use </span>tokio::sync::{mpsc, oneshot};
 <span class="kw">use </span>tracing::{debug, debug_span, error, info_span, trace, warn, Instrument, Span};
 <span class="kw">use </span>url::Host;
 
-<span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
+<span class="attr">#[cfg(wasm_browser)]
+</span><span class="kw">use </span><span class="kw">crate</span>::portmapper; <span class="comment">// We stub the library
+</span><span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
 </span><span class="kw">use </span><span class="kw">crate</span>::Metrics;
-<span class="kw">use crate</span>::{
-    <span class="self">self </span><span class="kw">as </span>net_report,
+<span class="kw">use crate</span>::{<span class="self">self </span><span class="kw">as </span>net_report, Report};
+<span class="attr">#[cfg(not(wasm_browser))]
+</span><span class="kw">use crate</span>::{
     defaults::timeouts::DNS_TIMEOUT,
     dns::DNS_STAGGERING_MS,
     ip_mapped_addrs::IpMappedAddresses,
     ping::{PingError, Pinger},
-    Report,
 };
 
-<span class="kw">mod </span>hairpin;
+<span class="attr">#[cfg(not(wasm_browser))]
+</span><span class="kw">mod </span>hairpin;
 <span class="kw">mod </span>probes;
 
 <span class="kw">pub use </span>probes::ProbeProto;
@@ -1754,23 +1841,37 @@
     </span>_drop_guard: AbortOnDropHandle&lt;()&gt;,
 }
 
+<span class="doccomment">/// Any state that depends on sockets being available in the current environment.
+///
+/// Factored out so it can be disabled easily in browsers.
+</span><span class="attr">#[cfg(not(wasm_browser))]
+#[derive(Debug, Clone)]
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>SocketState {
+    <span class="doccomment">/// The portmapper client, if there is one.
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) port_mapper: <span class="prelude-ty">Option</span>&lt;portmapper::Client&gt;,
+    <span class="doccomment">/// Socket to send IPv4 STUN requests from.
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) stun_sock4: <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;,
+    <span class="doccomment">/// Socket so send IPv6 STUN requests from.
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) stun_sock6: <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;,
+    <span class="doccomment">/// QUIC configuration to do QUIC address Discovery
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) quic_config: <span class="prelude-ty">Option</span>&lt;QuicConfig&gt;,
+    <span class="doccomment">/// The DNS resolver to use for probes that need to resolve DNS records.
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) dns_resolver: DnsResolver,
+    <span class="doccomment">/// Optional [`IpMappedAddresses`] used to enable QAD in iroh
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddresses&gt;,
+}
+
 <span class="kw">impl </span>Client {
-    <span class="attr">#[allow(clippy::too_many_arguments)]
-    </span><span class="doccomment">/// Creates a new actor generating a single report.
+    <span class="doccomment">/// Creates a new actor generating a single report.
     ///
     /// The actor starts running immediately and only generates a single report, after which
     /// it shuts down.  Dropping this handle will abort the actor.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(
         net_report: net_report::Addr,
         last_report: <span class="prelude-ty">Option</span>&lt;Arc&lt;Report&gt;&gt;,
-        port_mapper: <span class="prelude-ty">Option</span>&lt;portmapper::Client&gt;,
         relay_map: RelayMap,
-        stun_sock4: <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;,
-        stun_sock6: <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;,
-        quic_config: <span class="prelude-ty">Option</span>&lt;QuicConfig&gt;,
-        dns_resolver: DnsResolver,
         protocols: BTreeSet&lt;ProbeProto&gt;,
-        ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddresses&gt;,
+        <span class="attr">#[cfg(not(wasm_browser))] </span>socket_state: SocketState,
     ) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>(msg_tx, msg_rx) = mpsc::channel(<span class="number">32</span>);
         <span class="kw">let </span>addr = Addr {
@@ -1781,17 +1882,14 @@
             msg_rx,
             net_report: net_report.clone(),
             last_report,
-            port_mapper,
             relay_map,
-            stun_sock4,
-            stun_sock6,
-            quic_config,
             report: Report::default(),
-            hairpin_actor: hairpin::Client::new(net_report, addr),
             outstanding_tasks: OutstandingTasks::default(),
-            dns_resolver,
             protocols,
-            ip_mapped_addrs,
+            <span class="attr">#[cfg(not(wasm_browser))]
+            </span>socket_state,
+            <span class="attr">#[cfg(not(wasm_browser))]
+            </span>hairpin_actor: hairpin::Client::new(net_report, addr),
         };
         <span class="kw">let </span>task =
             task::spawn(<span class="kw">async move </span>{ actor.run().<span class="kw">await </span>}.instrument(<span class="macro">info_span!</span>(<span class="string">"reportgen.actor"</span>)));
@@ -1852,33 +1950,26 @@
     <span class="comment">// Provided state
     </span><span class="doccomment">/// The previous report, if it exists.
     </span>last_report: <span class="prelude-ty">Option</span>&lt;Arc&lt;Report&gt;&gt;,
-    <span class="doccomment">/// The portmapper client, if there is one.
-    </span>port_mapper: <span class="prelude-ty">Option</span>&lt;portmapper::Client&gt;,
     <span class="doccomment">/// The relay configuration.
     </span>relay_map: RelayMap,
-    <span class="doccomment">/// Socket to send IPv4 STUN requests from.
-    </span>stun_sock4: <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;,
-    <span class="doccomment">/// Socket so send IPv6 STUN requests from.
-    </span>stun_sock6: <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;,
-    <span class="doccomment">/// QUIC configuration to do QUIC address Discovery
-    </span>quic_config: <span class="prelude-ty">Option</span>&lt;QuicConfig&gt;,
 
     <span class="comment">// Internal state.
     </span><span class="doccomment">/// The report being built.
     </span>report: Report,
-    <span class="doccomment">/// The hairpin actor.
-    </span>hairpin_actor: hairpin::Client,
     <span class="doccomment">/// Which tasks the [`Actor`] is still waiting on.
     ///
     /// This is essentially the summary of all the work the [`Actor`] is doing.
     </span>outstanding_tasks: OutstandingTasks,
-    <span class="doccomment">/// The DNS resolver to use for probes that need to resolve DNS records.
-    </span>dns_resolver: DnsResolver,
     <span class="doccomment">/// Protocols we should attempt to create probes for, if we have the correct
     /// configuration for that protocol.
     </span>protocols: BTreeSet&lt;ProbeProto&gt;,
-    <span class="doccomment">/// Optional [`IpMappedAddresses`] used to enable QAD in iroh
-    </span>ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddresses&gt;,
+
+    <span class="doccomment">/// Any socket-related state that doesn't exist/work in browsers
+    </span><span class="attr">#[cfg(not(wasm_browser))]
+    </span>socket_state: SocketState,
+    <span class="doccomment">/// The hairpin actor.
+    </span><span class="attr">#[cfg(not(wasm_browser))]
+    </span>hairpin_actor: hairpin::Client,
 }
 
 <span class="kw">impl </span>Actor {
@@ -1913,10 +2004,11 @@
     ///   - Updates the report, cancels unneeded futures.
     /// - Sends the report to the net_report actor.
     </span><span class="kw">async fn </span>run_inner(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="macro">debug!</span>(
-            port_mapper = %<span class="self">self</span>.port_mapper.is_some(),
-            <span class="string">"reportstate actor starting"</span>,
-        );
+        <span class="attr">#[cfg(not(wasm_browser))]
+        </span><span class="kw">let </span>port_mapper = <span class="self">self</span>.socket_state.port_mapper.is_some();
+        <span class="attr">#[cfg(wasm_browser)]
+        </span><span class="kw">let </span>port_mapper = <span class="bool-val">false</span>;
+        <span class="macro">debug!</span>(%port_mapper, <span class="string">"reportstate actor starting"</span>);
 
         <span class="self">self</span>.report.os_has_ipv6 = <span class="kw">super</span>::os_has_ipv6();
 
@@ -2040,6 +2132,7 @@
         update_report(<span class="kw-2">&amp;mut </span><span class="self">self</span>.report, probe_report);
 
         <span class="comment">// When we discover the first IPv4 address we want to start the hairpin actor.
+        </span><span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>addr) = <span class="self">self</span>.report.global_v4 {
             <span class="kw">if </span>!<span class="self">self</span>.hairpin_actor.has_started() {
                 <span class="self">self</span>.hairpin_actor.start_check(<span class="kw-2">*</span>addr);
@@ -2088,6 +2181,7 @@
         }
 
         <span class="comment">// If the probe is for IPv6 and we don't yet have an IPv6 report, that would help.
+        </span><span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">if </span>probe.proto() == ProbeProto::StunIpv6 &amp;&amp; <span class="self">self</span>.report.relay_v6_latency.is_empty() {
             <span class="kw">return </span><span class="bool-val">true</span>;
         }
@@ -2098,6 +2192,7 @@
         // talking to. If we don't yet have two results yet
         // (`mapping_varies_by_dest_ip` is blank), then another IPv4 probe
         // would be good.
+        </span><span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">if </span>probe.proto() == ProbeProto::StunIpv4 &amp;&amp; <span class="self">self</span>.report.mapping_varies_by_dest_ip.is_none()
         {
             <span class="kw">return </span><span class="bool-val">true</span>;
@@ -2127,8 +2222,16 @@
     </span><span class="kw">fn </span>prepare_portmapper_task(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
     ) -&gt; MaybeFuture&lt;Pin&lt;Box&lt;<span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Option</span>&lt;portmapper::ProbeOutput&gt;&gt;&gt;&gt;&gt; {
-        <span class="kw">let </span><span class="kw-2">mut </span>port_mapping = MaybeFuture::default();
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(port_mapper) = <span class="self">self</span>.port_mapper.clone() {
+        <span class="comment">// In the browser, the compiler struggles to infer the type of future inside, because it's never set.
+        </span><span class="attr">#[cfg(wasm_browser)]
+        </span><span class="kw">let </span>port_mapping: MaybeFuture&lt;Pin&lt;Box&lt;Pending&lt;<span class="prelude-ty">Option</span>&lt;portmapper::ProbeOutput&gt;&gt;&gt;&gt;&gt; =
+            MaybeFuture::default();
+
+        <span class="attr">#[cfg(not(wasm_browser))]
+        </span><span class="kw">let </span><span class="kw-2">mut </span>port_mapping = MaybeFuture::default();
+
+        <span class="attr">#[cfg(not(wasm_browser))]
+        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(port_mapper) = <span class="self">self</span>.socket_state.port_mapper.clone() {
             port_mapping.inner = <span class="prelude-val">Some</span>(Box::pin(<span class="kw">async move </span>{
                 <span class="kw">match </span>port_mapper.probe().<span class="kw">await </span>{
                     <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(res)) =&gt; <span class="prelude-val">Some</span>(res),
@@ -2151,9 +2254,17 @@
     </span><span class="kw">fn </span>prepare_captive_portal_task(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
     ) -&gt; MaybeFuture&lt;Pin&lt;Box&lt;<span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Option</span>&lt;bool&gt;&gt;&gt;&gt;&gt; {
+        <span class="comment">// In the browser case the compiler cannot infer the type of the future, because it's never set:
+        </span><span class="attr">#[cfg(wasm_browser)]
+        </span><span class="kw">let </span>captive_task: MaybeFuture&lt;Pin&lt;Box&lt;Pending&lt;<span class="prelude-ty">Option</span>&lt;bool&gt;&gt;&gt;&gt;&gt; = MaybeFuture::default();
+
+        <span class="attr">#[cfg(not(wasm_browser))]
+        </span><span class="kw">let </span><span class="kw-2">mut </span>captive_task = MaybeFuture::default();
+
         <span class="comment">// If we're doing a full probe, also check for a captive portal. We
         // delay by a bit to wait for UDP STUN to finish, to avoid the probe if
         // it's unnecessary.
+        </span><span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">if </span><span class="self">self</span>.last_report.is_none() {
             <span class="comment">// Even if we're doing a non-incremental update, we may want to try our
             // preferred relay for captive portal detection.
@@ -2162,42 +2273,40 @@
                 .as_ref()
                 .and_then(|l| l.preferred_relay.clone());
 
-            <span class="kw">let </span>dns_resolver = <span class="self">self</span>.dns_resolver.clone();
+            <span class="kw">let </span>dns_resolver = <span class="self">self</span>.socket_state.dns_resolver.clone();
             <span class="kw">let </span>dm = <span class="self">self</span>.relay_map.clone();
             <span class="self">self</span>.outstanding_tasks.captive_task = <span class="bool-val">true</span>;
-            MaybeFuture {
-                inner: <span class="prelude-val">Some</span>(Box::pin(<span class="kw">async move </span>{
-                    time::sleep(CAPTIVE_PORTAL_DELAY).<span class="kw">await</span>;
-                    <span class="macro">debug!</span>(<span class="string">"Captive portal check started after {CAPTIVE_PORTAL_DELAY:?}"</span>);
-                    <span class="kw">let </span>captive_portal_check = time::timeout(
-                        CAPTIVE_PORTAL_TIMEOUT,
-                        check_captive_portal(<span class="kw-2">&amp;</span>dns_resolver, <span class="kw-2">&amp;</span>dm, preferred_relay)
-                            .instrument(<span class="macro">debug_span!</span>(<span class="string">"captive-portal"</span>)),
-                    );
-                    <span class="kw">match </span>captive_portal_check.<span class="kw">await </span>{
-                        <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(found)) =&gt; <span class="prelude-val">Some</span>(found),
-                        <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err)) =&gt; {
-                            <span class="kw">let </span>err: <span class="prelude-ty">Result</span>&lt;reqwest::Error, <span class="kw">_</span>&gt; = err.downcast();
-                            <span class="kw">match </span>err {
-                                <span class="prelude-val">Ok</span>(req_err) <span class="kw">if </span>req_err.is_connect() =&gt; {
-                                    <span class="macro">debug!</span>(<span class="string">"check_captive_portal failed: {req_err:#}"</span>);
-                                }
-                                <span class="prelude-val">Ok</span>(req_err) =&gt; <span class="macro">warn!</span>(<span class="string">"check_captive_portal error: {req_err:#}"</span>),
-                                <span class="prelude-val">Err</span>(any_err) =&gt; <span class="macro">warn!</span>(<span class="string">"check_captive_portal error: {any_err:#}"</span>),
+            captive_task.inner = <span class="prelude-val">Some</span>(Box::pin(<span class="kw">async move </span>{
+                time::sleep(CAPTIVE_PORTAL_DELAY).<span class="kw">await</span>;
+                <span class="macro">debug!</span>(<span class="string">"Captive portal check started after {CAPTIVE_PORTAL_DELAY:?}"</span>);
+                <span class="kw">let </span>captive_portal_check = time::timeout(
+                    CAPTIVE_PORTAL_TIMEOUT,
+                    check_captive_portal(<span class="kw-2">&amp;</span>dns_resolver, <span class="kw-2">&amp;</span>dm, preferred_relay)
+                        .instrument(<span class="macro">debug_span!</span>(<span class="string">"captive-portal"</span>)),
+                );
+                <span class="kw">match </span>captive_portal_check.<span class="kw">await </span>{
+                    <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(found)) =&gt; <span class="prelude-val">Some</span>(found),
+                    <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err)) =&gt; {
+                        <span class="kw">let </span>err: <span class="prelude-ty">Result</span>&lt;reqwest::Error, <span class="kw">_</span>&gt; = err.downcast();
+                        <span class="kw">match </span>err {
+                            <span class="prelude-val">Ok</span>(req_err) <span class="kw">if </span>req_err.is_connect() =&gt; {
+                                <span class="macro">debug!</span>(<span class="string">"check_captive_portal failed: {req_err:#}"</span>);
                             }
-                            <span class="prelude-val">None
-                        </span>}
-                        <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; {
-                            <span class="macro">warn!</span>(<span class="string">"check_captive_portal timed out"</span>);
-                            <span class="prelude-val">None
-                        </span>}
-                    }
-                })),
-            }
-        } <span class="kw">else </span>{
-            <span class="self">self</span>.outstanding_tasks.captive_task = <span class="bool-val">false</span>;
-            MaybeFuture::default()
+                            <span class="prelude-val">Ok</span>(req_err) =&gt; <span class="macro">warn!</span>(<span class="string">"check_captive_portal error: {req_err:#}"</span>),
+                            <span class="prelude-val">Err</span>(any_err) =&gt; <span class="macro">warn!</span>(<span class="string">"check_captive_portal error: {any_err:#}"</span>),
+                        }
+                        <span class="prelude-val">None
+                    </span>}
+                    <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; {
+                        <span class="macro">warn!</span>(<span class="string">"check_captive_portal timed out"</span>);
+                        <span class="prelude-val">None
+                    </span>}
+                }
+            }));
         }
+
+        <span class="self">self</span>.outstanding_tasks.captive_task = <span class="bool-val">false</span>;
+        captive_task
     }
 
     <span class="doccomment">/// Prepares the future which will run all the probes as per generated ProbePlan.
@@ -2219,19 +2328,31 @@
     ///   - Once there are [`ProbeReport`]s from enough nodes, all remaining probes are
     ///     aborted.  That is, the main actor loop stops polling them.
     </span><span class="kw">async fn </span>spawn_probes_task(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;JoinSet&lt;<span class="prelude-ty">Result</span>&lt;ProbeReport&gt;&gt;&gt; {
-        <span class="kw">let </span>if_state = interfaces::State::new().<span class="kw">await</span>;
-        <span class="macro">debug!</span>(%if_state, <span class="string">"Local interfaces"</span>);
+        <span class="attr">#[cfg(not(wasm_browser))]
+        </span><span class="kw">let </span>if_state = interfaces::State::new().<span class="kw">await</span>;
+        <span class="attr">#[cfg(not(wasm_browser))]
+        </span><span class="macro">debug!</span>(%if_state, <span class="string">"Local interfaces"</span>);
         <span class="kw">let </span>plan = <span class="kw">match </span><span class="self">self</span>.last_report {
-            <span class="prelude-val">Some</span>(<span class="kw-2">ref </span>report) =&gt; {
-                ProbePlan::with_last_report(<span class="kw-2">&amp;</span><span class="self">self</span>.relay_map, <span class="kw-2">&amp;</span>if_state, report, <span class="kw-2">&amp;</span><span class="self">self</span>.protocols)
-            }
-            <span class="prelude-val">None </span>=&gt; ProbePlan::initial(<span class="kw-2">&amp;</span><span class="self">self</span>.relay_map, <span class="kw-2">&amp;</span>if_state, <span class="kw-2">&amp;</span><span class="self">self</span>.protocols),
+            <span class="prelude-val">Some</span>(<span class="kw-2">ref </span>report) =&gt; ProbePlan::with_last_report(
+                <span class="kw-2">&amp;</span><span class="self">self</span>.relay_map,
+                report,
+                <span class="kw-2">&amp;</span><span class="self">self</span>.protocols,
+                <span class="attr">#[cfg(not(wasm_browser))]
+                </span><span class="kw-2">&amp;</span>if_state,
+            ),
+            <span class="prelude-val">None </span>=&gt; ProbePlan::initial(
+                <span class="kw-2">&amp;</span><span class="self">self</span>.relay_map,
+                <span class="kw-2">&amp;</span><span class="self">self</span>.protocols,
+                <span class="attr">#[cfg(not(wasm_browser))]
+                </span><span class="kw-2">&amp;</span>if_state,
+            ),
         };
         <span class="macro">trace!</span>(%plan, <span class="string">"probe plan"</span>);
 
         <span class="comment">// The pinger is created here so that any sockets that might be bound for it are
         // shared between the probes that use it.  It binds sockets lazily, so we can always
         // create it.
+        </span><span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">let </span>pinger = Pinger::new();
 
         <span class="comment">// A collection of futures running probe sets.
@@ -2240,28 +2361,25 @@
             <span class="kw">let </span><span class="kw-2">mut </span>set = JoinSet::default();
             <span class="kw">for </span>probe <span class="kw">in </span>probe_set {
                 <span class="kw">let </span>reportstate = <span class="self">self</span>.addr();
-                <span class="kw">let </span>stun_sock4 = <span class="self">self</span>.stun_sock4.clone();
-                <span class="kw">let </span>stun_sock6 = <span class="self">self</span>.stun_sock6.clone();
-                <span class="kw">let </span>quic_config = <span class="self">self</span>.quic_config.clone();
                 <span class="kw">let </span>relay_node = probe.node().clone();
                 <span class="kw">let </span>probe = probe.clone();
                 <span class="kw">let </span>net_report = <span class="self">self</span>.net_report.clone();
-                <span class="kw">let </span>pinger = pinger.clone();
-                <span class="kw">let </span>dns_resolver = <span class="self">self</span>.dns_resolver.clone();
-                <span class="kw">let </span>ip_mapped_addrs = <span class="self">self</span>.ip_mapped_addrs.clone();
+
+                <span class="attr">#[cfg(not(wasm_browser))]
+                </span><span class="kw">let </span>pinger = pinger.clone();
+                <span class="attr">#[cfg(not(wasm_browser))]
+                </span><span class="kw">let </span>socket_state = <span class="self">self</span>.socket_state.clone();
 
                 set.spawn(
                     run_probe(
                         reportstate,
-                        stun_sock4,
-                        stun_sock6,
-                        quic_config,
                         relay_node,
                         probe.clone(),
                         net_report,
-                        pinger,
-                        dns_resolver,
-                        ip_mapped_addrs,
+                        <span class="attr">#[cfg(not(wasm_browser))]
+                        </span>pinger,
+                        <span class="attr">#[cfg(not(wasm_browser))]
+                        </span>socket_state,
                     )
                     .instrument(<span class="macro">debug_span!</span>(<span class="string">"run_probe"</span>, %probe)),
                 );
@@ -2386,18 +2504,13 @@
 <span class="doccomment">/// Executes a particular [`Probe`], including using a delayed start if needed.
 ///
 /// If *stun_sock4* and *stun_sock6* are `None` the STUN probes are disabled.
-</span><span class="attr">#[allow(clippy::too_many_arguments)]
 </span><span class="kw">async fn </span>run_probe(
     reportstate: Addr,
-    stun_sock4: <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;,
-    stun_sock6: <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;,
-    quic_config: <span class="prelude-ty">Option</span>&lt;QuicConfig&gt;,
     relay_node: Arc&lt;RelayNode&gt;,
     probe: Probe,
     net_report: net_report::Addr,
-    pinger: Pinger,
-    dns_resolver: DnsResolver,
-    ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddresses&gt;,
+    <span class="attr">#[cfg(not(wasm_browser))] </span>pinger: Pinger,
+    <span class="attr">#[cfg(not(wasm_browser))] </span>socket_state: SocketState,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;ProbeReport, ProbeError&gt; {
     <span class="kw">if </span>!probe.delay().is_zero() {
         <span class="macro">trace!</span>(<span class="string">"delaying probe"</span>);
@@ -2431,18 +2544,20 @@
         ));
     }
 
-    <span class="kw">let </span>relay_addr = get_relay_addr(<span class="kw-2">&amp;</span>dns_resolver, <span class="kw-2">&amp;</span>relay_node, probe.proto())
+    <span class="attr">#[cfg(not(wasm_browser))]
+    </span><span class="kw">let </span>relay_addr = get_relay_addr(<span class="kw-2">&amp;</span>socket_state.dns_resolver, <span class="kw-2">&amp;</span>relay_node, probe.proto())
         .<span class="kw">await
         </span>.context(<span class="string">"no relay node addr"</span>)
         .map_err(|e| ProbeError::AbortSet(e, probe.clone()))<span class="question-mark">?</span>;
 
     <span class="kw">let </span><span class="kw-2">mut </span>result = ProbeReport::new(probe.clone());
     <span class="kw">match </span>probe {
-        Probe::StunIpv4 { .. } | Probe::StunIpv6 { .. } =&gt; {
+        <span class="attr">#[cfg(not(wasm_browser))]
+        </span>Probe::StunIpv4 { .. } | Probe::StunIpv6 { .. } =&gt; {
             <span class="kw">let </span>maybe_sock = <span class="kw">if </span><span class="macro">matches!</span>(probe, Probe::StunIpv4 { .. }) {
-                stun_sock4.as_ref()
+                socket_state.stun_sock4.as_ref()
             } <span class="kw">else </span>{
-                stun_sock6.as_ref()
+                socket_state.stun_sock6.as_ref()
             };
             <span class="kw">match </span>maybe_sock {
                 <span class="prelude-val">Some</span>(sock) =&gt; {
@@ -2456,13 +2571,22 @@
                 }
             }
         }
-        Probe::IcmpV4 { .. } | Probe::IcmpV6 { .. } =&gt; {
+        <span class="attr">#[cfg(not(wasm_browser))]
+        </span>Probe::IcmpV4 { .. } | Probe::IcmpV6 { .. } =&gt; {
             result = run_icmp_probe(probe, relay_addr, pinger).<span class="kw">await</span><span class="question-mark">?
         </span>}
         Probe::Https { <span class="kw-2">ref </span>node, .. } =&gt; {
             <span class="macro">debug!</span>(<span class="string">"sending probe HTTPS"</span>);
-            <span class="kw">match </span>measure_https_latency(<span class="kw-2">&amp;</span>dns_resolver, node, <span class="prelude-val">None</span>).<span class="kw">await </span>{
+            <span class="kw">match </span>measure_https_latency(
+                <span class="attr">#[cfg(not(wasm_browser))]
+                </span><span class="kw-2">&amp;</span>socket_state.dns_resolver,
+                node,
+                <span class="prelude-val">None</span>,
+            )
+            .<span class="kw">await
+            </span>{
                 <span class="prelude-val">Ok</span>((latency, ip)) =&gt; {
+                    <span class="macro">debug!</span>(<span class="question-mark">?</span>latency, <span class="string">"latency"</span>);
                     result.latency = <span class="prelude-val">Some</span>(latency);
                     <span class="comment">// We set these IPv4 and IPv6 but they're not really used
                     // and we don't necessarily set them both. If UDP is blocked
@@ -2480,13 +2604,20 @@
             }
         }
 
-        Probe::QuicIpv4 { <span class="kw-2">ref </span>node, .. } | Probe::QuicIpv6 { <span class="kw-2">ref </span>node, .. } =&gt; {
+        <span class="attr">#[cfg(not(wasm_browser))]
+        </span>Probe::QuicIpv4 { <span class="kw-2">ref </span>node, .. } | Probe::QuicIpv6 { <span class="kw-2">ref </span>node, .. } =&gt; {
             <span class="macro">debug!</span>(<span class="string">"sending QUIC address discovery probe"</span>);
             <span class="kw">let </span>url = node.url.clone();
-            <span class="kw">match </span>quic_config {
+            <span class="kw">match </span>socket_state.quic_config {
                 <span class="prelude-val">Some</span>(quic_config) =&gt; {
-                    result = run_quic_probe(quic_config, url, relay_addr, probe, ip_mapped_addrs)
-                        .<span class="kw">await</span><span class="question-mark">?</span>;
+                    result = run_quic_probe(
+                        quic_config,
+                        url,
+                        relay_addr,
+                        probe,
+                        socket_state.ip_mapped_addrs,
+                    )
+                    .<span class="kw">await</span><span class="question-mark">?</span>;
                 }
                 <span class="prelude-val">None </span>=&gt; {
                     <span class="kw">return </span><span class="prelude-val">Err</span>(ProbeError::AbortSet(
@@ -2503,6 +2634,7 @@
 }
 
 <span class="doccomment">/// Run a STUN IPv4 or IPv6 probe.
+</span><span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">async fn </span>run_stun_probe(
     sock: <span class="kw-2">&amp;</span>Arc&lt;UdpSocket&gt;,
     relay_addr: SocketAddr,
@@ -2585,17 +2717,19 @@
     }
 }
 
-<span class="kw">fn </span>maybe_to_mapped_addr(
+<span class="attr">#[cfg(not(wasm_browser))]
+</span><span class="kw">fn </span>maybe_to_mapped_addr(
     ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddresses&gt;,
     addr: SocketAddr,
 ) -&gt; SocketAddr {
     <span class="kw">if let </span><span class="prelude-val">Some</span>(ip_mapped_addrs) = ip_mapped_addrs.as_ref() {
-        <span class="kw">return </span>ip_mapped_addrs.get_or_register(addr).socket_addr();
+        <span class="kw">return </span>ip_mapped_addrs.get_or_register(addr).private_socket_addr();
     }
     addr
 }
 
 <span class="doccomment">/// Run a QUIC address discovery probe.
+</span><span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">async fn </span>run_quic_probe(
     quic_config: QuicConfig,
     url: RelayUrl,
@@ -2640,6 +2774,7 @@
 /// return a "204 No Content" response and checking if that's what we get.
 ///
 /// The boolean return is whether we think we have a captive portal.
+</span><span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">async fn </span>check_captive_portal(
     dns_resolver: <span class="kw-2">&amp;</span>DnsResolver,
     dm: <span class="kw-2">&amp;</span>RelayMap,
@@ -2673,6 +2808,7 @@
     };
 
     <span class="kw">let </span><span class="kw-2">mut </span>builder = reqwest::ClientBuilder::new().redirect(reqwest::redirect::Policy::none());
+
     <span class="kw">if let </span><span class="prelude-val">Some</span>(Host::Domain(domain)) = url.host() {
         <span class="comment">// Use our own resolver rather than getaddrinfo
         //
@@ -2723,7 +2859,8 @@
 <span class="doccomment">/// Returns the proper port based on the protocol of the probe.
 </span><span class="kw">fn </span>get_port(relay_node: <span class="kw-2">&amp;</span>RelayNode, proto: <span class="kw-2">&amp;</span>ProbeProto) -&gt; <span class="prelude-ty">Result</span>&lt;u16&gt; {
     <span class="kw">match </span>proto {
-        ProbeProto::QuicIpv4 | ProbeProto::QuicIpv6 =&gt; {
+        <span class="attr">#[cfg(not(wasm_browser))]
+        </span>ProbeProto::QuicIpv4 | ProbeProto::QuicIpv6 =&gt; {
             <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>quic) = relay_node.quic {
                 <span class="kw">if </span>quic.port == <span class="number">0 </span>{
                     <span class="prelude-val">Ok</span>(DEFAULT_RELAY_QUIC_PORT)
@@ -2754,6 +2891,7 @@
 /// assume that we are running this net report with `iroh`, and need to provide mapped
 /// addresses to the probe in order for it to function in the specialize iroh-quinn
 /// endpoint that expects mapped addresses.
+</span><span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">async fn </span>get_relay_addr(
     dns_resolver: <span class="kw-2">&amp;</span>DnsResolver,
     relay_node: <span class="kw-2">&amp;</span>RelayNode,
@@ -2780,6 +2918,7 @@
 <span class="doccomment">/// Do a staggared ipv4 DNS lookup based on [`RelayNode`]
 ///
 /// `port` is combined with the resolved [`std::net::Ipv4Addr`] to return a [`SocketAddr`]
+</span><span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">async fn </span>relay_lookup_ipv4_staggered(
     dns_resolver: <span class="kw-2">&amp;</span>DnsResolver,
     relay: <span class="kw-2">&amp;</span>RelayNode,
@@ -2809,6 +2948,7 @@
 <span class="doccomment">/// Do a staggared ipv6 DNS lookup based on [`RelayNode`]
 ///
 /// `port` is combined with the resolved [`std::net::Ipv6Addr`] to return a [`SocketAddr`]
+</span><span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">async fn </span>relay_lookup_ipv6_staggered(
     dns_resolver: <span class="kw-2">&amp;</span>DnsResolver,
     relay: <span class="kw-2">&amp;</span>RelayNode,
@@ -2839,6 +2979,7 @@
 ///
 /// The `pinger` is passed in so the ping sockets are only bound once
 /// for the probe set.
+</span><span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">async fn </span>run_icmp_probe(
     probe: Probe,
     relay_addr: SocketAddr,
@@ -2859,7 +3000,8 @@
                 <span class="macro">anyhow!</span>(<span class="string">"Failed to create pinger ({err:#}), aborting probeset"</span>),
                 probe.clone(),
             ),
-            PingError::Ping(err) =&gt; ProbeError::Error(err.into(), probe.clone()),
+            <span class="attr">#[cfg(not(wasm_browser))]
+            </span>PingError::Ping(err) =&gt; ProbeError::Error(err.into(), probe.clone()),
         })<span class="question-mark">?</span>;
     <span class="macro">debug!</span>(dst = %relay_addr, len = DATA.len(), <span class="question-mark">?</span>latency, <span class="string">"ICMP ping done"</span>);
     <span class="kw">let </span><span class="kw-2">mut </span>report = ProbeReport::new(probe);
@@ -2883,7 +3025,7 @@
 /// use of self-signed certificates for servers.  Currently this is used for testing.
 </span><span class="attr">#[allow(clippy::unused_async)]
 </span><span class="kw">async fn </span>measure_https_latency(
-    dns_resolver: <span class="kw-2">&amp;</span>DnsResolver,
+    <span class="attr">#[cfg(not(wasm_browser))] </span>dns_resolver: <span class="kw-2">&amp;</span>DnsResolver,
     node: <span class="kw-2">&amp;</span>RelayNode,
     certs: <span class="prelude-ty">Option</span>&lt;Vec&lt;rustls::pki_types::CertificateDer&lt;<span class="lifetime">'static</span>&gt;&gt;&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(Duration, IpAddr)&gt; {
@@ -2892,8 +3034,15 @@
     <span class="comment">// This should also use same connection establishment as relay client itself, which
     // needs to be more configurable so users can do more crazy things:
     // https://github.com/n0-computer/iroh/issues/2901
-    </span><span class="kw">let </span><span class="kw-2">mut </span>builder = reqwest::ClientBuilder::new().redirect(reqwest::redirect::Policy::none());
-    <span class="kw">if let </span><span class="prelude-val">Some</span>(Host::Domain(domain)) = url.host() {
+    </span><span class="kw">let </span><span class="kw-2">mut </span>builder = reqwest::ClientBuilder::new();
+
+    <span class="attr">#[cfg(not(wasm_browser))]
+    </span>{
+        builder = builder.redirect(reqwest::redirect::Policy::none());
+    }
+
+    <span class="attr">#[cfg(not(wasm_browser))]
+    </span><span class="kw">if let </span><span class="prelude-val">Some</span>(Host::Domain(domain)) = url.host() {
         <span class="comment">// Use our own resolver rather than getaddrinfo
         //
         // Be careful, a non-zero port will override the port in the URI.
@@ -2908,7 +3057,9 @@
             .collect();
         builder = builder.resolve_to_addrs(domain, <span class="kw-2">&amp;</span>addrs);
     }
-    <span class="kw">if let </span><span class="prelude-val">Some</span>(certs) = certs {
+
+    <span class="attr">#[cfg(not(wasm_browser))]
+    </span><span class="kw">if let </span><span class="prelude-val">Some</span>(certs) = certs {
         <span class="kw">for </span>cert <span class="kw">in </span>certs {
             <span class="kw">let </span>cert = reqwest::Certificate::from_der(<span class="kw-2">&amp;</span>cert)<span class="question-mark">?</span>;
             builder = builder.add_root_certificate(cert);
@@ -2917,24 +3068,30 @@
     <span class="kw">let </span>client = builder.build()<span class="question-mark">?</span>;
 
     <span class="kw">let </span>start = Instant::now();
-    <span class="kw">let </span><span class="kw-2">mut </span>response = client.request(reqwest::Method::GET, url).send().<span class="kw">await</span><span class="question-mark">?</span>;
+    <span class="kw">let </span>response = client.request(reqwest::Method::GET, url).send().<span class="kw">await</span><span class="question-mark">?</span>;
     <span class="kw">let </span>latency = start.elapsed();
     <span class="kw">if </span>response.status().is_success() {
+        <span class="comment">// Only `None` if a different hyper HttpConnector in the request.
+        </span><span class="attr">#[cfg(not(wasm_browser))]
+        </span><span class="kw">let </span>remote_ip = response
+            .remote_addr()
+            .context(<span class="string">"missing HttpInfo from HttpConnector"</span>)<span class="question-mark">?
+            </span>.ip();
+        <span class="attr">#[cfg(wasm_browser)]
+        </span><span class="kw">let </span>remote_ip = IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED);
+
         <span class="comment">// Drain the response body to be nice to the server, up to a limit.
         </span><span class="kw">const </span>MAX_BODY_SIZE: usize = <span class="number">8 </span>&lt;&lt; <span class="number">10</span>; <span class="comment">// 8 KiB
         </span><span class="kw">let </span><span class="kw-2">mut </span>body_size = <span class="number">0</span>;
-        <span class="kw">while let </span><span class="prelude-val">Some</span>(chunk) = response.chunk().<span class="kw">await</span><span class="question-mark">? </span>{
+        <span class="kw">let </span><span class="kw-2">mut </span>stream = response.bytes_stream();
+        <span class="comment">// ignore failing frames
+        </span><span class="kw">while let </span><span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(chunk)) = stream.next().<span class="kw">await </span>{
             body_size += chunk.len();
             <span class="kw">if </span>body_size &gt;= MAX_BODY_SIZE {
                 <span class="kw">break</span>;
             }
         }
 
-        <span class="comment">// Only `None` if a different hyper HttpConnector in the request.
-        </span><span class="kw">let </span>remote_ip = response
-            .remote_addr()
-            .context(<span class="string">"missing HttpInfo from HttpConnector"</span>)<span class="question-mark">?
-            </span>.ip();
         <span class="prelude-val">Ok</span>((latency, remote_ip))
     } <span class="kw">else </span>{
         <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(
@@ -2952,7 +3109,8 @@
             .relay_latency
             .update_relay(relay_node.url.clone(), latency);
 
-        <span class="kw">if </span><span class="macro">matches!</span>(
+        <span class="attr">#[cfg(not(wasm_browser))]
+        </span><span class="kw">if </span><span class="macro">matches!</span>(
             probe_report.probe.proto(),
             ProbeProto::StunIpv4
                 | ProbeProto::StunIpv6

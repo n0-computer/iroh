@@ -407,7 +407,11 @@
 <a href="#406" id="406">406</a>
 <a href="#407" id="407">407</a>
 <a href="#408" id="408">408</a>
-<a href="#409" id="409">409</a></pre></div><pre class="rust"><code><span class="doccomment">//! DNS resolver
+<a href="#409" id="409">409</a>
+<a href="#410" id="410">410</a>
+<a href="#411" id="411">411</a>
+<a href="#412" id="412">412</a>
+<a href="#413" id="413">413</a></pre></div><pre class="rust"><code><span class="doccomment">//! DNS resolver
 
 </span><span class="kw">use </span>std::{
     fmt::{<span class="self">self</span>, Write},
@@ -417,14 +421,14 @@
 
 <span class="kw">use </span>anyhow::{bail, Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>hickory_resolver::{Resolver, TokioResolver};
-<span class="kw">use </span>iroh_base::{NodeAddr, NodeId};
+<span class="kw">use </span>iroh_base::NodeId;
 <span class="kw">use </span>n0_future::{
     time::{<span class="self">self</span>, Duration},
     StreamExt,
 };
 <span class="kw">use </span>url::Url;
 
-<span class="kw">pub mod </span>node_info;
+<span class="kw">use </span><span class="kw">crate</span>::node_info::NodeInfo;
 
 <span class="doccomment">/// The n0 testing DNS node origin, for production.
 </span><span class="kw">pub const </span>N0_DNS_NODE_ORIGIN_PROD: <span class="kw-2">&amp;</span>str = <span class="string">"dns.iroh.link"</span>;
@@ -624,18 +628,22 @@
     ///
     /// To lookup nodes that published their node info to the DNS servers run by n0,
     /// pass [`N0_DNS_NODE_ORIGIN_PROD`] as `origin`.
-    </span><span class="kw">pub async fn </span>lookup_node_by_id(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: <span class="kw-2">&amp;</span>NodeId, origin: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;NodeAddr&gt; {
-        <span class="kw">let </span>attrs =
-            node_info::TxtAttrs::&lt;node_info::IrohAttr&gt;::lookup_by_id(<span class="self">self</span>, node_id, origin).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>info: node_info::NodeInfo = attrs.into();
-        <span class="prelude-val">Ok</span>(info.into())
+    </span><span class="kw">pub async fn </span>lookup_node_by_id(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: <span class="kw-2">&amp;</span>NodeId, origin: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;NodeInfo&gt; {
+        <span class="kw">let </span>attrs = <span class="kw">crate</span>::node_info::TxtAttrs::&lt;<span class="kw">crate</span>::node_info::IrohAttr&gt;::lookup_by_id(
+            <span class="self">self</span>, node_id, origin,
+        )
+        .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>info = attrs.into();
+        <span class="prelude-val">Ok</span>(info)
     }
 
     <span class="doccomment">/// Looks up node info by DNS name.
-    </span><span class="kw">pub async fn </span>lookup_node_by_domain_name(<span class="kw-2">&amp;</span><span class="self">self</span>, name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;NodeAddr&gt; {
-        <span class="kw">let </span>attrs = node_info::TxtAttrs::&lt;node_info::IrohAttr&gt;::lookup_by_name(<span class="self">self</span>, name).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>info: node_info::NodeInfo = attrs.into();
-        <span class="prelude-val">Ok</span>(info.into())
+    </span><span class="kw">pub async fn </span>lookup_node_by_domain_name(<span class="kw-2">&amp;</span><span class="self">self</span>, name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;NodeInfo&gt; {
+        <span class="kw">let </span>attrs =
+            <span class="kw">crate</span>::node_info::TxtAttrs::&lt;<span class="kw">crate</span>::node_info::IrohAttr&gt;::lookup_by_name(<span class="self">self</span>, name)
+                .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>info = attrs.into();
+        <span class="prelude-val">Ok</span>(info)
     }
 
     <span class="doccomment">/// Looks up node info by DNS name in a staggered fashion.
@@ -648,7 +656,7 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         name: <span class="kw-2">&amp;</span>str,
         delays_ms: <span class="kw-2">&amp;</span>[u64],
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;NodeAddr&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;NodeInfo&gt; {
         <span class="kw">let </span>f = || <span class="self">self</span>.lookup_node_by_domain_name(name);
         stagger_call(f, delays_ms).<span class="kw">await
     </span>}
@@ -664,7 +672,7 @@
         node_id: <span class="kw-2">&amp;</span>NodeId,
         origin: <span class="kw-2">&amp;</span>str,
         delays_ms: <span class="kw-2">&amp;</span>[u64],
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;NodeAddr&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;NodeInfo&gt; {
         <span class="kw">let </span>f = || <span class="self">self</span>.lookup_node_by_id(node_id, origin);
         stagger_call(f, delays_ms).<span class="kw">await
     </span>}
@@ -684,7 +692,7 @@
 
 <span class="doccomment">/// TXT records returned from [`DnsResolver::lookup_txt`]
 </span><span class="attr">#[derive(Debug, Clone)]
-</span><span class="kw">pub struct </span>TxtLookup(hickory_resolver::lookup::TxtLookup);
+</span><span class="kw">pub struct </span>TxtLookup(<span class="kw">pub</span>(<span class="kw">crate</span>) hickory_resolver::lookup::TxtLookup);
 
 <span class="kw">impl </span>From&lt;hickory_resolver::lookup::TxtLookup&gt; <span class="kw">for </span>TxtLookup {
     <span class="kw">fn </span>from(value: hickory_resolver::lookup::TxtLookup) -&gt; <span class="self">Self </span>{
