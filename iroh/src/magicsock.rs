@@ -3414,6 +3414,7 @@ mod tests {
                 insecure_skip_relay_cert_verify: false,
                 #[cfg(any(test, feature = "test-utils"))]
                 path_selection: PathSelection::default(),
+                discovery_user_data: None,
             }
         }
     }
