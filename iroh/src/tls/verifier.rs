@@ -80,7 +80,7 @@ impl ServerCertificateVerifier {
         let pem_key = remote_peer_id
             .public()
             .to_public_key_der()
-            .expect("vaild key");
+            .expect("valid key");
         let remote_key = SubjectPublicKeyInfoDer::from(pem_key.into_vec());
         trusted_spki.push(remote_key);
 
