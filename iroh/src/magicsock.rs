@@ -149,41 +149,6 @@ pub(crate) struct Options {
     pub(crate) path_selection: PathSelection,
 }
 
-#[cfg(test)]
-impl Default for Options {
-    fn default() -> Self {
-        let secret_key = SecretKey::generate(rand::rngs::OsRng);
-        let server_config = make_default_server_config(&secret_key);
-        Options {
-            addr_v4: None,
-            addr_v6: None,
-            secret_key,
-            relay_map: RelayMap::empty(),
-            node_map: None,
-            discovery: None,
-            discovery_user_data: None,
-            proxy_url: None,
-            #[cfg(not(wasm_browser))]
-            dns_resolver: DnsResolver::new(),
-            server_config,
-            #[cfg(any(test, feature = "test-utils"))]
-            insecure_skip_relay_cert_verify: false,
-            #[cfg(any(test, feature = "test-utils"))]
-            path_selection: PathSelection::default(),
-        }
-    }
-}
-
-/// Generate a server config with no ALPNS and a default transport configuration
-#[cfg(test)]
-fn make_default_server_config(secret_key: &SecretKey) -> ServerConfig {
-    let quic_server_config = crate::tls::make_server_config(secret_key, vec![], false)
-        .expect("should generate valid config");
-    let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
-    server_config.transport_config(Arc::new(quinn::TransportConfig::default()));
-    server_config
-}
-
 /// Contents of a relay message. Use a SmallVec to avoid allocations for the very
 /// common case of a single packet.
 type RelayContents = SmallVec<[Bytes; 1]>;
@@ -3430,6 +3395,43 @@ mod tests {
 
     const ALPN: &[u8] = b"n0/test/1";
 
+    impl Default for Options {
+        fn default() -> Self {
+            let secret_key = SecretKey::generate(rand::rngs::OsRng);
+            let tls_auth = crate::tls::Authentication::RawPublicKey;
+            let server_config = make_default_server_config(&secret_key, tls_auth);
+            Options {
+                addr_v4: None,
+                addr_v6: None,
+                secret_key,
+                relay_map: RelayMap::empty(),
+                node_map: None,
+                discovery: None,
+                proxy_url: None,
+                dns_resolver: DnsResolver::new(),
+                server_config,
+                #[cfg(any(test, feature = "test-utils"))]
+                insecure_skip_relay_cert_verify: false,
+                #[cfg(any(test, feature = "test-utils"))]
+                path_selection: PathSelection::default(),
+                discovery_user_data: None,
+            }
+        }
+    }
+
+    /// Generate a server config with no ALPNS and a default transport configuration
+    fn make_default_server_config(
+        secret_key: &SecretKey,
+        tls_auth: crate::tls::Authentication,
+    ) -> ServerConfig {
+        let quic_server_config = tls_auth
+            .make_server_config(secret_key, vec![], false)
+            .expect("should generate valid config");
+        let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
+        server_config.transport_config(Arc::new(quinn::TransportConfig::default()));
+        server_config
+    }
+
     impl MagicSock {
         #[track_caller]
         pub fn add_test_addr(&self, node_addr: NodeAddr) {
@@ -3907,306 +3909,6 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    #[traced_test]
-    async fn test_two_devices_roundtrip_quinn_raw() -> Result<()> {
-        let make_conn = |addr: SocketAddr| -> anyhow::Result<quinn::Endpoint> {
-            let key = SecretKey::generate(rand::thread_rng());
-            let conn = std::net::UdpSocket::bind(addr)?;
-
-            let quic_server_config = tls::make_server_config(&key, vec![ALPN.to_vec()], false)?;
-            let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
-            let mut transport_config = quinn::TransportConfig::default();
-            transport_config.keep_alive_interval(Some(Duration::from_secs(5)));
-            transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
-            server_config.transport_config(Arc::new(transport_config));
-            let mut quic_ep = quinn::Endpoint::new(
-                quinn::EndpointConfig::default(),
-                Some(server_config),
-                conn,
-                Arc::new(quinn::TokioRuntime),
-            )?;
-
-            let quic_client_config =
-                tls::make_client_config(&key, None, vec![ALPN.to_vec()], None, false)?;
-            let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
-            let mut transport_config = quinn::TransportConfig::default();
-            transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
-            client_config.transport_config(Arc::new(transport_config));
-            quic_ep.set_default_client_config(client_config);
-
-            Ok(quic_ep)
-        };
-
-        let m1 = make_conn("127.0.0.1:0".parse().unwrap())?;
-        let m2 = make_conn("127.0.0.1:0".parse().unwrap())?;
-
-        // msg from  a -> b
-        macro_rules! roundtrip {
-            ($a:expr, $b:expr, $msg:expr) => {
-                let a = $a.clone();
-                let b = $b.clone();
-                let a_name = stringify!($a);
-                let b_name = stringify!($b);
-                println!("{} -> {} ({} bytes)", a_name, b_name, $msg.len());
-
-                let a_addr = a.local_addr()?;
-                let b_addr = b.local_addr()?;
-
-                println!("{}: {}, {}: {}", a_name, a_addr, b_name, b_addr);
-
-                let b_task = tokio::task::spawn(async move {
-                    println!("[{b_name}] accepting conn");
-                    let conn = b.accept().await.expect("no conn");
-                    println!("[{}] connecting", b_name);
-                    let conn = conn
-                        .await
-                        .with_context(|| format!("[{b_name}] connecting"))?;
-                    println!("[{}] accepting bi", b_name);
-                    let (mut send_bi, mut recv_bi) = conn
-                        .accept_bi()
-                        .await
-                        .with_context(|| format!("[{b_name}] accepting bi"))?;
-
-                    println!("[{b_name}] reading");
-                    let val = recv_bi
-                        .read_to_end(usize::MAX)
-                        .await
-                        .with_context(|| format!("[{b_name}] reading to end"))?;
-                    println!("[{b_name}] finishing");
-                    send_bi
-                        .finish()
-                        .with_context(|| format!("[{b_name}] finishing"))?;
-                    send_bi
-                        .stopped()
-                        .await
-                        .with_context(|| format!("[b_name] stopped"))?;
-
-                    println!("[{b_name}] close");
-                    conn.close(0u32.into(), b"done");
-                    println!("[{b_name}] closed");
-
-                    Ok::<_, anyhow::Error>(val)
-                });
-
-                println!("[{a_name}] connecting to {b_addr}");
-                let conn = a
-                    .connect(b_addr, "localhost")?
-                    .await
-                    .with_context(|| format!("[{a_name}] connect"))?;
-
-                println!("[{a_name}] opening bi");
-                let (mut send_bi, mut recv_bi) = conn
-                    .open_bi()
-                    .await
-                    .with_context(|| format!("[{a_name}] open bi"))?;
-                println!("[{a_name}] writing message");
-                send_bi
-                    .write_all(&$msg[..])
-                    .await
-                    .with_context(|| format!("[{a_name}] write all"))?;
-
-                println!("[{a_name}] finishing");
-                send_bi
-                    .finish()
-                    .with_context(|| format!("[{a_name}] finish"))?;
-                send_bi
-                    .stopped()
-                    .await
-                    .with_context(|| format!("[{a_name}] stopped"))?;
-
-                println!("[{a_name}] reading_to_end");
-                let _ = recv_bi
-                    .read_to_end(usize::MAX)
-                    .await
-                    .with_context(|| format!("[{a_name}] reading_to_end"))?;
-                println!("[{a_name}] close");
-                conn.close(0u32.into(), b"done");
-                println!("[{a_name}] wait idle");
-                a.wait_idle().await;
-
-                drop(send_bi);
-
-                // make sure the right values arrived
-                println!("[{a_name}] waiting for channel");
-                let val = b_task.await??;
-                anyhow::ensure!(
-                    val == $msg,
-                    "expected {}, got {}",
-                    HEXLOWER.encode(&$msg[..]),
-                    HEXLOWER.encode(&val)
-                );
-            };
-        }
-
-        for i in 0..10 {
-            println!("-- round {}", i + 1);
-            roundtrip!(m1, m2, b"hello m1");
-            roundtrip!(m2, m1, b"hello m2");
-
-            println!("-- larger data");
-
-            let mut data = vec![0u8; 10 * 1024];
-            rand::thread_rng().fill_bytes(&mut data);
-            roundtrip!(m1, m2, data);
-            roundtrip!(m2, m1, data);
-        }
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    #[traced_test]
-    async fn test_two_devices_roundtrip_quinn_rebinding_conn() -> Result<()> {
-        fn make_conn(addr: SocketAddr) -> anyhow::Result<quinn::Endpoint> {
-            let key = SecretKey::generate(rand::thread_rng());
-            let conn = UdpConn::wrap(Arc::new(bind_with_fallback(addr)?));
-
-            let quic_server_config = tls::make_server_config(&key, vec![ALPN.to_vec()], false)?;
-            let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(quic_server_config));
-            let mut transport_config = quinn::TransportConfig::default();
-            transport_config.keep_alive_interval(Some(Duration::from_secs(5)));
-            transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
-            server_config.transport_config(Arc::new(transport_config));
-            let mut quic_ep = quinn::Endpoint::new_with_abstract_socket(
-                quinn::EndpointConfig::default(),
-                Some(server_config),
-                Arc::new(conn),
-                Arc::new(quinn::TokioRuntime),
-            )?;
-
-            let quic_client_config =
-                tls::make_client_config(&key, None, vec![ALPN.to_vec()], None, false)?;
-            let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
-            let mut transport_config = quinn::TransportConfig::default();
-            transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
-            client_config.transport_config(Arc::new(transport_config));
-            quic_ep.set_default_client_config(client_config);
-
-            Ok(quic_ep)
-        }
-
-        let m1 = make_conn("127.0.0.1:7770".parse().unwrap())?;
-        let m2 = make_conn("127.0.0.1:7771".parse().unwrap())?;
-
-        // msg from  a -> b
-        macro_rules! roundtrip {
-            ($a:expr, $b:expr, $msg:expr) => {
-                let a = $a.clone();
-                let b = $b.clone();
-                let a_name = stringify!($a);
-                let b_name = stringify!($b);
-                println!("{} -> {} ({} bytes)", a_name, b_name, $msg.len());
-
-                let a_addr: SocketAddr = format!("127.0.0.1:{}", a.local_addr()?.port())
-                    .parse()
-                    .unwrap();
-                let b_addr: SocketAddr = format!("127.0.0.1:{}", b.local_addr()?.port())
-                    .parse()
-                    .unwrap();
-
-                println!("{}: {}, {}: {}", a_name, a_addr, b_name, b_addr);
-
-                let b_task = tokio::task::spawn(async move {
-                    println!("[{}] accepting conn", b_name);
-                    let conn = b.accept().await.expect("no conn");
-                    println!("[{}] connecting", b_name);
-                    let conn = conn
-                        .await
-                        .with_context(|| format!("[{}] connecting", b_name))?;
-                    println!("[{}] accepting bi", b_name);
-                    let (mut send_bi, mut recv_bi) = conn
-                        .accept_bi()
-                        .await
-                        .with_context(|| format!("[{}] accepting bi", b_name))?;
-
-                    println!("[{}] reading", b_name);
-                    let val = recv_bi
-                        .read_to_end(usize::MAX)
-                        .await
-                        .with_context(|| format!("[{}] reading to end", b_name))?;
-                    println!("[{}] finishing", b_name);
-                    send_bi
-                        .finish()
-                        .with_context(|| format!("[{}] finishing", b_name))?;
-                    send_bi
-                        .stopped()
-                        .await
-                        .with_context(|| format!("[{b_name}] stopped"))?;
-
-                    println!("[{}] close", b_name);
-                    conn.close(0u32.into(), b"done");
-                    println!("[{}] closed", b_name);
-
-                    Ok::<_, anyhow::Error>(val)
-                });
-
-                println!("[{}] connecting to {}", a_name, b_addr);
-                let conn = a
-                    .connect(b_addr, "localhost")?
-                    .await
-                    .with_context(|| format!("[{}] connect", a_name))?;
-
-                println!("[{}] opening bi", a_name);
-                let (mut send_bi, mut recv_bi) = conn
-                    .open_bi()
-                    .await
-                    .with_context(|| format!("[{}] open bi", a_name))?;
-                println!("[{}] writing message", a_name);
-                send_bi
-                    .write_all(&$msg[..])
-                    .await
-                    .with_context(|| format!("[{}] write all", a_name))?;
-
-                println!("[{}] finishing", a_name);
-                send_bi
-                    .finish()
-                    .with_context(|| format!("[{}] finish", a_name))?;
-                send_bi
-                    .stopped()
-                    .await
-                    .with_context(|| format!("[{a_name}] stopped"))?;
-
-                println!("[{}] reading_to_end", a_name);
-                let _ = recv_bi
-                    .read_to_end(usize::MAX)
-                    .await
-                    .with_context(|| format!("[{}]", a_name))?;
-                println!("[{}] close", a_name);
-                conn.close(0u32.into(), b"done");
-                println!("[{}] wait idle", a_name);
-                a.wait_idle().await;
-
-                drop(send_bi);
-
-                // make sure the right values arrived
-                println!("[{}] waiting for channel", a_name);
-                let val = b_task.await??;
-                anyhow::ensure!(
-                    val == $msg,
-                    "expected {}, got {}",
-                    HEXLOWER.encode(&$msg[..]),
-                    HEXLOWER.encode(&val)
-                );
-            };
-        }
-
-        for i in 0..10 {
-            println!("-- round {}", i + 1);
-            roundtrip!(m1, m2, b"hello m1");
-            roundtrip!(m2, m1, b"hello m2");
-
-            println!("-- larger data");
-
-            let mut data = vec![0u8; 10 * 1024];
-            rand::thread_rng().fill_bytes(&mut data);
-            roundtrip!(m1, m2, data);
-            roundtrip!(m2, m1, data);
-        }
-
-        Ok(())
-    }
-
     #[test]
     fn test_split_packets() {
         fn mk_transmit(contents: &[u8], segment_size: Option<usize>) -> quinn_udp::Transmit<'_> {
@@ -4300,13 +4002,15 @@ mod tests {
     ///
     /// Use [`magicsock_connect`] to establish connections.
     #[instrument(name = "ep", skip_all, fields(me = secret_key.public().fmt_short()))]
-    async fn magicsock_ep(secret_key: SecretKey) -> anyhow::Result<Handle> {
-        let server_config = crate::endpoint::make_server_config(
-            &secret_key,
-            vec![ALPN.to_vec()],
-            Arc::new(quinn::TransportConfig::default()),
-            true,
-        )?;
+    async fn magicsock_ep(
+        secret_key: SecretKey,
+        tls_auth: tls::Authentication,
+    ) -> anyhow::Result<Handle> {
+        let quic_server_config =
+            tls_auth.make_server_config(&secret_key, vec![ALPN.to_vec()], true)?;
+        let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
+        server_config.transport_config(Arc::new(quinn::TransportConfig::default()));
+
         let dns_resolver = DnsResolver::new();
         let opts = Options {
             addr_v4: None,
@@ -4335,6 +4039,7 @@ mod tests {
         ep_secret_key: SecretKey,
         addr: NodeIdMappedAddr,
         node_id: NodeId,
+        tls_auth: tls::Authentication,
     ) -> Result<quinn::Connection> {
         // Endpoint::connect sets this, do the same to have similar behaviour.
         let mut transport_config = quinn::TransportConfig::default();
@@ -4346,6 +4051,7 @@ mod tests {
             addr,
             node_id,
             Arc::new(transport_config),
+            tls_auth,
         )
         .await
     }
@@ -4362,10 +4068,11 @@ mod tests {
         mapped_addr: NodeIdMappedAddr,
         node_id: NodeId,
         transport_config: Arc<quinn::TransportConfig>,
+        tls_auth: tls::Authentication,
     ) -> Result<quinn::Connection> {
         let alpns = vec![ALPN.to_vec()];
         let quic_client_config =
-            tls::make_client_config(&ep_secret_key, Some(node_id), alpns, None, true)?;
+            tls_auth.make_client_config(&ep_secret_key, node_id, alpns, None, true)?;
         let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
         client_config.transport_config(transport_config);
         let connect = ep.connect_with(
@@ -4382,13 +4089,16 @@ mod tests {
     async fn test_try_send_no_send_addr() {
         // Regression test: if there is no send_addr we should keep being able to use the
         // Endpoint.
+
+        let tls_auth = tls::Authentication::RawPublicKey;
+
         let secret_key_1 = SecretKey::from_bytes(&[1u8; 32]);
         let secret_key_2 = SecretKey::from_bytes(&[2u8; 32]);
         let node_id_2 = secret_key_2.public();
         let secret_key_missing_node = SecretKey::from_bytes(&[255u8; 32]);
         let node_id_missing_node = secret_key_missing_node.public();
 
-        let msock_1 = magicsock_ep(secret_key_1.clone()).await.unwrap();
+        let msock_1 = magicsock_ep(secret_key_1.clone(), tls_auth).await.unwrap();
 
         // Generate an address not present in the NodeMap.
         let bad_addr = NodeIdMappedAddr::generate();
@@ -4404,14 +4114,15 @@ mod tests {
                 secret_key_1.clone(),
                 bad_addr,
                 node_id_missing_node,
+                tls_auth,
             ),
         )
         .await;
         assert!(res.is_err(), "expecting timeout");
 
         // Now check we can still create another connection with this endpoint.
-        let msock_2 = magicsock_ep(secret_key_2.clone()).await.unwrap();
-        let ep_2 = msock_2.endpoint().clone();
+        let msock_2 = magicsock_ep(secret_key_2.clone(), tls_auth).await.unwrap();
+
         // This needs an accept task
         let accept_task = tokio::spawn({
             async fn accept(ep: quinn::Endpoint) -> Result<()> {
@@ -4423,8 +4134,9 @@ mod tests {
                 info!("accept finished");
                 Ok(())
             }
+            let ep = msock_2.endpoint().clone();
             async move {
-                if let Err(err) = accept(ep_2).await {
+                if let Err(err) = accept(ep).await {
                     error!("{err:#}");
                 }
             }
@@ -4455,7 +4167,13 @@ mod tests {
         let addr = msock_1.get_mapping_addr(node_id_2).unwrap();
         let res = tokio::time::timeout(
             Duration::from_secs(10),
-            magicsock_connect(msock_1.endpoint(), secret_key_1.clone(), addr, node_id_2),
+            magicsock_connect(
+                msock_1.endpoint(),
+                secret_key_1.clone(),
+                addr,
+                node_id_2,
+                tls_auth,
+            ),
         )
         .await
         .expect("timeout while connecting");
@@ -4472,12 +4190,15 @@ mod tests {
     async fn test_try_send_no_udp_addr_or_relay_url() {
         // This specifically tests the `if udp_addr.is_none() && relay_url.is_none()`
         // behaviour of MagicSock::try_send.
+
+        let tls_auth = tls::Authentication::RawPublicKey;
+
         let secret_key_1 = SecretKey::from_bytes(&[1u8; 32]);
         let secret_key_2 = SecretKey::from_bytes(&[2u8; 32]);
         let node_id_2 = secret_key_2.public();
 
-        let msock_1 = magicsock_ep(secret_key_1.clone()).await.unwrap();
-        let msock_2 = magicsock_ep(secret_key_2.clone()).await.unwrap();
+        let msock_1 = magicsock_ep(secret_key_1.clone(), tls_auth).await.unwrap();
+        let msock_2 = magicsock_ep(secret_key_2.clone(), tls_auth).await.unwrap();
         let ep_2 = msock_2.endpoint().clone();
 
         // We need a task to accept the connection.
@@ -4530,6 +4251,7 @@ mod tests {
             addr_2,
             node_id_2,
             Arc::new(transport_config),
+            tls_auth,
         )
         .await;
         assert!(res.is_err(), "expected timeout");
@@ -4557,10 +4279,15 @@ mod tests {
         // We can now connect
         tokio::time::timeout(Duration::from_secs(10), async move {
             info!("establishing new connection");
-            let conn =
-                magicsock_connect(msock_1.endpoint(), secret_key_1.clone(), addr_2, node_id_2)
-                    .await
-                    .unwrap();
+            let conn = magicsock_connect(
+                msock_1.endpoint(),
+                secret_key_1.clone(),
+                addr_2,
+                node_id_2,
+                tls_auth,
+            )
+            .await
+            .unwrap();
             info!("have connection");
             let mut stream = conn.open_uni().await.unwrap();
             stream.write_all(b"hello").await.unwrap();
