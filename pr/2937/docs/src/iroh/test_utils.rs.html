@@ -542,9 +542,7 @@
 <a href="#541" id="541">541</a>
 <a href="#542" id="542">542</a>
 <a href="#543" id="543">543</a>
-<a href="#544" id="544">544</a>
-<a href="#545" id="545">545</a>
-<a href="#546" id="546">546</a></pre></div><pre class="rust"><code><span class="doccomment">//! Internal utilities to support testing.
+<a href="#544" id="544">544</a></pre></div><pre class="rust"><code><span class="doccomment">//! Internal utilities to support testing.
 </span><span class="kw">use </span>std::net::Ipv4Addr;
 
 <span class="kw">use </span>anyhow::Result;
@@ -917,12 +915,10 @@
 
     <span class="kw">use </span>anyhow::{bail, <span class="prelude-ty">Result</span>};
     <span class="kw">use </span>iroh_base::NodeId;
+    <span class="kw">use </span>iroh_relay::node_info::{NodeIdExt, NodeInfo, IROH_TXT_NAME};
     <span class="kw">use </span>pkarr::SignedPacket;
 
-    <span class="kw">use crate</span>::{
-        dns::node_info::{NodeIdExt, NodeInfo, IROH_TXT_NAME},
-        test_utils::dns_server::QueryHandler,
-    };
+    <span class="kw">use </span><span class="kw">crate</span>::test_utils::dns_server::QueryHandler;
 
     <span class="attr">#[derive(Debug, Clone)]
     </span><span class="kw">pub struct </span>State {

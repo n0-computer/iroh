@@ -219,7 +219,8 @@
 <a href="#218" id="218">218</a>
 <a href="#219" id="219">219</a>
 <a href="#220" id="220">220</a>
-<a href="#221" id="221">221</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`BestAddr`] is the currently active best address for UDP sends.
+<a href="#221" id="221">221</a>
+<a href="#222" id="222">222</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`BestAddr`] is the currently active best address for UDP sends.
 
 </span><span class="kw">use </span>std::net::SocketAddr;
 
@@ -354,6 +355,7 @@
     }
 
     <span class="doccomment">/// Reset the expiry, if the passed in addr matches the currently used one.
+    </span><span class="attr">#[cfg(not(wasm_browser))]
     </span><span class="kw">pub fn </span>reconfirm_if_used(<span class="kw-2">&amp;mut </span><span class="self">self</span>, addr: SocketAddr, source: Source, confirmed_at: Instant) {
         <span class="kw">if let </span><span class="prelude-val">Some</span>(state) = <span class="self">self</span>.<span class="number">0</span>.as_mut() {
             <span class="kw">if </span>state.addr.addr == addr {

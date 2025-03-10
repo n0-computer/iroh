@@ -740,9 +740,60 @@
 <a href="#739" id="739">739</a>
 <a href="#740" id="740">740</a>
 <a href="#741" id="741">741</a>
-<a href="#742" id="742">742</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
+<a href="#742" id="742">742</a>
+<a href="#743" id="743">743</a>
+<a href="#744" id="744">744</a>
+<a href="#745" id="745">745</a>
+<a href="#746" id="746">746</a>
+<a href="#747" id="747">747</a>
+<a href="#748" id="748">748</a>
+<a href="#749" id="749">749</a>
+<a href="#750" id="750">750</a>
+<a href="#751" id="751">751</a>
+<a href="#752" id="752">752</a>
+<a href="#753" id="753">753</a>
+<a href="#754" id="754">754</a>
+<a href="#755" id="755">755</a>
+<a href="#756" id="756">756</a>
+<a href="#757" id="757">757</a>
+<a href="#758" id="758">758</a>
+<a href="#759" id="759">759</a>
+<a href="#760" id="760">760</a>
+<a href="#761" id="761">761</a>
+<a href="#762" id="762">762</a>
+<a href="#763" id="763">763</a>
+<a href="#764" id="764">764</a>
+<a href="#765" id="765">765</a>
+<a href="#766" id="766">766</a>
+<a href="#767" id="767">767</a>
+<a href="#768" id="768">768</a>
+<a href="#769" id="769">769</a>
+<a href="#770" id="770">770</a>
+<a href="#771" id="771">771</a>
+<a href="#772" id="772">772</a>
+<a href="#773" id="773">773</a>
+<a href="#774" id="774">774</a>
+<a href="#775" id="775">775</a>
+<a href="#776" id="776">776</a>
+<a href="#777" id="777">777</a>
+<a href="#778" id="778">778</a>
+<a href="#779" id="779">779</a>
+<a href="#780" id="780">780</a>
+<a href="#781" id="781">781</a>
+<a href="#782" id="782">782</a>
+<a href="#783" id="783">783</a>
+<a href="#784" id="784">784</a>
+<a href="#785" id="785">785</a>
+<a href="#786" id="786">786</a>
+<a href="#787" id="787">787</a>
+<a href="#788" id="788">788</a>
+<a href="#789" id="789">789</a>
+<a href="#790" id="790">790</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
 
-</span><span class="kw">use </span>std::{future::Future, num::NonZeroU32, pin::Pin, sync::Arc, task::Poll, time::Duration};
+</span><span class="kw">use </span>std::{
+    collections::HashSet, future::Future, num::NonZeroU32, pin::Pin, sync::Arc, task::Poll,
+    time::Duration,
+};
 
 <span class="kw">use </span>anyhow::{bail, Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
@@ -750,6 +801,7 @@
 <span class="kw">use </span>iroh_metrics::{inc, inc_by};
 <span class="kw">use </span>n0_future::{FutureExt, Sink, SinkExt, Stream, StreamExt};
 <span class="kw">use </span>rand::Rng;
+<span class="kw">use </span>time::{Date, OffsetDateTime};
 <span class="kw">use </span>tokio::{
     sync::mpsc::{<span class="self">self</span>, error::TrySendError},
     time::MissedTickBehavior,
@@ -847,6 +899,7 @@
             node_id,
             connection_id,
             clients: clients.clone(),
+            client_counter: ClientCounter::default(),
             ping_tracker: PingTracker::default(),
         };
 
@@ -947,11 +1000,20 @@
     </span>connection_id: u64,
     <span class="doccomment">/// Reference to the other connected clients.
     </span>clients: Clients,
+    <span class="doccomment">/// Statistics about the connected clients
+    </span>client_counter: ClientCounter,
     ping_tracker: PingTracker,
 }
 
 <span class="kw">impl </span>Actor {
     <span class="kw">async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>, done: CancellationToken) {
+        <span class="comment">// Note the accept and disconnects metrics must be in a pair.  Technically the
+        // connection is accepted long before this in the HTTP server, but it is clearer to
+        // handle the metric here.
+        </span><span class="macro">inc!</span>(Metrics, accepts);
+        <span class="kw">if </span><span class="self">self</span>.client_counter.update(<span class="self">self</span>.node_id) {
+            <span class="macro">inc!</span>(Metrics, unique_client_keys);
+        }
         <span class="kw">match </span><span class="self">self</span>.run_inner(done).<span class="kw">await </span>{
             <span class="prelude-val">Err</span>(e) =&gt; {
                 <span class="macro">warn!</span>(<span class="string">"actor errored {e:#?}, exiting"</span>);
@@ -962,6 +1024,7 @@
         }
 
         <span class="self">self</span>.clients.unregister(<span class="self">self</span>.connection_id, <span class="self">self</span>.node_id);
+        <span class="macro">inc!</span>(Metrics, disconnects);
     }
 
     <span class="kw">async fn </span>run_inner(<span class="kw-2">&amp;mut </span><span class="self">self</span>, done: CancellationToken) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
@@ -1294,6 +1357,38 @@
     }
 }
 
+<span class="doccomment">/// Tracks how many unique nodes have been seen during the last day.
+</span><span class="attr">#[derive(Debug)]
+</span><span class="kw">struct </span>ClientCounter {
+    clients: HashSet&lt;NodeId&gt;,
+    last_clear_date: Date,
+}
+
+<span class="kw">impl </span>Default <span class="kw">for </span>ClientCounter {
+    <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{
+            clients: HashSet::new(),
+            last_clear_date: OffsetDateTime::now_utc().date(),
+        }
+    }
+}
+
+<span class="kw">impl </span>ClientCounter {
+    <span class="kw">fn </span>check_and_clear(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+        <span class="kw">let </span>today = OffsetDateTime::now_utc().date();
+        <span class="kw">if </span>today != <span class="self">self</span>.last_clear_date {
+            <span class="self">self</span>.clients.clear();
+            <span class="self">self</span>.last_clear_date = today;
+        }
+    }
+
+    <span class="doccomment">/// Marks this node as seen, returns whether it is new today or not.
+    </span><span class="kw">fn </span>update(<span class="kw-2">&amp;mut </span><span class="self">self</span>, client: NodeId) -&gt; bool {
+        <span class="self">self</span>.check_and_clear();
+        <span class="self">self</span>.clients.insert(client)
+    }
+}
+
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>bytes::Bytes;
@@ -1332,6 +1427,7 @@
             connection_id: <span class="number">0</span>,
             node_id,
             clients: clients.clone(),
+            client_counter: ClientCounter::default(),
             ping_tracker: PingTracker::default(),
         };
 

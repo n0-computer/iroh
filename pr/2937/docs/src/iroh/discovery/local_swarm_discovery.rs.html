@@ -487,7 +487,25 @@
 <a href="#486" id="486">486</a>
 <a href="#487" id="487">487</a>
 <a href="#488" id="488">488</a>
-<a href="#489" id="489">489</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service that uses an mdns-like service to discover local nodes.
+<a href="#489" id="489">489</a>
+<a href="#490" id="490">490</a>
+<a href="#491" id="491">491</a>
+<a href="#492" id="492">492</a>
+<a href="#493" id="493">493</a>
+<a href="#494" id="494">494</a>
+<a href="#495" id="495">495</a>
+<a href="#496" id="496">496</a>
+<a href="#497" id="497">497</a>
+<a href="#498" id="498">498</a>
+<a href="#499" id="499">499</a>
+<a href="#500" id="500">500</a>
+<a href="#501" id="501">501</a>
+<a href="#502" id="502">502</a>
+<a href="#503" id="503">503</a>
+<a href="#504" id="504">504</a>
+<a href="#505" id="505">505</a>
+<a href="#506" id="506">506</a>
+<a href="#507" id="507">507</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service that uses an mdns-like service to discover local nodes.
 //!
 //! This allows you to use an mdns-like swarm discovery service to find address information about nodes that are on your local network, no relay or outside internet needed.
 //! See the [`swarm-discovery`](https://crates.io/crates/swarm-discovery) crate for more details.
@@ -526,7 +544,7 @@
 
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>derive_more::FromStr;
-<span class="kw">use </span>iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
+<span class="kw">use </span>iroh_base::{NodeId, PublicKey};
 <span class="kw">use </span>n0_future::{
     boxed::BoxStream,
     task::{<span class="self">self</span>, AbortOnDropHandle, JoinSet},
@@ -537,7 +555,7 @@
 <span class="kw">use </span>tracing::{debug, error, info_span, trace, warn, Instrument};
 
 <span class="kw">use crate</span>::{
-    discovery::{Discovery, DiscoveryItem},
+    discovery::{Discovery, DiscoveryItem, NodeData, NodeInfo},
     watchable::Watchable,
     Endpoint,
 };
@@ -552,6 +570,10 @@
 /// Used in the [`crate::endpoint::Source::Discovery`] enum variant as the `name`.
 </span><span class="kw">pub const </span>NAME: <span class="kw-2">&amp;</span>str = <span class="string">"local.swarm.discovery"</span>;
 
+<span class="doccomment">/// The key of the attribute under which the `UserData` is stored in
+/// the TXT record supported by swarm-discovery.
+</span><span class="kw">const </span>USER_DATA_ATTRIBUTE: <span class="kw-2">&amp;</span>str = <span class="string">"user-data"</span>;
+
 <span class="doccomment">/// How long we will wait before we stop sending discovery items
 </span><span class="kw">const </span>DISCOVERY_DURATION: Duration = Duration::from_secs(<span class="number">10</span>);
 
@@ -562,7 +584,7 @@
     </span>handle: AbortOnDropHandle&lt;()&gt;,
     sender: mpsc::Sender&lt;Message&gt;,
     <span class="doccomment">/// When `local_addrs` changes, we re-publish our info.
-    </span>local_addrs: Watchable&lt;<span class="prelude-ty">Option</span>&lt;(<span class="prelude-ty">Option</span>&lt;RelayUrl&gt;, BTreeSet&lt;SocketAddr&gt;)&gt;&gt;,
+    </span>local_addrs: Watchable&lt;<span class="prelude-ty">Option</span>&lt;NodeData&gt;&gt;,
 }
 
 <span class="attr">#[derive(Debug)]
@@ -635,8 +657,7 @@
             <span class="kw-2">&amp;</span>rt,
         )<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>local_addrs: Watchable&lt;<span class="prelude-ty">Option</span>&lt;(<span class="prelude-ty">Option</span>&lt;RelayUrl&gt;, BTreeSet&lt;SocketAddr&gt;)&gt;&gt; =
-            Watchable::default();
+        <span class="kw">let </span>local_addrs: Watchable&lt;<span class="prelude-ty">Option</span>&lt;NodeData&gt;&gt; = Watchable::default();
         <span class="kw">let </span><span class="kw-2">mut </span>addrs_change = local_addrs.watch();
         <span class="kw">let </span>discovery_fut = <span class="kw">async move </span>{
             <span class="kw">let </span><span class="kw-2">mut </span>node_addrs: HashMap&lt;PublicKey, Peer&gt; = HashMap::default();
@@ -653,13 +674,18 @@
                     msg = recv.recv() =&gt; {
                         msg
                     }
-                    <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>((_url, addrs))) = addrs_change.updated() =&gt; {
-                        <span class="macro">tracing::trace!</span>(<span class="question-mark">?</span>addrs, <span class="string">"LocalSwarmDiscovery address changed"</span>);
+                    <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(data)) = addrs_change.updated() =&gt; {
+                        <span class="macro">tracing::trace!</span>(<span class="question-mark">?</span>data, <span class="string">"LocalSwarmDiscovery address changed"</span>);
                         discovery.remove_all();
                         <span class="kw">let </span>addrs =
-                            LocalSwarmDiscovery::socketaddrs_to_addrs(addrs);
+                            LocalSwarmDiscovery::socketaddrs_to_addrs(data.direct_addresses());
                         <span class="kw">for </span>addr <span class="kw">in </span>addrs {
                             discovery.add(addr.<span class="number">0</span>, addr.<span class="number">1</span>)
+                        }
+                        <span class="kw">if let </span><span class="prelude-val">Some</span>(user_data) = data.user_data() {
+                            <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = discovery.set_txt_attribute(USER_DATA_ATTRIBUTE.to_string(), <span class="prelude-val">Some</span>(user_data.to_string())) {
+                                <span class="macro">warn!</span>(<span class="string">"Failed to set the user-defined data in local swarm discovery: {err:?}"</span>);
+                            }
                         }
                         <span class="kw">continue</span>;
                     }
@@ -807,7 +833,7 @@
                 sender.send(Message::Discovery(node_id, peer)).<span class="kw">await</span>.ok();
             });
         };
-        <span class="kw">let </span>addrs = LocalSwarmDiscovery::socketaddrs_to_addrs(socketaddrs);
+        <span class="kw">let </span>addrs = LocalSwarmDiscovery::socketaddrs_to_addrs(<span class="kw-2">&amp;</span>socketaddrs);
         <span class="kw">let </span>node_id_str = data_encoding::BASE32_NOPAD
             .encode(node_id.as_bytes())
             .to_ascii_lowercase();
@@ -820,7 +846,7 @@
         discoverer.spawn(rt)
     }
 
-    <span class="kw">fn </span>socketaddrs_to_addrs(socketaddrs: BTreeSet&lt;SocketAddr&gt;) -&gt; HashMap&lt;u16, Vec&lt;IpAddr&gt;&gt; {
+    <span class="kw">fn </span>socketaddrs_to_addrs(socketaddrs: <span class="kw-2">&amp;</span>BTreeSet&lt;SocketAddr&gt;) -&gt; HashMap&lt;u16, Vec&lt;IpAddr&gt;&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>addrs: HashMap&lt;u16, Vec&lt;IpAddr&gt;&gt; = HashMap::default();
         <span class="kw">for </span>socketaddr <span class="kw">in </span>socketaddrs {
             addrs
@@ -838,15 +864,23 @@
         .iter()
         .map(|(ip, port)| SocketAddr::new(<span class="kw-2">*</span>ip, <span class="kw-2">*</span>port))
         .collect();
-    DiscoveryItem {
-        node_addr: NodeAddr {
-            node_id: <span class="kw-2">*</span>node_id,
-            relay_url: <span class="prelude-val">None</span>,
-            direct_addresses,
-        },
-        provenance: NAME,
-        last_updated: <span class="prelude-val">None</span>,
-    }
+    <span class="comment">// Get the user-defined data from the resolved peer info. We expect an attribute with a value
+    // that parses as `UserData`. Otherwise, omit.
+    </span><span class="kw">let </span>user_data = <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="prelude-val">Some</span>(user_data)) = peer.txt_attribute(USER_DATA_ATTRIBUTE) {
+        <span class="kw">match </span>user_data.parse() {
+            <span class="prelude-val">Err</span>(err) =&gt; {
+                <span class="macro">debug!</span>(<span class="string">"failed to parse user data from TXT attribute: {err}"</span>);
+                <span class="prelude-val">None
+            </span>}
+            <span class="prelude-val">Ok</span>(data) =&gt; <span class="prelude-val">Some</span>(data),
+        }
+    } <span class="kw">else </span>{
+        <span class="prelude-val">None
+    </span>};
+    <span class="kw">let </span>node_info = NodeInfo::new(<span class="kw-2">*</span>node_id)
+        .with_direct_addresses(direct_addresses)
+        .with_user_data(user_data);
+    DiscoveryItem::new(node_info, NAME, <span class="prelude-val">None</span>)
 }
 
 <span class="kw">impl </span>Discovery <span class="kw">for </span>LocalSwarmDiscovery {
@@ -865,10 +899,8 @@
         <span class="prelude-val">Some</span>(Box::pin(stream.flatten_stream()))
     }
 
-    <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, url: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>RelayUrl&gt;, addrs: <span class="kw-2">&amp;</span>BTreeSet&lt;SocketAddr&gt;) {
-        <span class="self">self</span>.local_addrs
-            .set(<span class="prelude-val">Some</span>((url.cloned(), addrs.clone())))
-            .ok();
+    <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, data: <span class="kw-2">&amp;</span>NodeData) {
+        <span class="self">self</span>.local_addrs.set(<span class="prelude-val">Some</span>(data.clone())).ok();
     }
 
     <span class="kw">fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;DiscoveryItem&gt;&gt; {
@@ -896,6 +928,7 @@
         <span class="kw">use </span>tracing_test::traced_test;
 
         <span class="kw">use </span><span class="kw">super</span>::<span class="kw">super</span>::<span class="kw-2">*</span>;
+        <span class="kw">use </span><span class="kw">crate</span>::discovery::UserData;
 
         <span class="attr">#[tokio::test]
         #[traced_test]
@@ -904,7 +937,10 @@
             <span class="kw">let </span>(node_id_b, discovery_b) = make_discoverer()<span class="question-mark">?</span>;
 
             <span class="comment">// make addr info for discoverer b
-            </span><span class="kw">let </span>addr_info = (<span class="prelude-val">None</span>, BTreeSet::from([<span class="string">"0.0.0.0:11111"</span>.parse()<span class="question-mark">?</span>]));
+            </span><span class="kw">let </span>user_data: UserData = <span class="string">"foobar"</span>.parse()<span class="question-mark">?</span>;
+            <span class="kw">let </span>node_data = NodeData::new(<span class="prelude-val">None</span>, BTreeSet::from([<span class="string">"0.0.0.0:11111"</span>.parse()<span class="question-mark">?</span>]))
+                .with_user_data(<span class="prelude-val">Some</span>(user_data.clone()));
+            <span class="macro">println!</span>(<span class="string">"info {node_data:?}"</span>);
 
             <span class="comment">// pass in endpoint, this is never used
             </span><span class="kw">let </span>ep = <span class="kw">crate</span>::endpoint::Builder::default().bind().<span class="kw">await</span><span class="question-mark">?</span>;
@@ -915,17 +951,15 @@
 
             <span class="macro">tracing::debug!</span>(<span class="question-mark">?</span>node_id_b, <span class="string">"Discovering node id b"</span>);
             <span class="comment">// publish discovery_b's address
-            </span>discovery_b.publish(addr_info.<span class="number">0</span>.as_ref(), <span class="kw-2">&amp;</span>addr_info.<span class="number">1</span>);
+            </span>discovery_b.publish(<span class="kw-2">&amp;</span>node_data);
             <span class="kw">let </span>s1_res = tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), s1.next())
                 .<span class="kw">await</span><span class="question-mark">?
                 </span>.unwrap()<span class="question-mark">?</span>;
             <span class="kw">let </span>s2_res = tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), s2.next())
                 .<span class="kw">await</span><span class="question-mark">?
                 </span>.unwrap()<span class="question-mark">?</span>;
-            <span class="macro">assert_eq!</span>(s1_res.node_addr.relay_url, addr_info.<span class="number">0</span>);
-            <span class="macro">assert_eq!</span>(s1_res.node_addr.direct_addresses, addr_info.<span class="number">1</span>);
-            <span class="macro">assert_eq!</span>(s2_res.node_addr.relay_url, addr_info.<span class="number">0</span>);
-            <span class="macro">assert_eq!</span>(s2_res.node_addr.direct_addresses, addr_info.<span class="number">1</span>);
+            <span class="macro">assert_eq!</span>(s1_res.node_info().data, node_data);
+            <span class="macro">assert_eq!</span>(s2_res.node_info().data, node_data);
 
             <span class="prelude-val">Ok</span>(())
         }
@@ -938,12 +972,14 @@
             <span class="kw">let </span><span class="kw-2">mut </span>discoverers = <span class="macro">vec!</span>[];
 
             <span class="kw">let </span>(<span class="kw">_</span>, discovery) = make_discoverer()<span class="question-mark">?</span>;
-            <span class="kw">let </span>addr_info = (<span class="prelude-val">None</span>, BTreeSet::from([<span class="string">"0.0.0.0:11111"</span>.parse()<span class="question-mark">?</span>]));
+            <span class="kw">let </span>node_data = NodeData::new(<span class="prelude-val">None</span>, BTreeSet::from([<span class="string">"0.0.0.0:11111"</span>.parse()<span class="question-mark">?</span>]));
 
-            <span class="kw">for _ in </span><span class="number">0</span>..num_nodes {
+            <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..num_nodes {
                 <span class="kw">let </span>(node_id, discovery) = make_discoverer()<span class="question-mark">?</span>;
-                node_ids.insert(node_id);
-                discovery.publish(addr_info.<span class="number">0</span>.as_ref(), <span class="kw-2">&amp;</span>addr_info.<span class="number">1</span>);
+                <span class="kw">let </span>user_data: UserData = <span class="macro">format!</span>(<span class="string">"node{i}"</span>).parse()<span class="question-mark">?</span>;
+                <span class="kw">let </span>node_data = node_data.clone().with_user_data(<span class="prelude-val">Some</span>(user_data.clone()));
+                node_ids.insert((node_id, <span class="prelude-val">Some</span>(user_data)));
+                discovery.publish(<span class="kw-2">&amp;</span>node_data);
                 discoverers.push(discovery);
             }
 
@@ -953,8 +989,8 @@
                 <span class="kw">let </span><span class="kw-2">mut </span>got_ids = BTreeSet::new();
                 <span class="kw">while </span>got_ids.len() != num_nodes {
                     <span class="kw">if let </span><span class="prelude-val">Some</span>(item) = events.next().<span class="kw">await </span>{
-                        <span class="kw">if </span>node_ids.contains(<span class="kw-2">&amp;</span>item.node_addr.node_id) {
-                            got_ids.insert(item.node_addr.node_id);
+                        <span class="kw">if </span>node_ids.contains(<span class="kw-2">&amp;</span>(item.node_id(), item.user_data().cloned())) {
+                            got_ids.insert((item.node_id(), item.user_data().cloned()));
                         }
                     } <span class="kw">else </span>{
                         <span class="macro">anyhow::bail!</span>(

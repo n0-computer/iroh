@@ -2546,7 +2546,165 @@
 <a href="#2545" id="2545">2545</a>
 <a href="#2546" id="2546">2546</a>
 <a href="#2547" id="2547">2547</a>
-<a href="#2548" id="2548">2548</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2548" id="2548">2548</a>
+<a href="#2549" id="2549">2549</a>
+<a href="#2550" id="2550">2550</a>
+<a href="#2551" id="2551">2551</a>
+<a href="#2552" id="2552">2552</a>
+<a href="#2553" id="2553">2553</a>
+<a href="#2554" id="2554">2554</a>
+<a href="#2555" id="2555">2555</a>
+<a href="#2556" id="2556">2556</a>
+<a href="#2557" id="2557">2557</a>
+<a href="#2558" id="2558">2558</a>
+<a href="#2559" id="2559">2559</a>
+<a href="#2560" id="2560">2560</a>
+<a href="#2561" id="2561">2561</a>
+<a href="#2562" id="2562">2562</a>
+<a href="#2563" id="2563">2563</a>
+<a href="#2564" id="2564">2564</a>
+<a href="#2565" id="2565">2565</a>
+<a href="#2566" id="2566">2566</a>
+<a href="#2567" id="2567">2567</a>
+<a href="#2568" id="2568">2568</a>
+<a href="#2569" id="2569">2569</a>
+<a href="#2570" id="2570">2570</a>
+<a href="#2571" id="2571">2571</a>
+<a href="#2572" id="2572">2572</a>
+<a href="#2573" id="2573">2573</a>
+<a href="#2574" id="2574">2574</a>
+<a href="#2575" id="2575">2575</a>
+<a href="#2576" id="2576">2576</a>
+<a href="#2577" id="2577">2577</a>
+<a href="#2578" id="2578">2578</a>
+<a href="#2579" id="2579">2579</a>
+<a href="#2580" id="2580">2580</a>
+<a href="#2581" id="2581">2581</a>
+<a href="#2582" id="2582">2582</a>
+<a href="#2583" id="2583">2583</a>
+<a href="#2584" id="2584">2584</a>
+<a href="#2585" id="2585">2585</a>
+<a href="#2586" id="2586">2586</a>
+<a href="#2587" id="2587">2587</a>
+<a href="#2588" id="2588">2588</a>
+<a href="#2589" id="2589">2589</a>
+<a href="#2590" id="2590">2590</a>
+<a href="#2591" id="2591">2591</a>
+<a href="#2592" id="2592">2592</a>
+<a href="#2593" id="2593">2593</a>
+<a href="#2594" id="2594">2594</a>
+<a href="#2595" id="2595">2595</a>
+<a href="#2596" id="2596">2596</a>
+<a href="#2597" id="2597">2597</a>
+<a href="#2598" id="2598">2598</a>
+<a href="#2599" id="2599">2599</a>
+<a href="#2600" id="2600">2600</a>
+<a href="#2601" id="2601">2601</a>
+<a href="#2602" id="2602">2602</a>
+<a href="#2603" id="2603">2603</a>
+<a href="#2604" id="2604">2604</a>
+<a href="#2605" id="2605">2605</a>
+<a href="#2606" id="2606">2606</a>
+<a href="#2607" id="2607">2607</a>
+<a href="#2608" id="2608">2608</a>
+<a href="#2609" id="2609">2609</a>
+<a href="#2610" id="2610">2610</a>
+<a href="#2611" id="2611">2611</a>
+<a href="#2612" id="2612">2612</a>
+<a href="#2613" id="2613">2613</a>
+<a href="#2614" id="2614">2614</a>
+<a href="#2615" id="2615">2615</a>
+<a href="#2616" id="2616">2616</a>
+<a href="#2617" id="2617">2617</a>
+<a href="#2618" id="2618">2618</a>
+<a href="#2619" id="2619">2619</a>
+<a href="#2620" id="2620">2620</a>
+<a href="#2621" id="2621">2621</a>
+<a href="#2622" id="2622">2622</a>
+<a href="#2623" id="2623">2623</a>
+<a href="#2624" id="2624">2624</a>
+<a href="#2625" id="2625">2625</a>
+<a href="#2626" id="2626">2626</a>
+<a href="#2627" id="2627">2627</a>
+<a href="#2628" id="2628">2628</a>
+<a href="#2629" id="2629">2629</a>
+<a href="#2630" id="2630">2630</a>
+<a href="#2631" id="2631">2631</a>
+<a href="#2632" id="2632">2632</a>
+<a href="#2633" id="2633">2633</a>
+<a href="#2634" id="2634">2634</a>
+<a href="#2635" id="2635">2635</a>
+<a href="#2636" id="2636">2636</a>
+<a href="#2637" id="2637">2637</a>
+<a href="#2638" id="2638">2638</a>
+<a href="#2639" id="2639">2639</a>
+<a href="#2640" id="2640">2640</a>
+<a href="#2641" id="2641">2641</a>
+<a href="#2642" id="2642">2642</a>
+<a href="#2643" id="2643">2643</a>
+<a href="#2644" id="2644">2644</a>
+<a href="#2645" id="2645">2645</a>
+<a href="#2646" id="2646">2646</a>
+<a href="#2647" id="2647">2647</a>
+<a href="#2648" id="2648">2648</a>
+<a href="#2649" id="2649">2649</a>
+<a href="#2650" id="2650">2650</a>
+<a href="#2651" id="2651">2651</a>
+<a href="#2652" id="2652">2652</a>
+<a href="#2653" id="2653">2653</a>
+<a href="#2654" id="2654">2654</a>
+<a href="#2655" id="2655">2655</a>
+<a href="#2656" id="2656">2656</a>
+<a href="#2657" id="2657">2657</a>
+<a href="#2658" id="2658">2658</a>
+<a href="#2659" id="2659">2659</a>
+<a href="#2660" id="2660">2660</a>
+<a href="#2661" id="2661">2661</a>
+<a href="#2662" id="2662">2662</a>
+<a href="#2663" id="2663">2663</a>
+<a href="#2664" id="2664">2664</a>
+<a href="#2665" id="2665">2665</a>
+<a href="#2666" id="2666">2666</a>
+<a href="#2667" id="2667">2667</a>
+<a href="#2668" id="2668">2668</a>
+<a href="#2669" id="2669">2669</a>
+<a href="#2670" id="2670">2670</a>
+<a href="#2671" id="2671">2671</a>
+<a href="#2672" id="2672">2672</a>
+<a href="#2673" id="2673">2673</a>
+<a href="#2674" id="2674">2674</a>
+<a href="#2675" id="2675">2675</a>
+<a href="#2676" id="2676">2676</a>
+<a href="#2677" id="2677">2677</a>
+<a href="#2678" id="2678">2678</a>
+<a href="#2679" id="2679">2679</a>
+<a href="#2680" id="2680">2680</a>
+<a href="#2681" id="2681">2681</a>
+<a href="#2682" id="2682">2682</a>
+<a href="#2683" id="2683">2683</a>
+<a href="#2684" id="2684">2684</a>
+<a href="#2685" id="2685">2685</a>
+<a href="#2686" id="2686">2686</a>
+<a href="#2687" id="2687">2687</a>
+<a href="#2688" id="2688">2688</a>
+<a href="#2689" id="2689">2689</a>
+<a href="#2690" id="2690">2690</a>
+<a href="#2691" id="2691">2691</a>
+<a href="#2692" id="2692">2692</a>
+<a href="#2693" id="2693">2693</a>
+<a href="#2694" id="2694">2694</a>
+<a href="#2695" id="2695">2695</a>
+<a href="#2696" id="2696">2696</a>
+<a href="#2697" id="2697">2697</a>
+<a href="#2698" id="2698">2698</a>
+<a href="#2699" id="2699">2699</a>
+<a href="#2700" id="2700">2700</a>
+<a href="#2701" id="2701">2701</a>
+<a href="#2702" id="2702">2702</a>
+<a href="#2703" id="2703">2703</a>
+<a href="#2704" id="2704">2704</a>
+<a href="#2705" id="2705">2705</a>
+<a href="#2706" id="2706">2706</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -2573,16 +2731,20 @@
 <span class="kw">use </span>data_encoding::BASE32_DNSSEC;
 <span class="kw">use </span>iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
 <span class="kw">use </span>iroh_relay::RelayMap;
-<span class="kw">use </span>n0_future::time::Duration;
+<span class="kw">use </span>n0_future::{time::Duration, Stream};
 <span class="kw">use </span>pin_project::pin_project;
 <span class="kw">use </span>tracing::{debug, instrument, trace, warn};
 <span class="kw">use </span>url::Url;
 
+<span class="attr">#[cfg(wasm_browser)]
+</span><span class="kw">use </span><span class="kw">crate</span>::discovery::pkarr::PkarrResolver;
+<span class="attr">#[cfg(not(wasm_browser))]
+</span><span class="kw">use crate</span>::{discovery::dns::DnsDiscovery, dns::DnsResolver};
 <span class="kw">use crate</span>::{
     discovery::{
-        dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryTask,
+        pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryItem, DiscoverySubscribers,
+        DiscoveryTask, Lagged, UserData,
     },
-    dns::DnsResolver,
     magicsock::{<span class="self">self</span>, Handle, NodeIdMappedAddr},
     tls,
     watchable::Watcher,
@@ -2658,10 +2820,12 @@
     keylog: bool,
     <span class="attr">#[debug(skip)]
     </span>discovery: Vec&lt;DiscoveryBuilder&gt;,
+    discovery_user_data: <span class="prelude-ty">Option</span>&lt;UserData&gt;,
     proxy_url: <span class="prelude-ty">Option</span>&lt;Url&gt;,
     <span class="doccomment">/// List of known nodes. See [`Builder::known_nodes`].
     </span>node_map: <span class="prelude-ty">Option</span>&lt;Vec&lt;NodeAddr&gt;&gt;,
-    dns_resolver: <span class="prelude-ty">Option</span>&lt;DnsResolver&gt;,
+    <span class="attr">#[cfg(not(wasm_browser))]
+    </span>dns_resolver: <span class="prelude-ty">Option</span>&lt;DnsResolver&gt;,
     <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
     </span>insecure_skip_relay_cert_verify: bool,
     addr_v4: <span class="prelude-ty">Option</span>&lt;SocketAddrV4&gt;,
@@ -2682,9 +2846,11 @@
             transport_config,
             keylog: Default::default(),
             discovery: Default::default(),
+            discovery_user_data: Default::default(),
             proxy_url: <span class="prelude-val">None</span>,
             node_map: <span class="prelude-val">None</span>,
-            dns_resolver: <span class="prelude-val">None</span>,
+            <span class="attr">#[cfg(not(wasm_browser))]
+            </span>dns_resolver: <span class="prelude-val">None</span>,
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>insecure_skip_relay_cert_verify: <span class="bool-val">false</span>,
             addr_v4: <span class="prelude-val">None</span>,
@@ -2714,7 +2880,8 @@
             keylog: <span class="self">self</span>.keylog,
             secret_key: secret_key.clone(),
         };
-        <span class="kw">let </span>dns_resolver = <span class="self">self</span>.dns_resolver.unwrap_or_default();
+        <span class="attr">#[cfg(not(wasm_browser))]
+        </span><span class="kw">let </span>dns_resolver = <span class="self">self</span>.dns_resolver.unwrap_or_default();
         <span class="kw">let </span>discovery = <span class="self">self
             </span>.discovery
             .into_iter()
@@ -2734,8 +2901,10 @@
             relay_map,
             node_map: <span class="self">self</span>.node_map,
             discovery,
+            discovery_user_data: <span class="self">self</span>.discovery_user_data,
             proxy_url: <span class="self">self</span>.proxy_url,
-            dns_resolver,
+            <span class="attr">#[cfg(not(wasm_browser))]
+            </span>dns_resolver,
             server_config,
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>insecure_skip_relay_cert_verify: <span class="self">self</span>.insecure_skip_relay_cert_verify,
@@ -2883,8 +3052,18 @@
         <span class="self">self</span>.discovery.push(Box::new(|secret_key| {
             <span class="prelude-val">Some</span>(Box::new(PkarrPublisher::n0_dns(secret_key.clone())))
         }));
-        <span class="self">self</span>.discovery
-            .push(Box::new(|<span class="kw">_</span>| <span class="prelude-val">Some</span>(Box::new(DnsDiscovery::n0_dns()))));
+        <span class="comment">// Resolve using HTTPS requests to our DNS server's /pkarr path in browsers
+        </span><span class="attr">#[cfg(wasm_browser)]
+        </span>{
+            <span class="self">self</span>.discovery
+                .push(Box::new(|<span class="kw">_</span>| <span class="prelude-val">Some</span>(Box::new(PkarrResolver::n0_dns()))));
+        }
+        <span class="comment">// Resolve using DNS queries outside browsers.
+        </span><span class="attr">#[cfg(not(wasm_browser))]
+        </span>{
+            <span class="self">self</span>.discovery
+                .push(Box::new(|<span class="kw">_</span>| <span class="prelude-val">Some</span>(Box::new(DnsDiscovery::n0_dns()))));
+        }
         <span class="self">self
     </span>}
 
@@ -2941,6 +3120,19 @@
         <span class="self">self
     </span>}
 
+    <span class="doccomment">/// Sets the initial user-defined data to be published in discovery services for this node.
+    ///
+    /// When using discovery services, this string of [`UserData`] will be published together
+    /// with the node's addresses and relay URL. When other nodes discover this node,
+    /// they retrieve the [`UserData`] in addition to the addressing info.
+    ///
+    /// Iroh itself does not interpret the user-defined data in any way, it is purely left
+    /// for applications to parse and use.
+    </span><span class="kw">pub fn </span>user_data_for_discovery(<span class="kw-2">mut </span><span class="self">self</span>, user_data: UserData) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.discovery_user_data = <span class="prelude-val">Some</span>(user_data);
+        <span class="self">self
+    </span>}
+
     <span class="doccomment">/// Optionally set a list of known nodes.
     </span><span class="kw">pub fn </span>known_nodes(<span class="kw-2">mut </span><span class="self">self</span>, nodes: Vec&lt;NodeAddr&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.node_map = <span class="prelude-val">Some</span>(nodes);
@@ -2974,6 +3166,7 @@
     /// host system's DNS configuration. You can pass a custom instance of [`DnsResolver`]
     /// here to use a differently configured DNS resolver for this endpoint, or to share
     /// a [`DnsResolver`] between multiple endpoints.
+    </span><span class="attr">#[cfg(not(wasm_browser))]
     </span><span class="kw">pub fn </span>dns_resolver(<span class="kw-2">mut </span><span class="self">self</span>, dns_resolver: DnsResolver) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.dns_resolver = <span class="prelude-val">Some</span>(dns_resolver);
         <span class="self">self
@@ -3266,7 +3459,7 @@
         </span><span class="kw">let </span>server_name = <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{}.iroh.invalid"</span>, BASE32_DNSSEC.encode(node_id.as_bytes()));
         <span class="kw">let </span>connect = <span class="self">self</span>.msock.endpoint().connect_with(
             client_config,
-            mapped_addr.socket_addr(),
+            mapped_addr.private_socket_addr(),
             server_name,
         )<span class="question-mark">?</span>;
 
@@ -3383,14 +3576,30 @@
     /// The returned [`NodeAddr`] will have the current [`RelayUrl`] and direct addresses
     /// as they would be returned by [`Endpoint::home_relay`] and
     /// [`Endpoint::direct_addresses`].
+    ///
+    /// In browsers, because direct addresses are unavailable, this will only wait for
+    /// the home relay to be available before returning.
     </span><span class="kw">pub async fn </span>node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;NodeAddr&gt; {
-        <span class="kw">let </span>addrs = <span class="self">self</span>.direct_addresses().initialized().<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>relay = <span class="self">self</span>.home_relay().get()<span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(NodeAddr::from_parts(
-            <span class="self">self</span>.node_id(),
-            relay,
-            addrs.into_iter().map(|x| x.addr),
-        ))
+        <span class="attr">#[cfg(not(wasm_browser))]
+        </span>{
+            <span class="comment">// Outside browsers, we preserve the "old" behavior of waiting for direct
+            // addresses and then adding the relay URL (should we have it)
+            </span><span class="kw">let </span>addrs = <span class="self">self</span>.direct_addresses().initialized().<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="kw">let </span>relay = <span class="self">self</span>.home_relay().get()<span class="question-mark">?</span>;
+            <span class="prelude-val">Ok</span>(NodeAddr::from_parts(
+                <span class="self">self</span>.node_id(),
+                relay,
+                addrs.into_iter().map(|x| x.addr),
+            ))
+        }
+        <span class="attr">#[cfg(wasm_browser)]
+        </span>{
+            <span class="comment">// In browsers, there will never be any direct addresses, so we wait
+            // for the home relay instead. This make the `NodeAddr` have *some* way
+            // of connecting to us.
+            </span><span class="kw">let </span>relay = <span class="self">self</span>.home_relay().initialized().<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="prelude-val">Ok</span>(NodeAddr::new(<span class="self">self</span>.node_id()).with_relay_url(relay))
+        }
     }
 
     <span class="doccomment">/// Returns a [`Watcher`] for the [`RelayUrl`] of the Relay server used as home relay.
@@ -3464,6 +3673,7 @@
     ///
     /// The [`Endpoint`] always binds on an IPv4 address and also tries to bind on an IPv6
     /// address if available.
+    </span><span class="attr">#[cfg(not(wasm_browser))]
     </span><span class="kw">pub fn </span>bound_sockets(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; (SocketAddr, <span class="prelude-ty">Option</span>&lt;SocketAddr&gt;) {
         <span class="self">self</span>.msock.local_addr()
     }
@@ -3497,6 +3707,34 @@
     /// See also [`Endpoint::remote_info`] to only retrieve information about a single node.
     </span><span class="kw">pub fn </span>remote_info_iter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = RemoteInfo&gt; {
         <span class="self">self</span>.msock.list_remote_infos().into_iter()
+    }
+
+    <span class="doccomment">/// Returns a stream of all remote nodes discovered through the endpoint's discovery services.
+    ///
+    /// Whenever a node is discovered via the endpoint's discovery service, the corresponding
+    /// [`DiscoveryItem`] is yielded from this stream. This includes nodes discovered actively
+    /// through [`Discovery::resolve`], which is invoked automatically when calling
+    /// [`Endpoint::connect`] for a [`NodeId`] unknown to the endpoint. It also includes
+    /// nodes that the endpoint discovers passively from discovery services that implement
+    /// [`Discovery::subscribe`], which e.g. [`LocalSwarmDiscovery`] does.
+    ///
+    /// The stream does not yield information about nodes that are added manually to the endpoint's
+    /// addressbook by calling [`Endpoint::add_node_addr`] or by supplying a full [`NodeAddr`] to
+    /// [`Endpoint::connect`]. It also does not yield information about nodes that we only
+    /// know about because they connected to us. When using the [`StaticProvider`] discovery,
+    /// discovery info is only emitted once connecting to a node added to the static provider, not
+    /// at the time of adding it to the static provider.
+    ///
+    /// The stream should be processed in a loop. If the stream is not processed fast enough,
+    /// [`Lagged`] may be yielded, indicating that items were missed.
+    ///
+    /// See also [`Endpoint::remote_info_iter`], which returns an iterator over all remotes
+    /// the endpoint knows about at a specific point in time.
+    ///
+    /// [`LocalSwarmDiscovery`]: crate::discovery::local_swarm_discovery::LocalSwarmDiscovery
+    /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
+    </span><span class="kw">pub fn </span>discovery_stream(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Stream&lt;Item = <span class="prelude-ty">Result</span>&lt;DiscoveryItem, Lagged&gt;&gt; {
+        <span class="self">self</span>.msock.discovery_subscribers().subscribe()
     }
 
     <span class="comment">// # Methods for less common getters.
@@ -3535,6 +3773,7 @@
     <span class="doccomment">/// Returns the DNS resolver used in this [`Endpoint`].
     ///
     /// See [`Builder::dns_resolver`].
+    </span><span class="attr">#[cfg(not(wasm_browser))]
     </span><span class="kw">pub fn </span>dns_resolver(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>DnsResolver {
         <span class="self">self</span>.msock.dns_resolver()
     }
@@ -3562,6 +3801,19 @@
         <span class="self">self</span>.msock.network_change().<span class="kw">await</span>;
     }
 
+    <span class="comment">// # Methods to update internal state.
+
+    </span><span class="doccomment">/// Sets the initial user-defined data to be published in discovery services for this node.
+    ///
+    /// If the user-defined data passed to this function is different to the previous one,
+    /// the endpoint will republish its node info to the configured discovery services.
+    ///
+    /// See also [`Builder::user_data_for_discovery`] for setting an initial value when
+    /// building the endpoint.
+    </span><span class="kw">pub fn </span>set_user_data_for_discovery(<span class="kw-2">&amp;</span><span class="self">self</span>, user_data: <span class="prelude-ty">Option</span>&lt;UserData&gt;) {
+        <span class="self">self</span>.msock.set_user_data_for_discovery(user_data);
+    }
+
     <span class="comment">// # Methods for terminating the endpoint.
 
     </span><span class="doccomment">/// Closes the QUIC endpoint and the magic socket.
@@ -3570,17 +3822,32 @@
     /// of `0` and an empty reason.  Though it is best practice to close those
     /// explicitly before with a custom error code and reason.
     ///
-    /// This will not wait for the [`quinn::Endpoint`] to drain connections.
+    /// It will then make a best effort to wait for all close notifications to be
+    /// acknowledged by the peers, re-transmitting them if needed. This ensures the
+    /// peers are aware of the closed connections instead of having to wait for a timeout
+    /// on the connection. Once all connections are closed or timed out, the future
+    /// finishes.
     ///
-    /// To ensure no data is lost, design protocols so that the last *sender*
-    /// of data in the protocol calls [`Connection::closed`], and `await`s until
-    /// it receives a "close" message from the *receiver*. Once the *receiver*
-    /// gets the last data in the protocol, it should call [`Connection::close`]
-    /// to inform the *sender* that all data has been received.
+    /// The maximum time-out that this future will wait for depends on QUIC transport
+    /// configurations of non-drained connections at the time of calling, and their current
+    /// estimates of round trip time. With default parameters and a conservative estimate
+    /// of round trip time, this call's future should take 3 seconds to resolve in cases of
+    /// bad connectivity or failed connections. In the usual case, this call's future should
+    /// return much more quickly.
     ///
-    /// Be aware however that the underlying UDP sockets are only closed
-    /// on [`Drop`], bearing in mind the [`Endpoint`] is only dropped once all the clones
-    /// are dropped.
+    /// It is highly recommended you *do* wait for this close call to finish, if possible.
+    /// Not doing so will make connections that were still open while closing the endpoint
+    /// time out on the remote end. Thus remote ends will assume connections to have failed
+    /// even if all application data was transmitted successfully.
+    ///
+    /// Note: Someone used to closing TCP sockets might wonder why it is necessary to wait
+    /// for timeouts when closing QUIC endpoints, while they don't have to do this for TCP
+    /// sockets. This is due to QUIC and its acknowledgments being implemented in user-land,
+    /// while TCP sockets usually get closed and drained by the operating system in the
+    /// kernel during the "Time-Wait" period of the TCP socket.
+    ///
+    /// Be aware however that the underlying UDP sockets are only closed once all clones of
+    /// the the respective [`Endpoint`] are dropped.
     </span><span class="kw">pub async fn </span>close(<span class="kw-2">&amp;</span><span class="self">self</span>) {
         <span class="kw">if </span><span class="self">self</span>.is_closed() {
             <span class="kw">return</span>;
@@ -3657,6 +3924,11 @@
                 }
             }
         }
+    }
+
+    <span class="doccomment">/// Returns a reference to the subscribers channel for discovery events.
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>discovery_subscribers(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>DiscoverySubscribers {
+        <span class="self">self</span>.msock.discovery_subscribers()
     }
 
     <span class="attr">#[cfg(test)]
@@ -4096,16 +4368,21 @@
     ///
     /// # Gracefully closing a connection
     ///
-    /// Only the peer last **receiving** application data can be certain that all data is
-    /// delivered.
+    /// Only the peer last receiving application data can be certain that all data is
+    /// delivered. The only reliable action it can then take is to close the connection,
+    /// potentially with a custom error code. The delivery of the final CONNECTION_CLOSE
+    /// frame is very likely if both endpoints stay online long enough, calling
+    /// [`Endpoint::close`] will wait to provide sufficient time. Otherwise, the remote peer
+    /// will time out the connection, provided that the idle timeout is not disabled.
     ///
-    /// To communicate to the last **sender** of the application data that all the data was received, we recommend designing protocols that follow this pattern:
+    /// The sending side can not guarantee all stream data is delivered to the remote
+    /// application. It only knows the data is delivered to the QUIC stack of the remote
+    /// endpoint. Once the local side sends a CONNECTION_CLOSE frame in response to calling
+    /// [`close`] the remote endpoint may drop any data it received but is as yet
+    /// undelivered to the application, including data that was acknowledged as received to
+    /// the local endpoint.
     ///
-    /// 1) The **sender** sends the last data. It then calls [`Connection::closed`]. This will wait until it receives a CONNECTION_CLOSE frame from the other side.
-    /// 2) The **receiver** receives the last data. It then calls [`Connection::close`] and provides an error_code and/or reason.
-    /// 3) The **sender** checks that the error_code is the expected error code.
-    ///
-    /// If the `close`/`closed` dance is not done, or is interrupted at any point, the connection will eventually time out, provided that the idle timeout is not disabled.
+    /// [`close`]: Connection::close
     </span><span class="attr">#[inline]
     </span><span class="kw">pub fn </span>close(<span class="kw-2">&amp;</span><span class="self">self</span>, error_code: VarInt, reason: <span class="kw-2">&amp;</span>[u8]) {
         <span class="self">self</span>.inner.close(error_code, reason)
@@ -5090,6 +5367,45 @@
         </span>connect_client_0rtt_expect_ok(<span class="kw-2">&amp;</span>client, server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>, <span class="bool-val">false</span>).<span class="kw">await</span><span class="question-mark">?</span>;
 
         client.close().<span class="kw">await</span>;
+
+        <span class="prelude-val">Ok</span>(())
+    }
+
+    <span class="attr">#[tokio::test]
+    #[traced_test]
+    </span><span class="kw">async fn </span>graceful_close() -&gt; testresult::TestResult {
+        <span class="kw">let </span>client = Endpoint::builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>server = Endpoint::builder()
+            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
+            .bind()
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>server_addr = server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>server_task = tokio::spawn(<span class="kw">async move </span>{
+            <span class="kw">let </span>incoming = server.accept().<span class="kw">await</span>.unwrap();
+            <span class="kw">let </span>conn = incoming.<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.accept_bi().<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="kw">let </span>msg = recv.read_to_end(<span class="number">1_000</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+            send.write_all(<span class="kw-2">&amp;</span>msg).<span class="kw">await</span><span class="question-mark">?</span>;
+            send.finish()<span class="question-mark">?</span>;
+            <span class="kw">let </span>close_reason = conn.closed().<span class="kw">await</span>;
+            testresult::TestResult::Ok(close_reason)
+        });
+
+        <span class="kw">let </span>conn = client.connect(server_addr, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.open_bi().<span class="kw">await</span><span class="question-mark">?</span>;
+        send.write_all(<span class="string">b"Hello, world!"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        send.finish()<span class="question-mark">?</span>;
+        recv.read_to_end(<span class="number">1_000</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        conn.close(<span class="number">42u32</span>.into(), <span class="string">b"thanks, bye!"</span>);
+        client.close().<span class="kw">await</span>;
+
+        <span class="kw">let </span>close_err = server_task.<span class="kw">await</span><span class="question-mark">??</span>;
+        <span class="kw">let </span>ConnectionError::ApplicationClosed(app_close) = close_err <span class="kw">else </span>{
+            <span class="macro">panic!</span>(<span class="string">"Unexpected close reason: {close_err:?}"</span>);
+        };
+
+        <span class="macro">assert_eq!</span>(app_close.error_code, <span class="number">42u32</span>.into());
+        <span class="macro">assert_eq!</span>(app_close.reason.as_ref(), <span class="string">b"thanks, bye!"</span>);
 
         <span class="prelude-val">Ok</span>(())
     }

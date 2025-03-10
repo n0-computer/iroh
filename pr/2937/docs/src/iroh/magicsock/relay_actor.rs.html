@@ -1545,7 +1545,42 @@
 <a href="#1544" id="1544">1544</a>
 <a href="#1545" id="1545">1545</a>
 <a href="#1546" id="1546">1546</a>
-<a href="#1547" id="1547">1547</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1547" id="1547">1547</a>
+<a href="#1548" id="1548">1548</a>
+<a href="#1549" id="1549">1549</a>
+<a href="#1550" id="1550">1550</a>
+<a href="#1551" id="1551">1551</a>
+<a href="#1552" id="1552">1552</a>
+<a href="#1553" id="1553">1553</a>
+<a href="#1554" id="1554">1554</a>
+<a href="#1555" id="1555">1555</a>
+<a href="#1556" id="1556">1556</a>
+<a href="#1557" id="1557">1557</a>
+<a href="#1558" id="1558">1558</a>
+<a href="#1559" id="1559">1559</a>
+<a href="#1560" id="1560">1560</a>
+<a href="#1561" id="1561">1561</a>
+<a href="#1562" id="1562">1562</a>
+<a href="#1563" id="1563">1563</a>
+<a href="#1564" id="1564">1564</a>
+<a href="#1565" id="1565">1565</a>
+<a href="#1566" id="1566">1566</a>
+<a href="#1567" id="1567">1567</a>
+<a href="#1568" id="1568">1568</a>
+<a href="#1569" id="1569">1569</a>
+<a href="#1570" id="1570">1570</a>
+<a href="#1571" id="1571">1571</a>
+<a href="#1572" id="1572">1572</a>
+<a href="#1573" id="1573">1573</a>
+<a href="#1574" id="1574">1574</a>
+<a href="#1575" id="1575">1575</a>
+<a href="#1576" id="1576">1576</a>
+<a href="#1577" id="1577">1577</a>
+<a href="#1578" id="1578">1578</a>
+<a href="#1579" id="1579">1579</a>
+<a href="#1580" id="1580">1580</a>
+<a href="#1581" id="1581">1581</a>
+<a href="#1582" id="1582">1582</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1595,6 +1630,7 @@
     PingTracker, MAX_PACKET_SIZE,
 };
 <span class="kw">use </span>n0_future::{
+    boxed::BoxFuture,
     task::JoinSet,
     time::{<span class="self">self</span>, Duration, Instant, MissedTickBehavior},
     FuturesUnorderedBounded, SinkExt, StreamExt,
@@ -1605,8 +1641,9 @@
 <span class="kw">use </span>url::Url;
 
 <span class="kw">use </span><span class="kw">super</span>::RelayDatagramSendChannelReceiver;
+<span class="attr">#[cfg(not(wasm_browser))]
+</span><span class="kw">use </span><span class="kw">crate</span>::dns::DnsResolver;
 <span class="kw">use crate</span>::{
-    dns::DnsResolver,
     magicsock::{MagicSock, Metrics <span class="kw">as </span>MagicsockMetrics, RelayContents, RelayDatagramRecvQueue},
     util::MaybeFuture,
 };
@@ -1751,7 +1788,8 @@
 </span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">struct </span>RelayConnectionOptions {
     secret_key: SecretKey,
-    dns_resolver: DnsResolver,
+    <span class="attr">#[cfg(not(wasm_browser))]
+    </span>dns_resolver: DnsResolver,
     proxy_url: <span class="prelude-ty">Option</span>&lt;Url&gt;,
     prefer_ipv6: Arc&lt;AtomicBool&gt;,
     <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
@@ -1789,14 +1827,21 @@
     ) -&gt; relay::client::ClientBuilder {
         <span class="kw">let </span>RelayConnectionOptions {
             secret_key,
-            dns_resolver,
+            <span class="attr">#[cfg(not(wasm_browser))]
+            </span>dns_resolver,
             proxy_url,
             prefer_ipv6,
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>insecure_skip_cert_verify,
         } = opts;
-        <span class="kw">let </span><span class="kw-2">mut </span>builder = relay::client::ClientBuilder::new(url, secret_key, dns_resolver)
-            .address_family_selector(<span class="kw">move </span>|| prefer_ipv6.load(Ordering::Relaxed));
+
+        <span class="kw">let </span><span class="kw-2">mut </span>builder = relay::client::ClientBuilder::new(
+            url,
+            secret_key,
+            <span class="attr">#[cfg(not(wasm_browser))]
+            </span>dns_resolver,
+        )
+        .address_family_selector(<span class="kw">move </span>|| prefer_ipv6.load(Ordering::Relaxed));
         <span class="kw">if let </span><span class="prelude-val">Some</span>(proxy_url) = proxy_url {
             builder = builder.proxy_url(proxy_url);
         }
@@ -1940,7 +1985,7 @@
     /// The future only completes once the connection is established and retries
     /// connections.  It currently does not ever return `Err` as the retries continue
     /// forever.
-    </span><span class="kw">fn </span>dial_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Pin&lt;Box&lt;<span class="kw">dyn </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;Client&gt;&gt; + Send&gt;&gt; {
+    </span><span class="kw">fn </span>dial_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;Client&gt;&gt; {
         <span class="kw">let </span>backoff: ExponentialBackoff&lt;backoff::SystemClock&gt; = ExponentialBackoffBuilder::new()
             .with_initial_interval(Duration::from_millis(<span class="number">10</span>))
             .with_max_interval(Duration::from_secs(<span class="number">5</span>))
@@ -1964,7 +2009,31 @@
                 }
             }
         };
-        <span class="kw">let </span>retry_fut = backoff::future::retry(backoff, connect_fn);
+
+        <span class="comment">// We implement our own `Sleeper` here, so that we can use the `backoff`
+        // crate with our own implementation of `time::sleep` (from `n0_future`)
+        // that works in browsers.
+        </span><span class="kw">struct </span>Sleeper;
+
+        <span class="kw">impl </span>backoff::future::Sleeper <span class="kw">for </span>Sleeper {
+            <span class="kw">type </span>Sleep = time::Sleep;
+
+            <span class="kw">fn </span>sleep(<span class="kw-2">&amp;</span><span class="self">self</span>, dur: Duration) -&gt; <span class="self">Self</span>::Sleep {
+                time::sleep(dur)
+            }
+        }
+
+        <span class="comment">// Because we're using a lower-level backoff API, we need to provide a
+        // backoff::Notify implementation. By default backoff has one that
+        // doesn't do anything, but it doesn't expose that API. So we implement
+        // it here ourselves.
+        </span><span class="kw">struct </span>NoopNotify;
+
+        <span class="kw">impl</span>&lt;E&gt; backoff::Notify&lt;E&gt; <span class="kw">for </span>NoopNotify {
+            <span class="kw">fn </span>notify(<span class="kw-2">&amp;mut </span><span class="self">self</span>, <span class="kw">_</span>: E, <span class="kw">_</span>: Duration) {}
+        }
+
+        <span class="kw">let </span>retry_fut = backoff::future::Retry::new(Sleeper, backoff, NoopNotify, connect_fn);
         Box::pin(retry_fut)
     }
 
@@ -2501,7 +2570,8 @@
 
         <span class="kw">let </span>connection_opts = RelayConnectionOptions {
             secret_key: <span class="self">self</span>.msock.secret_key.clone(),
-            dns_resolver: <span class="self">self</span>.msock.dns_resolver.clone(),
+            <span class="attr">#[cfg(not(wasm_browser))]
+            </span>dns_resolver: <span class="self">self</span>.msock.dns_resolver.clone(),
             proxy_url: <span class="self">self</span>.msock.proxy_url().cloned(),
             prefer_ipv6: <span class="self">self</span>.msock.ipv6_reported.clone(),
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
