@@ -2705,7 +2705,13 @@
 <a href="#2704" id="2704">2704</a>
 <a href="#2705" id="2705">2705</a>
 <a href="#2706" id="2706">2706</a>
-<a href="#2707" id="2707">2707</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2707" id="2707">2707</a>
+<a href="#2708" id="2708">2708</a>
+<a href="#2709" id="2709">2709</a>
+<a href="#2710" id="2710">2710</a>
+<a href="#2711" id="2711">2711</a>
+<a href="#2712" id="2712">2712</a>
+<a href="#2713" id="2713">2713</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -3070,12 +3076,18 @@
     </span>}
 
     <span class="doccomment">/// Use libp2p based self signed certificates for TLS.
+    ///
+    /// For details see the libp2p spec at &lt;https://github.com/libp2p/specs/blob/master/tls/tls.md&gt;
+    ///
+    /// This is the only mechanism available in `iroh@0.33.0` and earlier.
     </span><span class="kw">pub fn </span>tls_x509(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.tls_auth = tls::Authentication::X509;
         <span class="self">self
     </span>}
 
     <span class="doccomment">/// Use TLS Raw Public Keys
+    ///
+    /// This is the default, but is not compatible with older versions of iroh.
     </span><span class="kw">pub fn </span>tls_raw_public_keys(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.tls_auth = tls::Authentication::RawPublicKey;
         <span class="self">self
