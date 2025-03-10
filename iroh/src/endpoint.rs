@@ -363,12 +363,18 @@ impl Builder {
     }
 
     /// Use libp2p based self signed certificates for TLS.
+    ///
+    /// For details see the libp2p spec at <https://github.com/libp2p/specs/blob/master/tls/tls.md>
+    ///
+    /// This is the only mechanism available in `iroh@0.33.0` and earlier.
     pub fn tls_x509(mut self) -> Self {
         self.tls_auth = tls::Authentication::X509;
         self
     }
 
     /// Use TLS Raw Public Keys
+    ///
+    /// This is the default, but is not compatible with older versions of iroh.
     pub fn tls_raw_public_keys(mut self) -> Self {
         self.tls_auth = tls::Authentication::RawPublicKey;
         self
