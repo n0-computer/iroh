@@ -2704,7 +2704,8 @@
 <a href="#2703" id="2703">2703</a>
 <a href="#2704" id="2704">2704</a>
 <a href="#2705" id="2705">2705</a>
-<a href="#2706" id="2706">2706</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2706" id="2706">2706</a>
+<a href="#2707" id="2707">2707</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -2729,6 +2730,7 @@
 
 <span class="kw">use </span>anyhow::{bail, Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>data_encoding::BASE32_DNSSEC;
+<span class="kw">use </span>ed25519_dalek::{pkcs8::DecodePublicKey, VerifyingKey};
 <span class="kw">use </span>iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
 <span class="kw">use </span>iroh_relay::RelayMap;
 <span class="kw">use </span>n0_future::{time::Duration, Stream};
@@ -4521,7 +4523,7 @@
                             <span class="prelude-val">Ok</span>(cert.peer_id())
                         }
                         tls::Authentication::RawPublicKey =&gt; {
-                            <span class="kw">let </span>peer_id = NodeId::from_public_der(<span class="kw-2">&amp;</span>certs[<span class="number">0</span>])<span class="question-mark">?</span>;
+                            <span class="kw">let </span>peer_id = VerifyingKey::from_public_key_der(<span class="kw-2">&amp;</span>certs[<span class="number">0</span>])<span class="question-mark">?</span>.into();
                             <span class="prelude-val">Ok</span>(peer_id)
                         }
                     }

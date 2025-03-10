@@ -335,7 +335,10 @@
 <a href="#334" id="334">334</a>
 <a href="#335" id="335">335</a>
 <a href="#336" id="336">336</a>
-<a href="#337" id="337">337</a></pre></div><pre class="rust"><code><span class="doccomment">//! TLS 1.3 certificates and handshakes handling.
+<a href="#337" id="337">337</a>
+<a href="#338" id="338">338</a>
+<a href="#339" id="339">339</a>
+<a href="#340" id="340">340</a></pre></div><pre class="rust"><code><span class="doccomment">//! TLS 1.3 certificates and handshakes handling.
 //!
 //! This module handles a verification of a client/server certificate chain
 //! and signatures allegedly by the given certificates, or using raw public keys.
@@ -346,11 +349,12 @@
 
 </span><span class="kw">use </span>std::sync::Arc;
 
+<span class="kw">use </span>ed25519_dalek::pkcs8::EncodePublicKey;
 <span class="kw">use </span>iroh_base::PublicKey;
 <span class="kw">use </span>rustls::{
     client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
     crypto::{verify_tls13_signature_with_raw_key, WebPkiSupportedAlgorithms},
-    pki_types::{pem::PemObject, CertificateDer <span class="kw">as </span>Certificate},
+    pki_types::CertificateDer <span class="kw">as </span>Certificate,
     server::danger::{ClientCertVerified, ClientCertVerifier},
     CertificateError, DigitallySignedStruct, DistinguishedName, OtherError, PeerMisbehaved,
     SignatureScheme, SupportedProtocolVersion,
@@ -413,9 +417,11 @@
 </span><span class="kw">impl </span>ServerCertificateVerifier {
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>with_remote_peer_id(auth: Authentication, remote_peer_id: PublicKey) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span><span class="kw-2">mut </span>trusted_spki = Vec::new();
-        <span class="kw">let </span>pem_key = remote_peer_id.serialize_public_pem();
-        <span class="kw">let </span>remote_key = SubjectPublicKeyInfoDer::from_pem_slice(pem_key.as_bytes())
-            .expect(<span class="string">"cannot remote open pub key"</span>);
+        <span class="kw">let </span>pem_key = remote_peer_id
+            .public()
+            .to_public_key_der()
+            .expect(<span class="string">"vaild key"</span>);
+        <span class="kw">let </span>remote_key = SubjectPublicKeyInfoDer::from(pem_key.into_vec());
         trusted_spki.push(remote_key);
 
         <span class="self">Self </span>{
