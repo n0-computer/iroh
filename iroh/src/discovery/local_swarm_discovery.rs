@@ -37,7 +37,7 @@ use std::{
 
 use anyhow::Result;
 use derive_more::FromStr;
-use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
+use iroh_base::{NodeId, PublicKey};
 use n0_future::{
     boxed::BoxStream,
     task::{self, AbortOnDropHandle, JoinSet},
@@ -48,7 +48,7 @@ use tokio::sync::mpsc::{self, error::TrySendError};
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
 use crate::{
-    discovery::{Discovery, DiscoveryItem},
+    discovery::{Discovery, DiscoveryItem, NodeData, NodeInfo},
     watchable::Watchable,
     Endpoint,
 };
@@ -63,6 +63,10 @@ const N0_LOCAL_SWARM: &str = "iroh.local.swarm";
 /// Used in the [`crate::endpoint::Source::Discovery`] enum variant as the `name`.
 pub const NAME: &str = "local.swarm.discovery";
 
+/// The key of the attribute under which the `UserData` is stored in
+/// the TXT record supported by swarm-discovery.
+const USER_DATA_ATTRIBUTE: &str = "user-data";
+
 /// How long we will wait before we stop sending discovery items
 const DISCOVERY_DURATION: Duration = Duration::from_secs(10);
 
@@ -73,7 +77,7 @@ pub struct LocalSwarmDiscovery {
     handle: AbortOnDropHandle<()>,
     sender: mpsc::Sender<Message>,
     /// When `local_addrs` changes, we re-publish our info.
-    local_addrs: Watchable<Option<(Option<RelayUrl>, BTreeSet<SocketAddr>)>>,
+    local_addrs: Watchable<Option<NodeData>>,
 }
 
 #[derive(Debug)]
@@ -146,8 +150,7 @@ impl LocalSwarmDiscovery {
             &rt,
         )?;
 
-        let local_addrs: Watchable<Option<(Option<RelayUrl>, BTreeSet<SocketAddr>)>> =
-            Watchable::default();
+        let local_addrs: Watchable<Option<NodeData>> = Watchable::default();
         let mut addrs_change = local_addrs.watch();
         let discovery_fut = async move {
             let mut node_addrs: HashMap<PublicKey, Peer> = HashMap::default();
@@ -164,13 +167,18 @@ impl LocalSwarmDiscovery {
                     msg = recv.recv() => {
                         msg
                     }
-                    Ok(Some((_url, addrs))) = addrs_change.updated() => {
-                        tracing::trace!(?addrs, "LocalSwarmDiscovery address changed");
+                    Ok(Some(data)) = addrs_change.updated() => {
+                        tracing::trace!(?data, "LocalSwarmDiscovery address changed");
                         discovery.remove_all();
                         let addrs =
-                            LocalSwarmDiscovery::socketaddrs_to_addrs(addrs);
+                            LocalSwarmDiscovery::socketaddrs_to_addrs(data.direct_addresses());
                         for addr in addrs {
                             discovery.add(addr.0, addr.1)
+                        }
+                        if let Some(user_data) = data.user_data() {
+                            if let Err(err) = discovery.set_txt_attribute(USER_DATA_ATTRIBUTE.to_string(), Some(user_data.to_string())) {
+                                warn!("Failed to set the user-defined data in local swarm discovery: {err:?}");
+                            }
                         }
                         continue;
                     }
@@ -318,7 +326,7 @@ impl LocalSwarmDiscovery {
                 sender.send(Message::Discovery(node_id, peer)).await.ok();
             });
         };
-        let addrs = LocalSwarmDiscovery::socketaddrs_to_addrs(socketaddrs);
+        let addrs = LocalSwarmDiscovery::socketaddrs_to_addrs(&socketaddrs);
         let node_id_str = data_encoding::BASE32_NOPAD
             .encode(node_id.as_bytes())
             .to_ascii_lowercase();
@@ -331,7 +339,7 @@ impl LocalSwarmDiscovery {
         discoverer.spawn(rt)
     }
 
-    fn socketaddrs_to_addrs(socketaddrs: BTreeSet<SocketAddr>) -> HashMap<u16, Vec<IpAddr>> {
+    fn socketaddrs_to_addrs(socketaddrs: &BTreeSet<SocketAddr>) -> HashMap<u16, Vec<IpAddr>> {
         let mut addrs: HashMap<u16, Vec<IpAddr>> = HashMap::default();
         for socketaddr in socketaddrs {
             addrs
@@ -349,15 +357,23 @@ fn peer_to_discovery_item(peer: &Peer, node_id: &NodeId) -> DiscoveryItem {
         .iter()
         .map(|(ip, port)| SocketAddr::new(*ip, *port))
         .collect();
-    DiscoveryItem {
-        node_addr: NodeAddr {
-            node_id: *node_id,
-            relay_url: None,
-            direct_addresses,
-        },
-        provenance: NAME,
-        last_updated: None,
-    }
+    // Get the user-defined data from the resolved peer info. We expect an attribute with a value
+    // that parses as `UserData`. Otherwise, omit.
+    let user_data = if let Some(Some(user_data)) = peer.txt_attribute(USER_DATA_ATTRIBUTE) {
+        match user_data.parse() {
+            Err(err) => {
+                debug!("failed to parse user data from TXT attribute: {err}");
+                None
+            }
+            Ok(data) => Some(data),
+        }
+    } else {
+        None
+    };
+    let node_info = NodeInfo::new(*node_id)
+        .with_direct_addresses(direct_addresses)
+        .with_user_data(user_data);
+    DiscoveryItem::new(node_info, NAME, None)
 }
 
 impl Discovery for LocalSwarmDiscovery {
@@ -376,10 +392,8 @@ impl Discovery for LocalSwarmDiscovery {
         Some(Box::pin(stream.flatten_stream()))
     }
 
-    fn publish(&self, url: Option<&RelayUrl>, addrs: &BTreeSet<SocketAddr>) {
-        self.local_addrs
-            .set(Some((url.cloned(), addrs.clone())))
-            .ok();
+    fn publish(&self, data: &NodeData) {
+        self.local_addrs.set(Some(data.clone())).ok();
     }
 
     fn subscribe(&self) -> Option<BoxStream<DiscoveryItem>> {
@@ -407,6 +421,7 @@ mod tests {
         use tracing_test::traced_test;
 
         use super::super::*;
+        use crate::discovery::UserData;
 
         #[tokio::test]
         #[traced_test]
@@ -415,7 +430,10 @@ mod tests {
             let (node_id_b, discovery_b) = make_discoverer()?;
 
             // make addr info for discoverer b
-            let addr_info = (None, BTreeSet::from(["0.0.0.0:11111".parse()?]));
+            let user_data: UserData = "foobar".parse()?;
+            let node_data = NodeData::new(None, BTreeSet::from(["0.0.0.0:11111".parse()?]))
+                .with_user_data(Some(user_data.clone()));
+            println!("info {node_data:?}");
 
             // pass in endpoint, this is never used
             let ep = crate::endpoint::Builder::default().bind().await?;
@@ -426,17 +444,15 @@ mod tests {
 
             tracing::debug!(?node_id_b, "Discovering node id b");
             // publish discovery_b's address
-            discovery_b.publish(addr_info.0.as_ref(), &addr_info.1);
+            discovery_b.publish(&node_data);
             let s1_res = tokio::time::timeout(Duration::from_secs(5), s1.next())
                 .await?
                 .unwrap()?;
             let s2_res = tokio::time::timeout(Duration::from_secs(5), s2.next())
                 .await?
                 .unwrap()?;
-            assert_eq!(s1_res.node_addr.relay_url, addr_info.0);
-            assert_eq!(s1_res.node_addr.direct_addresses, addr_info.1);
-            assert_eq!(s2_res.node_addr.relay_url, addr_info.0);
-            assert_eq!(s2_res.node_addr.direct_addresses, addr_info.1);
+            assert_eq!(s1_res.node_info().data, node_data);
+            assert_eq!(s2_res.node_info().data, node_data);
 
             Ok(())
         }
@@ -449,12 +465,14 @@ mod tests {
             let mut discoverers = vec![];
 
             let (_, discovery) = make_discoverer()?;
-            let addr_info = (None, BTreeSet::from(["0.0.0.0:11111".parse()?]));
+            let node_data = NodeData::new(None, BTreeSet::from(["0.0.0.0:11111".parse()?]));
 
-            for _ in 0..num_nodes {
+            for i in 0..num_nodes {
                 let (node_id, discovery) = make_discoverer()?;
-                node_ids.insert(node_id);
-                discovery.publish(addr_info.0.as_ref(), &addr_info.1);
+                let user_data: UserData = format!("node{i}").parse()?;
+                let node_data = node_data.clone().with_user_data(Some(user_data.clone()));
+                node_ids.insert((node_id, Some(user_data)));
+                discovery.publish(&node_data);
                 discoverers.push(discovery);
             }
 
@@ -464,8 +482,8 @@ mod tests {
                 let mut got_ids = BTreeSet::new();
                 while got_ids.len() != num_nodes {
                     if let Some(item) = events.next().await {
-                        if node_ids.contains(&item.node_addr.node_id) {
-                            got_ids.insert(item.node_addr.node_id);
+                        if node_ids.contains(&(item.node_id(), item.user_data().cloned())) {
+                            got_ids.insert((item.node_id(), item.user_data().cloned()));
                         }
                     } else {
                         anyhow::bail!(

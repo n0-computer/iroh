@@ -7,40 +7,28 @@ use std::{
     task::{Context, Poll},
 };
 
-use anyhow::{bail, Context as _};
 use netwatch::UdpSocket;
 use quinn::AsyncUdpSocket;
 use quinn_udp::Transmit;
-use tracing::debug;
 
-/// A UDP socket implementing Quinn's [`AsyncUdpSocket`].
+/// Wrapper struct to implement Quinn's [`AsyncUdpSocket`] for [`UdpSocket`].
 #[derive(Debug, Clone)]
-pub struct UdpConn {
-    io: Arc<UdpSocket>,
+pub(super) struct UdpConn {
+    inner: Arc<UdpSocket>,
 }
 
 impl UdpConn {
-    pub(super) fn as_socket(&self) -> Arc<UdpSocket> {
-        self.io.clone()
+    pub(super) fn wrap(inner: Arc<UdpSocket>) -> Self {
+        Self { inner }
     }
 
     pub(super) fn as_socket_ref(&self) -> &UdpSocket {
-        &self.io
-    }
-
-    pub(super) fn bind(addr: SocketAddr) -> anyhow::Result<Self> {
-        let sock = bind(addr)?;
-
-        Ok(Self { io: Arc::new(sock) })
-    }
-
-    pub fn port(&self) -> u16 {
-        self.local_addr().map(|p| p.port()).unwrap_or_default()
+        &self.inner
     }
 
     pub(super) fn create_io_poller(&self) -> Pin<Box<dyn quinn::UdpPoller>> {
         Box::pin(IoPoller {
-            io: self.io.clone(),
+            io: self.inner.clone(),
         })
     }
 }
@@ -51,7 +39,7 @@ impl AsyncUdpSocket for UdpConn {
     }
 
     fn try_send(&self, transmit: &Transmit<'_>) -> io::Result<()> {
-        self.io.try_send_quinn(transmit)
+        self.inner.try_send_quinn(transmit)
     }
 
     fn poll_recv(
@@ -60,61 +48,24 @@ impl AsyncUdpSocket for UdpConn {
         bufs: &mut [io::IoSliceMut<'_>],
         meta: &mut [quinn_udp::RecvMeta],
     ) -> Poll<io::Result<usize>> {
-        self.io.poll_recv_quinn(cx, bufs, meta)
+        self.inner.poll_recv_quinn(cx, bufs, meta)
     }
 
     fn local_addr(&self) -> io::Result<SocketAddr> {
-        self.io.local_addr()
+        self.inner.local_addr()
     }
 
     fn may_fragment(&self) -> bool {
-        self.io.may_fragment()
+        self.inner.may_fragment()
     }
 
     fn max_transmit_segments(&self) -> usize {
-        self.io.max_gso_segments()
+        self.inner.max_gso_segments()
     }
 
     fn max_receive_segments(&self) -> usize {
-        self.io.gro_segments()
+        self.inner.gro_segments()
     }
-}
-
-fn bind(mut addr: SocketAddr) -> anyhow::Result<UdpSocket> {
-    debug!(%addr, "binding");
-
-    // Build a list of preferred ports.
-    // - Best is the port that the user requested.
-    // - Second best is the port that is currently in use.
-    // - If those fail, fall back to 0.
-
-    let mut ports = Vec::new();
-    if addr.port() != 0 {
-        ports.push(addr.port());
-    }
-    // Backup port
-    ports.push(0);
-    // Remove duplicates. (All duplicates are consecutive.)
-    ports.dedup();
-    debug!(?ports, "candidate ports");
-
-    for port in &ports {
-        addr.set_port(*port);
-        match UdpSocket::bind_full(addr) {
-            Ok(pconn) => {
-                let local_addr = pconn.local_addr().context("UDP socket not bound")?;
-                debug!(%addr, %local_addr, "successfully bound");
-                return Ok(pconn);
-            }
-            Err(err) => {
-                debug!(%addr, "failed to bind: {err:#}");
-                continue;
-            }
-        }
-    }
-
-    // Failed to bind, including on port 0 (!).
-    bail!("failed to bind any ports on {:?} (tried {:?})", addr, ports);
 }
 
 /// Poller for when the socket is writable.
@@ -154,7 +105,8 @@ mod tests {
             Arc::new(quinn::TokioRuntime),
         )?;
 
-        let quic_client_config = tls::make_client_config(&key, None, vec![ALPN.to_vec()], false)?;
+        let quic_client_config =
+            tls::make_client_config(&key, None, vec![ALPN.to_vec()], None, false)?;
         let client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
         quic_ep.set_default_client_config(client_config);
         Ok((quic_ep, key))
@@ -176,10 +128,16 @@ mod tests {
     }
 
     async fn rebinding_conn_send_recv(network: IpFamily) -> Result<()> {
-        let m1 = UdpConn::bind(SocketAddr::new(network.unspecified_addr(), 0))?;
+        let m1 = UdpConn::wrap(Arc::new(UdpSocket::bind_full(SocketAddr::new(
+            network.unspecified_addr(),
+            0,
+        ))?));
         let (m1, _m1_key) = wrap_socket(m1)?;
 
-        let m2 = UdpConn::bind(SocketAddr::new(network.unspecified_addr(), 0))?;
+        let m2 = UdpConn::wrap(Arc::new(UdpSocket::bind_full(SocketAddr::new(
+            network.unspecified_addr(),
+            0,
+        ))?));
         let (m2, _m2_key) = wrap_socket(m2)?;
 
         let m1_addr = SocketAddr::new(network.local_addr(), m1.local_addr()?.port());

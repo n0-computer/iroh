@@ -51,11 +51,14 @@ async fn main() -> anyhow::Result<()> {
         Command::Domain { domain } => resolver.lookup_node_by_domain_name(&domain).await?,
     };
     println!("resolved node {}", resolved.node_id);
-    if let Some(url) = resolved.relay_url {
+    if let Some(url) = resolved.relay_url() {
         println!("    relay={url}")
     }
-    for addr in resolved.direct_addresses {
+    for addr in resolved.direct_addresses() {
         println!("    addr={addr}")
+    }
+    if let Some(user_data) = resolved.user_data() {
+        println!("    user-data={user_data}")
     }
     Ok(())
 }

@@ -230,29 +230,33 @@
 
 #![recursion_limit = "256"]
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
+#![cfg_attr(wasm_browser, allow(unused))]
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![cfg_attr(iroh_docsrs, feature(doc_auto_cfg))]
 
 mod disco;
 mod key;
 mod magicsock;
+mod tls;
 
 pub(crate) mod util;
+#[cfg(wasm_browser)]
+pub(crate) mod web_runtime;
 
 pub mod defaults;
 pub mod discovery;
+#[cfg(not(wasm_browser))]
 pub mod dns;
 pub mod endpoint;
 pub mod metrics;
 pub mod protocol;
-mod tls;
 pub mod watchable;
 
 pub use endpoint::{Endpoint, RelayMode};
 pub use iroh_base::{
     KeyParsingError, NodeAddr, NodeId, PublicKey, RelayUrl, RelayUrlParseError, SecretKey,
 };
-pub use iroh_relay::{RelayMap, RelayNode};
+pub use iroh_relay::{node_info, RelayMap, RelayNode};
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;

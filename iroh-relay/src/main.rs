@@ -309,7 +309,7 @@ struct TlsConfig {
     ///
     /// Defaults to the servers' current working directory.
     cert_dir: Option<PathBuf>,
-    /// Path of where to read the certificate from for the `Manual` `cert_mode`.
+    /// Path of where to read the certificate from for the `Manual` and `Reloading` `cert_mode`.
     ///
     /// Defaults to `<cert_dir>/default.crt`.
     ///
@@ -534,11 +534,11 @@ async fn maybe_load_tls(
 
             let key_reader = rustls_cert_file_reader::FileReader::new(
                 key_path,
-                rustls_cert_file_reader::Format::DER,
+                rustls_cert_file_reader::Format::PEM,
             );
             let certs_reader = rustls_cert_file_reader::FileReader::new(
                 cert_path,
-                rustls_cert_file_reader::Format::DER,
+                rustls_cert_file_reader::Format::PEM,
             );
 
             let loader: CertifiedKeyLoader<
