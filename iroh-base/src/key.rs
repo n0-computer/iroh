@@ -11,7 +11,7 @@ use std::{
 use curve25519_dalek::edwards::CompressedEdwardsY;
 pub use ed25519_dalek::Signature;
 use ed25519_dalek::{
-    pkcs8::{spki::der::zeroize::Zeroizing, DecodePublicKey, EncodePrivateKey, EncodePublicKey},
+    pkcs8::{spki::der::zeroize::Zeroizing, EncodePrivateKey},
     SignatureError, SigningKey, VerifyingKey,
 };
 use rand_core::CryptoRngCore;
@@ -100,20 +100,6 @@ impl PublicKey {
     /// Returns the [`VerifyingKey`] for this `PublicKey`.
     pub fn public(&self) -> VerifyingKey {
         VerifyingKey::from_bytes(self.0.as_bytes()).expect("already verified")
-    }
-
-    /// Serializes the public key as PEM
-    pub fn serialize_public_pem(&self) -> String {
-        use ed25519_dalek::pkcs8::spki::der::pem::LineEnding;
-        let key = self.public();
-        key.to_public_key_pem(LineEnding::default())
-            .expect("key is valid")
-    }
-
-    /// Deserialize the pem bytes
-    pub fn from_public_der(der: &[u8]) -> Result<Self, ed25519_dalek::pkcs8::spki::Error> {
-        let key = VerifyingKey::from_public_key_der(der)?;
-        Ok(key.into())
     }
 
     /// Construct a `PublicKey` from a slice of bytes.

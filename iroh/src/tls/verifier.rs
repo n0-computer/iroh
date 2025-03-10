@@ -9,11 +9,12 @@
 
 use std::sync::Arc;
 
+use ed25519_dalek::pkcs8::EncodePublicKey;
 use iroh_base::PublicKey;
 use rustls::{
     client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
     crypto::{verify_tls13_signature_with_raw_key, WebPkiSupportedAlgorithms},
-    pki_types::{pem::PemObject, CertificateDer as Certificate},
+    pki_types::CertificateDer as Certificate,
     server::danger::{ClientCertVerified, ClientCertVerifier},
     CertificateError, DigitallySignedStruct, DistinguishedName, OtherError, PeerMisbehaved,
     SignatureScheme, SupportedProtocolVersion,
@@ -76,9 +77,11 @@ pub(super) struct ServerCertificateVerifier {
 impl ServerCertificateVerifier {
     pub(super) fn with_remote_peer_id(auth: Authentication, remote_peer_id: PublicKey) -> Self {
         let mut trusted_spki = Vec::new();
-        let pem_key = remote_peer_id.serialize_public_pem();
-        let remote_key = SubjectPublicKeyInfoDer::from_pem_slice(pem_key.as_bytes())
-            .expect("cannot remote open pub key");
+        let pem_key = remote_peer_id
+            .public()
+            .to_public_key_der()
+            .expect("vaild key");
+        let remote_key = SubjectPublicKeyInfoDer::from(pem_key.into_vec());
         trusted_spki.push(remote_key);
 
         Self {

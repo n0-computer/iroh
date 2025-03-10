@@ -23,6 +23,7 @@ use std::{
 
 use anyhow::{bail, Context, Result};
 use data_encoding::BASE32_DNSSEC;
+use ed25519_dalek::{pkcs8::DecodePublicKey, VerifyingKey};
 use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
 use iroh_relay::RelayMap;
 use n0_future::{time::Duration, Stream};
@@ -1815,7 +1816,7 @@ impl Connection {
                             Ok(cert.peer_id())
                         }
                         tls::Authentication::RawPublicKey => {
-                            let peer_id = NodeId::from_public_der(&certs[0])?;
+                            let peer_id = VerifyingKey::from_public_key_der(&certs[0])?.into();
                             Ok(peer_id)
                         }
                     }
