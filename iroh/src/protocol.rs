@@ -113,6 +113,8 @@ pub struct RouterBuilder {
 /// [`crate::protocol::RouterBuilder::accept`].
 pub trait ProtocolHandler: Send + Sync + std::fmt::Debug + 'static {
     /// Optional interception point to handle the `Connecting` state.
+    ///
+    /// This enables accepting 0-RTT data from clients, among other things.
     fn on_connecting(&self, connecting: Connecting) -> BoxFuture<Result<Connection>> {
         Box::pin(async move {
             let conn = connecting.await?;
@@ -383,6 +385,8 @@ async fn handle_connection(incoming: crate::endpoint::Incoming, protocols: Arc<P
 
 /// Wraps an existing protocol, limiting its access,
 /// based on the provided function.
+///
+/// Any refused connection will be closed with an error code of `0` and reason `not allowed`.
 #[derive(derive_more::Debug, Clone)]
 pub struct AccessLimit<P: ProtocolHandler + Clone> {
     proto: P,
