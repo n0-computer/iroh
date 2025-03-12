@@ -281,7 +281,7 @@ impl DnsResolver {
         stagger_call(f, delays_ms).await
     }
 
-    /// Look up a [`RelayNode`] and return an [`IpMappedAddr`].
+    /// Look up a [`RelayNode`] and return a [`SocketAddr`].
     ///
     /// Uses `[DnsResolver::lookup_ipv4_staggered]`.
     ///
@@ -319,7 +319,7 @@ impl DnsResolver {
         }
     }
 
-    /// Look up a [`RelayNode`] and return an [`IpMappedAddr`].
+    /// Look up a [`RelayNode`] and return an [`SocketAddr`].
     ///
     /// Uses `[DnsResolver::lookup_ipv6_staggered]`.
     ///
