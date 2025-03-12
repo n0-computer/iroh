@@ -418,11 +418,11 @@ impl ActiveRelayActor {
                         Ok(Ok(client)) => Ok(client),
                         Ok(Err(err)) => {
                             warn!("Relay connection failed: {err:#}");
-                            Err(err.into())
+                            Err(err)
                         }
                         Err(_) => {
                             warn!(?CONNECT_TIMEOUT, "Timeout connecting to relay");
-                            Err(anyhow!("Timeout").into())
+                            Err(anyhow!("Timeout"))
                         }
                     }
                 }
