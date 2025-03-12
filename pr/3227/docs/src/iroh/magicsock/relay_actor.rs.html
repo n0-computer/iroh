@@ -1991,11 +1991,11 @@
                         <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(client)) =&gt; <span class="prelude-val">Ok</span>(client),
                         <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err)) =&gt; {
                             <span class="macro">warn!</span>(<span class="string">"Relay connection failed: {err:#}"</span>);
-                            <span class="prelude-val">Err</span>(err.into())
+                            <span class="prelude-val">Err</span>(err)
                         }
                         <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; {
                             <span class="macro">warn!</span>(<span class="question-mark">?</span>CONNECT_TIMEOUT, <span class="string">"Timeout connecting to relay"</span>);
-                            <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Timeout"</span>).into())
+                            <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Timeout"</span>))
                         }
                     }
                 }
