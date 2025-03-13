@@ -429,7 +429,7 @@ impl ActiveRelayActor {
             }
         };
 
-        // We implement our own `Sleeper` here, so that we can use the `backoff`
+        // We implement our own `Sleeper` here, so that we can use the `backon`
         // crate with our own implementation of `time::sleep` (from `n0_future`)
         // that works in browsers.
         struct Sleeper;
