@@ -38,7 +38,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
-use backoff::exponential::{ExponentialBackoff, ExponentialBackoffBuilder};
+use backon::{BackoffBuilder, ExponentialBuilder, Retryable};
 use bytes::{Bytes, BytesMut};
 use iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_metrics::{inc, inc_by};
@@ -404,9 +404,10 @@ impl ActiveRelayActor {
     /// connections.  It currently does not ever return `Err` as the retries continue
     /// forever.
     fn dial_relay(&self) -> BoxFuture<Result<Client>> {
-        let backoff: ExponentialBackoff<backoff::SystemClock> = ExponentialBackoffBuilder::new()
-            .with_initial_interval(Duration::from_millis(10))
-            .with_max_interval(Duration::from_secs(5))
+        let backoff = ExponentialBuilder::new()
+            .with_min_delay(Duration::from_millis(10))
+            .with_max_delay(Duration::from_secs(5))
+            .without_max_times()
             .build();
         let connect_fn = {
             let client_builder = self.relay_client_builder.clone();
@@ -417,23 +418,23 @@ impl ActiveRelayActor {
                         Ok(Ok(client)) => Ok(client),
                         Ok(Err(err)) => {
                             warn!("Relay connection failed: {err:#}");
-                            Err(err.into())
+                            Err(err)
                         }
                         Err(_) => {
                             warn!(?CONNECT_TIMEOUT, "Timeout connecting to relay");
-                            Err(anyhow!("Timeout").into())
+                            Err(anyhow!("Timeout"))
                         }
                     }
                 }
             }
         };
 
-        // We implement our own `Sleeper` here, so that we can use the `backoff`
+        // We implement our own `Sleeper` here, so that we can use the `backon`
         // crate with our own implementation of `time::sleep` (from `n0_future`)
         // that works in browsers.
         struct Sleeper;
 
-        impl backoff::future::Sleeper for Sleeper {
+        impl backon::Sleeper for Sleeper {
             type Sleep = time::Sleep;
 
             fn sleep(&self, dur: Duration) -> Self::Sleep {
@@ -441,17 +442,7 @@ impl ActiveRelayActor {
             }
         }
 
-        // Because we're using a lower-level backoff API, we need to provide a
-        // backoff::Notify implementation. By default backoff has one that
-        // doesn't do anything, but it doesn't expose that API. So we implement
-        // it here ourselves.
-        struct NoopNotify;
-
-        impl<E> backoff::Notify<E> for NoopNotify {
-            fn notify(&mut self, _: E, _: Duration) {}
-        }
-
-        let retry_fut = backoff::future::Retry::new(Sleeper, backoff, NoopNotify, connect_fn);
+        let retry_fut = connect_fn.retry(backoff).sleep(Sleeper);
         Box::pin(retry_fut)
     }
 

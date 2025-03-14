@@ -25,7 +25,7 @@ aead = { version = "0.5.2", features = ["bytes"] }
 anyhow = { version = "1" }
 atomic-waker = "1.1.2"
 concurrent-queue = "2.5"
-backoff = { version = "0.4.0", features = ["futures"] }
+backon = { version = "1.4" }
 bytes = "1.7"
 crypto_box = { version = "0.9.1", features = ["serde", "chacha20"] }
 data-encoding = "2.2"
