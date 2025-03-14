@@ -142,7 +142,7 @@
 
 <span class="doccomment">/// TLS Authentication mechanism
 </span><span class="attr">#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
-</span><span class="kw">pub enum </span>Authentication {
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>Authentication {
     <span class="doccomment">/// Self signed certificates, based on libp2p-tls
     </span>X509,
     <span class="doccomment">/// RFC 7250 TLS extension: Raw Public Keys.
