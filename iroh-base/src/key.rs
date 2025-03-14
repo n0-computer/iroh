@@ -10,10 +10,7 @@ use std::{
 
 use curve25519_dalek::edwards::CompressedEdwardsY;
 pub use ed25519_dalek::Signature;
-use ed25519_dalek::{
-    pkcs8::{spki::der::zeroize::Zeroizing, EncodePrivateKey},
-    SignatureError, SigningKey, VerifyingKey,
-};
+use ed25519_dalek::{SignatureError, SigningKey, VerifyingKey};
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
 
@@ -264,14 +261,6 @@ impl SecretKey {
     /// The public key of this [`SecretKey`].
     pub fn public(&self) -> PublicKey {
         self.secret.verifying_key().into()
-    }
-
-    /// Serializes the secret key as PEM
-    pub fn serialize_secret_pem(&self) -> Zeroizing<String> {
-        use ed25519_dalek::pkcs8::spki::der::pem::LineEnding;
-        self.secret
-            .to_pkcs8_pem(LineEnding::default())
-            .expect("key is valid")
     }
 
     /// Generate a new [`SecretKey`] with a randomness generator.

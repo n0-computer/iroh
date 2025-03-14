@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use ed25519_dalek::pkcs8::{spki::der::pem::LineEnding, EncodePrivateKey};
 use iroh_base::SecretKey;
 use webpki::types::{pem::PemObject, CertificateDer, PrivatePkcs8KeyDer};
 
@@ -28,7 +29,11 @@ impl AlwaysResolvesCert {
             }
             Authentication::RawPublicKey => {
                 // Directly use the key
-                let client_private_key = secret_key.serialize_secret_pem();
+                let client_private_key = secret_key
+                    .secret()
+                    .to_pkcs8_pem(LineEnding::default())
+                    .expect("key is valid");
+
                 let client_private_key =
                     PrivatePkcs8KeyDer::from_pem_slice(client_private_key.as_bytes())
                         .expect("cannot open private key file");

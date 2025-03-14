@@ -38,7 +38,7 @@ derive_more = { version = "1.0.0", features = [
     "deref",
     "from_str"
 ] }
-ed25519-dalek = "2.0"
+ed25519-dalek = { version = "2.0.0", features = ["serde", "rand_core", "zeroize", "pkcs8", "pem"] }
 http = "1"
 iroh-base = { version = "0.33.0", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
 iroh-relay = { version = "0.33", path = "../iroh-relay", default-features = false }
