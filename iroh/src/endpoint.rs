@@ -385,14 +385,14 @@ impl Builder {
     #[cfg(feature = "discovery-local-network")]
     /// Configures the endpoint to also use local network discovery.
     ///
-    /// This is equivalent to adding a [`crate::discovery::local_swarm_discovery::LocalSwarmDiscovery`]
-    /// with default settings. Note that LocalSwarmDiscovery has various more advanced
+    /// This is equivalent to adding a [`crate::discovery::mdns::MdnsDiscovery`]
+    /// with default settings. Note that MdnsDiscovery has various more advanced
     /// configuration options. If you need any of those, you should manually
-    /// create a LocalSwarmDiscovery and add it with [`Builder::add_discovery`].
+    /// create a MdnsDiscovery and add it with [`Builder::add_discovery`].
     pub fn discovery_local_network(mut self) -> Self {
-        use crate::discovery::local_swarm_discovery::LocalSwarmDiscovery;
+        use crate::discovery::mdns::MdnsDiscovery;
         self.discovery.push(Box::new(|secret_key| {
-            LocalSwarmDiscovery::new(secret_key.public())
+            MdnsDiscovery::new(secret_key.public())
                 .map(|x| Box::new(x) as _)
                 .ok()
         }));
@@ -1011,7 +1011,7 @@ impl Endpoint {
     /// through [`Discovery::resolve`], which is invoked automatically when calling
     /// [`Endpoint::connect`] for a [`NodeId`] unknown to the endpoint. It also includes
     /// nodes that the endpoint discovers passively from discovery services that implement
-    /// [`Discovery::subscribe`], which e.g. [`LocalSwarmDiscovery`] does.
+    /// [`Discovery::subscribe`], which e.g. [`MdnsDiscovery`] does.
     ///
     /// The stream does not yield information about nodes that are added manually to the endpoint's
     /// addressbook by calling [`Endpoint::add_node_addr`] or by supplying a full [`NodeAddr`] to
@@ -1026,7 +1026,7 @@ impl Endpoint {
     /// See also [`Endpoint::remote_info_iter`], which returns an iterator over all remotes
     /// the endpoint knows about at a specific point in time.
     ///
-    /// [`LocalSwarmDiscovery`]: crate::discovery::local_swarm_discovery::LocalSwarmDiscovery
+    /// [`MdnsDiscovery`]: crate::discovery::mdns::MdnsDiscovery
     /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
     pub fn discovery_stream(&self) -> impl Stream<Item = Result<DiscoveryItem, Lagged>> {
         self.msock.discovery_subscribers().subscribe()
