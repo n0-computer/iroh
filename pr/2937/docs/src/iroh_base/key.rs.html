@@ -402,18 +402,7 @@
 <a href="#401" id="401">401</a>
 <a href="#402" id="402">402</a>
 <a href="#403" id="403">403</a>
-<a href="#404" id="404">404</a>
-<a href="#405" id="405">405</a>
-<a href="#406" id="406">406</a>
-<a href="#407" id="407">407</a>
-<a href="#408" id="408">408</a>
-<a href="#409" id="409">409</a>
-<a href="#410" id="410">410</a>
-<a href="#411" id="411">411</a>
-<a href="#412" id="412">412</a>
-<a href="#413" id="413">413</a>
-<a href="#414" id="414">414</a>
-<a href="#415" id="415">415</a></pre></div><pre class="rust"><code><span class="doccomment">//! Cryptographic key handling for `iroh`.
+<a href="#404" id="404">404</a></pre></div><pre class="rust"><code><span class="doccomment">//! Cryptographic key handling for `iroh`.
 
 </span><span class="kw">use </span>std::{
     borrow::Borrow,
@@ -425,10 +414,7 @@
 
 <span class="kw">use </span>curve25519_dalek::edwards::CompressedEdwardsY;
 <span class="kw">pub use </span>ed25519_dalek::Signature;
-<span class="kw">use </span>ed25519_dalek::{
-    pkcs8::{spki::der::zeroize::Zeroizing, EncodePrivateKey},
-    SignatureError, SigningKey, VerifyingKey,
-};
+<span class="kw">use </span>ed25519_dalek::{SignatureError, SigningKey, VerifyingKey};
 <span class="kw">use </span>rand_core::CryptoRngCore;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 
@@ -679,14 +665,6 @@
     <span class="doccomment">/// The public key of this [`SecretKey`].
     </span><span class="kw">pub fn </span>public(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; PublicKey {
         <span class="self">self</span>.secret.verifying_key().into()
-    }
-
-    <span class="doccomment">/// Serializes the secret key as PEM
-    </span><span class="kw">pub fn </span>serialize_secret_pem(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Zeroizing&lt;String&gt; {
-        <span class="kw">use </span>ed25519_dalek::pkcs8::spki::der::pem::LineEnding;
-        <span class="self">self</span>.secret
-            .to_pkcs8_pem(LineEnding::default())
-            .expect(<span class="string">"key is valid"</span>)
     }
 
     <span class="doccomment">/// Generate a new [`SecretKey`] with a randomness generator.
