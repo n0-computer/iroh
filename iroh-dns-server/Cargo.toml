@@ -61,7 +61,6 @@ z32 = "1.1.1"
 criterion = "0.5.1"
 hickory-resolver = "=0.25.0-alpha.5"
 iroh = { path = "../iroh" }
-mainline = "5"
 rand = "0.8"
 rand_chacha = "0.3.1"
 testresult = "0.4.1"

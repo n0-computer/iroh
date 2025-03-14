@@ -148,7 +148,6 @@ tokio = { version = "1", features = [
 serde_json = "1"
 iroh-relay = { path = "../iroh-relay", default-features = false, features = ["test-utils", "server"] }
 tracing-test = "0.2.5"
-mainline = "5.2.0"
 
 # wasm-in-browser test/dev dependencies
 [target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dev-dependencies]

@@ -219,7 +219,7 @@ mod tests {
     #[traced_test]
     async fn integration_mainline() -> Result<()> {
         // run a mainline testnet
-        let testnet = mainline::Testnet::new(5)?;
+        let testnet = pkarr::mainline::Testnet::new(5)?;
         let bootstrap = testnet.bootstrap.clone();
 
         // spawn our server with mainline support
