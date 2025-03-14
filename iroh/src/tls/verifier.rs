@@ -77,11 +77,11 @@ pub(super) struct ServerCertificateVerifier {
 impl ServerCertificateVerifier {
     pub(super) fn with_remote_peer_id(auth: Authentication, remote_peer_id: PublicKey) -> Self {
         let mut trusted_spki = Vec::new();
-        let pem_key = remote_peer_id
+        let der_key = remote_peer_id
             .public()
             .to_public_key_der()
             .expect("valid key");
-        let remote_key = SubjectPublicKeyInfoDer::from(pem_key.into_vec());
+        let remote_key = SubjectPublicKeyInfoDer::from(der_key.into_vec());
         trusted_spki.push(remote_key);
 
         Self {
