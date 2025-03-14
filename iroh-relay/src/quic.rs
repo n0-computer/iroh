@@ -273,7 +273,7 @@ impl QuicClient {
         // if we've sent to an ipv4 address, but received an observed address
         // that is ivp6 then the address is an [IPv4-Mapped IPv6 Addresses](https://doc.rust-lang.org/beta/std/net/struct.Ipv6Addr.html#ipv4-mapped-ipv6-addresses)
         observed_addr = SocketAddr::new(observed_addr.ip().to_canonical(), observed_addr.port());
-        let latency = conn.rtt() / 2;
+        let latency = conn.rtt();
         // gracefully close the connections
         conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
         Ok((observed_addr, latency))
