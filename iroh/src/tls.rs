@@ -20,7 +20,7 @@ mod verifier;
 
 /// TLS Authentication mechanism
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
-pub enum Authentication {
+pub(crate) enum Authentication {
     /// Self signed certificates, based on libp2p-tls
     X509,
     /// RFC 7250 TLS extension: Raw Public Keys.
