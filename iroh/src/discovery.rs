@@ -34,8 +34,8 @@
 //! - The [`PkarrResolver`] which can perform lookups from designated [pkarr relay servers]
 //!   using HTTP.
 //!
-//! - [`LocalSwarmDiscovery`]: local_swarm_discovery::LocalSwarmDiscovery which is an mDNS
-//!   implementation.
+//! - [`MdnsDiscovery`]: mdns::MdnsDiscovery which uses the crate `swarm-discovery`, an
+//!   opinionated mDNS implementation, to discover nodes on the local network.
 //!
 //! - The [`DhtDiscovery`] also uses the [`pkarr`] system but can also publish and lookup
 //!   records to/from the Mainline DHT.
@@ -69,14 +69,14 @@
 //! # }
 //! ```
 //!
-//! To also enable [`LocalSwarmDiscovery`] it can be added as another service in the
+//! To also enable [`MdnsDiscovery`] it can be added as another service in the
 //! [`ConcurrentDiscovery`]:
 //!
 //! ```no_run
 //! # #[cfg(feature = "discovery-local-network")]
 //! # {
 //! # use iroh::discovery::dns::DnsDiscovery;
-//! # use iroh::discovery::local_swarm_discovery::LocalSwarmDiscovery;
+//! # use iroh::discovery::mdns::MdnsDiscovery;
 //! # use iroh::discovery::pkarr::PkarrPublisher;
 //! # use iroh::discovery::ConcurrentDiscovery;
 //! # use iroh::SecretKey;
@@ -86,7 +86,7 @@
 //! let discovery = ConcurrentDiscovery::from_services(vec![
 //!     Box::new(PkarrPublisher::n0_dns(secret_key.clone())),
 //!     Box::new(DnsDiscovery::n0_dns()),
-//!     Box::new(LocalSwarmDiscovery::new(secret_key.public())?),
+//!     Box::new(MdnsDiscovery::new(secret_key.public())?),
 //! ]);
 //! # Ok(())
 //! # }
@@ -102,28 +102,31 @@
 //! [`PkarrPublisher`]: pkarr::PkarrPublisher
 //! [`DhtDiscovery`]: pkarr::dht::DhtDiscovery
 //! [pkarr relay servers]: https://pkarr.org/#servers
-//! [`LocalSwarmDiscovery`]: local_swarm_discovery::LocalSwarmDiscovery
+//! [`MdnsDiscovery`]: mdns::MdnsDiscovery
 //! [`StaticProvider`]: static_provider::StaticProvider
 
 use std::sync::Arc;
 
 use anyhow::{anyhow, ensure, Result};
 use iroh_base::{NodeAddr, NodeId};
-pub use iroh_relay::dns::node_info::{NodeData, NodeInfo};
 use n0_future::{
-    stream::{Boxed as BoxStream, StreamExt},
+    boxed::BoxStream,
+    stream::StreamExt,
     task::{self, AbortOnDropHandle},
     time::{self, Duration},
+    Stream, TryStreamExt,
 };
 use tokio::sync::oneshot;
 use tracing::{debug, error_span, warn, Instrument};
 
+pub use crate::node_info::{NodeData, NodeInfo, UserData};
 use crate::Endpoint;
 
+#[cfg(not(wasm_browser))]
 pub mod dns;
 
 #[cfg(feature = "discovery-local-network")]
-pub mod local_swarm_discovery;
+pub mod mdns;
 pub mod pkarr;
 pub mod static_provider;
 
@@ -261,6 +264,11 @@ impl DiscoveryItem {
     pub fn into_node_addr(self) -> NodeAddr {
         self.node_info.into_node_addr()
     }
+
+    /// Returns any user-defined data.
+    pub fn user_data(&self) -> Option<UserData> {
+        self.node_info().data.user_data().cloned()
+    }
 }
 
 impl std::ops::Deref for DiscoveryItem {
@@ -352,7 +360,7 @@ const MAX_AGE: Duration = Duration::from_secs(10);
 /// A wrapper around a tokio task which runs a node discovery.
 pub(super) struct DiscoveryTask {
     on_first_rx: oneshot::Receiver<Result<()>>,
-    task: AbortOnDropHandle<()>,
+    _task: AbortOnDropHandle<()>,
 }
 
 impl DiscoveryTask {
@@ -367,7 +375,7 @@ impl DiscoveryTask {
             ),
         );
         Ok(Self {
-            task: AbortOnDropHandle::new(task),
+            _task: AbortOnDropHandle::new(task),
             on_first_rx,
         })
     }
@@ -411,7 +419,7 @@ impl DiscoveryTask {
             ),
         );
         Ok(Some(Self {
-            task: AbortOnDropHandle::new(task),
+            _task: AbortOnDropHandle::new(task),
             on_first_rx,
         }))
     }
@@ -471,7 +479,7 @@ impl DiscoveryTask {
             match stream.next().await {
                 Some(Ok(r)) => {
                     let provenance = r.provenance;
-                    let node_addr = r.into_node_addr();
+                    let node_addr = r.to_node_addr();
                     if node_addr.is_empty() {
                         debug!(%provenance, "empty address found");
                         continue;
@@ -481,6 +489,8 @@ impl DiscoveryTask {
                     if let Some(tx) = on_first_tx.take() {
                         tx.send(Ok(())).ok();
                     }
+                    // Send the discovery item to the subscribers of the discovery broadcast stream.
+                    ep.discovery_subscribers().send(r);
                 }
                 Some(Err(err)) => {
                     warn!(?err, "discovery service produced error");
@@ -496,9 +506,44 @@ impl DiscoveryTask {
     }
 }
 
-impl Drop for DiscoveryTask {
-    fn drop(&mut self) {
-        self.task.abort();
+/// Error returned when a discovery watch stream lagged too far behind.
+///
+/// The stream returned from [`Endpoint::discovery_stream`] yields this error
+/// if the loop in which the stream is processed cannot keep up with the emitted
+/// discovery events. Attempting to read the next item from the channel afterwards
+/// will return the oldest [`DiscoveryItem`] that is still retained.
+///
+/// Includes the number of skipped messages.
+#[derive(Debug, thiserror::Error)]
+#[error("channel lagged by {0}")]
+pub struct Lagged(pub u64);
+
+#[derive(Clone, Debug)]
+pub(super) struct DiscoverySubscribers {
+    inner: tokio::sync::broadcast::Sender<DiscoveryItem>,
+}
+
+impl DiscoverySubscribers {
+    pub(crate) fn new() -> Self {
+        // TODO: Make capacity configurable from the endpoint builder?
+        // This is the maximum number of [`DiscoveryItem`]s held by the channel if
+        // subscribers are stalled.
+        const CAPACITY: usize = 128;
+        Self {
+            inner: tokio::sync::broadcast::Sender::new(CAPACITY),
+        }
+    }
+
+    pub(crate) fn subscribe(&self) -> impl Stream<Item = Result<DiscoveryItem, Lagged>> {
+        use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
+        let recv = self.inner.subscribe();
+        BroadcastStream::new(recv).map_err(|BroadcastStreamRecvError::Lagged(n)| Lagged(n))
+    }
+
+    pub(crate) fn send(&self, item: DiscoveryItem) {
+        // `broadcast::Sender::send` returns an error if the channel has no subscribers,
+        // which we don't care about.
+        self.inner.send(item).ok();
     }
 }
 
@@ -524,9 +569,19 @@ mod tests {
 
     type InfoStore = HashMap<NodeId, (NodeData, u64)>;
 
-    #[derive(Debug, Clone, Default)]
+    #[derive(Debug, Clone)]
     struct TestDiscoveryShared {
         nodes: Arc<Mutex<InfoStore>>,
+        watchers: tokio::sync::broadcast::Sender<DiscoveryItem>,
+    }
+
+    impl Default for TestDiscoveryShared {
+        fn default() -> Self {
+            Self {
+                nodes: Default::default(),
+                watchers: tokio::sync::broadcast::Sender::new(1024),
+            }
+        }
     }
 
     impl TestDiscoveryShared {
@@ -548,6 +603,10 @@ mod tests {
                 resolve_wrong: true,
                 delay: Duration::from_millis(100),
             }
+        }
+
+        pub fn send_passive(&self, item: DiscoveryItem) {
+            self.watchers.send(item).ok();
         }
     }
 
@@ -610,6 +669,13 @@ mod tests {
                 None => n0_future::stream::empty().boxed(),
             };
             Some(stream)
+        }
+
+        fn subscribe(&self) -> Option<BoxStream<DiscoveryItem>> {
+            let recv = self.shared.watchers.subscribe();
+            let stream =
+                tokio_stream::wrappers::BroadcastStream::new(recv).filter_map(|item| item.ok());
+            Some(Box::pin(stream))
         }
     }
 
@@ -769,6 +835,52 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    #[traced_test]
+    async fn endpoint_discovery_watch() -> anyhow::Result<()> {
+        let disco_shared = TestDiscoveryShared::default();
+        let (ep1, _guard1) = {
+            let secret = SecretKey::generate(rand::thread_rng());
+            let disco = disco_shared.create_discovery(secret.public());
+            new_endpoint(secret, disco).await
+        };
+        let (ep2, _guard2) = {
+            let secret = SecretKey::generate(rand::thread_rng());
+            let disco = disco_shared.create_discovery(secret.public());
+            new_endpoint(secret, disco).await
+        };
+
+        let mut stream = ep1.discovery_stream();
+
+        // wait for ep2 node addr to be updated and connect from ep1 -> discovery via resolve
+        ep2.node_addr().await?;
+        let _ = ep1.connect(ep2.node_id(), TEST_ALPN).await?;
+
+        let item = tokio::time::timeout(Duration::from_secs(1), stream.next())
+            .await
+            .expect("timeout")
+            .expect("stream closed")
+            .expect("stream lagged");
+        assert_eq!(item.node_id(), ep2.node_id());
+        assert_eq!(item.provenance(), "test-disco");
+
+        // inject item into discovery passively
+        let passive_node_id = SecretKey::generate(rand::thread_rng()).public();
+        let node_info = NodeInfo::new(passive_node_id);
+        let passive_item = DiscoveryItem::new(node_info, "test-disco-passive", None);
+        disco_shared.send_passive(passive_item.clone());
+
+        let item = tokio::time::timeout(Duration::from_secs(1), stream.next())
+            .await
+            .expect("timeout")
+            .expect("stream closed")
+            .expect("stream lagged");
+        assert_eq!(item.node_id(), passive_node_id);
+        assert_eq!(item.provenance(), "test-disco-passive");
+
+        Ok(())
+    }
+
     async fn new_endpoint(
         secret: SecretKey,
         disco: impl Discovery + 'static,
@@ -832,14 +944,15 @@ mod tests {
 mod test_dns_pkarr {
     use anyhow::Result;
     use iroh_base::{NodeAddr, SecretKey};
-    use iroh_relay::RelayMap;
+    use iroh_relay::{node_info::UserData, RelayMap};
     use n0_future::time::Duration;
     use tokio_util::task::AbortOnDropHandle;
     use tracing_test::traced_test;
 
     use crate::{
         discovery::{pkarr::PkarrPublisher, NodeData},
-        dns::{node_info::NodeInfo, DnsResolver},
+        dns::DnsResolver,
+        node_info::NodeInfo,
         test_utils::{
             dns_server::run_dns_server, pkarr_dns_state::State, run_relay_server, DnsPkarrServer,
         },
@@ -885,20 +998,24 @@ mod test_dns_pkarr {
 
         let resolver = DnsResolver::with_nameserver(dns_pkarr_server.nameserver);
         let publisher = PkarrPublisher::new(secret_key, dns_pkarr_server.pkarr_url.clone());
-        let data = NodeData::new(relay_url.clone(), Default::default());
+        let user_data: UserData = "foobar".parse().unwrap();
+        let data = NodeData::new(relay_url.clone(), Default::default())
+            .with_user_data(Some(user_data.clone()));
         // does not block, update happens in background task
         publisher.update_node_data(&data);
         // wait until our shared state received the update from pkarr publishing
         dns_pkarr_server.on_node(&node_id, PUBLISH_TIMEOUT).await?;
         let resolved = resolver.lookup_node_by_id(&node_id, &origin).await?;
+        println!("resolved {resolved:?}");
 
-        let expected = NodeAddr {
+        let expected_addr = NodeAddr {
             node_id,
             relay_url,
             direct_addresses: Default::default(),
         };
 
-        assert_eq!(resolved.to_node_addr(), expected);
+        assert_eq!(resolved.to_node_addr(), expected_addr);
+        assert_eq!(resolved.user_data(), Some(&user_data));
         Ok(())
     }
 

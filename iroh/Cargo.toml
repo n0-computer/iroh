@@ -1,6 +1,6 @@
 [package]
 name = "iroh"
-version = "0.32.1"
+version = "0.33.0"
 edition = "2021"
 readme = "README.md"
 description = "p2p quic connections dialed by public key"
@@ -12,6 +12,11 @@ keywords = ["quic", "networking", "holepunching", "p2p"]
 # Sadly this also needs to be updated in .github/workflows/ci.yml
 rust-version = "1.81"
 
+[lib]
+# We need "cdylib" to actually generate .wasm files when we run with --target=wasm32-unknown-unknown.
+# It would be nice if we could make this target-dependent, but we can't (yet): https://github.com/rust-lang/cargo/issues/12260
+crate-type = ["lib", "cdylib"]
+
 [lints]
 workspace = true
 
@@ -20,8 +25,7 @@ aead = { version = "0.5.2", features = ["bytes"] }
 anyhow = { version = "1" }
 atomic-waker = "1.1.2"
 concurrent-queue = "2.5"
-axum = { version = "0.7", optional = true }
-backoff = { version = "0.4.0", features = ["futures", "tokio"]}
+backon = { version = "1.4" }
 bytes = "1.7"
 crypto_box = { version = "0.9.1", features = ["serde", "chacha20"] }
 data-encoding = "2.2"
@@ -35,24 +39,16 @@ derive_more = { version = "1.0.0", features = [
     "from_str"
 ] }
 ed25519-dalek = "2.0"
-n0-future = "0.1.2"
-governor = "0.7.0"
-hickory-resolver = { version = "=0.25.0-alpha.5" }
 http = "1"
-http-body-util = "0.1.0"
-hyper = { version = "1", features = ["server", "client", "http1"] }
-hyper-util = "0.1.1"
-igd-next = { version = "0.15.1", features = ["aio_tokio"] }
-iroh-base = { version = "0.32.0", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
-iroh-relay = { version = "0.32", path = "../iroh-relay", default-features = false }
-netdev = "0.31.0"
-netwatch = { version = "0.3" }
+iroh-base = { version = "0.33.0", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
+iroh-relay = { version = "0.33", path = "../iroh-relay", default-features = false }
+n0-future = "0.1.2"
+netwatch = { version = "0.4" }
 pin-project = "1"
 pkarr = { version = "3.4", default-features = false, features = [
     "relays",
 ] }
-portmapper = { version = "0.3", default-features = false }
-quinn = { package = "iroh-quinn", version = "0.13.0" }
+quinn = { package = "iroh-quinn", version = "0.13.0", default-features = false, features = ["rustls-ring"] }
 quinn-proto = { package = "iroh-quinn-proto", version = "0.13.0" }
 quinn-udp = { package = "iroh-quinn-udp", version = "0.5.7" }
 rand = "0.8"
@@ -72,32 +68,26 @@ tokio = { version = "1", features = [
     "macros",
     "sync",
     "rt",
-    "net",
-    "fs",
-    "io-std",
-    "signal",
-    "process",
 ] }
-tokio-rustls = { version = "0.26", default-features = false, features = [
-    "logging",
-    "ring",
-] }
-tokio-stream = { version = "0.1.15" }
-tokio-util = { version = "0.7", features = ["io-util", "io", "codec", "rt"] }
+tokio-stream = { version = "0.1.15", features = ["sync"] }
+tokio-util = { version = "0.7", features = ["io-util", "io", "rt"] }
 tracing = "0.1"
 url = { version = "2.5", features = ["serde"] }
 webpki = { package = "rustls-webpki", version = "0.102" }
 webpki-roots = "0.26"
 x509-parser = "0.16"
 z32 = "1.0.3"
-net-report = { package = "iroh-net-report", path = "../iroh-net-report", version = "0.32", default-features = false }
+net-report = { package = "iroh-net-report", path = "../iroh-net-report", version = "0.33", default-features = false }
 
 # metrics
-iroh-metrics = { version = "0.31", default-features = false }
+iroh-metrics = { version = "0.32", default-features = false }
 
 # local-swarm-discovery
 swarm-discovery = { version = "0.3.0-alpha.2", optional = true }
 futures-util = "0.3"
+
+# test_utils
+axum = { version = "0.7", optional = true }
 
 # Examples
 clap = { version = "4", features = ["derive"], optional = true }
@@ -107,7 +97,39 @@ tracing-subscriber = { version = "0.3", features = [
 indicatif = { version = "0.17", features = ["tokio"], optional = true }
 parse-size = { version = "=1.0.0", optional = true } # pinned version to avoid bumping msrv to 1.81
 
+# non-wasm-in-browser dependencies
+[target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
+hickory-resolver = { version = "=0.25.0-alpha.5" }
+igd-next = { version = "0.15.1", features = ["aio_tokio"] }
+netdev = { version = "0.31.0" }
+portmapper = { version = "0.4", default-features = false }
+quinn = { package = "iroh-quinn", version = "0.13.0", default-features = false, features = ["platform-verifier", "runtime-tokio", "rustls-ring"] }
+tokio = { version = "1", features = [
+    "io-util",
+    "macros",
+    "sync",
+    "rt",
+    "net",
+    "fs",
+    "io-std",
+    "signal",
+    "process",
+] }
+
+# wasm-in-browser dependencies
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
+wasm-bindgen-futures = "0.4"
+# we don't use instant nor time directly, but need to enable it because backoff and x509_parser use these in browsers and we need to enable some feature flags for that to work
+instant = { version = "0.1", features = ["wasm-bindgen"] }
+time = { version = "0.3", features = ["wasm-bindgen"] }
+
+# target-common test/dev dependencies
 [dev-dependencies]
+testresult = "0.4.0"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# *non*-wasm-in-browser test/dev dependencies
+[target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dev-dependencies]
 axum = { version = "0.7" }
 clap = { version = "4", features = ["derive"] }
 futures-lite = "2.6"
@@ -123,12 +145,18 @@ tokio = { version = "1", features = [
     "time",
     "test-util",
 ] }
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 serde_json = "1"
-testresult = "0.4.0"
 iroh-relay = { path = "../iroh-relay", default-features = false, features = ["test-utils", "server"] }
 tracing-test = "0.2.5"
 mainline = "5.2.0"
+
+# wasm-in-browser test/dev dependencies
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dev-dependencies]
+tracing-subscriber-wasm = "0.1.0"
+wasm-bindgen-test = "0.3"
+
+[build-dependencies]
+cfg_aliases = { version = "0.2" }
 
 [features]
 default = ["metrics"]
@@ -147,6 +175,10 @@ examples = [
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "iroh_docsrs"]
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
 
 [[example]]
 name = "listen"

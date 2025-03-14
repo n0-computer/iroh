@@ -25,16 +25,20 @@ use anyhow::{bail, Context, Result};
 use data_encoding::BASE32_DNSSEC;
 use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
 use iroh_relay::RelayMap;
-use n0_future::time::Duration;
+use n0_future::{time::Duration, Stream};
 use pin_project::pin_project;
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
+#[cfg(wasm_browser)]
+use crate::discovery::pkarr::PkarrResolver;
+#[cfg(not(wasm_browser))]
+use crate::{discovery::dns::DnsDiscovery, dns::DnsResolver};
 use crate::{
     discovery::{
-        dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryTask,
+        pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryItem, DiscoverySubscribers,
+        DiscoveryTask, Lagged, UserData,
     },
-    dns::DnsResolver,
     magicsock::{self, Handle, NodeIdMappedAddr},
     tls,
     watchable::Watcher,
@@ -110,9 +114,11 @@ pub struct Builder {
     keylog: bool,
     #[debug(skip)]
     discovery: Vec<DiscoveryBuilder>,
+    discovery_user_data: Option<UserData>,
     proxy_url: Option<Url>,
     /// List of known nodes. See [`Builder::known_nodes`].
     node_map: Option<Vec<NodeAddr>>,
+    #[cfg(not(wasm_browser))]
     dns_resolver: Option<DnsResolver>,
     #[cfg(any(test, feature = "test-utils"))]
     insecure_skip_relay_cert_verify: bool,
@@ -133,8 +139,10 @@ impl Default for Builder {
             transport_config,
             keylog: Default::default(),
             discovery: Default::default(),
+            discovery_user_data: Default::default(),
             proxy_url: None,
             node_map: None,
+            #[cfg(not(wasm_browser))]
             dns_resolver: None,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify: false,
@@ -163,6 +171,7 @@ impl Builder {
             keylog: self.keylog,
             secret_key: secret_key.clone(),
         };
+        #[cfg(not(wasm_browser))]
         let dns_resolver = self.dns_resolver.unwrap_or_default();
         let discovery = self
             .discovery
@@ -183,7 +192,9 @@ impl Builder {
             relay_map,
             node_map: self.node_map,
             discovery,
+            discovery_user_data: self.discovery_user_data,
             proxy_url: self.proxy_url,
+            #[cfg(not(wasm_browser))]
             dns_resolver,
             server_config,
             #[cfg(any(test, feature = "test-utils"))]
@@ -332,8 +343,18 @@ impl Builder {
         self.discovery.push(Box::new(|secret_key| {
             Some(Box::new(PkarrPublisher::n0_dns(secret_key.clone())))
         }));
-        self.discovery
-            .push(Box::new(|_| Some(Box::new(DnsDiscovery::n0_dns()))));
+        // Resolve using HTTPS requests to our DNS server's /pkarr path in browsers
+        #[cfg(wasm_browser)]
+        {
+            self.discovery
+                .push(Box::new(|_| Some(Box::new(PkarrResolver::n0_dns()))));
+        }
+        // Resolve using DNS queries outside browsers.
+        #[cfg(not(wasm_browser))]
+        {
+            self.discovery
+                .push(Box::new(|_| Some(Box::new(DnsDiscovery::n0_dns()))));
+        }
         self
     }
 
@@ -364,17 +385,30 @@ impl Builder {
     #[cfg(feature = "discovery-local-network")]
     /// Configures the endpoint to also use local network discovery.
     ///
-    /// This is equivalent to adding a [`crate::discovery::local_swarm_discovery::LocalSwarmDiscovery`]
-    /// with default settings. Note that LocalSwarmDiscovery has various more advanced
+    /// This is equivalent to adding a [`crate::discovery::mdns::MdnsDiscovery`]
+    /// with default settings. Note that MdnsDiscovery has various more advanced
     /// configuration options. If you need any of those, you should manually
-    /// create a LocalSwarmDiscovery and add it with [`Builder::add_discovery`].
+    /// create a MdnsDiscovery and add it with [`Builder::add_discovery`].
     pub fn discovery_local_network(mut self) -> Self {
-        use crate::discovery::local_swarm_discovery::LocalSwarmDiscovery;
+        use crate::discovery::mdns::MdnsDiscovery;
         self.discovery.push(Box::new(|secret_key| {
-            LocalSwarmDiscovery::new(secret_key.public())
+            MdnsDiscovery::new(secret_key.public())
                 .map(|x| Box::new(x) as _)
                 .ok()
         }));
+        self
+    }
+
+    /// Sets the initial user-defined data to be published in discovery services for this node.
+    ///
+    /// When using discovery services, this string of [`UserData`] will be published together
+    /// with the node's addresses and relay URL. When other nodes discover this node,
+    /// they retrieve the [`UserData`] in addition to the addressing info.
+    ///
+    /// Iroh itself does not interpret the user-defined data in any way, it is purely left
+    /// for applications to parse and use.
+    pub fn user_data_for_discovery(mut self, user_data: UserData) -> Self {
+        self.discovery_user_data = Some(user_data);
         self
     }
 
@@ -411,6 +445,7 @@ impl Builder {
     /// host system's DNS configuration. You can pass a custom instance of [`DnsResolver`]
     /// here to use a differently configured DNS resolver for this endpoint, or to share
     /// a [`DnsResolver`] between multiple endpoints.
+    #[cfg(not(wasm_browser))]
     pub fn dns_resolver(mut self, dns_resolver: DnsResolver) -> Self {
         self.dns_resolver = Some(dns_resolver);
         self
@@ -719,7 +754,7 @@ impl Endpoint {
         let server_name = &format!("{}.iroh.invalid", BASE32_DNSSEC.encode(node_id.as_bytes()));
         let connect = self.msock.endpoint().connect_with(
             client_config,
-            mapped_addr.socket_addr(),
+            mapped_addr.private_socket_addr(),
             server_name,
         )?;
 
@@ -836,14 +871,30 @@ impl Endpoint {
     /// The returned [`NodeAddr`] will have the current [`RelayUrl`] and direct addresses
     /// as they would be returned by [`Endpoint::home_relay`] and
     /// [`Endpoint::direct_addresses`].
+    ///
+    /// In browsers, because direct addresses are unavailable, this will only wait for
+    /// the home relay to be available before returning.
     pub async fn node_addr(&self) -> Result<NodeAddr> {
-        let addrs = self.direct_addresses().initialized().await?;
-        let relay = self.home_relay().get()?;
-        Ok(NodeAddr::from_parts(
-            self.node_id(),
-            relay,
-            addrs.into_iter().map(|x| x.addr),
-        ))
+        #[cfg(not(wasm_browser))]
+        {
+            // Outside browsers, we preserve the "old" behavior of waiting for direct
+            // addresses and then adding the relay URL (should we have it)
+            let addrs = self.direct_addresses().initialized().await?;
+            let relay = self.home_relay().get()?;
+            Ok(NodeAddr::from_parts(
+                self.node_id(),
+                relay,
+                addrs.into_iter().map(|x| x.addr),
+            ))
+        }
+        #[cfg(wasm_browser)]
+        {
+            // In browsers, there will never be any direct addresses, so we wait
+            // for the home relay instead. This make the `NodeAddr` have *some* way
+            // of connecting to us.
+            let relay = self.home_relay().initialized().await?;
+            Ok(NodeAddr::new(self.node_id()).with_relay_url(relay))
+        }
     }
 
     /// Returns a [`Watcher`] for the [`RelayUrl`] of the Relay server used as home relay.
@@ -917,6 +968,7 @@ impl Endpoint {
     ///
     /// The [`Endpoint`] always binds on an IPv4 address and also tries to bind on an IPv6
     /// address if available.
+    #[cfg(not(wasm_browser))]
     pub fn bound_sockets(&self) -> (SocketAddr, Option<SocketAddr>) {
         self.msock.local_addr()
     }
@@ -950,6 +1002,34 @@ impl Endpoint {
     /// See also [`Endpoint::remote_info`] to only retrieve information about a single node.
     pub fn remote_info_iter(&self) -> impl Iterator<Item = RemoteInfo> {
         self.msock.list_remote_infos().into_iter()
+    }
+
+    /// Returns a stream of all remote nodes discovered through the endpoint's discovery services.
+    ///
+    /// Whenever a node is discovered via the endpoint's discovery service, the corresponding
+    /// [`DiscoveryItem`] is yielded from this stream. This includes nodes discovered actively
+    /// through [`Discovery::resolve`], which is invoked automatically when calling
+    /// [`Endpoint::connect`] for a [`NodeId`] unknown to the endpoint. It also includes
+    /// nodes that the endpoint discovers passively from discovery services that implement
+    /// [`Discovery::subscribe`], which e.g. [`MdnsDiscovery`] does.
+    ///
+    /// The stream does not yield information about nodes that are added manually to the endpoint's
+    /// addressbook by calling [`Endpoint::add_node_addr`] or by supplying a full [`NodeAddr`] to
+    /// [`Endpoint::connect`]. It also does not yield information about nodes that we only
+    /// know about because they connected to us. When using the [`StaticProvider`] discovery,
+    /// discovery info is only emitted once connecting to a node added to the static provider, not
+    /// at the time of adding it to the static provider.
+    ///
+    /// The stream should be processed in a loop. If the stream is not processed fast enough,
+    /// [`Lagged`] may be yielded, indicating that items were missed.
+    ///
+    /// See also [`Endpoint::remote_info_iter`], which returns an iterator over all remotes
+    /// the endpoint knows about at a specific point in time.
+    ///
+    /// [`MdnsDiscovery`]: crate::discovery::mdns::MdnsDiscovery
+    /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
+    pub fn discovery_stream(&self) -> impl Stream<Item = Result<DiscoveryItem, Lagged>> {
+        self.msock.discovery_subscribers().subscribe()
     }
 
     // # Methods for less common getters.
@@ -988,6 +1068,7 @@ impl Endpoint {
     /// Returns the DNS resolver used in this [`Endpoint`].
     ///
     /// See [`Builder::dns_resolver`].
+    #[cfg(not(wasm_browser))]
     pub fn dns_resolver(&self) -> &DnsResolver {
         self.msock.dns_resolver()
     }
@@ -1013,6 +1094,19 @@ impl Endpoint {
     /// the network change itself, there is no harm in calling this function.
     pub async fn network_change(&self) {
         self.msock.network_change().await;
+    }
+
+    // # Methods to update internal state.
+
+    /// Sets the initial user-defined data to be published in discovery services for this node.
+    ///
+    /// If the user-defined data passed to this function is different to the previous one,
+    /// the endpoint will republish its node info to the configured discovery services.
+    ///
+    /// See also [`Builder::user_data_for_discovery`] for setting an initial value when
+    /// building the endpoint.
+    pub fn set_user_data_for_discovery(&self, user_data: Option<UserData>) {
+        self.msock.set_user_data_for_discovery(user_data);
     }
 
     // # Methods for terminating the endpoint.
@@ -1125,6 +1219,11 @@ impl Endpoint {
                 }
             }
         }
+    }
+
+    /// Returns a reference to the subscribers channel for discovery events.
+    pub(crate) fn discovery_subscribers(&self) -> &DiscoverySubscribers {
+        self.msock.discovery_subscribers()
     }
 
     #[cfg(test)]

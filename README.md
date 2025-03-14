@@ -76,6 +76,9 @@ send.finish()?;
 let response = recv.read_to_end(1000).await?;
 assert_eq!(&response, b"Hello, world!");
 
+// As the side receiving the last application data - say goodbye
+conn.close(0u32.into(), b"bye!");
+
 // Close the endpoint and all its connections
 endpoint.close().await;
 ```
@@ -94,9 +97,8 @@ let router = Router::builder(endpoint)
 struct Echo;
 
 impl ProtocolHandler for Echo {
-    fn accept(self: Arc<Self>, connecting: Connecting) -> BoxedFuture<Result<()>> {
+    fn accept(&self, connection: Connection) -> BoxedFuture<Result<()>> {
         Box::pin(async move {
-            let connection = connecting.await?;
             let (mut send, mut recv) = connection.accept_bi().await?;
 
             // Echo any bytes received back directly.

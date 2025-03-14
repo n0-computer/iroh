@@ -38,7 +38,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
-use backoff::exponential::{ExponentialBackoff, ExponentialBackoffBuilder};
+use backon::{BackoffBuilder, ExponentialBuilder, Retryable};
 use bytes::{Bytes, BytesMut};
 use iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_metrics::{inc, inc_by};
@@ -48,6 +48,7 @@ use iroh_relay::{
     PingTracker, MAX_PACKET_SIZE,
 };
 use n0_future::{
+    boxed::BoxFuture,
     task::JoinSet,
     time::{self, Duration, Instant, MissedTickBehavior},
     FuturesUnorderedBounded, SinkExt, StreamExt,
@@ -58,8 +59,9 @@ use tracing::{debug, error, event, info_span, instrument, trace, warn, Instrumen
 use url::Url;
 
 use super::RelayDatagramSendChannelReceiver;
+#[cfg(not(wasm_browser))]
+use crate::dns::DnsResolver;
 use crate::{
-    dns::DnsResolver,
     magicsock::{MagicSock, Metrics as MagicsockMetrics, RelayContents, RelayDatagramRecvQueue},
     util::MaybeFuture,
 };
@@ -204,6 +206,7 @@ struct ActiveRelayActorOptions {
 #[derive(Debug, Clone)]
 struct RelayConnectionOptions {
     secret_key: SecretKey,
+    #[cfg(not(wasm_browser))]
     dns_resolver: DnsResolver,
     proxy_url: Option<Url>,
     prefer_ipv6: Arc<AtomicBool>,
@@ -242,14 +245,21 @@ impl ActiveRelayActor {
     ) -> relay::client::ClientBuilder {
         let RelayConnectionOptions {
             secret_key,
+            #[cfg(not(wasm_browser))]
             dns_resolver,
             proxy_url,
             prefer_ipv6,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_cert_verify,
         } = opts;
-        let mut builder = relay::client::ClientBuilder::new(url, secret_key, dns_resolver)
-            .address_family_selector(move || prefer_ipv6.load(Ordering::Relaxed));
+
+        let mut builder = relay::client::ClientBuilder::new(
+            url,
+            secret_key,
+            #[cfg(not(wasm_browser))]
+            dns_resolver,
+        )
+        .address_family_selector(move || prefer_ipv6.load(Ordering::Relaxed));
         if let Some(proxy_url) = proxy_url {
             builder = builder.proxy_url(proxy_url);
         }
@@ -393,10 +403,11 @@ impl ActiveRelayActor {
     /// The future only completes once the connection is established and retries
     /// connections.  It currently does not ever return `Err` as the retries continue
     /// forever.
-    fn dial_relay(&self) -> Pin<Box<dyn Future<Output = Result<Client>> + Send>> {
-        let backoff: ExponentialBackoff<backoff::SystemClock> = ExponentialBackoffBuilder::new()
-            .with_initial_interval(Duration::from_millis(10))
-            .with_max_interval(Duration::from_secs(5))
+    fn dial_relay(&self) -> BoxFuture<Result<Client>> {
+        let backoff = ExponentialBuilder::new()
+            .with_min_delay(Duration::from_millis(10))
+            .with_max_delay(Duration::from_secs(5))
+            .without_max_times()
             .build();
         let connect_fn = {
             let client_builder = self.relay_client_builder.clone();
@@ -407,17 +418,31 @@ impl ActiveRelayActor {
                         Ok(Ok(client)) => Ok(client),
                         Ok(Err(err)) => {
                             warn!("Relay connection failed: {err:#}");
-                            Err(err.into())
+                            Err(err)
                         }
                         Err(_) => {
                             warn!(?CONNECT_TIMEOUT, "Timeout connecting to relay");
-                            Err(anyhow!("Timeout").into())
+                            Err(anyhow!("Timeout"))
                         }
                     }
                 }
             }
         };
-        let retry_fut = backoff::future::retry(backoff, connect_fn);
+
+        // We implement our own `Sleeper` here, so that we can use the `backon`
+        // crate with our own implementation of `time::sleep` (from `n0_future`)
+        // that works in browsers.
+        struct Sleeper;
+
+        impl backon::Sleeper for Sleeper {
+            type Sleep = time::Sleep;
+
+            fn sleep(&self, dur: Duration) -> Self::Sleep {
+                time::sleep(dur)
+            }
+        }
+
+        let retry_fut = connect_fn.retry(backoff).sleep(Sleeper);
         Box::pin(retry_fut)
     }
 
@@ -954,6 +979,7 @@ impl RelayActor {
 
         let connection_opts = RelayConnectionOptions {
             secret_key: self.msock.secret_key.clone(),
+            #[cfg(not(wasm_browser))]
             dns_resolver: self.msock.dns_resolver.clone(),
             proxy_url: self.msock.proxy_url().cloned(),
             prefer_ipv6: self.msock.ipv6_reported.clone(),

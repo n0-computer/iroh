@@ -8,7 +8,7 @@
 
 use anyhow::Result;
 use iroh::{
-    endpoint::Connecting,
+    endpoint::Connection,
     protocol::{ProtocolHandler, Router},
     Endpoint, NodeAddr,
 };
@@ -51,6 +51,8 @@ async fn connect_side(addr: NodeAddr) -> Result<()> {
     let response = recv.read_to_end(1000).await?;
     assert_eq!(&response, b"Hello, world!");
 
+    conn.close(0u32.into(), b"bye!");
+
     Ok(())
 }
 
@@ -71,11 +73,9 @@ impl ProtocolHandler for Echo {
     ///
     /// The returned future runs on a newly spawned tokio task, so it can run as long as
     /// the connection lasts.
-    fn accept(&self, connecting: Connecting) -> BoxFuture<Result<()>> {
+    fn accept(&self, connection: Connection) -> BoxFuture<Result<()>> {
         // We have to return a boxed future from the handler.
         Box::pin(async move {
-            // Wait for the connection to be fully established.
-            let connection = connecting.await?;
             // We can get the remote's node id from the connection.
             let node_id = connection.remote_node_id()?;
             println!("accepted connection from {node_id}");

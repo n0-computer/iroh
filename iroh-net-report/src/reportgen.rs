@@ -968,7 +968,7 @@ fn maybe_to_mapped_addr(
     addr: SocketAddr,
 ) -> SocketAddr {
     if let Some(ip_mapped_addrs) = ip_mapped_addrs.as_ref() {
-        return ip_mapped_addrs.get_or_register(addr).socket_addr();
+        return ip_mapped_addrs.get_or_register(addr).private_socket_addr();
     }
     addr
 }

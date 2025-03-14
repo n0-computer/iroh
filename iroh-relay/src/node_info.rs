@@ -34,18 +34,21 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fmt::Display,
+    fmt::{self, Display},
     hash::Hash,
     net::SocketAddr,
     str::FromStr,
 };
 
 use anyhow::{anyhow, Result};
+#[cfg(not(wasm_browser))]
 use hickory_resolver::{proto::ProtoError, Name};
 use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
+#[cfg(not(wasm_browser))]
 use tracing::warn;
 use url::Url;
 
+#[cfg(not(wasm_browser))]
 use crate::{defaults::timeouts::DNS_TIMEOUT, dns::DnsResolver};
 
 /// The DNS name for the iroh TXT record.
@@ -80,7 +83,9 @@ impl NodeIdExt for NodeId {
 
 /// Data about a node that may be published to and resolved from discovery services.
 ///
-/// This includes an optional [`RelayUrl`] and a set of direct addresses.
+/// This includes an optional [`RelayUrl`], a set of direct addresses, and the optional
+/// [`UserData`], a string that can be set by applications and is not parsed or used by iroh
+/// itself.
 ///
 /// This struct does not include the node's [`NodeId`], only the data *about* a certain
 /// node. See [`NodeInfo`] for a struct that contains a [`NodeId`] with associated [`NodeData`].
@@ -90,6 +95,8 @@ pub struct NodeData {
     relay_url: Option<RelayUrl>,
     /// Direct addresses where this node can be reached.
     direct_addresses: BTreeSet<SocketAddr>,
+    /// Optional user-defined [`UserData`] for this node.
+    user_data: Option<UserData>,
 }
 
 impl NodeData {
@@ -98,6 +105,7 @@ impl NodeData {
         Self {
             relay_url,
             direct_addresses,
+            user_data: None,
         }
     }
 
@@ -113,9 +121,20 @@ impl NodeData {
         self
     }
 
+    /// Sets the user-defined data and returns the updated node data.
+    pub fn with_user_data(mut self, user_data: Option<UserData>) -> Self {
+        self.user_data = user_data;
+        self
+    }
+
     /// Returns the relay URL of the node.
     pub fn relay_url(&self) -> Option<&RelayUrl> {
         self.relay_url.as_ref()
+    }
+
+    /// Returns the optional user-defined data of the node.
+    pub fn user_data(&self) -> Option<&UserData> {
+        self.user_data.as_ref()
     }
 
     /// Returns the direct addresses of the node.
@@ -137,6 +156,11 @@ impl NodeData {
     pub fn set_relay_url(&mut self, relay_url: Option<RelayUrl>) {
         self.relay_url = relay_url
     }
+
+    /// Sets the user-defined data of the node data.
+    pub fn set_user_data(&mut self, user_data: Option<UserData>) {
+        self.user_data = user_data;
+    }
 }
 
 impl From<NodeAddr> for NodeData {
@@ -144,7 +168,69 @@ impl From<NodeAddr> for NodeData {
         Self {
             relay_url: node_addr.relay_url,
             direct_addresses: node_addr.direct_addresses,
+            user_data: None,
         }
+    }
+}
+
+// User-defined data that can be published and resolved through node discovery.
+///
+/// Under the hood this is a UTF-8 String is no longer than [`UserData::MAX_LENGTH`] bytes.
+///
+/// Iroh does not keep track of or examine the user-defined data.
+///
+/// `UserData` implements [`FromStr`] and [`TryFrom<String>`], so you can
+/// convert `&str` and `String` into `UserData` easily.
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct UserData(String);
+
+impl UserData {
+    /// The max byte length allowed for user-defined data.
+    ///
+    /// In DNS discovery services, the user-defined data is stored in a TXT record character string,
+    /// which has a max length of 255 bytes. We need to subtract the `user-data=` prefix,
+    /// which leaves 245 bytes for the actual user-defined data.
+    pub const MAX_LENGTH: usize = 245;
+}
+
+/// Error returned when an input value is too long for [`UserData`].
+#[derive(Debug, thiserror::Error)]
+#[error("User-defined data exceeds max length")]
+pub struct MaxLengthExceededError;
+
+impl TryFrom<String> for UserData {
+    type Error = MaxLengthExceededError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        if value.len() > Self::MAX_LENGTH {
+            Err(MaxLengthExceededError)
+        } else {
+            Ok(Self(value))
+        }
+    }
+}
+
+impl FromStr for UserData {
+    type Err = MaxLengthExceededError;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        if s.len() > Self::MAX_LENGTH {
+            Err(MaxLengthExceededError)
+        } else {
+            Ok(Self(s.to_string()))
+        }
+    }
+}
+
+impl fmt::Display for UserData {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl AsRef<str> for UserData {
+    fn as_ref(&self) -> &str {
+        &self.0
     }
 }
 
@@ -181,9 +267,16 @@ impl From<&TxtAttrs<IrohAttr>> for NodeInfo {
             .flatten()
             .filter_map(|s| SocketAddr::from_str(s).ok())
             .collect();
+        let user_data = attrs
+            .get(&IrohAttr::UserData)
+            .into_iter()
+            .flatten()
+            .next()
+            .and_then(|s| UserData::from_str(s).ok());
         let data = NodeData {
             relay_url: relay_url.map(Into::into),
             direct_addresses,
+            user_data,
         };
         Self { node_id, data }
     }
@@ -226,6 +319,12 @@ impl NodeInfo {
         self
     }
 
+    /// Sets the user-defined data and returns the updated node info.
+    pub fn with_user_data(mut self, user_data: Option<UserData>) -> Self {
+        self.data = self.data.with_user_data(user_data);
+        self
+    }
+
     /// Converts into a [`NodeAddr`] by cloning the needed fields.
     pub fn to_node_addr(&self) -> NodeAddr {
         NodeAddr {
@@ -248,8 +347,9 @@ impl NodeInfo {
         self.into()
     }
 
+    #[cfg(not(wasm_browser))]
     /// Parses a [`NodeInfo`] from a TXT records lookup.
-    pub fn from_txt_lookup(lookup: super::TxtLookup) -> Result<Self> {
+    pub fn from_txt_lookup(lookup: crate::dns::TxtLookup) -> Result<Self> {
         let attrs = TxtAttrs::from_txt_lookup(lookup)?;
         Ok(attrs.into())
     }
@@ -295,6 +395,7 @@ impl std::ops::DerefMut for NodeInfo {
 /// Takes a [`hickory_resolver::proto::rr::Name`] DNS name and expects the first label to be
 /// [`IROH_TXT_NAME`] and the second label to be a z32 encoded [`NodeId`]. Ignores
 /// subsequent labels.
+#[cfg(not(wasm_browser))]
 fn node_id_from_hickory_name(name: &hickory_resolver::proto::rr::Name) -> Option<NodeId> {
     if name.num_labels() < 2 {
         return None;
@@ -316,11 +417,13 @@ fn node_id_from_hickory_name(name: &hickory_resolver::proto::rr::Name) -> Option
     Debug, strum::Display, strum::AsRefStr, strum::EnumString, Hash, Eq, PartialEq, Ord, PartialOrd,
 )]
 #[strum(serialize_all = "kebab-case")]
-pub(super) enum IrohAttr {
+pub(crate) enum IrohAttr {
     /// URL of home relay.
     Relay,
     /// Direct address.
     Addr,
+    /// User-defined data
+    UserData,
 }
 
 /// Attributes parsed from [`IROH_TXT_NAME`] TXT records.
@@ -329,7 +432,7 @@ pub(super) enum IrohAttr {
 /// all attributes. Can also be used with an enum, if it implements [`FromStr`] and
 /// [`Display`].
 #[derive(Debug)]
-pub(super) struct TxtAttrs<T> {
+pub(crate) struct TxtAttrs<T> {
     node_id: NodeId,
     attrs: BTreeMap<T, Vec<String>>,
 }
@@ -343,13 +446,16 @@ impl From<&NodeInfo> for TxtAttrs<IrohAttr> {
         for addr in &info.data.direct_addresses {
             attrs.push((IrohAttr::Addr, addr.to_string()));
         }
+        if let Some(user_data) = &info.data.user_data {
+            attrs.push((IrohAttr::UserData, user_data.to_string()));
+        }
         Self::from_parts(info.node_id, attrs.into_iter())
     }
 }
 
 impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     /// Creates [`TxtAttrs`] from a node id and an iterator of key-value pairs.
-    pub(super) fn from_parts(node_id: NodeId, pairs: impl Iterator<Item = (T, String)>) -> Self {
+    pub(crate) fn from_parts(node_id: NodeId, pairs: impl Iterator<Item = (T, String)>) -> Self {
         let mut attrs: BTreeMap<T, Vec<String>> = BTreeMap::new();
         for (k, v) in pairs {
             attrs.entry(k).or_default().push(v);
@@ -358,7 +464,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     }
 
     /// Creates [`TxtAttrs`] from a node id and an iterator of "{key}={value}" strings.
-    pub(super) fn from_strings(
+    pub(crate) fn from_strings(
         node_id: NodeId,
         strings: impl Iterator<Item = String>,
     ) -> Result<Self> {
@@ -376,6 +482,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         Ok(Self { attrs, node_id })
     }
 
+    #[cfg(not(wasm_browser))]
     async fn lookup(resolver: &DnsResolver, name: Name) -> Result<Self> {
         let name = ensure_iroh_txt_label(name)?;
         let lookup = resolver.lookup_txt(name, DNS_TIMEOUT).await?;
@@ -384,7 +491,8 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     }
 
     /// Looks up attributes by [`NodeId`] and origin domain.
-    pub(super) async fn lookup_by_id(
+    #[cfg(not(wasm_browser))]
+    pub(crate) async fn lookup_by_id(
         resolver: &DnsResolver,
         node_id: &NodeId,
         origin: &str,
@@ -394,23 +502,24 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     }
 
     /// Looks up attributes by DNS name.
-    pub(super) async fn lookup_by_name(resolver: &DnsResolver, name: &str) -> Result<Self> {
+    #[cfg(not(wasm_browser))]
+    pub(crate) async fn lookup_by_name(resolver: &DnsResolver, name: &str) -> Result<Self> {
         let name = Name::from_str(name)?;
         TxtAttrs::lookup(resolver, name).await
     }
 
     /// Returns the parsed attributes.
-    pub(super) fn attrs(&self) -> &BTreeMap<T, Vec<String>> {
+    pub(crate) fn attrs(&self) -> &BTreeMap<T, Vec<String>> {
         &self.attrs
     }
 
     /// Returns the node id.
-    pub(super) fn node_id(&self) -> NodeId {
+    pub(crate) fn node_id(&self) -> NodeId {
         self.node_id
     }
 
     /// Parses a [`pkarr::SignedPacket`].
-    pub(super) fn from_pkarr_signed_packet(packet: &pkarr::SignedPacket) -> Result<Self> {
+    pub(crate) fn from_pkarr_signed_packet(packet: &pkarr::SignedPacket) -> Result<Self> {
         use pkarr::dns::{
             rdata::RData,
             {self},
@@ -434,7 +543,8 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     }
 
     /// Parses a TXT records lookup.
-    pub(super) fn from_txt_lookup(lookup: super::TxtLookup) -> Result<Self> {
+    #[cfg(not(wasm_browser))]
+    pub(crate) fn from_txt_lookup(lookup: crate::dns::TxtLookup) -> Result<Self> {
         let queried_node_id = node_id_from_hickory_name(lookup.0.query().name())
             .ok_or_else(|| anyhow!("invalid DNS answer: not a query for _iroh.z32encodedpubkey"))?;
 
@@ -483,7 +593,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     /// Creates a [`pkarr::SignedPacket`]
     ///
     /// This constructs a DNS packet and signs it with a [`SecretKey`].
-    pub(super) fn to_pkarr_signed_packet(
+    pub(crate) fn to_pkarr_signed_packet(
         &self,
         secret_key: &SecretKey,
         ttl: u32,
@@ -503,6 +613,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     }
 }
 
+#[cfg(not(wasm_browser))]
 fn ensure_iroh_txt_label(name: Name) -> Result<Name, ProtoError> {
     if name.iter().next() == Some(IROH_TXT_NAME.as_bytes()) {
         Ok(name)
@@ -511,6 +622,7 @@ fn ensure_iroh_txt_label(name: Name) -> Result<Name, ProtoError> {
     }
 }
 
+#[cfg(not(wasm_browser))]
 fn node_domain(node_id: &NodeId, origin: &str) -> Result<Name> {
     let domain = format!("{}.{}", NodeId::to_z32(node_id), origin);
     let domain = Name::from_str(&domain)?;
@@ -542,7 +654,8 @@ mod tests {
         let node_data = NodeData::new(
             Some("https://example.com".parse().unwrap()),
             ["127.0.0.1:1234".parse().unwrap()].into_iter().collect(),
-        );
+        )
+        .with_user_data(Some("foobar".parse().unwrap()));
         let node_id = "vpnk377obfvzlipnsfbqba7ywkkenc4xlpmovt5tsfujoa75zqia"
             .parse()
             .unwrap();
@@ -559,7 +672,8 @@ mod tests {
         let node_data = NodeData::new(
             Some("https://example.com".parse().unwrap()),
             ["127.0.0.1:1234".parse().unwrap()].into_iter().collect(),
-        );
+        )
+        .with_user_data(Some("foobar".parse().unwrap()));
         let expected = NodeInfo::from_parts(secret_key.public(), node_data);
         let packet = expected.to_pkarr_signed_packet(&secret_key, 30).unwrap();
         let actual = NodeInfo::from_pkarr_signed_packet(&packet).unwrap();

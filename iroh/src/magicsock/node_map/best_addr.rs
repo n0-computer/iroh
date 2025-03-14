@@ -133,6 +133,7 @@ impl BestAddr {
     }
 
     /// Reset the expiry, if the passed in addr matches the currently used one.
+    #[cfg(not(wasm_browser))]
     pub fn reconfirm_if_used(&mut self, addr: SocketAddr, source: Source, confirmed_at: Instant) {
         if let Some(state) = self.0.as_mut() {
             if state.addr.addr == addr {

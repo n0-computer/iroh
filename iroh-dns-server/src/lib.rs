@@ -23,9 +23,8 @@ mod tests {
 
     use anyhow::Result;
     use iroh::{
-        discovery::pkarr::PkarrRelayClient,
-        dns::{node_info::NodeInfo, DnsResolver},
-        RelayUrl, SecretKey,
+        discovery::pkarr::PkarrRelayClient, dns::DnsResolver, node_info::NodeInfo, RelayUrl,
+        SecretKey,
     };
     use pkarr::{SignedPacket, Timestamp};
     use testresult::TestResult;

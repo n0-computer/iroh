@@ -7,9 +7,6 @@ use std::{
     },
 };
 
-/// The dummy port used for all mapped addresses
-pub const MAPPED_ADDR_PORT: u16 = 12345;
-
 /// Can occur when converting a [`SocketAddr`] to an [`IpMappedAddr`]
 #[derive(Debug, thiserror::Error)]
 #[error("Failed to convert")]
@@ -32,6 +29,9 @@ impl IpMappedAddr {
     /// The Subnet ID used in our Unique Local Addresses.
     const ADDR_SUBNET: [u8; 2] = [0, 1];
 
+    /// The dummy port used for all mapped addresses.
+    const MAPPED_ADDR_PORT: u16 = 12345;
+
     /// Generates a globally unique fake UDP address.
     ///
     /// This generates a new IPv6 address in the Unique Local Address range (RFC 4193)
@@ -48,9 +48,15 @@ impl IpMappedAddr {
         Self(Ipv6Addr::from(addr))
     }
 
-    /// Return a [`SocketAddr`] from the [`IpMappedAddr`].
-    pub fn socket_addr(&self) -> SocketAddr {
-        SocketAddr::new(IpAddr::from(self.0), MAPPED_ADDR_PORT)
+    /// Returns a consistent [`SocketAddr`] for the [`IpMappedAddr`].
+    ///
+    /// This does not have a routable IP address.
+    ///
+    /// This uses a made-up, but fixed port number.  The [IpMappedAddresses`] map this is
+    /// made for creates a unique [`IpMappedAddr`] for each IP+port and thus does not use
+    /// the port to map back to the original [`SocketAddr`].
+    pub fn private_socket_addr(&self) -> SocketAddr {
+        SocketAddr::new(IpAddr::from(self.0), Self::MAPPED_ADDR_PORT)
     }
 }
 

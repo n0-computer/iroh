@@ -1,6 +1,6 @@
 [package]
 name = "iroh-relay"
-version = "0.32.0"
+version = "0.33.0"
 edition = "2021"
 readme = "README.md"
 description = "Iroh's relay server and client"
@@ -11,7 +11,9 @@ keywords = ["networking", "holepunching", "p2p"]
 rust-version = "1.81"
 
 [lib]
-crate-type = ["lib", "cdylib"] # cdylib is needed for Wasm support
+# We need "cdylib" to actually generate .wasm files when we run with --target=wasm32-unknown-unknown.
+# It would be nice if we could make this target-dependent, but we can't (yet): https://github.com/rust-lang/cargo/issues/12260
+crate-type = ["lib", "cdylib"]
 
 [lints]
 workspace = true
@@ -30,8 +32,8 @@ http = "1"
 http-body-util = "0.1.0"
 hyper = { version = "1", features = ["server", "client", "http1"] }
 hyper-util = "0.1.1"
-iroh-base = { version = "0.32.0", path = "../iroh-base", default-features = false, features = ["key", "relay"] }
-iroh-metrics = { version = "0.31", default-features = false }
+iroh-base = { version = "0.33.0", path = "../iroh-base", default-features = false, features = ["key", "relay"] }
+iroh-metrics = { version = "0.32", default-features = false }
 n0-future = "0.1.2"
 num_enum = "0.7"
 pin-project = "1"
@@ -83,6 +85,7 @@ reloadable-state = { version = "0.1", optional = true }
 rustls-cert-reloadable-resolver = { version = "0.7.1", optional = true }
 rustls-cert-file-reader = { version = "0.4.1", optional = true }
 rustls-pemfile = { version = "2.1", optional = true }
+time = { version = "0.3.37", optional = true }
 tokio-rustls-acme = { version = "0.6", optional = true }
 tokio-tungstenite = { version = "0.24", default-features = false, optional = true } # keep version in sync with what tokio-tungstenite-wasm depends on
 toml = { version = "0.8", optional = true }
@@ -141,6 +144,7 @@ server = [
     "dep:rustls-cert-file-reader",
     "dep:rustls-cert-reloadable-resolver",
     "dep:rustls-pemfile",
+    "dep:time",
     "dep:tokio-rustls-acme",
     "dep:tokio-tungstenite",
     "dep:toml",
@@ -148,6 +152,7 @@ server = [
     "quinn/log",
     "quinn/platform-verifier",
     "quinn/runtime-tokio",
+    "iroh-metrics/service",
 ]
 metrics = ["iroh-metrics/metrics"]
 test-utils = []

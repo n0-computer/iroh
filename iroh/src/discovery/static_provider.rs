@@ -17,6 +17,7 @@ use std::{
 
 use iroh_base::NodeId;
 use n0_future::{
+    boxed::BoxStream,
     stream::{self, StreamExt},
     time::SystemTime,
 };
@@ -159,6 +160,7 @@ impl StaticProvider {
                     .data
                     .add_direct_addresses(data.direct_addresses().iter().copied());
                 existing.data.set_relay_url(data.relay_url().cloned());
+                existing.data.set_user_data(data.user_data().cloned());
                 existing.last_updated = last_updated;
             }
             Entry::Vacant(entry) => {
@@ -191,7 +193,7 @@ impl Discovery for StaticProvider {
         &self,
         _endpoint: crate::Endpoint,
         node_id: NodeId,
-    ) -> Option<n0_future::stream::Boxed<anyhow::Result<super::DiscoveryItem>>> {
+    ) -> Option<BoxStream<anyhow::Result<super::DiscoveryItem>>> {
         let guard = self.nodes.read().expect("poisoned");
         let info = guard.get(&node_id);
         match info {
@@ -240,12 +242,14 @@ mod tests {
             relay_url: Some("https://example.com".parse()?),
             direct_addresses: Default::default(),
         };
-        let node_info = NodeInfo::from(addr.clone());
+        let user_data = Some("foobar".parse().unwrap());
+        let node_info = NodeInfo::from(addr.clone()).with_user_data(user_data.clone());
         discovery.add_node_info(node_info.clone());
 
         let back = discovery.get_node_info(key.public()).context("no addr")?;
 
         assert_eq!(back, node_info);
+        assert_eq!(back.user_data(), user_data.as_ref());
         assert_eq!(back.into_node_addr(), addr);
 
         let removed = discovery
