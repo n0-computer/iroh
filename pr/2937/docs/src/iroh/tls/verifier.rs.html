@@ -417,11 +417,11 @@
 </span><span class="kw">impl </span>ServerCertificateVerifier {
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>with_remote_peer_id(auth: Authentication, remote_peer_id: PublicKey) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span><span class="kw-2">mut </span>trusted_spki = Vec::new();
-        <span class="kw">let </span>pem_key = remote_peer_id
+        <span class="kw">let </span>der_key = remote_peer_id
             .public()
             .to_public_key_der()
             .expect(<span class="string">"valid key"</span>);
-        <span class="kw">let </span>remote_key = SubjectPublicKeyInfoDer::from(pem_key.into_vec());
+        <span class="kw">let </span>remote_key = SubjectPublicKeyInfoDer::from(der_key.into_vec());
         trusted_spki.push(remote_key);
 
         <span class="self">Self </span>{

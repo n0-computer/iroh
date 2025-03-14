@@ -3120,14 +3120,14 @@
     <span class="attr">#[cfg(feature = <span class="string">"discovery-local-network"</span>)]
     </span><span class="doccomment">/// Configures the endpoint to also use local network discovery.
     ///
-    /// This is equivalent to adding a [`crate::discovery::local_swarm_discovery::LocalSwarmDiscovery`]
-    /// with default settings. Note that LocalSwarmDiscovery has various more advanced
+    /// This is equivalent to adding a [`crate::discovery::mdns::MdnsDiscovery`]
+    /// with default settings. Note that MdnsDiscovery has various more advanced
     /// configuration options. If you need any of those, you should manually
-    /// create a LocalSwarmDiscovery and add it with [`Builder::add_discovery`].
+    /// create a MdnsDiscovery and add it with [`Builder::add_discovery`].
     </span><span class="kw">pub fn </span>discovery_local_network(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
-        <span class="kw">use </span><span class="kw">crate</span>::discovery::local_swarm_discovery::LocalSwarmDiscovery;
+        <span class="kw">use </span><span class="kw">crate</span>::discovery::mdns::MdnsDiscovery;
         <span class="self">self</span>.discovery.push(Box::new(|secret_key| {
-            LocalSwarmDiscovery::new(secret_key.public())
+            MdnsDiscovery::new(secret_key.public())
                 .map(|x| Box::new(x) <span class="kw">as _</span>)
                 .ok()
         }));
@@ -3730,7 +3730,7 @@
     /// through [`Discovery::resolve`], which is invoked automatically when calling
     /// [`Endpoint::connect`] for a [`NodeId`] unknown to the endpoint. It also includes
     /// nodes that the endpoint discovers passively from discovery services that implement
-    /// [`Discovery::subscribe`], which e.g. [`LocalSwarmDiscovery`] does.
+    /// [`Discovery::subscribe`], which e.g. [`MdnsDiscovery`] does.
     ///
     /// The stream does not yield information about nodes that are added manually to the endpoint's
     /// addressbook by calling [`Endpoint::add_node_addr`] or by supplying a full [`NodeAddr`] to
@@ -3745,7 +3745,7 @@
     /// See also [`Endpoint::remote_info_iter`], which returns an iterator over all remotes
     /// the endpoint knows about at a specific point in time.
     ///
-    /// [`LocalSwarmDiscovery`]: crate::discovery::local_swarm_discovery::LocalSwarmDiscovery
+    /// [`MdnsDiscovery`]: crate::discovery::mdns::MdnsDiscovery
     /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
     </span><span class="kw">pub fn </span>discovery_stream(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Stream&lt;Item = <span class="prelude-ty">Result</span>&lt;DiscoveryItem, Lagged&gt;&gt; {
         <span class="self">self</span>.msock.discovery_subscribers().subscribe()

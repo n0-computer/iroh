@@ -1067,7 +1067,12 @@
 <a href="#1066" id="1066">1066</a>
 <a href="#1067" id="1067">1067</a>
 <a href="#1068" id="1068">1068</a>
-<a href="#1069" id="1069">1069</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
+<a href="#1069" id="1069">1069</a>
+<a href="#1070" id="1070">1070</a>
+<a href="#1071" id="1071">1071</a>
+<a href="#1072" id="1072">1072</a>
+<a href="#1073" id="1073">1073</a>
+<a href="#1074" id="1074">1074</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
 //! To connect to an iroh node a [`NodeAddr`] is needed, which may contain a
 //! [`RelayUrl`] or one or more *direct addresses* in addition to the [`NodeId`].
@@ -1103,8 +1108,8 @@
 //! - The [`PkarrResolver`] which can perform lookups from designated [pkarr relay servers]
 //!   using HTTP.
 //!
-//! - [`LocalSwarmDiscovery`]: local_swarm_discovery::LocalSwarmDiscovery which is an mDNS
-//!   implementation.
+//! - [`MdnsDiscovery`]: mdns::MdnsDiscovery which uses the crate `swarm-discovery`, an
+//!   opinionated mDNS implementation, to discover nodes on the local network.
 //!
 //! - The [`DhtDiscovery`] also uses the [`pkarr`] system but can also publish and lookup
 //!   records to/from the Mainline DHT.
@@ -1138,14 +1143,14 @@
 //! # }
 //! ```
 //!
-//! To also enable [`LocalSwarmDiscovery`] it can be added as another service in the
+//! To also enable [`MdnsDiscovery`] it can be added as another service in the
 //! [`ConcurrentDiscovery`]:
 //!
 //! ```no_run
 //! # #[cfg(feature = "discovery-local-network")]
 //! # {
 //! # use iroh::discovery::dns::DnsDiscovery;
-//! # use iroh::discovery::local_swarm_discovery::LocalSwarmDiscovery;
+//! # use iroh::discovery::mdns::MdnsDiscovery;
 //! # use iroh::discovery::pkarr::PkarrPublisher;
 //! # use iroh::discovery::ConcurrentDiscovery;
 //! # use iroh::SecretKey;
@@ -1155,7 +1160,7 @@
 //! let discovery = ConcurrentDiscovery::from_services(vec![
 //!     Box::new(PkarrPublisher::n0_dns(secret_key.clone())),
 //!     Box::new(DnsDiscovery::n0_dns()),
-//!     Box::new(LocalSwarmDiscovery::new(secret_key.public())?),
+//!     Box::new(MdnsDiscovery::new(secret_key.public())?),
 //! ]);
 //! # Ok(())
 //! # }
@@ -1171,7 +1176,7 @@
 //! [`PkarrPublisher`]: pkarr::PkarrPublisher
 //! [`DhtDiscovery`]: pkarr::dht::DhtDiscovery
 //! [pkarr relay servers]: https://pkarr.org/#servers
-//! [`LocalSwarmDiscovery`]: local_swarm_discovery::LocalSwarmDiscovery
+//! [`MdnsDiscovery`]: mdns::MdnsDiscovery
 //! [`StaticProvider`]: static_provider::StaticProvider
 
 </span><span class="kw">use </span>std::sync::Arc;
@@ -1195,7 +1200,7 @@
 </span><span class="kw">pub mod </span>dns;
 
 <span class="attr">#[cfg(feature = <span class="string">"discovery-local-network"</span>)]
-</span><span class="kw">pub mod </span>local_swarm_discovery;
+</span><span class="kw">pub mod </span>mdns;
 <span class="kw">pub mod </span>pkarr;
 <span class="kw">pub mod </span>static_provider;
 
@@ -1332,6 +1337,11 @@
     <span class="doccomment">/// Converts into a [`NodeAddr`] without cloning.
     </span><span class="kw">pub fn </span>into_node_addr(<span class="self">self</span>) -&gt; NodeAddr {
         <span class="self">self</span>.node_info.into_node_addr()
+    }
+
+    <span class="doccomment">/// Returns any user-defined data.
+    </span><span class="kw">pub fn </span>user_data(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;UserData&gt; {
+        <span class="self">self</span>.node_info().data.user_data().cloned()
     }
 }
 
