@@ -266,8 +266,7 @@
 <a href="#265" id="265">265</a>
 <a href="#266" id="266">266</a>
 <a href="#267" id="267">267</a>
-<a href="#268" id="268">268</a>
-<a href="#269" id="269">269</a></pre></div><pre class="rust"><code><span class="doccomment">//! A DNS server and pkarr relay
+<a href="#268" id="268">268</a></pre></div><pre class="rust"><code><span class="doccomment">//! A DNS server and pkarr relay
 
 </span><span class="attr">#![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
@@ -292,9 +291,8 @@
 
     <span class="kw">use </span>anyhow::Result;
     <span class="kw">use </span>iroh::{
-        discovery::pkarr::PkarrRelayClient,
-        dns::{node_info::NodeInfo, DnsResolver},
-        RelayUrl, SecretKey,
+        discovery::pkarr::PkarrRelayClient, dns::DnsResolver, node_info::NodeInfo, RelayUrl,
+        SecretKey,
     };
     <span class="kw">use </span>pkarr::{SignedPacket, Timestamp};
     <span class="kw">use </span>testresult::TestResult;
@@ -489,7 +487,7 @@
     #[traced_test]
     </span><span class="kw">async fn </span>integration_mainline() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="comment">// run a mainline testnet
-        </span><span class="kw">let </span>testnet = mainline::Testnet::new(<span class="number">5</span>)<span class="question-mark">?</span>;
+        </span><span class="kw">let </span>testnet = pkarr::mainline::Testnet::new(<span class="number">5</span>)<span class="question-mark">?</span>;
         <span class="kw">let </span>bootstrap = testnet.bootstrap.clone();
 
         <span class="comment">// spawn our server with mainline support

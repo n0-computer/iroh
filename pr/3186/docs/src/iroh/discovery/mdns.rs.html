@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh/src/discovery/local_swarm_discovery.rs`."><title>local_swarm_discovery.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-dbdb5eec.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="iroh" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (d10a6823f 2024-11-29)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../../static.files/storage-59e33391.js"></script><script defer src="../../../static.files/src-script-56102188.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">iroh/discovery/</div>local_swarm_discovery.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers">
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh/src/discovery/mdns.rs`."><title>mdns.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-dbdb5eec.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="iroh" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (d10a6823f 2024-11-29)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../../static.files/storage-59e33391.js"></script><script defer src="../../../static.files/src-script-56102188.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">iroh/discovery/</div>mdns.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers">
 <a href="#1" id="1">1</a>
 <a href="#2" id="2">2</a>
 <a href="#3" id="3">3</a>
@@ -475,12 +475,38 @@
 <a href="#474" id="474">474</a>
 <a href="#475" id="475">475</a>
 <a href="#476" id="476">476</a>
-<a href="#477" id="477">477</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service that uses an mdns-like service to discover local nodes.
+<a href="#477" id="477">477</a>
+<a href="#478" id="478">478</a>
+<a href="#479" id="479">479</a>
+<a href="#480" id="480">480</a>
+<a href="#481" id="481">481</a>
+<a href="#482" id="482">482</a>
+<a href="#483" id="483">483</a>
+<a href="#484" id="484">484</a>
+<a href="#485" id="485">485</a>
+<a href="#486" id="486">486</a>
+<a href="#487" id="487">487</a>
+<a href="#488" id="488">488</a>
+<a href="#489" id="489">489</a>
+<a href="#490" id="490">490</a>
+<a href="#491" id="491">491</a>
+<a href="#492" id="492">492</a>
+<a href="#493" id="493">493</a>
+<a href="#494" id="494">494</a>
+<a href="#495" id="495">495</a>
+<a href="#496" id="496">496</a>
+<a href="#497" id="497">497</a>
+<a href="#498" id="498">498</a>
+<a href="#499" id="499">499</a>
+<a href="#500" id="500">500</a>
+<a href="#501" id="501">501</a>
+<a href="#502" id="502">502</a>
+<a href="#503" id="503">503</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service that uses an mdns-like service to discover local nodes.
 //!
 //! This allows you to use an mdns-like swarm discovery service to find address information about nodes that are on your local network, no relay or outside internet needed.
 //! See the [`swarm-discovery`](https://crates.io/crates/swarm-discovery) crate for more details.
 //!
-//! When [`LocalSwarmDiscovery`] is enabled, it's possible to get a list of the locally discovered nodes by filtering a list of `RemoteInfo`s.
+//! When [`MdnsDiscovery`] is enabled, it's possible to get a list of the locally discovered nodes by filtering a list of `RemoteInfo`s.
 //!
 //! ```
 //! use std::time::Duration;
@@ -497,7 +523,7 @@
 //!         .filter(|remote| {
 //!             remote.sources().iter().any(|(source, duration)| {
 //!                 if let Source::Discovery { name } = source {
-//!                     name == iroh::discovery::local_swarm_discovery::NAME &amp;&amp; *duration &lt;= recent
+//!                     name == iroh::discovery::mdns::NAME &amp;&amp; *duration &lt;= recent
 //!                 } else {
 //!                     false
 //!                 }
@@ -540,12 +566,16 @@
 /// Used in the [`crate::endpoint::Source::Discovery`] enum variant as the `name`.
 </span><span class="kw">pub const </span>NAME: <span class="kw-2">&amp;</span>str = <span class="string">"local.swarm.discovery"</span>;
 
+<span class="doccomment">/// The key of the attribute under which the `UserData` is stored in
+/// the TXT record supported by swarm-discovery.
+</span><span class="kw">const </span>USER_DATA_ATTRIBUTE: <span class="kw-2">&amp;</span>str = <span class="string">"user-data"</span>;
+
 <span class="doccomment">/// How long we will wait before we stop sending discovery items
 </span><span class="kw">const </span>DISCOVERY_DURATION: Duration = Duration::from_secs(<span class="number">10</span>);
 
 <span class="doccomment">/// Discovery using `swarm-discovery`, a variation on mdns
 </span><span class="attr">#[derive(Debug)]
-</span><span class="kw">pub struct </span>LocalSwarmDiscovery {
+</span><span class="kw">pub struct </span>MdnsDiscovery {
     <span class="attr">#[allow(dead_code)]
     </span>handle: AbortOnDropHandle&lt;()&gt;,
     sender: mpsc::Sender&lt;Message&gt;,
@@ -601,8 +631,8 @@
     }
 }
 
-<span class="kw">impl </span>LocalSwarmDiscovery {
-    <span class="doccomment">/// Create a new [`LocalSwarmDiscovery`] Service.
+<span class="kw">impl </span>MdnsDiscovery {
+    <span class="doccomment">/// Create a new [`MdnsDiscovery`] Service.
     ///
     /// This starts a [`Discoverer`] that broadcasts your addresses and receives addresses from other nodes in your local network.
     ///
@@ -612,16 +642,12 @@
     /// # Panics
     /// This relies on [`tokio::runtime::Handle::current`] and will panic if called outside of the context of a tokio runtime.
     </span><span class="kw">pub fn </span>new(node_id: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="macro">debug!</span>(<span class="string">"Creating new LocalSwarmDiscovery service"</span>);
+        <span class="macro">debug!</span>(<span class="string">"Creating new MdnsDiscovery service"</span>);
         <span class="kw">let </span>(send, <span class="kw-2">mut </span>recv) = mpsc::channel(<span class="number">64</span>);
         <span class="kw">let </span>task_sender = send.clone();
         <span class="kw">let </span>rt = tokio::runtime::Handle::current();
-        <span class="kw">let </span>discovery = LocalSwarmDiscovery::spawn_discoverer(
-            node_id,
-            task_sender.clone(),
-            BTreeSet::new(),
-            <span class="kw-2">&amp;</span>rt,
-        )<span class="question-mark">?</span>;
+        <span class="kw">let </span>discovery =
+            MdnsDiscovery::spawn_discoverer(node_id, task_sender.clone(), BTreeSet::new(), <span class="kw-2">&amp;</span>rt)<span class="question-mark">?</span>;
 
         <span class="kw">let </span>local_addrs: Watchable&lt;<span class="prelude-ty">Option</span>&lt;NodeData&gt;&gt; = Watchable::default();
         <span class="kw">let </span><span class="kw-2">mut </span>addrs_change = local_addrs.watch();
@@ -635,26 +661,31 @@
             &gt; = HashMap::default();
             <span class="kw">let </span><span class="kw-2">mut </span>timeouts = JoinSet::new();
             <span class="kw">loop </span>{
-                <span class="macro">trace!</span>(<span class="question-mark">?</span>node_addrs, <span class="string">"LocalSwarmDiscovery Service loop tick"</span>);
+                <span class="macro">trace!</span>(<span class="question-mark">?</span>node_addrs, <span class="string">"MdnsDiscovery Service loop tick"</span>);
                 <span class="kw">let </span>msg = <span class="macro">tokio::select!</span> {
                     msg = recv.recv() =&gt; {
                         msg
                     }
                     <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(data)) = addrs_change.updated() =&gt; {
-                        <span class="macro">tracing::trace!</span>(<span class="question-mark">?</span>data, <span class="string">"LocalSwarmDiscovery address changed"</span>);
+                        <span class="macro">tracing::trace!</span>(<span class="question-mark">?</span>data, <span class="string">"MdnsDiscovery address changed"</span>);
                         discovery.remove_all();
                         <span class="kw">let </span>addrs =
-                            LocalSwarmDiscovery::socketaddrs_to_addrs(data.direct_addresses());
+                            MdnsDiscovery::socketaddrs_to_addrs(data.direct_addresses());
                         <span class="kw">for </span>addr <span class="kw">in </span>addrs {
                             discovery.add(addr.<span class="number">0</span>, addr.<span class="number">1</span>)
+                        }
+                        <span class="kw">if let </span><span class="prelude-val">Some</span>(user_data) = data.user_data() {
+                            <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = discovery.set_txt_attribute(USER_DATA_ATTRIBUTE.to_string(), <span class="prelude-val">Some</span>(user_data.to_string())) {
+                                <span class="macro">warn!</span>(<span class="string">"Failed to set the user-defined data in local swarm discovery: {err:?}"</span>);
+                            }
                         }
                         <span class="kw">continue</span>;
                     }
                 };
                 <span class="kw">let </span>msg = <span class="kw">match </span>msg {
                     <span class="prelude-val">None </span>=&gt; {
-                        <span class="macro">error!</span>(<span class="string">"LocalSwarmDiscovery channel closed"</span>);
-                        <span class="macro">error!</span>(<span class="string">"closing LocalSwarmDiscovery"</span>);
+                        <span class="macro">error!</span>(<span class="string">"MdnsDiscovery channel closed"</span>);
+                        <span class="macro">error!</span>(<span class="string">"closing MdnsDiscovery"</span>);
                         timeouts.abort_all();
                         <span class="kw">return</span>;
                     }
@@ -665,7 +696,7 @@
                         <span class="macro">trace!</span>(
                             <span class="question-mark">?</span>discovered_node_id,
                             <span class="question-mark">?</span>peer_info,
-                            <span class="string">"LocalSwarmDiscovery Message::Discovery"
+                            <span class="string">"MdnsDiscovery Message::Discovery"
                         </span>);
                         <span class="kw">let </span>discovered_node_id = <span class="kw">match </span>PublicKey::from_str(<span class="kw-2">&amp;</span>discovered_node_id) {
                             <span class="prelude-val">Ok</span>(node_id) =&gt; node_id,
@@ -685,7 +716,7 @@
                         <span class="kw">if </span>peer_info.is_expiry() {
                             <span class="macro">trace!</span>(
                                 <span class="question-mark">?</span>discovered_node_id,
-                                <span class="string">"removing node from LocalSwarmDiscovery address book"
+                                <span class="string">"removing node from MdnsDiscovery address book"
                             </span>);
                             node_addrs.remove(<span class="kw-2">&amp;</span>discovered_node_id);
                             <span class="kw">continue</span>;
@@ -702,7 +733,7 @@
                         <span class="macro">debug!</span>(
                             <span class="question-mark">?</span>discovered_node_id,
                             <span class="question-mark">?</span>peer_info,
-                            <span class="string">"adding node to LocalSwarmDiscovery address book"
+                            <span class="string">"adding node to MdnsDiscovery address book"
                         </span>);
 
                         <span class="kw">let </span><span class="kw-2">mut </span>resolved = <span class="bool-val">false</span>;
@@ -726,7 +757,7 @@
                     Message::Resolve(node_id, sender) =&gt; {
                         <span class="kw">let </span>id = last_id + <span class="number">1</span>;
                         last_id = id;
-                        <span class="macro">trace!</span>(<span class="question-mark">?</span>node_id, <span class="string">"LocalSwarmDiscovery Message::SendAddrs"</span>);
+                        <span class="macro">trace!</span>(<span class="question-mark">?</span>node_id, <span class="string">"MdnsDiscovery Message::SendAddrs"</span>);
                         <span class="kw">if let </span><span class="prelude-val">Some</span>(peer_info) = node_addrs.get(<span class="kw-2">&amp;</span>node_id) {
                             <span class="kw">let </span>item = peer_to_discovery_item(peer_info, <span class="kw-2">&amp;</span>node_id);
                             <span class="macro">debug!</span>(<span class="question-mark">?</span>item, <span class="string">"sending DiscoveryItem"</span>);
@@ -750,7 +781,7 @@
                         });
                     }
                     Message::Timeout(node_id, id) =&gt; {
-                        <span class="macro">trace!</span>(<span class="question-mark">?</span>node_id, <span class="string">"LocalSwarmDiscovery Message::Timeout"</span>);
+                        <span class="macro">trace!</span>(<span class="question-mark">?</span>node_id, <span class="string">"MdnsDiscovery Message::Timeout"</span>);
                         <span class="kw">if let </span><span class="prelude-val">Some</span>(senders_for_node_id) = senders.get_mut(<span class="kw-2">&amp;</span>node_id) {
                             senders_for_node_id.remove(<span class="kw-2">&amp;</span>id);
                             <span class="kw">if </span>senders_for_node_id.is_empty() {
@@ -759,7 +790,7 @@
                         }
                     }
                     Message::Subscribe(subscriber) =&gt; {
-                        <span class="macro">trace!</span>(<span class="string">"LocalSwarmDiscovery Message::Subscribe"</span>);
+                        <span class="macro">trace!</span>(<span class="string">"MdnsDiscovery Message::Subscribe"</span>);
                         subscribers.push(subscriber);
                     }
                 }
@@ -784,7 +815,7 @@
             <span class="macro">trace!</span>(
                 node_id,
                 <span class="question-mark">?</span>peer,
-                <span class="string">"Received peer information from LocalSwarmDiscovery"
+                <span class="string">"Received peer information from MdnsDiscovery"
             </span>);
 
             <span class="kw">let </span>sender = sender.clone();
@@ -794,7 +825,7 @@
                 sender.send(Message::Discovery(node_id, peer)).<span class="kw">await</span>.ok();
             });
         };
-        <span class="kw">let </span>addrs = LocalSwarmDiscovery::socketaddrs_to_addrs(<span class="kw-2">&amp;</span>socketaddrs);
+        <span class="kw">let </span>addrs = MdnsDiscovery::socketaddrs_to_addrs(<span class="kw-2">&amp;</span>socketaddrs);
         <span class="kw">let </span>node_id_str = data_encoding::BASE32_NOPAD
             .encode(node_id.as_bytes())
             .to_ascii_lowercase();
@@ -825,11 +856,26 @@
         .iter()
         .map(|(ip, port)| SocketAddr::new(<span class="kw-2">*</span>ip, <span class="kw-2">*</span>port))
         .collect();
-    <span class="kw">let </span>node_info = NodeInfo::new(<span class="kw-2">*</span>node_id).with_direct_addresses(direct_addresses);
+    <span class="comment">// Get the user-defined data from the resolved peer info. We expect an attribute with a value
+    // that parses as `UserData`. Otherwise, omit.
+    </span><span class="kw">let </span>user_data = <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="prelude-val">Some</span>(user_data)) = peer.txt_attribute(USER_DATA_ATTRIBUTE) {
+        <span class="kw">match </span>user_data.parse() {
+            <span class="prelude-val">Err</span>(err) =&gt; {
+                <span class="macro">debug!</span>(<span class="string">"failed to parse user data from TXT attribute: {err}"</span>);
+                <span class="prelude-val">None
+            </span>}
+            <span class="prelude-val">Ok</span>(data) =&gt; <span class="prelude-val">Some</span>(data),
+        }
+    } <span class="kw">else </span>{
+        <span class="prelude-val">None
+    </span>};
+    <span class="kw">let </span>node_info = NodeInfo::new(<span class="kw-2">*</span>node_id)
+        .with_direct_addresses(direct_addresses)
+        .with_user_data(user_data);
     DiscoveryItem::new(node_info, NAME, <span class="prelude-val">None</span>)
 }
 
-<span class="kw">impl </span>Discovery <span class="kw">for </span>LocalSwarmDiscovery {
+<span class="kw">impl </span>Discovery <span class="kw">for </span>MdnsDiscovery {
     <span class="kw">fn </span>resolve(<span class="kw-2">&amp;</span><span class="self">self</span>, _ep: Endpoint, node_id: NodeId) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem&gt;&gt;&gt; {
         <span class="kw">use </span>futures_util::FutureExt;
 
@@ -874,15 +920,19 @@
         <span class="kw">use </span>tracing_test::traced_test;
 
         <span class="kw">use </span><span class="kw">super</span>::<span class="kw">super</span>::<span class="kw-2">*</span>;
+        <span class="kw">use </span><span class="kw">crate</span>::discovery::UserData;
 
         <span class="attr">#[tokio::test]
         #[traced_test]
-        </span><span class="kw">async fn </span>local_swarm_discovery_publish_resolve() -&gt; TestResult {
+        </span><span class="kw">async fn </span>mdns_publish_resolve() -&gt; TestResult {
             <span class="kw">let </span>(<span class="kw">_</span>, discovery_a) = make_discoverer()<span class="question-mark">?</span>;
             <span class="kw">let </span>(node_id_b, discovery_b) = make_discoverer()<span class="question-mark">?</span>;
 
             <span class="comment">// make addr info for discoverer b
-            </span><span class="kw">let </span>addr_info = NodeData::new(<span class="prelude-val">None</span>, BTreeSet::from([<span class="string">"0.0.0.0:11111"</span>.parse()<span class="question-mark">?</span>]));
+            </span><span class="kw">let </span>user_data: UserData = <span class="string">"foobar"</span>.parse()<span class="question-mark">?</span>;
+            <span class="kw">let </span>node_data = NodeData::new(<span class="prelude-val">None</span>, BTreeSet::from([<span class="string">"0.0.0.0:11111"</span>.parse()<span class="question-mark">?</span>]))
+                .with_user_data(<span class="prelude-val">Some</span>(user_data.clone()));
+            <span class="macro">println!</span>(<span class="string">"info {node_data:?}"</span>);
 
             <span class="comment">// pass in endpoint, this is never used
             </span><span class="kw">let </span>ep = <span class="kw">crate</span>::endpoint::Builder::default().bind().<span class="kw">await</span><span class="question-mark">?</span>;
@@ -893,33 +943,35 @@
 
             <span class="macro">tracing::debug!</span>(<span class="question-mark">?</span>node_id_b, <span class="string">"Discovering node id b"</span>);
             <span class="comment">// publish discovery_b's address
-            </span>discovery_b.publish(<span class="kw-2">&amp;</span>addr_info);
+            </span>discovery_b.publish(<span class="kw-2">&amp;</span>node_data);
             <span class="kw">let </span>s1_res = tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), s1.next())
                 .<span class="kw">await</span><span class="question-mark">?
                 </span>.unwrap()<span class="question-mark">?</span>;
             <span class="kw">let </span>s2_res = tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), s2.next())
                 .<span class="kw">await</span><span class="question-mark">?
                 </span>.unwrap()<span class="question-mark">?</span>;
-            <span class="macro">assert_eq!</span>(s1_res.node_info().data, addr_info);
-            <span class="macro">assert_eq!</span>(s2_res.node_info().data, addr_info);
+            <span class="macro">assert_eq!</span>(s1_res.node_info().data, node_data);
+            <span class="macro">assert_eq!</span>(s2_res.node_info().data, node_data);
 
             <span class="prelude-val">Ok</span>(())
         }
 
         <span class="attr">#[tokio::test]
         #[traced_test]
-        </span><span class="kw">async fn </span>local_swarm_discovery_subscribe() -&gt; TestResult {
+        </span><span class="kw">async fn </span>mdns_subscribe() -&gt; TestResult {
             <span class="kw">let </span>num_nodes = <span class="number">5</span>;
             <span class="kw">let </span><span class="kw-2">mut </span>node_ids = BTreeSet::new();
             <span class="kw">let </span><span class="kw-2">mut </span>discoverers = <span class="macro">vec!</span>[];
 
             <span class="kw">let </span>(<span class="kw">_</span>, discovery) = make_discoverer()<span class="question-mark">?</span>;
-            <span class="kw">let </span>addr_info = NodeData::new(<span class="prelude-val">None</span>, BTreeSet::from([<span class="string">"0.0.0.0:11111"</span>.parse()<span class="question-mark">?</span>]));
+            <span class="kw">let </span>node_data = NodeData::new(<span class="prelude-val">None</span>, BTreeSet::from([<span class="string">"0.0.0.0:11111"</span>.parse()<span class="question-mark">?</span>]));
 
-            <span class="kw">for _ in </span><span class="number">0</span>..num_nodes {
+            <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..num_nodes {
                 <span class="kw">let </span>(node_id, discovery) = make_discoverer()<span class="question-mark">?</span>;
-                node_ids.insert(node_id);
-                discovery.publish(<span class="kw-2">&amp;</span>addr_info);
+                <span class="kw">let </span>user_data: UserData = <span class="macro">format!</span>(<span class="string">"node{i}"</span>).parse()<span class="question-mark">?</span>;
+                <span class="kw">let </span>node_data = node_data.clone().with_user_data(<span class="prelude-val">Some</span>(user_data.clone()));
+                node_ids.insert((node_id, <span class="prelude-val">Some</span>(user_data)));
+                discovery.publish(<span class="kw-2">&amp;</span>node_data);
                 discoverers.push(discovery);
             }
 
@@ -929,8 +981,8 @@
                 <span class="kw">let </span><span class="kw-2">mut </span>got_ids = BTreeSet::new();
                 <span class="kw">while </span>got_ids.len() != num_nodes {
                     <span class="kw">if let </span><span class="prelude-val">Some</span>(item) = events.next().<span class="kw">await </span>{
-                        <span class="kw">if </span>node_ids.contains(<span class="kw-2">&amp;</span>item.node_id()) {
-                            got_ids.insert(item.node_id());
+                        <span class="kw">if </span>node_ids.contains(<span class="kw-2">&amp;</span>(item.node_id(), item.user_data())) {
+                            got_ids.insert((item.node_id(), item.user_data()));
                         }
                     } <span class="kw">else </span>{
                         <span class="macro">anyhow::bail!</span>(
@@ -946,9 +998,9 @@
             <span class="prelude-val">Ok</span>(())
         }
 
-        <span class="kw">fn </span>make_discoverer() -&gt; <span class="prelude-ty">Result</span>&lt;(PublicKey, LocalSwarmDiscovery)&gt; {
+        <span class="kw">fn </span>make_discoverer() -&gt; <span class="prelude-ty">Result</span>&lt;(PublicKey, MdnsDiscovery)&gt; {
             <span class="kw">let </span>node_id = SecretKey::generate(rand::thread_rng()).public();
-            <span class="prelude-val">Ok</span>((node_id, LocalSwarmDiscovery::new(node_id)<span class="question-mark">?</span>))
+            <span class="prelude-val">Ok</span>((node_id, MdnsDiscovery::new(node_id)<span class="question-mark">?</span>))
         }
     }
 }

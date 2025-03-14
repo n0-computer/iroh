@@ -2573,7 +2573,106 @@
 <a href="#2572" id="2572">2572</a>
 <a href="#2573" id="2573">2573</a>
 <a href="#2574" id="2574">2574</a>
-<a href="#2575" id="2575">2575</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2575" id="2575">2575</a>
+<a href="#2576" id="2576">2576</a>
+<a href="#2577" id="2577">2577</a>
+<a href="#2578" id="2578">2578</a>
+<a href="#2579" id="2579">2579</a>
+<a href="#2580" id="2580">2580</a>
+<a href="#2581" id="2581">2581</a>
+<a href="#2582" id="2582">2582</a>
+<a href="#2583" id="2583">2583</a>
+<a href="#2584" id="2584">2584</a>
+<a href="#2585" id="2585">2585</a>
+<a href="#2586" id="2586">2586</a>
+<a href="#2587" id="2587">2587</a>
+<a href="#2588" id="2588">2588</a>
+<a href="#2589" id="2589">2589</a>
+<a href="#2590" id="2590">2590</a>
+<a href="#2591" id="2591">2591</a>
+<a href="#2592" id="2592">2592</a>
+<a href="#2593" id="2593">2593</a>
+<a href="#2594" id="2594">2594</a>
+<a href="#2595" id="2595">2595</a>
+<a href="#2596" id="2596">2596</a>
+<a href="#2597" id="2597">2597</a>
+<a href="#2598" id="2598">2598</a>
+<a href="#2599" id="2599">2599</a>
+<a href="#2600" id="2600">2600</a>
+<a href="#2601" id="2601">2601</a>
+<a href="#2602" id="2602">2602</a>
+<a href="#2603" id="2603">2603</a>
+<a href="#2604" id="2604">2604</a>
+<a href="#2605" id="2605">2605</a>
+<a href="#2606" id="2606">2606</a>
+<a href="#2607" id="2607">2607</a>
+<a href="#2608" id="2608">2608</a>
+<a href="#2609" id="2609">2609</a>
+<a href="#2610" id="2610">2610</a>
+<a href="#2611" id="2611">2611</a>
+<a href="#2612" id="2612">2612</a>
+<a href="#2613" id="2613">2613</a>
+<a href="#2614" id="2614">2614</a>
+<a href="#2615" id="2615">2615</a>
+<a href="#2616" id="2616">2616</a>
+<a href="#2617" id="2617">2617</a>
+<a href="#2618" id="2618">2618</a>
+<a href="#2619" id="2619">2619</a>
+<a href="#2620" id="2620">2620</a>
+<a href="#2621" id="2621">2621</a>
+<a href="#2622" id="2622">2622</a>
+<a href="#2623" id="2623">2623</a>
+<a href="#2624" id="2624">2624</a>
+<a href="#2625" id="2625">2625</a>
+<a href="#2626" id="2626">2626</a>
+<a href="#2627" id="2627">2627</a>
+<a href="#2628" id="2628">2628</a>
+<a href="#2629" id="2629">2629</a>
+<a href="#2630" id="2630">2630</a>
+<a href="#2631" id="2631">2631</a>
+<a href="#2632" id="2632">2632</a>
+<a href="#2633" id="2633">2633</a>
+<a href="#2634" id="2634">2634</a>
+<a href="#2635" id="2635">2635</a>
+<a href="#2636" id="2636">2636</a>
+<a href="#2637" id="2637">2637</a>
+<a href="#2638" id="2638">2638</a>
+<a href="#2639" id="2639">2639</a>
+<a href="#2640" id="2640">2640</a>
+<a href="#2641" id="2641">2641</a>
+<a href="#2642" id="2642">2642</a>
+<a href="#2643" id="2643">2643</a>
+<a href="#2644" id="2644">2644</a>
+<a href="#2645" id="2645">2645</a>
+<a href="#2646" id="2646">2646</a>
+<a href="#2647" id="2647">2647</a>
+<a href="#2648" id="2648">2648</a>
+<a href="#2649" id="2649">2649</a>
+<a href="#2650" id="2650">2650</a>
+<a href="#2651" id="2651">2651</a>
+<a href="#2652" id="2652">2652</a>
+<a href="#2653" id="2653">2653</a>
+<a href="#2654" id="2654">2654</a>
+<a href="#2655" id="2655">2655</a>
+<a href="#2656" id="2656">2656</a>
+<a href="#2657" id="2657">2657</a>
+<a href="#2658" id="2658">2658</a>
+<a href="#2659" id="2659">2659</a>
+<a href="#2660" id="2660">2660</a>
+<a href="#2661" id="2661">2661</a>
+<a href="#2662" id="2662">2662</a>
+<a href="#2663" id="2663">2663</a>
+<a href="#2664" id="2664">2664</a>
+<a href="#2665" id="2665">2665</a>
+<a href="#2666" id="2666">2666</a>
+<a href="#2667" id="2667">2667</a>
+<a href="#2668" id="2668">2668</a>
+<a href="#2669" id="2669">2669</a>
+<a href="#2670" id="2670">2670</a>
+<a href="#2671" id="2671">2671</a>
+<a href="#2672" id="2672">2672</a>
+<a href="#2673" id="2673">2673</a>
+<a href="#2674" id="2674">2674</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -2600,16 +2699,20 @@
 <span class="kw">use </span>data_encoding::BASE32_DNSSEC;
 <span class="kw">use </span>iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
 <span class="kw">use </span>iroh_relay::RelayMap;
-<span class="kw">use </span>n0_future::time::Duration;
+<span class="kw">use </span>n0_future::{time::Duration, Stream};
 <span class="kw">use </span>pin_project::pin_project;
 <span class="kw">use </span>tracing::{debug, instrument, trace, warn};
 <span class="kw">use </span>url::Url;
 
+<span class="attr">#[cfg(wasm_browser)]
+</span><span class="kw">use </span><span class="kw">crate</span>::discovery::pkarr::PkarrResolver;
+<span class="attr">#[cfg(not(wasm_browser))]
+</span><span class="kw">use crate</span>::{discovery::dns::DnsDiscovery, dns::DnsResolver};
 <span class="kw">use crate</span>::{
     discovery::{
-        dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryTask,
+        pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryItem, DiscoverySubscribers,
+        DiscoveryTask, Lagged, UserData,
     },
-    dns::DnsResolver,
     magicsock::{<span class="self">self</span>, Handle, NodeIdMappedAddr},
     tls,
     watchable::Watcher,
@@ -2685,10 +2788,12 @@
     keylog: bool,
     <span class="attr">#[debug(skip)]
     </span>discovery: Vec&lt;DiscoveryBuilder&gt;,
+    discovery_user_data: <span class="prelude-ty">Option</span>&lt;UserData&gt;,
     proxy_url: <span class="prelude-ty">Option</span>&lt;Url&gt;,
     <span class="doccomment">/// List of known nodes. See [`Builder::known_nodes`].
     </span>node_map: <span class="prelude-ty">Option</span>&lt;Vec&lt;NodeAddr&gt;&gt;,
-    dns_resolver: <span class="prelude-ty">Option</span>&lt;DnsResolver&gt;,
+    <span class="attr">#[cfg(not(wasm_browser))]
+    </span>dns_resolver: <span class="prelude-ty">Option</span>&lt;DnsResolver&gt;,
     <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
     </span>insecure_skip_relay_cert_verify: bool,
     addr_v4: <span class="prelude-ty">Option</span>&lt;SocketAddrV4&gt;,
@@ -2708,9 +2813,11 @@
             transport_config,
             keylog: Default::default(),
             discovery: Default::default(),
+            discovery_user_data: Default::default(),
             proxy_url: <span class="prelude-val">None</span>,
             node_map: <span class="prelude-val">None</span>,
-            dns_resolver: <span class="prelude-val">None</span>,
+            <span class="attr">#[cfg(not(wasm_browser))]
+            </span>dns_resolver: <span class="prelude-val">None</span>,
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>insecure_skip_relay_cert_verify: <span class="bool-val">false</span>,
             addr_v4: <span class="prelude-val">None</span>,
@@ -2738,7 +2845,8 @@
             keylog: <span class="self">self</span>.keylog,
             secret_key: secret_key.clone(),
         };
-        <span class="kw">let </span>dns_resolver = <span class="self">self</span>.dns_resolver.unwrap_or_default();
+        <span class="attr">#[cfg(not(wasm_browser))]
+        </span><span class="kw">let </span>dns_resolver = <span class="self">self</span>.dns_resolver.unwrap_or_default();
         <span class="kw">let </span>discovery = <span class="self">self
             </span>.discovery
             .into_iter()
@@ -2758,8 +2866,10 @@
             relay_map,
             node_map: <span class="self">self</span>.node_map,
             discovery,
+            discovery_user_data: <span class="self">self</span>.discovery_user_data,
             proxy_url: <span class="self">self</span>.proxy_url,
-            dns_resolver,
+            <span class="attr">#[cfg(not(wasm_browser))]
+            </span>dns_resolver,
             server_config,
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>insecure_skip_relay_cert_verify: <span class="self">self</span>.insecure_skip_relay_cert_verify,
@@ -2907,8 +3017,18 @@
         <span class="self">self</span>.discovery.push(Box::new(|secret_key| {
             <span class="prelude-val">Some</span>(Box::new(PkarrPublisher::n0_dns(secret_key.clone())))
         }));
-        <span class="self">self</span>.discovery
-            .push(Box::new(|<span class="kw">_</span>| <span class="prelude-val">Some</span>(Box::new(DnsDiscovery::n0_dns()))));
+        <span class="comment">// Resolve using HTTPS requests to our DNS server's /pkarr path in browsers
+        </span><span class="attr">#[cfg(wasm_browser)]
+        </span>{
+            <span class="self">self</span>.discovery
+                .push(Box::new(|<span class="kw">_</span>| <span class="prelude-val">Some</span>(Box::new(PkarrResolver::n0_dns()))));
+        }
+        <span class="comment">// Resolve using DNS queries outside browsers.
+        </span><span class="attr">#[cfg(not(wasm_browser))]
+        </span>{
+            <span class="self">self</span>.discovery
+                .push(Box::new(|<span class="kw">_</span>| <span class="prelude-val">Some</span>(Box::new(DnsDiscovery::n0_dns()))));
+        }
         <span class="self">self
     </span>}
 
@@ -2939,17 +3059,30 @@
     <span class="attr">#[cfg(feature = <span class="string">"discovery-local-network"</span>)]
     </span><span class="doccomment">/// Configures the endpoint to also use local network discovery.
     ///
-    /// This is equivalent to adding a [`crate::discovery::local_swarm_discovery::LocalSwarmDiscovery`]
-    /// with default settings. Note that LocalSwarmDiscovery has various more advanced
+    /// This is equivalent to adding a [`crate::discovery::mdns::MdnsDiscovery`]
+    /// with default settings. Note that MdnsDiscovery has various more advanced
     /// configuration options. If you need any of those, you should manually
-    /// create a LocalSwarmDiscovery and add it with [`Builder::add_discovery`].
+    /// create a MdnsDiscovery and add it with [`Builder::add_discovery`].
     </span><span class="kw">pub fn </span>discovery_local_network(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
-        <span class="kw">use </span><span class="kw">crate</span>::discovery::local_swarm_discovery::LocalSwarmDiscovery;
+        <span class="kw">use </span><span class="kw">crate</span>::discovery::mdns::MdnsDiscovery;
         <span class="self">self</span>.discovery.push(Box::new(|secret_key| {
-            LocalSwarmDiscovery::new(secret_key.public())
+            MdnsDiscovery::new(secret_key.public())
                 .map(|x| Box::new(x) <span class="kw">as _</span>)
                 .ok()
         }));
+        <span class="self">self
+    </span>}
+
+    <span class="doccomment">/// Sets the initial user-defined data to be published in discovery services for this node.
+    ///
+    /// When using discovery services, this string of [`UserData`] will be published together
+    /// with the node's addresses and relay URL. When other nodes discover this node,
+    /// they retrieve the [`UserData`] in addition to the addressing info.
+    ///
+    /// Iroh itself does not interpret the user-defined data in any way, it is purely left
+    /// for applications to parse and use.
+    </span><span class="kw">pub fn </span>user_data_for_discovery(<span class="kw-2">mut </span><span class="self">self</span>, user_data: UserData) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.discovery_user_data = <span class="prelude-val">Some</span>(user_data);
         <span class="self">self
     </span>}
 
@@ -2986,6 +3119,7 @@
     /// host system's DNS configuration. You can pass a custom instance of [`DnsResolver`]
     /// here to use a differently configured DNS resolver for this endpoint, or to share
     /// a [`DnsResolver`] between multiple endpoints.
+    </span><span class="attr">#[cfg(not(wasm_browser))]
     </span><span class="kw">pub fn </span>dns_resolver(<span class="kw-2">mut </span><span class="self">self</span>, dns_resolver: DnsResolver) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.dns_resolver = <span class="prelude-val">Some</span>(dns_resolver);
         <span class="self">self
@@ -3294,7 +3428,7 @@
         </span><span class="kw">let </span>server_name = <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{}.iroh.invalid"</span>, BASE32_DNSSEC.encode(node_id.as_bytes()));
         <span class="kw">let </span>connect = <span class="self">self</span>.msock.endpoint().connect_with(
             client_config,
-            mapped_addr.socket_addr(),
+            mapped_addr.private_socket_addr(),
             server_name,
         )<span class="question-mark">?</span>;
 
@@ -3411,14 +3545,30 @@
     /// The returned [`NodeAddr`] will have the current [`RelayUrl`] and direct addresses
     /// as they would be returned by [`Endpoint::home_relay`] and
     /// [`Endpoint::direct_addresses`].
+    ///
+    /// In browsers, because direct addresses are unavailable, this will only wait for
+    /// the home relay to be available before returning.
     </span><span class="kw">pub async fn </span>node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;NodeAddr&gt; {
-        <span class="kw">let </span>addrs = <span class="self">self</span>.direct_addresses().initialized().<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>relay = <span class="self">self</span>.home_relay().get()<span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(NodeAddr::from_parts(
-            <span class="self">self</span>.node_id(),
-            relay,
-            addrs.into_iter().map(|x| x.addr),
-        ))
+        <span class="attr">#[cfg(not(wasm_browser))]
+        </span>{
+            <span class="comment">// Outside browsers, we preserve the "old" behavior of waiting for direct
+            // addresses and then adding the relay URL (should we have it)
+            </span><span class="kw">let </span>addrs = <span class="self">self</span>.direct_addresses().initialized().<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="kw">let </span>relay = <span class="self">self</span>.home_relay().get()<span class="question-mark">?</span>;
+            <span class="prelude-val">Ok</span>(NodeAddr::from_parts(
+                <span class="self">self</span>.node_id(),
+                relay,
+                addrs.into_iter().map(|x| x.addr),
+            ))
+        }
+        <span class="attr">#[cfg(wasm_browser)]
+        </span>{
+            <span class="comment">// In browsers, there will never be any direct addresses, so we wait
+            // for the home relay instead. This make the `NodeAddr` have *some* way
+            // of connecting to us.
+            </span><span class="kw">let </span>relay = <span class="self">self</span>.home_relay().initialized().<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="prelude-val">Ok</span>(NodeAddr::new(<span class="self">self</span>.node_id()).with_relay_url(relay))
+        }
     }
 
     <span class="doccomment">/// Returns a [`Watcher`] for the [`RelayUrl`] of the Relay server used as home relay.
@@ -3492,6 +3642,7 @@
     ///
     /// The [`Endpoint`] always binds on an IPv4 address and also tries to bind on an IPv6
     /// address if available.
+    </span><span class="attr">#[cfg(not(wasm_browser))]
     </span><span class="kw">pub fn </span>bound_sockets(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; (SocketAddr, <span class="prelude-ty">Option</span>&lt;SocketAddr&gt;) {
         <span class="self">self</span>.msock.local_addr()
     }
@@ -3525,6 +3676,34 @@
     /// See also [`Endpoint::remote_info`] to only retrieve information about a single node.
     </span><span class="kw">pub fn </span>remote_info_iter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = RemoteInfo&gt; {
         <span class="self">self</span>.msock.list_remote_infos().into_iter()
+    }
+
+    <span class="doccomment">/// Returns a stream of all remote nodes discovered through the endpoint's discovery services.
+    ///
+    /// Whenever a node is discovered via the endpoint's discovery service, the corresponding
+    /// [`DiscoveryItem`] is yielded from this stream. This includes nodes discovered actively
+    /// through [`Discovery::resolve`], which is invoked automatically when calling
+    /// [`Endpoint::connect`] for a [`NodeId`] unknown to the endpoint. It also includes
+    /// nodes that the endpoint discovers passively from discovery services that implement
+    /// [`Discovery::subscribe`], which e.g. [`MdnsDiscovery`] does.
+    ///
+    /// The stream does not yield information about nodes that are added manually to the endpoint's
+    /// addressbook by calling [`Endpoint::add_node_addr`] or by supplying a full [`NodeAddr`] to
+    /// [`Endpoint::connect`]. It also does not yield information about nodes that we only
+    /// know about because they connected to us. When using the [`StaticProvider`] discovery,
+    /// discovery info is only emitted once connecting to a node added to the static provider, not
+    /// at the time of adding it to the static provider.
+    ///
+    /// The stream should be processed in a loop. If the stream is not processed fast enough,
+    /// [`Lagged`] may be yielded, indicating that items were missed.
+    ///
+    /// See also [`Endpoint::remote_info_iter`], which returns an iterator over all remotes
+    /// the endpoint knows about at a specific point in time.
+    ///
+    /// [`MdnsDiscovery`]: crate::discovery::mdns::MdnsDiscovery
+    /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
+    </span><span class="kw">pub fn </span>discovery_stream(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Stream&lt;Item = <span class="prelude-ty">Result</span>&lt;DiscoveryItem, Lagged&gt;&gt; {
+        <span class="self">self</span>.msock.discovery_subscribers().subscribe()
     }
 
     <span class="comment">// # Methods for less common getters.
@@ -3563,6 +3742,7 @@
     <span class="doccomment">/// Returns the DNS resolver used in this [`Endpoint`].
     ///
     /// See [`Builder::dns_resolver`].
+    </span><span class="attr">#[cfg(not(wasm_browser))]
     </span><span class="kw">pub fn </span>dns_resolver(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>DnsResolver {
         <span class="self">self</span>.msock.dns_resolver()
     }
@@ -3588,6 +3768,19 @@
     /// the network change itself, there is no harm in calling this function.
     </span><span class="kw">pub async fn </span>network_change(<span class="kw-2">&amp;</span><span class="self">self</span>) {
         <span class="self">self</span>.msock.network_change().<span class="kw">await</span>;
+    }
+
+    <span class="comment">// # Methods to update internal state.
+
+    </span><span class="doccomment">/// Sets the initial user-defined data to be published in discovery services for this node.
+    ///
+    /// If the user-defined data passed to this function is different to the previous one,
+    /// the endpoint will republish its node info to the configured discovery services.
+    ///
+    /// See also [`Builder::user_data_for_discovery`] for setting an initial value when
+    /// building the endpoint.
+    </span><span class="kw">pub fn </span>set_user_data_for_discovery(<span class="kw-2">&amp;</span><span class="self">self</span>, user_data: <span class="prelude-ty">Option</span>&lt;UserData&gt;) {
+        <span class="self">self</span>.msock.set_user_data_for_discovery(user_data);
     }
 
     <span class="comment">// # Methods for terminating the endpoint.
@@ -3700,6 +3893,11 @@
                 }
             }
         }
+    }
+
+    <span class="doccomment">/// Returns a reference to the subscribers channel for discovery events.
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>discovery_subscribers(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>DiscoverySubscribers {
+        <span class="self">self</span>.msock.discovery_subscribers()
     }
 
     <span class="attr">#[cfg(test)]

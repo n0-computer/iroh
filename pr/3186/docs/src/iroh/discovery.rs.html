@@ -955,7 +955,124 @@
 <a href="#954" id="954">954</a>
 <a href="#955" id="955">955</a>
 <a href="#956" id="956">956</a>
-<a href="#957" id="957">957</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
+<a href="#957" id="957">957</a>
+<a href="#958" id="958">958</a>
+<a href="#959" id="959">959</a>
+<a href="#960" id="960">960</a>
+<a href="#961" id="961">961</a>
+<a href="#962" id="962">962</a>
+<a href="#963" id="963">963</a>
+<a href="#964" id="964">964</a>
+<a href="#965" id="965">965</a>
+<a href="#966" id="966">966</a>
+<a href="#967" id="967">967</a>
+<a href="#968" id="968">968</a>
+<a href="#969" id="969">969</a>
+<a href="#970" id="970">970</a>
+<a href="#971" id="971">971</a>
+<a href="#972" id="972">972</a>
+<a href="#973" id="973">973</a>
+<a href="#974" id="974">974</a>
+<a href="#975" id="975">975</a>
+<a href="#976" id="976">976</a>
+<a href="#977" id="977">977</a>
+<a href="#978" id="978">978</a>
+<a href="#979" id="979">979</a>
+<a href="#980" id="980">980</a>
+<a href="#981" id="981">981</a>
+<a href="#982" id="982">982</a>
+<a href="#983" id="983">983</a>
+<a href="#984" id="984">984</a>
+<a href="#985" id="985">985</a>
+<a href="#986" id="986">986</a>
+<a href="#987" id="987">987</a>
+<a href="#988" id="988">988</a>
+<a href="#989" id="989">989</a>
+<a href="#990" id="990">990</a>
+<a href="#991" id="991">991</a>
+<a href="#992" id="992">992</a>
+<a href="#993" id="993">993</a>
+<a href="#994" id="994">994</a>
+<a href="#995" id="995">995</a>
+<a href="#996" id="996">996</a>
+<a href="#997" id="997">997</a>
+<a href="#998" id="998">998</a>
+<a href="#999" id="999">999</a>
+<a href="#1000" id="1000">1000</a>
+<a href="#1001" id="1001">1001</a>
+<a href="#1002" id="1002">1002</a>
+<a href="#1003" id="1003">1003</a>
+<a href="#1004" id="1004">1004</a>
+<a href="#1005" id="1005">1005</a>
+<a href="#1006" id="1006">1006</a>
+<a href="#1007" id="1007">1007</a>
+<a href="#1008" id="1008">1008</a>
+<a href="#1009" id="1009">1009</a>
+<a href="#1010" id="1010">1010</a>
+<a href="#1011" id="1011">1011</a>
+<a href="#1012" id="1012">1012</a>
+<a href="#1013" id="1013">1013</a>
+<a href="#1014" id="1014">1014</a>
+<a href="#1015" id="1015">1015</a>
+<a href="#1016" id="1016">1016</a>
+<a href="#1017" id="1017">1017</a>
+<a href="#1018" id="1018">1018</a>
+<a href="#1019" id="1019">1019</a>
+<a href="#1020" id="1020">1020</a>
+<a href="#1021" id="1021">1021</a>
+<a href="#1022" id="1022">1022</a>
+<a href="#1023" id="1023">1023</a>
+<a href="#1024" id="1024">1024</a>
+<a href="#1025" id="1025">1025</a>
+<a href="#1026" id="1026">1026</a>
+<a href="#1027" id="1027">1027</a>
+<a href="#1028" id="1028">1028</a>
+<a href="#1029" id="1029">1029</a>
+<a href="#1030" id="1030">1030</a>
+<a href="#1031" id="1031">1031</a>
+<a href="#1032" id="1032">1032</a>
+<a href="#1033" id="1033">1033</a>
+<a href="#1034" id="1034">1034</a>
+<a href="#1035" id="1035">1035</a>
+<a href="#1036" id="1036">1036</a>
+<a href="#1037" id="1037">1037</a>
+<a href="#1038" id="1038">1038</a>
+<a href="#1039" id="1039">1039</a>
+<a href="#1040" id="1040">1040</a>
+<a href="#1041" id="1041">1041</a>
+<a href="#1042" id="1042">1042</a>
+<a href="#1043" id="1043">1043</a>
+<a href="#1044" id="1044">1044</a>
+<a href="#1045" id="1045">1045</a>
+<a href="#1046" id="1046">1046</a>
+<a href="#1047" id="1047">1047</a>
+<a href="#1048" id="1048">1048</a>
+<a href="#1049" id="1049">1049</a>
+<a href="#1050" id="1050">1050</a>
+<a href="#1051" id="1051">1051</a>
+<a href="#1052" id="1052">1052</a>
+<a href="#1053" id="1053">1053</a>
+<a href="#1054" id="1054">1054</a>
+<a href="#1055" id="1055">1055</a>
+<a href="#1056" id="1056">1056</a>
+<a href="#1057" id="1057">1057</a>
+<a href="#1058" id="1058">1058</a>
+<a href="#1059" id="1059">1059</a>
+<a href="#1060" id="1060">1060</a>
+<a href="#1061" id="1061">1061</a>
+<a href="#1062" id="1062">1062</a>
+<a href="#1063" id="1063">1063</a>
+<a href="#1064" id="1064">1064</a>
+<a href="#1065" id="1065">1065</a>
+<a href="#1066" id="1066">1066</a>
+<a href="#1067" id="1067">1067</a>
+<a href="#1068" id="1068">1068</a>
+<a href="#1069" id="1069">1069</a>
+<a href="#1070" id="1070">1070</a>
+<a href="#1071" id="1071">1071</a>
+<a href="#1072" id="1072">1072</a>
+<a href="#1073" id="1073">1073</a>
+<a href="#1074" id="1074">1074</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
 //! To connect to an iroh node a [`NodeAddr`] is needed, which may contain a
 //! [`RelayUrl`] or one or more *direct addresses* in addition to the [`NodeId`].
@@ -991,8 +1108,8 @@
 //! - The [`PkarrResolver`] which can perform lookups from designated [pkarr relay servers]
 //!   using HTTP.
 //!
-//! - [`LocalSwarmDiscovery`]: local_swarm_discovery::LocalSwarmDiscovery which is an mDNS
-//!   implementation.
+//! - [`MdnsDiscovery`]: mdns::MdnsDiscovery which uses the crate `swarm-discovery`, an
+//!   opinionated mDNS implementation, to discover nodes on the local network.
 //!
 //! - The [`DhtDiscovery`] also uses the [`pkarr`] system but can also publish and lookup
 //!   records to/from the Mainline DHT.
@@ -1026,14 +1143,14 @@
 //! # }
 //! ```
 //!
-//! To also enable [`LocalSwarmDiscovery`] it can be added as another service in the
+//! To also enable [`MdnsDiscovery`] it can be added as another service in the
 //! [`ConcurrentDiscovery`]:
 //!
 //! ```no_run
 //! # #[cfg(feature = "discovery-local-network")]
 //! # {
 //! # use iroh::discovery::dns::DnsDiscovery;
-//! # use iroh::discovery::local_swarm_discovery::LocalSwarmDiscovery;
+//! # use iroh::discovery::mdns::MdnsDiscovery;
 //! # use iroh::discovery::pkarr::PkarrPublisher;
 //! # use iroh::discovery::ConcurrentDiscovery;
 //! # use iroh::SecretKey;
@@ -1043,7 +1160,7 @@
 //! let discovery = ConcurrentDiscovery::from_services(vec![
 //!     Box::new(PkarrPublisher::n0_dns(secret_key.clone())),
 //!     Box::new(DnsDiscovery::n0_dns()),
-//!     Box::new(LocalSwarmDiscovery::new(secret_key.public())?),
+//!     Box::new(MdnsDiscovery::new(secret_key.public())?),
 //! ]);
 //! # Ok(())
 //! # }
@@ -1059,28 +1176,31 @@
 //! [`PkarrPublisher`]: pkarr::PkarrPublisher
 //! [`DhtDiscovery`]: pkarr::dht::DhtDiscovery
 //! [pkarr relay servers]: https://pkarr.org/#servers
-//! [`LocalSwarmDiscovery`]: local_swarm_discovery::LocalSwarmDiscovery
+//! [`MdnsDiscovery`]: mdns::MdnsDiscovery
 //! [`StaticProvider`]: static_provider::StaticProvider
 
 </span><span class="kw">use </span>std::sync::Arc;
 
 <span class="kw">use </span>anyhow::{anyhow, ensure, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>iroh_base::{NodeAddr, NodeId};
-<span class="kw">pub use </span>iroh_relay::dns::node_info::{NodeData, NodeInfo};
 <span class="kw">use </span>n0_future::{
-    stream::{Boxed <span class="kw">as </span>BoxStream, StreamExt},
+    boxed::BoxStream,
+    stream::StreamExt,
     task::{<span class="self">self</span>, AbortOnDropHandle},
     time::{<span class="self">self</span>, Duration},
+    Stream, TryStreamExt,
 };
 <span class="kw">use </span>tokio::sync::oneshot;
 <span class="kw">use </span>tracing::{debug, error_span, warn, Instrument};
 
+<span class="kw">pub use </span><span class="kw">crate</span>::node_info::{NodeData, NodeInfo, UserData};
 <span class="kw">use </span><span class="kw">crate</span>::Endpoint;
 
-<span class="kw">pub mod </span>dns;
+<span class="attr">#[cfg(not(wasm_browser))]
+</span><span class="kw">pub mod </span>dns;
 
 <span class="attr">#[cfg(feature = <span class="string">"discovery-local-network"</span>)]
-</span><span class="kw">pub mod </span>local_swarm_discovery;
+</span><span class="kw">pub mod </span>mdns;
 <span class="kw">pub mod </span>pkarr;
 <span class="kw">pub mod </span>static_provider;
 
@@ -1218,6 +1338,11 @@
     </span><span class="kw">pub fn </span>into_node_addr(<span class="self">self</span>) -&gt; NodeAddr {
         <span class="self">self</span>.node_info.into_node_addr()
     }
+
+    <span class="doccomment">/// Returns any user-defined data.
+    </span><span class="kw">pub fn </span>user_data(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;UserData&gt; {
+        <span class="self">self</span>.node_info().data.user_data().cloned()
+    }
 }
 
 <span class="kw">impl </span>std::ops::Deref <span class="kw">for </span>DiscoveryItem {
@@ -1309,7 +1434,7 @@
 <span class="doccomment">/// A wrapper around a tokio task which runs a node discovery.
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>DiscoveryTask {
     on_first_rx: oneshot::Receiver&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;,
-    task: AbortOnDropHandle&lt;()&gt;,
+    _task: AbortOnDropHandle&lt;()&gt;,
 }
 
 <span class="kw">impl </span>DiscoveryTask {
@@ -1324,7 +1449,7 @@
             ),
         );
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
-            task: AbortOnDropHandle::new(task),
+            _task: AbortOnDropHandle::new(task),
             on_first_rx,
         })
     }
@@ -1368,7 +1493,7 @@
             ),
         );
         <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="self">Self </span>{
-            task: AbortOnDropHandle::new(task),
+            _task: AbortOnDropHandle::new(task),
             on_first_rx,
         }))
     }
@@ -1428,7 +1553,7 @@
             <span class="kw">match </span>stream.next().<span class="kw">await </span>{
                 <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(r)) =&gt; {
                     <span class="kw">let </span>provenance = r.provenance;
-                    <span class="kw">let </span>node_addr = r.into_node_addr();
+                    <span class="kw">let </span>node_addr = r.to_node_addr();
                     <span class="kw">if </span>node_addr.is_empty() {
                         <span class="macro">debug!</span>(%provenance, <span class="string">"empty address found"</span>);
                         <span class="kw">continue</span>;
@@ -1438,6 +1563,8 @@
                     <span class="kw">if let </span><span class="prelude-val">Some</span>(tx) = on_first_tx.take() {
                         tx.send(<span class="prelude-val">Ok</span>(())).ok();
                     }
+                    <span class="comment">// Send the discovery item to the subscribers of the discovery broadcast stream.
+                    </span>ep.discovery_subscribers().send(r);
                 }
                 <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(err)) =&gt; {
                     <span class="macro">warn!</span>(<span class="question-mark">?</span>err, <span class="string">"discovery service produced error"</span>);
@@ -1453,9 +1580,44 @@
     }
 }
 
-<span class="kw">impl </span>Drop <span class="kw">for </span>DiscoveryTask {
-    <span class="kw">fn </span>drop(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
-        <span class="self">self</span>.task.abort();
+<span class="doccomment">/// Error returned when a discovery watch stream lagged too far behind.
+///
+/// The stream returned from [`Endpoint::discovery_stream`] yields this error
+/// if the loop in which the stream is processed cannot keep up with the emitted
+/// discovery events. Attempting to read the next item from the channel afterwards
+/// will return the oldest [`DiscoveryItem`] that is still retained.
+///
+/// Includes the number of skipped messages.
+</span><span class="attr">#[derive(Debug, thiserror::Error)]
+#[error(<span class="string">"channel lagged by {0}"</span>)]
+</span><span class="kw">pub struct </span>Lagged(<span class="kw">pub </span>u64);
+
+<span class="attr">#[derive(Clone, Debug)]
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>DiscoverySubscribers {
+    inner: tokio::sync::broadcast::Sender&lt;DiscoveryItem&gt;,
+}
+
+<span class="kw">impl </span>DiscoverySubscribers {
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new() -&gt; <span class="self">Self </span>{
+        <span class="comment">// TODO: Make capacity configurable from the endpoint builder?
+        // This is the maximum number of [`DiscoveryItem`]s held by the channel if
+        // subscribers are stalled.
+        </span><span class="kw">const </span>CAPACITY: usize = <span class="number">128</span>;
+        <span class="self">Self </span>{
+            inner: tokio::sync::broadcast::Sender::new(CAPACITY),
+        }
+    }
+
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Stream&lt;Item = <span class="prelude-ty">Result</span>&lt;DiscoveryItem, Lagged&gt;&gt; {
+        <span class="kw">use </span>tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
+        <span class="kw">let </span>recv = <span class="self">self</span>.inner.subscribe();
+        BroadcastStream::new(recv).map_err(|BroadcastStreamRecvError::Lagged(n)| Lagged(n))
+    }
+
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>send(<span class="kw-2">&amp;</span><span class="self">self</span>, item: DiscoveryItem) {
+        <span class="comment">// `broadcast::Sender::send` returns an error if the channel has no subscribers,
+        // which we don't care about.
+        </span><span class="self">self</span>.inner.send(item).ok();
     }
 }
 
@@ -1481,9 +1643,19 @@
 
     <span class="kw">type </span>InfoStore = HashMap&lt;NodeId, (NodeData, u64)&gt;;
 
-    <span class="attr">#[derive(Debug, Clone, Default)]
+    <span class="attr">#[derive(Debug, Clone)]
     </span><span class="kw">struct </span>TestDiscoveryShared {
         nodes: Arc&lt;Mutex&lt;InfoStore&gt;&gt;,
+        watchers: tokio::sync::broadcast::Sender&lt;DiscoveryItem&gt;,
+    }
+
+    <span class="kw">impl </span>Default <span class="kw">for </span>TestDiscoveryShared {
+        <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
+            <span class="self">Self </span>{
+                nodes: Default::default(),
+                watchers: tokio::sync::broadcast::Sender::new(<span class="number">1024</span>),
+            }
+        }
     }
 
     <span class="kw">impl </span>TestDiscoveryShared {
@@ -1505,6 +1677,10 @@
                 resolve_wrong: <span class="bool-val">true</span>,
                 delay: Duration::from_millis(<span class="number">100</span>),
             }
+        }
+
+        <span class="kw">pub fn </span>send_passive(<span class="kw-2">&amp;</span><span class="self">self</span>, item: DiscoveryItem) {
+            <span class="self">self</span>.watchers.send(item).ok();
         }
     }
 
@@ -1567,6 +1743,13 @@
                 <span class="prelude-val">None </span>=&gt; n0_future::stream::empty().boxed(),
             };
             <span class="prelude-val">Some</span>(stream)
+        }
+
+        <span class="kw">fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;DiscoveryItem&gt;&gt; {
+            <span class="kw">let </span>recv = <span class="self">self</span>.shared.watchers.subscribe();
+            <span class="kw">let </span>stream =
+                tokio_stream::wrappers::BroadcastStream::new(recv).filter_map(|item| item.ok());
+            <span class="prelude-val">Some</span>(Box::pin(stream))
         }
     }
 
@@ -1726,6 +1909,52 @@
         <span class="prelude-val">Ok</span>(())
     }
 
+    <span class="attr">#[tokio::test]
+    #[traced_test]
+    </span><span class="kw">async fn </span>endpoint_discovery_watch() -&gt; anyhow::Result&lt;()&gt; {
+        <span class="kw">let </span>disco_shared = TestDiscoveryShared::default();
+        <span class="kw">let </span>(ep1, _guard1) = {
+            <span class="kw">let </span>secret = SecretKey::generate(rand::thread_rng());
+            <span class="kw">let </span>disco = disco_shared.create_discovery(secret.public());
+            new_endpoint(secret, disco).<span class="kw">await
+        </span>};
+        <span class="kw">let </span>(ep2, _guard2) = {
+            <span class="kw">let </span>secret = SecretKey::generate(rand::thread_rng());
+            <span class="kw">let </span>disco = disco_shared.create_discovery(secret.public());
+            new_endpoint(secret, disco).<span class="kw">await
+        </span>};
+
+        <span class="kw">let </span><span class="kw-2">mut </span>stream = ep1.discovery_stream();
+
+        <span class="comment">// wait for ep2 node addr to be updated and connect from ep1 -&gt; discovery via resolve
+        </span>ep2.node_addr().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let _ </span>= ep1.connect(ep2.node_id(), TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="kw">let </span>item = tokio::time::timeout(Duration::from_secs(<span class="number">1</span>), stream.next())
+            .<span class="kw">await
+            </span>.expect(<span class="string">"timeout"</span>)
+            .expect(<span class="string">"stream closed"</span>)
+            .expect(<span class="string">"stream lagged"</span>);
+        <span class="macro">assert_eq!</span>(item.node_id(), ep2.node_id());
+        <span class="macro">assert_eq!</span>(item.provenance(), <span class="string">"test-disco"</span>);
+
+        <span class="comment">// inject item into discovery passively
+        </span><span class="kw">let </span>passive_node_id = SecretKey::generate(rand::thread_rng()).public();
+        <span class="kw">let </span>node_info = NodeInfo::new(passive_node_id);
+        <span class="kw">let </span>passive_item = DiscoveryItem::new(node_info, <span class="string">"test-disco-passive"</span>, <span class="prelude-val">None</span>);
+        disco_shared.send_passive(passive_item.clone());
+
+        <span class="kw">let </span>item = tokio::time::timeout(Duration::from_secs(<span class="number">1</span>), stream.next())
+            .<span class="kw">await
+            </span>.expect(<span class="string">"timeout"</span>)
+            .expect(<span class="string">"stream closed"</span>)
+            .expect(<span class="string">"stream lagged"</span>);
+        <span class="macro">assert_eq!</span>(item.node_id(), passive_node_id);
+        <span class="macro">assert_eq!</span>(item.provenance(), <span class="string">"test-disco-passive"</span>);
+
+        <span class="prelude-val">Ok</span>(())
+    }
+
     <span class="kw">async fn </span>new_endpoint(
         secret: SecretKey,
         disco: <span class="kw">impl </span>Discovery + <span class="lifetime">'static</span>,
@@ -1789,14 +2018,15 @@
 </span><span class="kw">mod </span>test_dns_pkarr {
     <span class="kw">use </span>anyhow::Result;
     <span class="kw">use </span>iroh_base::{NodeAddr, SecretKey};
-    <span class="kw">use </span>iroh_relay::RelayMap;
+    <span class="kw">use </span>iroh_relay::{node_info::UserData, RelayMap};
     <span class="kw">use </span>n0_future::time::Duration;
     <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
     <span class="kw">use </span>tracing_test::traced_test;
 
     <span class="kw">use crate</span>::{
         discovery::{pkarr::PkarrPublisher, NodeData},
-        dns::{node_info::NodeInfo, DnsResolver},
+        dns::DnsResolver,
+        node_info::NodeInfo,
         test_utils::{
             dns_server::run_dns_server, pkarr_dns_state::State, run_relay_server, DnsPkarrServer,
         },
@@ -1842,20 +2072,24 @@
 
         <span class="kw">let </span>resolver = DnsResolver::with_nameserver(dns_pkarr_server.nameserver);
         <span class="kw">let </span>publisher = PkarrPublisher::new(secret_key, dns_pkarr_server.pkarr_url.clone());
-        <span class="kw">let </span>data = NodeData::new(relay_url.clone(), Default::default());
+        <span class="kw">let </span>user_data: UserData = <span class="string">"foobar"</span>.parse().unwrap();
+        <span class="kw">let </span>data = NodeData::new(relay_url.clone(), Default::default())
+            .with_user_data(<span class="prelude-val">Some</span>(user_data.clone()));
         <span class="comment">// does not block, update happens in background task
         </span>publisher.update_node_data(<span class="kw-2">&amp;</span>data);
         <span class="comment">// wait until our shared state received the update from pkarr publishing
         </span>dns_pkarr_server.on_node(<span class="kw-2">&amp;</span>node_id, PUBLISH_TIMEOUT).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>resolved = resolver.lookup_node_by_id(<span class="kw-2">&amp;</span>node_id, <span class="kw-2">&amp;</span>origin).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="macro">println!</span>(<span class="string">"resolved {resolved:?}"</span>);
 
-        <span class="kw">let </span>expected = NodeAddr {
+        <span class="kw">let </span>expected_addr = NodeAddr {
             node_id,
             relay_url,
             direct_addresses: Default::default(),
         };
 
-        <span class="macro">assert_eq!</span>(resolved.to_node_addr(), expected);
+        <span class="macro">assert_eq!</span>(resolved.to_node_addr(), expected_addr);
+        <span class="macro">assert_eq!</span>(resolved.user_data(), <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>user_data));
         <span class="prelude-val">Ok</span>(())
     }
 

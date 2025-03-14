@@ -390,7 +390,7 @@
         pkarr::{DEFAULT_PKARR_TTL, N0_DNS_PKARR_RELAY_PROD},
         Discovery, DiscoveryItem, NodeData,
     },
-    dns::node_info::NodeInfo,
+    node_info::NodeInfo,
     Endpoint,
 };
 
@@ -692,7 +692,7 @@
     </span><span class="kw">async fn </span>dht_discovery_smoke() -&gt; TestResult {
         <span class="kw">let </span>ep = <span class="kw">crate</span>::Endpoint::builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>secret = ep.secret_key().clone();
-        <span class="kw">let </span>testnet = mainline::Testnet::new(<span class="number">2</span>)<span class="question-mark">?</span>;
+        <span class="kw">let </span>testnet = pkarr::mainline::Testnet::new(<span class="number">2</span>)<span class="question-mark">?</span>;
         <span class="kw">let </span>client = pkarr::Client::builder()
             .dht(|builder| builder.bootstrap(<span class="kw-2">&amp;</span>testnet.bootstrap))
             .build()<span class="question-mark">?</span>;
