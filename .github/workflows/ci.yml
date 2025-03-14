@@ -143,7 +143,7 @@ jobs:
       - uses: taiki-e/install-action@cross
 
       - name: test
-        run: RUST_BACKTRACE=1 cross test --all --target ${{ matrix.target }} -- --test-threads=12
+        run: cross test --all --target ${{ matrix.target }} -- --test-threads=12
         env:
           RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG' }}
 
