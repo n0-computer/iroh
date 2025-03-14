@@ -314,11 +314,10 @@ impl Frame {
     /// Tries to decode a frame received over websockets.
     ///
     /// Specifically, bytes received from a binary websocket message frame.
-    pub(crate) fn decode_from_ws_msg(vec: Vec<u8>, cache: &KeyCache) -> anyhow::Result<Self> {
-        if vec.is_empty() {
+    pub(crate) fn decode_from_ws_msg(bytes: Bytes, cache: &KeyCache) -> anyhow::Result<Self> {
+        if bytes.is_empty() {
             bail!("error parsing relay::codec::Frame: too few bytes (0)");
         }
-        let bytes = Bytes::from(vec);
         let typ = FrameType::from(bytes[0]);
         let frame = Self::from_bytes(typ, bytes.slice(1..), cache)?;
         Ok(frame)
@@ -853,7 +852,7 @@ mod proptests {
         #[test]
         fn frame_ws_roundtrip(frame in frame()) {
             let encoded = frame.clone().encode_for_ws_msg();
-            let decoded = Frame::decode_from_ws_msg(encoded, &KeyCache::test()).unwrap();
+            let decoded = Frame::decode_from_ws_msg(Bytes::from(encoded), &KeyCache::test()).unwrap();
             prop_assert_eq!(frame, decoded);
         }
 
