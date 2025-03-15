@@ -371,7 +371,8 @@ async fn handle_connection(incoming: crate::endpoint::Incoming, protocols: Arc<P
         warn!("Ignoring connection: unsupported ALPN protocol");
         return;
     };
-    warn!("Handling incoming connection for ALPN {alpn}");
+    let alpn_str = String::from_utf8(alpn).unwrap_or_else(|_| "<invalid>".to_string());
+    warn!("Handling incoming connection for ALPN {alpn_str}");
     match handler.on_connecting(connecting).await {
         Ok(connection) => {
             if let Err(err) = handler.accept(connection).await {
