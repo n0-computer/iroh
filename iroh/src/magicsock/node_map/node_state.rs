@@ -387,6 +387,7 @@ impl NodeState {
     ///
     /// When a call-me-maybe message is sent we also need to send pings to all known paths
     /// of the endpoint.  The [`NodeState::send_call_me_maybe`] function takes care of this.
+    #[cfg(not(wasm_browser))]
     #[instrument("want_call_me_maybe", skip_all)]
     fn want_call_me_maybe(&self, now: &Instant) -> bool {
         trace!("full ping: wanted?");
@@ -416,6 +417,12 @@ impl NodeState {
                 }
             }
         }
+    }
+
+    #[cfg(wasm_browser)]
+    fn want_call_me_maybe(&self, _now: &Instant) -> bool {
+        trace!("full ping: skipped in browser");
+        false
     }
 
     /// Cleanup the expired ping for the passed in txid.
