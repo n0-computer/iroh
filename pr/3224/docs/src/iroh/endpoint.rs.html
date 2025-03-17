@@ -2672,7 +2672,46 @@
 <a href="#2671" id="2671">2671</a>
 <a href="#2672" id="2672">2672</a>
 <a href="#2673" id="2673">2673</a>
-<a href="#2674" id="2674">2674</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2674" id="2674">2674</a>
+<a href="#2675" id="2675">2675</a>
+<a href="#2676" id="2676">2676</a>
+<a href="#2677" id="2677">2677</a>
+<a href="#2678" id="2678">2678</a>
+<a href="#2679" id="2679">2679</a>
+<a href="#2680" id="2680">2680</a>
+<a href="#2681" id="2681">2681</a>
+<a href="#2682" id="2682">2682</a>
+<a href="#2683" id="2683">2683</a>
+<a href="#2684" id="2684">2684</a>
+<a href="#2685" id="2685">2685</a>
+<a href="#2686" id="2686">2686</a>
+<a href="#2687" id="2687">2687</a>
+<a href="#2688" id="2688">2688</a>
+<a href="#2689" id="2689">2689</a>
+<a href="#2690" id="2690">2690</a>
+<a href="#2691" id="2691">2691</a>
+<a href="#2692" id="2692">2692</a>
+<a href="#2693" id="2693">2693</a>
+<a href="#2694" id="2694">2694</a>
+<a href="#2695" id="2695">2695</a>
+<a href="#2696" id="2696">2696</a>
+<a href="#2697" id="2697">2697</a>
+<a href="#2698" id="2698">2698</a>
+<a href="#2699" id="2699">2699</a>
+<a href="#2700" id="2700">2700</a>
+<a href="#2701" id="2701">2701</a>
+<a href="#2702" id="2702">2702</a>
+<a href="#2703" id="2703">2703</a>
+<a href="#2704" id="2704">2704</a>
+<a href="#2705" id="2705">2705</a>
+<a href="#2706" id="2706">2706</a>
+<a href="#2707" id="2707">2707</a>
+<a href="#2708" id="2708">2708</a>
+<a href="#2709" id="2709">2709</a>
+<a href="#2710" id="2710">2710</a>
+<a href="#2711" id="2711">2711</a>
+<a href="#2712" id="2712">2712</a>
+<a href="#2713" id="2713">2713</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -2697,6 +2736,7 @@
 
 <span class="kw">use </span>anyhow::{bail, Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>data_encoding::BASE32_DNSSEC;
+<span class="kw">use </span>ed25519_dalek::{pkcs8::DecodePublicKey, VerifyingKey};
 <span class="kw">use </span>iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
 <span class="kw">use </span>iroh_relay::RelayMap;
 <span class="kw">use </span>n0_future::{time::Duration, Stream};
@@ -2800,6 +2840,7 @@
     addr_v6: <span class="prelude-ty">Option</span>&lt;SocketAddrV6&gt;,
     <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
     </span>path_selection: PathSelection,
+    tls_auth: tls::Authentication,
 }
 
 <span class="kw">impl </span>Default <span class="kw">for </span>Builder {
@@ -2824,6 +2865,7 @@
             addr_v6: <span class="prelude-val">None</span>,
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>path_selection: PathSelection::default(),
+            tls_auth: tls::Authentication::RawPublicKey,
         }
     }
 }
@@ -2842,6 +2884,7 @@
             .unwrap_or_else(|| SecretKey::generate(rand::rngs::OsRng));
         <span class="kw">let </span>static_config = StaticConfig {
             transport_config: Arc::new(<span class="self">self</span>.transport_config),
+            tls_auth: <span class="self">self</span>.tls_auth,
             keylog: <span class="self">self</span>.keylog,
             secret_key: secret_key.clone(),
         };
@@ -3032,6 +3075,24 @@
         <span class="self">self
     </span>}
 
+    <span class="doccomment">/// Use libp2p based self signed certificates for TLS.
+    ///
+    /// For details see the libp2p spec at &lt;https://github.com/libp2p/specs/blob/master/tls/tls.md&gt;
+    ///
+    /// This is the only mechanism available in `iroh@0.33.0` and earlier.
+    </span><span class="kw">pub fn </span>tls_x509(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.tls_auth = tls::Authentication::X509;
+        <span class="self">self
+    </span>}
+
+    <span class="doccomment">/// Use TLS Raw Public Keys
+    ///
+    /// This is the default, but is not compatible with older versions of iroh.
+    </span><span class="kw">pub fn </span>tls_raw_public_keys(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.tls_auth = tls::Authentication::RawPublicKey;
+        <span class="self">self
+    </span>}
+
     <span class="attr">#[cfg(feature = <span class="string">"discovery-pkarr-dht"</span>)]
     </span><span class="doccomment">/// Configures the endpoint to also use the mainline DHT with default settings.
     ///
@@ -3059,14 +3120,14 @@
     <span class="attr">#[cfg(feature = <span class="string">"discovery-local-network"</span>)]
     </span><span class="doccomment">/// Configures the endpoint to also use local network discovery.
     ///
-    /// This is equivalent to adding a [`crate::discovery::local_swarm_discovery::LocalSwarmDiscovery`]
-    /// with default settings. Note that LocalSwarmDiscovery has various more advanced
+    /// This is equivalent to adding a [`crate::discovery::mdns::MdnsDiscovery`]
+    /// with default settings. Note that MdnsDiscovery has various more advanced
     /// configuration options. If you need any of those, you should manually
-    /// create a LocalSwarmDiscovery and add it with [`Builder::add_discovery`].
+    /// create a MdnsDiscovery and add it with [`Builder::add_discovery`].
     </span><span class="kw">pub fn </span>discovery_local_network(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
-        <span class="kw">use </span><span class="kw">crate</span>::discovery::local_swarm_discovery::LocalSwarmDiscovery;
+        <span class="kw">use </span><span class="kw">crate</span>::discovery::mdns::MdnsDiscovery;
         <span class="self">self</span>.discovery.push(Box::new(|secret_key| {
-            LocalSwarmDiscovery::new(secret_key.public())
+            MdnsDiscovery::new(secret_key.public())
                 .map(|x| Box::new(x) <span class="kw">as _</span>)
                 .ok()
         }));
@@ -3175,6 +3236,7 @@
 <span class="doccomment">/// Configuration for a [`quinn::Endpoint`] that cannot be changed at runtime.
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">struct </span>StaticConfig {
+    tls_auth: tls::Authentication,
     secret_key: SecretKey,
     transport_config: Arc&lt;quinn::TransportConfig&gt;,
     keylog: bool,
@@ -3183,31 +3245,14 @@
 <span class="kw">impl </span>StaticConfig {
     <span class="doccomment">/// Create a [`quinn::ServerConfig`] with the specified ALPN protocols.
     </span><span class="kw">fn </span>create_server_config(<span class="kw-2">&amp;</span><span class="self">self</span>, alpn_protocols: Vec&lt;Vec&lt;u8&gt;&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;ServerConfig&gt; {
-        <span class="kw">let </span>server_config = make_server_config(
-            <span class="kw-2">&amp;</span><span class="self">self</span>.secret_key,
-            alpn_protocols,
-            <span class="self">self</span>.transport_config.clone(),
-            <span class="self">self</span>.keylog,
-        )<span class="question-mark">?</span>;
+        <span class="kw">let </span>quic_server_config =
+            <span class="self">self</span>.tls_auth
+                .make_server_config(<span class="kw-2">&amp;</span><span class="self">self</span>.secret_key, alpn_protocols, <span class="self">self</span>.keylog)<span class="question-mark">?</span>;
+        <span class="kw">let </span><span class="kw-2">mut </span>server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
+        server_config.transport_config(<span class="self">self</span>.transport_config.clone());
+
         <span class="prelude-val">Ok</span>(server_config)
     }
-}
-
-<span class="doccomment">/// Creates a [`ServerConfig`] with the given secret key and limits.
-</span><span class="comment">// This return type can not longer be used anywhere in our public API.  It is however still
-// used by iroh::node::Node (or rather iroh::node::Builder) to create a plain Quinn
-// endpoint.
-</span><span class="kw">pub fn </span>make_server_config(
-    secret_key: <span class="kw-2">&amp;</span>SecretKey,
-    alpn_protocols: Vec&lt;Vec&lt;u8&gt;&gt;,
-    transport_config: Arc&lt;TransportConfig&gt;,
-    keylog: bool,
-) -&gt; <span class="prelude-ty">Result</span>&lt;ServerConfig&gt; {
-    <span class="kw">let </span>quic_server_config = tls::make_server_config(secret_key, alpn_protocols, keylog)<span class="question-mark">?</span>;
-    <span class="kw">let </span><span class="kw-2">mut </span>server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
-    server_config.transport_config(transport_config);
-
-    <span class="prelude-val">Ok</span>(server_config)
 }
 
 <span class="doccomment">/// Controls an iroh node, establishing connections with other nodes.
@@ -3404,9 +3449,9 @@
         </span>);
         <span class="kw">let </span>client_config = {
             <span class="kw">let </span>alpn_protocols = <span class="macro">vec!</span>[alpn.to_vec()];
-            <span class="kw">let </span>quic_client_config = tls::make_client_config(
+            <span class="kw">let </span>quic_client_config = <span class="self">self</span>.static_config.tls_auth.make_client_config(
                 <span class="kw-2">&amp;</span><span class="self">self</span>.static_config.secret_key,
-                <span class="prelude-val">Some</span>(node_id),
+                node_id,
                 alpn_protocols,
                 <span class="prelude-val">Some</span>(<span class="self">self</span>.session_store.clone()),
                 <span class="self">self</span>.static_config.keylog,
@@ -3685,7 +3730,7 @@
     /// through [`Discovery::resolve`], which is invoked automatically when calling
     /// [`Endpoint::connect`] for a [`NodeId`] unknown to the endpoint. It also includes
     /// nodes that the endpoint discovers passively from discovery services that implement
-    /// [`Discovery::subscribe`], which e.g. [`LocalSwarmDiscovery`] does.
+    /// [`Discovery::subscribe`], which e.g. [`MdnsDiscovery`] does.
     ///
     /// The stream does not yield information about nodes that are added manually to the endpoint's
     /// addressbook by calling [`Endpoint::add_node_addr`] or by supplying a full [`NodeAddr`] to
@@ -3700,7 +3745,7 @@
     /// See also [`Endpoint::remote_info_iter`], which returns an iterator over all remotes
     /// the endpoint knows about at a specific point in time.
     ///
-    /// [`LocalSwarmDiscovery`]: crate::discovery::local_swarm_discovery::LocalSwarmDiscovery
+    /// [`MdnsDiscovery`]: crate::discovery::mdns::MdnsDiscovery
     /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
     </span><span class="kw">pub fn </span>discovery_stream(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Stream&lt;Item = <span class="prelude-ty">Result</span>&lt;DiscoveryItem, Lagged&gt;&gt; {
         <span class="self">self</span>.msock.discovery_subscribers().subscribe()
@@ -4073,7 +4118,10 @@
             Poll::Pending =&gt; Poll::Pending,
             Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; Poll::Ready(<span class="prelude-val">Err</span>(err)),
             Poll::Ready(<span class="prelude-val">Ok</span>(inner)) =&gt; {
-                <span class="kw">let </span>conn = Connection { inner };
+                <span class="kw">let </span>conn = Connection {
+                    inner,
+                    tls_auth: this.ep.static_config.tls_auth,
+                };
                 try_send_rtt_msg(<span class="kw-2">&amp;</span>conn, this.ep, <span class="prelude-val">None</span>);
                 Poll::Ready(<span class="prelude-val">Ok</span>(conn))
             }
@@ -4143,7 +4191,10 @@
     </span><span class="kw">pub fn </span>into_0rtt(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(Connection, ZeroRttAccepted), <span class="self">Self</span>&gt; {
         <span class="kw">match </span><span class="self">self</span>.inner.into_0rtt() {
             <span class="prelude-val">Ok</span>((inner, zrtt_accepted)) =&gt; {
-                <span class="kw">let </span>conn = Connection { inner };
+                <span class="kw">let </span>conn = Connection {
+                    inner,
+                    tls_auth: <span class="self">self</span>.ep.static_config.tls_auth,
+                };
                 <span class="kw">let </span>zrtt_accepted = ZeroRttAccepted {
                     inner: zrtt_accepted,
                     _discovery_drop_guard: <span class="self">self</span>._discovery_drop_guard,
@@ -4195,7 +4246,10 @@
             Poll::Pending =&gt; Poll::Pending,
             Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; Poll::Ready(<span class="prelude-val">Err</span>(err)),
             Poll::Ready(<span class="prelude-val">Ok</span>(inner)) =&gt; {
-                <span class="kw">let </span>conn = Connection { inner };
+                <span class="kw">let </span>conn = Connection {
+                    inner,
+                    tls_auth: this.ep.static_config.tls_auth,
+                };
                 try_send_rtt_msg(<span class="kw-2">&amp;</span>conn, this.ep, <span class="kw-2">*</span>this.remote_node_id);
                 Poll::Ready(<span class="prelude-val">Ok</span>(conn))
             }
@@ -4241,12 +4295,10 @@
 /// connection without losing application data.
 ///
 /// May be cloned to obtain another handle to the same connection.
-</span><span class="comment">// This has repr(transparent) as it opens the door to potentially allow casting it to a
-// quinn::Connection in the future.  Right now however that'd be iroh_quinn::Connection.
 </span><span class="attr">#[derive(Debug, Clone)]
-#[repr(transparent)]
 </span><span class="kw">pub struct </span>Connection {
     inner: quinn::Connection,
+    tls_auth: tls::Authentication,
 }
 
 <span class="kw">impl </span>Connection {
@@ -4476,8 +4528,17 @@
                             certs.len()
                         );
                     }
-                    <span class="kw">let </span>cert = tls::certificate::parse(<span class="kw-2">&amp;</span>certs[<span class="number">0</span>])<span class="question-mark">?</span>;
-                    <span class="prelude-val">Ok</span>(cert.peer_id())
+
+                    <span class="kw">match </span><span class="self">self</span>.tls_auth {
+                        tls::Authentication::X509 =&gt; {
+                            <span class="kw">let </span>cert = tls::certificate::parse(<span class="kw-2">&amp;</span>certs[<span class="number">0</span>])<span class="question-mark">?</span>;
+                            <span class="prelude-val">Ok</span>(cert.peer_id())
+                        }
+                        tls::Authentication::RawPublicKey =&gt; {
+                            <span class="kw">let </span>peer_id = VerifyingKey::from_public_key_der(<span class="kw-2">&amp;</span>certs[<span class="number">0</span>])<span class="question-mark">?</span>.into();
+                            <span class="prelude-val">Ok</span>(peer_id)
+                        }
+                    }
                 }
                 <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="macro">bail!</span>(<span class="string">"invalid peer certificate"</span>),
             },
@@ -4944,19 +5005,36 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>endpoint_bidi_send_recv() {
+    </span><span class="kw">async fn </span>endpoint_bidi_send_recv_x509() {
+        endpoint_bidi_send_recv(tls::Authentication::X509).<span class="kw">await
+    </span>}
+
+    <span class="attr">#[tokio::test]
+    #[traced_test]
+    </span><span class="kw">async fn </span>endpoint_bidi_send_recv_raw_public_key() {
+        endpoint_bidi_send_recv(tls::Authentication::RawPublicKey).<span class="kw">await
+    </span>}
+
+    <span class="kw">async fn </span>endpoint_bidi_send_recv(auth: tls::Authentication) {
         <span class="kw">let </span>ep1 = Endpoint::builder()
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
-            .relay_mode(RelayMode::Disabled)
-            .bind()
-            .<span class="kw">await
-            </span>.unwrap();
+            .relay_mode(RelayMode::Disabled);
+
+        <span class="kw">let </span>ep1 = <span class="kw">match </span>auth {
+            tls::Authentication::X509 =&gt; ep1.tls_x509(),
+            tls::Authentication::RawPublicKey =&gt; ep1.tls_raw_public_keys(),
+        };
+        <span class="kw">let </span>ep1 = ep1.bind().<span class="kw">await</span>.unwrap();
         <span class="kw">let </span>ep2 = Endpoint::builder()
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
-            .relay_mode(RelayMode::Disabled)
-            .bind()
-            .<span class="kw">await
-            </span>.unwrap();
+            .relay_mode(RelayMode::Disabled);
+
+        <span class="kw">let </span>ep2 = <span class="kw">match </span>auth {
+            tls::Authentication::X509 =&gt; ep2.tls_x509(),
+            tls::Authentication::RawPublicKey =&gt; ep2.tls_raw_public_keys(),
+        };
+        <span class="kw">let </span>ep2 = ep2.bind().<span class="kw">await</span>.unwrap();
+
         <span class="kw">let </span>ep1_nodeaddr = ep1.node_addr().<span class="kw">await</span>.unwrap();
         <span class="kw">let </span>ep2_nodeaddr = ep2.node_addr().<span class="kw">await</span>.unwrap();
         ep1.add_node_addr(ep2_nodeaddr.clone()).unwrap();

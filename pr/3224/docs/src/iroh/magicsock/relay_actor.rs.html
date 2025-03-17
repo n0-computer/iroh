@@ -1571,16 +1571,7 @@
 <a href="#1570" id="1570">1570</a>
 <a href="#1571" id="1571">1571</a>
 <a href="#1572" id="1572">1572</a>
-<a href="#1573" id="1573">1573</a>
-<a href="#1574" id="1574">1574</a>
-<a href="#1575" id="1575">1575</a>
-<a href="#1576" id="1576">1576</a>
-<a href="#1577" id="1577">1577</a>
-<a href="#1578" id="1578">1578</a>
-<a href="#1579" id="1579">1579</a>
-<a href="#1580" id="1580">1580</a>
-<a href="#1581" id="1581">1581</a>
-<a href="#1582" id="1582">1582</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1573" id="1573">1573</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1620,7 +1611,7 @@
 };
 
 <span class="kw">use </span>anyhow::{anyhow, <span class="prelude-ty">Result</span>};
-<span class="kw">use </span>backoff::exponential::{ExponentialBackoff, ExponentialBackoffBuilder};
+<span class="kw">use </span>backon::{BackoffBuilder, ExponentialBuilder, Retryable};
 <span class="kw">use </span>bytes::{Bytes, BytesMut};
 <span class="kw">use </span>iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
 <span class="kw">use </span>iroh_metrics::{inc, inc_by};
@@ -1986,9 +1977,10 @@
     /// connections.  It currently does not ever return `Err` as the retries continue
     /// forever.
     </span><span class="kw">fn </span>dial_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;Client&gt;&gt; {
-        <span class="kw">let </span>backoff: ExponentialBackoff&lt;backoff::SystemClock&gt; = ExponentialBackoffBuilder::new()
-            .with_initial_interval(Duration::from_millis(<span class="number">10</span>))
-            .with_max_interval(Duration::from_secs(<span class="number">5</span>))
+        <span class="kw">let </span>backoff = ExponentialBuilder::new()
+            .with_min_delay(Duration::from_millis(<span class="number">10</span>))
+            .with_max_delay(Duration::from_secs(<span class="number">5</span>))
+            .without_max_times()
             .build();
         <span class="kw">let </span>connect_fn = {
             <span class="kw">let </span>client_builder = <span class="self">self</span>.relay_client_builder.clone();
@@ -1999,23 +1991,23 @@
                         <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(client)) =&gt; <span class="prelude-val">Ok</span>(client),
                         <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err)) =&gt; {
                             <span class="macro">warn!</span>(<span class="string">"Relay connection failed: {err:#}"</span>);
-                            <span class="prelude-val">Err</span>(err.into())
+                            <span class="prelude-val">Err</span>(err)
                         }
                         <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; {
                             <span class="macro">warn!</span>(<span class="question-mark">?</span>CONNECT_TIMEOUT, <span class="string">"Timeout connecting to relay"</span>);
-                            <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Timeout"</span>).into())
+                            <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Timeout"</span>))
                         }
                     }
                 }
             }
         };
 
-        <span class="comment">// We implement our own `Sleeper` here, so that we can use the `backoff`
+        <span class="comment">// We implement our own `Sleeper` here, so that we can use the `backon`
         // crate with our own implementation of `time::sleep` (from `n0_future`)
         // that works in browsers.
         </span><span class="kw">struct </span>Sleeper;
 
-        <span class="kw">impl </span>backoff::future::Sleeper <span class="kw">for </span>Sleeper {
+        <span class="kw">impl </span>backon::Sleeper <span class="kw">for </span>Sleeper {
             <span class="kw">type </span>Sleep = time::Sleep;
 
             <span class="kw">fn </span>sleep(<span class="kw-2">&amp;</span><span class="self">self</span>, dur: Duration) -&gt; <span class="self">Self</span>::Sleep {
@@ -2023,17 +2015,7 @@
             }
         }
 
-        <span class="comment">// Because we're using a lower-level backoff API, we need to provide a
-        // backoff::Notify implementation. By default backoff has one that
-        // doesn't do anything, but it doesn't expose that API. So we implement
-        // it here ourselves.
-        </span><span class="kw">struct </span>NoopNotify;
-
-        <span class="kw">impl</span>&lt;E&gt; backoff::Notify&lt;E&gt; <span class="kw">for </span>NoopNotify {
-            <span class="kw">fn </span>notify(<span class="kw-2">&amp;mut </span><span class="self">self</span>, <span class="kw">_</span>: E, <span class="kw">_</span>: Duration) {}
-        }
-
-        <span class="kw">let </span>retry_fut = backoff::future::Retry::new(Sleeper, backoff, NoopNotify, connect_fn);
+        <span class="kw">let </span>retry_fut = connect_fn.retry(backoff).sleep(Sleeper);
         Box::pin(retry_fut)
     }
 
