@@ -1274,24 +1274,29 @@ struct HttpPingCacheInner {
 }
 
 /// HTTP Ping cache wrapper - RwLock to allow concurrent access.
-struct HttpPingCache (Arc<tokio::sync::RwLock<HttpPingCacheInner>>);
+struct HttpPingCache(Arc<tokio::sync::RwLock<HttpPingCacheInner>>);
 
 /// Get the HTTP Ping cache from global.
 async fn _get_cache() -> &'static HttpPingCache {
-    _HTTP_PING_CACHE.get_or_init(|| async move {
-        HttpPingCache(Arc::new(tokio::sync::RwLock::new(HttpPingCacheInner {
-            cache: std::collections::HashMap::new(),
-        })))
-    }).await
+    _HTTP_PING_CACHE
+        .get_or_init(|| async move {
+            HttpPingCache(Arc::new(tokio::sync::RwLock::new(HttpPingCacheInner {
+                cache: std::collections::HashMap::new(),
+            })))
+        })
+        .await
 }
 
 /// Get the cached HTTP Ping for a given URL, if not expired.
 async fn _get_cached_http_ping(url: String) -> Option<(Duration, IpAddr)> {
-    let entry = {let cache = _get_cache().await.0.read().await;
-    let Some(entry) = cache.cache.get(&url).cloned() else {
-        tracing::debug!("CACHE MISS (absent): {:?}", url.to_string());
-        return None;
-    }; entry};
+    let entry = {
+        let cache = _get_cache().await.0.read().await;
+        let Some(entry) = cache.cache.get(&url).cloned() else {
+            tracing::debug!("CACHE MISS (absent): {:?}", url.to_string());
+            return None;
+        };
+        entry
+    };
     let (latency, remote_ip, time) = entry;
     if time.elapsed() <= HTTP_PING_CACHE_TTL {
         tracing::debug!("CACHE HIT: {:?}", url.to_string());
@@ -1308,7 +1313,9 @@ async fn _get_cached_http_ping(url: String) -> Option<(Duration, IpAddr)> {
 async fn _set_cached_http_ping(url: String, latency: Duration, remote_ip: IpAddr) {
     let mut cache = _get_cache().await.0.write().await;
     tracing::debug!("CACHE SET: {:?}", url.to_string());
-    cache.cache.insert(url, (latency, remote_ip, Instant::now()));
+    cache
+        .cache
+        .insert(url, (latency, remote_ip, Instant::now()));
 }
 
 /// Executes an HTTPS probe.
@@ -1364,7 +1371,10 @@ async fn measure_https_latency(
     let client = builder.build()?;
 
     let start = Instant::now();
-    let response = client.request(reqwest::Method::GET, url.clone()).send().await?;
+    let response = client
+        .request(reqwest::Method::GET, url.clone())
+        .send()
+        .await?;
     let latency = start.elapsed();
     if response.status().is_success() {
         // Only `None` if a different hyper HttpConnector in the request.
