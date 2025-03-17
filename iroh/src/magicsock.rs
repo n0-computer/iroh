@@ -1913,11 +1913,16 @@ impl Handle {
             }
         })
         .await;
-        if shutdown_done.is_ok() {
-            warn!("tasks shutdown complete");
-            // shutdown all tasks
-            warn!("aborting remaining {}/3 tasks", tasks.len());
-            tasks.shutdown().await;
+        match shutdown_done {
+            Ok(_) => trace!("tasks finished in time, shutdown complete"),
+            Err(_elapsed) => {
+                // shutdown all tasks
+                warn!(
+                    "tasks didn't finish in time, aborting remaining {}/3 tasks",
+                    tasks.len()
+                );
+                tasks.shutdown().await;
+            }
         }
         trace!("magicsock closed");
     }
