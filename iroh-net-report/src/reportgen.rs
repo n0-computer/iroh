@@ -1289,17 +1289,17 @@ async fn _get_cache() -> &'static HttpPingCache {
 async fn _get_cached_http_ping(url: String) -> Option<(Duration, IpAddr)> {
     let entry = {let cache = _get_cache().await.0.read().await;
     let Some(entry) = cache.cache.get(&url).cloned() else {
-        tracing::info!("CACHE MISS (absent): {:?}", url.to_string());
+        tracing::debug!("CACHE MISS (absent): {:?}", url.to_string());
         return None;
     }; entry};
     let (latency, remote_ip, time) = entry;
     if time.elapsed() <= HTTP_PING_CACHE_TTL {
-        tracing::info!("CACHE HIT: {:?}", url.to_string());
+        tracing::debug!("CACHE HIT: {:?}", url.to_string());
         Some((latency, remote_ip))
     } else {
         let mut cache = _get_cache().await.0.write().await;
         cache.cache.remove(&url);
-        tracing::info!("CACHE MISS (expired): {:?}", url.to_string());
+        tracing::debug!("CACHE MISS (expired): {:?}", url.to_string());
         None
     }
 }
@@ -1307,7 +1307,7 @@ async fn _get_cached_http_ping(url: String) -> Option<(Duration, IpAddr)> {
 /// Set the cached HTTP Ping for a given URL.
 async fn _set_cached_http_ping(url: String, latency: Duration, remote_ip: IpAddr) {
     let mut cache = _get_cache().await.0.write().await;
-    tracing::info!("CACHE SET: {:?}", url.to_string());
+    tracing::debug!("CACHE SET: {:?}", url.to_string());
     cache.cache.insert(url, (latency, remote_ip, Instant::now()));
 }
 
