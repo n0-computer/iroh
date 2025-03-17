@@ -1264,6 +1264,53 @@ async fn run_icmp_probe(
     Ok(report)
 }
 
+/// Global to hold recent HTTP pings.
+static _HTTP_PING_CACHE: tokio::sync::OnceCell<HttpPingCache> = tokio::sync::OnceCell::const_new();
+/// Time to live for HTTP pings in the cache.
+const HTTP_PING_CACHE_TTL: Duration = Duration::from_secs(5);
+/// HTTP Ping cache container - HashMap of URL to (latency, remote_ip, time)
+struct HttpPingCacheInner {
+    cache: std::collections::HashMap<String, (Duration, IpAddr, Instant)>,
+}
+
+/// HTTP Ping cache wrapper - RwLock to allow concurrent access.
+struct HttpPingCache (Arc<tokio::sync::RwLock<HttpPingCacheInner>>);
+
+/// Get the HTTP Ping cache from global.
+async fn _get_cache() -> &'static HttpPingCache {
+    _HTTP_PING_CACHE.get_or_init(|| async move {
+        HttpPingCache(Arc::new(tokio::sync::RwLock::new(HttpPingCacheInner {
+            cache: std::collections::HashMap::new(),
+        })))
+    }).await
+}
+
+/// Get the cached HTTP Ping for a given URL, if not expired.
+async fn _get_cached_http_ping(url: String) -> Option<(Duration, IpAddr)> {
+    let entry = {let cache = _get_cache().await.0.read().await;
+    let Some(entry) = cache.cache.get(&url).cloned() else {
+        tracing::info!("CACHE MISS (absent): {:?}", url.to_string());
+        return None;
+    }; entry};
+    let (latency, remote_ip, time) = entry;
+    if time.elapsed() <= HTTP_PING_CACHE_TTL {
+        tracing::info!("CACHE HIT: {:?}", url.to_string());
+        Some((latency, remote_ip))
+    } else {
+        let mut cache = _get_cache().await.0.write().await;
+        cache.cache.remove(&url);
+        tracing::info!("CACHE MISS (expired): {:?}", url.to_string());
+        None
+    }
+}
+
+/// Set the cached HTTP Ping for a given URL.
+async fn _set_cached_http_ping(url: String, latency: Duration, remote_ip: IpAddr) {
+    let mut cache = _get_cache().await.0.write().await;
+    tracing::info!("CACHE SET: {:?}", url.to_string());
+    cache.cache.insert(url, (latency, remote_ip, Instant::now()));
+}
+
 /// Executes an HTTPS probe.
 ///
 /// If `certs` is provided they will be added to the trusted root certificates, allowing the
@@ -1275,6 +1322,10 @@ async fn measure_https_latency(
     certs: Option<Vec<rustls::pki_types::CertificateDer<'static>>>,
 ) -> Result<(Duration, IpAddr)> {
     let url = node.url.join(RELAY_PROBE_PATH)?;
+
+    if let Some(r) = _get_cached_http_ping(url.to_string()).await {
+        return Ok(r);
+    }
 
     // This should also use same connection establishment as relay client itself, which
     // needs to be more configurable so users can do more crazy things:
@@ -1313,7 +1364,7 @@ async fn measure_https_latency(
     let client = builder.build()?;
 
     let start = Instant::now();
-    let response = client.request(reqwest::Method::GET, url).send().await?;
+    let response = client.request(reqwest::Method::GET, url.clone()).send().await?;
     let latency = start.elapsed();
     if response.status().is_success() {
         // Only `None` if a different hyper HttpConnector in the request.
@@ -1337,6 +1388,7 @@ async fn measure_https_latency(
             }
         }
 
+        _set_cached_http_ping(url.to_string(), latency, remote_ip).await;
         Ok((latency, remote_ip))
     } else {
         Err(anyhow!(
