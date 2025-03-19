@@ -48,7 +48,7 @@ impl ConsolePaths {
 /// The configuration for an iroh node.
 // Please note that this is documented in the `iroh.computer` repository under
 // `src/app/docs/reference/config/page.mdx`.  Any changes to this need to be updated there.
-#[derive(PartialEq, Eq, Debug, Deserialize, Clone)]
+#[derive(PartialEq, Eq, Debug, Deserialize, Serialize, Clone)]
 #[serde(default, deny_unknown_fields)]
 pub(crate) struct NodeConfig {
     /// The nodes for relay to use.
@@ -88,6 +88,8 @@ impl NodeConfig {
     /// be used.
     pub(crate) async fn load(file: Option<&Path>) -> Result<NodeConfig> {
         let default_config = iroh_config_path(CONFIG_FILE_NAME)?;
+        println!("default_config: {:?}", default_config);
+        println!("config toml:\n{}", toml::to_string_pretty(&NodeConfig::default()).unwrap());
 
         let config_file = match file {
             Some(file) => Some(file),
@@ -130,7 +132,7 @@ impl NodeConfig {
 /// Serde-compatible configuration for [`GcPolicy`].
 ///
 /// The [`GcPolicy`] struct is not amenable to TOML serialisation, this covers this gap.
-#[derive(PartialEq, Eq, Debug, Default, Deserialize, Clone)]
+#[derive(PartialEq, Eq, Debug, Default, Serialize, Deserialize, Clone)]
 #[serde(default, deny_unknown_fields, rename = "gc_policy")]
 pub(crate) struct GcPolicyConfig {
     enabled: bool,

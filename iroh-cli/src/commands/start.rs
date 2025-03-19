@@ -6,7 +6,7 @@ use colored::Colorize;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use iroh::{
     net::relay::{RelayMap, RelayMode},
-    node::{Node, RpcStatus, DEFAULT_RPC_ADDR},
+    node::{GcPolicy, Node, RpcStatus, DEFAULT_RPC_ADDR},
 };
 use std::{
     future::Future,
@@ -90,9 +90,10 @@ where
 {
     trace!(?config, "using config");
     let relay_map = config.relay_map()?;
+    let gc_policy: GcPolicy = config.gc_policy.clone().into();
 
     let spinner = create_spinner("Iroh booting...");
-    let node = start_node(iroh_data_root, rpc_addr, relay_map).await?;
+    let node = start_node(iroh_data_root, rpc_addr, relay_map, gc_policy).await?;
     drop(spinner);
 
     eprintln!("{}", welcome_message(&node)?);
@@ -136,6 +137,7 @@ pub(crate) async fn start_node(
     iroh_data_root: &Path,
     rpc_addr: Option<SocketAddr>,
     relay_map: Option<RelayMap>,
+    gc_policy: GcPolicy,
 ) -> Result<Node<iroh::blobs::store::fs::Store>> {
     let rpc_status = RpcStatus::load(iroh_data_root).await?;
     match rpc_status {
@@ -157,6 +159,7 @@ pub(crate) async fn start_node(
         .await?
         .relay_mode(relay_mode)
         .enable_docs()
+        .gc_policy(gc_policy)
         .enable_rpc_with_addr(rpc_addr)
         .await?
         .spawn()

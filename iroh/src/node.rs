@@ -287,6 +287,8 @@ impl<D: iroh_blobs::store::Store> NodeInner<D> {
         let external_rpc = RpcServer::new(external_rpc);
         let internal_rpc = RpcServer::new(internal_rpc);
 
+        tracing::error!("starting with gc policy {:?}", gc_policy);
+
         // Spawn a task for the garbage collection.
         if let GcPolicy::Interval(gc_period) = gc_policy {
             let protocols = protocols.clone();
