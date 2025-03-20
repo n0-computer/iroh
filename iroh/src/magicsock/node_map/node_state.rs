@@ -898,8 +898,10 @@ impl NodeState {
         let is_relay = src.is_relay();
         match self.sent_pings.remove(&m.tx_id) {
             None => {
-                // This is not a pong for a ping we sent.
-                warn!(tx = %HEXLOWER.encode(&m.tx_id), "received pong with unknown transaction id");
+                // This is not a pong for a ping we sent.  In reality however we probably
+                // did send this ping but it has timed-out by the time we receive this pong
+                // so we removed the state already.
+                debug!(tx = %HEXLOWER.encode(&m.tx_id), "received unknown pong (did it timeout?)");
                 None
             }
             Some(sp) => {
