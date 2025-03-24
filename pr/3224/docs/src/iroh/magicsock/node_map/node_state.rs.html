@@ -1752,7 +1752,9 @@
 <a href="#1751" id="1751">1751</a>
 <a href="#1752" id="1752">1752</a>
 <a href="#1753" id="1753">1753</a>
-<a href="#1754" id="1754">1754</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#1754" id="1754">1754</a>
+<a href="#1755" id="1755">1755</a>
+<a href="#1756" id="1756">1756</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{btree_map::Entry, BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
@@ -2652,8 +2654,10 @@
         <span class="kw">let </span>is_relay = src.is_relay();
         <span class="kw">match </span><span class="self">self</span>.sent_pings.remove(<span class="kw-2">&amp;</span>m.tx_id) {
             <span class="prelude-val">None </span>=&gt; {
-                <span class="comment">// This is not a pong for a ping we sent.
-                </span><span class="macro">warn!</span>(tx = %HEXLOWER.encode(<span class="kw-2">&amp;</span>m.tx_id), <span class="string">"received pong with unknown transaction id"</span>);
+                <span class="comment">// This is not a pong for a ping we sent.  In reality however we probably
+                // did send this ping but it has timed-out by the time we receive this pong
+                // so we removed the state already.
+                </span><span class="macro">debug!</span>(tx = %HEXLOWER.encode(<span class="kw-2">&amp;</span>m.tx_id), <span class="string">"received unknown pong (did it timeout?)"</span>);
                 <span class="prelude-val">None
             </span>}
             <span class="prelude-val">Some</span>(sp) =&gt; {
