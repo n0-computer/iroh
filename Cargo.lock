@@ -2272,7 +2272,7 @@ dependencies = [
  "iroh-relay",
  "n0-future",
  "netdev",
- "netwatch 0.4.0",
+ "netwatch",
  "parse-size",
  "pin-project",
  "pkarr",
@@ -2433,7 +2433,7 @@ dependencies = [
  "iroh-quinn",
  "iroh-relay",
  "n0-future",
- "netwatch 0.4.0",
+ "netwatch",
  "portmapper",
  "pretty_assertions",
  "rand 0.8.5",
@@ -2970,39 +2970,6 @@ dependencies = [
 
 [[package]]
 name = "netwatch"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "64da82edf903649e6cb6a77b5a6f7fe01387d8865065d411d139018510880302"
-dependencies = [
- "anyhow",
- "atomic-waker",
- "bytes",
- "derive_more",
- "futures-lite",
- "futures-sink",
- "futures-util",
- "iroh-quinn-udp",
- "libc",
- "netdev",
- "netlink-packet-core",
- "netlink-packet-route 0.19.0",
- "netlink-sys",
- "once_cell",
- "rtnetlink 0.13.1",
- "rtnetlink 0.14.1",
- "serde",
- "socket2",
- "thiserror 2.0.11",
- "time",
- "tokio",
- "tokio-util",
- "tracing",
- "windows 0.58.0",
- "wmi",
-]
-
-[[package]]
-name = "netwatch"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b7879c2cfdf30d92f2be89efa3169b3d78107e3ab7f7b9a37157782569314e1"
@@ -3497,9 +3464,9 @@ checksum = "280dc24453071f1b63954171985a0b0d30058d287960968b9b2aca264c8d4ee6"
 
 [[package]]
 name = "portmapper"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b715da165f399be093fecb2ca774b00713a3b32f6b27e0752fbf255e3be622af"
+checksum = "247dcb75747c53cc433d6d8963a064187eec4a676ba13ea33143f1c9100e754f"
 dependencies = [
  "base64",
  "bytes",
@@ -3509,7 +3476,7 @@ dependencies = [
  "igd-next",
  "iroh-metrics",
  "libc",
- "netwatch 0.3.0",
+ "netwatch",
  "num_enum",
  "rand 0.8.5",
  "serde",
@@ -5616,7 +5583,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
