@@ -2782,10 +2782,7 @@
 <a href="#2781" id="2781">2781</a>
 <a href="#2782" id="2782">2782</a>
 <a href="#2783" id="2783">2783</a>
-<a href="#2784" id="2784">2784</a>
-<a href="#2785" id="2785">2785</a>
-<a href="#2786" id="2786">2786</a>
-<a href="#2787" id="2787">2787</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2784" id="2784">2784</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -3073,13 +3070,10 @@
     ///
     /// Options are either [`Protocol::Websocket`] or [`Protocol::Relay`].
     ///
-    /// `Websocket` will work with relays version 0.19 and above, so likely with any relays
-    /// deployed at the time of writing this option (websocket support was released 9 months ago).
+    /// `Websocket` is considered unstable between iroh versions at the moment.
+    /// The protocol can change in compatibility-breaking ways before iroh 1.0.
     ///
-    /// `Relay` will work for now, but will likely be removed with the 1.0 release.
-    ///
-    /// Default is set to `Relay` at the moment, until we've thoroughly tested and improved
-    /// websocket performance.
+    /// Default is set to `Relay` at the moment, until we've stabilized the websocket protocol.
     ///
     /// [`Protocol::Websocket`]: iroh_relay::http::Protocol::Websocket
     /// [`Protocol::Relay`]: iroh_relay::http::Protocol::Relay
