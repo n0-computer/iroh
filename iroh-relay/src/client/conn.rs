@@ -35,6 +35,7 @@ pub enum ConnSendError {
     Protocol(&'static str),
 }
 
+#[cfg(wasm_browser)]
 impl From<ws_stream_wasm::WsErr> for ConnSendError {
     fn from(source: ws_stream_wasm::WsErr) -> Self {
         let io_err = std::io::Error::new(std::io::ErrorKind::Other, source.to_string());

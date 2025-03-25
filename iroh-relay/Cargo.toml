@@ -70,7 +70,6 @@ tracing = "0.1"
 url = { version = "2.5", features = ["serde"] }
 webpki = { package = "rustls-webpki", version = "0.102" }
 webpki-roots = "0.26"
-ws_stream_wasm = { version = "0.7.4", default-features = false }
 data-encoding = "2.6.0"
 lru = "0.12"
 z32 = "1.0.3"
@@ -109,6 +108,10 @@ tokio = { version = "1", features = [
     "process",
 ] }
 tokio-websockets = { version = "0.11.3", features = ["rustls-bring-your-own-connector", "ring", "getrandom", "rand", "client"] }
+
+# wasm-in-browser dependencies
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
+ws_stream_wasm = { version = "0.7.4", default-features = false }
 
 [dev-dependencies]
 clap = { version = "4", features = ["derive"] }
