@@ -53,7 +53,10 @@
 <a href="#52" id="52">52</a>
 <a href="#53" id="53">53</a>
 <a href="#54" id="54">54</a>
-<a href="#55" id="55">55</a></pre></div><pre class="rust"><code><span class="doccomment">//! HTTP-specific constants for the relay server and client.
+<a href="#55" id="55">55</a>
+<a href="#56" id="56">56</a>
+<a href="#57" id="57">57</a>
+<a href="#58" id="58">58</a></pre></div><pre class="rust"><code><span class="doccomment">//! HTTP-specific constants for the relay server and client.
 
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>HTTP_UPGRADE_PROTOCOL: <span class="kw-2">&amp;</span>str = <span class="string">"iroh derp http"</span>;
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>WEBSOCKET_UPGRADE_PROTOCOL: <span class="kw-2">&amp;</span>str = <span class="string">"websocket"</span>;
@@ -83,7 +86,10 @@
 
 <span class="kw">impl </span>Default <span class="kw">for </span>Protocol {
     <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
-        <span class="self">Self</span>::Websocket
+        <span class="attr">#[cfg(not(wasm_browser))]
+        </span><span class="kw">return </span><span class="self">Self</span>::Relay;
+        <span class="attr">#[cfg(wasm_browser)]
+        </span><span class="kw">return </span><span class="self">Self</span>::Websocket;
     }
 }
 
