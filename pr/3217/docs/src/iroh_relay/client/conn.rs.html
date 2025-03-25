@@ -444,7 +444,8 @@
 <a href="#443" id="443">443</a>
 <a href="#444" id="444">444</a>
 <a href="#445" id="445">445</a>
-<a href="#446" id="446">446</a></pre></div><pre class="rust"><code><span class="doccomment">//! Manages client-side connections to the relay server.
+<a href="#446" id="446">446</a>
+<a href="#447" id="447">447</a></pre></div><pre class="rust"><code><span class="doccomment">//! Manages client-side connections to the relay server.
 //!
 //! based on tailscale/derp/derp_client.go
 
@@ -481,7 +482,8 @@
     </span>Protocol(<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str),
 }
 
-<span class="kw">impl </span>From&lt;ws_stream_wasm::WsErr&gt; <span class="kw">for </span>ConnSendError {
+<span class="attr">#[cfg(wasm_browser)]
+</span><span class="kw">impl </span>From&lt;ws_stream_wasm::WsErr&gt; <span class="kw">for </span>ConnSendError {
     <span class="kw">fn </span>from(source: ws_stream_wasm::WsErr) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>io_err = std::io::Error::new(std::io::ErrorKind::Other, source.to_string());
         <span class="self">Self</span>::Io(io_err)
