@@ -286,13 +286,10 @@ impl Builder {
     ///
     /// Options are either [`Protocol::Websocket`] or [`Protocol::Relay`].
     ///
-    /// `Websocket` will work with relays version 0.19 and above, so likely with any relays
-    /// deployed at the time of writing this option (websocket support was released 9 months ago).
+    /// `Websocket` is considered unstable between iroh versions at the moment.
+    /// The protocol can change in compatibility-breaking ways before iroh 1.0.
     ///
-    /// `Relay` will work for now, but will likely be removed with the 1.0 release.
-    ///
-    /// Default is set to `Relay` at the moment, until we've thoroughly tested and improved
-    /// websocket performance.
+    /// Default is set to `Relay` at the moment, until we've stabilized the websocket protocol.
     ///
     /// [`Protocol::Websocket`]: iroh_relay::http::Protocol::Websocket
     /// [`Protocol::Relay`]: iroh_relay::http::Protocol::Relay
