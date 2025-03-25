@@ -2780,9 +2780,7 @@
 <a href="#2779" id="2779">2779</a>
 <a href="#2780" id="2780">2780</a>
 <a href="#2781" id="2781">2781</a>
-<a href="#2782" id="2782">2782</a>
-<a href="#2783" id="2783">2783</a>
-<a href="#2784" id="2784">2784</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2782" id="2782">2782</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -2827,6 +2825,7 @@
     magicsock::{<span class="self">self</span>, Handle, NodeIdMappedAddr},
     tls,
     watchable::Watcher,
+    RelayProtocol,
 };
 
 <span class="kw">mod </span>rtt_actor;
@@ -3068,16 +3067,13 @@
 
     <span class="doccomment">/// Sets the protocol to use for relay connections.
     ///
-    /// Options are either [`Protocol::Websocket`] or [`Protocol::Relay`].
+    /// Options are either [`RelayProtocol::Websocket`] or [`RelayProtocol::Relay`].
     ///
     /// `Websocket` is considered unstable between iroh versions at the moment.
     /// The protocol can change in compatibility-breaking ways before iroh 1.0.
     ///
     /// Default is set to `Relay` at the moment, until we've stabilized the websocket protocol.
-    ///
-    /// [`Protocol::Websocket`]: iroh_relay::http::Protocol::Websocket
-    /// [`Protocol::Relay`]: iroh_relay::http::Protocol::Relay
-    </span><span class="kw">pub fn </span>relay_conn_protocol(<span class="kw-2">mut </span><span class="self">self</span>, protocol: iroh_relay::http::Protocol) -&gt; <span class="self">Self </span>{
+    </span><span class="kw">pub fn </span>relay_conn_protocol(<span class="kw-2">mut </span><span class="self">self</span>, protocol: RelayProtocol) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.relay_protocol = protocol;
         <span class="self">self
     </span>}

@@ -518,7 +518,7 @@
 <span class="kw">pub use </span>iroh_base::{
     KeyParsingError, NodeAddr, NodeId, PublicKey, RelayUrl, RelayUrlParseError, SecretKey,
 };
-<span class="kw">pub use </span>iroh_relay::{node_info, RelayMap, RelayNode};
+<span class="kw">pub use </span>iroh_relay::{http::Protocol <span class="kw">as </span>RelayProtocol, node_info, RelayMap, RelayNode};
 
 <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
 </span><span class="kw">pub mod </span>test_utils;
