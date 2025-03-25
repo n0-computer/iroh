@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["Router","RouterBuilder"],"trait":["ProtocolHandler"]};
+window.SIDEBAR_ITEMS = {"struct":["AccessLimit","Router","RouterBuilder"],"trait":["ProtocolHandler"]};
