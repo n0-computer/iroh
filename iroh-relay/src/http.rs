@@ -28,7 +28,10 @@ pub enum Protocol {
 
 impl Default for Protocol {
     fn default() -> Self {
-        Self::Websocket
+        #[cfg(not(wasm_browser))]
+        return Self::Relay;
+        #[cfg(wasm_browser)]
+        return Self::Websocket;
     }
 }
 
