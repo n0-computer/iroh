@@ -2711,7 +2711,81 @@
 <a href="#2710" id="2710">2710</a>
 <a href="#2711" id="2711">2711</a>
 <a href="#2712" id="2712">2712</a>
-<a href="#2713" id="2713">2713</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2713" id="2713">2713</a>
+<a href="#2714" id="2714">2714</a>
+<a href="#2715" id="2715">2715</a>
+<a href="#2716" id="2716">2716</a>
+<a href="#2717" id="2717">2717</a>
+<a href="#2718" id="2718">2718</a>
+<a href="#2719" id="2719">2719</a>
+<a href="#2720" id="2720">2720</a>
+<a href="#2721" id="2721">2721</a>
+<a href="#2722" id="2722">2722</a>
+<a href="#2723" id="2723">2723</a>
+<a href="#2724" id="2724">2724</a>
+<a href="#2725" id="2725">2725</a>
+<a href="#2726" id="2726">2726</a>
+<a href="#2727" id="2727">2727</a>
+<a href="#2728" id="2728">2728</a>
+<a href="#2729" id="2729">2729</a>
+<a href="#2730" id="2730">2730</a>
+<a href="#2731" id="2731">2731</a>
+<a href="#2732" id="2732">2732</a>
+<a href="#2733" id="2733">2733</a>
+<a href="#2734" id="2734">2734</a>
+<a href="#2735" id="2735">2735</a>
+<a href="#2736" id="2736">2736</a>
+<a href="#2737" id="2737">2737</a>
+<a href="#2738" id="2738">2738</a>
+<a href="#2739" id="2739">2739</a>
+<a href="#2740" id="2740">2740</a>
+<a href="#2741" id="2741">2741</a>
+<a href="#2742" id="2742">2742</a>
+<a href="#2743" id="2743">2743</a>
+<a href="#2744" id="2744">2744</a>
+<a href="#2745" id="2745">2745</a>
+<a href="#2746" id="2746">2746</a>
+<a href="#2747" id="2747">2747</a>
+<a href="#2748" id="2748">2748</a>
+<a href="#2749" id="2749">2749</a>
+<a href="#2750" id="2750">2750</a>
+<a href="#2751" id="2751">2751</a>
+<a href="#2752" id="2752">2752</a>
+<a href="#2753" id="2753">2753</a>
+<a href="#2754" id="2754">2754</a>
+<a href="#2755" id="2755">2755</a>
+<a href="#2756" id="2756">2756</a>
+<a href="#2757" id="2757">2757</a>
+<a href="#2758" id="2758">2758</a>
+<a href="#2759" id="2759">2759</a>
+<a href="#2760" id="2760">2760</a>
+<a href="#2761" id="2761">2761</a>
+<a href="#2762" id="2762">2762</a>
+<a href="#2763" id="2763">2763</a>
+<a href="#2764" id="2764">2764</a>
+<a href="#2765" id="2765">2765</a>
+<a href="#2766" id="2766">2766</a>
+<a href="#2767" id="2767">2767</a>
+<a href="#2768" id="2768">2768</a>
+<a href="#2769" id="2769">2769</a>
+<a href="#2770" id="2770">2770</a>
+<a href="#2771" id="2771">2771</a>
+<a href="#2772" id="2772">2772</a>
+<a href="#2773" id="2773">2773</a>
+<a href="#2774" id="2774">2774</a>
+<a href="#2775" id="2775">2775</a>
+<a href="#2776" id="2776">2776</a>
+<a href="#2777" id="2777">2777</a>
+<a href="#2778" id="2778">2778</a>
+<a href="#2779" id="2779">2779</a>
+<a href="#2780" id="2780">2780</a>
+<a href="#2781" id="2781">2781</a>
+<a href="#2782" id="2782">2782</a>
+<a href="#2783" id="2783">2783</a>
+<a href="#2784" id="2784">2784</a>
+<a href="#2785" id="2785">2785</a>
+<a href="#2786" id="2786">2786</a>
+<a href="#2787" id="2787">2787</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -2823,6 +2897,7 @@
 </span><span class="kw">pub struct </span>Builder {
     secret_key: <span class="prelude-ty">Option</span>&lt;SecretKey&gt;,
     relay_mode: RelayMode,
+    relay_protocol: iroh_relay::http::Protocol,
     alpn_protocols: Vec&lt;Vec&lt;u8&gt;&gt;,
     transport_config: quinn::TransportConfig,
     keylog: bool,
@@ -2850,6 +2925,7 @@
         <span class="self">Self </span>{
             secret_key: Default::default(),
             relay_mode: default_relay_mode(),
+            relay_protocol: iroh_relay::http::Protocol::default(),
             alpn_protocols: Default::default(),
             transport_config,
             keylog: Default::default(),
@@ -2907,6 +2983,7 @@
             addr_v6: <span class="self">self</span>.addr_v6,
             secret_key,
             relay_map,
+            relay_protocol: <span class="self">self</span>.relay_protocol,
             node_map: <span class="self">self</span>.node_map,
             discovery,
             discovery_user_data: <span class="self">self</span>.discovery_user_data,
@@ -2989,6 +3066,25 @@
     /// [number 0]: https://n0.computer
     </span><span class="kw">pub fn </span>relay_mode(<span class="kw-2">mut </span><span class="self">self</span>, relay_mode: RelayMode) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.relay_mode = relay_mode;
+        <span class="self">self
+    </span>}
+
+    <span class="doccomment">/// Sets the protocol to use for relay connections.
+    ///
+    /// Options are either [`Protocol::Websocket`] or [`Protocol::Relay`].
+    ///
+    /// `Websocket` will work with relays version 0.19 and above, so likely with any relays
+    /// deployed at the time of writing this option (websocket support was released 9 months ago).
+    ///
+    /// `Relay` will work for now, but will likely be removed with the 1.0 release.
+    ///
+    /// Default is set to `Relay` at the moment, until we've thoroughly tested and improved
+    /// websocket performance.
+    ///
+    /// [`Protocol::Websocket`]: iroh_relay::http::Protocol::Websocket
+    /// [`Protocol::Relay`]: iroh_relay::http::Protocol::Relay
+    </span><span class="kw">pub fn </span>relay_conn_protocol(<span class="kw-2">mut </span><span class="self">self</span>, protocol: iroh_relay::http::Protocol) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.relay_protocol = protocol;
         <span class="self">self
     </span>}
 
@@ -4722,6 +4818,7 @@
 
     <span class="kw">use </span>std::time::Instant;
 
+    <span class="kw">use </span>iroh_relay::http::Protocol;
     <span class="kw">use </span>n0_future::StreamExt;
     <span class="kw">use </span>rand::SeedableRng;
     <span class="kw">use </span>testresult::TestResult;
@@ -5001,6 +5098,57 @@
         </span><span class="kw">if </span>start.elapsed() &gt; Duration::from_secs(<span class="number">15</span>) {
             <span class="macro">panic!</span>(<span class="string">"Test too slow, something went wrong"</span>);
         }
+    }
+
+    <span class="attr">#[tokio::test]
+    #[traced_test]
+    </span><span class="kw">async fn </span>endpoint_send_relay_websockets() -&gt; testresult::TestResult {
+        <span class="kw">let </span>(relay_map, _relay_url, _guard) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>client = Endpoint::builder()
+            .relay_conn_protocol(Protocol::Websocket)
+            .relay_mode(RelayMode::Custom(relay_map.clone()))
+            .bind()
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>server = Endpoint::builder()
+            .relay_conn_protocol(Protocol::Websocket)
+            .relay_mode(RelayMode::Custom(relay_map))
+            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
+            .bind()
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="kw">let </span>task = tokio::spawn({
+            <span class="kw">let </span>server = server.clone();
+            <span class="kw">async move </span>{
+                <span class="kw">let </span><span class="prelude-val">Some</span>(conn) = server.accept().<span class="kw">await else </span>{
+                    <span class="macro">bail!</span>(<span class="string">"Expected an incoming connection"</span>);
+                };
+                <span class="kw">let </span>conn = conn.<span class="kw">await</span><span class="question-mark">?</span>;
+                <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.accept_bi().<span class="kw">await</span><span class="question-mark">?</span>;
+                <span class="kw">let </span>data = recv.read_to_end(<span class="number">1000</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+                send.write_all(<span class="kw-2">&amp;</span>data).<span class="kw">await</span><span class="question-mark">?</span>;
+                send.finish()<span class="question-mark">?</span>;
+                conn.closed().<span class="kw">await</span>;
+
+                <span class="prelude-val">Ok</span>(())
+            }
+        });
+
+        <span class="kw">let </span>addr = server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>conn = client.connect(addr, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.open_bi().<span class="kw">await</span><span class="question-mark">?</span>;
+        send.write_all(<span class="string">b"Hello, world!"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        send.finish()<span class="question-mark">?</span>;
+        <span class="kw">let </span>data = recv.read_to_end(<span class="number">1000</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        conn.close(<span class="number">0u32</span>.into(), <span class="string">b"bye!"</span>);
+
+        task.<span class="kw">await</span><span class="question-mark">??</span>;
+
+        client.close().<span class="kw">await</span>;
+        server.close().<span class="kw">await</span>;
+
+        <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>data, <span class="string">b"Hello, world!"</span>);
+
+        <span class="prelude-val">Ok</span>(())
     }
 
     <span class="attr">#[tokio::test]

@@ -1571,7 +1571,15 @@
 <a href="#1570" id="1570">1570</a>
 <a href="#1571" id="1571">1571</a>
 <a href="#1572" id="1572">1572</a>
-<a href="#1573" id="1573">1573</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1573" id="1573">1573</a>
+<a href="#1574" id="1574">1574</a>
+<a href="#1575" id="1575">1575</a>
+<a href="#1576" id="1576">1576</a>
+<a href="#1577" id="1577">1577</a>
+<a href="#1578" id="1578">1578</a>
+<a href="#1579" id="1579">1579</a>
+<a href="#1580" id="1580">1580</a>
+<a href="#1581" id="1581">1581</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1785,6 +1793,7 @@
     prefer_ipv6: Arc&lt;AtomicBool&gt;,
     <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
     </span>insecure_skip_cert_verify: bool,
+    protocol: iroh_relay::http::Protocol,
 }
 
 <span class="kw">impl </span>ActiveRelayActor {
@@ -1824,6 +1833,7 @@
             prefer_ipv6,
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>insecure_skip_cert_verify,
+            protocol,
         } = opts;
 
         <span class="kw">let </span><span class="kw-2">mut </span>builder = relay::client::ClientBuilder::new(
@@ -1832,6 +1842,7 @@
             <span class="attr">#[cfg(not(wasm_browser))]
             </span>dns_resolver,
         )
+        .protocol(protocol)
         .address_family_selector(<span class="kw">move </span>|| prefer_ipv6.load(Ordering::Relaxed));
         <span class="kw">if let </span><span class="prelude-val">Some</span>(proxy_url) = proxy_url {
             builder = builder.proxy_url(proxy_url);
@@ -2346,12 +2357,14 @@
     <span class="doccomment">/// The tasks for the [`ActiveRelayActor`]s in `active_relays` above.
     </span>active_relay_tasks: JoinSet&lt;()&gt;,
     cancel_token: CancellationToken,
+    protocol: iroh_relay::http::Protocol,
 }
 
 <span class="kw">impl </span>RelayActor {
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(
         msock: Arc&lt;MagicSock&gt;,
         relay_datagram_recv_queue: Arc&lt;RelayDatagramRecvQueue&gt;,
+        protocol: iroh_relay::http::Protocol,
     ) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>cancel_token = CancellationToken::new();
         <span class="self">Self </span>{
@@ -2360,6 +2373,7 @@
             active_relays: Default::default(),
             active_relay_tasks: JoinSet::new(),
             cancel_token,
+            protocol,
         }
     }
 
@@ -2558,6 +2572,7 @@
             prefer_ipv6: <span class="self">self</span>.msock.ipv6_reported.clone(),
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>insecure_skip_cert_verify: <span class="self">self</span>.msock.insecure_skip_relay_cert_verify,
+            protocol: <span class="self">self</span>.protocol,
         };
 
         <span class="comment">// TODO: Replace 64 with PER_CLIENT_SEND_QUEUE_DEPTH once that's unused
@@ -2859,6 +2874,7 @@
                 proxy_url: <span class="prelude-val">None</span>,
                 prefer_ipv6: Arc::new(AtomicBool::new(<span class="bool-val">true</span>)),
                 insecure_skip_cert_verify: <span class="bool-val">true</span>,
+                protocol: iroh_relay::http::Protocol::default(),
             },
             stop_token,
         };

@@ -4420,7 +4420,13 @@
 <a href="#4419" id="4419">4419</a>
 <a href="#4420" id="4420">4420</a>
 <a href="#4421" id="4421">4421</a>
-<a href="#4422" id="4422">4422</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4422" id="4422">4422</a>
+<a href="#4423" id="4423">4423</a>
+<a href="#4424" id="4424">4424</a>
+<a href="#4425" id="4425">4425</a>
+<a href="#4426" id="4426">4426</a>
+<a href="#4427" id="4427">4427</a>
+<a href="#4428" id="4428">4428</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4537,6 +4543,9 @@
 
     <span class="doccomment">/// The [`RelayMap`] to use, leave empty to not use a relay server.
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) relay_map: RelayMap,
+
+    <span class="doccomment">/// Whether to use websockets or the nonstandard legacy protocol to connect to relays
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) relay_protocol: iroh_relay::http::Protocol,
 
     <span class="doccomment">/// An optional [`NodeMap`], to restore information about nodes.
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) node_map: <span class="prelude-ty">Option</span>&lt;Vec&lt;NodeAddr&gt;&gt;,
@@ -6092,6 +6101,7 @@
             addr_v6,
             secret_key,
             relay_map,
+            relay_protocol,
             node_map,
             discovery,
             discovery_user_data,
@@ -6190,7 +6200,7 @@
 
         <span class="kw">let </span><span class="kw-2">mut </span>actor_tasks = JoinSet::default();
 
-        <span class="kw">let </span>relay_actor = RelayActor::new(msock.clone(), relay_datagram_recv_queue);
+        <span class="kw">let </span>relay_actor = RelayActor::new(msock.clone(), relay_datagram_recv_queue, relay_protocol);
         <span class="kw">let </span>relay_actor_cancel_token = relay_actor.cancel_token();
         actor_tasks.spawn(
             <span class="kw">async move </span>{
@@ -7832,6 +7842,7 @@
                 addr_v6: <span class="prelude-val">None</span>,
                 secret_key,
                 relay_map: RelayMap::empty(),
+                relay_protocol: iroh_relay::http::Protocol::default(),
                 node_map: <span class="prelude-val">None</span>,
                 discovery: <span class="prelude-val">None</span>,
                 proxy_url: <span class="prelude-val">None</span>,
@@ -8444,6 +8455,7 @@
             addr_v6: <span class="prelude-val">None</span>,
             secret_key: secret_key.clone(),
             relay_map: RelayMap::empty(),
+            relay_protocol: iroh_relay::http::Protocol::default(),
             node_map: <span class="prelude-val">None</span>,
             discovery: <span class="prelude-val">None</span>,
             discovery_user_data: <span class="prelude-val">None</span>,
