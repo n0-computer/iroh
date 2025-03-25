@@ -1162,7 +1162,9 @@
 <a href="#1161" id="1161">1161</a>
 <a href="#1162" id="1162">1162</a>
 <a href="#1163" id="1163">1163</a>
-<a href="#1164" id="1164">1164</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#1164" id="1164">1164</a>
+<a href="#1165" id="1165">1165</a>
+<a href="#1166" id="1166">1166</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::HashMap, future::Future, net::SocketAddr, pin::Pin, sync::Arc, time::Duration,
 };
 
@@ -1981,7 +1983,8 @@
         <span class="macro">assert_eq!</span>(b_key, got_key);
         <span class="macro">assert_eq!</span>(msg, got_msg);
 
-        client_a.close().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="comment">// Close before shutting down, otherwise we'll try to send close frames on broken pipes
+        </span>client_a.close().<span class="kw">await</span><span class="question-mark">?</span>;
         client_b.close().<span class="kw">await</span><span class="question-mark">?</span>;
         server.shutdown();
 
@@ -2090,10 +2093,11 @@
         <span class="macro">assert_eq!</span>(b_key, got_key);
         <span class="macro">assert_eq!</span>(msg, got_msg);
 
+        <span class="comment">// Close before shutting down, otherwise we'll try to send close frames on broken pipes
+        </span>client_a.close().<span class="kw">await</span><span class="question-mark">?</span>;
+        client_b.close().<span class="kw">await</span><span class="question-mark">?</span>;
         server.shutdown();
         server.task_handle().<span class="kw">await</span><span class="question-mark">?</span>;
-        client_a.close().<span class="kw">await</span><span class="question-mark">?</span>;
-        client_b.close().<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="prelude-val">Ok</span>(())
     }
