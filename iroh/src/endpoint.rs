@@ -43,6 +43,7 @@ use crate::{
     magicsock::{self, Handle, NodeIdMappedAddr},
     tls,
     watchable::Watcher,
+    RelayProtocol,
 };
 
 mod rtt_actor;
@@ -284,16 +285,13 @@ impl Builder {
 
     /// Sets the protocol to use for relay connections.
     ///
-    /// Options are either [`Protocol::Websocket`] or [`Protocol::Relay`].
+    /// Options are either [`RelayProtocol::Websocket`] or [`RelayProtocol::Relay`].
     ///
     /// `Websocket` is considered unstable between iroh versions at the moment.
     /// The protocol can change in compatibility-breaking ways before iroh 1.0.
     ///
     /// Default is set to `Relay` at the moment, until we've stabilized the websocket protocol.
-    ///
-    /// [`Protocol::Websocket`]: iroh_relay::http::Protocol::Websocket
-    /// [`Protocol::Relay`]: iroh_relay::http::Protocol::Relay
-    pub fn relay_conn_protocol(mut self, protocol: iroh_relay::http::Protocol) -> Self {
+    pub fn relay_conn_protocol(mut self, protocol: RelayProtocol) -> Self {
         self.relay_protocol = protocol;
         self
     }
