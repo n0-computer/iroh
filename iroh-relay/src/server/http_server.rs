@@ -817,6 +817,7 @@ mod tests {
         assert_eq!(b_key, got_key);
         assert_eq!(msg, got_msg);
 
+        // Close before shutting down, otherwise we'll try to send close frames on broken pipes
         client_a.close().await?;
         client_b.close().await?;
         server.shutdown();
@@ -926,10 +927,11 @@ mod tests {
         assert_eq!(b_key, got_key);
         assert_eq!(msg, got_msg);
 
-        server.shutdown();
-        server.task_handle().await?;
+        // Close before shutting down, otherwise we'll try to send close frames on broken pipes
         client_a.close().await?;
         client_b.close().await?;
+        server.shutdown();
+        server.task_handle().await?;
 
         Ok(())
     }
