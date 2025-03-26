@@ -1064,8 +1064,7 @@ impl NodeState {
         state.last_payload_msg = Some(now);
         self.last_used = Some(now);
         self.udp_paths
-            .best_addr
-            .reconfirm_if_used(addr.into(), BestAddrSource::Udp, now);
+            .reconfirm_or_assign_best_addr(addr.into(), BestAddrSource::Udp, now);
     }
 
     pub(super) fn receive_relay(&mut self, url: &RelayUrl, src: NodeId, now: Instant) {

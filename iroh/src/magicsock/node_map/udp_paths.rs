@@ -12,7 +12,7 @@ use rand::seq::IteratorRandom;
 use tracing::warn;
 
 use super::{
-    best_addr::{self, BestAddr},
+    best_addr::{self, BestAddr, Source},
     node_state::PongReply,
     path_state::PathState,
     IpPort,
@@ -174,6 +174,32 @@ impl NodeUdpPaths {
                     best_addr::Source::BestCandidate,
                     pong.pong_at,
                 )
+            }
+        }
+    }
+
+    pub(super) fn reconfirm_or_assign_best_addr(
+        &mut self,
+        addr: SocketAddr,
+        source: Source,
+        confirmed_at: Instant,
+    ) {
+        // if there is a best addr, reconfirm that the best addr is still the best
+        if !self.best_addr.is_empty() {
+            self.best_addr.reconfirm_if_used(addr, source, confirmed_at);
+        } else if let Some(candidate) = self.chosen_candidate {
+            // if there is NOT a best addr, and the socket_addr is the candidate addr, assign the candidate addr to best addr
+            // we have no known latency so
+
+            // TODO(ramfox): our main footgun here is that we don't have a latency from a pong. if we go this route, we need some default here.
+            const DEFAULT_LATENCY: Duration = Duration::from_millis(500);
+            if candidate == addr.into() {
+                self.best_addr.insert_if_better_or_reconfirm(
+                    addr,
+                    DEFAULT_LATENCY,
+                    source,
+                    confirmed_at,
+                );
             }
         }
     }
