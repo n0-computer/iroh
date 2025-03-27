@@ -11,6 +11,7 @@ use std::{
 
 use anyhow::{bail, Context as _, Result};
 use clap::Parser;
+use http::StatusCode;
 use iroh_base::NodeId;
 use iroh_relay::{
     defaults::{
@@ -184,8 +185,8 @@ enum AccessConfig {
     Denylist(Vec<NodeId>),
     /// Performs a HTTP POST request to determine access for each node that connects to the relay.
     ///
-    /// The string value is used as the URL template, where `{node_id}` will be replaced
-    /// with the hex-encoded node id that is connecting.
+    /// The request will have a header `X-Iroh-Node-Id` set to the hex-encoded node id attempting
+    /// to connect to the relay.
     ///
     /// To grant access, the HTTP endpoint must return a `200` response with `true` as the response text.
     /// In all other cases, the node will be denied access.
@@ -243,7 +244,7 @@ async fn http_access_check(
     node_id: NodeId,
 ) -> iroh_relay::server::Access {
     use iroh_relay::server::Access;
-    debug!(%url, "check relay access via HTTP POST");
+    debug!(%url, "Check relay access via HTTP POST");
     let res = match client
         .post(url)
         .header("X-Iroh-NodeId", node_id.to_string())
@@ -252,28 +253,28 @@ async fn http_access_check(
     {
         Ok(t) => t,
         Err(err) => {
-            warn!("request failed: {err}");
+            warn!("HTTP access check failed to retrieve response: {err}");
             return Access::Deny;
         }
     };
-    if res.status().is_success() {
+    if res.status() == StatusCode::OK {
         match res.text().await {
-            Err(err) => {
-                warn!("failed to read response: {err}");
-                Access::Deny
-            }
             Ok(text) if text == "true" => {
-                debug!("request successfull: grant access");
+                debug!("HTTP access check successful: grant access.");
                 Access::Allow
             }
             Ok(_) => {
-                warn!("request successfull but response text is not `true`: deny access");
+                warn!("HTTP access check return invalid response text: deny access.");
+                Access::Deny
+            }
+            Err(err) => {
+                warn!("HTTP access check failed to read response: {err}");
                 Access::Deny
             }
         }
     } else {
         debug!(
-            "request returned non-success code {}: deny access",
+            "HTTP access check response has status code {}: deny access",
             res.status()
         );
         Access::Deny
