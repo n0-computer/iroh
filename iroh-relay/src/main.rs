@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 use tokio_rustls_acme::{caches::DirCache, AcmeConfig};
 use tracing::{debug, warn};
 use tracing_subscriber::{prelude::*, EnvFilter};
+use url::Url;
 
 /// The default `http_bind_port` when using `--dev`.
 const DEV_MODE_HTTP_PORT: u16 = 3340;
@@ -188,7 +189,7 @@ enum AccessConfig {
     ///
     /// To grant access, the HTTP endpoint must return a `200` response with `true` as the response text.
     /// In all other cases, the node will be denied access.
-    Http(String),
+    Http(Url),
 }
 
 impl From<AccessConfig> for iroh_relay::server::AccessConfig {
@@ -223,13 +224,12 @@ impl From<AccessConfig> for iroh_relay::server::AccessConfig {
                     .boxed()
                 }))
             }
-            AccessConfig::Http(url_template) => {
+            AccessConfig::Http(url) => {
                 let client = reqwest::Client::default();
-                let url_template = Arc::new(url_template);
                 iroh_relay::server::AccessConfig::Restricted(Box::new(move |node_id| {
                     let client = client.clone();
-                    let url_template = url_template.clone();
-                    async move { http_access_check(&client, &url_template, node_id).await }.boxed()
+                    let url = url.clone();
+                    async move { http_access_check(&client, url, node_id).await }.boxed()
                 }))
             }
         }
@@ -239,13 +239,17 @@ impl From<AccessConfig> for iroh_relay::server::AccessConfig {
 #[tracing::instrument("http-access-check", skip_all, fields(node_id=%node_id.fmt_short()))]
 async fn http_access_check(
     client: &reqwest::Client,
-    url_template: &str,
+    url: Url,
     node_id: NodeId,
 ) -> iroh_relay::server::Access {
     use iroh_relay::server::Access;
-    let url = url_template.replace("{node_id}", &node_id.to_string());
     debug!(%url, "check relay access via HTTP POST");
-    let res = match client.post(&url).send().await {
+    let res = match client
+        .post(url)
+        .header("X-Iroh-NodeId", node_id.to_string())
+        .send()
+        .await
+    {
         Ok(t) => t,
         Err(err) => {
             warn!("request failed: {err}");
