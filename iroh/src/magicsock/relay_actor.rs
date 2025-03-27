@@ -807,15 +807,19 @@ impl RelayActor {
             tokio::select! {
                 biased;
                 _ = self.cancel_token.cancelled() => {
-                    trace!("shutting down");
+                    debug!("shutting down");
                     break;
                 }
-                Some(Err(err)) = self.active_relay_tasks.join_next() => {
-                    if err.is_panic() {
-                        panic!("ActiveRelayActor task panicked: {err:#?}");
-                    }
-                    if !err.is_cancelled() {
-                        error!("ActiveRelayActor failed: {err:?}");
+                Some(res) = self.active_relay_tasks.join_next() => {
+                    match res {
+                        Ok(()) => (),
+                        Err(err) if err.is_panic() => {
+                            error!("ActiveRelayActor task panicked: {err:#?}");
+                        }
+                        Err(err) if err.is_cancelled() => {
+                            error!("ActiveRelayActor cancelled: {err:#?}");
+                        }
+                        Err(err) => error!("ActiveRelayActor failed: {err:#?}"),
                     }
                     self.reap_active_relays();
                 }
@@ -969,6 +973,7 @@ impl RelayActor {
                     }
                 }
                 self.active_relays.insert(url, handle.clone());
+                self.log_active_relay();
                 handle
             }
         }
