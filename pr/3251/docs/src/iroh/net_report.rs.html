@@ -1389,7 +1389,8 @@
 <a href="#1388" id="1388">1388</a>
 <a href="#1389" id="1389">1389</a>
 <a href="#1390" id="1390">1390</a>
-<a href="#1391" id="1391">1391</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
+<a href="#1391" id="1391">1391</a>
+<a href="#1392" id="1392">1392</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
 //!
 //! NetReport is responsible for finding out the network conditions of the current host, like
 //! whether it is connected to the internet via IPv4 and/or IPv6, what the NAT situation is
@@ -2313,7 +2314,8 @@
     <span class="kw">use </span>tracing::info;
     <span class="kw">use </span>tracing_test::traced_test;
 
-    <span class="kw">use super</span>::{dns::tests::resolver, ping::Pinger, stun_utils::bind_local_stun_socket, <span class="kw-2">*</span>};
+    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+    <span class="kw">use </span><span class="kw">crate</span>::net_report::{dns, ping::Pinger, stun_utils::bind_local_stun_socket};
 
     <span class="kw">mod </span>stun_utils {
         <span class="doccomment">//! Utils for testing that expose a simple stun server.
@@ -2453,7 +2455,7 @@
         <span class="kw">let </span>(stun_addr, stun_stats, _cleanup_guard) =
             stun_utils::serve(<span class="string">"127.0.0.1"</span>.parse().unwrap()).<span class="kw">await</span><span class="question-mark">?</span>;
 
-        <span class="kw">let </span>resolver = <span class="kw">super</span>::dns::tests::resolver();
+        <span class="kw">let </span>resolver = dns::tests::resolver();
         <span class="kw">let </span><span class="kw-2">mut </span>client = Client::new(<span class="prelude-val">None</span>, resolver.clone(), <span class="prelude-val">None</span>)<span class="question-mark">?</span>;
         <span class="kw">let </span>dm = stun_utils::relay_map_of([stun_addr].into_iter());
 
@@ -2701,7 +2703,7 @@
                 want_relay: <span class="prelude-val">Some</span>(relay_url(<span class="number">2</span>)), <span class="comment">// 2 got fast enough
             </span>},
         ];
-        <span class="kw">let </span>resolver = resolver();
+        <span class="kw">let </span>resolver = dns::tests::resolver();
         <span class="kw">for </span><span class="kw-2">mut </span>tt <span class="kw">in </span>tests {
             <span class="macro">println!</span>(<span class="string">"test: {}"</span>, tt.name);
             <span class="kw">let </span><span class="kw-2">mut </span>actor = Actor::new(<span class="prelude-val">None</span>, resolver.clone(), <span class="prelude-val">None</span>).unwrap();
@@ -2738,7 +2740,7 @@
         <span class="kw">let </span>dm = stun_utils::relay_map_of([stun_addr].into_iter());
         <span class="macro">dbg!</span>(<span class="kw-2">&amp;</span>dm);
 
-        <span class="kw">let </span>resolver = resolver().clone();
+        <span class="kw">let </span>resolver = dns::tests::resolver().clone();
         <span class="kw">let </span><span class="kw-2">mut </span>client = Client::new(<span class="prelude-val">None</span>, resolver, <span class="prelude-val">None</span>)<span class="question-mark">?</span>;
 
         <span class="comment">// Set up an external socket to send STUN requests from, this will be discovered as

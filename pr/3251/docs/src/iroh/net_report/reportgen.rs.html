@@ -1753,7 +1753,8 @@
 <a href="#1752" id="1752">1752</a>
 <a href="#1753" id="1753">1753</a>
 <a href="#1754" id="1754">1754</a>
-<a href="#1755" id="1755">1755</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
+<a href="#1755" id="1755">1755</a>
+<a href="#1756" id="1756">1756</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
 //!
 //! It is implemented as an actor with [`Client`] as handle.
 //!
@@ -1807,8 +1808,8 @@
 <span class="kw">use </span>url::Host;
 
 <span class="attr">#[cfg(wasm_browser)]
-</span><span class="kw">use </span><span class="kw">crate</span>::net_report::portmapper;
-<span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
+</span><span class="kw">use </span><span class="kw">crate</span>::net_report::portmapper; <span class="comment">// We stub the library
+</span><span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
 </span><span class="kw">use </span><span class="kw">crate</span>::net_report::Metrics;
 <span class="kw">use </span><span class="kw">crate</span>::net_report::{<span class="self">self</span>, Report};
 <span class="attr">#[cfg(not(wasm_browser))]
@@ -1817,16 +1818,16 @@
     dns::DNS_STAGGERING_MS,
     ip_mapped_addrs::IpMappedAddresses,
     ping::{PingError, Pinger},
-}; <span class="comment">// We stub the library
+};
 
-</span><span class="attr">#[cfg(not(wasm_browser))]
+<span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">mod </span>hairpin;
 <span class="kw">mod </span>probes;
 
 <span class="kw">pub use </span>probes::ProbeProto;
 <span class="kw">use </span>probes::{Probe, ProbePlan};
 
-<span class="kw">use </span><span class="kw">super</span>::defaults::timeouts::{
+<span class="kw">use </span><span class="kw">crate</span>::net_report::defaults::timeouts::{
     CAPTIVE_PORTAL_DELAY, CAPTIVE_PORTAL_TIMEOUT, OVERALL_REPORT_TIMEOUT, PROBES_TIMEOUT,
 };
 
@@ -3200,6 +3201,7 @@
     <span class="kw">use </span>tracing_test::traced_test;
 
     <span class="kw">use super</span>::{<span class="kw">super</span>::test_utils, <span class="kw-2">*</span>};
+    <span class="kw">use </span><span class="kw">crate</span>::net_report::dns;
 
     <span class="attr">#[tokio::test]
     #[traced_test]
@@ -3450,7 +3452,7 @@
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_measure_https_latency() -&gt; TestResult {
         <span class="kw">let </span>(server, relay) = test_utils::relay().<span class="kw">await</span>;
-        <span class="kw">let </span>dns_resolver = <span class="kw">crate</span>::net_report::dns::tests::resolver();
+        <span class="kw">let </span>dns_resolver = dns::tests::resolver();
         <span class="macro">tracing::info!</span>(relay_url = <span class="question-mark">?</span>relay.url , <span class="string">"RELAY_URL"</span>);
         <span class="kw">let </span>(latency, ip) =
             measure_https_latency(<span class="kw-2">&amp;</span>dns_resolver, <span class="kw-2">&amp;</span>relay, server.certificates()).<span class="kw">await</span><span class="question-mark">?</span>;
