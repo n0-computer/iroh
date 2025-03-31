@@ -23,7 +23,7 @@ env:
   RUSTFLAGS: -Dwarnings
   RUSTDOCFLAGS: -Dwarnings
   SCCACHE_CACHE_SIZE: "10G"
-  CRATES_LIST: "iroh,iroh-bench,iroh-dns-server,iroh-relay,iroh-net-report"
+  CRATES_LIST: "iroh,iroh-bench,iroh-dns-server,iroh-relay"
   IROH_FORCE_STAGING_RELAYS: "1"
 
 jobs:

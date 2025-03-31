@@ -13,7 +13,7 @@ use n0_future::time::Duration;
 #[cfg(not(wasm_browser))]
 use netwatch::interfaces;
 
-use crate::Report;
+use crate::net_report::Report;
 
 /// The retransmit interval used when net_report first runs.
 ///
@@ -681,7 +681,7 @@ mod tests {
     use tracing_test::traced_test;
 
     use super::*;
-    use crate::{test_utils, RelayLatencies};
+    use crate::net_report::{test_utils, RelayLatencies};
 
     /// Shorthand which declares a new ProbeSet.
     ///

@@ -8,7 +8,7 @@ mod imp {
 
     use netwatch::UdpSocket;
 
-    use crate::{reportgen::ProbeProto, QuicConfig};
+    use crate::net_report::{reportgen::ProbeProto, QuicConfig};
 
     /// Options for running probes
     ///

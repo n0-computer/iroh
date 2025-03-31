@@ -70,8 +70,6 @@ pub use options::Options;
 pub use reportgen::QuicConfig;
 #[cfg(not(wasm_browser))]
 use reportgen::SocketState;
-#[cfg(feature = "stun-utils")]
-pub use stun_utils::bind_local_stun_socket;
 
 const FULL_REPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
@@ -797,7 +795,7 @@ pub fn os_has_ipv6() -> bool {
     false
 }
 
-#[cfg(any(test, feature = "stun-utils"))]
+#[cfg(any(test))]
 pub(crate) mod stun_utils {
     use anyhow::Context as _;
     use netwatch::IpFamily;
@@ -924,8 +922,7 @@ mod tests {
     use tracing::info;
     use tracing_test::traced_test;
 
-    use super::*;
-    use crate::{ping::Pinger, stun_utils::bind_local_stun_socket};
+    use super::{dns::tests::resolver, ping::Pinger, stun_utils::bind_local_stun_socket, *};
 
     mod stun_utils {
         //! Utils for testing that expose a simple stun server.
@@ -1065,7 +1062,7 @@ mod tests {
         let (stun_addr, stun_stats, _cleanup_guard) =
             stun_utils::serve("127.0.0.1".parse().unwrap()).await?;
 
-        let resolver = crate::dns::tests::resolver();
+        let resolver = super::dns::tests::resolver();
         let mut client = Client::new(None, resolver.clone(), None)?;
         let dm = stun_utils::relay_map_of([stun_addr].into_iter());
 
@@ -1112,7 +1109,7 @@ mod tests {
         let dm = stun_utils::relay_map_of_opts([(stun_addr, false)].into_iter());
 
         // Now create a client and generate a report.
-        let resolver = crate::dns::tests::resolver();
+        let resolver = dns::tests::resolver();
         let mut client = Client::new(None, resolver.clone(), None)?;
 
         let r = client.get_report(dm, None, None, None).await?;
@@ -1313,7 +1310,7 @@ mod tests {
                 want_relay: Some(relay_url(2)), // 2 got fast enough
             },
         ];
-        let resolver = crate::dns::tests::resolver();
+        let resolver = resolver();
         for mut tt in tests {
             println!("test: {}", tt.name);
             let mut actor = Actor::new(None, resolver.clone(), None).unwrap();
@@ -1350,7 +1347,7 @@ mod tests {
         let dm = stun_utils::relay_map_of([stun_addr].into_iter());
         dbg!(&dm);
 
-        let resolver = crate::dns::tests::resolver().clone();
+        let resolver = resolver().clone();
         let mut client = Client::new(None, resolver, None)?;
 
         // Set up an external socket to send STUN requests from, this will be discovered as
