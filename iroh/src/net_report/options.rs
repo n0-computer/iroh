@@ -149,7 +149,7 @@ mod imp {
 mod imp {
     use std::collections::BTreeSet;
 
-    use crate::reportgen::ProbeProto;
+    use crate::net_report::reportgen::ProbeProto;
 
     /// Options for running probes (in browsers).
     ///

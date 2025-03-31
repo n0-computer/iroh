@@ -237,7 +237,7 @@ impl fmt::Display for ProbeSet {
 /// The [`reportgen`] actor will also abort all the remaining [`ProbeSet`]s once it has
 /// sufficient information for a report.
 ///
-/// [`reportgen`]: crate::reportgen
+/// [`reportgen`]: crate::net_report::reportgen
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct ProbePlan {
     set: BTreeSet<ProbeSet>,

@@ -795,7 +795,7 @@ pub fn os_has_ipv6() -> bool {
     false
 }
 
-#[cfg(any(test))]
+#[cfg(test)]
 pub(crate) mod stun_utils {
     use anyhow::Context as _;
     use netwatch::IpFamily;
