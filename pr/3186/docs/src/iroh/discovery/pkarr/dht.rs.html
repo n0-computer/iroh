@@ -692,7 +692,7 @@
     </span><span class="kw">async fn </span>dht_discovery_smoke() -&gt; TestResult {
         <span class="kw">let </span>ep = <span class="kw">crate</span>::Endpoint::builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>secret = ep.secret_key().clone();
-        <span class="kw">let </span>testnet = pkarr::mainline::Testnet::new(<span class="number">2</span>)<span class="question-mark">?</span>;
+        <span class="kw">let </span>testnet = pkarr::mainline::Testnet::new_async(<span class="number">3</span>).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>client = pkarr::Client::builder()
             .dht(|builder| builder.bootstrap(<span class="kw-2">&amp;</span>testnet.bootstrap))
             .build()<span class="question-mark">?</span>;

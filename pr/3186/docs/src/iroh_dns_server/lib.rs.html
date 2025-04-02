@@ -487,7 +487,7 @@
     #[traced_test]
     </span><span class="kw">async fn </span>integration_mainline() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="comment">// run a mainline testnet
-        </span><span class="kw">let </span>testnet = pkarr::mainline::Testnet::new(<span class="number">5</span>)<span class="question-mark">?</span>;
+        </span><span class="kw">let </span>testnet = pkarr::mainline::Testnet::new_async(<span class="number">5</span>).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>bootstrap = testnet.bootstrap.clone();
 
         <span class="comment">// spawn our server with mainline support
