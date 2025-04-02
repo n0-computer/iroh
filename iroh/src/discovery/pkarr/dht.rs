@@ -327,16 +327,18 @@ mod tests {
         let ep = crate::Endpoint::builder().bind().await?;
         let secret = ep.secret_key().clone();
         let testnet = pkarr::mainline::Testnet::new(2)?;
-        let bootstrapped: Vec<bool> = FuturesUnordered::from_iter(
-            testnet
-                .nodes
-                .iter()
-                .cloned()
-                .map(|node| async move { node.as_async().bootstrapped().await }),
-        )
-        .collect()
-        .await;
-        assert!(bootstrapped.into_iter().any(|x| x), "testnet bootstrapped");
+        assert!(
+            FuturesUnordered::from_iter(
+                testnet
+                    .nodes
+                    .iter()
+                    .cloned()
+                    .map(|node| async move { node.as_async().bootstrapped().await }),
+            )
+            .any(|x| x)
+            .await,
+            "testnet bootstrapped"
+        );
 
         let client = pkarr::Client::builder()
             .dht(|builder| builder.bootstrap(&testnet.bootstrap))

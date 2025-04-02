@@ -221,16 +221,18 @@ mod tests {
     async fn integration_mainline() -> Result<()> {
         // run a mainline testnet
         let testnet = pkarr::mainline::Testnet::new(5)?;
-        let bootstrapped: Vec<bool> = FuturesUnordered::from_iter(
-            testnet
-                .nodes
-                .iter()
-                .cloned()
-                .map(|node| async move { node.as_async().bootstrapped().await }),
-        )
-        .collect()
-        .await;
-        assert!(bootstrapped.into_iter().any(|x| x), "testnet bootstrapped");
+        assert!(
+            FuturesUnordered::from_iter(
+                testnet
+                    .nodes
+                    .iter()
+                    .cloned()
+                    .map(|node| async move { node.as_async().bootstrapped().await }),
+            )
+            .any(|x| x)
+            .await,
+            "testnet bootstrapped"
+        );
 
         let bootstrap = testnet.bootstrap.clone();
         // spawn our server with mainline support
