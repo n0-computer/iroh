@@ -325,7 +325,7 @@ mod tests {
     async fn dht_discovery_smoke() -> TestResult {
         let ep = crate::Endpoint::builder().bind().await?;
         let secret = ep.secret_key().clone();
-        let testnet = pkarr::mainline::Testnet::new(2)?;
+        let testnet = pkarr::mainline::Testnet::new_async(3).await?;
         let client = pkarr::Client::builder()
             .dht(|builder| builder.bootstrap(&testnet.bootstrap))
             .build()?;
