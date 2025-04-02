@@ -93,7 +93,7 @@ impl Inner {
             Some(signed_packet) => match NodeInfo::from_pkarr_signed_packet(&signed_packet) {
                 Ok(node_info) => {
                     tracing::info!("discovered node info {:?}", node_info);
-                    Some(Ok(DiscoveryItem::new(node_info, "dht", None)))
+                    Some(Ok(DiscoveryItem::new(node_info, "pkarr", None)))
                 }
                 Err(_err) => {
                     tracing::debug!("failed to parse signed packet as node info");
