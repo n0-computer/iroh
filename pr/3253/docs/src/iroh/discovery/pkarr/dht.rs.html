@@ -378,8 +378,7 @@
 <a href="#377" id="377">377</a>
 <a href="#378" id="378">378</a>
 <a href="#379" id="379">379</a>
-<a href="#380" id="380">380</a>
-<a href="#381" id="381">381</a></pre></div><pre class="rust"><code><span class="doccomment">//! Pkarr based node discovery for iroh, supporting both relay servers and the DHT.
+<a href="#380" id="380">380</a></pre></div><pre class="rust"><code><span class="doccomment">//! Pkarr based node discovery for iroh, supporting both relay servers and the DHT.
 //!
 //! This module contains pkarr-based node discovery for iroh which can use both pkarr
 //! relay servers as well as the Mainline DHT directly.  See the [pkarr module] for an
@@ -702,12 +701,11 @@
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
 
     <span class="attr">#[tokio::test]
-    #[ignore = <span class="string">"flaky"</span>]
     #[traced_test]
     </span><span class="kw">async fn </span>dht_discovery_smoke() -&gt; TestResult {
         <span class="kw">let </span>ep = <span class="kw">crate</span>::Endpoint::builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>secret = ep.secret_key().clone();
-        <span class="kw">let </span>testnet = pkarr::mainline::Testnet::new(<span class="number">2</span>)<span class="question-mark">?</span>;
+        <span class="kw">let </span>testnet = pkarr::mainline::Testnet::new(<span class="number">3</span>)<span class="question-mark">?</span>;
         <span class="macro">assert!</span>(
             FuturesUnordered::from_iter(
                 testnet
