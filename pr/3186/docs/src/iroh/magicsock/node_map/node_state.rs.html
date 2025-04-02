@@ -1745,7 +1745,16 @@
 <a href="#1744" id="1744">1744</a>
 <a href="#1745" id="1745">1745</a>
 <a href="#1746" id="1746">1746</a>
-<a href="#1747" id="1747">1747</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#1747" id="1747">1747</a>
+<a href="#1748" id="1748">1748</a>
+<a href="#1749" id="1749">1749</a>
+<a href="#1750" id="1750">1750</a>
+<a href="#1751" id="1751">1751</a>
+<a href="#1752" id="1752">1752</a>
+<a href="#1753" id="1753">1753</a>
+<a href="#1754" id="1754">1754</a>
+<a href="#1755" id="1755">1755</a>
+<a href="#1756" id="1756">1756</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{btree_map::Entry, BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
@@ -2134,7 +2143,8 @@
     ///
     /// When a call-me-maybe message is sent we also need to send pings to all known paths
     /// of the endpoint.  The [`NodeState::send_call_me_maybe`] function takes care of this.
-    </span><span class="attr">#[instrument(<span class="string">"want_call_me_maybe"</span>, skip_all)]
+    </span><span class="attr">#[cfg(not(wasm_browser))]
+    #[instrument(<span class="string">"want_call_me_maybe"</span>, skip_all)]
     </span><span class="kw">fn </span>want_call_me_maybe(<span class="kw-2">&amp;</span><span class="self">self</span>, now: <span class="kw-2">&amp;</span>Instant) -&gt; bool {
         <span class="macro">trace!</span>(<span class="string">"full ping: wanted?"</span>);
         <span class="kw">let </span><span class="prelude-val">Some</span>(last_full_ping) = <span class="self">self</span>.last_full_ping <span class="kw">else </span>{
@@ -2164,6 +2174,12 @@
             }
         }
     }
+
+    <span class="attr">#[cfg(wasm_browser)]
+    </span><span class="kw">fn </span>want_call_me_maybe(<span class="kw-2">&amp;</span><span class="self">self</span>, _now: <span class="kw-2">&amp;</span>Instant) -&gt; bool {
+        <span class="macro">trace!</span>(<span class="string">"full ping: skipped in browser"</span>);
+        <span class="bool-val">false
+    </span>}
 
     <span class="doccomment">/// Cleanup the expired ping for the passed in txid.
     </span><span class="attr">#[instrument(<span class="string">"disco"</span>, skip_all, fields(node = %<span class="self">self</span>.node_id.fmt_short()))]
@@ -2638,8 +2654,10 @@
         <span class="kw">let </span>is_relay = src.is_relay();
         <span class="kw">match </span><span class="self">self</span>.sent_pings.remove(<span class="kw-2">&amp;</span>m.tx_id) {
             <span class="prelude-val">None </span>=&gt; {
-                <span class="comment">// This is not a pong for a ping we sent.
-                </span><span class="macro">warn!</span>(tx = %HEXLOWER.encode(<span class="kw-2">&amp;</span>m.tx_id), <span class="string">"received pong with unknown transaction id"</span>);
+                <span class="comment">// This is not a pong for a ping we sent.  In reality however we probably
+                // did send this ping but it has timed-out by the time we receive this pong
+                // so we removed the state already.
+                </span><span class="macro">debug!</span>(tx = %HEXLOWER.encode(<span class="kw-2">&amp;</span>m.tx_id), <span class="string">"received unknown pong (did it timeout?)"</span>);
                 <span class="prelude-val">None
             </span>}
             <span class="prelude-val">Some</span>(sp) =&gt; {
