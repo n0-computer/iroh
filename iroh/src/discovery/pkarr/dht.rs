@@ -321,7 +321,6 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    #[ignore = "flaky"]
     #[traced_test]
     async fn dht_discovery_smoke() -> TestResult {
         let ep = crate::Endpoint::builder().bind().await?;
