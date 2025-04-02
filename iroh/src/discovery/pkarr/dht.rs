@@ -314,6 +314,7 @@ mod tests {
     use std::collections::BTreeSet;
 
     use iroh_base::RelayUrl;
+    use n0_future::FuturesUnordered;
     use testresult::TestResult;
     use tracing_test::traced_test;
 
@@ -326,6 +327,17 @@ mod tests {
         let ep = crate::Endpoint::builder().bind().await?;
         let secret = ep.secret_key().clone();
         let testnet = pkarr::mainline::Testnet::new(2)?;
+        let bootstrapped: Vec<bool> = FuturesUnordered::from_iter(
+            testnet
+                .nodes
+                .iter()
+                .cloned()
+                .map(|node| async move { node.as_async().bootstrapped().await }),
+        )
+        .collect()
+        .await;
+        assert!(bootstrapped.into_iter().any(|x| x), "testnet bootstrapped");
+
         let client = pkarr::Client::builder()
             .dht(|builder| builder.bootstrap(&testnet.bootstrap))
             .build()?;

@@ -26,6 +26,7 @@ mod tests {
         discovery::pkarr::PkarrRelayClient, dns::DnsResolver, node_info::NodeInfo, RelayUrl,
         SecretKey,
     };
+    use n0_future::{FuturesUnordered, StreamExt};
     use pkarr::{SignedPacket, Timestamp};
     use testresult::TestResult;
     use tracing_test::traced_test;
@@ -220,8 +221,18 @@ mod tests {
     async fn integration_mainline() -> Result<()> {
         // run a mainline testnet
         let testnet = pkarr::mainline::Testnet::new(5)?;
-        let bootstrap = testnet.bootstrap.clone();
+        let bootstrapped: Vec<bool> = FuturesUnordered::from_iter(
+            testnet
+                .nodes
+                .iter()
+                .cloned()
+                .map(|node| async move { node.as_async().bootstrapped().await }),
+        )
+        .collect()
+        .await;
+        assert!(bootstrapped.into_iter().any(|x| x), "testnet bootstrapped");
 
+        let bootstrap = testnet.bootstrap.clone();
         // spawn our server with mainline support
         let (server, nameserver, _http_url) =
             Server::spawn_for_tests_with_options(Some(BootstrapOption::Custom(bootstrap)), None)
