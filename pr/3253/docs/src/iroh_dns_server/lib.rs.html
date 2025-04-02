@@ -277,7 +277,9 @@
 <a href="#276" id="276">276</a>
 <a href="#277" id="277">277</a>
 <a href="#278" id="278">278</a>
-<a href="#279" id="279">279</a></pre></div><pre class="rust"><code><span class="doccomment">//! A DNS server and pkarr relay
+<a href="#279" id="279">279</a>
+<a href="#280" id="280">280</a>
+<a href="#281" id="281">281</a></pre></div><pre class="rust"><code><span class="doccomment">//! A DNS server and pkarr relay
 
 </span><span class="attr">#![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
@@ -500,16 +502,18 @@
     </span><span class="kw">async fn </span>integration_mainline() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="comment">// run a mainline testnet
         </span><span class="kw">let </span>testnet = pkarr::mainline::Testnet::new(<span class="number">5</span>)<span class="question-mark">?</span>;
-        <span class="kw">let </span>bootstrapped: Vec&lt;bool&gt; = FuturesUnordered::from_iter(
-            testnet
-                .nodes
-                .iter()
-                .cloned()
-                .map(|node| <span class="kw">async move </span>{ node.as_async().bootstrapped().<span class="kw">await </span>}),
-        )
-        .collect()
-        .<span class="kw">await</span>;
-        <span class="macro">assert!</span>(bootstrapped.into_iter().any(|x| x), <span class="string">"testnet bootstrapped"</span>);
+        <span class="macro">assert!</span>(
+            FuturesUnordered::from_iter(
+                testnet
+                    .nodes
+                    .iter()
+                    .cloned()
+                    .map(|node| <span class="kw">async move </span>{ node.as_async().bootstrapped().<span class="kw">await </span>}),
+            )
+            .any(|x| x)
+            .<span class="kw">await</span>,
+            <span class="string">"testnet bootstrapped"
+        </span>);
 
         <span class="kw">let </span>bootstrap = testnet.bootstrap.clone();
         <span class="comment">// spawn our server with mainline support

@@ -377,7 +377,9 @@
 <a href="#376" id="376">376</a>
 <a href="#377" id="377">377</a>
 <a href="#378" id="378">378</a>
-<a href="#379" id="379">379</a></pre></div><pre class="rust"><code><span class="doccomment">//! Pkarr based node discovery for iroh, supporting both relay servers and the DHT.
+<a href="#379" id="379">379</a>
+<a href="#380" id="380">380</a>
+<a href="#381" id="381">381</a></pre></div><pre class="rust"><code><span class="doccomment">//! Pkarr based node discovery for iroh, supporting both relay servers and the DHT.
 //!
 //! This module contains pkarr-based node discovery for iroh which can use both pkarr
 //! relay servers as well as the Mainline DHT directly.  See the [pkarr module] for an
@@ -706,16 +708,18 @@
         <span class="kw">let </span>ep = <span class="kw">crate</span>::Endpoint::builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>secret = ep.secret_key().clone();
         <span class="kw">let </span>testnet = pkarr::mainline::Testnet::new(<span class="number">2</span>)<span class="question-mark">?</span>;
-        <span class="kw">let </span>bootstrapped: Vec&lt;bool&gt; = FuturesUnordered::from_iter(
-            testnet
-                .nodes
-                .iter()
-                .cloned()
-                .map(|node| <span class="kw">async move </span>{ node.as_async().bootstrapped().<span class="kw">await </span>}),
-        )
-        .collect()
-        .<span class="kw">await</span>;
-        <span class="macro">assert!</span>(bootstrapped.into_iter().any(|x| x), <span class="string">"testnet bootstrapped"</span>);
+        <span class="macro">assert!</span>(
+            FuturesUnordered::from_iter(
+                testnet
+                    .nodes
+                    .iter()
+                    .cloned()
+                    .map(|node| <span class="kw">async move </span>{ node.as_async().bootstrapped().<span class="kw">await </span>}),
+            )
+            .any(|x| x)
+            .<span class="kw">await</span>,
+            <span class="string">"testnet bootstrapped"
+        </span>);
 
         <span class="kw">let </span>client = pkarr::Client::builder()
             .dht(|builder| builder.bootstrap(<span class="kw-2">&amp;</span>testnet.bootstrap))
