@@ -460,7 +460,7 @@
             <span class="prelude-val">Some</span>(signed_packet) =&gt; <span class="kw">match </span>NodeInfo::from_pkarr_signed_packet(<span class="kw-2">&amp;</span>signed_packet) {
                 <span class="prelude-val">Ok</span>(node_info) =&gt; {
                     <span class="macro">tracing::info!</span>(<span class="string">"discovered node info {:?}"</span>, node_info);
-                    <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(DiscoveryItem::new(node_info, <span class="string">"dht"</span>, <span class="prelude-val">None</span>)))
+                    <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(DiscoveryItem::new(node_info, <span class="string">"pkarr"</span>, <span class="prelude-val">None</span>)))
                 }
                 <span class="prelude-val">Err</span>(_err) =&gt; {
                     <span class="macro">tracing::debug!</span>(<span class="string">"failed to parse signed packet as node info"</span>);
