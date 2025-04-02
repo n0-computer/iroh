@@ -23,6 +23,7 @@ use std::{
 
 use anyhow::{bail, Context, Result};
 use data_encoding::BASE32_DNSSEC;
+use ed25519_dalek::{pkcs8::DecodePublicKey, VerifyingKey};
 use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
 use iroh_relay::RelayMap;
 use n0_future::{time::Duration, Stream};
@@ -126,6 +127,7 @@ pub struct Builder {
     addr_v6: Option<SocketAddrV6>,
     #[cfg(any(test, feature = "test-utils"))]
     path_selection: PathSelection,
+    tls_auth: tls::Authentication,
 }
 
 impl Default for Builder {
@@ -150,6 +152,7 @@ impl Default for Builder {
             addr_v6: None,
             #[cfg(any(test, feature = "test-utils"))]
             path_selection: PathSelection::default(),
+            tls_auth: tls::Authentication::RawPublicKey,
         }
     }
 }
@@ -168,6 +171,7 @@ impl Builder {
             .unwrap_or_else(|| SecretKey::generate(rand::rngs::OsRng));
         let static_config = StaticConfig {
             transport_config: Arc::new(self.transport_config),
+            tls_auth: self.tls_auth,
             keylog: self.keylog,
             secret_key: secret_key.clone(),
         };
@@ -358,6 +362,24 @@ impl Builder {
         self
     }
 
+    /// Use libp2p based self signed certificates for TLS.
+    ///
+    /// For details see the libp2p spec at <https://github.com/libp2p/specs/blob/master/tls/tls.md>
+    ///
+    /// This is the only mechanism available in `iroh@0.33.0` and earlier.
+    pub fn tls_x509(mut self) -> Self {
+        self.tls_auth = tls::Authentication::X509;
+        self
+    }
+
+    /// Use TLS Raw Public Keys
+    ///
+    /// This is the default, but is not compatible with older versions of iroh.
+    pub fn tls_raw_public_keys(mut self) -> Self {
+        self.tls_auth = tls::Authentication::RawPublicKey;
+        self
+    }
+
     #[cfg(feature = "discovery-pkarr-dht")]
     /// Configures the endpoint to also use the mainline DHT with default settings.
     ///
@@ -501,6 +523,7 @@ impl Builder {
 /// Configuration for a [`quinn::Endpoint`] that cannot be changed at runtime.
 #[derive(Debug)]
 struct StaticConfig {
+    tls_auth: tls::Authentication,
     secret_key: SecretKey,
     transport_config: Arc<quinn::TransportConfig>,
     keylog: bool,
@@ -509,31 +532,14 @@ struct StaticConfig {
 impl StaticConfig {
     /// Create a [`quinn::ServerConfig`] with the specified ALPN protocols.
     fn create_server_config(&self, alpn_protocols: Vec<Vec<u8>>) -> Result<ServerConfig> {
-        let server_config = make_server_config(
-            &self.secret_key,
-            alpn_protocols,
-            self.transport_config.clone(),
-            self.keylog,
-        )?;
+        let quic_server_config =
+            self.tls_auth
+                .make_server_config(&self.secret_key, alpn_protocols, self.keylog)?;
+        let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
+        server_config.transport_config(self.transport_config.clone());
+
         Ok(server_config)
     }
-}
-
-/// Creates a [`ServerConfig`] with the given secret key and limits.
-// This return type can not longer be used anywhere in our public API.  It is however still
-// used by iroh::node::Node (or rather iroh::node::Builder) to create a plain Quinn
-// endpoint.
-pub fn make_server_config(
-    secret_key: &SecretKey,
-    alpn_protocols: Vec<Vec<u8>>,
-    transport_config: Arc<TransportConfig>,
-    keylog: bool,
-) -> Result<ServerConfig> {
-    let quic_server_config = tls::make_server_config(secret_key, alpn_protocols, keylog)?;
-    let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
-    server_config.transport_config(transport_config);
-
-    Ok(server_config)
 }
 
 /// Controls an iroh node, establishing connections with other nodes.
@@ -730,9 +736,9 @@ impl Endpoint {
         );
         let client_config = {
             let alpn_protocols = vec![alpn.to_vec()];
-            let quic_client_config = tls::make_client_config(
+            let quic_client_config = self.static_config.tls_auth.make_client_config(
                 &self.static_config.secret_key,
-                Some(node_id),
+                node_id,
                 alpn_protocols,
                 Some(self.session_store.clone()),
                 self.static_config.keylog,
@@ -1399,7 +1405,10 @@ impl Future for IncomingFuture {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
             Poll::Ready(Ok(inner)) => {
-                let conn = Connection { inner };
+                let conn = Connection {
+                    inner,
+                    tls_auth: this.ep.static_config.tls_auth,
+                };
                 try_send_rtt_msg(&conn, this.ep, None);
                 Poll::Ready(Ok(conn))
             }
@@ -1469,7 +1478,10 @@ impl Connecting {
     pub fn into_0rtt(self) -> Result<(Connection, ZeroRttAccepted), Self> {
         match self.inner.into_0rtt() {
             Ok((inner, zrtt_accepted)) => {
-                let conn = Connection { inner };
+                let conn = Connection {
+                    inner,
+                    tls_auth: self.ep.static_config.tls_auth,
+                };
                 let zrtt_accepted = ZeroRttAccepted {
                     inner: zrtt_accepted,
                     _discovery_drop_guard: self._discovery_drop_guard,
@@ -1521,7 +1533,10 @@ impl Future for Connecting {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
             Poll::Ready(Ok(inner)) => {
-                let conn = Connection { inner };
+                let conn = Connection {
+                    inner,
+                    tls_auth: this.ep.static_config.tls_auth,
+                };
                 try_send_rtt_msg(&conn, this.ep, *this.remote_node_id);
                 Poll::Ready(Ok(conn))
             }
@@ -1567,12 +1582,10 @@ impl Future for ZeroRttAccepted {
 /// connection without losing application data.
 ///
 /// May be cloned to obtain another handle to the same connection.
-// This has repr(transparent) as it opens the door to potentially allow casting it to a
-// quinn::Connection in the future.  Right now however that'd be iroh_quinn::Connection.
 #[derive(Debug, Clone)]
-#[repr(transparent)]
 pub struct Connection {
     inner: quinn::Connection,
+    tls_auth: tls::Authentication,
 }
 
 impl Connection {
@@ -1802,8 +1815,17 @@ impl Connection {
                             certs.len()
                         );
                     }
-                    let cert = tls::certificate::parse(&certs[0])?;
-                    Ok(cert.peer_id())
+
+                    match self.tls_auth {
+                        tls::Authentication::X509 => {
+                            let cert = tls::certificate::parse(&certs[0])?;
+                            Ok(cert.peer_id())
+                        }
+                        tls::Authentication::RawPublicKey => {
+                            let peer_id = VerifyingKey::from_public_key_der(&certs[0])?.into();
+                            Ok(peer_id)
+                        }
+                    }
                 }
                 Err(_) => bail!("invalid peer certificate"),
             },
@@ -2270,19 +2292,36 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_bidi_send_recv() {
+    async fn endpoint_bidi_send_recv_x509() {
+        endpoint_bidi_send_recv(tls::Authentication::X509).await
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn endpoint_bidi_send_recv_raw_public_key() {
+        endpoint_bidi_send_recv(tls::Authentication::RawPublicKey).await
+    }
+
+    async fn endpoint_bidi_send_recv(auth: tls::Authentication) {
         let ep1 = Endpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])
-            .relay_mode(RelayMode::Disabled)
-            .bind()
-            .await
-            .unwrap();
+            .relay_mode(RelayMode::Disabled);
+
+        let ep1 = match auth {
+            tls::Authentication::X509 => ep1.tls_x509(),
+            tls::Authentication::RawPublicKey => ep1.tls_raw_public_keys(),
+        };
+        let ep1 = ep1.bind().await.unwrap();
         let ep2 = Endpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])
-            .relay_mode(RelayMode::Disabled)
-            .bind()
-            .await
-            .unwrap();
+            .relay_mode(RelayMode::Disabled);
+
+        let ep2 = match auth {
+            tls::Authentication::X509 => ep2.tls_x509(),
+            tls::Authentication::RawPublicKey => ep2.tls_raw_public_keys(),
+        };
+        let ep2 = ep2.bind().await.unwrap();
+
         let ep1_nodeaddr = ep1.node_addr().await.unwrap();
         let ep2_nodeaddr = ep2.node_addr().await.unwrap();
         ep1.add_node_addr(ep2_nodeaddr.clone()).unwrap();

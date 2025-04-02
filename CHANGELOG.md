@@ -2,7 +2,37 @@
 
 All notable changes to iroh will be documented in this file.
 
-## [0.33.0](https://github.com/n0-computer/iroh/compare/v0.32.1..0.33.0) - 2025-02-24
+## [0.34.0](https://github.com/n0-computer/iroh/compare/v0.33.0..0.34.0) - 2025-03-17
+
+### ⛰️  Features
+
+- *(iroh)* Enable `netwatch::netmon::Monitor` and the `metrics` feature in Wasm ([#3206](https://github.com/n0-computer/iroh/issues/3206)) - ([7acfe39](https://github.com/n0-computer/iroh/commit/7acfe395429edc5810efa5136fbd77e7ae9d4952))
+- *(iroh)* [**breaking**] Allow for limiting incoming connections on the router ([#3157](https://github.com/n0-computer/iroh/issues/3157)) - ([3e16848](https://github.com/n0-computer/iroh/commit/3e168483b08d3e9705f616812b567634ed35cf9b))
+- *(iroh)* [**breaking**] Switch TLS authentication to raw public keys ([#2937](https://github.com/n0-computer/iroh/issues/2937)) - ([d8c8c8e](https://github.com/n0-computer/iroh/commit/d8c8c8e393243a1858f84354b7e92443ed665146))
+- [**breaking**] Add `DiscoveryItem::user_data` method and adjust `locally-discovered-nodes` example ([#3215](https://github.com/n0-computer/iroh/issues/3215)) - ([f6b5f5c](https://github.com/n0-computer/iroh/commit/f6b5f5cf0d8b6e75e2f87707b71855f32b12481f))
+
+### 🐛 Bug Fixes
+
+- *(iroh)* Don't cause re-stuns all the time in browsers ([#3234](https://github.com/n0-computer/iroh/issues/3234)) - ([ef3645e](https://github.com/n0-computer/iroh/commit/ef3645e8b7d5700e309de3cd13b745bbf352f151))
+- *(iroh-base)* [**breaking**] Remove unused `getrandom` dependency ([#3202](https://github.com/n0-computer/iroh/issues/3202)) - ([0c7a122](https://github.com/n0-computer/iroh/commit/0c7a1227cf1b9f640145c059c7581f2c502e6691))
+- *(iroh-relay)* Report round-trip-latency instead of single-trip for QAD ([#3230](https://github.com/n0-computer/iroh/issues/3230)) - ([00f8309](https://github.com/n0-computer/iroh/commit/00f8309b00158fdb7a4565d4cd85c404262cd19b))
+- *(relay)* [**breaking**] Change default cert format from der to pem ([#3204](https://github.com/n0-computer/iroh/issues/3204)) - ([4930837](https://github.com/n0-computer/iroh/commit/493083765083c77fd74c7575236d8b7696b61754))
+- Update project_sync ([#3213](https://github.com/n0-computer/iroh/issues/3213)) - ([aa7463b](https://github.com/n0-computer/iroh/commit/aa7463bcc025aae69b164c101e8d7d52c96184db))
+
+### 🚜 Refactor
+
+- *(iroh)* Factor out socket-related state & construction into `magicsock::SocketState` and `ActorSocketState` ([#3203](https://github.com/n0-computer/iroh/issues/3203)) - ([2a49265](https://github.com/n0-computer/iroh/commit/2a492652b3c322dfd05c5f43a90d368195d6d121))
+- *(iroh, iroh-net-report)* [**breaking**] Make ports more private ([#3207](https://github.com/n0-computer/iroh/issues/3207)) - ([906250b](https://github.com/n0-computer/iroh/commit/906250bb28244ad62c23399c9b10494226610c5a))
+
+### 📚 Documentation
+
+- *(iroh)* Fix quicwg.org link ([#3235](https://github.com/n0-computer/iroh/issues/3235)) - ([f09c89e](https://github.com/n0-computer/iroh/commit/f09c89e8bda4a7d09a5335b9439bede5eec73d5d))
+
+### ⚙️ Miscellaneous Tasks
+
+- Switch from `backoff` to `backon` ([#3227](https://github.com/n0-computer/iroh/issues/3227)) - ([14795ab](https://github.com/n0-computer/iroh/commit/14795ab89747ec72868fad07f91424b8a408b45c))
+
+## [0.33.0](https://github.com/n0-computer/iroh/compare/v0.32.1..v0.33.0) - 2025-02-24
 
 ### ⛰️  Features
 
@@ -33,6 +63,7 @@ All notable changes to iroh will be documented in this file.
 ### ⚙️ Miscellaneous Tasks
 
 - Add additional todos in the "change checklist" ([#3180](https://github.com/n0-computer/iroh/issues/3180)) - ([31efead](https://github.com/n0-computer/iroh/commit/31efead8e8de8fc24af0594d80148d9281eee995))
+- Release - ([d551ead](https://github.com/n0-computer/iroh/commit/d551ead06543b3e05b05db1d1c1fbaeacb57b5b8))
 
 ## [0.32.1](https://github.com/n0-computer/iroh/compare/v0.32.0..v0.32.1) - 2025-02-05
 

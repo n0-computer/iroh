@@ -911,6 +911,7 @@ checksum = "f55bf8e7b65898637379c1b74eb1551107c8294ed26d855ceb9fd1a09cfc9bc0"
 dependencies = [
  "const-oid",
  "der_derive",
+ "pem-rfc7468",
  "zeroize",
 ]
 
@@ -2246,7 +2247,7 @@ dependencies = [
 
 [[package]]
 name = "iroh"
-version = "0.33.0"
+version = "0.34.0"
 dependencies = [
  "aead",
  "anyhow",
@@ -2317,7 +2318,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-base"
-version = "0.33.0"
+version = "0.34.0"
 dependencies = [
  "curve25519-dalek",
  "data-encoding",
@@ -2336,7 +2337,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-bench"
-version = "0.33.0"
+version = "0.34.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2346,6 +2347,7 @@ dependencies = [
  "iroh-metrics",
  "iroh-quinn",
  "n0-future",
+ "rand 0.8.5",
  "rcgen",
  "rustls",
  "tokio",
@@ -2355,7 +2357,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-dns-server"
-version = "0.33.0"
+version = "0.34.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2425,7 +2427,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-net-report"
-version = "0.33.0"
+version = "0.34.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2511,7 +2513,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-relay"
-version = "0.33.0"
+version = "0.34.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3286,6 +3288,15 @@ checksum = "8e459365e590736a54c3fa561947c84837534b8e9af6fc5bf781307e82658fae"
 dependencies = [
  "base64",
  "serde",
+]
+
+[[package]]
+name = "pem-rfc7468"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "88b39c9bfcfc231068454382784bb460aae594343fb030d46e9f50a645418412"
+dependencies = [
+ "base64ct",
 ]
 
 [[package]]
