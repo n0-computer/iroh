@@ -22,7 +22,7 @@ use iroh_relay::{
 use n0_future::FutureExt;
 use serde::{Deserialize, Serialize};
 use tokio_rustls_acme::{caches::DirCache, AcmeConfig};
-use tracing::debug;
+use tracing::{debug, info};
 use tracing_subscriber::{prelude::*, EnvFilter};
 
 /// The default `http_bind_port` when using `--dev`.
@@ -415,13 +415,18 @@ impl Config {
         let config_path = if let Some(config_path) = &opts.config_path {
             config_path
         } else {
+            info!("using default config");
             return Ok(Config::default());
         };
 
         if config_path.exists() {
+            info!("reading config from {}", config_path.to_string_lossy());
             Self::read_from_file(&config_path).await
         } else {
-            Ok(Config::default())
+            let config = Config::default();
+            config.write_to_file(&config_path).await?;
+            info!("saved default config to {}", config_path.to_string_lossy());
+            Ok(config)
         }
     }
 
@@ -437,6 +442,12 @@ impl Config {
             .await
             .context("unable to read config")?;
         Self::from_str(&config_ser)
+    }
+
+    async fn write_to_file(&self, path: impl AsRef<Path>) -> Result<()> {
+        let s = toml::to_string(self)?;
+        tokio::fs::write(path, s).await?;
+        Ok(())
     }
 }
 
