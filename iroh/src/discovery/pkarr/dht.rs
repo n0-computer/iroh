@@ -326,7 +326,7 @@ mod tests {
     async fn dht_discovery_smoke() -> TestResult {
         let ep = crate::Endpoint::builder().bind().await?;
         let secret = ep.secret_key().clone();
-        let testnet = pkarr::mainline::Testnet::new(2)?;
+        let testnet = pkarr::mainline::Testnet::new(3)?;
         assert!(
             FuturesUnordered::from_iter(
                 testnet
