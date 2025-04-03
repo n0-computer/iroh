@@ -322,7 +322,7 @@ impl Server {
             relay.tls.as_ref().and_then(|tls| match tls.cert {
                 CertConfig::LetsEncrypt { .. } => None,
                 CertConfig::Manual { ref certs, .. } => Some(certs.clone()),
-                CertConfig::Reloading { .. } => None,
+                CertConfig::Reloading => None,
             })
         });
 
@@ -384,7 +384,7 @@ impl Server {
                                     acceptor,
                                 })
                             }
-                            CertConfig::Manual { .. } | CertConfig::Reloading { .. } => {
+                            CertConfig::Manual { .. } | CertConfig::Reloading => {
                                 let server_config = Arc::new(tls_config.server_config);
                                 let acceptor =
                                     tokio_rustls::TlsAcceptor::from(server_config.clone());
