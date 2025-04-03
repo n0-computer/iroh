@@ -40,3 +40,8 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(iroh_docsrs)", "cfg(iroh_l
 
 [workspace.lints.clippy]
 unused-async = "warn"
+
+[patch.crates-io]
+n0-future = { git = "https://github.com/n0-computer/n0-future", branch = "minimal-versions" }
+portmapper = { git = "https://github.com/n0-computer/net-tools", branch = "minimal-versions" }
+netwatch = { git = "https://github.com/n0-computer/net-tools", branch = "minimal-versions" }
