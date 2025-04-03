@@ -41,6 +41,3 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(iroh_docsrs)", "cfg(iroh_l
 
 [workspace.lints.clippy]
 unused-async = "warn"
-
-[patch.crates-io]
-swarm-discovery = { git = "https://github.com/n0-computer/swarm-discovery.git", branch = "matheus23/hickory-0.25" }
