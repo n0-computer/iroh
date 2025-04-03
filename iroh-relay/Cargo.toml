@@ -134,7 +134,7 @@ serde_json = "1"
 tracing-test = "0.2.5"
 
 [build-dependencies]
-cfg_aliases = { version = "0.2" }
+cfg_aliases = { version = "0.2.1" }
 
 [features]
 default = ["metrics"]
