@@ -1579,7 +1579,12 @@
 <a href="#1578" id="1578">1578</a>
 <a href="#1579" id="1579">1579</a>
 <a href="#1580" id="1580">1580</a>
-<a href="#1581" id="1581">1581</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1581" id="1581">1581</a>
+<a href="#1582" id="1582">1582</a>
+<a href="#1583" id="1583">1583</a>
+<a href="#1584" id="1584">1584</a>
+<a href="#1585" id="1585">1585</a>
+<a href="#1586" id="1586">1586</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -2394,15 +2399,19 @@
             <span class="macro">tokio::select!</span> {
                 biased;
                 <span class="kw">_ </span>= <span class="self">self</span>.cancel_token.cancelled() =&gt; {
-                    <span class="macro">trace!</span>(<span class="string">"shutting down"</span>);
+                    <span class="macro">debug!</span>(<span class="string">"shutting down"</span>);
                     <span class="kw">break</span>;
                 }
-                <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(err)) = <span class="self">self</span>.active_relay_tasks.join_next() =&gt; {
-                    <span class="kw">if </span>err.is_panic() {
-                        <span class="macro">panic!</span>(<span class="string">"ActiveRelayActor task panicked: {err:#?}"</span>);
-                    }
-                    <span class="kw">if </span>!err.is_cancelled() {
-                        <span class="macro">error!</span>(<span class="string">"ActiveRelayActor failed: {err:?}"</span>);
+                <span class="prelude-val">Some</span>(res) = <span class="self">self</span>.active_relay_tasks.join_next() =&gt; {
+                    <span class="kw">match </span>res {
+                        <span class="prelude-val">Ok</span>(()) =&gt; (),
+                        <span class="prelude-val">Err</span>(err) <span class="kw">if </span>err.is_panic() =&gt; {
+                            <span class="macro">error!</span>(<span class="string">"ActiveRelayActor task panicked: {err:#?}"</span>);
+                        }
+                        <span class="prelude-val">Err</span>(err) <span class="kw">if </span>err.is_cancelled() =&gt; {
+                            <span class="macro">error!</span>(<span class="string">"ActiveRelayActor cancelled: {err:#?}"</span>);
+                        }
+                        <span class="prelude-val">Err</span>(err) =&gt; <span class="macro">error!</span>(<span class="string">"ActiveRelayActor failed: {err:#?}"</span>),
                     }
                     <span class="self">self</span>.reap_active_relays();
                 }
@@ -2556,6 +2565,7 @@
                     }
                 }
                 <span class="self">self</span>.active_relays.insert(url, handle.clone());
+                <span class="self">self</span>.log_active_relay();
                 handle
             }
         }
