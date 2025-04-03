@@ -637,7 +637,7 @@ impl ActiveRelayActor {
                 state.ping_tracker.pong_received(data)
             }
             ReceivedMessage::Health { problem } => {
-                let problem = problem.as_deref().unwrap_or_else(|| "unknown");
+                let problem = problem.as_deref().unwrap_or("unknown");
                 warn!("Relay server reports problem: {problem}");
             }
             ReceivedMessage::KeepAlive | ReceivedMessage::ServerRestarting { .. } => {
