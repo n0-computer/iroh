@@ -100,7 +100,7 @@ parse-size = { version = "=1.0.0", optional = true } # pinned version to avoid b
 
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
-hickory-resolver = { version = "=0.25.0-alpha.5" }
+hickory-resolver = "0.25"
 igd-next = { version = "0.15.1", features = ["aio_tokio"] }
 netdev = { version = "0.31.0" }
 portmapper = { version = "0.4", default-features = false }
