@@ -40,7 +40,7 @@ url = { version = "2.4" }
 
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
-hickory-resolver = "=0.25.0-alpha.5"
+hickory-resolver = "0.25.1"
 netwatch = { version = "0.4" }
 portmapper = { version = "0.4", default-features = false }
 surge-ping = "0.8.0"

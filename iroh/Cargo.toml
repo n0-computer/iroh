@@ -84,7 +84,7 @@ net-report = { package = "iroh-net-report", path = "../iroh-net-report", version
 iroh-metrics = { version = "0.32", default-features = false }
 
 # local-swarm-discovery
-swarm-discovery = { version = "0.3.0-alpha.2", optional = true }
+swarm-discovery = { version = "0.3.1", optional = true }
 futures-util = "0.3"
 
 # test_utils
@@ -100,7 +100,7 @@ parse-size = { version = "=1.0.0", optional = true } # pinned version to avoid b
 
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
-hickory-resolver = { version = "=0.25.0-alpha.5" }
+hickory-resolver = "0.25.1"
 igd-next = { version = "0.15.1", features = ["aio_tokio"] }
 netdev = { version = "0.31.0" }
 portmapper = { version = "0.4", default-features = false }

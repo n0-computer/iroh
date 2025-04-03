@@ -7,7 +7,7 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
-use hickory_resolver::{Resolver, TokioResolver};
+use hickory_resolver::{name_server::TokioConnectionProvider, TokioResolver};
 use iroh_base::NodeId;
 use n0_future::{
     time::{self, Duration},
@@ -54,8 +54,10 @@ impl DnsResolver {
         // see [`DnsResolver::lookup_ipv4_ipv6`] for info on why we avoid `LookupIpStrategy::Ipv4AndIpv6`
         options.ip_strategy = hickory_resolver::config::LookupIpStrategy::Ipv4thenIpv6;
 
-        let resolver = Resolver::tokio(config, options);
-        DnsResolver(resolver)
+        let mut builder =
+            TokioResolver::builder_with_config(config, TokioConnectionProvider::default());
+        *builder.options_mut() = options;
+        DnsResolver(builder.build())
     }
 
     /// Create a new DNS resolver configured with a single UDP DNS nameserver.
@@ -66,7 +68,10 @@ impl DnsResolver {
             hickory_resolver::proto::xfer::Protocol::Udp,
         );
         config.add_name_server(nameserver_config);
-        DnsResolver(Resolver::tokio(config, Default::default()))
+
+        let builder =
+            TokioResolver::builder_with_config(config, TokioConnectionProvider::default());
+        DnsResolver(builder.build())
     }
 
     /// Removes all entries from the cache.
