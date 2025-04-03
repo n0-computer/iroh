@@ -1566,7 +1566,7 @@
             relay.tls.as_ref().and_then(|tls| <span class="kw">match </span>tls.cert {
                 CertConfig::LetsEncrypt { .. } =&gt; <span class="prelude-val">None</span>,
                 CertConfig::Manual { <span class="kw-2">ref </span>certs, .. } =&gt; <span class="prelude-val">Some</span>(certs.clone()),
-                CertConfig::Reloading { .. } =&gt; <span class="prelude-val">None</span>,
+                CertConfig::Reloading =&gt; <span class="prelude-val">None</span>,
             })
         });
 
@@ -1628,7 +1628,7 @@
                                     acceptor,
                                 })
                             }
-                            CertConfig::Manual { .. } | CertConfig::Reloading { .. } =&gt; {
+                            CertConfig::Manual { .. } | CertConfig::Reloading =&gt; {
                                 <span class="kw">let </span>server_config = Arc::new(tls_config.server_config);
                                 <span class="kw">let </span>acceptor =
                                     tokio_rustls::TlsAcceptor::from(server_config.clone());
