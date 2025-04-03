@@ -163,7 +163,7 @@ tracing-subscriber-wasm = "0.1.0"
 wasm-bindgen-test = "0.3"
 
 [build-dependencies]
-cfg_aliases = { version = "0.2" }
+cfg_aliases = { version = "0.2.1" }
 
 [features]
 default = ["metrics"]
