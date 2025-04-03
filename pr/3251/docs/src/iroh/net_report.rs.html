@@ -1388,7 +1388,8 @@
 <a href="#1387" id="1387">1387</a>
 <a href="#1388" id="1388">1388</a>
 <a href="#1389" id="1389">1389</a>
-<a href="#1390" id="1390">1390</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
+<a href="#1390" id="1390">1390</a>
+<a href="#1391" id="1391">1391</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
 //!
 //! NetReport is responsible for finding out the network conditions of the current host, like
 //! whether it is connected to the internet via IPv4 and/or IPv6, what the NAT situation is
@@ -1435,7 +1436,8 @@
 
 <span class="kw">mod </span>options;
 
-<span class="kw">pub use </span>stun_utils::bind_local_stun_socket;
+<span class="attr">#[cfg(not(wasm_browser))]
+</span><span class="kw">pub use </span>stun_utils::bind_local_stun_socket;
 
 <span class="doccomment">/// We "vendor" what we need of the library in browsers for simplicity.
 ///
