@@ -2211,7 +2211,7 @@
                 state.ping_tracker.pong_received(data)
             }
             ReceivedMessage::Health { problem } =&gt; {
-                <span class="kw">let </span>problem = problem.as_deref().unwrap_or_else(|| <span class="string">"unknown"</span>);
+                <span class="kw">let </span>problem = problem.as_deref().unwrap_or(<span class="string">"unknown"</span>);
                 <span class="macro">warn!</span>(<span class="string">"Relay server reports problem: {problem}"</span>);
             }
             ReceivedMessage::KeepAlive | ReceivedMessage::ServerRestarting { .. } =&gt; {
