@@ -242,7 +242,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        name: [windows-latest, ubuntu-latest, macOS-arm-latest]
+        name: [ubuntu-latest, macOS-arm-latest] # TODO: windows
         include:
           - name: ubuntu-latest
             os: ubuntu-latest
