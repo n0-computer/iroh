@@ -45,12 +45,14 @@ mod reportgen;
 
 mod options;
 
+pub use stun_utils::bind_local_stun_socket;
+
 /// We "vendor" what we need of the library in browsers for simplicity.
 ///
 /// We could consider making `portmapper` compile to wasm in the future,
 /// but what we need is so little it's likely not worth it.
 #[cfg(wasm_browser)]
-pub mod portmapper {
+pub(crate) mod portmapper {
     /// Output of a port mapping probe.
     #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
     #[display("portmap={{ UPnP: {upnp}, PMP: {nat_pmp}, PCP: {pcp} }}")]
@@ -64,7 +66,7 @@ pub mod portmapper {
     }
 }
 
-pub use ip_mapped_addrs::{IpMappedAddr, IpMappedAddrError, IpMappedAddresses};
+pub(crate) use ip_mapped_addrs::{IpMappedAddr, IpMappedAddresses};
 pub use metrics::Metrics;
 pub use options::Options;
 pub use reportgen::QuicConfig;
@@ -296,7 +298,8 @@ impl Client {
     /// When `None`, it will disable the QUIC address discovery probes.
     ///
     /// This will attempt to use *all* probe protocols.
-    pub async fn get_report(
+    #[cfg(test)]
+    pub async fn get_report_all(
         &mut self,
         relay_map: RelayMap,
         #[cfg(not(wasm_browser))] stun_sock_v4: Option<Arc<UdpSocket>>,
@@ -322,11 +325,7 @@ impl Client {
     /// It may not be called concurrently with itself, `&mut self` takes care of that.
     ///
     /// Look at [`Options`] for the different configuration options.
-    pub async fn get_report_with_opts(
-        &mut self,
-        relay_map: RelayMap,
-        opts: Options,
-    ) -> Result<Arc<Report>> {
+    pub async fn get_report(&mut self, relay_map: RelayMap, opts: Options) -> Result<Arc<Report>> {
         let rx = self.get_report_channel(relay_map, opts).await?;
         match rx.await {
             Ok(res) => res,
@@ -337,7 +336,7 @@ impl Client {
     /// Get report with channel
     ///
     /// Look at [`Options`] for the different configuration options.
-    pub async fn get_report_channel(
+    pub(crate) async fn get_report_channel(
         &mut self,
         relay_map: RelayMap,
         opts: Options,
@@ -785,17 +784,16 @@ struct ReportRun {
 
 /// Test if IPv6 works at all, or if it's been hard disabled at the OS level.
 #[cfg(not(wasm_browser))]
-pub fn os_has_ipv6() -> bool {
+fn os_has_ipv6() -> bool {
     UdpSocket::bind_local_v6(0).is_ok()
 }
 
 /// Always returns false in browsers
 #[cfg(wasm_browser)]
-pub fn os_has_ipv6() -> bool {
+fn os_has_ipv6() -> bool {
     false
 }
 
-#[cfg(test)]
 pub(crate) mod stun_utils {
     use anyhow::Context as _;
     use netwatch::IpFamily;
@@ -1072,7 +1070,7 @@ mod tests {
             let cancel = CancellationToken::new();
             let sock = bind_local_stun_socket(IpFamily::V4, client.addr(), cancel.clone());
             println!("--round {}", i);
-            let r = client.get_report(dm.clone(), sock, None, None).await?;
+            let r = client.get_report_all(dm.clone(), sock, None, None).await?;
 
             assert!(r.udp, "want UDP");
             assert_eq!(
@@ -1113,7 +1111,7 @@ mod tests {
         let resolver = dns::tests::resolver();
         let mut client = Client::new(None, resolver.clone(), None)?;
 
-        let r = client.get_report(dm, None, None, None).await?;
+        let r = client.get_report_all(dm, None, None, None).await?;
         let mut r: Report = (*r).clone();
         r.portmap_probe = None;
 
@@ -1382,7 +1380,7 @@ mod tests {
             )
         };
 
-        let r = client.get_report(dm, Some(sock), None, None).await?;
+        let r = client.get_report_all(dm, Some(sock), None, None).await?;
         dbg!(&r);
         assert_eq!(r.hair_pinning, Some(true));
 
