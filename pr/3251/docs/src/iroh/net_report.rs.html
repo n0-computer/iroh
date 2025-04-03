@@ -1388,9 +1388,7 @@
 <a href="#1387" id="1387">1387</a>
 <a href="#1388" id="1388">1388</a>
 <a href="#1389" id="1389">1389</a>
-<a href="#1390" id="1390">1390</a>
-<a href="#1391" id="1391">1391</a>
-<a href="#1392" id="1392">1392</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
+<a href="#1390" id="1390">1390</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
 //!
 //! NetReport is responsible for finding out the network conditions of the current host, like
 //! whether it is connected to the internet via IPv4 and/or IPv6, what the NAT situation is
@@ -1437,12 +1435,14 @@
 
 <span class="kw">mod </span>options;
 
+<span class="kw">pub use </span>stun_utils::bind_local_stun_socket;
+
 <span class="doccomment">/// We "vendor" what we need of the library in browsers for simplicity.
 ///
 /// We could consider making `portmapper` compile to wasm in the future,
 /// but what we need is so little it's likely not worth it.
 </span><span class="attr">#[cfg(wasm_browser)]
-</span><span class="kw">pub mod </span>portmapper {
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>portmapper {
     <span class="doccomment">/// Output of a port mapping probe.
     </span><span class="attr">#[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
     #[display(<span class="string">"portmap={{ UPnP: {upnp}, PMP: {nat_pmp}, PCP: {pcp} }}"</span>)]
@@ -1456,7 +1456,7 @@
     }
 }
 
-<span class="kw">pub use </span>ip_mapped_addrs::{IpMappedAddr, IpMappedAddrError, IpMappedAddresses};
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span>ip_mapped_addrs::{IpMappedAddr, IpMappedAddresses};
 <span class="kw">pub use </span>metrics::Metrics;
 <span class="kw">pub use </span>options::Options;
 <span class="kw">pub use </span>reportgen::QuicConfig;
@@ -1688,7 +1688,8 @@
     /// When `None`, it will disable the QUIC address discovery probes.
     ///
     /// This will attempt to use *all* probe protocols.
-    </span><span class="kw">pub async fn </span>get_report(
+    </span><span class="attr">#[cfg(test)]
+    </span><span class="kw">pub async fn </span>get_report_all(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         relay_map: RelayMap,
         <span class="attr">#[cfg(not(wasm_browser))] </span>stun_sock_v4: <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;,
@@ -1714,11 +1715,7 @@
     /// It may not be called concurrently with itself, `&amp;mut self` takes care of that.
     ///
     /// Look at [`Options`] for the different configuration options.
-    </span><span class="kw">pub async fn </span>get_report_with_opts(
-        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-        relay_map: RelayMap,
-        opts: Options,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;Arc&lt;Report&gt;&gt; {
+    </span><span class="kw">pub async fn </span>get_report(<span class="kw-2">&amp;mut </span><span class="self">self</span>, relay_map: RelayMap, opts: Options) -&gt; <span class="prelude-ty">Result</span>&lt;Arc&lt;Report&gt;&gt; {
         <span class="kw">let </span>rx = <span class="self">self</span>.get_report_channel(relay_map, opts).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">match </span>rx.<span class="kw">await </span>{
             <span class="prelude-val">Ok</span>(res) =&gt; res,
@@ -1729,7 +1726,7 @@
     <span class="doccomment">/// Get report with channel
     ///
     /// Look at [`Options`] for the different configuration options.
-    </span><span class="kw">pub async fn </span>get_report_channel(
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>get_report_channel(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         relay_map: RelayMap,
         opts: Options,
@@ -2177,18 +2174,17 @@
 
 <span class="doccomment">/// Test if IPv6 works at all, or if it's been hard disabled at the OS level.
 </span><span class="attr">#[cfg(not(wasm_browser))]
-</span><span class="kw">pub fn </span>os_has_ipv6() -&gt; bool {
+</span><span class="kw">fn </span>os_has_ipv6() -&gt; bool {
     UdpSocket::bind_local_v6(<span class="number">0</span>).is_ok()
 }
 
 <span class="doccomment">/// Always returns false in browsers
 </span><span class="attr">#[cfg(wasm_browser)]
-</span><span class="kw">pub fn </span>os_has_ipv6() -&gt; bool {
+</span><span class="kw">fn </span>os_has_ipv6() -&gt; bool {
     <span class="bool-val">false
 </span>}
 
-<span class="attr">#[cfg(test)]
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>stun_utils {
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>stun_utils {
     <span class="kw">use </span>anyhow::Context <span class="kw">as _</span>;
     <span class="kw">use </span>netwatch::IpFamily;
     <span class="kw">use </span>tokio_util::sync::CancellationToken;
@@ -2464,7 +2460,7 @@
             <span class="kw">let </span>cancel = CancellationToken::new();
             <span class="kw">let </span>sock = bind_local_stun_socket(IpFamily::V4, client.addr(), cancel.clone());
             <span class="macro">println!</span>(<span class="string">"--round {}"</span>, i);
-            <span class="kw">let </span>r = client.get_report(dm.clone(), sock, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="kw">let </span>r = client.get_report_all(dm.clone(), sock, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>).<span class="kw">await</span><span class="question-mark">?</span>;
 
             <span class="macro">assert!</span>(r.udp, <span class="string">"want UDP"</span>);
             <span class="macro">assert_eq!</span>(
@@ -2505,7 +2501,7 @@
         </span><span class="kw">let </span>resolver = dns::tests::resolver();
         <span class="kw">let </span><span class="kw-2">mut </span>client = Client::new(<span class="prelude-val">None</span>, resolver.clone(), <span class="prelude-val">None</span>)<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>r = client.get_report(dm, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>r = client.get_report_all(dm, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>, <span class="prelude-val">None</span>).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>r: Report = (<span class="kw-2">*</span>r).clone();
         r.portmap_probe = <span class="prelude-val">None</span>;
 
@@ -2774,7 +2770,7 @@
             )
         };
 
-        <span class="kw">let </span>r = client.get_report(dm, <span class="prelude-val">Some</span>(sock), <span class="prelude-val">None</span>, <span class="prelude-val">None</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>r = client.get_report_all(dm, <span class="prelude-val">Some</span>(sock), <span class="prelude-val">None</span>, <span class="prelude-val">None</span>).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="macro">dbg!</span>(<span class="kw-2">&amp;</span>r);
         <span class="macro">assert_eq!</span>(r.hair_pinning, <span class="prelude-val">Some</span>(<span class="bool-val">true</span>));
 
