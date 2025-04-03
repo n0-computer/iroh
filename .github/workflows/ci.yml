@@ -339,7 +339,7 @@ jobs:
       - run: codespell --ignore-words-list=ans,atmost,crate,inout,ratatui,ser,stayin,swarmin,worl --skip=CHANGELOG.md
 
   minimal-crates:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, X64]
     steps:
       - uses: actions/checkout@v2
       - uses: dtolnay/rust-toolchain@nightly

@@ -2188,6 +2188,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "igd-next"
+version = "0.16.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d06464e726471718db9ad3fefc020529fabcde03313a0fc3967510e2db5add12"
+dependencies = [
+ "async-trait",
+ "attohttpc",
+ "bytes",
+ "futures",
+ "http 1.3.1",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "log",
+ "rand 0.9.0",
+ "tokio",
+ "url",
+ "xmltree",
+]
+
+[[package]]
 name = "indexmap"
 version = "2.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2276,7 +2297,7 @@ dependencies = [
  "futures-util",
  "hickory-resolver",
  "http 1.3.1",
- "igd-next",
+ "igd-next 0.15.1",
  "indicatif",
  "instant",
  "iroh-base",
@@ -2826,8 +2847,7 @@ dependencies = [
 [[package]]
 name = "n0-future"
 version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "399e11dc3b0e8d9d65b27170d22f5d779d52d9bed888db70d7e0c2c7ce3dfc52"
+source = "git+https://github.com/n0-computer/n0-future?branch=minimal-versions#179703c51ce34bb6ab4fc261c3dc812fb2df7f52"
 dependencies = [
  "cfg_aliases",
  "derive_more",
@@ -2951,8 +2971,7 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b7879c2cfdf30d92f2be89efa3169b3d78107e3ab7f7b9a37157782569314e1"
+source = "git+https://github.com/n0-computer/net-tools?branch=minimal-versions#44c6cbbedadd1449ccf29f19f7fb8dbf1d9e402d"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -3449,15 +3468,15 @@ checksum = "350e9b48cbc6b0e028b0473b114454c6316e57336ee184ceab6e53f72c178b3e"
 [[package]]
 name = "portmapper"
 version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "247dcb75747c53cc433d6d8963a064187eec4a676ba13ea33143f1c9100e754f"
+source = "git+https://github.com/n0-computer/net-tools?branch=minimal-versions#44c6cbbedadd1449ccf29f19f7fb8dbf1d9e402d"
 dependencies = [
  "base64",
  "bytes",
  "derive_more",
  "futures-lite",
  "futures-util",
- "igd-next",
+ "hyper-util",
+ "igd-next 0.16.1",
  "iroh-metrics",
  "libc",
  "netwatch",
@@ -3470,6 +3489,7 @@ dependencies = [
  "time",
  "tokio",
  "tokio-util",
+ "tower-layer",
  "tracing",
  "url",
 ]
