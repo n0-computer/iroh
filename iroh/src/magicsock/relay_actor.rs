@@ -38,7 +38,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
-use backon::{BackoffBuilder, ExponentialBuilder, Retryable};
+use backon::{BackoffBuilder, ExponentialBuilder};
 use bytes::{Bytes, BytesMut};
 use iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_metrics::{inc, inc_by};
@@ -48,7 +48,6 @@ use iroh_relay::{
     PingTracker, MAX_PACKET_SIZE,
 };
 use n0_future::{
-    boxed::BoxFuture,
     task::JoinSet,
     time::{self, Duration, Instant, MissedTickBehavior},
     FuturesUnorderedBounded, SinkExt, StreamExt,
@@ -274,9 +273,24 @@ impl ActiveRelayActor {
     async fn run(mut self) -> anyhow::Result<()> {
         inc!(MagicsockMetrics, num_relay_conns_added);
 
-        loop {
-            let Some(client) = self.run_dialing().instrument(info_span!("dialing")).await else {
-                break;
+        let mut backoff = ExponentialBuilder::new()
+            .with_min_delay(Duration::from_millis(10))
+            .with_max_delay(Duration::from_secs(5))
+            .without_max_times()
+            .build();
+
+        'run: loop {
+            let client = 'dial: loop {
+                match self.run_dialing().instrument(info_span!("dialing")).await {
+                    None => break 'run,
+                    Some(Ok(client)) => break 'dial client,
+                    Some(Err(err)) => {
+                        let sleep = backoff.next().expect("backoff is infinite");
+                        warn!("Client failed to connect: {err:#}");
+                        debug!("Retry in {sleep:?}");
+                        time::sleep(sleep).await;
+                    }
+                };
             };
             match self
                 .run_connected(client)
@@ -285,7 +299,10 @@ impl ActiveRelayActor {
             {
                 Ok(_) => break,
                 Err(err) => {
+                    let sleep = backoff.next().expect("backoff is infinite");
                     debug!("Connection to relay server lost: {err:#}");
+                    debug!("Retry in {sleep:?}");
+                    time::sleep(sleep).await;
                     continue;
                 }
             }
@@ -315,9 +332,9 @@ impl ActiveRelayActor {
 
     /// Actor loop when connecting to the relay server.
     ///
-    /// Returns `None` if the actor needs to shut down.  Returns `Some(client)` when the
-    /// connection is established.
-    async fn run_dialing(&mut self) -> Option<iroh_relay::client::Client> {
+    /// Returns `None` if the actor needs to shut down.  Returns `Some(Ok(client))` when the
+    /// connection is established, and `Some(Err(err))` if dialing the relay failed.
+    async fn run_dialing(&mut self) -> Option<Result<iroh_relay::client::Client>> {
         debug!("Actor loop: connecting to relay.");
 
         // We regularly flush the relay_datagrams_send queue so it is not full of stale
@@ -330,7 +347,8 @@ impl ActiveRelayActor {
         send_datagram_flush.set_missed_tick_behavior(MissedTickBehavior::Delay);
         send_datagram_flush.reset(); // Skip the immediate interval
 
-        let mut dialing_fut = self.dial_relay();
+        let dialing_fut = self.dial_relay();
+        tokio::pin!(dialing_fut);
         loop {
             tokio::select! {
                 biased;
@@ -352,11 +370,10 @@ impl ActiveRelayActor {
                 res = &mut dialing_fut => {
                     match res {
                         Ok(client) => {
-                            break Some(client);
+                            break Some(Ok(client));
                         }
                         Err(err) => {
-                            warn!("Client failed to connect: {err:#}");
-                            dialing_fut = self.dial_relay();
+                            break Some(Err(err));
                         }
                     }
                 }
@@ -403,47 +420,22 @@ impl ActiveRelayActor {
     /// The future only completes once the connection is established and retries
     /// connections.  It currently does not ever return `Err` as the retries continue
     /// forever.
-    fn dial_relay(&self) -> BoxFuture<Result<Client>> {
-        let backoff = ExponentialBuilder::new()
-            .with_min_delay(Duration::from_millis(10))
-            .with_max_delay(Duration::from_secs(5))
-            .without_max_times()
-            .build();
-        let connect_fn = {
-            let client_builder = self.relay_client_builder.clone();
-            move || {
-                let client_builder = client_builder.clone();
-                async move {
-                    match time::timeout(CONNECT_TIMEOUT, client_builder.connect()).await {
-                        Ok(Ok(client)) => Ok(client),
-                        Ok(Err(err)) => {
-                            warn!("Relay connection failed: {err:#}");
-                            Err(err)
-                        }
-                        Err(_) => {
-                            warn!(?CONNECT_TIMEOUT, "Timeout connecting to relay");
-                            Err(anyhow!("Timeout"))
-                        }
-                    }
+    // This is using `impl Future` to return a future without a reference to self.
+    fn dial_relay(&self) -> impl Future<Output = Result<Client>> {
+        let client_builder = self.relay_client_builder.clone();
+        async move {
+            match time::timeout(CONNECT_TIMEOUT, client_builder.connect()).await {
+                Ok(Ok(client)) => Ok(client),
+                Ok(Err(err)) => {
+                    warn!("Relay connection failed: {err:#}");
+                    Err(err)
+                }
+                Err(_) => {
+                    warn!(?CONNECT_TIMEOUT, "Timeout connecting to relay");
+                    Err(anyhow!("Timeout"))
                 }
             }
-        };
-
-        // We implement our own `Sleeper` here, so that we can use the `backon`
-        // crate with our own implementation of `time::sleep` (from `n0_future`)
-        // that works in browsers.
-        struct Sleeper;
-
-        impl backon::Sleeper for Sleeper {
-            type Sleep = time::Sleep;
-
-            fn sleep(&self, dur: Duration) -> Self::Sleep {
-                time::sleep(dur)
-            }
         }
-
-        let retry_fut = connect_fn.retry(backoff).sleep(Sleeper);
-        Box::pin(retry_fut)
     }
 
     /// Runs the actor loop when connected to a relay server.
@@ -644,9 +636,13 @@ impl ActiveRelayActor {
                 }
                 state.ping_tracker.pong_received(data)
             }
-            ReceivedMessage::KeepAlive
-            | ReceivedMessage::Health { .. }
-            | ReceivedMessage::ServerRestarting { .. } => trace!("Ignoring {msg:?}"),
+            ReceivedMessage::Health { problem } => {
+                let problem = problem.as_deref().unwrap_or_else(|| "unknown");
+                warn!("Relay server reports problem: {problem}");
+            }
+            ReceivedMessage::KeepAlive | ReceivedMessage::ServerRestarting { .. } => {
+                trace!("Ignoring {msg:?}")
+            }
         }
     }
 

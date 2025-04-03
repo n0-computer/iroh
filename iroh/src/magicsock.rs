@@ -2927,6 +2927,7 @@ impl Actor {
         self.update_direct_addresses(report);
     }
 
+    // TODO(frando): This never returns false.
     fn set_nearest_relay(&mut self, relay_url: Option<RelayUrl>) -> bool {
         let my_relay = self.msock.my_relay();
         if relay_url == my_relay {
