@@ -45,6 +45,7 @@ mod reportgen;
 
 mod options;
 
+#[cfg(not(wasm_browser))]
 pub use stun_utils::bind_local_stun_socket;
 
 /// We "vendor" what we need of the library in browsers for simplicity.
