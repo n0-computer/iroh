@@ -1389,7 +1389,8 @@
 <a href="#1388" id="1388">1388</a>
 <a href="#1389" id="1389">1389</a>
 <a href="#1390" id="1390">1390</a>
-<a href="#1391" id="1391">1391</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
+<a href="#1391" id="1391">1391</a>
+<a href="#1392" id="1392">1392</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
 //!
 //! NetReport is responsible for finding out the network conditions of the current host, like
 //! whether it is connected to the internet via IPv4 and/or IPv6, what the NAT situation is
@@ -2186,7 +2187,8 @@
     <span class="bool-val">false
 </span>}
 
-<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>stun_utils {
+<span class="attr">#[cfg(not(wasm_browser))]
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>stun_utils {
     <span class="kw">use </span>anyhow::Context <span class="kw">as _</span>;
     <span class="kw">use </span>netwatch::IpFamily;
     <span class="kw">use </span>tokio_util::sync::CancellationToken;
