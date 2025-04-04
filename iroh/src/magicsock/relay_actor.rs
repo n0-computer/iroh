@@ -577,7 +577,7 @@ impl ActiveRelayActor {
                 }
                 msg = client_stream.next() => {
                     let Some(msg) = msg else {
-                        break Err(anyhow!("Client stream finished"));
+                        break Err(anyhow!("Stream closed by relay server."));
                     };
                     match msg {
                         Ok(msg) => {
@@ -711,7 +711,7 @@ impl ActiveRelayActor {
                 // No need to read the inbox or datagrams to send.
                 msg = client_stream.next() => {
                     let Some(msg) = msg else {
-                        break Err(anyhow!("Client stream finished"));
+                        break Err(anyhow!("Stream closed by relay server."));
                     };
                     match msg {
                         Ok(msg) => self.handle_relay_msg(msg, state),
