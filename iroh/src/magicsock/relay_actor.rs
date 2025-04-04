@@ -281,25 +281,19 @@ impl ActiveRelayActor {
 
         let mut backoff = Self::build_backoff();
 
-        loop {
-            match self.run_once().await {
-                Err(err) => {
-                    warn!("Relay connection failed: {err:#}");
-                    if self.pong_received {
-                        // If the relay connection remained established long enough so that we received a pong
-                        // from the relay server, we reset the backoff and attempt to reconnect immediately.
-                        self.pong_received = false;
-                        backoff = Self::build_backoff();
-                        continue;
-                    } else {
-                        // If dialing failed, or if the relay connection failed before we received a pong,
-                        // we wait an exponentially increasing time until we attempt to reconnect again.
-                        let sleep = backoff.next().context("Retries exceeded")?;
-                        debug!("Retry in {sleep:?}");
-                        time::sleep(sleep).await;
-                    }
-                }
-                Ok(()) => break,
+        while let Err(err) = self.run_once().await {
+            warn!("Relay connection failed: {err:#}");
+            if self.pong_received {
+                // If the relay connection remained established long enough so that we received a pong
+                // from the relay server, we reset the backoff and attempt to reconnect immediately.
+                self.pong_received = false;
+                backoff = Self::build_backoff();
+            } else {
+                // If dialing failed, or if the relay connection failed before we received a pong,
+                // we wait an exponentially increasing time until we attempt to reconnect again.
+                let sleep = backoff.next().context("Retries exceeded")?;
+                debug!("Retry in {sleep:?}");
+                time::sleep(sleep).await;
             }
         }
         debug!("exiting");
