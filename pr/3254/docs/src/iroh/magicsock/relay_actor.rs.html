@@ -1571,7 +1571,24 @@
 <a href="#1570" id="1570">1570</a>
 <a href="#1571" id="1571">1571</a>
 <a href="#1572" id="1572">1572</a>
-<a href="#1573" id="1573">1573</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1573" id="1573">1573</a>
+<a href="#1574" id="1574">1574</a>
+<a href="#1575" id="1575">1575</a>
+<a href="#1576" id="1576">1576</a>
+<a href="#1577" id="1577">1577</a>
+<a href="#1578" id="1578">1578</a>
+<a href="#1579" id="1579">1579</a>
+<a href="#1580" id="1580">1580</a>
+<a href="#1581" id="1581">1581</a>
+<a href="#1582" id="1582">1582</a>
+<a href="#1583" id="1583">1583</a>
+<a href="#1584" id="1584">1584</a>
+<a href="#1585" id="1585">1585</a>
+<a href="#1586" id="1586">1586</a>
+<a href="#1587" id="1587">1587</a>
+<a href="#1588" id="1588">1588</a>
+<a href="#1589" id="1589">1589</a>
+<a href="#1590" id="1590">1590</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1611,7 +1628,7 @@
 };
 
 <span class="kw">use </span>anyhow::{anyhow, Context, <span class="prelude-ty">Result</span>};
-<span class="kw">use </span>backon::{BackoffBuilder, ExponentialBuilder};
+<span class="kw">use </span>backon::{Backoff, BackoffBuilder, ExponentialBuilder};
 <span class="kw">use </span>bytes::{Bytes, BytesMut};
 <span class="kw">use </span>iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
 <span class="kw">use </span>iroh_metrics::{inc, inc_by};
@@ -1730,6 +1747,11 @@
     </span>inactive_timeout: Pin&lt;Box&lt;time::Sleep&gt;&gt;,
     <span class="doccomment">/// Token indicating the [`ActiveRelayActor`] should stop.
     </span>stop_token: CancellationToken,
+    <span class="doccomment">/// Whether we received a pong from the server in the last successful connection.
+    ///
+    /// This serves as an indicator that the connection was established successfully before breaking,
+    /// in which case we want to reset the reconnect backoff delay.
+    </span>pong_received: bool,
 }
 
 <span class="attr">#[derive(Debug)]
@@ -1808,6 +1830,7 @@
             is_home_relay: <span class="bool-val">false</span>,
             inactive_timeout: Box::pin(time::sleep(RELAY_INACTIVE_CLEANUP_TIME)),
             stop_token,
+            pong_received: <span class="bool-val">false</span>,
         }
     }
 
@@ -1846,19 +1869,25 @@
     </span><span class="kw">async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; anyhow::Result&lt;()&gt; {
         <span class="macro">inc!</span>(MagicsockMetrics, num_relay_conns_added);
 
-        <span class="kw">let </span><span class="kw-2">mut </span>backoff = ExponentialBuilder::new()
-            .with_min_delay(Duration::from_millis(<span class="number">10</span>))
-            .with_max_delay(Duration::from_secs(<span class="number">16</span>))
-            .without_max_times()
-            .build();
+        <span class="kw">let </span><span class="kw-2">mut </span>backoff = <span class="self">Self</span>::build_backoff();
 
         <span class="kw">loop </span>{
             <span class="kw">match </span><span class="self">self</span>.run_once().<span class="kw">await </span>{
                 <span class="prelude-val">Err</span>(err) =&gt; {
                     <span class="macro">warn!</span>(<span class="string">"Relay connection failed: {err:#}"</span>);
-                    <span class="kw">let </span>sleep = backoff.next().context(<span class="string">"Retries exceeded"</span>)<span class="question-mark">?</span>;
-                    <span class="macro">debug!</span>(<span class="string">"Retry in {sleep:?}"</span>);
-                    time::sleep(sleep).<span class="kw">await</span>;
+                    <span class="kw">if </span><span class="self">self</span>.pong_received {
+                        <span class="comment">// If the relay connection remained established long enough so that we received a pong
+                        // from the relay server, we reset the backoff and attempt to reconnect immediately.
+                        </span><span class="self">self</span>.pong_received = <span class="bool-val">false</span>;
+                        backoff = <span class="self">Self</span>::build_backoff();
+                        <span class="kw">continue</span>;
+                    } <span class="kw">else </span>{
+                        <span class="comment">// If dialing failed, or if the relay connection failed before we received a pong,
+                        // we wait an exponentially increasing time until we attempt to reconnect again.
+                        </span><span class="kw">let </span>sleep = backoff.next().context(<span class="string">"Retries exceeded"</span>)<span class="question-mark">?</span>;
+                        <span class="macro">debug!</span>(<span class="string">"Retry in {sleep:?}"</span>);
+                        time::sleep(sleep).<span class="kw">await</span>;
+                    }
                 }
                 <span class="prelude-val">Ok</span>(()) =&gt; <span class="kw">break</span>,
             }
@@ -1866,6 +1895,14 @@
         <span class="macro">debug!</span>(<span class="string">"exiting"</span>);
         <span class="macro">inc!</span>(MagicsockMetrics, num_relay_conns_removed);
         <span class="prelude-val">Ok</span>(())
+    }
+
+    <span class="kw">fn </span>build_backoff() -&gt; <span class="kw">impl </span>Backoff {
+        ExponentialBuilder::new()
+            .with_min_delay(Duration::from_millis(<span class="number">10</span>))
+            .with_max_delay(Duration::from_secs(<span class="number">16</span>))
+            .without_max_times()
+            .build()
     }
 
     <span class="doccomment">/// Attempt to connect to the relay, and run the connected actor loop.
@@ -1998,14 +2035,10 @@
         <span class="kw">async move </span>{
             <span class="kw">match </span>time::timeout(CONNECT_TIMEOUT, client_builder.connect()).<span class="kw">await </span>{
                 <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(client)) =&gt; <span class="prelude-val">Ok</span>(client),
-                <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err)) =&gt; {
-                    <span class="macro">warn!</span>(<span class="string">"Relay connection failed: {err:#}"</span>);
-                    <span class="prelude-val">Err</span>(err)
-                }
-                <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; {
-                    <span class="macro">warn!</span>(<span class="question-mark">?</span>CONNECT_TIMEOUT, <span class="string">"Timeout connecting to relay"</span>);
-                    <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Timeout"</span>))
-                }
+                <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err)) =&gt; <span class="prelude-val">Err</span>(err),
+                <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(
+                    <span class="string">"Connecting to relay timed out after {CONNECT_TIMEOUT:?}"
+                </span>)),
             }
         }
     }
@@ -2038,11 +2071,11 @@
         </span><span class="kw">let </span><span class="kw-2">mut </span>send_datagrams_buf = Vec::with_capacity(SEND_DATAGRAM_BATCH_SIZE);
 
         <span class="comment">// Regularly send pings so we know the connection is healthy.
+        // The first ping will be sent immediately.
         </span><span class="kw">let </span><span class="kw-2">mut </span>ping_interval = time::interval(PING_INTERVAL);
         ping_interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
-        ping_interval.reset(); <span class="comment">// skip the ping at current time.
 
-        </span><span class="kw">let </span>res = <span class="kw">loop </span>{
+        <span class="kw">let </span>res = <span class="kw">loop </span>{
             <span class="kw">if let </span><span class="prelude-val">Some</span>(data) = state.pong_pending.take() {
                 <span class="kw">let </span>fut = client_sink.send(SendMessage::Pong(data));
                 <span class="self">self</span>.run_sending(fut, <span class="kw-2">&amp;mut </span>state, <span class="kw-2">&amp;mut </span>client_stream)
@@ -2206,7 +2239,8 @@
                         }
                     }
                 }
-                state.ping_tracker.pong_received(data)
+                state.ping_tracker.pong_received(data);
+                <span class="self">self</span>.pong_received = <span class="bool-val">true</span>;
             }
             ReceivedMessage::Health { problem } =&gt; {
                 <span class="kw">let </span>problem = problem.as_deref().unwrap_or(<span class="string">"unknown"</span>);
