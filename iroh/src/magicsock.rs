@@ -2916,9 +2916,7 @@ impl Actor {
                 ni.preferred_relay = self.pick_relay_fallback();
             }
 
-            if !self.set_nearest_relay(ni.preferred_relay.clone()) {
-                ni.preferred_relay = None;
-            }
+            self.set_nearest_relay(ni.preferred_relay.clone());
 
             // TODO: set link type
             self.call_net_info_callback(ni).await;
@@ -2927,11 +2925,11 @@ impl Actor {
         self.update_direct_addresses(report);
     }
 
-    fn set_nearest_relay(&mut self, relay_url: Option<RelayUrl>) -> bool {
+    fn set_nearest_relay(&mut self, relay_url: Option<RelayUrl>) {
         let my_relay = self.msock.my_relay();
         if relay_url == my_relay {
             // No change.
-            return true;
+            return;
         }
         let old_relay = self.msock.set_my_relay(relay_url.clone());
 
@@ -2947,8 +2945,6 @@ impl Actor {
                 url: relay_url.clone(),
             });
         }
-
-        true
     }
 
     /// Returns a deterministic relay node to connect to. This is only used if net_report
