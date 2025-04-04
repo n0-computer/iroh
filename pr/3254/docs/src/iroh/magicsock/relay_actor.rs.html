@@ -1582,13 +1582,7 @@
 <a href="#1581" id="1581">1581</a>
 <a href="#1582" id="1582">1582</a>
 <a href="#1583" id="1583">1583</a>
-<a href="#1584" id="1584">1584</a>
-<a href="#1585" id="1585">1585</a>
-<a href="#1586" id="1586">1586</a>
-<a href="#1587" id="1587">1587</a>
-<a href="#1588" id="1588">1588</a>
-<a href="#1589" id="1589">1589</a>
-<a href="#1590" id="1590">1590</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1584" id="1584">1584</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1871,25 +1865,19 @@
 
         <span class="kw">let </span><span class="kw-2">mut </span>backoff = <span class="self">Self</span>::build_backoff();
 
-        <span class="kw">loop </span>{
-            <span class="kw">match </span><span class="self">self</span>.run_once().<span class="kw">await </span>{
-                <span class="prelude-val">Err</span>(err) =&gt; {
-                    <span class="macro">warn!</span>(<span class="string">"Relay connection failed: {err:#}"</span>);
-                    <span class="kw">if </span><span class="self">self</span>.pong_received {
-                        <span class="comment">// If the relay connection remained established long enough so that we received a pong
-                        // from the relay server, we reset the backoff and attempt to reconnect immediately.
-                        </span><span class="self">self</span>.pong_received = <span class="bool-val">false</span>;
-                        backoff = <span class="self">Self</span>::build_backoff();
-                        <span class="kw">continue</span>;
-                    } <span class="kw">else </span>{
-                        <span class="comment">// If dialing failed, or if the relay connection failed before we received a pong,
-                        // we wait an exponentially increasing time until we attempt to reconnect again.
-                        </span><span class="kw">let </span>sleep = backoff.next().context(<span class="string">"Retries exceeded"</span>)<span class="question-mark">?</span>;
-                        <span class="macro">debug!</span>(<span class="string">"Retry in {sleep:?}"</span>);
-                        time::sleep(sleep).<span class="kw">await</span>;
-                    }
-                }
-                <span class="prelude-val">Ok</span>(()) =&gt; <span class="kw">break</span>,
+        <span class="kw">while let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.run_once().<span class="kw">await </span>{
+            <span class="macro">warn!</span>(<span class="string">"Relay connection failed: {err:#}"</span>);
+            <span class="kw">if </span><span class="self">self</span>.pong_received {
+                <span class="comment">// If the relay connection remained established long enough so that we received a pong
+                // from the relay server, we reset the backoff and attempt to reconnect immediately.
+                </span><span class="self">self</span>.pong_received = <span class="bool-val">false</span>;
+                backoff = <span class="self">Self</span>::build_backoff();
+            } <span class="kw">else </span>{
+                <span class="comment">// If dialing failed, or if the relay connection failed before we received a pong,
+                // we wait an exponentially increasing time until we attempt to reconnect again.
+                </span><span class="kw">let </span>sleep = backoff.next().context(<span class="string">"Retries exceeded"</span>)<span class="question-mark">?</span>;
+                <span class="macro">debug!</span>(<span class="string">"Retry in {sleep:?}"</span>);
+                time::sleep(sleep).<span class="kw">await</span>;
             }
         }
         <span class="macro">debug!</span>(<span class="string">"exiting"</span>);
