@@ -38,7 +38,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Context, Result};
-use backon::{BackoffBuilder, ExponentialBuilder};
+use backon::{Backoff, BackoffBuilder, ExponentialBuilder};
 use bytes::{Bytes, BytesMut};
 use iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_metrics::{inc, inc_by};
@@ -157,6 +157,11 @@ struct ActiveRelayActor {
     inactive_timeout: Pin<Box<time::Sleep>>,
     /// Token indicating the [`ActiveRelayActor`] should stop.
     stop_token: CancellationToken,
+    /// Whether we received a pong from the server in the last successful connection.
+    ///
+    /// This serves as an indicator that the connection was established successfully before breaking,
+    /// in which case we want to reset the reconnect backoff delay.
+    pong_received: bool,
 }
 
 #[derive(Debug)]
@@ -235,6 +240,7 @@ impl ActiveRelayActor {
             is_home_relay: false,
             inactive_timeout: Box::pin(time::sleep(RELAY_INACTIVE_CLEANUP_TIME)),
             stop_token,
+            pong_received: false,
         }
     }
 
@@ -273,19 +279,25 @@ impl ActiveRelayActor {
     async fn run(mut self) -> anyhow::Result<()> {
         inc!(MagicsockMetrics, num_relay_conns_added);
 
-        let mut backoff = ExponentialBuilder::new()
-            .with_min_delay(Duration::from_millis(10))
-            .with_max_delay(Duration::from_secs(16))
-            .without_max_times()
-            .build();
+        let mut backoff = Self::build_backoff();
 
         loop {
             match self.run_once().await {
                 Err(err) => {
                     warn!("Relay connection failed: {err:#}");
-                    let sleep = backoff.next().context("Retries exceeded")?;
-                    debug!("Retry in {sleep:?}");
-                    time::sleep(sleep).await;
+                    if self.pong_received {
+                        // If the relay connection remained established long enough so that we received a pong
+                        // from the relay server, we reset the backoff and attempt to reconnect immediately.
+                        self.pong_received = false;
+                        backoff = Self::build_backoff();
+                        continue;
+                    } else {
+                        // If dialing failed, or if the relay connection failed before we received a pong,
+                        // we wait an exponentially increasing time until we attempt to reconnect again.
+                        let sleep = backoff.next().context("Retries exceeded")?;
+                        debug!("Retry in {sleep:?}");
+                        time::sleep(sleep).await;
+                    }
                 }
                 Ok(()) => break,
             }
@@ -293,6 +305,14 @@ impl ActiveRelayActor {
         debug!("exiting");
         inc!(MagicsockMetrics, num_relay_conns_removed);
         Ok(())
+    }
+
+    fn build_backoff() -> impl Backoff {
+        ExponentialBuilder::new()
+            .with_min_delay(Duration::from_millis(10))
+            .with_max_delay(Duration::from_secs(16))
+            .without_max_times()
+            .build()
     }
 
     /// Attempt to connect to the relay, and run the connected actor loop.
@@ -461,9 +481,9 @@ impl ActiveRelayActor {
         let mut send_datagrams_buf = Vec::with_capacity(SEND_DATAGRAM_BATCH_SIZE);
 
         // Regularly send pings so we know the connection is healthy.
+        // The first ping will be sent immediately.
         let mut ping_interval = time::interval(PING_INTERVAL);
         ping_interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
-        ping_interval.reset(); // skip the ping at current time.
 
         let res = loop {
             if let Some(data) = state.pong_pending.take() {
@@ -629,7 +649,8 @@ impl ActiveRelayActor {
                         }
                     }
                 }
-                state.ping_tracker.pong_received(data)
+                state.ping_tracker.pong_received(data);
+                self.pong_received = true;
             }
             ReceivedMessage::Health { problem } => {
                 let problem = problem.as_deref().unwrap_or("unknown");
