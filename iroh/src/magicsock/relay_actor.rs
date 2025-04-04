@@ -157,11 +157,6 @@ struct ActiveRelayActor {
     inactive_timeout: Pin<Box<time::Sleep>>,
     /// Token indicating the [`ActiveRelayActor`] should stop.
     stop_token: CancellationToken,
-    /// Whether we received a pong from the server in the last successful connection.
-    ///
-    /// This serves as an indicator that the connection was established successfully before breaking,
-    /// in which case we want to reset the reconnect backoff delay.
-    pong_received: bool,
 }
 
 #[derive(Debug)]
@@ -218,6 +213,17 @@ struct RelayConnectionOptions {
     insecure_skip_cert_verify: bool,
 }
 
+/// Possible reasons for a failed relay connection.
+#[derive(Debug, thiserror::Error)]
+enum RelayConnectionError {
+    #[error("Failed to connect to relay server: {0:#}")]
+    Connecting(#[source] anyhow::Error),
+    #[error("Failed to handshake with relay server: {0:#}")]
+    Handshake(#[source] anyhow::Error),
+    #[error("Lost connection to relay server: {0:#}")]
+    Established(#[source] anyhow::Error),
+}
+
 impl ActiveRelayActor {
     fn new(opts: ActiveRelayActorOptions) -> Self {
         let ActiveRelayActorOptions {
@@ -240,7 +246,6 @@ impl ActiveRelayActor {
             is_home_relay: false,
             inactive_timeout: Box::pin(time::sleep(RELAY_INACTIVE_CLEANUP_TIME)),
             stop_token,
-            pong_received: false,
         }
     }
 
@@ -276,24 +281,26 @@ impl ActiveRelayActor {
     /// The main actor run loop.
     ///
     /// Primarily switches between the dialing and connected states.
-    async fn run(mut self) -> anyhow::Result<()> {
+    async fn run(mut self) -> Result<()> {
         inc!(MagicsockMetrics, num_relay_conns_added);
 
         let mut backoff = Self::build_backoff();
 
         while let Err(err) = self.run_once().await {
-            warn!("Relay connection failed: {err:#}");
-            if self.pong_received {
-                // If the relay connection remained established long enough so that we received a pong
-                // from the relay server, we reset the backoff and attempt to reconnect immediately.
-                self.pong_received = false;
-                backoff = Self::build_backoff();
-            } else {
-                // If dialing failed, or if the relay connection failed before we received a pong,
-                // we wait an exponentially increasing time until we attempt to reconnect again.
-                let sleep = backoff.next().context("Retries exceeded")?;
-                debug!("Retry in {sleep:?}");
-                time::sleep(sleep).await;
+            warn!("{err}");
+            match err {
+                RelayConnectionError::Connecting(_) | RelayConnectionError::Handshake(_) => {
+                    // If dialing failed, or if the relay connection failed before we received a pong,
+                    // we wait an exponentially increasing time until we attempt to reconnect again.
+                    let delay = backoff.next().context("Retries exceeded")?;
+                    debug!("Retry in {delay:?}");
+                    time::sleep(delay).await;
+                }
+                RelayConnectionError::Established(_) => {
+                    // If the relay connection remained established long enough so that we received a pong
+                    // from the relay server, we reset the backoff and attempt to reconnect immediately.
+                    backoff = Self::build_backoff();
+                }
             }
         }
         debug!("exiting");
@@ -314,10 +321,10 @@ impl ActiveRelayActor {
     /// Returns `Ok(())` if the actor loop should shut down. Returns an error if dialing failed,
     /// or if the relay connection failed while connected. In both cases, the connection should
     /// be retried with a backoff.
-    async fn run_once(&mut self) -> Result<()> {
+    async fn run_once(&mut self) -> Result<(), RelayConnectionError> {
         let client = match self.run_dialing().instrument(info_span!("dialing")).await {
             Some(Ok(client)) => client,
-            Some(Err(err)) => return Err(err).context("Failed to connect to relay"),
+            Some(Err(err)) => return Err(RelayConnectionError::Connecting(err)),
             None => return Ok(()),
         };
         self.run_connected(client)
@@ -440,9 +447,7 @@ impl ActiveRelayActor {
             match time::timeout(CONNECT_TIMEOUT, client_builder.connect()).await {
                 Ok(Ok(client)) => Ok(client),
                 Ok(Err(err)) => Err(err),
-                Err(_) => Err(anyhow!(
-                    "Connecting to relay timed out after {CONNECT_TIMEOUT:?}"
-                )),
+                Err(_) => Err(anyhow!("Connecting timed out after {CONNECT_TIMEOUT:?}")),
             }
         }
     }
@@ -451,7 +456,10 @@ impl ActiveRelayActor {
     ///
     /// Returns `Ok` if the actor needs to shut down.  `Err` is returned if the connection
     /// to the relay server is lost.
-    async fn run_connected(&mut self, client: iroh_relay::client::Client) -> Result<()> {
+    async fn run_connected(
+        &mut self,
+        client: iroh_relay::client::Client,
+    ) -> Result<(), RelayConnectionError> {
         debug!("Actor loop: connected to relay");
         event!(
             target: "iroh::_events::relay::connected",
@@ -467,6 +475,7 @@ impl ActiveRelayActor {
             nodes_present: BTreeSet::new(),
             last_packet_src: None,
             pong_pending: None,
+            established: false,
             #[cfg(test)]
             test_pong: None,
         };
@@ -577,7 +586,7 @@ impl ActiveRelayActor {
                 }
                 msg = client_stream.next() => {
                     let Some(msg) = msg else {
-                        break Err(anyhow!("Stream closed by relay server."));
+                        break Err(anyhow!("Stream closed by server."));
                     };
                     match msg {
                         Ok(msg) => {
@@ -594,10 +603,14 @@ impl ActiveRelayActor {
                 }
             }
         };
+
         if res.is_ok() {
-            client_sink.close().await?;
+            if let Err(err) = client_sink.close().await {
+                debug!("Failed to close client sink gracefully: {err:#}");
+            }
         }
-        res
+
+        res.map_err(|err| state.map_err(err))
     }
 
     fn handle_relay_msg(&mut self, msg: ReceivedMessage, state: &mut ConnectedRelayState) {
@@ -644,7 +657,7 @@ impl ActiveRelayActor {
                     }
                 }
                 state.ping_tracker.pong_received(data);
-                self.pong_received = true;
+                state.established = true;
             }
             ReceivedMessage::Health { problem } => {
                 let problem = problem.as_deref().unwrap_or("unknown");
@@ -672,13 +685,13 @@ impl ActiveRelayActor {
         sending_fut: impl Future<Output = Result<T, E>>,
         state: &mut ConnectedRelayState,
         client_stream: &mut iroh_relay::client::ClientStream,
-    ) -> Result<()> {
+    ) -> Result<(), RelayConnectionError> {
         // we use the same time as for our ping interval
         let send_timeout = PING_INTERVAL;
 
         let mut timeout = pin!(time::sleep(send_timeout));
         let mut sending_fut = pin!(sending_fut);
-        loop {
+        let res = loop {
             tokio::select! {
                 biased;
                 _ = self.stop_token.cancelled() => {
@@ -711,7 +724,7 @@ impl ActiveRelayActor {
                 // No need to read the inbox or datagrams to send.
                 msg = client_stream.next() => {
                     let Some(msg) = msg else {
-                        break Err(anyhow!("Stream closed by relay server."));
+                        break Err(anyhow!("Stream closed by server."));
                     };
                     match msg {
                         Ok(msg) => self.handle_relay_msg(msg, state),
@@ -723,7 +736,8 @@ impl ActiveRelayActor {
                     break Ok(());
                 }
             }
-        }
+        };
+        res.map_err(|err| state.map_err(err))
     }
 }
 
@@ -744,8 +758,22 @@ struct ConnectedRelayState {
     last_packet_src: Option<NodeId>,
     /// A pong we need to send ASAP.
     pong_pending: Option<[u8; 8]>,
+    /// Whether the connection is to be considered established.
+    ///
+    /// This is set to `true` once a pong was received from the server.
+    established: bool,
     #[cfg(test)]
     test_pong: Option<([u8; 8], oneshot::Sender<()>)>,
+}
+
+impl ConnectedRelayState {
+    fn map_err(&self, error: anyhow::Error) -> RelayConnectionError {
+        if self.established {
+            RelayConnectionError::Established(error)
+        } else {
+            RelayConnectionError::Handshake(error)
+        }
+    }
 }
 
 pub(super) enum RelayActorMessage {
