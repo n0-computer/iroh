@@ -9,7 +9,7 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{bail, Context as _, Result};
+use anyhow::{anyhow, bail, Context as _, Result};
 use clap::Parser;
 use http::StatusCode;
 use iroh_base::NodeId;
@@ -29,6 +29,10 @@ use url::Url;
 
 /// The default `http_bind_port` when using `--dev`.
 const DEV_MODE_HTTP_PORT: u16 = 3340;
+/// The header name for setting the node id in HTTP auth requests.
+const X_IROH_NODE_ID: &str = "X-Iroh-NodeId";
+/// Environment variable to read a bearer token for HTTP auth requests from.
+const ENV_HTTP_BEARER_TOKEN: &str = "IROH_RELAY_HTTP_BEARER_TOKEN";
 
 /// A relay server for iroh.
 #[derive(Parser, Debug, Clone)]
@@ -197,6 +201,13 @@ enum AccessConfig {
 struct HttpAccessConfig {
     /// The URL to send the `POST` request to.
     url: Url,
+    /// Optional bearer token for authorizing to the HTTP endpoint.
+    ///
+    /// If set, an `Authorization: Bearer {token}` header will be set on the HTTP request.
+    /// The bearer token can also be set via the `IROH_RELAY_HTTP_BEARER_TOKEN` environment variable.
+    /// If both the config and the environment variable are set, the value from the environment variable
+    /// is used.
+    bearer_token: Option<String>,
 }
 
 impl From<AccessConfig> for iroh_relay::server::AccessConfig {
@@ -231,8 +242,12 @@ impl From<AccessConfig> for iroh_relay::server::AccessConfig {
                     .boxed()
                 }))
             }
-            AccessConfig::Http(config) => {
+            AccessConfig::Http(mut config) => {
                 let client = reqwest::Client::default();
+                // Allow to set bearer token via environment variable as well.
+                if let Ok(token) = std::env::var(ENV_HTTP_BEARER_TOKEN) {
+                    config.bearer_token = Some(token);
+                }
                 let config = Arc::new(config);
                 iroh_relay::server::AccessConfig::Restricted(Box::new(move |node_id| {
                     let client = client.clone();
@@ -252,39 +267,42 @@ async fn http_access_check(
 ) -> iroh_relay::server::Access {
     use iroh_relay::server::Access;
     debug!(url=%config.url, "Check relay access via HTTP POST");
-    let res = match client
-        .post(config.url.clone())
-        .header("X-Iroh-NodeId", node_id.to_string())
-        .send()
-        .await
-    {
-        Ok(t) => t,
+
+    match http_access_check_inner(client, config, node_id).await {
+        Ok(()) => {
+            debug!("HTTP access check OK: Allow access");
+            Access::Allow
+        }
         Err(err) => {
-            warn!("HTTP access check failed to retrieve response: {err}");
-            return Access::Deny;
+            debug!("HTTP access check failed: Deny access (reason: {err:#})");
+            Access::Deny
         }
-    };
-    if res.status() == StatusCode::OK {
-        match res.text().await {
-            Ok(text) if text == "true" => {
-                debug!("HTTP access check successful: grant access.");
-                Access::Allow
-            }
-            Ok(_) => {
-                warn!("HTTP access check return invalid response text: deny access.");
-                Access::Deny
-            }
-            Err(err) => {
-                warn!("HTTP access check failed to read response: {err}");
-                Access::Deny
-            }
+    }
+}
+
+async fn http_access_check_inner(
+    client: &reqwest::Client,
+    config: &HttpAccessConfig,
+    node_id: NodeId,
+) -> Result<()> {
+    let mut request = client
+        .post(config.url.clone())
+        .header(X_IROH_NODE_ID, node_id.to_string());
+    if let Some(token) = config.bearer_token.as_ref() {
+        request = request.header(http::header::AUTHORIZATION, format!("Bearer {token}"));
+    }
+
+    match request.send().await {
+        Err(err) => {
+            warn!("Failed to retrieve response for HTTP access check: {err:#}");
+            Err(err).context("Failed to fetch response")
         }
-    } else {
-        debug!(
-            "HTTP access check response has status code {}: deny access",
-            res.status()
-        );
-        Access::Deny
+        Ok(res) if res.status() == StatusCode::OK => match res.text().await {
+            Ok(text) if text == "true" => Ok(()),
+            Ok(_) => Err(anyhow!("Invalid response text (must be 'true')")),
+            Err(err) => Err(err).context("Failed to read response"),
+        },
+        Ok(res) => Err(anyhow!("Received invalid status code ({})", res.status())),
     }
 }
 
