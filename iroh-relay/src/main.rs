@@ -190,7 +190,13 @@ enum AccessConfig {
     ///
     /// To grant access, the HTTP endpoint must return a `200` response with `true` as the response text.
     /// In all other cases, the node will be denied access.
-    Http(Url),
+    Http(HttpAccessConfig),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct HttpAccessConfig {
+    /// The URL to send the `POST` request to.
+    url: Url,
 }
 
 impl From<AccessConfig> for iroh_relay::server::AccessConfig {
@@ -225,12 +231,13 @@ impl From<AccessConfig> for iroh_relay::server::AccessConfig {
                     .boxed()
                 }))
             }
-            AccessConfig::Http(url) => {
+            AccessConfig::Http(config) => {
                 let client = reqwest::Client::default();
+                let config = Arc::new(config);
                 iroh_relay::server::AccessConfig::Restricted(Box::new(move |node_id| {
                     let client = client.clone();
-                    let url = url.clone();
-                    async move { http_access_check(&client, url, node_id).await }.boxed()
+                    let config = config.clone();
+                    async move { http_access_check(&client, &config, node_id).await }.boxed()
                 }))
             }
         }
@@ -240,13 +247,13 @@ impl From<AccessConfig> for iroh_relay::server::AccessConfig {
 #[tracing::instrument("http-access-check", skip_all, fields(node_id=%node_id.fmt_short()))]
 async fn http_access_check(
     client: &reqwest::Client,
-    url: Url,
+    config: &HttpAccessConfig,
     node_id: NodeId,
 ) -> iroh_relay::server::Access {
     use iroh_relay::server::Access;
-    debug!(%url, "Check relay access via HTTP POST");
+    debug!(url=%config.url, "Check relay access via HTTP POST");
     let res = match client
-        .post(url)
+        .post(config.url.clone())
         .header("X-Iroh-NodeId", node_id.to_string())
         .send()
         .await
