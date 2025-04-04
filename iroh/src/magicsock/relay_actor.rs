@@ -425,14 +425,10 @@ impl ActiveRelayActor {
         async move {
             match time::timeout(CONNECT_TIMEOUT, client_builder.connect()).await {
                 Ok(Ok(client)) => Ok(client),
-                Ok(Err(err)) => {
-                    warn!("Relay connection failed: {err:#}");
-                    Err(err)
-                }
-                Err(_) => {
-                    warn!(?CONNECT_TIMEOUT, "Timeout connecting to relay");
-                    Err(anyhow!("Timeout"))
-                }
+                Ok(Err(err)) => Err(err),
+                Err(_) => Err(anyhow!(
+                    "Connecting to relay timed out after {CONNECT_TIMEOUT:?}"
+                )),
             }
         }
     }
