@@ -4416,12 +4416,7 @@
 <a href="#4415" id="4415">4415</a>
 <a href="#4416" id="4416">4416</a>
 <a href="#4417" id="4417">4417</a>
-<a href="#4418" id="4418">4418</a>
-<a href="#4419" id="4419">4419</a>
-<a href="#4420" id="4420">4420</a>
-<a href="#4421" id="4421">4421</a>
-<a href="#4422" id="4422">4422</a>
-<a href="#4423" id="4423">4423</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4418" id="4418">4418</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -7339,9 +7334,7 @@
                 </span>ni.preferred_relay = <span class="self">self</span>.pick_relay_fallback();
             }
 
-            <span class="kw">if </span>!<span class="self">self</span>.set_nearest_relay(ni.preferred_relay.clone()) {
-                ni.preferred_relay = <span class="prelude-val">None</span>;
-            }
+            <span class="self">self</span>.set_nearest_relay(ni.preferred_relay.clone());
 
             <span class="comment">// TODO: set link type
             </span><span class="self">self</span>.call_net_info_callback(ni).<span class="kw">await</span>;
@@ -7350,12 +7343,11 @@
         </span><span class="self">self</span>.update_direct_addresses(report);
     }
 
-    <span class="comment">// TODO(frando): This never returns false.
-    </span><span class="kw">fn </span>set_nearest_relay(<span class="kw-2">&amp;mut </span><span class="self">self</span>, relay_url: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;) -&gt; bool {
+    <span class="kw">fn </span>set_nearest_relay(<span class="kw-2">&amp;mut </span><span class="self">self</span>, relay_url: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;) {
         <span class="kw">let </span>my_relay = <span class="self">self</span>.msock.my_relay();
         <span class="kw">if </span>relay_url == my_relay {
             <span class="comment">// No change.
-            </span><span class="kw">return </span><span class="bool-val">true</span>;
+            </span><span class="kw">return</span>;
         }
         <span class="kw">let </span>old_relay = <span class="self">self</span>.msock.set_my_relay(relay_url.clone());
 
@@ -7371,9 +7363,7 @@
                 url: relay_url.clone(),
             });
         }
-
-        <span class="bool-val">true
-    </span>}
+    }
 
     <span class="doccomment">/// Returns a deterministic relay node to connect to. This is only used if net_report
     /// couldn't find the nearest one, for instance, if UDP is blocked and thus STUN

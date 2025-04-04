@@ -1571,8 +1571,7 @@
 <a href="#1570" id="1570">1570</a>
 <a href="#1571" id="1571">1571</a>
 <a href="#1572" id="1572">1572</a>
-<a href="#1573" id="1573">1573</a>
-<a href="#1574" id="1574">1574</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1573" id="1573">1573</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1611,7 +1610,7 @@
     },
 };
 
-<span class="kw">use </span>anyhow::{anyhow, <span class="prelude-ty">Result</span>};
+<span class="kw">use </span>anyhow::{anyhow, Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>backon::{BackoffBuilder, ExponentialBuilder};
 <span class="kw">use </span>bytes::{Bytes, BytesMut};
 <span class="kw">use </span>iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
@@ -1849,42 +1848,41 @@
 
         <span class="kw">let </span><span class="kw-2">mut </span>backoff = ExponentialBuilder::new()
             .with_min_delay(Duration::from_millis(<span class="number">10</span>))
-            .with_max_delay(Duration::from_secs(<span class="number">5</span>))
+            .with_max_delay(Duration::from_secs(<span class="number">16</span>))
             .without_max_times()
             .build();
 
-        <span class="lifetime">'run</span>: <span class="kw">loop </span>{
-            <span class="kw">let </span>client = <span class="lifetime">'dial</span>: <span class="kw">loop </span>{
-                <span class="kw">match </span><span class="self">self</span>.run_dialing().instrument(<span class="macro">info_span!</span>(<span class="string">"dialing"</span>)).<span class="kw">await </span>{
-                    <span class="prelude-val">None </span>=&gt; <span class="kw">break </span><span class="lifetime">'run</span>,
-                    <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(client)) =&gt; <span class="kw">break </span><span class="lifetime">'dial </span>client,
-                    <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(err)) =&gt; {
-                        <span class="kw">let </span>sleep = backoff.next().expect(<span class="string">"backoff is infinite"</span>);
-                        <span class="macro">warn!</span>(<span class="string">"Client failed to connect: {err:#}"</span>);
-                        <span class="macro">debug!</span>(<span class="string">"Retry in {sleep:?}"</span>);
-                        time::sleep(sleep).<span class="kw">await</span>;
-                    }
-                };
-            };
-            <span class="kw">match </span><span class="self">self
-                </span>.run_connected(client)
-                .instrument(<span class="macro">info_span!</span>(<span class="string">"connected"</span>))
-                .<span class="kw">await
-            </span>{
-                <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; <span class="kw">break</span>,
+        <span class="kw">loop </span>{
+            <span class="kw">match </span><span class="self">self</span>.run_once().<span class="kw">await </span>{
                 <span class="prelude-val">Err</span>(err) =&gt; {
-                    <span class="kw">let </span>sleep = backoff.next().expect(<span class="string">"backoff is infinite"</span>);
-                    <span class="macro">debug!</span>(<span class="string">"Connection to relay server lost: {err:#}"</span>);
+                    <span class="macro">warn!</span>(<span class="string">"Relay connection failed: {err:#}"</span>);
+                    <span class="kw">let </span>sleep = backoff.next().context(<span class="string">"Retries exceeded"</span>)<span class="question-mark">?</span>;
                     <span class="macro">debug!</span>(<span class="string">"Retry in {sleep:?}"</span>);
                     time::sleep(sleep).<span class="kw">await</span>;
-                    <span class="kw">continue</span>;
                 }
+                <span class="prelude-val">Ok</span>(()) =&gt; <span class="kw">break</span>,
             }
         }
         <span class="macro">debug!</span>(<span class="string">"exiting"</span>);
         <span class="macro">inc!</span>(MagicsockMetrics, num_relay_conns_removed);
         <span class="prelude-val">Ok</span>(())
     }
+
+    <span class="doccomment">/// Attempt to connect to the relay, and run the connected actor loop.
+    ///
+    /// Returns `Ok(())` if the actor loop should shut down. Returns an error if dialing failed,
+    /// or if the relay connection failed while connected. In both cases, the connection should
+    /// be retried with a backoff.
+    </span><span class="kw">async fn </span>run_once(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        <span class="kw">let </span>client = <span class="kw">match </span><span class="self">self</span>.run_dialing().instrument(<span class="macro">info_span!</span>(<span class="string">"dialing"</span>)).<span class="kw">await </span>{
+            <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(client)) =&gt; client,
+            <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(err)) =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(err).context(<span class="string">"Failed to connect to relay"</span>),
+            <span class="prelude-val">None </span>=&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(()),
+        };
+        <span class="self">self</span>.run_connected(client)
+            .instrument(<span class="macro">info_span!</span>(<span class="string">"connected"</span>))
+            .<span class="kw">await
+    </span>}
 
     <span class="kw">fn </span>reset_inactive_timeout(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
         <span class="self">self</span>.inactive_timeout
