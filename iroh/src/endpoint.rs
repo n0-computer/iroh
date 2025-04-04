@@ -43,6 +43,7 @@ use crate::{
     magicsock::{self, Handle, NodeIdMappedAddr},
     tls,
     watchable::Watcher,
+    RelayProtocol,
 };
 
 mod rtt_actor;
@@ -110,6 +111,7 @@ pub enum PathSelection {
 pub struct Builder {
     secret_key: Option<SecretKey>,
     relay_mode: RelayMode,
+    relay_protocol: iroh_relay::http::Protocol,
     alpn_protocols: Vec<Vec<u8>>,
     transport_config: quinn::TransportConfig,
     keylog: bool,
@@ -137,6 +139,7 @@ impl Default for Builder {
         Self {
             secret_key: Default::default(),
             relay_mode: default_relay_mode(),
+            relay_protocol: iroh_relay::http::Protocol::default(),
             alpn_protocols: Default::default(),
             transport_config,
             keylog: Default::default(),
@@ -194,6 +197,7 @@ impl Builder {
             addr_v6: self.addr_v6,
             secret_key,
             relay_map,
+            relay_protocol: self.relay_protocol,
             node_map: self.node_map,
             discovery,
             discovery_user_data: self.discovery_user_data,
@@ -276,6 +280,19 @@ impl Builder {
     /// [number 0]: https://n0.computer
     pub fn relay_mode(mut self, relay_mode: RelayMode) -> Self {
         self.relay_mode = relay_mode;
+        self
+    }
+
+    /// Sets the protocol to use for relay connections.
+    ///
+    /// Options are either [`RelayProtocol::Websocket`] or [`RelayProtocol::Relay`].
+    ///
+    /// `Websocket` is considered unstable between iroh versions at the moment.
+    /// The protocol can change in compatibility-breaking ways before iroh 1.0.
+    ///
+    /// Default is set to `Relay` at the moment, until we've stabilized the websocket protocol.
+    pub fn relay_conn_protocol(mut self, protocol: RelayProtocol) -> Self {
+        self.relay_protocol = protocol;
         self
     }
 
@@ -2009,6 +2026,7 @@ mod tests {
 
     use std::time::Instant;
 
+    use iroh_relay::http::Protocol;
     use n0_future::StreamExt;
     use rand::SeedableRng;
     use testresult::TestResult;
@@ -2288,6 +2306,57 @@ mod tests {
         if start.elapsed() > Duration::from_secs(15) {
             panic!("Test too slow, something went wrong");
         }
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn endpoint_send_relay_websockets() -> testresult::TestResult {
+        let (relay_map, _relay_url, _guard) = run_relay_server().await?;
+        let client = Endpoint::builder()
+            .relay_conn_protocol(Protocol::Websocket)
+            .relay_mode(RelayMode::Custom(relay_map.clone()))
+            .bind()
+            .await?;
+        let server = Endpoint::builder()
+            .relay_conn_protocol(Protocol::Websocket)
+            .relay_mode(RelayMode::Custom(relay_map))
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .bind()
+            .await?;
+
+        let task = tokio::spawn({
+            let server = server.clone();
+            async move {
+                let Some(conn) = server.accept().await else {
+                    bail!("Expected an incoming connection");
+                };
+                let conn = conn.await?;
+                let (mut send, mut recv) = conn.accept_bi().await?;
+                let data = recv.read_to_end(1000).await?;
+                send.write_all(&data).await?;
+                send.finish()?;
+                conn.closed().await;
+
+                Ok(())
+            }
+        });
+
+        let addr = server.node_addr().await?;
+        let conn = client.connect(addr, TEST_ALPN).await?;
+        let (mut send, mut recv) = conn.open_bi().await?;
+        send.write_all(b"Hello, world!").await?;
+        send.finish()?;
+        let data = recv.read_to_end(1000).await?;
+        conn.close(0u32.into(), b"bye!");
+
+        task.await??;
+
+        client.close().await;
+        server.close().await;
+
+        assert_eq!(&data, b"Hello, world!");
+
+        Ok(())
     }
 
     #[tokio::test]
