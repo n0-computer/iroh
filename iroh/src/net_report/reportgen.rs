@@ -52,12 +52,12 @@ use tracing::{debug, debug_span, error, info_span, trace, warn, Instrument, Span
 use url::Host;
 
 #[cfg(wasm_browser)]
-use crate::portmapper; // We stub the library
+use crate::net_report::portmapper; // We stub the library
 #[cfg(feature = "metrics")]
-use crate::Metrics;
-use crate::{self as net_report, Report};
+use crate::net_report::Metrics;
+use crate::net_report::{self, Report};
 #[cfg(not(wasm_browser))]
-use crate::{
+use crate::net_report::{
     defaults::timeouts::DNS_TIMEOUT,
     dns::DNS_STAGGERING_MS,
     ip_mapped_addrs::IpMappedAddresses,
@@ -71,7 +71,7 @@ mod probes;
 pub use probes::ProbeProto;
 use probes::{Probe, ProbePlan};
 
-use crate::defaults::timeouts::{
+use crate::net_report::defaults::timeouts::{
     CAPTIVE_PORTAL_DELAY, CAPTIVE_PORTAL_TIMEOUT, OVERALL_REPORT_TIMEOUT, PROBES_TIMEOUT,
 };
 
@@ -1445,6 +1445,7 @@ mod tests {
     use tracing_test::traced_test;
 
     use super::{super::test_utils, *};
+    use crate::net_report::dns;
 
     #[tokio::test]
     #[traced_test]
@@ -1695,7 +1696,7 @@ mod tests {
     #[tokio::test]
     async fn test_measure_https_latency() -> TestResult {
         let (server, relay) = test_utils::relay().await;
-        let dns_resolver = crate::dns::tests::resolver();
+        let dns_resolver = dns::tests::resolver();
         tracing::info!(relay_url = ?relay.url , "RELAY_URL");
         let (latency, ip) =
             measure_https_latency(&dns_resolver, &relay, server.certificates()).await?;

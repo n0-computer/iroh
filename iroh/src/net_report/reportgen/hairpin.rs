@@ -24,7 +24,7 @@ use netwatch::UdpSocket;
 use tokio::sync::oneshot;
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
-use crate::{self as net_report, defaults::timeouts::HAIRPIN_CHECK_TIMEOUT, reportgen, Inflight};
+use crate::net_report::{self, defaults::timeouts::HAIRPIN_CHECK_TIMEOUT, reportgen, Inflight};
 
 /// Handle to the hairpin actor.
 ///
