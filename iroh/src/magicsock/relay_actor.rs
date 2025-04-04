@@ -37,7 +37,7 @@ use std::{
     },
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use backon::{BackoffBuilder, ExponentialBuilder};
 use bytes::{Bytes, BytesMut};
 use iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
@@ -275,41 +275,40 @@ impl ActiveRelayActor {
 
         let mut backoff = ExponentialBuilder::new()
             .with_min_delay(Duration::from_millis(10))
-            .with_max_delay(Duration::from_secs(5))
+            .with_max_delay(Duration::from_secs(16))
             .without_max_times()
             .build();
 
-        'run: loop {
-            let client = 'dial: loop {
-                match self.run_dialing().instrument(info_span!("dialing")).await {
-                    None => break 'run,
-                    Some(Ok(client)) => break 'dial client,
-                    Some(Err(err)) => {
-                        let sleep = backoff.next().expect("backoff is infinite");
-                        warn!("Client failed to connect: {err:#}");
-                        debug!("Retry in {sleep:?}");
-                        time::sleep(sleep).await;
-                    }
-                };
-            };
-            match self
-                .run_connected(client)
-                .instrument(info_span!("connected"))
-                .await
-            {
-                Ok(_) => break,
+        loop {
+            match self.run_once().await {
                 Err(err) => {
-                    let sleep = backoff.next().expect("backoff is infinite");
-                    debug!("Connection to relay server lost: {err:#}");
+                    warn!("Relay connection failed: {err:#}");
+                    let sleep = backoff.next().context("Retries exceeded")?;
                     debug!("Retry in {sleep:?}");
                     time::sleep(sleep).await;
-                    continue;
                 }
+                Ok(()) => break,
             }
         }
         debug!("exiting");
         inc!(MagicsockMetrics, num_relay_conns_removed);
         Ok(())
+    }
+
+    /// Attempt to connect to the relay, and run the connected actor loop.
+    ///
+    /// Returns `Ok(())` if the actor loop should shut down. Returns an error if dialing failed,
+    /// or if the relay connection failed while connected. In both cases, the connection should
+    /// be retried with a backoff.
+    async fn run_once(&mut self) -> Result<()> {
+        let client = match self.run_dialing().instrument(info_span!("dialing")).await {
+            Some(Ok(client)) => client,
+            Some(Err(err)) => return Err(err).context("Failed to connect to relay"),
+            None => return Ok(()),
+        };
+        self.run_connected(client)
+            .instrument(info_span!("connected"))
+            .await
     }
 
     fn reset_inactive_timeout(&mut self) {
