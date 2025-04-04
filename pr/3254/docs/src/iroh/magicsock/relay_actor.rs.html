@@ -2161,7 +2161,7 @@
                 }
                 msg = client_stream.next() =&gt; {
                     <span class="kw">let </span><span class="prelude-val">Some</span>(msg) = msg <span class="kw">else </span>{
-                        <span class="kw">break </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Client stream finished"</span>));
+                        <span class="kw">break </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Stream closed by relay server."</span>));
                     };
                     <span class="kw">match </span>msg {
                         <span class="prelude-val">Ok</span>(msg) =&gt; {
@@ -2295,7 +2295,7 @@
                 <span class="comment">// No need to read the inbox or datagrams to send.
                 </span>msg = client_stream.next() =&gt; {
                     <span class="kw">let </span><span class="prelude-val">Some</span>(msg) = msg <span class="kw">else </span>{
-                        <span class="kw">break </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Client stream finished"</span>));
+                        <span class="kw">break </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Stream closed by relay server."</span>));
                     };
                     <span class="kw">match </span>msg {
                         <span class="prelude-val">Ok</span>(msg) =&gt; <span class="self">self</span>.handle_relay_msg(msg, state),
