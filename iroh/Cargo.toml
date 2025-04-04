@@ -104,7 +104,7 @@ hickory-resolver = "0.25.1"
 igd-next = { version = "0.15.1", features = ["aio_tokio"] }
 netdev = { version = "0.31.0" }
 portmapper = { version = "0.4", default-features = false }
-quinn = { package = "iroh-quinn", version = "0.13.0", default-features = false, features = ["platform-verifier", "runtime-tokio", "rustls-ring"] }
+quinn = { package = "iroh-quinn", version = "0.13.0", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 tokio = { version = "1", features = [
     "io-util",
     "macros",
