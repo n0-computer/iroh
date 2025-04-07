@@ -312,6 +312,7 @@ impl ActiveRelayActor {
         ExponentialBuilder::new()
             .with_min_delay(Duration::from_millis(10))
             .with_max_delay(Duration::from_secs(16))
+            .with_jitter()
             .without_max_times()
             .build()
     }
