@@ -39,6 +39,7 @@ pub enum ConnSendError {
 impl From<ws_stream_wasm::WsErr> for ConnSendError {
     fn from(err: ws_stream_wasm::WsErr) -> Self {
         use std::io::ErrorKind::*;
+
         use ws_stream_wasm::WsErr::*;
         let kind = match err {
             ConnectionNotOpen => NotConnected,
