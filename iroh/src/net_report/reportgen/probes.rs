@@ -13,7 +13,7 @@ use n0_future::time::Duration;
 #[cfg(not(wasm_browser))]
 use netwatch::interfaces;
 
-use crate::Report;
+use crate::net_report::Report;
 
 /// The retransmit interval used when net_report first runs.
 ///
@@ -237,7 +237,7 @@ impl fmt::Display for ProbeSet {
 /// The [`reportgen`] actor will also abort all the remaining [`ProbeSet`]s once it has
 /// sufficient information for a report.
 ///
-/// [`reportgen`]: crate::reportgen
+/// [`reportgen`]: crate::net_report::reportgen
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct ProbePlan {
     set: BTreeSet<ProbeSet>,
@@ -681,7 +681,7 @@ mod tests {
     use tracing_test::traced_test;
 
     use super::*;
-    use crate::{test_utils, RelayLatencies};
+    use crate::net_report::{test_utils, RelayLatencies};
 
     /// Shorthand which declares a new ProbeSet.
     ///

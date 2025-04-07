@@ -249,6 +249,7 @@ pub mod discovery;
 pub mod dns;
 pub mod endpoint;
 pub mod metrics;
+pub mod net_report;
 pub mod protocol;
 pub mod watchable;
 

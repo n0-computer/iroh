@@ -42,9 +42,6 @@ use n0_future::{
     time::{self, Duration, Instant},
     FutureExt, StreamExt,
 };
-use net_report::IpMappedAddresses;
-#[cfg(not(wasm_browser))]
-use net_report::{IpMappedAddr, QuicConfig};
 use netwatch::{interfaces, netmon};
 #[cfg(not(wasm_browser))]
 use netwatch::{ip::LocalAddresses, UdpSocket};
@@ -71,11 +68,14 @@ use self::{
 use crate::dns::DnsResolver;
 #[cfg(any(test, feature = "test-utils"))]
 use crate::endpoint::PathSelection;
+#[cfg(not(wasm_browser))]
+use crate::net_report::{IpMappedAddr, QuicConfig};
 use crate::{
     defaults::timeouts::NET_REPORT_TIMEOUT,
     disco::{self, CallMeMaybe, SendAddr},
     discovery::{Discovery, DiscoveryItem, DiscoverySubscribers, NodeData, UserData},
     key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
+    net_report::{self, IpMappedAddresses},
     watchable::{Watchable, Watcher},
 };
 
