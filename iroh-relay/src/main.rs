@@ -838,6 +838,57 @@ mod tests {
         let config = Config::from_str(dbg!(&config))?;
         assert_eq!(config.access, AccessConfig::Allowlist(vec![node_id]));
 
+        let config = r#"
+            access.http.url = "https://example.com/foo/bar?boo=baz"
+        "#
+        .to_string();
+        let config = Config::from_str(dbg!(&config))?;
+        assert_eq!(
+            config.access,
+            AccessConfig::Http(HttpAccessConfig {
+                url: "https://example.com/foo/bar?boo=baz".parse().unwrap(),
+                bearer_token: None
+            })
+        );
+        let config = r#"
+            access.http.url = "https://example.com/foo/bar?boo=baz"
+            access.http.bearer_token = "foo"
+        "#
+        .to_string();
+        let config = Config::from_str(dbg!(&config))?;
+        assert_eq!(
+            config.access,
+            AccessConfig::Http(HttpAccessConfig {
+                url: "https://example.com/foo/bar?boo=baz".parse().unwrap(),
+                bearer_token: Some("foo".to_string())
+            })
+        );
+
+        let config = r#"
+            access.http = { url = "https://example.com/foo" }
+        "#
+        .to_string();
+        let config = Config::from_str(dbg!(&config))?;
+        assert_eq!(
+            config.access,
+            AccessConfig::Http(HttpAccessConfig {
+                url: "https://example.com/foo".parse().unwrap(),
+                bearer_token: None
+            })
+        );
+
+        let config = r#"
+            access.http = { url = "https://example.com/foo", bearer_token = "foo" }
+        "#
+        .to_string();
+        let config = Config::from_str(dbg!(&config))?;
+        assert_eq!(
+            config.access,
+            AccessConfig::Http(HttpAccessConfig {
+                url: "https://example.com/foo".parse().unwrap(),
+                bearer_token: Some("foo".to_string())
+            })
+        );
         Ok(())
     }
 }
