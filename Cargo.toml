@@ -5,7 +5,6 @@ members = [
   "iroh",
   "iroh/bench",
   "iroh-relay",
-  "iroh-net-report",
 ]
 resolver = "2"
 
