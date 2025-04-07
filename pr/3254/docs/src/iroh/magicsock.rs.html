@@ -4460,9 +4460,6 @@
     time::{<span class="self">self</span>, Duration, Instant},
     FutureExt, StreamExt,
 };
-<span class="kw">use </span>net_report::IpMappedAddresses;
-<span class="attr">#[cfg(not(wasm_browser))]
-</span><span class="kw">use </span>net_report::{IpMappedAddr, QuicConfig};
 <span class="kw">use </span>netwatch::{interfaces, netmon};
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">use </span>netwatch::{ip::LocalAddresses, UdpSocket};
@@ -4489,11 +4486,14 @@
 </span><span class="kw">use </span><span class="kw">crate</span>::dns::DnsResolver;
 <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
 </span><span class="kw">use </span><span class="kw">crate</span>::endpoint::PathSelection;
+<span class="attr">#[cfg(not(wasm_browser))]
+</span><span class="kw">use </span><span class="kw">crate</span>::net_report::{IpMappedAddr, QuicConfig};
 <span class="kw">use crate</span>::{
     defaults::timeouts::NET_REPORT_TIMEOUT,
     disco::{<span class="self">self</span>, CallMeMaybe, SendAddr},
     discovery::{Discovery, DiscoveryItem, DiscoverySubscribers, NodeData, UserData},
     key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
+    net_report::{<span class="self">self</span>, IpMappedAddresses},
     watchable::{Watchable, Watcher},
 };
 

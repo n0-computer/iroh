@@ -1610,7 +1610,8 @@
 <a href="#1609" id="1609">1609</a>
 <a href="#1610" id="1610">1610</a>
 <a href="#1611" id="1611">1611</a>
-<a href="#1612" id="1612">1612</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1612" id="1612">1612</a>
+<a href="#1613" id="1613">1613</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1924,6 +1925,7 @@
         ExponentialBuilder::new()
             .with_min_delay(Duration::from_millis(<span class="number">10</span>))
             .with_max_delay(Duration::from_secs(<span class="number">16</span>))
+            .with_jitter()
             .without_max_times()
             .build()
     }
