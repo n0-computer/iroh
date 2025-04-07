@@ -37,9 +37,17 @@ pub enum ConnSendError {
 
 #[cfg(wasm_browser)]
 impl From<ws_stream_wasm::WsErr> for ConnSendError {
-    fn from(source: ws_stream_wasm::WsErr) -> Self {
-        let io_err = std::io::Error::new(std::io::ErrorKind::Other, source.to_string());
-        Self::Io(io_err)
+    fn from(err: ws_stream_wasm::WsErr) -> Self {
+        use std::io::ErrorKind::*;
+        use ws_stream_wasm::WsErr::*;
+        let kind = match err {
+            ConnectionNotOpen => NotConnected,
+            ReasonStringToLong | InvalidCloseCode { .. } | InvalidUrl { .. } => InvalidInput,
+            UnknownDataType | InvalidEncoding => InvalidData,
+            ConnectionFailed { .. } => ConnectionReset,
+            _ => Other,
+        };
+        Self::Io(std::io::Error::new(kind, err.to_string()))
     }
 }
 
