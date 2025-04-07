@@ -9,8 +9,9 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{bail, Context as _, Result};
+use anyhow::{anyhow, bail, Context as _, Result};
 use clap::Parser;
+use http::StatusCode;
 use iroh_base::NodeId;
 use iroh_relay::{
     defaults::{
@@ -22,11 +23,16 @@ use iroh_relay::{
 use n0_future::FutureExt;
 use serde::{Deserialize, Serialize};
 use tokio_rustls_acme::{caches::DirCache, AcmeConfig};
-use tracing::debug;
+use tracing::{debug, warn};
 use tracing_subscriber::{prelude::*, EnvFilter};
+use url::Url;
 
 /// The default `http_bind_port` when using `--dev`.
 const DEV_MODE_HTTP_PORT: u16 = 3340;
+/// The header name for setting the node id in HTTP auth requests.
+const X_IROH_NODE_ID: &str = "X-Iroh-NodeId";
+/// Environment variable to read a bearer token for HTTP auth requests from.
+const ENV_HTTP_BEARER_TOKEN: &str = "IROH_RELAY_HTTP_BEARER_TOKEN";
 
 /// A relay server for iroh.
 #[derive(Parser, Debug, Clone)]
@@ -181,6 +187,27 @@ enum AccessConfig {
     Allowlist(Vec<NodeId>),
     /// Allows everyone, except these nodes.
     Denylist(Vec<NodeId>),
+    /// Performs a HTTP POST request to determine access for each node that connects to the relay.
+    ///
+    /// The request will have a header `X-Iroh-Node-Id` set to the hex-encoded node id attempting
+    /// to connect to the relay.
+    ///
+    /// To grant access, the HTTP endpoint must return a `200` response with `true` as the response text.
+    /// In all other cases, the node will be denied access.
+    Http(HttpAccessConfig),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct HttpAccessConfig {
+    /// The URL to send the `POST` request to.
+    url: Url,
+    /// Optional bearer token for authorizing to the HTTP endpoint.
+    ///
+    /// If set, an `Authorization: Bearer {token}` header will be set on the HTTP request.
+    /// The bearer token can also be set via the `IROH_RELAY_HTTP_BEARER_TOKEN` environment variable.
+    /// If both the config and the environment variable are set, the value from the environment variable
+    /// is used.
+    bearer_token: Option<String>,
 }
 
 impl From<AccessConfig> for iroh_relay::server::AccessConfig {
@@ -215,7 +242,67 @@ impl From<AccessConfig> for iroh_relay::server::AccessConfig {
                     .boxed()
                 }))
             }
+            AccessConfig::Http(mut config) => {
+                let client = reqwest::Client::default();
+                // Allow to set bearer token via environment variable as well.
+                if let Ok(token) = std::env::var(ENV_HTTP_BEARER_TOKEN) {
+                    config.bearer_token = Some(token);
+                }
+                let config = Arc::new(config);
+                iroh_relay::server::AccessConfig::Restricted(Box::new(move |node_id| {
+                    let client = client.clone();
+                    let config = config.clone();
+                    async move { http_access_check(&client, &config, node_id).await }.boxed()
+                }))
+            }
         }
+    }
+}
+
+#[tracing::instrument("http-access-check", skip_all, fields(node_id=%node_id.fmt_short()))]
+async fn http_access_check(
+    client: &reqwest::Client,
+    config: &HttpAccessConfig,
+    node_id: NodeId,
+) -> iroh_relay::server::Access {
+    use iroh_relay::server::Access;
+    debug!(url=%config.url, "Check relay access via HTTP POST");
+
+    match http_access_check_inner(client, config, node_id).await {
+        Ok(()) => {
+            debug!("HTTP access check OK: Allow access");
+            Access::Allow
+        }
+        Err(err) => {
+            debug!("HTTP access check failed: Deny access (reason: {err:#})");
+            Access::Deny
+        }
+    }
+}
+
+async fn http_access_check_inner(
+    client: &reqwest::Client,
+    config: &HttpAccessConfig,
+    node_id: NodeId,
+) -> Result<()> {
+    let mut request = client
+        .post(config.url.clone())
+        .header(X_IROH_NODE_ID, node_id.to_string());
+    if let Some(token) = config.bearer_token.as_ref() {
+        request = request.header(http::header::AUTHORIZATION, format!("Bearer {token}"));
+    }
+
+    match request.send().await {
+        Err(err) => {
+            warn!("Failed to retrieve response for HTTP access check: {err:#}");
+            Err(err).context("Failed to fetch response")
+        }
+        Ok(res) if res.status() == StatusCode::OK => match res.text().await {
+            Ok(text) if text == "true" => Ok(()),
+            Ok(_) => Err(anyhow!("Invalid response text (must be 'true')")),
+            Err(err) => Err(err).context("Failed to read response"),
+        },
+        Ok(res) => Err(anyhow!("Received invalid status code ({})", res.status())),
     }
 }
 
@@ -751,6 +838,57 @@ mod tests {
         let config = Config::from_str(dbg!(&config))?;
         assert_eq!(config.access, AccessConfig::Allowlist(vec![node_id]));
 
+        let config = r#"
+            access.http.url = "https://example.com/foo/bar?boo=baz"
+        "#
+        .to_string();
+        let config = Config::from_str(dbg!(&config))?;
+        assert_eq!(
+            config.access,
+            AccessConfig::Http(HttpAccessConfig {
+                url: "https://example.com/foo/bar?boo=baz".parse().unwrap(),
+                bearer_token: None
+            })
+        );
+        let config = r#"
+            access.http.url = "https://example.com/foo/bar?boo=baz"
+            access.http.bearer_token = "foo"
+        "#
+        .to_string();
+        let config = Config::from_str(dbg!(&config))?;
+        assert_eq!(
+            config.access,
+            AccessConfig::Http(HttpAccessConfig {
+                url: "https://example.com/foo/bar?boo=baz".parse().unwrap(),
+                bearer_token: Some("foo".to_string())
+            })
+        );
+
+        let config = r#"
+            access.http = { url = "https://example.com/foo" }
+        "#
+        .to_string();
+        let config = Config::from_str(dbg!(&config))?;
+        assert_eq!(
+            config.access,
+            AccessConfig::Http(HttpAccessConfig {
+                url: "https://example.com/foo".parse().unwrap(),
+                bearer_token: None
+            })
+        );
+
+        let config = r#"
+            access.http = { url = "https://example.com/foo", bearer_token = "foo" }
+        "#
+        .to_string();
+        let config = Config::from_str(dbg!(&config))?;
+        assert_eq!(
+            config.access,
+            AccessConfig::Http(HttpAccessConfig {
+                url: "https://example.com/foo".parse().unwrap(),
+                bearer_token: Some("foo".to_string())
+            })
+        );
         Ok(())
     }
 }
