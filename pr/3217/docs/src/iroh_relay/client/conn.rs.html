@@ -445,7 +445,15 @@
 <a href="#444" id="444">444</a>
 <a href="#445" id="445">445</a>
 <a href="#446" id="446">446</a>
-<a href="#447" id="447">447</a></pre></div><pre class="rust"><code><span class="doccomment">//! Manages client-side connections to the relay server.
+<a href="#447" id="447">447</a>
+<a href="#448" id="448">448</a>
+<a href="#449" id="449">449</a>
+<a href="#450" id="450">450</a>
+<a href="#451" id="451">451</a>
+<a href="#452" id="452">452</a>
+<a href="#453" id="453">453</a>
+<a href="#454" id="454">454</a>
+<a href="#455" id="455">455</a></pre></div><pre class="rust"><code><span class="doccomment">//! Manages client-side connections to the relay server.
 //!
 //! based on tailscale/derp/derp_client.go
 
@@ -484,9 +492,17 @@
 
 <span class="attr">#[cfg(wasm_browser)]
 </span><span class="kw">impl </span>From&lt;ws_stream_wasm::WsErr&gt; <span class="kw">for </span>ConnSendError {
-    <span class="kw">fn </span>from(source: ws_stream_wasm::WsErr) -&gt; <span class="self">Self </span>{
-        <span class="kw">let </span>io_err = std::io::Error::new(std::io::ErrorKind::Other, source.to_string());
-        <span class="self">Self</span>::Io(io_err)
+    <span class="kw">fn </span>from(err: ws_stream_wasm::WsErr) -&gt; <span class="self">Self </span>{
+        <span class="kw">use </span>std::io::ErrorKind::<span class="kw-2">*</span>;
+        <span class="kw">use </span>ws_stream_wasm::WsErr::<span class="kw-2">*</span>;
+        <span class="kw">let </span>kind = <span class="kw">match </span>err {
+            ConnectionNotOpen =&gt; NotConnected,
+            ReasonStringToLong | InvalidCloseCode { .. } | InvalidUrl { .. } =&gt; InvalidInput,
+            UnknownDataType | InvalidEncoding =&gt; InvalidData,
+            ConnectionFailed { .. } =&gt; ConnectionReset,
+            <span class="kw">_ </span>=&gt; Other,
+        };
+        <span class="self">Self</span>::Io(std::io::Error::new(kind, err.to_string()))
     }
 }
 
