@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"fn":["bind_local_stun_socket","os_has_ipv6"],"struct":["Addr","Client","IpMappedAddr","IpMappedAddrError","IpMappedAddresses","Metrics","Options","QuicConfig","RelayLatencies","Report"]};
