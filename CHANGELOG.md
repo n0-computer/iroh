@@ -2,7 +2,30 @@
 
 All notable changes to iroh will be documented in this file.
 
-## [0.34.0](https://github.com/n0-computer/iroh/compare/v0.33.0..0.34.0) - 2025-03-17
+## [0.34.1](https://github.com/n0-computer/iroh/compare/v0.34.0..0.34.1) - 2025-04-07
+
+### ⛰️  Features
+
+- *(iroh)* Move `iroh-net-report` back into `iroh` ([#3251](https://github.com/n0-computer/iroh/issues/3251)) - ([d6bc83f](https://github.com/n0-computer/iroh/commit/d6bc83faa23666ecbc4c3a7506004ace9f95614f))
+- *(iroh-relay)* Allow to authenticate nodes via a HTTP POST request ([#3246](https://github.com/n0-computer/iroh/issues/3246)) - ([592c3b5](https://github.com/n0-computer/iroh/commit/592c3b541d4bf9081ed364875d514950490dd88b))
+
+### 🐛 Bug Fixes
+
+- *(iroh)* Reduce log-level of unknown pong message ([#3242](https://github.com/n0-computer/iroh/issues/3242)) - ([cf3e650](https://github.com/n0-computer/iroh/commit/cf3e650694ba94224adfe0ee961d9f471a042650))
+- *(iroh)* Reap ActiveRelayActor handles for idle relays ([#3249](https://github.com/n0-computer/iroh/issues/3249)) - ([528a32c](https://github.com/n0-computer/iroh/commit/528a32c215289e622367bb0cbdb2dee543d8e217))
+- Backoff before retry if relay connection terminates ([#3254](https://github.com/n0-computer/iroh/issues/3254)) - ([bc6e98c](https://github.com/n0-computer/iroh/commit/bc6e98cae6f1893f4888eae613b7645e941365a6))
+
+### ⚙️ Miscellaneous Tasks
+
+- *(iroh)* Update from alpha to release 0.25 hickory ([#3256](https://github.com/n0-computer/iroh/issues/3256)) - ([26289ca](https://github.com/n0-computer/iroh/commit/26289ca230cf21f188f92638adecc43d9ca1bfd1))
+- *(iroh)* Don't depend on unused `rustls-platform-verifier` dependency ([#3257](https://github.com/n0-computer/iroh/issues/3257)) - ([42b605e](https://github.com/n0-computer/iroh/commit/42b605e53d89c89faf0f63a86bf48d0039ea53b4))
+- *(iroh-relay)* Fix README.md instuctions to enable `server` feature ([#3239](https://github.com/n0-computer/iroh/issues/3239)) - ([7588135](https://github.com/n0-computer/iroh/commit/7588135441b72f718ca4ed460d351441e89c4a8b))
+
+### Deps
+
+- Bump tokio to 1.44.2 ([#3259](https://github.com/n0-computer/iroh/issues/3259)) - ([e109e6d](https://github.com/n0-computer/iroh/commit/e109e6de2ab5ab9118dcabadfadd2744762a0672))
+
+## [0.34.0](https://github.com/n0-computer/iroh/compare/v0.33.0..v0.34.0) - 2025-03-17
 
 ### ⛰️  Features
 
@@ -31,6 +54,7 @@ All notable changes to iroh will be documented in this file.
 ### ⚙️ Miscellaneous Tasks
 
 - Switch from `backoff` to `backon` ([#3227](https://github.com/n0-computer/iroh/issues/3227)) - ([14795ab](https://github.com/n0-computer/iroh/commit/14795ab89747ec72868fad07f91424b8a408b45c))
+- Release - ([82eb549](https://github.com/n0-computer/iroh/commit/82eb5492cc973ed8cd00aa3254761561a419908b))
 
 ## [0.33.0](https://github.com/n0-computer/iroh/compare/v0.32.1..v0.33.0) - 2025-02-24
 
