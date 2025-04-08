@@ -1755,8 +1755,7 @@
 <a href="#1754" id="1754">1754</a>
 <a href="#1755" id="1755">1755</a>
 <a href="#1756" id="1756">1756</a>
-<a href="#1757" id="1757">1757</a>
-<a href="#1758" id="1758">1758</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
+<a href="#1757" id="1757">1757</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
 //!
 //! It is implemented as an actor with [`Client`] as handle.
 //!
@@ -1809,8 +1808,7 @@
 
 <span class="attr">#[cfg(wasm_browser)]
 </span><span class="kw">use </span><span class="kw">crate</span>::net_report::portmapper; <span class="comment">// We stub the library
-</span><span class="kw">use </span><span class="kw">crate</span>::net_report::Metrics;
-<span class="kw">use </span><span class="kw">crate</span>::net_report::{<span class="self">self</span>, Report};
+</span><span class="kw">use </span><span class="kw">crate</span>::net_report::{<span class="self">self</span>, Metrics, Report};
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">use </span><span class="kw">crate</span>::net_report::{
     defaults::timeouts::DNS_TIMEOUT,
