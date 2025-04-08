@@ -4535,7 +4535,7 @@
     disco::{<span class="self">self</span>, CallMeMaybe, SendAddr},
     discovery::{Discovery, DiscoveryItem, DiscoverySubscribers, NodeData, UserData},
     key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
-    metrics::{EndpointMetrics, PortmapMetrics},
+    metrics::EndpointMetrics,
     net_report::{<span class="self">self</span>, IpMappedAddresses},
     watchable::{Watchable, Watcher},
 };
@@ -6822,7 +6822,7 @@
     <span class="kw">fn </span>bind(
         addr_v4: <span class="prelude-ty">Option</span>&lt;SocketAddrV4&gt;,
         addr_v6: <span class="prelude-ty">Option</span>&lt;SocketAddrV6&gt;,
-        metrics: PortmapMetrics,
+        metrics: portmapper::Metrics,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>port_mapper = portmapper::Client::with_metrics(Default::default(), metrics);
         <span class="kw">let </span>(v4, v6) = <span class="self">Self</span>::bind_sockets(addr_v4, addr_v6)<span class="question-mark">?</span>;
