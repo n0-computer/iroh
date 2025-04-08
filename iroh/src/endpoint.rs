@@ -41,6 +41,7 @@ use crate::{
         DiscoveryTask, Lagged, UserData,
     },
     magicsock::{self, Handle, NodeIdMappedAddr},
+    metrics::EndpointMetrics,
     tls,
     watchable::Watcher,
     RelayProtocol,
@@ -192,6 +193,8 @@ impl Builder {
         };
         let server_config = static_config.create_server_config(self.alpn_protocols)?;
 
+        let metrics = EndpointMetrics::default();
+
         let msock_opts = magicsock::Options {
             addr_v4: self.addr_v4,
             addr_v6: self.addr_v6,
@@ -209,6 +212,7 @@ impl Builder {
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
             #[cfg(any(test, feature = "test-utils"))]
             path_selection: self.path_selection,
+            metrics,
         };
         Endpoint::bind(static_config, msock_opts).await
     }
@@ -620,7 +624,7 @@ impl Endpoint {
 
         let ep = Self {
             msock: msock.clone(),
-            rtt_actor: Arc::new(rtt_actor::RttHandle::new()),
+            rtt_actor: Arc::new(rtt_actor::RttHandle::new(msock.metrics.magicsock.clone())),
             static_config: Arc::new(static_config),
             session_store: Arc::new(rustls::client::ClientSessionMemoryCache::new(
                 MAX_TLS_TICKETS,
@@ -1101,6 +1105,12 @@ impl Endpoint {
     /// See [`Builder::discovery`].
     pub fn discovery(&self) -> Option<&dyn Discovery> {
         self.msock.discovery()
+    }
+
+    /// Returns metrics collected for this endpoint.
+    #[cfg(feature = "metrics")]
+    pub fn metrics(&self) -> &EndpointMetrics {
+        &self.msock.metrics
     }
 
     // # Methods for less common state updates.

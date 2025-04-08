@@ -283,7 +283,7 @@ impl Server {
         #[cfg(feature = "metrics")]
         if let Some(addr) = config.metrics_addr {
             debug!("Starting metrics server");
-            use iroh_metrics::core::Metric;
+            use iroh_metrics::core::MetricExt;
 
             iroh_metrics::core::Core::init(|reg, metrics| {
                 metrics.insert(metrics::Metrics::new(reg));

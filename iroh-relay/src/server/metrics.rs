@@ -123,7 +123,7 @@ impl Default for Metrics {
 }
 
 impl Metric for Metrics {
-    fn name() -> &'static str {
+    fn name(&self) -> &'static str {
         "relayserver"
     }
 }
@@ -163,7 +163,7 @@ impl Default for StunMetrics {
 }
 
 impl Metric for StunMetrics {
-    fn name() -> &'static str {
+    fn name(&self) -> &'static str {
         "stun"
     }
 }

@@ -2404,8 +2404,6 @@ dependencies = [
 [[package]]
 name = "iroh-metrics"
 version = "0.32.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c0f7cd1ffe3b152a5f4f4c1880e01e07d96001f20e02cc143cb7842987c616b3"
 dependencies = [
  "erased_set",
  "http-body-util",
@@ -6274,3 +6272,7 @@ dependencies = [
  "quote",
  "syn 2.0.98",
 ]
+
+[[patch.unused]]
+name = "portmapper"
+version = "0.4.1"
