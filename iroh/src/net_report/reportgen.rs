@@ -51,7 +51,6 @@ use url::Host;
 
 #[cfg(wasm_browser)]
 use crate::net_report::portmapper; // We stub the library
-#[cfg(feature = "metrics")]
 use crate::net_report::Metrics;
 use crate::net_report::{self, Report};
 #[cfg(not(wasm_browser))]
