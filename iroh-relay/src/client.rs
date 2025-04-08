@@ -31,9 +31,9 @@ use crate::{
 
 pub(crate) mod conn;
 #[cfg(not(wasm_browser))]
-mod connect_relay;
-#[cfg(not(wasm_browser))]
 pub(crate) mod streams;
+#[cfg(not(wasm_browser))]
+mod tls;
 #[cfg(not(wasm_browser))]
 mod util;
 
@@ -140,10 +140,16 @@ impl ClientBuilder {
     /// Establishes a new connection to the relay server.
     pub async fn connect(&self) -> Result<Client> {
         let (conn, local_addr) = match self.protocol {
+            #[cfg(wasm_browser)]
             Protocol::Websocket => {
                 let conn = self.connect_ws().await?;
                 let local_addr = None;
                 (conn, local_addr)
+            }
+            #[cfg(not(wasm_browser))]
+            Protocol::Websocket => {
+                let (conn, local_addr) = self.connect_ws().await?;
+                (conn, Some(local_addr))
             }
             #[cfg(not(wasm_browser))]
             Protocol::Relay => {
@@ -167,30 +173,26 @@ impl ClientBuilder {
         Ok(Client { conn, local_addr })
     }
 
+    #[cfg(wasm_browser)]
     async fn connect_ws(&self) -> Result<Conn> {
         let mut dial_url = (*self.url).clone();
         dial_url.set_path(RELAY_PATH);
         // The relay URL is exchanged with the http(s) scheme in tickets and similar.
         // We need to use the ws:// or wss:// schemes when connecting with websockets, though.
         dial_url
-            .set_scheme(if self.use_tls() { "wss" } else { "ws" })
+            .set_scheme(match self.url.scheme() {
+                "http" => "ws",
+                "ws" => "ws",
+                _ => "wss",
+            })
             .map_err(|()| anyhow!("Invalid URL"))?;
 
         debug!(%dial_url, "Dialing relay by websocket");
 
-        let conn = tokio_tungstenite_wasm::connect(dial_url).await?;
-        let conn = Conn::new_ws(conn, self.key_cache.clone(), &self.secret_key).await?;
+        let (_, ws_stream) = ws_stream_wasm::WsMeta::connect(dial_url.as_str(), None).await?;
+        let conn =
+            Conn::new_ws_browser(ws_stream, self.key_cache.clone(), &self.secret_key).await?;
         Ok(conn)
-    }
-
-    fn use_tls(&self) -> bool {
-        // only disable tls if we are explicitly dialing a http url
-        #[allow(clippy::match_like_matches_macro)]
-        match self.url.scheme() {
-            "http" => false,
-            "ws" => false,
-            _ => true,
-        }
     }
 }
 

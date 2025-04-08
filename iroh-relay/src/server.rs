@@ -809,7 +809,7 @@ mod tests {
 
     use bytes::Bytes;
     use http::header::UPGRADE;
-    use iroh_base::{NodeId, SecretKey};
+    use iroh_base::{NodeId, RelayUrl, SecretKey};
     use n0_future::{FutureExt, SinkExt};
     use testresult::TestResult;
     use tracing_test::traced_test;

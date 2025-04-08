@@ -1,12 +1,13 @@
-//! Functionality related to `ClientBuilder::connect_relay`.
+//! Functionality related to lower-level tls-based connection establishment.
 //!
-//! This is (1) likely to be phased out over time in favor of websockets, and
-//! (2) doesn't work in the browser - thus separated into its own file.
+//! Primarily to support [`ClientBuilder::connect_relay`].
+//!
+//! This doesn't work in the browser - thus separated into its own file.
 //!
 //! `connect_relay` uses a custom HTTP upgrade header value (see [`HTTP_UPGRADE_PROTOCOL`]),
 //! as opposed to [`WEBSOCKET_UPGRADE_PROTOCOL`].
-//! However, this code path also contains support for HTTP(s) proxies, which is
-//! why it still remains the default code path as of now.
+//!
+//! `connect_ws` however reuses websockets for framing.
 //!
 //! [`HTTP_UPGRADE_PROTOCOL`]: crate::http::HTTP_UPGRADE_PROTOCOL
 //! [`WEBSOCKET_UPGRADE_PROTOCOL`]: crate::http::WEBSOCKET_UPGRADE_PROTOCOL
@@ -34,12 +35,45 @@ use super::{
 };
 use crate::defaults::timeouts::*;
 
-impl ClientBuilder {
-    /// Connects to configured relay using HTTP(S) with an upgrade header
-    /// set to [`HTTP_UPGRADE_PROTOCOL`].
-    ///
-    /// [`HTTP_UPGRADE_PROTOCOL`]: crate::http::HTTP_UPGRADE_PROTOCOL
-    pub(super) async fn connect_relay(&self) -> Result<(Conn, SocketAddr)> {
+#[derive(Debug, Clone)]
+pub struct MaybeTlsStreamBuilder {
+    url: Url,
+    dns_resolver: DnsResolver,
+    proxy_url: Option<Url>,
+    prefer_ipv6: bool,
+    #[cfg(any(test, feature = "test-utils"))]
+    insecure_skip_cert_verify: bool,
+}
+
+impl MaybeTlsStreamBuilder {
+    pub fn new(url: Url, dns_resolver: DnsResolver) -> Self {
+        Self {
+            url,
+            dns_resolver,
+            proxy_url: None,
+            prefer_ipv6: false,
+            #[cfg(any(test, feature = "test-utils"))]
+            insecure_skip_cert_verify: false,
+        }
+    }
+
+    pub fn proxy_url(mut self, proxy_url: Option<Url>) -> Self {
+        self.proxy_url = proxy_url;
+        self
+    }
+
+    pub fn prefer_ipv6(mut self, prefer: bool) -> Self {
+        self.prefer_ipv6 = prefer;
+        self
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn insecure_skip_cert_verify(mut self, skip: bool) -> Self {
+        self.insecure_skip_cert_verify = skip;
+        self
+    }
+
+    pub async fn connect(self) -> Result<MaybeTlsStream<ProxyStream>> {
         let roots = rustls::RootCertStore {
             roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
         };
@@ -60,7 +94,6 @@ impl ClientBuilder {
         config.resumption = Resumption::default();
         let tls_connector: tokio_rustls::TlsConnector = Arc::new(config).into();
 
-        let url = self.url.clone();
         let tcp_stream = self.dial_url(&tls_connector).await?;
 
         let local_addr = tcp_stream
@@ -69,7 +102,7 @@ impl ClientBuilder {
 
         debug!(server_addr = ?tcp_stream.peer_addr(), %local_addr, "TCP stream connected");
 
-        let response = if self.use_tls() {
+        if self.use_tls() {
             debug!("Starting TLS handshake");
             let hostname = self
                 .tls_servername()
@@ -77,66 +110,21 @@ impl ClientBuilder {
             let hostname = hostname.to_owned();
             let tls_stream = tls_connector.connect(hostname, tcp_stream).await?;
             debug!("tls_connector connect success");
-            Self::start_upgrade(tls_stream, url).await?
+            Ok(MaybeTlsStream::Tls(tls_stream))
         } else {
             debug!("Starting handshake");
-            Self::start_upgrade(tcp_stream, url).await?
-        };
-
-        if response.status() != hyper::StatusCode::SWITCHING_PROTOCOLS {
-            bail!(
-                "Unexpected status code: expected {}, actual: {}",
-                hyper::StatusCode::SWITCHING_PROTOCOLS,
-                response.status(),
-            );
+            Ok(MaybeTlsStream::Raw(tcp_stream))
         }
-
-        debug!("starting upgrade");
-        let upgraded = hyper::upgrade::on(response)
-            .await
-            .context("Upgrade failed")?;
-
-        debug!("connection upgraded");
-        let conn = downcast_upgrade(upgraded)?;
-
-        let conn = Conn::new_relay(conn, self.key_cache.clone(), &self.secret_key).await?;
-
-        Ok((conn, local_addr))
     }
 
-    /// Sends the HTTP upgrade request to the relay server.
-    async fn start_upgrade<T>(io: T, relay_url: RelayUrl) -> Result<hyper::Response<Incoming>>
-    where
-        T: AsyncRead + AsyncWrite + Send + Unpin + 'static,
-    {
-        use hyper_util::rt::TokioIo;
-        let host_header_value = host_header_value(relay_url)?;
-
-        let io = TokioIo::new(io);
-        let (mut request_sender, connection) = hyper::client::conn::http1::Builder::new()
-            .handshake(io)
-            .await?;
-        task::spawn(
-            // This task drives the HTTP exchange, completes once connection is upgraded.
-            async move {
-                debug!("HTTP upgrade driver started");
-                if let Err(err) = connection.with_upgrades().await {
-                    error!("HTTP upgrade error: {err:#}");
-                }
-                debug!("HTTP upgrade driver finished");
-            }
-            .instrument(info_span!("http-driver")),
-        );
-        debug!("Sending upgrade request");
-        let req = Request::builder()
-            .uri(RELAY_PATH)
-            .header(UPGRADE, Protocol::Relay.upgrade_header())
-            // https://datatracker.ietf.org/doc/html/rfc2616#section-14.23
-            // > A client MUST include a Host header field in all HTTP/1.1 request messages.
-            // This header value helps reverse proxies identify how to forward requests.
-            .header(HOST, host_header_value)
-            .body(http_body_util::Empty::<hyper::body::Bytes>::new())?;
-        request_sender.send_request(req).await.map_err(From::from)
+    fn use_tls(&self) -> bool {
+        // only disable tls if we are explicitly dialing a http url
+        #[allow(clippy::match_like_matches_macro)]
+        match self.url.scheme() {
+            "http" => false,
+            "ws" => false,
+            _ => true,
+        }
     }
 
     fn tls_servername(&self) -> Option<rustls::pki_types::ServerName> {
@@ -158,10 +146,9 @@ impl ClientBuilder {
     async fn dial_url_direct(&self) -> Result<tokio::net::TcpStream> {
         use tokio::net::TcpStream;
         debug!(%self.url, "dial url");
-        let prefer_ipv6 = self.prefer_ipv6();
         let dst_ip = self
             .dns_resolver
-            .resolve_host(&self.url, prefer_ipv6, DNS_TIMEOUT)
+            .resolve_host(&self.url, self.prefer_ipv6, DNS_TIMEOUT)
             .await?;
 
         let port = url_port(&self.url).ok_or_else(|| anyhow!("Missing URL port"))?;
@@ -184,16 +171,15 @@ impl ClientBuilder {
         &self,
         proxy_url: Url,
         tls_connector: &tokio_rustls::TlsConnector,
-    ) -> Result<util::Chain<std::io::Cursor<Bytes>, MaybeTlsStream>> {
+    ) -> Result<util::Chain<std::io::Cursor<Bytes>, MaybeTlsStream<tokio::net::TcpStream>>> {
         use hyper_util::rt::TokioIo;
         use tokio::net::TcpStream;
         debug!(%self.url, %proxy_url, "dial url via proxy");
 
         // Resolve proxy DNS
-        let prefer_ipv6 = self.prefer_ipv6();
         let proxy_ip = self
             .dns_resolver
-            .resolve_host(&proxy_url, prefer_ipv6, DNS_TIMEOUT)
+            .resolve_host(&proxy_url, self.prefer_ipv6, DNS_TIMEOUT)
             .await?;
 
         let proxy_port = url_port(&proxy_url).ok_or_else(|| anyhow!("Missing proxy url port"))?;
@@ -266,13 +252,138 @@ impl ClientBuilder {
         }
 
         let upgraded = hyper::upgrade::on(res).await?;
-        let Ok(Parts { io, read_buf, .. }) = upgraded.downcast::<TokioIo<MaybeTlsStream>>() else {
+        let Ok(Parts { io, read_buf, .. }) =
+            upgraded.downcast::<TokioIo<MaybeTlsStream<tokio::net::TcpStream>>>()
+        else {
             bail!("Invalid upgrade");
         };
 
         let res = util::chain(std::io::Cursor::new(read_buf), io.into_inner());
 
         Ok(res)
+    }
+}
+
+impl ClientBuilder {
+    /// Connects to configured relay using HTTP(S) with an upgrade header
+    /// set to [`HTTP_UPGRADE_PROTOCOL`].
+    ///
+    /// [`HTTP_UPGRADE_PROTOCOL`]: crate::http::HTTP_UPGRADE_PROTOCOL
+    pub(super) async fn connect_relay(&self) -> Result<(Conn, SocketAddr)> {
+        #[allow(unused_mut)]
+        let mut builder =
+            MaybeTlsStreamBuilder::new(self.url.clone().into(), self.dns_resolver.clone())
+                .prefer_ipv6(self.prefer_ipv6())
+                .proxy_url(self.proxy_url.clone());
+
+        #[cfg(any(test, feature = "test-utils"))]
+        if self.insecure_skip_cert_verify {
+            builder = builder.insecure_skip_cert_verify(self.insecure_skip_cert_verify);
+        }
+
+        let stream = builder.connect().await?;
+        let local_addr = stream.as_ref().local_addr()?;
+        let response = self.http_upgrade_relay(stream).await?;
+
+        if response.status() != hyper::StatusCode::SWITCHING_PROTOCOLS {
+            bail!(
+                "Unexpected status code: expected {}, actual: {}",
+                hyper::StatusCode::SWITCHING_PROTOCOLS,
+                response.status(),
+            );
+        }
+
+        debug!("starting upgrade");
+        let upgraded = hyper::upgrade::on(response)
+            .await
+            .context("Upgrade failed")?;
+
+        debug!("connection upgraded");
+        let conn = downcast_upgrade(upgraded)?;
+
+        let conn = Conn::new_relay(conn, self.key_cache.clone(), &self.secret_key).await?;
+
+        Ok((conn, local_addr))
+    }
+
+    pub(super) async fn connect_ws(&self) -> Result<(Conn, SocketAddr)> {
+        let mut dial_url = (*self.url).clone();
+        dial_url.set_path(RELAY_PATH);
+        // The relay URL is exchanged with the http(s) scheme in tickets and similar.
+        // We need to use the ws:// or wss:// schemes when connecting with websockets, though.
+        dial_url
+            .set_scheme(match self.url.scheme() {
+                "http" => "ws",
+                "ws" => "ws",
+                _ => "wss",
+            })
+            .map_err(|()| anyhow!("Invalid URL"))?;
+
+        debug!(%dial_url, "Dialing relay by websocket");
+
+        #[allow(unused_mut)]
+        let mut builder = MaybeTlsStreamBuilder::new(dial_url.clone(), self.dns_resolver.clone())
+            .prefer_ipv6(self.prefer_ipv6())
+            .proxy_url(self.proxy_url.clone());
+
+        #[cfg(any(test, feature = "test-utils"))]
+        if self.insecure_skip_cert_verify {
+            builder = builder.insecure_skip_cert_verify(self.insecure_skip_cert_verify);
+        }
+
+        let stream = builder.connect().await?;
+        let local_addr = stream.as_ref().local_addr()?;
+        let (conn, response) = tokio_websockets::ClientBuilder::new()
+            .uri(dial_url.as_str())?
+            .connect_on(stream)
+            .await?;
+
+        if response.status() != hyper::StatusCode::SWITCHING_PROTOCOLS {
+            bail!(
+                "Unexpected status code: expected {}, actual: {}",
+                hyper::StatusCode::SWITCHING_PROTOCOLS,
+                response.status(),
+            );
+        }
+
+        let conn = Conn::new_ws(conn, self.key_cache.clone(), &self.secret_key).await?;
+
+        Ok((conn, local_addr))
+    }
+
+    /// Sends the HTTP upgrade request to the relay server.
+    async fn http_upgrade_relay<T>(&self, io: T) -> Result<hyper::Response<Incoming>>
+    where
+        T: AsyncRead + AsyncWrite + Send + Unpin + 'static,
+    {
+        use hyper_util::rt::TokioIo;
+        let host_header_value = host_header_value(self.url.clone())?;
+
+        let io = TokioIo::new(io);
+        let (mut request_sender, connection) = hyper::client::conn::http1::Builder::new()
+            .handshake(io)
+            .await?;
+        task::spawn(
+            // This task drives the HTTP exchange, completes once connection is upgraded.
+            async move {
+                debug!("HTTP upgrade driver started");
+                if let Err(err) = connection.with_upgrades().await {
+                    error!("HTTP upgrade error: {err:#}");
+                }
+                debug!("HTTP upgrade driver finished");
+            }
+            .instrument(info_span!("http-driver")),
+        );
+        debug!("Sending upgrade request");
+        let req = Request::builder()
+            .uri(RELAY_PATH)
+            .header(UPGRADE, Protocol::Relay.upgrade_header())
+            // https://datatracker.ietf.org/doc/html/rfc2616#section-14.23
+            // > A client MUST include a Host header field in all HTTP/1.1 request messages.
+            // This header value helps reverse proxies identify how to forward requests.
+            .header(HOST, host_header_value)
+            .body(http_body_util::Empty::<hyper::body::Bytes>::new())?;
+        request_sender.send_request(req).await.map_err(From::from)
     }
 
     /// Reports whether IPv4 dials should be slightly
@@ -309,8 +420,8 @@ fn url_port(url: &Url) -> Option<u16> {
     }
 
     match url.scheme() {
-        "http" => Some(80),
-        "https" => Some(443),
+        "http" | "ws" => Some(80),
+        "https" | "wss" => Some(443),
         _ => None,
     }
 }

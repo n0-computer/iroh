@@ -90,27 +90,23 @@ impl AsyncWrite for MaybeTlsStreamChained {
 }
 
 pub fn downcast_upgrade(upgraded: Upgraded) -> Result<MaybeTlsStreamChained> {
-    match upgraded.downcast::<TokioIo<ProxyStream>>() {
+    match upgraded.downcast::<TokioIo<MaybeTlsStream<ProxyStream>>>() {
         Ok(Parts { read_buf, io, .. }) => {
-            let conn = io.into_inner();
             // Prepend data to the reader to avoid data loss
-            let conn = util::chain(std::io::Cursor::new(read_buf), conn);
-            Ok(MaybeTlsStreamChained::Raw(conn))
-        }
-        Err(upgraded) => {
-            if let Ok(Parts { read_buf, io, .. }) =
-                upgraded.downcast::<TokioIo<tokio_rustls::client::TlsStream<ProxyStream>>>()
-            {
-                let conn = io.into_inner();
-
-                // Prepend data to the reader to avoid data loss
-                let conn = util::chain(std::io::Cursor::new(read_buf), conn);
-                return Ok(MaybeTlsStreamChained::Tls(conn));
+            let read_buf = std::io::Cursor::new(read_buf);
+            match io.into_inner() {
+                MaybeTlsStream::Raw(conn) => {
+                    Ok(MaybeTlsStreamChained::Raw(util::chain(read_buf, conn)))
+                }
+                MaybeTlsStream::Tls(conn) => {
+                    Ok(MaybeTlsStreamChained::Tls(util::chain(read_buf, conn)))
+                }
             }
-
+        }
+        Err(_) => {
             bail!(
                 "could not downcast the upgraded connection to a TcpStream or client::TlsStream<TcpStream>"
-            )
+            );
         }
     }
 }
@@ -118,7 +114,7 @@ pub fn downcast_upgrade(upgraded: Upgraded) -> Result<MaybeTlsStreamChained> {
 #[derive(Debug)]
 pub enum ProxyStream {
     Raw(TcpStream),
-    Proxied(util::Chain<std::io::Cursor<Bytes>, MaybeTlsStream>),
+    Proxied(util::Chain<std::io::Cursor<Bytes>, MaybeTlsStream<TcpStream>>),
 }
 
 impl AsyncRead for ProxyStream {
@@ -194,12 +190,12 @@ impl ProxyStream {
 }
 
 #[derive(Debug)]
-pub enum MaybeTlsStream {
-    Raw(TcpStream),
-    Tls(tokio_rustls::client::TlsStream<TcpStream>),
+pub enum MaybeTlsStream<IO> {
+    Raw(IO),
+    Tls(tokio_rustls::client::TlsStream<IO>),
 }
 
-impl AsyncRead for MaybeTlsStream {
+impl<IO: AsyncRead + AsyncWrite + Unpin> AsyncRead for MaybeTlsStream<IO> {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -212,7 +208,7 @@ impl AsyncRead for MaybeTlsStream {
     }
 }
 
-impl AsyncWrite for MaybeTlsStream {
+impl<IO: AsyncRead + AsyncWrite + Unpin> AsyncWrite for MaybeTlsStream<IO> {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -255,7 +251,7 @@ impl AsyncWrite for MaybeTlsStream {
     }
 }
 
-impl MaybeTlsStream {
+impl MaybeTlsStream<TcpStream> {
     pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
         match self {
             Self::Raw(s) => s.local_addr(),
@@ -267,6 +263,15 @@ impl MaybeTlsStream {
         match self {
             Self::Raw(s) => s.peer_addr(),
             Self::Tls(s) => s.get_ref().0.peer_addr(),
+        }
+    }
+}
+
+impl<IO> AsRef<IO> for MaybeTlsStream<IO> {
+    fn as_ref(&self) -> &IO {
+        match self {
+            Self::Raw(s) => s,
+            Self::Tls(s) => s.get_ref().0,
         }
     }
 }
