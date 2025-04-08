@@ -42,5 +42,5 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(iroh_docsrs)", "cfg(iroh_l
 unused-async = "warn"
 
 [patch.crates-io]
-iroh-metrics = { path = "../iroh-metrics" }
-portmapper = { path = "../net-tools/portmapper" }
+iroh-metrics = { git = "https://github.com/n0-computer/iroh-metrics", branch = "Frando/metric-sets" }
+portmapper = { git = "https://github.com/n0-computer/net-tools", branch = "Frando/metrics" }

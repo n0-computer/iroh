@@ -74,7 +74,7 @@ use crate::{
     disco::{self, CallMeMaybe, SendAddr},
     discovery::{Discovery, DiscoveryItem, DiscoverySubscribers, NodeData, UserData},
     key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
-    metrics::EndpointMetrics,
+    metrics::{EndpointMetrics, PortmapMetrics},
     net_report::{self, IpMappedAddresses},
     watchable::{Watchable, Watcher},
 };
@@ -1715,7 +1715,7 @@ impl Handle {
         } = opts;
 
         #[cfg(not(wasm_browser))]
-        let actor_sockets = ActorSocketState::bind(addr_v4, addr_v6)?;
+        let actor_sockets = ActorSocketState::bind(addr_v4, addr_v6, metrics.portmapper.clone())?;
 
         #[cfg(not(wasm_browser))]
         let sockets = actor_sockets.msock_socket_state()?;
@@ -2358,8 +2358,12 @@ struct ActorSocketState {
 
 #[cfg(not(wasm_browser))]
 impl ActorSocketState {
-    fn bind(addr_v4: Option<SocketAddrV4>, addr_v6: Option<SocketAddrV6>) -> Result<Self> {
-        let port_mapper = portmapper::Client::default();
+    fn bind(
+        addr_v4: Option<SocketAddrV4>,
+        addr_v6: Option<SocketAddrV6>,
+        metrics: PortmapMetrics,
+    ) -> Result<Self> {
+        let port_mapper = portmapper::Client::with_metrics(Default::default(), metrics);
         let (v4, v6) = Self::bind_sockets(addr_v4, addr_v6)?;
 
         let this = Self {
