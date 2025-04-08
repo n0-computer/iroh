@@ -5,6 +5,7 @@ use clap::Parser;
 #[cfg(not(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
 use iroh_bench::quinn;
 use iroh_bench::{configure_tracing_subscriber, iroh, rt, s2n, Commands, Opt};
+use iroh_metrics::core::MetricExt;
 
 fn main() {
     let cmd = Commands::parse();
@@ -34,7 +35,6 @@ pub fn run_iroh(opt: Opt) -> Result<()> {
     if opt.metrics {
         // enable recording metrics
         iroh_metrics::core::Core::try_init(|reg, metrics| {
-            use iroh_metrics::core::Metric;
             metrics.insert(::iroh::metrics::MagicsockMetrics::new(reg));
             metrics.insert(::iroh::metrics::NetReportMetrics::new(reg));
             metrics.insert(::iroh::metrics::PortmapMetrics::new(reg));

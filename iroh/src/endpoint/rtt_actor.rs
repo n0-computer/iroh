@@ -3,7 +3,6 @@
 use std::{pin::Pin, task::Poll};
 
 use iroh_base::NodeId;
-use iroh_metrics::inc;
 use n0_future::{
     task::{self, AbortOnDropHandle},
     MergeUnbounded, Stream, StreamExt,
@@ -21,9 +20,10 @@ pub(super) struct RttHandle {
 }
 
 impl RttHandle {
-    pub(super) fn new() -> Self {
+    pub(super) fn new(metrics: MagicsockMetrics) -> Self {
         let mut actor = RttActor {
             connection_events: Default::default(),
+            metrics,
         };
         let (msg_tx, msg_rx) = mpsc::channel(16);
         let handle = task::spawn(
@@ -62,6 +62,7 @@ struct RttActor {
     /// Stream of connection type changes.
     #[debug("MergeUnbounded<WatcherStream<ConnectionType>>")]
     connection_events: MergeUnbounded<MappedStream>,
+    metrics: MagicsockMetrics,
 }
 
 #[derive(Debug)]
@@ -75,8 +76,12 @@ struct MappedStream {
     was_direct_before: bool,
 }
 
+struct ConnectionEvent {
+    became_direct: bool,
+}
+
 impl Stream for MappedStream {
-    type Item = ConnectionType;
+    type Item = ConnectionEvent;
 
     /// Performs the congestion controller reset for a magic socket path change.
     ///
@@ -90,6 +95,7 @@ impl Stream for MappedStream {
     ) -> Poll<Option<Self::Item>> {
         match Pin::new(&mut self.stream).poll_next(cx) {
             Poll::Ready(Some(new_conn_type)) => {
+                let mut became_direct = false;
                 if self.connection.network_path_changed() {
                     debug!(
                         node_id = %self.node_id.fmt_short(),
@@ -99,10 +105,10 @@ impl Stream for MappedStream {
                     if !self.was_direct_before && matches!(new_conn_type, ConnectionType::Direct(_))
                     {
                         self.was_direct_before = true;
-                        inc!(MagicsockMetrics, connection_became_direct);
+                        became_direct = true
                     }
-                }
-                Poll::Ready(Some(new_conn_type))
+                };
+                Poll::Ready(Some(ConnectionEvent { became_direct }))
             }
             Poll::Ready(None) => Poll::Ready(None),
             Poll::Pending => Poll::Pending,
@@ -124,7 +130,11 @@ impl RttActor {
                         None => break,
                     }
                 }
-                _item = self.connection_events.next(), if !self.connection_events.is_empty() => {}
+                event = self.connection_events.next(), if !self.connection_events.is_empty() => {
+                    if event.map(|e| e.became_direct).unwrap_or(false) {
+                        self.metrics.connection_became_direct.inc();
+                    }
+                }
             }
         }
         debug!("rtt-actor finished");
@@ -156,6 +166,6 @@ impl RttActor {
             node_id,
             was_direct_before: false,
         });
-        inc!(MagicsockMetrics, connection_handshake_success);
+        self.metrics.connection_handshake_success.inc();
     }
 }

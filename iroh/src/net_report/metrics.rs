@@ -35,7 +35,7 @@ impl Default for Metrics {
 }
 
 impl Metric for Metrics {
-    fn name() -> &'static str {
+    fn name(&self) -> &'static str {
         "net_report"
     }
 }
