@@ -74,7 +74,7 @@ use crate::{
     disco::{self, CallMeMaybe, SendAddr},
     discovery::{Discovery, DiscoveryItem, DiscoverySubscribers, NodeData, UserData},
     key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
-    metrics::{EndpointMetrics, PortmapMetrics},
+    metrics::EndpointMetrics,
     net_report::{self, IpMappedAddresses},
     watchable::{Watchable, Watcher},
 };
@@ -2361,7 +2361,7 @@ impl ActorSocketState {
     fn bind(
         addr_v4: Option<SocketAddrV4>,
         addr_v6: Option<SocketAddrV6>,
-        metrics: PortmapMetrics,
+        metrics: portmapper::Metrics,
     ) -> Result<Self> {
         let port_mapper = portmapper::Client::with_metrics(Default::default(), metrics);
         let (v4, v6) = Self::bind_sockets(addr_v4, addr_v6)?;
