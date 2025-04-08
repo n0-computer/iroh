@@ -7,20 +7,22 @@ pub use portmapper::Metrics as PortmapMetrics;
 
 pub use crate::{magicsock::Metrics as MagicsockMetrics, net_report::Metrics as NetReportMetrics};
 
+/// Metrics collected by an [`crate::endpoint::Endpoint`].
 ///
+/// The metrics for an endpoint can be accessed via [`crate::endpoint::Endpoint::metrics`].
 #[derive(Default, Debug, Clone)]
 pub struct EndpointMetrics {
-    ///
+    /// Metrics collected by the endpoint's socket.
     pub magicsock: MagicsockMetrics,
-    ///
+    /// Metrics collected by net reports.
     pub net_report: NetReportMetrics,
-    ///
+    /// Metrics collected by the portmapper service.
     #[cfg(not(wasm_browser))]
     pub portmapper: PortmapMetrics,
 }
 
 impl iroh_metrics::core::MetricSet for EndpointMetrics {
-    fn iter<'a>(&'a self) -> impl IntoIterator<Item = &'a dyn Metric> {
+    fn iter(&self) -> impl IntoIterator<Item = &dyn Metric> {
         #[cfg(not(wasm_browser))]
         return [
             &self.magicsock as &dyn Metric,
