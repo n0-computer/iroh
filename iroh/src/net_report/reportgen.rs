@@ -51,8 +51,7 @@ use url::Host;
 
 #[cfg(wasm_browser)]
 use crate::net_report::portmapper; // We stub the library
-use crate::net_report::Metrics;
-use crate::net_report::{self, Report};
+use crate::net_report::{self, Metrics, Report};
 #[cfg(not(wasm_browser))]
 use crate::net_report::{
     defaults::timeouts::DNS_TIMEOUT,
