@@ -38,7 +38,9 @@
 <a href="#37" id="37">37</a>
 <a href="#38" id="38">38</a>
 <a href="#39" id="39">39</a>
-<a href="#40" id="40">40</a></pre></div><pre class="rust"><code><span class="doccomment">//! Co-locating all of the iroh metrics structs
+<a href="#40" id="40">40</a>
+<a href="#41" id="41">41</a>
+<a href="#42" id="42">42</a></pre></div><pre class="rust"><code><span class="doccomment">//! Co-locating all of the iroh metrics structs
 </span><span class="kw">use </span>iroh_metrics::core::Metric;
 <span class="attr">#[cfg(feature = <span class="string">"test-utils"</span>)]
 </span><span class="kw">pub use </span>iroh_relay::server::Metrics <span class="kw">as </span>RelayMetrics;
@@ -47,20 +49,22 @@
 
 <span class="kw">pub use crate</span>::{magicsock::Metrics <span class="kw">as </span>MagicsockMetrics, net_report::Metrics <span class="kw">as </span>NetReportMetrics};
 
-<span class="doccomment">///
+<span class="doccomment">/// Metrics collected by an [`crate::endpoint::Endpoint`].
+///
+/// The metrics for an endpoint can be accessed via [`crate::endpoint::Endpoint::metrics`].
 </span><span class="attr">#[derive(Default, Debug, Clone)]
 </span><span class="kw">pub struct </span>EndpointMetrics {
-    <span class="doccomment">///
+    <span class="doccomment">/// Metrics collected by the endpoint's socket.
     </span><span class="kw">pub </span>magicsock: MagicsockMetrics,
-    <span class="doccomment">///
+    <span class="doccomment">/// Metrics collected by net reports.
     </span><span class="kw">pub </span>net_report: NetReportMetrics,
-    <span class="doccomment">///
+    <span class="doccomment">/// Metrics collected by the portmapper service.
     </span><span class="attr">#[cfg(not(wasm_browser))]
     </span><span class="kw">pub </span>portmapper: PortmapMetrics,
 }
 
 <span class="kw">impl </span>iroh_metrics::core::MetricSet <span class="kw">for </span>EndpointMetrics {
-    <span class="kw">fn </span>iter&lt;<span class="lifetime">'a</span>&gt;(<span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="self">self</span>) -&gt; <span class="kw">impl </span>IntoIterator&lt;Item = <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw">dyn </span>Metric&gt; {
+    <span class="kw">fn </span>iter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>IntoIterator&lt;Item = <span class="kw-2">&amp;</span><span class="kw">dyn </span>Metric&gt; {
         <span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">return </span>[
             <span class="kw-2">&amp;</span><span class="self">self</span>.magicsock <span class="kw">as </span><span class="kw-2">&amp;</span><span class="kw">dyn </span>Metric,
