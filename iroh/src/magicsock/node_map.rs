@@ -127,7 +127,7 @@ impl NodeMap {
     #[cfg(not(any(test, feature = "test-utils")))]
     /// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
     pub(super) fn load_from_vec(nodes: Vec<NodeAddr>, metrics: &Metrics) -> Self {
-        Self::from_inner(NodeMapInner::load_from_vec(nodes))
+        Self::from_inner(NodeMapInner::load_from_vec(nodes, metrics))
     }
 
     #[cfg(any(test, feature = "test-utils"))]
@@ -337,7 +337,7 @@ impl NodeMapInner {
     fn load_from_vec(nodes: Vec<NodeAddr>, metrics: &Metrics) -> Self {
         let mut me = Self::default();
         for node_addr in nodes {
-            me.add_node_addr(node_addr, Source::Saved);
+            me.add_node_addr(node_addr, Source::Saved, metrics);
         }
         me
     }
