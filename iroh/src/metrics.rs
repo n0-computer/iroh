@@ -31,20 +31,3 @@ impl iroh_metrics::core::MetricSet for EndpointMetrics {
         "endpoint"
     }
 }
-
-/// Increments the given counter or gauge by 1.
-macro_rules! inc {
-    ($msock:expr, $f:ident) => {
-        $msock.metrics.magicsock.$f.inc()
-    };
-}
-
-/// Increments the given counter or gauge by `n`.
-macro_rules! inc_by {
-    ($msock:ident, $f:ident, $n:expr) => {
-        $msock.metrics.magicsock.$f.inc_by($n)
-    };
-}
-
-pub(crate) use inc;
-pub(crate) use inc_by;

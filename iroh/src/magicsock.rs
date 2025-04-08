@@ -74,7 +74,7 @@ use crate::{
     disco::{self, CallMeMaybe, SendAddr},
     discovery::{Discovery, DiscoveryItem, DiscoverySubscribers, NodeData, UserData},
     key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
-    metrics::{inc, inc_by, EndpointMetrics},
+    metrics::EndpointMetrics,
     net_report::{self, IpMappedAddresses},
     watchable::{Watchable, Watcher},
 };
@@ -473,10 +473,16 @@ impl MagicSock {
             .magicsock
             .send_data
             .inc_by(transmit.contents.len() as _);
-        inc_by!(self, send_data, transmit.contents.len() as _);
+        self.metrics
+            .magicsock
+            .send_data
+            .inc_by(transmit.contents.len() as _);
 
         if self.is_closed() {
-            inc_by!(self, send_data_network_down, transmit.contents.len() as _);
+            self.metrics
+                .magicsock
+                .send_data_network_down
+                .inc_by(transmit.contents.len() as _);
             return Err(io::Error::new(
                 io::ErrorKind::NotConnected,
                 "connection closed",
@@ -728,9 +734,9 @@ impl MagicSock {
         conn.try_send(transmit)?;
         let total_bytes: u64 = transmit.contents.len() as u64;
         if addr.is_ipv6() {
-            inc_by!(self, send_ipv6, total_bytes);
+            self.metrics.magicsock.send_ipv6.inc_by(total_bytes);
         } else {
-            inc_by!(self, send_ipv4, total_bytes);
+            self.metrics.magicsock.send_ipv4.inc_by(total_bytes);
         }
         Ok(())
     }
@@ -875,7 +881,7 @@ impl MagicSock {
             let mut quic_datagram_count = 0;
             if meta.len > meta.stride {
                 trace!(%meta.len, %meta.stride, "GRO datagram received");
-                inc!(self, recv_gro_datagrams);
+                self.metrics.magicsock.recv_gro_datagrams.inc();
             }
 
             // Chunk through the datagrams in this GRO payload to find disco and stun
@@ -909,9 +915,15 @@ impl MagicSock {
                 } else {
                     trace!(src = %meta.addr, len = %meta.stride, "UDP recv: quic packet");
                     if from_ipv4 {
-                        inc_by!(self, recv_data_ipv4, datagram.len() as _);
+                        self.metrics
+                            .magicsock
+                            .recv_data_ipv4
+                            .inc_by(datagram.len() as _);
                     } else {
-                        inc_by!(self, recv_data_ipv6, datagram.len() as _);
+                        self.metrics
+                            .magicsock
+                            .recv_data_ipv6
+                            .inc_by(datagram.len() as _);
                     }
                     quic_datagram_count += 1;
                     buf_contains_quic_datagrams = true;
@@ -968,7 +980,10 @@ impl MagicSock {
         }
 
         if quic_packets_total > 0 {
-            inc_by!(self, recv_datagrams, quic_packets_total as _);
+            self.metrics
+                .magicsock
+                .recv_datagrams
+                .inc_by(quic_packets_total as _);
             trace!("UDP recv: {} packets", quic_packets_total);
         }
     }
@@ -1008,7 +1023,10 @@ impl MagicSock {
                         continue;
                     }
                     Some((node_id, meta, buf)) => {
-                        inc_by!(self, recv_data_relay, buf.len() as _);
+                        self.metrics
+                            .magicsock
+                            .recv_data_relay
+                            .inc_by(buf.len() as _);
                         trace!(
                             src = %meta.addr,
                             node = %node_id.fmt_short(),
@@ -1027,7 +1045,7 @@ impl MagicSock {
 
         // If we have any msgs to report, they are in the first `num_msgs_total` slots
         if num_msgs > 0 {
-            inc_by!(self, recv_datagrams, num_msgs as _);
+            self.metrics.magicsock.recv_datagrams.inc_by(num_msgs as _);
             Poll::Ready(Ok(num_msgs))
         } else {
             Poll::Pending
@@ -1120,7 +1138,7 @@ impl MagicSock {
             Ok(dm) => dm,
             Err(DiscoBoxError::Open(err)) => {
                 warn!(?err, "failed to open disco box");
-                inc!(self, recv_disco_bad_key);
+                self.metrics.magicsock.recv_disco_bad_key.inc();
                 return;
             }
             Err(DiscoBoxError::Parse(err)) => {
@@ -1130,16 +1148,16 @@ impl MagicSock {
                 // understand. Not even worth logging about, lest it
                 // be too spammy for old clients.
 
-                inc!(self, recv_disco_bad_parse);
+                self.metrics.magicsock.recv_disco_bad_parse.inc();
                 debug!(?err, "failed to parse disco message");
                 return;
             }
         };
 
         if src.is_relay() {
-            inc!(self, recv_disco_relay);
+            self.metrics.magicsock.recv_disco_relay.inc();
         } else {
-            inc!(self, recv_disco_udp);
+            self.metrics.magicsock.recv_disco_udp.inc();
         }
 
         let span = trace_span!("handle_disco", ?dm);
@@ -1147,15 +1165,15 @@ impl MagicSock {
         trace!("receive disco message");
         match dm {
             disco::Message::Ping(ping) => {
-                inc!(self, recv_disco_ping);
+                self.metrics.magicsock.recv_disco_ping.inc();
                 self.handle_ping(ping, sender, src);
             }
             disco::Message::Pong(pong) => {
-                inc!(self, recv_disco_pong);
+                self.metrics.magicsock.recv_disco_pong.inc();
                 self.node_map.handle_pong(sender, &src, pong);
             }
             disco::Message::CallMeMaybe(cm) => {
-                inc!(self, recv_disco_call_me_maybe);
+                self.metrics.magicsock.recv_disco_call_me_maybe.inc();
                 match src {
                     DiscoMessageSource::Relay { url, .. } => {
                         event!(
@@ -1355,7 +1373,7 @@ impl MagicSock {
     fn send_disco_message_relay(&self, url: &RelayUrl, dst: NodeId, msg: disco::Message) -> bool {
         debug!(node = %dst.fmt_short(), %url, %msg, "send disco message (relay)");
         let pkt = self.encode_disco_message(dst, &msg);
-        inc!(self, send_disco_relay);
+        self.metrics.magicsock.send_disco_relay.inc();
         match self.try_send_relay(url, dst, smallvec![pkt]) {
             Ok(()) => {
                 if let disco::Message::CallMeMaybe(CallMeMaybe { ref my_numbers }) = msg {
@@ -1367,8 +1385,8 @@ impl MagicSock {
                         addrs = ?my_numbers,
                     );
                 }
-                inc!(self, sent_disco_relay);
-                disco_message_sent(&self, &msg);
+                self.metrics.magicsock.sent_disco_relay.inc();
+                disco_message_sent(&msg, &self.metrics.magicsock);
                 true
             }
             Err(_) => false,
@@ -1419,7 +1437,7 @@ impl MagicSock {
         let pkt = self.encode_disco_message(dst_node, msg);
         // TODO: These metrics will be wrong with the poll impl
         // Also - do we need it? I'd say the `sent_disco_udp` below is enough.
-        inc!(self, send_disco_udp);
+        self.metrics.magicsock.send_disco_udp.inc();
         let transmit = quinn_udp::Transmit {
             destination: dst,
             contents: &pkt,
@@ -1431,8 +1449,8 @@ impl MagicSock {
         match sent {
             Ok(()) => {
                 trace!(%dst, node = %dst_node.fmt_short(), %msg, "sent disco message");
-                inc!(self, sent_disco_udp);
-                disco_message_sent(&self, msg);
+                self.metrics.magicsock.sent_disco_udp.inc();
+                disco_message_sent(msg, &self.metrics.magicsock);
                 Ok(())
             }
             Err(err) => {
@@ -1524,7 +1542,7 @@ impl MagicSock {
     #[instrument(skip_all)]
     fn re_stun(&self, why: &'static str) {
         debug!("re_stun: {}", why);
-        inc!(self, re_stun_calls);
+        self.metrics.magicsock.re_stun_calls.inc();
         self.direct_addr_update_state.schedule_run(why);
     }
 
@@ -2443,7 +2461,7 @@ impl Actor {
         let mut portmap_watcher_closed = false;
         let mut link_change_closed = false;
         loop {
-            inc!(self.msock, actor_tick_main);
+            self.msock.metrics.magicsock.actor_tick_main.inc();
             #[cfg(not(wasm_browser))]
             let portmap_watcher_changed = portmap_watcher.changed();
             #[cfg(wasm_browser)]
@@ -2458,21 +2476,21 @@ impl Actor {
                 msg = self.msg_receiver.recv(), if !receiver_closed => {
                     let Some(msg) = msg else {
                         trace!("tick: magicsock receiver closed");
-                        inc!(self.msock, actor_tick_other);
+                        self.msock.metrics.magicsock.actor_tick_other.inc();
 
                         receiver_closed = true;
                         continue;
                     };
 
                     trace!(?msg, "tick: msg");
-                    inc!(self.msock, actor_tick_msg);
+                    self.msock.metrics.magicsock.actor_tick_msg.inc();
                     if self.handle_actor_message(msg).await {
                         return Ok(());
                     }
                 }
                 tick = self.periodic_re_stun_timer.tick() => {
                     trace!("tick: re_stun {:?}", tick);
-                    inc!(self.msock, actor_tick_re_stun);
+                    self.msock.metrics.magicsock.actor_tick_re_stun.inc();
                     self.msock.re_stun("periodic");
                 }
                 change = portmap_watcher_changed, if !portmap_watcher_closed => {
@@ -2480,14 +2498,14 @@ impl Actor {
                     {
                         if change.is_err() {
                             trace!("tick: portmap watcher closed");
-                            inc!(self.msock, actor_tick_other);
+                            self.msock.metrics.magicsock.actor_tick_other.inc();
 
                             portmap_watcher_closed = true;
                             continue;
                         }
 
                         trace!("tick: portmap changed");
-                        inc!(self.msock, actor_tick_portmap_changed);
+                        self.msock.metrics.magicsock.actor_tick_portmap_changed.inc();
                         let new_external_address = *portmap_watcher.borrow();
                         debug!("external address updated: {new_external_address:?}");
                         self.msock.re_stun("portmap_updated");
@@ -2502,7 +2520,7 @@ impl Actor {
                             "tick: direct addr heartbeat {} direct addrs",
                             self.msock.node_map.node_count(),
                         );
-                        inc!(self.msock, actor_tick_direct_addr_heartbeat);
+                        self.msock.metrics.magicsock.actor_tick_direct_addr_heartbeat.inc();
                         // TODO: this might trigger too many packets at once, pace this
 
                         self.msock.node_map.prune_inactive();
@@ -2513,7 +2531,7 @@ impl Actor {
                 _ = direct_addr_update_receiver.changed() => {
                     let reason = *direct_addr_update_receiver.borrow();
                     trace!("tick: direct addr update receiver {:?}", reason);
-                    inc!(self.msock, actor_tick_direct_addr_update_receiver);
+                    self.msock.metrics.magicsock.actor_tick_direct_addr_update_receiver.inc();
                     if let Some(reason) = reason {
                         self.refresh_direct_addrs(reason).await;
                     }
@@ -2521,14 +2539,14 @@ impl Actor {
                 is_major = link_change_r.recv(), if !link_change_closed => {
                     let Some(is_major) = is_major else {
                         trace!("tick: link change receiver closed");
-                        inc!(self.msock, actor_tick_other);
+                        self.msock.metrics.magicsock.actor_tick_other.inc();
 
                         link_change_closed = true;
                         continue;
                     };
 
                     trace!("tick: link change {}", is_major);
-                    inc!(self.msock, actor_link_change);
+                    self.msock.metrics.magicsock.actor_link_change.inc();
                     self.handle_network_change(is_major).await;
                 }
                 // Even if `discovery_events` yields `None`, it could begin to yield
@@ -2642,7 +2660,7 @@ impl Actor {
     /// mistake to be made.
     #[instrument(level = "debug", skip_all)]
     async fn refresh_direct_addrs(&mut self, why: &'static str) {
-        inc!(self.msock, update_direct_addrs);
+        self.msock.metrics.magicsock.update_direct_addrs.inc();
 
         debug!("starting direct addr update ({})", why);
         #[cfg(not(wasm_browser))]
@@ -2949,7 +2967,7 @@ impl Actor {
         let old_relay = self.msock.set_my_relay(relay_url.clone());
 
         if let Some(ref relay_url) = relay_url {
-            inc!(self.msock, relay_home_change);
+            self.msock.metrics.magicsock.relay_home_change.inc();
 
             // On change, notify all currently connected relay servers and
             // start connecting to our home relay if we are not already.
@@ -3249,16 +3267,16 @@ impl std::fmt::Display for NodeIdMappedAddr {
     }
 }
 
-fn disco_message_sent(msock: &MagicSock, msg: &disco::Message) {
+fn disco_message_sent(msg: &disco::Message, metrics: &MagicsockMetrics) {
     match msg {
         disco::Message::Ping(_) => {
-            inc!(msock, sent_disco_ping);
+            metrics.sent_disco_ping.inc();
         }
         disco::Message::Pong(_) => {
-            inc!(msock, sent_disco_pong);
+            metrics.sent_disco_pong.inc();
         }
         disco::Message::CallMeMaybe(_) => {
-            inc!(msock, sent_disco_call_me_maybe);
+            metrics.sent_disco_call_me_maybe.inc();
         }
     }
 }
