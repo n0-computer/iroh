@@ -2967,7 +2967,7 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.4.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=Frando/metrics#c04c68d3624e32f8bb682442db63cf467b1a938c"
+source = "git+https://github.com/n0-computer/net-tools?branch=Frando/metrics#92e9c70819dc2c27f0d832289efdcfa92aee4b11"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -3464,7 +3464,7 @@ checksum = "280dc24453071f1b63954171985a0b0d30058d287960968b9b2aca264c8d4ee6"
 [[package]]
 name = "portmapper"
 version = "0.4.1"
-source = "git+https://github.com/n0-computer/net-tools?branch=Frando/metrics#c04c68d3624e32f8bb682442db63cf467b1a938c"
+source = "git+https://github.com/n0-computer/net-tools?branch=Frando/metrics#92e9c70819dc2c27f0d832289efdcfa92aee4b11"
 dependencies = [
  "base64",
  "bytes",
