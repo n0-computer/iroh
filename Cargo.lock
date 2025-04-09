@@ -2398,7 +2398,7 @@ dependencies = [
 [[package]]
 name = "iroh-metrics"
 version = "0.32.0"
-source = "git+https://github.com/n0-computer/iroh-metrics?branch=Frando/refactor#04b9c4fca09b15856d00da4640cfa3d882f3c750"
+source = "git+https://github.com/n0-computer/iroh-metrics?branch=Frando/refactor#b7f521f03734e890725a8b2c6a70055ef97cee0b"
 dependencies = [
  "http-body-util",
  "hyper",
@@ -2967,7 +2967,7 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.4.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=Frando/metrics#92e9c70819dc2c27f0d832289efdcfa92aee4b11"
+source = "git+https://github.com/n0-computer/net-tools?branch=Frando/metrics#4c953aef8bab936c891224215ac3e1aaedb00942"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -3464,7 +3464,7 @@ checksum = "280dc24453071f1b63954171985a0b0d30058d287960968b9b2aca264c8d4ee6"
 [[package]]
 name = "portmapper"
 version = "0.4.1"
-source = "git+https://github.com/n0-computer/net-tools?branch=Frando/metrics#92e9c70819dc2c27f0d832289efdcfa92aee4b11"
+source = "git+https://github.com/n0-computer/net-tools?branch=Frando/metrics#4c953aef8bab936c891224215ac3e1aaedb00942"
 dependencies = [
  "base64",
  "bytes",
