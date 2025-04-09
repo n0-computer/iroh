@@ -1,4 +1,4 @@
-use iroh_metrics::{struct_iterable::Iterable, Counter, Metric};
+use iroh_metrics::{struct_iterable::Iterable, Counter, MetricsGroup};
 
 /// Enum of metrics for the module
 #[allow(missing_docs)]
@@ -150,7 +150,7 @@ impl Default for Metrics {
     }
 }
 
-impl Metric for Metrics {
+impl MetricsGroup for Metrics {
     fn name(&self) -> &'static str {
         "magicsock"
     }

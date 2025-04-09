@@ -1,4 +1,6 @@
-use iroh_metrics::{struct_iterable::Iterable, Counter, Metric};
+use std::sync::Arc;
+
+use iroh_metrics::{struct_iterable::Iterable, Counter, MetricsGroup, MetricsGroupSet};
 
 /// Metrics tracked for the relay server
 #[derive(Debug, Clone, Iterable)]
@@ -119,7 +121,7 @@ impl Default for Metrics {
     }
 }
 
-impl Metric for Metrics {
+impl MetricsGroup for Metrics {
     fn name(&self) -> &'static str {
         "relayserver"
     }
@@ -159,8 +161,27 @@ impl Default for StunMetrics {
     }
 }
 
-impl Metric for StunMetrics {
+impl MetricsGroup for StunMetrics {
     fn name(&self) -> &'static str {
         "stun"
+    }
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct RelayMetrics {
+    pub stun: Arc<StunMetrics>,
+    pub server: Arc<Metrics>,
+}
+
+impl MetricsGroupSet for RelayMetrics {
+    fn name(&self) -> &'static str {
+        "relay"
+    }
+
+    fn iter(&self) -> impl IntoIterator<Item = &dyn MetricsGroup> {
+        [
+            &*self.stun as &dyn MetricsGroup,
+            &*self.server as &dyn MetricsGroup,
+        ]
     }
 }

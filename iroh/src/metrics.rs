@@ -1,7 +1,7 @@
 //! Co-locating all of the iroh metrics structs
 use std::sync::Arc;
 
-use iroh_metrics::Metric;
+use iroh_metrics::{MetricsGroup, MetricsGroupSet};
 #[cfg(feature = "test-utils")]
 pub use iroh_relay::server::Metrics as RelayMetrics;
 #[cfg(not(wasm_browser))]
@@ -23,18 +23,18 @@ pub struct EndpointMetrics {
     pub portmapper: Arc<PortmapMetrics>,
 }
 
-impl iroh_metrics::MetricSet for EndpointMetrics {
-    fn iter(&self) -> impl IntoIterator<Item = &dyn Metric> {
+impl MetricsGroupSet for EndpointMetrics {
+    fn iter(&self) -> impl IntoIterator<Item = &dyn MetricsGroup> {
         #[cfg(not(wasm_browser))]
         return [
-            &self.magicsock as &dyn Metric,
-            &self.net_report as &dyn Metric,
-            &*self.portmapper as &dyn Metric,
+            &self.magicsock as &dyn MetricsGroup,
+            &self.net_report as &dyn MetricsGroup,
+            &*self.portmapper as &dyn MetricsGroup,
         ];
         #[cfg(wasm_browser)]
         return [
-            &self.magicsock as &dyn Metric,
-            &self.net_report as &dyn Metric,
+            &self.magicsock as &dyn MetricsGroup,
+            &self.net_report as &dyn MetricsGroup,
         ];
     }
 

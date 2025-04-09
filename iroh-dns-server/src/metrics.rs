@@ -1,6 +1,6 @@
 //! Metrics support for the server
 
-use iroh_metrics::{struct_iterable::Iterable, Counter, Metric};
+use iroh_metrics::{struct_iterable::Iterable, Counter, MetricsGroup};
 
 /// Metrics for iroh-dns-server
 #[derive(Debug, Clone, Iterable)]
@@ -49,7 +49,7 @@ impl Default for Metrics {
     }
 }
 
-impl Metric for Metrics {
+impl MetricsGroup for Metrics {
     fn name(&self) -> &'static str {
         "dns_server"
     }

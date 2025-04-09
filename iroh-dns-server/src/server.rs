@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use iroh_metrics::{service::start_metrics_server, Metric};
+use iroh_metrics::{service::start_metrics_server, MetricsGroup};
 use tracing::info;
 
 use crate::{

@@ -27,7 +27,8 @@ use hyper::body::Incoming;
 use iroh_base::NodeId;
 #[cfg(feature = "test-utils")]
 use iroh_base::RelayUrl;
-use iroh_metrics::Metric;
+use iroh_metrics::MetricsGroupSet;
+use metrics::RelayMetrics;
 use n0_future::{future::Boxed, StreamExt};
 use tokio::{
     net::{TcpListener, UdpSocket},
@@ -269,6 +270,7 @@ pub struct Server {
     /// If the server has manual certificates configured the certificate chain will be
     /// available here, this can be used by a client to authenticate the server.
     certificates: Option<Vec<rustls::pki_types::CertificateDer<'static>>>,
+    metrics: RelayMetrics,
 }
 
 impl Server {
@@ -280,14 +282,12 @@ impl Server {
     {
         let mut tasks = JoinSet::new();
 
-        let stun_metrics = StunMetrics::default();
-        let metrics = Arc::new(Metrics::default());
+        let metrics = RelayMetrics::default();
 
         #[cfg(feature = "metrics")]
         if let Some(addr) = config.metrics_addr {
             debug!("Starting metrics server");
             let mut registry = iroh_metrics::Registry::default();
-            stun_metrics.register(&mut registry);
             metrics.register(&mut registry);
             tasks.spawn(
                 async move {
@@ -307,7 +307,7 @@ impl Server {
                         let addr = sock.local_addr()?;
                         info!("STUN server listening on {addr}");
                         tasks.spawn(
-                            server_stun_listener(sock, stun_metrics)
+                            server_stun_listener(sock, metrics.stun.clone())
                                 .instrument(info_span!("stun-server", %addr)),
                         );
                         Some(addr)
@@ -351,14 +351,15 @@ impl Server {
                 let key_cache_capacity = relay_config
                     .key_cache_capacity
                     .unwrap_or(DEFAULT_KEY_CACHE_CAPACITY);
-                let mut builder = http_server::ServerBuilder::new(relay_bind_addr, metrics)
-                    .headers(headers)
-                    .key_cache_capacity(key_cache_capacity)
-                    .access(relay_config.access)
-                    .request_handler(Method::GET, "/", Box::new(root_handler))
-                    .request_handler(Method::GET, "/index.html", Box::new(root_handler))
-                    .request_handler(Method::GET, RELAY_PROBE_PATH, Box::new(probe_handler))
-                    .request_handler(Method::GET, "/robots.txt", Box::new(robots_handler));
+                let mut builder =
+                    http_server::ServerBuilder::new(relay_bind_addr, metrics.server.clone())
+                        .headers(headers)
+                        .key_cache_capacity(key_cache_capacity)
+                        .access(relay_config.access)
+                        .request_handler(Method::GET, "/", Box::new(root_handler))
+                        .request_handler(Method::GET, "/index.html", Box::new(root_handler))
+                        .request_handler(Method::GET, RELAY_PROBE_PATH, Box::new(probe_handler))
+                        .request_handler(Method::GET, "/robots.txt", Box::new(robots_handler));
                 if let Some(cfg) = relay_config.limits.client_rx {
                     builder = builder.client_rx_ratelimit(cfg);
                 }
@@ -441,6 +442,7 @@ impl Server {
             quic_handle,
             supervisor: AbortOnDropHandle::new(task),
             certificates,
+            metrics,
         })
     }
 
@@ -515,6 +517,11 @@ impl Server {
                 .into()
         })
     }
+
+    /// Returns the metrics collected in the relay server.
+    pub fn metrics(&self) -> &RelayMetrics {
+        &self.metrics
+    }
 }
 
 /// Supervisor for the relay server tasks.
@@ -583,10 +590,9 @@ async fn relay_supervisor(
 /// Runs a STUN server.
 ///
 /// When the future is dropped, the server stops.
-async fn server_stun_listener(sock: UdpSocket, metrics: StunMetrics) -> Result<()> {
+async fn server_stun_listener(sock: UdpSocket, metrics: Arc<StunMetrics>) -> Result<()> {
     info!(addr = ?sock.local_addr().ok(), "running STUN server");
     let sock = Arc::new(sock);
-    let metrics = Arc::new(metrics);
     let mut buffer = vec![0u8; 64 << 10];
     let mut tasks = JoinSet::new();
     loop {
