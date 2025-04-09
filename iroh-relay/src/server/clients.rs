@@ -13,7 +13,6 @@ use anyhow::{bail, Result};
 use bytes::Bytes;
 use dashmap::DashMap;
 use iroh_base::NodeId;
-use iroh_metrics::inc;
 use tokio::sync::mpsc::error::TrySendError;
 use tracing::{debug, trace};
 
@@ -45,12 +44,12 @@ impl Clients {
     }
 
     /// Builds the client handler and starts the read & write loops for the connection.
-    pub async fn register(&self, client_config: Config) {
+    pub async fn register(&self, client_config: Config, metrics: Arc<Metrics>) {
         let node_id = client_config.node_id;
         let connection_id = self.get_connection_id();
         trace!(remote_node = node_id.fmt_short(), "registering client");
 
-        let client = Client::new(client_config, connection_id, self);
+        let client = Client::new(client_config, connection_id, self, metrics);
         if let Some(old_client) = self.0.clients.insert(node_id, client) {
             debug!(
                 remote_node = node_id.fmt_short(),
@@ -104,10 +103,16 @@ impl Clients {
     }
 
     /// Attempt to send a packet to client with [`NodeId`] `dst`.
-    pub(super) fn send_packet(&self, dst: NodeId, data: Bytes, src: NodeId) -> Result<()> {
+    pub(super) fn send_packet(
+        &self,
+        dst: NodeId,
+        data: Bytes,
+        src: NodeId,
+        metrics: &Metrics,
+    ) -> Result<()> {
         let Some(client) = self.0.clients.get(&dst) else {
             debug!(dst = dst.fmt_short(), "no connected client, dropped packet");
-            inc!(Metrics, send_packets_dropped);
+            metrics.send_packets_dropped.inc();
             return Ok(());
         };
         match client.try_send_packet(src, data) {
@@ -135,13 +140,19 @@ impl Clients {
     }
 
     /// Attempt to send a disco packet to client with [`NodeId`] `dst`.
-    pub(super) fn send_disco_packet(&self, dst: NodeId, data: Bytes, src: NodeId) -> Result<()> {
+    pub(super) fn send_disco_packet(
+        &self,
+        dst: NodeId,
+        data: Bytes,
+        src: NodeId,
+        metrics: &Metrics,
+    ) -> Result<()> {
         let Some(client) = self.0.clients.get(&dst) else {
             debug!(
                 dst = dst.fmt_short(),
                 "no connected client, dropped disco packet"
             );
-            inc!(Metrics, disco_packets_dropped);
+            metrics.disco_packets_dropped.inc();
             return Ok(());
         };
         match client.try_send_disco_packet(src, data) {
@@ -209,11 +220,12 @@ mod tests {
         let (builder_a, mut a_rw) = test_client_builder(a_key);
 
         let clients = Clients::default();
-        clients.register(builder_a).await;
+        let metrics = Arc::new(Metrics::default());
+        clients.register(builder_a, metrics.clone()).await;
 
         // send packet
         let data = b"hello world!";
-        clients.send_packet(a_key, Bytes::from(&data[..]), b_key)?;
+        clients.send_packet(a_key, Bytes::from(&data[..]), b_key, &metrics)?;
         let frame = recv_frame(FrameType::RecvPacket, &mut a_rw).await?;
         assert_eq!(
             frame,
@@ -224,7 +236,7 @@ mod tests {
         );
 
         // send disco packet
-        clients.send_disco_packet(a_key, Bytes::from(&data[..]), b_key)?;
+        clients.send_disco_packet(a_key, Bytes::from(&data[..]), b_key, &metrics)?;
         let frame = recv_frame(FrameType::RecvPacket, &mut a_rw).await?;
         assert_eq!(
             frame,
