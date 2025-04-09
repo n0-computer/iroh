@@ -1126,8 +1126,8 @@ impl Endpoint {
     /// # }
     /// ```
     ///
-    /// [`EndpointMetrics`] implements [`iroh_metrics::MetricsGroupSet`], and each field
-    /// implements [`iroh_metrics::MetricsGroup`]. These trait provides various methods to iterate
+    /// [`EndpointMetrics`] implements [`MetricsGroupSet`], and each field
+    /// implements [`MetricsGroup`]. These trait provides various methods to iterate
     /// the groups in the set, and over the individual metrics in each group, without having
     /// to access each field manually. With these methods, it is straightforward to collect
     /// all metrics into a map or push their values to some other metrics collector.
@@ -1163,6 +1163,9 @@ impl Endpoint {
     ///
     /// [`prometheus_client`]: https://docs.rs/prometheus-client/latest/prometheus_client/index.html
     /// [`Registry`]: https://docs.rs/prometheus-client/latest/prometheus_client/registry/struct.Registry.html
+    /// [`EndpointMetrics::register`]: iroh_metrics::MetricsGroupSet::register
+    /// [`MetricsGroup`]: iroh_metrics::MetricsGroup
+    /// [`MetricsGroupSet`]: iroh_metrics::MetricsGroupSet
     #[cfg(feature = "metrics")]
     pub fn metrics(&self) -> &EndpointMetrics {
         &self.msock.metrics
