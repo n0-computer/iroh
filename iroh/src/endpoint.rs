@@ -1112,7 +1112,57 @@ impl Endpoint {
     /// The endpoint internally collects various metrics about its operation.
     /// The returned [`EndpointMetrics`] struct contains all of these metrics.
     ///
-    /// See the docs for [`EndpointMetrics`] for details and examples on how to work with the metrics.
+    /// You can access individual metrics directly by using the public fields:
+    /// ```rust
+    /// # use std::collections::BTreeMap;
+    /// # use iroh_metrics::{MetricsGroup, MetricValue, MetricsGroupSet};
+    /// # use iroh::endpoint::Endpoint;
+    /// # async fn wrapper() -> testresult::TestResult {
+    /// let endpoint = Endpoint::builder().bind().await?;
+    /// let metrics = endpoint.metrics();
+    ///
+    /// assert_eq!(metrics.magicsock.recv_datagrams.get(), 0);
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// [`EndpointMetrics`] implements [`iroh_metrics::MetricsGroupSet`], and each field
+    /// implements [`iroh_metrics::MetricsGroup`]. These trait provides various methods to iterate
+    /// the groups in the set, and over the individual metrics in each group, without having
+    /// to access each field manually. With these methods, it is straightforward to collect
+    /// all metrics into a map or push their values to some other metrics collector.
+    ///
+    /// For example, the following snippet collects all metrics into a map:
+    /// ```rust
+    /// # use std::collections::BTreeMap;
+    /// # use iroh_metrics::{MetricsGroup, MetricValue, MetricsGroupSet};
+    /// # use iroh::endpoint::Endpoint;
+    /// # async fn wrapper() -> testresult::TestResult {
+    /// let endpoint = Endpoint::builder().bind().await?;
+    /// let metrics: BTreeMap<String, MetricValue> = endpoint
+    ///     .metrics()
+    ///     .iter()
+    ///     .flat_map(|group| {
+    ///         group.values().map(|item| {
+    ///             let name = [group.name(), item.name].join(":");
+    ///             (name, item.value)
+    ///         })
+    ///     })
+    ///     .collect();
+    ///
+    /// assert_eq!(metrics["magicsock:recv_datagrams"], MetricValue::Counter(0));
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// The metrics can also be used with the types from the [`prometheus_client`] crate.
+    /// With [`EndpointMetrics::register`], you can register all metrics onto a onto a
+    /// [`Registry`]. [`iroh_metrics`] provides functions to easily start services
+    /// to serve the metrics with a HTTP server, dump them to a file, or push them
+    /// to a Prometheus gateway. See the `service` module in [`iroh_metrics`] for details.
+    ///
+    /// [`prometheus_client`]: https://docs.rs/prometheus-client/latest/prometheus_client/index.html
+    /// [`Registry`]: https://docs.rs/prometheus-client/latest/prometheus_client/registry/struct.Registry.html
     #[cfg(feature = "metrics")]
     pub fn metrics(&self) -> &EndpointMetrics {
         &self.msock.metrics
