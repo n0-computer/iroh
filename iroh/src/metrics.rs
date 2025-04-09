@@ -26,7 +26,7 @@ pub use crate::{magicsock::Metrics as MagicsockMetrics, net_report::Metrics as N
 /// # }
 /// ```
 ///
-/// [`EndpointMetrics] implements [`MetricsGroupSet`], and all fields of this struct implement
+/// [`EndpointMetrics`] implements [`MetricsGroupSet`], and all fields of this struct implement
 /// implement [`iroh_metrics::MetricsGroup`]. These trait provides various methods to iterate
 /// the groups in the set, and over the individual metrics in each group, without having
 /// to access each field manually. With these methods, it is straightforward to collect
@@ -55,13 +55,14 @@ pub use crate::{magicsock::Metrics as MagicsockMetrics, net_report::Metrics as N
 /// # }
 /// ```
 ///
-/// The metrics can also be used with the types from the `prometheus_client` crate.
+/// The metrics can also be used with the types from the [`prometheus_client`] crate.
 /// With [`EndpointMetrics::register`], you can register all metrics onto a onto a
-/// [`prometheus_client::Registry`]. [`iroh_metrics`] provides functions to easily start
-/// services to serve the metrics with a HTTP server, dump them to a file, or push them
-/// to a Prometheus gateway. See the `service` module in `iroh_metrics` for details.
+/// [`Registry`]. [`iroh_metrics`] provides functions to easily start services
+/// to serve the metrics with a HTTP server, dump them to a file, or push them
+/// to a Prometheus gateway. See the `service` module in [`iroh_metrics`] for details.
 ///
-/// [`prometheus_client::Registry`]: https://docs.rs/prometheus-client/latest/prometheus_client/registry/struct.Registry.html
+/// [`prometheus_client`]: https://docs.rs/prometheus-client/latest/prometheus_client/index.html
+/// [`Registry`]: https://docs.rs/prometheus-client/latest/prometheus_client/registry/struct.Registry.html
 #[derive(Default, Debug, Clone)]
 pub struct EndpointMetrics {
     /// Metrics collected by the endpoint's socket.
