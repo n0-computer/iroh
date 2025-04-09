@@ -1,29 +1,34 @@
 //! The main server which combines the DNS and HTTP(S) servers.
 
+use std::sync::Arc;
+
 use anyhow::Result;
-use iroh_metrics::metrics::start_metrics_server;
+use iroh_metrics::{service::start_metrics_server, Metric};
 use tracing::info;
 
 use crate::{
     config::Config,
     dns::{DnsHandler, DnsServer},
     http::HttpServer,
+    metrics::Metrics,
     state::AppState,
     store::ZoneStore,
 };
 
 /// Spawn the server and run until the `Ctrl-C` signal is received, then shutdown.
 pub async fn run_with_config_until_ctrl_c(config: Config) -> Result<()> {
+    let metrics = Arc::new(Metrics::default());
     let zone_store_options = config.zone_store.clone().unwrap_or_default();
     let mut store = ZoneStore::persistent(
         Config::signed_packet_store_path()?,
         zone_store_options.into(),
+        metrics.clone(),
     )?;
     if let Some(bootstrap) = config.mainline_enabled() {
         info!("mainline fallback enabled");
         store = store.with_mainline_fallback(bootstrap);
     };
-    let server = Server::spawn(config, store).await?;
+    let server = Server::spawn(config, store, metrics).await?;
     tokio::signal::ctrl_c().await?;
     info!("shutdown");
     server.shutdown().await?;
@@ -44,15 +49,21 @@ impl Server {
     /// * A DNS server task
     /// * A HTTP server task, if `config.http` is not empty
     /// * A HTTPS server task, if `config.https` is not empty
-    pub async fn spawn(config: Config, store: ZoneStore) -> Result<Self> {
-        let dns_handler = DnsHandler::new(store.clone(), &config.dns)?;
+    pub async fn spawn(config: Config, store: ZoneStore, metrics: Arc<Metrics>) -> Result<Self> {
+        let dns_handler = DnsHandler::new(store.clone(), &config.dns, metrics.clone())?;
 
-        let state = AppState { store, dns_handler };
+        let state = AppState {
+            store,
+            dns_handler,
+            metrics: metrics.clone(),
+        };
 
         let metrics_addr = config.metrics_addr();
         let metrics_task = tokio::task::spawn(async move {
             if let Some(addr) = metrics_addr {
-                start_metrics_server(addr).await?;
+                let mut registry = iroh_metrics::Registry::default();
+                metrics.register(&mut registry);
+                start_metrics_server(addr, std::sync::Arc::new(registry)).await?;
             }
             Ok(())
         });
@@ -122,12 +133,12 @@ impl Server {
         config.https = None;
         config.metrics = Some(MetricsConfig::disabled());
 
-        let mut store = ZoneStore::in_memory(options.unwrap_or_default())?;
+        let mut store = ZoneStore::in_memory(options.unwrap_or_default(), Default::default())?;
         if let Some(bootstrap) = mainline {
             info!("mainline fallback enabled");
             store = store.with_mainline_fallback(bootstrap);
         }
-        let server = Self::spawn(config, store).await?;
+        let server = Self::spawn(config, store, Default::default()).await?;
         let dns_addr = server.dns_server.local_addr();
         let http_addr = server.http_server.http_addr().expect("http is set");
         let http_url = format!("http://{http_addr}").parse()?;
