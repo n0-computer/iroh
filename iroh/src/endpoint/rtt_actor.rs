@@ -1,6 +1,6 @@
 //! Actor which coordinates the congestion controller for the magic socket
 
-use std::{pin::Pin, task::Poll};
+use std::{pin::Pin, sync::Arc, task::Poll};
 
 use iroh_base::NodeId;
 use n0_future::{
@@ -20,7 +20,7 @@ pub(super) struct RttHandle {
 }
 
 impl RttHandle {
-    pub(super) fn new(metrics: MagicsockMetrics) -> Self {
+    pub(super) fn new(metrics: Arc<MagicsockMetrics>) -> Self {
         let mut actor = RttActor {
             connection_events: Default::default(),
             metrics,
@@ -62,7 +62,7 @@ struct RttActor {
     /// Stream of connection type changes.
     #[debug("MergeUnbounded<WatcherStream<ConnectionType>>")]
     connection_events: MergeUnbounded<MappedStream>,
-    metrics: MagicsockMetrics,
+    metrics: Arc<MagicsockMetrics>,
 }
 
 #[derive(Debug)]

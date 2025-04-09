@@ -15,9 +15,9 @@ pub use crate::{magicsock::Metrics as MagicsockMetrics, net_report::Metrics as N
 #[derive(Default, Debug, Clone)]
 pub struct EndpointMetrics {
     /// Metrics collected by the endpoint's socket.
-    pub magicsock: MagicsockMetrics,
+    pub magicsock: Arc<MagicsockMetrics>,
     /// Metrics collected by net reports.
-    pub net_report: NetReportMetrics,
+    pub net_report: Arc<NetReportMetrics>,
     /// Metrics collected by the portmapper service.
     #[cfg(not(wasm_browser))]
     pub portmapper: Arc<PortmapMetrics>,
@@ -27,14 +27,14 @@ impl MetricsGroupSet for EndpointMetrics {
     fn iter(&self) -> impl IntoIterator<Item = &dyn MetricsGroup> {
         #[cfg(not(wasm_browser))]
         return [
-            &self.magicsock as &dyn MetricsGroup,
-            &self.net_report as &dyn MetricsGroup,
+            &*self.magicsock as &dyn MetricsGroup,
+            &*self.net_report as &dyn MetricsGroup,
             &*self.portmapper as &dyn MetricsGroup,
         ];
         #[cfg(wasm_browser)]
         return [
-            &self.magicsock as &dyn MetricsGroup,
-            &self.net_report as &dyn MetricsGroup,
+            &*self.magicsock as &dyn MetricsGroup,
+            &*self.net_report as &dyn MetricsGroup,
         ];
     }
 

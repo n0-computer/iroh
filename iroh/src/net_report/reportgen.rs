@@ -112,7 +112,7 @@ impl Client {
         last_report: Option<Arc<Report>>,
         relay_map: RelayMap,
         protocols: BTreeSet<ProbeProto>,
-        metrics: Metrics,
+        metrics: Arc<Metrics>,
         #[cfg(not(wasm_browser))] socket_state: SocketState,
     ) -> Self {
         let (msg_tx, msg_rx) = mpsc::channel(32);
@@ -213,7 +213,7 @@ struct Actor {
     /// The hairpin actor.
     #[cfg(not(wasm_browser))]
     hairpin_actor: hairpin::Client,
-    metrics: Metrics,
+    metrics: Arc<Metrics>,
 }
 
 impl Actor {
@@ -755,7 +755,7 @@ async fn run_probe(
     relay_node: Arc<RelayNode>,
     probe: Probe,
     net_report: net_report::Addr,
-    metrics: Metrics,
+    metrics: Arc<Metrics>,
     #[cfg(not(wasm_browser))] pinger: Pinger,
     #[cfg(not(wasm_browser))] socket_state: SocketState,
 ) -> Result<ProbeReport, ProbeError> {
