@@ -473,10 +473,6 @@ impl MagicSock {
             .magicsock
             .send_data
             .inc_by(transmit.contents.len() as _);
-        self.metrics
-            .magicsock
-            .send_data
-            .inc_by(transmit.contents.len() as _);
 
         if self.is_closed() {
             self.metrics
