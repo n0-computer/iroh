@@ -4455,11 +4455,7 @@
 <a href="#4454" id="4454">4454</a>
 <a href="#4455" id="4455">4455</a>
 <a href="#4456" id="4456">4456</a>
-<a href="#4457" id="4457">4457</a>
-<a href="#4458" id="4458">4458</a>
-<a href="#4459" id="4459">4459</a>
-<a href="#4460" id="4460">4460</a>
-<a href="#4461" id="4461">4461</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4457" id="4457">4457</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4930,10 +4926,6 @@
     <span class="doccomment">/// Implementation for AsyncUdpSocket::try_send
     </span><span class="attr">#[instrument(skip_all)]
     </span><span class="kw">fn </span>try_send(<span class="kw-2">&amp;</span><span class="self">self</span>, transmit: <span class="kw-2">&amp;</span>quinn_udp::Transmit) -&gt; io::Result&lt;()&gt; {
-        <span class="self">self</span>.metrics
-            .magicsock
-            .send_data
-            .inc_by(transmit.contents.len() <span class="kw">as _</span>);
         <span class="self">self</span>.metrics
             .magicsock
             .send_data

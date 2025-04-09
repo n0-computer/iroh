@@ -2790,7 +2790,62 @@
 <a href="#2789" id="2789">2789</a>
 <a href="#2790" id="2790">2790</a>
 <a href="#2791" id="2791">2791</a>
-<a href="#2792" id="2792">2792</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2792" id="2792">2792</a>
+<a href="#2793" id="2793">2793</a>
+<a href="#2794" id="2794">2794</a>
+<a href="#2795" id="2795">2795</a>
+<a href="#2796" id="2796">2796</a>
+<a href="#2797" id="2797">2797</a>
+<a href="#2798" id="2798">2798</a>
+<a href="#2799" id="2799">2799</a>
+<a href="#2800" id="2800">2800</a>
+<a href="#2801" id="2801">2801</a>
+<a href="#2802" id="2802">2802</a>
+<a href="#2803" id="2803">2803</a>
+<a href="#2804" id="2804">2804</a>
+<a href="#2805" id="2805">2805</a>
+<a href="#2806" id="2806">2806</a>
+<a href="#2807" id="2807">2807</a>
+<a href="#2808" id="2808">2808</a>
+<a href="#2809" id="2809">2809</a>
+<a href="#2810" id="2810">2810</a>
+<a href="#2811" id="2811">2811</a>
+<a href="#2812" id="2812">2812</a>
+<a href="#2813" id="2813">2813</a>
+<a href="#2814" id="2814">2814</a>
+<a href="#2815" id="2815">2815</a>
+<a href="#2816" id="2816">2816</a>
+<a href="#2817" id="2817">2817</a>
+<a href="#2818" id="2818">2818</a>
+<a href="#2819" id="2819">2819</a>
+<a href="#2820" id="2820">2820</a>
+<a href="#2821" id="2821">2821</a>
+<a href="#2822" id="2822">2822</a>
+<a href="#2823" id="2823">2823</a>
+<a href="#2824" id="2824">2824</a>
+<a href="#2825" id="2825">2825</a>
+<a href="#2826" id="2826">2826</a>
+<a href="#2827" id="2827">2827</a>
+<a href="#2828" id="2828">2828</a>
+<a href="#2829" id="2829">2829</a>
+<a href="#2830" id="2830">2830</a>
+<a href="#2831" id="2831">2831</a>
+<a href="#2832" id="2832">2832</a>
+<a href="#2833" id="2833">2833</a>
+<a href="#2834" id="2834">2834</a>
+<a href="#2835" id="2835">2835</a>
+<a href="#2836" id="2836">2836</a>
+<a href="#2837" id="2837">2837</a>
+<a href="#2838" id="2838">2838</a>
+<a href="#2839" id="2839">2839</a>
+<a href="#2840" id="2840">2840</a>
+<a href="#2841" id="2841">2841</a>
+<a href="#2842" id="2842">2842</a>
+<a href="#2843" id="2843">2843</a>
+<a href="#2844" id="2844">2844</a>
+<a href="#2845" id="2845">2845</a>
+<a href="#2846" id="2846">2846</a>
+<a href="#2847" id="2847">2847</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -3900,6 +3955,11 @@
     }
 
     <span class="doccomment">/// Returns metrics collected for this endpoint.
+    ///
+    /// The endpoint internally collects various metrics about its operation.
+    /// The returned [`EndpointMetrics`] struct contains all of these metrics.
+    ///
+    /// See the docs for [`EndpointMetrics`] for details and examples on how to work with the metrics.
     </span><span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
     </span><span class="kw">pub fn </span>metrics(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>EndpointMetrics {
         <span class="kw-2">&amp;</span><span class="self">self</span>.msock.metrics
@@ -5578,6 +5638,56 @@
 
         <span class="macro">assert_eq!</span>(app_close.error_code, <span class="number">42u32</span>.into());
         <span class="macro">assert_eq!</span>(app_close.reason.as_ref(), <span class="string">b"thanks, bye!"</span>);
+
+        <span class="prelude-val">Ok</span>(())
+    }
+
+    <span class="attr">#[tokio::test]
+    #[traced_test]
+    </span><span class="kw">async fn </span>metrics_smoke() -&gt; testresult::TestResult {
+        <span class="kw">let </span>client = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>server = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
+            .bind()
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>server_addr = server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>server_task = tokio::task::spawn(<span class="kw">async move </span>{
+            <span class="kw">let </span>conn = server
+                .accept()
+                .<span class="kw">await
+                </span>.context(<span class="string">"expected conn"</span>)<span class="question-mark">?
+                </span>.accept()<span class="question-mark">?
+                </span>.<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="kw">let </span><span class="kw-2">mut </span>uni = conn.accept_uni().<span class="kw">await</span><span class="question-mark">?</span>;
+            uni.read_to_end(<span class="number">10</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+            drop(conn);
+            anyhow::Ok(server)
+        });
+        <span class="kw">let </span>conn = client.connect(server_addr, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span><span class="kw-2">mut </span>uni = conn.open_uni().<span class="kw">await</span><span class="question-mark">?</span>;
+        uni.write_all(<span class="string">b"helloworld"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        uni.finish()<span class="question-mark">?</span>;
+        conn.closed().<span class="kw">await</span>;
+        drop(conn);
+        <span class="kw">let </span>server = server_task.<span class="kw">await</span><span class="question-mark">??</span>;
+
+        <span class="kw">let </span>m = client.metrics();
+        <span class="macro">assert_eq!</span>(m.magicsock.num_direct_conns_added.get(), <span class="number">1</span>);
+        <span class="macro">assert_eq!</span>(m.magicsock.connection_became_direct.get(), <span class="number">1</span>);
+        <span class="macro">assert_eq!</span>(m.magicsock.connection_handshake_success.get(), <span class="number">1</span>);
+        <span class="macro">assert_eq!</span>(m.magicsock.nodes_contacted_directly.get(), <span class="number">1</span>);
+        <span class="macro">assert_eq!</span>(m.magicsock.recv_datagrams.get(), <span class="number">6</span>);
+
+        <span class="kw">let </span>m = server.metrics();
+        <span class="macro">assert_eq!</span>(m.magicsock.num_direct_conns_added.get(), <span class="number">1</span>);
+        <span class="macro">assert_eq!</span>(m.magicsock.connection_became_direct.get(), <span class="number">1</span>);
+        <span class="macro">assert_eq!</span>(m.magicsock.nodes_contacted_directly.get(), <span class="number">1</span>);
+        <span class="macro">assert_eq!</span>(m.magicsock.connection_handshake_success.get(), <span class="number">1</span>);
+        <span class="macro">assert_eq!</span>(m.magicsock.recv_datagrams.get(), <span class="number">6</span>);
 
         <span class="prelude-val">Ok</span>(())
     }

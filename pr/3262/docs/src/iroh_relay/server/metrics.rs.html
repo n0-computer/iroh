@@ -185,7 +185,8 @@
 <a href="#184" id="184">184</a>
 <a href="#185" id="185">185</a>
 <a href="#186" id="186">186</a>
-<a href="#187" id="187">187</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::sync::Arc;
+<a href="#187" id="187">187</a>
+<a href="#188" id="188">188</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::sync::Arc;
 
 <span class="kw">use </span>iroh_metrics::{struct_iterable::Iterable, Counter, MetricsGroup, MetricsGroupSet};
 
@@ -365,11 +366,12 @@
         <span class="string">"relay"
     </span>}
 
-    <span class="kw">fn </span>iter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>IntoIterator&lt;Item = <span class="kw-2">&amp;</span><span class="kw">dyn </span>MetricsGroup&gt; {
+    <span class="kw">fn </span>iter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="kw-2">&amp;</span><span class="kw">dyn </span>MetricsGroup&gt; {
         [
             <span class="kw-2">&amp;*</span><span class="self">self</span>.stun <span class="kw">as </span><span class="kw-2">&amp;</span><span class="kw">dyn </span>MetricsGroup,
             <span class="kw-2">&amp;*</span><span class="self">self</span>.server <span class="kw">as </span><span class="kw-2">&amp;</span><span class="kw">dyn </span>MetricsGroup,
         ]
+        .into_iter()
     }
 }
 </code></pre></div></section></main></body></html>
