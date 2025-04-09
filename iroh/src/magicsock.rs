@@ -2361,7 +2361,7 @@ impl ActorSocketState {
     fn bind(
         addr_v4: Option<SocketAddrV4>,
         addr_v6: Option<SocketAddrV6>,
-        metrics: portmapper::Metrics,
+        metrics: Arc<portmapper::Metrics>,
     ) -> Result<Self> {
         let port_mapper = portmapper::Client::with_metrics(Default::default(), metrics);
         let (v4, v6) = Self::bind_sockets(addr_v4, addr_v6)?;
