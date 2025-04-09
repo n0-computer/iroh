@@ -265,13 +265,17 @@
 <a href="#264" id="264">264</a>
 <a href="#265" id="265">265</a>
 <a href="#266" id="266">266</a>
-<a href="#267" id="267">267</a></pre></div><pre class="rust"><code><span class="doccomment">//! Pkarr packet store used to resolve DNS queries.
+<a href="#267" id="267">267</a>
+<a href="#268" id="268">268</a>
+<a href="#269" id="269">269</a>
+<a href="#270" id="270">270</a>
+<a href="#271" id="271">271</a>
+<a href="#272" id="272">272</a></pre></div><pre class="rust"><code><span class="doccomment">//! Pkarr packet store used to resolve DNS queries.
 
 </span><span class="kw">use </span>std::{collections::BTreeMap, num::NonZeroUsize, path::Path, sync::Arc, time::Duration};
 
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>hickory_server::proto::rr::{Name, RecordSet, RecordType, RrKey};
-<span class="kw">use </span>iroh_metrics::inc;
 <span class="kw">use </span>lru::LruCache;
 <span class="kw">use </span>pkarr::{mainline::dht::DhtSettings, PkarrClient, SignedPacket};
 <span class="kw">use </span>tokio::sync::Mutex;
@@ -308,19 +312,24 @@
     cache: Arc&lt;Mutex&lt;ZoneCache&gt;&gt;,
     store: Arc&lt;SignedPacketStore&gt;,
     pkarr: <span class="prelude-ty">Option</span>&lt;Arc&lt;PkarrClient&gt;&gt;,
+    metrics: Arc&lt;Metrics&gt;,
 }
 
 <span class="kw">impl </span>ZoneStore {
     <span class="doccomment">/// Create a persistent store
-    </span><span class="kw">pub fn </span>persistent(path: <span class="kw">impl </span>AsRef&lt;Path&gt;, options: ZoneStoreOptions) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="kw">let </span>packet_store = SignedPacketStore::persistent(path, options)<span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(<span class="self">Self</span>::new(packet_store))
+    </span><span class="kw">pub fn </span>persistent(
+        path: <span class="kw">impl </span>AsRef&lt;Path&gt;,
+        options: ZoneStoreOptions,
+        metrics: Arc&lt;Metrics&gt;,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+        <span class="kw">let </span>packet_store = SignedPacketStore::persistent(path, options, metrics.clone())<span class="question-mark">?</span>;
+        <span class="prelude-val">Ok</span>(<span class="self">Self</span>::new(packet_store, metrics))
     }
 
     <span class="doccomment">/// Create an in-memory store.
-    </span><span class="kw">pub fn </span>in_memory(options: ZoneStoreOptions) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="kw">let </span>packet_store = SignedPacketStore::in_memory(options)<span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(<span class="self">Self</span>::new(packet_store))
+    </span><span class="kw">pub fn </span>in_memory(options: ZoneStoreOptions, metrics: Arc&lt;Metrics&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+        <span class="kw">let </span>packet_store = SignedPacketStore::in_memory(options, metrics.clone())<span class="question-mark">?</span>;
+        <span class="prelude-val">Ok</span>(<span class="self">Self</span>::new(packet_store, metrics))
     }
 
     <span class="doccomment">/// Configure a pkarr client for resolution of packets from the bittorrent mainline DHT.
@@ -347,12 +356,13 @@
     }
 
     <span class="doccomment">/// Create a new zone store.
-    </span><span class="kw">pub fn </span>new(store: SignedPacketStore) -&gt; <span class="self">Self </span>{
+    </span><span class="kw">pub fn </span>new(store: SignedPacketStore, metrics: Arc&lt;Metrics&gt;) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>zone_cache = ZoneCache::new(DEFAULT_CACHE_CAPACITY);
         <span class="self">Self </span>{
             store: Arc::new(store),
             cache: Arc::new(Mutex::new(zone_cache)),
             pkarr: <span class="prelude-val">None</span>,
+            metrics,
         }
     }
 
@@ -414,11 +424,11 @@
     </span><span class="kw">pub async fn </span>insert(<span class="kw-2">&amp;</span><span class="self">self</span>, signed_packet: SignedPacket, _source: PacketSource) -&gt; <span class="prelude-ty">Result</span>&lt;bool&gt; {
         <span class="kw">let </span>pubkey = PublicKeyBytes::from_signed_packet(<span class="kw-2">&amp;</span>signed_packet);
         <span class="kw">if </span><span class="self">self</span>.store.upsert(signed_packet).<span class="kw">await</span><span class="question-mark">? </span>{
-            <span class="macro">inc!</span>(Metrics, pkarr_publish_update);
+            <span class="self">self</span>.metrics.pkarr_publish_update.inc();
             <span class="self">self</span>.cache.lock().<span class="kw">await</span>.remove(<span class="kw-2">&amp;</span>pubkey);
             <span class="prelude-val">Ok</span>(<span class="bool-val">true</span>)
         } <span class="kw">else </span>{
-            <span class="macro">inc!</span>(Metrics, pkarr_publish_noop);
+            <span class="self">self</span>.metrics.pkarr_publish_noop.inc();
             <span class="prelude-val">Ok</span>(<span class="bool-val">false</span>)
         }
     }

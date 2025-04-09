@@ -6822,7 +6822,7 @@
     <span class="kw">fn </span>bind(
         addr_v4: <span class="prelude-ty">Option</span>&lt;SocketAddrV4&gt;,
         addr_v6: <span class="prelude-ty">Option</span>&lt;SocketAddrV6&gt;,
-        metrics: portmapper::Metrics,
+        metrics: Arc&lt;portmapper::Metrics&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>port_mapper = portmapper::Client::with_metrics(Default::default(), metrics);
         <span class="kw">let </span>(v4, v6) = <span class="self">Self</span>::bind_sockets(addr_v4, addr_v6)<span class="question-mark">?</span>;

@@ -1164,7 +1164,16 @@
 <a href="#1163" id="1163">1163</a>
 <a href="#1164" id="1164">1164</a>
 <a href="#1165" id="1165">1165</a>
-<a href="#1166" id="1166">1166</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#1166" id="1166">1166</a>
+<a href="#1167" id="1167">1167</a>
+<a href="#1168" id="1168">1168</a>
+<a href="#1169" id="1169">1169</a>
+<a href="#1170" id="1170">1170</a>
+<a href="#1171" id="1171">1171</a>
+<a href="#1172" id="1172">1172</a>
+<a href="#1173" id="1173">1173</a>
+<a href="#1174" id="1174">1174</a>
+<a href="#1175" id="1175">1175</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::HashMap, future::Future, net::SocketAddr, pin::Pin, sync::Arc, time::Duration,
 };
 
@@ -1179,7 +1188,6 @@
     upgrade::Upgraded,
     HeaderMap, Method, Request, Response, StatusCode,
 };
-<span class="kw">use </span>iroh_metrics::inc;
 <span class="kw">use </span>n0_future::{FutureExt, SinkExt};
 <span class="kw">use </span>tokio::net::{TcpListener, TcpStream};
 <span class="kw">use </span>tokio_rustls_acme::AcmeAcceptor;
@@ -1342,11 +1350,12 @@
     </span>key_cache_capacity: usize,
     <span class="doccomment">/// Access config for nodes.
     </span>access: AccessConfig,
+    metrics: Arc&lt;Metrics&gt;,
 }
 
 <span class="kw">impl </span>ServerBuilder {
     <span class="doccomment">/// Creates a new [ServerBuilder].
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(addr: SocketAddr) -&gt; <span class="self">Self </span>{
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(addr: SocketAddr, metrics: Arc&lt;Metrics&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             addr,
             tls_config: <span class="prelude-val">None</span>,
@@ -1355,6 +1364,7 @@
             client_rx_ratelimit: <span class="prelude-val">None</span>,
             key_cache_capacity: DEFAULT_KEY_CACHE_CAPACITY,
             access: AccessConfig::Everyone,
+            metrics,
         }
     }
 
@@ -1414,6 +1424,7 @@
             <span class="self">self</span>.client_rx_ratelimit,
             KeyCache::new(<span class="self">self</span>.key_cache_capacity),
             <span class="self">self</span>.access,
+            <span class="self">self</span>.metrics,
         );
 
         <span class="kw">let </span>addr = <span class="self">self</span>.addr;
@@ -1493,6 +1504,7 @@
     rate_limit: <span class="prelude-ty">Option</span>&lt;ClientRateLimit&gt;,
     key_cache: KeyCache,
     access: AccessConfig,
+    metrics: Arc&lt;Metrics&gt;,
 }
 
 <span class="kw">impl </span>RelayService {
@@ -1683,11 +1695,11 @@
         <span class="macro">trace!</span>(<span class="question-mark">?</span>protocol, <span class="string">"accept: start"</span>);
         <span class="kw">let </span><span class="kw-2">mut </span>io = <span class="kw">match </span>protocol {
             Protocol::Relay =&gt; {
-                <span class="macro">inc!</span>(Metrics, relay_accepts);
+                <span class="self">self</span>.metrics.relay_accepts.inc();
                 RelayedStream::Relay(Framed::new(io, RelayCodec::new(<span class="self">self</span>.key_cache.clone())))
             }
             Protocol::Websocket =&gt; {
-                <span class="macro">inc!</span>(Metrics, websocket_accepts);
+                <span class="self">self</span>.metrics.websocket_accepts.inc();
                 <span class="comment">// Since we already did the HTTP upgrade in the previous step,
                 // we use tokio-websockets to handle this connection
                 // Create a server builder with default config
@@ -1735,7 +1747,9 @@
 
         <span class="comment">// build and register client, starting up read &amp; write loops for the client
         // connection
-        </span><span class="self">self</span>.clients.register(client_conn_builder).<span class="kw">await</span>;
+        </span><span class="self">self</span>.clients
+            .register(client_conn_builder, <span class="self">self</span>.metrics.clone())
+            .<span class="kw">await</span>;
         <span class="prelude-val">Ok</span>(())
     }
 }
@@ -1757,6 +1771,7 @@
         rate_limit: <span class="prelude-ty">Option</span>&lt;ClientRateLimit&gt;,
         key_cache: KeyCache,
         access: AccessConfig,
+        metrics: Arc&lt;Metrics&gt;,
     ) -&gt; <span class="self">Self </span>{
         <span class="self">Self</span>(Arc::new(Inner {
             handlers,
@@ -1766,6 +1781,7 @@
             rate_limit,
             key_cache,
             access,
+            metrics,
         }))
     }
 
@@ -1927,7 +1943,7 @@
         <span class="kw">let </span>b_key = SecretKey::generate(rand::thread_rng());
 
         <span class="comment">// start server
-        </span><span class="kw">let </span>server = ServerBuilder::new(<span class="string">"127.0.0.1:0"</span>.parse().unwrap())
+        </span><span class="kw">let </span>server = ServerBuilder::new(<span class="string">"127.0.0.1:0"</span>.parse().unwrap(), Default::default())
             .spawn()
             .<span class="kw">await</span><span class="question-mark">?</span>;
 
@@ -2035,7 +2051,7 @@
         </span><span class="kw">let </span>tls_config = make_tls_config();
 
         <span class="comment">// start server
-        </span><span class="kw">let </span><span class="kw-2">mut </span>server = ServerBuilder::new(<span class="string">"127.0.0.1:0"</span>.parse().unwrap())
+        </span><span class="kw">let </span><span class="kw-2">mut </span>server = ServerBuilder::new(<span class="string">"127.0.0.1:0"</span>.parse().unwrap(), Default::default())
             .tls_config(<span class="prelude-val">Some</span>(tls_config))
             .spawn()
             .<span class="kw">await</span><span class="question-mark">?</span>;
@@ -2118,6 +2134,7 @@
             <span class="prelude-val">None</span>,
             KeyCache::test(),
             AccessConfig::Everyone,
+            Default::default(),
         );
 
         <span class="macro">info!</span>(<span class="string">"Create client A and connect it to the server."</span>);
@@ -2205,6 +2222,7 @@
             <span class="prelude-val">None</span>,
             KeyCache::test(),
             AccessConfig::Everyone,
+            Default::default(),
         );
 
         <span class="macro">info!</span>(<span class="string">"Create client A and connect it to the server."</span>);

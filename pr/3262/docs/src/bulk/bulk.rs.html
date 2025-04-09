@@ -170,40 +170,13 @@
 <a href="#169" id="169">169</a>
 <a href="#170" id="170">170</a>
 <a href="#171" id="171">171</a>
-<a href="#172" id="172">172</a>
-<a href="#173" id="173">173</a>
-<a href="#174" id="174">174</a>
-<a href="#175" id="175">175</a>
-<a href="#176" id="176">176</a>
-<a href="#177" id="177">177</a>
-<a href="#178" id="178">178</a>
-<a href="#179" id="179">179</a>
-<a href="#180" id="180">180</a>
-<a href="#181" id="181">181</a>
-<a href="#182" id="182">182</a>
-<a href="#183" id="183">183</a>
-<a href="#184" id="184">184</a>
-<a href="#185" id="185">185</a>
-<a href="#186" id="186">186</a>
-<a href="#187" id="187">187</a>
-<a href="#188" id="188">188</a>
-<a href="#189" id="189">189</a>
-<a href="#190" id="190">190</a>
-<a href="#191" id="191">191</a>
-<a href="#192" id="192">192</a>
-<a href="#193" id="193">193</a>
-<a href="#194" id="194">194</a>
-<a href="#195" id="195">195</a>
-<a href="#196" id="196">196</a>
-<a href="#197" id="197">197</a>
-<a href="#198" id="198">198</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::BTreeMap;
+<a href="#172" id="172">172</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::BTreeMap;
 
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>clap::Parser;
 <span class="attr">#[cfg(not(any(target_os = <span class="string">"freebsd"</span>, target_os = <span class="string">"openbsd"</span>, target_os = <span class="string">"netbsd"</span>)))]
 </span><span class="kw">use </span>iroh_bench::quinn;
 <span class="kw">use </span>iroh_bench::{configure_tracing_subscriber, iroh, rt, s2n, Commands, Opt};
-<span class="kw">use </span>iroh_metrics::core::MetricExt;
 
 <span class="kw">fn </span>main() {
     <span class="kw">let </span>cmd = Commands::parse();
@@ -230,27 +203,15 @@
 }
 
 <span class="kw">pub fn </span>run_iroh(opt: Opt) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-    <span class="kw">if </span>opt.metrics {
-        <span class="comment">// enable recording metrics
-        </span>iroh_metrics::core::Core::try_init(|reg, metrics| {
-            metrics.insert(::iroh::metrics::MagicsockMetrics::new(reg));
-            metrics.insert(::iroh::metrics::NetReportMetrics::new(reg));
-            metrics.insert(::iroh::metrics::PortmapMetrics::new(reg));
-            <span class="attr">#[cfg(feature = <span class="string">"local-relay"</span>)]
-            </span><span class="kw">if </span>opt.only_relay {
-                metrics.insert(::iroh::metrics::RelayMetrics::new(reg));
-            }
-        })<span class="question-mark">?</span>;
-    }
-
     <span class="kw">let </span>server_span = <span class="macro">tracing::error_span!</span>(<span class="string">"server"</span>);
     <span class="kw">let </span>runtime = rt();
 
     <span class="attr">#[cfg(feature = <span class="string">"local-relay"</span>)]
-    </span><span class="kw">let </span>(relay_url, _guard) = <span class="kw">if </span>opt.only_relay {
-        <span class="kw">let </span>(<span class="kw">_</span>, relay_url, _guard) = runtime.block_on(::iroh::test_utils::run_relay_server())<span class="question-mark">?</span>;
+    </span><span class="kw">let </span>(relay_url, relay_server) = <span class="kw">if </span>opt.only_relay {
+        <span class="kw">let </span>(<span class="kw">_</span>, relay_url, relay_server) =
+            runtime.block_on(::iroh::test_utils::run_relay_server())<span class="question-mark">?</span>;
 
-        (<span class="prelude-val">Some</span>(relay_url), <span class="prelude-val">Some</span>(_guard))
+        (<span class="prelude-val">Some</span>(relay_url), <span class="prelude-val">Some</span>(relay_server))
     } <span class="kw">else </span>{
         (<span class="prelude-val">None</span>, <span class="prelude-val">None</span>)
     };
@@ -261,6 +222,8 @@
         <span class="kw">let </span>_guard = server_span.enter();
         iroh::server_endpoint(<span class="kw-2">&amp;</span>runtime, <span class="kw-2">&amp;</span>relay_url, <span class="kw-2">&amp;</span>opt)
     };
+
+    <span class="kw">let </span>endpoint_metrics = endpoint.metrics().clone();
 
     <span class="kw">let </span>server_thread = std::thread::spawn(<span class="kw">move </span>|| {
         <span class="kw">let </span>_guard = server_span.entered();
@@ -296,27 +259,15 @@
 
     <span class="kw">if </span>opt.metrics {
         <span class="comment">// print metrics
-        </span><span class="kw">let </span>core =
-            iroh_metrics::core::Core::get().ok_or_else(|| <span class="macro">anyhow::anyhow!</span>(<span class="string">"Missing metrics"</span>))<span class="question-mark">?</span>;
-        <span class="macro">println!</span>(<span class="string">"\nMetrics:"</span>);
-        collect_and_print(
-            <span class="string">"MagicsockMetrics"</span>,
-            core.get_collector::&lt;::iroh::metrics::MagicsockMetrics&gt;(),
-        );
-        collect_and_print(
-            <span class="string">"NetReportMetrics"</span>,
-            core.get_collector::&lt;::iroh::metrics::NetReportMetrics&gt;(),
-        );
-        collect_and_print(
-            <span class="string">"PortmapMetrics"</span>,
-            core.get_collector::&lt;::iroh::metrics::PortmapMetrics&gt;(),
-        );
-        <span class="comment">// if None, (this is the case if opt.only_relay is false), then this is skipped internally:
-        </span><span class="attr">#[cfg(feature = <span class="string">"local-relay"</span>)]
-        </span>collect_and_print(
-            <span class="string">"RelayMetrics"</span>,
-            core.get_collector::&lt;::iroh::metrics::RelayMetrics&gt;(),
-        );
+        </span><span class="macro">println!</span>(<span class="string">"\nMetrics:"</span>);
+        collect_and_print(<span class="string">"MagicsockMetrics"</span>, <span class="kw-2">&amp;*</span>endpoint_metrics.magicsock);
+        collect_and_print(<span class="string">"NetReportMetrics"</span>, <span class="kw-2">&amp;*</span>endpoint_metrics.net_report);
+        collect_and_print(<span class="string">"PortmapMetrics"</span>, <span class="kw-2">&amp;*</span>endpoint_metrics.portmapper);
+        <span class="attr">#[cfg(feature = <span class="string">"local-relay"</span>)]
+        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(relay_server) = relay_server.as_ref() {
+            collect_and_print(<span class="string">"RelayServerMetrics"</span>, <span class="kw-2">&amp;*</span>relay_server.metrics().server);
+            collect_and_print(<span class="string">"RelayStunMetrics"</span>, <span class="kw-2">&amp;*</span>relay_server.metrics().stun);
+        }
     }
 
     server_thread.join().expect(<span class="string">"server thread"</span>);
@@ -381,14 +332,11 @@
 
 <span class="kw">fn </span>collect_and_print(
     category: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
-    metrics: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span><span class="kw">impl </span>iroh_metrics::struct_iterable::Iterable&gt;,
+    metrics: <span class="kw-2">&amp;</span><span class="kw">impl </span>iroh_metrics::struct_iterable::Iterable,
 ) {
-    <span class="kw">let </span><span class="prelude-val">Some</span>(metrics) = metrics <span class="kw">else </span>{
-        <span class="kw">return</span>;
-    };
     <span class="kw">let </span><span class="kw-2">mut </span>map = BTreeMap::new();
     <span class="kw">for </span>(name, counter) <span class="kw">in </span>metrics.iter() {
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(counter) = counter.downcast_ref::&lt;iroh_metrics::core::Counter&gt;() {
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(counter) = counter.downcast_ref::&lt;iroh_metrics::Counter&gt;() {
             map.insert(name.to_string(), counter.get());
         }
     }

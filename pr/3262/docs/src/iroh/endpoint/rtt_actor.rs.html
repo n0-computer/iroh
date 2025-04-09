@@ -171,7 +171,7 @@
 <a href="#170" id="170">170</a>
 <a href="#171" id="171">171</a></pre></div><pre class="rust"><code><span class="doccomment">//! Actor which coordinates the congestion controller for the magic socket
 
-</span><span class="kw">use </span>std::{pin::Pin, task::Poll};
+</span><span class="kw">use </span>std::{pin::Pin, sync::Arc, task::Poll};
 
 <span class="kw">use </span>iroh_base::NodeId;
 <span class="kw">use </span>n0_future::{
@@ -191,7 +191,7 @@
 }
 
 <span class="kw">impl </span>RttHandle {
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(metrics: MagicsockMetrics) -&gt; <span class="self">Self </span>{
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(metrics: Arc&lt;MagicsockMetrics&gt;) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span><span class="kw-2">mut </span>actor = RttActor {
             connection_events: Default::default(),
             metrics,
@@ -233,7 +233,7 @@
     <span class="doccomment">/// Stream of connection type changes.
     </span><span class="attr">#[debug(<span class="string">"MergeUnbounded&lt;WatcherStream&lt;ConnectionType&gt;&gt;"</span>)]
     </span>connection_events: MergeUnbounded&lt;MappedStream&gt;,
-    metrics: MagicsockMetrics,
+    metrics: Arc&lt;MagicsockMetrics&gt;,
 }
 
 <span class="attr">#[derive(Debug)]

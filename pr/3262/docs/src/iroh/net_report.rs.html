@@ -1642,7 +1642,7 @@
         <span class="attr">#[cfg(not(wasm_browser))] </span>port_mapper: <span class="prelude-ty">Option</span>&lt;portmapper::Client&gt;,
         <span class="attr">#[cfg(not(wasm_browser))] </span>dns_resolver: DnsResolver,
         <span class="attr">#[cfg(not(wasm_browser))] </span>ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddresses&gt;,
-        metrics: Metrics,
+        metrics: Arc&lt;Metrics&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>actor = Actor::new(
             <span class="attr">#[cfg(not(wasm_browser))]
@@ -1799,7 +1799,7 @@
 </span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>Addr {
     sender: mpsc::Sender&lt;Message&gt;,
-    metrics: Metrics,
+    metrics: Arc&lt;Metrics&gt;,
 }
 
 <span class="kw">impl </span>Addr {
@@ -1875,7 +1875,7 @@
     <span class="doccomment">/// The [`IpMappedAddresses`] that allows you to do QAD in iroh
     </span><span class="attr">#[cfg(not(wasm_browser))]
     </span>ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddresses&gt;,
-    metrics: Metrics,
+    metrics: Arc&lt;Metrics&gt;,
 }
 
 <span class="kw">impl </span>Actor {
@@ -1887,7 +1887,7 @@
         <span class="attr">#[cfg(not(wasm_browser))] </span>port_mapper: <span class="prelude-ty">Option</span>&lt;portmapper::Client&gt;,
         <span class="attr">#[cfg(not(wasm_browser))] </span>dns_resolver: DnsResolver,
         <span class="attr">#[cfg(not(wasm_browser))] </span>ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddresses&gt;,
-        metrics: Metrics,
+        metrics: Arc&lt;Metrics&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="comment">// TODO: consider an instrumented flume channel so we have metrics.
         </span><span class="kw">let </span>(sender, receiver) = mpsc::channel(<span class="number">32</span>);

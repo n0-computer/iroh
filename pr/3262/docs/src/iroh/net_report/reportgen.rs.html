@@ -1869,7 +1869,7 @@
         last_report: <span class="prelude-ty">Option</span>&lt;Arc&lt;Report&gt;&gt;,
         relay_map: RelayMap,
         protocols: BTreeSet&lt;ProbeProto&gt;,
-        metrics: Metrics,
+        metrics: Arc&lt;Metrics&gt;,
         <span class="attr">#[cfg(not(wasm_browser))] </span>socket_state: SocketState,
     ) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>(msg_tx, msg_rx) = mpsc::channel(<span class="number">32</span>);
@@ -1970,7 +1970,7 @@
     <span class="doccomment">/// The hairpin actor.
     </span><span class="attr">#[cfg(not(wasm_browser))]
     </span>hairpin_actor: hairpin::Client,
-    metrics: Metrics,
+    metrics: Arc&lt;Metrics&gt;,
 }
 
 <span class="kw">impl </span>Actor {
@@ -2512,7 +2512,7 @@
     relay_node: Arc&lt;RelayNode&gt;,
     probe: Probe,
     net_report: net_report::Addr,
-    metrics: Metrics,
+    metrics: Arc&lt;Metrics&gt;,
     <span class="attr">#[cfg(not(wasm_browser))] </span>pinger: Pinger,
     <span class="attr">#[cfg(not(wasm_browser))] </span>socket_state: SocketState,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;ProbeReport, ProbeError&gt; {

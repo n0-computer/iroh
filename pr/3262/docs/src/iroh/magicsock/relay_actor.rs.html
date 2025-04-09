@@ -1790,7 +1790,7 @@
     </span>inactive_timeout: Pin&lt;Box&lt;time::Sleep&gt;&gt;,
     <span class="doccomment">/// Token indicating the [`ActiveRelayActor`] should stop.
     </span>stop_token: CancellationToken,
-    metrics: MagicsockMetrics,
+    metrics: Arc&lt;MagicsockMetrics&gt;,
 }
 
 <span class="attr">#[derive(Debug)]
@@ -1833,7 +1833,7 @@
     relay_datagrams_recv: Arc&lt;RelayDatagramRecvQueue&gt;,
     connection_opts: RelayConnectionOptions,
     stop_token: CancellationToken,
-    metrics: MagicsockMetrics,
+    metrics: Arc&lt;MagicsockMetrics&gt;,
 }
 
 <span class="doccomment">/// Configuration needed to create a connection to a relay server.

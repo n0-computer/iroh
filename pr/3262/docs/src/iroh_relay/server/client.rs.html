@@ -788,7 +788,24 @@
 <a href="#787" id="787">787</a>
 <a href="#788" id="788">788</a>
 <a href="#789" id="789">789</a>
-<a href="#790" id="790">790</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
+<a href="#790" id="790">790</a>
+<a href="#791" id="791">791</a>
+<a href="#792" id="792">792</a>
+<a href="#793" id="793">793</a>
+<a href="#794" id="794">794</a>
+<a href="#795" id="795">795</a>
+<a href="#796" id="796">796</a>
+<a href="#797" id="797">797</a>
+<a href="#798" id="798">798</a>
+<a href="#799" id="799">799</a>
+<a href="#800" id="800">800</a>
+<a href="#801" id="801">801</a>
+<a href="#802" id="802">802</a>
+<a href="#803" id="803">803</a>
+<a href="#804" id="804">804</a>
+<a href="#805" id="805">805</a>
+<a href="#806" id="806">806</a>
+<a href="#807" id="807">807</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
 
 </span><span class="kw">use </span>std::{
     collections::HashSet, future::Future, num::NonZeroU32, pin::Pin, sync::Arc, task::Poll,
@@ -798,7 +815,6 @@
 <span class="kw">use </span>anyhow::{bail, Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>iroh_base::NodeId;
-<span class="kw">use </span>iroh_metrics::{inc, inc_by};
 <span class="kw">use </span>n0_future::{FutureExt, Sink, SinkExt, Stream, StreamExt};
 <span class="kw">use </span>rand::Rng;
 <span class="kw">use </span>time::{Date, OffsetDateTime};
@@ -863,7 +879,12 @@
     <span class="doccomment">/// Creates a client from a connection &amp; starts a read and write loop to handle io to and from
     /// the client
     /// Call [`Client::shutdown`] to close the read and write loops before dropping the [`Client`]
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(config: Config, connection_id: u64, clients: <span class="kw-2">&amp;</span>Clients) -&gt; Client {
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(
+        config: Config,
+        connection_id: u64,
+        clients: <span class="kw-2">&amp;</span>Clients,
+        metrics: Arc&lt;Metrics&gt;,
+    ) -&gt; Client {
         <span class="kw">let </span>Config {
             node_id,
             stream: io,
@@ -879,9 +900,9 @@
                     quota = quota.allow_burst(max_burst);
                 }
                 <span class="kw">let </span>limiter = governor::RateLimiter::direct(quota);
-                RateLimitedRelayedStream::new(io, limiter)
+                RateLimitedRelayedStream::new(io, limiter, metrics.clone())
             }
-            <span class="prelude-val">None </span>=&gt; RateLimitedRelayedStream::unlimited(io),
+            <span class="prelude-val">None </span>=&gt; RateLimitedRelayedStream::unlimited(io, metrics.clone()),
         };
 
         <span class="kw">let </span>done = CancellationToken::new();
@@ -901,6 +922,7 @@
             clients: clients.clone(),
             client_counter: ClientCounter::default(),
             ping_tracker: PingTracker::default(),
+            metrics,
         };
 
         <span class="comment">// start io loop
@@ -1003,6 +1025,7 @@
     <span class="doccomment">/// Statistics about the connected clients
     </span>client_counter: ClientCounter,
     ping_tracker: PingTracker,
+    metrics: Arc&lt;Metrics&gt;,
 }
 
 <span class="kw">impl </span>Actor {
@@ -1010,9 +1033,9 @@
         <span class="comment">// Note the accept and disconnects metrics must be in a pair.  Technically the
         // connection is accepted long before this in the HTTP server, but it is clearer to
         // handle the metric here.
-        </span><span class="macro">inc!</span>(Metrics, accepts);
+        </span><span class="self">self</span>.metrics.accepts.inc();
         <span class="kw">if </span><span class="self">self</span>.client_counter.update(<span class="self">self</span>.node_id) {
-            <span class="macro">inc!</span>(Metrics, unique_client_keys);
+            <span class="self">self</span>.metrics.unique_client_keys.inc();
         }
         <span class="kw">match </span><span class="self">self</span>.run_inner(done).<span class="kw">await </span>{
             <span class="prelude-val">Err</span>(e) =&gt; {
@@ -1024,7 +1047,7 @@
         }
 
         <span class="self">self</span>.clients.unregister(<span class="self">self</span>.connection_id, <span class="self">self</span>.node_id);
-        <span class="macro">inc!</span>(Metrics, disconnects);
+        <span class="self">self</span>.metrics.disconnects.inc();
     }
 
     <span class="kw">async fn </span>run_inner(<span class="kw-2">&amp;mut </span><span class="self">self</span>, done: CancellationToken) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
@@ -1104,7 +1127,7 @@
         <span class="kw">let </span>content = packet.data;
 
         <span class="kw">if let </span><span class="prelude-val">Ok</span>(len) = content.len().try_into() {
-            <span class="macro">inc_by!</span>(Metrics, bytes_sent, len);
+            <span class="self">self</span>.metrics.bytes_sent.inc_by(len);
         }
         <span class="self">self</span>.write_frame(Frame::RecvPacket { src_key, content })
             .<span class="kw">await
@@ -1114,11 +1137,11 @@
         <span class="macro">trace!</span>(<span class="string">"send packet"</span>);
         <span class="kw">match </span><span class="self">self</span>.send_raw(packet).<span class="kw">await </span>{
             <span class="prelude-val">Ok</span>(()) =&gt; {
-                <span class="macro">inc!</span>(Metrics, send_packets_sent);
+                <span class="self">self</span>.metrics.send_packets_sent.inc();
                 <span class="prelude-val">Ok</span>(())
             }
             <span class="prelude-val">Err</span>(err) =&gt; {
-                <span class="macro">inc!</span>(Metrics, send_packets_dropped);
+                <span class="self">self</span>.metrics.send_packets_dropped.inc();
                 <span class="prelude-val">Err</span>(err)
             }
         }
@@ -1128,11 +1151,11 @@
         <span class="macro">trace!</span>(<span class="string">"send disco packet"</span>);
         <span class="kw">match </span><span class="self">self</span>.send_raw(packet).<span class="kw">await </span>{
             <span class="prelude-val">Ok</span>(()) =&gt; {
-                <span class="macro">inc!</span>(Metrics, disco_packets_sent);
+                <span class="self">self</span>.metrics.disco_packets_sent.inc();
                 <span class="prelude-val">Ok</span>(())
             }
             <span class="prelude-val">Err</span>(err) =&gt; {
-                <span class="macro">inc!</span>(Metrics, disco_packets_dropped);
+                <span class="self">self</span>.metrics.disco_packets_dropped.inc();
                 <span class="prelude-val">Err</span>(err)
             }
         }
@@ -1150,13 +1173,13 @@
             Frame::SendPacket { dst_key, packet } =&gt; {
                 <span class="kw">let </span>packet_len = packet.len();
                 <span class="self">self</span>.handle_frame_send_packet(dst_key, packet)<span class="question-mark">?</span>;
-                <span class="macro">inc_by!</span>(Metrics, bytes_recv, packet_len <span class="kw">as </span>u64);
+                <span class="self">self</span>.metrics.bytes_recv.inc_by(packet_len <span class="kw">as </span>u64);
             }
             Frame::Ping { data } =&gt; {
-                <span class="macro">inc!</span>(Metrics, got_ping);
+                <span class="self">self</span>.metrics.got_ping.inc();
                 <span class="comment">// TODO: add rate limiter
                 </span><span class="self">self</span>.write_frame(Frame::Pong { data }).<span class="kw">await</span><span class="question-mark">?</span>;
-                <span class="macro">inc!</span>(Metrics, sent_pong);
+                <span class="self">self</span>.metrics.sent_pong.inc();
             }
             Frame::Pong { data } =&gt; {
                 <span class="self">self</span>.ping_tracker.pong_received(data);
@@ -1165,7 +1188,7 @@
                 <span class="macro">bail!</span>(<span class="string">"server issue: {:?}"</span>, problem);
             }
             <span class="kw">_ </span>=&gt; {
-                <span class="macro">inc!</span>(Metrics, unknown_frames);
+                <span class="self">self</span>.metrics.unknown_frames.inc();
             }
         }
         <span class="prelude-val">Ok</span>(())
@@ -1173,11 +1196,13 @@
 
     <span class="kw">fn </span>handle_frame_send_packet(<span class="kw-2">&amp;</span><span class="self">self</span>, dst: NodeId, data: Bytes) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">if </span>disco::looks_like_disco_wrapper(<span class="kw-2">&amp;</span>data) {
-            <span class="macro">inc!</span>(Metrics, disco_packets_recv);
-            <span class="self">self</span>.clients.send_disco_packet(dst, data, <span class="self">self</span>.node_id)<span class="question-mark">?</span>;
+            <span class="self">self</span>.metrics.disco_packets_recv.inc();
+            <span class="self">self</span>.clients
+                .send_disco_packet(dst, data, <span class="self">self</span>.node_id, <span class="kw-2">&amp;</span><span class="self">self</span>.metrics)<span class="question-mark">?</span>;
         } <span class="kw">else </span>{
-            <span class="macro">inc!</span>(Metrics, send_packets_recv);
-            <span class="self">self</span>.clients.send_packet(dst, data, <span class="self">self</span>.node_id)<span class="question-mark">?</span>;
+            <span class="self">self</span>.metrics.send_packets_recv.inc();
+            <span class="self">self</span>.clients
+                .send_packet(dst, data, <span class="self">self</span>.node_id, <span class="kw-2">&amp;</span><span class="self">self</span>.metrics)<span class="question-mark">?</span>;
         }
         <span class="prelude-val">Ok</span>(())
     }
@@ -1196,6 +1221,7 @@
     state: State,
     <span class="doccomment">/// Keeps track if this stream was ever rate-limited.
     </span>limited_once: bool,
+    metrics: Arc&lt;Metrics&gt;,
 }
 
 <span class="attr">#[derive(derive_more::Debug)]
@@ -1211,21 +1237,27 @@
 }
 
 <span class="kw">impl </span>RateLimitedRelayedStream {
-    <span class="kw">fn </span>new(inner: RelayedStream, limiter: governor::DefaultDirectRateLimiter) -&gt; <span class="self">Self </span>{
+    <span class="kw">fn </span>new(
+        inner: RelayedStream,
+        limiter: governor::DefaultDirectRateLimiter,
+        metrics: Arc&lt;Metrics&gt;,
+    ) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             inner,
             limiter: <span class="prelude-val">Some</span>(Arc::new(limiter)),
             state: State::Ready,
             limited_once: <span class="bool-val">false</span>,
+            metrics,
         }
     }
 
-    <span class="kw">fn </span>unlimited(inner: RelayedStream) -&gt; <span class="self">Self </span>{
+    <span class="kw">fn </span>unlimited(inner: RelayedStream, metrics: Arc&lt;Metrics&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             inner,
             limiter: <span class="prelude-val">None</span>,
             state: State::Ready,
             limited_once: <span class="bool-val">false</span>,
+            metrics,
         }
     }
 }
@@ -1234,9 +1266,9 @@
     <span class="doccomment">/// Records metrics about being rate-limited.
     </span><span class="kw">fn </span>record_rate_limited(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
         <span class="comment">// TODO: add a label for the frame type.
-        </span><span class="macro">inc!</span>(Metrics, frames_rx_ratelimited_total);
+        </span><span class="self">self</span>.metrics.frames_rx_ratelimited_total.inc();
         <span class="kw">if </span>!<span class="self">self</span>.limited_once {
-            <span class="macro">inc!</span>(Metrics, conns_rx_ratelimited_total);
+            <span class="self">self</span>.metrics.conns_rx_ratelimited_total.inc();
             <span class="self">self</span>.limited_once = <span class="bool-val">true</span>;
         }
     }
@@ -1418,8 +1450,9 @@
             RelayedStream::Relay(Framed::new(MaybeTlsStream::Test(io), RelayCodec::test()));
 
         <span class="kw">let </span>clients = Clients::default();
+        <span class="kw">let </span>metrics = Arc::new(Metrics::default());
         <span class="kw">let </span>actor = Actor {
-            stream: RateLimitedRelayedStream::unlimited(stream),
+            stream: RateLimitedRelayedStream::unlimited(stream, metrics.clone()),
             timeout: Duration::from_secs(<span class="number">1</span>),
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
@@ -1429,6 +1462,7 @@
             clients: clients.clone(),
             client_counter: ClientCounter::default(),
             ping_tracker: PingTracker::default(),
+            metrics,
         };
 
         <span class="kw">let </span>done = CancellationToken::new();
@@ -1532,7 +1566,7 @@
             MaybeTlsStream::Test(io_read),
             RelayCodec::test(),
         ));
-        <span class="kw">let </span><span class="kw-2">mut </span>stream = RateLimitedRelayedStream::new(stream, limiter);
+        <span class="kw">let </span><span class="kw-2">mut </span>stream = RateLimitedRelayedStream::new(stream, limiter, Default::default());
 
         <span class="comment">// Prepare a frame to send, assert its size.
         </span><span class="kw">let </span>data = Bytes::from_static(<span class="string">b"hello world!!"</span>);

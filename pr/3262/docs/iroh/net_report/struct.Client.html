@@ -9,7 +9,7 @@ If all <a href="struct.Client.html" title="struct iroh::net_report::Client"><cod
     port_mapper: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;Client&gt;,
     dns_resolver: <a class="struct" href="../dns/struct.DnsResolver.html" title="struct iroh::dns::DnsResolver">DnsResolver</a>,
     ip_mapped_addrs: <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;IpMappedAddresses&gt;,
-    metrics: <a class="struct" href="struct.Metrics.html" title="struct iroh::net_report::Metrics">Metrics</a>,
+    metrics: <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/sync/struct.Arc.html" title="struct alloc::sync::Arc">Arc</a>&lt;<a class="struct" href="struct.Metrics.html" title="struct iroh::net_report::Metrics">Metrics</a>&gt;,
 ) -&gt; <a class="type" href="https://docs.rs/anyhow/1.0.95/anyhow/type.Result.html" title="type anyhow::Result">Result</a>&lt;Self&gt;</h4></section></summary><div class="docblock"><p>Creates a new net_report client.</p>
 <p>This starts a connected actor in the background.  Once the client is dropped it will
 stop running.</p>

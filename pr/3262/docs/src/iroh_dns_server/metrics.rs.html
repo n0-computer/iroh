@@ -54,18 +54,9 @@
 <a href="#53" id="53">53</a>
 <a href="#54" id="54">54</a>
 <a href="#55" id="55">55</a>
-<a href="#56" id="56">56</a>
-<a href="#57" id="57">57</a>
-<a href="#58" id="58">58</a>
-<a href="#59" id="59">59</a>
-<a href="#60" id="60">60</a>
-<a href="#61" id="61">61</a>
-<a href="#62" id="62">62</a>
-<a href="#63" id="63">63</a>
-<a href="#64" id="64">64</a></pre></div><pre class="rust"><code><span class="doccomment">//! Metrics support for the server
+<a href="#56" id="56">56</a></pre></div><pre class="rust"><code><span class="doccomment">//! Metrics support for the server
 
-</span><span class="kw">use </span>iroh_metrics::core::{Core, Counter, Metric, MetricExt};
-<span class="kw">use </span>struct_iterable::Iterable;
+</span><span class="kw">use </span>iroh_metrics::{struct_iterable::Iterable, Counter, MetricsGroup};
 
 <span class="doccomment">/// Metrics for iroh-dns-server
 </span><span class="attr">#[derive(Debug, Clone, Iterable)]
@@ -114,16 +105,9 @@
     }
 }
 
-<span class="kw">impl </span>Metric <span class="kw">for </span>Metrics {
+<span class="kw">impl </span>MetricsGroup <span class="kw">for </span>Metrics {
     <span class="kw">fn </span>name(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str {
         <span class="string">"dns_server"
     </span>}
-}
-
-<span class="doccomment">/// Init the metrics collection core.
-</span><span class="kw">pub fn </span>init_metrics() {
-    Core::init(|reg, metrics| {
-        metrics.insert(Metrics::new(reg));
-    });
 }
 </code></pre></div></section></main></body></html>

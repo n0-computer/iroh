@@ -467,7 +467,7 @@
             max_batch_time: Duration::from_millis(<span class="number">100</span>),
             ..Default::default()
         };
-        <span class="kw">let </span>store = ZoneStore::in_memory(options)<span class="question-mark">?</span>;
+        <span class="kw">let </span>store = ZoneStore::in_memory(options, Default::default())<span class="question-mark">?</span>;
 
         <span class="comment">// create a signed packet
         </span><span class="kw">let </span>signed_packet = random_signed_packet()<span class="question-mark">?</span>;
