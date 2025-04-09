@@ -94,7 +94,8 @@
 <a href="#93" id="93">93</a>
 <a href="#94" id="94">94</a>
 <a href="#95" id="95">95</a>
-<a href="#96" id="96">96</a></pre></div><pre class="rust"><code><span class="doccomment">//! Co-locating all of the iroh metrics structs
+<a href="#96" id="96">96</a>
+<a href="#97" id="97">97</a></pre></div><pre class="rust"><code><span class="doccomment">//! Co-locating all of the iroh metrics structs
 </span><span class="kw">use </span>std::sync::Arc;
 
 <span class="kw">use </span>iroh_metrics::{MetricsGroup, MetricsGroupSet};
@@ -122,7 +123,7 @@
 /// # }
 /// ```
 ///
-/// [`EndpointMetrics] implements [`MetricsGroupSet`], and all fields of this struct implement
+/// [`EndpointMetrics`] implements [`MetricsGroupSet`], and all fields of this struct implement
 /// implement [`iroh_metrics::MetricsGroup`]. These trait provides various methods to iterate
 /// the groups in the set, and over the individual metrics in each group, without having
 /// to access each field manually. With these methods, it is straightforward to collect
@@ -151,13 +152,14 @@
 /// # }
 /// ```
 ///
-/// The metrics can also be used with the types from the `prometheus_client` crate.
+/// The metrics can also be used with the types from the [`prometheus_client`] crate.
 /// With [`EndpointMetrics::register`], you can register all metrics onto a onto a
-/// [`prometheus_client::Registry`]. [`iroh_metrics`] provides functions to easily start
-/// services to serve the metrics with a HTTP server, dump them to a file, or push them
-/// to a Prometheus gateway. See the `service` module in `iroh_metrics` for details.
+/// [`Registry`]. [`iroh_metrics`] provides functions to easily start services
+/// to serve the metrics with a HTTP server, dump them to a file, or push them
+/// to a Prometheus gateway. See the `service` module in [`iroh_metrics`] for details.
 ///
-/// [`prometheus_client::Registry`]: https://docs.rs/prometheus-client/latest/prometheus_client/registry/struct.Registry.html
+/// [`prometheus_client`]: https://docs.rs/prometheus-client/latest/prometheus_client/index.html
+/// [`Registry`]: https://docs.rs/prometheus-client/latest/prometheus_client/registry/struct.Registry.html
 </span><span class="attr">#[derive(Default, Debug, Clone)]
 </span><span class="kw">pub struct </span>EndpointMetrics {
     <span class="doccomment">/// Metrics collected by the endpoint's socket.

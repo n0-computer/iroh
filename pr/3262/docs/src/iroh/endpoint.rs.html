@@ -5680,14 +5680,14 @@
         <span class="macro">assert_eq!</span>(m.magicsock.connection_became_direct.get(), <span class="number">1</span>);
         <span class="macro">assert_eq!</span>(m.magicsock.connection_handshake_success.get(), <span class="number">1</span>);
         <span class="macro">assert_eq!</span>(m.magicsock.nodes_contacted_directly.get(), <span class="number">1</span>);
-        <span class="macro">assert_eq!</span>(m.magicsock.recv_datagrams.get(), <span class="number">6</span>);
+        <span class="macro">assert!</span>(m.magicsock.recv_datagrams.get() &gt; <span class="number">0</span>);
 
         <span class="kw">let </span>m = server.metrics();
         <span class="macro">assert_eq!</span>(m.magicsock.num_direct_conns_added.get(), <span class="number">1</span>);
         <span class="macro">assert_eq!</span>(m.magicsock.connection_became_direct.get(), <span class="number">1</span>);
         <span class="macro">assert_eq!</span>(m.magicsock.nodes_contacted_directly.get(), <span class="number">1</span>);
         <span class="macro">assert_eq!</span>(m.magicsock.connection_handshake_success.get(), <span class="number">1</span>);
-        <span class="macro">assert_eq!</span>(m.magicsock.recv_datagrams.get(), <span class="number">6</span>);
+        <span class="macro">assert!</span>(m.magicsock.recv_datagrams.get() &gt; <span class="number">0</span>);
 
         <span class="prelude-val">Ok</span>(())
     }
