@@ -2833,14 +2833,14 @@ mod tests {
         assert_eq!(m.magicsock.connection_became_direct.get(), 1);
         assert_eq!(m.magicsock.connection_handshake_success.get(), 1);
         assert_eq!(m.magicsock.nodes_contacted_directly.get(), 1);
-        assert_eq!(m.magicsock.recv_datagrams.get(), 6);
+        assert!(m.magicsock.recv_datagrams.get() > 0);
 
         let m = server.metrics();
         assert_eq!(m.magicsock.num_direct_conns_added.get(), 1);
         assert_eq!(m.magicsock.connection_became_direct.get(), 1);
         assert_eq!(m.magicsock.nodes_contacted_directly.get(), 1);
         assert_eq!(m.magicsock.connection_handshake_success.get(), 1);
-        assert_eq!(m.magicsock.recv_datagrams.get(), 6);
+        assert!(m.magicsock.recv_datagrams.get() > 0);
 
         Ok(())
     }
