@@ -247,7 +247,7 @@ impl Client {
         #[cfg(not(wasm_browser))] port_mapper: Option<portmapper::Client>,
         #[cfg(not(wasm_browser))] dns_resolver: DnsResolver,
         #[cfg(not(wasm_browser))] ip_mapped_addrs: Option<IpMappedAddresses>,
-        metrics: Metrics,
+        metrics: Arc<Metrics>,
     ) -> Result<Self> {
         let mut actor = Actor::new(
             #[cfg(not(wasm_browser))]
@@ -404,7 +404,7 @@ pub(crate) enum Message {
 #[derive(Debug, Clone)]
 pub struct Addr {
     sender: mpsc::Sender<Message>,
-    metrics: Metrics,
+    metrics: Arc<Metrics>,
 }
 
 impl Addr {
@@ -480,7 +480,7 @@ struct Actor {
     /// The [`IpMappedAddresses`] that allows you to do QAD in iroh
     #[cfg(not(wasm_browser))]
     ip_mapped_addrs: Option<IpMappedAddresses>,
-    metrics: Metrics,
+    metrics: Arc<Metrics>,
 }
 
 impl Actor {
@@ -492,7 +492,7 @@ impl Actor {
         #[cfg(not(wasm_browser))] port_mapper: Option<portmapper::Client>,
         #[cfg(not(wasm_browser))] dns_resolver: DnsResolver,
         #[cfg(not(wasm_browser))] ip_mapped_addrs: Option<IpMappedAddresses>,
-        metrics: Metrics,
+        metrics: Arc<Metrics>,
     ) -> Result<Self> {
         // TODO: consider an instrumented flume channel so we have metrics.
         let (sender, receiver) = mpsc::channel(32);

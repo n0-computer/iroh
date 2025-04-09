@@ -156,7 +156,7 @@ struct ActiveRelayActor {
     inactive_timeout: Pin<Box<time::Sleep>>,
     /// Token indicating the [`ActiveRelayActor`] should stop.
     stop_token: CancellationToken,
-    metrics: MagicsockMetrics,
+    metrics: Arc<MagicsockMetrics>,
 }
 
 #[derive(Debug)]
@@ -199,7 +199,7 @@ struct ActiveRelayActorOptions {
     relay_datagrams_recv: Arc<RelayDatagramRecvQueue>,
     connection_opts: RelayConnectionOptions,
     stop_token: CancellationToken,
-    metrics: MagicsockMetrics,
+    metrics: Arc<MagicsockMetrics>,
 }
 
 /// Configuration needed to create a connection to a relay server.
