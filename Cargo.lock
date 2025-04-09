@@ -2398,7 +2398,7 @@ dependencies = [
 [[package]]
 name = "iroh-metrics"
 version = "0.32.0"
-source = "git+https://github.com/n0-computer/iroh-metrics?branch=Frando/refactor#83b0335857dcfe379ffbf4e854851f209ddeeb6c"
+source = "git+https://github.com/n0-computer/iroh-metrics?branch=Frando/refactor#edca9ebc27d6ef7ba10a99b340356e8ff1c197f5"
 dependencies = [
  "http-body-util",
  "hyper",
@@ -5581,7 +5581,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

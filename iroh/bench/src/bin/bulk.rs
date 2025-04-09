@@ -5,7 +5,6 @@ use clap::Parser;
 #[cfg(not(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
 use iroh_bench::quinn;
 use iroh_bench::{configure_tracing_subscriber, iroh, rt, s2n, Commands, Opt};
-use iroh_metrics::core::MetricExt;
 
 fn main() {
     let cmd = Commands::parse();
@@ -32,27 +31,15 @@ fn main() {
 }
 
 pub fn run_iroh(opt: Opt) -> Result<()> {
-    if opt.metrics {
-        // enable recording metrics
-        iroh_metrics::core::Core::try_init(|reg, metrics| {
-            metrics.insert(::iroh::metrics::MagicsockMetrics::new(reg));
-            metrics.insert(::iroh::metrics::NetReportMetrics::new(reg));
-            metrics.insert(::iroh::metrics::PortmapMetrics::new(reg));
-            #[cfg(feature = "local-relay")]
-            if opt.only_relay {
-                metrics.insert(::iroh::metrics::RelayMetrics::new(reg));
-            }
-        })?;
-    }
-
     let server_span = tracing::error_span!("server");
     let runtime = rt();
 
     #[cfg(feature = "local-relay")]
-    let (relay_url, _guard) = if opt.only_relay {
-        let (_, relay_url, _guard) = runtime.block_on(::iroh::test_utils::run_relay_server())?;
+    let (relay_url, relay_server) = if opt.only_relay {
+        let (_, relay_url, relay_server) =
+            runtime.block_on(::iroh::test_utils::run_relay_server())?;
 
-        (Some(relay_url), Some(_guard))
+        (Some(relay_url), Some(relay_server))
     } else {
         (None, None)
     };
@@ -63,6 +50,8 @@ pub fn run_iroh(opt: Opt) -> Result<()> {
         let _guard = server_span.enter();
         iroh::server_endpoint(&runtime, &relay_url, &opt)
     };
+
+    let endpoint_metrics = endpoint.metrics().clone();
 
     let server_thread = std::thread::spawn(move || {
         let _guard = server_span.entered();
@@ -98,27 +87,15 @@ pub fn run_iroh(opt: Opt) -> Result<()> {
 
     if opt.metrics {
         // print metrics
-        let core =
-            iroh_metrics::core::Core::get().ok_or_else(|| anyhow::anyhow!("Missing metrics"))?;
         println!("\nMetrics:");
-        collect_and_print(
-            "MagicsockMetrics",
-            core.get_collector::<::iroh::metrics::MagicsockMetrics>(),
-        );
-        collect_and_print(
-            "NetReportMetrics",
-            core.get_collector::<::iroh::metrics::NetReportMetrics>(),
-        );
-        collect_and_print(
-            "PortmapMetrics",
-            core.get_collector::<::iroh::metrics::PortmapMetrics>(),
-        );
-        // if None, (this is the case if opt.only_relay is false), then this is skipped internally:
+        collect_and_print("MagicsockMetrics", &endpoint_metrics.magicsock);
+        collect_and_print("NetReportMetrics", &endpoint_metrics.net_report);
+        collect_and_print("PortmapMetrics", &*endpoint_metrics.portmapper);
         #[cfg(feature = "local-relay")]
-        collect_and_print(
-            "RelayMetrics",
-            core.get_collector::<::iroh::metrics::RelayMetrics>(),
-        );
+        if let Some(relay_server) = relay_server.as_ref() {
+            collect_and_print("RelayServerMetrics", &*relay_server.metrics().server);
+            collect_and_print("RelayStunMetrics", &*relay_server.metrics().stun);
+        }
     }
 
     server_thread.join().expect("server thread");
@@ -183,14 +160,11 @@ pub fn run_s2n(_opt: s2n::Opt) -> Result<()> {
 
 fn collect_and_print(
     category: &'static str,
-    metrics: Option<&impl iroh_metrics::struct_iterable::Iterable>,
+    metrics: &impl iroh_metrics::struct_iterable::Iterable,
 ) {
-    let Some(metrics) = metrics else {
-        return;
-    };
     let mut map = BTreeMap::new();
     for (name, counter) in metrics.iter() {
-        if let Some(counter) = counter.downcast_ref::<iroh_metrics::core::Counter>() {
+        if let Some(counter) = counter.downcast_ref::<iroh_metrics::Counter>() {
             map.insert(name.to_string(), counter.get());
         }
     }
