@@ -2398,7 +2398,7 @@ dependencies = [
 [[package]]
 name = "iroh-metrics"
 version = "0.32.0"
-source = "git+https://github.com/n0-computer/iroh-metrics?branch=Frando/refactor#edca9ebc27d6ef7ba10a99b340356e8ff1c197f5"
+source = "git+https://github.com/n0-computer/iroh-metrics?branch=Frando/refactor#04b9c4fca09b15856d00da4640cfa3d882f3c750"
 dependencies = [
  "http-body-util",
  "hyper",
@@ -4000,9 +4000,9 @@ dependencies = [
 
 [[package]]
 name = "ring"
-version = "0.17.13"
+version = "0.17.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "70ac5d832aa16abd7d1def883a8545280c20a60f523a370aa3a9617c2b8550ee"
+checksum = "a4689e6c2294d81e88dc6261c768b63bc4fcdb852be6d1352498b114f61383b7"
 dependencies = [
  "cc",
  "cfg-if",
