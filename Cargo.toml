@@ -43,4 +43,3 @@ unused-async = "warn"
 
 [patch.crates-io]
 iroh-metrics = { git = "https://github.com/n0-computer/iroh-metrics", branch = "Frando/refactor" }
-portmapper = { git = "https://github.com/n0-computer/net-tools", branch = "Frando/metrics" }
