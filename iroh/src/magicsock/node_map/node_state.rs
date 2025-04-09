@@ -6,7 +6,6 @@ use std::{
 
 use data_encoding::HEXLOWER;
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
-use iroh_metrics::inc;
 use iroh_relay::protos::stun;
 use n0_future::{
     task::{self, AbortOnDropHandle},
@@ -160,10 +159,12 @@ impl NodeState {
     pub(super) fn new(id: usize, options: Options) -> Self {
         let quic_mapped_addr = NodeIdMappedAddr::generate();
 
-        if options.relay_url.is_some() {
-            // we potentially have a relay connection to the node
-            inc!(MagicsockMetrics, num_relay_conns_added);
-        }
+        // TODO(frando): I don't think we need to track the `num_relay_conns_added`
+        // metric here. We do so in `Self::addr_for_send`.
+        // if options.relay_url.is_some() {
+        //     // we potentially have a relay connection to the node
+        //     inc!(MagicsockMetrics, num_relay_conns_added);
+        // }
 
         let now = Instant::now();
 
@@ -280,6 +281,7 @@ impl NodeState {
         &mut self,
         now: &Instant,
         have_ipv6: bool,
+        metrics: &MagicsockMetrics,
     ) -> (Option<SocketAddr>, Option<RelayUrl>) {
         #[cfg(any(test, feature = "test-utils"))]
         if self.path_selection == PathSelection::RelayOnly {
@@ -316,7 +318,7 @@ impl NodeState {
         };
         if !self.has_been_direct && matches!(&typ, ConnectionType::Direct(_)) {
             self.has_been_direct = true;
-            inc!(MagicsockMetrics, nodes_contacted_directly);
+            metrics.nodes_contacted_directly.inc();
         }
         if let Ok(prev_typ) = self.conn_type.set(typ.clone()) {
             // The connection type has changed.
@@ -332,27 +334,27 @@ impl NodeState {
             match (prev_typ, typ) {
                 (ConnectionType::Relay(_), ConnectionType::Direct(_))
                 | (ConnectionType::Mixed(_, _), ConnectionType::Direct(_)) => {
-                    inc!(MagicsockMetrics, num_direct_conns_added);
-                    inc!(MagicsockMetrics, num_relay_conns_removed);
+                    metrics.num_direct_conns_added.inc();
+                    metrics.num_relay_conns_removed.inc();
                 }
                 (ConnectionType::Direct(_), ConnectionType::Relay(_))
                 | (ConnectionType::Direct(_), ConnectionType::Mixed(_, _)) => {
-                    inc!(MagicsockMetrics, num_direct_conns_removed);
-                    inc!(MagicsockMetrics, num_relay_conns_added);
+                    metrics.num_direct_conns_removed.inc();
+                    metrics.num_relay_conns_added.inc();
                 }
                 (ConnectionType::None, ConnectionType::Direct(_)) => {
-                    inc!(MagicsockMetrics, num_direct_conns_added)
+                    metrics.num_direct_conns_added.inc();
                 }
                 (ConnectionType::Direct(_), ConnectionType::None) => {
-                    inc!(MagicsockMetrics, num_direct_conns_removed)
+                    metrics.num_direct_conns_removed.inc();
                 }
                 (ConnectionType::None, ConnectionType::Relay(_))
                 | (ConnectionType::None, ConnectionType::Mixed(_, _)) => {
-                    inc!(MagicsockMetrics, num_relay_conns_added)
+                    metrics.num_relay_conns_added.inc();
                 }
                 (ConnectionType::Relay(_), ConnectionType::None)
                 | (ConnectionType::Mixed(_, _), ConnectionType::None) => {
-                    inc!(MagicsockMetrics, num_relay_conns_removed)
+                    metrics.num_relay_conns_removed.inc();
                 }
                 _ => (),
             }
@@ -663,16 +665,17 @@ impl NodeState {
         new_relay_url: Option<&RelayUrl>,
         new_addrs: &BTreeSet<SocketAddr>,
         source: super::Source,
+        metrics: &MagicsockMetrics,
     ) {
         if self.udp_paths.best_addr.is_empty() {
             // we do not have a direct connection, so changing the relay information may
             // have an effect on our connection status
             if self.relay_url.is_none() && new_relay_url.is_some() {
                 // we did not have a relay connection before, but now we do
-                inc!(MagicsockMetrics, num_relay_conns_added)
+                metrics.num_relay_conns_added.inc();
             } else if self.relay_url.is_some() && new_relay_url.is_none() {
                 // we had a relay connection before but do not have one now
-                inc!(MagicsockMetrics, num_relay_conns_removed)
+                metrics.num_relay_conns_removed.inc();
             }
         }
 
@@ -1165,14 +1168,15 @@ impl NodeState {
     pub(crate) fn get_send_addrs(
         &mut self,
         have_ipv6: bool,
+        metrics: &MagicsockMetrics,
     ) -> (Option<SocketAddr>, Option<RelayUrl>, Vec<PingAction>) {
         let now = Instant::now();
         let prev = self.last_used.replace(now);
         if prev.is_none() {
             // this is the first time we are trying to connect to this node
-            inc!(MagicsockMetrics, nodes_contacted);
+            metrics.nodes_contacted.inc();
         }
-        let (udp_addr, relay_url) = self.addr_for_send(&now, have_ipv6);
+        let (udp_addr, relay_url) = self.addr_for_send(&now, have_ipv6, metrics);
         let mut ping_msgs = Vec::new();
 
         if self.want_call_me_maybe(&now) {

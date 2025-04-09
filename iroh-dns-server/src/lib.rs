@@ -194,7 +194,7 @@ mod tests {
             max_batch_time: Duration::from_millis(100),
             ..Default::default()
         };
-        let store = ZoneStore::in_memory(options)?;
+        let store = ZoneStore::in_memory(options, Default::default())?;
 
         // create a signed packet
         let signed_packet = random_signed_packet()?;

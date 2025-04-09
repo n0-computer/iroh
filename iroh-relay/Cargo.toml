@@ -139,6 +139,7 @@ cfg_aliases = { version = "0.2" }
 [features]
 default = ["metrics"]
 server = [
+    "metrics",
     "dep:clap",
     "dep:dashmap",
     "dep:governor",

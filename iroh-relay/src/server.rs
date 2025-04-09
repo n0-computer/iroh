@@ -27,7 +27,8 @@ use hyper::body::Incoming;
 use iroh_base::NodeId;
 #[cfg(feature = "test-utils")]
 use iroh_base::RelayUrl;
-use iroh_metrics::inc;
+use iroh_metrics::MetricsGroupSet;
+use metrics::RelayMetrics;
 use n0_future::{future::Boxed, StreamExt};
 use tokio::{
     net::{TcpListener, UdpSocket},
@@ -269,6 +270,7 @@ pub struct Server {
     /// If the server has manual certificates configured the certificate chain will be
     /// available here, this can be used by a client to authenticate the server.
     certificates: Option<Vec<rustls::pki_types::CertificateDer<'static>>>,
+    metrics: RelayMetrics,
 }
 
 impl Server {
@@ -280,18 +282,16 @@ impl Server {
     {
         let mut tasks = JoinSet::new();
 
+        let metrics = RelayMetrics::default();
+
         #[cfg(feature = "metrics")]
         if let Some(addr) = config.metrics_addr {
             debug!("Starting metrics server");
-            use iroh_metrics::core::Metric;
-
-            iroh_metrics::core::Core::init(|reg, metrics| {
-                metrics.insert(metrics::Metrics::new(reg));
-                metrics.insert(StunMetrics::new(reg));
-            });
+            let mut registry = iroh_metrics::Registry::default();
+            metrics.register(&mut registry);
             tasks.spawn(
                 async move {
-                    iroh_metrics::metrics::start_metrics_server(addr).await?;
+                    iroh_metrics::service::start_metrics_server(addr, Arc::new(registry)).await?;
                     anyhow::Ok(())
                 }
                 .instrument(info_span!("metrics-server")),
@@ -307,7 +307,8 @@ impl Server {
                         let addr = sock.local_addr()?;
                         info!("STUN server listening on {addr}");
                         tasks.spawn(
-                            server_stun_listener(sock).instrument(info_span!("stun-server", %addr)),
+                            server_stun_listener(sock, metrics.stun.clone())
+                                .instrument(info_span!("stun-server", %addr)),
                         );
                         Some(addr)
                     }
@@ -350,14 +351,15 @@ impl Server {
                 let key_cache_capacity = relay_config
                     .key_cache_capacity
                     .unwrap_or(DEFAULT_KEY_CACHE_CAPACITY);
-                let mut builder = http_server::ServerBuilder::new(relay_bind_addr)
-                    .headers(headers)
-                    .key_cache_capacity(key_cache_capacity)
-                    .access(relay_config.access)
-                    .request_handler(Method::GET, "/", Box::new(root_handler))
-                    .request_handler(Method::GET, "/index.html", Box::new(root_handler))
-                    .request_handler(Method::GET, RELAY_PROBE_PATH, Box::new(probe_handler))
-                    .request_handler(Method::GET, "/robots.txt", Box::new(robots_handler));
+                let mut builder =
+                    http_server::ServerBuilder::new(relay_bind_addr, metrics.server.clone())
+                        .headers(headers)
+                        .key_cache_capacity(key_cache_capacity)
+                        .access(relay_config.access)
+                        .request_handler(Method::GET, "/", Box::new(root_handler))
+                        .request_handler(Method::GET, "/index.html", Box::new(root_handler))
+                        .request_handler(Method::GET, RELAY_PROBE_PATH, Box::new(probe_handler))
+                        .request_handler(Method::GET, "/robots.txt", Box::new(robots_handler));
                 if let Some(cfg) = relay_config.limits.client_rx {
                     builder = builder.client_rx_ratelimit(cfg);
                 }
@@ -440,6 +442,7 @@ impl Server {
             quic_handle,
             supervisor: AbortOnDropHandle::new(task),
             certificates,
+            metrics,
         })
     }
 
@@ -514,6 +517,11 @@ impl Server {
                 .into()
         })
     }
+
+    /// Returns the metrics collected in the relay server.
+    pub fn metrics(&self) -> &RelayMetrics {
+        &self.metrics
+    }
 }
 
 /// Supervisor for the relay server tasks.
@@ -582,7 +590,7 @@ async fn relay_supervisor(
 /// Runs a STUN server.
 ///
 /// When the future is dropped, the server stops.
-async fn server_stun_listener(sock: UdpSocket) -> Result<()> {
+async fn server_stun_listener(sock: UdpSocket, metrics: Arc<StunMetrics>) -> Result<()> {
     info!(addr = ?sock.local_addr().ok(), "running STUN server");
     let sock = Arc::new(sock);
     let mut buffer = vec![0u8; 64 << 10];
@@ -601,18 +609,18 @@ async fn server_stun_listener(sock: UdpSocket) -> Result<()> {
             res = sock.recv_from(&mut buffer) => {
                 match res {
                     Ok((n, src_addr)) => {
-                        inc!(StunMetrics, requests);
+                        metrics.requests.inc();
                         let pkt = &buffer[..n];
                         if !protos::stun::is(pkt) {
                             debug!(%src_addr, "STUN: ignoring non stun packet");
-                            inc!(StunMetrics, bad_requests);
+                            metrics.bad_requests.inc();
                             continue;
                         }
                         let pkt = pkt.to_vec();
-                        tasks.spawn(handle_stun_request(src_addr, pkt, sock.clone()));
+                        tasks.spawn(handle_stun_request(src_addr, pkt, sock.clone(), metrics.clone()));
                     }
                     Err(err) => {
-                        inc!(StunMetrics, failures);
+                        metrics.failures.inc();
                         warn!("failed to recv: {err:#}");
                     }
                 }
@@ -622,14 +630,19 @@ async fn server_stun_listener(sock: UdpSocket) -> Result<()> {
 }
 
 /// Handles a single STUN request, doing all logging required.
-async fn handle_stun_request(src_addr: SocketAddr, pkt: Vec<u8>, sock: Arc<UdpSocket>) {
+async fn handle_stun_request(
+    src_addr: SocketAddr,
+    pkt: Vec<u8>,
+    sock: Arc<UdpSocket>,
+    metrics: Arc<StunMetrics>,
+) {
     let (txid, response) = match protos::stun::parse_binding_request(&pkt) {
         Ok(txid) => {
             debug!(%src_addr, %txid, "STUN: received binding request");
             (txid, protos::stun::response(txid, src_addr))
         }
         Err(err) => {
-            inc!(StunMetrics, bad_requests);
+            metrics.bad_requests.inc();
             warn!(%src_addr, "STUN: invalid binding request: {:?}", err);
             return;
         }
@@ -646,14 +659,14 @@ async fn handle_stun_request(src_addr: SocketAddr, pkt: Vec<u8>, sock: Arc<UdpSo
                 );
             } else {
                 match src_addr {
-                    SocketAddr::V4(_) => inc!(StunMetrics, ipv4_success),
-                    SocketAddr::V6(_) => inc!(StunMetrics, ipv6_success),
-                }
+                    SocketAddr::V4(_) => metrics.ipv4_success.inc(),
+                    SocketAddr::V6(_) => metrics.ipv6_success.inc(),
+                };
             }
             trace!(%src_addr, %txid, "sent {len} bytes");
         }
         Err(err) => {
-            inc!(StunMetrics, failures);
+            metrics.failures.inc();
             warn!(%src_addr, %txid, "failed to write response: {err:#}");
         }
     }

@@ -27,8 +27,6 @@ use std::{
 
 use anyhow::{anyhow, bail, Context as _, Result};
 use iroh_base::RelayUrl;
-#[cfg(feature = "metrics")]
-use iroh_metrics::inc;
 #[cfg(not(wasm_browser))]
 use iroh_relay::dns::DnsResolver;
 use iroh_relay::{
@@ -53,9 +51,7 @@ use url::Host;
 
 #[cfg(wasm_browser)]
 use crate::net_report::portmapper; // We stub the library
-#[cfg(feature = "metrics")]
-use crate::net_report::Metrics;
-use crate::net_report::{self, Report};
+use crate::net_report::{self, Metrics, Report};
 #[cfg(not(wasm_browser))]
 use crate::net_report::{
     defaults::timeouts::DNS_TIMEOUT,
@@ -116,6 +112,7 @@ impl Client {
         last_report: Option<Arc<Report>>,
         relay_map: RelayMap,
         protocols: BTreeSet<ProbeProto>,
+        metrics: Arc<Metrics>,
         #[cfg(not(wasm_browser))] socket_state: SocketState,
     ) -> Self {
         let (msg_tx, msg_rx) = mpsc::channel(32);
@@ -135,6 +132,7 @@ impl Client {
             socket_state,
             #[cfg(not(wasm_browser))]
             hairpin_actor: hairpin::Client::new(net_report, addr),
+            metrics,
         };
         let task =
             task::spawn(async move { actor.run().await }.instrument(info_span!("reportgen.actor")));
@@ -215,6 +213,7 @@ struct Actor {
     /// The hairpin actor.
     #[cfg(not(wasm_browser))]
     hairpin_actor: hairpin::Client,
+    metrics: Arc<Metrics>,
 }
 
 impl Actor {
@@ -615,12 +614,14 @@ impl Actor {
                 #[cfg(not(wasm_browser))]
                 let socket_state = self.socket_state.clone();
 
+                let metrics = self.metrics.clone();
                 set.spawn(
                     run_probe(
                         reportstate,
                         relay_node,
                         probe.clone(),
                         net_report,
+                        metrics,
                         #[cfg(not(wasm_browser))]
                         pinger,
                         #[cfg(not(wasm_browser))]
@@ -754,6 +755,7 @@ async fn run_probe(
     relay_node: Arc<RelayNode>,
     probe: Probe,
     net_report: net_report::Addr,
+    metrics: Arc<Metrics>,
     #[cfg(not(wasm_browser))] pinger: Pinger,
     #[cfg(not(wasm_browser))] socket_state: SocketState,
 ) -> Result<ProbeReport, ProbeError> {
@@ -806,7 +808,7 @@ async fn run_probe(
             };
             match maybe_sock {
                 Some(sock) => {
-                    result = run_stun_probe(sock, relay_addr, net_report, probe).await?;
+                    result = run_stun_probe(sock, relay_addr, net_report, probe, &metrics).await?;
                 }
                 None => {
                     return Err(ProbeError::AbortSet(
@@ -885,6 +887,7 @@ async fn run_stun_probe(
     relay_addr: SocketAddr,
     net_report: net_report::Addr,
     probe: Probe,
+    metrics: &Metrics,
 ) -> Result<ProbeReport, ProbeError> {
     match probe.proto() {
         ProbeProto::StunIpv4 => debug_assert!(relay_addr.is_ipv4()),
@@ -920,12 +923,10 @@ async fn run_stun_probe(
 
             if matches!(probe, Probe::StunIpv4 { .. }) {
                 result.ipv4_can_send = true;
-                #[cfg(feature = "metrics")]
-                inc!(Metrics, stun_packets_sent_ipv4);
+                metrics.stun_packets_sent_ipv4.inc();
             } else {
                 result.ipv6_can_send = true;
-                #[cfg(feature = "metrics")]
-                inc!(Metrics, stun_packets_sent_ipv6);
+                metrics.stun_packets_sent_ipv6.inc();
             }
             let (delay, addr) = stun_rx
                 .await

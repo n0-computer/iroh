@@ -1,7 +1,6 @@
 //! Metrics support for the server
 
-use iroh_metrics::core::{Core, Counter, Metric};
-use struct_iterable::Iterable;
+use iroh_metrics::{struct_iterable::Iterable, Counter, MetricsGroup};
 
 /// Metrics for iroh-dns-server
 #[derive(Debug, Clone, Iterable)]
@@ -50,15 +49,8 @@ impl Default for Metrics {
     }
 }
 
-impl Metric for Metrics {
-    fn name() -> &'static str {
+impl MetricsGroup for Metrics {
+    fn name(&self) -> &'static str {
         "dns_server"
     }
-}
-
-/// Init the metrics collection core.
-pub fn init_metrics() {
-    Core::init(|reg, metrics| {
-        metrics.insert(Metrics::new(reg));
-    });
 }
