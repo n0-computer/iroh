@@ -178,10 +178,11 @@ impl MetricsGroupSet for RelayMetrics {
         "relay"
     }
 
-    fn iter(&self) -> impl IntoIterator<Item = &dyn MetricsGroup> {
+    fn iter(&self) -> impl Iterator<Item = &dyn MetricsGroup> {
         [
             &*self.stun as &dyn MetricsGroup,
             &*self.server as &dyn MetricsGroup,
         ]
+        .into_iter()
     }
 }

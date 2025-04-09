@@ -1108,6 +1108,11 @@ impl Endpoint {
     }
 
     /// Returns metrics collected for this endpoint.
+    ///
+    /// The endpoint internally collects various metrics about its operation.
+    /// The returned [`EndpointMetrics`] struct contains all of these metrics.
+    ///
+    /// See the docs for [`EndpointMetrics`] for details and examples on how to work with the metrics.
     #[cfg(feature = "metrics")]
     pub fn metrics(&self) -> &EndpointMetrics {
         &self.msock.metrics
@@ -2786,6 +2791,56 @@ mod tests {
 
         assert_eq!(app_close.error_code, 42u32.into());
         assert_eq!(app_close.reason.as_ref(), b"thanks, bye!");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn metrics_smoke() -> testresult::TestResult {
+        let client = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .await?;
+        let server = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .bind()
+            .await?;
+        let server_addr = server.node_addr().await?;
+        let server_task = tokio::task::spawn(async move {
+            let conn = server
+                .accept()
+                .await
+                .context("expected conn")?
+                .accept()?
+                .await?;
+            let mut uni = conn.accept_uni().await?;
+            uni.read_to_end(10).await?;
+            drop(conn);
+            anyhow::Ok(server)
+        });
+        let conn = client.connect(server_addr, TEST_ALPN).await?;
+        let mut uni = conn.open_uni().await?;
+        uni.write_all(b"helloworld").await?;
+        uni.finish()?;
+        conn.closed().await;
+        drop(conn);
+        let server = server_task.await??;
+
+        let m = client.metrics();
+        assert_eq!(m.magicsock.num_direct_conns_added.get(), 1);
+        assert_eq!(m.magicsock.connection_became_direct.get(), 1);
+        assert_eq!(m.magicsock.connection_handshake_success.get(), 1);
+        assert_eq!(m.magicsock.nodes_contacted_directly.get(), 1);
+        assert_eq!(m.magicsock.recv_datagrams.get(), 6);
+
+        let m = server.metrics();
+        assert_eq!(m.magicsock.num_direct_conns_added.get(), 1);
+        assert_eq!(m.magicsock.connection_became_direct.get(), 1);
+        assert_eq!(m.magicsock.nodes_contacted_directly.get(), 1);
+        assert_eq!(m.magicsock.connection_handshake_success.get(), 1);
+        assert_eq!(m.magicsock.recv_datagrams.get(), 6);
 
         Ok(())
     }
