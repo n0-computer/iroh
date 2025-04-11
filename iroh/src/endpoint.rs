@@ -1135,18 +1135,16 @@ impl Endpoint {
     /// For example, the following snippet collects all metrics into a map:
     /// ```rust
     /// # use std::collections::BTreeMap;
-    /// # use iroh_metrics::{MetricsGroup, MetricValue, MetricsGroupSet};
+    /// # use iroh_metrics::{Metric, MetricsGroup, MetricValue, MetricsGroupSet};
     /// # use iroh::endpoint::Endpoint;
     /// # async fn wrapper() -> testresult::TestResult {
     /// let endpoint = Endpoint::builder().bind().await?;
     /// let metrics: BTreeMap<String, MetricValue> = endpoint
     ///     .metrics()
     ///     .iter()
-    ///     .flat_map(|group| {
-    ///         group.values().map(|item| {
-    ///             let name = [group.name(), item.name].join(":");
-    ///             (name, item.value)
-    ///         })
+    ///     .map(|(group, metric)| {
+    ///         let name = [group, metric.name()].join(":");
+    ///         (name, metric.value())
     ///     })
     ///     .collect();
     ///
@@ -2094,6 +2092,7 @@ mod tests {
 
     use std::time::Instant;
 
+    use iroh_metrics::{service::MetricsSource, MetricsGroupSet};
     use iroh_relay::http::Protocol;
     use n0_future::StreamExt;
     use rand::SeedableRng;
@@ -2851,11 +2850,15 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn metrics_smoke() -> testresult::TestResult {
+        let secret_key = SecretKey::from_bytes(&[0u8; 32]);
         let client = Endpoint::builder()
+            .secret_key(secret_key)
             .relay_mode(RelayMode::Disabled)
             .bind()
             .await?;
+        let secret_key = SecretKey::from_bytes(&[1u8; 32]);
         let server = Endpoint::builder()
+            .secret_key(secret_key)
             .relay_mode(RelayMode::Disabled)
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
@@ -2894,6 +2897,18 @@ mod tests {
         assert_eq!(m.magicsock.nodes_contacted_directly.get(), 1);
         assert_eq!(m.magicsock.connection_handshake_success.get(), 1);
         assert!(m.magicsock.recv_datagrams.get() > 0);
+
+        // test openmetrics encoding with labeled subregistries per endpoint
+        let mut registry = iroh_metrics::Registry::default();
+        client.metrics().register(
+            registry.sub_registry_with_label(("id".into(), client.node_id().fmt_short().into())),
+        );
+        server.metrics().register(
+            registry.sub_registry_with_label(("id".into(), server.node_id().fmt_short().into())),
+        );
+        let s = registry.encode_openmetrics()?;
+        assert!(s.contains(r#"magicsock_nodes_contacted_directly_total{id="3b6a27bcce"} 1"#));
+        assert!(s.contains(r#"magicsock_nodes_contacted_directly_total{id="8a88e3dd74"} 1"#));
 
         Ok(())
     }
