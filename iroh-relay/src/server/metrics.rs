@@ -10,54 +10,50 @@ pub struct Metrics {
      * Metrics about packets
      */
     /// Bytes sent from a `FrameType::SendPacket`
-    #[metrics(description = "Number of bytes sent.")]
+    #[metrics(help = "Number of bytes sent.")]
     pub bytes_sent: Counter,
     /// Bytes received from a `FrameType::SendPacket`
-    #[metrics(description = "Number of bytes received.")]
+    #[metrics(help = "Number of bytes received.")]
     pub bytes_recv: Counter,
 
     /// `FrameType::SendPacket` sent, that are not disco messages
-    #[metrics(description = "Number of 'send' packets relayed.")]
+    #[metrics(help = "Number of 'send' packets relayed.")]
     pub send_packets_sent: Counter,
     /// `FrameType::SendPacket` received, that are not disco messages
-    #[metrics(description = "Number of 'send' packets received.")]
+    #[metrics(help = "Number of 'send' packets received.")]
     pub send_packets_recv: Counter,
     /// `FrameType::SendPacket` dropped, that are not disco messages
-    #[metrics(description = "Number of 'send' packets dropped.")]
+    #[metrics(help = "Number of 'send' packets dropped.")]
     pub send_packets_dropped: Counter,
 
     /// `FrameType::SendPacket` sent that are disco messages
-    #[metrics(description = "Number of disco packets sent.")]
+    #[metrics(help = "Number of disco packets sent.")]
     pub disco_packets_sent: Counter,
     /// `FrameType::SendPacket` received that are disco messages
-    #[metrics(description = "Number of disco packets received.")]
+    #[metrics(help = "Number of disco packets received.")]
     pub disco_packets_recv: Counter,
     /// `FrameType::SendPacket` dropped that are disco messages
-    #[metrics(description = "Number of disco packets dropped.")]
+    #[metrics(help = "Number of disco packets dropped.")]
     pub disco_packets_dropped: Counter,
 
     /// Packets of other `FrameType`s sent
-    #[metrics(
-        description = "Number of packets sent that were not disco packets or 'send' packets"
-    )]
+    #[metrics(help = "Number of packets sent that were not disco packets or 'send' packets")]
     pub other_packets_sent: Counter,
     /// Packets of other `FrameType`s received
-    #[metrics(
-        description = "Number of packets received that were not disco packets or 'send' packets"
-    )]
+    #[metrics(help = "Number of packets received that were not disco packets or 'send' packets")]
     pub other_packets_recv: Counter,
     /// Packets of other `FrameType`s dropped
-    #[metrics(description = "Number of times a non-disco, non-send packet was dropped.")]
+    #[metrics(help = "Number of times a non-disco, non-send packet was dropped.")]
     pub other_packets_dropped: Counter,
 
     /// Number of `FrameType::Ping`s received
-    #[metrics(description = "Number of times the server has received a Ping from a client.")]
+    #[metrics(help = "Number of times the server has received a Ping from a client.")]
     pub got_ping: Counter,
     /// Number of `FrameType::Pong`s sent
-    #[metrics(description = "Number of times the server has sent a Pong to a client.")]
+    #[metrics(help = "Number of times the server has sent a Pong to a client.")]
     pub sent_pong: Counter,
     /// Number of `FrameType::Unknown` received
-    #[metrics(description = "Number of unknown frames sent to this server.")]
+    #[metrics(help = "Number of unknown frames sent to this server.")]
     pub unknown_frames: Counter,
 
     /// Number of frames received from client connection which have been rate-limited.
@@ -71,7 +67,7 @@ pub struct Metrics {
     /// Number of times this server has accepted a connection.
     pub accepts: Counter,
     /// Number of connections we have removed because of an error
-    #[metrics(description = "Number of clients that have then disconnected.")]
+    #[metrics(help = "Number of clients that have then disconnected.")]
     pub disconnects: Counter,
 
     /// Number of unique client keys per day
