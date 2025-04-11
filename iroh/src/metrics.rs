@@ -24,7 +24,7 @@ pub struct EndpointMetrics {
 }
 
 impl MetricsGroupSet for EndpointMetrics {
-    fn iter(&self) -> impl Iterator<Item = &dyn MetricsGroup> {
+    fn groups(&self) -> impl Iterator<Item = &dyn MetricsGroup> {
         #[cfg(not(wasm_browser))]
         return [
             &*self.magicsock as &dyn MetricsGroup,
