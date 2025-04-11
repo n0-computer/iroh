@@ -5,6 +5,7 @@ use clap::Parser;
 #[cfg(not(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
 use iroh_bench::quinn;
 use iroh_bench::{configure_tracing_subscriber, iroh, rt, s2n, Commands, Opt};
+use iroh_metrics::{MetricValue, MetricsGroup};
 
 fn main() {
     let cmd = Commands::parse();
@@ -158,15 +159,15 @@ pub fn run_s2n(_opt: s2n::Opt) -> Result<()> {
     unimplemented!()
 }
 
-fn collect_and_print(
-    category: &'static str,
-    metrics: &impl iroh_metrics::struct_iterable::Iterable,
-) {
+fn collect_and_print(category: &'static str, metrics: &dyn MetricsGroup) {
     let mut map = BTreeMap::new();
-    for (name, counter) in metrics.iter() {
-        if let Some(counter) = counter.downcast_ref::<iroh_metrics::Counter>() {
-            map.insert(name.to_string(), counter.get());
-        }
+    for item in metrics.iter() {
+        let value: i64 = match item.value() {
+            MetricValue::Counter(v) => v as i64,
+            MetricValue::Gauge(v) => v,
+            _ => continue,
+        };
+        map.insert(item.name().to_string(), value);
     }
     println!("{category}: {map:#?}");
 }
