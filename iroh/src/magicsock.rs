@@ -75,7 +75,7 @@ use crate::{
     discovery::{Discovery, DiscoveryItem, DiscoverySubscribers, NodeData, UserData},
     key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
     metrics::EndpointMetrics,
-    net_report::{self, IpMappedAddresses},
+    net_report::{self, IpMappedAddresses, Report},
     watchable::{Watchable, Watcher},
 };
 
@@ -244,6 +244,9 @@ pub(crate) struct MagicSock {
     /// Our discovered direct addresses.
     direct_addrs: DiscoveredDirectAddrs,
 
+    /// Our latest net-report
+    net_report: Watchable<Option<Arc<Report>>>,
+
     /// List of CallMeMaybe disco messages that should be sent out after the next endpoint update
     /// completes
     pending_call_me_maybes: std::sync::Mutex<HashMap<PublicKey, RelayUrl>>,
@@ -351,6 +354,21 @@ impl MagicSock {
     /// To get the current direct addresses, use [`Watcher::initialized`].
     pub(crate) fn direct_addresses(&self) -> Watcher<Option<BTreeSet<DirectAddr>>> {
         self.direct_addrs.addrs.watch()
+    }
+
+    /// Returns a [`Watcher`] for this socket's net-report.
+    ///
+    /// The [`MagicSock`] continuously monitors the network conditions for changes.
+    /// Whenever changes are detected this [`Watcher`] will yield a new report.
+    ///
+    /// Upon the first creation on the [`MagicSock`] it may not yet have completed
+    /// a first net-report. In this case, the current item in this [`Watcher`] will
+    /// be [`None`].  Once the first report has been run, the [`Watcher`] will
+    /// store [`Some`] report.
+    ///
+    /// To get the current `net-report`, use [`Watcher::initialized`].
+    pub(crate) fn net_report(&self) -> Watcher<Option<Arc<Report>>> {
+        self.net_report.watch()
     }
 
     /// Watch for changes to the home relay.
@@ -1767,6 +1785,7 @@ impl Handle {
             discovery,
             discovery_user_data: RwLock::new(discovery_user_data),
             direct_addrs: Default::default(),
+            net_report: Default::default(),
             pending_call_me_maybes: Default::default(),
             direct_addr_update_state: DirectAddrUpdateState::new(),
             #[cfg(not(wasm_browser))]
@@ -2900,6 +2919,8 @@ impl Actor {
 
     async fn handle_net_report_report(&mut self, report: Option<Arc<net_report::Report>>) {
         if let Some(ref report) = report {
+            // only returns Err if the report hasn't changed.
+            self.msock.net_report.set(Some(report.clone())).ok();
             self.msock
                 .ipv6_reported
                 .store(report.ipv6, Ordering::Relaxed);

@@ -42,6 +42,7 @@ use crate::{
     },
     magicsock::{self, Handle, NodeIdMappedAddr},
     metrics::EndpointMetrics,
+    net_report::Report,
     tls,
     watchable::Watcher,
     RelayProtocol,
@@ -990,6 +991,39 @@ impl Endpoint {
     /// [STUN]: https://en.wikipedia.org/wiki/STUN
     pub fn direct_addresses(&self) -> Watcher<Option<BTreeSet<DirectAddr>>> {
         self.msock.direct_addresses()
+    }
+
+    /// Returns a [`Watcher`] for any net-reports run from this [`Endpoint`].
+    ///
+    /// A `net-report` checks the network conditions of the [`Endpoint`], such as
+    /// whether it is connected to the internet via Ipv4 and/or Ipv6, it's NAT
+    /// status, it's latency to the relay servers, and it's public addresses.
+    ///
+    /// The [`Endpoint`] continuously runs `net-reports` to monitor if network
+    /// conditions have changed. This [`Watcher`] will return the latest result
+    /// of the `net-report`.
+    ///
+    /// When issuing the first call to this method the first report  might
+    /// still be underway, in this case the [`Watcher`] might not be initialized
+    /// with [`Some`] value yet.  Once the first set of report has been successfully
+    /// run, the [`Watcher`] will always return [`Some`] report immediately, which
+    /// is the most recently run `net-report`.
+    ///
+    /// # Examples
+    ///
+    /// To get the first report use [`Watcher::initialized`]:
+    /// ```no_run
+    /// use futures_lite::StreamExt;
+    /// use iroh::Endpoint;
+    ///
+    /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    /// # rt.block_on(async move {
+    /// let mep = Endpoint::builder().bind().await.unwrap();
+    /// let _addrs = mep.net_report().initialized().await.unwrap();
+    /// # });
+    /// ```
+    pub fn net_report(&self) -> Watcher<Option<Arc<Report>>> {
+        self.msock.net_report()
     }
 
     /// Returns the local socket addresses on which the underlying sockets are bound.
