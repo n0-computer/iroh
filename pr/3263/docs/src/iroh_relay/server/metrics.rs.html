@@ -119,11 +119,7 @@
 <a href="#118" id="118">118</a>
 <a href="#119" id="119">119</a>
 <a href="#120" id="120">120</a>
-<a href="#121" id="121">121</a>
-<a href="#122" id="122">122</a>
-<a href="#123" id="123">123</a>
-<a href="#124" id="124">124</a>
-<a href="#125" id="125">125</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::sync::Arc;
+<a href="#121" id="121">121</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::sync::Arc;
 
 <span class="kw">use </span>iroh_metrics::{Counter, MetricsGroup, MetricsGroupSet};
 
@@ -135,54 +131,50 @@
      * Metrics about packets
      */
     </span><span class="doccomment">/// Bytes sent from a `FrameType::SendPacket`
-    </span><span class="attr">#[metrics(description = <span class="string">"Number of bytes sent."</span>)]
+    </span><span class="attr">#[metrics(help = <span class="string">"Number of bytes sent."</span>)]
     </span><span class="kw">pub </span>bytes_sent: Counter,
     <span class="doccomment">/// Bytes received from a `FrameType::SendPacket`
-    </span><span class="attr">#[metrics(description = <span class="string">"Number of bytes received."</span>)]
+    </span><span class="attr">#[metrics(help = <span class="string">"Number of bytes received."</span>)]
     </span><span class="kw">pub </span>bytes_recv: Counter,
 
     <span class="doccomment">/// `FrameType::SendPacket` sent, that are not disco messages
-    </span><span class="attr">#[metrics(description = <span class="string">"Number of 'send' packets relayed."</span>)]
+    </span><span class="attr">#[metrics(help = <span class="string">"Number of 'send' packets relayed."</span>)]
     </span><span class="kw">pub </span>send_packets_sent: Counter,
     <span class="doccomment">/// `FrameType::SendPacket` received, that are not disco messages
-    </span><span class="attr">#[metrics(description = <span class="string">"Number of 'send' packets received."</span>)]
+    </span><span class="attr">#[metrics(help = <span class="string">"Number of 'send' packets received."</span>)]
     </span><span class="kw">pub </span>send_packets_recv: Counter,
     <span class="doccomment">/// `FrameType::SendPacket` dropped, that are not disco messages
-    </span><span class="attr">#[metrics(description = <span class="string">"Number of 'send' packets dropped."</span>)]
+    </span><span class="attr">#[metrics(help = <span class="string">"Number of 'send' packets dropped."</span>)]
     </span><span class="kw">pub </span>send_packets_dropped: Counter,
 
     <span class="doccomment">/// `FrameType::SendPacket` sent that are disco messages
-    </span><span class="attr">#[metrics(description = <span class="string">"Number of disco packets sent."</span>)]
+    </span><span class="attr">#[metrics(help = <span class="string">"Number of disco packets sent."</span>)]
     </span><span class="kw">pub </span>disco_packets_sent: Counter,
     <span class="doccomment">/// `FrameType::SendPacket` received that are disco messages
-    </span><span class="attr">#[metrics(description = <span class="string">"Number of disco packets received."</span>)]
+    </span><span class="attr">#[metrics(help = <span class="string">"Number of disco packets received."</span>)]
     </span><span class="kw">pub </span>disco_packets_recv: Counter,
     <span class="doccomment">/// `FrameType::SendPacket` dropped that are disco messages
-    </span><span class="attr">#[metrics(description = <span class="string">"Number of disco packets dropped."</span>)]
+    </span><span class="attr">#[metrics(help = <span class="string">"Number of disco packets dropped."</span>)]
     </span><span class="kw">pub </span>disco_packets_dropped: Counter,
 
     <span class="doccomment">/// Packets of other `FrameType`s sent
-    </span><span class="attr">#[metrics(
-        description = <span class="string">"Number of packets sent that were not disco packets or 'send' packets"
-    </span>)]
+    </span><span class="attr">#[metrics(help = <span class="string">"Number of packets sent that were not disco packets or 'send' packets"</span>)]
     </span><span class="kw">pub </span>other_packets_sent: Counter,
     <span class="doccomment">/// Packets of other `FrameType`s received
-    </span><span class="attr">#[metrics(
-        description = <span class="string">"Number of packets received that were not disco packets or 'send' packets"
-    </span>)]
+    </span><span class="attr">#[metrics(help = <span class="string">"Number of packets received that were not disco packets or 'send' packets"</span>)]
     </span><span class="kw">pub </span>other_packets_recv: Counter,
     <span class="doccomment">/// Packets of other `FrameType`s dropped
-    </span><span class="attr">#[metrics(description = <span class="string">"Number of times a non-disco, non-send packet was dropped."</span>)]
+    </span><span class="attr">#[metrics(help = <span class="string">"Number of times a non-disco, non-send packet was dropped."</span>)]
     </span><span class="kw">pub </span>other_packets_dropped: Counter,
 
     <span class="doccomment">/// Number of `FrameType::Ping`s received
-    </span><span class="attr">#[metrics(description = <span class="string">"Number of times the server has received a Ping from a client."</span>)]
+    </span><span class="attr">#[metrics(help = <span class="string">"Number of times the server has received a Ping from a client."</span>)]
     </span><span class="kw">pub </span>got_ping: Counter,
     <span class="doccomment">/// Number of `FrameType::Pong`s sent
-    </span><span class="attr">#[metrics(description = <span class="string">"Number of times the server has sent a Pong to a client."</span>)]
+    </span><span class="attr">#[metrics(help = <span class="string">"Number of times the server has sent a Pong to a client."</span>)]
     </span><span class="kw">pub </span>sent_pong: Counter,
     <span class="doccomment">/// Number of `FrameType::Unknown` received
-    </span><span class="attr">#[metrics(description = <span class="string">"Number of unknown frames sent to this server."</span>)]
+    </span><span class="attr">#[metrics(help = <span class="string">"Number of unknown frames sent to this server."</span>)]
     </span><span class="kw">pub </span>unknown_frames: Counter,
 
     <span class="doccomment">/// Number of frames received from client connection which have been rate-limited.
@@ -196,7 +188,7 @@
     </span><span class="doccomment">/// Number of times this server has accepted a connection.
     </span><span class="kw">pub </span>accepts: Counter,
     <span class="doccomment">/// Number of connections we have removed because of an error
-    </span><span class="attr">#[metrics(description = <span class="string">"Number of clients that have then disconnected."</span>)]
+    </span><span class="attr">#[metrics(help = <span class="string">"Number of clients that have then disconnected."</span>)]
     </span><span class="kw">pub </span>disconnects: Counter,
 
     <span class="doccomment">/// Number of unique client keys per day
