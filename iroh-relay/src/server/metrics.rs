@@ -128,44 +128,21 @@ impl MetricsGroup for Metrics {
 }
 
 /// StunMetrics tracked for the relay server
-#[derive(Debug, Clone, Iterable)]
+#[derive(Debug, Clone, MetricsGroup)]
+#[metrics_group(name = "stun")]
 pub struct StunMetrics {
-    /*
-     * Metrics about STUN requests
-     */
-    /// Number of stun requests made
+    /// Number of STUN requests made to the server.
     pub requests: Counter,
-    /// Number of successful requests over ipv4
+    /// Number of successful ipv4 STUN requests served.
     pub ipv4_success: Counter,
-    /// Number of successful requests over ipv6
+    /// Number of successful ipv6 STUN requests served.
     pub ipv6_success: Counter,
-
-    /// Number of bad requests, either non-stun packets or incorrect binding request
+    /// Number of bad requests made to the STUN endpoint.
     pub bad_requests: Counter,
-    /// Number of failures
+    /// Number of STUN requests that end in failure.
     pub failures: Counter,
 }
 
-impl Default for StunMetrics {
-    fn default() -> Self {
-        Self {
-            /*
-             * Metrics about STUN requests
-             */
-            requests: Counter::new("Number of STUN requests made to the server."),
-            ipv4_success: Counter::new("Number of successful ipv4 STUN requests served."),
-            ipv6_success: Counter::new("Number of successful ipv6 STUN requests served."),
-            bad_requests: Counter::new("Number of bad requests made to the STUN endpoint."),
-            failures: Counter::new("Number of STUN requests that end in failure."),
-        }
-    }
-}
-
-impl MetricsGroup for StunMetrics {
-    fn name(&self) -> &'static str {
-        "stun"
-    }
-}
 
 #[derive(Debug, Default, Clone)]
 pub struct RelayMetrics {
@@ -178,7 +155,7 @@ impl MetricsGroupSet for RelayMetrics {
         "relay"
     }
 
-    fn iter(&self) -> impl Iterator<Item = &dyn MetricsGroup> {
+    fn groups(&self) -> impl Iterator<Item = &dyn MetricsGroup> {
         [
             &*self.stun as &dyn MetricsGroup,
             &*self.server as &dyn MetricsGroup,
