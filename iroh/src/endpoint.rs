@@ -1135,18 +1135,16 @@ impl Endpoint {
     /// For example, the following snippet collects all metrics into a map:
     /// ```rust
     /// # use std::collections::BTreeMap;
-    /// # use iroh_metrics::{MetricsGroup, MetricValue, MetricsGroupSet};
+    /// # use iroh_metrics::{Metric, MetricsGroup, MetricValue, MetricsGroupSet};
     /// # use iroh::endpoint::Endpoint;
     /// # async fn wrapper() -> testresult::TestResult {
     /// let endpoint = Endpoint::builder().bind().await?;
     /// let metrics: BTreeMap<String, MetricValue> = endpoint
     ///     .metrics()
     ///     .iter()
-    ///     .flat_map(|group| {
-    ///         group.values().map(|item| {
-    ///             let name = [group.name(), item.name].join(":");
-    ///             (name, item.value)
-    ///         })
+    ///     .map(|(group, metric)| {
+    ///         let name = [group, metric.name()].join(":");
+    ///         (name, metric.value())
     ///     })
     ///     .collect();
     ///
