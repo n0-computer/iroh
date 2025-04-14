@@ -70,7 +70,7 @@
 }
 
 <span class="kw">impl </span>MetricsGroupSet <span class="kw">for </span>EndpointMetrics {
-    <span class="kw">fn </span>iter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="kw-2">&amp;</span><span class="kw">dyn </span>MetricsGroup&gt; {
+    <span class="kw">fn </span>groups(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="kw-2">&amp;</span><span class="kw">dyn </span>MetricsGroup&gt; {
         <span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">return </span>[
             <span class="kw-2">&amp;*</span><span class="self">self</span>.magicsock <span class="kw">as </span><span class="kw-2">&amp;</span><span class="kw">dyn </span>MetricsGroup,

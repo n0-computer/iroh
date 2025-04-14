@@ -170,13 +170,15 @@
 <a href="#169" id="169">169</a>
 <a href="#170" id="170">170</a>
 <a href="#171" id="171">171</a>
-<a href="#172" id="172">172</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::BTreeMap;
+<a href="#172" id="172">172</a>
+<a href="#173" id="173">173</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::BTreeMap;
 
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>clap::Parser;
 <span class="attr">#[cfg(not(any(target_os = <span class="string">"freebsd"</span>, target_os = <span class="string">"openbsd"</span>, target_os = <span class="string">"netbsd"</span>)))]
 </span><span class="kw">use </span>iroh_bench::quinn;
 <span class="kw">use </span>iroh_bench::{configure_tracing_subscriber, iroh, rt, s2n, Commands, Opt};
+<span class="kw">use </span>iroh_metrics::{MetricValue, MetricsGroup};
 
 <span class="kw">fn </span>main() {
     <span class="kw">let </span>cmd = Commands::parse();
@@ -330,15 +332,15 @@
     <span class="macro">unimplemented!</span>()
 }
 
-<span class="kw">fn </span>collect_and_print(
-    category: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
-    metrics: <span class="kw-2">&amp;</span><span class="kw">impl </span>iroh_metrics::struct_iterable::Iterable,
-) {
+<span class="kw">fn </span>collect_and_print(category: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str, metrics: <span class="kw-2">&amp;</span><span class="kw">dyn </span>MetricsGroup) {
     <span class="kw">let </span><span class="kw-2">mut </span>map = BTreeMap::new();
-    <span class="kw">for </span>(name, counter) <span class="kw">in </span>metrics.iter() {
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(counter) = counter.downcast_ref::&lt;iroh_metrics::Counter&gt;() {
-            map.insert(name.to_string(), counter.get());
-        }
+    <span class="kw">for </span>item <span class="kw">in </span>metrics.iter() {
+        <span class="kw">let </span>value: i64 = <span class="kw">match </span>item.value() {
+            MetricValue::Counter(v) =&gt; v <span class="kw">as </span>i64,
+            MetricValue::Gauge(v) =&gt; v,
+            <span class="kw">_ </span>=&gt; <span class="kw">continue</span>,
+        };
+        map.insert(item.name().to_string(), value);
     }
     <span class="macro">println!</span>(<span class="string">"{category}: {map:#?}"</span>);
 }

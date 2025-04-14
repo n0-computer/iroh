@@ -2898,7 +2898,25 @@
 <a href="#2897" id="2897">2897</a>
 <a href="#2898" id="2898">2898</a>
 <a href="#2899" id="2899">2899</a>
-<a href="#2900" id="2900">2900</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2900" id="2900">2900</a>
+<a href="#2901" id="2901">2901</a>
+<a href="#2902" id="2902">2902</a>
+<a href="#2903" id="2903">2903</a>
+<a href="#2904" id="2904">2904</a>
+<a href="#2905" id="2905">2905</a>
+<a href="#2906" id="2906">2906</a>
+<a href="#2907" id="2907">2907</a>
+<a href="#2908" id="2908">2908</a>
+<a href="#2909" id="2909">2909</a>
+<a href="#2910" id="2910">2910</a>
+<a href="#2911" id="2911">2911</a>
+<a href="#2912" id="2912">2912</a>
+<a href="#2913" id="2913">2913</a>
+<a href="#2914" id="2914">2914</a>
+<a href="#2915" id="2915">2915</a>
+<a href="#2916" id="2916">2916</a>
+<a href="#2917" id="2917">2917</a>
+<a href="#2918" id="2918">2918</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -4035,18 +4053,16 @@
     /// For example, the following snippet collects all metrics into a map:
     /// ```rust
     /// # use std::collections::BTreeMap;
-    /// # use iroh_metrics::{MetricsGroup, MetricValue, MetricsGroupSet};
+    /// # use iroh_metrics::{Metric, MetricsGroup, MetricValue, MetricsGroupSet};
     /// # use iroh::endpoint::Endpoint;
     /// # async fn wrapper() -&gt; testresult::TestResult {
     /// let endpoint = Endpoint::builder().bind().await?;
     /// let metrics: BTreeMap&lt;String, MetricValue&gt; = endpoint
     ///     .metrics()
     ///     .iter()
-    ///     .flat_map(|group| {
-    ///         group.values().map(|item| {
-    ///             let name = [group.name(), item.name].join(":");
-    ///             (name, item.value)
-    ///         })
+    ///     .map(|(group, metric)| {
+    ///         let name = [group, metric.name()].join(":");
+    ///         (name, metric.value())
     ///     })
     ///     .collect();
     ///
@@ -4994,6 +5010,7 @@
 
     <span class="kw">use </span>std::time::Instant;
 
+    <span class="kw">use </span>iroh_metrics::{service::MetricsSource, MetricsGroupSet};
     <span class="kw">use </span>iroh_relay::http::Protocol;
     <span class="kw">use </span>n0_future::StreamExt;
     <span class="kw">use </span>rand::SeedableRng;
@@ -5751,11 +5768,17 @@
     <span class="attr">#[tokio::test]
     #[traced_test]
     </span><span class="kw">async fn </span>metrics_smoke() -&gt; testresult::TestResult {
+        <span class="kw">use </span>iroh_metrics::Registry;
+
+        <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">0u8</span>; <span class="number">32</span>]);
         <span class="kw">let </span>client = Endpoint::builder()
+            .secret_key(secret_key)
             .relay_mode(RelayMode::Disabled)
             .bind()
             .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">1u8</span>; <span class="number">32</span>]);
         <span class="kw">let </span>server = Endpoint::builder()
+            .secret_key(secret_key)
             .relay_mode(RelayMode::Disabled)
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
             .bind()
@@ -5794,6 +5817,19 @@
         <span class="macro">assert_eq!</span>(m.magicsock.nodes_contacted_directly.get(), <span class="number">1</span>);
         <span class="macro">assert_eq!</span>(m.magicsock.connection_handshake_success.get(), <span class="number">1</span>);
         <span class="macro">assert!</span>(m.magicsock.recv_datagrams.get() &gt; <span class="number">0</span>);
+
+        <span class="comment">// test openmetrics encoding with labeled subregistries per endpoint
+        </span><span class="kw">fn </span>register_endpoint(registry: <span class="kw-2">&amp;mut </span>Registry, endpoint: <span class="kw-2">&amp;</span>Endpoint) {
+            <span class="kw">let </span>id = endpoint.node_id().fmt_short().into();
+            <span class="kw">let </span>sub_registry = registry.sub_registry_with_label((<span class="string">"id"</span>.into(), id));
+            endpoint.metrics().register(sub_registry);
+        }
+        <span class="kw">let </span><span class="kw-2">mut </span>registry = Registry::default();
+        register_endpoint(<span class="kw-2">&amp;mut </span>registry, <span class="kw-2">&amp;</span>client);
+        register_endpoint(<span class="kw-2">&amp;mut </span>registry, <span class="kw-2">&amp;</span>server);
+        <span class="kw">let </span>s = registry.encode_openmetrics()<span class="question-mark">?</span>;
+        <span class="macro">assert!</span>(s.contains(<span class="string">r#"magicsock_nodes_contacted_directly_total{id="3b6a27bcce"} 1"#</span>));
+        <span class="macro">assert!</span>(s.contains(<span class="string">r#"magicsock_nodes_contacted_directly_total{id="8a88e3dd74"} 1"#</span>));
 
         <span class="prelude-val">Ok</span>(())
     }
