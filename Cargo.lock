@@ -2398,7 +2398,7 @@ dependencies = [
 [[package]]
 name = "iroh-metrics"
 version = "0.32.0"
-source = "git+https://github.com/n0-computer/iroh-metrics?branch=Frando/refactor2#7ddd198e69230b4716806e69eb141eef04affd1a"
+source = "git+https://github.com/n0-computer/iroh-metrics?branch=Frando/refactor#a1a6e1090892bde5c2d2c115afd03a409f12f6a3"
 dependencies = [
  "http-body-util",
  "hyper",
@@ -2415,7 +2415,7 @@ dependencies = [
 [[package]]
 name = "iroh-metrics-derive"
 version = "0.1.0"
-source = "git+https://github.com/n0-computer/iroh-metrics?branch=Frando/refactor2#7ddd198e69230b4716806e69eb141eef04affd1a"
+source = "git+https://github.com/n0-computer/iroh-metrics?branch=Frando/refactor#a1a6e1090892bde5c2d2c115afd03a409f12f6a3"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -2978,7 +2978,7 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.4.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=Frando/metrics2#56845af49f5d8a2b7ea52f64ca2945679e66fd33"
+source = "git+https://github.com/n0-computer/net-tools?branch=Frando/metrics#731a154aa91ccdae75f1337a9ce5888d4ae484be"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -3475,7 +3475,7 @@ checksum = "280dc24453071f1b63954171985a0b0d30058d287960968b9b2aca264c8d4ee6"
 [[package]]
 name = "portmapper"
 version = "0.4.1"
-source = "git+https://github.com/n0-computer/net-tools?branch=Frando/metrics2#56845af49f5d8a2b7ea52f64ca2945679e66fd33"
+source = "git+https://github.com/n0-computer/net-tools?branch=Frando/metrics#731a154aa91ccdae75f1337a9ce5888d4ae484be"
 dependencies = [
  "base64",
  "bytes",
@@ -3485,7 +3485,7 @@ dependencies = [
  "igd-next",
  "iroh-metrics",
  "libc",
- "netwatch 0.4.0 (git+https://github.com/n0-computer/net-tools?branch=Frando/metrics2)",
+ "netwatch 0.4.0 (git+https://github.com/n0-computer/net-tools?branch=Frando/metrics)",
  "num_enum",
  "rand 0.8.5",
  "serde",
