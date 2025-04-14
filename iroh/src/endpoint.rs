@@ -2850,6 +2850,8 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn metrics_smoke() -> testresult::TestResult {
+        use iroh_metrics::Registry;
+
         let secret_key = SecretKey::from_bytes(&[0u8; 32]);
         let client = Endpoint::builder()
             .secret_key(secret_key)
@@ -2899,13 +2901,14 @@ mod tests {
         assert!(m.magicsock.recv_datagrams.get() > 0);
 
         // test openmetrics encoding with labeled subregistries per endpoint
-        let mut registry = iroh_metrics::Registry::default();
-        client.metrics().register(
-            registry.sub_registry_with_label(("id".into(), client.node_id().fmt_short().into())),
-        );
-        server.metrics().register(
-            registry.sub_registry_with_label(("id".into(), server.node_id().fmt_short().into())),
-        );
+        fn register_endpoint(registry: &mut Registry, endpoint: &Endpoint) {
+            let id = endpoint.node_id().fmt_short().into();
+            let sub_registry = registry.sub_registry_with_label(("id".into(), id));
+            endpoint.metrics().register(sub_registry);
+        }
+        let mut registry = Registry::default();
+        register_endpoint(&mut registry, &client);
+        register_endpoint(&mut registry, &server);
         let s = registry.encode_openmetrics()?;
         assert!(s.contains(r#"magicsock_nodes_contacted_directly_total{id="3b6a27bcce"} 1"#));
         assert!(s.contains(r#"magicsock_nodes_contacted_directly_total{id="8a88e3dd74"} 1"#));
