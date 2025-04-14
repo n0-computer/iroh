@@ -270,7 +270,12 @@
 <a href="#269" id="269">269</a>
 <a href="#270" id="270">270</a>
 <a href="#271" id="271">271</a>
-<a href="#272" id="272">272</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#272" id="272">272</a>
+<a href="#273" id="273">273</a>
+<a href="#274" id="274">274</a>
+<a href="#275" id="275">275</a>
+<a href="#276" id="276">276</a>
+<a href="#277" id="277">277</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::SocketAddr,
     pin::Pin,
     task::{Context, Poll},
@@ -362,27 +367,23 @@
 }
 
 <span class="kw">pub fn </span>downcast_upgrade(upgraded: Upgraded) -&gt; <span class="prelude-ty">Result</span>&lt;MaybeTlsStreamChained&gt; {
-    <span class="kw">match </span>upgraded.downcast::&lt;TokioIo&lt;ProxyStream&gt;&gt;() {
+    <span class="kw">match </span>upgraded.downcast::&lt;TokioIo&lt;MaybeTlsStream&lt;ProxyStream&gt;&gt;&gt;() {
         <span class="prelude-val">Ok</span>(Parts { read_buf, io, .. }) =&gt; {
-            <span class="kw">let </span>conn = io.into_inner();
             <span class="comment">// Prepend data to the reader to avoid data loss
-            </span><span class="kw">let </span>conn = util::chain(std::io::Cursor::new(read_buf), conn);
-            <span class="prelude-val">Ok</span>(MaybeTlsStreamChained::Raw(conn))
-        }
-        <span class="prelude-val">Err</span>(upgraded) =&gt; {
-            <span class="kw">if let </span><span class="prelude-val">Ok</span>(Parts { read_buf, io, .. }) =
-                upgraded.downcast::&lt;TokioIo&lt;tokio_rustls::client::TlsStream&lt;ProxyStream&gt;&gt;&gt;()
-            {
-                <span class="kw">let </span>conn = io.into_inner();
-
-                <span class="comment">// Prepend data to the reader to avoid data loss
-                </span><span class="kw">let </span>conn = util::chain(std::io::Cursor::new(read_buf), conn);
-                <span class="kw">return </span><span class="prelude-val">Ok</span>(MaybeTlsStreamChained::Tls(conn));
+            </span><span class="kw">let </span>read_buf = std::io::Cursor::new(read_buf);
+            <span class="kw">match </span>io.into_inner() {
+                MaybeTlsStream::Raw(conn) =&gt; {
+                    <span class="prelude-val">Ok</span>(MaybeTlsStreamChained::Raw(util::chain(read_buf, conn)))
+                }
+                MaybeTlsStream::Tls(conn) =&gt; {
+                    <span class="prelude-val">Ok</span>(MaybeTlsStreamChained::Tls(util::chain(read_buf, conn)))
+                }
             }
-
+        }
+        <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; {
             <span class="macro">bail!</span>(
                 <span class="string">"could not downcast the upgraded connection to a TcpStream or client::TlsStream&lt;TcpStream&gt;"
-            </span>)
+            </span>);
         }
     }
 }
@@ -390,7 +391,7 @@
 <span class="attr">#[derive(Debug)]
 </span><span class="kw">pub enum </span>ProxyStream {
     Raw(TcpStream),
-    Proxied(util::Chain&lt;std::io::Cursor&lt;Bytes&gt;, MaybeTlsStream&gt;),
+    Proxied(util::Chain&lt;std::io::Cursor&lt;Bytes&gt;, MaybeTlsStream&lt;TcpStream&gt;&gt;),
 }
 
 <span class="kw">impl </span>AsyncRead <span class="kw">for </span>ProxyStream {
@@ -466,12 +467,12 @@
 }
 
 <span class="attr">#[derive(Debug)]
-</span><span class="kw">pub enum </span>MaybeTlsStream {
-    Raw(TcpStream),
-    Tls(tokio_rustls::client::TlsStream&lt;TcpStream&gt;),
+</span><span class="kw">pub enum </span>MaybeTlsStream&lt;IO&gt; {
+    Raw(IO),
+    Tls(tokio_rustls::client::TlsStream&lt;IO&gt;),
 }
 
-<span class="kw">impl </span>AsyncRead <span class="kw">for </span>MaybeTlsStream {
+<span class="kw">impl</span>&lt;IO: AsyncRead + AsyncWrite + Unpin&gt; AsyncRead <span class="kw">for </span>MaybeTlsStream&lt;IO&gt; {
     <span class="kw">fn </span>poll_read(
         <span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;,
         cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;,
@@ -484,7 +485,7 @@
     }
 }
 
-<span class="kw">impl </span>AsyncWrite <span class="kw">for </span>MaybeTlsStream {
+<span class="kw">impl</span>&lt;IO: AsyncRead + AsyncWrite + Unpin&gt; AsyncWrite <span class="kw">for </span>MaybeTlsStream&lt;IO&gt; {
     <span class="kw">fn </span>poll_write(
         <span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;,
         cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;,
@@ -527,7 +528,7 @@
     }
 }
 
-<span class="kw">impl </span>MaybeTlsStream {
+<span class="kw">impl </span>MaybeTlsStream&lt;TcpStream&gt; {
     <span class="kw">pub fn </span>local_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; std::io::Result&lt;SocketAddr&gt; {
         <span class="kw">match </span><span class="self">self </span>{
             <span class="self">Self</span>::Raw(s) =&gt; s.local_addr(),
@@ -539,6 +540,15 @@
         <span class="kw">match </span><span class="self">self </span>{
             <span class="self">Self</span>::Raw(s) =&gt; s.peer_addr(),
             <span class="self">Self</span>::Tls(s) =&gt; s.get_ref().<span class="number">0</span>.peer_addr(),
+        }
+    }
+}
+
+<span class="kw">impl</span>&lt;IO&gt; AsRef&lt;IO&gt; <span class="kw">for </span>MaybeTlsStream&lt;IO&gt; {
+    <span class="kw">fn </span>as_ref(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>IO {
+        <span class="kw">match </span><span class="self">self </span>{
+            <span class="self">Self</span>::Raw(s) =&gt; s,
+            <span class="self">Self</span>::Tls(s) =&gt; s.get_ref().<span class="number">0</span>,
         }
     }
 }

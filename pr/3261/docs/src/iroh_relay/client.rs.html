@@ -368,7 +368,9 @@
 <a href="#367" id="367">367</a>
 <a href="#368" id="368">368</a>
 <a href="#369" id="369">369</a>
-<a href="#370" id="370">370</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
+<a href="#370" id="370">370</a>
+<a href="#371" id="371">371</a>
+<a href="#372" id="372">372</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
 //!
 //! Based on tailscale/derp/derphttp/derphttp_client.go
 
@@ -401,9 +403,9 @@
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>conn;
 <span class="attr">#[cfg(not(wasm_browser))]
-</span><span class="kw">mod </span>connect_relay;
-<span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>streams;
+<span class="attr">#[cfg(not(wasm_browser))]
+</span><span class="kw">mod </span>tls;
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">mod </span>util;
 
@@ -510,10 +512,16 @@
     <span class="doccomment">/// Establishes a new connection to the relay server.
     </span><span class="kw">pub async fn </span>connect(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Client&gt; {
         <span class="kw">let </span>(conn, local_addr) = <span class="kw">match </span><span class="self">self</span>.protocol {
-            Protocol::Websocket =&gt; {
+            <span class="attr">#[cfg(wasm_browser)]
+            </span>Protocol::Websocket =&gt; {
                 <span class="kw">let </span>conn = <span class="self">self</span>.connect_ws().<span class="kw">await</span><span class="question-mark">?</span>;
                 <span class="kw">let </span>local_addr = <span class="prelude-val">None</span>;
                 (conn, local_addr)
+            }
+            <span class="attr">#[cfg(not(wasm_browser))]
+            </span>Protocol::Websocket =&gt; {
+                <span class="kw">let </span>(conn, local_addr) = <span class="self">self</span>.connect_ws().<span class="kw">await</span><span class="question-mark">?</span>;
+                (conn, <span class="prelude-val">Some</span>(local_addr))
             }
             <span class="attr">#[cfg(not(wasm_browser))]
             </span>Protocol::Relay =&gt; {
@@ -537,30 +545,26 @@
         <span class="prelude-val">Ok</span>(Client { conn, local_addr })
     }
 
-    <span class="kw">async fn </span>connect_ws(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Conn&gt; {
+    <span class="attr">#[cfg(wasm_browser)]
+    </span><span class="kw">async fn </span>connect_ws(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Conn&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>dial_url = (<span class="kw-2">*</span><span class="self">self</span>.url).clone();
         dial_url.set_path(RELAY_PATH);
         <span class="comment">// The relay URL is exchanged with the http(s) scheme in tickets and similar.
         // We need to use the ws:// or wss:// schemes when connecting with websockets, though.
         </span>dial_url
-            .set_scheme(<span class="kw">if </span><span class="self">self</span>.use_tls() { <span class="string">"wss" </span>} <span class="kw">else </span>{ <span class="string">"ws" </span>})
+            .set_scheme(<span class="kw">match </span><span class="self">self</span>.url.scheme() {
+                <span class="string">"http" </span>=&gt; <span class="string">"ws"</span>,
+                <span class="string">"ws" </span>=&gt; <span class="string">"ws"</span>,
+                <span class="kw">_ </span>=&gt; <span class="string">"wss"</span>,
+            })
             .map_err(|()| <span class="macro">anyhow!</span>(<span class="string">"Invalid URL"</span>))<span class="question-mark">?</span>;
 
         <span class="macro">debug!</span>(%dial_url, <span class="string">"Dialing relay by websocket"</span>);
 
-        <span class="kw">let </span>conn = tokio_tungstenite_wasm::connect(dial_url).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>conn = Conn::new_ws(conn, <span class="self">self</span>.key_cache.clone(), <span class="kw-2">&amp;</span><span class="self">self</span>.secret_key).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>(<span class="kw">_</span>, ws_stream) = ws_stream_wasm::WsMeta::connect(dial_url.as_str(), <span class="prelude-val">None</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>conn =
+            Conn::new_ws_browser(ws_stream, <span class="self">self</span>.key_cache.clone(), <span class="kw-2">&amp;</span><span class="self">self</span>.secret_key).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(conn)
-    }
-
-    <span class="kw">fn </span>use_tls(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-        <span class="comment">// only disable tls if we are explicitly dialing a http url
-        </span><span class="attr">#[allow(clippy::match_like_matches_macro)]
-        </span><span class="kw">match </span><span class="self">self</span>.url.scheme() {
-            <span class="string">"http" </span>=&gt; <span class="bool-val">false</span>,
-            <span class="string">"ws" </span>=&gt; <span class="bool-val">false</span>,
-            <span class="kw">_ </span>=&gt; <span class="bool-val">true</span>,
-        }
     }
 }
 

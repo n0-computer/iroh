@@ -1,4 +1,4 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh-relay/src/client/connect_relay.rs`."><title>connect_relay.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-dbdb5eec.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="iroh_relay" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (d10a6823f 2024-11-29)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../../static.files/storage-59e33391.js"></script><script defer src="../../../static.files/src-script-56102188.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">iroh_relay/client/</div>connect_relay.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers">
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Source of the Rust file `iroh-relay/src/client/tls.rs`."><title>tls.rs - source</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2" crossorigin href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-dbdb5eec.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="iroh_relay" data-themes="" data-resource-suffix="" data-rustdoc-version="1.85.0-nightly (d10a6823f 2024-11-29)" data-channel="nightly" data-search-js="search-92e6798f.js" data-settings-js="settings-0f613d39.js" ><script src="../../../static.files/storage-59e33391.js"></script><script defer src="../../../static.files/src-script-56102188.js"></script><script defer src="../../../src-files.js"></script><script defer src="../../../static.files/main-5f194d8c.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-893ab5e7.css"></noscript><link rel="alternate icon" type="image/png" href="../../../static.files/favicon-32x32-6580c154.png"><link rel="icon" type="image/svg+xml" href="../../../static.files/favicon-044be391.svg"></head><body class="rustdoc src"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><nav class="sidebar"><div class="src-sidebar-title"><h2>Files</h2></div></nav><div class="sidebar-resizer"></div><main><rustdoc-search></rustdoc-search><section id="main-content" class="content"><div class="main-heading"><h1><div class="sub-heading">iroh_relay/client/</div>tls.rs</h1><rustdoc-toolbar></rustdoc-toolbar></div><div class="example-wrap"><div data-nosnippet><pre class="src-line-numbers">
 <a href="#1" id="1">1</a>
 <a href="#2" id="2">2</a>
 <a href="#3" id="3">3</a>
@@ -344,15 +344,127 @@
 <a href="#343" id="343">343</a>
 <a href="#344" id="344">344</a>
 <a href="#345" id="345">345</a>
-<a href="#346" id="346">346</a></pre></div><pre class="rust"><code><span class="doccomment">//! Functionality related to `ClientBuilder::connect_relay`.
+<a href="#346" id="346">346</a>
+<a href="#347" id="347">347</a>
+<a href="#348" id="348">348</a>
+<a href="#349" id="349">349</a>
+<a href="#350" id="350">350</a>
+<a href="#351" id="351">351</a>
+<a href="#352" id="352">352</a>
+<a href="#353" id="353">353</a>
+<a href="#354" id="354">354</a>
+<a href="#355" id="355">355</a>
+<a href="#356" id="356">356</a>
+<a href="#357" id="357">357</a>
+<a href="#358" id="358">358</a>
+<a href="#359" id="359">359</a>
+<a href="#360" id="360">360</a>
+<a href="#361" id="361">361</a>
+<a href="#362" id="362">362</a>
+<a href="#363" id="363">363</a>
+<a href="#364" id="364">364</a>
+<a href="#365" id="365">365</a>
+<a href="#366" id="366">366</a>
+<a href="#367" id="367">367</a>
+<a href="#368" id="368">368</a>
+<a href="#369" id="369">369</a>
+<a href="#370" id="370">370</a>
+<a href="#371" id="371">371</a>
+<a href="#372" id="372">372</a>
+<a href="#373" id="373">373</a>
+<a href="#374" id="374">374</a>
+<a href="#375" id="375">375</a>
+<a href="#376" id="376">376</a>
+<a href="#377" id="377">377</a>
+<a href="#378" id="378">378</a>
+<a href="#379" id="379">379</a>
+<a href="#380" id="380">380</a>
+<a href="#381" id="381">381</a>
+<a href="#382" id="382">382</a>
+<a href="#383" id="383">383</a>
+<a href="#384" id="384">384</a>
+<a href="#385" id="385">385</a>
+<a href="#386" id="386">386</a>
+<a href="#387" id="387">387</a>
+<a href="#388" id="388">388</a>
+<a href="#389" id="389">389</a>
+<a href="#390" id="390">390</a>
+<a href="#391" id="391">391</a>
+<a href="#392" id="392">392</a>
+<a href="#393" id="393">393</a>
+<a href="#394" id="394">394</a>
+<a href="#395" id="395">395</a>
+<a href="#396" id="396">396</a>
+<a href="#397" id="397">397</a>
+<a href="#398" id="398">398</a>
+<a href="#399" id="399">399</a>
+<a href="#400" id="400">400</a>
+<a href="#401" id="401">401</a>
+<a href="#402" id="402">402</a>
+<a href="#403" id="403">403</a>
+<a href="#404" id="404">404</a>
+<a href="#405" id="405">405</a>
+<a href="#406" id="406">406</a>
+<a href="#407" id="407">407</a>
+<a href="#408" id="408">408</a>
+<a href="#409" id="409">409</a>
+<a href="#410" id="410">410</a>
+<a href="#411" id="411">411</a>
+<a href="#412" id="412">412</a>
+<a href="#413" id="413">413</a>
+<a href="#414" id="414">414</a>
+<a href="#415" id="415">415</a>
+<a href="#416" id="416">416</a>
+<a href="#417" id="417">417</a>
+<a href="#418" id="418">418</a>
+<a href="#419" id="419">419</a>
+<a href="#420" id="420">420</a>
+<a href="#421" id="421">421</a>
+<a href="#422" id="422">422</a>
+<a href="#423" id="423">423</a>
+<a href="#424" id="424">424</a>
+<a href="#425" id="425">425</a>
+<a href="#426" id="426">426</a>
+<a href="#427" id="427">427</a>
+<a href="#428" id="428">428</a>
+<a href="#429" id="429">429</a>
+<a href="#430" id="430">430</a>
+<a href="#431" id="431">431</a>
+<a href="#432" id="432">432</a>
+<a href="#433" id="433">433</a>
+<a href="#434" id="434">434</a>
+<a href="#435" id="435">435</a>
+<a href="#436" id="436">436</a>
+<a href="#437" id="437">437</a>
+<a href="#438" id="438">438</a>
+<a href="#439" id="439">439</a>
+<a href="#440" id="440">440</a>
+<a href="#441" id="441">441</a>
+<a href="#442" id="442">442</a>
+<a href="#443" id="443">443</a>
+<a href="#444" id="444">444</a>
+<a href="#445" id="445">445</a>
+<a href="#446" id="446">446</a>
+<a href="#447" id="447">447</a>
+<a href="#448" id="448">448</a>
+<a href="#449" id="449">449</a>
+<a href="#450" id="450">450</a>
+<a href="#451" id="451">451</a>
+<a href="#452" id="452">452</a>
+<a href="#453" id="453">453</a>
+<a href="#454" id="454">454</a>
+<a href="#455" id="455">455</a>
+<a href="#456" id="456">456</a>
+<a href="#457" id="457">457</a></pre></div><pre class="rust"><code><span class="doccomment">//! Functionality related to lower-level tls-based connection establishment.
 //!
-//! This is (1) likely to be phased out over time in favor of websockets, and
-//! (2) doesn't work in the browser - thus separated into its own file.
+//! Primarily to support [`ClientBuilder::connect_relay`].
+//!
+//! This doesn't work in the browser - thus separated into its own file.
 //!
 //! `connect_relay` uses a custom HTTP upgrade header value (see [`HTTP_UPGRADE_PROTOCOL`]),
 //! as opposed to [`WEBSOCKET_UPGRADE_PROTOCOL`].
-//! However, this code path also contains support for HTTP(s) proxies, which is
-//! why it still remains the default code path as of now.
+//!
+//! `connect_ws` however reuses websockets for framing.
 //!
 //! [`HTTP_UPGRADE_PROTOCOL`]: crate::http::HTTP_UPGRADE_PROTOCOL
 //! [`WEBSOCKET_UPGRADE_PROTOCOL`]: crate::http::WEBSOCKET_UPGRADE_PROTOCOL
@@ -380,12 +492,45 @@
 };
 <span class="kw">use </span><span class="kw">crate</span>::defaults::timeouts::<span class="kw-2">*</span>;
 
-<span class="kw">impl </span>ClientBuilder {
-    <span class="doccomment">/// Connects to configured relay using HTTP(S) with an upgrade header
-    /// set to [`HTTP_UPGRADE_PROTOCOL`].
-    ///
-    /// [`HTTP_UPGRADE_PROTOCOL`]: crate::http::HTTP_UPGRADE_PROTOCOL
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>connect_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(Conn, SocketAddr)&gt; {
+<span class="attr">#[derive(Debug, Clone)]
+</span><span class="kw">pub struct </span>MaybeTlsStreamBuilder {
+    url: Url,
+    dns_resolver: DnsResolver,
+    proxy_url: <span class="prelude-ty">Option</span>&lt;Url&gt;,
+    prefer_ipv6: bool,
+    <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+    </span>insecure_skip_cert_verify: bool,
+}
+
+<span class="kw">impl </span>MaybeTlsStreamBuilder {
+    <span class="kw">pub fn </span>new(url: Url, dns_resolver: DnsResolver) -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{
+            url,
+            dns_resolver,
+            proxy_url: <span class="prelude-val">None</span>,
+            prefer_ipv6: <span class="bool-val">false</span>,
+            <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+            </span>insecure_skip_cert_verify: <span class="bool-val">false</span>,
+        }
+    }
+
+    <span class="kw">pub fn </span>proxy_url(<span class="kw-2">mut </span><span class="self">self</span>, proxy_url: <span class="prelude-ty">Option</span>&lt;Url&gt;) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.proxy_url = proxy_url;
+        <span class="self">self
+    </span>}
+
+    <span class="kw">pub fn </span>prefer_ipv6(<span class="kw-2">mut </span><span class="self">self</span>, prefer: bool) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.prefer_ipv6 = prefer;
+        <span class="self">self
+    </span>}
+
+    <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+    </span><span class="kw">pub fn </span>insecure_skip_cert_verify(<span class="kw-2">mut </span><span class="self">self</span>, skip: bool) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.insecure_skip_cert_verify = skip;
+        <span class="self">self
+    </span>}
+
+    <span class="kw">pub async fn </span>connect(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;MaybeTlsStream&lt;ProxyStream&gt;&gt; {
         <span class="kw">let </span>roots = rustls::RootCertStore {
             roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
         };
@@ -406,7 +551,6 @@
         config.resumption = Resumption::default();
         <span class="kw">let </span>tls_connector: tokio_rustls::TlsConnector = Arc::new(config).into();
 
-        <span class="kw">let </span>url = <span class="self">self</span>.url.clone();
         <span class="kw">let </span>tcp_stream = <span class="self">self</span>.dial_url(<span class="kw-2">&amp;</span>tls_connector).<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="kw">let </span>local_addr = tcp_stream
@@ -415,7 +559,7 @@
 
         <span class="macro">debug!</span>(server_addr = <span class="question-mark">?</span>tcp_stream.peer_addr(), %local_addr, <span class="string">"TCP stream connected"</span>);
 
-        <span class="kw">let </span>response = <span class="kw">if </span><span class="self">self</span>.use_tls() {
+        <span class="kw">if </span><span class="self">self</span>.use_tls() {
             <span class="macro">debug!</span>(<span class="string">"Starting TLS handshake"</span>);
             <span class="kw">let </span>hostname = <span class="self">self
                 </span>.tls_servername()
@@ -423,66 +567,21 @@
             <span class="kw">let </span>hostname = hostname.to_owned();
             <span class="kw">let </span>tls_stream = tls_connector.connect(hostname, tcp_stream).<span class="kw">await</span><span class="question-mark">?</span>;
             <span class="macro">debug!</span>(<span class="string">"tls_connector connect success"</span>);
-            <span class="self">Self</span>::start_upgrade(tls_stream, url).<span class="kw">await</span><span class="question-mark">?
-        </span>} <span class="kw">else </span>{
+            <span class="prelude-val">Ok</span>(MaybeTlsStream::Tls(tls_stream))
+        } <span class="kw">else </span>{
             <span class="macro">debug!</span>(<span class="string">"Starting handshake"</span>);
-            <span class="self">Self</span>::start_upgrade(tcp_stream, url).<span class="kw">await</span><span class="question-mark">?
-        </span>};
-
-        <span class="kw">if </span>response.status() != hyper::StatusCode::SWITCHING_PROTOCOLS {
-            <span class="macro">bail!</span>(
-                <span class="string">"Unexpected status code: expected {}, actual: {}"</span>,
-                hyper::StatusCode::SWITCHING_PROTOCOLS,
-                response.status(),
-            );
+            <span class="prelude-val">Ok</span>(MaybeTlsStream::Raw(tcp_stream))
         }
-
-        <span class="macro">debug!</span>(<span class="string">"starting upgrade"</span>);
-        <span class="kw">let </span>upgraded = hyper::upgrade::on(response)
-            .<span class="kw">await
-            </span>.context(<span class="string">"Upgrade failed"</span>)<span class="question-mark">?</span>;
-
-        <span class="macro">debug!</span>(<span class="string">"connection upgraded"</span>);
-        <span class="kw">let </span>conn = downcast_upgrade(upgraded)<span class="question-mark">?</span>;
-
-        <span class="kw">let </span>conn = Conn::new_relay(conn, <span class="self">self</span>.key_cache.clone(), <span class="kw-2">&amp;</span><span class="self">self</span>.secret_key).<span class="kw">await</span><span class="question-mark">?</span>;
-
-        <span class="prelude-val">Ok</span>((conn, local_addr))
     }
 
-    <span class="doccomment">/// Sends the HTTP upgrade request to the relay server.
-    </span><span class="kw">async fn </span>start_upgrade&lt;T&gt;(io: T, relay_url: RelayUrl) -&gt; <span class="prelude-ty">Result</span>&lt;hyper::Response&lt;Incoming&gt;&gt;
-    <span class="kw">where
-        </span>T: AsyncRead + AsyncWrite + Send + Unpin + <span class="lifetime">'static</span>,
-    {
-        <span class="kw">use </span>hyper_util::rt::TokioIo;
-        <span class="kw">let </span>host_header_value = host_header_value(relay_url)<span class="question-mark">?</span>;
-
-        <span class="kw">let </span>io = TokioIo::new(io);
-        <span class="kw">let </span>(<span class="kw-2">mut </span>request_sender, connection) = hyper::client::conn::http1::Builder::new()
-            .handshake(io)
-            .<span class="kw">await</span><span class="question-mark">?</span>;
-        task::spawn(
-            <span class="comment">// This task drives the HTTP exchange, completes once connection is upgraded.
-            </span><span class="kw">async move </span>{
-                <span class="macro">debug!</span>(<span class="string">"HTTP upgrade driver started"</span>);
-                <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = connection.with_upgrades().<span class="kw">await </span>{
-                    <span class="macro">error!</span>(<span class="string">"HTTP upgrade error: {err:#}"</span>);
-                }
-                <span class="macro">debug!</span>(<span class="string">"HTTP upgrade driver finished"</span>);
-            }
-            .instrument(<span class="macro">info_span!</span>(<span class="string">"http-driver"</span>)),
-        );
-        <span class="macro">debug!</span>(<span class="string">"Sending upgrade request"</span>);
-        <span class="kw">let </span>req = Request::builder()
-            .uri(RELAY_PATH)
-            .header(UPGRADE, Protocol::Relay.upgrade_header())
-            <span class="comment">// https://datatracker.ietf.org/doc/html/rfc2616#section-14.23
-            // &gt; A client MUST include a Host header field in all HTTP/1.1 request messages.
-            // This header value helps reverse proxies identify how to forward requests.
-            </span>.header(HOST, host_header_value)
-            .body(http_body_util::Empty::&lt;hyper::body::Bytes&gt;::new())<span class="question-mark">?</span>;
-        request_sender.send_request(req).<span class="kw">await</span>.map_err(From::from)
+    <span class="kw">fn </span>use_tls(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+        <span class="comment">// only disable tls if we are explicitly dialing a http url
+        </span><span class="attr">#[allow(clippy::match_like_matches_macro)]
+        </span><span class="kw">match </span><span class="self">self</span>.url.scheme() {
+            <span class="string">"http" </span>=&gt; <span class="bool-val">false</span>,
+            <span class="string">"ws" </span>=&gt; <span class="bool-val">false</span>,
+            <span class="kw">_ </span>=&gt; <span class="bool-val">true</span>,
+        }
     }
 
     <span class="kw">fn </span>tls_servername(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;rustls::pki_types::ServerName&gt; {
@@ -504,10 +603,9 @@
     <span class="kw">async fn </span>dial_url_direct(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;tokio::net::TcpStream&gt; {
         <span class="kw">use </span>tokio::net::TcpStream;
         <span class="macro">debug!</span>(%<span class="self">self</span>.url, <span class="string">"dial url"</span>);
-        <span class="kw">let </span>prefer_ipv6 = <span class="self">self</span>.prefer_ipv6();
         <span class="kw">let </span>dst_ip = <span class="self">self
             </span>.dns_resolver
-            .resolve_host(<span class="kw-2">&amp;</span><span class="self">self</span>.url, prefer_ipv6, DNS_TIMEOUT)
+            .resolve_host(<span class="kw-2">&amp;</span><span class="self">self</span>.url, <span class="self">self</span>.prefer_ipv6, DNS_TIMEOUT)
             .<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="kw">let </span>port = url_port(<span class="kw-2">&amp;</span><span class="self">self</span>.url).ok_or_else(|| <span class="macro">anyhow!</span>(<span class="string">"Missing URL port"</span>))<span class="question-mark">?</span>;
@@ -530,16 +628,15 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         proxy_url: Url,
         tls_connector: <span class="kw-2">&amp;</span>tokio_rustls::TlsConnector,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;util::Chain&lt;std::io::Cursor&lt;Bytes&gt;, MaybeTlsStream&gt;&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;util::Chain&lt;std::io::Cursor&lt;Bytes&gt;, MaybeTlsStream&lt;tokio::net::TcpStream&gt;&gt;&gt; {
         <span class="kw">use </span>hyper_util::rt::TokioIo;
         <span class="kw">use </span>tokio::net::TcpStream;
         <span class="macro">debug!</span>(%<span class="self">self</span>.url, %proxy_url, <span class="string">"dial url via proxy"</span>);
 
         <span class="comment">// Resolve proxy DNS
-        </span><span class="kw">let </span>prefer_ipv6 = <span class="self">self</span>.prefer_ipv6();
-        <span class="kw">let </span>proxy_ip = <span class="self">self
+        </span><span class="kw">let </span>proxy_ip = <span class="self">self
             </span>.dns_resolver
-            .resolve_host(<span class="kw-2">&amp;</span>proxy_url, prefer_ipv6, DNS_TIMEOUT)
+            .resolve_host(<span class="kw-2">&amp;</span>proxy_url, <span class="self">self</span>.prefer_ipv6, DNS_TIMEOUT)
             .<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="kw">let </span>proxy_port = url_port(<span class="kw-2">&amp;</span>proxy_url).ok_or_else(|| <span class="macro">anyhow!</span>(<span class="string">"Missing proxy url port"</span>))<span class="question-mark">?</span>;
@@ -612,13 +709,138 @@
         }
 
         <span class="kw">let </span>upgraded = hyper::upgrade::on(res).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span><span class="prelude-val">Ok</span>(Parts { io, read_buf, .. }) = upgraded.downcast::&lt;TokioIo&lt;MaybeTlsStream&gt;&gt;() <span class="kw">else </span>{
+        <span class="kw">let </span><span class="prelude-val">Ok</span>(Parts { io, read_buf, .. }) =
+            upgraded.downcast::&lt;TokioIo&lt;MaybeTlsStream&lt;tokio::net::TcpStream&gt;&gt;&gt;()
+        <span class="kw">else </span>{
             <span class="macro">bail!</span>(<span class="string">"Invalid upgrade"</span>);
         };
 
         <span class="kw">let </span>res = util::chain(std::io::Cursor::new(read_buf), io.into_inner());
 
         <span class="prelude-val">Ok</span>(res)
+    }
+}
+
+<span class="kw">impl </span>ClientBuilder {
+    <span class="doccomment">/// Connects to configured relay using HTTP(S) with an upgrade header
+    /// set to [`HTTP_UPGRADE_PROTOCOL`].
+    ///
+    /// [`HTTP_UPGRADE_PROTOCOL`]: crate::http::HTTP_UPGRADE_PROTOCOL
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>connect_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(Conn, SocketAddr)&gt; {
+        <span class="attr">#[allow(unused_mut)]
+        </span><span class="kw">let </span><span class="kw-2">mut </span>builder =
+            MaybeTlsStreamBuilder::new(<span class="self">self</span>.url.clone().into(), <span class="self">self</span>.dns_resolver.clone())
+                .prefer_ipv6(<span class="self">self</span>.prefer_ipv6())
+                .proxy_url(<span class="self">self</span>.proxy_url.clone());
+
+        <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+        </span><span class="kw">if </span><span class="self">self</span>.insecure_skip_cert_verify {
+            builder = builder.insecure_skip_cert_verify(<span class="self">self</span>.insecure_skip_cert_verify);
+        }
+
+        <span class="kw">let </span>stream = builder.connect().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>local_addr = stream.as_ref().local_addr()<span class="question-mark">?</span>;
+        <span class="kw">let </span>response = <span class="self">self</span>.http_upgrade_relay(stream).<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="kw">if </span>response.status() != hyper::StatusCode::SWITCHING_PROTOCOLS {
+            <span class="macro">bail!</span>(
+                <span class="string">"Unexpected status code: expected {}, actual: {}"</span>,
+                hyper::StatusCode::SWITCHING_PROTOCOLS,
+                response.status(),
+            );
+        }
+
+        <span class="macro">debug!</span>(<span class="string">"starting upgrade"</span>);
+        <span class="kw">let </span>upgraded = hyper::upgrade::on(response)
+            .<span class="kw">await
+            </span>.context(<span class="string">"Upgrade failed"</span>)<span class="question-mark">?</span>;
+
+        <span class="macro">debug!</span>(<span class="string">"connection upgraded"</span>);
+        <span class="kw">let </span>conn = downcast_upgrade(upgraded)<span class="question-mark">?</span>;
+
+        <span class="kw">let </span>conn = Conn::new_relay(conn, <span class="self">self</span>.key_cache.clone(), <span class="kw-2">&amp;</span><span class="self">self</span>.secret_key).<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="prelude-val">Ok</span>((conn, local_addr))
+    }
+
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>connect_ws(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(Conn, SocketAddr)&gt; {
+        <span class="kw">let </span><span class="kw-2">mut </span>dial_url = (<span class="kw-2">*</span><span class="self">self</span>.url).clone();
+        dial_url.set_path(RELAY_PATH);
+        <span class="comment">// The relay URL is exchanged with the http(s) scheme in tickets and similar.
+        // We need to use the ws:// or wss:// schemes when connecting with websockets, though.
+        </span>dial_url
+            .set_scheme(<span class="kw">match </span><span class="self">self</span>.url.scheme() {
+                <span class="string">"http" </span>=&gt; <span class="string">"ws"</span>,
+                <span class="string">"ws" </span>=&gt; <span class="string">"ws"</span>,
+                <span class="kw">_ </span>=&gt; <span class="string">"wss"</span>,
+            })
+            .map_err(|()| <span class="macro">anyhow!</span>(<span class="string">"Invalid URL"</span>))<span class="question-mark">?</span>;
+
+        <span class="macro">debug!</span>(%dial_url, <span class="string">"Dialing relay by websocket"</span>);
+
+        <span class="attr">#[allow(unused_mut)]
+        </span><span class="kw">let </span><span class="kw-2">mut </span>builder = MaybeTlsStreamBuilder::new(dial_url.clone(), <span class="self">self</span>.dns_resolver.clone())
+            .prefer_ipv6(<span class="self">self</span>.prefer_ipv6())
+            .proxy_url(<span class="self">self</span>.proxy_url.clone());
+
+        <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+        </span><span class="kw">if </span><span class="self">self</span>.insecure_skip_cert_verify {
+            builder = builder.insecure_skip_cert_verify(<span class="self">self</span>.insecure_skip_cert_verify);
+        }
+
+        <span class="kw">let </span>stream = builder.connect().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>local_addr = stream.as_ref().local_addr()<span class="question-mark">?</span>;
+        <span class="kw">let </span>(conn, response) = tokio_websockets::ClientBuilder::new()
+            .uri(dial_url.as_str())<span class="question-mark">?
+            </span>.connect_on(stream)
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="kw">if </span>response.status() != hyper::StatusCode::SWITCHING_PROTOCOLS {
+            <span class="macro">bail!</span>(
+                <span class="string">"Unexpected status code: expected {}, actual: {}"</span>,
+                hyper::StatusCode::SWITCHING_PROTOCOLS,
+                response.status(),
+            );
+        }
+
+        <span class="kw">let </span>conn = Conn::new_ws(conn, <span class="self">self</span>.key_cache.clone(), <span class="kw-2">&amp;</span><span class="self">self</span>.secret_key).<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="prelude-val">Ok</span>((conn, local_addr))
+    }
+
+    <span class="doccomment">/// Sends the HTTP upgrade request to the relay server.
+    </span><span class="kw">async fn </span>http_upgrade_relay&lt;T&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, io: T) -&gt; <span class="prelude-ty">Result</span>&lt;hyper::Response&lt;Incoming&gt;&gt;
+    <span class="kw">where
+        </span>T: AsyncRead + AsyncWrite + Send + Unpin + <span class="lifetime">'static</span>,
+    {
+        <span class="kw">use </span>hyper_util::rt::TokioIo;
+        <span class="kw">let </span>host_header_value = host_header_value(<span class="self">self</span>.url.clone())<span class="question-mark">?</span>;
+
+        <span class="kw">let </span>io = TokioIo::new(io);
+        <span class="kw">let </span>(<span class="kw-2">mut </span>request_sender, connection) = hyper::client::conn::http1::Builder::new()
+            .handshake(io)
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+        task::spawn(
+            <span class="comment">// This task drives the HTTP exchange, completes once connection is upgraded.
+            </span><span class="kw">async move </span>{
+                <span class="macro">debug!</span>(<span class="string">"HTTP upgrade driver started"</span>);
+                <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = connection.with_upgrades().<span class="kw">await </span>{
+                    <span class="macro">error!</span>(<span class="string">"HTTP upgrade error: {err:#}"</span>);
+                }
+                <span class="macro">debug!</span>(<span class="string">"HTTP upgrade driver finished"</span>);
+            }
+            .instrument(<span class="macro">info_span!</span>(<span class="string">"http-driver"</span>)),
+        );
+        <span class="macro">debug!</span>(<span class="string">"Sending upgrade request"</span>);
+        <span class="kw">let </span>req = Request::builder()
+            .uri(RELAY_PATH)
+            .header(UPGRADE, Protocol::Relay.upgrade_header())
+            <span class="comment">// https://datatracker.ietf.org/doc/html/rfc2616#section-14.23
+            // &gt; A client MUST include a Host header field in all HTTP/1.1 request messages.
+            // This header value helps reverse proxies identify how to forward requests.
+            </span>.header(HOST, host_header_value)
+            .body(http_body_util::Empty::&lt;hyper::body::Bytes&gt;::new())<span class="question-mark">?</span>;
+        request_sender.send_request(req).<span class="kw">await</span>.map_err(From::from)
     }
 
     <span class="doccomment">/// Reports whether IPv4 dials should be slightly
@@ -655,8 +877,8 @@
     }
 
     <span class="kw">match </span>url.scheme() {
-        <span class="string">"http" </span>=&gt; <span class="prelude-val">Some</span>(<span class="number">80</span>),
-        <span class="string">"https" </span>=&gt; <span class="prelude-val">Some</span>(<span class="number">443</span>),
+        <span class="string">"http" </span>| <span class="string">"ws" </span>=&gt; <span class="prelude-val">Some</span>(<span class="number">80</span>),
+        <span class="string">"https" </span>| <span class="string">"wss" </span>=&gt; <span class="prelude-val">Some</span>(<span class="number">443</span>),
         <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
     }
 }

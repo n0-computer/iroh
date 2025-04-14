@@ -86,10 +86,10 @@
 
 <span class="kw">impl </span>Default <span class="kw">for </span>Protocol {
     <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
-        <span class="attr">#[cfg(wasm_browser)]
-        </span><span class="kw">return </span><span class="self">Self</span>::Websocket;
         <span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">return </span><span class="self">Self</span>::Relay;
+        <span class="attr">#[cfg(wasm_browser)]
+        </span><span class="kw">return </span><span class="self">Self</span>::Websocket;
     }
 }
 
