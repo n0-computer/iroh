@@ -248,6 +248,20 @@ impl NodeMap {
             .handle_call_me_maybe(sender, cm, metrics)
     }
 
+    pub(super) fn addr_for_send(
+        &self,
+        addr: NodeIdMappedAddr,
+        have_ipv6: bool,
+    ) -> Option<(PublicKey, Option<SocketAddr>, Option<RelayUrl>)> {
+        let mut inner = self.inner.lock().expect("poisoned");
+        let ep = inner.get_mut(NodeStateKey::NodeIdMappedAddr(addr))?;
+        let public_key = *ep.public_key();
+        trace!(dest = %addr, node_id = %public_key.fmt_short(), "dst mapped to NodeId");
+        let now = Instant::now();
+        let (udp_addr, relay_url) = ep.addr_for_send(&now, have_ipv6);
+        Some((public_key, udp_addr, relay_url))
+    }
+
     #[allow(clippy::type_complexity)]
     pub(super) fn get_send_addrs(
         &self,

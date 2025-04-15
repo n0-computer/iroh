@@ -277,7 +277,7 @@ impl NodeState {
     /// Returns the address(es) that should be used for sending the next packet.
     ///
     /// This may return to send on one, both or no paths.
-    fn addr_for_send(
+    pub(super) fn addr_for_send(
         &mut self,
         now: &Instant,
         have_ipv6: bool,

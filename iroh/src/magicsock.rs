@@ -224,7 +224,7 @@ pub(crate) struct MagicSock {
     /// Nearest relay node ID; 0 means none/unknown.
     my_relay: Watchable<Option<RelayUrl>>,
     /// Tracks the networkmap node entity for each node discovery key.
-    node_map: NodeMap,
+    node_map: Arc<NodeMap>,
     /// Tracks the mapped IP addresses
     ip_mapped_addrs: IpMappedAddresses,
     /// NetReport client
@@ -1790,7 +1790,7 @@ impl Handle {
             my_relay: Default::default(),
             net_reporter: net_reporter.addr(),
             disco_secrets: DiscoSecrets::default(),
-            node_map,
+            node_map: Arc::new(node_map),
             ip_mapped_addrs,
             udp_disco_sender,
             discovery,
@@ -2184,7 +2184,7 @@ impl RelayDatagramRecvQueue {
 }
 
 impl AsyncUdpSocket for MagicSock {
-    fn create_io_poller(self: Arc<Self>) -> Pin<Box<dyn quinn::UdpPoller>> {
+    fn create_io_poller(self: Arc<Self>, remote: SocketAddr) -> Pin<Box<dyn quinn::UdpPoller>> {
         // To do this properly the MagicSock would need a registry of pollers.  For each
         // node we would look up the poller or create one.  Then on each try_send we can
         // look up the correct poller and configure it to poll the paths it needs.
@@ -2205,6 +2205,10 @@ impl AsyncUdpSocket for MagicSock {
         let ipv6_poller = self.sockets.v6.as_ref().map(|sock| sock.create_io_poller());
         let relay_sender = self.relay_datagram_send_channel.clone();
         Box::pin(IoPoller {
+            mapped_addr: MappedAddr::from(remote),
+            node_map: self.node_map.clone(),
+            ip_mapped_addrs: self.ip_mapped_addrs.clone(),
+            ipv6_reported: self.ipv6_reported.clone(),
             #[cfg(not(wasm_browser))]
             ipv4_poller,
             #[cfg(not(wasm_browser))]
@@ -2303,6 +2307,10 @@ impl AsyncUdpSocket for MagicSock {
 
 #[derive(Debug)]
 struct IoPoller {
+    mapped_addr: MappedAddr,
+    node_map: Arc<NodeMap>,
+    ip_mapped_addrs: IpMappedAddresses,
+    ipv6_reported: Arc<AtomicBool>,
     #[cfg(not(wasm_browser))]
     ipv4_poller: Pin<Box<dyn quinn::UdpPoller>>,
     #[cfg(not(wasm_browser))]
@@ -2312,21 +2320,60 @@ struct IoPoller {
 
 impl quinn::UdpPoller for IoPoller {
     fn poll_writable(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
-        // This version returns Ready as soon as any of them are ready.
         let this = &mut *self;
-        #[cfg(not(wasm_browser))]
-        match this.ipv4_poller.as_mut().poll_writable(cx) {
-            Poll::Ready(_) => return Poll::Ready(Ok(())),
-            Poll::Pending => (),
-        }
-        #[cfg(not(wasm_browser))]
-        if let Some(ref mut ipv6_poller) = this.ipv6_poller {
-            match ipv6_poller.as_mut().poll_writable(cx) {
-                Poll::Ready(_) => return Poll::Ready(Ok(())),
-                Poll::Pending => (),
+        let udp_addr = match &this.mapped_addr {
+            MappedAddr::None(dest) => {
+                error!(%dest, "Cannot convert to a mapped address, voiding transmit.");
+                // Because we can't send these, we just stall whatever endpoint driver got into this state
+                // TODO: Maybe we shoulde error out instead? Since there's no way this recovers, right?
+                return Poll::Pending;
             }
-        }
-        this.relay_sender.poll_writable(cx)
+            MappedAddr::NodeId(dest) => {
+                trace!(%dest, "polling writable");
+
+                // Get the node's relay address and best direct address, as well
+                // as any pings that need to be sent for hole-punching purposes.
+                match this
+                    .node_map
+                    .addr_for_send(*dest, this.ipv6_reported.load(Ordering::Relaxed))
+                {
+                    Some((_, None, Some(_relay_url))) => {
+                        return this.relay_sender.poll_writable(cx)
+                    }
+                    Some((_, Some(udp_addr), None)) => udp_addr,
+                    Some((_, Some(udp_addr), Some(_relay_url))) => {
+                        // If we're in mixed connection mode, then wait for anything to be ready.
+                        if let Poll::Ready(r) = this.relay_sender.poll_writable(cx) {
+                            return Poll::Ready(r);
+                        }
+                        udp_addr
+                    }
+                    _ => {
+                        // TODO ensure this is correct
+                        return Poll::Pending;
+                    }
+                }
+            }
+            MappedAddr::Ip(mapped_addr) => {
+                let Some(udp_addr) = this.ip_mapped_addrs.get_ip_addr(mapped_addr) else {
+                    // TODO idk
+                    return Poll::Pending;
+                };
+                udp_addr
+            }
+        };
+
+        let poller = match udp_addr {
+            SocketAddr::V4(_) => this.ipv4_poller.as_mut(),
+            SocketAddr::V6(_) => {
+                let Some(poller) = this.ipv6_poller.as_mut() else {
+                    // TODO error? Trace?
+                    return Poll::Pending;
+                };
+                poller.as_mut()
+            }
+        };
+        poller.poll_writable(cx)
     }
 }
 
