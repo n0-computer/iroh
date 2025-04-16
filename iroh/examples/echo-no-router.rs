@@ -1,0 +1,102 @@
+//! Very basic example showing how to implement a basic echo protocol,
+//! without using the `Router` API. (For the router version, check out the echo.rs example.)
+//!
+//! The echo protocol echos any data sent to it in the first stream.
+//!
+//! ## Running the Example
+//!
+//!     cargo run --example echo-no-router --features=examples
+
+use anyhow::Result;
+use iroh::{Endpoint, NodeAddr};
+
+/// Each protocol is identified by its ALPN string.
+///
+/// The ALPN, or application-layer protocol negotiation, is exchanged in the connection handshake,
+/// and the connection is aborted unless both nodes pass the same bytestring.
+const ALPN: &[u8] = b"iroh-example/echo/0";
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    let endpoint = accept_side().await?;
+    let node_addr = endpoint.node_addr().await?;
+
+    connect_side(node_addr).await?;
+
+    endpoint.close().await;
+
+    Ok(())
+}
+
+async fn connect_side(addr: NodeAddr) -> Result<()> {
+    let endpoint = Endpoint::builder().discovery_n0().bind().await?;
+
+    // Open a connection to the accepting node
+    let conn = endpoint.connect(addr, ALPN).await?;
+
+    // Open a bidirectional QUIC stream
+    let (mut send, mut recv) = conn.open_bi().await?;
+
+    // Send some data to be echoed
+    send.write_all(b"Hello, world!").await?;
+
+    // Signal the end of transfer on this particular stream.
+    send.finish()?;
+
+    // Receive the echo
+    let response = recv.read_to_end(1000).await?;
+    assert_eq!(&response, b"Hello, world!");
+
+    // Explicitly close the whole connection.
+    conn.close(0u32.into(), b"bye!");
+
+    Ok(())
+}
+
+async fn accept_side() -> Result<Endpoint> {
+    let endpoint = Endpoint::builder()
+        .discovery_n0()
+        .alpns(vec![ALPN.to_vec()])
+        .bind()
+        .await?;
+
+    let ep = endpoint.clone(); // Cloning so we can both return it and use it in the tokio task
+
+    // spawn a task so that `accept_side` returns immediately and we can continue in main().
+    tokio::spawn(async move {
+        // This task won't leak, because we call `endpoint.close()` in `main()`,
+        // which causes `endpoint.accept().await` to return `None`.
+        while let Some(incoming) = endpoint.accept().await {
+            // spawn a task for each incoming connection, so we can serve multiple connections asynchronously
+            tokio::spawn(async move {
+                let connection = incoming.await?;
+
+                // We can get the remote's node id from the connection.
+                let node_id = connection.remote_node_id()?;
+                println!("accepted connection from {node_id}");
+
+                // Our protocol is a simple request-response protocol, so we expect the
+                // connecting peer to open a single bi-directional stream.
+                let (mut send, mut recv) = connection.accept_bi().await?;
+
+                // Echo any bytes received back directly.
+                let bytes_sent = tokio::io::copy(&mut recv, &mut send).await?;
+                println!("Copied over {bytes_sent} byte(s)");
+
+                // By calling `finish` on the send stream we signal that we will not send anything
+                // further, which makes the receive stream on the other end terminate.
+                send.finish()?;
+
+                // Wait until the remote closes the connection, which it does once it
+                // received the response.
+                connection.closed().await;
+
+                anyhow::Ok(())
+            });
+        }
+
+        anyhow::Ok(())
+    });
+
+    Ok(ep)
+}
