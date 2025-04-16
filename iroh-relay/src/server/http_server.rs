@@ -175,12 +175,12 @@ pub(super) struct ServerBuilder {
     key_cache_capacity: usize,
     /// Access config for nodes.
     access: AccessConfig,
-    metrics: Arc<Metrics>,
+    metrics: Option<Arc<Metrics>>,
 }
 
 impl ServerBuilder {
     /// Creates a new [ServerBuilder].
-    pub(super) fn new(addr: SocketAddr, metrics: Arc<Metrics>) -> Self {
+    pub(super) fn new(addr: SocketAddr) -> Self {
         Self {
             addr,
             tls_config: None,
@@ -189,8 +189,14 @@ impl ServerBuilder {
             client_rx_ratelimit: None,
             key_cache_capacity: DEFAULT_KEY_CACHE_CAPACITY,
             access: AccessConfig::Everyone,
-            metrics,
+            metrics: None,
         }
+    }
+
+    /// Sets the metrics collector.
+    pub(super) fn metrics(mut self, metrics: Arc<Metrics>) -> Self {
+        self.metrics = Some(metrics);
+        self
     }
 
     /// Set the access configuration.
@@ -249,7 +255,7 @@ impl ServerBuilder {
             self.client_rx_ratelimit,
             KeyCache::new(self.key_cache_capacity),
             self.access,
-            self.metrics,
+            self.metrics.unwrap_or_default(),
         );
 
         let addr = self.addr;
@@ -768,7 +774,7 @@ mod tests {
         let b_key = SecretKey::generate(rand::thread_rng());
 
         // start server
-        let server = ServerBuilder::new("127.0.0.1:0".parse().unwrap(), Default::default())
+        let server = ServerBuilder::new("127.0.0.1:0".parse().unwrap())
             .spawn()
             .await?;
 
@@ -876,7 +882,7 @@ mod tests {
         let tls_config = make_tls_config();
 
         // start server
-        let mut server = ServerBuilder::new("127.0.0.1:0".parse().unwrap(), Default::default())
+        let mut server = ServerBuilder::new("127.0.0.1:0".parse().unwrap())
             .tls_config(Some(tls_config))
             .spawn()
             .await?;

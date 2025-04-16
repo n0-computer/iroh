@@ -351,15 +351,15 @@ impl Server {
                 let key_cache_capacity = relay_config
                     .key_cache_capacity
                     .unwrap_or(DEFAULT_KEY_CACHE_CAPACITY);
-                let mut builder =
-                    http_server::ServerBuilder::new(relay_bind_addr, metrics.server.clone())
-                        .headers(headers)
-                        .key_cache_capacity(key_cache_capacity)
-                        .access(relay_config.access)
-                        .request_handler(Method::GET, "/", Box::new(root_handler))
-                        .request_handler(Method::GET, "/index.html", Box::new(root_handler))
-                        .request_handler(Method::GET, RELAY_PROBE_PATH, Box::new(probe_handler))
-                        .request_handler(Method::GET, "/robots.txt", Box::new(robots_handler));
+                let mut builder = http_server::ServerBuilder::new(relay_bind_addr)
+                    .metrics(metrics.server.clone())
+                    .headers(headers)
+                    .key_cache_capacity(key_cache_capacity)
+                    .access(relay_config.access)
+                    .request_handler(Method::GET, "/", Box::new(root_handler))
+                    .request_handler(Method::GET, "/index.html", Box::new(root_handler))
+                    .request_handler(Method::GET, RELAY_PROBE_PATH, Box::new(probe_handler))
+                    .request_handler(Method::GET, "/robots.txt", Box::new(robots_handler));
                 if let Some(cfg) = relay_config.limits.client_rx {
                     builder = builder.client_rx_ratelimit(cfg);
                 }
