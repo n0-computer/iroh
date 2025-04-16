@@ -1173,7 +1173,13 @@
 <a href="#1172" id="1172">1172</a>
 <a href="#1173" id="1173">1173</a>
 <a href="#1174" id="1174">1174</a>
-<a href="#1175" id="1175">1175</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#1175" id="1175">1175</a>
+<a href="#1176" id="1176">1176</a>
+<a href="#1177" id="1177">1177</a>
+<a href="#1178" id="1178">1178</a>
+<a href="#1179" id="1179">1179</a>
+<a href="#1180" id="1180">1180</a>
+<a href="#1181" id="1181">1181</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::HashMap, future::Future, net::SocketAddr, pin::Pin, sync::Arc, time::Duration,
 };
 
@@ -1350,12 +1356,12 @@
     </span>key_cache_capacity: usize,
     <span class="doccomment">/// Access config for nodes.
     </span>access: AccessConfig,
-    metrics: Arc&lt;Metrics&gt;,
+    metrics: <span class="prelude-ty">Option</span>&lt;Arc&lt;Metrics&gt;&gt;,
 }
 
 <span class="kw">impl </span>ServerBuilder {
     <span class="doccomment">/// Creates a new [ServerBuilder].
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(addr: SocketAddr, metrics: Arc&lt;Metrics&gt;) -&gt; <span class="self">Self </span>{
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(addr: SocketAddr) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             addr,
             tls_config: <span class="prelude-val">None</span>,
@@ -1364,9 +1370,15 @@
             client_rx_ratelimit: <span class="prelude-val">None</span>,
             key_cache_capacity: DEFAULT_KEY_CACHE_CAPACITY,
             access: AccessConfig::Everyone,
-            metrics,
+            metrics: <span class="prelude-val">None</span>,
         }
     }
+
+    <span class="doccomment">/// Sets the metrics collector.
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>metrics(<span class="kw-2">mut </span><span class="self">self</span>, metrics: Arc&lt;Metrics&gt;) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.metrics = <span class="prelude-val">Some</span>(metrics);
+        <span class="self">self
+    </span>}
 
     <span class="doccomment">/// Set the access configuration.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>access(<span class="kw-2">mut </span><span class="self">self</span>, access: AccessConfig) -&gt; <span class="self">Self </span>{
@@ -1424,7 +1436,7 @@
             <span class="self">self</span>.client_rx_ratelimit,
             KeyCache::new(<span class="self">self</span>.key_cache_capacity),
             <span class="self">self</span>.access,
-            <span class="self">self</span>.metrics,
+            <span class="self">self</span>.metrics.unwrap_or_default(),
         );
 
         <span class="kw">let </span>addr = <span class="self">self</span>.addr;
@@ -1943,7 +1955,7 @@
         <span class="kw">let </span>b_key = SecretKey::generate(rand::thread_rng());
 
         <span class="comment">// start server
-        </span><span class="kw">let </span>server = ServerBuilder::new(<span class="string">"127.0.0.1:0"</span>.parse().unwrap(), Default::default())
+        </span><span class="kw">let </span>server = ServerBuilder::new(<span class="string">"127.0.0.1:0"</span>.parse().unwrap())
             .spawn()
             .<span class="kw">await</span><span class="question-mark">?</span>;
 
@@ -2051,7 +2063,7 @@
         </span><span class="kw">let </span>tls_config = make_tls_config();
 
         <span class="comment">// start server
-        </span><span class="kw">let </span><span class="kw-2">mut </span>server = ServerBuilder::new(<span class="string">"127.0.0.1:0"</span>.parse().unwrap(), Default::default())
+        </span><span class="kw">let </span><span class="kw-2">mut </span>server = ServerBuilder::new(<span class="string">"127.0.0.1:0"</span>.parse().unwrap())
             .tls_config(<span class="prelude-val">Some</span>(tls_config))
             .spawn()
             .<span class="kw">await</span><span class="question-mark">?</span>;

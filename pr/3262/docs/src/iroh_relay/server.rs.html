@@ -1608,15 +1608,15 @@
                 <span class="kw">let </span>key_cache_capacity = relay_config
                     .key_cache_capacity
                     .unwrap_or(DEFAULT_KEY_CACHE_CAPACITY);
-                <span class="kw">let </span><span class="kw-2">mut </span>builder =
-                    http_server::ServerBuilder::new(relay_bind_addr, metrics.server.clone())
-                        .headers(headers)
-                        .key_cache_capacity(key_cache_capacity)
-                        .access(relay_config.access)
-                        .request_handler(Method::GET, <span class="string">"/"</span>, Box::new(root_handler))
-                        .request_handler(Method::GET, <span class="string">"/index.html"</span>, Box::new(root_handler))
-                        .request_handler(Method::GET, RELAY_PROBE_PATH, Box::new(probe_handler))
-                        .request_handler(Method::GET, <span class="string">"/robots.txt"</span>, Box::new(robots_handler));
+                <span class="kw">let </span><span class="kw-2">mut </span>builder = http_server::ServerBuilder::new(relay_bind_addr)
+                    .metrics(metrics.server.clone())
+                    .headers(headers)
+                    .key_cache_capacity(key_cache_capacity)
+                    .access(relay_config.access)
+                    .request_handler(Method::GET, <span class="string">"/"</span>, Box::new(root_handler))
+                    .request_handler(Method::GET, <span class="string">"/index.html"</span>, Box::new(root_handler))
+                    .request_handler(Method::GET, RELAY_PROBE_PATH, Box::new(probe_handler))
+                    .request_handler(Method::GET, <span class="string">"/robots.txt"</span>, Box::new(robots_handler));
                 <span class="kw">if let </span><span class="prelude-val">Some</span>(cfg) = relay_config.limits.client_rx {
                     builder = builder.client_rx_ratelimit(cfg);
                 }
