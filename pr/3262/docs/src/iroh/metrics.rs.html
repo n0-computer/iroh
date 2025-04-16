@@ -44,7 +44,8 @@
 <a href="#43" id="43">43</a>
 <a href="#44" id="44">44</a>
 <a href="#45" id="45">45</a>
-<a href="#46" id="46">46</a></pre></div><pre class="rust"><code><span class="doccomment">//! Co-locating all of the iroh metrics structs
+<a href="#46" id="46">46</a>
+<a href="#47" id="47">47</a></pre></div><pre class="rust"><code><span class="doccomment">//! Co-locating all of the iroh metrics structs
 </span><span class="kw">use </span>std::sync::Arc;
 
 <span class="kw">use </span>iroh_metrics::{MetricsGroup, MetricsGroupSet};
@@ -59,6 +60,7 @@
 ///
 /// See [`crate::endpoint::Endpoint::metrics`] for details.
 </span><span class="attr">#[derive(Default, Debug, Clone)]
+#[non_exhaustive]
 </span><span class="kw">pub struct </span>EndpointMetrics {
     <span class="doccomment">/// Metrics collected by the endpoint's socket.
     </span><span class="kw">pub </span>magicsock: Arc&lt;MagicsockMetrics&gt;,

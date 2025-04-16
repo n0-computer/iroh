@@ -23,9 +23,9 @@
 <a href="#22" id="22">22</a></pre></div><pre class="rust"><code><span class="kw">use </span>iroh_metrics::{Counter, MetricsGroup};
 
 <span class="doccomment">/// Enum of metrics for the module
-</span><span class="attr">#[allow(missing_docs)]
-#[derive(Debug, Clone, MetricsGroup)]
+</span><span class="attr">#[derive(Debug, Clone, MetricsGroup)]
 #[metrics(name = <span class="string">"net_report"</span>)]
+#[non_exhaustive]
 </span><span class="kw">pub struct </span>Metrics {
     <span class="doccomment">/// Incoming STUN packets dropped due to a full receiving queue.
     </span><span class="kw">pub </span>stun_packets_dropped: Counter,
