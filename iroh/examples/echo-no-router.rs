@@ -18,13 +18,13 @@ const ALPN: &[u8] = b"iroh-example/echo/0";
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let endpoint = accept_side().await?;
+    let endpoint = start_accept_side().await?;
     let node_addr = endpoint.node_addr().await?;
 
     connect_side(node_addr).await?;
 
     // This makes sure the endpoint is closed properly and connections close gracefully
-    // and will indirectly close the tasks spawned by `accept_side`.
+    // and will indirectly close the tasks spawned by `start_accept_side`.
     endpoint.close().await;
 
     Ok(())
@@ -64,7 +64,7 @@ async fn connect_side(addr: NodeAddr) -> Result<()> {
     Ok(())
 }
 
-async fn accept_side() -> Result<Endpoint> {
+async fn start_accept_side() -> Result<Endpoint> {
     let endpoint = Endpoint::builder()
         .discovery_n0()
         // The accept side needs to opt-in to the protocols it accepts,
@@ -74,7 +74,7 @@ async fn accept_side() -> Result<Endpoint> {
         .bind()
         .await?;
 
-    // spawn a task so that `accept_side` returns immediately and we can continue in main().
+    // spawn a task so that `start_accept_side` returns immediately and we can continue in main().
     tokio::spawn({
         let endpoint = endpoint.clone(); 
         async move {

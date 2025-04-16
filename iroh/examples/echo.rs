@@ -22,7 +22,7 @@ const ALPN: &[u8] = b"iroh-example/echo/0";
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let router = accept_side().await?;
+    let router = start_accept_side().await?;
     let node_addr = router.endpoint().node_addr().await?;
 
     connect_side(node_addr).await?;
@@ -66,7 +66,7 @@ async fn connect_side(addr: NodeAddr) -> Result<()> {
     Ok(())
 }
 
-async fn accept_side() -> Result<Router> {
+async fn start_accept_side() -> Result<Router> {
     let endpoint = Endpoint::builder().discovery_n0().bind().await?;
 
     // Build our protocol handler and add our protocol, identified by its ALPN, and spawn the node.
