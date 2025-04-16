@@ -13,6 +13,7 @@ pub use crate::{magicsock::Metrics as MagicsockMetrics, net_report::Metrics as N
 ///
 /// See [`crate::endpoint::Endpoint::metrics`] for details.
 #[derive(Default, Debug, Clone)]
+#[non_exhaustive]
 pub struct EndpointMetrics {
     /// Metrics collected by the endpoint's socket.
     pub magicsock: Arc<MagicsockMetrics>,

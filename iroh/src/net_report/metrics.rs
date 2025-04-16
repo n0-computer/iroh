@@ -1,9 +1,9 @@
 use iroh_metrics::{Counter, MetricsGroup};
 
 /// Enum of metrics for the module
-#[allow(missing_docs)]
 #[derive(Debug, Clone, MetricsGroup)]
 #[metrics(name = "net_report")]
+#[non_exhaustive]
 pub struct Metrics {
     /// Incoming STUN packets dropped due to a full receiving queue.
     pub stun_packets_dropped: Counter,
