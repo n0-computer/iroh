@@ -76,7 +76,7 @@ async fn start_accept_side() -> Result<Endpoint> {
 
     // spawn a task so that `start_accept_side` returns immediately and we can continue in main().
     tokio::spawn({
-        let endpoint = endpoint.clone(); 
+        let endpoint = endpoint.clone();
         async move {
             // This task won't leak, because we call `endpoint.close()` in `main()`,
             // which causes `endpoint.accept().await` to return `None`.
