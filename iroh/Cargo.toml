@@ -81,7 +81,7 @@ x509-parser = "0.16"
 z32 = "1.0.3"
 
 # metrics
-iroh-metrics = { version = "0.32", default-features = false }
+iroh-metrics = { version = "0.33", default-features = false }
 
 # local-swarm-discovery
 swarm-discovery = { version = "0.3.1", optional = true }

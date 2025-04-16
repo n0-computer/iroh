@@ -2397,8 +2397,9 @@ dependencies = [
 
 [[package]]
 name = "iroh-metrics"
-version = "0.32.0"
-source = "git+https://github.com/n0-computer/iroh-metrics?branch=Frando/refactor#a1a6e1090892bde5c2d2c115afd03a409f12f6a3"
+version = "0.33.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d64b607e49f67fa42b3e780109cad0fa1fdb476b4a78d4cf8443499bbc1ad0a"
 dependencies = [
  "http-body-util",
  "hyper",
@@ -2415,7 +2416,8 @@ dependencies = [
 [[package]]
 name = "iroh-metrics-derive"
 version = "0.1.0"
-source = "git+https://github.com/n0-computer/iroh-metrics?branch=Frando/refactor#a1a6e1090892bde5c2d2c115afd03a409f12f6a3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "caaa484b5f192006b1cc39261712d65baf87342fc72a4acc1560355d1dc410d9"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -2978,7 +2980,7 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.4.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=Frando/metrics#731a154aa91ccdae75f1337a9ce5888d4ae484be"
+source = "git+https://github.com/n0-computer/net-tools?branch=Frando/metrics#7012b8e65c352e1ce2c9f15aaa614fa193704e4f"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -3475,7 +3477,7 @@ checksum = "280dc24453071f1b63954171985a0b0d30058d287960968b9b2aca264c8d4ee6"
 [[package]]
 name = "portmapper"
 version = "0.4.1"
-source = "git+https://github.com/n0-computer/net-tools?branch=Frando/metrics#731a154aa91ccdae75f1337a9ce5888d4ae484be"
+source = "git+https://github.com/n0-computer/net-tools?branch=Frando/metrics#7012b8e65c352e1ce2c9f15aaa614fa193704e4f"
 dependencies = [
  "base64",
  "bytes",
