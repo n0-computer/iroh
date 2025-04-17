@@ -210,5 +210,9 @@ name = "echo"
 required-features = ["examples"]
 
 [[example]]
+name = "echo-no-router"
+required-features = ["examples"]
+
+[[example]]
 name = "transfer"
 required-features = ["examples"]
