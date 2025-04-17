@@ -50,6 +50,15 @@ mod imp {
         ///
         /// On by default
         pub(crate) https: bool,
+        /// Run probes until enough probes have
+        /// been returned to generate a report,
+        /// and no longer.
+        ///
+        /// When `false`, the report will run
+        /// until all probe/relay node
+        /// combinations have been returned, or
+        /// timeout occurs
+        pub(crate) sparse: bool,
     }
 
     impl Default for Options {
@@ -61,6 +70,7 @@ mod imp {
                 icmp_v4: true,
                 icmp_v6: true,
                 https: true,
+                sparse: true,
             }
         }
     }
@@ -75,6 +85,7 @@ mod imp {
                 icmp_v4: false,
                 icmp_v6: false,
                 https: false,
+                sparse: true,
             }
         }
 
@@ -111,6 +122,21 @@ mod imp {
         /// Enable or disable https probe
         pub fn https(mut self, enable: bool) -> Self {
             self.https = enable;
+            self
+        }
+
+        /// When `true`, the report will run until
+        /// enough probes have returned to generate
+        /// a full report, or timeout occurs.
+        ///
+        /// When `false`, the report will run until
+        /// all probe protocol/relay node combinations
+        /// have been returned, or timeout occurs.
+
+        ///
+        /// The default is `true`.
+        pub fn sparse(mut self, sparse: bool) -> Self {
+            self.sparse = sparse;
             self
         }
 

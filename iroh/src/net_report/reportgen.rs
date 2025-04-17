@@ -71,6 +71,8 @@ use crate::net_report::defaults::timeouts::{
     CAPTIVE_PORTAL_DELAY, CAPTIVE_PORTAL_TIMEOUT, OVERALL_REPORT_TIMEOUT, PROBES_TIMEOUT,
 };
 
+use super::ProbeResult;
+
 const ENOUGH_NODES: usize = 3;
 
 /// Holds the state for a single invocation of [`net_report::Client::get_report`].
@@ -107,6 +109,13 @@ impl Client {
     ///
     /// The actor starts running immediately and only generates a single report, after which
     /// it shuts down.  Dropping this handle will abort the actor.
+    ///
+    /// When `sparse` is `true`, the report will run until it
+    /// has processed enough probes to return a
+    /// full report.
+    ///
+    /// When `false`, the report will ensure that one of each probe protocol/relay
+    /// combination is processed (within the timeout).
     pub(super) fn new(
         net_report: net_report::Addr,
         last_report: Option<Arc<Report>>,
@@ -114,6 +123,8 @@ impl Client {
         protocols: BTreeSet<ProbeProto>,
         metrics: Arc<Metrics>,
         #[cfg(not(wasm_browser))] socket_state: SocketState,
+        probes_tx: mpsc::Sender<ProbeResult>,
+        sparse: bool,
     ) -> Self {
         let (msg_tx, msg_rx) = mpsc::channel(32);
         let addr = Addr {
@@ -128,6 +139,8 @@ impl Client {
             report: Report::default(),
             outstanding_tasks: OutstandingTasks::default(),
             protocols,
+            reported_probes: (!sparse).then_some(Default::default()),
+            probes_tx,
             #[cfg(not(wasm_browser))]
             socket_state,
             #[cfg(not(wasm_browser))]
@@ -206,6 +219,10 @@ struct Actor {
     /// Protocols we should attempt to create probes for, if we have the correct
     /// configuration for that protocol.
     protocols: BTreeSet<ProbeProto>,
+    /// When running a "full" report, a report should try to get one response from each protocol, per relay URL, before returning.
+    reported_probes: Option<BTreeSet<(ProbeProto, RelayUrl)>>,
+    /// Sender to send `ProbeReport`s
+    probes_tx: mpsc::Sender<ProbeResult>,
 
     /// Any socket-related state that doesn't exist/work in browsers
     #[cfg(not(wasm_browser))]
@@ -373,6 +390,20 @@ impl Actor {
 
     fn handle_probe_report(&mut self, probe_report: ProbeReport) {
         debug!(?probe_report, "finished probe");
+        if let Err(e) = self.probes_tx.try_send(probe_report.clone().into()) {
+            warn!(
+                "unable to send the probe report for probe {} to 
+                {} to the probe sender: {e:?}",
+                probe_report.probe.proto(),
+                probe_report.probe.node().url
+            );
+        }
+        if let Some(reported_probes) = self.reported_probes.as_mut() {
+            reported_probes.insert((
+                probe_report.probe.proto(),
+                probe_report.probe.node().url.clone(),
+            ));
+        }
         update_report(&mut self.report, probe_report);
 
         // When we discover the first IPv4 address we want to start the hairpin actor.
@@ -419,6 +450,14 @@ impl Actor {
 
     /// Whether running this probe would still improve our report.
     fn probe_would_help(&mut self, probe: Probe, relay_node: Arc<RelayNode>) -> bool {
+        // If we want to do a "full" probe, and don't yet have a probe report for this
+        // probe protocol / relay node combination, that would help.
+        if let Some(reported_probes) = self.reported_probes.as_ref() {
+            if reported_probes.contains(&(probe.proto(), relay_node.url.clone())) {
+                return true;
+            }
+        }
+
         // If the probe is for a relay we don't yet know about, that would help.
         if self.report.relay_latency.get(&relay_node.url).is_none() {
             return true;
@@ -688,21 +727,21 @@ impl OutstandingTasks {
 
 /// The success result of [`run_probe`].
 #[derive(Debug, Clone)]
-struct ProbeReport {
+pub struct ProbeReport {
     /// Whether we can send IPv4 UDP packets.
-    ipv4_can_send: bool,
+    pub(crate) ipv4_can_send: bool,
     /// Whether we can send IPv6 UDP packets.
-    ipv6_can_send: bool,
+    pub(crate) ipv6_can_send: bool,
     /// Whether we can send ICMPv4 packets, `None` if not checked.
-    icmpv4: Option<bool>,
+    pub(crate) icmpv4: Option<bool>,
     /// Whether we can send ICMPv6 packets, `None` if not checked.
-    icmpv6: Option<bool>,
+    pub(crate) icmpv6: Option<bool>,
     /// The latency to the relay node.
-    latency: Option<Duration>,
+    pub(crate) latency: Option<Duration>,
     /// The probe that generated this report.
     probe: Probe,
     /// The discovered public address.
-    addr: Option<SocketAddr>,
+    pub(crate) addr: Option<SocketAddr>,
 }
 
 impl ProbeReport {
@@ -716,6 +755,16 @@ impl ProbeReport {
             latency: None,
             addr: None,
         }
+    }
+
+    /// Returns the protocol used for this probe.
+    pub fn proto(&self) -> ProbeProto {
+        self.probe.proto()
+    }
+
+    /// Returns the relay url of the relay this probe is meant for.
+    pub fn relay_url(&self) -> RelayUrl {
+        self.probe.node().url.clone()
     }
 }
 

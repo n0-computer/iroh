@@ -48,7 +48,7 @@ use quinn::{AsyncUdpSocket, ServerConfig};
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use relay_actor::RelaySendItem;
 use smallvec::{smallvec, SmallVec};
-use tokio::sync::{self, mpsc, Mutex};
+use tokio::sync::{self, mpsc, oneshot, Mutex};
 use tokio_util::sync::CancellationToken;
 use tracing::{
     debug, error, error_span, event, info, info_span, instrument, trace, trace_span, warn,
@@ -75,7 +75,7 @@ use crate::{
     discovery::{Discovery, DiscoveryItem, DiscoverySubscribers, NodeData, UserData},
     key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
     metrics::EndpointMetrics,
-    net_report::{self, IpMappedAddresses, Report},
+    net_report::{self, IpMappedAddresses, NetReporter, Report},
     watcher::{self, Watchable},
 };
 
@@ -1587,6 +1587,16 @@ impl MagicSock {
             discovery.publish(&data);
         }
     }
+
+    /// Run a net-report, outside of the usual net-report cycle. This is for
+    /// diagnostic purposes only, and will not effect the usual net-report
+    /// run cycle nor adjust the
+    async fn run_diagnostic_net_report(&self) -> Result<oneshot::Receiver<Result<NetReporter>>> {
+        let (tx, rx) = oneshot::channel();
+        let msg = ActorMessage::DiagnosticNetReport(tx);
+        self.actor_sender.send(msg).await?;
+        Ok(rx)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1985,6 +1995,24 @@ impl Handle {
         }
         trace!("magicsock closed");
     }
+
+    /// Run a diagnosic net-report check, that waits for all
+    /// probes to return before ending the run (within the
+    /// timeout).
+    ///
+    /// This does not interfere with the normal net-report run
+    /// and does not update the known public addresses or
+    /// adjust the known latency for any relay nodes, it is
+    /// strictly for diagnostic purposes.
+    ///
+    /// Return a [`NetReporter`], allowing you to iterate
+    /// over all of the returned probes using `.next()`, or
+    /// you can just `.await` the [`NetReporter`] to get
+    /// the [`Report`].
+    async fn run_diagnostic_net_report(&self) -> Result<NetReporter> {
+        let rx = self.msock.run_diagnostic_net_report().await?;
+        rx.await?
+    }
 }
 
 #[derive(Debug, Default)]
@@ -2335,6 +2363,7 @@ enum ActorMessage {
     Shutdown,
     EndpointPingExpired(usize, stun_rs::TransactionId),
     NetReport(Result<Option<Arc<net_report::Report>>>, &'static str),
+    DiagnosticNetReport(oneshot::Sender<anyhow::Result<NetReporter>>),
     NetworkChange,
     #[cfg(test)]
     ForceNetworkChange(bool),
@@ -2676,6 +2705,9 @@ impl Actor {
             ActorMessage::ForceNetworkChange(is_major) => {
                 self.handle_network_change(is_major).await;
             }
+            ActorMessage::DiagnosticNetReport(tx) => {
+                self.net_report_diagnostic(tx).await;
+            }
         }
 
         false
@@ -2876,6 +2908,36 @@ impl Actor {
         self.net_info_last = Some(ni);
     }
 
+    /// User requested a full diagnosic run of net-report, outside
+    /// of the normal net report cycle.
+    #[instrument(level = "debug", skip_all)]
+    async fn net_report_diagnostic(&mut self, tx: oneshot::Sender<Result<NetReporter>>) {
+        // Don't start a net report probe if we know
+        // we are shutting down
+        if self.msock.is_closing() || self.msock.is_closed() {
+            tx.send(Err(anyhow!(
+                "magicsock is closed, cancelling net-report diagnostic"
+            )))
+            .ok();
+            return;
+        }
+        if self.msock.relay_map.is_empty() {
+            tx.send(Err(anyhow!(
+                "no relay nodes, cancelling net-report diagnostic"
+            )))
+            .ok();
+            return;
+        }
+        let relay_map = self.msock.relay_map.clone();
+
+        // run a non-sparse report, meaning the report will ensure
+        // that each probe protocol response is received for each relay
+        // before finishing
+        let opts = self.net_report_config.clone().sparse(false);
+        let res = self.net_reporter.get_report_channel(relay_map, opts).await;
+        tx.send(res).ok();
+    }
+
     /// Calls net_report.
     ///
     /// Note that invoking this is managed by [`DirectAddrUpdateState`] via
@@ -2908,9 +2970,8 @@ impl Actor {
                 task::spawn(async move {
                     let report = time::timeout(NET_REPORT_TIMEOUT, rx).await;
                     let report: anyhow::Result<_> = match report {
-                        Ok(Ok(Ok(report))) => Ok(Some(report)),
-                        Ok(Ok(Err(err))) => Err(err),
-                        Ok(Err(_)) => Err(anyhow!("net_report report not received")),
+                        Ok(Ok(report)) => Ok(Some(report)),
+                        Ok(Err(err)) => Err(err),
                         Err(err) => Err(anyhow!("net_report report timeout: {:?}", err)),
                     };
                     msg_sender
@@ -4485,6 +4546,30 @@ mod tests {
             .add_node_addr(addr, node_map::Source::App)?;
         assert_eq!(stack.endpoint.magic_sock().node_map.node_count(), 3);
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn multiple_net_report_runs() -> Result<()> {
+        let stack = MagicStack::new(RelayMode::Default).await?;
+        let ep = stack.endpoint;
+        println!("running multiple net-report checks at once");
+        let mut reporter0 = ep.magic_sock().run_diagnostic_net_report().await?;
+        let mut reporter1 = ep.magic_sock().run_diagnostic_net_report().await?;
+        let mut set = JoinSet::new();
+        set.spawn(async move {
+            while let Some(probe_result) = reporter0.next().await {
+                println!("probe from reporter0: {probe_result}");
+            }
+            println!("probe report from reporter0: {:?}", reporter0.await);
+        });
+        set.spawn(async move {
+            while let Some(probe_result) = reporter1.next().await {
+                println!("probe from reporter1: {probe_result}");
+            }
+            println!("probe report from reporter1: {:?}", reporter1.await);
+        });
+        set.join_all().await;
         Ok(())
     }
 }
