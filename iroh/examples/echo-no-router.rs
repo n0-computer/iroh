@@ -55,7 +55,7 @@ async fn connect_side(addr: NodeAddr) -> Result<()> {
     // The above call only queues a close message to be sent (see how it's not async!).
     // We need to actually call this to make sure this message is sent out.
     endpoint.close().await;
-    // If we don't call this, but continue using the endpoint, we then the queued
+    // If we don't call this, but continue using the endpoint, then the queued
     // close call will eventually be picked up and sent.
     // But always try to wait for endpoint.close().await to go through before dropping
     // the endpoint to ensure any queued messages are sent through and connections are
