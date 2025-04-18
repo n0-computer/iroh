@@ -89,8 +89,7 @@ let endpoint = Endpoint::builder().discovery_n0().bind().await?;
 
 let router = Router::builder(endpoint)
     .accept(ALPN.to_vec(), Arc::new(Echo))
-    .spawn()
-    .await?;
+    .spawn();
 
 // The protocol definition:
 #[derive(Debug, Clone)]
