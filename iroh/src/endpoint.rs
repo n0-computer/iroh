@@ -41,6 +41,7 @@ use crate::{
         DiscoveryTask, Lagged, UserData,
     },
     magicsock::{self, Handle, NodeIdMappedAddr},
+    metrics::EndpointMetrics,
     tls,
     watchable::Watcher,
     RelayProtocol,
@@ -192,6 +193,8 @@ impl Builder {
         };
         let server_config = static_config.create_server_config(self.alpn_protocols)?;
 
+        let metrics = EndpointMetrics::default();
+
         let msock_opts = magicsock::Options {
             addr_v4: self.addr_v4,
             addr_v6: self.addr_v6,
@@ -209,6 +212,7 @@ impl Builder {
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
             #[cfg(any(test, feature = "test-utils"))]
             path_selection: self.path_selection,
+            metrics,
         };
         Endpoint::bind(static_config, msock_opts).await
     }
@@ -620,7 +624,7 @@ impl Endpoint {
 
         let ep = Self {
             msock: msock.clone(),
-            rtt_actor: Arc::new(rtt_actor::RttHandle::new()),
+            rtt_actor: Arc::new(rtt_actor::RttHandle::new(msock.metrics.magicsock.clone())),
             static_config: Arc::new(static_config),
             session_store: Arc::new(rustls::client::ClientSessionMemoryCache::new(
                 MAX_TLS_TICKETS,
@@ -1101,6 +1105,68 @@ impl Endpoint {
     /// See [`Builder::discovery`].
     pub fn discovery(&self) -> Option<&dyn Discovery> {
         self.msock.discovery()
+    }
+
+    /// Returns metrics collected for this endpoint.
+    ///
+    /// The endpoint internally collects various metrics about its operation.
+    /// The returned [`EndpointMetrics`] struct contains all of these metrics.
+    ///
+    /// You can access individual metrics directly by using the public fields:
+    /// ```rust
+    /// # use std::collections::BTreeMap;
+    /// # use iroh_metrics::{MetricsGroup, MetricValue, MetricsGroupSet};
+    /// # use iroh::endpoint::Endpoint;
+    /// # async fn wrapper() -> testresult::TestResult {
+    /// let endpoint = Endpoint::builder().bind().await?;
+    /// let metrics = endpoint.metrics();
+    ///
+    /// assert_eq!(metrics.magicsock.recv_datagrams.get(), 0);
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// [`EndpointMetrics`] implements [`MetricsGroupSet`], and each field
+    /// implements [`MetricsGroup`]. These trait provides various methods to iterate
+    /// the groups in the set, and over the individual metrics in each group, without having
+    /// to access each field manually. With these methods, it is straightforward to collect
+    /// all metrics into a map or push their values to some other metrics collector.
+    ///
+    /// For example, the following snippet collects all metrics into a map:
+    /// ```rust
+    /// # use std::collections::BTreeMap;
+    /// # use iroh_metrics::{Metric, MetricsGroup, MetricValue, MetricsGroupSet};
+    /// # use iroh::endpoint::Endpoint;
+    /// # async fn wrapper() -> testresult::TestResult {
+    /// let endpoint = Endpoint::builder().bind().await?;
+    /// let metrics: BTreeMap<String, MetricValue> = endpoint
+    ///     .metrics()
+    ///     .iter()
+    ///     .map(|(group, metric)| {
+    ///         let name = [group, metric.name()].join(":");
+    ///         (name, metric.value())
+    ///     })
+    ///     .collect();
+    ///
+    /// assert_eq!(metrics["magicsock:recv_datagrams"], MetricValue::Counter(0));
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// The metrics can also be used with the types from the [`prometheus_client`] crate.
+    /// With [`EndpointMetrics::register`], you can register all metrics onto a onto a
+    /// [`Registry`]. [`iroh_metrics`] provides functions to easily start services
+    /// to serve the metrics with a HTTP server, dump them to a file, or push them
+    /// to a Prometheus gateway. See the `service` module in [`iroh_metrics`] for details.
+    ///
+    /// [`prometheus_client`]: https://docs.rs/prometheus-client/latest/prometheus_client/index.html
+    /// [`Registry`]: https://docs.rs/prometheus-client/latest/prometheus_client/registry/struct.Registry.html
+    /// [`EndpointMetrics::register`]: iroh_metrics::MetricsGroupSet::register
+    /// [`MetricsGroup`]: iroh_metrics::MetricsGroup
+    /// [`MetricsGroupSet`]: iroh_metrics::MetricsGroupSet
+    #[cfg(feature = "metrics")]
+    pub fn metrics(&self) -> &EndpointMetrics {
+        &self.msock.metrics
     }
 
     // # Methods for less common state updates.
@@ -2026,6 +2092,7 @@ mod tests {
 
     use std::time::Instant;
 
+    use iroh_metrics::{service::MetricsSource, MetricsGroupSet};
     use iroh_relay::http::Protocol;
     use n0_future::StreamExt;
     use rand::SeedableRng;
@@ -2776,6 +2843,75 @@ mod tests {
 
         assert_eq!(app_close.error_code, 42u32.into());
         assert_eq!(app_close.reason.as_ref(), b"thanks, bye!");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn metrics_smoke() -> testresult::TestResult {
+        use iroh_metrics::Registry;
+
+        let secret_key = SecretKey::from_bytes(&[0u8; 32]);
+        let client = Endpoint::builder()
+            .secret_key(secret_key)
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .await?;
+        let secret_key = SecretKey::from_bytes(&[1u8; 32]);
+        let server = Endpoint::builder()
+            .secret_key(secret_key)
+            .relay_mode(RelayMode::Disabled)
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .bind()
+            .await?;
+        let server_addr = server.node_addr().await?;
+        let server_task = tokio::task::spawn(async move {
+            let conn = server
+                .accept()
+                .await
+                .context("expected conn")?
+                .accept()?
+                .await?;
+            let mut uni = conn.accept_uni().await?;
+            uni.read_to_end(10).await?;
+            drop(conn);
+            anyhow::Ok(server)
+        });
+        let conn = client.connect(server_addr, TEST_ALPN).await?;
+        let mut uni = conn.open_uni().await?;
+        uni.write_all(b"helloworld").await?;
+        uni.finish()?;
+        conn.closed().await;
+        drop(conn);
+        let server = server_task.await??;
+
+        let m = client.metrics();
+        assert_eq!(m.magicsock.num_direct_conns_added.get(), 1);
+        assert_eq!(m.magicsock.connection_became_direct.get(), 1);
+        assert_eq!(m.magicsock.connection_handshake_success.get(), 1);
+        assert_eq!(m.magicsock.nodes_contacted_directly.get(), 1);
+        assert!(m.magicsock.recv_datagrams.get() > 0);
+
+        let m = server.metrics();
+        assert_eq!(m.magicsock.num_direct_conns_added.get(), 1);
+        assert_eq!(m.magicsock.connection_became_direct.get(), 1);
+        assert_eq!(m.magicsock.nodes_contacted_directly.get(), 1);
+        assert_eq!(m.magicsock.connection_handshake_success.get(), 1);
+        assert!(m.magicsock.recv_datagrams.get() > 0);
+
+        // test openmetrics encoding with labeled subregistries per endpoint
+        fn register_endpoint(registry: &mut Registry, endpoint: &Endpoint) {
+            let id = endpoint.node_id().fmt_short().into();
+            let sub_registry = registry.sub_registry_with_label(("id".into(), id));
+            endpoint.metrics().register(sub_registry);
+        }
+        let mut registry = Registry::default();
+        register_endpoint(&mut registry, &client);
+        register_endpoint(&mut registry, &server);
+        let s = registry.encode_openmetrics()?;
+        assert!(s.contains(r#"magicsock_nodes_contacted_directly_total{id="3b6a27bcce"} 1"#));
+        assert!(s.contains(r#"magicsock_nodes_contacted_directly_total{id="8a88e3dd74"} 1"#));
 
         Ok(())
     }

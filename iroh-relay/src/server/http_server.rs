@@ -13,7 +13,6 @@ use hyper::{
     upgrade::Upgraded,
     HeaderMap, Method, Request, Response, StatusCode,
 };
-use iroh_metrics::inc;
 use n0_future::{FutureExt, SinkExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls_acme::AcmeAcceptor;
@@ -176,6 +175,7 @@ pub(super) struct ServerBuilder {
     key_cache_capacity: usize,
     /// Access config for nodes.
     access: AccessConfig,
+    metrics: Option<Arc<Metrics>>,
 }
 
 impl ServerBuilder {
@@ -189,7 +189,14 @@ impl ServerBuilder {
             client_rx_ratelimit: None,
             key_cache_capacity: DEFAULT_KEY_CACHE_CAPACITY,
             access: AccessConfig::Everyone,
+            metrics: None,
         }
+    }
+
+    /// Sets the metrics collector.
+    pub(super) fn metrics(mut self, metrics: Arc<Metrics>) -> Self {
+        self.metrics = Some(metrics);
+        self
     }
 
     /// Set the access configuration.
@@ -248,6 +255,7 @@ impl ServerBuilder {
             self.client_rx_ratelimit,
             KeyCache::new(self.key_cache_capacity),
             self.access,
+            self.metrics.unwrap_or_default(),
         );
 
         let addr = self.addr;
@@ -327,6 +335,7 @@ struct Inner {
     rate_limit: Option<ClientRateLimit>,
     key_cache: KeyCache,
     access: AccessConfig,
+    metrics: Arc<Metrics>,
 }
 
 impl RelayService {
@@ -517,11 +526,11 @@ impl Inner {
         trace!(?protocol, "accept: start");
         let mut io = match protocol {
             Protocol::Relay => {
-                inc!(Metrics, relay_accepts);
+                self.metrics.relay_accepts.inc();
                 RelayedStream::Relay(Framed::new(io, RelayCodec::new(self.key_cache.clone())))
             }
             Protocol::Websocket => {
-                inc!(Metrics, websocket_accepts);
+                self.metrics.websocket_accepts.inc();
                 // Since we already did the HTTP upgrade in the previous step,
                 // we use tokio-websockets to handle this connection
                 // Create a server builder with default config
@@ -569,7 +578,9 @@ impl Inner {
 
         // build and register client, starting up read & write loops for the client
         // connection
-        self.clients.register(client_conn_builder).await;
+        self.clients
+            .register(client_conn_builder, self.metrics.clone())
+            .await;
         Ok(())
     }
 }
@@ -591,6 +602,7 @@ impl RelayService {
         rate_limit: Option<ClientRateLimit>,
         key_cache: KeyCache,
         access: AccessConfig,
+        metrics: Arc<Metrics>,
     ) -> Self {
         Self(Arc::new(Inner {
             handlers,
@@ -600,6 +612,7 @@ impl RelayService {
             rate_limit,
             key_cache,
             access,
+            metrics,
         }))
     }
 
@@ -952,6 +965,7 @@ mod tests {
             None,
             KeyCache::test(),
             AccessConfig::Everyone,
+            Default::default(),
         );
 
         info!("Create client A and connect it to the server.");
@@ -1039,6 +1053,7 @@ mod tests {
             None,
             KeyCache::test(),
             AccessConfig::Everyone,
+            Default::default(),
         );
 
         info!("Create client A and connect it to the server.");
