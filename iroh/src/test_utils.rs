@@ -310,7 +310,7 @@ pub(crate) mod pkarr_relay {
     pub async fn run_pkarr_relay(state: AppState) -> Result<(Url, CleanupDropGuard)> {
         let bind_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
         let app = Router::new()
-            .route("/pkarr/:key", put(pkarr_put))
+            .route("/pkarr/{key}", put(pkarr_put))
             .with_state(state);
         let listener = tokio::net::TcpListener::bind(bind_addr).await?;
         let bound_addr = listener.local_addr()?;
