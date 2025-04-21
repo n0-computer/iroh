@@ -86,7 +86,7 @@ rustls-cert-reloadable-resolver = { version = "0.7.1", optional = true }
 rustls-cert-file-reader = { version = "0.4.1", optional = true }
 rustls-pemfile = { version = "2.1", optional = true }
 time = { version = "0.3.37", optional = true }
-tokio-rustls-acme = { version = "0.6", optional = true }
+tokio-rustls-acme = { version = "0.7", optional = true }
 tokio-websockets = { version = "0.11.3", features = ["rustls-bring-your-own-connector", "ring", "getrandom", "rand", "server"], optional = true } # server-side websocket implementation
 toml = { version = "0.8", optional = true }
 tracing-subscriber = { version = "0.3", features = [
