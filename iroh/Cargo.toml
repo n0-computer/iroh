@@ -23,6 +23,7 @@ workspace = true
 [dependencies]
 aead = { version = "0.5.2", features = ["bytes"] }
 anyhow = { version = "1" }
+async-channel = "2.3.1"
 atomic-waker = "1.1.2"
 concurrent-queue = "2.5"
 backon = { version = "1.4" }
