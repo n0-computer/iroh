@@ -884,7 +884,9 @@
 <a href="#883" id="883">883</a>
 <a href="#884" id="884">884</a>
 <a href="#885" id="885">885</a>
-<a href="#886" id="886">886</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#886" id="886">886</a>
+<a href="#887" id="887">887</a>
+<a href="#888" id="888">888</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{hash_map::Entry, BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
@@ -1044,7 +1046,8 @@
         <span class="self">self</span>.inner.lock().expect(<span class="string">"poisoned"</span>).node_count()
     }
 
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>receive_udp(
+    <span class="attr">#[cfg(not(wasm_browser))]
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>receive_udp(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         udp_addr: SocketAddr,
     ) -&gt; <span class="prelude-ty">Option</span>&lt;(PublicKey, NodeIdMappedAddr)&gt; {
@@ -1324,6 +1327,7 @@
     }
 
     <span class="doccomment">/// Marks the node we believe to be at `ipp` as recently used.
+    </span><span class="attr">#[cfg(not(wasm_browser))]
     </span><span class="kw">fn </span>receive_udp(<span class="kw-2">&amp;mut </span><span class="self">self</span>, udp_addr: SocketAddr) -&gt; <span class="prelude-ty">Option</span>&lt;(NodeId, NodeIdMappedAddr)&gt; {
         <span class="kw">let </span>ip_port: IpPort = udp_addr.into();
         <span class="kw">let </span><span class="prelude-val">Some</span>(node_state) = <span class="self">self</span>.get_mut(NodeStateKey::IpPort(ip_port)) <span class="kw">else </span>{

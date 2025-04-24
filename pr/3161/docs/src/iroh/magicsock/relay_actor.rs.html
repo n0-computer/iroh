@@ -1545,7 +1545,81 @@
 <a href="#1544" id="1544">1544</a>
 <a href="#1545" id="1545">1545</a>
 <a href="#1546" id="1546">1546</a>
-<a href="#1547" id="1547">1547</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1547" id="1547">1547</a>
+<a href="#1548" id="1548">1548</a>
+<a href="#1549" id="1549">1549</a>
+<a href="#1550" id="1550">1550</a>
+<a href="#1551" id="1551">1551</a>
+<a href="#1552" id="1552">1552</a>
+<a href="#1553" id="1553">1553</a>
+<a href="#1554" id="1554">1554</a>
+<a href="#1555" id="1555">1555</a>
+<a href="#1556" id="1556">1556</a>
+<a href="#1557" id="1557">1557</a>
+<a href="#1558" id="1558">1558</a>
+<a href="#1559" id="1559">1559</a>
+<a href="#1560" id="1560">1560</a>
+<a href="#1561" id="1561">1561</a>
+<a href="#1562" id="1562">1562</a>
+<a href="#1563" id="1563">1563</a>
+<a href="#1564" id="1564">1564</a>
+<a href="#1565" id="1565">1565</a>
+<a href="#1566" id="1566">1566</a>
+<a href="#1567" id="1567">1567</a>
+<a href="#1568" id="1568">1568</a>
+<a href="#1569" id="1569">1569</a>
+<a href="#1570" id="1570">1570</a>
+<a href="#1571" id="1571">1571</a>
+<a href="#1572" id="1572">1572</a>
+<a href="#1573" id="1573">1573</a>
+<a href="#1574" id="1574">1574</a>
+<a href="#1575" id="1575">1575</a>
+<a href="#1576" id="1576">1576</a>
+<a href="#1577" id="1577">1577</a>
+<a href="#1578" id="1578">1578</a>
+<a href="#1579" id="1579">1579</a>
+<a href="#1580" id="1580">1580</a>
+<a href="#1581" id="1581">1581</a>
+<a href="#1582" id="1582">1582</a>
+<a href="#1583" id="1583">1583</a>
+<a href="#1584" id="1584">1584</a>
+<a href="#1585" id="1585">1585</a>
+<a href="#1586" id="1586">1586</a>
+<a href="#1587" id="1587">1587</a>
+<a href="#1588" id="1588">1588</a>
+<a href="#1589" id="1589">1589</a>
+<a href="#1590" id="1590">1590</a>
+<a href="#1591" id="1591">1591</a>
+<a href="#1592" id="1592">1592</a>
+<a href="#1593" id="1593">1593</a>
+<a href="#1594" id="1594">1594</a>
+<a href="#1595" id="1595">1595</a>
+<a href="#1596" id="1596">1596</a>
+<a href="#1597" id="1597">1597</a>
+<a href="#1598" id="1598">1598</a>
+<a href="#1599" id="1599">1599</a>
+<a href="#1600" id="1600">1600</a>
+<a href="#1601" id="1601">1601</a>
+<a href="#1602" id="1602">1602</a>
+<a href="#1603" id="1603">1603</a>
+<a href="#1604" id="1604">1604</a>
+<a href="#1605" id="1605">1605</a>
+<a href="#1606" id="1606">1606</a>
+<a href="#1607" id="1607">1607</a>
+<a href="#1608" id="1608">1608</a>
+<a href="#1609" id="1609">1609</a>
+<a href="#1610" id="1610">1610</a>
+<a href="#1611" id="1611">1611</a>
+<a href="#1612" id="1612">1612</a>
+<a href="#1613" id="1613">1613</a>
+<a href="#1614" id="1614">1614</a>
+<a href="#1615" id="1615">1615</a>
+<a href="#1616" id="1616">1616</a>
+<a href="#1617" id="1617">1617</a>
+<a href="#1618" id="1618">1618</a>
+<a href="#1619" id="1619">1619</a>
+<a href="#1620" id="1620">1620</a>
+<a href="#1621" id="1621">1621</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1584,8 +1658,8 @@
     },
 };
 
-<span class="kw">use </span>anyhow::{anyhow, <span class="prelude-ty">Result</span>};
-<span class="kw">use </span>backoff::exponential::{ExponentialBackoff, ExponentialBackoffBuilder};
+<span class="kw">use </span>anyhow::{anyhow, Context, <span class="prelude-ty">Result</span>};
+<span class="kw">use </span>backon::{Backoff, BackoffBuilder, ExponentialBuilder};
 <span class="kw">use </span>bytes::{Bytes, BytesMut};
 <span class="kw">use </span>iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
 <span class="kw">use </span>iroh_metrics::{inc, inc_by};
@@ -1605,8 +1679,9 @@
 <span class="kw">use </span>url::Url;
 
 <span class="kw">use </span><span class="kw">super</span>::RelayDatagramSendChannelReceiver;
+<span class="attr">#[cfg(not(wasm_browser))]
+</span><span class="kw">use </span><span class="kw">crate</span>::dns::DnsResolver;
 <span class="kw">use crate</span>::{
-    dns::DnsResolver,
     magicsock::{MagicSock, Metrics <span class="kw">as </span>MagicsockMetrics, RelayContents, RelayDatagramRecvQueue},
     util::MaybeFuture,
 };
@@ -1751,11 +1826,24 @@
 </span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">struct </span>RelayConnectionOptions {
     secret_key: SecretKey,
-    dns_resolver: DnsResolver,
+    <span class="attr">#[cfg(not(wasm_browser))]
+    </span>dns_resolver: DnsResolver,
     proxy_url: <span class="prelude-ty">Option</span>&lt;Url&gt;,
     prefer_ipv6: Arc&lt;AtomicBool&gt;,
     <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
     </span>insecure_skip_cert_verify: bool,
+    protocol: iroh_relay::http::Protocol,
+}
+
+<span class="doccomment">/// Possible reasons for a failed relay connection.
+</span><span class="attr">#[derive(Debug, thiserror::Error)]
+</span><span class="kw">enum </span>RelayConnectionError {
+    <span class="attr">#[error(<span class="string">"Failed to connect to relay server: {0:#}"</span>)]
+    </span>Connecting(<span class="attr">#[source] </span>anyhow::Error),
+    <span class="attr">#[error(<span class="string">"Failed to handshake with relay server: {0:#}"</span>)]
+    </span>Handshake(<span class="attr">#[source] </span>anyhow::Error),
+    <span class="attr">#[error(<span class="string">"Lost connection to relay server: {0:#}"</span>)]
+    </span>Established(<span class="attr">#[source] </span>anyhow::Error),
 }
 
 <span class="kw">impl </span>ActiveRelayActor {
@@ -1789,14 +1877,23 @@
     ) -&gt; relay::client::ClientBuilder {
         <span class="kw">let </span>RelayConnectionOptions {
             secret_key,
-            dns_resolver,
+            <span class="attr">#[cfg(not(wasm_browser))]
+            </span>dns_resolver,
             proxy_url,
             prefer_ipv6,
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>insecure_skip_cert_verify,
+            protocol,
         } = opts;
-        <span class="kw">let </span><span class="kw-2">mut </span>builder = relay::client::ClientBuilder::new(url, secret_key, dns_resolver)
-            .address_family_selector(<span class="kw">move </span>|| prefer_ipv6.load(Ordering::Relaxed));
+
+        <span class="kw">let </span><span class="kw-2">mut </span>builder = relay::client::ClientBuilder::new(
+            url,
+            secret_key,
+            <span class="attr">#[cfg(not(wasm_browser))]
+            </span>dns_resolver,
+        )
+        .protocol(protocol)
+        .address_family_selector(<span class="kw">move </span>|| prefer_ipv6.load(Ordering::Relaxed));
         <span class="kw">if let </span><span class="prelude-val">Some</span>(proxy_url) = proxy_url {
             builder = builder.proxy_url(proxy_url);
         }
@@ -1808,22 +1905,25 @@
     <span class="doccomment">/// The main actor run loop.
     ///
     /// Primarily switches between the dialing and connected states.
-    </span><span class="kw">async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; anyhow::Result&lt;()&gt; {
+    </span><span class="kw">async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="macro">inc!</span>(MagicsockMetrics, num_relay_conns_added);
 
-        <span class="kw">loop </span>{
-            <span class="kw">let </span><span class="prelude-val">Some</span>(client) = <span class="self">self</span>.run_dialing().instrument(<span class="macro">info_span!</span>(<span class="string">"dialing"</span>)).<span class="kw">await else </span>{
-                <span class="kw">break</span>;
-            };
-            <span class="kw">match </span><span class="self">self
-                </span>.run_connected(client)
-                .instrument(<span class="macro">info_span!</span>(<span class="string">"connected"</span>))
-                .<span class="kw">await
-            </span>{
-                <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; <span class="kw">break</span>,
-                <span class="prelude-val">Err</span>(err) =&gt; {
-                    <span class="macro">debug!</span>(<span class="string">"Connection to relay server lost: {err:#}"</span>);
-                    <span class="kw">continue</span>;
+        <span class="kw">let </span><span class="kw-2">mut </span>backoff = <span class="self">Self</span>::build_backoff();
+
+        <span class="kw">while let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.run_once().<span class="kw">await </span>{
+            <span class="macro">warn!</span>(<span class="string">"{err}"</span>);
+            <span class="kw">match </span>err {
+                RelayConnectionError::Connecting(<span class="kw">_</span>) | RelayConnectionError::Handshake(<span class="kw">_</span>) =&gt; {
+                    <span class="comment">// If dialing failed, or if the relay connection failed before we received a pong,
+                    // we wait an exponentially increasing time until we attempt to reconnect again.
+                    </span><span class="kw">let </span>delay = backoff.next().context(<span class="string">"Retries exceeded"</span>)<span class="question-mark">?</span>;
+                    <span class="macro">debug!</span>(<span class="string">"Retry in {delay:?}"</span>);
+                    time::sleep(delay).<span class="kw">await</span>;
+                }
+                RelayConnectionError::Established(<span class="kw">_</span>) =&gt; {
+                    <span class="comment">// If the relay connection remained established long enough so that we received a pong
+                    // from the relay server, we reset the backoff and attempt to reconnect immediately.
+                    </span>backoff = <span class="self">Self</span>::build_backoff();
                 }
             }
         }
@@ -1831,6 +1931,31 @@
         <span class="macro">inc!</span>(MagicsockMetrics, num_relay_conns_removed);
         <span class="prelude-val">Ok</span>(())
     }
+
+    <span class="kw">fn </span>build_backoff() -&gt; <span class="kw">impl </span>Backoff {
+        ExponentialBuilder::new()
+            .with_min_delay(Duration::from_millis(<span class="number">10</span>))
+            .with_max_delay(Duration::from_secs(<span class="number">16</span>))
+            .with_jitter()
+            .without_max_times()
+            .build()
+    }
+
+    <span class="doccomment">/// Attempt to connect to the relay, and run the connected actor loop.
+    ///
+    /// Returns `Ok(())` if the actor loop should shut down. Returns an error if dialing failed,
+    /// or if the relay connection failed while connected. In both cases, the connection should
+    /// be retried with a backoff.
+    </span><span class="kw">async fn </span>run_once(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(), RelayConnectionError&gt; {
+        <span class="kw">let </span>client = <span class="kw">match </span><span class="self">self</span>.run_dialing().instrument(<span class="macro">info_span!</span>(<span class="string">"dialing"</span>)).<span class="kw">await </span>{
+            <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(client)) =&gt; client,
+            <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(err)) =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(RelayConnectionError::Connecting(err)),
+            <span class="prelude-val">None </span>=&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(()),
+        };
+        <span class="self">self</span>.run_connected(client)
+            .instrument(<span class="macro">info_span!</span>(<span class="string">"connected"</span>))
+            .<span class="kw">await
+    </span>}
 
     <span class="kw">fn </span>reset_inactive_timeout(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
         <span class="self">self</span>.inactive_timeout
@@ -1852,9 +1977,9 @@
 
     <span class="doccomment">/// Actor loop when connecting to the relay server.
     ///
-    /// Returns `None` if the actor needs to shut down.  Returns `Some(client)` when the
-    /// connection is established.
-    </span><span class="kw">async fn </span>run_dialing(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;iroh_relay::client::Client&gt; {
+    /// Returns `None` if the actor needs to shut down.  Returns `Some(Ok(client))` when the
+    /// connection is established, and `Some(Err(err))` if dialing the relay failed.
+    </span><span class="kw">async fn </span>run_dialing(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Result</span>&lt;iroh_relay::client::Client&gt;&gt; {
         <span class="macro">debug!</span>(<span class="string">"Actor loop: connecting to relay."</span>);
 
         <span class="comment">// We regularly flush the relay_datagrams_send queue so it is not full of stale
@@ -1867,7 +1992,8 @@
         send_datagram_flush.set_missed_tick_behavior(MissedTickBehavior::Delay);
         send_datagram_flush.reset(); <span class="comment">// Skip the immediate interval
 
-        </span><span class="kw">let </span><span class="kw-2">mut </span>dialing_fut = <span class="self">self</span>.dial_relay();
+        </span><span class="kw">let </span>dialing_fut = <span class="self">self</span>.dial_relay();
+        <span class="macro">tokio::pin!</span>(dialing_fut);
         <span class="kw">loop </span>{
             <span class="macro">tokio::select!</span> {
                 biased;
@@ -1889,11 +2015,10 @@
                 res = <span class="kw-2">&amp;mut </span>dialing_fut =&gt; {
                     <span class="kw">match </span>res {
                         <span class="prelude-val">Ok</span>(client) =&gt; {
-                            <span class="kw">break </span><span class="prelude-val">Some</span>(client);
+                            <span class="kw">break </span><span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(client));
                         }
                         <span class="prelude-val">Err</span>(err) =&gt; {
-                            <span class="macro">warn!</span>(<span class="string">"Client failed to connect: {err:#}"</span>);
-                            dialing_fut = <span class="self">self</span>.dial_relay();
+                            <span class="kw">break </span><span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(err));
                         }
                     }
                 }
@@ -1940,39 +2065,26 @@
     /// The future only completes once the connection is established and retries
     /// connections.  It currently does not ever return `Err` as the retries continue
     /// forever.
-    </span><span class="kw">fn </span>dial_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Pin&lt;Box&lt;<span class="kw">dyn </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;Client&gt;&gt; + Send&gt;&gt; {
-        <span class="kw">let </span>backoff: ExponentialBackoff&lt;backoff::SystemClock&gt; = ExponentialBackoffBuilder::new()
-            .with_initial_interval(Duration::from_millis(<span class="number">10</span>))
-            .with_max_interval(Duration::from_secs(<span class="number">5</span>))
-            .build();
-        <span class="kw">let </span>connect_fn = {
-            <span class="kw">let </span>client_builder = <span class="self">self</span>.relay_client_builder.clone();
-            <span class="kw">move </span>|| {
-                <span class="kw">let </span>client_builder = client_builder.clone();
-                <span class="kw">async move </span>{
-                    <span class="kw">match </span>time::timeout(CONNECT_TIMEOUT, client_builder.connect()).<span class="kw">await </span>{
-                        <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(client)) =&gt; <span class="prelude-val">Ok</span>(client),
-                        <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err)) =&gt; {
-                            <span class="macro">warn!</span>(<span class="string">"Relay connection failed: {err:#}"</span>);
-                            <span class="prelude-val">Err</span>(anyhow::Error::from(err).into())
-                        }
-                        <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; {
-                            <span class="macro">warn!</span>(<span class="question-mark">?</span>CONNECT_TIMEOUT, <span class="string">"Timeout connecting to relay"</span>);
-                            <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Timeout"</span>).into())
-                        }
-                    }
-                }
+    </span><span class="comment">// This is using `impl Future` to return a future without a reference to self.
+    </span><span class="kw">fn </span>dial_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;Client&gt;&gt; {
+        <span class="kw">let </span>client_builder = <span class="self">self</span>.relay_client_builder.clone();
+        <span class="kw">async move </span>{
+            <span class="kw">match </span>time::timeout(CONNECT_TIMEOUT, client_builder.connect()).<span class="kw">await </span>{
+                <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(client)) =&gt; <span class="prelude-val">Ok</span>(client),
+                <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err)) =&gt; <span class="prelude-val">Err</span>(anyhow::Error::from(err)),
+                <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Connecting timed out after {CONNECT_TIMEOUT:?}"</span>)),
             }
-        };
-        <span class="kw">let </span>retry_fut = backoff::future::retry(backoff, connect_fn);
-        Box::pin(retry_fut)
+        }
     }
 
     <span class="doccomment">/// Runs the actor loop when connected to a relay server.
     ///
     /// Returns `Ok` if the actor needs to shut down.  `Err` is returned if the connection
     /// to the relay server is lost.
-    </span><span class="kw">async fn </span>run_connected(<span class="kw-2">&amp;mut </span><span class="self">self</span>, client: iroh_relay::client::Client) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">async fn </span>run_connected(
+        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+        client: iroh_relay::client::Client,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), RelayConnectionError&gt; {
         <span class="macro">debug!</span>(<span class="string">"Actor loop: connected to relay"</span>);
         <span class="macro">event!</span>(
             target: <span class="string">"iroh::_events::relay::connected"</span>,
@@ -1988,6 +2100,7 @@
             nodes_present: BTreeSet::new(),
             last_packet_src: <span class="prelude-val">None</span>,
             pong_pending: <span class="prelude-val">None</span>,
+            established: <span class="bool-val">false</span>,
             <span class="attr">#[cfg(test)]
             </span>test_pong: <span class="prelude-val">None</span>,
         };
@@ -1996,11 +2109,11 @@
         </span><span class="kw">let </span><span class="kw-2">mut </span>send_datagrams_buf = Vec::with_capacity(SEND_DATAGRAM_BATCH_SIZE);
 
         <span class="comment">// Regularly send pings so we know the connection is healthy.
+        // The first ping will be sent immediately.
         </span><span class="kw">let </span><span class="kw-2">mut </span>ping_interval = time::interval(PING_INTERVAL);
         ping_interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
-        ping_interval.reset(); <span class="comment">// skip the ping at current time.
 
-        </span><span class="kw">let </span>res = <span class="kw">loop </span>{
+        <span class="kw">let </span>res = <span class="kw">loop </span>{
             <span class="kw">if let </span><span class="prelude-val">Some</span>(data) = state.pong_pending.take() {
                 <span class="kw">let </span>fut = client_sink.send(SendMessage::Pong(data));
                 <span class="self">self</span>.run_sending(fut, <span class="kw-2">&amp;mut </span>state, <span class="kw-2">&amp;mut </span>client_stream)
@@ -2098,7 +2211,7 @@
                 }
                 msg = client_stream.next() =&gt; {
                     <span class="kw">let </span><span class="prelude-val">Some</span>(msg) = msg <span class="kw">else </span>{
-                        <span class="kw">break </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Client stream finished"</span>));
+                        <span class="kw">break </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Stream closed by server."</span>));
                     };
                     <span class="kw">match </span>msg {
                         <span class="prelude-val">Ok</span>(msg) =&gt; {
@@ -2115,10 +2228,14 @@
                 }
             }
         };
+
         <span class="kw">if </span>res.is_ok() {
-            client_sink.close().<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = client_sink.close().<span class="kw">await </span>{
+                <span class="macro">debug!</span>(<span class="string">"Failed to close client sink gracefully: {err:#}"</span>);
+            }
         }
-        res
+
+        res.map_err(|err| state.map_err(err))
     }
 
     <span class="kw">fn </span>handle_relay_msg(<span class="kw-2">&amp;mut </span><span class="self">self</span>, msg: ReceivedMessage, state: <span class="kw-2">&amp;mut </span>ConnectedRelayState) {
@@ -2164,11 +2281,16 @@
                         }
                     }
                 }
-                state.ping_tracker.pong_received(data)
+                state.ping_tracker.pong_received(data);
+                state.established = <span class="bool-val">true</span>;
             }
-            ReceivedMessage::KeepAlive
-            | ReceivedMessage::Health { .. }
-            | ReceivedMessage::ServerRestarting { .. } =&gt; <span class="macro">trace!</span>(<span class="string">"Ignoring {msg:?}"</span>),
+            ReceivedMessage::Health { problem } =&gt; {
+                <span class="kw">let </span>problem = problem.as_deref().unwrap_or(<span class="string">"unknown"</span>);
+                <span class="macro">warn!</span>(<span class="string">"Relay server reports problem: {problem}"</span>);
+            }
+            ReceivedMessage::KeepAlive | ReceivedMessage::ServerRestarting { .. } =&gt; {
+                <span class="macro">trace!</span>(<span class="string">"Ignoring {msg:?}"</span>)
+            }
         }
     }
 
@@ -2188,13 +2310,13 @@
         sending_fut: <span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;T, E&gt;&gt;,
         state: <span class="kw-2">&amp;mut </span>ConnectedRelayState,
         client_stream: <span class="kw-2">&amp;mut </span>iroh_relay::client::ClientStream,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), RelayConnectionError&gt; {
         <span class="comment">// we use the same time as for our ping interval
         </span><span class="kw">let </span>send_timeout = PING_INTERVAL;
 
         <span class="kw">let </span><span class="kw-2">mut </span>timeout = <span class="macro">pin!</span>(time::sleep(send_timeout));
         <span class="kw">let </span><span class="kw-2">mut </span>sending_fut = <span class="macro">pin!</span>(sending_fut);
-        <span class="kw">loop </span>{
+        <span class="kw">let </span>res = <span class="kw">loop </span>{
             <span class="macro">tokio::select!</span> {
                 biased;
                 <span class="kw">_ </span>= <span class="self">self</span>.stop_token.cancelled() =&gt; {
@@ -2227,7 +2349,7 @@
                 <span class="comment">// No need to read the inbox or datagrams to send.
                 </span>msg = client_stream.next() =&gt; {
                     <span class="kw">let </span><span class="prelude-val">Some</span>(msg) = msg <span class="kw">else </span>{
-                        <span class="kw">break </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Client stream finished"</span>));
+                        <span class="kw">break </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Stream closed by server."</span>));
                     };
                     <span class="kw">match </span>msg {
                         <span class="prelude-val">Ok</span>(msg) =&gt; <span class="self">self</span>.handle_relay_msg(msg, state),
@@ -2239,7 +2361,8 @@
                     <span class="kw">break </span><span class="prelude-val">Ok</span>(());
                 }
             }
-        }
+        };
+        res.map_err(|err| state.map_err(err))
     }
 }
 
@@ -2260,8 +2383,22 @@
     </span>last_packet_src: <span class="prelude-ty">Option</span>&lt;NodeId&gt;,
     <span class="doccomment">/// A pong we need to send ASAP.
     </span>pong_pending: <span class="prelude-ty">Option</span>&lt;[u8; <span class="number">8</span>]&gt;,
+    <span class="doccomment">/// Whether the connection is to be considered established.
+    ///
+    /// This is set to `true` once a pong was received from the server.
+    </span>established: bool,
     <span class="attr">#[cfg(test)]
     </span>test_pong: <span class="prelude-ty">Option</span>&lt;([u8; <span class="number">8</span>], oneshot::Sender&lt;()&gt;)&gt;,
+}
+
+<span class="kw">impl </span>ConnectedRelayState {
+    <span class="kw">fn </span>map_err(<span class="kw-2">&amp;</span><span class="self">self</span>, error: anyhow::Error) -&gt; RelayConnectionError {
+        <span class="kw">if </span><span class="self">self</span>.established {
+            RelayConnectionError::Established(error)
+        } <span class="kw">else </span>{
+            RelayConnectionError::Handshake(error)
+        }
+    }
 }
 
 <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">enum </span>RelayActorMessage {
@@ -2295,12 +2432,14 @@
     <span class="doccomment">/// The tasks for the [`ActiveRelayActor`]s in `active_relays` above.
     </span>active_relay_tasks: JoinSet&lt;()&gt;,
     cancel_token: CancellationToken,
+    protocol: iroh_relay::http::Protocol,
 }
 
 <span class="kw">impl </span>RelayActor {
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(
         msock: Arc&lt;MagicSock&gt;,
         relay_datagram_recv_queue: Arc&lt;RelayDatagramRecvQueue&gt;,
+        protocol: iroh_relay::http::Protocol,
     ) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>cancel_token = CancellationToken::new();
         <span class="self">Self </span>{
@@ -2309,6 +2448,7 @@
             active_relays: Default::default(),
             active_relay_tasks: JoinSet::new(),
             cancel_token,
+            protocol,
         }
     }
 
@@ -2329,15 +2469,19 @@
             <span class="macro">tokio::select!</span> {
                 biased;
                 <span class="kw">_ </span>= <span class="self">self</span>.cancel_token.cancelled() =&gt; {
-                    <span class="macro">trace!</span>(<span class="string">"shutting down"</span>);
+                    <span class="macro">debug!</span>(<span class="string">"shutting down"</span>);
                     <span class="kw">break</span>;
                 }
-                <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(err)) = <span class="self">self</span>.active_relay_tasks.join_next() =&gt; {
-                    <span class="kw">if </span>err.is_panic() {
-                        <span class="macro">panic!</span>(<span class="string">"ActiveRelayActor task panicked: {err:#?}"</span>);
-                    }
-                    <span class="kw">if </span>!err.is_cancelled() {
-                        <span class="macro">error!</span>(<span class="string">"ActiveRelayActor failed: {err:?}"</span>);
+                <span class="prelude-val">Some</span>(res) = <span class="self">self</span>.active_relay_tasks.join_next() =&gt; {
+                    <span class="kw">match </span>res {
+                        <span class="prelude-val">Ok</span>(()) =&gt; (),
+                        <span class="prelude-val">Err</span>(err) <span class="kw">if </span>err.is_panic() =&gt; {
+                            <span class="macro">error!</span>(<span class="string">"ActiveRelayActor task panicked: {err:#?}"</span>);
+                        }
+                        <span class="prelude-val">Err</span>(err) <span class="kw">if </span>err.is_cancelled() =&gt; {
+                            <span class="macro">error!</span>(<span class="string">"ActiveRelayActor cancelled: {err:#?}"</span>);
+                        }
+                        <span class="prelude-val">Err</span>(err) =&gt; <span class="macro">error!</span>(<span class="string">"ActiveRelayActor failed: {err:#?}"</span>),
                     }
                     <span class="self">self</span>.reap_active_relays();
                 }
@@ -2491,6 +2635,7 @@
                     }
                 }
                 <span class="self">self</span>.active_relays.insert(url, handle.clone());
+                <span class="self">self</span>.log_active_relay();
                 handle
             }
         }
@@ -2501,11 +2646,13 @@
 
         <span class="kw">let </span>connection_opts = RelayConnectionOptions {
             secret_key: <span class="self">self</span>.msock.secret_key.clone(),
-            dns_resolver: <span class="self">self</span>.msock.dns_resolver.clone(),
+            <span class="attr">#[cfg(not(wasm_browser))]
+            </span>dns_resolver: <span class="self">self</span>.msock.dns_resolver.clone(),
             proxy_url: <span class="self">self</span>.msock.proxy_url().cloned(),
             prefer_ipv6: <span class="self">self</span>.msock.ipv6_reported.clone(),
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>insecure_skip_cert_verify: <span class="self">self</span>.msock.insecure_skip_relay_cert_verify,
+            protocol: <span class="self">self</span>.protocol,
         };
 
         <span class="comment">// TODO: Replace 64 with PER_CLIENT_SEND_QUEUE_DEPTH once that's unused
@@ -2807,6 +2954,7 @@
                 proxy_url: <span class="prelude-val">None</span>,
                 prefer_ipv6: Arc::new(AtomicBool::new(<span class="bool-val">true</span>)),
                 insecure_skip_cert_verify: <span class="bool-val">true</span>,
+                protocol: iroh_relay::http::Protocol::default(),
             },
             stop_token,
         };

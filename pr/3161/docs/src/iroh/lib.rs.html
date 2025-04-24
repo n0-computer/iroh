@@ -256,7 +256,12 @@
 <a href="#255" id="255">255</a>
 <a href="#256" id="256">256</a>
 <a href="#257" id="257">257</a>
-<a href="#258" id="258">258</a></pre></div><pre class="rust"><code><span class="doccomment">//! Peer-to-peer QUIC connections.
+<a href="#258" id="258">258</a>
+<a href="#259" id="259">259</a>
+<a href="#260" id="260">260</a>
+<a href="#261" id="261">261</a>
+<a href="#262" id="262">262</a>
+<a href="#263" id="263">263</a></pre></div><pre class="rust"><code><span class="doccomment">//! Peer-to-peer QUIC connections.
 //!
 //! iroh is a library to establish direct connectivity between peers.  It exposes an
 //! interface to [QUIC] connections and streams to the user, while implementing direct
@@ -468,7 +473,7 @@
 //! Please see the examples directory for more nuanced examples.
 //!
 //!
-//! [QUIC]: https://quickwg.org
+//! [QUIC]: https://quicwg.org
 //! [bi-directional streams]: crate::endpoint::Connection::open_bi
 //! [hole punching]: https://en.wikipedia.org/wiki/Hole_punching_(networking)
 //! [socket addresses]: https://doc.rust-lang.org/stable/std/net/enum.SocketAddr.html
@@ -488,29 +493,34 @@
 
 </span><span class="attr">#![recursion_limit = <span class="string">"256"</span>]
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
+#![cfg_attr(wasm_browser, allow(unused))]
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![cfg_attr(iroh_docsrs, feature(doc_auto_cfg))]
 
 </span><span class="kw">mod </span>disco;
 <span class="kw">mod </span>key;
 <span class="kw">mod </span>magicsock;
+<span class="kw">mod </span>tls;
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>util;
+<span class="attr">#[cfg(wasm_browser)]
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>web_runtime;
 
 <span class="kw">pub mod </span>defaults;
 <span class="kw">pub mod </span>discovery;
-<span class="kw">pub mod </span>dns;
+<span class="attr">#[cfg(not(wasm_browser))]
+</span><span class="kw">pub mod </span>dns;
 <span class="kw">pub mod </span>endpoint;
 <span class="kw">pub mod </span>metrics;
+<span class="kw">pub mod </span>net_report;
 <span class="kw">pub mod </span>protocol;
-<span class="kw">mod </span>tls;
 <span class="kw">pub mod </span>watchable;
 
 <span class="kw">pub use </span>endpoint::{Endpoint, RelayMode};
 <span class="kw">pub use </span>iroh_base::{
     KeyParsingError, NodeAddr, NodeId, PublicKey, RelayUrl, RelayUrlParseError, SecretKey,
 };
-<span class="kw">pub use </span>iroh_relay::{RelayMap, RelayNode};
+<span class="kw">pub use </span>iroh_relay::{http::Protocol <span class="kw">as </span>RelayProtocol, node_info, RelayMap, RelayNode};
 
 <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
 </span><span class="kw">pub mod </span>test_utils;

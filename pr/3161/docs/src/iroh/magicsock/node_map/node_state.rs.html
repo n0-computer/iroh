@@ -1739,7 +1739,22 @@
 <a href="#1738" id="1738">1738</a>
 <a href="#1739" id="1739">1739</a>
 <a href="#1740" id="1740">1740</a>
-<a href="#1741" id="1741">1741</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#1741" id="1741">1741</a>
+<a href="#1742" id="1742">1742</a>
+<a href="#1743" id="1743">1743</a>
+<a href="#1744" id="1744">1744</a>
+<a href="#1745" id="1745">1745</a>
+<a href="#1746" id="1746">1746</a>
+<a href="#1747" id="1747">1747</a>
+<a href="#1748" id="1748">1748</a>
+<a href="#1749" id="1749">1749</a>
+<a href="#1750" id="1750">1750</a>
+<a href="#1751" id="1751">1751</a>
+<a href="#1752" id="1752">1752</a>
+<a href="#1753" id="1753">1753</a>
+<a href="#1754" id="1754">1754</a>
+<a href="#1755" id="1755">1755</a>
+<a href="#1756" id="1756">1756</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{btree_map::Entry, BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
@@ -1753,7 +1768,6 @@
     task::{<span class="self">self</span>, AbortOnDropHandle},
     time::{<span class="self">self</span>, Duration, Instant},
 };
-<span class="kw">use </span>netwatch::ip::is_unicast_link_local;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>tokio::sync::mpsc;
 <span class="kw">use </span>tracing::{debug, event, info, instrument, trace, warn, Level};
@@ -2129,7 +2143,8 @@
     ///
     /// When a call-me-maybe message is sent we also need to send pings to all known paths
     /// of the endpoint.  The [`NodeState::send_call_me_maybe`] function takes care of this.
-    </span><span class="attr">#[instrument(<span class="string">"want_call_me_maybe"</span>, skip_all)]
+    </span><span class="attr">#[cfg(not(wasm_browser))]
+    #[instrument(<span class="string">"want_call_me_maybe"</span>, skip_all)]
     </span><span class="kw">fn </span>want_call_me_maybe(<span class="kw-2">&amp;</span><span class="self">self</span>, now: <span class="kw-2">&amp;</span>Instant) -&gt; bool {
         <span class="macro">trace!</span>(<span class="string">"full ping: wanted?"</span>);
         <span class="kw">let </span><span class="prelude-val">Some</span>(last_full_ping) = <span class="self">self</span>.last_full_ping <span class="kw">else </span>{
@@ -2159,6 +2174,12 @@
             }
         }
     }
+
+    <span class="attr">#[cfg(wasm_browser)]
+    </span><span class="kw">fn </span>want_call_me_maybe(<span class="kw-2">&amp;</span><span class="self">self</span>, _now: <span class="kw-2">&amp;</span>Instant) -&gt; bool {
+        <span class="macro">trace!</span>(<span class="string">"full ping: skipped in browser"</span>);
+        <span class="bool-val">false
+    </span>}
 
     <span class="doccomment">/// Cleanup the expired ping for the passed in txid.
     </span><span class="attr">#[instrument(<span class="string">"disco"</span>, skip_all, fields(node = %<span class="self">self</span>.node_id.fmt_short()))]
@@ -2212,9 +2233,14 @@
         <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
         </span><span class="kw">if </span><span class="self">self</span>.path_selection == PathSelection::RelayOnly &amp;&amp; !dst.is_relay() {
             <span class="comment">// don't attempt any hole punching in relay only mode
-            </span><span class="macro">warn!</span>(<span class="string">"in `RealyOnly` mode, ignoring request to start a hole punching attempt."</span>);
+            </span><span class="macro">warn!</span>(<span class="string">"in `RelayOnly` mode, ignoring request to start a hole punching attempt."</span>);
             <span class="kw">return </span><span class="prelude-val">None</span>;
         }
+        <span class="attr">#[cfg(wasm_browser)]
+        </span><span class="kw">if </span>!dst.is_relay() {
+            <span class="kw">return </span><span class="prelude-val">None</span>; <span class="comment">// Similar to `RelayOnly` mode, we don't send UDP pings for hole-punching.
+        </span>}
+
         <span class="kw">let </span>tx_id = stun::TransactionId::default();
         <span class="macro">trace!</span>(tx = %HEXLOWER.encode(<span class="kw-2">&amp;</span>tx_id), %dst, <span class="question-mark">?</span>purpose,
                dst = %<span class="self">self</span>.node_id.fmt_short(), <span class="string">"start ping"</span>);
@@ -2362,6 +2388,7 @@
             <span class="macro">warn!</span>(<span class="string">"in `RelayOnly` mode, ignoring request to respond to a hole punching attempt."</span>);
             <span class="kw">return </span>ping_msgs;
         }
+
         <span class="self">self</span>.prune_direct_addresses();
         <span class="kw">let </span><span class="kw-2">mut </span>ping_dsts = String::from(<span class="string">"["</span>);
         <span class="self">self</span>.udp_paths
@@ -2627,8 +2654,10 @@
         <span class="kw">let </span>is_relay = src.is_relay();
         <span class="kw">match </span><span class="self">self</span>.sent_pings.remove(<span class="kw-2">&amp;</span>m.tx_id) {
             <span class="prelude-val">None </span>=&gt; {
-                <span class="comment">// This is not a pong for a ping we sent.
-                </span><span class="macro">warn!</span>(tx = %HEXLOWER.encode(<span class="kw-2">&amp;</span>m.tx_id), <span class="string">"received pong with unknown transaction id"</span>);
+                <span class="comment">// This is not a pong for a ping we sent.  In reality however we probably
+                // did send this ping but it has timed-out by the time we receive this pong
+                // so we removed the state already.
+                </span><span class="macro">debug!</span>(tx = %HEXLOWER.encode(<span class="kw-2">&amp;</span>m.tx_id), <span class="string">"received unknown pong (did it timeout?)"</span>);
                 <span class="prelude-val">None
             </span>}
             <span class="prelude-val">Some</span>(sp) =&gt; {
@@ -2726,7 +2755,7 @@
 
         <span class="kw">for </span>peer_sockaddr <span class="kw">in </span><span class="kw-2">&amp;</span>m.my_numbers {
             <span class="kw">if let </span>IpAddr::V6(ip) = peer_sockaddr.ip() {
-                <span class="kw">if </span>is_unicast_link_local(ip) {
+                <span class="kw">if </span>netwatch::ip::is_unicast_link_local(ip) {
                     <span class="comment">// We send these out, but ignore them for now.
                     // TODO: teach the ping code to ping on all interfaces for these.
                     </span><span class="kw">continue</span>;
@@ -2782,6 +2811,7 @@
     }
 
     <span class="doccomment">/// Marks this node as having received a UDP payload message.
+    </span><span class="attr">#[cfg(not(wasm_browser))]
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>receive_udp(<span class="kw-2">&amp;mut </span><span class="self">self</span>, addr: IpPort, now: Instant) {
         <span class="kw">let </span><span class="prelude-val">Some</span>(state) = <span class="self">self</span>.udp_paths.paths.get_mut(<span class="kw-2">&amp;</span>addr) <span class="kw">else </span>{
             <span class="macro">debug_assert!</span>(<span class="bool-val">false</span>, <span class="string">"node map inconsistency by_ip_port &lt;-&gt; direct addr"</span>);

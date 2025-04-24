@@ -777,7 +777,7 @@
         <span class="comment">// if we've sent to an ipv4 address, but received an observed address
         // that is ivp6 then the address is an [IPv4-Mapped IPv6 Addresses](https://doc.rust-lang.org/beta/std/net/struct.Ipv6Addr.html#ipv4-mapped-ipv6-addresses)
         </span>observed_addr = SocketAddr::new(observed_addr.ip().to_canonical(), observed_addr.port());
-        <span class="kw">let </span>latency = conn.rtt() / <span class="number">2</span>;
+        <span class="kw">let </span>latency = conn.rtt();
         <span class="comment">// gracefully close the connections
         </span>conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
         <span class="prelude-val">Ok</span>((observed_addr, latency))
