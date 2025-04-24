@@ -814,7 +814,6 @@ mod tests {
     use iroh_base::{NodeId, RelayUrl, SecretKey};
     use n0_future::{FutureExt, SinkExt};
     use testresult::TestResult;
-    use tracing_subscriber::layer::SubscriberExt;
     use tracing_test::traced_test;
 
     use super::*;
@@ -1161,12 +1160,8 @@ mod tests {
     use n0_snafu::{TestError, TestResultExt};
 
     #[tokio::test]
-    // #[traced_test]
+    #[traced_test]
     async fn test_relay_access_control() -> n0_snafu::TestResult {
-        let subscriber =
-            tracing_subscriber::Registry::default().with(n0_snafu::ErrorLayer::default());
-        tracing::subscriber::set_global_default(subscriber).unwrap();
-
         let current_span = tracing::info_span!("this is a test");
         let _guard = current_span.enter();
 
