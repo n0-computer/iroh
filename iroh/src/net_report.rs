@@ -76,6 +76,8 @@ pub use reportgen::QuicConfig;
 #[cfg(not(wasm_browser))]
 use reportgen::SocketState;
 
+use crate::watcher::{self, Watchable};
+
 const FULL_REPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
 /// The maximum latency of all nodes, if none are found yet.
@@ -350,6 +352,18 @@ impl Client {
             .await?;
         Ok(reporter)
     }
+
+    /// Watch if a report is currently running.
+    ///
+    /// Returns a `Watcher`. If the content is
+    /// `true`, a report is currently running. If
+    /// `false`, no report is currentnly running.
+    pub async fn is_running(addr: &Addr) -> Result<watcher::Direct<bool>> {
+        let (tx, rx) = oneshot::channel();
+        addr.send(Message::TrackRuns(tx)).await?;
+        let is_running = rx.await?;
+        Ok(is_running)
+    }
 }
 
 /// ProbeResult
@@ -480,6 +494,8 @@ pub(crate) enum Message {
     /// The sender is signalled once the STUN packet is registered with the actor and will
     /// correctly accept the STUN response.
     InFlightStun(Inflight, oneshot::Sender<()>),
+    /// Track whether a report is running.
+    TrackRuns(oneshot::Sender<watcher::Direct<bool>>),
 }
 
 /// Sender to the main service.
@@ -566,6 +582,9 @@ struct Actor {
     #[cfg(not(wasm_browser))]
     ip_mapped_addrs: Option<IpMappedAddresses>,
     metrics: Arc<Metrics>,
+
+    /// Is a report currently running?
+    is_running: Watchable<bool>,
 }
 
 impl Actor {
@@ -594,6 +613,7 @@ impl Actor {
             #[cfg(not(wasm_browser))]
             ip_mapped_addrs,
             metrics,
+            is_running: Watchable::new(false),
         })
     }
 
@@ -633,6 +653,9 @@ impl Actor {
                 Message::InFlightStun(inflight, response_tx) => {
                     self.handle_in_flight_stun(inflight, response_tx);
                 }
+                Message::TrackRuns(rx) => {
+                    rx.send(self.is_running.watch()).ok();
+                }
             }
         }
     }
@@ -654,7 +677,7 @@ impl Actor {
             ip_mapped_addrs: self.ip_mapped_addrs.clone(),
         };
         trace!("Attempting probes for protocols {protocols:#?}");
-        if self.current_report_run.is_some() {
+        if self.is_running.get() {
             response_tx
                 .report
                 .send(Err(anyhow!(
@@ -663,6 +686,8 @@ impl Actor {
                 .ok();
             return;
         }
+
+        self.is_running.set(true).expect("checked");
 
         let now = Instant::now();
 
@@ -714,6 +739,7 @@ impl Actor {
         if let Some(ReportRun { report_tx, .. }) = self.current_report_run.take() {
             report_tx.send(Ok(report)).ok();
         }
+        self.is_running.set(false).ok();
     }
 
     fn handle_report_aborted(&mut self, err: anyhow::Error) {
@@ -721,6 +747,7 @@ impl Actor {
         if let Some(ReportRun { report_tx, .. }) = self.current_report_run.take() {
             report_tx.send(Err(err.context("report aborted"))).ok();
         }
+        self.is_running.set(false).ok();
     }
 
     /// Handles [`Message::StunPacket`].

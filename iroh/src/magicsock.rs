@@ -1592,6 +1592,16 @@ impl MagicSock {
     /// diagnostic purposes only, and will not effect the usual net-report
     /// run cycle nor adjust the
     async fn run_diagnostic_net_report(&self) -> Result<oneshot::Receiver<Result<NetReporter>>> {
+        let is_running = net_report::Client::is_running(&self.net_reporter).await?;
+        // wait for any current runs to complete
+        // before requesting a run
+        let mut is_running = is_running.stream();
+        while let Some(is_running) = is_running.next().await {
+            if is_running {
+                continue;
+            }
+            break;
+        }
         let (tx, rx) = oneshot::channel();
         let msg = ActorMessage::DiagnosticNetReport(tx);
         self.actor_sender.send(msg).await?;
