@@ -26,7 +26,7 @@ pub fn server_endpoint(
     let _guard = rt.enter();
     rt.block_on(async move {
         let relay_mode = relay_url.clone().map_or(RelayMode::Disabled, |url| {
-            RelayMode::Custom(RelayMap::from_url(url))
+            RelayMode::Custom(RelayMap::from_urls(&[url]))
         });
 
         #[allow(unused_mut)]
@@ -88,7 +88,7 @@ pub async fn connect_client(
     opt: Opt,
 ) -> Result<(Endpoint, Connection)> {
     let relay_mode = relay_url.clone().map_or(RelayMode::Disabled, |url| {
-        RelayMode::Custom(RelayMap::from_url(url))
+        RelayMode::Custom(RelayMap::from_urls(&[url]))
     });
     #[allow(unused_mut)]
     let mut builder = Endpoint::builder();

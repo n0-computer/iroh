@@ -106,7 +106,7 @@ async fn provide(
     let relay_mode = match relay_url {
         Some(relay_url) => {
             let relay_url = RelayUrl::from_str(&relay_url)?;
-            let relay_map = RelayMap::from_url(relay_url);
+            let relay_map = RelayMap::from_urls(&[relay_url]);
             RelayMode::Custom(relay_map)
         }
         None => RelayMode::Default,
@@ -229,7 +229,7 @@ async fn fetch(
     let relay_mode = match relay_url {
         Some(relay_url) => {
             let relay_url = RelayUrl::from_str(&relay_url)?;
-            let relay_map = RelayMap::from_url(relay_url);
+            let relay_map = RelayMap::from_urls(&[relay_url]);
             RelayMode::Custom(relay_map)
         }
         None => RelayMode::Default,
