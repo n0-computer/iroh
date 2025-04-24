@@ -73,7 +73,7 @@ data-encoding = "2.6.0"
 lru = "0.12"
 z32 = "1.0.3"
 snafu = { version = "0.8.5", features = ["rust_1_81"] }
-n0-snafu = { path = "../../n0-snafu" }
+n0-snafu = { git = "https://github.com/n0-computer/n0-snafu" }
 
 # server feature
 anyhow = { version = "1", optional = true }
@@ -139,7 +139,7 @@ tracing-test = "0.2.5"
 cfg_aliases = { version = "0.2" }
 
 [features]
-default = ["metrics", "server", "test-utils"]
+default = ["metrics"]
 server = [
     "dep:anyhow",
     "dep:clap",
