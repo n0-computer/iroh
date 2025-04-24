@@ -13,6 +13,7 @@ pub use ed25519_dalek::{Signature, SignatureError};
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
+use snafu::{Backtrace, Snafu};
 
 /// A public key.
 ///
@@ -180,17 +181,24 @@ impl Display for PublicKey {
 }
 
 /// Error when deserialising a [`PublicKey`] or a [`SecretKey`].
-#[derive(thiserror::Error, Debug)]
+#[derive(Snafu, Debug)]
+#[allow(missing_docs)]
 pub enum KeyParsingError {
     /// Error when decoding.
-    #[error("decoding: {0}")]
-    Decode(#[from] data_encoding::DecodeError),
+    #[snafu(transparent)]
+    Decode {
+        source: data_encoding::DecodeError,
+        backtrace: Option<Backtrace>,
+    },
     /// Error when decoding the public key.
-    #[error("key: {0}")]
-    Key(#[from] ed25519_dalek::SignatureError),
+    #[snafu(transparent)]
+    Key {
+        source: ed25519_dalek::SignatureError,
+        backtrace: Option<Backtrace>,
+    },
     /// The encoded information had the wrong length.
-    #[error("invalid length")]
-    DecodeInvalidLength,
+    #[snafu(display("invalid length"))]
+    DecodeInvalidLength { backtrace: Option<Backtrace> },
 }
 
 /// Deserialises the [`PublicKey`] from it's base32 encoding.
@@ -333,14 +341,14 @@ fn decode_base32_hex(s: &str) -> Result<[u8; 32], KeyParsingError> {
         let input = s.to_ascii_uppercase();
         let input = input.as_bytes();
         if data_encoding::BASE32_NOPAD.decode_len(input.len())? != bytes.len() {
-            return Err(KeyParsingError::DecodeInvalidLength);
+            return Err(DecodeInvalidLengthSnafu.build());
         }
         data_encoding::BASE32_NOPAD.decode_mut(input, &mut bytes)
     };
     match res {
         Ok(len) => {
             if len != PublicKey::LENGTH {
-                return Err(KeyParsingError::DecodeInvalidLength);
+                return Err(DecodeInvalidLengthSnafu.build());
             }
         }
         Err(partial) => return Err(partial.error.into()),

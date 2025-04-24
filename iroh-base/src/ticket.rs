@@ -6,6 +6,7 @@
 use std::{collections::BTreeSet, net::SocketAddr};
 
 use serde::{Deserialize, Serialize};
+use snafu::{Backtrace, Snafu};
 
 use crate::{key::NodeId, relay_url::RelayUrl};
 
@@ -48,7 +49,7 @@ pub trait Ticket: Sized {
     fn deserialize(str: &str) -> Result<Self, Error> {
         let expected = Self::KIND;
         let Some(rest) = str.strip_prefix(expected) else {
-            return Err(Error::Kind { expected });
+            return Err(KindSnafu { expected }.build());
         };
         let bytes = data_encoding::BASE32_NOPAD.decode(rest.to_ascii_uppercase().as_bytes())?;
         let ticket = Self::from_bytes(&bytes)?;
@@ -57,23 +58,35 @@ pub trait Ticket: Sized {
 }
 
 /// An error deserializing an iroh ticket.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Snafu)]
+#[allow(missing_docs)]
+#[snafu(visibility(pub(crate)))]
 pub enum Error {
     /// Found a ticket of with the wrong prefix, indicating the wrong kind.
-    #[error("wrong prefix, expected {expected}")]
+    #[snafu(display("wrong prefix, expected {expected}"))]
     Kind {
         /// The expected prefix.
         expected: &'static str,
+        backtrace: Option<Backtrace>,
     },
     /// This looks like a ticket, but postcard deserialization failed.
-    #[error("deserialization failed: {_0}")]
-    Postcard(#[from] postcard::Error),
+    #[snafu(display("deserialization failed"))]
+    Postcard {
+        source: postcard::Error,
+        backtrace: Option<Backtrace>,
+    },
     /// This looks like a ticket, but base32 decoding failed.
-    #[error("decoding failed: {_0}")]
-    Encoding(#[from] data_encoding::DecodeError),
+    #[snafu(transparent)]
+    Encoding {
+        source: data_encoding::DecodeError,
+        backtrace: Option<Backtrace>,
+    },
     /// Verification of the deserialized bytes failed.
-    #[error("verification failed: {_0}")]
-    Verify(&'static str),
+    #[snafu(display("verification failed: {message}"))]
+    Verify {
+        message: &'static str,
+        backtrace: Option<Backtrace>,
+    },
 }
 
 #[derive(Serialize, Deserialize)]

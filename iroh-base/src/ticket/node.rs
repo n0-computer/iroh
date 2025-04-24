@@ -3,6 +3,7 @@
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
+use snafu::ResultExt;
 
 use super::{Variant0AddrInfo, Variant0NodeAddr};
 use crate::{
@@ -62,7 +63,7 @@ impl Ticket for NodeTicket {
     }
 
     fn from_bytes(bytes: &[u8]) -> Result<Self, ticket::Error> {
-        let res: TicketWireFormat = postcard::from_bytes(bytes).map_err(ticket::Error::Postcard)?;
+        let res: TicketWireFormat = postcard::from_bytes(bytes).context(ticket::PostcardSnafu)?;
         let TicketWireFormat::Variant0(Variant0NodeTicket { node }) = res;
         Ok(Self {
             node: NodeAddr {

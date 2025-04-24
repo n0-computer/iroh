@@ -467,7 +467,7 @@ fn url_port(url: &Url) -> Option<u16> {
 mod tests {
     use std::str::FromStr;
 
-    use testresult::TestResult;
+    use n0_snafu::TestResult;
     use tracing_test::traced_test;
 
     use super::*;
