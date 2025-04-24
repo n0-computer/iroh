@@ -125,9 +125,14 @@
 <a href="#124" id="124">124</a>
 <a href="#125" id="125">125</a>
 <a href="#126" id="126">126</a>
-<a href="#127" id="127">127</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{fmt, ops::Deref, str::FromStr, sync::Arc};
+<a href="#127" id="127">127</a>
+<a href="#128" id="128">128</a>
+<a href="#129" id="129">129</a>
+<a href="#130" id="130">130</a>
+<a href="#131" id="131">131</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{fmt, ops::Deref, str::FromStr, sync::Arc};
 
 <span class="kw">use </span>serde::{Deserialize, Serialize};
+<span class="kw">use </span>snafu::{Backtrace, ResultExt, Snafu};
 <span class="kw">use </span>url::Url;
 
 <span class="doccomment">/// A URL identifying a relay server.
@@ -165,9 +170,12 @@
 }
 
 <span class="doccomment">/// Can occur when parsing a string into a [`RelayUrl`].
-</span><span class="attr">#[derive(Debug, thiserror::Error)]
-#[error(<span class="string">"Failed to parse: {0}"</span>)]
-</span><span class="kw">pub struct </span>RelayUrlParseError(<span class="attr">#[from] </span>url::ParseError);
+</span><span class="attr">#[derive(Debug, Snafu)]
+#[snafu(display(<span class="string">"Failed to parse"</span>))]
+</span><span class="kw">pub struct </span>RelayUrlParseError {
+    source: url::ParseError,
+    backtrace: <span class="prelude-ty">Option</span>&lt;Backtrace&gt;,
+}
 
 <span class="doccomment">/// Support for parsing strings directly.
 ///
@@ -177,7 +185,7 @@
     <span class="kw">type </span><span class="prelude-val">Err </span>= RelayUrlParseError;
 
     <span class="kw">fn </span>from_str(s: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, <span class="self">Self</span>::Err&gt; {
-        <span class="kw">let </span>inner = Url::from_str(s)<span class="question-mark">?</span>;
+        <span class="kw">let </span>inner = Url::from_str(s).context(RelayUrlParseSnafu)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(RelayUrl::from(inner))
     }
 }

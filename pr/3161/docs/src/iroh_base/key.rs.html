@@ -402,7 +402,15 @@
 <a href="#401" id="401">401</a>
 <a href="#402" id="402">402</a>
 <a href="#403" id="403">403</a>
-<a href="#404" id="404">404</a></pre></div><pre class="rust"><code><span class="doccomment">//! Cryptographic key handling for `iroh`.
+<a href="#404" id="404">404</a>
+<a href="#405" id="405">405</a>
+<a href="#406" id="406">406</a>
+<a href="#407" id="407">407</a>
+<a href="#408" id="408">408</a>
+<a href="#409" id="409">409</a>
+<a href="#410" id="410">410</a>
+<a href="#411" id="411">411</a>
+<a href="#412" id="412">412</a></pre></div><pre class="rust"><code><span class="doccomment">//! Cryptographic key handling for `iroh`.
 
 </span><span class="kw">use </span>std::{
     borrow::Borrow,
@@ -417,6 +425,7 @@
 <span class="kw">use </span>ed25519_dalek::{SigningKey, VerifyingKey};
 <span class="kw">use </span>rand_core::CryptoRngCore;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
+<span class="kw">use </span>snafu::{Backtrace, Snafu};
 
 <span class="doccomment">/// A public key.
 ///
@@ -584,17 +593,24 @@
 }
 
 <span class="doccomment">/// Error when deserialising a [`PublicKey`] or a [`SecretKey`].
-</span><span class="attr">#[derive(thiserror::Error, Debug)]
+</span><span class="attr">#[derive(Snafu, Debug)]
+#[allow(missing_docs)]
 </span><span class="kw">pub enum </span>KeyParsingError {
     <span class="doccomment">/// Error when decoding.
-    </span><span class="attr">#[error(<span class="string">"decoding: {0}"</span>)]
-    </span>Decode(<span class="attr">#[from] </span>data_encoding::DecodeError),
+    </span><span class="attr">#[snafu(transparent)]
+    </span>Decode {
+        source: data_encoding::DecodeError,
+        backtrace: <span class="prelude-ty">Option</span>&lt;Backtrace&gt;,
+    },
     <span class="doccomment">/// Error when decoding the public key.
-    </span><span class="attr">#[error(<span class="string">"key: {0}"</span>)]
-    </span>Key(<span class="attr">#[from] </span>ed25519_dalek::SignatureError),
+    </span><span class="attr">#[snafu(transparent)]
+    </span>Key {
+        source: ed25519_dalek::SignatureError,
+        backtrace: <span class="prelude-ty">Option</span>&lt;Backtrace&gt;,
+    },
     <span class="doccomment">/// The encoded information had the wrong length.
-    </span><span class="attr">#[error(<span class="string">"invalid length"</span>)]
-    </span>DecodeInvalidLength,
+    </span><span class="attr">#[snafu(display(<span class="string">"invalid length"</span>))]
+    </span>DecodeInvalidLength { backtrace: <span class="prelude-ty">Option</span>&lt;Backtrace&gt; },
 }
 
 <span class="doccomment">/// Deserialises the [`PublicKey`] from it's base32 encoding.
@@ -737,14 +753,14 @@
         <span class="kw">let </span>input = s.to_ascii_uppercase();
         <span class="kw">let </span>input = input.as_bytes();
         <span class="kw">if </span>data_encoding::BASE32_NOPAD.decode_len(input.len())<span class="question-mark">? </span>!= bytes.len() {
-            <span class="kw">return </span><span class="prelude-val">Err</span>(KeyParsingError::DecodeInvalidLength);
+            <span class="kw">return </span><span class="prelude-val">Err</span>(DecodeInvalidLengthSnafu.build());
         }
         data_encoding::BASE32_NOPAD.decode_mut(input, <span class="kw-2">&amp;mut </span>bytes)
     };
     <span class="kw">match </span>res {
         <span class="prelude-val">Ok</span>(len) =&gt; {
             <span class="kw">if </span>len != PublicKey::LENGTH {
-                <span class="kw">return </span><span class="prelude-val">Err</span>(KeyParsingError::DecodeInvalidLength);
+                <span class="kw">return </span><span class="prelude-val">Err</span>(DecodeInvalidLengthSnafu.build());
             }
         }
         <span class="prelude-val">Err</span>(partial) =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(partial.error.into()),

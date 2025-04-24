@@ -209,11 +209,13 @@
 <a href="#208" id="208">208</a>
 <a href="#209" id="209">209</a>
 <a href="#210" id="210">210</a>
-<a href="#211" id="211">211</a></pre></div><pre class="rust"><code><span class="doccomment">//! Tickets for nodes.
+<a href="#211" id="211">211</a>
+<a href="#212" id="212">212</a></pre></div><pre class="rust"><code><span class="doccomment">//! Tickets for nodes.
 
 </span><span class="kw">use </span>std::str::FromStr;
 
 <span class="kw">use </span>serde::{Deserialize, Serialize};
+<span class="kw">use </span>snafu::ResultExt;
 
 <span class="kw">use super</span>::{Variant0AddrInfo, Variant0NodeAddr};
 <span class="kw">use crate</span>::{
@@ -273,7 +275,7 @@
     }
 
     <span class="kw">fn </span>from_bytes(bytes: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ticket::Error&gt; {
-        <span class="kw">let </span>res: TicketWireFormat = postcard::from_bytes(bytes).map_err(ticket::Error::Postcard)<span class="question-mark">?</span>;
+        <span class="kw">let </span>res: TicketWireFormat = postcard::from_bytes(bytes).context(ticket::PostcardSnafu)<span class="question-mark">?</span>;
         <span class="kw">let </span>TicketWireFormat::Variant0(Variant0NodeTicket { node }) = res;
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
             node: NodeAddr {
