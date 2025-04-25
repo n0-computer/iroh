@@ -752,7 +752,8 @@ impl Endpoint {
             "Attempting connection..."
         );
         let client_config = {
-            let alpn_protocols = vec![alpn.to_vec()];
+            let mut alpn_protocols = vec![alpn.to_vec()];
+            alpn_protocols.extend(options.additional_alpns);
             let quic_client_config = self.static_config.tls_auth.make_client_config(
                 &self.static_config.secret_key,
                 node_id,
@@ -1263,6 +1264,7 @@ impl Endpoint {
 #[derive(Default, Debug, Clone)]
 pub struct ConnectOptions {
     transport_config: Option<Arc<TransportConfig>>,
+    additional_alpns: Vec<Vec<u8>>,
 }
 
 impl ConnectOptions {
@@ -1277,6 +1279,12 @@ impl ConnectOptions {
     /// Sets the QUIC transport config options for this connection.
     pub fn with_transport_config(mut self, transport_config: Arc<TransportConfig>) -> Self {
         self.transport_config = Some(transport_config);
+        self
+    }
+
+    /// TODO
+    pub fn with_additional_alpns(mut self, alpns: Vec<Vec<u8>>) -> Self {
+        self.additional_alpns = alpns;
         self
     }
 }
