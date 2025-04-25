@@ -94,6 +94,7 @@ toml = { version = "0.8", optional = true }
 tracing-subscriber = { version = "0.3", features = [
     "env-filter",
 ], optional = true }
+nested_enum_utils = "0.2.0"
 
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
