@@ -1977,7 +1977,7 @@ enum DiscoBoxError {
     #[error("Failed to open crypto box")]
     Open(#[from] DecryptionError),
     #[error("Failed to parse disco message")]
-    Parse(anyhow::Error),
+    Parse(#[from] disco::ParseError),
 }
 
 /// Creates a sender and receiver pair for sending datagrams to the [`RelayActor`].
