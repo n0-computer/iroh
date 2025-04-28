@@ -1754,7 +1754,8 @@
 <a href="#1753" id="1753">1753</a>
 <a href="#1754" id="1754">1754</a>
 <a href="#1755" id="1755">1755</a>
-<a href="#1756" id="1756">1756</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
+<a href="#1756" id="1756">1756</a>
+<a href="#1757" id="1757">1757</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
 //!
 //! It is implemented as an actor with [`Client`] as handle.
 //!
@@ -2997,12 +2998,13 @@
         .send(relay_addr.ip(), DATA)
         .<span class="kw">await
         </span>.map_err(|err| <span class="kw">match </span>err {
-            PingError::Client(err) =&gt; ProbeError::AbortSet(
-                <span class="macro">anyhow!</span>(<span class="string">"Failed to create pinger ({err:#}), aborting probeset"</span>),
+            PingError::CreateClientIpv4 { source, .. }
+            | PingError::CreateClientIpv6 { source, .. } =&gt; ProbeError::AbortSet(
+                <span class="macro">anyhow!</span>(<span class="string">"Failed to create pinger ({source:#}), aborting probeset"</span>),
                 probe.clone(),
             ),
             <span class="attr">#[cfg(not(wasm_browser))]
-            </span>PingError::Ping(err) =&gt; ProbeError::Error(err.into(), probe.clone()),
+            </span>PingError::Ping { source, .. } =&gt; ProbeError::Error(source.into(), probe.clone()),
         })<span class="question-mark">?</span>;
     <span class="macro">debug!</span>(dst = %relay_addr, len = DATA.len(), <span class="question-mark">?</span>latency, <span class="string">"ICMP ping done"</span>);
     <span class="kw">let </span><span class="kw-2">mut </span>report = ProbeReport::new(probe);

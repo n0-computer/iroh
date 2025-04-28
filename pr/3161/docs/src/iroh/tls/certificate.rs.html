@@ -401,7 +401,14 @@
 <a href="#400" id="400">400</a>
 <a href="#401" id="401">401</a>
 <a href="#402" id="402">402</a>
-<a href="#403" id="403">403</a></pre></div><pre class="rust"><code><span class="doccomment">//! X.509 certificate handling.
+<a href="#403" id="403">403</a>
+<a href="#404" id="404">404</a>
+<a href="#405" id="405">405</a>
+<a href="#406" id="406">406</a>
+<a href="#407" id="407">407</a>
+<a href="#408" id="408">408</a>
+<a href="#409" id="409">409</a>
+<a href="#410" id="410">410</a></pre></div><pre class="rust"><code><span class="doccomment">//! X.509 certificate handling.
 //!
 //! This module handles generation, signing, and verification of certificates.
 //!
@@ -410,6 +417,7 @@
 
 </span><span class="kw">use </span>der::{asn1::OctetStringRef, Decode, Encode, Sequence};
 <span class="kw">use </span>iroh_base::{PublicKey, SecretKey, Signature};
+<span class="kw">use </span>snafu::Snafu;
 <span class="kw">use </span>x509_parser::prelude::<span class="kw-2">*</span>;
 
 <span class="doccomment">/// The libp2p Public Key Extension is a X.509 extension
@@ -507,19 +515,25 @@
 }
 
 <span class="doccomment">/// An error that occurs during certificate generation.
-</span><span class="attr">#[derive(Debug, thiserror::Error)]
-#[error(transparent)]
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>GenError(<span class="attr">#[from] </span>rcgen::Error);
+</span><span class="attr">#[derive(Debug, Snafu)]
+#[snafu(transparent)]
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>GenError {
+    source: rcgen::Error,
+}
 
 <span class="doccomment">/// An error that occurs during certificate parsing.
-</span><span class="attr">#[derive(Debug, thiserror::Error)]
-#[error(transparent)]
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>ParseError(<span class="attr">#[from] </span><span class="kw">pub</span>(<span class="kw">crate</span>) webpki::Error);
+</span><span class="attr">#[derive(Debug, Snafu)]
+#[snafu(transparent)]
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>ParseError {
+    <span class="kw">pub</span>(<span class="kw">crate</span>) source: webpki::Error,
+}
 
 <span class="doccomment">/// An error that occurs during signature verification.
-</span><span class="attr">#[derive(Debug, thiserror::Error)]
-#[error(transparent)]
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>VerificationError(<span class="attr">#[from] </span><span class="kw">pub</span>(<span class="kw">crate</span>) webpki::Error);
+</span><span class="attr">#[derive(Debug, Snafu)]
+#[snafu(transparent)]
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>VerificationError {
+    <span class="kw">pub</span>(<span class="kw">crate</span>) source: webpki::Error,
+}
 
 <span class="doccomment">/// Internal function that only parses but does not verify the certificate.
 ///

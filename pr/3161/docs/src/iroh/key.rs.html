@@ -140,11 +140,18 @@
 <a href="#139" id="139">139</a>
 <a href="#140" id="140">140</a>
 <a href="#141" id="141">141</a>
-<a href="#142" id="142">142</a></pre></div><pre class="rust"><code><span class="doccomment">//! The private and public keys of a node.
+<a href="#142" id="142">142</a>
+<a href="#143" id="143">143</a>
+<a href="#144" id="144">144</a>
+<a href="#145" id="145">145</a>
+<a href="#146" id="146">146</a>
+<a href="#147" id="147">147</a></pre></div><pre class="rust"><code><span class="doccomment">//! The private and public keys of a node.
 
 </span><span class="kw">use </span>std::fmt::Debug;
 
 <span class="kw">use </span>aead::Buffer;
+<span class="kw">use </span>nested_enum_utils::common_fields;
+<span class="kw">use </span>snafu::{ensure, ResultExt, Snafu};
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>NONCE_LEN: usize = <span class="number">24</span>;
 
@@ -160,14 +167,19 @@
 </span><span class="kw">pub struct </span>SharedSecret(crypto_box::ChaChaBox);
 
 <span class="doccomment">/// Errors that can occur during [`SharedSecret::open`].
-</span><span class="attr">#[derive(Debug, thiserror::Error)]
+</span><span class="attr">#[common_fields({
+    backtrace: <span class="prelude-ty">Option</span>&lt;snafu::Backtrace&gt;,
+    <span class="attr">#[snafu(implicit)]
+    </span>span_trace: n0_snafu::SpanTrace,
+})]
+<span class="attr">#[derive(Debug, Snafu)]
 </span><span class="kw">pub enum </span>DecryptionError {
     <span class="doccomment">/// The nonce had the wrong size.
-    </span><span class="attr">#[error(<span class="string">"Invalid nonce"</span>)]
-    </span>InvalidNonce,
+    </span><span class="attr">#[snafu(display(<span class="string">"Invalid nonce"</span>))]
+    </span>InvalidNonce {},
     <span class="doccomment">/// AEAD decryption failed.
-    </span><span class="attr">#[error(<span class="string">"Aead error"</span>)]
-    </span>Aead(aead::Error),
+    </span><span class="attr">#[snafu(display(<span class="string">"Aead error"</span>))]
+    </span>Aead { source: aead::Error },
 }
 
 <span class="kw">impl </span>Debug <span class="kw">for </span>SharedSecret {
@@ -196,19 +208,17 @@
     <span class="doccomment">/// Opens the ciphertext, which must have been created using `Self::seal`, and places the clear text into the provided buffer.
     </span><span class="kw">pub fn </span>open(<span class="kw-2">&amp;</span><span class="self">self</span>, buffer: <span class="kw-2">&amp;mut </span><span class="kw">dyn </span>Buffer) -&gt; <span class="prelude-ty">Result</span>&lt;(), DecryptionError&gt; {
         <span class="kw">use </span>aead::AeadInPlace;
-        <span class="kw">if </span>buffer.len() &lt; NONCE_LEN {
-            <span class="kw">return </span><span class="prelude-val">Err</span>(DecryptionError::InvalidNonce);
-        }
+        <span class="macro">ensure!</span>(buffer.len() &gt;= NONCE_LEN, InvalidNonceSnafu);
 
         <span class="kw">let </span>offset = buffer.len() - NONCE_LEN;
         <span class="kw">let </span>nonce: [u8; NONCE_LEN] = buffer.as_ref()[offset..]
             .try_into()
-            .map_err(|<span class="kw">_</span>| DecryptionError::InvalidNonce)<span class="question-mark">?</span>;
+            .map_err(|<span class="kw">_</span>| InvalidNonceSnafu.build())<span class="question-mark">?</span>;
 
         buffer.truncate(offset);
         <span class="self">self</span>.<span class="number">0
             </span>.decrypt_in_place(<span class="kw-2">&amp;</span>nonce.into(), <span class="kw-2">&amp;</span>[], buffer)
-            .map_err(DecryptionError::Aead)<span class="question-mark">?</span>;
+            .context(AeadSnafu)<span class="question-mark">?</span>;
 
         <span class="prelude-val">Ok</span>(())
     }

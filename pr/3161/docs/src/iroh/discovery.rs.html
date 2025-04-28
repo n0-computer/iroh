@@ -1072,7 +1072,11 @@
 <a href="#1071" id="1071">1071</a>
 <a href="#1072" id="1072">1072</a>
 <a href="#1073" id="1073">1073</a>
-<a href="#1074" id="1074">1074</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
+<a href="#1074" id="1074">1074</a>
+<a href="#1075" id="1075">1075</a>
+<a href="#1076" id="1076">1076</a>
+<a href="#1077" id="1077">1077</a>
+<a href="#1078" id="1078">1078</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
 //! To connect to an iroh node a [`NodeAddr`] is needed, which may contain a
 //! [`RelayUrl`] or one or more *direct addresses* in addition to the [`NodeId`].
@@ -1190,6 +1194,7 @@
     time::{<span class="self">self</span>, Duration},
     Stream, TryStreamExt,
 };
+<span class="kw">use </span>snafu::Snafu;
 <span class="kw">use </span>tokio::sync::oneshot;
 <span class="kw">use </span>tracing::{debug, error_span, warn, Instrument};
 
@@ -1588,9 +1593,12 @@
 /// will return the oldest [`DiscoveryItem`] that is still retained.
 ///
 /// Includes the number of skipped messages.
-</span><span class="attr">#[derive(Debug, thiserror::Error)]
-#[error(<span class="string">"channel lagged by {0}"</span>)]
-</span><span class="kw">pub struct </span>Lagged(<span class="kw">pub </span>u64);
+</span><span class="attr">#[derive(Debug, Snafu)]
+#[snafu(display(<span class="string">"channel lagged by {val}"</span>))]
+</span><span class="kw">pub struct </span>Lagged {
+    <span class="doccomment">/// The number of skipped messages
+    </span><span class="kw">pub </span>val: u64,
+}
 
 <span class="attr">#[derive(Clone, Debug)]
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>DiscoverySubscribers {
@@ -1611,7 +1619,7 @@
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Stream&lt;Item = <span class="prelude-ty">Result</span>&lt;DiscoveryItem, Lagged&gt;&gt; {
         <span class="kw">use </span>tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
         <span class="kw">let </span>recv = <span class="self">self</span>.inner.subscribe();
-        BroadcastStream::new(recv).map_err(|BroadcastStreamRecvError::Lagged(n)| Lagged(n))
+        BroadcastStream::new(recv).map_err(|BroadcastStreamRecvError::Lagged(n)| Lagged { val: n })
     }
 
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>send(<span class="kw-2">&amp;</span><span class="self">self</span>, item: DiscoveryItem) {

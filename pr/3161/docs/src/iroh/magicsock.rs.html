@@ -4422,7 +4422,16 @@
 <a href="#4421" id="4421">4421</a>
 <a href="#4422" id="4422">4422</a>
 <a href="#4423" id="4423">4423</a>
-<a href="#4424" id="4424">4424</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4424" id="4424">4424</a>
+<a href="#4425" id="4425">4425</a>
+<a href="#4426" id="4426">4426</a>
+<a href="#4427" id="4427">4427</a>
+<a href="#4428" id="4428">4428</a>
+<a href="#4429" id="4429">4429</a>
+<a href="#4430" id="4430">4430</a>
+<a href="#4431" id="4431">4431</a>
+<a href="#4432" id="4432">4432</a>
+<a href="#4433" id="4433">4433</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4466,6 +4475,7 @@
     time::{<span class="self">self</span>, Duration, Instant},
     FutureExt, StreamExt,
 };
+<span class="kw">use </span>nested_enum_utils::common_fields;
 <span class="kw">use </span>netwatch::{interfaces, netmon};
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">use </span>netwatch::{ip::LocalAddresses, UdpSocket};
@@ -4473,6 +4483,7 @@
 <span class="kw">use </span>rand::{seq::SliceRandom, Rng, SeedableRng};
 <span class="kw">use </span>relay_actor::RelaySendItem;
 <span class="kw">use </span>smallvec::{smallvec, SmallVec};
+<span class="kw">use </span>snafu::{IntoError, Snafu};
 <span class="kw">use </span>tokio::sync::{<span class="self">self</span>, mpsc, Mutex};
 <span class="kw">use </span>tokio_util::sync::CancellationToken;
 <span class="kw">use </span>tracing::{
@@ -5536,12 +5547,12 @@
             sealed_box.to_vec(),
         ) {
             <span class="prelude-val">Ok</span>(dm) =&gt; dm,
-            <span class="prelude-val">Err</span>(DiscoBoxError::Open(err)) =&gt; {
-                <span class="macro">warn!</span>(<span class="question-mark">?</span>err, <span class="string">"failed to open disco box"</span>);
+            <span class="prelude-val">Err</span>(DiscoBoxError::Open { source, .. }) =&gt; {
+                <span class="macro">warn!</span>(<span class="question-mark">?</span>source, <span class="string">"failed to open disco box"</span>);
                 <span class="macro">inc!</span>(MagicsockMetrics, recv_disco_bad_key);
                 <span class="kw">return</span>;
             }
-            <span class="prelude-val">Err</span>(DiscoBoxError::Parse(err)) =&gt; {
+            <span class="prelude-val">Err</span>(DiscoBoxError::Parse { source, .. }) =&gt; {
                 <span class="comment">// Couldn't parse it, but it was inside a correctly
                 // signed box, so just ignore it, assuming it's from a
                 // newer version of Tailscale that we don't
@@ -5549,7 +5560,7 @@
                 // be too spammy for old clients.
 
                 </span><span class="macro">inc!</span>(MagicsockMetrics, recv_disco_bad_parse);
-                <span class="macro">debug!</span>(<span class="question-mark">?</span>err, <span class="string">"failed to parse disco message"</span>);
+                <span class="macro">debug!</span>(<span class="question-mark">?</span>source, <span class="string">"failed to parse disco message"</span>);
                 <span class="kw">return</span>;
             }
         };
@@ -6391,17 +6402,24 @@
         node_id: PublicKey,
         <span class="kw-2">mut </span>sealed_box: Vec&lt;u8&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;disco::Message, DiscoBoxError&gt; {
-        <span class="self">self</span>.get(secret, node_id, |secret| secret.open(<span class="kw-2">&amp;mut </span>sealed_box))<span class="question-mark">?</span>;
-        disco::Message::from_bytes(<span class="kw-2">&amp;</span>sealed_box).map_err(DiscoBoxError::Parse)
+        <span class="self">self</span>.get(secret, node_id, |secret| secret.open(<span class="kw-2">&amp;mut </span>sealed_box))
+            .map_err(|err| OpenSnafu.into_error(Box::new(err)))<span class="question-mark">?</span>;
+        disco::Message::from_bytes(<span class="kw-2">&amp;</span>sealed_box).map_err(|err| ParseSnafu.into_error(Box::new(err)))
     }
 }
 
-<span class="attr">#[derive(Debug, thiserror::Error)]
+<span class="attr">#[allow(missing_docs)]
+#[common_fields({
+    backtrace: <span class="prelude-ty">Option</span>&lt;snafu::Backtrace&gt;,
+    <span class="attr">#[snafu(implicit)]
+    </span>span_trace: n0_snafu::SpanTrace,
+})]
+<span class="attr">#[derive(Debug, Snafu)]
 </span><span class="kw">enum </span>DiscoBoxError {
-    <span class="attr">#[error(<span class="string">"Failed to open crypto box"</span>)]
-    </span>Open(<span class="attr">#[from] </span>DecryptionError),
-    <span class="attr">#[error(<span class="string">"Failed to parse disco message"</span>)]
-    </span>Parse(<span class="attr">#[from] </span>disco::ParseError),
+    <span class="attr">#[snafu(display(<span class="string">"Failed to open crypto box"</span>))]
+    </span>Open { source: Box&lt;DecryptionError&gt; },
+    <span class="attr">#[snafu(display(<span class="string">"Failed to parse disco message"</span>))]
+    </span>Parse { source: Box&lt;disco::ParseError&gt; },
 }
 
 <span class="doccomment">/// Creates a sender and receiver pair for sending datagrams to the [`RelayActor`].
@@ -7596,8 +7614,8 @@
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>NodeIdMappedAddr(Ipv6Addr);
 
 <span class="doccomment">/// Can occur when converting a [`SocketAddr`] to an [`NodeIdMappedAddr`]
-</span><span class="attr">#[derive(Debug, thiserror::Error)]
-#[error(<span class="string">"Failed to convert"</span>)]
+</span><span class="attr">#[derive(Debug, Snafu)]
+#[snafu(display(<span class="string">"Failed to convert"</span>))]
 </span><span class="kw">pub struct </span>NodeIdMappedAddrError;
 
 <span class="doccomment">/// Counter to always generate unique addresses for [`NodeIdMappedAddr`].

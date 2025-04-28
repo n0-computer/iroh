@@ -547,7 +547,12 @@
 <a href="#546" id="546">546</a>
 <a href="#547" id="547">547</a>
 <a href="#548" id="548">548</a>
-<a href="#549" id="549">549</a></pre></div><pre class="rust"><code><span class="doccomment">//! Watchable values.
+<a href="#549" id="549">549</a>
+<a href="#550" id="550">550</a>
+<a href="#551" id="551">551</a>
+<a href="#552" id="552">552</a>
+<a href="#553" id="553">553</a>
+<a href="#554" id="554">554</a></pre></div><pre class="rust"><code><span class="doccomment">//! Watchable values.
 //!
 //! A [`Watchable`] exists to keep track of a value which may change over time.  It allows
 //! observers to be notified of changes to the value.  The aim is to always be aware of the
@@ -570,6 +575,7 @@
 <span class="attr">#[cfg(iroh_loom)]
 </span><span class="kw">use </span>loom::sync;
 <span class="kw">use </span>n0_future::stream::Stream;
+<span class="kw">use </span>snafu::{OptionExt, Snafu};
 <span class="kw">use </span>sync::{Mutex, RwLock};
 
 <span class="doccomment">/// A wrapper around a value that notifies [`Watcher`]s when the value is modified.
@@ -670,7 +676,7 @@
     /// Returns [`Err(Disconnected)`](Disconnected) if the original
     /// [`Watchable`] was dropped.
     </span><span class="kw">pub fn </span>get(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;T, Disconnected&gt; {
-        <span class="kw">let </span>shared = <span class="self">self</span>.shared.upgrade().ok_or(Disconnected)<span class="question-mark">?</span>;
+        <span class="kw">let </span>shared = <span class="self">self</span>.shared.upgrade().context(DisconnectedSnafu)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(shared.get())
     }
 
@@ -752,7 +758,7 @@
 
     <span class="kw">fn </span>poll(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>task::Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="self">Self</span>::Output&gt; {
         <span class="kw">let </span><span class="prelude-val">Some</span>(shared) = <span class="self">self</span>.watcher.shared.upgrade() <span class="kw">else </span>{
-            <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(Disconnected));
+            <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(DisconnectedSnafu.build()));
         };
         <span class="kw">match </span>shared.poll_next(cx, <span class="self">self</span>.watcher.epoch) {
             Poll::Pending =&gt; Poll::Pending,
@@ -783,7 +789,7 @@
     <span class="kw">fn </span>poll(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>task::Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="self">Self</span>::Output&gt; {
         <span class="kw">loop </span>{
             <span class="kw">let </span><span class="prelude-val">Some</span>(shared) = <span class="self">self</span>.watcher.shared.upgrade() <span class="kw">else </span>{
-                <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(Disconnected));
+                <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(DisconnectedSnafu.build()));
             };
             <span class="kw">let </span>(epoch, value) = <span class="macro">n0_future::ready!</span>(shared.poll_next(cx, <span class="self">self</span>.watcher.epoch));
             <span class="self">self</span>.watcher.epoch = epoch;
@@ -826,9 +832,13 @@
 
 <span class="doccomment">/// The error for when a [`Watcher`] is disconnected from its underlying
 /// [`Watchable`] value, because of that watchable having been dropped.
-</span><span class="attr">#[derive(thiserror::Error, Debug)]
-#[error(<span class="string">"Watch lost connection to underlying Watchable, it was dropped"</span>)]
-</span><span class="kw">pub struct </span>Disconnected;
+</span><span class="attr">#[derive(Debug, Snafu)]
+#[snafu(display(<span class="string">"Watch lost connection to underlying Watchable, it was dropped"</span>))]
+</span><span class="kw">pub struct </span>Disconnected {
+    backtrace: <span class="prelude-ty">Option</span>&lt;snafu::Backtrace&gt;,
+    <span class="attr">#[snafu(implicit)]
+    </span>span_trace: n0_snafu::SpanTrace,
+}
 
 <span class="comment">// Private:
 

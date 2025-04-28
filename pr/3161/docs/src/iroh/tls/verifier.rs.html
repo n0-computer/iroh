@@ -652,9 +652,9 @@
 }
 
 <span class="kw">impl </span>From&lt;certificate::ParseError&gt; <span class="kw">for </span>rustls::Error {
-    <span class="kw">fn </span>from(certificate::ParseError(e): certificate::ParseError) -&gt; <span class="self">Self </span>{
+    <span class="kw">fn </span>from(certificate::ParseError { source }: certificate::ParseError) -&gt; <span class="self">Self </span>{
         <span class="kw">use </span>webpki::Error::<span class="kw-2">*</span>;
-        <span class="kw">match </span>e {
+        <span class="kw">match </span>source {
             BadDer =&gt; rustls::Error::InvalidCertificate(CertificateError::BadEncoding),
             e =&gt; {
                 rustls::Error::InvalidCertificate(CertificateError::Other(OtherError(Arc::new(e))))
@@ -663,9 +663,9 @@
     }
 }
 <span class="kw">impl </span>From&lt;certificate::VerificationError&gt; <span class="kw">for </span>rustls::Error {
-    <span class="kw">fn </span>from(certificate::VerificationError(e): certificate::VerificationError) -&gt; <span class="self">Self </span>{
+    <span class="kw">fn </span>from(certificate::VerificationError { source }: certificate::VerificationError) -&gt; <span class="self">Self </span>{
         <span class="kw">use </span>webpki::Error::<span class="kw-2">*</span>;
-        <span class="kw">match </span>e {
+        <span class="kw">match </span>source {
             InvalidSignatureForPublicKey =&gt; {
                 rustls::Error::InvalidCertificate(CertificateError::BadSignature)
             }

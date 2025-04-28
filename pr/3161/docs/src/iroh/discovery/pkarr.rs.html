@@ -660,7 +660,7 @@
             </span><span class="macro">tokio::select!</span> {
                 res = <span class="self">self</span>.watcher.updated() =&gt; <span class="kw">match </span>res {
                     <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; <span class="macro">debug!</span>(<span class="string">"Publish node info to pkarr (info changed)"</span>),
-                    <span class="prelude-val">Err</span>(Disconnected) =&gt; <span class="kw">break</span>,
+                    <span class="prelude-val">Err</span>(Disconnected { .. }) =&gt; <span class="kw">break</span>,
                 },
                 <span class="kw">_ </span>= <span class="kw-2">&amp;mut </span>republish =&gt; <span class="macro">debug!</span>(<span class="string">"Publish node info to pkarr (interval elapsed)"</span>),
             }

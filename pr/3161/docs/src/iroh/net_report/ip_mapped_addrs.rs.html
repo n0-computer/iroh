@@ -135,7 +135,9 @@
 <a href="#134" id="134">134</a>
 <a href="#135" id="135">135</a>
 <a href="#136" id="136">136</a>
-<a href="#137" id="137">137</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#137" id="137">137</a>
+<a href="#138" id="138">138</a>
+<a href="#139" id="139">139</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::BTreeMap,
     net::{IpAddr, Ipv6Addr, SocketAddr},
     sync::{
@@ -144,9 +146,11 @@
     },
 };
 
+<span class="kw">use </span>snafu::Snafu;
+
 <span class="doccomment">/// Can occur when converting a [`SocketAddr`] to an [`IpMappedAddr`]
-</span><span class="attr">#[derive(Debug, thiserror::Error)]
-#[error(<span class="string">"Failed to convert"</span>)]
+</span><span class="attr">#[derive(Debug, Snafu)]
+#[snafu(display(<span class="string">"Failed to convert"</span>))]
 </span><span class="kw">pub struct </span>IpMappedAddrError;
 
 <span class="doccomment">/// A map fake Ipv6 address with an actual IP address.

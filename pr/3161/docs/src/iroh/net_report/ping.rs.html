@@ -161,7 +161,26 @@
 <a href="#160" id="160">160</a>
 <a href="#161" id="161">161</a>
 <a href="#162" id="162">162</a>
-<a href="#163" id="163">163</a></pre></div><pre class="rust"><code><span class="doccomment">//! Allows sending ICMP echo requests to a host in order to determine network latency.
+<a href="#163" id="163">163</a>
+<a href="#164" id="164">164</a>
+<a href="#165" id="165">165</a>
+<a href="#166" id="166">166</a>
+<a href="#167" id="167">167</a>
+<a href="#168" id="168">168</a>
+<a href="#169" id="169">169</a>
+<a href="#170" id="170">170</a>
+<a href="#171" id="171">171</a>
+<a href="#172" id="172">172</a>
+<a href="#173" id="173">173</a>
+<a href="#174" id="174">174</a>
+<a href="#175" id="175">175</a>
+<a href="#176" id="176">176</a>
+<a href="#177" id="177">177</a>
+<a href="#178" id="178">178</a>
+<a href="#179" id="179">179</a>
+<a href="#180" id="180">180</a>
+<a href="#181" id="181">181</a>
+<a href="#182" id="182">182</a></pre></div><pre class="rust"><code><span class="doccomment">//! Allows sending ICMP echo requests to a host in order to determine network latency.
 
 </span><span class="kw">use </span>std::{
     fmt::Debug,
@@ -169,22 +188,31 @@
     sync::{Arc, Mutex},
 };
 
-<span class="kw">use </span>anyhow::{Context, <span class="prelude-ty">Result</span>};
+<span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>n0_future::time::Duration;
+<span class="kw">use </span>nested_enum_utils::common_fields;
+<span class="kw">use </span>snafu::{ResultExt, Snafu};
 <span class="kw">use </span>surge_ping::{Client, Config, IcmpPacket, PingIdentifier, PingSequence, ICMP};
 <span class="kw">use </span>tracing::debug;
 
 <span class="kw">use </span><span class="kw">crate</span>::net_report::defaults::timeouts::DEFAULT_PINGER_TIMEOUT <span class="kw">as </span>DEFAULT_TIMEOUT;
 
 <span class="doccomment">/// Whether this error was because we couldn't create a client or a send error.
-</span><span class="attr">#[derive(Debug, thiserror::Error)]
+</span><span class="attr">#[allow(missing_docs)]
+#[common_fields({
+    backtrace: <span class="prelude-ty">Option</span>&lt;snafu::Backtrace&gt;,
+    <span class="attr">#[snafu(implicit)]
+    </span>span_trace: n0_snafu::SpanTrace,
+})]
+<span class="attr">#[derive(Debug, Snafu)]
 </span><span class="kw">pub enum </span>PingError {
-    <span class="doccomment">/// Could not create client, probably bind error.
-    </span><span class="attr">#[error(<span class="string">"Error creating ping client"</span>)]
-    </span>Client(<span class="attr">#[from] </span>anyhow::Error),
+    <span class="attr">#[snafu(display(<span class="string">"failed to create IPv4 ping client"</span>))]
+    </span>CreateClientIpv4 { source: std::io::Error },
+    <span class="attr">#[snafu(display(<span class="string">"failed to create IPv6 ping client"</span>))]
+    </span>CreateClientIpv6 { source: std::io::Error },
     <span class="doccomment">/// Could not send ping.
-    </span><span class="attr">#[error(<span class="string">"Error sending ping"</span>)]
-    </span>Ping(<span class="attr">#[from] </span>surge_ping::SurgeError),
+    </span><span class="attr">#[snafu(display(<span class="string">"failed to send ping"</span>))]
+    </span>Ping { source: surge_ping::SurgeError },
 }
 
 <span class="doccomment">/// Allows sending ICMP echo requests to a host in order to determine network latency.
@@ -214,7 +242,7 @@
     ///
     /// We do this because it means we do not bind a socket until we really try to send a
     /// ping.  It makes it more transparent to use the pinger.
-    </span><span class="kw">fn </span>get_client(<span class="kw-2">&amp;</span><span class="self">self</span>, kind: ICMP) -&gt; <span class="prelude-ty">Result</span>&lt;Client&gt; {
+    </span><span class="kw">fn </span>get_client(<span class="kw-2">&amp;</span><span class="self">self</span>, kind: ICMP) -&gt; <span class="prelude-ty">Result</span>&lt;Client, PingError&gt; {
         <span class="kw">let </span>client = <span class="kw">match </span>kind {
             ICMP::V4 =&gt; {
                 <span class="kw">let </span><span class="kw-2">mut </span>opt_client = <span class="self">self</span>.<span class="number">0</span>.client_v4.lock().expect(<span class="string">"poisoned"</span>);
@@ -222,7 +250,7 @@
                     <span class="prelude-val">Some</span>(<span class="kw-2">ref </span>client) =&gt; client.clone(),
                     <span class="prelude-val">None </span>=&gt; {
                         <span class="kw">let </span>cfg = Config::builder().kind(kind).build();
-                        <span class="kw">let </span>client = Client::new(<span class="kw-2">&amp;</span>cfg).context(<span class="string">"failed to create IPv4 pinger"</span>)<span class="question-mark">?</span>;
+                        <span class="kw">let </span>client = Client::new(<span class="kw-2">&amp;</span>cfg).context(CreateClientIpv4Snafu)<span class="question-mark">?</span>;
                         <span class="kw-2">*</span>opt_client = <span class="prelude-val">Some</span>(client.clone());
                         client
                     }
@@ -234,7 +262,7 @@
                     <span class="prelude-val">Some</span>(<span class="kw-2">ref </span>client) =&gt; client.clone(),
                     <span class="prelude-val">None </span>=&gt; {
                         <span class="kw">let </span>cfg = Config::builder().kind(kind).build();
-                        <span class="kw">let </span>client = Client::new(<span class="kw-2">&amp;</span>cfg).context(<span class="string">"failed to create IPv6 pinger"</span>)<span class="question-mark">?</span>;
+                        <span class="kw">let </span>client = Client::new(<span class="kw-2">&amp;</span>cfg).context(CreateClientIpv6Snafu)<span class="question-mark">?</span>;
                         <span class="kw-2">*</span>opt_client = <span class="prelude-val">Some</span>(client.clone());
                         client
                     }
@@ -247,14 +275,18 @@
     <span class="doccomment">/// Send a ping request with associated data, returning the perceived latency.
     </span><span class="kw">pub async fn </span>send(<span class="kw-2">&amp;</span><span class="self">self</span>, addr: IpAddr, data: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;Duration, PingError&gt; {
         <span class="kw">let </span>client = <span class="kw">match </span>addr {
-            IpAddr::V4(<span class="kw">_</span>) =&gt; <span class="self">self</span>.get_client(ICMP::V4).map_err(PingError::Client)<span class="question-mark">?</span>,
-            IpAddr::V6(<span class="kw">_</span>) =&gt; <span class="self">self</span>.get_client(ICMP::V6).map_err(PingError::Client)<span class="question-mark">?</span>,
+            IpAddr::V4(<span class="kw">_</span>) =&gt; <span class="self">self</span>.get_client(ICMP::V4)<span class="question-mark">?</span>,
+            IpAddr::V6(<span class="kw">_</span>) =&gt; <span class="self">self</span>.get_client(ICMP::V6)<span class="question-mark">?</span>,
         };
         <span class="kw">let </span>ident = PingIdentifier(rand::random());
         <span class="macro">debug!</span>(%addr, %ident, <span class="string">"Creating pinger"</span>);
         <span class="kw">let </span><span class="kw-2">mut </span>pinger = client.pinger(addr, ident).<span class="kw">await</span>;
         pinger.timeout(DEFAULT_TIMEOUT); <span class="comment">// todo: timeout too large for net_report
-        </span><span class="kw">match </span>pinger.ping(PingSequence(<span class="number">0</span>), data).<span class="kw">await</span><span class="question-mark">? </span>{
+        </span><span class="kw">match </span>pinger
+            .ping(PingSequence(<span class="number">0</span>), data)
+            .<span class="kw">await
+            </span>.context(PingSnafu)<span class="question-mark">?
+        </span>{
             (IcmpPacket::V4(packet), dur) =&gt; {
                 <span class="macro">debug!</span>(
                     <span class="string">"{} bytes from {}: icmp_seq={} ttl={:?} time={:0.2?}"</span>,
@@ -301,12 +333,15 @@
             <span class="prelude-val">Ok</span>(duration) =&gt; {
                 <span class="macro">assert!</span>(!duration.is_zero());
             }
-            <span class="prelude-val">Err</span>(PingError::Client(err)) =&gt; {
+            <span class="prelude-val">Err</span>(
+                PingError::CreateClientIpv4 { source, .. }
+                | PingError::CreateClientIpv6 { source, .. },
+            ) =&gt; {
                 <span class="comment">// We don't have permission, too bad.
-                </span><span class="macro">error!</span>(<span class="string">"no ping permissions: {err:#}"</span>);
+                </span><span class="macro">error!</span>(<span class="string">"no ping permissions: {source:#}"</span>);
             }
-            <span class="prelude-val">Err</span>(PingError::Ping(err)) =&gt; {
-                <span class="macro">panic!</span>(<span class="string">"ping failed: {err:#}"</span>);
+            <span class="prelude-val">Err</span>(PingError::Ping { source, .. }) =&gt; {
+                <span class="macro">panic!</span>(<span class="string">"ping failed: {source:#}"</span>);
             }
         }
 
@@ -314,12 +349,15 @@
             <span class="prelude-val">Ok</span>(duration) =&gt; {
                 <span class="macro">assert!</span>(!duration.is_zero());
             }
-            <span class="prelude-val">Err</span>(PingError::Client(err)) =&gt; {
+            <span class="prelude-val">Err</span>(
+                PingError::CreateClientIpv4 { source, .. }
+                | PingError::CreateClientIpv6 { source, .. },
+            ) =&gt; {
                 <span class="comment">// We don't have permission, too bad.
-                </span><span class="macro">error!</span>(<span class="string">"no ping permissions: {err:#}"</span>);
+                </span><span class="macro">error!</span>(<span class="string">"no ping permissions: {source:#}"</span>);
             }
-            <span class="prelude-val">Err</span>(PingError::Ping(err)) =&gt; {
-                <span class="macro">error!</span>(<span class="string">"ping failed, probably no IPv6 stack: {err:#}"</span>);
+            <span class="prelude-val">Err</span>(PingError::Ping { source, .. }) =&gt; {
+                <span class="macro">error!</span>(<span class="string">"ping failed, probably no IPv6 stack: {source:#}"</span>);
             }
         }
     }
