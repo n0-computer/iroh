@@ -64,7 +64,11 @@ impl AsyncUdpSocket for IpTransport {
 
 impl Transport for IpTransport {
     fn is_valid_send_addr(&self, addr: SocketAddr) -> bool {
-        self.bind_addr.ip() == addr.ip()
+        match (self.bind_addr, addr) {
+            (SocketAddr::V4(_), SocketAddr::V4(_)) => true,
+            (SocketAddr::V6(_), SocketAddr::V6(_)) => true,
+            _ => false,
+        }
     }
 
     fn poll_writable(&self, cx: &mut Context) -> Poll<io::Result<()>> {

@@ -454,7 +454,21 @@ impl MagicSock {
     #[cfg(not(wasm_browser))]
     #[cfg_attr(windows, allow(dead_code))]
     fn normalized_local_addr(&self) -> io::Result<SocketAddr> {
-        todo!()
+        let addrs: Vec<_> = self
+            .sockets
+            .ip
+            .iter()
+            .filter_map(|t| t.local_addr().ok())
+            .collect();
+
+        if let Some(addr) = addrs.iter().find(|a| a.is_ipv6()) {
+            return Ok(*addr);
+        }
+        if let Some(addr) = addrs.first() {
+            return Ok(*addr);
+        }
+
+        Err(io::Error::other("no valid socket available"))
     }
 
     /// Implementation for AsyncUdpSocket::try_send
@@ -2675,12 +2689,9 @@ impl Actor {
             .sockets
             .ip
             .iter()
-            .filter_map(|t| t.bind_addr())
+            .filter_map(|t| Some((t.bind_addr()?, t.local_addr().ok()?)))
             .collect();
-        let is_unspecified: Vec<bool> = local_addrs
-            .iter()
-            .map(|a| a.ip().is_unspecified())
-            .collect();
+
         let msock = self.msock.clone();
 
         // The following code can be slow, we do not want to block the caller since it would
@@ -2689,7 +2700,10 @@ impl Actor {
             async move {
                 // If a socket is bound to the unspecified address, create SocketAddrs for
                 // each local IP address by pairing it with the port the socket is bound on.
-                if is_unspecified.iter().any(|a| *a) {
+                if local_addrs
+                    .iter()
+                    .any(|(bound, _)| bound.ip().is_unspecified())
+                {
                     // Depending on the OS and network interfaces attached and their state
                     // enumerating the local interfaces can take a long time.  Especially
                     // Windows is very slow.
@@ -2705,15 +2719,13 @@ impl Actor {
                         ips = loopback;
                     }
                     for ip in ips {
-                        match ip {
-                            IpAddr::V4(_) => {
-                                let addr = local_addrs.iter().find(|a| a.is_ipv4());
-                                addr.map(|addr| addr.port())
-                            }
-                            IpAddr::V6(_) => {
-                                let addr = local_addrs.iter().find(|a| a.is_ipv6());
-                                addr.map(|addr| addr.port())
-                            }
+                        let port_if_unspecified = match ip {
+                            IpAddr::V4(_) => local_addrs
+                                .iter()
+                                .find_map(|(_, a)| a.is_ipv4().then(|| a.port())),
+                            IpAddr::V6(_) => local_addrs
+                                .iter()
+                                .find_map(|(_, a)| a.is_ipv6().then(|| a.port())),
                         };
                         if let Some(port) = port_if_unspecified {
                             let addr = SocketAddr::new(ip, port);
@@ -2723,9 +2735,9 @@ impl Actor {
                 }
 
                 // If a socket is bound to a specific address, add it.
-                for addr in local_addrs {
-                    if !addr.ip().is_unspecified() {
-                        addrs.entry(addr).or_insert(DirectAddrType::Local);
+                for (bound, local) in local_addrs {
+                    if !bound.ip().is_unspecified() {
+                        addrs.entry(local).or_insert(DirectAddrType::Local);
                     }
                 }
 
