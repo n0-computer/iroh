@@ -1241,12 +1241,13 @@ async fn run_icmp_probe(
         .send(relay_addr.ip(), DATA)
         .await
         .map_err(|err| match err {
-            PingError::Client(err) => ProbeError::AbortSet(
-                anyhow!("Failed to create pinger ({err:#}), aborting probeset"),
+            PingError::CreateClientIpv4 { source, .. }
+            | PingError::CreateClientIpv6 { source, .. } => ProbeError::AbortSet(
+                anyhow!("Failed to create pinger ({source:#}), aborting probeset"),
                 probe.clone(),
             ),
             #[cfg(not(wasm_browser))]
-            PingError::Ping(err) => ProbeError::Error(err.into(), probe.clone()),
+            PingError::Ping { source, .. } => ProbeError::Error(source.into(), probe.clone()),
         })?;
     debug!(dst = %relay_addr, len = DATA.len(), ?latency, "ICMP ping done");
     let mut report = ProbeReport::new(probe);

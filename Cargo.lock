@@ -2287,7 +2287,6 @@ dependencies = [
  "surge-ping",
  "swarm-discovery",
  "testresult",
- "thiserror 2.0.11",
  "time",
  "tokio",
  "tokio-stream",

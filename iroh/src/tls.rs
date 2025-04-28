@@ -9,7 +9,9 @@
 use std::sync::Arc;
 
 use iroh_base::{PublicKey, SecretKey};
+use nested_enum_utils::common_fields;
 use quinn::crypto::rustls::{NoInitialCipherSuite, QuicClientConfig, QuicServerConfig};
+use snafu::Snafu;
 use tracing::warn;
 
 use self::resolver::AlwaysResolvesCert;
@@ -108,15 +110,20 @@ impl Authentication {
 }
 
 /// Error for generating TLS configs.
-#[derive(Debug, thiserror::Error)]
+#[common_fields({
+    backtrace: Option<snafu::Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[derive(Debug, Snafu)]
 pub(crate) enum CreateConfigError {
     /// Error generating the certificate.
-    #[error("Error generating the certificate")]
-    CertError(#[from] certificate::GenError),
+    #[snafu(display("Error generating the certificate"), context(false))]
+    CertError { source: certificate::GenError },
     /// Error creating QUIC config.
-    #[error("Error creating QUIC config")]
-    ConfigError(#[from] NoInitialCipherSuite),
+    #[snafu(display("Error creating QUIC config"), context(false))]
+    ConfigError { source: NoInitialCipherSuite },
     /// Rustls configuration error
-    #[error("rustls error")]
-    Rustls(#[from] rustls::Error),
+    #[snafu(display("rustls error"), context(false))]
+    Rustls { source: rustls::Error },
 }

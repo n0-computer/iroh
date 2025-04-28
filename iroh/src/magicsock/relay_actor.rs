@@ -37,7 +37,7 @@ use std::{
     },
 };
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use backon::{Backoff, BackoffBuilder, ExponentialBuilder};
 use bytes::{Bytes, BytesMut};
 use iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
@@ -52,6 +52,8 @@ use n0_future::{
     time::{self, Duration, Instant, MissedTickBehavior},
     FuturesUnorderedBounded, SinkExt, StreamExt,
 };
+use nested_enum_utils::common_fields;
+use snafu::{IntoError, ResultExt, Snafu};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, event, info_span, instrument, trace, warn, Instrument, Level};
@@ -215,14 +217,20 @@ struct RelayConnectionOptions {
 }
 
 /// Possible reasons for a failed relay connection.
-#[derive(Debug, thiserror::Error)]
+#[allow(missing_docs)]
+#[common_fields({
+    backtrace: Option<snafu::Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[derive(Debug, Snafu)]
 enum RelayConnectionError {
-    #[error("Failed to connect to relay server: {0:#}")]
-    Connecting(#[source] anyhow::Error),
-    #[error("Failed to handshake with relay server: {0:#}")]
-    Handshake(#[source] anyhow::Error),
-    #[error("Lost connection to relay server: {0:#}")]
-    Established(#[source] anyhow::Error),
+    #[snafu(display("Failed to connect to relay server"))]
+    Connecting { source: anyhow::Error },
+    #[snafu(display("Failed to handshake with relay server"))]
+    Handshake { source: anyhow::Error },
+    #[snafu(display("Lost connection to relay server"))]
+    Established { source: anyhow::Error },
 }
 
 impl ActiveRelayActor {
@@ -285,6 +293,8 @@ impl ActiveRelayActor {
     ///
     /// Primarily switches between the dialing and connected states.
     async fn run(mut self) -> Result<()> {
+        use anyhow::Context;
+
         inc!(MagicsockMetrics, num_relay_conns_added);
 
         let mut backoff = Self::build_backoff();
@@ -292,14 +302,15 @@ impl ActiveRelayActor {
         while let Err(err) = self.run_once().await {
             warn!("{err}");
             match err {
-                RelayConnectionError::Connecting(_) | RelayConnectionError::Handshake(_) => {
+                RelayConnectionError::Connecting { .. }
+                | RelayConnectionError::Handshake { .. } => {
                     // If dialing failed, or if the relay connection failed before we received a pong,
                     // we wait an exponentially increasing time until we attempt to reconnect again.
                     let delay = backoff.next().context("Retries exceeded")?;
                     debug!("Retry in {delay:?}");
                     time::sleep(delay).await;
                 }
-                RelayConnectionError::Established(_) => {
+                RelayConnectionError::Established { .. } => {
                     // If the relay connection remained established long enough so that we received a pong
                     // from the relay server, we reset the backoff and attempt to reconnect immediately.
                     backoff = Self::build_backoff();
@@ -327,8 +338,7 @@ impl ActiveRelayActor {
     /// be retried with a backoff.
     async fn run_once(&mut self) -> Result<(), RelayConnectionError> {
         let client = match self.run_dialing().instrument(info_span!("dialing")).await {
-            Some(Ok(client)) => client,
-            Some(Err(err)) => return Err(RelayConnectionError::Connecting(err)),
+            Some(client_res) => client_res.context(ConnectingSnafu)?,
             None => return Ok(()),
         };
         self.run_connected(client)
@@ -773,9 +783,9 @@ struct ConnectedRelayState {
 impl ConnectedRelayState {
     fn map_err(&self, error: anyhow::Error) -> RelayConnectionError {
         if self.established {
-            RelayConnectionError::Established(error)
+            EstablishedSnafu.into_error(error)
         } else {
-            RelayConnectionError::Handshake(error)
+            HandshakeSnafu.into_error(error)
         }
     }
 }

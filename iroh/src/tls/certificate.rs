@@ -7,6 +7,7 @@
 
 use der::{asn1::OctetStringRef, Decode, Encode, Sequence};
 use iroh_base::{PublicKey, SecretKey, Signature};
+use snafu::Snafu;
 use x509_parser::prelude::*;
 
 /// The libp2p Public Key Extension is a X.509 extension
@@ -104,19 +105,25 @@ pub(crate) struct P2pExtension {
 }
 
 /// An error that occurs during certificate generation.
-#[derive(Debug, thiserror::Error)]
-#[error(transparent)]
-pub(crate) struct GenError(#[from] rcgen::Error);
+#[derive(Debug, Snafu)]
+#[snafu(transparent)]
+pub(crate) struct GenError {
+    source: rcgen::Error,
+}
 
 /// An error that occurs during certificate parsing.
-#[derive(Debug, thiserror::Error)]
-#[error(transparent)]
-pub(crate) struct ParseError(#[from] pub(crate) webpki::Error);
+#[derive(Debug, Snafu)]
+#[snafu(transparent)]
+pub(crate) struct ParseError {
+    pub(crate) source: webpki::Error,
+}
 
 /// An error that occurs during signature verification.
-#[derive(Debug, thiserror::Error)]
-#[error(transparent)]
-pub(crate) struct VerificationError(#[from] pub(crate) webpki::Error);
+#[derive(Debug, Snafu)]
+#[snafu(transparent)]
+pub(crate) struct VerificationError {
+    pub(crate) source: webpki::Error,
+}
 
 /// Internal function that only parses but does not verify the certificate.
 ///

@@ -116,6 +116,7 @@ use n0_future::{
     time::{self, Duration},
     Stream, TryStreamExt,
 };
+use snafu::Snafu;
 use tokio::sync::oneshot;
 use tracing::{debug, error_span, warn, Instrument};
 
@@ -514,9 +515,12 @@ impl DiscoveryTask {
 /// will return the oldest [`DiscoveryItem`] that is still retained.
 ///
 /// Includes the number of skipped messages.
-#[derive(Debug, thiserror::Error)]
-#[error("channel lagged by {0}")]
-pub struct Lagged(pub u64);
+#[derive(Debug, Snafu)]
+#[snafu(display("channel lagged by {val}"))]
+pub struct Lagged {
+    /// The number of skipped messages
+    pub val: u64,
+}
 
 #[derive(Clone, Debug)]
 pub(super) struct DiscoverySubscribers {
@@ -537,7 +541,7 @@ impl DiscoverySubscribers {
     pub(crate) fn subscribe(&self) -> impl Stream<Item = Result<DiscoveryItem, Lagged>> {
         use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
         let recv = self.inner.subscribe();
-        BroadcastStream::new(recv).map_err(|BroadcastStreamRecvError::Lagged(n)| Lagged(n))
+        BroadcastStream::new(recv).map_err(|BroadcastStreamRecvError::Lagged(n)| Lagged { val: n })
     }
 
     pub(crate) fn send(&self, item: DiscoveryItem) {

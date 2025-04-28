@@ -42,6 +42,7 @@ use n0_future::{
     time::{self, Duration, Instant},
     FutureExt, StreamExt,
 };
+use nested_enum_utils::common_fields;
 use netwatch::{interfaces, netmon};
 #[cfg(not(wasm_browser))]
 use netwatch::{ip::LocalAddresses, UdpSocket};
@@ -49,6 +50,7 @@ use quinn::{AsyncUdpSocket, ServerConfig};
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use relay_actor::RelaySendItem;
 use smallvec::{smallvec, SmallVec};
+use snafu::{IntoError, Snafu};
 use tokio::sync::{self, mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
 use tracing::{
@@ -1112,12 +1114,12 @@ impl MagicSock {
             sealed_box.to_vec(),
         ) {
             Ok(dm) => dm,
-            Err(DiscoBoxError::Open(err)) => {
-                warn!(?err, "failed to open disco box");
+            Err(DiscoBoxError::Open { source, .. }) => {
+                warn!(?source, "failed to open disco box");
                 inc!(MagicsockMetrics, recv_disco_bad_key);
                 return;
             }
-            Err(DiscoBoxError::Parse(err)) => {
+            Err(DiscoBoxError::Parse { source, .. }) => {
                 // Couldn't parse it, but it was inside a correctly
                 // signed box, so just ignore it, assuming it's from a
                 // newer version of Tailscale that we don't
@@ -1125,7 +1127,7 @@ impl MagicSock {
                 // be too spammy for old clients.
 
                 inc!(MagicsockMetrics, recv_disco_bad_parse);
-                debug!(?err, "failed to parse disco message");
+                debug!(?source, "failed to parse disco message");
                 return;
             }
         };
@@ -1967,17 +1969,24 @@ impl DiscoSecrets {
         node_id: PublicKey,
         mut sealed_box: Vec<u8>,
     ) -> Result<disco::Message, DiscoBoxError> {
-        self.get(secret, node_id, |secret| secret.open(&mut sealed_box))?;
-        disco::Message::from_bytes(&sealed_box).map_err(DiscoBoxError::Parse)
+        self.get(secret, node_id, |secret| secret.open(&mut sealed_box))
+            .map_err(|err| OpenSnafu.into_error(Box::new(err)))?;
+        disco::Message::from_bytes(&sealed_box).map_err(|err| ParseSnafu.into_error(Box::new(err)))
     }
 }
 
-#[derive(Debug, thiserror::Error)]
+#[allow(missing_docs)]
+#[common_fields({
+    backtrace: Option<snafu::Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[derive(Debug, Snafu)]
 enum DiscoBoxError {
-    #[error("Failed to open crypto box")]
-    Open(#[from] DecryptionError),
-    #[error("Failed to parse disco message")]
-    Parse(#[from] disco::ParseError),
+    #[snafu(display("Failed to open crypto box"))]
+    Open { source: Box<DecryptionError> },
+    #[snafu(display("Failed to parse disco message"))]
+    Parse { source: Box<disco::ParseError> },
 }
 
 /// Creates a sender and receiver pair for sending datagrams to the [`RelayActor`].
@@ -3172,8 +3181,8 @@ fn split_packets(transmit: &quinn_udp::Transmit) -> RelayContents {
 pub(crate) struct NodeIdMappedAddr(Ipv6Addr);
 
 /// Can occur when converting a [`SocketAddr`] to an [`NodeIdMappedAddr`]
-#[derive(Debug, thiserror::Error)]
-#[error("Failed to convert")]
+#[derive(Debug, Snafu)]
+#[snafu(display("Failed to convert"))]
 pub struct NodeIdMappedAddrError;
 
 /// Counter to always generate unique addresses for [`NodeIdMappedAddr`].

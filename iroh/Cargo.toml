@@ -21,7 +21,7 @@ crate-type = ["lib", "cdylib"]
 workspace = true
 
 [dependencies]
-aead = { version = "0.5.2", features = ["bytes"] }
+aead = { version = "0.5.2", features = ["bytes", "std"] }
 anyhow = { version = "1" }
 atomic-waker = "1.1.2"
 concurrent-queue = "2.5"
@@ -67,7 +67,6 @@ smallvec = "1.11.1"
 snafu = { version = "0.8.5", features = ["rust_1_81"] }
 strum = { version = "0.26", features = ["derive"] }
 stun-rs = "0.1.5"
-thiserror = "2"
 tokio = { version = "1", features = [
     "io-util",
     "macros",
