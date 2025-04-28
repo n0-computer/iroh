@@ -6401,7 +6401,7 @@
     <span class="attr">#[error(<span class="string">"Failed to open crypto box"</span>)]
     </span>Open(<span class="attr">#[from] </span>DecryptionError),
     <span class="attr">#[error(<span class="string">"Failed to parse disco message"</span>)]
-    </span>Parse(anyhow::Error),
+    </span>Parse(<span class="attr">#[from] </span>disco::ParseError),
 }
 
 <span class="doccomment">/// Creates a sender and receiver pair for sending datagrams to the [`RelayActor`].

@@ -508,7 +508,23 @@
 <a href="#507" id="507">507</a>
 <a href="#508" id="508">508</a>
 <a href="#509" id="509">509</a>
-<a href="#510" id="510">510</a></pre></div><pre class="rust"><code><span class="doccomment">//! Contains the discovery message types.
+<a href="#510" id="510">510</a>
+<a href="#511" id="511">511</a>
+<a href="#512" id="512">512</a>
+<a href="#513" id="513">513</a>
+<a href="#514" id="514">514</a>
+<a href="#515" id="515">515</a>
+<a href="#516" id="516">516</a>
+<a href="#517" id="517">517</a>
+<a href="#518" id="518">518</a>
+<a href="#519" id="519">519</a>
+<a href="#520" id="520">520</a>
+<a href="#521" id="521">521</a>
+<a href="#522" id="522">522</a>
+<a href="#523" id="523">523</a>
+<a href="#524" id="524">524</a>
+<a href="#525" id="525">525</a>
+<a href="#526" id="526">526</a></pre></div><pre class="rust"><code><span class="doccomment">//! Contains the discovery message types.
 //!
 //! A discovery message is:
 //!
@@ -533,10 +549,11 @@
     net::{IpAddr, SocketAddr},
 };
 
-<span class="kw">use </span>anyhow::{anyhow, bail, ensure, Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>data_encoding::HEXLOWER;
 <span class="kw">use </span>iroh_base::{PublicKey, RelayUrl};
+<span class="kw">use </span>nested_enum_utils::common_fields;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
+<span class="kw">use </span>snafu::{ensure, Snafu};
 <span class="kw">use </span>url::Url;
 
 <span class="comment">// TODO: custom magicn
@@ -712,13 +729,12 @@
 }
 
 <span class="kw">impl </span>Ping {
-    <span class="kw">fn </span>from_bytes(ver: u8, p: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="macro">ensure!</span>(ver == V0, <span class="string">"invalid version"</span>);
+    <span class="kw">fn </span>from_bytes(p: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ParseError&gt; {
         <span class="comment">// Deliberately lax on longer-than-expected messages, for future compatibility.
-        </span><span class="macro">ensure!</span>(p.len() &gt;= PING_LEN, <span class="string">"message too short"</span>);
+        </span><span class="macro">ensure!</span>(p.len() &gt;= PING_LEN, TooShortSnafu);
         <span class="kw">let </span>tx_id: [u8; TX_LEN] = p[..TX_LEN].try_into().expect(<span class="string">"length checked"</span>);
         <span class="kw">let </span>raw_key = <span class="kw-2">&amp;</span>p[TX_LEN..TX_LEN + iroh_base::PublicKey::LENGTH];
-        <span class="kw">let </span>node_key = PublicKey::try_from(raw_key)<span class="question-mark">?</span>;
+        <span class="kw">let </span>node_key = PublicKey::try_from(raw_key).map_err(|<span class="kw">_</span>| InvalidEncodingSnafu.build())<span class="question-mark">?</span>;
         <span class="kw">let </span>tx_id = stun_rs::TransactionId::from(tx_id);
 
         <span class="prelude-val">Ok</span>(Ping { tx_id, node_key })
@@ -736,22 +752,36 @@
     }
 }
 
-<span class="kw">fn </span>send_addr_from_bytes(p: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;SendAddr&gt; {
-    <span class="macro">ensure!</span>(p.len() &gt; <span class="number">2</span>, <span class="string">"too short"</span>);
+<span class="attr">#[allow(missing_docs)]
+#[common_fields({
+    backtrace: <span class="prelude-ty">Option</span>&lt;snafu::Backtrace&gt;,
+    <span class="attr">#[snafu(implicit)]
+    </span>span_trace: n0_snafu::SpanTrace,
+})]
+<span class="attr">#[derive(Debug, Snafu)]
+</span><span class="kw">pub enum </span>ParseError {
+    <span class="attr">#[snafu(display(<span class="string">"message is too short"</span>))]
+    </span>TooShort {},
+    <span class="attr">#[snafu(display(<span class="string">"invalid encoding"</span>))]
+    </span>InvalidEncoding {},
+    <span class="attr">#[snafu(display(<span class="string">"unknown format"</span>))]
+    </span>UnknownFormat {},
+}
+
+<span class="kw">fn </span>send_addr_from_bytes(p: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;SendAddr, ParseError&gt; {
+    <span class="macro">ensure!</span>(p.len() &gt; <span class="number">2</span>, TooShortSnafu);
     <span class="kw">match </span>p[<span class="number">0</span>] {
         <span class="number">0u8 </span>=&gt; {
-            <span class="kw">let </span>bytes: [u8; EP_LENGTH] = p[<span class="number">1</span>..].try_into().context(<span class="string">"invalid length"</span>)<span class="question-mark">?</span>;
+            <span class="kw">let </span>bytes: [u8; EP_LENGTH] = p[<span class="number">1</span>..].try_into().map_err(|<span class="kw">_</span>| TooShortSnafu.build())<span class="question-mark">?</span>;
             <span class="kw">let </span>addr = socket_addr_from_bytes(bytes);
             <span class="prelude-val">Ok</span>(SendAddr::Udp(addr))
         }
         <span class="number">1u8 </span>=&gt; {
-            <span class="kw">let </span>s = std::str::from_utf8(<span class="kw-2">&amp;</span>p[<span class="number">1</span>..])<span class="question-mark">?</span>;
-            <span class="kw">let </span>u: Url = s.parse()<span class="question-mark">?</span>;
+            <span class="kw">let </span>s = std::str::from_utf8(<span class="kw-2">&amp;</span>p[<span class="number">1</span>..]).map_err(|<span class="kw">_</span>| InvalidEncodingSnafu.build())<span class="question-mark">?</span>;
+            <span class="kw">let </span>u: Url = s.parse().map_err(|<span class="kw">_</span>| InvalidEncodingSnafu.build())<span class="question-mark">?</span>;
             <span class="prelude-val">Ok</span>(SendAddr::Relay(u.into()))
         }
-        <span class="kw">_ </span>=&gt; {
-            <span class="macro">bail!</span>(<span class="string">"invalid addr type {}"</span>, p[<span class="number">0</span>]);
-        }
+        <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(UnknownFormatSnafu.build()),
     }
 }
 
@@ -796,9 +826,9 @@
 }
 
 <span class="kw">impl </span>Pong {
-    <span class="kw">fn </span>from_bytes(ver: u8, p: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="macro">ensure!</span>(ver == V0, <span class="string">"invalid version"</span>);
-        <span class="kw">let </span>tx_id: [u8; TX_LEN] = p[..TX_LEN].try_into().context(<span class="string">"message too short"</span>)<span class="question-mark">?</span>;
+    <span class="kw">fn </span>from_bytes(p: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ParseError&gt; {
+        <span class="kw">let </span>tx_id: [u8; TX_LEN] = p[..TX_LEN].try_into().map_err(|<span class="kw">_</span>| TooShortSnafu.build())<span class="question-mark">?</span>;
+
         <span class="kw">let </span>tx_id = stun_rs::TransactionId::from(tx_id);
         <span class="kw">let </span>src = send_addr_from_bytes(<span class="kw-2">&amp;</span>p[TX_LEN..])<span class="question-mark">?</span>;
 
@@ -820,9 +850,8 @@
 }
 
 <span class="kw">impl </span>CallMeMaybe {
-    <span class="kw">fn </span>from_bytes(ver: u8, p: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="macro">ensure!</span>(ver == V0, <span class="string">"invalid version"</span>);
-        <span class="macro">ensure!</span>(p.len() % EP_LENGTH == <span class="number">0</span>, <span class="string">"invalid entries"</span>);
+    <span class="kw">fn </span>from_bytes(p: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ParseError&gt; {
+        <span class="macro">ensure!</span>(p.len() % EP_LENGTH == <span class="number">0</span>, InvalidEncodingSnafu);
 
         <span class="kw">let </span>num_entries = p.len() / EP_LENGTH;
         <span class="kw">let </span><span class="kw-2">mut </span>m = CallMeMaybe {
@@ -830,7 +859,8 @@
         };
 
         <span class="kw">for </span>chunk <span class="kw">in </span>p.chunks_exact(EP_LENGTH) {
-            <span class="kw">let </span>bytes: [u8; EP_LENGTH] = chunk.try_into().context(<span class="string">"chunk must match"</span>)<span class="question-mark">?</span>;
+            <span class="kw">let </span>bytes: [u8; EP_LENGTH] =
+                chunk.try_into().map_err(|<span class="kw">_</span>| InvalidEncodingSnafu.build())<span class="question-mark">?</span>;
             <span class="kw">let </span>src = socket_addr_from_bytes(bytes);
             m.my_numbers.push(src);
         }
@@ -858,23 +888,25 @@
 
 <span class="kw">impl </span>Message {
     <span class="doccomment">/// Parses the encrypted part of the message from inside the nacl secretbox.
-    </span><span class="kw">pub fn </span>from_bytes(p: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="macro">ensure!</span>(p.len() &gt;= <span class="number">2</span>, <span class="string">"message too short"</span>);
+    </span><span class="kw">pub fn </span>from_bytes(p: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ParseError&gt; {
+        <span class="macro">ensure!</span>(p.len() &gt;= <span class="number">2</span>, TooShortSnafu);
 
-        <span class="kw">let </span>t = MessageType::try_from(p[<span class="number">0</span>]).map_err(|v| <span class="macro">anyhow!</span>(<span class="string">"unknown message type: {}"</span>, v))<span class="question-mark">?</span>;
-        <span class="kw">let </span>ver = p[<span class="number">1</span>];
+        <span class="kw">let </span>t = MessageType::try_from(p[<span class="number">0</span>]).map_err(|<span class="kw">_</span>| UnknownFormatSnafu.build())<span class="question-mark">?</span>;
+        <span class="kw">let </span>version = p[<span class="number">1</span>];
+        <span class="macro">ensure!</span>(version == V0, UnknownFormatSnafu);
+
         <span class="kw">let </span>p = <span class="kw-2">&amp;</span>p[<span class="number">2</span>..];
         <span class="kw">match </span>t {
             MessageType::Ping =&gt; {
-                <span class="kw">let </span>ping = Ping::from_bytes(ver, p)<span class="question-mark">?</span>;
+                <span class="kw">let </span>ping = Ping::from_bytes(p)<span class="question-mark">?</span>;
                 <span class="prelude-val">Ok</span>(Message::Ping(ping))
             }
             MessageType::Pong =&gt; {
-                <span class="kw">let </span>pong = Pong::from_bytes(ver, p)<span class="question-mark">?</span>;
+                <span class="kw">let </span>pong = Pong::from_bytes(p)<span class="question-mark">?</span>;
                 <span class="prelude-val">Ok</span>(Message::Pong(pong))
             }
             MessageType::CallMeMaybe =&gt; {
-                <span class="kw">let </span>cm = CallMeMaybe::from_bytes(ver, p)<span class="question-mark">?</span>;
+                <span class="kw">let </span>cm = CallMeMaybe::from_bytes(p)<span class="question-mark">?</span>;
                 <span class="prelude-val">Ok</span>(Message::CallMeMaybe(cm))
             }
         }
