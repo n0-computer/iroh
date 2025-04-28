@@ -27,7 +27,6 @@ use hyper::body::Incoming;
 use iroh_base::NodeId;
 #[cfg(feature = "test-utils")]
 use iroh_base::RelayUrl;
-use iroh_metrics::MetricsGroupSet;
 use metrics::RelayMetrics;
 use n0_future::{future::Boxed, StreamExt};
 use tokio::{
@@ -288,7 +287,7 @@ impl Server {
         if let Some(addr) = config.metrics_addr {
             debug!("Starting metrics server");
             let mut registry = iroh_metrics::Registry::default();
-            metrics.register(&mut registry);
+            registry.register_all(&metrics);
             tasks.spawn(
                 async move {
                     iroh_metrics::service::start_metrics_server(addr, Arc::new(registry)).await?;

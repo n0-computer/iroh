@@ -2092,7 +2092,7 @@ mod tests {
 
     use std::time::Instant;
 
-    use iroh_metrics::{service::MetricsSource, MetricsGroupSet};
+    use iroh_metrics::MetricsSource;
     use iroh_relay::http::Protocol;
     use n0_future::StreamExt;
     use rand::SeedableRng;
@@ -2904,12 +2904,12 @@ mod tests {
         fn register_endpoint(registry: &mut Registry, endpoint: &Endpoint) {
             let id = endpoint.node_id().fmt_short();
             let sub_registry = registry.sub_registry_with_label("id", id);
-            endpoint.metrics().register(sub_registry);
+            sub_registry.register_all(endpoint.metrics());
         }
         let mut registry = Registry::default();
         register_endpoint(&mut registry, &client);
         register_endpoint(&mut registry, &server);
-        let s = registry.encode_openmetrics()?;
+        let s = registry.encode_openmetrics_to_string()?;
         assert!(s.contains(r#"magicsock_nodes_contacted_directly_total{id="3b6a27bcce"} 1"#));
         assert!(s.contains(r#"magicsock_nodes_contacted_directly_total{id="8a88e3dd74"} 1"#));
 

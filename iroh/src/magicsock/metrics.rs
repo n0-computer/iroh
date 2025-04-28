@@ -1,9 +1,10 @@
 use iroh_metrics::{Counter, MetricsGroup};
+use serde::{Deserialize, Serialize};
 
 /// Enum of metrics for the module
 // TODO(frando): Add description doc strings for each metric.
 #[allow(missing_docs)]
-#[derive(Debug, Default, MetricsGroup)]
+#[derive(Debug, Default, Serialize, Deserialize, MetricsGroup)]
 #[non_exhaustive]
 #[metrics(name = "magicsock")]
 pub struct Metrics {

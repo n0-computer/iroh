@@ -1,7 +1,8 @@
 use iroh_metrics::{Counter, MetricsGroup};
+use serde::{Deserialize, Serialize};
 
 /// Enum of metrics for the module
-#[derive(Debug, Default, MetricsGroup)]
+#[derive(Debug, Default, MetricsGroup, Serialize, Deserialize)]
 #[metrics(name = "net_report")]
 #[non_exhaustive]
 pub struct Metrics {

@@ -2266,6 +2266,7 @@ dependencies = [
  "pin-project",
  "pkarr",
  "portmapper",
+ "postcard",
  "pretty_assertions",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
@@ -2972,7 +2973,7 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.4.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=Frando/metrics2#dae8cea85713f36a3880c40893c17ccb3f712af0"
+source = "git+https://github.com/n0-computer/net-tools?branch=Frando/metrics2#647b31b2c4468b7fe8651f8a31d5fea5411ee549"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -3469,7 +3470,7 @@ checksum = "280dc24453071f1b63954171985a0b0d30058d287960968b9b2aca264c8d4ee6"
 [[package]]
 name = "portmapper"
 version = "0.4.1"
-source = "git+https://github.com/n0-computer/net-tools?branch=Frando/metrics2#dae8cea85713f36a3880c40893c17ccb3f712af0"
+source = "git+https://github.com/n0-computer/net-tools?branch=Frando/metrics2#647b31b2c4468b7fe8651f8a31d5fea5411ee549"
 dependencies = [
  "base64",
  "bytes",
