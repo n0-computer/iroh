@@ -6,7 +6,6 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use anyhow::Result;
 use n0_future::time::Duration;
 use nested_enum_utils::common_fields;
 use snafu::{ResultExt, Snafu};

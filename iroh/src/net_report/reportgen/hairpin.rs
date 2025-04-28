@@ -14,13 +14,13 @@
 
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
-use anyhow::{bail, Context, Result};
 use iroh_relay::protos::stun;
 use n0_future::{
     task::{self, AbortOnDropHandle},
     time::{self, Instant},
 };
 use netwatch::UdpSocket;
+use snafu::Snafu;
 use tokio::sync::oneshot;
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
@@ -88,6 +88,18 @@ struct Actor {
     reportgen: reportgen::Addr,
 }
 
+#[derive(Debug, Snafu)]
+enum Error {
+    #[snafu(transparent)]
+    Io { source: std::io::Error },
+    #[snafu(display("net_report actor is gone"))]
+    NetReportActorGone,
+    #[snafu(display("reportgen actor is gone"))]
+    ReportGenActorGone,
+    #[snafu(display("stun response channel dropped"))]
+    StunResponseGone,
+}
+
 impl Actor {
     async fn run(self) {
         match self.run_inner().await {
@@ -96,8 +108,8 @@ impl Actor {
         }
     }
 
-    async fn run_inner(self) -> Result<()> {
-        let socket = UdpSocket::bind_v4(0).context("Failed to bind hairpin socket on 0.0.0.0:0")?;
+    async fn run_inner(self) -> Result<(), Error> {
+        let socket = UdpSocket::bind_v4(0)?;
 
         if let Err(err) = Self::prepare_hairpin(&socket).await {
             warn!("unable to send hairpin prep: {err:#}");
@@ -121,8 +133,11 @@ impl Actor {
         self.net_report
             .send(net_report::Message::InFlightStun(inflight, msg_response_tx))
             .await
-            .context("net_report actor gone")?;
-        msg_response_rx.await.context("net_report actor died")?;
+            .map_err(|_| NetReportActorGoneSnafu.build())?;
+
+        msg_response_rx
+            .await
+            .map_err(|_| NetReportActorGoneSnafu.build())?;
 
         if let Err(err) = socket.send_to(&stun::request(txn), dst.into()).await {
             warn!(%dst, "failed to send hairpin check");
@@ -132,7 +147,7 @@ impl Actor {
         let now = Instant::now();
         let hairpinning_works = match time::timeout(HAIRPIN_CHECK_TIMEOUT, stun_rx).await {
             Ok(Ok(_)) => true,
-            Ok(Err(_)) => bail!("net_report actor dropped stun response channel"),
+            Ok(Err(_)) => return Err(StunResponseGoneSnafu.build()),
             Err(_) => false, // Elapsed
         };
         debug!(
@@ -144,14 +159,14 @@ impl Actor {
         self.reportgen
             .send(super::Message::HairpinResult(hairpinning_works))
             .await
-            .context("Failed to send hairpin result to reportgen actor")?;
+            .map_err(|_| ReportGenActorGoneSnafu.build())?;
 
         trace!("reportgen notified");
 
         Ok(())
     }
 
-    async fn prepare_hairpin(socket: &UdpSocket) -> Result<()> {
+    async fn prepare_hairpin(socket: &UdpSocket) -> std::io::Result<()> {
         // At least the Apple Airport Extreme doesn't allow hairpin
         // sends from a private socket until it's seen traffic from
         // that src IP:port to something else out on the internet.
