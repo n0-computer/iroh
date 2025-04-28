@@ -22,7 +22,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     pin::Pin,
     sync::{
-        atomic::{AtomicBool, AtomicU16, AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         Arc, RwLock,
     },
     task::{Context, Poll, Waker},
@@ -88,10 +88,9 @@ mod udp_conn;
 
 mod transports;
 
-use self::transports::Transport;
-
 pub use node_map::Source;
 
+use self::transports::Transport;
 pub use self::{
     metrics::Metrics,
     node_map::{ConnectionType, ControlMsg, DirectAddrInfo, RemoteInfo},
@@ -268,8 +267,6 @@ pub(crate) struct MagicSock {
 #[cfg(not(wasm_browser))]
 #[derive(Debug)]
 pub(crate) struct SocketState {
-    /// Port configured for the ipv4 socket. Can be 0
-    port: AtomicU16,
     /// IP based connections
     ip: Vec<IpTransport>,
 }
@@ -1673,7 +1670,7 @@ impl Handle {
         let actor_sockets = ActorSocketState::bind(addr_v4, addr_v6)?;
 
         #[cfg(not(wasm_browser))]
-        let sockets = actor_sockets.msock_socket_state(addr_v4, addr_v6)?;
+        let sockets = actor_sockets.msock_socket_state()?;
 
         let ip_mapped_addrs = IpMappedAddresses::default();
 
@@ -1796,12 +1793,16 @@ impl Handle {
             ep: qad_endpoint,
             client_config,
             ipv4: true,
-            ipv6: actor_sockets.v6.is_some(),
+            ipv6: actor_sockets
+                .ip
+                .iter()
+                .any(|t| t.bind_addr().map(|a| a.is_ipv6()).unwrap_or(false)),
         });
         #[cfg(not(wasm_browser))]
         let net_report_config = net_report::Options::default()
-            .stun_v4(Some(actor_sockets.v4.clone()))
-            .stun_v6(actor_sockets.v6.clone())
+            // TODO:
+            // .stun_v4(Some(actor_sockets.v4.as_socket().clone()))
+            // .stun_v6(actor_sockets.v6.as_ref().map(|s| s.as_socket().clone()))
             .quic_config(quic_config);
         #[cfg(wasm_browser)]
         let net_report_config = net_report::Options::default();
@@ -2302,8 +2303,7 @@ struct ActorSocketState {
     port_mapper: portmapper::Client,
 
     // The underlying UDP sockets used to send/rcv packets.
-    v4: Arc<UdpSocket>,
-    v6: Option<Arc<UdpSocket>>,
+    ip: Vec<IpTransport>,
 }
 
 #[cfg(not(wasm_browser))]
@@ -2312,13 +2312,16 @@ impl ActorSocketState {
         let port_mapper = portmapper::Client::default();
         let (v4, v6) = Self::bind_sockets(addr_v4, addr_v6)?;
 
-        let this = Self {
-            port_mapper,
-            v4,
-            v6,
-        };
+        let port = v4.local_addr().map_or(0, |p| p.port());
+        let v4 = UdpConn::wrap(v4);
+        let v6 = v6.map(UdpConn::wrap);
 
-        let port = this.port_v4();
+        let mut ip = vec![IpTransport::new(addr_v4.into(), v4)];
+        if let (Some(v6), Some(addr)) = (v6, addr_v6) {
+            ip.push(IpTransport::new(addr.into(), v6))
+        }
+
+        let this = Self { port_mapper, ip };
 
         // NOTE: we can end up with a zero port if `netwatch::UdpSocket::socket_addr` fails
         match port.try_into() {
@@ -2329,11 +2332,6 @@ impl ActorSocketState {
         }
 
         Ok(this)
-    }
-
-    /// Returns the ipv4 port, or 0 if `netwatch::UdpSocket::socket_addr` failed.
-    fn port_v4(&self) -> u16 {
-        self.v4.local_addr().map_or(0, |p| p.port())
     }
 
     fn bind_sockets(
@@ -2357,22 +2355,9 @@ impl ActorSocketState {
         Ok((v4, v6))
     }
 
-    fn msock_socket_state(
-        &self,
-        addr_v4: SocketAddrV4,
-        addr_v6: Option<SocketAddrV6>,
-    ) -> Result<SocketState> {
-        let mut ip = vec![IpTransport::new(
-            addr_v4.into(),
-            UdpConn::wrap(self.v4.clone()),
-        )];
-        if let (Some(v6), Some(addr)) = (self.v6.clone(), addr_v6) {
-            ip.push(IpTransport::new(addr.into(), UdpConn::wrap(v6)))
-        }
-
+    fn msock_socket_state(&self) -> Result<SocketState> {
         let socket_state = SocketState {
-            port: AtomicU16::new(self.port_v4()),
-            ip,
+            ip: self.ip.clone(),
         };
 
         Ok(socket_state)
@@ -2533,13 +2518,10 @@ impl Actor {
         if is_major {
             #[cfg(not(wasm_browser))]
             {
-                if let Err(err) = self.sockets.v4.rebind() {
-                    warn!("failed to rebind Udp IPv4 socket: {:?}", err);
-                };
-                if let Some(ref socket) = self.sockets.v6 {
+                for socket in &self.sockets.ip {
                     if let Err(err) = socket.rebind() {
-                        warn!("failed to rebind Udp IPv6 socket: {:?}", err);
-                    };
+                        warn!("failed to rebind socket: {:?}", err);
+                    }
                 }
                 self.msock.dns_resolver.clear_cache();
             }
@@ -2661,17 +2643,25 @@ impl Actor {
                 // port locally, assume they might've added a static
                 // port mapping on their router to the same explicit
                 // port that we are running with. Worst case it's an invalid candidate mapping.
-                let port = self.msock.sockets.port.load(Ordering::Relaxed);
-                if net_report_report
-                    .mapping_varies_by_dest_ip
-                    .unwrap_or_default()
-                    && port != 0
-                {
-                    let mut addr = global_v4;
-                    addr.set_port(port);
-                    addrs
-                        .entry(addr.into())
-                        .or_insert(DirectAddrType::Stun4LocalPort);
+                let port = self
+                    .msock
+                    .sockets
+                    .ip
+                    .iter()
+                    .filter_map(|t| t.bind_addr())
+                    .map(|addr| addr.port())
+                    .find(|a| *a != 0);
+                if let Some(port) = port {
+                    if net_report_report
+                        .mapping_varies_by_dest_ip
+                        .unwrap_or_default()
+                    {
+                        let mut addr = global_v4;
+                        addr.set_port(port);
+                        addrs
+                            .entry(addr.into())
+                            .or_insert(DirectAddrType::Stun4LocalPort);
+                    }
                 }
             }
             if let Some(global_v6) = net_report_report.global_v6 {
@@ -2681,16 +2671,16 @@ impl Actor {
             }
         }
 
-        let local_addr_v4 = self.sockets.v4.local_addr().ok();
-        let local_addr_v6 = self.sockets.v6.as_ref().and_then(|c| c.local_addr().ok());
-
-        let is_unspecified_v4 = local_addr_v4
+        let local_addrs: Vec<_> = self
+            .sockets
+            .ip
+            .iter()
+            .filter_map(|t| t.bind_addr())
+            .collect();
+        let is_unspecified: Vec<bool> = local_addrs
+            .iter()
             .map(|a| a.ip().is_unspecified())
-            .unwrap_or(false);
-        let is_unspecified_v6 = local_addr_v6
-            .map(|a| a.ip().is_unspecified())
-            .unwrap_or(false);
-
+            .collect();
         let msock = self.msock.clone();
 
         // The following code can be slow, we do not want to block the caller since it would
@@ -2699,7 +2689,7 @@ impl Actor {
             async move {
                 // If a socket is bound to the unspecified address, create SocketAddrs for
                 // each local IP address by pairing it with the port the socket is bound on.
-                if is_unspecified_v4 || is_unspecified_v6 {
+                if is_unspecified.iter().any(|a| *a) {
                     // Depending on the OS and network interfaces attached and their state
                     // enumerating the local interfaces can take a long time.  Especially
                     // Windows is very slow.
@@ -2715,14 +2705,15 @@ impl Actor {
                         ips = loopback;
                     }
                     for ip in ips {
-                        let port_if_unspecified = match ip {
-                            IpAddr::V4(_) if is_unspecified_v4 => {
-                                local_addr_v4.map(|addr| addr.port())
+                        match ip {
+                            IpAddr::V4(_) => {
+                                let addr = local_addrs.iter().find(|a| a.is_ipv4());
+                                addr.map(|addr| addr.port())
                             }
-                            IpAddr::V6(_) if is_unspecified_v6 => {
-                                local_addr_v6.map(|addr| addr.port())
+                            IpAddr::V6(_) => {
+                                let addr = local_addrs.iter().find(|a| a.is_ipv6());
+                                addr.map(|addr| addr.port())
                             }
-                            _ => None,
                         };
                         if let Some(port) = port_if_unspecified {
                             let addr = SocketAddr::new(ip, port);
@@ -2732,13 +2723,8 @@ impl Actor {
                 }
 
                 // If a socket is bound to a specific address, add it.
-                if !is_unspecified_v4 {
-                    if let Some(addr) = local_addr_v4 {
-                        addrs.entry(addr).or_insert(DirectAddrType::Local);
-                    }
-                }
-                if !is_unspecified_v6 {
-                    if let Some(addr) = local_addr_v6 {
+                for addr in local_addrs {
+                    if !addr.ip().is_unspecified() {
                         addrs.entry(addr).or_insert(DirectAddrType::Local);
                     }
                 }

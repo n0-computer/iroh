@@ -1,15 +1,17 @@
-use quinn::AsyncUdpSocket;
-use std::io;
-use std::net::SocketAddr;
-use std::pin::Pin;
-use std::sync::Arc;
-use std::task::{Context, Poll};
+use std::{
+    io,
+    net::SocketAddr,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+};
 
-use crate::magicsock::UdpConn;
+use quinn::AsyncUdpSocket;
 
 use super::Transport;
+use crate::magicsock::UdpConn;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct IpTransport {
     bind_addr: SocketAddr,
     socket: UdpConn,
@@ -71,5 +73,13 @@ impl Transport for IpTransport {
 
     fn create_self_io_poller(&self) -> Pin<Box<dyn quinn::UdpPoller>> {
         self.socket.create_io_poller()
+    }
+
+    fn bind_addr(&self) -> Option<SocketAddr> {
+        Some(self.bind_addr)
+    }
+
+    fn rebind(&self) -> io::Result<()> {
+        self.socket.as_socket_ref().rebind()
     }
 }
