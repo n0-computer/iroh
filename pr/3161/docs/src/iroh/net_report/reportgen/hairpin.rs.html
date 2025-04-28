@@ -304,7 +304,22 @@
 <a href="#303" id="303">303</a>
 <a href="#304" id="304">304</a>
 <a href="#305" id="305">305</a>
-<a href="#306" id="306">306</a></pre></div><pre class="rust"><code><span class="doccomment">//! Actor to run hairpinning check.
+<a href="#306" id="306">306</a>
+<a href="#307" id="307">307</a>
+<a href="#308" id="308">308</a>
+<a href="#309" id="309">309</a>
+<a href="#310" id="310">310</a>
+<a href="#311" id="311">311</a>
+<a href="#312" id="312">312</a>
+<a href="#313" id="313">313</a>
+<a href="#314" id="314">314</a>
+<a href="#315" id="315">315</a>
+<a href="#316" id="316">316</a>
+<a href="#317" id="317">317</a>
+<a href="#318" id="318">318</a>
+<a href="#319" id="319">319</a>
+<a href="#320" id="320">320</a>
+<a href="#321" id="321">321</a></pre></div><pre class="rust"><code><span class="doccomment">//! Actor to run hairpinning check.
 //!
 //! This actor works as follows:
 //!
@@ -320,13 +335,13 @@
 
 </span><span class="kw">use </span>std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
-<span class="kw">use </span>anyhow::{bail, Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>iroh_relay::protos::stun;
 <span class="kw">use </span>n0_future::{
     task::{<span class="self">self</span>, AbortOnDropHandle},
     time::{<span class="self">self</span>, Instant},
 };
 <span class="kw">use </span>netwatch::UdpSocket;
+<span class="kw">use </span>snafu::Snafu;
 <span class="kw">use </span>tokio::sync::oneshot;
 <span class="kw">use </span>tracing::{debug, error, info_span, trace, warn, Instrument};
 
@@ -394,6 +409,18 @@
     reportgen: reportgen::Addr,
 }
 
+<span class="attr">#[derive(Debug, Snafu)]
+</span><span class="kw">enum </span>Error {
+    <span class="attr">#[snafu(transparent)]
+    </span>Io { source: std::io::Error },
+    <span class="attr">#[snafu(display(<span class="string">"net_report actor is gone"</span>))]
+    </span>NetReportActorGone,
+    <span class="attr">#[snafu(display(<span class="string">"reportgen actor is gone"</span>))]
+    </span>ReportGenActorGone,
+    <span class="attr">#[snafu(display(<span class="string">"stun response channel dropped"</span>))]
+    </span>StunResponseGone,
+}
+
 <span class="kw">impl </span>Actor {
     <span class="kw">async fn </span>run(<span class="self">self</span>) {
         <span class="kw">match </span><span class="self">self</span>.run_inner().<span class="kw">await </span>{
@@ -402,8 +429,8 @@
         }
     }
 
-    <span class="kw">async fn </span>run_inner(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">let </span>socket = UdpSocket::bind_v4(<span class="number">0</span>).context(<span class="string">"Failed to bind hairpin socket on 0.0.0.0:0"</span>)<span class="question-mark">?</span>;
+    <span class="kw">async fn </span>run_inner(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
+        <span class="kw">let </span>socket = UdpSocket::bind_v4(<span class="number">0</span>)<span class="question-mark">?</span>;
 
         <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">Self</span>::prepare_hairpin(<span class="kw-2">&amp;</span>socket).<span class="kw">await </span>{
             <span class="macro">warn!</span>(<span class="string">"unable to send hairpin prep: {err:#}"</span>);
@@ -427,8 +454,11 @@
         <span class="self">self</span>.net_report
             .send(net_report::Message::InFlightStun(inflight, msg_response_tx))
             .<span class="kw">await
-            </span>.context(<span class="string">"net_report actor gone"</span>)<span class="question-mark">?</span>;
-        msg_response_rx.<span class="kw">await</span>.context(<span class="string">"net_report actor died"</span>)<span class="question-mark">?</span>;
+            </span>.map_err(|<span class="kw">_</span>| NetReportActorGoneSnafu.build())<span class="question-mark">?</span>;
+
+        msg_response_rx
+            .<span class="kw">await
+            </span>.map_err(|<span class="kw">_</span>| NetReportActorGoneSnafu.build())<span class="question-mark">?</span>;
 
         <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = socket.send_to(<span class="kw-2">&amp;</span>stun::request(txn), dst.into()).<span class="kw">await </span>{
             <span class="macro">warn!</span>(%dst, <span class="string">"failed to send hairpin check"</span>);
@@ -438,7 +468,7 @@
         <span class="kw">let </span>now = Instant::now();
         <span class="kw">let </span>hairpinning_works = <span class="kw">match </span>time::timeout(HAIRPIN_CHECK_TIMEOUT, stun_rx).<span class="kw">await </span>{
             <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(<span class="kw">_</span>)) =&gt; <span class="bool-val">true</span>,
-            <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(<span class="kw">_</span>)) =&gt; <span class="macro">bail!</span>(<span class="string">"net_report actor dropped stun response channel"</span>),
+            <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(<span class="kw">_</span>)) =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(StunResponseGoneSnafu.build()),
             <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="bool-val">false</span>, <span class="comment">// Elapsed
         </span>};
         <span class="macro">debug!</span>(
@@ -450,14 +480,14 @@
         <span class="self">self</span>.reportgen
             .send(<span class="kw">super</span>::Message::HairpinResult(hairpinning_works))
             .<span class="kw">await
-            </span>.context(<span class="string">"Failed to send hairpin result to reportgen actor"</span>)<span class="question-mark">?</span>;
+            </span>.map_err(|<span class="kw">_</span>| ReportGenActorGoneSnafu.build())<span class="question-mark">?</span>;
 
         <span class="macro">trace!</span>(<span class="string">"reportgen notified"</span>);
 
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">async fn </span>prepare_hairpin(socket: <span class="kw-2">&amp;</span>UdpSocket) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    <span class="kw">async fn </span>prepare_hairpin(socket: <span class="kw-2">&amp;</span>UdpSocket) -&gt; std::io::Result&lt;()&gt; {
         <span class="comment">// At least the Apple Airport Extreme doesn't allow hairpin
         // sends from a private socket until it's seen traffic from
         // that src IP:port to something else out on the internet.

@@ -179,8 +179,7 @@
 <a href="#178" id="178">178</a>
 <a href="#179" id="179">179</a>
 <a href="#180" id="180">180</a>
-<a href="#181" id="181">181</a>
-<a href="#182" id="182">182</a></pre></div><pre class="rust"><code><span class="doccomment">//! Allows sending ICMP echo requests to a host in order to determine network latency.
+<a href="#181" id="181">181</a></pre></div><pre class="rust"><code><span class="doccomment">//! Allows sending ICMP echo requests to a host in order to determine network latency.
 
 </span><span class="kw">use </span>std::{
     fmt::Debug,
@@ -188,7 +187,6 @@
     sync::{Arc, Mutex},
 };
 
-<span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>n0_future::time::Duration;
 <span class="kw">use </span>nested_enum_utils::common_fields;
 <span class="kw">use </span>snafu::{ResultExt, Snafu};
