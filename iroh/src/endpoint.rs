@@ -993,7 +993,7 @@ impl Endpoint {
     /// address if available.
     #[cfg(not(wasm_browser))]
     pub fn bound_sockets(&self) -> (SocketAddr, Option<SocketAddr>) {
-        self.msock.local_addr()
+        todo!()
     }
 
     // # Getter methods for information about other nodes.

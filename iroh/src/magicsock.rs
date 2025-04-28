@@ -55,6 +55,7 @@ use tracing::{
     debug, error, error_span, event, info, info_span, instrument, trace, trace_span, warn,
     Instrument, Level, Span,
 };
+use transports::IpTransport;
 use url::Url;
 
 #[cfg(not(wasm_browser))]
@@ -84,6 +85,10 @@ mod node_map;
 mod relay_actor;
 #[cfg(not(wasm_browser))]
 mod udp_conn;
+
+mod transports;
+
+use self::transports::Transport;
 
 pub use node_map::Source;
 
@@ -265,12 +270,8 @@ pub(crate) struct MagicSock {
 pub(crate) struct SocketState {
     /// Port configured for the ipv4 socket. Can be 0
     port: AtomicU16,
-    /// UDP IPv4 socket
-    v4: UdpConn,
-    /// UDP IPv6 socket
-    v6: Option<UdpConn>,
-    /// Cached version of the Ipv4 and Ipv6 addrs of the current connection.
-    local_addrs: std::sync::RwLock<(SocketAddr, Option<SocketAddr>)>,
+    /// IP based connections
+    ip: Vec<IpTransport>,
 }
 
 impl MagicSock {
@@ -312,8 +313,8 @@ impl MagicSock {
 
     /// Get the cached version of the Ipv4 and Ipv6 addrs of the current connection.
     #[cfg(not(wasm_browser))]
-    pub(crate) fn local_addr(&self) -> (SocketAddr, Option<SocketAddr>) {
-        *self.sockets.local_addrs.read().expect("not poisoned")
+    pub(crate) fn local_addr(&self) -> Vec<io::Result<SocketAddr>> {
+        self.sockets.ip.iter().map(|t| t.local_addr()).collect()
     }
 
     /// Returns `true` if we have at least one candidate address where we can send packets to.
@@ -456,9 +457,7 @@ impl MagicSock {
     #[cfg(not(wasm_browser))]
     #[cfg_attr(windows, allow(dead_code))]
     fn normalized_local_addr(&self) -> io::Result<SocketAddr> {
-        let (v4, v6) = self.local_addr();
-        let addr = if let Some(v6) = v6 { v6 } else { v4 };
-        Ok(addr)
+        todo!()
     }
 
     /// Implementation for AsyncUdpSocket::try_send
@@ -718,7 +717,9 @@ impl MagicSock {
 
     #[cfg(not(wasm_browser))]
     fn try_send_udp(&self, addr: SocketAddr, transmit: &quinn_udp::Transmit) -> io::Result<()> {
-        let conn = self.conn_for_addr(addr)?;
+        let conn = self
+            .conn_for_addr(addr)
+            .ok_or_else(|| io::Error::other("no valid socket available"))?;
         conn.try_send(transmit)?;
         let total_bytes: u64 = transmit.contents.len() as u64;
         if addr.is_ipv6() {
@@ -730,16 +731,12 @@ impl MagicSock {
     }
 
     #[cfg(not(wasm_browser))]
-    fn conn_for_addr(&self, addr: SocketAddr) -> io::Result<&UdpConn> {
-        let sock = match addr {
-            SocketAddr::V4(_) => &self.sockets.v4,
-            SocketAddr::V6(_) => self
-                .sockets
-                .v6
-                .as_ref()
-                .ok_or(io::Error::new(io::ErrorKind::Other, "no IPv6 connection"))?,
-        };
-        Ok(sock)
+    fn conn_for_addr(&self, addr: SocketAddr) -> Option<&dyn Transport> {
+        // TODO: handle multiple matches
+        if let Some(transport) = self.sockets.ip.iter().find(|p| p.is_valid_send_addr(addr)) {
+            return Some(transport);
+        }
+        None
     }
 
     /// NOTE: Receiving on a [`Self::closed`] socket will return [`Poll::Pending`] indefinitely.
@@ -756,23 +753,11 @@ impl MagicSock {
             return Poll::Pending;
         }
 
-        // Three macros to help polling: they return if they get a result, execution
-        // continues if they were Pending and we need to poll others (or finally return
-        // Pending).
-        macro_rules! poll_ipv4 {
-            () => {
-                match self.sockets.v4.poll_recv(cx, bufs, metas)? {
-                    Poll::Pending | Poll::Ready(0) => {}
-                    Poll::Ready(n) => {
-                        self.process_udp_datagrams(true, &mut bufs[..n], &mut metas[..n]);
-                        return Poll::Ready(Ok(n));
-                    }
-                }
-            };
-        }
-        macro_rules! poll_ipv6 {
-            () => {
-                if let Some(ref socket) = self.sockets.v6 {
+        // TODO: proper randomization again
+
+        macro_rules! poll_ip {
+            ($i:expr) => {
+                if let Some(ref socket) = self.sockets.ip.get($i) {
                     match socket.poll_recv(cx, bufs, metas)? {
                         Poll::Pending | Poll::Ready(0) => {}
                         Poll::Ready(n) => {
@@ -793,26 +778,19 @@ impl MagicSock {
         }
 
         let counter = self.poll_recv_counter.fetch_add(1, Ordering::Relaxed);
-        match counter % 3 {
+        match counter % 2 {
             0 => {
-                // order of polling: UDPv4, UDPv6, relay
-                poll_ipv4!();
-                poll_ipv6!();
+                for i in 0..self.sockets.ip.len() {
+                    poll_ip!(i);
+                }
                 poll_relay!();
-                Poll::Pending
-            }
-            1 => {
-                // order of polling: UDPv6, relay, UDPv4
-                poll_ipv6!();
-                poll_relay!();
-                poll_ipv4!();
                 Poll::Pending
             }
             _ => {
-                // order of polling: relay, UDPv4, UDPv6
                 poll_relay!();
-                poll_ipv4!();
-                poll_ipv6!();
+                for i in 0..self.sockets.ip.len() {
+                    poll_ip!(i);
+                }
                 Poll::Pending
             }
         }
@@ -854,7 +832,7 @@ impl MagicSock {
         // NodeState/PathState.  Then on the send path it should be retrieved from the
         // NodeState/PathSate together with the send address and substituted at send time.
         // This is relevant for IPv6 link-local addresses where the OS otherwise does not
-        // know which intervace to send from.
+        // know which interface to send from.
         #[cfg(not(windows))]
         let dst_ip = self.normalized_local_addr().ok().map(|addr| addr.ip());
         // Reasoning for this here:
@@ -1380,8 +1358,10 @@ impl MagicSock {
                     Ok(()) => return Poll::Ready(Ok(())),
                     Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
                         // This is the socket .try_send_disco_message_udp used.
-                        let sock = self.conn_for_addr(dst)?;
-                        match sock.as_socket_ref().poll_writable(cx) {
+                        let sock = self
+                            .conn_for_addr(dst)
+                            .ok_or_else(|| io::Error::other("no valid socket available"))?;
+                        match sock.poll_writable(cx) {
                             Poll::Ready(Ok(())) => continue,
                             Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
                             Poll::Pending => return Poll::Pending,
@@ -1687,11 +1667,13 @@ impl Handle {
             path_selection,
         } = opts;
 
+        let addr_v4 = addr_v4.unwrap_or_else(|| SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0));
+
         #[cfg(not(wasm_browser))]
         let actor_sockets = ActorSocketState::bind(addr_v4, addr_v6)?;
 
         #[cfg(not(wasm_browser))]
-        let sockets = actor_sockets.msock_socket_state()?;
+        let sockets = actor_sockets.msock_socket_state(addr_v4, addr_v6)?;
 
         let ip_mapped_addrs = IpMappedAddresses::default();
 
@@ -2145,15 +2127,16 @@ impl AsyncUdpSocket for MagicSock {
         // connection.  It checks all paths and returns Poll::Ready as soon as any path is
         // ready.
         #[cfg(not(wasm_browser))]
-        let ipv4_poller = self.sockets.v4.create_io_poller();
-        #[cfg(not(wasm_browser))]
-        let ipv6_poller = self.sockets.v6.as_ref().map(|sock| sock.create_io_poller());
+        let ip_pollers = self
+            .sockets
+            .ip
+            .iter()
+            .map(|t| t.create_self_io_poller())
+            .collect();
         let relay_sender = self.relay_datagram_send_channel.clone();
         Box::pin(IoPoller {
             #[cfg(not(wasm_browser))]
-            ipv4_poller,
-            #[cfg(not(wasm_browser))]
-            ipv6_poller,
+            ip_pollers,
             relay_sender,
         })
     }
@@ -2172,35 +2155,41 @@ impl AsyncUdpSocket for MagicSock {
         self.poll_recv(cx, bufs, metas)
     }
 
+    #[cfg(not(wasm_browser))]
     fn local_addr(&self) -> io::Result<SocketAddr> {
-        #[cfg(not(wasm_browser))]
-        match &*self.sockets.local_addrs.read().expect("not poisoned") {
-            (ipv4, None) => {
-                // Pretend to be IPv6, because our `MappedAddr`s
-                // need to be IPv6.
-                let ip: IpAddr = match ipv4.ip() {
-                    IpAddr::V4(ip) => ip.to_ipv6_mapped().into(),
-                    IpAddr::V6(ip) => ip.into(),
-                };
-                Ok(SocketAddr::new(ip, ipv4.port()))
-            }
-            (_, Some(ipv6)) => Ok(*ipv6),
+        let addrs: Vec<_> = self
+            .sockets
+            .ip
+            .iter()
+            .filter_map(|t| t.local_addr().ok())
+            .collect();
+
+        if let Some(addr) = addrs.iter().find(|addr| addr.is_ipv6()) {
+            return Ok(*addr);
         }
-        // Again, we need to pretend we're IPv6, because of our `MappedAddr`s.
-        #[cfg(wasm_browser)]
-        return Ok(SocketAddr::new(std::net::Ipv6Addr::LOCALHOST.into(), 0));
+        if let Some(SocketAddr::V4(addr)) = addrs.first() {
+            let ip = addr.ip().to_ipv6_mapped().into();
+            return Ok(SocketAddr::new(ip, addr.port()));
+        }
+
+        Err(io::Error::other("no vaild address available"))
+    }
+
+    #[cfg(wasm_browser)]
+    fn local_addr(&self) -> io::Result<SocketAddr> {
+        Ok(SocketAddr::new(std::net::Ipv6Addr::LOCALHOST.into(), 0))
     }
 
     #[cfg(not(wasm_browser))]
     fn max_transmit_segments(&self) -> usize {
-        if let Some(socket) = self.sockets.v6.as_ref() {
-            std::cmp::min(
-                socket.max_transmit_segments(),
-                self.sockets.v4.max_transmit_segments(),
-            )
-        } else {
-            self.sockets.v4.max_transmit_segments()
-        }
+        let res = self
+            .sockets
+            .ip
+            .iter()
+            .map(|t| t.max_transmit_segments())
+            .min();
+
+        res.unwrap_or(1)
     }
 
     #[cfg(wasm_browser)]
@@ -2210,20 +2199,21 @@ impl AsyncUdpSocket for MagicSock {
 
     #[cfg(not(wasm_browser))]
     fn max_receive_segments(&self) -> usize {
-        if let Some(socket) = self.sockets.v6.as_ref() {
-            // `max_receive_segments` controls the size of the `RecvMeta` buffer
-            // that quinn creates. Having buffers slightly bigger than necessary
-            // isn't terrible, and makes sure a single socket can read the maximum
-            // amount with a single poll. We considered adding these numbers instead,
-            // but we never get data from both sockets at the same time in `poll_recv`
-            // and it's impossible and unnecessary to be refactored that way.
-            std::cmp::max(
-                socket.max_receive_segments(),
-                self.sockets.v4.max_receive_segments(),
-            )
-        } else {
-            self.sockets.v4.max_receive_segments()
-        }
+        // `max_receive_segments` controls the size of the `RecvMeta` buffer
+        // that quinn creates. Having buffers slightly bigger than necessary
+        // isn't terrible, and makes sure a single socket can read the maximum
+        // amount with a single poll. We considered adding these numbers instead,
+        // but we never get data from both sockets at the same time in `poll_recv`
+        // and it's impossible and unnecessary to be refactored that way.
+
+        let res = self
+            .sockets
+            .ip
+            .iter()
+            .map(|t| t.max_receive_segments())
+            .max();
+
+        res.unwrap_or(1)
     }
 
     #[cfg(wasm_browser)]
@@ -2233,11 +2223,7 @@ impl AsyncUdpSocket for MagicSock {
 
     #[cfg(not(wasm_browser))]
     fn may_fragment(&self) -> bool {
-        if let Some(socket) = self.sockets.v6.as_ref() {
-            socket.may_fragment() || self.sockets.v4.may_fragment()
-        } else {
-            self.sockets.v4.may_fragment()
-        }
+        self.sockets.ip.iter().any(|t| t.may_fragment())
     }
 
     #[cfg(wasm_browser)]
@@ -2249,9 +2235,7 @@ impl AsyncUdpSocket for MagicSock {
 #[derive(Debug)]
 struct IoPoller {
     #[cfg(not(wasm_browser))]
-    ipv4_poller: Pin<Box<dyn quinn::UdpPoller>>,
-    #[cfg(not(wasm_browser))]
-    ipv6_poller: Option<Pin<Box<dyn quinn::UdpPoller>>>,
+    ip_pollers: Vec<Pin<Box<dyn quinn::UdpPoller>>>,
     relay_sender: RelayDatagramSendChannelSender,
 }
 
@@ -2260,13 +2244,8 @@ impl quinn::UdpPoller for IoPoller {
         // This version returns Ready as soon as any of them are ready.
         let this = &mut *self;
         #[cfg(not(wasm_browser))]
-        match this.ipv4_poller.as_mut().poll_writable(cx) {
-            Poll::Ready(_) => return Poll::Ready(Ok(())),
-            Poll::Pending => (),
-        }
-        #[cfg(not(wasm_browser))]
-        if let Some(ref mut ipv6_poller) = this.ipv6_poller {
-            match ipv6_poller.as_mut().poll_writable(cx) {
+        for poller in &mut this.ip_pollers {
+            match poller.as_mut().poll_writable(cx) {
                 Poll::Ready(_) => return Poll::Ready(Ok(())),
                 Poll::Pending => (),
             }
@@ -2329,7 +2308,7 @@ struct ActorSocketState {
 
 #[cfg(not(wasm_browser))]
 impl ActorSocketState {
-    fn bind(addr_v4: Option<SocketAddrV4>, addr_v6: Option<SocketAddrV6>) -> Result<Self> {
+    fn bind(addr_v4: SocketAddrV4, addr_v6: Option<SocketAddrV6>) -> Result<Self> {
         let port_mapper = portmapper::Client::default();
         let (v4, v6) = Self::bind_sockets(addr_v4, addr_v6)?;
 
@@ -2358,10 +2337,9 @@ impl ActorSocketState {
     }
 
     fn bind_sockets(
-        addr_v4: Option<SocketAddrV4>,
+        addr_v4: SocketAddrV4,
         addr_v6: Option<SocketAddrV6>,
     ) -> Result<(Arc<UdpSocket>, Option<Arc<UdpSocket>>)> {
-        let addr_v4 = addr_v4.unwrap_or_else(|| SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0));
         let v4 = Arc::new(bind_with_fallback(SocketAddr::V4(addr_v4)).context("bind IPv4 failed")?);
 
         let ip4_port = v4.local_addr()?.port();
@@ -2379,15 +2357,22 @@ impl ActorSocketState {
         Ok((v4, v6))
     }
 
-    fn msock_socket_state(&self) -> Result<SocketState> {
-        let ipv4_addr = self.v4.local_addr()?;
-        let ipv6_addr = self.v6.as_ref().and_then(|c| c.local_addr().ok());
+    fn msock_socket_state(
+        &self,
+        addr_v4: SocketAddrV4,
+        addr_v6: Option<SocketAddrV6>,
+    ) -> Result<SocketState> {
+        let mut ip = vec![IpTransport::new(
+            addr_v4.into(),
+            UdpConn::wrap(self.v4.clone()),
+        )];
+        if let (Some(v6), Some(addr)) = (self.v6.clone(), addr_v6) {
+            ip.push(IpTransport::new(addr.into(), UdpConn::wrap(v6)))
+        }
 
         let socket_state = SocketState {
             port: AtomicU16::new(self.port_v4()),
-            local_addrs: std::sync::RwLock::new((ipv4_addr, ipv6_addr)),
-            v4: UdpConn::wrap(self.v4.clone()),
-            v6: self.v6.clone().map(UdpConn::wrap),
+            ip,
         };
 
         Ok(socket_state)
