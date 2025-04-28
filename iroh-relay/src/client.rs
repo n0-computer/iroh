@@ -15,6 +15,7 @@ use n0_future::{
     split::{split, SplitSink, SplitStream},
     time, Sink, Stream,
 };
+use nested_enum_utils::common_fields;
 use snafu::{Backtrace, Snafu};
 #[cfg(any(test, feature = "test-utils"))]
 use tracing::warn;
@@ -38,86 +39,39 @@ mod tls;
 mod util;
 
 /// Connection errors
+#[common_fields({
+    backtrace: Option<Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
 #[snafu(visibility(pub(crate)))]
 pub enum ConnectError {
     #[snafu(display("Invalid URL for websocket: {url}"))]
-    InvalidWebsocketUrl {
-        url: Url,
-        backtrace: Option<Backtrace>,
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
-    },
+    InvalidWebsocketUrl { url: Url },
     #[snafu(display("Invalid relay URL: {url}"))]
-    InvalidRelayUrl {
-        url: Url,
-        backtrace: Option<Backtrace>,
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
-    },
+    InvalidRelayUrl { url: Url },
     #[snafu(transparent)]
-    Websocket {
-        source: tokio_websockets::Error,
-        backtrace: Option<Backtrace>,
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
-    },
+    Websocket { source: tokio_websockets::Error },
     #[snafu(transparent)]
-    Handshake {
-        source: HandshakeError,
-        backtrace: Option<Backtrace>,
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
-    },
+    Handshake { source: HandshakeError },
     #[snafu(transparent)]
-    Dial {
-        source: DialError,
-        backtrace: Option<Backtrace>,
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
-    },
+    Dial { source: DialError },
     #[snafu(display("Unexpected status during upgrade: {code}"))]
-    UnexpectedUpgradeStatus {
-        code: hyper::StatusCode,
-        backtrace: Option<Backtrace>,
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
-    },
+    UnexpectedUpgradeStatus { code: hyper::StatusCode },
     #[snafu(display("Failed to upgrade response"))]
-    Upgrade {
-        source: hyper::Error,
-        backtrace: Option<Backtrace>,
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
-    },
+    Upgrade { source: hyper::Error },
     #[snafu(display("Invalid TLS servername"))]
-    InvalidTlsServername {
-        backtrace: Option<Backtrace>,
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
-    },
+    InvalidTlsServername {},
     #[snafu(display("No local address available"))]
-    NoLocalAddr {
-        backtrace: Option<Backtrace>,
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
-    },
+    NoLocalAddr {},
     #[snafu(display("tls connection failed"))]
-    Tls {
-        source: std::io::Error,
-        backtrace: Option<Backtrace>,
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
-    },
+    Tls { source: std::io::Error },
     #[cfg(wasm_browser)]
     #[snafu(display("The relay protocol is not available in browsers"))]
-    RelayProtoNotAvailable {
-        backtrace: Option<Backtrace>,
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
-    },
+    RelayProtoNotAvailable {},
 }
 
 /// Dialing errors
