@@ -3,7 +3,7 @@ use std::sync::Arc;
 use iroh_metrics::{Counter, MetricsGroup, MetricsGroupSet};
 
 /// Metrics tracked for the relay server
-#[derive(Debug, Clone, MetricsGroup)]
+#[derive(Debug, Default, MetricsGroup)]
 #[metrics(name = "relayserver")]
 pub struct Metrics {
     /*
@@ -85,7 +85,7 @@ pub struct Metrics {
 }
 
 /// StunMetrics tracked for the relay server
-#[derive(Debug, Clone, MetricsGroup)]
+#[derive(Debug, Default, MetricsGroup)]
 #[metrics(name = "stun")]
 pub struct StunMetrics {
     /// Number of STUN requests made to the server.
@@ -100,22 +100,9 @@ pub struct StunMetrics {
     pub failures: Counter,
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, MetricsGroupSet)]
+#[metrics(name = "relay")]
 pub struct RelayMetrics {
     pub stun: Arc<StunMetrics>,
     pub server: Arc<Metrics>,
-}
-
-impl MetricsGroupSet for RelayMetrics {
-    fn name(&self) -> &'static str {
-        "relay"
-    }
-
-    fn groups(&self) -> impl Iterator<Item = &dyn MetricsGroup> {
-        [
-            &*self.stun as &dyn MetricsGroup,
-            &*self.server as &dyn MetricsGroup,
-        ]
-        .into_iter()
-    }
 }

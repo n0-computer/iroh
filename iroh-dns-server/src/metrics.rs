@@ -3,7 +3,7 @@
 use iroh_metrics::{Counter, MetricsGroup};
 
 /// Metrics for iroh-dns-server
-#[derive(Debug, Clone, MetricsGroup)]
+#[derive(Debug, Default, MetricsGroup)]
 #[metrics(name = "dns_server")]
 pub struct Metrics {
     /// Number of pkarr relay puts that updated the state

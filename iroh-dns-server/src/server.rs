@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use iroh_metrics::{service::start_metrics_server, MetricsGroup};
+use iroh_metrics::service::start_metrics_server;
 use tracing::info;
 
 use crate::{
@@ -62,8 +62,8 @@ impl Server {
         let metrics_task = tokio::task::spawn(async move {
             if let Some(addr) = metrics_addr {
                 let mut registry = iroh_metrics::Registry::default();
-                metrics.register(&mut registry);
-                start_metrics_server(addr, std::sync::Arc::new(registry)).await?;
+                registry.register(metrics);
+                start_metrics_server(addr, Arc::new(registry)).await?;
             }
             Ok(())
         });

@@ -2902,8 +2902,8 @@ mod tests {
 
         // test openmetrics encoding with labeled subregistries per endpoint
         fn register_endpoint(registry: &mut Registry, endpoint: &Endpoint) {
-            let id = endpoint.node_id().fmt_short().into();
-            let sub_registry = registry.sub_registry_with_label(("id".into(), id));
+            let id = endpoint.node_id().fmt_short();
+            let sub_registry = registry.sub_registry_with_label("id", id);
             endpoint.metrics().register(sub_registry);
         }
         let mut registry = Registry::default();

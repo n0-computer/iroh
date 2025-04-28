@@ -33,7 +33,7 @@ http-body-util = "0.1.0"
 hyper = { version = "1", features = ["server", "client", "http1"] }
 hyper-util = "0.1.1"
 iroh-base = { version = "0.34.1", path = "../iroh-base", default-features = false, features = ["key", "relay"] }
-iroh-metrics = { version = "0.33", default-features = false }
+iroh-metrics = { git = "https://github.com/n0-computer/iroh-metrics", branch = "Frando/derive-metricsgroupset", default-features = false }
 n0-future = "0.1.2"
 num_enum = "0.7"
 pin-project = "1"

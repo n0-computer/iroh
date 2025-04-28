@@ -1038,12 +1038,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dtoa"
-version = "1.0.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dcbb2bf8e87535c23f7a8a321e364ce21462d0ff10cb6407820e8e96dfff6653"
-
-[[package]]
 name = "dyn-clone"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2398,14 +2392,13 @@ dependencies = [
 [[package]]
 name = "iroh-metrics"
 version = "0.33.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d64b607e49f67fa42b3e780109cad0fa1fdb476b4a78d4cf8443499bbc1ad0a"
+source = "git+https://github.com/n0-computer/iroh-metrics?branch=Frando/derive-metricsgroupset#f8a2a047fc9f4232e0920501150efddc11be7060"
 dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
  "iroh-metrics-derive",
- "prometheus-client",
+ "itoa",
  "reqwest",
  "serde",
  "thiserror 2.0.11",
@@ -2416,8 +2409,7 @@ dependencies = [
 [[package]]
 name = "iroh-metrics-derive"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "caaa484b5f192006b1cc39261712d65baf87342fc72a4acc1560355d1dc410d9"
+source = "git+https://github.com/n0-computer/iroh-metrics?branch=Frando/derive-metricsgroupset#f8a2a047fc9f4232e0920501150efddc11be7060"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -2980,7 +2972,7 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.4.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=Frando/metrics#ef897c745d78dbd19429bdf6131f91c9563c2c1a"
+source = "git+https://github.com/n0-computer/net-tools?branch=Frando/metrics2#640166ea310788a1fabca4ea99fc8cb0c6ae70f4"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -3477,7 +3469,7 @@ checksum = "280dc24453071f1b63954171985a0b0d30058d287960968b9b2aca264c8d4ee6"
 [[package]]
 name = "portmapper"
 version = "0.4.1"
-source = "git+https://github.com/n0-computer/net-tools?branch=Frando/metrics#ef897c745d78dbd19429bdf6131f91c9563c2c1a"
+source = "git+https://github.com/n0-computer/net-tools?branch=Frando/metrics2#640166ea310788a1fabca4ea99fc8cb0c6ae70f4"
 dependencies = [
  "base64",
  "bytes",
@@ -3487,7 +3479,7 @@ dependencies = [
  "igd-next",
  "iroh-metrics",
  "libc",
- "netwatch 0.4.0 (git+https://github.com/n0-computer/net-tools?branch=Frando/metrics)",
+ "netwatch 0.4.0 (git+https://github.com/n0-computer/net-tools?branch=Frando/metrics2)",
  "num_enum",
  "rand 0.8.5",
  "serde",
@@ -3611,29 +3603,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "60946a68e5f9d28b0dc1c21bb8a97ee7d018a8b322fa57838ba31cc878e22d99"
 dependencies = [
  "unicode-ident",
-]
-
-[[package]]
-name = "prometheus-client"
-version = "0.22.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "504ee9ff529add891127c4827eb481bd69dc0ebc72e9a682e187db4caa60c3ca"
-dependencies = [
- "dtoa",
- "itoa",
- "parking_lot",
- "prometheus-client-derive-encode",
-]
-
-[[package]]
-name = "prometheus-client-derive-encode"
-version = "0.4.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "440f724eba9f6996b75d63681b0a92b06947f1457076d503a4d2e2c8f56442b8"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.98",
 ]
 
 [[package]]
@@ -5594,7 +5563,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
