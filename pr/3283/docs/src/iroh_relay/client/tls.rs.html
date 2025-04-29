@@ -492,12 +492,7 @@
 <a href="#491" id="491">491</a>
 <a href="#492" id="492">492</a>
 <a href="#493" id="493">493</a>
-<a href="#494" id="494">494</a>
-<a href="#495" id="495">495</a>
-<a href="#496" id="496">496</a>
-<a href="#497" id="497">497</a>
-<a href="#498" id="498">498</a>
-<a href="#499" id="499">499</a></pre></div><pre class="rust"><code><span class="doccomment">//! Functionality related to lower-level tls-based connection establishment.
+<a href="#494" id="494">494</a></pre></div><pre class="rust"><code><span class="doccomment">//! Functionality related to lower-level tls-based connection establishment.
 //!
 //! Primarily to support [`ClientBuilder::connect_relay`].
 //!
@@ -657,7 +652,7 @@
             .resolve_host(<span class="kw-2">&amp;</span><span class="self">self</span>.url, <span class="self">self</span>.prefer_ipv6, DNS_TIMEOUT)
             .<span class="kw">await</span><span class="question-mark">?</span>;
 
-        <span class="kw">let </span>port = url_port(<span class="kw-2">&amp;</span><span class="self">self</span>.url).context(InvalidTargetPortSnafu {})<span class="question-mark">?</span>;
+        <span class="kw">let </span>port = url_port(<span class="kw-2">&amp;</span><span class="self">self</span>.url).context(InvalidTargetPortSnafu)<span class="question-mark">?</span>;
         <span class="kw">let </span>addr = SocketAddr::new(dst_ip, port);
 
         <span class="macro">debug!</span>(<span class="string">"connecting to {}"</span>, addr);
@@ -723,7 +718,7 @@
             url: <span class="self">self</span>.url.clone(),
         })<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>port = url_port(<span class="kw-2">&amp;</span><span class="self">self</span>.url).context(InvalidTargetPortSnafu {})<span class="question-mark">?</span>;
+        <span class="kw">let </span>port = url_port(<span class="kw-2">&amp;</span><span class="self">self</span>.url).context(InvalidTargetPortSnafu)<span class="question-mark">?</span>;
 
         <span class="comment">// Establish Proxy Tunnel
         </span><span class="kw">let </span><span class="kw-2">mut </span>req_builder = Request::builder()
@@ -754,17 +749,14 @@
 
         <span class="kw">let </span>(<span class="kw-2">mut </span>sender, conn) = hyper::client::conn::http1::handshake(io)
             .<span class="kw">await
-            </span>.context(ProxyConnectSnafu {})<span class="question-mark">?</span>;
+            </span>.context(ProxyConnectSnafu)<span class="question-mark">?</span>;
         task::spawn(<span class="kw">async move </span>{
             <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = conn.with_upgrades().<span class="kw">await </span>{
                 <span class="macro">error!</span>(<span class="string">"Proxy connection failed: {:?}"</span>, err);
             }
         });
 
-        <span class="kw">let </span>res = sender
-            .send_request(req)
-            .<span class="kw">await
-            </span>.context(ProxyConnectSnafu {})<span class="question-mark">?</span>;
+        <span class="kw">let </span>res = sender.send_request(req).<span class="kw">await</span>.context(ProxyConnectSnafu)<span class="question-mark">?</span>;
         <span class="kw">if </span>!res.status().is_success() {
             <span class="kw">return </span><span class="prelude-val">Err</span>(ProxyConnectInvalidStatusSnafu {
                 status: res.status(),
@@ -772,9 +764,7 @@
             .build());
         }
 
-        <span class="kw">let </span>upgraded = hyper::upgrade::on(res)
-            .<span class="kw">await
-            </span>.context(ProxyConnectSnafu {})<span class="question-mark">?</span>;
+        <span class="kw">let </span>upgraded = hyper::upgrade::on(res).<span class="kw">await</span>.context(ProxyConnectSnafu)<span class="question-mark">?</span>;
         <span class="kw">let </span>Parts { io, read_buf, .. } = upgraded
             .downcast::&lt;TokioIo&lt;MaybeTlsStream&lt;tokio::net::TcpStream&gt;&gt;&gt;()
             .expect(<span class="string">"only this upgrade used"</span>);

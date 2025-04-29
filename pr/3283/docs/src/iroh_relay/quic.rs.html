@@ -481,15 +481,26 @@
 <a href="#480" id="480">480</a>
 <a href="#481" id="481">481</a>
 <a href="#482" id="482">482</a>
-<a href="#483" id="483">483</a></pre></div><pre class="rust"><code><span class="doccomment">//! Create a QUIC server that accepts connections
+<a href="#483" id="483">483</a>
+<a href="#484" id="484">484</a>
+<a href="#485" id="485">485</a>
+<a href="#486" id="486">486</a>
+<a href="#487" id="487">487</a>
+<a href="#488" id="488">488</a>
+<a href="#489" id="489">489</a>
+<a href="#490" id="490">490</a>
+<a href="#491" id="491">491</a>
+<a href="#492" id="492">492</a></pre></div><pre class="rust"><code><span class="doccomment">//! Create a QUIC server that accepts connections
 //! for QUIC address discovery.
 </span><span class="kw">use </span>std::{net::SocketAddr, sync::Arc};
 
 <span class="kw">use </span>n0_future::time::Duration;
+<span class="kw">use </span>nested_enum_utils::common_fields;
 <span class="kw">use </span>quinn::{
     crypto::rustls::{NoInitialCipherSuite, QuicClientConfig},
     VarInt,
 };
+<span class="kw">use </span>snafu::{Backtrace, Snafu};
 <span class="kw">use </span>tokio::sync::watch;
 
 <span class="doccomment">/// ALPN for our quic addr discovery
@@ -679,17 +690,24 @@
 }
 
 <span class="doccomment">/// Quic client related errors.
-</span><span class="attr">#[allow(missing_docs)]
-#[derive(Debug, thiserror::Error)]
+</span><span class="attr">#[common_fields({
+    backtrace: <span class="prelude-ty">Option</span>&lt;Backtrace&gt;,
+    <span class="attr">#[snafu(implicit)]
+    </span>span_trace: n0_snafu::SpanTrace,
+})]
+<span class="attr">#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+#[snafu(visibility(<span class="kw">pub</span>(<span class="kw">crate</span>)))]
 </span><span class="kw">pub enum </span>Error {
-    <span class="attr">#[error(transparent)]
-    </span>Connect(<span class="attr">#[from] </span>quinn::ConnectError),
-    <span class="attr">#[error(transparent)]
-    </span>Connection(<span class="attr">#[from] </span>quinn::ConnectionError),
-    <span class="attr">#[error(transparent)]
-    </span>WatchRecv(<span class="attr">#[from] </span>watch::error::RecvError),
-    <span class="attr">#[error(transparent)]
-    </span>NoIntitialCipherSuite(<span class="attr">#[from] </span>NoInitialCipherSuite),
+    <span class="attr">#[snafu(transparent)]
+    </span>Connect { source: quinn::ConnectError },
+    <span class="attr">#[snafu(transparent)]
+    </span>Connection { source: quinn::ConnectionError },
+    <span class="attr">#[snafu(transparent)]
+    </span>WatchRecv { source: watch::error::RecvError },
+    <span class="attr">#[snafu(transparent)]
+    </span>NoIntitialCipherSuite { source: NoInitialCipherSuite },
 }
 
 <span class="doccomment">/// Handles the client side of QUIC address discovery.

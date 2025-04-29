@@ -918,7 +918,7 @@
             Frame::Pong { data } =&gt; <span class="prelude-val">Ok</span>(ReceivedMessage::Pong(data)),
             Frame::Health { problem } =&gt; {
                 <span class="kw">let </span>problem = std::str::from_utf8(<span class="kw-2">&amp;</span>problem)
-                    .context(InvalidProtocolMessageEncodingSnafu {})<span class="question-mark">?
+                    .context(InvalidProtocolMessageEncodingSnafu)<span class="question-mark">?
                     </span>.to_owned();
                 <span class="kw">let </span>problem = <span class="prelude-val">Some</span>(problem);
                 <span class="prelude-val">Ok</span>(ReceivedMessage::Health { problem })

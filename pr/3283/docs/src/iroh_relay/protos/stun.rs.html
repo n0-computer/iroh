@@ -396,11 +396,7 @@
 <a href="#395" id="395">395</a>
 <a href="#396" id="396">396</a>
 <a href="#397" id="397">397</a>
-<a href="#398" id="398">398</a>
-<a href="#399" id="399">399</a>
-<a href="#400" id="400">400</a>
-<a href="#401" id="401">401</a>
-<a href="#402" id="402">402</a></pre></div><pre class="rust"><code><span class="doccomment">//! STUN packets sending and receiving.
+<a href="#398" id="398">398</a></pre></div><pre class="rust"><code><span class="doccomment">//! STUN packets sending and receiving.
 
 </span><span class="kw">use </span>std::net::SocketAddr;
 
@@ -492,13 +488,11 @@
         .with_validation() <span class="comment">// ensure fingerprint is validated
         </span>.build();
     <span class="kw">let </span>decoder = MessageDecoderBuilder::default().with_context(ctx).build();
-    <span class="kw">let </span>(msg, <span class="kw">_</span>) = decoder
-        .decode(b)
-        .map_err(|<span class="kw">_</span>| InvalidMessageSnafu {}.build())<span class="question-mark">?</span>;
+    <span class="kw">let </span>(msg, <span class="kw">_</span>) = decoder.decode(b).map_err(|<span class="kw">_</span>| InvalidMessageSnafu.build())<span class="question-mark">?</span>;
 
     <span class="kw">let </span>tx = <span class="kw-2">*</span>msg.transaction_id();
     <span class="kw">if </span>msg.method() != methods::BINDING {
-        <span class="kw">return </span><span class="prelude-val">Err</span>(NotBindingSnafu {}.build());
+        <span class="kw">return </span><span class="prelude-val">Err</span>(NotBindingSnafu.build());
     }
 
     <span class="comment">// TODO: Tailscale sets the software to tailscale, we should check if we want to do this too.
@@ -509,7 +503,7 @@
         .map(|attr| !attr.is_fingerprint())
         .unwrap_or_default()
     {
-        <span class="kw">return </span><span class="prelude-val">Err</span>(NoFingerprintSnafu {}.build());
+        <span class="kw">return </span><span class="prelude-val">Err</span>(NoFingerprintSnafu.build());
     }
 
     <span class="prelude-val">Ok</span>(tx)
@@ -519,13 +513,11 @@
 /// The IP address is extracted from the XOR-MAPPED-ADDRESS attribute.
 </span><span class="kw">pub fn </span>parse_response(b: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;(TransactionId, SocketAddr), Error&gt; {
     <span class="kw">let </span>decoder = MessageDecoder::default();
-    <span class="kw">let </span>(msg, <span class="kw">_</span>) = decoder
-        .decode(b)
-        .map_err(|<span class="kw">_</span>| InvalidMessageSnafu {}.build())<span class="question-mark">?</span>;
+    <span class="kw">let </span>(msg, <span class="kw">_</span>) = decoder.decode(b).map_err(|<span class="kw">_</span>| InvalidMessageSnafu.build())<span class="question-mark">?</span>;
 
     <span class="kw">let </span>tx = <span class="kw-2">*</span>msg.transaction_id();
     <span class="kw">if </span>msg.class() != MessageClass::SuccessResponse {
-        <span class="kw">return </span><span class="prelude-val">Err</span>(NotSuccessResponseSnafu {}.build());
+        <span class="kw">return </span><span class="prelude-val">Err</span>(NotSuccessResponseSnafu.build());
     }
 
     <span class="comment">// Read through the attributes.
@@ -560,7 +552,7 @@
         <span class="kw">return </span><span class="prelude-val">Ok</span>((tx, addr));
     }
 
-    <span class="prelude-val">Err</span>(MalformedAttrsSnafu {}.build())
+    <span class="prelude-val">Err</span>(MalformedAttrsSnafu.build())
 }
 
 <span class="attr">#[cfg(test)]

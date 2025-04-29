@@ -647,7 +647,7 @@
         prefer_ipv6: bool,
         timeout: Duration,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;IpAddr, Error&gt; {
-        <span class="kw">let </span>host = url.host().context(MissingHostSnafu {})<span class="question-mark">?</span>;
+        <span class="kw">let </span>host = url.host().context(MissingHostSnafu)<span class="question-mark">?</span>;
         <span class="kw">match </span>host {
             url::Host::Domain(domain) =&gt; {
                 <span class="comment">// Need to do a DNS lookup
@@ -668,9 +668,9 @@
                     (<span class="prelude-val">Ok</span>(<span class="kw-2">mut </span>v4), <span class="prelude-val">Ok</span>(<span class="kw-2">mut </span>v6)) =&gt; (v4.next(), v6.next()),
                 };
                 <span class="kw">if </span>prefer_ipv6 {
-                    v6.or(v4).context(NoResponseSnafu {})
+                    v6.or(v4).context(NoResponseSnafu)
                 } <span class="kw">else </span>{
-                    v4.or(v6).context(NoResponseSnafu {})
+                    v4.or(v6).context(NoResponseSnafu)
                 }
             }
             url::Host::Ipv4(ip) =&gt; <span class="prelude-val">Ok</span>(IpAddr::V4(ip)),
@@ -929,7 +929,7 @@
             <span class="kw">let </span>r_pos = DONE_CALL.fetch_add(<span class="number">1</span>, std::sync::atomic::Ordering::Relaxed);
             <span class="kw">async move </span>{
                 <span class="macro">tracing::info!</span>(r_pos, <span class="string">"call"</span>);
-                CALL_RESULTS[r_pos].map_err(|<span class="kw">_</span>| InvalidResponseSnafu {}.build())
+                CALL_RESULTS[r_pos].map_err(|<span class="kw">_</span>| InvalidResponseSnafu.build())
             }
         };
 

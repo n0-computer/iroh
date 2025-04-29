@@ -684,7 +684,7 @@
                 (conn, <span class="prelude-val">Some</span>(local_addr))
             }
             <span class="attr">#[cfg(wasm_browser)]
-            </span>Protocol::Relay =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(ConnectError::RelayProtoNotAvailable),
+            </span>Protocol::Relay =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(RelayProtoNotAvailableSnafu.build()),
         };
 
         <span class="macro">event!</span>(
