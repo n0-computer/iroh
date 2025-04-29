@@ -42,7 +42,10 @@ use n0_future::{
     FutureExt, StreamExt,
 };
 use nested_enum_utils::common_fields;
-use netwatch::{interfaces, netmon};
+use netwatch::{
+    interfaces,
+    netmon::{self, CallbackToken},
+};
 #[cfg(not(wasm_browser))]
 use netwatch::{ip::LocalAddresses, UdpSocket};
 use quinn::{AsyncUdpSocket, ServerConfig};
@@ -1695,6 +1698,8 @@ pub(crate) enum CreateHandleError {
     CreateNetReportClient { source: anyhow::Error },
     #[snafu(display("Failed to create netmon monitor"))]
     CreateNetmonMonitor { source: netmon::Error },
+    #[snafu(display("Failed to subscribe netmon monitor"))]
+    SubscribeNetmonMonitor { source: netmon::Error },
 }
 
 impl Handle {
@@ -1870,6 +1875,19 @@ impl Handle {
         #[cfg(wasm_browser)]
         let net_report_config = net_report::Options::default();
 
+        // Setup network monitoring
+        let (link_change_s, link_change_r) = mpsc::channel(8);
+        let netmon_token = network_monitor
+            .subscribe(move |is_major| {
+                let link_change_s = link_change_s.clone();
+                async move {
+                    link_change_s.send(is_major).await.ok();
+                }
+                .boxed()
+            })
+            .await
+            .context(SubscribeNetmonMonitorSnafu)?;
+
         actor_tasks.spawn({
             let msock = msock.clone();
             async move {
@@ -1889,9 +1907,7 @@ impl Handle {
                     net_report_config,
                 };
 
-                if let Err(err) = actor.run().await {
-                    warn!("relay handler errored: {:?}", err);
-                }
+                actor.run(link_change_r, netmon_token).await;
             }
             .instrument(info_span!("actor"))
         });
@@ -2470,20 +2486,7 @@ enum NetReportError {
 }
 
 impl Actor {
-    async fn run(mut self) -> anyhow::Result<()> {
-        // Setup network monitoring
-        let (link_change_s, mut link_change_r) = mpsc::channel(8);
-        let _token = self
-            .network_monitor
-            .subscribe(move |is_major| {
-                let link_change_s = link_change_s.clone();
-                async move {
-                    link_change_s.send(is_major).await.ok();
-                }
-                .boxed()
-            })
-            .await?;
-
+    async fn run(mut self, mut link_change_r: mpsc::Receiver<bool>, _token: CallbackToken) {
         // Let the the heartbeat only start a couple seconds later
         #[cfg(not(wasm_browser))]
         let mut direct_addr_heartbeat_timer = time::interval_at(
@@ -2531,7 +2534,7 @@ impl Actor {
                     trace!(?msg, "tick: msg");
                     inc!(Metrics, actor_tick_msg);
                     if self.handle_actor_message(msg).await {
-                        return Ok(());
+                        return;
                     }
                 }
                 tick = self.periodic_re_stun_timer.tick() => {
