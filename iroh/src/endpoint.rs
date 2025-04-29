@@ -1199,7 +1199,10 @@ impl Endpoint {
     ///
     /// // Wait for the metrics server to bind, then fetch the metrics via HTTP.
     /// tokio::time::sleep(Duration::from_millis(500));
-    /// let res = reqwest::get("http://localhost:9100/metrics").await?.text().await?;
+    /// let res = reqwest::get("http://localhost:9100/metrics")
+    ///     .await?
+    ///     .text()
+    ///     .await?;
     ///
     /// assert!(res.contains(r#"TYPE magicsock_recv_datagrams counter"#));
     /// assert!(res.contains(r#"magicsock_recv_datagrams_total 0"#));
