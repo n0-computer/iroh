@@ -502,8 +502,7 @@
 <a href="#501" id="501">501</a>
 <a href="#502" id="502">502</a>
 <a href="#503" id="503">503</a>
-<a href="#504" id="504">504</a>
-<a href="#505" id="505">505</a></pre></div><pre class="rust"><code><span class="doccomment">//! Tools for spawning an accept loop that routes incoming requests to the right protocol.
+<a href="#504" id="504">504</a></pre></div><pre class="rust"><code><span class="doccomment">//! Tools for spawning an accept loop that routes incoming requests to the right protocol.
 //!
 //! ## Example
 //!
@@ -544,7 +543,6 @@
 //! ```
 </span><span class="kw">use </span>std::{collections::BTreeMap, sync::Arc};
 
-<span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>iroh_base::NodeId;
 <span class="kw">use </span>n0_future::{
     boxed::BoxFuture,
@@ -620,7 +618,7 @@
     <span class="doccomment">/// Optional interception point to handle the `Connecting` state.
     ///
     /// This enables accepting 0-RTT data from clients, among other things.
-    </span><span class="kw">fn </span>on_connecting(<span class="kw-2">&amp;</span><span class="self">self</span>, connecting: Connecting) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;Connection&gt;&gt; {
+    </span><span class="kw">fn </span>on_connecting(<span class="kw-2">&amp;</span><span class="self">self</span>, connecting: Connecting) -&gt; BoxFuture&lt;anyhow::Result&lt;Connection&gt;&gt; {
         Box::pin(<span class="kw">async move </span>{
             <span class="kw">let </span>conn = connecting.<span class="kw">await</span><span class="question-mark">?</span>;
             <span class="prelude-val">Ok</span>(conn)
@@ -630,7 +628,7 @@
     <span class="doccomment">/// Handle an incoming connection.
     ///
     /// This runs on a freshly spawned tokio task so this can be long-running.
-    </span><span class="kw">fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, connection: Connection) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;;
+    </span><span class="kw">fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, connection: Connection) -&gt; BoxFuture&lt;anyhow::Result&lt;()&gt;&gt;;
 
     <span class="doccomment">/// Called when the node shuts down.
     </span><span class="kw">fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; BoxFuture&lt;()&gt; {
@@ -639,11 +637,11 @@
 }
 
 <span class="kw">impl</span>&lt;T: ProtocolHandler&gt; ProtocolHandler <span class="kw">for </span>Arc&lt;T&gt; {
-    <span class="kw">fn </span>on_connecting(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connecting) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;Connection&gt;&gt; {
+    <span class="kw">fn </span>on_connecting(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connecting) -&gt; BoxFuture&lt;anyhow::Result&lt;Connection&gt;&gt; {
         <span class="self">self</span>.as_ref().on_connecting(conn)
     }
 
-    <span class="kw">fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connection) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt; {
+    <span class="kw">fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connection) -&gt; BoxFuture&lt;anyhow::Result&lt;()&gt;&gt; {
         <span class="self">self</span>.as_ref().accept(conn)
     }
 
@@ -653,11 +651,11 @@
 }
 
 <span class="kw">impl</span>&lt;T: ProtocolHandler&gt; ProtocolHandler <span class="kw">for </span>Box&lt;T&gt; {
-    <span class="kw">fn </span>on_connecting(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connecting) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;Connection&gt;&gt; {
+    <span class="kw">fn </span>on_connecting(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connecting) -&gt; BoxFuture&lt;anyhow::Result&lt;Connection&gt;&gt; {
         <span class="self">self</span>.as_ref().on_connecting(conn)
     }
 
-    <span class="kw">fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connection) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt; {
+    <span class="kw">fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connection) -&gt; BoxFuture&lt;anyhow::Result&lt;()&gt;&gt; {
         <span class="self">self</span>.as_ref().accept(conn)
     }
 
@@ -720,7 +718,7 @@
     ///
     /// If some [`ProtocolHandler`] panicked in the accept loop, this will propagate
     /// that panic into the result here.
-    </span><span class="kw">pub async fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">pub async fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; anyhow::Result&lt;()&gt; {
         <span class="kw">if </span><span class="self">self</span>.is_shutdown() {
             <span class="kw">return </span><span class="prelude-val">Ok</span>(());
         }
@@ -760,7 +758,7 @@
     }
 
     <span class="doccomment">/// Spawns an accept loop and returns a handle to it encapsulated as the [`Router`].
-    </span><span class="kw">pub async fn </span>spawn(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Router&gt; {
+    </span><span class="kw">pub async fn </span>spawn(<span class="self">self</span>) -&gt; anyhow::Result&lt;Router&gt; {
         <span class="comment">// Update the endpoint with our alpns.
         </span><span class="kw">let </span>alpns = <span class="self">self
             </span>.protocols
@@ -916,11 +914,11 @@
 }
 
 <span class="kw">impl</span>&lt;P: ProtocolHandler + Clone&gt; ProtocolHandler <span class="kw">for </span>AccessLimit&lt;P&gt; {
-    <span class="kw">fn </span>on_connecting(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connecting) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;Connection&gt;&gt; {
+    <span class="kw">fn </span>on_connecting(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connecting) -&gt; BoxFuture&lt;anyhow::Result&lt;Connection&gt;&gt; {
         <span class="self">self</span>.proto.on_connecting(conn)
     }
 
-    <span class="kw">fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connection) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt; {
+    <span class="kw">fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connection) -&gt; BoxFuture&lt;anyhow::Result&lt;()&gt;&gt; {
         <span class="kw">let </span>this = <span class="self">self</span>.clone();
         Box::pin(<span class="kw">async move </span>{
             <span class="kw">let </span>remote = conn.remote_node_id()<span class="question-mark">?</span>;
@@ -944,7 +942,7 @@
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
 
     <span class="attr">#[tokio::test]
-    </span><span class="kw">async fn </span>test_shutdown() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">async fn </span>test_shutdown() -&gt; anyhow::Result&lt;()&gt; {
         <span class="kw">let </span>endpoint = Endpoint::builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>router = Router::builder(endpoint.clone()).spawn().<span class="kw">await</span><span class="question-mark">?</span>;
 
@@ -966,7 +964,7 @@
     <span class="kw">const </span>ECHO_ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"/iroh/echo/1"</span>;
 
     <span class="kw">impl </span>ProtocolHandler <span class="kw">for </span>Echo {
-        <span class="kw">fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, connection: Connection) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt; {
+        <span class="kw">fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, connection: Connection) -&gt; BoxFuture&lt;anyhow::Result&lt;()&gt;&gt; {
             <span class="macro">println!</span>(<span class="string">"accepting echo"</span>);
             Box::pin(<span class="kw">async move </span>{
                 <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = connection.accept_bi().<span class="kw">await</span><span class="question-mark">?</span>;
@@ -982,7 +980,7 @@
         }
     }
     <span class="attr">#[tokio::test]
-    </span><span class="kw">async fn </span>test_limiter() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">async fn </span>test_limiter() -&gt; anyhow::Result&lt;()&gt; {
         <span class="kw">let </span>e1 = Endpoint::builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="comment">// deny all access
         </span><span class="kw">let </span>proto = AccessLimit::new(Echo, |_node_id| <span class="bool-val">false</span>);

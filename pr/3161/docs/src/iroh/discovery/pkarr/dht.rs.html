@@ -443,8 +443,7 @@
 <a href="#442" id="442">442</a>
 <a href="#443" id="443">443</a>
 <a href="#444" id="444">444</a>
-<a href="#445" id="445">445</a>
-<a href="#446" id="446">446</a></pre></div><pre class="rust"><code><span class="doccomment">//! Pkarr based node discovery for iroh, supporting both relay servers and the DHT.
+<a href="#445" id="445">445</a></pre></div><pre class="rust"><code><span class="doccomment">//! Pkarr based node discovery for iroh, supporting both relay servers and the DHT.
 //!
 //! This module contains pkarr-based node discovery for iroh which can use both pkarr
 //! relay servers as well as the Mainline DHT directly.  See the [pkarr module] for an
@@ -453,7 +452,6 @@
 //! [pkarr module]: super
 </span><span class="kw">use </span>std::sync::{Arc, Mutex};
 
-<span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>iroh_base::{NodeId, SecretKey};
 <span class="kw">use </span>n0_future::{
     boxed::BoxStream,
@@ -536,7 +534,7 @@
 }
 
 <span class="kw">impl </span>Inner {
-    <span class="kw">async fn </span>resolve_relay(<span class="kw-2">&amp;</span><span class="self">self</span>, key: pkarr::PublicKey) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem&gt;&gt; {
+    <span class="kw">async fn </span>resolve_relay(<span class="kw-2">&amp;</span><span class="self">self</span>, key: pkarr::PublicKey) -&gt; <span class="prelude-ty">Option</span>&lt;anyhow::Result&lt;DiscoveryItem&gt;&gt; {
         <span class="macro">tracing::info!</span>(<span class="string">"resolving {} from relay {:?}"</span>, key.to_z32(), <span class="self">self</span>.relay_url);
 
         <span class="kw">let </span>maybe_packet = <span class="self">self
@@ -566,7 +564,7 @@
             }
         }
     }
-    <span class="kw">async fn </span>resolve_dht(<span class="kw-2">&amp;</span><span class="self">self</span>, key: pkarr::PublicKey) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem&gt;&gt; {
+    <span class="kw">async fn </span>resolve_dht(<span class="kw-2">&amp;</span><span class="self">self</span>, key: pkarr::PublicKey) -&gt; <span class="prelude-ty">Option</span>&lt;anyhow::Result&lt;DiscoveryItem&gt;&gt; {
         <span class="macro">tracing::info!</span>(<span class="string">"resolving {} from DHT"</span>, key.to_z32());
 
         <span class="kw">let </span>maybe_packet = <span class="self">self</span>.pkarr.resolve(<span class="kw-2">&amp;</span>key).<span class="kw">await</span>;
@@ -681,7 +679,7 @@
     </span>}
 
     <span class="doccomment">/// Builds the discovery mechanism.
-    </span><span class="kw">pub fn </span>build(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;DhtDiscovery&gt; {
+    </span><span class="kw">pub fn </span>build(<span class="self">self</span>) -&gt; anyhow::Result&lt;DhtDiscovery&gt; {
         <span class="kw">let </span>pkarr = <span class="kw">match </span><span class="self">self</span>.client {
             <span class="prelude-val">Some</span>(client) =&gt; client,
             <span class="prelude-val">None </span>=&gt; PkarrClient::new(Default::default())<span class="question-mark">?</span>,

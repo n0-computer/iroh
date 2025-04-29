@@ -501,7 +501,10 @@
 <a href="#500" id="500">500</a>
 <a href="#501" id="501">501</a>
 <a href="#502" id="502">502</a>
-<a href="#503" id="503">503</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service that uses an mdns-like service to discover local nodes.
+<a href="#503" id="503">503</a>
+<a href="#504" id="504">504</a>
+<a href="#505" id="505">505</a>
+<a href="#506" id="506">506</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service that uses an mdns-like service to discover local nodes.
 //!
 //! This allows you to use an mdns-like swarm discovery service to find address information about nodes that are on your local network, no relay or outside internet needed.
 //! See the [`swarm-discovery`](https://crates.io/crates/swarm-discovery) crate for more details.
@@ -538,7 +541,6 @@
     net::{IpAddr, SocketAddr},
 };
 
-<span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>derive_more::FromStr;
 <span class="kw">use </span>iroh_base::{NodeId, PublicKey};
 <span class="kw">use </span>n0_future::{
@@ -586,7 +588,7 @@
 <span class="attr">#[derive(Debug)]
 </span><span class="kw">enum </span>Message {
     Discovery(String, Peer),
-    Resolve(NodeId, mpsc::Sender&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem&gt;&gt;),
+    Resolve(NodeId, mpsc::Sender&lt;anyhow::Result&lt;DiscoveryItem&gt;&gt;),
     Timeout(NodeId, usize),
     Subscribe(mpsc::Sender&lt;DiscoveryItem&gt;),
 }
@@ -641,7 +643,7 @@
     ///
     /// # Panics
     /// This relies on [`tokio::runtime::Handle::current`] and will panic if called outside of the context of a tokio runtime.
-    </span><span class="kw">pub fn </span>new(node_id: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+    </span><span class="kw">pub fn </span>new(node_id: NodeId) -&gt; anyhow::Result&lt;<span class="self">Self</span>&gt; {
         <span class="macro">debug!</span>(<span class="string">"Creating new MdnsDiscovery service"</span>);
         <span class="kw">let </span>(send, <span class="kw-2">mut </span>recv) = mpsc::channel(<span class="number">64</span>);
         <span class="kw">let </span>task_sender = send.clone();
@@ -657,7 +659,7 @@
             <span class="kw">let </span><span class="kw-2">mut </span>last_id = <span class="number">0</span>;
             <span class="kw">let </span><span class="kw-2">mut </span>senders: HashMap&lt;
                 PublicKey,
-                HashMap&lt;usize, mpsc::Sender&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem&gt;&gt;&gt;,
+                HashMap&lt;usize, mpsc::Sender&lt;anyhow::Result&lt;DiscoveryItem&gt;&gt;&gt;,
             &gt; = HashMap::default();
             <span class="kw">let </span><span class="kw-2">mut </span>timeouts = JoinSet::new();
             <span class="kw">loop </span>{
@@ -809,7 +811,7 @@
         sender: mpsc::Sender&lt;Message&gt;,
         socketaddrs: BTreeSet&lt;SocketAddr&gt;,
         rt: <span class="kw-2">&amp;</span>tokio::runtime::Handle,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;DropGuard&gt; {
+    ) -&gt; anyhow::Result&lt;DropGuard&gt; {
         <span class="kw">let </span>spawn_rt = rt.clone();
         <span class="kw">let </span>callback = <span class="kw">move </span>|node_id: <span class="kw-2">&amp;</span>str, peer: <span class="kw-2">&amp;</span>Peer| {
             <span class="macro">trace!</span>(
@@ -876,7 +878,11 @@
 }
 
 <span class="kw">impl </span>Discovery <span class="kw">for </span>MdnsDiscovery {
-    <span class="kw">fn </span>resolve(<span class="kw-2">&amp;</span><span class="self">self</span>, _ep: Endpoint, node_id: NodeId) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem&gt;&gt;&gt; {
+    <span class="kw">fn </span>resolve(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        _ep: Endpoint,
+        node_id: NodeId,
+    ) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;anyhow::Result&lt;DiscoveryItem&gt;&gt;&gt; {
         <span class="kw">use </span>futures_util::FutureExt;
 
         <span class="kw">let </span>(send, recv) = mpsc::channel(<span class="number">20</span>);
@@ -998,7 +1004,7 @@
             <span class="prelude-val">Ok</span>(())
         }
 
-        <span class="kw">fn </span>make_discoverer() -&gt; <span class="prelude-ty">Result</span>&lt;(PublicKey, MdnsDiscovery)&gt; {
+        <span class="kw">fn </span>make_discoverer() -&gt; anyhow::Result&lt;(PublicKey, MdnsDiscovery)&gt; {
             <span class="kw">let </span>node_id = SecretKey::generate(rand::thread_rng()).public();
             <span class="prelude-val">Ok</span>((node_id, MdnsDiscovery::new(node_id)<span class="question-mark">?</span>))
         }

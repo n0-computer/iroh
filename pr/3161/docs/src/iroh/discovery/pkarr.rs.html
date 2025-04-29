@@ -402,7 +402,11 @@
 <a href="#401" id="401">401</a>
 <a href="#402" id="402">402</a>
 <a href="#403" id="403">403</a>
-<a href="#404" id="404">404</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service which publishes and resolves node information using a [pkarr] relay.
+<a href="#404" id="404">404</a>
+<a href="#405" id="405">405</a>
+<a href="#406" id="406">406</a>
+<a href="#407" id="407">407</a>
+<a href="#408" id="408">408</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service which publishes and resolves node information using a [pkarr] relay.
 //!
 //! Public-Key Addressable Resource Records, [pkarr], is a system which allows publishing
 //! [DNS Resource Records] owned by a particular [`SecretKey`] under a name derived from its
@@ -450,7 +454,7 @@
 
 </span><span class="kw">use </span>std::sync::Arc;
 
-<span class="kw">use </span>anyhow::{anyhow, bail, <span class="prelude-ty">Result</span>};
+<span class="kw">use </span>anyhow::{anyhow, bail};
 <span class="kw">use </span>iroh_base::{NodeId, SecretKey};
 <span class="kw">use </span>iroh_relay::node_info::NodeInfo;
 <span class="kw">use </span>n0_future::{
@@ -667,7 +671,7 @@
         }
     }
 
-    <span class="kw">async fn </span>publish_current(<span class="kw-2">&amp;</span><span class="self">self</span>, info: NodeInfo) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    <span class="kw">async fn </span>publish_current(<span class="kw-2">&amp;</span><span class="self">self</span>, info: NodeInfo) -&gt; anyhow::Result&lt;()&gt; {
         <span class="macro">debug!</span>(
             data = <span class="question-mark">?</span>info.data,
             pkarr_relay = %<span class="self">self</span>.pkarr_client.pkarr_relay_url,
@@ -726,7 +730,11 @@
 }
 
 <span class="kw">impl </span>Discovery <span class="kw">for </span>PkarrResolver {
-    <span class="kw">fn </span>resolve(<span class="kw-2">&amp;</span><span class="self">self</span>, _ep: Endpoint, node_id: NodeId) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem&gt;&gt;&gt; {
+    <span class="kw">fn </span>resolve(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        _ep: Endpoint,
+        node_id: NodeId,
+    ) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;anyhow::Result&lt;DiscoveryItem&gt;&gt;&gt; {
         <span class="kw">let </span>pkarr_client = <span class="self">self</span>.pkarr_client.clone();
         <span class="kw">let </span>fut = <span class="kw">async move </span>{
             <span class="kw">let </span>signed_packet = pkarr_client.resolve(node_id).<span class="kw">await</span><span class="question-mark">?</span>;

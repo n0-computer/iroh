@@ -76,10 +76,12 @@
 <a href="#75" id="75">75</a>
 <a href="#76" id="76">76</a>
 <a href="#77" id="77">77</a>
-<a href="#78" id="78">78</a></pre></div><pre class="rust"><code><span class="doccomment">//! DNS node discovery for iroh
+<a href="#78" id="78">78</a>
+<a href="#79" id="79">79</a>
+<a href="#80" id="80">80</a>
+<a href="#81" id="81">81</a></pre></div><pre class="rust"><code><span class="doccomment">//! DNS node discovery for iroh
 
-</span><span class="kw">use </span>anyhow::Result;
-<span class="kw">use </span>iroh_base::NodeId;
+</span><span class="kw">use </span>iroh_base::NodeId;
 <span class="kw">pub use </span>iroh_relay::dns::{N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING};
 <span class="kw">use </span>n0_future::boxed::BoxStream;
 
@@ -141,7 +143,11 @@
 }
 
 <span class="kw">impl </span>Discovery <span class="kw">for </span>DnsDiscovery {
-    <span class="kw">fn </span>resolve(<span class="kw-2">&amp;</span><span class="self">self</span>, ep: Endpoint, node_id: NodeId) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem&gt;&gt;&gt; {
+    <span class="kw">fn </span>resolve(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        ep: Endpoint,
+        node_id: NodeId,
+    ) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;anyhow::Result&lt;DiscoveryItem&gt;&gt;&gt; {
         <span class="kw">let </span>resolver = ep.dns_resolver().clone();
         <span class="kw">let </span>origin_domain = <span class="self">self</span>.origin_domain.clone();
         <span class="kw">let </span>fut = <span class="kw">async move </span>{

@@ -1782,7 +1782,7 @@
     task::{Context, Poll},
 };
 
-<span class="kw">use </span>anyhow::{anyhow, bail, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
+<span class="kw">use </span>anyhow::{anyhow, bail, Context <span class="kw">as _</span>};
 <span class="kw">use </span>iroh_base::RelayUrl;
 <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
 </span><span class="kw">use </span>iroh_metrics::inc;
@@ -2005,7 +2005,7 @@
     ///   - Receives actor messages (sent by those futures).
     ///   - Updates the report, cancels unneeded futures.
     /// - Sends the report to the net_report actor.
-    </span><span class="kw">async fn </span>run_inner(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">async fn </span>run_inner(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; anyhow::Result&lt;()&gt; {
         <span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">let </span>port_mapper = <span class="self">self</span>.socket_state.port_mapper.is_some();
         <span class="attr">#[cfg(wasm_browser)]
@@ -2329,7 +2329,7 @@
     ///     failure permanent.  Probes in a probe set are essentially retries.
     ///   - Once there are [`ProbeReport`]s from enough nodes, all remaining probes are
     ///     aborted.  That is, the main actor loop stops polling them.
-    </span><span class="kw">async fn </span>spawn_probes_task(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;JoinSet&lt;<span class="prelude-ty">Result</span>&lt;ProbeReport&gt;&gt;&gt; {
+    </span><span class="kw">async fn </span>spawn_probes_task(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; anyhow::Result&lt;JoinSet&lt;anyhow::Result&lt;ProbeReport&gt;&gt;&gt; {
         <span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">let </span>if_state = interfaces::State::new().<span class="kw">await</span>;
         <span class="attr">#[cfg(not(wasm_browser))]
@@ -2781,7 +2781,7 @@
     dns_resolver: <span class="kw-2">&amp;</span>DnsResolver,
     dm: <span class="kw-2">&amp;</span>RelayMap,
     preferred_relay: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;,
-) -&gt; <span class="prelude-ty">Result</span>&lt;bool&gt; {
+) -&gt; anyhow::Result&lt;bool&gt; {
     <span class="comment">// If we have a preferred relay node and we can use it for non-STUN requests, try that;
     // otherwise, pick a random one suitable for non-STUN requests.
     </span><span class="kw">let </span>preferred_relay = preferred_relay.and_then(|url| <span class="kw">match </span>dm.get_node(<span class="kw-2">&amp;</span>url) {
@@ -2859,7 +2859,7 @@
 }
 
 <span class="doccomment">/// Returns the proper port based on the protocol of the probe.
-</span><span class="kw">fn </span>get_port(relay_node: <span class="kw-2">&amp;</span>RelayNode, proto: <span class="kw-2">&amp;</span>ProbeProto) -&gt; <span class="prelude-ty">Result</span>&lt;u16&gt; {
+</span><span class="kw">fn </span>get_port(relay_node: <span class="kw-2">&amp;</span>RelayNode, proto: <span class="kw-2">&amp;</span>ProbeProto) -&gt; anyhow::Result&lt;u16&gt; {
     <span class="kw">match </span>proto {
         <span class="attr">#[cfg(not(wasm_browser))]
         </span>ProbeProto::QuicIpv4 | ProbeProto::QuicIpv6 =&gt; {
@@ -2898,7 +2898,7 @@
     dns_resolver: <span class="kw-2">&amp;</span>DnsResolver,
     relay_node: <span class="kw-2">&amp;</span>RelayNode,
     proto: ProbeProto,
-) -&gt; <span class="prelude-ty">Result</span>&lt;SocketAddr&gt; {
+) -&gt; anyhow::Result&lt;SocketAddr&gt; {
     <span class="kw">if </span>relay_node.stun_only &amp;&amp; !<span class="macro">matches!</span>(proto, ProbeProto::StunIpv4 | ProbeProto::StunIpv6) {
         <span class="macro">bail!</span>(<span class="string">"Relay node not suitable for non-STUN probes"</span>);
     }
@@ -2925,7 +2925,7 @@
     dns_resolver: <span class="kw-2">&amp;</span>DnsResolver,
     relay: <span class="kw-2">&amp;</span>RelayNode,
     port: u16,
-) -&gt; <span class="prelude-ty">Result</span>&lt;SocketAddr&gt; {
+) -&gt; anyhow::Result&lt;SocketAddr&gt; {
     <span class="kw">match </span>relay.url.host() {
         <span class="prelude-val">Some</span>(url::Host::Domain(hostname)) =&gt; {
             <span class="macro">debug!</span>(%hostname, <span class="string">"Performing DNS A lookup for relay addr"</span>);
@@ -2955,7 +2955,7 @@
     dns_resolver: <span class="kw-2">&amp;</span>DnsResolver,
     relay: <span class="kw-2">&amp;</span>RelayNode,
     port: u16,
-) -&gt; <span class="prelude-ty">Result</span>&lt;SocketAddr&gt; {
+) -&gt; anyhow::Result&lt;SocketAddr&gt; {
     <span class="kw">match </span>relay.url.host() {
         <span class="prelude-val">Some</span>(url::Host::Domain(hostname)) =&gt; {
             <span class="macro">debug!</span>(%hostname, <span class="string">"Performing DNS AAAA lookup for relay addr"</span>);
@@ -3031,7 +3031,7 @@
     <span class="attr">#[cfg(not(wasm_browser))] </span>dns_resolver: <span class="kw-2">&amp;</span>DnsResolver,
     node: <span class="kw-2">&amp;</span>RelayNode,
     certs: <span class="prelude-ty">Option</span>&lt;Vec&lt;rustls::pki_types::CertificateDer&lt;<span class="lifetime">'static</span>&gt;&gt;&gt;,
-) -&gt; <span class="prelude-ty">Result</span>&lt;(Duration, IpAddr)&gt; {
+) -&gt; anyhow::Result&lt;(Duration, IpAddr)&gt; {
     <span class="kw">let </span>url = node.url.join(RELAY_PROBE_PATH)<span class="question-mark">?</span>;
 
     <span class="comment">// This should also use same connection establishment as relay client itself, which

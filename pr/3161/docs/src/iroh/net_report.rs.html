@@ -1390,7 +1390,15 @@
 <a href="#1389" id="1389">1389</a>
 <a href="#1390" id="1390">1390</a>
 <a href="#1391" id="1391">1391</a>
-<a href="#1392" id="1392">1392</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
+<a href="#1392" id="1392">1392</a>
+<a href="#1393" id="1393">1393</a>
+<a href="#1394" id="1394">1394</a>
+<a href="#1395" id="1395">1395</a>
+<a href="#1396" id="1396">1396</a>
+<a href="#1397" id="1397">1397</a>
+<a href="#1398" id="1398">1398</a>
+<a href="#1399" id="1399">1399</a>
+<a href="#1400" id="1400">1400</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
 //!
 //! NetReport is responsible for finding out the network conditions of the current host, like
 //! whether it is connected to the internet via IPv4 and/or IPv6, what the NAT situation is
@@ -1409,7 +1417,7 @@
     sync::Arc,
 };
 
-<span class="kw">use </span>anyhow::{anyhow, <span class="prelude-ty">Result</span>};
+<span class="kw">use </span>anyhow::anyhow;
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>iroh_base::RelayUrl;
 <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
@@ -1641,7 +1649,7 @@
         <span class="attr">#[cfg(not(wasm_browser))] </span>port_mapper: <span class="prelude-ty">Option</span>&lt;portmapper::Client&gt;,
         <span class="attr">#[cfg(not(wasm_browser))] </span>dns_resolver: DnsResolver,
         <span class="attr">#[cfg(not(wasm_browser))] </span>ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddresses&gt;,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+    ) -&gt; anyhow::Result&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>actor = Actor::new(
             <span class="attr">#[cfg(not(wasm_browser))]
             </span>port_mapper,
@@ -1698,7 +1706,7 @@
         <span class="attr">#[cfg(not(wasm_browser))] </span>stun_sock_v4: <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;,
         <span class="attr">#[cfg(not(wasm_browser))] </span>stun_sock_v6: <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;,
         <span class="attr">#[cfg(not(wasm_browser))] </span>quic_config: <span class="prelude-ty">Option</span>&lt;QuicConfig&gt;,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;Arc&lt;Report&gt;&gt; {
+    ) -&gt; anyhow::Result&lt;Arc&lt;Report&gt;&gt; {
         <span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">let </span>opts = Options::default()
             .stun_v4(stun_sock_v4)
@@ -1718,7 +1726,11 @@
     /// It may not be called concurrently with itself, `&amp;mut self` takes care of that.
     ///
     /// Look at [`Options`] for the different configuration options.
-    </span><span class="kw">pub async fn </span>get_report(<span class="kw-2">&amp;mut </span><span class="self">self</span>, relay_map: RelayMap, opts: Options) -&gt; <span class="prelude-ty">Result</span>&lt;Arc&lt;Report&gt;&gt; {
+    </span><span class="kw">pub async fn </span>get_report(
+        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+        relay_map: RelayMap,
+        opts: Options,
+    ) -&gt; anyhow::Result&lt;Arc&lt;Report&gt;&gt; {
         <span class="kw">let </span>rx = <span class="self">self</span>.get_report_channel(relay_map, opts).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">match </span>rx.<span class="kw">await </span>{
             <span class="prelude-val">Ok</span>(res) =&gt; res,
@@ -1733,7 +1745,7 @@
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         relay_map: RelayMap,
         opts: Options,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;oneshot::Receiver&lt;<span class="prelude-ty">Result</span>&lt;Arc&lt;Report&gt;&gt;&gt;&gt; {
+    ) -&gt; anyhow::Result&lt;oneshot::Receiver&lt;anyhow::Result&lt;Arc&lt;Report&gt;&gt;&gt;&gt; {
         <span class="kw">let </span>(tx, rx) = oneshot::channel();
         <span class="self">self</span>.addr
             .send(Message::RunCheck {
@@ -1769,7 +1781,7 @@
         <span class="doccomment">/// Options for the report
         </span>opts: Options,
         <span class="doccomment">/// Channel to receive the response.
-        </span>response_tx: oneshot::Sender&lt;<span class="prelude-ty">Result</span>&lt;Arc&lt;Report&gt;&gt;&gt;,
+        </span>response_tx: oneshot::Sender&lt;anyhow::Result&lt;Arc&lt;Report&gt;&gt;&gt;,
     },
     <span class="doccomment">/// A report produced by the [`reportgen`] actor.
     </span>ReportReady { report: Box&lt;Report&gt; },
@@ -1883,7 +1895,7 @@
         <span class="attr">#[cfg(not(wasm_browser))] </span>port_mapper: <span class="prelude-ty">Option</span>&lt;portmapper::Client&gt;,
         <span class="attr">#[cfg(not(wasm_browser))] </span>dns_resolver: DnsResolver,
         <span class="attr">#[cfg(not(wasm_browser))] </span>ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddresses&gt;,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+    ) -&gt; anyhow::Result&lt;<span class="self">Self</span>&gt; {
         <span class="comment">// TODO: consider an instrumented flume channel so we have metrics.
         </span><span class="kw">let </span>(sender, receiver) = mpsc::channel(<span class="number">32</span>);
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
@@ -1949,7 +1961,7 @@
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         relay_map: RelayMap,
         opts: Options,
-        response_tx: oneshot::Sender&lt;<span class="prelude-ty">Result</span>&lt;Arc&lt;Report&gt;&gt;&gt;,
+        response_tx: oneshot::Sender&lt;anyhow::Result&lt;Arc&lt;Report&gt;&gt;&gt;,
     ) {
         <span class="kw">let </span>protocols = opts.to_protocols();
         <span class="attr">#[cfg(not(wasm_browser))]
@@ -2172,7 +2184,7 @@
     <span class="doccomment">/// The handle of the [`reportgen`] actor, cancels the actor on drop.
     </span>_reportgen: reportgen::Client,
     <span class="doccomment">/// Where to send the completed report.
-    </span>report_tx: oneshot::Sender&lt;<span class="prelude-ty">Result</span>&lt;Arc&lt;Report&gt;&gt;&gt;,
+    </span>report_tx: oneshot::Sender&lt;anyhow::Result&lt;Arc&lt;Report&gt;&gt;&gt;,
 }
 
 <span class="doccomment">/// Test if IPv6 works at all, or if it's been hard disabled at the OS level.
@@ -2247,7 +2259,11 @@
     }
 
     <span class="doccomment">/// Receive STUN response from a UDP socket, pass it to the actor.
-    </span><span class="kw">async fn </span>recv_stun_once(sock: <span class="kw-2">&amp;</span>UdpSocket, buf: <span class="kw-2">&amp;mut </span>[u8], actor_addr: <span class="kw-2">&amp;</span>Addr) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">async fn </span>recv_stun_once(
+        sock: <span class="kw-2">&amp;</span>UdpSocket,
+        buf: <span class="kw-2">&amp;mut </span>[u8],
+        actor_addr: <span class="kw-2">&amp;</span>Addr,
+    ) -&gt; anyhow::Result&lt;()&gt; {
         <span class="kw">let </span>(count, <span class="kw-2">mut </span>from_addr) = sock
             .recv_from(buf)
             .<span class="kw">await
@@ -2451,7 +2467,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_basic() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">async fn </span>test_basic() -&gt; anyhow::Result&lt;()&gt; {
         <span class="kw">let </span>(stun_addr, stun_stats, _cleanup_guard) =
             stun_utils::serve(<span class="string">"127.0.0.1"</span>.parse().unwrap()).<span class="kw">await</span><span class="question-mark">?</span>;
 
@@ -2494,7 +2510,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_udp_blocked() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">async fn </span>test_udp_blocked() -&gt; anyhow::Result&lt;()&gt; {
         <span class="comment">// Create a "STUN server", which will never respond to anything.  This is how UDP to
         // the STUN server being blocked will look like from the client's perspective.
         </span><span class="kw">let </span>blackhole = tokio::net::UdpSocket::bind(<span class="string">"127.0.0.1:0"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
@@ -2545,7 +2561,7 @@
     }
 
     <span class="attr">#[tokio::test(flavor = <span class="string">"current_thread"</span>, start_paused = <span class="bool-val">true</span>)]
-    </span><span class="kw">async fn </span>test_add_report_history_set_preferred_relay() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">async fn </span>test_add_report_history_set_preferred_relay() -&gt; anyhow::Result&lt;()&gt; {
         <span class="kw">fn </span>relay_url(i: u16) -&gt; RelayUrl {
             <span class="macro">format!</span>(<span class="string">"http://{i}.com"</span>).parse().unwrap()
         }
@@ -2726,7 +2742,7 @@
     }
 
     <span class="attr">#[tokio::test]
-    </span><span class="kw">async fn </span>test_hairpin() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">async fn </span>test_hairpin() -&gt; anyhow::Result&lt;()&gt; {
         <span class="comment">// Hairpinning is initiated after we discover our own IPv4 socket address (IP +
         // port) via STUN, so the test needs to have a STUN server and perform STUN over
         // IPv4 first.  Hairpinning detection works by sending a STUN *request* to **our own
