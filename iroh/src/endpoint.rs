@@ -2787,4 +2787,102 @@ mod tests {
 
         Ok(())
     }
+
+    /// Configures the accept side to take `accept_alpns` ALPNs, then connects to it with `primary_connect_alpn`
+    /// with `secondary_connect_alpns` set, and finally returns the negotiated ALPN.
+    async fn alpn_connection_test(
+        accept_alpns: Vec<Vec<u8>>,
+        primary_connect_alpn: &[u8],
+        secondary_connect_alpns: Vec<Vec<u8>>,
+    ) -> testresult::TestResult<Option<Vec<u8>>> {
+        let client = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .await?;
+        let server = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .alpns(accept_alpns)
+            .bind()
+            .await?;
+        let server_addr = server.node_addr().await?;
+        let server_task = tokio::spawn({
+            let server = server.clone();
+            async move {
+                let incoming = server.accept().await.unwrap();
+                let conn = incoming.await?;
+                conn.close(0u32.into(), b"bye!");
+                testresult::TestResult::Ok(conn.alpn())
+            }
+        });
+
+        let conn = client
+            .connect_with_opts(
+                server_addr,
+                primary_connect_alpn,
+                ConnectOptions::new().with_additional_alpns(secondary_connect_alpns),
+            )
+            .await?;
+        let conn = conn.await?;
+        let client_alpn = conn.alpn();
+        conn.closed().await;
+        client.close().await;
+        server.close().await;
+
+        let server_alpn = server_task.await??;
+
+        assert_eq!(client_alpn, server_alpn);
+
+        Ok(server_alpn)
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn connect_multiple_alpn_negotiated() -> testresult::TestResult {
+        const ALPN_ONE: &[u8] = b"alpn/1";
+        const ALPN_TWO: &[u8] = b"alpn/2";
+
+        assert_eq!(
+            alpn_connection_test(
+                // Prefer version 2 over version 1 on the accept side
+                vec![ALPN_TWO.to_vec(), ALPN_ONE.to_vec()],
+                ALPN_TWO,
+                vec![ALPN_ONE.to_vec()],
+            )
+            .await?,
+            Some(ALPN_TWO.to_vec()),
+            "accept side prefers version 2 over 1"
+        );
+
+        assert_eq!(
+            alpn_connection_test(
+                // Only support the old version
+                vec![ALPN_ONE.to_vec()],
+                ALPN_TWO,
+                vec![ALPN_ONE.to_vec()],
+            )
+            .await?,
+            Some(ALPN_ONE.to_vec()),
+            "accept side only supports the old version"
+        );
+
+        assert_eq!(
+            alpn_connection_test(
+                vec![ALPN_TWO.to_vec(), ALPN_ONE.to_vec()],
+                ALPN_ONE,
+                vec![ALPN_TWO.to_vec()],
+            )
+            .await?,
+            Some(ALPN_TWO.to_vec()),
+            "connect side ALPN order doesn't matter"
+        );
+
+        assert_eq!(
+            alpn_connection_test(vec![ALPN_TWO.to_vec(), ALPN_ONE.to_vec()], ALPN_ONE, vec![],)
+                .await?,
+            Some(ALPN_ONE.to_vec()),
+            "connect side only supports the old version"
+        );
+
+        Ok(())
+    }
 }
