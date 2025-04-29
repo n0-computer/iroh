@@ -158,7 +158,7 @@ impl MaybeTlsStreamBuilder {
             .resolve_host(&self.url, self.prefer_ipv6, DNS_TIMEOUT)
             .await?;
 
-        let port = url_port(&self.url).context(InvalidTargetPortSnafu {})?;
+        let port = url_port(&self.url).context(InvalidTargetPortSnafu)?;
         let addr = SocketAddr::new(dst_ip, port);
 
         debug!("connecting to {}", addr);
@@ -224,7 +224,7 @@ impl MaybeTlsStreamBuilder {
             url: self.url.clone(),
         })?;
 
-        let port = url_port(&self.url).context(InvalidTargetPortSnafu {})?;
+        let port = url_port(&self.url).context(InvalidTargetPortSnafu)?;
 
         // Establish Proxy Tunnel
         let mut req_builder = Request::builder()
@@ -255,17 +255,14 @@ impl MaybeTlsStreamBuilder {
 
         let (mut sender, conn) = hyper::client::conn::http1::handshake(io)
             .await
-            .context(ProxyConnectSnafu {})?;
+            .context(ProxyConnectSnafu)?;
         task::spawn(async move {
             if let Err(err) = conn.with_upgrades().await {
                 error!("Proxy connection failed: {:?}", err);
             }
         });
 
-        let res = sender
-            .send_request(req)
-            .await
-            .context(ProxyConnectSnafu {})?;
+        let res = sender.send_request(req).await.context(ProxyConnectSnafu)?;
         if !res.status().is_success() {
             return Err(ProxyConnectInvalidStatusSnafu {
                 status: res.status(),
@@ -273,9 +270,7 @@ impl MaybeTlsStreamBuilder {
             .build());
         }
 
-        let upgraded = hyper::upgrade::on(res)
-            .await
-            .context(ProxyConnectSnafu {})?;
+        let upgraded = hyper::upgrade::on(res).await.context(ProxyConnectSnafu)?;
         let Parts { io, read_buf, .. } = upgraded
             .downcast::<TokioIo<MaybeTlsStream<tokio::net::TcpStream>>>()
             .expect("only this upgrade used");

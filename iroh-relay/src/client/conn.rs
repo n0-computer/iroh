@@ -436,7 +436,7 @@ impl TryFrom<Frame> for ReceivedMessage {
             Frame::Pong { data } => Ok(ReceivedMessage::Pong(data)),
             Frame::Health { problem } => {
                 let problem = std::str::from_utf8(&problem)
-                    .context(InvalidProtocolMessageEncodingSnafu {})?
+                    .context(InvalidProtocolMessageEncodingSnafu)?
                     .to_owned();
                 let problem = Some(problem);
                 Ok(ReceivedMessage::Health { problem })

@@ -177,7 +177,7 @@ impl DnsResolver {
         prefer_ipv6: bool,
         timeout: Duration,
     ) -> Result<IpAddr, Error> {
-        let host = url.host().context(MissingHostSnafu {})?;
+        let host = url.host().context(MissingHostSnafu)?;
         match host {
             url::Host::Domain(domain) => {
                 // Need to do a DNS lookup
@@ -198,9 +198,9 @@ impl DnsResolver {
                     (Ok(mut v4), Ok(mut v6)) => (v4.next(), v6.next()),
                 };
                 if prefer_ipv6 {
-                    v6.or(v4).context(NoResponseSnafu {})
+                    v6.or(v4).context(NoResponseSnafu)
                 } else {
-                    v4.or(v6).context(NoResponseSnafu {})
+                    v4.or(v6).context(NoResponseSnafu)
                 }
             }
             url::Host::Ipv4(ip) => Ok(IpAddr::V4(ip)),
@@ -459,7 +459,7 @@ pub(crate) mod tests {
             let r_pos = DONE_CALL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             async move {
                 tracing::info!(r_pos, "call");
-                CALL_RESULTS[r_pos].map_err(|_| InvalidResponseSnafu {}.build())
+                CALL_RESULTS[r_pos].map_err(|_| InvalidResponseSnafu.build())
             }
         };
 

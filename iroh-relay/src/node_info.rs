@@ -74,8 +74,10 @@ pub enum Error {
     InvalidLength { len: usize },
     #[snafu(display("node id is not a valid public key"))]
     InvalidSignature { source: SignatureError },
+    #[cfg(not(wasm_browser))]
     #[snafu(display("name is not a valid TXT label"))]
     InvalidLabel { source: ProtoError },
+    #[cfg(not(wasm_browser))]
     #[snafu(display("failed to resolve TXT record"))]
     LookupFailed { source: DnsError },
     #[snafu(transparent)]
@@ -106,11 +108,11 @@ impl NodeIdExt for NodeId {
     }
 
     fn from_z32(s: &str) -> Result<NodeId, Error> {
-        let bytes = z32::decode(s.as_bytes()).context(InvalidEncodingZ32Snafu {})?;
+        let bytes = z32::decode(s.as_bytes()).context(InvalidEncodingZ32Snafu)?;
         let bytes: &[u8; 32] = &bytes
             .try_into()
             .map_err(|_| InvalidLengthSnafu { len: s.len() }.build())?;
-        let node_id = NodeId::from_bytes(bytes).context(InvalidSignatureSnafu {})?;
+        let node_id = NodeId::from_bytes(bytes).context(InvalidSignatureSnafu)?;
         Ok(node_id)
     }
 }
@@ -241,7 +243,7 @@ impl TryFrom<String> for UserData {
     type Error = MaxLengthExceededError;
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
-        snafu::ensure!(value.len() <= Self::MAX_LENGTH, MaxLengthExceededSnafu {});
+        snafu::ensure!(value.len() <= Self::MAX_LENGTH, MaxLengthExceededSnafu);
         Ok(Self(value))
     }
 }
@@ -250,7 +252,7 @@ impl FromStr for UserData {
     type Err = MaxLengthExceededError;
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        snafu::ensure!(s.len() <= Self::MAX_LENGTH, MaxLengthExceededSnafu {});
+        snafu::ensure!(s.len() <= Self::MAX_LENGTH, MaxLengthExceededSnafu);
         Ok(Self(s.to_string()))
     }
 }
@@ -521,7 +523,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         let lookup = resolver
             .lookup_txt(name, DNS_TIMEOUT)
             .await
-            .context(LookupFailedSnafu {})?;
+            .context(LookupFailedSnafu)?;
         let attrs = Self::from_txt_lookup(lookup)?;
         Ok(attrs)
     }
@@ -540,7 +542,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     /// Looks up attributes by DNS name.
     #[cfg(not(wasm_browser))]
     pub(crate) async fn lookup_by_name(resolver: &DnsResolver, name: &str) -> Result<Self, Error> {
-        let name = Name::from_str(name).context(InvalidLabelSnafu {})?;
+        let name = Name::from_str(name).context(InvalidLabelSnafu)?;
         TxtAttrs::lookup(resolver, name).await
     }
 
@@ -584,8 +586,8 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
 
         // TODO(matheus23): Errors here are extremely weird and need cleanup
         let queried_node_id = node_id_from_hickory_name(lookup.0.query().name())
-            .context(crate::dns::InvalidResponseSnafu {})
-            .context(LookupFailedSnafu {})?;
+            .context(crate::dns::InvalidResponseSnafu)
+            .context(LookupFailedSnafu)?;
 
         let strings = lookup.0.as_lookup().record_iter().filter_map(|record| {
             match node_id_from_hickory_name(record.name()) {
@@ -652,7 +654,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         let mut packet = dns::Packet::new_reply(0);
         for s in self.to_txt_strings() {
             let mut txt = rdata::TXT::new();
-            txt.add_string(&s).context(InvalidTxtEntrySnafu {})?;
+            txt.add_string(&s).context(InvalidTxtEntrySnafu)?;
             let rdata = rdata::RData::TXT(txt.into_owned());
             packet.answers.push(dns::ResourceRecord::new(
                 name.clone(),
@@ -670,14 +672,14 @@ fn ensure_iroh_txt_label(name: Name) -> Result<Name, Error> {
     if name.iter().next() == Some(IROH_TXT_NAME.as_bytes()) {
         Ok(name)
     } else {
-        Name::parse(IROH_TXT_NAME, Some(&name)).context(InvalidLabelSnafu {})
+        Name::parse(IROH_TXT_NAME, Some(&name)).context(InvalidLabelSnafu)
     }
 }
 
 #[cfg(not(wasm_browser))]
 fn node_domain(node_id: &NodeId, origin: &str) -> Result<Name, Error> {
     let domain = format!("{}.{}", NodeId::to_z32(node_id), origin);
-    let domain = Name::from_str(&domain).context(InvalidLabelSnafu {})?;
+    let domain = Name::from_str(&domain).context(InvalidLabelSnafu)?;
     Ok(domain)
 }
 

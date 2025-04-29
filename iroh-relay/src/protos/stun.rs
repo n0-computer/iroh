@@ -90,13 +90,11 @@ pub fn parse_binding_request(b: &[u8]) -> Result<TransactionId, Error> {
         .with_validation() // ensure fingerprint is validated
         .build();
     let decoder = MessageDecoderBuilder::default().with_context(ctx).build();
-    let (msg, _) = decoder
-        .decode(b)
-        .map_err(|_| InvalidMessageSnafu {}.build())?;
+    let (msg, _) = decoder.decode(b).map_err(|_| InvalidMessageSnafu.build())?;
 
     let tx = *msg.transaction_id();
     if msg.method() != methods::BINDING {
-        return Err(NotBindingSnafu {}.build());
+        return Err(NotBindingSnafu.build());
     }
 
     // TODO: Tailscale sets the software to tailscale, we should check if we want to do this too.
@@ -107,7 +105,7 @@ pub fn parse_binding_request(b: &[u8]) -> Result<TransactionId, Error> {
         .map(|attr| !attr.is_fingerprint())
         .unwrap_or_default()
     {
-        return Err(NoFingerprintSnafu {}.build());
+        return Err(NoFingerprintSnafu.build());
     }
 
     Ok(tx)
@@ -117,13 +115,11 @@ pub fn parse_binding_request(b: &[u8]) -> Result<TransactionId, Error> {
 /// The IP address is extracted from the XOR-MAPPED-ADDRESS attribute.
 pub fn parse_response(b: &[u8]) -> Result<(TransactionId, SocketAddr), Error> {
     let decoder = MessageDecoder::default();
-    let (msg, _) = decoder
-        .decode(b)
-        .map_err(|_| InvalidMessageSnafu {}.build())?;
+    let (msg, _) = decoder.decode(b).map_err(|_| InvalidMessageSnafu.build())?;
 
     let tx = *msg.transaction_id();
     if msg.class() != MessageClass::SuccessResponse {
-        return Err(NotSuccessResponseSnafu {}.build());
+        return Err(NotSuccessResponseSnafu.build());
     }
 
     // Read through the attributes.
@@ -158,7 +154,7 @@ pub fn parse_response(b: &[u8]) -> Result<(TransactionId, SocketAddr), Error> {
         return Ok((tx, addr));
     }
 
-    Err(MalformedAttrsSnafu {}.build())
+    Err(MalformedAttrsSnafu.build())
 }
 
 #[cfg(test)]

@@ -233,7 +233,7 @@ impl ClientBuilder {
                 (conn, Some(local_addr))
             }
             #[cfg(wasm_browser)]
-            Protocol::Relay => return Err(ConnectError::RelayProtoNotAvailable),
+            Protocol::Relay => return Err(RelayProtoNotAvailableSnafu.build()),
         };
 
         event!(
