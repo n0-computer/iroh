@@ -28,7 +28,7 @@ use std::{
     task::{Context, Poll, Waker},
 };
 
-use anyhow::{anyhow, Context as _};
+use anyhow::anyhow;
 use atomic_waker::AtomicWaker;
 use bytes::Bytes;
 use concurrent_queue::ConcurrentQueue;
@@ -50,7 +50,7 @@ use quinn::{AsyncUdpSocket, ServerConfig};
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use relay_actor::RelaySendItem;
 use smallvec::{smallvec, SmallVec};
-use snafu::{IntoError, Snafu};
+use snafu::{IntoError, ResultExt, Snafu};
 use tokio::sync::{self, mpsc, Mutex};
 use tokio_util::sync::CancellationToken;
 use tracing::{
@@ -277,7 +277,7 @@ pub(crate) struct SocketState {
 
 impl MagicSock {
     /// Creates a magic [`MagicSock`] listening on [`Options::addr_v4`] and [`Options::addr_v6`].
-    pub(crate) async fn spawn(opts: Options) -> anyhow::Result<Handle> {
+    pub(crate) async fn spawn(opts: Options) -> Result<Handle, CreateHandleError> {
         Handle::new(opts).await
     }
 
@@ -1663,9 +1663,29 @@ impl DirectAddrUpdateState {
     }
 }
 
+#[allow(missing_docs)]
+#[common_fields({
+    backtrace: Option<snafu::Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[derive(Debug, Snafu)]
+pub(crate) enum CreateHandleError {
+    #[snafu(display("Failed to create bind sockets"))]
+    BindSockets { source: io::Error },
+    #[snafu(display("Failed to create internal quinn endpoint"))]
+    CreateQuinnEndpoint { source: io::Error },
+    #[snafu(display("Failed to create socket state"))]
+    CreateSocketState { source: io::Error },
+    #[snafu(display("Failed to create net report client"))]
+    CreateNetReportClient { source: anyhow::Error },
+    #[snafu(display("Failed to create netmon monitor"))]
+    CreateNetmonMonitor { source: netmon::Error },
+}
+
 impl Handle {
     /// Creates a magic [`MagicSock`] listening on [`Options::addr_v4`] and [`Options::addr_v6`].
-    async fn new(opts: Options) -> anyhow::Result<Self> {
+    async fn new(opts: Options) -> Result<Self, CreateHandleError> {
         let me = opts.secret_key.public().fmt_short();
 
         Self::with_name(me, opts)
@@ -1673,7 +1693,7 @@ impl Handle {
             .await
     }
 
-    async fn with_name(me: String, opts: Options) -> anyhow::Result<Self> {
+    async fn with_name(me: String, opts: Options) -> Result<Self, CreateHandleError> {
         let Options {
             addr_v4,
             addr_v6,
@@ -1694,10 +1714,12 @@ impl Handle {
         } = opts;
 
         #[cfg(not(wasm_browser))]
-        let actor_sockets = ActorSocketState::bind(addr_v4, addr_v6)?;
+        let actor_sockets = ActorSocketState::bind(addr_v4, addr_v6).context(BindSocketsSnafu)?;
 
         #[cfg(not(wasm_browser))]
-        let sockets = actor_sockets.msock_socket_state()?;
+        let sockets = actor_sockets
+            .msock_socket_state()
+            .context(CreateSocketStateSnafu)?;
 
         let ip_mapped_addrs = IpMappedAddresses::default();
 
@@ -1708,7 +1730,8 @@ impl Handle {
             dns_resolver.clone(),
             #[cfg(not(wasm_browser))]
             Some(ip_mapped_addrs.clone()),
-        )?;
+        )
+        .context(CreateNetReportClientSnafu)?;
 
         let (actor_sender, actor_receiver) = mpsc::channel(256);
         let (relay_actor_sender, relay_actor_receiver) = mpsc::channel(256);
@@ -1774,7 +1797,8 @@ impl Handle {
             Arc::new(quinn::TokioRuntime),
             #[cfg(wasm_browser)]
             Arc::new(crate::web_runtime::WebRuntime),
-        )?;
+        )
+        .context(CreateQuinnEndpointSnafu)?;
 
         let mut actor_tasks = JoinSet::default();
 
@@ -1801,7 +1825,9 @@ impl Handle {
             }
         });
 
-        let network_monitor = netmon::Monitor::new().await?;
+        let network_monitor = netmon::Monitor::new()
+            .await
+            .context(CreateNetmonMonitorSnafu)?;
         let qad_endpoint = endpoint.clone();
 
         // create a client config for the endpoint to use for QUIC address discovery
@@ -2084,6 +2110,12 @@ struct RelayDatagramRecvQueue {
     waker: AtomicWaker,
 }
 
+#[derive(Debug, Snafu)]
+enum RelayRecvDatagramError {
+    #[snafu(display("Queue is closed"))]
+    Closed,
+}
+
 impl RelayDatagramRecvQueue {
     /// Creates a new, empty queue with a fixed size bound of 512 items.
     fn new() -> Self {
@@ -2118,7 +2150,10 @@ impl RelayDatagramRecvQueue {
     /// The reason this method is made available as `&self` is because
     /// the interface for quinn's [`AsyncUdpSocket::poll_recv`] requires us
     /// to be able to poll from `&self`.
-    fn poll_recv(&self, cx: &mut Context) -> Poll<anyhow::Result<RelayRecvDatagram>> {
+    fn poll_recv(
+        &self,
+        cx: &mut Context,
+    ) -> Poll<Result<RelayRecvDatagram, RelayRecvDatagramError>> {
         match self.queue.pop() {
             Ok(value) => Poll::Ready(Ok(value)),
             Err(concurrent_queue::PopError::Empty) => {
@@ -2132,11 +2167,11 @@ impl RelayDatagramRecvQueue {
                     Err(concurrent_queue::PopError::Empty) => Poll::Pending,
                     Err(concurrent_queue::PopError::Closed) => {
                         self.waker.take();
-                        Poll::Ready(Err(anyhow!("Queue closed")))
+                        Poll::Ready(Err(ClosedSnafu.build()))
                     }
                 }
             }
-            Err(concurrent_queue::PopError::Closed) => Poll::Ready(Err(anyhow!("Queue closed"))),
+            Err(concurrent_queue::PopError::Closed) => Poll::Ready(Err(ClosedSnafu.build())),
         }
     }
 }
@@ -2345,7 +2380,7 @@ struct ActorSocketState {
 
 #[cfg(not(wasm_browser))]
 impl ActorSocketState {
-    fn bind(addr_v4: Option<SocketAddrV4>, addr_v6: Option<SocketAddrV6>) -> anyhow::Result<Self> {
+    fn bind(addr_v4: Option<SocketAddrV4>, addr_v6: Option<SocketAddrV6>) -> io::Result<Self> {
         let port_mapper = portmapper::Client::default();
         let (v4, v6) = Self::bind_sockets(addr_v4, addr_v6)?;
 
@@ -2376,9 +2411,9 @@ impl ActorSocketState {
     fn bind_sockets(
         addr_v4: Option<SocketAddrV4>,
         addr_v6: Option<SocketAddrV6>,
-    ) -> anyhow::Result<(Arc<UdpSocket>, Option<Arc<UdpSocket>>)> {
+    ) -> io::Result<(Arc<UdpSocket>, Option<Arc<UdpSocket>>)> {
         let addr_v4 = addr_v4.unwrap_or_else(|| SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0));
-        let v4 = Arc::new(bind_with_fallback(SocketAddr::V4(addr_v4)).context("bind IPv4 failed")?);
+        let v4 = Arc::new(bind_with_fallback(SocketAddr::V4(addr_v4))?);
 
         let ip4_port = v4.local_addr()?.port();
         let ip6_port = ip4_port.checked_add(1).unwrap_or(ip4_port - 1);
@@ -2395,7 +2430,7 @@ impl ActorSocketState {
         Ok((v4, v6))
     }
 
-    fn msock_socket_state(&self) -> anyhow::Result<SocketState> {
+    fn msock_socket_state(&self) -> io::Result<SocketState> {
         let ipv4_addr = self.v4.local_addr()?;
         let ipv6_addr = self.v6.as_ref().and_then(|c| c.local_addr().ok());
 
@@ -3051,13 +3086,13 @@ fn new_re_stun_timer(initial_delay: bool) -> time::Interval {
 }
 
 #[cfg(not(wasm_browser))]
-fn bind_with_fallback(mut addr: SocketAddr) -> anyhow::Result<UdpSocket> {
+fn bind_with_fallback(mut addr: SocketAddr) -> io::Result<UdpSocket> {
     debug!(%addr, "binding");
 
     // First try binding a preferred port, if specified
     match UdpSocket::bind_full(addr) {
         Ok(socket) => {
-            let local_addr = socket.local_addr().context("UDP socket not bound")?;
+            let local_addr = socket.local_addr()?;
             debug!(%addr, %local_addr, "successfully bound");
             return Ok(socket);
         }
@@ -3065,14 +3100,14 @@ fn bind_with_fallback(mut addr: SocketAddr) -> anyhow::Result<UdpSocket> {
             debug!(%addr, "failed to bind: {err:#}");
             // If that was already the fallback port, then error out
             if addr.port() == 0 {
-                return Err(err.into());
+                return Err(err);
             }
         }
     }
 
     // Otherwise, try binding with port 0
     addr.set_port(0);
-    UdpSocket::bind_full(addr).context("failed to bind on fallback port")
+    UdpSocket::bind_full(addr)
 }
 
 /// The discovered direct addresses of this [`MagicSock`].
@@ -3236,7 +3271,7 @@ impl NodeIdMappedAddr {
 impl TryFrom<Ipv6Addr> for NodeIdMappedAddr {
     type Error = NodeIdMappedAddrError;
 
-    fn try_from(value: Ipv6Addr) -> std::result::Result<Self, Self::Error> {
+    fn try_from(value: Ipv6Addr) -> Result<Self, Self::Error> {
         let octets = value.octets();
         if octets[0] == Self::ADDR_PREFIXL
             && octets[1..6] == Self::ADDR_GLOBAL_ID
@@ -3402,7 +3437,6 @@ impl NetInfo {
 
 #[cfg(test)]
 mod tests {
-    use anyhow::Context;
     use rand::RngCore;
     use tokio_util::task::AbortOnDropHandle;
     use tracing_test::traced_test;
@@ -3576,8 +3610,7 @@ mod tests {
                 time::sleep(Duration::from_millis(200)).await;
             }
         })
-        .await
-        .context("failed to connect nodes")?;
+        .await?;
         info!("all nodes meshed");
         Ok(tasks)
     }
@@ -3588,28 +3621,21 @@ mod tests {
         let conn = ep.endpoint.accept().await.expect("no conn");
 
         info!("connecting");
-        let conn = conn.await.context("[receiver] connecting")?;
+        let conn = conn.await?;
         info!("accepting bi");
-        let (mut send_bi, mut recv_bi) =
-            conn.accept_bi().await.context("[receiver] accepting bi")?;
+        let (mut send_bi, mut recv_bi) = conn.accept_bi().await?;
 
         info!("reading");
-        let val = recv_bi
-            .read_to_end(usize::MAX)
-            .await
-            .context("[receiver] reading to end")?;
+        let val = recv_bi.read_to_end(usize::MAX).await?;
 
         info!("replying");
         for chunk in val.chunks(12) {
-            send_bi
-                .write_all(chunk)
-                .await
-                .context("[receiver] sending chunk")?;
+            send_bi.write_all(chunk).await?;
         }
 
         info!("finishing");
-        send_bi.finish().context("[receiver] finishing")?;
-        send_bi.stopped().await.context("[receiver] stopped")?;
+        send_bi.finish()?;
+        send_bi.stopped().await?;
 
         let stats = conn.stats();
         info!("stats: {:#?}", stats);
@@ -3638,24 +3664,20 @@ mod tests {
     ) -> anyhow::Result<()> {
         info!("connecting to {}", dest_id.fmt_short());
         let dest = NodeAddr::new(dest_id);
-        let conn = ep
-            .endpoint
-            .connect(dest, ALPN)
-            .await
-            .context("[sender] connect")?;
+        let conn = ep.endpoint.connect(dest, ALPN).await?;
 
         info!("opening bi");
-        let (mut send_bi, mut recv_bi) = conn.open_bi().await.context("[sender] open bi")?;
+        let (mut send_bi, mut recv_bi) = conn.open_bi().await?;
 
         info!("writing message");
-        send_bi.write_all(msg).await.context("[sender] write all")?;
+        send_bi.write_all(msg).await?;
 
         info!("finishing");
-        send_bi.finish().context("[sender] finish")?;
-        send_bi.stopped().await.context("[sender] stopped")?;
+        send_bi.finish()?;
+        send_bi.stopped().await?;
 
         info!("reading_to_end");
-        let val = recv_bi.read_to_end(usize::MAX).await.context("[sender]")?;
+        let val = recv_bi.read_to_end(usize::MAX).await?;
         assert_eq!(
             val,
             msg,
