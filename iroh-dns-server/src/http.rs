@@ -218,7 +218,7 @@ pub(crate) fn create_app(state: AppState, rate_limit_config: &RateLimitConfig) -
     let router = Router::new()
         .route("/dns-query", get(doh::get).post(doh::post))
         .route(
-            "/pkarr/:key",
+            "/pkarr/{key}",
             if let Some(rate_limit) = rate_limit {
                 get(pkarr::get).put(pkarr::put.layer(rate_limit))
             } else {
