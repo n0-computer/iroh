@@ -455,7 +455,20 @@
 <a href="#454" id="454">454</a>
 <a href="#455" id="455">455</a>
 <a href="#456" id="456">456</a>
-<a href="#457" id="457">457</a></pre></div><pre class="rust"><code><span class="doccomment">//! DNS resolver
+<a href="#457" id="457">457</a>
+<a href="#458" id="458">458</a>
+<a href="#459" id="459">459</a>
+<a href="#460" id="460">460</a>
+<a href="#461" id="461">461</a>
+<a href="#462" id="462">462</a>
+<a href="#463" id="463">463</a>
+<a href="#464" id="464">464</a>
+<a href="#465" id="465">465</a>
+<a href="#466" id="466">466</a>
+<a href="#467" id="467">467</a>
+<a href="#468" id="468">468</a>
+<a href="#469" id="469">469</a>
+<a href="#470" id="470">470</a></pre></div><pre class="rust"><code><span class="doccomment">//! DNS resolver
 
 </span><span class="kw">use </span>std::{
     fmt,
@@ -469,9 +482,11 @@
     time::{<span class="self">self</span>, Duration},
     StreamExt,
 };
+<span class="kw">use </span>nested_enum_utils::common_fields;
+<span class="kw">use </span>snafu::{Backtrace, OptionExt, Snafu};
 <span class="kw">use </span>url::Url;
 
-<span class="kw">use </span><span class="kw">crate</span>::node_info::{Error <span class="kw">as </span>NodeError, NodeInfo};
+<span class="kw">use </span><span class="kw">crate</span>::node_info::{<span class="self">self</span>, Error <span class="kw">as </span>NodeError, NodeInfo};
 
 <span class="doccomment">/// The n0 testing DNS node origin, for production.
 </span><span class="kw">pub const </span>N0_DNS_NODE_ORIGIN_PROD: <span class="kw-2">&amp;</span>str = <span class="string">"dns.iroh.link"</span>;
@@ -479,22 +494,31 @@
 </span><span class="kw">pub const </span>N0_DNS_NODE_ORIGIN_STAGING: <span class="kw-2">&amp;</span>str = <span class="string">"staging-dns.iroh.link"</span>;
 
 <span class="doccomment">/// Potential errors related to dns.
-</span><span class="attr">#[allow(missing_docs)]
-#[derive(Debug, thiserror::Error)]
+</span><span class="attr">#[common_fields({
+    backtrace: <span class="prelude-ty">Option</span>&lt;Backtrace&gt;,
+    <span class="attr">#[snafu(implicit)]
+    </span>span_trace: n0_snafu::SpanTrace,
+})]
+<span class="attr">#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+#[snafu(visibility(<span class="kw">pub</span>(<span class="kw">crate</span>)))]
 </span><span class="kw">pub enum </span>Error {
-    <span class="attr">#[error(transparent)]
-    </span>Timeout(<span class="attr">#[from] </span>tokio::time::error::Elapsed),
-    <span class="attr">#[error(<span class="string">"No response"</span>)]
-    </span>NoResponse,
-    <span class="attr">#[error(<span class="string">"Resolve failed ipv4: {ipv4}, ipv6 {ipv6}"</span>)]
+    <span class="attr">#[snafu(transparent)]
+    </span>Timeout { source: tokio::time::error::Elapsed },
+    <span class="attr">#[snafu(display(<span class="string">"No response"</span>))]
+    </span>NoResponse {},
+    <span class="attr">#[snafu(display(<span class="string">"Resolve failed ipv4: {ipv4}, ipv6 {ipv6}"</span>))]
     </span>ResolveBoth { ipv4: Box&lt;Error&gt;, ipv6: Box&lt;Error&gt; },
-    <span class="attr">#[error(<span class="string">"missing host"</span>)]
-    </span>MissingHost,
-    <span class="attr">#[error(transparent)]
-    </span>Resolve(<span class="attr">#[from] </span>hickory_resolver::ResolveError),
-    <span class="attr">#[error(<span class="string">"invalid DNS response: not a query for _iroh.z32encodedpubkey"</span>)]
-    </span>InvalidResponse,
-    <span class="attr">#[error(<span class="string">"no calls succeeded: [{}]"</span>, errors.iter().map(|e| e.to_string()).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;().join(<span class="string">""</span>))]
+    <span class="attr">#[snafu(display(<span class="string">"missing host"</span>))]
+    </span>MissingHost {},
+    <span class="attr">#[snafu(transparent)]
+    </span>Resolve {
+        source: hickory_resolver::ResolveError,
+    },
+    <span class="attr">#[snafu(display(<span class="string">"invalid DNS response: not a query for _iroh.z32encodedpubkey"</span>))]
+    </span>InvalidResponse {},
+    <span class="attr">#[snafu(display(<span class="string">"no calls succeeded: [{}]"</span>, errors.iter().map(|e| e.to_string()).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;().join(<span class="string">""</span>)))]
     </span>Staggered { errors: Vec&lt;Error&gt; },
 }
 
@@ -608,10 +632,11 @@
             (<span class="prelude-val">Ok</span>(ipv4), <span class="prelude-val">Ok</span>(ipv6)) =&gt; <span class="prelude-val">Ok</span>(LookupIter::Both(ipv4.chain(ipv6))),
             (<span class="prelude-val">Ok</span>(ipv4), <span class="prelude-val">Err</span>(<span class="kw">_</span>)) =&gt; <span class="prelude-val">Ok</span>(LookupIter::Ipv4(ipv4)),
             (<span class="prelude-val">Err</span>(<span class="kw">_</span>), <span class="prelude-val">Ok</span>(ipv6)) =&gt; <span class="prelude-val">Ok</span>(LookupIter::Ipv6(ipv6)),
-            (<span class="prelude-val">Err</span>(ipv4_err), <span class="prelude-val">Err</span>(ipv6_err)) =&gt; <span class="prelude-val">Err</span>(Error::ResolveBoth {
+            (<span class="prelude-val">Err</span>(ipv4_err), <span class="prelude-val">Err</span>(ipv6_err)) =&gt; <span class="prelude-val">Err</span>(ResolveBothSnafu {
                 ipv4: Box::new(ipv4_err),
                 ipv6: Box::new(ipv6_err),
-            }),
+            }
+            .build()),
         }
     }
 
@@ -622,7 +647,7 @@
         prefer_ipv6: bool,
         timeout: Duration,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;IpAddr, Error&gt; {
-        <span class="kw">let </span>host = url.host().ok_or(Error::MissingHost)<span class="question-mark">?</span>;
+        <span class="kw">let </span>host = url.host().context(MissingHostSnafu {})<span class="question-mark">?</span>;
         <span class="kw">match </span>host {
             url::Host::Domain(domain) =&gt; {
                 <span class="comment">// Need to do a DNS lookup
@@ -632,19 +657,20 @@
                 );
                 <span class="kw">let </span>(v4, v6) = <span class="kw">match </span>lookup {
                     (<span class="prelude-val">Err</span>(ipv4_err), <span class="prelude-val">Err</span>(ipv6_err)) =&gt; {
-                        <span class="kw">return </span><span class="prelude-val">Err</span>(Error::ResolveBoth {
+                        <span class="kw">return </span><span class="prelude-val">Err</span>(ResolveBothSnafu {
                             ipv4: Box::new(ipv4_err),
                             ipv6: Box::new(ipv6_err),
-                        });
+                        }
+                        .build());
                     }
                     (<span class="prelude-val">Err</span>(<span class="kw">_</span>), <span class="prelude-val">Ok</span>(<span class="kw-2">mut </span>v6)) =&gt; (<span class="prelude-val">None</span>, v6.next()),
                     (<span class="prelude-val">Ok</span>(<span class="kw-2">mut </span>v4), <span class="prelude-val">Err</span>(<span class="kw">_</span>)) =&gt; (v4.next(), <span class="prelude-val">None</span>),
                     (<span class="prelude-val">Ok</span>(<span class="kw-2">mut </span>v4), <span class="prelude-val">Ok</span>(<span class="kw-2">mut </span>v6)) =&gt; (v4.next(), v6.next()),
                 };
                 <span class="kw">if </span>prefer_ipv6 {
-                    v6.or(v4).ok_or(Error::NoResponse)
+                    v6.or(v4).context(NoResponseSnafu {})
                 } <span class="kw">else </span>{
-                    v4.or(v6).ok_or(Error::NoResponse)
+                    v4.or(v6).context(NoResponseSnafu {})
                 }
             }
             url::Host::Ipv4(ip) =&gt; <span class="prelude-val">Ok</span>(IpAddr::V4(ip)),
@@ -668,7 +694,7 @@
         <span class="kw">let </span>f = || <span class="self">self</span>.lookup_ipv4(host.clone(), timeout);
         stagger_call(f, delays_ms)
             .<span class="kw">await
-            </span>.map_err(|errors| Error::Staggered { errors })
+            </span>.map_err(|errors| StaggeredSnafu { errors }.build())
     }
 
     <span class="doccomment">/// Perform an ipv6 lookup with a timeout in a staggered fashion.
@@ -687,7 +713,7 @@
         <span class="kw">let </span>f = || <span class="self">self</span>.lookup_ipv6(host.clone(), timeout);
         stagger_call(f, delays_ms)
             .<span class="kw">await
-            </span>.map_err(|errors| Error::Staggered { errors })
+            </span>.map_err(|errors| StaggeredSnafu { errors }.build())
     }
 
     <span class="doccomment">/// Race an ipv4 and ipv6 lookup with a timeout in a staggered fashion.
@@ -707,7 +733,7 @@
         <span class="kw">let </span>f = || <span class="self">self</span>.lookup_ipv4_ipv6(host.clone(), timeout);
         stagger_call(f, delays_ms)
             .<span class="kw">await
-            </span>.map_err(|errors| Error::Staggered { errors })
+            </span>.map_err(|errors| StaggeredSnafu { errors }.build())
     }
 
     <span class="doccomment">/// Looks up node info by [`NodeId`] and origin domain name.
@@ -750,7 +776,7 @@
         <span class="kw">let </span>f = || <span class="self">self</span>.lookup_node_by_domain_name(name);
         stagger_call(f, delays_ms)
             .<span class="kw">await
-            </span>.map_err(|errors| NodeError::Staggered { errors })
+            </span>.map_err(|errors| node_info::StaggeredSnafu { errors }.build())
     }
 
     <span class="doccomment">/// Looks up node info by [`NodeId`] and origin domain name.
@@ -768,7 +794,7 @@
         <span class="kw">let </span>f = || <span class="self">self</span>.lookup_node_by_id(node_id, origin);
         stagger_call(f, delays_ms)
             .<span class="kw">await
-            </span>.map_err(|errors| NodeError::Staggered { errors })
+            </span>.map_err(|errors| node_info::StaggeredSnafu { errors }.build())
     }
 }
 
@@ -903,7 +929,7 @@
             <span class="kw">let </span>r_pos = DONE_CALL.fetch_add(<span class="number">1</span>, std::sync::atomic::Ordering::Relaxed);
             <span class="kw">async move </span>{
                 <span class="macro">tracing::info!</span>(r_pos, <span class="string">"call"</span>);
-                CALL_RESULTS[r_pos].map_err(|<span class="kw">_</span>| Error::InvalidResponse)
+                CALL_RESULTS[r_pos].map_err(|<span class="kw">_</span>| InvalidResponseSnafu {}.build())
             }
         };
 

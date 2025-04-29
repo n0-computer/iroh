@@ -790,7 +790,30 @@
 <a href="#789" id="789">789</a>
 <a href="#790" id="790">790</a>
 <a href="#791" id="791">791</a>
-<a href="#792" id="792">792</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
+<a href="#792" id="792">792</a>
+<a href="#793" id="793">793</a>
+<a href="#794" id="794">794</a>
+<a href="#795" id="795">795</a>
+<a href="#796" id="796">796</a>
+<a href="#797" id="797">797</a>
+<a href="#798" id="798">798</a>
+<a href="#799" id="799">799</a>
+<a href="#800" id="800">800</a>
+<a href="#801" id="801">801</a>
+<a href="#802" id="802">802</a>
+<a href="#803" id="803">803</a>
+<a href="#804" id="804">804</a>
+<a href="#805" id="805">805</a>
+<a href="#806" id="806">806</a>
+<a href="#807" id="807">807</a>
+<a href="#808" id="808">808</a>
+<a href="#809" id="809">809</a>
+<a href="#810" id="810">810</a>
+<a href="#811" id="811">811</a>
+<a href="#812" id="812">812</a>
+<a href="#813" id="813">813</a>
+<a href="#814" id="814">814</a>
+<a href="#815" id="815">815</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
 //!
 //! Dialing by [`NodeId`] is supported by iroh nodes publishing [Pkarr] records to DNS
 //! servers or the Mainline DHT.  This module supports creating and parsing these records.
@@ -835,6 +858,8 @@
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">use </span>hickory_resolver::{proto::ProtoError, Name};
 <span class="kw">use </span>iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey, SignatureError};
+<span class="kw">use </span>nested_enum_utils::common_fields;
+<span class="kw">use </span>snafu::{Backtrace, ResultExt, Snafu};
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">use </span>tracing::warn;
 <span class="kw">use </span>url::Url;
@@ -848,24 +873,31 @@
 <span class="doccomment">/// The DNS name for the iroh TXT record.
 </span><span class="kw">pub const </span>IROH_TXT_NAME: <span class="kw-2">&amp;</span>str = <span class="string">"_iroh"</span>;
 
-<span class="attr">#[derive(Debug, thiserror::Error)]
-#[allow(missing_docs)]
+<span class="attr">#[common_fields({
+    backtrace: <span class="prelude-ty">Option</span>&lt;Backtrace&gt;,
+    <span class="attr">#[snafu(implicit)]
+    </span>span_trace: n0_snafu::SpanTrace,
+})]
+<span class="attr">#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+#[snafu(visibility(<span class="kw">pub</span>(<span class="kw">crate</span>)))]
 </span><span class="kw">pub enum </span>Error {
-    <span class="attr">#[error(<span class="string">"node id was not encoded in valid z32"</span>)]
-    </span>InvalidEncodingZ32(<span class="attr">#[from] </span>z32::Z32Error),
-    <span class="attr">#[error(<span class="string">"length must be 32 bytes"</span>)]
-    </span>InvalidLength,
-    <span class="attr">#[error(<span class="string">"node id is not a valid public key"</span>)]
-    </span>InvalidSignature(<span class="attr">#[from] </span>SignatureError),
-    <span class="attr">#[error(<span class="string">"name is not a valid TXT label"</span>)]
-    </span>InvalidLabel(<span class="attr">#[from] </span>ProtoError),
-    <span class="attr">#[error(<span class="string">"failed to resolve TXT record"</span>)]
-    </span>LookupFailed(<span class="attr">#[from] </span>DnsError),
-    <span class="attr">#[error(transparent)]
-    </span>Pkarr(<span class="attr">#[from] </span>pkarr::Error),
-    <span class="attr">#[error(<span class="string">"invalid TXT entry"</span>)]
-    </span>InvalidTxtEntry(<span class="attr">#[source] </span>pkarr::dns::SimpleDnsError),
-    <span class="attr">#[error(<span class="string">"no calls succeeded: [{}]"</span>, errors.iter().map(|e| e.to_string()).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;().join(<span class="string">""</span>))]
+    <span class="attr">#[snafu(display(<span class="string">"node id was not encoded in valid z32"</span>))]
+    </span>InvalidEncodingZ32 { source: z32::Z32Error },
+    <span class="attr">#[snafu(display(<span class="string">"length must be 32 bytes, but got {len} byte(s)"</span>))]
+    </span>InvalidLength { len: usize },
+    <span class="attr">#[snafu(display(<span class="string">"node id is not a valid public key"</span>))]
+    </span>InvalidSignature { source: SignatureError },
+    <span class="attr">#[snafu(display(<span class="string">"name is not a valid TXT label"</span>))]
+    </span>InvalidLabel { source: ProtoError },
+    <span class="attr">#[snafu(display(<span class="string">"failed to resolve TXT record"</span>))]
+    </span>LookupFailed { source: DnsError },
+    <span class="attr">#[snafu(transparent)]
+    </span>Pkarr { source: pkarr::Error },
+    <span class="attr">#[snafu(display(<span class="string">"invalid TXT entry"</span>))]
+    </span>InvalidTxtEntry { source: pkarr::dns::SimpleDnsError },
+    <span class="attr">#[snafu(display(<span class="string">"no calls succeeded: [{}]"</span>, errors.iter().map(|e| e.to_string()).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;().join(<span class="string">""</span>)))]
     </span>Staggered { errors: Vec&lt;Error&gt; },
 }
 
@@ -889,9 +921,11 @@
     }
 
     <span class="kw">fn </span>from_z32(s: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;NodeId, Error&gt; {
-        <span class="kw">let </span>bytes = z32::decode(s.as_bytes())<span class="question-mark">?</span>;
-        <span class="kw">let </span>bytes: <span class="kw-2">&amp;</span>[u8; <span class="number">32</span>] = <span class="kw-2">&amp;</span>bytes.try_into().map_err(|<span class="kw">_</span>| Error::InvalidLength)<span class="question-mark">?</span>;
-        <span class="kw">let </span>node_id = NodeId::from_bytes(bytes)<span class="question-mark">?</span>;
+        <span class="kw">let </span>bytes = z32::decode(s.as_bytes()).context(InvalidEncodingZ32Snafu {})<span class="question-mark">?</span>;
+        <span class="kw">let </span>bytes: <span class="kw-2">&amp;</span>[u8; <span class="number">32</span>] = <span class="kw-2">&amp;</span>bytes
+            .try_into()
+            .map_err(|<span class="kw">_</span>| InvalidLengthSnafu { len: s.len() }.build())<span class="question-mark">?</span>;
+        <span class="kw">let </span>node_id = NodeId::from_bytes(bytes).context(InvalidSignatureSnafu {})<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(node_id)
     }
 }
@@ -1009,16 +1043,21 @@
 }
 
 <span class="doccomment">/// Error returned when an input value is too long for [`UserData`].
-</span><span class="attr">#[derive(Debug, thiserror::Error)]
-#[error(<span class="string">"User-defined data exceeds max length"</span>)]
-</span><span class="kw">pub struct </span>MaxLengthExceededError;
+</span><span class="attr">#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[snafu(visibility(<span class="kw">pub</span>(<span class="kw">crate</span>)))]
+</span><span class="kw">pub struct </span>MaxLengthExceededError {
+    backtrace: <span class="prelude-ty">Option</span>&lt;Backtrace&gt;,
+    <span class="attr">#[snafu(implicit)]
+    </span>span_trace: n0_snafu::SpanTrace,
+}
 
 <span class="kw">impl </span>TryFrom&lt;String&gt; <span class="kw">for </span>UserData {
     <span class="kw">type </span>Error = MaxLengthExceededError;
 
     <span class="kw">fn </span>try_from(value: String) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, <span class="self">Self</span>::Error&gt; {
         <span class="kw">if </span>value.len() &gt; <span class="self">Self</span>::MAX_LENGTH {
-            <span class="prelude-val">Err</span>(MaxLengthExceededError)
+            <span class="prelude-val">Err</span>(MaxLengthExceededSnafu {}.build())
         } <span class="kw">else </span>{
             <span class="prelude-val">Ok</span>(<span class="self">Self</span>(value))
         }
@@ -1030,7 +1069,7 @@
 
     <span class="kw">fn </span>from_str(s: <span class="kw-2">&amp;</span>str) -&gt; std::result::Result&lt;<span class="self">Self</span>, <span class="self">Self</span>::Err&gt; {
         <span class="kw">if </span>s.len() &gt; <span class="self">Self</span>::MAX_LENGTH {
-            <span class="prelude-val">Err</span>(MaxLengthExceededError)
+            <span class="prelude-val">Err</span>(MaxLengthExceededSnafu {}.build())
         } <span class="kw">else </span>{
             <span class="prelude-val">Ok</span>(<span class="self">Self</span>(s.to_string()))
         }
@@ -1300,7 +1339,10 @@
     <span class="attr">#[cfg(not(wasm_browser))]
     </span><span class="kw">async fn </span>lookup(resolver: <span class="kw-2">&amp;</span>DnsResolver, name: Name) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, Error&gt; {
         <span class="kw">let </span>name = ensure_iroh_txt_label(name)<span class="question-mark">?</span>;
-        <span class="kw">let </span>lookup = resolver.lookup_txt(name, DNS_TIMEOUT).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>lookup = resolver
+            .lookup_txt(name, DNS_TIMEOUT)
+            .<span class="kw">await
+            </span>.context(LookupFailedSnafu {})<span class="question-mark">?</span>;
         <span class="kw">let </span>attrs = <span class="self">Self</span>::from_txt_lookup(lookup)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(attrs)
     }
@@ -1319,7 +1361,7 @@
     <span class="doccomment">/// Looks up attributes by DNS name.
     </span><span class="attr">#[cfg(not(wasm_browser))]
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>lookup_by_name(resolver: <span class="kw-2">&amp;</span>DnsResolver, name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, Error&gt; {
-        <span class="kw">let </span>name = Name::from_str(name)<span class="question-mark">?</span>;
+        <span class="kw">let </span>name = Name::from_str(name).context(InvalidLabelSnafu {})<span class="question-mark">?</span>;
         TxtAttrs::lookup(resolver, name).<span class="kw">await
     </span>}
 
@@ -1359,8 +1401,12 @@
     <span class="doccomment">/// Parses a TXT records lookup.
     </span><span class="attr">#[cfg(not(wasm_browser))]
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>from_txt_lookup(lookup: <span class="kw">crate</span>::dns::TxtLookup) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, Error&gt; {
-        <span class="kw">let </span>queried_node_id = node_id_from_hickory_name(lookup.<span class="number">0</span>.query().name())
-            .ok_or_else(|| DnsError::InvalidResponse)<span class="question-mark">?</span>;
+        <span class="kw">use </span>snafu::OptionExt;
+
+        <span class="comment">// TODO(matheus23): Errors here are extremely weird and need cleanup
+        </span><span class="kw">let </span>queried_node_id = node_id_from_hickory_name(lookup.<span class="number">0</span>.query().name())
+            .context(<span class="kw">crate</span>::dns::InvalidResponseSnafu {})
+            .context(LookupFailedSnafu {})<span class="question-mark">?</span>;
 
         <span class="kw">let </span>strings = lookup.<span class="number">0</span>.as_lookup().record_iter().filter_map(|record| {
             <span class="kw">match </span>node_id_from_hickory_name(record.name()) {
@@ -1427,7 +1473,7 @@
         <span class="kw">let </span><span class="kw-2">mut </span>packet = dns::Packet::new_reply(<span class="number">0</span>);
         <span class="kw">for </span>s <span class="kw">in </span><span class="self">self</span>.to_txt_strings() {
             <span class="kw">let </span><span class="kw-2">mut </span>txt = rdata::TXT::new();
-            txt.add_string(<span class="kw-2">&amp;</span>s).map_err(Error::InvalidTxtEntry)<span class="question-mark">?</span>;
+            txt.add_string(<span class="kw-2">&amp;</span>s).context(InvalidTxtEntrySnafu {})<span class="question-mark">?</span>;
             <span class="kw">let </span>rdata = rdata::RData::TXT(txt.into_owned());
             packet.answers.push(dns::ResourceRecord::new(
                 name.clone(),
@@ -1441,18 +1487,18 @@
 }
 
 <span class="attr">#[cfg(not(wasm_browser))]
-</span><span class="kw">fn </span>ensure_iroh_txt_label(name: Name) -&gt; <span class="prelude-ty">Result</span>&lt;Name, ProtoError&gt; {
+</span><span class="kw">fn </span>ensure_iroh_txt_label(name: Name) -&gt; <span class="prelude-ty">Result</span>&lt;Name, Error&gt; {
     <span class="kw">if </span>name.iter().next() == <span class="prelude-val">Some</span>(IROH_TXT_NAME.as_bytes()) {
         <span class="prelude-val">Ok</span>(name)
     } <span class="kw">else </span>{
-        Name::parse(IROH_TXT_NAME, <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>name))
+        Name::parse(IROH_TXT_NAME, <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>name)).context(InvalidLabelSnafu {})
     }
 }
 
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">fn </span>node_domain(node_id: <span class="kw-2">&amp;</span>NodeId, origin: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;Name, Error&gt; {
     <span class="kw">let </span>domain = <span class="macro">format!</span>(<span class="string">"{}.{}"</span>, NodeId::to_z32(node_id), origin);
-    <span class="kw">let </span>domain = Name::from_str(<span class="kw-2">&amp;</span>domain)<span class="question-mark">?</span>;
+    <span class="kw">let </span>domain = Name::from_str(<span class="kw-2">&amp;</span>domain).context(InvalidLabelSnafu {})<span class="question-mark">?</span>;
     <span class="prelude-val">Ok</span>(domain)
 }
 
