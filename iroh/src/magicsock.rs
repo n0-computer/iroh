@@ -28,7 +28,6 @@ use std::{
     task::{Context, Poll, Waker},
 };
 
-use anyhow::anyhow;
 use atomic_waker::AtomicWaker;
 use bytes::Bytes;
 use concurrent_queue::ConcurrentQueue;
@@ -2343,7 +2342,7 @@ enum ActorMessage {
     Shutdown,
     EndpointPingExpired(usize, stun_rs::TransactionId),
     NetReport(
-        anyhow::Result<Option<Arc<net_report::Report>>>,
+        Result<Option<Arc<net_report::Report>>, NetReportError>,
         &'static str,
     ),
     NetworkChange,
@@ -2458,6 +2457,16 @@ impl ActorSocketState {
 
         Ok(socket_state)
     }
+}
+
+#[derive(Debug, Snafu)]
+enum NetReportError {
+    #[snafu(display("Net report not received"))]
+    NotReceived,
+    #[snafu(display("Net report timed out"))]
+    Timeout,
+    #[snafu(display("Net report encountered an error"))]
+    NetReport { source: anyhow::Error },
 }
 
 impl Actor {
@@ -2914,11 +2923,11 @@ impl Actor {
                 let msg_sender = self.msg_sender.clone();
                 task::spawn(async move {
                     let report = time::timeout(NET_REPORT_TIMEOUT, rx).await;
-                    let report: anyhow::Result<_> = match report {
+                    let report = match report {
                         Ok(Ok(Ok(report))) => Ok(Some(report)),
-                        Ok(Ok(Err(err))) => Err(err),
-                        Ok(Err(_)) => Err(anyhow!("net_report report not received")),
-                        Err(err) => Err(anyhow!("net_report report timeout: {:?}", err)),
+                        Ok(Ok(Err(err))) => Err(NetReportSnafu.into_error(err)),
+                        Ok(Err(_)) => Err(NotReceivedSnafu.build()),
+                        Err(_) => Err(TimeoutSnafu.build()),
                     };
                     msg_sender
                         .send(ActorMessage::NetReport(report, why))
@@ -3452,6 +3461,7 @@ impl NetInfo {
 
 #[cfg(test)]
 mod tests {
+    use anyhow::anyhow;
     use rand::RngCore;
     use tokio_util::task::AbortOnDropHandle;
     use tracing_test::traced_test;
