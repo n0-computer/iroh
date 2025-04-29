@@ -318,9 +318,8 @@ impl Sink<SendMessage> for Conn {
 
     fn start_send(mut self: Pin<&mut Self>, item: SendMessage) -> Result<(), Self::Error> {
         if let SendMessage::SendPacket(_, bytes) = &item {
-            if bytes.len() > MAX_PACKET_SIZE {
-                return Err(ExceedsMaxPacketSizeSnafu { size: bytes.len() }.build());
-            }
+            let size = bytes.len();
+            snafu::ensure!(size <= MAX_PACKET_SIZE, ExceedsMaxPacketSizeSnafu { size });
         }
         let frame = Frame::from(item);
         match *self {
