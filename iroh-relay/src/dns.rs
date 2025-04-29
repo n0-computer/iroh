@@ -12,9 +12,11 @@ use n0_future::{
     time::{self, Duration},
     StreamExt,
 };
+use nested_enum_utils::common_fields;
+use snafu::{Backtrace, OptionExt, Snafu};
 use url::Url;
 
-use crate::node_info::{Error as NodeError, NodeInfo};
+use crate::node_info::{self, Error as NodeError, NodeInfo};
 
 /// The n0 testing DNS node origin, for production.
 pub const N0_DNS_NODE_ORIGIN_PROD: &str = "dns.iroh.link";
@@ -22,22 +24,31 @@ pub const N0_DNS_NODE_ORIGIN_PROD: &str = "dns.iroh.link";
 pub const N0_DNS_NODE_ORIGIN_STAGING: &str = "staging-dns.iroh.link";
 
 /// Potential errors related to dns.
+#[common_fields({
+    backtrace: Option<Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
 #[allow(missing_docs)]
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+#[snafu(visibility(pub(crate)))]
 pub enum Error {
-    #[error(transparent)]
-    Timeout(#[from] tokio::time::error::Elapsed),
-    #[error("No response")]
-    NoResponse,
-    #[error("Resolve failed ipv4: {ipv4}, ipv6 {ipv6}")]
+    #[snafu(transparent)]
+    Timeout { source: tokio::time::error::Elapsed },
+    #[snafu(display("No response"))]
+    NoResponse {},
+    #[snafu(display("Resolve failed ipv4: {ipv4}, ipv6 {ipv6}"))]
     ResolveBoth { ipv4: Box<Error>, ipv6: Box<Error> },
-    #[error("missing host")]
-    MissingHost,
-    #[error(transparent)]
-    Resolve(#[from] hickory_resolver::ResolveError),
-    #[error("invalid DNS response: not a query for _iroh.z32encodedpubkey")]
-    InvalidResponse,
-    #[error("no calls succeeded: [{}]", errors.iter().map(|e| e.to_string()).collect::<Vec<_>>().join(""))]
+    #[snafu(display("missing host"))]
+    MissingHost {},
+    #[snafu(transparent)]
+    Resolve {
+        source: hickory_resolver::ResolveError,
+    },
+    #[snafu(display("invalid DNS response: not a query for _iroh.z32encodedpubkey"))]
+    InvalidResponse {},
+    #[snafu(display("no calls succeeded: [{}]", errors.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("")))]
     Staggered { errors: Vec<Error> },
 }
 
@@ -151,10 +162,11 @@ impl DnsResolver {
             (Ok(ipv4), Ok(ipv6)) => Ok(LookupIter::Both(ipv4.chain(ipv6))),
             (Ok(ipv4), Err(_)) => Ok(LookupIter::Ipv4(ipv4)),
             (Err(_), Ok(ipv6)) => Ok(LookupIter::Ipv6(ipv6)),
-            (Err(ipv4_err), Err(ipv6_err)) => Err(Error::ResolveBoth {
+            (Err(ipv4_err), Err(ipv6_err)) => Err(ResolveBothSnafu {
                 ipv4: Box::new(ipv4_err),
                 ipv6: Box::new(ipv6_err),
-            }),
+            }
+            .build()),
         }
     }
 
@@ -165,7 +177,7 @@ impl DnsResolver {
         prefer_ipv6: bool,
         timeout: Duration,
     ) -> Result<IpAddr, Error> {
-        let host = url.host().ok_or(Error::MissingHost)?;
+        let host = url.host().context(MissingHostSnafu {})?;
         match host {
             url::Host::Domain(domain) => {
                 // Need to do a DNS lookup
@@ -175,19 +187,20 @@ impl DnsResolver {
                 );
                 let (v4, v6) = match lookup {
                     (Err(ipv4_err), Err(ipv6_err)) => {
-                        return Err(Error::ResolveBoth {
+                        return Err(ResolveBothSnafu {
                             ipv4: Box::new(ipv4_err),
                             ipv6: Box::new(ipv6_err),
-                        });
+                        }
+                        .build());
                     }
                     (Err(_), Ok(mut v6)) => (None, v6.next()),
                     (Ok(mut v4), Err(_)) => (v4.next(), None),
                     (Ok(mut v4), Ok(mut v6)) => (v4.next(), v6.next()),
                 };
                 if prefer_ipv6 {
-                    v6.or(v4).ok_or(Error::NoResponse)
+                    v6.or(v4).context(NoResponseSnafu {})
                 } else {
-                    v4.or(v6).ok_or(Error::NoResponse)
+                    v4.or(v6).context(NoResponseSnafu {})
                 }
             }
             url::Host::Ipv4(ip) => Ok(IpAddr::V4(ip)),
@@ -211,7 +224,7 @@ impl DnsResolver {
         let f = || self.lookup_ipv4(host.clone(), timeout);
         stagger_call(f, delays_ms)
             .await
-            .map_err(|errors| Error::Staggered { errors })
+            .map_err(|errors| StaggeredSnafu { errors }.build())
     }
 
     /// Perform an ipv6 lookup with a timeout in a staggered fashion.
@@ -230,7 +243,7 @@ impl DnsResolver {
         let f = || self.lookup_ipv6(host.clone(), timeout);
         stagger_call(f, delays_ms)
             .await
-            .map_err(|errors| Error::Staggered { errors })
+            .map_err(|errors| StaggeredSnafu { errors }.build())
     }
 
     /// Race an ipv4 and ipv6 lookup with a timeout in a staggered fashion.
@@ -250,7 +263,7 @@ impl DnsResolver {
         let f = || self.lookup_ipv4_ipv6(host.clone(), timeout);
         stagger_call(f, delays_ms)
             .await
-            .map_err(|errors| Error::Staggered { errors })
+            .map_err(|errors| StaggeredSnafu { errors }.build())
     }
 
     /// Looks up node info by [`NodeId`] and origin domain name.
@@ -293,7 +306,7 @@ impl DnsResolver {
         let f = || self.lookup_node_by_domain_name(name);
         stagger_call(f, delays_ms)
             .await
-            .map_err(|errors| NodeError::Staggered { errors })
+            .map_err(|errors| node_info::StaggeredSnafu { errors }.build())
     }
 
     /// Looks up node info by [`NodeId`] and origin domain name.
@@ -311,7 +324,7 @@ impl DnsResolver {
         let f = || self.lookup_node_by_id(node_id, origin);
         stagger_call(f, delays_ms)
             .await
-            .map_err(|errors| NodeError::Staggered { errors })
+            .map_err(|errors| node_info::StaggeredSnafu { errors }.build())
     }
 }
 
@@ -446,7 +459,7 @@ pub(crate) mod tests {
             let r_pos = DONE_CALL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             async move {
                 tracing::info!(r_pos, "call");
-                CALL_RESULTS[r_pos].map_err(|_| Error::InvalidResponse)
+                CALL_RESULTS[r_pos].map_err(|_| InvalidResponseSnafu {}.build())
             }
         };
 

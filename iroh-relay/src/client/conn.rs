@@ -67,7 +67,12 @@ pub enum RecvError {
     #[snafu(transparent)]
     Protocol { source: crate::protos::relay::Error },
     #[snafu(transparent)]
-    Websocket { source: tokio_websockets::Error },
+    Websocket {
+        #[cfg(not(wasm_browser))]
+        source: tokio_websockets::Error,
+        #[cfg(wasm_browser)]
+        source: ws_stream_wasm::WsErr,
+    },
     #[snafu(display("invalid protocol message encoding"))]
     InvalidProtocolMessageEncoding { source: Utf8Error },
     #[snafu(display("Unexpected frame received: {frame_type}"))]

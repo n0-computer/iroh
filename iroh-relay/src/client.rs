@@ -54,7 +54,12 @@ pub enum ConnectError {
     #[snafu(display("Invalid relay URL: {url}"))]
     InvalidRelayUrl { url: Url },
     #[snafu(transparent)]
-    Websocket { source: tokio_websockets::Error },
+    Websocket {
+        #[cfg(not(wasm_browser))]
+        source: tokio_websockets::Error,
+        #[cfg(wasm_browser)]
+        source: ws_stream_wasm::WsErr,
+    },
     #[snafu(transparent)]
     Handshake { source: crate::protos::relay::Error },
     #[snafu(transparent)]
