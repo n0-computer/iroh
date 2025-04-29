@@ -45,7 +45,7 @@ tokio-rustls = { version = "0.26", default-features = false, features = [
     "logging",
     "ring",
 ] }
-tokio-rustls-acme = { version = "0.7", features = ["axum"] }
+tokio-rustls-acme = { version = "0.7.1", features = ["axum"] }
 tokio-stream = "0.1.14"
 tokio-util = "0.7"
 toml = "0.8.10"

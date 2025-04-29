@@ -1585,27 +1585,6 @@ dependencies = [
 
 [[package]]
 name = "governor"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0746aa765db78b521451ef74221663b57ba595bf83f75d0ce23cc09447c8139f"
-dependencies = [
- "cfg-if",
- "dashmap",
- "futures-sink",
- "futures-timer",
- "futures-util",
- "no-std-compat",
- "nonzero_ext",
- "parking_lot",
- "portable-atomic",
- "quanta",
- "rand 0.8.5",
- "smallvec",
- "spinning_top",
-]
-
-[[package]]
-name = "governor"
 version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "be93b4ec2e4710b04d9264c0c7350cdd62a8c20e5e4ac732552ebb8f0debe8eb"
@@ -2355,7 +2334,7 @@ dependencies = [
  "criterion",
  "derive_more",
  "dirs-next",
- "governor 0.8.1",
+ "governor",
  "hickory-resolver",
  "hickory-server",
  "http 1.2.0",
@@ -2478,7 +2457,7 @@ dependencies = [
  "dashmap",
  "data-encoding",
  "derive_more",
- "governor 0.7.0",
+ "governor",
  "hickory-proto",
  "hickory-resolver",
  "http 1.2.0",
@@ -4934,8 +4913,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-rustls-acme"
-version = "0.7.0"
-source = "git+https://github.com/n0-computer/tokio-rustls-acme?branch=feat-axum-8#9a1e43d3df7671494862368927af04d06832055c"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f296d48ff72e0df96e2d7ef064ad5904d016a130869e542f00b08c8e05cc18cf"
 dependencies = [
  "async-trait",
  "axum-server",
@@ -5110,7 +5090,7 @@ checksum = "84e6672c7510df74859726427edea641674dad1aeeb30057b87335b1ba23b843"
 dependencies = [
  "axum",
  "forwarded-header-value",
- "governor 0.8.1",
+ "governor",
  "http 1.2.0",
  "pin-project",
  "thiserror 2.0.11",
