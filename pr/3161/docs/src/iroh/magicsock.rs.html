@@ -6180,7 +6180,7 @@
     </span>span_trace: n0_snafu::SpanTrace,
 })]
 <span class="attr">#[derive(Debug, Snafu)]
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>CreateHandleError {
+</span><span class="kw">pub enum </span>CreateHandleError {
     <span class="attr">#[snafu(display(<span class="string">"Failed to create bind sockets"</span>))]
     </span>BindSockets { source: io::Error },
     <span class="attr">#[snafu(display(<span class="string">"Failed to create internal quinn endpoint"</span>))]

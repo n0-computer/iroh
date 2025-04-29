@@ -517,7 +517,7 @@
 <span class="doccomment">/// An error that occurs during certificate generation.
 </span><span class="attr">#[derive(Debug, Snafu)]
 #[snafu(transparent)]
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>GenError {
+</span><span class="kw">pub struct </span>GenError {
     source: rcgen::Error,
 }
 
