@@ -480,8 +480,7 @@
 <a href="#479" id="479">479</a>
 <a href="#480" id="480">480</a>
 <a href="#481" id="481">481</a>
-<a href="#482" id="482">482</a>
-<a href="#483" id="483">483</a></pre></div><pre class="rust"><code><span class="doccomment">//! Manages client-side connections to the relay server.
+<a href="#482" id="482">482</a></pre></div><pre class="rust"><code><span class="doccomment">//! Manages client-side connections to the relay server.
 //!
 //! based on tailscale/derp/derp_client.go
 
@@ -801,9 +800,8 @@
 
     <span class="kw">fn </span>start_send(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, item: SendMessage) -&gt; <span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt; {
         <span class="kw">if let </span>SendMessage::SendPacket(<span class="kw">_</span>, bytes) = <span class="kw-2">&amp;</span>item {
-            <span class="kw">if </span>bytes.len() &gt; MAX_PACKET_SIZE {
-                <span class="kw">return </span><span class="prelude-val">Err</span>(ExceedsMaxPacketSizeSnafu { size: bytes.len() }.build());
-            }
+            <span class="kw">let </span>size = bytes.len();
+            <span class="macro">snafu::ensure!</span>(size &lt;= MAX_PACKET_SIZE, ExceedsMaxPacketSizeSnafu { size });
         }
         <span class="kw">let </span>frame = Frame::from(item);
         <span class="kw">match </span><span class="kw-2">*</span><span class="self">self </span>{

@@ -807,13 +807,7 @@
 <a href="#806" id="806">806</a>
 <a href="#807" id="807">807</a>
 <a href="#808" id="808">808</a>
-<a href="#809" id="809">809</a>
-<a href="#810" id="810">810</a>
-<a href="#811" id="811">811</a>
-<a href="#812" id="812">812</a>
-<a href="#813" id="813">813</a>
-<a href="#814" id="814">814</a>
-<a href="#815" id="815">815</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
+<a href="#809" id="809">809</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
 //!
 //! Dialing by [`NodeId`] is supported by iroh nodes publishing [Pkarr] records to DNS
 //! servers or the Mainline DHT.  This module supports creating and parsing these records.
@@ -1056,11 +1050,8 @@
     <span class="kw">type </span>Error = MaxLengthExceededError;
 
     <span class="kw">fn </span>try_from(value: String) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, <span class="self">Self</span>::Error&gt; {
-        <span class="kw">if </span>value.len() &gt; <span class="self">Self</span>::MAX_LENGTH {
-            <span class="prelude-val">Err</span>(MaxLengthExceededSnafu {}.build())
-        } <span class="kw">else </span>{
-            <span class="prelude-val">Ok</span>(<span class="self">Self</span>(value))
-        }
+        <span class="macro">snafu::ensure!</span>(value.len() &lt;= <span class="self">Self</span>::MAX_LENGTH, MaxLengthExceededSnafu {});
+        <span class="prelude-val">Ok</span>(<span class="self">Self</span>(value))
     }
 }
 
@@ -1068,11 +1059,8 @@
     <span class="kw">type </span><span class="prelude-val">Err </span>= MaxLengthExceededError;
 
     <span class="kw">fn </span>from_str(s: <span class="kw-2">&amp;</span>str) -&gt; std::result::Result&lt;<span class="self">Self</span>, <span class="self">Self</span>::Err&gt; {
-        <span class="kw">if </span>s.len() &gt; <span class="self">Self</span>::MAX_LENGTH {
-            <span class="prelude-val">Err</span>(MaxLengthExceededSnafu {}.build())
-        } <span class="kw">else </span>{
-            <span class="prelude-val">Ok</span>(<span class="self">Self</span>(s.to_string()))
-        }
+        <span class="macro">snafu::ensure!</span>(s.len() &lt;= <span class="self">Self</span>::MAX_LENGTH, MaxLengthExceededSnafu {});
+        <span class="prelude-val">Ok</span>(<span class="self">Self</span>(s.to_string()))
     }
 }
 
