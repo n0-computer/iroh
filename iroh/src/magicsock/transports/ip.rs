@@ -2,13 +2,12 @@ use std::{
     io,
     net::SocketAddr,
     pin::Pin,
-    sync::Arc,
     task::{Context, Poll},
 };
 
 use quinn::AsyncUdpSocket;
 
-use super::Transport;
+use super::{RecvMeta, Transmit, Transport};
 use crate::magicsock::UdpConn;
 
 #[derive(Clone, Debug)]
@@ -26,13 +25,26 @@ impl IpTransport {
     }
 }
 
-impl AsyncUdpSocket for IpTransport {
-    fn create_io_poller(self: Arc<Self>) -> Pin<Box<dyn quinn::UdpPoller>> {
+impl Transport for IpTransport {
+    fn create_io_poller(&self) -> Pin<Box<dyn quinn::UdpPoller>> {
         self.socket.create_io_poller()
     }
 
-    fn try_send(&self, transmit: &quinn_udp::Transmit) -> io::Result<()> {
-        self.socket.try_send(transmit)
+    fn try_send(&self, transmit: &Transmit<'_>) -> io::Result<()> {
+        self.socket.try_send(&quinn_udp::Transmit {
+            destination: transmit
+                .destination
+                .clone()
+                .try_into()
+                .expect("invalid destination"),
+            ecn: transmit.ecn,
+            contents: transmit.contents,
+            segment_size: transmit.segment_size,
+            src_ip: transmit
+                .src_ip
+                .clone()
+                .map(|a| a.try_into().expect("invalid src_ip")),
+        })
     }
 
     /// NOTE: Receiving on a closed socket will return [`Poll::Pending`] indefinitely.
@@ -40,9 +52,10 @@ impl AsyncUdpSocket for IpTransport {
         &self,
         cx: &mut Context,
         bufs: &mut [io::IoSliceMut<'_>],
-        metas: &mut [quinn_udp::RecvMeta],
+        metas: &mut [RecvMeta],
     ) -> Poll<io::Result<usize>> {
-        self.socket.poll_recv(cx, bufs, metas)
+        todo!()
+        // self.socket.poll_recv(cx, bufs, metas)
     }
 
     fn local_addr(&self) -> io::Result<SocketAddr> {
@@ -60,9 +73,7 @@ impl AsyncUdpSocket for IpTransport {
     fn may_fragment(&self) -> bool {
         self.socket.may_fragment()
     }
-}
 
-impl Transport for IpTransport {
     fn is_valid_send_addr(&self, addr: SocketAddr) -> bool {
         match (self.bind_addr, addr) {
             (SocketAddr::V4(_), SocketAddr::V4(_)) => true,
@@ -73,10 +84,6 @@ impl Transport for IpTransport {
 
     fn poll_writable(&self, cx: &mut Context) -> Poll<io::Result<()>> {
         self.socket.as_socket_ref().poll_writable(cx)
-    }
-
-    fn create_self_io_poller(&self) -> Pin<Box<dyn quinn::UdpPoller>> {
-        self.socket.create_io_poller()
     }
 
     fn bind_addr(&self) -> Option<SocketAddr> {

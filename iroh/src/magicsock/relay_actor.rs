@@ -57,11 +57,13 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, event, info_span, instrument, trace, warn, Instrument, Level};
 use url::Url;
 
-use super::RelayDatagramSendChannelReceiver;
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
 use crate::{
-    magicsock::{MagicSock, Metrics as MagicsockMetrics, RelayContents, RelayDatagramRecvQueue},
+    magicsock::{
+        transports::relay::{RelayDatagramRecvQueue, RelayDatagramSendChannelReceiver},
+        MagicSock, Metrics as MagicsockMetrics, RelayContents,
+    },
     util::MaybeFuture,
 };
 
