@@ -1115,22 +1115,19 @@ impl Endpoint {
     /// You can access individual metrics directly by using the public fields:
     /// ```rust
     /// # use std::collections::BTreeMap;
-    /// # use iroh_metrics::{MetricsGroup, MetricValue, MetricsGroupSet};
     /// # use iroh::endpoint::Endpoint;
     /// # async fn wrapper() -> testresult::TestResult {
     /// let endpoint = Endpoint::builder().bind().await?;
-    /// let metrics = endpoint.metrics();
-    ///
-    /// assert_eq!(metrics.magicsock.recv_datagrams.get(), 0);
+    /// assert_eq!(endpoint.metrics().magicsock.recv_datagrams.get(), 0);
     /// # Ok(())
     /// # }
     /// ```
     ///
     /// [`EndpointMetrics`] implements [`MetricsGroupSet`], and each field
-    /// implements [`MetricsGroup`]. These trait provides various methods to iterate
+    /// implements [`MetricsGroup`]. These trait provides methods to iterate over
     /// the groups in the set, and over the individual metrics in each group, without having
     /// to access each field manually. With these methods, it is straightforward to collect
-    /// all metrics into a map or push their values to some other metrics collector.
+    /// all metrics into a map or push their values to a metrics collector.
     ///
     /// For example, the following snippet collects all metrics into a map:
     /// ```rust
@@ -1153,15 +1150,69 @@ impl Endpoint {
     /// # }
     /// ```
     ///
-    /// The metrics can also be used with the types from the [`prometheus_client`] crate.
-    /// With [`EndpointMetrics::register`], you can register all metrics onto a onto a
-    /// [`Registry`]. [`iroh_metrics`] provides functions to easily start services
-    /// to serve the metrics with a HTTP server, dump them to a file, or push them
-    /// to a Prometheus gateway. See the `service` module in [`iroh_metrics`] for details.
+    /// The metrics can also be encoded into the OpenMetrics text format, as used by Prometheus.
+    /// To do so, use the [`iroh_metrics::Registry`], add the endpoint metrics to the
+    /// registry with [`Registry::register_all`], and encode the metrics to a string with
+    /// [`encode_openmetrics_to_string`]:
+    /// ```rust
+    /// # use iroh_metrics::{Registry, MetricsSource};
+    /// # use iroh::endpoint::Endpoint;
+    /// # async fn wrapper() -> testresult::TestResult {
+    /// let endpoint = Endpoint::builder().bind().await?;
+    /// let mut registry = Registry::default();
+    /// registry.register_all(endpoint.metrics());
+    /// let s = registry.encode_openmetrics_to_string()?;
+    /// assert!(s.contains(r#"TYPE magicsock_recv_datagrams counter"#));
+    /// assert!(s.contains(r#"magicsock_recv_datagrams_total 0"#));
+    /// # Ok(())
+    /// # }
+    /// ```
     ///
-    /// [`prometheus_client`]: https://docs.rs/prometheus-client/latest/prometheus_client/index.html
-    /// [`Registry`]: https://docs.rs/prometheus-client/latest/prometheus_client/registry/struct.Registry.html
-    /// [`EndpointMetrics::register`]: iroh_metrics::MetricsGroupSet::register
+    /// Through a registry, you can also add labels or prefixes to metrics with
+    /// [`Registry::sub_registry_with_label`] or [`Registry::sub_registry_with_prefix`].
+    /// Furthermore, [`iroh_metrics::service`] provides functions to easily start services
+    /// to serve the metrics with a HTTP server, dump them to a file, or push them
+    /// to a Prometheus gateway.
+    ///
+    /// For example, the following snippet launches an HTTP server that serves the metrics in the
+    /// OpenMetrics text format:
+    /// ```no_run
+    /// # use std::{sync::{Arc, RwLock}, time::Duration};
+    /// # use iroh_metrics::{Registry, MetricsSource};
+    /// # use iroh::endpoint::Endpoint;
+    /// # async fn wrapper() -> testresult::TestResult {
+    /// // Create a registry, wrapped in a read-write lock so that we can register and serve
+    /// // the metrics independently.
+    /// let registry = Arc::new(RwLock::new(Registry::default()));
+    /// // Spawn a task to serve the metrics on an OpenMetrics HTTP endpoint.
+    /// let metrics_task = tokio::task::spawn({
+    ///     let registry = registry.clone();
+    ///     async move {
+    ///         let addr = "0.0.0.0:9100".parse().unwrap();
+    ///         iroh_metrics::service::start_metrics_server(addr, registry).await
+    ///     }
+    /// });
+    ///
+    /// // Spawn an endpoint and add the metrics to the registry.
+    /// let endpoint = Endpoint::builder().bind().await?;
+    /// registry.write().unwrap().register_all(endpoint.metrics());
+    ///
+    /// // Wait for the metrics server to bind, then fetch the metrics via HTTP.
+    /// tokio::time::sleep(Duration::from_millis(500));
+    /// let res = reqwest::get("http://localhost:9100/metrics").await?.text().await?;
+    ///
+    /// assert!(res.contains(r#"TYPE magicsock_recv_datagrams counter"#));
+    /// assert!(res.contains(r#"magicsock_recv_datagrams_total 0"#));
+    /// # metrics_task.abort();
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// [`Registry`]: iroh_metrics::Registry
+    /// [`Registry::register_all`]: iroh_metrics::Registry::register_all
+    /// [`Registry::sub_registry_with_label`]: iroh_metrics::Registry::sub_registry_with_label
+    /// [`Registry::sub_registry_with_prefix`]: iroh_metrics::Registry::sub_registry_with_prefix
+    /// [`encode_openmetrics_to_string`]: iroh_metrics::MetricsSource::encode_openmetrics_to_string
     /// [`MetricsGroup`]: iroh_metrics::MetricsGroup
     /// [`MetricsGroupSet`]: iroh_metrics::MetricsGroupSet
     #[cfg(feature = "metrics")]
