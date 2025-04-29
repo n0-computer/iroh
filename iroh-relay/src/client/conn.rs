@@ -5,21 +5,21 @@
 use std::{
     io,
     pin::Pin,
+    str::Utf8Error,
     task::{ready, Context, Poll},
 };
 
 use bytes::Bytes;
 use iroh_base::{NodeId, SecretKey};
 use n0_future::{time::Duration, Sink, Stream};
+use nested_enum_utils::common_fields;
+use snafu::{Backtrace, ResultExt, Snafu};
 #[cfg(not(wasm_browser))]
 use tokio_util::codec::Framed;
 use tracing::debug;
 
-use super::{ConnectError, KeyCache};
-use crate::protos::{
-    self,
-    relay::{ClientInfo, Frame, MAX_PACKET_SIZE, PROTOCOL_VERSION},
-};
+use super::KeyCache;
+use crate::protos::relay::{ClientInfo, Frame, MAX_PACKET_SIZE, PROTOCOL_VERSION};
 #[cfg(not(wasm_browser))]
 use crate::{
     client::streams::{MaybeTlsStream, MaybeTlsStreamChained, ProxyStream},
@@ -27,67 +27,53 @@ use crate::{
 };
 
 /// Error for sending messages to the relay server.
-#[derive(Debug, thiserror::Error)]
-pub enum ConnSendError {
-    /// An IO error.
-    #[error(transparent)]
-    Io(#[from] io::Error),
-    /// A protocol error.
-    #[error("Protocol error")]
-    Protocol(&'static str),
-}
-
-#[cfg(wasm_browser)]
-impl From<ws_stream_wasm::WsErr> for ConnSendError {
-    fn from(err: ws_stream_wasm::WsErr) -> Self {
-        use std::io::ErrorKind::*;
-
-        use ws_stream_wasm::WsErr::*;
-        let kind = match err {
-            ConnectionNotOpen => NotConnected,
-            ReasonStringToLong | InvalidCloseCode { .. } | InvalidUrl { .. } => InvalidInput,
-            UnknownDataType | InvalidEncoding => InvalidData,
-            ConnectionFailed { .. } => ConnectionReset,
-            _ => Other,
-        };
-        Self::Io(std::io::Error::new(kind, err.to_string()))
-    }
-}
-
-#[cfg(not(wasm_browser))]
-impl From<tokio_websockets::Error> for ConnSendError {
-    fn from(err: tokio_websockets::Error) -> Self {
-        let io_err = match err {
-            tokio_websockets::Error::Io(io_err) => io_err,
-            _ => std::io::Error::new(std::io::ErrorKind::Other, err.to_string()),
-        };
-        Self::Io(io_err)
-    }
-}
-
-/// Error when handshaking with the server
-#[derive(Debug, thiserror::Error)]
-pub enum HandshakeError {
-    /// An IO error.
-    #[error("failed to send handshake message to the relay")]
-    Send(#[from] protos::relay::Error),
+#[common_fields({
+    backtrace: Option<Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+#[snafu(visibility(pub(crate)))]
+pub enum SendError {
+    #[cfg(not(wasm_browser))]
+    #[snafu(transparent)]
+    RelayIo { source: io::Error },
+    #[snafu(transparent)]
+    WebsocketIo {
+        #[cfg(not(wasm_browser))]
+        source: tokio_websockets::Error,
+        #[cfg(wasm_browser)]
+        source: ws_stream_wasm::WsErr,
+    },
+    #[snafu(display("Exceeds max packet size ({MAX_PACKET_SIZE}): {size}"))]
+    ExceedsMaxPacketSize { size: usize },
 }
 
 /// Errors when receiving messages from the relay server.
-#[derive(Debug, thiserror::Error)]
+#[common_fields({
+    backtrace: Option<Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
 #[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+#[snafu(visibility(pub(crate)))]
 pub enum RecvError {
-    /// An IO error.
-    #[error(transparent)]
-    Io(#[from] io::Error),
-    #[error(transparent)]
-    Protocol(#[from] crate::protos::relay::Error),
-    #[error(transparent)]
-    Websocket(#[from] tokio_websockets::Error),
-    #[error("invalid protocol message encoding")]
-    InvalidProtocolMessageEncoding,
-    #[error("Unexpected frame received {0}")]
-    UnexpectedFrame(crate::protos::relay::FrameType),
+    #[snafu(transparent)]
+    Io { source: io::Error },
+    #[snafu(transparent)]
+    Protocol { source: crate::protos::relay::Error },
+    #[snafu(transparent)]
+    Websocket { source: tokio_websockets::Error },
+    #[snafu(display("invalid protocol message encoding"))]
+    InvalidProtocolMessageEncoding { source: Utf8Error },
+    #[snafu(display("Unexpected frame received: {frame_type}"))]
+    UnexpectedFrame {
+        frame_type: crate::protos::relay::FrameType,
+    },
 }
 
 /// A connection to a relay server.
@@ -129,7 +115,7 @@ impl Conn {
         conn: ws_stream_wasm::WsStream,
         key_cache: KeyCache,
         secret_key: &SecretKey,
-    ) -> Result<Self, ConnectError> {
+    ) -> Result<Self, crate::protos::relay::Error> {
         let mut conn = Self::WsBrowser { conn, key_cache };
 
         // exchange information with the server
@@ -144,7 +130,7 @@ impl Conn {
         conn: MaybeTlsStreamChained,
         key_cache: KeyCache,
         secret_key: &SecretKey,
-    ) -> Result<Self, ConnectError> {
+    ) -> Result<Self, crate::protos::relay::Error> {
         let conn = Framed::new(conn, RelayCodec::new(key_cache));
 
         let mut conn = Self::Relay { conn };
@@ -160,7 +146,7 @@ impl Conn {
         conn: tokio_websockets::WebSocketStream<MaybeTlsStream<ProxyStream>>,
         key_cache: KeyCache,
         secret_key: &SecretKey,
-    ) -> Result<Self, ConnectError> {
+    ) -> Result<Self, crate::protos::relay::Error> {
         let mut conn = Self::Ws { conn, key_cache };
 
         // exchange information with the server
@@ -171,7 +157,10 @@ impl Conn {
 }
 
 /// Sends the server handshake message.
-async fn server_handshake(writer: &mut Conn, secret_key: &SecretKey) -> Result<(), HandshakeError> {
+async fn server_handshake(
+    writer: &mut Conn,
+    secret_key: &SecretKey,
+) -> Result<(), crate::protos::relay::Error> {
     debug!("server_handshake: started");
     let client_info = ClientInfo {
         version: PROTOCOL_VERSION,
@@ -242,7 +231,7 @@ impl Stream for Conn {
 }
 
 impl Sink<Frame> for Conn {
-    type Error = ConnSendError;
+    type Error = SendError;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
@@ -260,7 +249,7 @@ impl Sink<Frame> for Conn {
     fn start_send(mut self: Pin<&mut Self>, frame: Frame) -> Result<(), Self::Error> {
         if let Frame::SendPacket { dst_key: _, packet } = &frame {
             if packet.len() > MAX_PACKET_SIZE {
-                return Err(ConnSendError::Protocol("Packet exceeds MAX_PACKET_SIZE"));
+                return Err(ExceedsMaxPacketSizeSnafu { size: packet.len() }.build());
             }
         }
         match *self {
@@ -307,7 +296,7 @@ impl Sink<Frame> for Conn {
 }
 
 impl Sink<SendMessage> for Conn {
-    type Error = ConnSendError;
+    type Error = SendError;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
@@ -325,7 +314,7 @@ impl Sink<SendMessage> for Conn {
     fn start_send(mut self: Pin<&mut Self>, item: SendMessage) -> Result<(), Self::Error> {
         if let SendMessage::SendPacket(_, bytes) = &item {
             if bytes.len() > MAX_PACKET_SIZE {
-                return Err(ConnSendError::Protocol("Packet exceeds MAX_PACKET_SIZE"));
+                return Err(ExceedsMaxPacketSizeSnafu { size: bytes.len() }.build());
             }
         }
         let frame = Frame::from(item);
@@ -443,7 +432,7 @@ impl TryFrom<Frame> for ReceivedMessage {
             Frame::Pong { data } => Ok(ReceivedMessage::Pong(data)),
             Frame::Health { problem } => {
                 let problem = std::str::from_utf8(&problem)
-                    .map_err(|_| RecvError::InvalidProtocolMessageEncoding)?
+                    .context(InvalidProtocolMessageEncodingSnafu {})?
                     .to_owned();
                 let problem = Some(problem);
                 Ok(ReceivedMessage::Health { problem })
@@ -459,7 +448,10 @@ impl TryFrom<Frame> for ReceivedMessage {
                     try_for,
                 })
             }
-            _ => Err(RecvError::UnexpectedFrame(frame.typ())),
+            _ => Err(UnexpectedFrameSnafu {
+                frame_type: frame.typ(),
+            }
+            .build()),
         }
     }
 }

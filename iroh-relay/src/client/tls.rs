@@ -25,7 +25,7 @@ use hyper::{
 };
 use n0_future::{task, time};
 use rustls::client::Resumption;
-use snafu::ResultExt;
+use snafu::{OptionExt, ResultExt};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::{error, info_span, Instrument};
 
@@ -158,7 +158,7 @@ impl MaybeTlsStreamBuilder {
             .resolve_host(&self.url, self.prefer_ipv6, DNS_TIMEOUT)
             .await?;
 
-        let port = url_port(&self.url).ok_or(DialError::InvalidTargetPort)?;
+        let port = url_port(&self.url).context(InvalidTargetPortSnafu {})?;
         let addr = SocketAddr::new(dst_ip, port);
 
         debug!("connecting to {}", addr);
@@ -205,22 +205,26 @@ impl MaybeTlsStreamBuilder {
         let io = if proxy_url.scheme() == "http" {
             MaybeTlsStream::Raw(tcp_stream)
         } else {
-            let hostname = proxy_url
-                .host_str()
-                .ok_or_else(|| DialError::ProxyInvalidUrl(proxy_url.clone()))?;
-            let hostname = rustls::pki_types::ServerName::try_from(hostname.to_string())
-                .map_err(|_| DialError::ProxyInvalidTlsServername)?;
+            let hostname = proxy_url.host_str().context(ProxyInvalidUrlSnafu {
+                proxy_url: proxy_url.clone(),
+            })?;
+            let hostname =
+                rustls::pki_types::ServerName::try_from(hostname.to_string()).map_err(|_| {
+                    ProxyInvalidTlsServernameSnafu {
+                        proxy_hostname: hostname.to_string(),
+                    }
+                    .build()
+                })?;
             let tls_stream = tls_connector.connect(hostname, tcp_stream).await?;
             MaybeTlsStream::Tls(tls_stream)
         };
         let io = TokioIo::new(io);
 
-        let target_host = self
-            .url
-            .host_str()
-            .ok_or_else(|| DialError::InvalidUrl(self.url.clone()))?;
+        let target_host = self.url.host_str().context(InvalidUrlSnafu {
+            url: self.url.clone(),
+        })?;
 
-        let port = url_port(&self.url).ok_or(DialError::InvalidTargetPort)?;
+        let port = url_port(&self.url).context(InvalidTargetPortSnafu {})?;
 
         // Establish Proxy Tunnel
         let mut req_builder = Request::builder()
@@ -251,7 +255,7 @@ impl MaybeTlsStreamBuilder {
 
         let (mut sender, conn) = hyper::client::conn::http1::handshake(io)
             .await
-            .map_err(DialError::ProxyConnect)?;
+            .context(ProxyConnectSnafu {})?;
         task::spawn(async move {
             if let Err(err) = conn.with_upgrades().await {
                 error!("Proxy connection failed: {:?}", err);
@@ -261,14 +265,17 @@ impl MaybeTlsStreamBuilder {
         let res = sender
             .send_request(req)
             .await
-            .map_err(DialError::ProxyConnect)?;
+            .context(ProxyConnectSnafu {})?;
         if !res.status().is_success() {
-            return Err(DialError::ProxyConnectInvalidStatus(res.status()));
+            return Err(ProxyConnectInvalidStatusSnafu {
+                status: res.status(),
+            }
+            .build());
         }
 
         let upgraded = hyper::upgrade::on(res)
             .await
-            .map_err(DialError::ProxyConnect)?;
+            .context(ProxyConnectSnafu {})?;
         let Parts { io, read_buf, .. } = upgraded
             .downcast::<TokioIo<MaybeTlsStream<tokio::net::TcpStream>>>()
             .expect("only this upgrade used");
@@ -385,12 +392,10 @@ impl ClientBuilder {
         T: AsyncRead + AsyncWrite + Send + Unpin + 'static,
     {
         use hyper_util::rt::TokioIo;
-        let host_header_value = host_header_value(self.url.clone()).ok_or_else(|| {
-            InvalidRelayUrlSnafu {
+        let host_header_value =
+            host_header_value(self.url.clone()).context(InvalidRelayUrlSnafu {
                 url: Url::from(self.url.clone()),
-            }
-            .build()
-        })?;
+            })?;
 
         let io = TokioIo::new(io);
         let (mut request_sender, connection) = hyper::client::conn::http1::Builder::new()

@@ -52,7 +52,6 @@ rustls = { version = "0.23", default-features = false, features = ["ring"] }
 serde = { version = "1", features = ["derive", "rc"] }
 strum = { version = "0.26", features = ["derive"] }
 stun-rs = "0.1.5"
-thiserror = "2"
 tokio = { version = "1", features = [
     "io-util",
     "macros",
@@ -88,6 +87,7 @@ rustls-cert-reloadable-resolver = { version = "0.7.1", optional = true }
 rustls-cert-file-reader = { version = "0.4.1", optional = true }
 rustls-pemfile = { version = "2.1", optional = true }
 time = { version = "0.3.37", optional = true }
+thiserror = { version = "2", optional = true }
 tokio-rustls-acme = { version = "0.7.1", optional = true }
 tokio-websockets = { version = "0.11.3", features = ["rustls-bring-your-own-connector", "ring", "getrandom", "rand", "server"], optional = true } # server-side websocket implementation
 toml = { version = "0.8", optional = true }
@@ -154,6 +154,7 @@ server = [
     "dep:rustls-cert-reloadable-resolver",
     "dep:rustls-pemfile",
     "dep:time",
+    "dep:thiserror",
     "dep:tokio-rustls-acme",
     "dep:tokio-websockets",
     "dep:toml",
