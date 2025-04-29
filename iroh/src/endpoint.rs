@@ -21,13 +21,14 @@ use std::{
     task::Poll,
 };
 
-use anyhow::{bail, Context};
 use data_encoding::BASE32_DNSSEC;
 use ed25519_dalek::{pkcs8::DecodePublicKey, VerifyingKey};
 use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
 use iroh_relay::RelayMap;
 use n0_future::{time::Duration, Stream};
+use nested_enum_utils::common_fields;
 use pin_project::pin_project;
+use snafu::{ensure, ResultExt, Snafu};
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
@@ -168,7 +169,7 @@ impl Builder {
     // # The final constructor that everyone needs.
 
     /// Binds the magic endpoint.
-    pub async fn bind(self) -> anyhow::Result<Endpoint> {
+    pub async fn bind(self) -> Result<Endpoint, BindError> {
         let relay_map = self.relay_mode.relay_map();
         let secret_key = self
             .secret_key
@@ -600,6 +601,73 @@ pub struct Endpoint {
     session_store: Arc<dyn rustls::client::ClientSessionStore>,
 }
 
+#[allow(missing_docs)]
+#[common_fields({
+    backtrace: Option<snafu::Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[derive(Debug, Snafu)]
+pub enum ConnectWithOptsError {
+    #[snafu(transparent)]
+    AddNodeAddr { source: AddNodeAddrError },
+    #[snafu(display("Connecting to ourself is not supported"))]
+    SelfConnect {},
+    #[snafu(display("No addressing information available"))]
+    NoAddress { source: GetMappingAddressError },
+    #[snafu(display("Invalid TLS configuration"))]
+    TlsCreate { source: tls::CreateConfigError },
+    #[snafu(display("Unable to connect to remote"))]
+    Quinn { source: quinn::ConnectError },
+}
+
+#[allow(missing_docs)]
+#[common_fields({
+    backtrace: Option<snafu::Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[derive(Debug, Snafu)]
+pub enum ConnectError {
+    #[snafu(transparent)]
+    Connect { source: ConnectWithOptsError },
+    #[snafu(transparent)]
+    Connection { source: ConnectionError },
+}
+
+#[allow(missing_docs)]
+#[common_fields({
+    backtrace: Option<snafu::Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[derive(Debug, Snafu)]
+pub enum BindError {
+    #[snafu(transparent)]
+    TlsCreate { source: tls::CreateConfigError },
+    #[snafu(transparent)]
+    MagicSpawn {
+        source: magicsock::CreateHandleError,
+    },
+}
+
+#[allow(missing_docs)]
+#[common_fields({
+    backtrace: Option<snafu::Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[derive(Debug, Snafu)]
+#[snafu(module)]
+pub enum GetMappingAddressError {
+    #[snafu(display("Discovery service required due to missing addressing information"))]
+    DiscoveryStart { source: anyhow::Error },
+    #[snafu(display("Discovery service failed"))]
+    Discover { source: anyhow::Error },
+    #[snafu(display("No addressing information found"))]
+    NoAddress {},
+}
+
 impl Endpoint {
     // The ordering of public methods is reflected directly in the documentation.  This is
     // roughly ordered by what is most commonly needed by users, but grouped in similar
@@ -620,7 +688,7 @@ impl Endpoint {
     async fn bind(
         static_config: StaticConfig,
         msock_opts: magicsock::Options,
-    ) -> anyhow::Result<Self> {
+    ) -> Result<Self, BindError> {
         let msock = magicsock::MagicSock::spawn(msock_opts).await?;
         trace!("created magicsock");
         debug!(version = env!("CARGO_PKG_VERSION"), "iroh Endpoint created");
@@ -640,7 +708,7 @@ impl Endpoint {
     ///
     /// This will only affect new incoming connections.
     /// Note that this *overrides* the current list of ALPNs.
-    pub fn set_alpns(&self, alpns: Vec<Vec<u8>>) -> anyhow::Result<()> {
+    pub fn set_alpns(&self, alpns: Vec<Vec<u8>>) -> Result<(), tls::CreateConfigError> {
         let server_config = self.static_config.create_server_config(alpns)?;
         self.msock.endpoint().set_server_config(Some(server_config));
         Ok(())
@@ -674,15 +742,14 @@ impl Endpoint {
         &self,
         node_addr: impl Into<NodeAddr>,
         alpn: &[u8],
-    ) -> anyhow::Result<Connection> {
+    ) -> Result<Connection, ConnectError> {
         let node_addr = node_addr.into();
         let remote = node_addr.node_id;
         let connecting = self
             .connect_with_opts(node_addr, alpn, Default::default())
             .await?;
-        let conn = connecting
-            .await
-            .context("failed connecting to remote endpoint")?;
+        let conn = connecting.await?;
+
         debug!(
             me = %self.node_id().fmt_short(),
             remote = %remote.fmt_short(),
@@ -716,17 +783,12 @@ impl Endpoint {
         node_addr: impl Into<NodeAddr>,
         alpn: &[u8],
         options: ConnectOptions,
-    ) -> anyhow::Result<Connecting> {
+    ) -> Result<Connecting, ConnectWithOptsError> {
         let node_addr: NodeAddr = node_addr.into();
         tracing::Span::current().record("remote", node_addr.node_id.fmt_short());
 
         // Connecting to ourselves is not supported.
-        if node_addr.node_id == self.node_id() {
-            bail!(
-                "Connecting to ourself is not supported ({} is the node id of this node)",
-                node_addr.node_id.fmt_short()
-            );
-        }
+        ensure!(node_addr.node_id != self.node_id(), SelfConnectSnafu);
 
         if !node_addr.is_empty() {
             self.add_node_addr(node_addr.clone())?;
@@ -742,12 +804,7 @@ impl Endpoint {
         let (mapped_addr, _discovery_drop_guard) = self
             .get_mapping_addr_and_maybe_start_discovery(node_addr)
             .await
-            .with_context(|| {
-                format!(
-                    "No addressing information for NodeId({}), unable to connect",
-                    node_id.fmt_short()
-                )
-            })?;
+            .context(NoAddressSnafu)?;
 
         let transport_config = options
             .transport_config
@@ -764,13 +821,17 @@ impl Endpoint {
         );
         let client_config = {
             let alpn_protocols = vec![alpn.to_vec()];
-            let quic_client_config = self.static_config.tls_auth.make_client_config(
-                &self.static_config.secret_key,
-                node_id,
-                alpn_protocols,
-                Some(self.session_store.clone()),
-                self.static_config.keylog,
-            )?;
+            let quic_client_config = self
+                .static_config
+                .tls_auth
+                .make_client_config(
+                    &self.static_config.secret_key,
+                    node_id,
+                    alpn_protocols,
+                    Some(self.session_store.clone()),
+                    self.static_config.keylog,
+                )
+                .context(TlsCreateSnafu)?;
             let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
             client_config.transport_config(transport_config);
             client_config
@@ -786,11 +847,15 @@ impl Endpoint {
         // We also add "iroh" as a subdomain, although those 5 bytes might not be necessary.
         // We *could* decide to remove that indicator in the future likely without breakage.
         let server_name = &format!("{}.iroh.invalid", BASE32_DNSSEC.encode(node_id.as_bytes()));
-        let connect = self.msock.endpoint().connect_with(
-            client_config,
-            mapped_addr.private_socket_addr(),
-            server_name,
-        )?;
+        let connect = self
+            .msock
+            .endpoint()
+            .connect_with(
+                client_config,
+                mapped_addr.private_socket_addr(),
+                server_name,
+            )
+            .context(QuinnSnafu)?;
 
         Ok(Connecting {
             inner: connect,
@@ -1208,7 +1273,7 @@ impl Endpoint {
     async fn get_mapping_addr_and_maybe_start_discovery(
         &self,
         node_addr: NodeAddr,
-    ) -> anyhow::Result<(NodeIdMappedAddr, Option<DiscoveryTask>)> {
+    ) -> Result<(NodeIdMappedAddr, Option<DiscoveryTask>), GetMappingAddressError> {
         let node_id = node_addr.node_id;
 
         // Only return a mapped addr if we have some way of dialing this node, in other
@@ -1239,16 +1304,16 @@ impl Endpoint {
                 // So, we start a discovery task and wait for the first result to arrive, and
                 // only then continue, because otherwise we wouldn't have any
                 // path to the remote endpoint.
-                let mut discovery = DiscoveryTask::start(self.clone(), node_id)
-                    .context("Discovery service required due to missing addressing information")?;
+                let res = DiscoveryTask::start(self.clone(), node_id);
+                let mut discovery = res.context(get_mapping_address_error::DiscoveryStartSnafu)?;
                 discovery
                     .first_arrived()
                     .await
-                    .context("Discovery service failed")?;
+                    .context(get_mapping_address_error::DiscoverSnafu)?;
                 if let Some(addr) = self.msock.get_mapping_addr(node_id) {
                     Ok((addr, Some(discovery)))
                 } else {
-                    bail!("Discovery did not find addressing information");
+                    Err(get_mapping_address_error::NoAddressSnafu.build())
                 }
             }
         }
@@ -1456,6 +1521,22 @@ pub struct Connecting {
     _discovery_drop_guard: Option<DiscoveryTask>,
 }
 
+#[allow(missing_docs)]
+#[common_fields({
+    backtrace: Option<snafu::Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[derive(Debug, Snafu)]
+pub enum AlpnError {
+    #[snafu(transparent)]
+    ConnectionError { source: ConnectionError },
+    #[snafu(display("No ALPN available"))]
+    Unavailable {},
+    #[snafu(display("Unknown handshake type"))]
+    UnknownHandshake {},
+}
+
 impl Connecting {
     /// Converts this [`Connecting`] into a 0-RTT or 0.5-RTT connection at the cost of weakened
     /// security.
@@ -1537,14 +1618,14 @@ impl Connecting {
     }
 
     /// Extracts the ALPN protocol from the peer's handshake data.
-    pub async fn alpn(&mut self) -> anyhow::Result<Vec<u8>> {
+    pub async fn alpn(&mut self) -> Result<Vec<u8>, AlpnError> {
         let data = self.handshake_data().await?;
         match data.downcast::<quinn::crypto::rustls::HandshakeData>() {
             Ok(data) => match data.protocol {
                 Some(protocol) => Ok(protocol),
-                None => bail!("no ALPN protocol available"),
+                None => Err(UnavailableSnafu.build()),
             },
-            Err(_) => bail!("unknown handshake type"),
+            Err(_) => Err(UnknownHandshakeSnafu.build()),
         }
     }
 }
@@ -1611,6 +1692,13 @@ impl Future for ZeroRttAccepted {
 pub struct Connection {
     inner: quinn::Connection,
     tls_auth: tls::Authentication,
+}
+
+#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[snafu(display("Protocol error: no remote id available"))]
+pub struct RemoteNodeIdError {
+    backtrace: Option<snafu::Backtrace>,
 }
 
 impl Connection {
@@ -1828,31 +1916,41 @@ impl Connection {
     ///
     /// [`PublicKey`]: iroh_base::PublicKey
     // TODO: Would be nice if this could be infallible.
-    pub fn remote_node_id(&self) -> anyhow::Result<NodeId> {
+    pub fn remote_node_id(&self) -> Result<NodeId, RemoteNodeIdError> {
         let data = self.peer_identity();
         match data {
-            None => bail!("no peer certificate found"),
+            None => {
+                warn!("no peer certificate found");
+                Err(RemoteNodeIdSnafu.build())
+            }
             Some(data) => match data.downcast::<Vec<rustls::pki_types::CertificateDer>>() {
                 Ok(certs) => {
                     if certs.len() != 1 {
-                        bail!(
+                        warn!(
                             "expected a single peer certificate, but {} found",
                             certs.len()
                         );
+                        return Err(RemoteNodeIdSnafu.build());
                     }
 
                     match self.tls_auth {
                         tls::Authentication::X509 => {
-                            let cert = tls::certificate::parse(&certs[0])?;
+                            let cert = tls::certificate::parse(&certs[0])
+                                .map_err(|_| RemoteNodeIdSnafu.build())?;
                             Ok(cert.peer_id())
                         }
                         tls::Authentication::RawPublicKey => {
-                            let peer_id = VerifyingKey::from_public_key_der(&certs[0])?.into();
+                            let peer_id = VerifyingKey::from_public_key_der(&certs[0])
+                                .map_err(|_| RemoteNodeIdSnafu.build())?
+                                .into();
                             Ok(peer_id)
                         }
                     }
                 }
-                Err(_) => bail!("invalid peer certificate"),
+                Err(err) => {
+                    warn!("invalid peer certificate: {:?}", err);
+                    Err(RemoteNodeIdSnafu.build())
+                }
             },
         }
     }
@@ -2031,9 +2129,9 @@ fn is_cgi() -> bool {
 // https://github.com/n0-computer/iroh/issues/1183
 #[cfg(test)]
 mod tests {
-
     use std::time::Instant;
 
+    use anyhow::bail;
     use iroh_relay::http::Protocol;
     use n0_future::StreamExt;
     use rand::SeedableRng;

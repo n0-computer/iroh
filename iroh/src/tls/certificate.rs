@@ -107,7 +107,7 @@ pub(crate) struct P2pExtension {
 /// An error that occurs during certificate generation.
 #[derive(Debug, Snafu)]
 #[snafu(transparent)]
-pub(crate) struct GenError {
+pub struct GenError {
     source: rcgen::Error,
 }
 

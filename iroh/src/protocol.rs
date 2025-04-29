@@ -50,7 +50,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info_span, trace, warn, Instrument};
 
 use crate::{
-    endpoint::{Connecting, Connection},
+    endpoint::{BindError, Connecting, Connection},
     Endpoint,
 };
 
@@ -254,7 +254,7 @@ impl RouterBuilder {
     }
 
     /// Spawns an accept loop and returns a handle to it encapsulated as the [`Router`].
-    pub async fn spawn(self) -> anyhow::Result<Router> {
+    pub async fn spawn(self) -> Result<Router, BindError> {
         // Update the endpoint with our alpns.
         let alpns = self
             .protocols
@@ -265,7 +265,7 @@ impl RouterBuilder {
         let protocols = Arc::new(self.protocols);
         if let Err(err) = self.endpoint.set_alpns(alpns) {
             shutdown(&self.endpoint, protocols.clone()).await;
-            return Err(err);
+            return Err(err.into());
         }
 
         let mut join_set = JoinSet::new();

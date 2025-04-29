@@ -116,7 +116,7 @@ impl Authentication {
     span_trace: n0_snafu::SpanTrace,
 })]
 #[derive(Debug, Snafu)]
-pub(crate) enum CreateConfigError {
+pub enum CreateConfigError {
     /// Error generating the certificate.
     #[snafu(display("Error generating the certificate"), context(false))]
     CertError { source: certificate::GenError },

@@ -1687,7 +1687,7 @@ impl DirectAddrUpdateState {
     span_trace: n0_snafu::SpanTrace,
 })]
 #[derive(Debug, Snafu)]
-pub(crate) enum CreateHandleError {
+pub enum CreateHandleError {
     #[snafu(display("Failed to create bind sockets"))]
     BindSockets { source: io::Error },
     #[snafu(display("Failed to create internal quinn endpoint"))]
