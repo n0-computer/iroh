@@ -4438,7 +4438,29 @@
 <a href="#4437" id="4437">4437</a>
 <a href="#4438" id="4438">4438</a>
 <a href="#4439" id="4439">4439</a>
-<a href="#4440" id="4440">4440</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4440" id="4440">4440</a>
+<a href="#4441" id="4441">4441</a>
+<a href="#4442" id="4442">4442</a>
+<a href="#4443" id="4443">4443</a>
+<a href="#4444" id="4444">4444</a>
+<a href="#4445" id="4445">4445</a>
+<a href="#4446" id="4446">4446</a>
+<a href="#4447" id="4447">4447</a>
+<a href="#4448" id="4448">4448</a>
+<a href="#4449" id="4449">4449</a>
+<a href="#4450" id="4450">4450</a>
+<a href="#4451" id="4451">4451</a>
+<a href="#4452" id="4452">4452</a>
+<a href="#4453" id="4453">4453</a>
+<a href="#4454" id="4454">4454</a>
+<a href="#4455" id="4455">4455</a>
+<a href="#4456" id="4456">4456</a>
+<a href="#4457" id="4457">4457</a>
+<a href="#4458" id="4458">4458</a>
+<a href="#4459" id="4459">4459</a>
+<a href="#4460" id="4460">4460</a>
+<a href="#4461" id="4461">4461</a>
+<a href="#4462" id="4462">4462</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4468,7 +4490,7 @@
     task::{Context, Poll, Waker},
 };
 
-<span class="kw">use </span>anyhow::{anyhow, Context <span class="kw">as _</span>};
+<span class="kw">use </span>anyhow::anyhow;
 <span class="kw">use </span>atomic_waker::AtomicWaker;
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>concurrent_queue::ConcurrentQueue;
@@ -4490,7 +4512,7 @@
 <span class="kw">use </span>rand::{seq::SliceRandom, Rng, SeedableRng};
 <span class="kw">use </span>relay_actor::RelaySendItem;
 <span class="kw">use </span>smallvec::{smallvec, SmallVec};
-<span class="kw">use </span>snafu::{IntoError, Snafu};
+<span class="kw">use </span>snafu::{IntoError, ResultExt, Snafu};
 <span class="kw">use </span>tokio::sync::{<span class="self">self</span>, mpsc, Mutex};
 <span class="kw">use </span>tokio_util::sync::CancellationToken;
 <span class="kw">use </span>tracing::{
@@ -4717,7 +4739,7 @@
 
 <span class="kw">impl </span>MagicSock {
     <span class="doccomment">/// Creates a magic [`MagicSock`] listening on [`Options::addr_v4`] and [`Options::addr_v6`].
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>spawn(opts: Options) -&gt; anyhow::Result&lt;Handle&gt; {
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>spawn(opts: Options) -&gt; <span class="prelude-ty">Result</span>&lt;Handle, CreateHandleError&gt; {
         Handle::new(opts).<span class="kw">await
     </span>}
 
@@ -6103,9 +6125,29 @@
     }
 }
 
+<span class="attr">#[allow(missing_docs)]
+#[common_fields({
+    backtrace: <span class="prelude-ty">Option</span>&lt;snafu::Backtrace&gt;,
+    <span class="attr">#[snafu(implicit)]
+    </span>span_trace: n0_snafu::SpanTrace,
+})]
+<span class="attr">#[derive(Debug, Snafu)]
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>CreateHandleError {
+    <span class="attr">#[snafu(display(<span class="string">"Failed to create bind sockets"</span>))]
+    </span>BindSockets { source: io::Error },
+    <span class="attr">#[snafu(display(<span class="string">"Failed to create internal quinn endpoint"</span>))]
+    </span>CreateQuinnEndpoint { source: io::Error },
+    <span class="attr">#[snafu(display(<span class="string">"Failed to create socket state"</span>))]
+    </span>CreateSocketState { source: io::Error },
+    <span class="attr">#[snafu(display(<span class="string">"Failed to create net report client"</span>))]
+    </span>CreateNetReportClient { source: anyhow::Error },
+    <span class="attr">#[snafu(display(<span class="string">"Failed to create netmon monitor"</span>))]
+    </span>CreateNetmonMonitor { source: netmon::Error },
+}
+
 <span class="kw">impl </span>Handle {
     <span class="doccomment">/// Creates a magic [`MagicSock`] listening on [`Options::addr_v4`] and [`Options::addr_v6`].
-    </span><span class="kw">async fn </span>new(opts: Options) -&gt; anyhow::Result&lt;<span class="self">Self</span>&gt; {
+    </span><span class="kw">async fn </span>new(opts: Options) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, CreateHandleError&gt; {
         <span class="kw">let </span>me = opts.secret_key.public().fmt_short();
 
         <span class="self">Self</span>::with_name(me, opts)
@@ -6113,7 +6155,7 @@
             .<span class="kw">await
     </span>}
 
-    <span class="kw">async fn </span>with_name(me: String, opts: Options) -&gt; anyhow::Result&lt;<span class="self">Self</span>&gt; {
+    <span class="kw">async fn </span>with_name(me: String, opts: Options) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, CreateHandleError&gt; {
         <span class="kw">let </span>Options {
             addr_v4,
             addr_v6,
@@ -6134,10 +6176,12 @@
         } = opts;
 
         <span class="attr">#[cfg(not(wasm_browser))]
-        </span><span class="kw">let </span>actor_sockets = ActorSocketState::bind(addr_v4, addr_v6)<span class="question-mark">?</span>;
+        </span><span class="kw">let </span>actor_sockets = ActorSocketState::bind(addr_v4, addr_v6).context(BindSocketsSnafu)<span class="question-mark">?</span>;
 
         <span class="attr">#[cfg(not(wasm_browser))]
-        </span><span class="kw">let </span>sockets = actor_sockets.msock_socket_state()<span class="question-mark">?</span>;
+        </span><span class="kw">let </span>sockets = actor_sockets
+            .msock_socket_state()
+            .context(CreateSocketStateSnafu)<span class="question-mark">?</span>;
 
         <span class="kw">let </span>ip_mapped_addrs = IpMappedAddresses::default();
 
@@ -6148,7 +6192,8 @@
             </span>dns_resolver.clone(),
             <span class="attr">#[cfg(not(wasm_browser))]
             </span><span class="prelude-val">Some</span>(ip_mapped_addrs.clone()),
-        )<span class="question-mark">?</span>;
+        )
+        .context(CreateNetReportClientSnafu)<span class="question-mark">?</span>;
 
         <span class="kw">let </span>(actor_sender, actor_receiver) = mpsc::channel(<span class="number">256</span>);
         <span class="kw">let </span>(relay_actor_sender, relay_actor_receiver) = mpsc::channel(<span class="number">256</span>);
@@ -6214,7 +6259,8 @@
             </span>Arc::new(quinn::TokioRuntime),
             <span class="attr">#[cfg(wasm_browser)]
             </span>Arc::new(<span class="kw">crate</span>::web_runtime::WebRuntime),
-        )<span class="question-mark">?</span>;
+        )
+        .context(CreateQuinnEndpointSnafu)<span class="question-mark">?</span>;
 
         <span class="kw">let </span><span class="kw-2">mut </span>actor_tasks = JoinSet::default();
 
@@ -6241,7 +6287,9 @@
             }
         });
 
-        <span class="kw">let </span>network_monitor = netmon::Monitor::new().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>network_monitor = netmon::Monitor::new()
+            .<span class="kw">await
+            </span>.context(CreateNetmonMonitorSnafu)<span class="question-mark">?</span>;
         <span class="kw">let </span>qad_endpoint = endpoint.clone();
 
         <span class="comment">// create a client config for the endpoint to use for QUIC address discovery
@@ -6524,6 +6572,12 @@
     waker: AtomicWaker,
 }
 
+<span class="attr">#[derive(Debug, Snafu)]
+</span><span class="kw">enum </span>RelayRecvDatagramError {
+    <span class="attr">#[snafu(display(<span class="string">"Queue is closed"</span>))]
+    </span>Closed,
+}
+
 <span class="kw">impl </span>RelayDatagramRecvQueue {
     <span class="doccomment">/// Creates a new, empty queue with a fixed size bound of 512 items.
     </span><span class="kw">fn </span>new() -&gt; <span class="self">Self </span>{
@@ -6558,7 +6612,10 @@
     /// The reason this method is made available as `&amp;self` is because
     /// the interface for quinn's [`AsyncUdpSocket::poll_recv`] requires us
     /// to be able to poll from `&amp;self`.
-    </span><span class="kw">fn </span>poll_recv(<span class="kw-2">&amp;</span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>Context) -&gt; Poll&lt;anyhow::Result&lt;RelayRecvDatagram&gt;&gt; {
+    </span><span class="kw">fn </span>poll_recv(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        cx: <span class="kw-2">&amp;mut </span>Context,
+    ) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;RelayRecvDatagram, RelayRecvDatagramError&gt;&gt; {
         <span class="kw">match </span><span class="self">self</span>.queue.pop() {
             <span class="prelude-val">Ok</span>(value) =&gt; Poll::Ready(<span class="prelude-val">Ok</span>(value)),
             <span class="prelude-val">Err</span>(concurrent_queue::PopError::Empty) =&gt; {
@@ -6572,11 +6629,11 @@
                     <span class="prelude-val">Err</span>(concurrent_queue::PopError::Empty) =&gt; Poll::Pending,
                     <span class="prelude-val">Err</span>(concurrent_queue::PopError::Closed) =&gt; {
                         <span class="self">self</span>.waker.take();
-                        Poll::Ready(<span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Queue closed"</span>)))
+                        Poll::Ready(<span class="prelude-val">Err</span>(ClosedSnafu.build()))
                     }
                 }
             }
-            <span class="prelude-val">Err</span>(concurrent_queue::PopError::Closed) =&gt; Poll::Ready(<span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Queue closed"</span>))),
+            <span class="prelude-val">Err</span>(concurrent_queue::PopError::Closed) =&gt; Poll::Ready(<span class="prelude-val">Err</span>(ClosedSnafu.build())),
         }
     }
 }
@@ -6785,7 +6842,7 @@
 
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">impl </span>ActorSocketState {
-    <span class="kw">fn </span>bind(addr_v4: <span class="prelude-ty">Option</span>&lt;SocketAddrV4&gt;, addr_v6: <span class="prelude-ty">Option</span>&lt;SocketAddrV6&gt;) -&gt; anyhow::Result&lt;<span class="self">Self</span>&gt; {
+    <span class="kw">fn </span>bind(addr_v4: <span class="prelude-ty">Option</span>&lt;SocketAddrV4&gt;, addr_v6: <span class="prelude-ty">Option</span>&lt;SocketAddrV6&gt;) -&gt; io::Result&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>port_mapper = portmapper::Client::default();
         <span class="kw">let </span>(v4, v6) = <span class="self">Self</span>::bind_sockets(addr_v4, addr_v6)<span class="question-mark">?</span>;
 
@@ -6816,9 +6873,9 @@
     <span class="kw">fn </span>bind_sockets(
         addr_v4: <span class="prelude-ty">Option</span>&lt;SocketAddrV4&gt;,
         addr_v6: <span class="prelude-ty">Option</span>&lt;SocketAddrV6&gt;,
-    ) -&gt; anyhow::Result&lt;(Arc&lt;UdpSocket&gt;, <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;)&gt; {
+    ) -&gt; io::Result&lt;(Arc&lt;UdpSocket&gt;, <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;)&gt; {
         <span class="kw">let </span>addr_v4 = addr_v4.unwrap_or_else(|| SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, <span class="number">0</span>));
-        <span class="kw">let </span>v4 = Arc::new(bind_with_fallback(SocketAddr::V4(addr_v4)).context(<span class="string">"bind IPv4 failed"</span>)<span class="question-mark">?</span>);
+        <span class="kw">let </span>v4 = Arc::new(bind_with_fallback(SocketAddr::V4(addr_v4))<span class="question-mark">?</span>);
 
         <span class="kw">let </span>ip4_port = v4.local_addr()<span class="question-mark">?</span>.port();
         <span class="kw">let </span>ip6_port = ip4_port.checked_add(<span class="number">1</span>).unwrap_or(ip4_port - <span class="number">1</span>);
@@ -6835,7 +6892,7 @@
         <span class="prelude-val">Ok</span>((v4, v6))
     }
 
-    <span class="kw">fn </span>msock_socket_state(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; anyhow::Result&lt;SocketState&gt; {
+    <span class="kw">fn </span>msock_socket_state(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; io::Result&lt;SocketState&gt; {
         <span class="kw">let </span>ipv4_addr = <span class="self">self</span>.v4.local_addr()<span class="question-mark">?</span>;
         <span class="kw">let </span>ipv6_addr = <span class="self">self</span>.v6.as_ref().and_then(|c| c.local_addr().ok());
 
@@ -7491,13 +7548,13 @@
 }
 
 <span class="attr">#[cfg(not(wasm_browser))]
-</span><span class="kw">fn </span>bind_with_fallback(<span class="kw-2">mut </span>addr: SocketAddr) -&gt; anyhow::Result&lt;UdpSocket&gt; {
+</span><span class="kw">fn </span>bind_with_fallback(<span class="kw-2">mut </span>addr: SocketAddr) -&gt; io::Result&lt;UdpSocket&gt; {
     <span class="macro">debug!</span>(%addr, <span class="string">"binding"</span>);
 
     <span class="comment">// First try binding a preferred port, if specified
     </span><span class="kw">match </span>UdpSocket::bind_full(addr) {
         <span class="prelude-val">Ok</span>(socket) =&gt; {
-            <span class="kw">let </span>local_addr = socket.local_addr().context(<span class="string">"UDP socket not bound"</span>)<span class="question-mark">?</span>;
+            <span class="kw">let </span>local_addr = socket.local_addr()<span class="question-mark">?</span>;
             <span class="macro">debug!</span>(%addr, %local_addr, <span class="string">"successfully bound"</span>);
             <span class="kw">return </span><span class="prelude-val">Ok</span>(socket);
         }
@@ -7505,14 +7562,14 @@
             <span class="macro">debug!</span>(%addr, <span class="string">"failed to bind: {err:#}"</span>);
             <span class="comment">// If that was already the fallback port, then error out
             </span><span class="kw">if </span>addr.port() == <span class="number">0 </span>{
-                <span class="kw">return </span><span class="prelude-val">Err</span>(err.into());
+                <span class="kw">return </span><span class="prelude-val">Err</span>(err);
             }
         }
     }
 
     <span class="comment">// Otherwise, try binding with port 0
     </span>addr.set_port(<span class="number">0</span>);
-    UdpSocket::bind_full(addr).context(<span class="string">"failed to bind on fallback port"</span>)
+    UdpSocket::bind_full(addr)
 }
 
 <span class="doccomment">/// The discovered direct addresses of this [`MagicSock`].
@@ -7676,7 +7733,7 @@
 <span class="kw">impl </span>TryFrom&lt;Ipv6Addr&gt; <span class="kw">for </span>NodeIdMappedAddr {
     <span class="kw">type </span>Error = NodeIdMappedAddrError;
 
-    <span class="kw">fn </span>try_from(value: Ipv6Addr) -&gt; std::result::Result&lt;<span class="self">Self</span>, <span class="self">Self</span>::Error&gt; {
+    <span class="kw">fn </span>try_from(value: Ipv6Addr) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, <span class="self">Self</span>::Error&gt; {
         <span class="kw">let </span>octets = value.octets();
         <span class="kw">if </span>octets[<span class="number">0</span>] == <span class="self">Self</span>::ADDR_PREFIXL
             &amp;&amp; octets[<span class="number">1</span>..<span class="number">6</span>] == <span class="self">Self</span>::ADDR_GLOBAL_ID
@@ -7842,7 +7899,6 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
-    <span class="kw">use </span>anyhow::Context;
     <span class="kw">use </span>rand::RngCore;
     <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
     <span class="kw">use </span>tracing_test::traced_test;
@@ -8016,8 +8072,7 @@
                 time::sleep(Duration::from_millis(<span class="number">200</span>)).<span class="kw">await</span>;
             }
         })
-        .<span class="kw">await
-        </span>.context(<span class="string">"failed to connect nodes"</span>)<span class="question-mark">?</span>;
+        .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="macro">info!</span>(<span class="string">"all nodes meshed"</span>);
         <span class="prelude-val">Ok</span>(tasks)
     }
@@ -8028,28 +8083,21 @@
         <span class="kw">let </span>conn = ep.endpoint.accept().<span class="kw">await</span>.expect(<span class="string">"no conn"</span>);
 
         <span class="macro">info!</span>(<span class="string">"connecting"</span>);
-        <span class="kw">let </span>conn = conn.<span class="kw">await</span>.context(<span class="string">"[receiver] connecting"</span>)<span class="question-mark">?</span>;
+        <span class="kw">let </span>conn = conn.<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="macro">info!</span>(<span class="string">"accepting bi"</span>);
-        <span class="kw">let </span>(<span class="kw-2">mut </span>send_bi, <span class="kw-2">mut </span>recv_bi) =
-            conn.accept_bi().<span class="kw">await</span>.context(<span class="string">"[receiver] accepting bi"</span>)<span class="question-mark">?</span>;
+        <span class="kw">let </span>(<span class="kw-2">mut </span>send_bi, <span class="kw-2">mut </span>recv_bi) = conn.accept_bi().<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="macro">info!</span>(<span class="string">"reading"</span>);
-        <span class="kw">let </span>val = recv_bi
-            .read_to_end(usize::MAX)
-            .<span class="kw">await
-            </span>.context(<span class="string">"[receiver] reading to end"</span>)<span class="question-mark">?</span>;
+        <span class="kw">let </span>val = recv_bi.read_to_end(usize::MAX).<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="macro">info!</span>(<span class="string">"replying"</span>);
         <span class="kw">for </span>chunk <span class="kw">in </span>val.chunks(<span class="number">12</span>) {
-            send_bi
-                .write_all(chunk)
-                .<span class="kw">await
-                </span>.context(<span class="string">"[receiver] sending chunk"</span>)<span class="question-mark">?</span>;
+            send_bi.write_all(chunk).<span class="kw">await</span><span class="question-mark">?</span>;
         }
 
         <span class="macro">info!</span>(<span class="string">"finishing"</span>);
-        send_bi.finish().context(<span class="string">"[receiver] finishing"</span>)<span class="question-mark">?</span>;
-        send_bi.stopped().<span class="kw">await</span>.context(<span class="string">"[receiver] stopped"</span>)<span class="question-mark">?</span>;
+        send_bi.finish()<span class="question-mark">?</span>;
+        send_bi.stopped().<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="kw">let </span>stats = conn.stats();
         <span class="macro">info!</span>(<span class="string">"stats: {:#?}"</span>, stats);
@@ -8078,24 +8126,20 @@
     ) -&gt; anyhow::Result&lt;()&gt; {
         <span class="macro">info!</span>(<span class="string">"connecting to {}"</span>, dest_id.fmt_short());
         <span class="kw">let </span>dest = NodeAddr::new(dest_id);
-        <span class="kw">let </span>conn = ep
-            .endpoint
-            .connect(dest, ALPN)
-            .<span class="kw">await
-            </span>.context(<span class="string">"[sender] connect"</span>)<span class="question-mark">?</span>;
+        <span class="kw">let </span>conn = ep.endpoint.connect(dest, ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="macro">info!</span>(<span class="string">"opening bi"</span>);
-        <span class="kw">let </span>(<span class="kw-2">mut </span>send_bi, <span class="kw-2">mut </span>recv_bi) = conn.open_bi().<span class="kw">await</span>.context(<span class="string">"[sender] open bi"</span>)<span class="question-mark">?</span>;
+        <span class="kw">let </span>(<span class="kw-2">mut </span>send_bi, <span class="kw-2">mut </span>recv_bi) = conn.open_bi().<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="macro">info!</span>(<span class="string">"writing message"</span>);
-        send_bi.write_all(msg).<span class="kw">await</span>.context(<span class="string">"[sender] write all"</span>)<span class="question-mark">?</span>;
+        send_bi.write_all(msg).<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="macro">info!</span>(<span class="string">"finishing"</span>);
-        send_bi.finish().context(<span class="string">"[sender] finish"</span>)<span class="question-mark">?</span>;
-        send_bi.stopped().<span class="kw">await</span>.context(<span class="string">"[sender] stopped"</span>)<span class="question-mark">?</span>;
+        send_bi.finish()<span class="question-mark">?</span>;
+        send_bi.stopped().<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="macro">info!</span>(<span class="string">"reading_to_end"</span>);
-        <span class="kw">let </span>val = recv_bi.read_to_end(usize::MAX).<span class="kw">await</span>.context(<span class="string">"[sender]"</span>)<span class="question-mark">?</span>;
+        <span class="kw">let </span>val = recv_bi.read_to_end(usize::MAX).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="macro">assert_eq!</span>(
             val,
             msg,
