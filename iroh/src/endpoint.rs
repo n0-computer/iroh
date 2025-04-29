@@ -21,7 +21,7 @@ use std::{
     task::Poll,
 };
 
-use anyhow::{bail, Context, Result};
+use anyhow::{bail, Context};
 use data_encoding::BASE32_DNSSEC;
 use ed25519_dalek::{pkcs8::DecodePublicKey, VerifyingKey};
 use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
@@ -42,7 +42,7 @@ use crate::{
     },
     magicsock::{self, Handle, NodeIdMappedAddr},
     tls,
-    watchable::Watcher,
+    watchable::{Disconnected, Watcher},
     RelayProtocol,
 };
 
@@ -167,7 +167,7 @@ impl Builder {
     // # The final constructor that everyone needs.
 
     /// Binds the magic endpoint.
-    pub async fn bind(self) -> Result<Endpoint> {
+    pub async fn bind(self) -> anyhow::Result<Endpoint> {
         let relay_map = self.relay_mode.relay_map();
         let secret_key = self
             .secret_key
@@ -548,7 +548,10 @@ struct StaticConfig {
 
 impl StaticConfig {
     /// Create a [`quinn::ServerConfig`] with the specified ALPN protocols.
-    fn create_server_config(&self, alpn_protocols: Vec<Vec<u8>>) -> Result<ServerConfig> {
+    fn create_server_config(
+        &self,
+        alpn_protocols: Vec<Vec<u8>>,
+    ) -> Result<ServerConfig, tls::CreateConfigError> {
         let quic_server_config =
             self.tls_auth
                 .make_server_config(&self.secret_key, alpn_protocols, self.keylog)?;
@@ -613,7 +616,10 @@ impl Endpoint {
     /// This is for internal use, the public interface is the [`Builder`] obtained from
     /// [Self::builder]. See the methods on the builder for documentation of the parameters.
     #[instrument("ep", skip_all, fields(me = %static_config.secret_key.public().fmt_short()))]
-    async fn bind(static_config: StaticConfig, msock_opts: magicsock::Options) -> Result<Self> {
+    async fn bind(
+        static_config: StaticConfig,
+        msock_opts: magicsock::Options,
+    ) -> anyhow::Result<Self> {
         let msock = magicsock::MagicSock::spawn(msock_opts).await?;
         trace!("created magicsock");
         debug!(version = env!("CARGO_PKG_VERSION"), "iroh Endpoint created");
@@ -633,7 +639,7 @@ impl Endpoint {
     ///
     /// This will only affect new incoming connections.
     /// Note that this *overrides* the current list of ALPNs.
-    pub fn set_alpns(&self, alpns: Vec<Vec<u8>>) -> Result<()> {
+    pub fn set_alpns(&self, alpns: Vec<Vec<u8>>) -> anyhow::Result<()> {
         let server_config = self.static_config.create_server_config(alpns)?;
         self.msock.endpoint().set_server_config(Some(server_config));
         Ok(())
@@ -663,7 +669,11 @@ impl Endpoint {
     /// The `alpn`, or application-level protocol identifier, is also required. The remote
     /// endpoint must support this `alpn`, otherwise the connection attempt will fail with
     /// an error.
-    pub async fn connect(&self, node_addr: impl Into<NodeAddr>, alpn: &[u8]) -> Result<Connection> {
+    pub async fn connect(
+        &self,
+        node_addr: impl Into<NodeAddr>,
+        alpn: &[u8],
+    ) -> anyhow::Result<Connection> {
         let node_addr = node_addr.into();
         let remote = node_addr.node_id;
         let connecting = self
@@ -705,7 +715,7 @@ impl Endpoint {
         node_addr: impl Into<NodeAddr>,
         alpn: &[u8],
         options: ConnectOptions,
-    ) -> Result<Connecting> {
+    ) -> anyhow::Result<Connecting> {
         let node_addr: NodeAddr = node_addr.into();
         tracing::Span::current().record("remote", node_addr.node_id.fmt_short());
 
@@ -827,7 +837,7 @@ impl Endpoint {
     /// if the direct addresses are a subset of ours.
     ///
     /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
-    pub fn add_node_addr(&self, node_addr: NodeAddr) -> Result<()> {
+    pub fn add_node_addr(&self, node_addr: NodeAddr) -> anyhow::Result<()> {
         self.add_node_addr_inner(node_addr, magicsock::Source::App)
     }
 
@@ -854,7 +864,7 @@ impl Endpoint {
         &self,
         node_addr: NodeAddr,
         source: &'static str,
-    ) -> Result<()> {
+    ) -> anyhow::Result<()> {
         self.add_node_addr_inner(
             node_addr,
             magicsock::Source::NamedApp {
@@ -863,7 +873,11 @@ impl Endpoint {
         )
     }
 
-    fn add_node_addr_inner(&self, node_addr: NodeAddr, source: magicsock::Source) -> Result<()> {
+    fn add_node_addr_inner(
+        &self,
+        node_addr: NodeAddr,
+        source: magicsock::Source,
+    ) -> anyhow::Result<()> {
         // Connecting to ourselves is not supported.
         if node_addr.node_id == self.node_id() {
             bail!(
@@ -897,7 +911,7 @@ impl Endpoint {
     ///
     /// In browsers, because direct addresses are unavailable, this will only wait for
     /// the home relay to be available before returning.
-    pub async fn node_addr(&self) -> Result<NodeAddr> {
+    pub async fn node_addr(&self) -> Result<NodeAddr, Disconnected> {
         #[cfg(not(wasm_browser))]
         {
             // Outside browsers, we preserve the "old" behavior of waiting for direct
@@ -1083,8 +1097,8 @@ impl Endpoint {
     ///
     /// # Errors
     ///
-    /// Will error if we do not have any address information for the given `node_id`.
-    pub fn conn_type(&self, node_id: NodeId) -> Result<Watcher<ConnectionType>> {
+    /// Will return `None` if we do not have any address information for the given `node_id`.
+    pub fn conn_type(&self, node_id: NodeId) -> Option<Watcher<ConnectionType>> {
         self.msock.conn_type(node_id)
     }
 
@@ -1198,7 +1212,7 @@ impl Endpoint {
     async fn get_mapping_addr_and_maybe_start_discovery(
         &self,
         node_addr: NodeAddr,
-    ) -> Result<(NodeIdMappedAddr, Option<DiscoveryTask>)> {
+    ) -> anyhow::Result<(NodeIdMappedAddr, Option<DiscoveryTask>)> {
         let node_id = node_addr.node_id;
 
         // Only return a mapped addr if we have some way of dialing this node, in other
@@ -1527,9 +1541,7 @@ impl Connecting {
     }
 
     /// Extracts the ALPN protocol from the peer's handshake data.
-    // Note, we could totally provide this method to be on a Connection as well.  But we'd
-    // need to wrap Connection too.
-    pub async fn alpn(&mut self) -> Result<Vec<u8>> {
+    pub async fn alpn(&mut self) -> anyhow::Result<Vec<u8>> {
         let data = self.handshake_data().await?;
         match data.downcast::<quinn::crypto::rustls::HandshakeData>() {
             Ok(data) => match data.protocol {
@@ -1820,7 +1832,7 @@ impl Connection {
     ///
     /// [`PublicKey`]: iroh_base::PublicKey
     // TODO: Would be nice if this could be infallible.
-    pub fn remote_node_id(&self) -> Result<NodeId> {
+    pub fn remote_node_id(&self) -> anyhow::Result<NodeId> {
         let data = self.peer_identity();
         match data {
             None => bail!("no peer certificate found"),
@@ -1911,7 +1923,7 @@ fn try_send_rtt_msg(conn: &Connection, magic_ep: &Endpoint, remote_node_id: Opti
         warn!(?conn, "failed to get remote node id");
         return;
     };
-    let Ok(conn_type_changes) = magic_ep.conn_type(node_id) else {
+    let Some(conn_type_changes) = magic_ep.conn_type(node_id) else {
         warn!(?conn, "failed to create conn_type stream");
         return;
     };
@@ -2491,8 +2503,8 @@ mod tests {
             .await
             .unwrap();
 
-        async fn handle_direct_conn(ep: &Endpoint, node_id: NodeId) -> Result<()> {
-            let mut stream = ep.conn_type(node_id)?.stream();
+        async fn handle_direct_conn(ep: &Endpoint, node_id: NodeId) -> anyhow::Result<()> {
+            let mut stream = ep.conn_type(node_id).expect("missing conn type").stream();
             let src = ep.node_id().fmt_short();
             let dst = node_id.fmt_short();
             while let Some(conn_type) = stream.next().await {
@@ -2559,7 +2571,10 @@ mod tests {
             .unwrap();
     }
 
-    async fn spawn_0rtt_server(secret_key: SecretKey, log_span: tracing::Span) -> Result<Endpoint> {
+    async fn spawn_0rtt_server(
+        secret_key: SecretKey,
+        log_span: tracing::Span,
+    ) -> anyhow::Result<Endpoint> {
         let server = Endpoint::builder()
             .secret_key(secret_key)
             .alpns(vec![TEST_ALPN.to_vec()])
@@ -2603,7 +2618,7 @@ mod tests {
     async fn connect_client_0rtt_expect_err(
         client: &Endpoint,
         server_addr: NodeAddr,
-    ) -> Result<()> {
+    ) -> anyhow::Result<()> {
         let conn = client
             .connect_with_opts(server_addr, TEST_ALPN, ConnectOptions::new())
             .await?
@@ -2624,7 +2639,7 @@ mod tests {
         client: &Endpoint,
         server_addr: NodeAddr,
         expect_server_accepts: bool,
-    ) -> Result<()> {
+    ) -> anyhow::Result<()> {
         let (conn, accepted_0rtt) = client
             .connect_with_opts(server_addr, TEST_ALPN, ConnectOptions::new())
             .await?

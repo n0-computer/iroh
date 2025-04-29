@@ -367,9 +367,9 @@ impl MagicSock {
     ///
     /// # Errors
     ///
-    /// Will return an error if there is no address information known about the
+    /// Will return `None` if there is no address information known about the
     /// given `node_id`.
-    pub(crate) fn conn_type(&self, node_id: NodeId) -> Result<Watcher<ConnectionType>> {
+    pub(crate) fn conn_type(&self, node_id: NodeId) -> Option<Watcher<ConnectionType>> {
         self.node_map.conn_type(node_id)
     }
 

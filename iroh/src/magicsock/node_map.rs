@@ -304,9 +304,9 @@ impl NodeMap {
     ///
     /// # Errors
     ///
-    /// Will return an error if there is not an entry in the [`NodeMap`] for
+    /// Will return `None` if there is not an entry in the [`NodeMap`] for
     /// the `node_id`
-    pub(super) fn conn_type(&self, node_id: NodeId) -> anyhow::Result<Watcher<ConnectionType>> {
+    pub(super) fn conn_type(&self, node_id: NodeId) -> Option<Watcher<ConnectionType>> {
         self.inner.lock().expect("poisoned").conn_type(node_id)
     }
 
@@ -495,13 +495,11 @@ impl NodeMapInner {
     ///
     /// # Errors
     ///
-    /// Will return an error if there is not an entry in the [`NodeMap`] for
+    /// Will return `None` if there is not an entry in the [`NodeMap`] for
     /// the `public_key`
-    fn conn_type(&self, node_id: NodeId) -> anyhow::Result<Watcher<ConnectionType>> {
-        match self.get(NodeStateKey::NodeId(node_id)) {
-            Some(ep) => Ok(ep.conn_type()),
-            None => anyhow::bail!("No endpoint for {node_id:?} found"),
-        }
+    fn conn_type(&self, node_id: NodeId) -> Option<Watcher<ConnectionType>> {
+        self.get(NodeStateKey::NodeId(node_id))
+            .map(|ep| ep.conn_type())
     }
 
     fn handle_pong(&mut self, sender: NodeId, src: &DiscoMessageSource, pong: Pong) {
