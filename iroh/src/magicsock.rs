@@ -275,6 +275,23 @@ pub(crate) struct SocketState {
     local_addrs: std::sync::RwLock<(SocketAddr, Option<SocketAddr>)>,
 }
 
+#[allow(missing_docs)]
+#[common_fields({
+    backtrace: Option<snafu::Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[derive(Debug, Snafu)]
+#[snafu(visibility(pub(crate)))]
+pub enum AddNodeAddrError {
+    #[snafu(display("Empty addressing info"))]
+    Empty,
+    #[snafu(display("Empty addressing info, {pruned} direct address have been pruned"))]
+    EmptyPruned { pruned: usize },
+    #[snafu(display("Adding our own address is not supported"))]
+    OwnAddress,
+}
+
 impl MagicSock {
     /// Creates a magic [`MagicSock`] listening on [`Options::addr_v4`] and [`Options::addr_v6`].
     pub(crate) async fn spawn(opts: Options) -> Result<Handle, CreateHandleError> {
@@ -384,8 +401,8 @@ impl MagicSock {
         &self,
         mut addr: NodeAddr,
         source: node_map::Source,
-    ) -> anyhow::Result<()> {
-        let mut pruned = 0;
+    ) -> Result<(), AddNodeAddrError> {
+        let mut pruned: usize = 0;
         for my_addr in self.direct_addrs.sockaddrs() {
             if addr.direct_addresses.remove(&my_addr) {
                 warn!( node_id=addr.node_id.fmt_short(), %my_addr, %source, "not adding our addr for node");
@@ -396,11 +413,9 @@ impl MagicSock {
             self.node_map.add_node_addr(addr, source);
             Ok(())
         } else if pruned != 0 {
-            Err(anyhow::anyhow!(
-                "empty addressing info, {pruned} direct addresses have been pruned"
-            ))
+            Err(EmptyPrunedSnafu { pruned }.build())
         } else {
-            Err(anyhow::anyhow!("empty addressing info"))
+            Err(EmptySnafu.build())
         }
     }
 
@@ -4419,7 +4434,10 @@ mod tests {
             .magic_sock()
             .add_node_addr(empty_addr, node_map::Source::App)
             .unwrap_err();
-        assert!(err.to_string().contains("empty addressing info"));
+        assert!(err
+            .to_string()
+            .to_lowercase()
+            .contains("empty addressing info"));
 
         // relay url only
         let addr = NodeAddr {

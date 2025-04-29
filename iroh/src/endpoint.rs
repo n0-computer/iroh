@@ -40,7 +40,7 @@ use crate::{
         pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryItem, DiscoverySubscribers,
         DiscoveryTask, Lagged, UserData,
     },
-    magicsock::{self, Handle, NodeIdMappedAddr},
+    magicsock::{self, Handle, NodeIdMappedAddr, OwnAddressSnafu},
     tls,
     watchable::{Disconnected, Watcher},
     RelayProtocol,
@@ -67,7 +67,8 @@ pub use quinn_proto::{
 
 use self::rtt_actor::RttMessage;
 pub use super::magicsock::{
-    ConnectionType, ControlMsg, DirectAddr, DirectAddrInfo, DirectAddrType, RemoteInfo, Source,
+    AddNodeAddrError, ConnectionType, ControlMsg, DirectAddr, DirectAddrInfo, DirectAddrType,
+    RemoteInfo, Source,
 };
 
 /// The delay to fall back to discovery when direct addresses fail.
@@ -837,7 +838,7 @@ impl Endpoint {
     /// if the direct addresses are a subset of ours.
     ///
     /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
-    pub fn add_node_addr(&self, node_addr: NodeAddr) -> anyhow::Result<()> {
+    pub fn add_node_addr(&self, node_addr: NodeAddr) -> Result<(), AddNodeAddrError> {
         self.add_node_addr_inner(node_addr, magicsock::Source::App)
     }
 
@@ -864,7 +865,7 @@ impl Endpoint {
         &self,
         node_addr: NodeAddr,
         source: &'static str,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), AddNodeAddrError> {
         self.add_node_addr_inner(
             node_addr,
             magicsock::Source::NamedApp {
@@ -877,14 +878,9 @@ impl Endpoint {
         &self,
         node_addr: NodeAddr,
         source: magicsock::Source,
-    ) -> anyhow::Result<()> {
+    ) -> Result<(), AddNodeAddrError> {
         // Connecting to ourselves is not supported.
-        if node_addr.node_id == self.node_id() {
-            bail!(
-                "Adding our own address is not supported ({} is the node id of this node)",
-                node_addr.node_id.fmt_short()
-            );
-        }
+        snafu::ensure!(node_addr.node_id != self.node_id(), OwnAddressSnafu);
         self.msock.add_node_addr(node_addr, source)
     }
 
