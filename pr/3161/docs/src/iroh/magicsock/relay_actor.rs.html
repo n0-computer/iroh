@@ -1668,7 +1668,7 @@
     },
 };
 
-<span class="kw">use </span>anyhow::{anyhow, <span class="prelude-ty">Result</span>};
+<span class="kw">use </span>anyhow::anyhow;
 <span class="kw">use </span>backon::{Backoff, BackoffBuilder, ExponentialBuilder};
 <span class="kw">use </span>bytes::{Bytes, BytesMut};
 <span class="kw">use </span>iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
@@ -1923,7 +1923,7 @@
     <span class="doccomment">/// The main actor run loop.
     ///
     /// Primarily switches between the dialing and connected states.
-    </span><span class="kw">async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; anyhow::Result&lt;()&gt; {
         <span class="kw">use </span>anyhow::Context;
 
         <span class="macro">inc!</span>(MagicsockMetrics, num_relay_conns_added);
@@ -1999,7 +1999,7 @@
     ///
     /// Returns `None` if the actor needs to shut down.  Returns `Some(Ok(client))` when the
     /// connection is established, and `Some(Err(err))` if dialing the relay failed.
-    </span><span class="kw">async fn </span>run_dialing(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Result</span>&lt;iroh_relay::client::Client&gt;&gt; {
+    </span><span class="kw">async fn </span>run_dialing(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;anyhow::Result&lt;iroh_relay::client::Client&gt;&gt; {
         <span class="macro">debug!</span>(<span class="string">"Actor loop: connecting to relay."</span>);
 
         <span class="comment">// We regularly flush the relay_datagrams_send queue so it is not full of stale
@@ -2086,7 +2086,7 @@
     /// connections.  It currently does not ever return `Err` as the retries continue
     /// forever.
     </span><span class="comment">// This is using `impl Future` to return a future without a reference to self.
-    </span><span class="kw">fn </span>dial_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;Client&gt;&gt; {
+    </span><span class="kw">fn </span>dial_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Future&lt;Output = anyhow::Result&lt;Client&gt;&gt; {
         <span class="kw">let </span>client_builder = <span class="self">self</span>.relay_client_builder.clone();
         <span class="kw">async move </span>{
             <span class="kw">match </span>time::timeout(CONNECT_TIMEOUT, client_builder.connect()).<span class="kw">await </span>{
@@ -3048,7 +3048,7 @@
         item: RelaySendItem,
         tx: <span class="kw-2">&amp;</span>mpsc::Sender&lt;RelaySendItem&gt;,
         rx: <span class="kw-2">&amp;</span>Arc&lt;RelayDatagramRecvQueue&gt;,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    ) -&gt; anyhow::Result&lt;()&gt; {
         <span class="macro">assert!</span>(item.datagrams.len() == <span class="number">1</span>);
         tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), <span class="kw">async move </span>{
             <span class="kw">loop </span>{

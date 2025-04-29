@@ -2780,7 +2780,22 @@
 <a href="#2779" id="2779">2779</a>
 <a href="#2780" id="2780">2780</a>
 <a href="#2781" id="2781">2781</a>
-<a href="#2782" id="2782">2782</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2782" id="2782">2782</a>
+<a href="#2783" id="2783">2783</a>
+<a href="#2784" id="2784">2784</a>
+<a href="#2785" id="2785">2785</a>
+<a href="#2786" id="2786">2786</a>
+<a href="#2787" id="2787">2787</a>
+<a href="#2788" id="2788">2788</a>
+<a href="#2789" id="2789">2789</a>
+<a href="#2790" id="2790">2790</a>
+<a href="#2791" id="2791">2791</a>
+<a href="#2792" id="2792">2792</a>
+<a href="#2793" id="2793">2793</a>
+<a href="#2794" id="2794">2794</a>
+<a href="#2795" id="2795">2795</a>
+<a href="#2796" id="2796">2796</a>
+<a href="#2797" id="2797">2797</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -2803,7 +2818,7 @@
     task::Poll,
 };
 
-<span class="kw">use </span>anyhow::{bail, Context, <span class="prelude-ty">Result</span>};
+<span class="kw">use </span>anyhow::{bail, Context};
 <span class="kw">use </span>data_encoding::BASE32_DNSSEC;
 <span class="kw">use </span>ed25519_dalek::{pkcs8::DecodePublicKey, VerifyingKey};
 <span class="kw">use </span>iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
@@ -2824,7 +2839,7 @@
     },
     magicsock::{<span class="self">self</span>, Handle, NodeIdMappedAddr},
     tls,
-    watchable::Watcher,
+    watchable::{Disconnected, Watcher},
     RelayProtocol,
 };
 
@@ -2949,7 +2964,7 @@
     // # The final constructor that everyone needs.
 
     </span><span class="doccomment">/// Binds the magic endpoint.
-    </span><span class="kw">pub async fn </span>bind(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Endpoint&gt; {
+    </span><span class="kw">pub async fn </span>bind(<span class="self">self</span>) -&gt; anyhow::Result&lt;Endpoint&gt; {
         <span class="kw">let </span>relay_map = <span class="self">self</span>.relay_mode.relay_map();
         <span class="kw">let </span>secret_key = <span class="self">self
             </span>.secret_key
@@ -3330,7 +3345,10 @@
 
 <span class="kw">impl </span>StaticConfig {
     <span class="doccomment">/// Create a [`quinn::ServerConfig`] with the specified ALPN protocols.
-    </span><span class="kw">fn </span>create_server_config(<span class="kw-2">&amp;</span><span class="self">self</span>, alpn_protocols: Vec&lt;Vec&lt;u8&gt;&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;ServerConfig&gt; {
+    </span><span class="kw">fn </span>create_server_config(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        alpn_protocols: Vec&lt;Vec&lt;u8&gt;&gt;,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;ServerConfig, tls::CreateConfigError&gt; {
         <span class="kw">let </span>quic_server_config =
             <span class="self">self</span>.tls_auth
                 .make_server_config(<span class="kw-2">&amp;</span><span class="self">self</span>.secret_key, alpn_protocols, <span class="self">self</span>.keylog)<span class="question-mark">?</span>;
@@ -3395,7 +3413,10 @@
     /// This is for internal use, the public interface is the [`Builder`] obtained from
     /// [Self::builder]. See the methods on the builder for documentation of the parameters.
     </span><span class="attr">#[instrument(<span class="string">"ep"</span>, skip_all, fields(me = %static_config.secret_key.public().fmt_short()))]
-    </span><span class="kw">async fn </span>bind(static_config: StaticConfig, msock_opts: magicsock::Options) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+    </span><span class="kw">async fn </span>bind(
+        static_config: StaticConfig,
+        msock_opts: magicsock::Options,
+    ) -&gt; anyhow::Result&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>msock = magicsock::MagicSock::spawn(msock_opts).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="macro">trace!</span>(<span class="string">"created magicsock"</span>);
         <span class="macro">debug!</span>(version = <span class="macro">env!</span>(<span class="string">"CARGO_PKG_VERSION"</span>), <span class="string">"iroh Endpoint created"</span>);
@@ -3415,7 +3436,7 @@
     ///
     /// This will only affect new incoming connections.
     /// Note that this *overrides* the current list of ALPNs.
-    </span><span class="kw">pub fn </span>set_alpns(<span class="kw-2">&amp;</span><span class="self">self</span>, alpns: Vec&lt;Vec&lt;u8&gt;&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">pub fn </span>set_alpns(<span class="kw-2">&amp;</span><span class="self">self</span>, alpns: Vec&lt;Vec&lt;u8&gt;&gt;) -&gt; anyhow::Result&lt;()&gt; {
         <span class="kw">let </span>server_config = <span class="self">self</span>.static_config.create_server_config(alpns)<span class="question-mark">?</span>;
         <span class="self">self</span>.msock.endpoint().set_server_config(<span class="prelude-val">Some</span>(server_config));
         <span class="prelude-val">Ok</span>(())
@@ -3445,7 +3466,11 @@
     /// The `alpn`, or application-level protocol identifier, is also required. The remote
     /// endpoint must support this `alpn`, otherwise the connection attempt will fail with
     /// an error.
-    </span><span class="kw">pub async fn </span>connect(<span class="kw-2">&amp;</span><span class="self">self</span>, node_addr: <span class="kw">impl </span>Into&lt;NodeAddr&gt;, alpn: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;Connection&gt; {
+    </span><span class="kw">pub async fn </span>connect(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        node_addr: <span class="kw">impl </span>Into&lt;NodeAddr&gt;,
+        alpn: <span class="kw-2">&amp;</span>[u8],
+    ) -&gt; anyhow::Result&lt;Connection&gt; {
         <span class="kw">let </span>node_addr = node_addr.into();
         <span class="kw">let </span>remote = node_addr.node_id;
         <span class="kw">let </span>connecting = <span class="self">self
@@ -3487,7 +3512,7 @@
         node_addr: <span class="kw">impl </span>Into&lt;NodeAddr&gt;,
         alpn: <span class="kw-2">&amp;</span>[u8],
         options: ConnectOptions,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;Connecting&gt; {
+    ) -&gt; anyhow::Result&lt;Connecting&gt; {
         <span class="kw">let </span>node_addr: NodeAddr = node_addr.into();
         tracing::Span::current().record(<span class="string">"remote"</span>, node_addr.node_id.fmt_short());
 
@@ -3609,7 +3634,7 @@
     /// if the direct addresses are a subset of ours.
     ///
     /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
-    </span><span class="kw">pub fn </span>add_node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, node_addr: NodeAddr) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">pub fn </span>add_node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, node_addr: NodeAddr) -&gt; anyhow::Result&lt;()&gt; {
         <span class="self">self</span>.add_node_addr_inner(node_addr, magicsock::Source::App)
     }
 
@@ -3636,7 +3661,7 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         node_addr: NodeAddr,
         source: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    ) -&gt; anyhow::Result&lt;()&gt; {
         <span class="self">self</span>.add_node_addr_inner(
             node_addr,
             magicsock::Source::NamedApp {
@@ -3645,7 +3670,11 @@
         )
     }
 
-    <span class="kw">fn </span>add_node_addr_inner(<span class="kw-2">&amp;</span><span class="self">self</span>, node_addr: NodeAddr, source: magicsock::Source) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    <span class="kw">fn </span>add_node_addr_inner(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        node_addr: NodeAddr,
+        source: magicsock::Source,
+    ) -&gt; anyhow::Result&lt;()&gt; {
         <span class="comment">// Connecting to ourselves is not supported.
         </span><span class="kw">if </span>node_addr.node_id == <span class="self">self</span>.node_id() {
             <span class="macro">bail!</span>(
@@ -3679,7 +3708,7 @@
     ///
     /// In browsers, because direct addresses are unavailable, this will only wait for
     /// the home relay to be available before returning.
-    </span><span class="kw">pub async fn </span>node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;NodeAddr&gt; {
+    </span><span class="kw">pub async fn </span>node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;NodeAddr, Disconnected&gt; {
         <span class="attr">#[cfg(not(wasm_browser))]
         </span>{
             <span class="comment">// Outside browsers, we preserve the "old" behavior of waiting for direct
@@ -3865,8 +3894,8 @@
     ///
     /// # Errors
     ///
-    /// Will error if we do not have any address information for the given `node_id`.
-    </span><span class="kw">pub fn </span>conn_type(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;Watcher&lt;ConnectionType&gt;&gt; {
+    /// Will return `None` if we do not have any address information for the given `node_id`.
+    </span><span class="kw">pub fn </span>conn_type(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Option</span>&lt;Watcher&lt;ConnectionType&gt;&gt; {
         <span class="self">self</span>.msock.conn_type(node_id)
     }
 
@@ -3980,7 +4009,7 @@
     </span><span class="kw">async fn </span>get_mapping_addr_and_maybe_start_discovery(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         node_addr: NodeAddr,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;(NodeIdMappedAddr, <span class="prelude-ty">Option</span>&lt;DiscoveryTask&gt;)&gt; {
+    ) -&gt; anyhow::Result&lt;(NodeIdMappedAddr, <span class="prelude-ty">Option</span>&lt;DiscoveryTask&gt;)&gt; {
         <span class="kw">let </span>node_id = node_addr.node_id;
 
         <span class="comment">// Only return a mapped addr if we have some way of dialing this node, in other
@@ -4309,9 +4338,7 @@
     </span>}
 
     <span class="doccomment">/// Extracts the ALPN protocol from the peer's handshake data.
-    </span><span class="comment">// Note, we could totally provide this method to be on a Connection as well.  But we'd
-    // need to wrap Connection too.
-    </span><span class="kw">pub async fn </span>alpn(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Vec&lt;u8&gt;&gt; {
+    </span><span class="kw">pub async fn </span>alpn(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; anyhow::Result&lt;Vec&lt;u8&gt;&gt; {
         <span class="kw">let </span>data = <span class="self">self</span>.handshake_data().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">match </span>data.downcast::&lt;quinn::crypto::rustls::HandshakeData&gt;() {
             <span class="prelude-val">Ok</span>(data) =&gt; <span class="kw">match </span>data.protocol {
@@ -4602,7 +4629,7 @@
     ///
     /// [`PublicKey`]: iroh_base::PublicKey
     </span><span class="comment">// TODO: Would be nice if this could be infallible.
-    </span><span class="kw">pub fn </span>remote_node_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;NodeId&gt; {
+    </span><span class="kw">pub fn </span>remote_node_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; anyhow::Result&lt;NodeId&gt; {
         <span class="kw">let </span>data = <span class="self">self</span>.peer_identity();
         <span class="kw">match </span>data {
             <span class="prelude-val">None </span>=&gt; <span class="macro">bail!</span>(<span class="string">"no peer certificate found"</span>),
@@ -4693,7 +4720,7 @@
         <span class="macro">warn!</span>(<span class="question-mark">?</span>conn, <span class="string">"failed to get remote node id"</span>);
         <span class="kw">return</span>;
     };
-    <span class="kw">let </span><span class="prelude-val">Ok</span>(conn_type_changes) = magic_ep.conn_type(node_id) <span class="kw">else </span>{
+    <span class="kw">let </span><span class="prelude-val">Some</span>(conn_type_changes) = magic_ep.conn_type(node_id) <span class="kw">else </span>{
         <span class="macro">warn!</span>(<span class="question-mark">?</span>conn, <span class="string">"failed to create conn_type stream"</span>);
         <span class="kw">return</span>;
     };
@@ -5273,8 +5300,8 @@
             .<span class="kw">await
             </span>.unwrap();
 
-        <span class="kw">async fn </span>handle_direct_conn(ep: <span class="kw-2">&amp;</span>Endpoint, node_id: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-            <span class="kw">let </span><span class="kw-2">mut </span>stream = ep.conn_type(node_id)<span class="question-mark">?</span>.stream();
+        <span class="kw">async fn </span>handle_direct_conn(ep: <span class="kw-2">&amp;</span>Endpoint, node_id: NodeId) -&gt; anyhow::Result&lt;()&gt; {
+            <span class="kw">let </span><span class="kw-2">mut </span>stream = ep.conn_type(node_id).expect(<span class="string">"missing conn type"</span>).stream();
             <span class="kw">let </span>src = ep.node_id().fmt_short();
             <span class="kw">let </span>dst = node_id.fmt_short();
             <span class="kw">while let </span><span class="prelude-val">Some</span>(conn_type) = stream.next().<span class="kw">await </span>{
@@ -5341,7 +5368,10 @@
             .unwrap();
     }
 
-    <span class="kw">async fn </span>spawn_0rtt_server(secret_key: SecretKey, log_span: tracing::Span) -&gt; <span class="prelude-ty">Result</span>&lt;Endpoint&gt; {
+    <span class="kw">async fn </span>spawn_0rtt_server(
+        secret_key: SecretKey,
+        log_span: tracing::Span,
+    ) -&gt; anyhow::Result&lt;Endpoint&gt; {
         <span class="kw">let </span>server = Endpoint::builder()
             .secret_key(secret_key)
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
@@ -5385,7 +5415,7 @@
     <span class="kw">async fn </span>connect_client_0rtt_expect_err(
         client: <span class="kw-2">&amp;</span>Endpoint,
         server_addr: NodeAddr,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    ) -&gt; anyhow::Result&lt;()&gt; {
         <span class="kw">let </span>conn = client
             .connect_with_opts(server_addr, TEST_ALPN, ConnectOptions::new())
             .<span class="kw">await</span><span class="question-mark">?
@@ -5406,7 +5436,7 @@
         client: <span class="kw-2">&amp;</span>Endpoint,
         server_addr: NodeAddr,
         expect_server_accepts: bool,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    ) -&gt; anyhow::Result&lt;()&gt; {
         <span class="kw">let </span>(conn, accepted_0rtt) = client
             .connect_with_opts(server_addr, TEST_ALPN, ConnectOptions::new())
             .<span class="kw">await</span><span class="question-mark">?

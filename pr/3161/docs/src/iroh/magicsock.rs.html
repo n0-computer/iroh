@@ -4431,7 +4431,14 @@
 <a href="#4430" id="4430">4430</a>
 <a href="#4431" id="4431">4431</a>
 <a href="#4432" id="4432">4432</a>
-<a href="#4433" id="4433">4433</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4433" id="4433">4433</a>
+<a href="#4434" id="4434">4434</a>
+<a href="#4435" id="4435">4435</a>
+<a href="#4436" id="4436">4436</a>
+<a href="#4437" id="4437">4437</a>
+<a href="#4438" id="4438">4438</a>
+<a href="#4439" id="4439">4439</a>
+<a href="#4440" id="4440">4440</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4461,7 +4468,7 @@
     task::{Context, Poll, Waker},
 };
 
-<span class="kw">use </span>anyhow::{anyhow, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
+<span class="kw">use </span>anyhow::{anyhow, Context <span class="kw">as _</span>};
 <span class="kw">use </span>atomic_waker::AtomicWaker;
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>concurrent_queue::ConcurrentQueue;
@@ -4710,7 +4717,7 @@
 
 <span class="kw">impl </span>MagicSock {
     <span class="doccomment">/// Creates a magic [`MagicSock`] listening on [`Options::addr_v4`] and [`Options::addr_v6`].
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>spawn(opts: Options) -&gt; <span class="prelude-ty">Result</span>&lt;Handle&gt; {
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>spawn(opts: Options) -&gt; anyhow::Result&lt;Handle&gt; {
         Handle::new(opts).<span class="kw">await
     </span>}
 
@@ -4800,9 +4807,9 @@
     ///
     /// # Errors
     ///
-    /// Will return an error if there is no address information known about the
+    /// Will return `None` if there is no address information known about the
     /// given `node_id`.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>conn_type(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;Watcher&lt;ConnectionType&gt;&gt; {
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>conn_type(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Option</span>&lt;Watcher&lt;ConnectionType&gt;&gt; {
         <span class="self">self</span>.node_map.conn_type(node_id)
     }
 
@@ -4813,7 +4820,11 @@
 
     <span class="doccomment">/// Add addresses for a node to the magic socket's addresbook.
     </span><span class="attr">#[instrument(skip_all, fields(me = %<span class="self">self</span>.me))]
-    </span><span class="kw">pub fn </span>add_node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="kw-2">mut </span>addr: NodeAddr, source: node_map::Source) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">pub fn </span>add_node_addr(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        <span class="kw-2">mut </span>addr: NodeAddr,
+        source: node_map::Source,
+    ) -&gt; anyhow::Result&lt;()&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>pruned = <span class="number">0</span>;
         <span class="kw">for </span>my_addr <span class="kw">in </span><span class="self">self</span>.direct_addrs.sockaddrs() {
             <span class="kw">if </span>addr.direct_addresses.remove(<span class="kw-2">&amp;</span>my_addr) {
@@ -6094,7 +6105,7 @@
 
 <span class="kw">impl </span>Handle {
     <span class="doccomment">/// Creates a magic [`MagicSock`] listening on [`Options::addr_v4`] and [`Options::addr_v6`].
-    </span><span class="kw">async fn </span>new(opts: Options) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+    </span><span class="kw">async fn </span>new(opts: Options) -&gt; anyhow::Result&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>me = opts.secret_key.public().fmt_short();
 
         <span class="self">Self</span>::with_name(me, opts)
@@ -6102,7 +6113,7 @@
             .<span class="kw">await
     </span>}
 
-    <span class="kw">async fn </span>with_name(me: String, opts: Options) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+    <span class="kw">async fn </span>with_name(me: String, opts: Options) -&gt; anyhow::Result&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>Options {
             addr_v4,
             addr_v6,
@@ -6547,7 +6558,7 @@
     /// The reason this method is made available as `&amp;self` is because
     /// the interface for quinn's [`AsyncUdpSocket::poll_recv`] requires us
     /// to be able to poll from `&amp;self`.
-    </span><span class="kw">fn </span>poll_recv(<span class="kw-2">&amp;</span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>Context) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;RelayRecvDatagram&gt;&gt; {
+    </span><span class="kw">fn </span>poll_recv(<span class="kw-2">&amp;</span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>Context) -&gt; Poll&lt;anyhow::Result&lt;RelayRecvDatagram&gt;&gt; {
         <span class="kw">match </span><span class="self">self</span>.queue.pop() {
             <span class="prelude-val">Ok</span>(value) =&gt; Poll::Ready(<span class="prelude-val">Ok</span>(value)),
             <span class="prelude-val">Err</span>(concurrent_queue::PopError::Empty) =&gt; {
@@ -6721,7 +6732,10 @@
 </span><span class="kw">enum </span>ActorMessage {
     Shutdown,
     EndpointPingExpired(usize, stun_rs::TransactionId),
-    NetReport(<span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Arc&lt;net_report::Report&gt;&gt;&gt;, <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str),
+    NetReport(
+        anyhow::Result&lt;<span class="prelude-ty">Option</span>&lt;Arc&lt;net_report::Report&gt;&gt;&gt;,
+        <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
+    ),
     NetworkChange,
     <span class="attr">#[cfg(test)]
     </span>ForceNetworkChange(bool),
@@ -6771,7 +6785,7 @@
 
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">impl </span>ActorSocketState {
-    <span class="kw">fn </span>bind(addr_v4: <span class="prelude-ty">Option</span>&lt;SocketAddrV4&gt;, addr_v6: <span class="prelude-ty">Option</span>&lt;SocketAddrV6&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+    <span class="kw">fn </span>bind(addr_v4: <span class="prelude-ty">Option</span>&lt;SocketAddrV4&gt;, addr_v6: <span class="prelude-ty">Option</span>&lt;SocketAddrV6&gt;) -&gt; anyhow::Result&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>port_mapper = portmapper::Client::default();
         <span class="kw">let </span>(v4, v6) = <span class="self">Self</span>::bind_sockets(addr_v4, addr_v6)<span class="question-mark">?</span>;
 
@@ -6802,7 +6816,7 @@
     <span class="kw">fn </span>bind_sockets(
         addr_v4: <span class="prelude-ty">Option</span>&lt;SocketAddrV4&gt;,
         addr_v6: <span class="prelude-ty">Option</span>&lt;SocketAddrV6&gt;,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;(Arc&lt;UdpSocket&gt;, <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;)&gt; {
+    ) -&gt; anyhow::Result&lt;(Arc&lt;UdpSocket&gt;, <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;)&gt; {
         <span class="kw">let </span>addr_v4 = addr_v4.unwrap_or_else(|| SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, <span class="number">0</span>));
         <span class="kw">let </span>v4 = Arc::new(bind_with_fallback(SocketAddr::V4(addr_v4)).context(<span class="string">"bind IPv4 failed"</span>)<span class="question-mark">?</span>);
 
@@ -6821,7 +6835,7 @@
         <span class="prelude-val">Ok</span>((v4, v6))
     }
 
-    <span class="kw">fn </span>msock_socket_state(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;SocketState&gt; {
+    <span class="kw">fn </span>msock_socket_state(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; anyhow::Result&lt;SocketState&gt; {
         <span class="kw">let </span>ipv4_addr = <span class="self">self</span>.v4.local_addr()<span class="question-mark">?</span>;
         <span class="kw">let </span>ipv6_addr = <span class="self">self</span>.v6.as_ref().and_then(|c| c.local_addr().ok());
 
@@ -6837,7 +6851,7 @@
 }
 
 <span class="kw">impl </span>Actor {
-    <span class="kw">async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    <span class="kw">async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; anyhow::Result&lt;()&gt; {
         <span class="comment">// Setup network monitoring
         </span><span class="kw">let </span>(link_change_s, <span class="kw-2">mut </span>link_change_r) = mpsc::channel(<span class="number">8</span>);
         <span class="kw">let </span>_token = <span class="self">self
@@ -7901,7 +7915,7 @@
     }
 
     <span class="kw">impl </span>MagicStack {
-        <span class="kw">async fn </span>new(relay_mode: RelayMode) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+        <span class="kw">async fn </span>new(relay_mode: RelayMode) -&gt; anyhow::Result&lt;<span class="self">Self</span>&gt; {
             <span class="kw">let </span>secret_key = SecretKey::generate(rand::thread_rng());
 
             <span class="kw">let </span><span class="kw-2">mut </span>transport_config = quinn::TransportConfig::default();
@@ -7944,7 +7958,7 @@
     ///
     /// When the returned drop guard is dropped, the tasks doing this updating are stopped.
     </span><span class="attr">#[instrument(skip_all)]
-    </span><span class="kw">async fn </span>mesh_stacks(stacks: Vec&lt;MagicStack&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;JoinSet&lt;()&gt;&gt; {
+    </span><span class="kw">async fn </span>mesh_stacks(stacks: Vec&lt;MagicStack&gt;) -&gt; anyhow::Result&lt;JoinSet&lt;()&gt;&gt; {
         <span class="doccomment">/// Registers endpoint addresses of a node to all other nodes.
         </span><span class="kw">fn </span>update_direct_addrs(
             stacks: <span class="kw-2">&amp;</span>[MagicStack],
@@ -8009,7 +8023,7 @@
     }
 
     <span class="attr">#[instrument(skip_all, fields(me = %ep.endpoint.node_id().fmt_short()))]
-    </span><span class="kw">async fn </span>echo_receiver(ep: MagicStack, loss: ExpectedLoss) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">async fn </span>echo_receiver(ep: MagicStack, loss: ExpectedLoss) -&gt; anyhow::Result&lt;()&gt; {
         <span class="macro">info!</span>(<span class="string">"accepting conn"</span>);
         <span class="kw">let </span>conn = ep.endpoint.accept().<span class="kw">await</span>.expect(<span class="string">"no conn"</span>);
 
@@ -8061,7 +8075,7 @@
         dest_id: PublicKey,
         msg: <span class="kw-2">&amp;</span>[u8],
         loss: ExpectedLoss,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    ) -&gt; anyhow::Result&lt;()&gt; {
         <span class="macro">info!</span>(<span class="string">"connecting to {}"</span>, dest_id.fmt_short());
         <span class="kw">let </span>dest = NodeAddr::new(dest_id);
         <span class="kw">let </span>conn = ep
@@ -8154,7 +8168,7 @@
 
     <span class="attr">#[tokio::test(flavor = <span class="string">"multi_thread"</span>)]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_two_devices_roundtrip_quinn_magic() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">async fn </span>test_two_devices_roundtrip_quinn_magic() -&gt; anyhow::Result&lt;()&gt; {
         <span class="kw">let </span>m1 = MagicStack::new(RelayMode::Disabled).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>m2 = MagicStack::new(RelayMode::Disabled).<span class="kw">await</span><span class="question-mark">?</span>;
 
@@ -8228,7 +8242,7 @@
 
     <span class="attr">#[tokio::test(flavor = <span class="string">"multi_thread"</span>)]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_two_devices_roundtrip_network_change() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">async fn </span>test_two_devices_roundtrip_network_change() -&gt; anyhow::Result&lt;()&gt; {
         time::timeout(
             Duration::from_secs(<span class="number">90</span>),
             test_two_devices_roundtrip_network_change_impl(),
@@ -8238,7 +8252,7 @@
 
     <span class="doccomment">/// Same structure as `test_two_devices_roundtrip_quinn_magic`, but interrupts regularly
     /// with (simulated) network changes.
-    </span><span class="kw">async fn </span>test_two_devices_roundtrip_network_change_impl() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">async fn </span>test_two_devices_roundtrip_network_change_impl() -&gt; anyhow::Result&lt;()&gt; {
         <span class="kw">let </span>m1 = MagicStack::new(RelayMode::Disabled).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>m2 = MagicStack::new(RelayMode::Disabled).<span class="kw">await</span><span class="question-mark">?</span>;
 
@@ -8336,7 +8350,7 @@
 
     <span class="attr">#[tokio::test(flavor = <span class="string">"multi_thread"</span>)]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_two_devices_setup_teardown() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">async fn </span>test_two_devices_setup_teardown() -&gt; anyhow::Result&lt;()&gt; {
         <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..<span class="number">10 </span>{
             <span class="macro">println!</span>(<span class="string">"-- round {i}"</span>);
             <span class="macro">println!</span>(<span class="string">"setting up magic stack"</span>);
@@ -8489,7 +8503,7 @@
         addr: NodeIdMappedAddr,
         node_id: NodeId,
         tls_auth: tls::Authentication,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;quinn::Connection&gt; {
+    ) -&gt; anyhow::Result&lt;quinn::Connection&gt; {
         <span class="comment">// Endpoint::connect sets this, do the same to have similar behaviour.
         </span><span class="kw">let </span><span class="kw-2">mut </span>transport_config = quinn::TransportConfig::default();
         transport_config.keep_alive_interval(<span class="prelude-val">Some</span>(Duration::from_secs(<span class="number">1</span>)));
@@ -8518,7 +8532,7 @@
         node_id: NodeId,
         transport_config: Arc&lt;quinn::TransportConfig&gt;,
         tls_auth: tls::Authentication,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;quinn::Connection&gt; {
+    ) -&gt; anyhow::Result&lt;quinn::Connection&gt; {
         <span class="kw">let </span>alpns = <span class="macro">vec!</span>[ALPN.to_vec()];
         <span class="kw">let </span>quic_client_config =
             tls_auth.make_client_config(<span class="kw-2">&amp;</span>ep_secret_key, node_id, alpns, <span class="prelude-val">None</span>, <span class="bool-val">true</span>)<span class="question-mark">?</span>;
@@ -8574,7 +8588,7 @@
 
         <span class="comment">// This needs an accept task
         </span><span class="kw">let </span>accept_task = tokio::spawn({
-            <span class="kw">async fn </span>accept(ep: quinn::Endpoint) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+            <span class="kw">async fn </span>accept(ep: quinn::Endpoint) -&gt; anyhow::Result&lt;()&gt; {
                 <span class="kw">let </span>incoming = ep.accept().<span class="kw">await</span>.ok_or(<span class="macro">anyhow!</span>(<span class="string">"no incoming"</span>))<span class="question-mark">?</span>;
                 <span class="kw">let </span>_conn = incoming.accept()<span class="question-mark">?</span>.<span class="kw">await</span><span class="question-mark">?</span>;
 
@@ -8652,7 +8666,7 @@
 
         <span class="comment">// We need a task to accept the connection.
         </span><span class="kw">let </span>accept_task = tokio::spawn({
-            <span class="kw">async fn </span>accept(ep: quinn::Endpoint) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+            <span class="kw">async fn </span>accept(ep: quinn::Endpoint) -&gt; anyhow::Result&lt;()&gt; {
                 <span class="kw">let </span>incoming = ep.accept().<span class="kw">await</span>.ok_or(<span class="macro">anyhow!</span>(<span class="string">"no incoming"</span>))<span class="question-mark">?</span>;
                 <span class="kw">let </span>conn = incoming.accept()<span class="question-mark">?</span>.<span class="kw">await</span><span class="question-mark">?</span>;
                 <span class="kw">let </span><span class="kw-2">mut </span>stream = conn.accept_uni().<span class="kw">await</span><span class="question-mark">?</span>;
@@ -8806,7 +8820,7 @@
     }
 
     <span class="attr">#[tokio::test]
-    </span><span class="kw">async fn </span>test_add_node_addr() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">async fn </span>test_add_node_addr() -&gt; anyhow::Result&lt;()&gt; {
         <span class="kw">let </span>stack = MagicStack::new(RelayMode::Default).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>rng = rand::thread_rng();
 
