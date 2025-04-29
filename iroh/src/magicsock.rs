@@ -28,7 +28,7 @@ use std::{
     task::{Context, Poll, Waker},
 };
 
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{anyhow, Context as _};
 use atomic_waker::AtomicWaker;
 use bytes::Bytes;
 use concurrent_queue::ConcurrentQueue;
@@ -277,7 +277,7 @@ pub(crate) struct SocketState {
 
 impl MagicSock {
     /// Creates a magic [`MagicSock`] listening on [`Options::addr_v4`] and [`Options::addr_v6`].
-    pub(crate) async fn spawn(opts: Options) -> Result<Handle> {
+    pub(crate) async fn spawn(opts: Options) -> anyhow::Result<Handle> {
         Handle::new(opts).await
     }
 
@@ -380,7 +380,11 @@ impl MagicSock {
 
     /// Add addresses for a node to the magic socket's addresbook.
     #[instrument(skip_all, fields(me = %self.me))]
-    pub fn add_node_addr(&self, mut addr: NodeAddr, source: node_map::Source) -> Result<()> {
+    pub fn add_node_addr(
+        &self,
+        mut addr: NodeAddr,
+        source: node_map::Source,
+    ) -> anyhow::Result<()> {
         let mut pruned = 0;
         for my_addr in self.direct_addrs.sockaddrs() {
             if addr.direct_addresses.remove(&my_addr) {
@@ -1661,7 +1665,7 @@ impl DirectAddrUpdateState {
 
 impl Handle {
     /// Creates a magic [`MagicSock`] listening on [`Options::addr_v4`] and [`Options::addr_v6`].
-    async fn new(opts: Options) -> Result<Self> {
+    async fn new(opts: Options) -> anyhow::Result<Self> {
         let me = opts.secret_key.public().fmt_short();
 
         Self::with_name(me, opts)
@@ -1669,7 +1673,7 @@ impl Handle {
             .await
     }
 
-    async fn with_name(me: String, opts: Options) -> Result<Self> {
+    async fn with_name(me: String, opts: Options) -> anyhow::Result<Self> {
         let Options {
             addr_v4,
             addr_v6,
@@ -2114,7 +2118,7 @@ impl RelayDatagramRecvQueue {
     /// The reason this method is made available as `&self` is because
     /// the interface for quinn's [`AsyncUdpSocket::poll_recv`] requires us
     /// to be able to poll from `&self`.
-    fn poll_recv(&self, cx: &mut Context) -> Poll<Result<RelayRecvDatagram>> {
+    fn poll_recv(&self, cx: &mut Context) -> Poll<anyhow::Result<RelayRecvDatagram>> {
         match self.queue.pop() {
             Ok(value) => Poll::Ready(Ok(value)),
             Err(concurrent_queue::PopError::Empty) => {
@@ -2288,7 +2292,10 @@ impl quinn::UdpPoller for IoPoller {
 enum ActorMessage {
     Shutdown,
     EndpointPingExpired(usize, stun_rs::TransactionId),
-    NetReport(Result<Option<Arc<net_report::Report>>>, &'static str),
+    NetReport(
+        anyhow::Result<Option<Arc<net_report::Report>>>,
+        &'static str,
+    ),
     NetworkChange,
     #[cfg(test)]
     ForceNetworkChange(bool),
@@ -2338,7 +2345,7 @@ struct ActorSocketState {
 
 #[cfg(not(wasm_browser))]
 impl ActorSocketState {
-    fn bind(addr_v4: Option<SocketAddrV4>, addr_v6: Option<SocketAddrV6>) -> Result<Self> {
+    fn bind(addr_v4: Option<SocketAddrV4>, addr_v6: Option<SocketAddrV6>) -> anyhow::Result<Self> {
         let port_mapper = portmapper::Client::default();
         let (v4, v6) = Self::bind_sockets(addr_v4, addr_v6)?;
 
@@ -2369,7 +2376,7 @@ impl ActorSocketState {
     fn bind_sockets(
         addr_v4: Option<SocketAddrV4>,
         addr_v6: Option<SocketAddrV6>,
-    ) -> Result<(Arc<UdpSocket>, Option<Arc<UdpSocket>>)> {
+    ) -> anyhow::Result<(Arc<UdpSocket>, Option<Arc<UdpSocket>>)> {
         let addr_v4 = addr_v4.unwrap_or_else(|| SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0));
         let v4 = Arc::new(bind_with_fallback(SocketAddr::V4(addr_v4)).context("bind IPv4 failed")?);
 
@@ -2388,7 +2395,7 @@ impl ActorSocketState {
         Ok((v4, v6))
     }
 
-    fn msock_socket_state(&self) -> Result<SocketState> {
+    fn msock_socket_state(&self) -> anyhow::Result<SocketState> {
         let ipv4_addr = self.v4.local_addr()?;
         let ipv6_addr = self.v6.as_ref().and_then(|c| c.local_addr().ok());
 
@@ -2404,7 +2411,7 @@ impl ActorSocketState {
 }
 
 impl Actor {
-    async fn run(mut self) -> Result<()> {
+    async fn run(mut self) -> anyhow::Result<()> {
         // Setup network monitoring
         let (link_change_s, mut link_change_r) = mpsc::channel(8);
         let _token = self
@@ -3468,7 +3475,7 @@ mod tests {
     }
 
     impl MagicStack {
-        async fn new(relay_mode: RelayMode) -> Result<Self> {
+        async fn new(relay_mode: RelayMode) -> anyhow::Result<Self> {
             let secret_key = SecretKey::generate(rand::thread_rng());
 
             let mut transport_config = quinn::TransportConfig::default();
@@ -3511,7 +3518,7 @@ mod tests {
     ///
     /// When the returned drop guard is dropped, the tasks doing this updating are stopped.
     #[instrument(skip_all)]
-    async fn mesh_stacks(stacks: Vec<MagicStack>) -> Result<JoinSet<()>> {
+    async fn mesh_stacks(stacks: Vec<MagicStack>) -> anyhow::Result<JoinSet<()>> {
         /// Registers endpoint addresses of a node to all other nodes.
         fn update_direct_addrs(
             stacks: &[MagicStack],
@@ -3576,7 +3583,7 @@ mod tests {
     }
 
     #[instrument(skip_all, fields(me = %ep.endpoint.node_id().fmt_short()))]
-    async fn echo_receiver(ep: MagicStack, loss: ExpectedLoss) -> Result<()> {
+    async fn echo_receiver(ep: MagicStack, loss: ExpectedLoss) -> anyhow::Result<()> {
         info!("accepting conn");
         let conn = ep.endpoint.accept().await.expect("no conn");
 
@@ -3628,7 +3635,7 @@ mod tests {
         dest_id: PublicKey,
         msg: &[u8],
         loss: ExpectedLoss,
-    ) -> Result<()> {
+    ) -> anyhow::Result<()> {
         info!("connecting to {}", dest_id.fmt_short());
         let dest = NodeAddr::new(dest_id);
         let conn = ep
@@ -3721,7 +3728,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     #[traced_test]
-    async fn test_two_devices_roundtrip_quinn_magic() -> Result<()> {
+    async fn test_two_devices_roundtrip_quinn_magic() -> anyhow::Result<()> {
         let m1 = MagicStack::new(RelayMode::Disabled).await?;
         let m2 = MagicStack::new(RelayMode::Disabled).await?;
 
@@ -3795,7 +3802,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     #[traced_test]
-    async fn test_two_devices_roundtrip_network_change() -> Result<()> {
+    async fn test_two_devices_roundtrip_network_change() -> anyhow::Result<()> {
         time::timeout(
             Duration::from_secs(90),
             test_two_devices_roundtrip_network_change_impl(),
@@ -3805,7 +3812,7 @@ mod tests {
 
     /// Same structure as `test_two_devices_roundtrip_quinn_magic`, but interrupts regularly
     /// with (simulated) network changes.
-    async fn test_two_devices_roundtrip_network_change_impl() -> Result<()> {
+    async fn test_two_devices_roundtrip_network_change_impl() -> anyhow::Result<()> {
         let m1 = MagicStack::new(RelayMode::Disabled).await?;
         let m2 = MagicStack::new(RelayMode::Disabled).await?;
 
@@ -3903,7 +3910,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     #[traced_test]
-    async fn test_two_devices_setup_teardown() -> Result<()> {
+    async fn test_two_devices_setup_teardown() -> anyhow::Result<()> {
         for i in 0..10 {
             println!("-- round {i}");
             println!("setting up magic stack");
@@ -4056,7 +4063,7 @@ mod tests {
         addr: NodeIdMappedAddr,
         node_id: NodeId,
         tls_auth: tls::Authentication,
-    ) -> Result<quinn::Connection> {
+    ) -> anyhow::Result<quinn::Connection> {
         // Endpoint::connect sets this, do the same to have similar behaviour.
         let mut transport_config = quinn::TransportConfig::default();
         transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
@@ -4085,7 +4092,7 @@ mod tests {
         node_id: NodeId,
         transport_config: Arc<quinn::TransportConfig>,
         tls_auth: tls::Authentication,
-    ) -> Result<quinn::Connection> {
+    ) -> anyhow::Result<quinn::Connection> {
         let alpns = vec![ALPN.to_vec()];
         let quic_client_config =
             tls_auth.make_client_config(&ep_secret_key, node_id, alpns, None, true)?;
@@ -4141,7 +4148,7 @@ mod tests {
 
         // This needs an accept task
         let accept_task = tokio::spawn({
-            async fn accept(ep: quinn::Endpoint) -> Result<()> {
+            async fn accept(ep: quinn::Endpoint) -> anyhow::Result<()> {
                 let incoming = ep.accept().await.ok_or(anyhow!("no incoming"))?;
                 let _conn = incoming.accept()?.await?;
 
@@ -4219,7 +4226,7 @@ mod tests {
 
         // We need a task to accept the connection.
         let accept_task = tokio::spawn({
-            async fn accept(ep: quinn::Endpoint) -> Result<()> {
+            async fn accept(ep: quinn::Endpoint) -> anyhow::Result<()> {
                 let incoming = ep.accept().await.ok_or(anyhow!("no incoming"))?;
                 let conn = incoming.accept()?.await?;
                 let mut stream = conn.accept_uni().await?;
@@ -4373,7 +4380,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_add_node_addr() -> Result<()> {
+    async fn test_add_node_addr() -> anyhow::Result<()> {
         let stack = MagicStack::new(RelayMode::Default).await?;
         let mut rng = rand::thread_rng();
 

@@ -37,7 +37,7 @@ use std::{
     },
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::anyhow;
 use backon::{Backoff, BackoffBuilder, ExponentialBuilder};
 use bytes::{Bytes, BytesMut};
 use iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
@@ -292,7 +292,7 @@ impl ActiveRelayActor {
     /// The main actor run loop.
     ///
     /// Primarily switches between the dialing and connected states.
-    async fn run(mut self) -> Result<()> {
+    async fn run(mut self) -> anyhow::Result<()> {
         use anyhow::Context;
 
         inc!(MagicsockMetrics, num_relay_conns_added);
@@ -368,7 +368,7 @@ impl ActiveRelayActor {
     ///
     /// Returns `None` if the actor needs to shut down.  Returns `Some(Ok(client))` when the
     /// connection is established, and `Some(Err(err))` if dialing the relay failed.
-    async fn run_dialing(&mut self) -> Option<Result<iroh_relay::client::Client>> {
+    async fn run_dialing(&mut self) -> Option<anyhow::Result<iroh_relay::client::Client>> {
         debug!("Actor loop: connecting to relay.");
 
         // We regularly flush the relay_datagrams_send queue so it is not full of stale
@@ -455,7 +455,7 @@ impl ActiveRelayActor {
     /// connections.  It currently does not ever return `Err` as the retries continue
     /// forever.
     // This is using `impl Future` to return a future without a reference to self.
-    fn dial_relay(&self) -> impl Future<Output = Result<Client>> {
+    fn dial_relay(&self) -> impl Future<Output = anyhow::Result<Client>> {
         let client_builder = self.relay_client_builder.clone();
         async move {
             match time::timeout(CONNECT_TIMEOUT, client_builder.connect()).await {
@@ -1417,7 +1417,7 @@ mod tests {
         item: RelaySendItem,
         tx: &mpsc::Sender<RelaySendItem>,
         rx: &Arc<RelayDatagramRecvQueue>,
-    ) -> Result<()> {
+    ) -> anyhow::Result<()> {
         assert!(item.datagrams.len() == 1);
         tokio::time::timeout(Duration::from_secs(10), async move {
             loop {
