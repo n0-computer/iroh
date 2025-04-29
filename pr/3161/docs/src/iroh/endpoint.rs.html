@@ -2791,11 +2791,7 @@
 <a href="#2790" id="2790">2790</a>
 <a href="#2791" id="2791">2791</a>
 <a href="#2792" id="2792">2792</a>
-<a href="#2793" id="2793">2793</a>
-<a href="#2794" id="2794">2794</a>
-<a href="#2795" id="2795">2795</a>
-<a href="#2796" id="2796">2796</a>
-<a href="#2797" id="2797">2797</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2793" id="2793">2793</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -2837,7 +2833,7 @@
         pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryItem, DiscoverySubscribers,
         DiscoveryTask, Lagged, UserData,
     },
-    magicsock::{<span class="self">self</span>, Handle, NodeIdMappedAddr},
+    magicsock::{<span class="self">self</span>, Handle, NodeIdMappedAddr, OwnAddressSnafu},
     tls,
     watchable::{Disconnected, Watcher},
     RelayProtocol,
@@ -2864,7 +2860,8 @@
 
 <span class="kw">use </span><span class="self">self</span>::rtt_actor::RttMessage;
 <span class="kw">pub use </span><span class="kw">super</span>::magicsock::{
-    ConnectionType, ControlMsg, DirectAddr, DirectAddrInfo, DirectAddrType, RemoteInfo, Source,
+    AddNodeAddrError, ConnectionType, ControlMsg, DirectAddr, DirectAddrInfo, DirectAddrType,
+    RemoteInfo, Source,
 };
 
 <span class="doccomment">/// The delay to fall back to discovery when direct addresses fail.
@@ -3634,7 +3631,7 @@
     /// if the direct addresses are a subset of ours.
     ///
     /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
-    </span><span class="kw">pub fn </span>add_node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, node_addr: NodeAddr) -&gt; anyhow::Result&lt;()&gt; {
+    </span><span class="kw">pub fn </span>add_node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, node_addr: NodeAddr) -&gt; <span class="prelude-ty">Result</span>&lt;(), AddNodeAddrError&gt; {
         <span class="self">self</span>.add_node_addr_inner(node_addr, magicsock::Source::App)
     }
 
@@ -3661,7 +3658,7 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         node_addr: NodeAddr,
         source: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
-    ) -&gt; anyhow::Result&lt;()&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), AddNodeAddrError&gt; {
         <span class="self">self</span>.add_node_addr_inner(
             node_addr,
             magicsock::Source::NamedApp {
@@ -3674,14 +3671,9 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         node_addr: NodeAddr,
         source: magicsock::Source,
-    ) -&gt; anyhow::Result&lt;()&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), AddNodeAddrError&gt; {
         <span class="comment">// Connecting to ourselves is not supported.
-        </span><span class="kw">if </span>node_addr.node_id == <span class="self">self</span>.node_id() {
-            <span class="macro">bail!</span>(
-                <span class="string">"Adding our own address is not supported ({} is the node id of this node)"</span>,
-                node_addr.node_id.fmt_short()
-            );
-        }
+        </span><span class="macro">snafu::ensure!</span>(node_addr.node_id != <span class="self">self</span>.node_id(), OwnAddressSnafu);
         <span class="self">self</span>.msock.add_node_addr(node_addr, source)
     }
 

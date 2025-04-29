@@ -4460,7 +4460,25 @@
 <a href="#4459" id="4459">4459</a>
 <a href="#4460" id="4460">4460</a>
 <a href="#4461" id="4461">4461</a>
-<a href="#4462" id="4462">4462</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4462" id="4462">4462</a>
+<a href="#4463" id="4463">4463</a>
+<a href="#4464" id="4464">4464</a>
+<a href="#4465" id="4465">4465</a>
+<a href="#4466" id="4466">4466</a>
+<a href="#4467" id="4467">4467</a>
+<a href="#4468" id="4468">4468</a>
+<a href="#4469" id="4469">4469</a>
+<a href="#4470" id="4470">4470</a>
+<a href="#4471" id="4471">4471</a>
+<a href="#4472" id="4472">4472</a>
+<a href="#4473" id="4473">4473</a>
+<a href="#4474" id="4474">4474</a>
+<a href="#4475" id="4475">4475</a>
+<a href="#4476" id="4476">4476</a>
+<a href="#4477" id="4477">4477</a>
+<a href="#4478" id="4478">4478</a>
+<a href="#4479" id="4479">4479</a>
+<a href="#4480" id="4480">4480</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4737,6 +4755,23 @@
     </span>local_addrs: std::sync::RwLock&lt;(SocketAddr, <span class="prelude-ty">Option</span>&lt;SocketAddr&gt;)&gt;,
 }
 
+<span class="attr">#[allow(missing_docs)]
+#[common_fields({
+    backtrace: <span class="prelude-ty">Option</span>&lt;snafu::Backtrace&gt;,
+    <span class="attr">#[snafu(implicit)]
+    </span>span_trace: n0_snafu::SpanTrace,
+})]
+<span class="attr">#[derive(Debug, Snafu)]
+#[snafu(visibility(<span class="kw">pub</span>(<span class="kw">crate</span>)))]
+</span><span class="kw">pub enum </span>AddNodeAddrError {
+    <span class="attr">#[snafu(display(<span class="string">"Empty addressing info"</span>))]
+    </span>Empty,
+    <span class="attr">#[snafu(display(<span class="string">"Empty addressing info, {pruned} direct address have been pruned"</span>))]
+    </span>EmptyPruned { pruned: usize },
+    <span class="attr">#[snafu(display(<span class="string">"Adding our own address is not supported"</span>))]
+    </span>OwnAddress,
+}
+
 <span class="kw">impl </span>MagicSock {
     <span class="doccomment">/// Creates a magic [`MagicSock`] listening on [`Options::addr_v4`] and [`Options::addr_v6`].
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>spawn(opts: Options) -&gt; <span class="prelude-ty">Result</span>&lt;Handle, CreateHandleError&gt; {
@@ -4846,8 +4881,8 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         <span class="kw-2">mut </span>addr: NodeAddr,
         source: node_map::Source,
-    ) -&gt; anyhow::Result&lt;()&gt; {
-        <span class="kw">let </span><span class="kw-2">mut </span>pruned = <span class="number">0</span>;
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), AddNodeAddrError&gt; {
+        <span class="kw">let </span><span class="kw-2">mut </span>pruned: usize = <span class="number">0</span>;
         <span class="kw">for </span>my_addr <span class="kw">in </span><span class="self">self</span>.direct_addrs.sockaddrs() {
             <span class="kw">if </span>addr.direct_addresses.remove(<span class="kw-2">&amp;</span>my_addr) {
                 <span class="macro">warn!</span>( node_id=addr.node_id.fmt_short(), %my_addr, %source, <span class="string">"not adding our addr for node"</span>);
@@ -4858,11 +4893,9 @@
             <span class="self">self</span>.node_map.add_node_addr(addr, source);
             <span class="prelude-val">Ok</span>(())
         } <span class="kw">else if </span>pruned != <span class="number">0 </span>{
-            <span class="prelude-val">Err</span>(<span class="macro">anyhow::anyhow!</span>(
-                <span class="string">"empty addressing info, {pruned} direct addresses have been pruned"
-            </span>))
+            <span class="prelude-val">Err</span>(EmptyPrunedSnafu { pruned }.build())
         } <span class="kw">else </span>{
-            <span class="prelude-val">Err</span>(<span class="macro">anyhow::anyhow!</span>(<span class="string">"empty addressing info"</span>))
+            <span class="prelude-val">Err</span>(EmptySnafu.build())
         }
     }
 
@@ -8881,7 +8914,10 @@
             .magic_sock()
             .add_node_addr(empty_addr, node_map::Source::App)
             .unwrap_err();
-        <span class="macro">assert!</span>(err.to_string().contains(<span class="string">"empty addressing info"</span>));
+        <span class="macro">assert!</span>(err
+            .to_string()
+            .to_lowercase()
+            .contains(<span class="string">"empty addressing info"</span>));
 
         <span class="comment">// relay url only
         </span><span class="kw">let </span>addr = NodeAddr {
