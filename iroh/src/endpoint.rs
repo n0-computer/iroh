@@ -253,7 +253,7 @@ impl Builder {
     /// Sets the [ALPN] protocols that this endpoint will accept on incoming connections.
     ///
     /// Not setting this will still allow creating connections, but to accept incoming
-    /// connections the [ALPN] must be set.
+    /// connections at least one [ALPN] must be set.
     ///
     /// [ALPN]: https://en.wikipedia.org/wiki/Application-Layer_Protocol_Negotiation
     pub fn alpns(mut self, alpn_protocols: Vec<Vec<u8>>) -> Self {
@@ -1282,7 +1282,23 @@ impl ConnectOptions {
         self
     }
 
-    /// TODO
+    /// Sets more [ALPN] identifiers that should be signaled as supported on connection.
+    ///
+    /// This allows connecting to servers that may only support older versions of your
+    /// protocol. In this case, you would add the older [ALPN] identifiers with this
+    /// function.
+    ///
+    /// You'll know the final negotiated [ALPN] identifier once your connection was
+    /// established using [`Connection::alpn`], or even slightly earlier in the
+    /// handshake by using [`Connecting::alpn`].
+    ///
+    /// The [ALPN] identifier order on the connect side doesn't matter, since it's the
+    /// accept side that determines the protocol.
+    ///
+    /// For setting the supported [ALPN] identifiers on the accept side, see the endpoint
+    /// builder's [`Builder::alpns`] function.
+    ///
+    /// [ALPN]: https://en.wikipedia.org/wiki/Application-Layer_Protocol_Negotiation
     pub fn with_additional_alpns(mut self, alpns: Vec<Vec<u8>>) -> Self {
         self.additional_alpns = alpns;
         self
