@@ -854,7 +854,7 @@
     <span class="kw">pub async fn </span>run_pkarr_relay(state: AppState) -&gt; <span class="prelude-ty">Result</span>&lt;(Url, CleanupDropGuard)&gt; {
         <span class="kw">let </span>bind_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, <span class="number">0</span>));
         <span class="kw">let </span>app = Router::new()
-            .route(<span class="string">"/pkarr/:key"</span>, put(pkarr_put))
+            .route(<span class="string">"/pkarr/{key}"</span>, put(pkarr_put))
             .with_state(state);
         <span class="kw">let </span>listener = tokio::net::TcpListener::bind(bind_addr).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>bound_addr = listener.local_addr()<span class="question-mark">?</span>;
