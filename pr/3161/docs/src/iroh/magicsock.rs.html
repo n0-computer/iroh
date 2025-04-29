@@ -4488,7 +4488,10 @@
 <a href="#4487" id="4487">4487</a>
 <a href="#4488" id="4488">4488</a>
 <a href="#4489" id="4489">4489</a>
-<a href="#4490" id="4490">4490</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4490" id="4490">4490</a>
+<a href="#4491" id="4491">4491</a>
+<a href="#4492" id="4492">4492</a>
+<a href="#4493" id="4493">4493</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4532,7 +4535,10 @@
     FutureExt, StreamExt,
 };
 <span class="kw">use </span>nested_enum_utils::common_fields;
-<span class="kw">use </span>netwatch::{interfaces, netmon};
+<span class="kw">use </span>netwatch::{
+    interfaces,
+    netmon::{<span class="self">self</span>, CallbackToken},
+};
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">use </span>netwatch::{ip::LocalAddresses, UdpSocket};
 <span class="kw">use </span>quinn::{AsyncUdpSocket, ServerConfig};
@@ -6185,6 +6191,8 @@
     </span>CreateNetReportClient { source: anyhow::Error },
     <span class="attr">#[snafu(display(<span class="string">"Failed to create netmon monitor"</span>))]
     </span>CreateNetmonMonitor { source: netmon::Error },
+    <span class="attr">#[snafu(display(<span class="string">"Failed to subscribe netmon monitor"</span>))]
+    </span>SubscribeNetmonMonitor { source: netmon::Error },
 }
 
 <span class="kw">impl </span>Handle {
@@ -6360,6 +6368,19 @@
         <span class="attr">#[cfg(wasm_browser)]
         </span><span class="kw">let </span>net_report_config = net_report::Options::default();
 
+        <span class="comment">// Setup network monitoring
+        </span><span class="kw">let </span>(link_change_s, link_change_r) = mpsc::channel(<span class="number">8</span>);
+        <span class="kw">let </span>netmon_token = network_monitor
+            .subscribe(<span class="kw">move </span>|is_major| {
+                <span class="kw">let </span>link_change_s = link_change_s.clone();
+                <span class="kw">async move </span>{
+                    link_change_s.send(is_major).<span class="kw">await</span>.ok();
+                }
+                .boxed()
+            })
+            .<span class="kw">await
+            </span>.context(SubscribeNetmonMonitorSnafu)<span class="question-mark">?</span>;
+
         actor_tasks.spawn({
             <span class="kw">let </span>msock = msock.clone();
             <span class="kw">async move </span>{
@@ -6379,9 +6400,7 @@
                     net_report_config,
                 };
 
-                <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = actor.run().<span class="kw">await </span>{
-                    <span class="macro">warn!</span>(<span class="string">"relay handler errored: {:?}"</span>, err);
-                }
+                actor.run(link_change_r, netmon_token).<span class="kw">await</span>;
             }
             .instrument(<span class="macro">info_span!</span>(<span class="string">"actor"</span>))
         });
@@ -6960,20 +6979,7 @@
 }
 
 <span class="kw">impl </span>Actor {
-    <span class="kw">async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; anyhow::Result&lt;()&gt; {
-        <span class="comment">// Setup network monitoring
-        </span><span class="kw">let </span>(link_change_s, <span class="kw-2">mut </span>link_change_r) = mpsc::channel(<span class="number">8</span>);
-        <span class="kw">let </span>_token = <span class="self">self
-            </span>.network_monitor
-            .subscribe(<span class="kw">move </span>|is_major| {
-                <span class="kw">let </span>link_change_s = link_change_s.clone();
-                <span class="kw">async move </span>{
-                    link_change_s.send(is_major).<span class="kw">await</span>.ok();
-                }
-                .boxed()
-            })
-            .<span class="kw">await</span><span class="question-mark">?</span>;
-
+    <span class="kw">async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>, <span class="kw-2">mut </span>link_change_r: mpsc::Receiver&lt;bool&gt;, _token: CallbackToken) {
         <span class="comment">// Let the the heartbeat only start a couple seconds later
         </span><span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">let </span><span class="kw-2">mut </span>direct_addr_heartbeat_timer = time::interval_at(
@@ -7021,7 +7027,7 @@
                     <span class="macro">trace!</span>(<span class="question-mark">?</span>msg, <span class="string">"tick: msg"</span>);
                     <span class="macro">inc!</span>(Metrics, actor_tick_msg);
                     <span class="kw">if </span><span class="self">self</span>.handle_actor_message(msg).<span class="kw">await </span>{
-                        <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+                        <span class="kw">return</span>;
                     }
                 }
                 tick = <span class="self">self</span>.periodic_re_stun_timer.tick() =&gt; {
