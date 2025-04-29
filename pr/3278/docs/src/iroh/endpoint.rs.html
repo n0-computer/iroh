@@ -2967,7 +2967,10 @@
 <a href="#2966" id="2966">2966</a>
 <a href="#2967" id="2967">2967</a>
 <a href="#2968" id="2968">2968</a>
-<a href="#2969" id="2969">2969</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2969" id="2969">2969</a>
+<a href="#2970" id="2970">2970</a>
+<a href="#2971" id="2971">2971</a>
+<a href="#2972" id="2972">2972</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -4168,7 +4171,10 @@
     ///
     /// // Wait for the metrics server to bind, then fetch the metrics via HTTP.
     /// tokio::time::sleep(Duration::from_millis(500));
-    /// let res = reqwest::get("http://localhost:9100/metrics").await?.text().await?;
+    /// let res = reqwest::get("http://localhost:9100/metrics")
+    ///     .await?
+    ///     .text()
+    ///     .await?;
     ///
     /// assert!(res.contains(r#"TYPE magicsock_recv_datagrams counter"#));
     /// assert!(res.contains(r#"magicsock_recv_datagrams_total 0"#));
