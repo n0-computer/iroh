@@ -4478,7 +4478,17 @@
 <a href="#4477" id="4477">4477</a>
 <a href="#4478" id="4478">4478</a>
 <a href="#4479" id="4479">4479</a>
-<a href="#4480" id="4480">4480</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4480" id="4480">4480</a>
+<a href="#4481" id="4481">4481</a>
+<a href="#4482" id="4482">4482</a>
+<a href="#4483" id="4483">4483</a>
+<a href="#4484" id="4484">4484</a>
+<a href="#4485" id="4485">4485</a>
+<a href="#4486" id="4486">4486</a>
+<a href="#4487" id="4487">4487</a>
+<a href="#4488" id="4488">4488</a>
+<a href="#4489" id="4489">4489</a>
+<a href="#4490" id="4490">4490</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4508,7 +4518,6 @@
     task::{Context, Poll, Waker},
 };
 
-<span class="kw">use </span>anyhow::anyhow;
 <span class="kw">use </span>atomic_waker::AtomicWaker;
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>concurrent_queue::ConcurrentQueue;
@@ -6823,7 +6832,7 @@
     Shutdown,
     EndpointPingExpired(usize, stun_rs::TransactionId),
     NetReport(
-        anyhow::Result&lt;<span class="prelude-ty">Option</span>&lt;Arc&lt;net_report::Report&gt;&gt;&gt;,
+        <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Arc&lt;net_report::Report&gt;&gt;, NetReportError&gt;,
         <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
     ),
     NetworkChange,
@@ -6938,6 +6947,16 @@
 
         <span class="prelude-val">Ok</span>(socket_state)
     }
+}
+
+<span class="attr">#[derive(Debug, Snafu)]
+</span><span class="kw">enum </span>NetReportError {
+    <span class="attr">#[snafu(display(<span class="string">"Net report not received"</span>))]
+    </span>NotReceived,
+    <span class="attr">#[snafu(display(<span class="string">"Net report timed out"</span>))]
+    </span>Timeout,
+    <span class="attr">#[snafu(display(<span class="string">"Net report encountered an error"</span>))]
+    </span>NetReport { source: anyhow::Error },
 }
 
 <span class="kw">impl </span>Actor {
@@ -7394,11 +7413,11 @@
                 <span class="kw">let </span>msg_sender = <span class="self">self</span>.msg_sender.clone();
                 task::spawn(<span class="kw">async move </span>{
                     <span class="kw">let </span>report = time::timeout(NET_REPORT_TIMEOUT, rx).<span class="kw">await</span>;
-                    <span class="kw">let </span>report: anyhow::Result&lt;<span class="kw">_</span>&gt; = <span class="kw">match </span>report {
+                    <span class="kw">let </span>report = <span class="kw">match </span>report {
                         <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(report))) =&gt; <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(report)),
-                        <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err))) =&gt; <span class="prelude-val">Err</span>(err),
-                        <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(<span class="kw">_</span>)) =&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"net_report report not received"</span>)),
-                        <span class="prelude-val">Err</span>(err) =&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"net_report report timeout: {:?}"</span>, err)),
+                        <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err))) =&gt; <span class="prelude-val">Err</span>(NetReportSnafu.into_error(err)),
+                        <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(<span class="kw">_</span>)) =&gt; <span class="prelude-val">Err</span>(NotReceivedSnafu.build()),
+                        <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="prelude-val">Err</span>(TimeoutSnafu.build()),
                     };
                     msg_sender
                         .send(ActorMessage::NetReport(report, why))
@@ -7932,6 +7951,7 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
+    <span class="kw">use </span>anyhow::anyhow;
     <span class="kw">use </span>rand::RngCore;
     <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
     <span class="kw">use </span>tracing_test::traced_test;
