@@ -17,7 +17,7 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::anyhow;
 use bytes::Bytes;
 use iroh_base::RelayUrl;
 #[cfg(feature = "metrics")]
@@ -249,7 +249,7 @@ impl Client {
         #[cfg(not(wasm_browser))] port_mapper: Option<portmapper::Client>,
         #[cfg(not(wasm_browser))] dns_resolver: DnsResolver,
         #[cfg(not(wasm_browser))] ip_mapped_addrs: Option<IpMappedAddresses>,
-    ) -> Result<Self> {
+    ) -> anyhow::Result<Self> {
         let mut actor = Actor::new(
             #[cfg(not(wasm_browser))]
             port_mapper,
@@ -306,7 +306,7 @@ impl Client {
         #[cfg(not(wasm_browser))] stun_sock_v4: Option<Arc<UdpSocket>>,
         #[cfg(not(wasm_browser))] stun_sock_v6: Option<Arc<UdpSocket>>,
         #[cfg(not(wasm_browser))] quic_config: Option<QuicConfig>,
-    ) -> Result<Arc<Report>> {
+    ) -> anyhow::Result<Arc<Report>> {
         #[cfg(not(wasm_browser))]
         let opts = Options::default()
             .stun_v4(stun_sock_v4)
@@ -326,7 +326,11 @@ impl Client {
     /// It may not be called concurrently with itself, `&mut self` takes care of that.
     ///
     /// Look at [`Options`] for the different configuration options.
-    pub async fn get_report(&mut self, relay_map: RelayMap, opts: Options) -> Result<Arc<Report>> {
+    pub async fn get_report(
+        &mut self,
+        relay_map: RelayMap,
+        opts: Options,
+    ) -> anyhow::Result<Arc<Report>> {
         let rx = self.get_report_channel(relay_map, opts).await?;
         match rx.await {
             Ok(res) => res,
@@ -341,7 +345,7 @@ impl Client {
         &mut self,
         relay_map: RelayMap,
         opts: Options,
-    ) -> Result<oneshot::Receiver<Result<Arc<Report>>>> {
+    ) -> anyhow::Result<oneshot::Receiver<anyhow::Result<Arc<Report>>>> {
         let (tx, rx) = oneshot::channel();
         self.addr
             .send(Message::RunCheck {
@@ -377,7 +381,7 @@ pub(crate) enum Message {
         /// Options for the report
         opts: Options,
         /// Channel to receive the response.
-        response_tx: oneshot::Sender<Result<Arc<Report>>>,
+        response_tx: oneshot::Sender<anyhow::Result<Arc<Report>>>,
     },
     /// A report produced by the [`reportgen`] actor.
     ReportReady { report: Box<Report> },
@@ -491,7 +495,7 @@ impl Actor {
         #[cfg(not(wasm_browser))] port_mapper: Option<portmapper::Client>,
         #[cfg(not(wasm_browser))] dns_resolver: DnsResolver,
         #[cfg(not(wasm_browser))] ip_mapped_addrs: Option<IpMappedAddresses>,
-    ) -> Result<Self> {
+    ) -> anyhow::Result<Self> {
         // TODO: consider an instrumented flume channel so we have metrics.
         let (sender, receiver) = mpsc::channel(32);
         Ok(Self {
@@ -557,7 +561,7 @@ impl Actor {
         &mut self,
         relay_map: RelayMap,
         opts: Options,
-        response_tx: oneshot::Sender<Result<Arc<Report>>>,
+        response_tx: oneshot::Sender<anyhow::Result<Arc<Report>>>,
     ) {
         let protocols = opts.to_protocols();
         #[cfg(not(wasm_browser))]
@@ -780,7 +784,7 @@ struct ReportRun {
     /// The handle of the [`reportgen`] actor, cancels the actor on drop.
     _reportgen: reportgen::Client,
     /// Where to send the completed report.
-    report_tx: oneshot::Sender<Result<Arc<Report>>>,
+    report_tx: oneshot::Sender<anyhow::Result<Arc<Report>>>,
 }
 
 /// Test if IPv6 works at all, or if it's been hard disabled at the OS level.
@@ -855,7 +859,11 @@ pub(crate) mod stun_utils {
     }
 
     /// Receive STUN response from a UDP socket, pass it to the actor.
-    async fn recv_stun_once(sock: &UdpSocket, buf: &mut [u8], actor_addr: &Addr) -> Result<()> {
+    async fn recv_stun_once(
+        sock: &UdpSocket,
+        buf: &mut [u8],
+        actor_addr: &Addr,
+    ) -> anyhow::Result<()> {
         let (count, mut from_addr) = sock
             .recv_from(buf)
             .await
@@ -1059,7 +1067,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_basic() -> Result<()> {
+    async fn test_basic() -> anyhow::Result<()> {
         let (stun_addr, stun_stats, _cleanup_guard) =
             stun_utils::serve("127.0.0.1".parse().unwrap()).await?;
 
@@ -1102,7 +1110,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_udp_blocked() -> Result<()> {
+    async fn test_udp_blocked() -> anyhow::Result<()> {
         // Create a "STUN server", which will never respond to anything.  This is how UDP to
         // the STUN server being blocked will look like from the client's perspective.
         let blackhole = tokio::net::UdpSocket::bind("127.0.0.1:0").await?;
@@ -1153,7 +1161,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_add_report_history_set_preferred_relay() -> Result<()> {
+    async fn test_add_report_history_set_preferred_relay() -> anyhow::Result<()> {
         fn relay_url(i: u16) -> RelayUrl {
             format!("http://{i}.com").parse().unwrap()
         }
@@ -1334,7 +1342,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_hairpin() -> Result<()> {
+    async fn test_hairpin() -> anyhow::Result<()> {
         // Hairpinning is initiated after we discover our own IPv4 socket address (IP +
         // port) via STUN, so the test needs to have a STUN server and perform STUN over
         // IPv4 first.  Hairpinning detection works by sending a STUN *request* to **our own

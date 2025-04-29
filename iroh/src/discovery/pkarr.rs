@@ -46,7 +46,7 @@
 
 use std::sync::Arc;
 
-use anyhow::{anyhow, bail, Result};
+use anyhow::{anyhow, bail};
 use iroh_base::{NodeId, SecretKey};
 use iroh_relay::node_info::NodeInfo;
 use n0_future::{
@@ -263,7 +263,7 @@ impl PublisherService {
         }
     }
 
-    async fn publish_current(&self, info: NodeInfo) -> Result<()> {
+    async fn publish_current(&self, info: NodeInfo) -> anyhow::Result<()> {
         debug!(
             data = ?info.data,
             pkarr_relay = %self.pkarr_client.pkarr_relay_url,
@@ -322,7 +322,11 @@ impl PkarrResolver {
 }
 
 impl Discovery for PkarrResolver {
-    fn resolve(&self, _ep: Endpoint, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem>>> {
+    fn resolve(
+        &self,
+        _ep: Endpoint,
+        node_id: NodeId,
+    ) -> Option<BoxStream<anyhow::Result<DiscoveryItem>>> {
         let pkarr_client = self.pkarr_client.clone();
         let fut = async move {
             let signed_packet = pkarr_client.resolve(node_id).await?;

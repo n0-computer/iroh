@@ -7,7 +7,6 @@
 //! [pkarr module]: super
 use std::sync::{Arc, Mutex};
 
-use anyhow::Result;
 use iroh_base::{NodeId, SecretKey};
 use n0_future::{
     boxed::BoxStream,
@@ -90,7 +89,7 @@ struct Inner {
 }
 
 impl Inner {
-    async fn resolve_relay(&self, key: pkarr::PublicKey) -> Option<Result<DiscoveryItem>> {
+    async fn resolve_relay(&self, key: pkarr::PublicKey) -> Option<anyhow::Result<DiscoveryItem>> {
         tracing::info!("resolving {} from relay {:?}", key.to_z32(), self.relay_url);
 
         let maybe_packet = self
@@ -120,7 +119,7 @@ impl Inner {
             }
         }
     }
-    async fn resolve_dht(&self, key: pkarr::PublicKey) -> Option<Result<DiscoveryItem>> {
+    async fn resolve_dht(&self, key: pkarr::PublicKey) -> Option<anyhow::Result<DiscoveryItem>> {
         tracing::info!("resolving {} from DHT", key.to_z32());
 
         let maybe_packet = self.pkarr.resolve(&key).await;
@@ -235,7 +234,7 @@ impl Builder {
     }
 
     /// Builds the discovery mechanism.
-    pub fn build(self) -> Result<DhtDiscovery> {
+    pub fn build(self) -> anyhow::Result<DhtDiscovery> {
         let pkarr = match self.client {
             Some(client) => client,
             None => PkarrClient::new(Default::default())?,

@@ -25,7 +25,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use anyhow::{anyhow, bail, Context as _, Result};
+use anyhow::{anyhow, bail, Context as _};
 use iroh_base::RelayUrl;
 #[cfg(feature = "metrics")]
 use iroh_metrics::inc;
@@ -248,7 +248,7 @@ impl Actor {
     ///   - Receives actor messages (sent by those futures).
     ///   - Updates the report, cancels unneeded futures.
     /// - Sends the report to the net_report actor.
-    async fn run_inner(&mut self) -> Result<()> {
+    async fn run_inner(&mut self) -> anyhow::Result<()> {
         #[cfg(not(wasm_browser))]
         let port_mapper = self.socket_state.port_mapper.is_some();
         #[cfg(wasm_browser)]
@@ -572,7 +572,7 @@ impl Actor {
     ///     failure permanent.  Probes in a probe set are essentially retries.
     ///   - Once there are [`ProbeReport`]s from enough nodes, all remaining probes are
     ///     aborted.  That is, the main actor loop stops polling them.
-    async fn spawn_probes_task(&mut self) -> Result<JoinSet<Result<ProbeReport>>> {
+    async fn spawn_probes_task(&mut self) -> anyhow::Result<JoinSet<anyhow::Result<ProbeReport>>> {
         #[cfg(not(wasm_browser))]
         let if_state = interfaces::State::new().await;
         #[cfg(not(wasm_browser))]
@@ -1024,7 +1024,7 @@ async fn check_captive_portal(
     dns_resolver: &DnsResolver,
     dm: &RelayMap,
     preferred_relay: Option<RelayUrl>,
-) -> Result<bool> {
+) -> anyhow::Result<bool> {
     // If we have a preferred relay node and we can use it for non-STUN requests, try that;
     // otherwise, pick a random one suitable for non-STUN requests.
     let preferred_relay = preferred_relay.and_then(|url| match dm.get_node(&url) {
@@ -1102,7 +1102,7 @@ async fn check_captive_portal(
 }
 
 /// Returns the proper port based on the protocol of the probe.
-fn get_port(relay_node: &RelayNode, proto: &ProbeProto) -> Result<u16> {
+fn get_port(relay_node: &RelayNode, proto: &ProbeProto) -> anyhow::Result<u16> {
     match proto {
         #[cfg(not(wasm_browser))]
         ProbeProto::QuicIpv4 | ProbeProto::QuicIpv6 => {
@@ -1141,7 +1141,7 @@ async fn get_relay_addr(
     dns_resolver: &DnsResolver,
     relay_node: &RelayNode,
     proto: ProbeProto,
-) -> Result<SocketAddr> {
+) -> anyhow::Result<SocketAddr> {
     if relay_node.stun_only && !matches!(proto, ProbeProto::StunIpv4 | ProbeProto::StunIpv6) {
         bail!("Relay node not suitable for non-STUN probes");
     }
@@ -1168,7 +1168,7 @@ async fn relay_lookup_ipv4_staggered(
     dns_resolver: &DnsResolver,
     relay: &RelayNode,
     port: u16,
-) -> Result<SocketAddr> {
+) -> anyhow::Result<SocketAddr> {
     match relay.url.host() {
         Some(url::Host::Domain(hostname)) => {
             debug!(%hostname, "Performing DNS A lookup for relay addr");
@@ -1198,7 +1198,7 @@ async fn relay_lookup_ipv6_staggered(
     dns_resolver: &DnsResolver,
     relay: &RelayNode,
     port: u16,
-) -> Result<SocketAddr> {
+) -> anyhow::Result<SocketAddr> {
     match relay.url.host() {
         Some(url::Host::Domain(hostname)) => {
             debug!(%hostname, "Performing DNS AAAA lookup for relay addr");
@@ -1274,7 +1274,7 @@ async fn measure_https_latency(
     #[cfg(not(wasm_browser))] dns_resolver: &DnsResolver,
     node: &RelayNode,
     certs: Option<Vec<rustls::pki_types::CertificateDer<'static>>>,
-) -> Result<(Duration, IpAddr)> {
+) -> anyhow::Result<(Duration, IpAddr)> {
     let url = node.url.join(RELAY_PROBE_PATH)?;
 
     // This should also use same connection establishment as relay client itself, which

@@ -35,7 +35,6 @@ use std::{
     net::{IpAddr, SocketAddr},
 };
 
-use anyhow::Result;
 use derive_more::FromStr;
 use iroh_base::{NodeId, PublicKey};
 use n0_future::{
@@ -83,7 +82,7 @@ pub struct MdnsDiscovery {
 #[derive(Debug)]
 enum Message {
     Discovery(String, Peer),
-    Resolve(NodeId, mpsc::Sender<Result<DiscoveryItem>>),
+    Resolve(NodeId, mpsc::Sender<anyhow::Result<DiscoveryItem>>),
     Timeout(NodeId, usize),
     Subscribe(mpsc::Sender<DiscoveryItem>),
 }
@@ -138,7 +137,7 @@ impl MdnsDiscovery {
     ///
     /// # Panics
     /// This relies on [`tokio::runtime::Handle::current`] and will panic if called outside of the context of a tokio runtime.
-    pub fn new(node_id: NodeId) -> Result<Self> {
+    pub fn new(node_id: NodeId) -> anyhow::Result<Self> {
         debug!("Creating new MdnsDiscovery service");
         let (send, mut recv) = mpsc::channel(64);
         let task_sender = send.clone();
@@ -154,7 +153,7 @@ impl MdnsDiscovery {
             let mut last_id = 0;
             let mut senders: HashMap<
                 PublicKey,
-                HashMap<usize, mpsc::Sender<Result<DiscoveryItem>>>,
+                HashMap<usize, mpsc::Sender<anyhow::Result<DiscoveryItem>>>,
             > = HashMap::default();
             let mut timeouts = JoinSet::new();
             loop {
@@ -306,7 +305,7 @@ impl MdnsDiscovery {
         sender: mpsc::Sender<Message>,
         socketaddrs: BTreeSet<SocketAddr>,
         rt: &tokio::runtime::Handle,
-    ) -> Result<DropGuard> {
+    ) -> anyhow::Result<DropGuard> {
         let spawn_rt = rt.clone();
         let callback = move |node_id: &str, peer: &Peer| {
             trace!(
@@ -373,7 +372,11 @@ fn peer_to_discovery_item(peer: &Peer, node_id: &NodeId) -> DiscoveryItem {
 }
 
 impl Discovery for MdnsDiscovery {
-    fn resolve(&self, _ep: Endpoint, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem>>> {
+    fn resolve(
+        &self,
+        _ep: Endpoint,
+        node_id: NodeId,
+    ) -> Option<BoxStream<anyhow::Result<DiscoveryItem>>> {
         use futures_util::FutureExt;
 
         let (send, recv) = mpsc::channel(20);
@@ -495,7 +498,7 @@ mod tests {
             Ok(())
         }
 
-        fn make_discoverer() -> Result<(PublicKey, MdnsDiscovery)> {
+        fn make_discoverer() -> anyhow::Result<(PublicKey, MdnsDiscovery)> {
             let node_id = SecretKey::generate(rand::thread_rng()).public();
             Ok((node_id, MdnsDiscovery::new(node_id)?))
         }

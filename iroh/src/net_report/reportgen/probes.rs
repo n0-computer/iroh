@@ -6,7 +6,7 @@
 
 use std::{collections::BTreeSet, fmt, sync::Arc};
 
-use anyhow::{ensure, Result};
+use anyhow::ensure;
 use iroh_base::RelayUrl;
 use iroh_relay::{RelayMap, RelayNode};
 use n0_future::time::Duration;
@@ -197,7 +197,7 @@ impl ProbeSet {
         }
     }
 
-    fn push(&mut self, probe: Probe) -> Result<()> {
+    fn push(&mut self, probe: Probe) -> anyhow::Result<()> {
         ensure!(probe.proto() == self.proto, "mismatching probe proto");
         self.probes.push(probe);
         Ok(())

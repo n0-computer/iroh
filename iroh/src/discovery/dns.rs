@@ -1,6 +1,5 @@
 //! DNS node discovery for iroh
 
-use anyhow::Result;
 use iroh_base::NodeId;
 pub use iroh_relay::dns::{N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING};
 use n0_future::boxed::BoxStream;
@@ -63,7 +62,11 @@ impl DnsDiscovery {
 }
 
 impl Discovery for DnsDiscovery {
-    fn resolve(&self, ep: Endpoint, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem>>> {
+    fn resolve(
+        &self,
+        ep: Endpoint,
+        node_id: NodeId,
+    ) -> Option<BoxStream<anyhow::Result<DiscoveryItem>>> {
         let resolver = ep.dns_resolver().clone();
         let origin_domain = self.origin_domain.clone();
         let fut = async move {

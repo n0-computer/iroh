@@ -39,7 +39,6 @@
 //! ```
 use std::{collections::BTreeMap, sync::Arc};
 
-use anyhow::Result;
 use iroh_base::NodeId;
 use n0_future::{
     boxed::BoxFuture,
@@ -115,7 +114,7 @@ pub trait ProtocolHandler: Send + Sync + std::fmt::Debug + 'static {
     /// Optional interception point to handle the `Connecting` state.
     ///
     /// This enables accepting 0-RTT data from clients, among other things.
-    fn on_connecting(&self, connecting: Connecting) -> BoxFuture<Result<Connection>> {
+    fn on_connecting(&self, connecting: Connecting) -> BoxFuture<anyhow::Result<Connection>> {
         Box::pin(async move {
             let conn = connecting.await?;
             Ok(conn)
@@ -125,7 +124,7 @@ pub trait ProtocolHandler: Send + Sync + std::fmt::Debug + 'static {
     /// Handle an incoming connection.
     ///
     /// This runs on a freshly spawned tokio task so this can be long-running.
-    fn accept(&self, connection: Connection) -> BoxFuture<Result<()>>;
+    fn accept(&self, connection: Connection) -> BoxFuture<anyhow::Result<()>>;
 
     /// Called when the node shuts down.
     fn shutdown(&self) -> BoxFuture<()> {
@@ -134,11 +133,11 @@ pub trait ProtocolHandler: Send + Sync + std::fmt::Debug + 'static {
 }
 
 impl<T: ProtocolHandler> ProtocolHandler for Arc<T> {
-    fn on_connecting(&self, conn: Connecting) -> BoxFuture<Result<Connection>> {
+    fn on_connecting(&self, conn: Connecting) -> BoxFuture<anyhow::Result<Connection>> {
         self.as_ref().on_connecting(conn)
     }
 
-    fn accept(&self, conn: Connection) -> BoxFuture<Result<()>> {
+    fn accept(&self, conn: Connection) -> BoxFuture<anyhow::Result<()>> {
         self.as_ref().accept(conn)
     }
 
@@ -148,11 +147,11 @@ impl<T: ProtocolHandler> ProtocolHandler for Arc<T> {
 }
 
 impl<T: ProtocolHandler> ProtocolHandler for Box<T> {
-    fn on_connecting(&self, conn: Connecting) -> BoxFuture<Result<Connection>> {
+    fn on_connecting(&self, conn: Connecting) -> BoxFuture<anyhow::Result<Connection>> {
         self.as_ref().on_connecting(conn)
     }
 
-    fn accept(&self, conn: Connection) -> BoxFuture<Result<()>> {
+    fn accept(&self, conn: Connection) -> BoxFuture<anyhow::Result<()>> {
         self.as_ref().accept(conn)
     }
 
@@ -215,7 +214,7 @@ impl Router {
     ///
     /// If some [`ProtocolHandler`] panicked in the accept loop, this will propagate
     /// that panic into the result here.
-    pub async fn shutdown(&self) -> Result<()> {
+    pub async fn shutdown(&self) -> anyhow::Result<()> {
         if self.is_shutdown() {
             return Ok(());
         }
@@ -255,7 +254,7 @@ impl RouterBuilder {
     }
 
     /// Spawns an accept loop and returns a handle to it encapsulated as the [`Router`].
-    pub async fn spawn(self) -> Result<Router> {
+    pub async fn spawn(self) -> anyhow::Result<Router> {
         // Update the endpoint with our alpns.
         let alpns = self
             .protocols
@@ -411,11 +410,11 @@ impl<P: ProtocolHandler + Clone> AccessLimit<P> {
 }
 
 impl<P: ProtocolHandler + Clone> ProtocolHandler for AccessLimit<P> {
-    fn on_connecting(&self, conn: Connecting) -> BoxFuture<Result<Connection>> {
+    fn on_connecting(&self, conn: Connecting) -> BoxFuture<anyhow::Result<Connection>> {
         self.proto.on_connecting(conn)
     }
 
-    fn accept(&self, conn: Connection) -> BoxFuture<Result<()>> {
+    fn accept(&self, conn: Connection) -> BoxFuture<anyhow::Result<()>> {
         let this = self.clone();
         Box::pin(async move {
             let remote = conn.remote_node_id()?;
@@ -439,7 +438,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_shutdown() -> Result<()> {
+    async fn test_shutdown() -> anyhow::Result<()> {
         let endpoint = Endpoint::builder().bind().await?;
         let router = Router::builder(endpoint.clone()).spawn().await?;
 
@@ -461,7 +460,7 @@ mod tests {
     const ECHO_ALPN: &[u8] = b"/iroh/echo/1";
 
     impl ProtocolHandler for Echo {
-        fn accept(&self, connection: Connection) -> BoxFuture<Result<()>> {
+        fn accept(&self, connection: Connection) -> BoxFuture<anyhow::Result<()>> {
             println!("accepting echo");
             Box::pin(async move {
                 let (mut send, mut recv) = connection.accept_bi().await?;
@@ -477,7 +476,7 @@ mod tests {
         }
     }
     #[tokio::test]
-    async fn test_limiter() -> Result<()> {
+    async fn test_limiter() -> anyhow::Result<()> {
         let e1 = Endpoint::builder().bind().await?;
         // deny all access
         let proto = AccessLimit::new(Echo, |_node_id| false);
