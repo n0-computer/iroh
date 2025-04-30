@@ -43,7 +43,7 @@ use iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_metrics::{inc, inc_by};
 use iroh_relay::{
     self as relay,
-    client::{Client, ConnSendError, ConnectError, ReceivedMessage, RecvError, SendMessage},
+    client::{Client, ConnectError, ReceivedMessage, RecvError, SendError, SendMessage},
     PingTracker, MAX_PACKET_SIZE,
 };
 use n0_future::{
@@ -253,7 +253,7 @@ enum RunError {
     #[snafu(display("Client stream read failed"))]
     ClientStreamRead { source: RecvError },
     #[snafu(transparent)]
-    Send { source: ConnSendError },
+    Send { source: SendError },
 }
 
 #[allow(missing_docs)]
