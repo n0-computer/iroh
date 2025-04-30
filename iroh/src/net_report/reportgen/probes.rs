@@ -6,12 +6,12 @@
 
 use std::{collections::BTreeSet, fmt, sync::Arc};
 
-use anyhow::ensure;
 use iroh_base::RelayUrl;
 use iroh_relay::{RelayMap, RelayNode};
 use n0_future::time::Duration;
 #[cfg(not(wasm_browser))]
 use netwatch::interfaces;
+use snafu::Snafu;
 
 use crate::net_report::Report;
 
@@ -189,6 +189,10 @@ pub(super) struct ProbeSet {
     probes: Vec<Probe>,
 }
 
+#[derive(Debug, Snafu)]
+#[snafu(display("Missmatching probe"))]
+struct PushError;
+
 impl ProbeSet {
     fn new(proto: ProbeProto) -> Self {
         Self {
@@ -197,8 +201,10 @@ impl ProbeSet {
         }
     }
 
-    fn push(&mut self, probe: Probe) -> anyhow::Result<()> {
-        ensure!(probe.proto() == self.proto, "mismatching probe proto");
+    fn push(&mut self, probe: Probe) -> Result<(), PushError> {
+        if probe.proto() != self.proto {
+            return Err(PushError);
+        }
         self.probes.push(probe);
         Ok(())
     }
