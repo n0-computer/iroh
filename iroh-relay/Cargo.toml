@@ -73,6 +73,7 @@ lru = "0.12"
 z32 = "1.0.3"
 snafu = { version = "0.8.5", features = ["rust_1_81"] }
 n0-snafu = { git = "https://github.com/n0-computer/n0-snafu" }
+nested_enum_utils = "0.2.0"
 
 # server feature
 anyhow = { version = "1", optional = true }
@@ -94,7 +95,6 @@ toml = { version = "0.8", optional = true }
 tracing-subscriber = { version = "0.3", features = [
     "env-filter",
 ], optional = true }
-nested_enum_utils = "0.2.0"
 
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]

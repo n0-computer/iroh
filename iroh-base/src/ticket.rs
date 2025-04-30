@@ -5,6 +5,7 @@
 
 use std::{collections::BTreeSet, net::SocketAddr};
 
+use nested_enum_utils::common_fields;
 use serde::{Deserialize, Serialize};
 use snafu::{Backtrace, Snafu};
 
@@ -58,6 +59,11 @@ pub trait Ticket: Sized {
 }
 
 /// An error deserializing an iroh ticket.
+#[common_fields({
+    backtrace: Option<Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
 #[derive(Debug, Snafu)]
 #[allow(missing_docs)]
 #[snafu(visibility(pub(crate)))]
@@ -67,26 +73,16 @@ pub enum Error {
     Kind {
         /// The expected prefix.
         expected: &'static str,
-        backtrace: Option<Backtrace>,
     },
     /// This looks like a ticket, but postcard deserialization failed.
     #[snafu(display("deserialization failed"))]
-    Postcard {
-        source: postcard::Error,
-        backtrace: Option<Backtrace>,
-    },
+    Postcard { source: postcard::Error },
     /// This looks like a ticket, but base32 decoding failed.
     #[snafu(transparent)]
-    Encoding {
-        source: data_encoding::DecodeError,
-        backtrace: Option<Backtrace>,
-    },
+    Encoding { source: data_encoding::DecodeError },
     /// Verification of the deserialized bytes failed.
     #[snafu(display("verification failed: {message}"))]
-    Verify {
-        message: &'static str,
-        backtrace: Option<Backtrace>,
-    },
+    Verify { message: &'static str },
 }
 
 #[derive(Serialize, Deserialize)]

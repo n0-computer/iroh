@@ -11,6 +11,7 @@ use std::{
 use curve25519_dalek::edwards::CompressedEdwardsY;
 pub use ed25519_dalek::{Signature, SignatureError};
 use ed25519_dalek::{SigningKey, VerifyingKey};
+use nested_enum_utils::common_fields;
 use rand_core::CryptoRngCore;
 use serde::{Deserialize, Serialize};
 use snafu::{Backtrace, Snafu};
@@ -181,24 +182,26 @@ impl Display for PublicKey {
 }
 
 /// Error when deserialising a [`PublicKey`] or a [`SecretKey`].
+#[common_fields({
+    backtrace: Option<Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
 #[derive(Snafu, Debug)]
 #[allow(missing_docs)]
+#[snafu(visibility(pub(crate)))]
 pub enum KeyParsingError {
     /// Error when decoding.
     #[snafu(transparent)]
-    Decode {
-        source: data_encoding::DecodeError,
-        backtrace: Option<Backtrace>,
-    },
+    Decode { source: data_encoding::DecodeError },
     /// Error when decoding the public key.
     #[snafu(transparent)]
     Key {
         source: ed25519_dalek::SignatureError,
-        backtrace: Option<Backtrace>,
     },
     /// The encoded information had the wrong length.
     #[snafu(display("invalid length"))]
-    DecodeInvalidLength { backtrace: Option<Backtrace> },
+    DecodeInvalidLength {},
 }
 
 /// Deserialises the [`PublicKey`] from it's base32 encoding.
