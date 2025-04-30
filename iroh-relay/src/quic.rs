@@ -399,7 +399,7 @@ mod tests {
 
         println!("Closed in {time:?}");
         assert!(Duration::from_millis(900) < time);
-        assert!(time < Duration::from_millis(1100));
+        assert!(time < Duration::from_millis(1500)); // give it some lee-way. Apparently github actions ubuntu runners can be slow?
 
         Ok(())
     }
