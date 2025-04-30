@@ -83,9 +83,6 @@ pub enum Error {
     #[cfg(not(wasm_browser))]
     #[snafu(transparent)]
     Pkarr { source: pkarr::Error },
-    #[cfg(wasm_browser)]
-    #[snafu(display("failed pkarr operation: {message}"))]
-    Pkarr { message: String },
     #[snafu(display("invalid TXT entry"))]
     InvalidTxtEntry { source: pkarr::dns::SimpleDnsError },
     #[snafu(display("no calls succeeded: [{}]", errors.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("")))]
@@ -570,14 +567,15 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         let pubkey_z32 = pubkey.to_z32();
         let node_id = NodeId::from(*pubkey.verifying_key());
         let zone = dns::Name::new(&pubkey_z32).expect("z32 encoding is valid");
-        let inner = packet.packet();
-        let txt_data = inner.answers.iter().filter_map(|rr| match &rr.rdata {
-            RData::TXT(txt) => match rr.name.without(&zone) {
-                Some(name) if name.to_string() == IROH_TXT_NAME => Some(txt),
-                Some(_) | None => None,
-            },
-            _ => None,
-        });
+        let txt_data = packet
+            .all_resource_records()
+            .filter_map(|rr| match &rr.rdata {
+                RData::TXT(txt) => match rr.name.without(&zone) {
+                    Some(name) if name.to_string() == IROH_TXT_NAME => Some(txt),
+                    Some(_) | None => None,
+                },
+                _ => None,
+            });
 
         let txt_strs = txt_data.filter_map(|s| String::try_from(s.clone()).ok());
         Self::from_strings(node_id, txt_strs)
@@ -643,39 +641,18 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         secret_key: &SecretKey,
         ttl: u32,
     ) -> Result<pkarr::SignedPacket, Error> {
-        let packet = self.to_pkarr_dns_packet(ttl)?;
-        let keypair = pkarr::Keypair::from_secret_key(&secret_key.to_bytes());
-        #[cfg(not(wasm_browser))]
-        let signed_packet = pkarr::SignedPacket::from_packet(&keypair, &packet)?;
-        #[cfg(wasm_browser)]
-        let signed_packet = pkarr::SignedPacket::from_packet(&keypair, &packet).map_err(|e| {
-            PkarrSnafu {
-                message: e.to_string(),
-            }
-            .build()
-        })?;
-        Ok(signed_packet)
-    }
-
-    fn to_pkarr_dns_packet(&self, ttl: u32) -> Result<pkarr::dns::Packet<'static>, Error> {
         use pkarr::dns::{self, rdata};
-        let name = dns::Name::new(IROH_TXT_NAME)
-            .expect("constant")
-            .into_owned();
+        let keypair = pkarr::Keypair::from_secret_key(&secret_key.to_bytes());
+        let name = dns::Name::new(IROH_TXT_NAME).expect("constant");
 
-        let mut packet = dns::Packet::new_reply(0);
+        let mut builder = pkarr::SignedPacket::builder();
         for s in self.to_txt_strings() {
             let mut txt = rdata::TXT::new();
             txt.add_string(&s).context(InvalidTxtEntrySnafu)?;
-            let rdata = rdata::RData::TXT(txt.into_owned());
-            packet.answers.push(dns::ResourceRecord::new(
-                name.clone(),
-                dns::CLASS::IN,
-                ttl,
-                rdata,
-            ));
+            builder = builder.txt(name.clone(), txt.into_owned(), ttl);
         }
-        Ok(packet)
+        let signed_packet = builder.build(&keypair)?;
+        Ok(signed_packet)
     }
 }
 
