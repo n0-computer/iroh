@@ -1291,9 +1291,9 @@ impl ConnectOptions {
     ///
     /// You'll know the final negotiated [ALPN] identifier once your connection was
     /// established using [`Connection::alpn`], or even slightly earlier in the
-    /// handshake by using [`Connecting::alpn`], and the negotiated [ALPN] identifier
-    /// may be any of the [ALPN] identifiers in this list or the main [ALPN] used in
-    /// [`Endpoint::connect_with_opts`].
+    /// handshake by using [`Connecting::alpn`].
+    /// The negotiated [ALPN] identifier may be any of the [ALPN] identifiers in this
+    /// list or the main [ALPN] used in [`Endpoint::connect_with_opts`].
     ///
     /// The [ALPN] identifier order on the connect side doesn't matter, since it's the
     /// accept side that determines the protocol.
