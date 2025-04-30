@@ -1282,7 +1282,8 @@ impl ConnectOptions {
         self
     }
 
-    /// Sets more [ALPN] identifiers that should be signaled as supported on connection.
+    /// Sets [ALPN] identifiers that should be signaled as supported on connection, *in
+    /// addition* to the main [ALPN] identifier used in [`Endpoint::connect_with_opts`].
     ///
     /// This allows connecting to servers that may only support older versions of your
     /// protocol. In this case, you would add the older [ALPN] identifiers with this
@@ -1290,7 +1291,9 @@ impl ConnectOptions {
     ///
     /// You'll know the final negotiated [ALPN] identifier once your connection was
     /// established using [`Connection::alpn`], or even slightly earlier in the
-    /// handshake by using [`Connecting::alpn`].
+    /// handshake by using [`Connecting::alpn`], and the negotiated [ALPN] identifier
+    /// may be any of the [ALPN] identifiers in this list or the main [ALPN] used in
+    /// [`Endpoint::connect_with_opts`].
     ///
     /// The [ALPN] identifier order on the connect side doesn't matter, since it's the
     /// accept side that determines the protocol.
