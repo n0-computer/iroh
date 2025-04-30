@@ -809,7 +809,19 @@
 <a href="#808" id="808">808</a>
 <a href="#809" id="809">809</a>
 <a href="#810" id="810">810</a>
-<a href="#811" id="811">811</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
+<a href="#811" id="811">811</a>
+<a href="#812" id="812">812</a>
+<a href="#813" id="813">813</a>
+<a href="#814" id="814">814</a>
+<a href="#815" id="815">815</a>
+<a href="#816" id="816">816</a>
+<a href="#817" id="817">817</a>
+<a href="#818" id="818">818</a>
+<a href="#819" id="819">819</a>
+<a href="#820" id="820">820</a>
+<a href="#821" id="821">821</a>
+<a href="#822" id="822">822</a>
+<a href="#823" id="823">823</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
 //!
 //! Dialing by [`NodeId`] is supported by iroh nodes publishing [Pkarr] records to DNS
 //! servers or the Mainline DHT.  This module supports creating and parsing these records.
@@ -891,8 +903,12 @@
     <span class="attr">#[cfg(not(wasm_browser))]
     #[snafu(display(<span class="string">"failed to resolve TXT record"</span>))]
     </span>LookupFailed { source: DnsError },
-    <span class="attr">#[snafu(transparent)]
+    <span class="attr">#[cfg(not(wasm_browser))]
+    #[snafu(transparent)]
     </span>Pkarr { source: pkarr::Error },
+    <span class="attr">#[cfg(wasm_browser)]
+    #[snafu(display(<span class="string">"failed pkarr operation: {message}"</span>))]
+    </span>Pkarr { message: String },
     <span class="attr">#[snafu(display(<span class="string">"invalid TXT entry"</span>))]
     </span>InvalidTxtEntry { source: pkarr::dns::SimpleDnsError },
     <span class="attr">#[snafu(display(<span class="string">"no calls succeeded: [{}]"</span>, errors.iter().map(|e| e.to_string()).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;().join(<span class="string">""</span>)))]
@@ -1452,7 +1468,15 @@
     ) -&gt; <span class="prelude-ty">Result</span>&lt;pkarr::SignedPacket, Error&gt; {
         <span class="kw">let </span>packet = <span class="self">self</span>.to_pkarr_dns_packet(ttl)<span class="question-mark">?</span>;
         <span class="kw">let </span>keypair = pkarr::Keypair::from_secret_key(<span class="kw-2">&amp;</span>secret_key.to_bytes());
-        <span class="kw">let </span>signed_packet = pkarr::SignedPacket::from_packet(<span class="kw-2">&amp;</span>keypair, <span class="kw-2">&amp;</span>packet)<span class="question-mark">?</span>;
+        <span class="attr">#[cfg(not(wasm_browser))]
+        </span><span class="kw">let </span>signed_packet = pkarr::SignedPacket::from_packet(<span class="kw-2">&amp;</span>keypair, <span class="kw-2">&amp;</span>packet)<span class="question-mark">?</span>;
+        <span class="attr">#[cfg(wasm_browser)]
+        </span><span class="kw">let </span>signed_packet = pkarr::SignedPacket::from_packet(<span class="kw-2">&amp;</span>keypair, <span class="kw-2">&amp;</span>packet).map_err(|e| {
+            PkarrSnafu {
+                message: e.to_string(),
+            }
+            .build()
+        })<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(signed_packet)
     }
 

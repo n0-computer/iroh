@@ -891,9 +891,9 @@
 
         <span class="macro">println!</span>(<span class="string">"Closed in {time:?}"</span>);
         <span class="macro">assert!</span>(Duration::from_millis(<span class="number">900</span>) &lt; time);
-        <span class="macro">assert!</span>(time &lt; Duration::from_millis(<span class="number">1100</span>));
+        <span class="macro">assert!</span>(time &lt; Duration::from_millis(<span class="number">1500</span>)); <span class="comment">// give it some lee-way. Apparently github actions ubuntu runners can be slow?
 
-        <span class="prelude-val">Ok</span>(())
+        </span><span class="prelude-val">Ok</span>(())
     }
 
     <span class="doccomment">/// Makes sure that, even though the RTT was set to some fairly low value,

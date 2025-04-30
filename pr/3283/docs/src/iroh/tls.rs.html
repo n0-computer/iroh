@@ -245,7 +245,7 @@
     </span>span_trace: n0_snafu::SpanTrace,
 })]
 <span class="attr">#[derive(Debug, Snafu)]
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>CreateConfigError {
+</span><span class="kw">pub enum </span>CreateConfigError {
     <span class="doccomment">/// Error generating the certificate.
     </span><span class="attr">#[snafu(display(<span class="string">"Error generating the certificate"</span>), context(<span class="bool-val">false</span>))]
     </span>CertError { source: certificate::GenError },

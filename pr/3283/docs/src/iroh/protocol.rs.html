@@ -554,7 +554,7 @@
 <span class="kw">use </span>tracing::{error, info_span, trace, warn, Instrument};
 
 <span class="kw">use crate</span>::{
-    endpoint::{Connecting, Connection},
+    endpoint::{BindError, Connecting, Connection},
     Endpoint,
 };
 
@@ -758,7 +758,7 @@
     }
 
     <span class="doccomment">/// Spawns an accept loop and returns a handle to it encapsulated as the [`Router`].
-    </span><span class="kw">pub async fn </span>spawn(<span class="self">self</span>) -&gt; anyhow::Result&lt;Router&gt; {
+    </span><span class="kw">pub async fn </span>spawn(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Router, BindError&gt; {
         <span class="comment">// Update the endpoint with our alpns.
         </span><span class="kw">let </span>alpns = <span class="self">self
             </span>.protocols
@@ -769,7 +769,7 @@
         <span class="kw">let </span>protocols = Arc::new(<span class="self">self</span>.protocols);
         <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.endpoint.set_alpns(alpns) {
             shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>.endpoint, protocols.clone()).<span class="kw">await</span>;
-            <span class="kw">return </span><span class="prelude-val">Err</span>(err);
+            <span class="kw">return </span><span class="prelude-val">Err</span>(err.into());
         }
 
         <span class="kw">let </span><span class="kw-2">mut </span>join_set = JoinSet::new();

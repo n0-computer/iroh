@@ -1629,7 +1629,41 @@
 <a href="#1628" id="1628">1628</a>
 <a href="#1629" id="1629">1629</a>
 <a href="#1630" id="1630">1630</a>
-<a href="#1631" id="1631">1631</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1631" id="1631">1631</a>
+<a href="#1632" id="1632">1632</a>
+<a href="#1633" id="1633">1633</a>
+<a href="#1634" id="1634">1634</a>
+<a href="#1635" id="1635">1635</a>
+<a href="#1636" id="1636">1636</a>
+<a href="#1637" id="1637">1637</a>
+<a href="#1638" id="1638">1638</a>
+<a href="#1639" id="1639">1639</a>
+<a href="#1640" id="1640">1640</a>
+<a href="#1641" id="1641">1641</a>
+<a href="#1642" id="1642">1642</a>
+<a href="#1643" id="1643">1643</a>
+<a href="#1644" id="1644">1644</a>
+<a href="#1645" id="1645">1645</a>
+<a href="#1646" id="1646">1646</a>
+<a href="#1647" id="1647">1647</a>
+<a href="#1648" id="1648">1648</a>
+<a href="#1649" id="1649">1649</a>
+<a href="#1650" id="1650">1650</a>
+<a href="#1651" id="1651">1651</a>
+<a href="#1652" id="1652">1652</a>
+<a href="#1653" id="1653">1653</a>
+<a href="#1654" id="1654">1654</a>
+<a href="#1655" id="1655">1655</a>
+<a href="#1656" id="1656">1656</a>
+<a href="#1657" id="1657">1657</a>
+<a href="#1658" id="1658">1658</a>
+<a href="#1659" id="1659">1659</a>
+<a href="#1660" id="1660">1660</a>
+<a href="#1661" id="1661">1661</a>
+<a href="#1662" id="1662">1662</a>
+<a href="#1663" id="1663">1663</a>
+<a href="#1664" id="1664">1664</a>
+<a href="#1665" id="1665">1665</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1668,14 +1702,13 @@
     },
 };
 
-<span class="kw">use </span>anyhow::anyhow;
 <span class="kw">use </span>backon::{Backoff, BackoffBuilder, ExponentialBuilder};
 <span class="kw">use </span>bytes::{Bytes, BytesMut};
 <span class="kw">use </span>iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
 <span class="kw">use </span>iroh_metrics::{inc, inc_by};
 <span class="kw">use </span>iroh_relay::{
     <span class="self">self </span><span class="kw">as </span>relay,
-    client::{Client, ReceivedMessage, SendMessage},
+    client::{Client, ConnectError, ReceivedMessage, RecvError, SendError, SendMessage},
     PingTracker, MAX_PACKET_SIZE,
 };
 <span class="kw">use </span>n0_future::{
@@ -1857,11 +1890,49 @@
 <span class="attr">#[derive(Debug, Snafu)]
 </span><span class="kw">enum </span>RelayConnectionError {
     <span class="attr">#[snafu(display(<span class="string">"Failed to connect to relay server"</span>))]
-    </span>Connecting { source: anyhow::Error },
+    </span>Dial { source: DialError },
     <span class="attr">#[snafu(display(<span class="string">"Failed to handshake with relay server"</span>))]
-    </span>Handshake { source: anyhow::Error },
+    </span>Handshake { source: RunError },
     <span class="attr">#[snafu(display(<span class="string">"Lost connection to relay server"</span>))]
-    </span>Established { source: anyhow::Error },
+    </span>Established { source: RunError },
+}
+
+<span class="attr">#[allow(missing_docs)]
+#[common_fields({
+    backtrace: <span class="prelude-ty">Option</span>&lt;snafu::Backtrace&gt;,
+    <span class="attr">#[snafu(implicit)]
+    </span>span_trace: n0_snafu::SpanTrace,
+})]
+<span class="attr">#[derive(Debug, Snafu)]
+</span><span class="kw">enum </span>RunError {
+    <span class="attr">#[snafu(display(<span class="string">"Send timeout"</span>))]
+    </span>SendTimeout {},
+    <span class="attr">#[snafu(display(<span class="string">"Ping timeout"</span>))]
+    </span>PingTimeout {},
+    <span class="attr">#[snafu(display(<span class="string">"Local IP no longer valid"</span>))]
+    </span>LocalIpInvalid {},
+    <span class="attr">#[snafu(display(<span class="string">"No local address"</span>))]
+    </span>LocalAddrMissing {},
+    <span class="attr">#[snafu(display(<span class="string">"Stream closed by server."</span>))]
+    </span>StreamClosedServer {},
+    <span class="attr">#[snafu(display(<span class="string">"Client stream read failed"</span>))]
+    </span>ClientStreamRead { source: RecvError },
+    <span class="attr">#[snafu(transparent)]
+    </span>Send { source: SendError },
+}
+
+<span class="attr">#[allow(missing_docs)]
+#[common_fields({
+    backtrace: <span class="prelude-ty">Option</span>&lt;snafu::Backtrace&gt;,
+    <span class="attr">#[snafu(implicit)]
+    </span>span_trace: n0_snafu::SpanTrace,
+})]
+<span class="attr">#[derive(Debug, Snafu)]
+</span><span class="kw">enum </span>DialError {
+    <span class="attr">#[snafu(display(<span class="string">"timeout trying to establish a connection"</span>))]
+    </span>Timeout {},
+    <span class="attr">#[snafu(display(<span class="string">"unable to connect"</span>))]
+    </span>Connect { source: ConnectError },
 }
 
 <span class="kw">impl </span>ActiveRelayActor {
@@ -1923,9 +1994,7 @@
     <span class="doccomment">/// The main actor run loop.
     ///
     /// Primarily switches between the dialing and connected states.
-    </span><span class="kw">async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; anyhow::Result&lt;()&gt; {
-        <span class="kw">use </span>anyhow::Context;
-
+    </span><span class="kw">async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>) {
         <span class="macro">inc!</span>(MagicsockMetrics, num_relay_conns_added);
 
         <span class="kw">let </span><span class="kw-2">mut </span>backoff = <span class="self">Self</span>::build_backoff();
@@ -1933,12 +2002,14 @@
         <span class="kw">while let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.run_once().<span class="kw">await </span>{
             <span class="macro">warn!</span>(<span class="string">"{err}"</span>);
             <span class="kw">match </span>err {
-                RelayConnectionError::Connecting { .. }
-                | RelayConnectionError::Handshake { .. } =&gt; {
+                RelayConnectionError::Dial { .. } | RelayConnectionError::Handshake { .. } =&gt; {
                     <span class="comment">// If dialing failed, or if the relay connection failed before we received a pong,
                     // we wait an exponentially increasing time until we attempt to reconnect again.
-                    </span><span class="kw">let </span>delay = backoff.next().context(<span class="string">"Retries exceeded"</span>)<span class="question-mark">?</span>;
-                    <span class="macro">debug!</span>(<span class="string">"Retry in {delay:?}"</span>);
+                    </span><span class="kw">let </span><span class="prelude-val">Some</span>(delay) = backoff.next() <span class="kw">else </span>{
+                        <span class="macro">warn!</span>(<span class="string">"retries exceeded"</span>);
+                        <span class="kw">break</span>;
+                    };
+                    <span class="macro">debug!</span>(<span class="string">"retry in {delay:?}"</span>);
                     time::sleep(delay).<span class="kw">await</span>;
                 }
                 RelayConnectionError::Established { .. } =&gt; {
@@ -1950,7 +2021,6 @@
         }
         <span class="macro">debug!</span>(<span class="string">"exiting"</span>);
         <span class="macro">inc!</span>(MagicsockMetrics, num_relay_conns_removed);
-        <span class="prelude-val">Ok</span>(())
     }
 
     <span class="kw">fn </span>build_backoff() -&gt; <span class="kw">impl </span>Backoff {
@@ -1969,7 +2039,7 @@
     /// be retried with a backoff.
     </span><span class="kw">async fn </span>run_once(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(), RelayConnectionError&gt; {
         <span class="kw">let </span>client = <span class="kw">match </span><span class="self">self</span>.run_dialing().instrument(<span class="macro">info_span!</span>(<span class="string">"dialing"</span>)).<span class="kw">await </span>{
-            <span class="prelude-val">Some</span>(client_res) =&gt; client_res.context(ConnectingSnafu)<span class="question-mark">?</span>,
+            <span class="prelude-val">Some</span>(client_res) =&gt; client_res.context(DialSnafu)<span class="question-mark">?</span>,
             <span class="prelude-val">None </span>=&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(()),
         };
         <span class="self">self</span>.run_connected(client)
@@ -1999,7 +2069,7 @@
     ///
     /// Returns `None` if the actor needs to shut down.  Returns `Some(Ok(client))` when the
     /// connection is established, and `Some(Err(err))` if dialing the relay failed.
-    </span><span class="kw">async fn </span>run_dialing(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;anyhow::Result&lt;iroh_relay::client::Client&gt;&gt; {
+    </span><span class="kw">async fn </span>run_dialing(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Result</span>&lt;iroh_relay::client::Client, DialError&gt;&gt; {
         <span class="macro">debug!</span>(<span class="string">"Actor loop: connecting to relay."</span>);
 
         <span class="comment">// We regularly flush the relay_datagrams_send queue so it is not full of stale
@@ -2086,13 +2156,13 @@
     /// connections.  It currently does not ever return `Err` as the retries continue
     /// forever.
     </span><span class="comment">// This is using `impl Future` to return a future without a reference to self.
-    </span><span class="kw">fn </span>dial_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Future&lt;Output = anyhow::Result&lt;Client&gt;&gt; {
+    </span><span class="kw">fn </span>dial_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;Client, DialError&gt;&gt; {
         <span class="kw">let </span>client_builder = <span class="self">self</span>.relay_client_builder.clone();
         <span class="kw">async move </span>{
             <span class="kw">match </span>time::timeout(CONNECT_TIMEOUT, client_builder.connect()).<span class="kw">await </span>{
                 <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(client)) =&gt; <span class="prelude-val">Ok</span>(client),
-                <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err)) =&gt; <span class="prelude-val">Err</span>(anyhow::Error::from(err)),
-                <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Connecting timed out after {CONNECT_TIMEOUT:?}"</span>)),
+                <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err)) =&gt; <span class="prelude-val">Err</span>(ConnectSnafu.into_error(err)),
+                <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="prelude-val">Err</span>(TimeoutSnafu.build()),
             }
         }
     }
@@ -2158,7 +2228,7 @@
                     }
                 }
                 <span class="kw">_ </span>= state.ping_tracker.timeout() =&gt; {
-                    <span class="kw">break </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Ping timeout"</span>));
+                    <span class="kw">break </span><span class="prelude-val">Err</span>(PingTimeoutSnafu.build());
                 }
                 <span class="kw">_ </span>= ping_interval.tick() =&gt; {
                     <span class="kw">let </span>data = state.ping_tracker.new_ping();
@@ -2181,8 +2251,8 @@
                                     <span class="kw">let </span>fut = client_sink.send(SendMessage::Ping(data));
                                     <span class="self">self</span>.run_sending(fut, <span class="kw-2">&amp;mut </span>state, <span class="kw-2">&amp;mut </span>client_stream).<span class="kw">await</span><span class="question-mark">?</span>;
                                 }
-                                <span class="prelude-val">Some</span>(<span class="kw">_</span>) =&gt; <span class="kw">break </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Local IP no longer valid"</span>)),
-                                <span class="prelude-val">None </span>=&gt; <span class="kw">break </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"No local addr, reconnecting"</span>)),
+                                <span class="prelude-val">Some</span>(<span class="kw">_</span>) =&gt; <span class="kw">break </span><span class="prelude-val">Err</span>(LocalIpInvalidSnafu.build()),
+                                <span class="prelude-val">None </span>=&gt; <span class="kw">break </span><span class="prelude-val">Err</span>(LocalAddrMissingSnafu.build()),
                             }
                         }
                         <span class="attr">#[cfg(test)]
@@ -2231,7 +2301,7 @@
                 }
                 msg = client_stream.next() =&gt; {
                     <span class="kw">let </span><span class="prelude-val">Some</span>(msg) = msg <span class="kw">else </span>{
-                        <span class="kw">break </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Stream closed by server."</span>));
+                        <span class="kw">break </span><span class="prelude-val">Err</span>(StreamClosedServerSnafu.build());
                     };
                     <span class="kw">match </span>msg {
                         <span class="prelude-val">Ok</span>(msg) =&gt; {
@@ -2239,7 +2309,7 @@
                             <span class="comment">// reset the ping timer, we have just received a message
                             </span>ping_interval.reset();
                         },
-                        <span class="prelude-val">Err</span>(err) =&gt; <span class="kw">break </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Client stream read error: {err:#}"</span>)),
+                        <span class="prelude-val">Err</span>(err) =&gt; <span class="kw">break </span><span class="prelude-val">Err</span>(ClientStreamReadSnafu.into_error(err)),
                     }
                 }
                 <span class="kw">_ </span>= <span class="kw-2">&amp;mut </span><span class="self">self</span>.inactive_timeout, <span class="kw">if </span>!<span class="self">self</span>.is_home_relay =&gt; {
@@ -2325,7 +2395,7 @@
     /// the actor should shut down, consult the [`ActiveRelayActor::stop_token`] and
     /// [`ActiveRelayActor::inactive_timeout`] for this, or the send was successful.
     </span><span class="attr">#[instrument(name = <span class="string">"tx"</span>, skip_all)]
-    </span><span class="kw">async fn </span>run_sending&lt;T, E: Into&lt;anyhow::Error&gt;&gt;(
+    </span><span class="kw">async fn </span>run_sending&lt;T, E: Into&lt;RunError&gt;&gt;(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         sending_fut: <span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;T, E&gt;&gt;,
         state: <span class="kw-2">&amp;mut </span>ConnectedRelayState,
@@ -2343,7 +2413,7 @@
                     <span class="kw">break </span><span class="prelude-val">Ok</span>(());
                 }
                 <span class="kw">_ </span>= <span class="kw-2">&amp;mut </span>timeout =&gt; {
-                    <span class="kw">break </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Send timeout"</span>));
+                    <span class="kw">break </span><span class="prelude-val">Err</span>(SendTimeoutSnafu.build());
                 }
                 msg = <span class="self">self</span>.prio_inbox.recv() =&gt; {
                     <span class="kw">let </span><span class="prelude-val">Some</span>(msg) = msg <span class="kw">else </span>{
@@ -2364,16 +2434,16 @@
                     }
                 }
                 <span class="kw">_ </span>= state.ping_tracker.timeout() =&gt; {
-                    <span class="kw">break </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Ping timeout"</span>));
+                    <span class="kw">break </span><span class="prelude-val">Err</span>(PingTimeoutSnafu.build());
                 }
                 <span class="comment">// No need to read the inbox or datagrams to send.
                 </span>msg = client_stream.next() =&gt; {
                     <span class="kw">let </span><span class="prelude-val">Some</span>(msg) = msg <span class="kw">else </span>{
-                        <span class="kw">break </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Stream closed by server."</span>));
+                        <span class="kw">break </span><span class="prelude-val">Err</span>(StreamClosedServerSnafu.build());
                     };
                     <span class="kw">match </span>msg {
                         <span class="prelude-val">Ok</span>(msg) =&gt; <span class="self">self</span>.handle_relay_msg(msg, state),
-                        <span class="prelude-val">Err</span>(err) =&gt; <span class="kw">break </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Client stream read error: {err:#}"</span>)),
+                        <span class="prelude-val">Err</span>(err) =&gt; <span class="kw">break </span><span class="prelude-val">Err</span>(ClientStreamReadSnafu.into_error(err)),
                     }
                 }
                 <span class="kw">_ </span>= <span class="kw-2">&amp;mut </span><span class="self">self</span>.inactive_timeout, <span class="kw">if </span>!<span class="self">self</span>.is_home_relay =&gt; {
@@ -2412,7 +2482,7 @@
 }
 
 <span class="kw">impl </span>ConnectedRelayState {
-    <span class="kw">fn </span>map_err(<span class="kw-2">&amp;</span><span class="self">self</span>, error: anyhow::Error) -&gt; RelayConnectionError {
+    <span class="kw">fn </span>map_err(<span class="kw-2">&amp;</span><span class="self">self</span>, error: RunError) -&gt; RelayConnectionError {
         <span class="kw">if </span><span class="self">self</span>.established {
             EstablishedSnafu.into_error(error)
         } <span class="kw">else </span>{
@@ -2692,10 +2762,7 @@
         <span class="kw">let </span>actor = ActiveRelayActor::new(opts);
         <span class="self">self</span>.active_relay_tasks.spawn(
             <span class="kw">async move </span>{
-                <span class="comment">// TODO: Make the actor itself infallible.
-                </span><span class="kw">if let </span><span class="prelude-val">Err</span>(err) = actor.run().<span class="kw">await </span>{
-                    <span class="macro">warn!</span>(<span class="string">"actor error: {err:#}"</span>);
-                }
+                actor.run().<span class="kw">await</span>;
             }
             .instrument(span),
         );
@@ -2961,7 +3028,7 @@
         relay_datagrams_send: mpsc::Receiver&lt;RelaySendItem&gt;,
         relay_datagrams_recv: Arc&lt;RelayDatagramRecvQueue&gt;,
         span: tracing::Span,
-    ) -&gt; AbortOnDropHandle&lt;anyhow::Result&lt;()&gt;&gt; {
+    ) -&gt; AbortOnDropHandle&lt;()&gt; {
         <span class="kw">let </span>opts = ActiveRelayActorOptions {
             url,
             prio_inbox_: prio_inbox_rx,
@@ -3048,7 +3115,7 @@
         item: RelaySendItem,
         tx: <span class="kw-2">&amp;</span>mpsc::Sender&lt;RelaySendItem&gt;,
         rx: <span class="kw-2">&amp;</span>Arc&lt;RelayDatagramRecvQueue&gt;,
-    ) -&gt; anyhow::Result&lt;()&gt; {
+    ) -&gt; TestResult&lt;()&gt; {
         <span class="macro">assert!</span>(item.datagrams.len() == <span class="number">1</span>);
         tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), <span class="kw">async move </span>{
             <span class="kw">loop </span>{
@@ -3115,6 +3182,7 @@
         <span class="comment">// Now ask to check the connection, triggering a ping but no reconnect.
         </span><span class="kw">let </span>(tx, rx) = oneshot::channel();
         inbox_tx.send(ActiveRelayMessage::GetLocalAddr(tx)).<span class="kw">await</span><span class="question-mark">?</span>;
+
         <span class="kw">let </span>local_addr = rx.<span class="kw">await</span><span class="question-mark">?</span>.context(<span class="string">"no local addr"</span>)<span class="question-mark">?</span>;
         <span class="macro">info!</span>(<span class="question-mark">?</span>local_addr, <span class="string">"check connection with addr"</span>);
         inbox_tx
@@ -3157,7 +3225,7 @@
 
         <span class="comment">// Shut down the actor.
         </span>cancel_token.cancel();
-        task.<span class="kw">await</span><span class="question-mark">??</span>;
+        task.<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="prelude-val">Ok</span>(())
     }
