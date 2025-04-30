@@ -1566,7 +1566,7 @@
             relay.tls.as_ref().and_then(|tls| <span class="kw">match </span>tls.cert {
                 CertConfig::LetsEncrypt { .. } =&gt; <span class="prelude-val">None</span>,
                 CertConfig::Manual { <span class="kw-2">ref </span>certs, .. } =&gt; <span class="prelude-val">Some</span>(certs.clone()),
-                CertConfig::Reloading { .. } =&gt; <span class="prelude-val">None</span>,
+                CertConfig::Reloading =&gt; <span class="prelude-val">None</span>,
             })
         });
 
@@ -1628,7 +1628,7 @@
                                     acceptor,
                                 })
                             }
-                            CertConfig::Manual { .. } | CertConfig::Reloading { .. } =&gt; {
+                            CertConfig::Manual { .. } | CertConfig::Reloading =&gt; {
                                 <span class="kw">let </span>server_config = Arc::new(tls_config.server_config);
                                 <span class="kw">let </span>acceptor =
                                     tokio_rustls::TlsAcceptor::from(server_config.clone());
@@ -2053,7 +2053,7 @@
 
     <span class="kw">use </span>bytes::Bytes;
     <span class="kw">use </span>http::header::UPGRADE;
-    <span class="kw">use </span>iroh_base::{NodeId, SecretKey};
+    <span class="kw">use </span>iroh_base::{NodeId, RelayUrl, SecretKey};
     <span class="kw">use </span>n0_future::{FutureExt, SinkExt};
     <span class="kw">use </span>testresult::TestResult;
     <span class="kw">use </span>tracing_test::traced_test;

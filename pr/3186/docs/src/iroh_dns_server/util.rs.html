@@ -268,7 +268,7 @@
         <span class="kw">if </span>name.num_labels() &lt; <span class="number">1 </span>{
             <span class="kw">continue</span>;
         }
-        <span class="kw">let </span>zone = name.iter().last().unwrap().into_label()<span class="question-mark">?</span>;
+        <span class="kw">let </span>zone = name.iter().next_back().unwrap().into_label()<span class="question-mark">?</span>;
         <span class="kw">if </span>zone != common_zone {
             <span class="kw">continue</span>;
         }

@@ -168,7 +168,20 @@
 <a href="#167" id="167">167</a>
 <a href="#168" id="168">168</a>
 <a href="#169" id="169">169</a>
-<a href="#170" id="170">170</a></pre></div><pre class="rust"><code><span class="doccomment">//! Streams used in the server-side implementation of iroh relays.
+<a href="#170" id="170">170</a>
+<a href="#171" id="171">171</a>
+<a href="#172" id="172">172</a>
+<a href="#173" id="173">173</a>
+<a href="#174" id="174">174</a>
+<a href="#175" id="175">175</a>
+<a href="#176" id="176">176</a>
+<a href="#177" id="177">177</a>
+<a href="#178" id="178">178</a>
+<a href="#179" id="179">179</a>
+<a href="#180" id="180">180</a>
+<a href="#181" id="181">181</a>
+<a href="#182" id="182">182</a>
+<a href="#183" id="183">183</a></pre></div><pre class="rust"><code><span class="doccomment">//! Streams used in the server-side implementation of iroh relays.
 
 </span><span class="kw">use </span>std::{
     pin::Pin,
@@ -178,8 +191,8 @@
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>n0_future::{Sink, Stream};
 <span class="kw">use </span>tokio::io::{AsyncRead, AsyncWrite};
-<span class="kw">use </span>tokio_tungstenite::{tungstenite, WebSocketStream};
 <span class="kw">use </span>tokio_util::codec::Framed;
+<span class="kw">use </span>tokio_websockets::WebSocketStream;
 
 <span class="kw">use crate</span>::{
     protos::relay::{Frame, RelayCodec},
@@ -195,9 +208,9 @@
     Ws(WebSocketStream&lt;MaybeTlsStream&gt;, KeyCache),
 }
 
-<span class="kw">fn </span>tung_to_io_err(e: tungstenite::Error) -&gt; std::io::Error {
+<span class="kw">fn </span>ws_to_io_err(e: tokio_websockets::Error) -&gt; std::io::Error {
     <span class="kw">match </span>e {
-        tungstenite::Error::Io(io_err) =&gt; io_err,
+        tokio_websockets::Error::Io(io_err) =&gt; io_err,
         <span class="kw">_ </span>=&gt; std::io::Error::new(std::io::ErrorKind::Other, e.to_string()),
     }
 }
@@ -208,7 +221,7 @@
     <span class="kw">fn </span>poll_ready(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt;&gt; {
         <span class="kw">match </span><span class="kw-2">*</span><span class="self">self </span>{
             <span class="self">Self</span>::Relay(<span class="kw-2">ref mut </span>framed) =&gt; Pin::new(framed).poll_ready(cx),
-            <span class="self">Self</span>::Ws(<span class="kw-2">ref mut </span>ws, <span class="kw">_</span>) =&gt; Pin::new(ws).poll_ready(cx).map_err(tung_to_io_err),
+            <span class="self">Self</span>::Ws(<span class="kw-2">ref mut </span>ws, <span class="kw">_</span>) =&gt; Pin::new(ws).poll_ready(cx).map_err(ws_to_io_err),
         }
     }
 
@@ -216,22 +229,24 @@
         <span class="kw">match </span><span class="kw-2">*</span><span class="self">self </span>{
             <span class="self">Self</span>::Relay(<span class="kw-2">ref mut </span>framed) =&gt; Pin::new(framed).start_send(item),
             <span class="self">Self</span>::Ws(<span class="kw-2">ref mut </span>ws, <span class="kw">_</span>) =&gt; Pin::new(ws)
-                .start_send(tungstenite::Message::Binary(item.encode_for_ws_msg()))
-                .map_err(tung_to_io_err),
+                .start_send(tokio_websockets::Message::binary(
+                    tokio_websockets::Payload::from(item.encode_for_ws_msg()),
+                ))
+                .map_err(ws_to_io_err),
         }
     }
 
     <span class="kw">fn </span>poll_flush(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt;&gt; {
         <span class="kw">match </span><span class="kw-2">*</span><span class="self">self </span>{
             <span class="self">Self</span>::Relay(<span class="kw-2">ref mut </span>framed) =&gt; Pin::new(framed).poll_flush(cx),
-            <span class="self">Self</span>::Ws(<span class="kw-2">ref mut </span>ws, <span class="kw">_</span>) =&gt; Pin::new(ws).poll_flush(cx).map_err(tung_to_io_err),
+            <span class="self">Self</span>::Ws(<span class="kw-2">ref mut </span>ws, <span class="kw">_</span>) =&gt; Pin::new(ws).poll_flush(cx).map_err(ws_to_io_err),
         }
     }
 
     <span class="kw">fn </span>poll_close(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt;&gt; {
         <span class="kw">match </span><span class="kw-2">*</span><span class="self">self </span>{
             <span class="self">Self</span>::Relay(<span class="kw-2">ref mut </span>framed) =&gt; Pin::new(framed).poll_close(cx),
-            <span class="self">Self</span>::Ws(<span class="kw-2">ref mut </span>ws, <span class="kw">_</span>) =&gt; Pin::new(ws).poll_close(cx).map_err(tung_to_io_err),
+            <span class="self">Self</span>::Ws(<span class="kw-2">ref mut </span>ws, <span class="kw">_</span>) =&gt; Pin::new(ws).poll_close(cx).map_err(ws_to_io_err),
         }
     }
 }
@@ -243,12 +258,23 @@
         <span class="kw">match </span><span class="kw-2">*</span><span class="self">self </span>{
             <span class="self">Self</span>::Relay(<span class="kw-2">ref mut </span>framed) =&gt; Pin::new(framed).poll_next(cx),
             <span class="self">Self</span>::Ws(<span class="kw-2">ref mut </span>ws, <span class="kw-2">ref </span>cache) =&gt; <span class="kw">match </span>Pin::new(ws).poll_next(cx) {
-                Poll::Ready(<span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(tungstenite::Message::Binary(vec)))) =&gt; {
-                    Poll::Ready(<span class="prelude-val">Some</span>(Frame::decode_from_ws_msg(vec, cache)))
-                }
                 Poll::Ready(<span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(msg))) =&gt; {
-                    <span class="macro">tracing::warn!</span>(<span class="question-mark">?</span>msg, <span class="string">"Got websocket message of unsupported type, skipping."</span>);
-                    Poll::Pending
+                    <span class="kw">if </span>msg.is_close() {
+                        <span class="comment">// Indicate the stream is done when we receive a close message.
+                        // Note: We don't have to poll the stream to completion for it to close gracefully.
+                        </span><span class="kw">return </span>Poll::Ready(<span class="prelude-val">None</span>);
+                    }
+                    <span class="kw">if </span>!msg.is_binary() {
+                        <span class="macro">tracing::warn!</span>(
+                            <span class="question-mark">?</span>msg,
+                            <span class="string">"Got websocket message of unsupported type, skipping."
+                        </span>);
+                        <span class="kw">return </span>Poll::Pending;
+                    }
+                    Poll::Ready(<span class="prelude-val">Some</span>(Frame::decode_from_ws_msg(
+                        msg.into_payload().into(),
+                        cache,
+                    )))
                 }
                 Poll::Ready(<span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(e))) =&gt; Poll::Ready(<span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(e.into()))),
                 Poll::Ready(<span class="prelude-val">None</span>) =&gt; Poll::Ready(<span class="prelude-val">None</span>),
