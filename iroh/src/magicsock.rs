@@ -79,7 +79,7 @@ use crate::{
     disco::{self, CallMeMaybe, SendAddr},
     discovery::{Discovery, DiscoveryItem, DiscoverySubscribers, NodeData, UserData},
     key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
-    net_report::{self, IpMappedAddresses},
+    net_report::{self, IpMappedAddresses, ReportError},
     watchable::{Watchable, Watcher},
 };
 
@@ -1694,8 +1694,6 @@ pub enum CreateHandleError {
     CreateQuinnEndpoint { source: io::Error },
     #[snafu(display("Failed to create socket state"))]
     CreateSocketState { source: io::Error },
-    #[snafu(display("Failed to create net report client"))]
-    CreateNetReportClient { source: anyhow::Error },
     #[snafu(display("Failed to create netmon monitor"))]
     CreateNetmonMonitor { source: netmon::Error },
     #[snafu(display("Failed to subscribe netmon monitor"))]
@@ -1749,8 +1747,7 @@ impl Handle {
             dns_resolver.clone(),
             #[cfg(not(wasm_browser))]
             Some(ip_mapped_addrs.clone()),
-        )
-        .context(CreateNetReportClientSnafu)?;
+        );
 
         let (actor_sender, actor_receiver) = mpsc::channel(256);
         let (relay_actor_sender, relay_actor_receiver) = mpsc::channel(256);
@@ -2482,7 +2479,7 @@ enum NetReportError {
     #[snafu(display("Net report timed out"))]
     Timeout,
     #[snafu(display("Net report encountered an error"))]
-    NetReport { source: anyhow::Error },
+    NetReport { source: ReportError },
 }
 
 impl Actor {

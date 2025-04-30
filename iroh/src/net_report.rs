@@ -17,7 +17,6 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::anyhow;
 use bytes::Bytes;
 use iroh_base::RelayUrl;
 #[cfg(feature = "metrics")]
@@ -29,8 +28,10 @@ use n0_future::{
     task::{self, AbortOnDropHandle},
     time::{Duration, Instant},
 };
+use nested_enum_utils::common_fields;
 #[cfg(not(wasm_browser))]
 use netwatch::UdpSocket;
+use snafu::Snafu;
 use tokio::sync::{self, mpsc, oneshot};
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
@@ -249,7 +250,7 @@ impl Client {
         #[cfg(not(wasm_browser))] port_mapper: Option<portmapper::Client>,
         #[cfg(not(wasm_browser))] dns_resolver: DnsResolver,
         #[cfg(not(wasm_browser))] ip_mapped_addrs: Option<IpMappedAddresses>,
-    ) -> anyhow::Result<Self> {
+    ) -> Self {
         let mut actor = Actor::new(
             #[cfg(not(wasm_browser))]
             port_mapper,
@@ -257,16 +258,16 @@ impl Client {
             dns_resolver,
             #[cfg(not(wasm_browser))]
             ip_mapped_addrs,
-        )?;
+        );
         let addr = actor.addr();
         let task = task::spawn(
             async move { actor.run().await }.instrument(info_span!("net_report.actor")),
         );
         let drop_guard = AbortOnDropHandle::new(task);
-        Ok(Client {
+        Client {
             addr,
             _drop_guard: Arc::new(drop_guard),
-        })
+        }
     }
 
     /// Returns a new address to send messages to this actor.
@@ -306,7 +307,7 @@ impl Client {
         #[cfg(not(wasm_browser))] stun_sock_v4: Option<Arc<UdpSocket>>,
         #[cfg(not(wasm_browser))] stun_sock_v6: Option<Arc<UdpSocket>>,
         #[cfg(not(wasm_browser))] quic_config: Option<QuicConfig>,
-    ) -> anyhow::Result<Arc<Report>> {
+    ) -> Result<Arc<Report>, ReportError> {
         #[cfg(not(wasm_browser))]
         let opts = Options::default()
             .stun_v4(stun_sock_v4)
@@ -314,10 +315,11 @@ impl Client {
             .quic_config(quic_config);
         #[cfg(wasm_browser)]
         let opts = Options::default();
-        let rx = self.get_report_channel(relay_map.clone(), opts).await?;
+
+        let rx = self.get_report_channel(relay_map, opts).await?;
         match rx.await {
             Ok(res) => res,
-            Err(_) => Err(anyhow!("channel closed, actor awol")),
+            Err(_) => Err(ActorGoneSnafu.build()),
         }
     }
 
@@ -330,11 +332,11 @@ impl Client {
         &mut self,
         relay_map: RelayMap,
         opts: Options,
-    ) -> anyhow::Result<Arc<Report>> {
+    ) -> Result<Arc<Report>, ReportError> {
         let rx = self.get_report_channel(relay_map, opts).await?;
         match rx.await {
             Ok(res) => res,
-            Err(_) => Err(anyhow!("channel closed, actor awol")),
+            Err(_) => Err(ActorGoneSnafu.build()),
         }
     }
 
@@ -345,7 +347,7 @@ impl Client {
         &mut self,
         relay_map: RelayMap,
         opts: Options,
-    ) -> anyhow::Result<oneshot::Receiver<anyhow::Result<Arc<Report>>>> {
+    ) -> Result<oneshot::Receiver<Result<Arc<Report>, ReportError>>, ReportError> {
         let (tx, rx) = oneshot::channel();
         self.addr
             .send(Message::RunCheck {
@@ -353,7 +355,8 @@ impl Client {
                 opts,
                 response_tx: tx,
             })
-            .await?;
+            .await
+            .map_err(|_| ActorGoneSnafu.build())?;
         Ok(rx)
     }
 }
@@ -381,7 +384,7 @@ pub(crate) enum Message {
         /// Options for the report
         opts: Options,
         /// Channel to receive the response.
-        response_tx: oneshot::Sender<anyhow::Result<Arc<Report>>>,
+        response_tx: oneshot::Sender<Result<Arc<Report>, ReportError>>,
     },
     /// A report produced by the [`reportgen`] actor.
     ReportReady { report: Box<Report> },
@@ -495,10 +498,10 @@ impl Actor {
         #[cfg(not(wasm_browser))] port_mapper: Option<portmapper::Client>,
         #[cfg(not(wasm_browser))] dns_resolver: DnsResolver,
         #[cfg(not(wasm_browser))] ip_mapped_addrs: Option<IpMappedAddresses>,
-    ) -> anyhow::Result<Self> {
+    ) -> Self {
         // TODO: consider an instrumented flume channel so we have metrics.
         let (sender, receiver) = mpsc::channel(32);
-        Ok(Self {
+        Self {
             receiver,
             sender,
             reports: Default::default(),
@@ -510,7 +513,7 @@ impl Actor {
             dns_resolver,
             #[cfg(not(wasm_browser))]
             ip_mapped_addrs,
-        })
+        }
     }
 
     /// Returns the channel to send messages to the actor.
@@ -561,7 +564,7 @@ impl Actor {
         &mut self,
         relay_map: RelayMap,
         opts: Options,
-        response_tx: oneshot::Sender<anyhow::Result<Arc<Report>>>,
+        response_tx: oneshot::Sender<Result<Arc<Report>, ReportError>>,
     ) {
         let protocols = opts.to_protocols();
         #[cfg(not(wasm_browser))]
@@ -575,11 +578,7 @@ impl Actor {
         };
         trace!("Attempting probes for protocols {protocols:#?}");
         if self.current_report_run.is_some() {
-            response_tx
-                .send(Err(anyhow!(
-                    "ignoring RunCheck request: reportgen actor already running"
-                )))
-                .ok();
+            response_tx.send(Err(AlreadyRunningSnafu.build())).ok();
             return;
         }
 
@@ -629,10 +628,10 @@ impl Actor {
         }
     }
 
-    fn handle_report_aborted(&mut self, err: anyhow::Error) {
+    fn handle_report_aborted(&mut self, reason: anyhow::Error) {
         self.in_flight_stun_requests.clear();
         if let Some(ReportRun { report_tx, .. }) = self.current_report_run.take() {
-            report_tx.send(Err(err.context("report aborted"))).ok();
+            report_tx.send(Err(AbortSnafu { reason }.build())).ok();
         }
     }
 
@@ -784,7 +783,23 @@ struct ReportRun {
     /// The handle of the [`reportgen`] actor, cancels the actor on drop.
     _reportgen: reportgen::Client,
     /// Where to send the completed report.
-    report_tx: oneshot::Sender<anyhow::Result<Arc<Report>>>,
+    report_tx: oneshot::Sender<Result<Arc<Report>, ReportError>>,
+}
+
+#[allow(missing_docs)]
+#[common_fields({
+    backtrace: Option<snafu::Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[derive(Debug, Snafu)]
+pub enum ReportError {
+    #[snafu(display("Report aborted early"))]
+    Abort { reason: anyhow::Error },
+    #[snafu(display("Report generation is already running"))]
+    AlreadyRunning {},
+    #[snafu(display("Internal actor is gone"))]
+    ActorGone {},
 }
 
 /// Test if IPv6 works at all, or if it's been hard disabled at the OS level.
@@ -801,7 +816,6 @@ fn os_has_ipv6() -> bool {
 
 #[cfg(not(wasm_browser))]
 pub(crate) mod stun_utils {
-    use anyhow::Context as _;
     use netwatch::IpFamily;
     use tokio_util::sync::CancellationToken;
 
@@ -858,23 +872,32 @@ pub(crate) mod stun_utils {
         Some(sock)
     }
 
+    #[derive(Debug, Snafu)]
+    enum RecvStunError {
+        #[snafu(transparent)]
+        Recv { source: std::io::Error },
+        #[snafu(display("Internal actor is gone"))]
+        ActorGone,
+    }
+
     /// Receive STUN response from a UDP socket, pass it to the actor.
     async fn recv_stun_once(
         sock: &UdpSocket,
         buf: &mut [u8],
         actor_addr: &Addr,
-    ) -> anyhow::Result<()> {
-        let (count, mut from_addr) = sock
-            .recv_from(buf)
-            .await
-            .context("Error reading from stun socket")?;
+    ) -> Result<(), RecvStunError> {
+        let (count, mut from_addr) = sock.recv_from(buf).await?;
+
         let payload = &buf[..count];
         from_addr.set_ip(from_addr.ip().to_canonical());
         let msg = Message::StunPacket {
             payload: Bytes::from(payload.to_vec()),
             from_addr,
         };
-        actor_addr.send(msg).await.context("actor stopped")
+        actor_addr
+            .send(msg)
+            .await
+            .map_err(|_| ActorGoneSnafu.build())
     }
 }
 
@@ -1072,7 +1095,7 @@ mod tests {
             stun_utils::serve("127.0.0.1".parse().unwrap()).await?;
 
         let resolver = dns::tests::resolver();
-        let mut client = Client::new(None, resolver.clone(), None)?;
+        let mut client = Client::new(None, resolver.clone(), None);
         let dm = stun_utils::relay_map_of([stun_addr].into_iter());
 
         // Note that the ProbePlan will change with each iteration.
@@ -1119,7 +1142,7 @@ mod tests {
 
         // Now create a client and generate a report.
         let resolver = dns::tests::resolver();
-        let mut client = Client::new(None, resolver.clone(), None)?;
+        let mut client = Client::new(None, resolver.clone(), None);
 
         let r = client.get_report_all(dm, None, None, None).await?;
         let mut r: Report = (*r).clone();
@@ -1322,7 +1345,7 @@ mod tests {
         let resolver = dns::tests::resolver();
         for mut tt in tests {
             println!("test: {}", tt.name);
-            let mut actor = Actor::new(None, resolver.clone(), None).unwrap();
+            let mut actor = Actor::new(None, resolver.clone(), None);
             for s in &mut tt.steps {
                 // trigger the timer
                 tokio::time::advance(Duration::from_secs(s.after)).await;
@@ -1357,7 +1380,7 @@ mod tests {
         dbg!(&dm);
 
         let resolver = dns::tests::resolver().clone();
-        let mut client = Client::new(None, resolver, None)?;
+        let mut client = Client::new(None, resolver, None);
 
         // Set up an external socket to send STUN requests from, this will be discovered as
         // our public socket address by STUN.  We send back any packets received on this
