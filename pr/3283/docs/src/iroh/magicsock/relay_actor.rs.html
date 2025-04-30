@@ -1663,7 +1663,8 @@
 <a href="#1662" id="1662">1662</a>
 <a href="#1663" id="1663">1663</a>
 <a href="#1664" id="1664">1664</a>
-<a href="#1665" id="1665">1665</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1665" id="1665">1665</a>
+<a href="#1666" id="1666">1666</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1917,8 +1918,8 @@
     </span>StreamClosedServer {},
     <span class="attr">#[snafu(display(<span class="string">"Client stream read failed"</span>))]
     </span>ClientStreamRead { source: RecvError },
-    <span class="attr">#[snafu(transparent)]
-    </span>Send { source: SendError },
+    <span class="attr">#[snafu(display(<span class="string">"Client stream write failed"</span>))]
+    </span>ClientStreamWrite { source: SendError },
 }
 
 <span class="attr">#[allow(missing_docs)]
@@ -2183,7 +2184,8 @@
             home_relay = <span class="self">self</span>.is_home_relay,
         );
 
-        <span class="kw">let </span>(<span class="kw-2">mut </span>client_stream, <span class="kw-2">mut </span>client_sink) = client.split();
+        <span class="kw">let </span>(<span class="kw-2">mut </span>client_stream, client_sink) = client.split();
+        <span class="kw">let </span><span class="kw-2">mut </span>client_sink = client_sink.sink_map_err(|e| ClientStreamWriteSnafu.into_error(e));
 
         <span class="kw">let </span><span class="kw-2">mut </span>state = ConnectedRelayState {
             ping_tracker: PingTracker::default(),
@@ -2395,9 +2397,9 @@
     /// the actor should shut down, consult the [`ActiveRelayActor::stop_token`] and
     /// [`ActiveRelayActor::inactive_timeout`] for this, or the send was successful.
     </span><span class="attr">#[instrument(name = <span class="string">"tx"</span>, skip_all)]
-    </span><span class="kw">async fn </span>run_sending&lt;T, E: Into&lt;RunError&gt;&gt;(
+    </span><span class="kw">async fn </span>run_sending&lt;T&gt;(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-        sending_fut: <span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;T, E&gt;&gt;,
+        sending_fut: <span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;T, RunError&gt;&gt;,
         state: <span class="kw-2">&amp;mut </span>ConnectedRelayState,
         client_stream: <span class="kw-2">&amp;mut </span>iroh_relay::client::ClientStream,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), RelayConnectionError&gt; {
