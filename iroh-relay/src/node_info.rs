@@ -80,9 +80,10 @@ pub enum Error {
     #[cfg(not(wasm_browser))]
     #[snafu(display("failed to resolve TXT record"))]
     LookupFailed { source: DnsError },
-    #[cfg(not(wasm_browser))]
     #[snafu(transparent)]
-    Pkarr { source: pkarr::Error },
+    FailedBuildingPacket {
+        source: pkarr::errors::SignedPacketBuildError,
+    },
     #[snafu(display("invalid TXT entry"))]
     InvalidTxtEntry { source: pkarr::dns::SimpleDnsError },
     #[snafu(display("no calls succeeded: [{}]", errors.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("")))]
