@@ -80,8 +80,12 @@ pub enum Error {
     #[cfg(not(wasm_browser))]
     #[snafu(display("failed to resolve TXT record"))]
     LookupFailed { source: DnsError },
+    #[cfg(not(wasm_browser))]
     #[snafu(transparent)]
     Pkarr { source: pkarr::Error },
+    #[cfg(wasm_browser)]
+    #[snafu(display("failed pkarr operation: {message}"))]
+    Pkarr { message: String },
     #[snafu(display("invalid TXT entry"))]
     InvalidTxtEntry { source: pkarr::dns::SimpleDnsError },
     #[snafu(display("no calls succeeded: [{}]", errors.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("")))]
@@ -641,7 +645,15 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     ) -> Result<pkarr::SignedPacket, Error> {
         let packet = self.to_pkarr_dns_packet(ttl)?;
         let keypair = pkarr::Keypair::from_secret_key(&secret_key.to_bytes());
+        #[cfg(not(wasm_browser))]
         let signed_packet = pkarr::SignedPacket::from_packet(&keypair, &packet)?;
+        #[cfg(wasm_browser)]
+        let signed_packet = pkarr::SignedPacket::from_packet(&keypair, &packet).map_err(|e| {
+            PkarrSnafu {
+                message: e.to_string(),
+            }
+            .build()
+        })?;
         Ok(signed_packet)
     }
 
