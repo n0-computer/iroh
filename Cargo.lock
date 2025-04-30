@@ -2393,7 +2393,7 @@ dependencies = [
 [[package]]
 name = "iroh-metrics"
 version = "0.33.0"
-source = "git+https://github.com/n0-computer/iroh-metrics?branch=Frando/derive-metricsgroupset#ff3c5270a5e5e6bd909e9cd0214d659f899f0073"
+source = "git+https://github.com/n0-computer/iroh-metrics?branch=main#a589407937d851c5e9424431b86eee24e3dddd93"
 dependencies = [
  "http-body-util",
  "hyper",
@@ -2402,7 +2402,7 @@ dependencies = [
  "itoa",
  "reqwest",
  "serde",
- "thiserror 2.0.11",
+ "snafu",
  "tokio",
  "tracing",
 ]
@@ -2410,7 +2410,7 @@ dependencies = [
 [[package]]
 name = "iroh-metrics-derive"
 version = "0.1.0"
-source = "git+https://github.com/n0-computer/iroh-metrics?branch=Frando/derive-metricsgroupset#ff3c5270a5e5e6bd909e9cd0214d659f899f0073"
+source = "git+https://github.com/n0-computer/iroh-metrics?branch=main#a589407937d851c5e9424431b86eee24e3dddd93"
 dependencies = [
  "heck",
  "proc-macro2",
@@ -2973,7 +2973,7 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.4.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=Frando/metrics2#647b31b2c4468b7fe8651f8a31d5fea5411ee549"
+source = "git+https://github.com/n0-computer/net-tools?branch=Frando/metrics#ff9840322c1c57dc87010f2909f174c5bb8944b3"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -3470,7 +3470,7 @@ checksum = "280dc24453071f1b63954171985a0b0d30058d287960968b9b2aca264c8d4ee6"
 [[package]]
 name = "portmapper"
 version = "0.4.1"
-source = "git+https://github.com/n0-computer/net-tools?branch=Frando/metrics2#647b31b2c4468b7fe8651f8a31d5fea5411ee549"
+source = "git+https://github.com/n0-computer/net-tools?branch=Frando/metrics#ff9840322c1c57dc87010f2909f174c5bb8944b3"
 dependencies = [
  "base64",
  "bytes",
@@ -3480,7 +3480,7 @@ dependencies = [
  "igd-next",
  "iroh-metrics",
  "libc",
- "netwatch 0.4.0 (git+https://github.com/n0-computer/net-tools?branch=Frando/metrics2)",
+ "netwatch 0.4.0 (git+https://github.com/n0-computer/net-tools?branch=Frando/metrics)",
  "num_enum",
  "rand 0.8.5",
  "serde",
@@ -4504,6 +4504,27 @@ name = "smol_str"
 version = "0.1.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fad6c857cbab2627dcf01ec85a623ca4e7dcb5691cbaa3d7fb7653671f0d09c9"
+
+[[package]]
+name = "snafu"
+version = "0.8.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "223891c85e2a29c3fe8fb900c1fae5e69c2e42415e3177752e8718475efa5019"
+dependencies = [
+ "snafu-derive",
+]
+
+[[package]]
+name = "snafu-derive"
+version = "0.8.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "03c3c6b7927ffe7ecaa769ee0e3994da3b8cafc8f444578982c83ecb161af917"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.98",
+]
 
 [[package]]
 name = "socket2"

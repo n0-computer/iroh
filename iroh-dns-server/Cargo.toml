@@ -28,7 +28,7 @@ governor = "0.6.3" #needs new release of tower_governor for 0.7.0
 hickory-server = { version = "0.25.1", features = ["https-ring"] }
 http = "1.0.0"
 humantime-serde = "1.1.1"
-iroh-metrics = { git = "https://github.com/n0-computer/iroh-metrics", branch = "Frando/derive-metricsgroupset", features = ["service"] }
+iroh-metrics = { git = "https://github.com/n0-computer/iroh-metrics", branch = "main", features = ["service"] }
 lru = "0.12.3"
 n0-future = "0.1.2"
 pkarr = { version = "2.3.1", features = [ "async", "relay", "dht"], default-features = false }

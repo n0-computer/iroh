@@ -81,7 +81,7 @@ x509-parser = "0.16"
 z32 = "1.0.3"
 
 # metrics
-iroh-metrics = { git = "https://github.com/n0-computer/iroh-metrics", branch = "Frando/derive-metricsgroupset", default-features = false }
+iroh-metrics = { git = "https://github.com/n0-computer/iroh-metrics", branch = "main", default-features = false }
 
 # local-swarm-discovery
 swarm-discovery = { version = "0.3.1", optional = true }
@@ -104,7 +104,7 @@ hickory-resolver = "0.25.1"
 igd-next = { version = "0.15.1", features = ["aio_tokio"] }
 netdev = { version = "0.31.0" }
 # portmapper = { version = "0.4.1", default-features = false }
-portmapper = { git = "https://github.com/n0-computer/net-tools", branch = "Frando/metrics2" }
+portmapper = { git = "https://github.com/n0-computer/net-tools", branch = "Frando/metrics" }
 quinn = { package = "iroh-quinn", version = "0.13.0", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 tokio = { version = "1", features = [
     "io-util",
