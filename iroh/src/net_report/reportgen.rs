@@ -25,7 +25,6 @@ use std::{
     task::{Context, Poll},
 };
 
-use anyhow::{anyhow, bail, Context as _};
 use iroh_base::RelayUrl;
 #[cfg(feature = "metrics")]
 use iroh_metrics::inc;
@@ -47,6 +46,7 @@ use n0_future::{
 #[cfg(not(wasm_browser))]
 use netwatch::{interfaces, UdpSocket};
 use rand::seq::IteratorRandom;
+use snafu::{IntoError, Snafu};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, debug_span, error, info_span, trace, warn, Instrument, Span};
 use url::Host;
@@ -217,6 +217,28 @@ struct Actor {
     hairpin_actor: hairpin::Client,
 }
 
+#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+pub(crate) enum ActorRunError {
+    #[snafu(display("Report generation timed out"))]
+    Timeout,
+    #[snafu(display("Client that requested the report is gone"))]
+    ClientGone,
+    #[snafu(display("Internal NetReport actor is gone"))]
+    ActorGone,
+    #[snafu(transparent)]
+    Probes { source: ProbesError },
+}
+
+#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+pub(crate) enum ProbesError {
+    #[snafu(display("Probe failed"))]
+    ProbeFailure { source: ProbeError },
+    #[snafu(display("All probes failed"))]
+    AllProbesFailed,
+}
+
 impl Actor {
     fn addr(&self) -> Addr {
         Addr {
@@ -229,7 +251,7 @@ impl Actor {
             Ok(_) => debug!("reportgen actor finished"),
             Err(err) => {
                 self.net_report
-                    .send(net_report::Message::ReportAborted { err })
+                    .send(net_report::Message::ReportAborted { reason: err })
                     .await
                     .ok();
             }
@@ -248,7 +270,7 @@ impl Actor {
     ///   - Receives actor messages (sent by those futures).
     ///   - Updates the report, cancels unneeded futures.
     /// - Sends the report to the net_report actor.
-    async fn run_inner(&mut self) -> anyhow::Result<()> {
+    async fn run_inner(&mut self) -> Result<(), ActorRunError> {
         #[cfg(not(wasm_browser))]
         let port_mapper = self.socket_state.port_mapper.is_some();
         #[cfg(wasm_browser)]
@@ -259,7 +281,7 @@ impl Actor {
 
         let mut port_mapping = self.prepare_portmapper_task();
         let mut captive_task = self.prepare_captive_portal_task();
-        let mut probes = self.spawn_probes_task().await?;
+        let mut probes = self.spawn_probes_task().await;
 
         let total_timer = time::sleep(OVERALL_REPORT_TIMEOUT);
         tokio::pin!(total_timer);
@@ -276,7 +298,7 @@ impl Actor {
                 biased;
                 _ = &mut total_timer => {
                     trace!("tick: total_timer expired");
-                    bail!("report timed out");
+                    return Err(TimeoutSnafu.build());
                 }
 
                 _ = &mut probe_timer => {
@@ -326,7 +348,9 @@ impl Actor {
                     trace!("tick: msg recv: {:?}", msg);
                     match msg {
                         Some(msg) => self.handle_message(msg),
-                        None => bail!("msg_rx closed, reportgen client must be dropped"),
+                        None => {
+                            return Err(ClientGoneSnafu.build());
+                        }
                     }
                 }
             }
@@ -345,7 +369,8 @@ impl Actor {
             .send(net_report::Message::ReportReady {
                 report: Box::new(self.report.clone()),
             })
-            .await?;
+            .await
+            .map_err(|_| ActorGoneSnafu.build())?;
 
         Ok(())
     }
@@ -572,7 +597,7 @@ impl Actor {
     ///     failure permanent.  Probes in a probe set are essentially retries.
     ///   - Once there are [`ProbeReport`]s from enough nodes, all remaining probes are
     ///     aborted.  That is, the main actor loop stops polling them.
-    async fn spawn_probes_task(&mut self) -> anyhow::Result<JoinSet<anyhow::Result<ProbeReport>>> {
+    async fn spawn_probes_task(&mut self) -> JoinSet<Result<ProbeReport, ProbesError>> {
         #[cfg(not(wasm_browser))]
         let if_state = interfaces::State::new().await;
         #[cfg(not(wasm_browser))]
@@ -639,15 +664,15 @@ impl Actor {
                     while let Some(res) = set.join_next().await {
                         match res {
                             Ok(Ok(report)) => return Ok(report),
-                            Ok(Err(ProbeError::Error(err, probe))) => {
+                            Ok(Err(ProbeErrorWithProbe::Error(err, probe))) => {
                                 probe_proto = Some(probe.proto());
                                 warn!(?probe, "probe failed: {:#}", err);
                                 continue;
                             }
-                            Ok(Err(ProbeError::AbortSet(err, probe))) => {
+                            Ok(Err(ProbeErrorWithProbe::AbortSet(err, probe))) => {
                                 debug!(?probe, "probe set aborted: {:#}", err);
                                 set.abort_all();
-                                return Err(err);
+                                return Err(ProbeFailureSnafu.into_error(err));
                             }
                             Err(err) => {
                                 warn!("fatal probe set error, aborting: {:#}", err);
@@ -656,14 +681,14 @@ impl Actor {
                         }
                     }
                     warn!(?probe_proto, "no successful probes in ProbeSet");
-                    Err(anyhow!("All probes in ProbeSet failed"))
+                    Err(AllProbesFailedSnafu.build())
                 }
                 .instrument(info_span!("probe")),
             );
         }
         self.outstanding_tasks.probes = true;
 
-        Ok(probes)
+        probes
     }
 }
 
@@ -726,11 +751,54 @@ impl ProbeReport {
 /// the others in the set.  So this allows an unsuccessful probe to cancel the remainder of
 /// the set or not.
 #[derive(Debug)]
-enum ProbeError {
+enum ProbeErrorWithProbe {
     /// Abort the current set.
-    AbortSet(anyhow::Error, Probe),
+    AbortSet(ProbeError, Probe),
     /// Continue the other probes in the set.
-    Error(anyhow::Error, Probe),
+    Error(ProbeError, Probe),
+}
+
+#[derive(Debug, Snafu)]
+#[snafu(module)]
+pub(crate) enum ProbeError {
+    #[snafu(display("Client is gone"))]
+    ClientGone,
+    #[snafu(display("Probe is no longer useful"))]
+    NotUseful,
+    #[snafu(display("Failed to retrieve the relay address"))]
+    GetRelayAddr { source: GetRelayAddrError },
+    #[snafu(display("Failed to run stun probe"))]
+    Stun { source: StunError },
+    #[snafu(display("Failed to run QUIC probe"))]
+    Quic { source: QuicError },
+    #[snafu(display("Failed to run ICMP probe"))]
+    Icmp { source: PingError },
+}
+
+#[derive(Debug, Snafu)]
+#[snafu(module)]
+pub(crate) enum StunError {
+    #[snafu(display("No UDP socket available"))]
+    NoSocket,
+    #[snafu(display("Stun channel is gone"))]
+    StunChannelGone,
+    #[snafu(display("Failed to send full STUN request"))]
+    SendFull,
+    #[snafu(display("Failed to send STUN request"))]
+    Send { source: std::io::Error },
+}
+
+#[derive(Debug, Snafu)]
+#[snafu(module)]
+pub(crate) enum QuicError {
+    #[snafu(display("No QUIC endpoint available"))]
+    NoEndpoint,
+    #[snafu(display("URL must have 'host' to use QUIC address discovery probes"))]
+    InvalidUrl,
+    #[snafu(display("Failed to create QUIC endpoint"))]
+    CreateClient { source: iroh_relay::quic::Error },
+    #[snafu(display("Failed to get address and latency"))]
+    GetAddr { source: iroh_relay::quic::Error },
 }
 
 /// Pieces needed to do QUIC address discovery.
@@ -756,7 +824,7 @@ async fn run_probe(
     net_report: net_report::Addr,
     #[cfg(not(wasm_browser))] pinger: Pinger,
     #[cfg(not(wasm_browser))] socket_state: SocketState,
-) -> Result<ProbeReport, ProbeError> {
+) -> Result<ProbeReport, ProbeErrorWithProbe> {
     if !probe.delay().is_zero() {
         trace!("delaying probe");
         time::sleep(probe.delay()).await;
@@ -774,17 +842,17 @@ async fn run_probe(
     {
         // this happens on shutdown or if the report is already finished
         debug!("Failed to check if probe would help: {err:#}");
-        return Err(ProbeError::AbortSet(err.into(), probe.clone()));
+        return Err(ProbeErrorWithProbe::AbortSet(
+            probe_error::ClientGoneSnafu.build(),
+            probe.clone(),
+        ));
     }
 
     if !would_help_rx.await.map_err(|_| {
-        ProbeError::AbortSet(
-            anyhow!("ReportCheck actor dropped sender while waiting for ProbeWouldHelp response"),
-            probe.clone(),
-        )
+        ProbeErrorWithProbe::AbortSet(probe_error::ClientGoneSnafu.build(), probe.clone())
     })? {
-        return Err(ProbeError::AbortSet(
-            anyhow!("ReportCheck says probe set no longer useful"),
+        return Err(ProbeErrorWithProbe::AbortSet(
+            probe_error::NotUsefulSnafu.build(),
             probe,
         ));
     }
@@ -792,8 +860,12 @@ async fn run_probe(
     #[cfg(not(wasm_browser))]
     let relay_addr = get_relay_addr(&socket_state.dns_resolver, &relay_node, probe.proto())
         .await
-        .context("no relay node addr")
-        .map_err(|e| ProbeError::AbortSet(e, probe.clone()))?;
+        .map_err(|e| {
+            ProbeErrorWithProbe::AbortSet(
+                probe_error::GetRelayAddrSnafu.into_error(e),
+                probe.clone(),
+            )
+        })?;
 
     let mut result = ProbeReport::new(probe.clone());
     match probe {
@@ -809,8 +881,8 @@ async fn run_probe(
                     result = run_stun_probe(sock, relay_addr, net_report, probe).await?;
                 }
                 None => {
-                    return Err(ProbeError::AbortSet(
-                        anyhow!("No socket for {}, aborting probeset", probe.proto()),
+                    return Err(ProbeErrorWithProbe::AbortSet(
+                        probe_error::StunSnafu.into_error(stun_error::NoSocketSnafu.build()),
                         probe.clone(),
                     ));
                 }
@@ -865,8 +937,8 @@ async fn run_probe(
                     .await?;
                 }
                 None => {
-                    return Err(ProbeError::AbortSet(
-                        anyhow!("No QUIC endpoint for {}", probe.proto()),
+                    return Err(ProbeErrorWithProbe::AbortSet(
+                        probe_error::QuicSnafu.into_error(quic_error::NoEndpointSnafu.build()),
                         probe.clone(),
                     ));
                 }
@@ -885,7 +957,7 @@ async fn run_stun_probe(
     relay_addr: SocketAddr,
     net_report: net_report::Addr,
     probe: Probe,
-) -> Result<ProbeReport, ProbeError> {
+) -> Result<ProbeReport, ProbeErrorWithProbe> {
     match probe.proto() {
         ProbeProto::StunIpv4 => debug_assert!(relay_addr.is_ipv4()),
         ProbeProto::StunIpv6 => debug_assert!(relay_addr.is_ipv6()),
@@ -907,10 +979,12 @@ async fn run_stun_probe(
             inflight_ready_tx,
         ))
         .await
-        .map_err(|e| ProbeError::Error(e.into(), probe.clone()))?;
-    inflight_ready_rx
-        .await
-        .map_err(|e| ProbeError::Error(e.into(), probe.clone()))?;
+        .map_err(|_| {
+            ProbeErrorWithProbe::Error(probe_error::ClientGoneSnafu.build(), probe.clone())
+        })?;
+    inflight_ready_rx.await.map_err(|_| {
+        ProbeErrorWithProbe::Error(probe_error::ClientGoneSnafu.build(), probe.clone())
+    })?;
 
     // Send the probe.
     match sock.send_to(&req, relay_addr).await {
@@ -927,22 +1001,27 @@ async fn run_stun_probe(
                 #[cfg(feature = "metrics")]
                 inc!(Metrics, stun_packets_sent_ipv6);
             }
-            let (delay, addr) = stun_rx
-                .await
-                .map_err(|e| ProbeError::Error(e.into(), probe.clone()))?;
+            let (delay, addr) = stun_rx.await.map_err(|_| {
+                ProbeErrorWithProbe::Error(
+                    probe_error::StunSnafu.into_error(stun_error::StunChannelGoneSnafu.build()),
+                    probe.clone(),
+                )
+            })?;
             result.latency = Some(delay);
             result.addr = Some(addr);
             Ok(result)
         }
         Ok(n) => {
-            let err = anyhow!("Failed to send full STUN request: {}", probe.proto());
+            let err = stun_error::SendFullSnafu.build();
             error!(%relay_addr, sent_len=n, req_len=req.len(), "{err:#}");
-            Err(ProbeError::Error(err, probe.clone()))
+            Err(ProbeErrorWithProbe::Error(
+                probe_error::StunSnafu.into_error(err),
+                probe.clone(),
+            ))
         }
         Err(err) => {
             let kind = err.kind();
-            let err = anyhow::Error::new(err)
-                .context(format!("Failed to send STUN request: {}", probe.proto()));
+            let err = stun_error::SendSnafu.into_error(err);
 
             // It is entirely normal that we are on a dual-stack machine with no
             // routed IPv6 network.  So silence that case.
@@ -951,11 +1030,17 @@ async fn run_stun_probe(
             match format!("{kind:?}").as_str() {
                 "NetworkUnreachable" | "HostUnreachable" => {
                     debug!(%relay_addr, "{err:#}");
-                    Err(ProbeError::AbortSet(err, probe.clone()))
+                    Err(ProbeErrorWithProbe::AbortSet(
+                        probe_error::StunSnafu.into_error(err),
+                        probe.clone(),
+                    ))
                 }
                 _ => {
                     // No need to log this, our caller does already log this.
-                    Err(ProbeError::Error(err, probe.clone()))
+                    Err(ProbeErrorWithProbe::Error(
+                        probe_error::StunSnafu.into_error(err),
+                        probe.clone(),
+                    ))
                 }
             }
         }
@@ -981,7 +1066,7 @@ async fn run_quic_probe(
     relay_addr: SocketAddr,
     probe: Probe,
     ip_mapped_addrs: Option<IpMappedAddresses>,
-) -> Result<ProbeReport, ProbeError> {
+) -> Result<ProbeReport, ProbeErrorWithProbe> {
     match probe.proto() {
         ProbeProto::QuicIpv4 => debug_assert!(relay_addr.is_ipv4()),
         ProbeProto::QuicIpv6 => debug_assert!(relay_addr.is_ipv6()),
@@ -991,18 +1076,28 @@ async fn run_quic_probe(
     let host = match url.host_str() {
         Some(host) => host,
         None => {
-            return Err(ProbeError::Error(
-                anyhow!("URL must have 'host' to use QUIC address discovery probes"),
+            return Err(ProbeErrorWithProbe::Error(
+                probe_error::QuicSnafu.into_error(quic_error::InvalidUrlSnafu.build()),
                 probe.clone(),
             ));
         }
     };
     let quic_client = iroh_relay::quic::QuicClient::new(quic_config.ep, quic_config.client_config)
-        .map_err(|e| ProbeError::Error(e.into(), probe.clone()))?;
+        .map_err(|e| {
+            ProbeErrorWithProbe::Error(
+                probe_error::QuicSnafu.into_error(quic_error::CreateClientSnafu.into_error(e)),
+                probe.clone(),
+            )
+        })?;
     let (addr, latency) = quic_client
         .get_addr_and_latency(relay_addr, host)
         .await
-        .map_err(|e| ProbeError::Error(e.into(), probe.clone()))?;
+        .map_err(|e| {
+            ProbeErrorWithProbe::Error(
+                probe_error::QuicSnafu.into_error(quic_error::GetAddrSnafu.into_error(e)),
+                probe.clone(),
+            )
+        })?;
     let mut result = ProbeReport::new(probe.clone());
     if matches!(probe, Probe::QuicIpv4 { .. }) {
         result.ipv4_can_send = true;
@@ -1102,28 +1197,46 @@ async fn check_captive_portal(
 }
 
 /// Returns the proper port based on the protocol of the probe.
-fn get_port(relay_node: &RelayNode, proto: &ProbeProto) -> anyhow::Result<u16> {
+fn get_port(relay_node: &RelayNode, proto: &ProbeProto) -> Option<u16> {
     match proto {
         #[cfg(not(wasm_browser))]
         ProbeProto::QuicIpv4 | ProbeProto::QuicIpv6 => {
             if let Some(ref quic) = relay_node.quic {
                 if quic.port == 0 {
-                    Ok(DEFAULT_RELAY_QUIC_PORT)
+                    Some(DEFAULT_RELAY_QUIC_PORT)
                 } else {
-                    Ok(quic.port)
+                    Some(quic.port)
                 }
             } else {
-                bail!("Relay node not suitable for QUIC address discovery probes");
+                None
             }
         }
         _ => {
             if relay_node.stun_port == 0 {
-                Ok(DEFAULT_STUN_PORT)
+                Some(DEFAULT_STUN_PORT)
             } else {
-                Ok(relay_node.stun_port)
+                Some(relay_node.stun_port)
             }
         }
     }
+}
+
+#[cfg(not(wasm_browser))]
+#[derive(Debug, Snafu)]
+#[snafu(module)]
+pub(crate) enum GetRelayAddrError {
+    #[snafu(display("No valid hostname in the relay URL"))]
+    InvalidHostname,
+    #[snafu(display("No suitable relay address found"))]
+    NoAddrFound,
+    #[snafu(display("DNS lookup failed"))]
+    DnsLookup { source: iroh_relay::dns::Error },
+    #[snafu(display("Relay node is not suitable for non-STUN probes"))]
+    UnsupportedRelayNode,
+    #[snafu(display("HTTPS probes are not implemented"))]
+    UnsupportedHttps,
+    #[snafu(display("No port available for this protocol"))]
+    MissingPort,
 }
 
 /// Returns the IP address to use to communicate to this relay node.
@@ -1141,11 +1254,13 @@ async fn get_relay_addr(
     dns_resolver: &DnsResolver,
     relay_node: &RelayNode,
     proto: ProbeProto,
-) -> anyhow::Result<SocketAddr> {
+) -> Result<SocketAddr, GetRelayAddrError> {
+    use snafu::OptionExt;
+
     if relay_node.stun_only && !matches!(proto, ProbeProto::StunIpv4 | ProbeProto::StunIpv6) {
-        bail!("Relay node not suitable for non-STUN probes");
+        return Err(get_relay_addr_error::UnsupportedRelayNodeSnafu.build());
     }
-    let port = get_port(relay_node, &proto)?;
+    let port = get_port(relay_node, &proto).context(get_relay_addr_error::MissingPortSnafu)?;
 
     match proto {
         ProbeProto::StunIpv4 | ProbeProto::IcmpV4 | ProbeProto::QuicIpv4 => {
@@ -1156,7 +1271,7 @@ async fn get_relay_addr(
             relay_lookup_ipv6_staggered(dns_resolver, relay_node, port).await
         }
 
-        ProbeProto::Https => Err(anyhow!("Not implemented")),
+        ProbeProto::Https => Err(get_relay_addr_error::UnsupportedHttpsSnafu.build()),
     }
 }
 
@@ -1168,7 +1283,7 @@ async fn relay_lookup_ipv4_staggered(
     dns_resolver: &DnsResolver,
     relay: &RelayNode,
     port: u16,
-) -> anyhow::Result<SocketAddr> {
+) -> Result<SocketAddr, GetRelayAddrError> {
     match relay.url.host() {
         Some(url::Host::Domain(hostname)) => {
             debug!(%hostname, "Performing DNS A lookup for relay addr");
@@ -1180,13 +1295,13 @@ async fn relay_lookup_ipv4_staggered(
                     .next()
                     .map(|ip| ip.to_canonical())
                     .map(|addr| SocketAddr::new(addr, port))
-                    .ok_or(anyhow!("No suitable relay addr found")),
-                Err(err) => Err(anyhow::Error::from(err).context("No suitable relay addr found")),
+                    .ok_or(get_relay_addr_error::NoAddrFoundSnafu.build()),
+                Err(err) => Err(get_relay_addr_error::DnsLookupSnafu.into_error(err)),
             }
         }
         Some(url::Host::Ipv4(addr)) => Ok(SocketAddr::new(addr.into(), port)),
-        Some(url::Host::Ipv6(_addr)) => Err(anyhow!("No suitable relay addr found")),
-        None => Err(anyhow!("No valid hostname in RelayUrl")),
+        Some(url::Host::Ipv6(_addr)) => Err(get_relay_addr_error::NoAddrFoundSnafu.build()),
+        None => Err(get_relay_addr_error::InvalidHostnameSnafu.build()),
     }
 }
 
@@ -1198,7 +1313,7 @@ async fn relay_lookup_ipv6_staggered(
     dns_resolver: &DnsResolver,
     relay: &RelayNode,
     port: u16,
-) -> anyhow::Result<SocketAddr> {
+) -> Result<SocketAddr, GetRelayAddrError> {
     match relay.url.host() {
         Some(url::Host::Domain(hostname)) => {
             debug!(%hostname, "Performing DNS AAAA lookup for relay addr");
@@ -1210,13 +1325,13 @@ async fn relay_lookup_ipv6_staggered(
                     .next()
                     .map(|ip| ip.to_canonical())
                     .map(|addr| SocketAddr::new(addr, port))
-                    .ok_or(anyhow!("No suitable relay addr found")),
-                Err(err) => Err(anyhow::Error::from(err).context("No suitable relay addr found")),
+                    .ok_or(get_relay_addr_error::NoAddrFoundSnafu.build()),
+                Err(err) => Err(get_relay_addr_error::DnsLookupSnafu.into_error(err)),
             }
         }
-        Some(url::Host::Ipv4(_addr)) => Err(anyhow!("No suitable relay addr found")),
-        Some(url::Host::Ipv6(addr)) => Ok(SocketAddr::new(addr.into(), port)),
-        None => Err(anyhow!("No valid hostname in RelayUrl")),
+        Some(url::Host::Ipv4(addr)) => Ok(SocketAddr::new(addr.into(), port)),
+        Some(url::Host::Ipv6(_addr)) => Err(get_relay_addr_error::NoAddrFoundSnafu.build()),
+        None => Err(get_relay_addr_error::InvalidHostnameSnafu.build()),
     }
 }
 
@@ -1229,7 +1344,7 @@ async fn run_icmp_probe(
     probe: Probe,
     relay_addr: SocketAddr,
     pinger: Pinger,
-) -> Result<ProbeReport, ProbeError> {
+) -> Result<ProbeReport, ProbeErrorWithProbe> {
     match probe.proto() {
         ProbeProto::IcmpV4 => debug_assert!(relay_addr.is_ipv4()),
         ProbeProto::IcmpV6 => debug_assert!(relay_addr.is_ipv6()),
@@ -1241,13 +1356,13 @@ async fn run_icmp_probe(
         .send(relay_addr.ip(), DATA)
         .await
         .map_err(|err| match err {
-            PingError::CreateClientIpv4 { source, .. }
-            | PingError::CreateClientIpv6 { source, .. } => ProbeError::AbortSet(
-                anyhow!("Failed to create pinger ({source:#}), aborting probeset"),
-                probe.clone(),
-            ),
+            PingError::CreateClientIpv4 { .. } | PingError::CreateClientIpv6 { .. } => {
+                ProbeErrorWithProbe::AbortSet(probe_error::IcmpSnafu.into_error(err), probe.clone())
+            }
             #[cfg(not(wasm_browser))]
-            PingError::Ping { source, .. } => ProbeError::Error(source.into(), probe.clone()),
+            PingError::Ping { .. } => {
+                ProbeErrorWithProbe::Error(probe_error::IcmpSnafu.into_error(err), probe.clone())
+            }
         })?;
     debug!(dst = %relay_addr, len = DATA.len(), ?latency, "ICMP ping done");
     let mut report = ProbeReport::new(probe);
@@ -1275,6 +1390,8 @@ async fn measure_https_latency(
     node: &RelayNode,
     certs: Option<Vec<rustls::pki_types::CertificateDer<'static>>>,
 ) -> anyhow::Result<(Duration, IpAddr)> {
+    use anyhow::Context;
+
     let url = node.url.join(RELAY_PROBE_PATH)?;
 
     // This should also use same connection establishment as relay client itself, which
@@ -1340,7 +1457,7 @@ async fn measure_https_latency(
 
         Ok((latency, remote_ip))
     } else {
-        Err(anyhow!(
+        Err(anyhow::anyhow!(
             "Error response from server: '{}'",
             response.status().canonical_reason().unwrap_or_default()
         ))
@@ -1442,6 +1559,7 @@ impl<T: Future + Unpin> Future for MaybeFuture<T> {
 mod tests {
     use std::net::{Ipv4Addr, Ipv6Addr};
 
+    use anyhow::Context;
     use testresult::TestResult;
     use tracing_test::traced_test;
 
@@ -1679,10 +1797,10 @@ mod tests {
                     );
                     break;
                 }
-                Err(ProbeError::Error(err, _probe)) => {
+                Err(ProbeErrorWithProbe::Error(err, _probe)) => {
                     last_err = Some(err);
                 }
-                Err(ProbeError::AbortSet(_err, _probe)) => {
+                Err(ProbeErrorWithProbe::AbortSet(_err, _probe)) => {
                     // We don't have permission, too bad.
                     // panic!("no ping permission: {err:#}");
                     break;
@@ -1743,7 +1861,7 @@ mod tests {
         {
             Ok(probe) => probe,
             Err(e) => match e {
-                ProbeError::AbortSet(err, _) | ProbeError::Error(err, _) => {
+                ProbeErrorWithProbe::AbortSet(err, _) | ProbeErrorWithProbe::Error(err, _) => {
                     return Err(err.into());
                 }
             },

@@ -766,7 +766,7 @@ impl ActiveRelayActor {
                 res = &mut sending_fut => {
                     match res {
                         Ok(_) => break Ok(()),
-                        Err(err) => break Err(err.into()),
+                        Err(err) => break Err(err),
                     }
                 }
                 _ = state.ping_tracker.timeout() => {

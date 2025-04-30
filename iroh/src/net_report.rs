@@ -31,6 +31,7 @@ use n0_future::{
 use nested_enum_utils::common_fields;
 #[cfg(not(wasm_browser))]
 use netwatch::UdpSocket;
+use reportgen::ActorRunError;
 use snafu::Snafu;
 use tokio::sync::{self, mpsc, oneshot};
 use tracing::{debug, error, info_span, trace, warn, Instrument};
@@ -389,7 +390,7 @@ pub(crate) enum Message {
     /// A report produced by the [`reportgen`] actor.
     ReportReady { report: Box<Report> },
     /// The [`reportgen`] actor failed to produce a report.
-    ReportAborted { err: anyhow::Error },
+    ReportAborted { reason: ActorRunError },
     /// An incoming STUN packet to parse.
     StunPacket {
         /// The raw UDP payload.
@@ -542,7 +543,7 @@ impl Actor {
                 Message::ReportReady { report } => {
                     self.handle_report_ready(*report);
                 }
-                Message::ReportAborted { err } => {
+                Message::ReportAborted { reason: err } => {
                     self.handle_report_aborted(err);
                 }
                 Message::StunPacket { payload, from_addr } => {
@@ -628,7 +629,7 @@ impl Actor {
         }
     }
 
-    fn handle_report_aborted(&mut self, reason: anyhow::Error) {
+    fn handle_report_aborted(&mut self, reason: ActorRunError) {
         self.in_flight_stun_requests.clear();
         if let Some(ReportRun { report_tx, .. }) = self.current_report_run.take() {
             report_tx.send(Err(AbortSnafu { reason }.build())).ok();
