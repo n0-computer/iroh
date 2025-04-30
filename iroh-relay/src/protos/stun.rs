@@ -2,6 +2,8 @@
 
 use std::net::SocketAddr;
 
+use nested_enum_utils::common_fields;
+use snafu::{Backtrace, Snafu};
 use stun_rs::{
     attributes::stun::{Fingerprint, XorMappedAddress},
     DecoderContextBuilder, MessageDecoderBuilder, MessageEncoderBuilder, StunMessageBuilder,
@@ -12,26 +14,34 @@ pub use stun_rs::{
 };
 
 /// Errors that can occur when handling a STUN packet.
-#[derive(Debug, thiserror::Error)]
+#[common_fields({
+    backtrace: Option<Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+#[snafu(visibility(pub(crate)))]
 pub enum Error {
     /// The STUN message could not be parsed or is otherwise invalid.
-    #[error("invalid message")]
-    InvalidMessage,
+    #[snafu(display("invalid message"))]
+    InvalidMessage {},
     /// STUN request is not a binding request when it should be.
-    #[error("not binding")]
-    NotBinding,
+    #[snafu(display("not binding"))]
+    NotBinding {},
     /// STUN packet is not a response when it should be.
-    #[error("not success response")]
-    NotSuccessResponse,
+    #[snafu(display("not success response"))]
+    NotSuccessResponse {},
     /// STUN response has malformed attributes.
-    #[error("malformed attributes")]
-    MalformedAttrs,
+    #[snafu(display("malformed attributes"))]
+    MalformedAttrs {},
     /// STUN request didn't end in fingerprint.
-    #[error("no fingerprint")]
-    NoFingerprint,
+    #[snafu(display("no fingerprint"))]
+    NoFingerprint {},
     /// STUN request had bogus fingerprint.
-    #[error("invalid fingerprint")]
-    InvalidFingerprint,
+    #[snafu(display("invalid fingerprint"))]
+    InvalidFingerprint {},
 }
 
 /// Generates a binding request STUN packet.
@@ -80,11 +90,11 @@ pub fn parse_binding_request(b: &[u8]) -> Result<TransactionId, Error> {
         .with_validation() // ensure fingerprint is validated
         .build();
     let decoder = MessageDecoderBuilder::default().with_context(ctx).build();
-    let (msg, _) = decoder.decode(b).map_err(|_| Error::InvalidMessage)?;
+    let (msg, _) = decoder.decode(b).map_err(|_| InvalidMessageSnafu.build())?;
 
     let tx = *msg.transaction_id();
     if msg.method() != methods::BINDING {
-        return Err(Error::NotBinding);
+        return Err(NotBindingSnafu.build());
     }
 
     // TODO: Tailscale sets the software to tailscale, we should check if we want to do this too.
@@ -95,7 +105,7 @@ pub fn parse_binding_request(b: &[u8]) -> Result<TransactionId, Error> {
         .map(|attr| !attr.is_fingerprint())
         .unwrap_or_default()
     {
-        return Err(Error::NoFingerprint);
+        return Err(NoFingerprintSnafu.build());
     }
 
     Ok(tx)
@@ -105,11 +115,11 @@ pub fn parse_binding_request(b: &[u8]) -> Result<TransactionId, Error> {
 /// The IP address is extracted from the XOR-MAPPED-ADDRESS attribute.
 pub fn parse_response(b: &[u8]) -> Result<(TransactionId, SocketAddr), Error> {
     let decoder = MessageDecoder::default();
-    let (msg, _) = decoder.decode(b).map_err(|_| Error::InvalidMessage)?;
+    let (msg, _) = decoder.decode(b).map_err(|_| InvalidMessageSnafu.build())?;
 
     let tx = *msg.transaction_id();
     if msg.class() != MessageClass::SuccessResponse {
-        return Err(Error::NotSuccessResponse);
+        return Err(NotSuccessResponseSnafu.build());
     }
 
     // Read through the attributes.
@@ -144,7 +154,7 @@ pub fn parse_response(b: &[u8]) -> Result<(TransactionId, SocketAddr), Error> {
         return Ok((tx, addr));
     }
 
-    Err(Error::MalformedAttrs)
+    Err(MalformedAttrsSnafu.build())
 }
 
 #[cfg(test)]

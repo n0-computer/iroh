@@ -19,10 +19,12 @@ use n0_future::time::Duration;
 use n0_future::{time, Sink, SinkExt};
 #[cfg(any(test, feature = "server"))]
 use n0_future::{Stream, StreamExt};
+use nested_enum_utils::common_fields;
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
+use snafu::{Backtrace, Snafu};
 
-use crate::{client::conn::ConnSendError, KeyCache};
+use crate::{client::conn::SendError, KeyCache};
 
 /// The maximum size of a packet sent over relay.
 /// (This only includes the data bytes visible to magicsock, not
@@ -127,29 +129,36 @@ pub(crate) struct ClientInfo {
 }
 
 /// Protocol related errors.
+#[common_fields({
+    backtrace: Option<Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
 #[allow(missing_docs)]
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+#[snafu(visibility(pub(crate)))]
 pub enum Error {
-    #[error(transparent)]
-    Io(#[from] std::io::Error),
-    #[error("unexpected frame: got {got}, expected {expected}")]
+    #[snafu(transparent)]
+    Io { source: std::io::Error },
+    #[snafu(display("unexpected frame: got {got}, expected {expected}"))]
     UnexpectedFrame { got: FrameType, expected: FrameType },
-    #[error(transparent)]
-    SerDe(#[from] postcard::Error),
-    #[error("timeout")]
-    Timeout(#[from] time::Elapsed),
-    #[error(transparent)]
-    InvalidSignature(#[from] SignatureError),
-    #[error(transparent)]
-    ConnSend(#[from] ConnSendError),
-    #[error("Too few bytes")]
+    #[snafu(transparent)]
+    SerDe { source: postcard::Error },
+    #[snafu(transparent)]
+    Timeout { source: time::Elapsed },
+    #[snafu(transparent)]
+    InvalidSignature { source: SignatureError },
+    #[snafu(transparent)]
+    ConnSend { source: SendError },
+    #[snafu(display("Too few bytes"))]
     TooSmall,
-    #[error("Frame is too large, has {0} bytes")]
-    FrameTooLarge(usize),
-    #[error("Invalid frame encoding")]
+    #[snafu(display("Frame is too large, has {frame_len} bytes"))]
+    FrameTooLarge { frame_len: usize },
+    #[snafu(display("Invalid frame encoding"))]
     InvalidFrame,
-    #[error("Invalid frame type: {0}")]
-    InvalidFrameType(FrameType),
+    #[snafu(display("Invalid frame type: {frame_type}"))]
+    InvalidFrameType { frame_type: FrameType },
 }
 
 /// Writes complete frame, errors if it is unable to write within the given `timeout`.
@@ -175,7 +184,7 @@ pub(crate) async fn write_frame<S: Sink<Frame, Error = std::io::Error> + Unpin>(
 /// and the client's [`ClientInfo`], sealed using the server's [`PublicKey`].
 ///
 /// Flushes after writing.
-pub(crate) async fn send_client_key<S: Sink<Frame, Error = ConnSendError> + Unpin>(
+pub(crate) async fn send_client_key<S: Sink<Frame, Error = SendError> + Unpin>(
     mut writer: S,
     client_secret_key: &SecretKey,
     client_info: &ClientInfo,
@@ -227,10 +236,11 @@ where
         let info: ClientInfo = postcard::from_bytes(&message).map_err(Error::from)?;
         Ok((client_public_key, info))
     } else {
-        Err(Error::UnexpectedFrame {
+        Err(UnexpectedFrameSnafu {
             got: buf.typ(),
             expected: FrameType::ClientInfo,
         }
+        .build()
         .into())
     }
 }
@@ -444,9 +454,9 @@ impl Frame {
                 if content.len() < PublicKey::LENGTH {
                     return Err(Error::InvalidFrame);
                 }
-                let packet_len = content.len() - PublicKey::LENGTH;
-                if packet_len > MAX_PACKET_SIZE {
-                    return Err(Error::FrameTooLarge(packet_len));
+                let frame_len = content.len() - PublicKey::LENGTH;
+                if frame_len > MAX_PACKET_SIZE {
+                    return Err(FrameTooLargeSnafu { frame_len }.build());
                 }
 
                 let dst_key = cache.key_from_slice(&content[..PublicKey::LENGTH])?;
@@ -458,9 +468,9 @@ impl Frame {
                     return Err(Error::InvalidFrame);
                 }
 
-                let packet_len = content.len() - PublicKey::LENGTH;
-                if packet_len > MAX_PACKET_SIZE {
-                    return Err(Error::FrameTooLarge(packet_len));
+                let frame_len = content.len() - PublicKey::LENGTH;
+                if frame_len > MAX_PACKET_SIZE {
+                    return Err(FrameTooLargeSnafu { frame_len }.build());
                 }
 
                 let src_key = cache.key_from_slice(&content[..PublicKey::LENGTH])?;
@@ -522,7 +532,7 @@ impl Frame {
                 }
             }
             _ => {
-                return Err(Error::InvalidFrameType(frame_type));
+                return Err(InvalidFrameTypeSnafu { frame_type }.build());
             }
         };
         Ok(res)
@@ -568,7 +578,7 @@ mod framing {
             };
 
             if frame_len > MAX_FRAME_SIZE {
-                return Err(Error::FrameTooLarge(frame_len));
+                return Err(FrameTooLargeSnafu { frame_len }.build());
             }
 
             if src.len() < HEADER_LEN + frame_len {
@@ -625,10 +635,11 @@ where
     match stream.next().await {
         Some(Ok(frame)) => {
             if frame_type != frame.typ() {
-                return Err(Error::UnexpectedFrame {
+                return Err(UnexpectedFrameSnafu {
                     got: frame.typ(),
                     expected: frame_type,
                 }
+                .build()
                 .into());
             }
             Ok(frame)
@@ -675,8 +686,7 @@ mod tests {
     async fn test_send_recv_client_key() -> TestResult {
         let (reader, writer) = tokio::io::duplex(1024);
         let mut reader = FramedRead::new(reader, RelayCodec::test());
-        let mut writer =
-            FramedWrite::new(writer, RelayCodec::test()).sink_map_err(ConnSendError::from);
+        let mut writer = FramedWrite::new(writer, RelayCodec::test()).sink_map_err(SendError::from);
 
         let client_key = SecretKey::generate(rand::thread_rng());
         let client_info = ClientInfo {

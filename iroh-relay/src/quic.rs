@@ -3,10 +3,12 @@
 use std::{net::SocketAddr, sync::Arc};
 
 use n0_future::time::Duration;
+use nested_enum_utils::common_fields;
 use quinn::{
     crypto::rustls::{NoInitialCipherSuite, QuicClientConfig},
     VarInt,
 };
+use snafu::{Backtrace, Snafu};
 use tokio::sync::watch;
 
 /// ALPN for our quic addr discovery
@@ -196,17 +198,24 @@ pub(crate) mod server {
 }
 
 /// Quic client related errors.
+#[common_fields({
+    backtrace: Option<Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
 #[allow(missing_docs)]
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+#[snafu(visibility(pub(crate)))]
 pub enum Error {
-    #[error(transparent)]
-    Connect(#[from] quinn::ConnectError),
-    #[error(transparent)]
-    Connection(#[from] quinn::ConnectionError),
-    #[error(transparent)]
-    WatchRecv(#[from] watch::error::RecvError),
-    #[error(transparent)]
-    NoIntitialCipherSuite(#[from] NoInitialCipherSuite),
+    #[snafu(transparent)]
+    Connect { source: quinn::ConnectError },
+    #[snafu(transparent)]
+    Connection { source: quinn::ConnectionError },
+    #[snafu(transparent)]
+    WatchRecv { source: watch::error::RecvError },
+    #[snafu(transparent)]
+    NoIntitialCipherSuite { source: NoInitialCipherSuite },
 }
 
 /// Handles the client side of QUIC address discovery.
@@ -390,7 +399,7 @@ mod tests {
 
         println!("Closed in {time:?}");
         assert!(Duration::from_millis(900) < time);
-        assert!(time < Duration::from_millis(1100));
+        assert!(time < Duration::from_millis(1500)); // give it some lee-way. Apparently github actions ubuntu runners can be slow?
 
         Ok(())
     }

@@ -22,7 +22,7 @@ use tracing::warn;
 use tracing::{debug, event, trace, Level};
 use url::Url;
 
-pub use self::conn::{ConnSendError, HandshakeError, ReceivedMessage, RecvError, SendMessage};
+pub use self::conn::{ReceivedMessage, RecvError, SendError, SendMessage};
 #[cfg(not(wasm_browser))]
 use crate::dns::{DnsResolver, Error as DnsError};
 use crate::{
@@ -54,9 +54,14 @@ pub enum ConnectError {
     #[snafu(display("Invalid relay URL: {url}"))]
     InvalidRelayUrl { url: Url },
     #[snafu(transparent)]
-    Websocket { source: tokio_websockets::Error },
+    Websocket {
+        #[cfg(not(wasm_browser))]
+        source: tokio_websockets::Error,
+        #[cfg(wasm_browser)]
+        source: ws_stream_wasm::WsErr,
+    },
     #[snafu(transparent)]
-    Handshake { source: HandshakeError },
+    Handshake { source: crate::protos::relay::Error },
     #[snafu(transparent)]
     Dial { source: DialError },
     #[snafu(display("Unexpected status during upgrade: {code}"))]
@@ -75,30 +80,36 @@ pub enum ConnectError {
 }
 
 /// Dialing errors
+#[common_fields({
+    backtrace: Option<Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
 #[allow(missing_docs)]
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Snafu)]
 #[non_exhaustive]
+#[snafu(visibility(pub(crate)))]
 pub enum DialError {
-    #[error("Invliad target port")]
-    InvalidTargetPort,
-    #[error(transparent)]
+    #[snafu(display("Invliad target port"))]
+    InvalidTargetPort {},
+    #[snafu(transparent)]
     #[cfg(not(wasm_browser))]
-    Dns(#[from] DnsError),
-    #[error("Timeout")]
-    Timeout(#[from] time::Elapsed),
-    #[error(transparent)]
-    Io(#[from] std::io::Error),
-    #[error("Invalid URL {0}")]
-    InvalidUrl(Url),
-    #[error("Failed proxy connection: {0}")]
-    ProxyConnectInvalidStatus(hyper::StatusCode),
-    #[error("Invalid Proxy URL {0}")]
-    ProxyInvalidUrl(Url),
-    #[error("failed to establish proxy connection")]
-    ProxyConnect(#[source] hyper::Error),
-    #[error("Invalid proxy TLS servername")]
-    ProxyInvalidTlsServername,
-    #[error("Invliad proxy target port")]
+    Dns { source: DnsError },
+    #[snafu(transparent)]
+    Timeout { source: time::Elapsed },
+    #[snafu(transparent)]
+    Io { source: std::io::Error },
+    #[snafu(display("Invalid URL: {url}"))]
+    InvalidUrl { url: Url },
+    #[snafu(display("Failed proxy connection: {status}"))]
+    ProxyConnectInvalidStatus { status: hyper::StatusCode },
+    #[snafu(display("Invalid Proxy URL {proxy_url}"))]
+    ProxyInvalidUrl { proxy_url: Url },
+    #[snafu(display("failed to establish proxy connection"))]
+    ProxyConnect { source: hyper::Error },
+    #[snafu(display("Invalid proxy TLS servername: {proxy_hostname}"))]
+    ProxyInvalidTlsServername { proxy_hostname: String },
+    #[snafu(display("Invalid proxy target port"))]
     ProxyInvalidTargetPort,
 }
 
@@ -222,7 +233,7 @@ impl ClientBuilder {
                 (conn, Some(local_addr))
             }
             #[cfg(wasm_browser)]
-            Protocol::Relay => return Err(ConnectError::RelayProtoNotAvailable),
+            Protocol::Relay => return Err(RelayProtoNotAvailableSnafu.build()),
         };
 
         event!(
@@ -294,7 +305,7 @@ impl Stream for Client {
 }
 
 impl Sink<SendMessage> for Client {
-    type Error = ConnSendError;
+    type Error = SendError;
 
     fn poll_ready(
         mut self: Pin<&mut Self>,
@@ -329,7 +340,7 @@ pub struct ClientSink {
 }
 
 impl Sink<SendMessage> for ClientSink {
-    type Error = ConnSendError;
+    type Error = SendError;
 
     fn poll_ready(
         mut self: Pin<&mut Self>,

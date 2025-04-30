@@ -43,7 +43,7 @@ use iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_metrics::{inc, inc_by};
 use iroh_relay::{
     self as relay,
-    client::{Client, ConnSendError, ConnectError, ReceivedMessage, RecvError, SendMessage},
+    client::{Client, ConnectError, ReceivedMessage, RecvError, SendError, SendMessage},
     PingTracker, MAX_PACKET_SIZE,
 };
 use n0_future::{
@@ -252,8 +252,8 @@ enum RunError {
     StreamClosedServer {},
     #[snafu(display("Client stream read failed"))]
     ClientStreamRead { source: RecvError },
-    #[snafu(transparent)]
-    Send { source: ConnSendError },
+    #[snafu(display("Client stream write failed"))]
+    ClientStreamWrite { source: SendError },
 }
 
 #[allow(missing_docs)]
@@ -518,7 +518,8 @@ impl ActiveRelayActor {
             home_relay = self.is_home_relay,
         );
 
-        let (mut client_stream, mut client_sink) = client.split();
+        let (mut client_stream, client_sink) = client.split();
+        let mut client_sink = client_sink.sink_map_err(|e| ClientStreamWriteSnafu.into_error(e));
 
         let mut state = ConnectedRelayState {
             ping_tracker: PingTracker::default(),
@@ -730,9 +731,9 @@ impl ActiveRelayActor {
     /// the actor should shut down, consult the [`ActiveRelayActor::stop_token`] and
     /// [`ActiveRelayActor::inactive_timeout`] for this, or the send was successful.
     #[instrument(name = "tx", skip_all)]
-    async fn run_sending<T, E: Into<RunError>>(
+    async fn run_sending<T>(
         &mut self,
-        sending_fut: impl Future<Output = Result<T, E>>,
+        sending_fut: impl Future<Output = Result<T, RunError>>,
         state: &mut ConnectedRelayState,
         client_stream: &mut iroh_relay::client::ClientStream,
     ) -> Result<(), RelayConnectionError> {
