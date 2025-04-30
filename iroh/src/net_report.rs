@@ -796,7 +796,7 @@ struct ReportRun {
 #[derive(Debug, Snafu)]
 pub enum ReportError {
     #[snafu(display("Report aborted early"))]
-    Abort { reason: anyhow::Error },
+    Abort { reason: ActorRunError },
     #[snafu(display("Report generation is already running"))]
     AlreadyRunning {},
     #[snafu(display("Internal actor is gone"))]
@@ -950,6 +950,7 @@ mod tests {
 
     use bytes::BytesMut;
     use netwatch::IpFamily;
+    use testresult::TestResult;
     use tokio_util::sync::CancellationToken;
     use tracing::info;
     use tracing_test::traced_test;
@@ -962,7 +963,6 @@ mod tests {
 
         use std::{net::IpAddr, sync::Arc};
 
-        use anyhow::Result;
         use iroh_base::RelayUrl;
         use iroh_relay::RelayNode;
         use tokio::{
@@ -1018,12 +1018,15 @@ mod tests {
         /// Sets up a simple STUN server binding to `0.0.0.0:0`.
         ///
         /// See [`serve`] for more details.
-        pub(crate) async fn serve_v4() -> Result<(SocketAddr, StunStats, CleanupDropGuard)> {
+        pub(crate) async fn serve_v4() -> std::io::Result<(SocketAddr, StunStats, CleanupDropGuard)>
+        {
             serve(std::net::Ipv4Addr::UNSPECIFIED.into()).await
         }
 
         /// Sets up a simple STUN server.
-        pub(crate) async fn serve(ip: IpAddr) -> Result<(SocketAddr, StunStats, CleanupDropGuard)> {
+        pub(crate) async fn serve(
+            ip: IpAddr,
+        ) -> std::io::Result<(SocketAddr, StunStats, CleanupDropGuard)> {
             let stats = StunStats::default();
 
             let pc = net::UdpSocket::bind((ip, 0)).await?;
@@ -1091,7 +1094,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_basic() -> anyhow::Result<()> {
+    async fn test_basic() -> TestResult {
         let (stun_addr, stun_stats, _cleanup_guard) =
             stun_utils::serve("127.0.0.1".parse().unwrap()).await?;
 
@@ -1134,7 +1137,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_udp_blocked() -> anyhow::Result<()> {
+    async fn test_udp_blocked() -> TestResult {
         // Create a "STUN server", which will never respond to anything.  This is how UDP to
         // the STUN server being blocked will look like from the client's perspective.
         let blackhole = tokio::net::UdpSocket::bind("127.0.0.1:0").await?;
@@ -1185,7 +1188,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_add_report_history_set_preferred_relay() -> anyhow::Result<()> {
+    async fn test_add_report_history_set_preferred_relay() -> TestResult {
         fn relay_url(i: u16) -> RelayUrl {
             format!("http://{i}.com").parse().unwrap()
         }
@@ -1366,7 +1369,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_hairpin() -> anyhow::Result<()> {
+    async fn test_hairpin() -> TestResult {
         // Hairpinning is initiated after we discover our own IPv4 socket address (IP +
         // port) via STUN, so the test needs to have a STUN server and perform STUN over
         // IPv4 first.  Hairpinning detection works by sending a STUN *request* to **our own

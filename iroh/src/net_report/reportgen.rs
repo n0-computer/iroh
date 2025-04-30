@@ -25,6 +25,7 @@ use std::{
     task::{Context, Poll},
 };
 
+use http::StatusCode;
 use iroh_base::RelayUrl;
 #[cfg(feature = "metrics")]
 use iroh_metrics::inc;
@@ -46,7 +47,7 @@ use n0_future::{
 #[cfg(not(wasm_browser))]
 use netwatch::{interfaces, UdpSocket};
 use rand::seq::IteratorRandom;
-use snafu::{IntoError, Snafu};
+use snafu::{IntoError, ResultExt, Snafu};
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, debug_span, error, info_span, trace, warn, Instrument, Span};
 use url::Host;
@@ -219,7 +220,7 @@ struct Actor {
 
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
-pub(crate) enum ActorRunError {
+pub enum ActorRunError {
     #[snafu(display("Report generation timed out"))]
     Timeout,
     #[snafu(display("Client that requested the report is gone"))]
@@ -232,7 +233,7 @@ pub(crate) enum ActorRunError {
 
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
-pub(crate) enum ProbesError {
+pub enum ProbesError {
     #[snafu(display("Probe failed"))]
     ProbeFailure { source: ProbeError },
     #[snafu(display("All probes failed"))]
@@ -557,13 +558,14 @@ impl Actor {
                 match captive_portal_check.await {
                     Ok(Ok(found)) => Some(found),
                     Ok(Err(err)) => {
-                        let err: Result<reqwest::Error, _> = err.downcast();
                         match err {
-                            Ok(req_err) if req_err.is_connect() => {
-                                debug!("check_captive_portal failed: {req_err:#}");
+                            CaptivePortalError::CreateReqwestClient { ref source }
+                            | CaptivePortalError::HttpRequest { ref source } => {
+                                if source.is_connect() {
+                                    debug!("check_captive_portal failed: {err:#}");
+                                }
                             }
-                            Ok(req_err) => warn!("check_captive_portal error: {req_err:#}"),
-                            Err(any_err) => warn!("check_captive_portal error: {any_err:#}"),
+                            _ => warn!("check_captive_portal error: {err:#}"),
                         }
                         None
                     }
@@ -758,9 +760,10 @@ enum ProbeErrorWithProbe {
     Error(ProbeError, Probe),
 }
 
+#[allow(missing_docs)]
 #[derive(Debug, Snafu)]
 #[snafu(module)]
-pub(crate) enum ProbeError {
+pub enum ProbeError {
     #[snafu(display("Client is gone"))]
     ClientGone,
     #[snafu(display("Probe is no longer useful"))]
@@ -775,9 +778,10 @@ pub(crate) enum ProbeError {
     Icmp { source: PingError },
 }
 
+#[allow(missing_docs)]
 #[derive(Debug, Snafu)]
 #[snafu(module)]
-pub(crate) enum StunError {
+pub enum StunError {
     #[snafu(display("No UDP socket available"))]
     NoSocket,
     #[snafu(display("Stun channel is gone"))]
@@ -788,9 +792,10 @@ pub(crate) enum StunError {
     Send { source: std::io::Error },
 }
 
+#[allow(missing_docs)]
 #[derive(Debug, Snafu)]
 #[snafu(module)]
-pub(crate) enum QuicError {
+pub enum QuicError {
     #[snafu(display("No QUIC endpoint available"))]
     NoEndpoint,
     #[snafu(display("URL must have 'host' to use QUIC address discovery probes"))]
@@ -1109,6 +1114,17 @@ async fn run_quic_probe(
     Ok(result)
 }
 
+#[derive(Debug, Snafu)]
+#[snafu(module)]
+enum CaptivePortalError {
+    #[snafu(transparent)]
+    DnsLookup { source: iroh_relay::dns::Error },
+    #[snafu(display("Creating HTTP client failed"))]
+    CreateReqwestClient { source: reqwest::Error },
+    #[snafu(display("HTTP request failed"))]
+    HttpRequest { source: reqwest::Error },
+}
+
 /// Reports whether or not we think the system is behind a
 /// captive portal, detected by making a request to a URL that we know should
 /// return a "204 No Content" response and checking if that's what we get.
@@ -1119,7 +1135,7 @@ async fn check_captive_portal(
     dns_resolver: &DnsResolver,
     dm: &RelayMap,
     preferred_relay: Option<RelayUrl>,
-) -> anyhow::Result<bool> {
+) -> Result<bool, CaptivePortalError> {
     // If we have a preferred relay node and we can use it for non-STUN requests, try that;
     // otherwise, pick a random one suitable for non-STUN requests.
     let preferred_relay = preferred_relay.and_then(|url| match dm.get_node(&url) {
@@ -1163,7 +1179,9 @@ async fn check_captive_portal(
             .collect();
         builder = builder.resolve_to_addrs(domain, &addrs);
     }
-    let client = builder.build()?;
+    let client = builder
+        .build()
+        .context(captive_portal_error::CreateReqwestClientSnafu)?;
 
     // Note: the set of valid characters in a challenge and the total
     // length is limited; see is_challenge_char in bin/iroh-relay for more
@@ -1176,7 +1194,8 @@ async fn check_captive_portal(
         .request(reqwest::Method::GET, portal_url)
         .header("X-Tailscale-Challenge", &challenge)
         .send()
-        .await?;
+        .await
+        .context(captive_portal_error::HttpRequestSnafu)?;
 
     let expected_response = format!("response {challenge}");
     let is_valid_response = res
@@ -1224,7 +1243,7 @@ fn get_port(relay_node: &RelayNode, proto: &ProbeProto) -> Option<u16> {
 #[cfg(not(wasm_browser))]
 #[derive(Debug, Snafu)]
 #[snafu(module)]
-pub(crate) enum GetRelayAddrError {
+pub enum GetRelayAddrError {
     #[snafu(display("No valid hostname in the relay URL"))]
     InvalidHostname,
     #[snafu(display("No suitable relay address found"))]
@@ -1380,6 +1399,24 @@ async fn run_icmp_probe(
     Ok(report)
 }
 
+#[derive(Debug, Snafu)]
+#[snafu(module)]
+enum MeasureHttpsLatencyError {
+    #[snafu(transparent)]
+    InvalidUrl { source: url::ParseError },
+    #[snafu(transparent)]
+    DnsLookup { source: iroh_relay::dns::Error },
+    #[cfg(not(wasm_browser))]
+    #[snafu(display("Invalid certificate"))]
+    InvalidCertificate { source: reqwest::Error },
+    #[snafu(display("Creating HTTP client failed"))]
+    CreateReqwestClient { source: reqwest::Error },
+    #[snafu(display("HTTP request failed"))]
+    HttpRequest { source: reqwest::Error },
+    #[snafu(display("Error response from server {status}: {:?}", status.canonical_reason()))]
+    InvalidResponse { status: StatusCode },
+}
+
 /// Executes an HTTPS probe.
 ///
 /// If `certs` is provided they will be added to the trusted root certificates, allowing the
@@ -1389,9 +1426,7 @@ async fn measure_https_latency(
     #[cfg(not(wasm_browser))] dns_resolver: &DnsResolver,
     node: &RelayNode,
     certs: Option<Vec<rustls::pki_types::CertificateDer<'static>>>,
-) -> anyhow::Result<(Duration, IpAddr)> {
-    use anyhow::Context;
-
+) -> Result<(Duration, IpAddr), MeasureHttpsLatencyError> {
     let url = node.url.join(RELAY_PROBE_PATH)?;
 
     // This should also use same connection establishment as relay client itself, which
@@ -1424,21 +1459,28 @@ async fn measure_https_latency(
     #[cfg(not(wasm_browser))]
     if let Some(certs) = certs {
         for cert in certs {
-            let cert = reqwest::Certificate::from_der(&cert)?;
+            let cert = reqwest::Certificate::from_der(&cert)
+                .context(measure_https_latency_error::InvalidCertificateSnafu)?;
             builder = builder.add_root_certificate(cert);
         }
     }
-    let client = builder.build()?;
+    let client = builder
+        .build()
+        .context(measure_https_latency_error::CreateReqwestClientSnafu)?;
 
     let start = Instant::now();
-    let response = client.request(reqwest::Method::GET, url).send().await?;
+    let response = client
+        .request(reqwest::Method::GET, url)
+        .send()
+        .await
+        .context(measure_https_latency_error::HttpRequestSnafu)?;
     let latency = start.elapsed();
     if response.status().is_success() {
         // Only `None` if a different hyper HttpConnector in the request.
         #[cfg(not(wasm_browser))]
         let remote_ip = response
             .remote_addr()
-            .context("missing HttpInfo from HttpConnector")?
+            .expect("missing HttpInfo from HttpConnector")
             .ip();
         #[cfg(wasm_browser)]
         let remote_ip = IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED);
@@ -1457,10 +1499,10 @@ async fn measure_https_latency(
 
         Ok((latency, remote_ip))
     } else {
-        Err(anyhow::anyhow!(
-            "Error response from server: '{}'",
-            response.status().canonical_reason().unwrap_or_default()
-        ))
+        Err(measure_https_latency_error::InvalidResponseSnafu {
+            status: response.status(),
+        }
+        .build())
     }
 }
 
@@ -1559,7 +1601,6 @@ impl<T: Future + Unpin> Future for MaybeFuture<T> {
 mod tests {
     use std::net::{Ipv4Addr, Ipv6Addr};
 
-    use anyhow::Context;
     use testresult::TestResult;
     use tracing_test::traced_test;
 
@@ -1822,11 +1863,7 @@ mod tests {
 
         assert!(latency > Duration::ZERO);
 
-        let relay_url_ip = relay
-            .url
-            .host_str()
-            .context("host")?
-            .parse::<std::net::IpAddr>()?;
+        let relay_url_ip = relay.url.host_str().unwrap().parse::<std::net::IpAddr>()?;
         assert_eq!(ip, relay_url_ip);
         Ok(())
     }
