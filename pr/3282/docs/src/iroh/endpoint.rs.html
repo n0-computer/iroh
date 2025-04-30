@@ -2902,7 +2902,10 @@
 <a href="#2901" id="2901">2901</a>
 <a href="#2902" id="2902">2902</a>
 <a href="#2903" id="2903">2903</a>
-<a href="#2904" id="2904">2904</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2904" id="2904">2904</a>
+<a href="#2905" id="2905">2905</a>
+<a href="#2906" id="2906">2906</a>
+<a href="#2907" id="2907">2907</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -4186,7 +4189,8 @@
         <span class="self">self
     </span>}
 
-    <span class="doccomment">/// Sets more [ALPN] identifiers that should be signaled as supported on connection.
+    <span class="doccomment">/// Sets [ALPN] identifiers that should be signaled as supported on connection, *in
+    /// addition* to the main [ALPN] identifier used in [`Endpoint::connect_with_opts`].
     ///
     /// This allows connecting to servers that may only support older versions of your
     /// protocol. In this case, you would add the older [ALPN] identifiers with this
@@ -4195,6 +4199,8 @@
     /// You'll know the final negotiated [ALPN] identifier once your connection was
     /// established using [`Connection::alpn`], or even slightly earlier in the
     /// handshake by using [`Connecting::alpn`].
+    /// The negotiated [ALPN] identifier may be any of the [ALPN] identifiers in this
+    /// list or the main [ALPN] used in [`Endpoint::connect_with_opts`].
     ///
     /// The [ALPN] identifier order on the connect side doesn't matter, since it's the
     /// accept side that determines the protocol.
