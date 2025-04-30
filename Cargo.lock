@@ -2329,6 +2329,8 @@ dependencies = [
  "data-encoding",
  "derive_more",
  "ed25519-dalek",
+ "n0-snafu",
+ "nested_enum_utils",
  "postcard",
  "proptest",
  "rand 0.8.5",
