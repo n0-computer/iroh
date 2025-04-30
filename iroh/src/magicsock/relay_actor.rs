@@ -37,8 +37,8 @@ use std::{
     },
 };
 
-use anyhow::{anyhow, Result};
-use backon::{BackoffBuilder, ExponentialBuilder, Retryable};
+use anyhow::{anyhow, Context, Result};
+use backon::{Backoff, BackoffBuilder, ExponentialBuilder};
 use bytes::{Bytes, BytesMut};
 use iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_metrics::{inc, inc_by};
@@ -48,7 +48,6 @@ use iroh_relay::{
     PingTracker, MAX_PACKET_SIZE,
 };
 use n0_future::{
-    boxed::BoxFuture,
     task::JoinSet,
     time::{self, Duration, Instant, MissedTickBehavior},
     FuturesUnorderedBounded, SinkExt, StreamExt,
@@ -212,6 +211,18 @@ struct RelayConnectionOptions {
     prefer_ipv6: Arc<AtomicBool>,
     #[cfg(any(test, feature = "test-utils"))]
     insecure_skip_cert_verify: bool,
+    protocol: iroh_relay::http::Protocol,
+}
+
+/// Possible reasons for a failed relay connection.
+#[derive(Debug, thiserror::Error)]
+enum RelayConnectionError {
+    #[error("Failed to connect to relay server: {0:#}")]
+    Connecting(#[source] anyhow::Error),
+    #[error("Failed to handshake with relay server: {0:#}")]
+    Handshake(#[source] anyhow::Error),
+    #[error("Lost connection to relay server: {0:#}")]
+    Established(#[source] anyhow::Error),
 }
 
 impl ActiveRelayActor {
@@ -251,6 +262,7 @@ impl ActiveRelayActor {
             prefer_ipv6,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_cert_verify,
+            protocol,
         } = opts;
 
         let mut builder = relay::client::ClientBuilder::new(
@@ -259,6 +271,7 @@ impl ActiveRelayActor {
             #[cfg(not(wasm_browser))]
             dns_resolver,
         )
+        .protocol(protocol)
         .address_family_selector(move || prefer_ipv6.load(Ordering::Relaxed));
         if let Some(proxy_url) = proxy_url {
             builder = builder.proxy_url(proxy_url);
@@ -271,28 +284,56 @@ impl ActiveRelayActor {
     /// The main actor run loop.
     ///
     /// Primarily switches between the dialing and connected states.
-    async fn run(mut self) -> anyhow::Result<()> {
+    async fn run(mut self) -> Result<()> {
         inc!(MagicsockMetrics, num_relay_conns_added);
 
-        loop {
-            let Some(client) = self.run_dialing().instrument(info_span!("dialing")).await else {
-                break;
-            };
-            match self
-                .run_connected(client)
-                .instrument(info_span!("connected"))
-                .await
-            {
-                Ok(_) => break,
-                Err(err) => {
-                    debug!("Connection to relay server lost: {err:#}");
-                    continue;
+        let mut backoff = Self::build_backoff();
+
+        while let Err(err) = self.run_once().await {
+            warn!("{err}");
+            match err {
+                RelayConnectionError::Connecting(_) | RelayConnectionError::Handshake(_) => {
+                    // If dialing failed, or if the relay connection failed before we received a pong,
+                    // we wait an exponentially increasing time until we attempt to reconnect again.
+                    let delay = backoff.next().context("Retries exceeded")?;
+                    debug!("Retry in {delay:?}");
+                    time::sleep(delay).await;
+                }
+                RelayConnectionError::Established(_) => {
+                    // If the relay connection remained established long enough so that we received a pong
+                    // from the relay server, we reset the backoff and attempt to reconnect immediately.
+                    backoff = Self::build_backoff();
                 }
             }
         }
         debug!("exiting");
         inc!(MagicsockMetrics, num_relay_conns_removed);
         Ok(())
+    }
+
+    fn build_backoff() -> impl Backoff {
+        ExponentialBuilder::new()
+            .with_min_delay(Duration::from_millis(10))
+            .with_max_delay(Duration::from_secs(16))
+            .with_jitter()
+            .without_max_times()
+            .build()
+    }
+
+    /// Attempt to connect to the relay, and run the connected actor loop.
+    ///
+    /// Returns `Ok(())` if the actor loop should shut down. Returns an error if dialing failed,
+    /// or if the relay connection failed while connected. In both cases, the connection should
+    /// be retried with a backoff.
+    async fn run_once(&mut self) -> Result<(), RelayConnectionError> {
+        let client = match self.run_dialing().instrument(info_span!("dialing")).await {
+            Some(Ok(client)) => client,
+            Some(Err(err)) => return Err(RelayConnectionError::Connecting(err)),
+            None => return Ok(()),
+        };
+        self.run_connected(client)
+            .instrument(info_span!("connected"))
+            .await
     }
 
     fn reset_inactive_timeout(&mut self) {
@@ -315,9 +356,9 @@ impl ActiveRelayActor {
 
     /// Actor loop when connecting to the relay server.
     ///
-    /// Returns `None` if the actor needs to shut down.  Returns `Some(client)` when the
-    /// connection is established.
-    async fn run_dialing(&mut self) -> Option<iroh_relay::client::Client> {
+    /// Returns `None` if the actor needs to shut down.  Returns `Some(Ok(client))` when the
+    /// connection is established, and `Some(Err(err))` if dialing the relay failed.
+    async fn run_dialing(&mut self) -> Option<Result<iroh_relay::client::Client>> {
         debug!("Actor loop: connecting to relay.");
 
         // We regularly flush the relay_datagrams_send queue so it is not full of stale
@@ -330,7 +371,8 @@ impl ActiveRelayActor {
         send_datagram_flush.set_missed_tick_behavior(MissedTickBehavior::Delay);
         send_datagram_flush.reset(); // Skip the immediate interval
 
-        let mut dialing_fut = self.dial_relay();
+        let dialing_fut = self.dial_relay();
+        tokio::pin!(dialing_fut);
         loop {
             tokio::select! {
                 biased;
@@ -352,11 +394,10 @@ impl ActiveRelayActor {
                 res = &mut dialing_fut => {
                     match res {
                         Ok(client) => {
-                            break Some(client);
+                            break Some(Ok(client));
                         }
                         Err(err) => {
-                            warn!("Client failed to connect: {err:#}");
-                            dialing_fut = self.dial_relay();
+                            break Some(Err(err));
                         }
                     }
                 }
@@ -403,54 +444,26 @@ impl ActiveRelayActor {
     /// The future only completes once the connection is established and retries
     /// connections.  It currently does not ever return `Err` as the retries continue
     /// forever.
-    fn dial_relay(&self) -> BoxFuture<Result<Client>> {
-        let backoff = ExponentialBuilder::new()
-            .with_min_delay(Duration::from_millis(10))
-            .with_max_delay(Duration::from_secs(5))
-            .without_max_times()
-            .build();
-        let connect_fn = {
-            let client_builder = self.relay_client_builder.clone();
-            move || {
-                let client_builder = client_builder.clone();
-                async move {
-                    match time::timeout(CONNECT_TIMEOUT, client_builder.connect()).await {
-                        Ok(Ok(client)) => Ok(client),
-                        Ok(Err(err)) => {
-                            warn!("Relay connection failed: {err:#}");
-                            Err(err)
-                        }
-                        Err(_) => {
-                            warn!(?CONNECT_TIMEOUT, "Timeout connecting to relay");
-                            Err(anyhow!("Timeout"))
-                        }
-                    }
-                }
-            }
-        };
-
-        // We implement our own `Sleeper` here, so that we can use the `backon`
-        // crate with our own implementation of `time::sleep` (from `n0_future`)
-        // that works in browsers.
-        struct Sleeper;
-
-        impl backon::Sleeper for Sleeper {
-            type Sleep = time::Sleep;
-
-            fn sleep(&self, dur: Duration) -> Self::Sleep {
-                time::sleep(dur)
+    // This is using `impl Future` to return a future without a reference to self.
+    fn dial_relay(&self) -> impl Future<Output = Result<Client>> {
+        let client_builder = self.relay_client_builder.clone();
+        async move {
+            match time::timeout(CONNECT_TIMEOUT, client_builder.connect()).await {
+                Ok(Ok(client)) => Ok(client),
+                Ok(Err(err)) => Err(err),
+                Err(_) => Err(anyhow!("Connecting timed out after {CONNECT_TIMEOUT:?}")),
             }
         }
-
-        let retry_fut = connect_fn.retry(backoff).sleep(Sleeper);
-        Box::pin(retry_fut)
     }
 
     /// Runs the actor loop when connected to a relay server.
     ///
     /// Returns `Ok` if the actor needs to shut down.  `Err` is returned if the connection
     /// to the relay server is lost.
-    async fn run_connected(&mut self, client: iroh_relay::client::Client) -> Result<()> {
+    async fn run_connected(
+        &mut self,
+        client: iroh_relay::client::Client,
+    ) -> Result<(), RelayConnectionError> {
         debug!("Actor loop: connected to relay");
         event!(
             target: "iroh::_events::relay::connected",
@@ -466,6 +479,7 @@ impl ActiveRelayActor {
             nodes_present: BTreeSet::new(),
             last_packet_src: None,
             pong_pending: None,
+            established: false,
             #[cfg(test)]
             test_pong: None,
         };
@@ -474,9 +488,9 @@ impl ActiveRelayActor {
         let mut send_datagrams_buf = Vec::with_capacity(SEND_DATAGRAM_BATCH_SIZE);
 
         // Regularly send pings so we know the connection is healthy.
+        // The first ping will be sent immediately.
         let mut ping_interval = time::interval(PING_INTERVAL);
         ping_interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
-        ping_interval.reset(); // skip the ping at current time.
 
         let res = loop {
             if let Some(data) = state.pong_pending.take() {
@@ -576,7 +590,7 @@ impl ActiveRelayActor {
                 }
                 msg = client_stream.next() => {
                     let Some(msg) = msg else {
-                        break Err(anyhow!("Client stream finished"));
+                        break Err(anyhow!("Stream closed by server."));
                     };
                     match msg {
                         Ok(msg) => {
@@ -593,10 +607,14 @@ impl ActiveRelayActor {
                 }
             }
         };
+
         if res.is_ok() {
-            client_sink.close().await?;
+            if let Err(err) = client_sink.close().await {
+                debug!("Failed to close client sink gracefully: {err:#}");
+            }
         }
-        res
+
+        res.map_err(|err| state.map_err(err))
     }
 
     fn handle_relay_msg(&mut self, msg: ReceivedMessage, state: &mut ConnectedRelayState) {
@@ -642,11 +660,16 @@ impl ActiveRelayActor {
                         }
                     }
                 }
-                state.ping_tracker.pong_received(data)
+                state.ping_tracker.pong_received(data);
+                state.established = true;
             }
-            ReceivedMessage::KeepAlive
-            | ReceivedMessage::Health { .. }
-            | ReceivedMessage::ServerRestarting { .. } => trace!("Ignoring {msg:?}"),
+            ReceivedMessage::Health { problem } => {
+                let problem = problem.as_deref().unwrap_or("unknown");
+                warn!("Relay server reports problem: {problem}");
+            }
+            ReceivedMessage::KeepAlive | ReceivedMessage::ServerRestarting { .. } => {
+                trace!("Ignoring {msg:?}")
+            }
         }
     }
 
@@ -666,13 +689,13 @@ impl ActiveRelayActor {
         sending_fut: impl Future<Output = Result<T, E>>,
         state: &mut ConnectedRelayState,
         client_stream: &mut iroh_relay::client::ClientStream,
-    ) -> Result<()> {
+    ) -> Result<(), RelayConnectionError> {
         // we use the same time as for our ping interval
         let send_timeout = PING_INTERVAL;
 
         let mut timeout = pin!(time::sleep(send_timeout));
         let mut sending_fut = pin!(sending_fut);
-        loop {
+        let res = loop {
             tokio::select! {
                 biased;
                 _ = self.stop_token.cancelled() => {
@@ -705,7 +728,7 @@ impl ActiveRelayActor {
                 // No need to read the inbox or datagrams to send.
                 msg = client_stream.next() => {
                     let Some(msg) = msg else {
-                        break Err(anyhow!("Client stream finished"));
+                        break Err(anyhow!("Stream closed by server."));
                     };
                     match msg {
                         Ok(msg) => self.handle_relay_msg(msg, state),
@@ -717,7 +740,8 @@ impl ActiveRelayActor {
                     break Ok(());
                 }
             }
-        }
+        };
+        res.map_err(|err| state.map_err(err))
     }
 }
 
@@ -738,8 +762,22 @@ struct ConnectedRelayState {
     last_packet_src: Option<NodeId>,
     /// A pong we need to send ASAP.
     pong_pending: Option<[u8; 8]>,
+    /// Whether the connection is to be considered established.
+    ///
+    /// This is set to `true` once a pong was received from the server.
+    established: bool,
     #[cfg(test)]
     test_pong: Option<([u8; 8], oneshot::Sender<()>)>,
+}
+
+impl ConnectedRelayState {
+    fn map_err(&self, error: anyhow::Error) -> RelayConnectionError {
+        if self.established {
+            RelayConnectionError::Established(error)
+        } else {
+            RelayConnectionError::Handshake(error)
+        }
+    }
 }
 
 pub(super) enum RelayActorMessage {
@@ -773,12 +811,14 @@ pub(super) struct RelayActor {
     /// The tasks for the [`ActiveRelayActor`]s in `active_relays` above.
     active_relay_tasks: JoinSet<()>,
     cancel_token: CancellationToken,
+    protocol: iroh_relay::http::Protocol,
 }
 
 impl RelayActor {
     pub(super) fn new(
         msock: Arc<MagicSock>,
         relay_datagram_recv_queue: Arc<RelayDatagramRecvQueue>,
+        protocol: iroh_relay::http::Protocol,
     ) -> Self {
         let cancel_token = CancellationToken::new();
         Self {
@@ -787,6 +827,7 @@ impl RelayActor {
             active_relays: Default::default(),
             active_relay_tasks: JoinSet::new(),
             cancel_token,
+            protocol,
         }
     }
 
@@ -990,6 +1031,7 @@ impl RelayActor {
             prefer_ipv6: self.msock.ipv6_reported.clone(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_cert_verify: self.msock.insecure_skip_relay_cert_verify,
+            protocol: self.protocol,
         };
 
         // TODO: Replace 64 with PER_CLIENT_SEND_QUEUE_DEPTH once that's unused
@@ -1291,6 +1333,7 @@ mod tests {
                 proxy_url: None,
                 prefer_ipv6: Arc::new(AtomicBool::new(true)),
                 insecure_skip_cert_verify: true,
+                protocol: iroh_relay::http::Protocol::default(),
             },
             stop_token,
         };

@@ -249,6 +249,7 @@ pub mod discovery;
 pub mod dns;
 pub mod endpoint;
 pub mod metrics;
+pub mod net_report;
 pub mod protocol;
 pub mod watchable;
 
@@ -256,7 +257,7 @@ pub use endpoint::{Endpoint, RelayMode};
 pub use iroh_base::{
     KeyParsingError, NodeAddr, NodeId, PublicKey, RelayUrl, RelayUrlParseError, SecretKey,
 };
-pub use iroh_relay::{node_info, RelayMap, RelayNode};
+pub use iroh_relay::{http::Protocol as RelayProtocol, node_info, RelayMap, RelayNode};
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;

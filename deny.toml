@@ -14,6 +14,7 @@ allow = [
     "Zlib",
     "MPL-2.0",                        # https://fossa.com/blog/open-source-software-licenses-101-mozilla-public-license-2-0/
     "Unicode-3.0",
+    "Unlicense",                      # https://unlicense.org/
 ]
 
 
@@ -21,4 +22,5 @@ allow = [
 ignore = [
   "RUSTSEC-2024-0384", # unmaintained, no upgrade available
   "RUSTSEC-2024-0436", # paste
+  "RUSTSEC-2023-0089", # unmainatined: postcard -> heapless -> atomic-polyfill
 ]

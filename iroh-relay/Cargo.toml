@@ -1,6 +1,6 @@
 [package]
 name = "iroh-relay"
-version = "0.34.0"
+version = "0.34.1"
 edition = "2021"
 readme = "README.md"
 description = "Iroh's relay server and client"
@@ -32,7 +32,7 @@ http = "1"
 http-body-util = "0.1.0"
 hyper = { version = "1", features = ["server", "client", "http1"] }
 hyper-util = "0.1.1"
-iroh-base = { version = "0.34.0", path = "../iroh-base", default-features = false, features = ["key", "relay"] }
+iroh-base = { version = "0.34.1", path = "../iroh-base", default-features = false, features = ["key", "relay"] }
 iroh-metrics = { version = "0.32", default-features = false }
 n0-future = "0.1.2"
 num_enum = "0.7"
@@ -64,7 +64,7 @@ tokio-rustls = { version = "0.26", default-features = false, features = [
     "logging",
     "ring",
 ] }
-tokio-tungstenite-wasm = "0.4"
+sha1 = "0.10.6"
 tokio-util = { version = "0.7", features = ["io-util", "io", "codec", "rt"] }
 tracing = "0.1"
 url = { version = "2.5", features = ["serde"] }
@@ -77,8 +77,8 @@ z32 = "1.0.3"
 # server feature
 clap = { version = "4", features = ["derive"], optional = true }
 dashmap = { version = "6.1.0", optional = true }
-governor = { version = "0.7.0", optional = true }
-hickory-proto = { version = "=0.25.0-alpha.5", default-features = false, optional = true }
+governor = { version = "0.8.0", optional = true }
+hickory-proto = { version = "0.25.1", default-features = false, optional = true }
 rcgen = { version = "0.13", optional = true }
 regex = { version = "1.7.1", optional = true }
 reloadable-state = { version = "0.1", optional = true }
@@ -86,8 +86,8 @@ rustls-cert-reloadable-resolver = { version = "0.7.1", optional = true }
 rustls-cert-file-reader = { version = "0.4.1", optional = true }
 rustls-pemfile = { version = "2.1", optional = true }
 time = { version = "0.3.37", optional = true }
-tokio-rustls-acme = { version = "0.6", optional = true }
-tokio-tungstenite = { version = "0.24", default-features = false, optional = true } # keep version in sync with what tokio-tungstenite-wasm depends on
+tokio-rustls-acme = { version = "0.7.1", optional = true }
+tokio-websockets = { version = "0.11.3", features = ["rustls-bring-your-own-connector", "ring", "getrandom", "rand", "server"], optional = true } # server-side websocket implementation
 toml = { version = "0.8", optional = true }
 tracing-subscriber = { version = "0.3", features = [
     "env-filter",
@@ -95,7 +95,7 @@ tracing-subscriber = { version = "0.3", features = [
 
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
-hickory-resolver = "=0.25.0-alpha.5"
+hickory-resolver = { version = "0.25.1", features = ["tokio"] }
 tokio = { version = "1", features = [
     "io-util",
     "macros",
@@ -107,6 +107,11 @@ tokio = { version = "1", features = [
     "signal",
     "process",
 ] }
+tokio-websockets = { version = "0.11.3", features = ["rustls-bring-your-own-connector", "ring", "getrandom", "rand", "client"] }
+
+# wasm-in-browser dependencies
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
+ws_stream_wasm = { version = "0.7.4", default-features = false }
 
 [dev-dependencies]
 clap = { version = "4", features = ["derive"] }
@@ -146,7 +151,7 @@ server = [
     "dep:rustls-pemfile",
     "dep:time",
     "dep:tokio-rustls-acme",
-    "dep:tokio-tungstenite",
+    "dep:tokio-websockets",
     "dep:toml",
     "dep:tracing-subscriber",
     "quinn/log",

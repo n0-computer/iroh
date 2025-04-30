@@ -22,11 +22,12 @@ const ALPN: &[u8] = b"iroh-example/echo/0";
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let router = accept_side().await?;
+    let router = start_accept_side().await?;
     let node_addr = router.endpoint().node_addr().await?;
 
     connect_side(node_addr).await?;
 
+    // This makes sure the endpoint in the router is closed properly and connections close gracefully
     router.shutdown().await?;
 
     Ok(())
@@ -44,19 +45,28 @@ async fn connect_side(addr: NodeAddr) -> Result<()> {
     // Send some data to be echoed
     send.write_all(b"Hello, world!").await?;
 
-    // Signal the end of transfer.
+    // Signal the end of data for this particular stream
     send.finish()?;
 
-    // Receive the echo
+    // Receive the echo, but limit reading up to maximum 1000 bytes
     let response = recv.read_to_end(1000).await?;
     assert_eq!(&response, b"Hello, world!");
 
+    // Explicitly close the whole connection.
     conn.close(0u32.into(), b"bye!");
 
+    // The above call only queues a close message to be sent (see how it's not async!).
+    // We need to actually call this to make sure this message is sent out.
+    endpoint.close().await;
+    // If we don't call this, but continue using the endpoint, we then the queued
+    // close call will eventually be picked up and sent.
+    // But always try to wait for endpoint.close().await to go through before dropping
+    // the endpoint to ensure any queued messages are sent through and connections are
+    // closed gracefully.
     Ok(())
 }
 
-async fn accept_side() -> Result<Router> {
+async fn start_accept_side() -> Result<Router> {
     let endpoint = Endpoint::builder().discovery_n0().bind().await?;
 
     // Build our protocol handler and add our protocol, identified by its ALPN, and spawn the node.
@@ -85,6 +95,7 @@ impl ProtocolHandler for Echo {
             let (mut send, mut recv) = connection.accept_bi().await?;
 
             // Echo any bytes received back directly.
+            // This will keep copying until the sender signals the end of data on the stream.
             let bytes_sent = tokio::io::copy(&mut recv, &mut send).await?;
             println!("Copied over {bytes_sent} byte(s)");
 
