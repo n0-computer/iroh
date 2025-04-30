@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["ConnSendError","ConnectError","DialError","HandshakeError","ReceivedMessage","RecvError","SendMessage"],"fn":["make_dangerous_client_config"],"struct":["Client","ClientBuilder","ClientSink","ClientStream"]};
+window.SIDEBAR_ITEMS = {"enum":["ConnectError","DialError","ReceivedMessage","RecvError","SendError","SendMessage"],"fn":["make_dangerous_client_config"],"struct":["Client","ClientBuilder","ClientSink","ClientStream"]};

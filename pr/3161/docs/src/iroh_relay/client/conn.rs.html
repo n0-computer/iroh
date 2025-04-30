@@ -480,32 +480,28 @@
 <a href="#479" id="479">479</a>
 <a href="#480" id="480">480</a>
 <a href="#481" id="481">481</a>
-<a href="#482" id="482">482</a>
-<a href="#483" id="483">483</a>
-<a href="#484" id="484">484</a>
-<a href="#485" id="485">485</a>
-<a href="#486" id="486">486</a></pre></div><pre class="rust"><code><span class="doccomment">//! Manages client-side connections to the relay server.
+<a href="#482" id="482">482</a></pre></div><pre class="rust"><code><span class="doccomment">//! Manages client-side connections to the relay server.
 //!
 //! based on tailscale/derp/derp_client.go
 
 </span><span class="kw">use </span>std::{
     io,
     pin::Pin,
+    str::Utf8Error,
     task::{ready, Context, Poll},
 };
 
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>iroh_base::{NodeId, SecretKey};
 <span class="kw">use </span>n0_future::{time::Duration, Sink, Stream};
+<span class="kw">use </span>nested_enum_utils::common_fields;
+<span class="kw">use </span>snafu::{Backtrace, ResultExt, Snafu};
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">use </span>tokio_util::codec::Framed;
 <span class="kw">use </span>tracing::debug;
 
-<span class="kw">use super</span>::{ConnectError, KeyCache};
-<span class="kw">use </span><span class="kw">crate</span>::protos::{
-    <span class="self">self</span>,
-    relay::{ClientInfo, Frame, MAX_PACKET_SIZE, PROTOCOL_VERSION},
-};
+<span class="kw">use </span><span class="kw">super</span>::KeyCache;
+<span class="kw">use </span><span class="kw">crate</span>::protos::relay::{ClientInfo, Frame, MAX_PACKET_SIZE, PROTOCOL_VERSION};
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">use crate</span>::{
     client::streams::{MaybeTlsStream, MaybeTlsStreamChained, ProxyStream},
@@ -513,67 +509,58 @@
 };
 
 <span class="doccomment">/// Error for sending messages to the relay server.
-</span><span class="attr">#[derive(Debug, thiserror::Error)]
-</span><span class="kw">pub enum </span>ConnSendError {
-    <span class="doccomment">/// An IO error.
-    </span><span class="attr">#[error(transparent)]
-    </span>Io(<span class="attr">#[from] </span>io::Error),
-    <span class="doccomment">/// A protocol error.
-    </span><span class="attr">#[error(<span class="string">"Protocol error"</span>)]
-    </span>Protocol(<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str),
-}
-
-<span class="attr">#[cfg(wasm_browser)]
-</span><span class="kw">impl </span>From&lt;ws_stream_wasm::WsErr&gt; <span class="kw">for </span>ConnSendError {
-    <span class="kw">fn </span>from(err: ws_stream_wasm::WsErr) -&gt; <span class="self">Self </span>{
-        <span class="kw">use </span>std::io::ErrorKind::<span class="kw-2">*</span>;
-
-        <span class="kw">use </span>ws_stream_wasm::WsErr::<span class="kw-2">*</span>;
-        <span class="kw">let </span>kind = <span class="kw">match </span>err {
-            ConnectionNotOpen =&gt; NotConnected,
-            ReasonStringToLong | InvalidCloseCode { .. } | InvalidUrl { .. } =&gt; InvalidInput,
-            UnknownDataType | InvalidEncoding =&gt; InvalidData,
-            ConnectionFailed { .. } =&gt; ConnectionReset,
-            <span class="kw">_ </span>=&gt; Other,
-        };
-        <span class="self">Self</span>::Io(std::io::Error::new(kind, err.to_string()))
-    }
-}
-
-<span class="attr">#[cfg(not(wasm_browser))]
-</span><span class="kw">impl </span>From&lt;tokio_websockets::Error&gt; <span class="kw">for </span>ConnSendError {
-    <span class="kw">fn </span>from(err: tokio_websockets::Error) -&gt; <span class="self">Self </span>{
-        <span class="kw">let </span>io_err = <span class="kw">match </span>err {
-            tokio_websockets::Error::Io(io_err) =&gt; io_err,
-            <span class="kw">_ </span>=&gt; std::io::Error::new(std::io::ErrorKind::Other, err.to_string()),
-        };
-        <span class="self">Self</span>::Io(io_err)
-    }
-}
-
-<span class="doccomment">/// Error when handshaking with the server
-</span><span class="attr">#[derive(Debug, thiserror::Error)]
-</span><span class="kw">pub enum </span>HandshakeError {
-    <span class="doccomment">/// An IO error.
-    </span><span class="attr">#[error(<span class="string">"failed to send handshake message to the relay"</span>)]
-    </span>Send(<span class="attr">#[from] </span>protos::relay::Error),
+</span><span class="attr">#[common_fields({
+    backtrace: <span class="prelude-ty">Option</span>&lt;Backtrace&gt;,
+    <span class="attr">#[snafu(implicit)]
+    </span>span_trace: n0_snafu::SpanTrace,
+})]
+<span class="attr">#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+#[snafu(visibility(<span class="kw">pub</span>(<span class="kw">crate</span>)))]
+</span><span class="kw">pub enum </span>SendError {
+    <span class="attr">#[cfg(not(wasm_browser))]
+    #[snafu(transparent)]
+    </span>RelayIo { source: io::Error },
+    <span class="attr">#[snafu(transparent)]
+    </span>WebsocketIo {
+        <span class="attr">#[cfg(not(wasm_browser))]
+        </span>source: tokio_websockets::Error,
+        <span class="attr">#[cfg(wasm_browser)]
+        </span>source: ws_stream_wasm::WsErr,
+    },
+    <span class="attr">#[snafu(display(<span class="string">"Exceeds max packet size ({MAX_PACKET_SIZE}): {size}"</span>))]
+    </span>ExceedsMaxPacketSize { size: usize },
 }
 
 <span class="doccomment">/// Errors when receiving messages from the relay server.
-</span><span class="attr">#[derive(Debug, thiserror::Error)]
-#[allow(missing_docs)]
+</span><span class="attr">#[common_fields({
+    backtrace: <span class="prelude-ty">Option</span>&lt;Backtrace&gt;,
+    <span class="attr">#[snafu(implicit)]
+    </span>span_trace: n0_snafu::SpanTrace,
+})]
+<span class="attr">#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+#[snafu(visibility(<span class="kw">pub</span>(<span class="kw">crate</span>)))]
 </span><span class="kw">pub enum </span>RecvError {
-    <span class="doccomment">/// An IO error.
-    </span><span class="attr">#[error(transparent)]
-    </span>Io(<span class="attr">#[from] </span>io::Error),
-    <span class="attr">#[error(transparent)]
-    </span>Protocol(<span class="attr">#[from] </span><span class="kw">crate</span>::protos::relay::Error),
-    <span class="attr">#[error(transparent)]
-    </span>Websocket(<span class="attr">#[from] </span>tokio_websockets::Error),
-    <span class="attr">#[error(<span class="string">"invalid protocol message encoding"</span>)]
-    </span>InvalidProtocolMessageEncoding,
-    <span class="attr">#[error(<span class="string">"Unexpected frame received {0}"</span>)]
-    </span>UnexpectedFrame(<span class="kw">crate</span>::protos::relay::FrameType),
+    <span class="attr">#[snafu(transparent)]
+    </span>Io { source: io::Error },
+    <span class="attr">#[snafu(transparent)]
+    </span>Protocol { source: <span class="kw">crate</span>::protos::relay::Error },
+    <span class="attr">#[snafu(transparent)]
+    </span>Websocket {
+        <span class="attr">#[cfg(not(wasm_browser))]
+        </span>source: tokio_websockets::Error,
+        <span class="attr">#[cfg(wasm_browser)]
+        </span>source: ws_stream_wasm::WsErr,
+    },
+    <span class="attr">#[snafu(display(<span class="string">"invalid protocol message encoding"</span>))]
+    </span>InvalidProtocolMessageEncoding { source: Utf8Error },
+    <span class="attr">#[snafu(display(<span class="string">"Unexpected frame received: {frame_type}"</span>))]
+    </span>UnexpectedFrame {
+        frame_type: <span class="kw">crate</span>::protos::relay::FrameType,
+    },
 }
 
 <span class="doccomment">/// A connection to a relay server.
@@ -615,7 +602,7 @@
         conn: ws_stream_wasm::WsStream,
         key_cache: KeyCache,
         secret_key: <span class="kw-2">&amp;</span>SecretKey,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ConnectError&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, <span class="kw">crate</span>::protos::relay::Error&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>conn = <span class="self">Self</span>::WsBrowser { conn, key_cache };
 
         <span class="comment">// exchange information with the server
@@ -630,7 +617,7 @@
         conn: MaybeTlsStreamChained,
         key_cache: KeyCache,
         secret_key: <span class="kw-2">&amp;</span>SecretKey,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ConnectError&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, <span class="kw">crate</span>::protos::relay::Error&gt; {
         <span class="kw">let </span>conn = Framed::new(conn, RelayCodec::new(key_cache));
 
         <span class="kw">let </span><span class="kw-2">mut </span>conn = <span class="self">Self</span>::Relay { conn };
@@ -646,7 +633,7 @@
         conn: tokio_websockets::WebSocketStream&lt;MaybeTlsStream&lt;ProxyStream&gt;&gt;,
         key_cache: KeyCache,
         secret_key: <span class="kw-2">&amp;</span>SecretKey,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ConnectError&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, <span class="kw">crate</span>::protos::relay::Error&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>conn = <span class="self">Self</span>::Ws { conn, key_cache };
 
         <span class="comment">// exchange information with the server
@@ -657,7 +644,10 @@
 }
 
 <span class="doccomment">/// Sends the server handshake message.
-</span><span class="kw">async fn </span>server_handshake(writer: <span class="kw-2">&amp;mut </span>Conn, secret_key: <span class="kw-2">&amp;</span>SecretKey) -&gt; <span class="prelude-ty">Result</span>&lt;(), HandshakeError&gt; {
+</span><span class="kw">async fn </span>server_handshake(
+    writer: <span class="kw-2">&amp;mut </span>Conn,
+    secret_key: <span class="kw-2">&amp;</span>SecretKey,
+) -&gt; <span class="prelude-ty">Result</span>&lt;(), <span class="kw">crate</span>::protos::relay::Error&gt; {
     <span class="macro">debug!</span>(<span class="string">"server_handshake: started"</span>);
     <span class="kw">let </span>client_info = ClientInfo {
         version: PROTOCOL_VERSION,
@@ -728,7 +718,7 @@
 }
 
 <span class="kw">impl </span>Sink&lt;Frame&gt; <span class="kw">for </span>Conn {
-    <span class="kw">type </span>Error = ConnSendError;
+    <span class="kw">type </span>Error = SendError;
 
     <span class="kw">fn </span>poll_ready(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt;&gt; {
         <span class="kw">match </span><span class="kw-2">*</span><span class="self">self </span>{
@@ -746,7 +736,7 @@
     <span class="kw">fn </span>start_send(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, frame: Frame) -&gt; <span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt; {
         <span class="kw">if let </span>Frame::SendPacket { dst_key: <span class="kw">_</span>, packet } = <span class="kw-2">&amp;</span>frame {
             <span class="kw">if </span>packet.len() &gt; MAX_PACKET_SIZE {
-                <span class="kw">return </span><span class="prelude-val">Err</span>(ConnSendError::Protocol(<span class="string">"Packet exceeds MAX_PACKET_SIZE"</span>));
+                <span class="kw">return </span><span class="prelude-val">Err</span>(ExceedsMaxPacketSizeSnafu { size: packet.len() }.build());
             }
         }
         <span class="kw">match </span><span class="kw-2">*</span><span class="self">self </span>{
@@ -793,7 +783,7 @@
 }
 
 <span class="kw">impl </span>Sink&lt;SendMessage&gt; <span class="kw">for </span>Conn {
-    <span class="kw">type </span>Error = ConnSendError;
+    <span class="kw">type </span>Error = SendError;
 
     <span class="kw">fn </span>poll_ready(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt;&gt; {
         <span class="kw">match </span><span class="kw-2">*</span><span class="self">self </span>{
@@ -810,9 +800,8 @@
 
     <span class="kw">fn </span>start_send(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, item: SendMessage) -&gt; <span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt; {
         <span class="kw">if let </span>SendMessage::SendPacket(<span class="kw">_</span>, bytes) = <span class="kw-2">&amp;</span>item {
-            <span class="kw">if </span>bytes.len() &gt; MAX_PACKET_SIZE {
-                <span class="kw">return </span><span class="prelude-val">Err</span>(ConnSendError::Protocol(<span class="string">"Packet exceeds MAX_PACKET_SIZE"</span>));
-            }
+            <span class="kw">let </span>size = bytes.len();
+            <span class="macro">snafu::ensure!</span>(size &lt;= MAX_PACKET_SIZE, ExceedsMaxPacketSizeSnafu { size });
         }
         <span class="kw">let </span>frame = Frame::from(item);
         <span class="kw">match </span><span class="kw-2">*</span><span class="self">self </span>{
@@ -929,7 +918,7 @@
             Frame::Pong { data } =&gt; <span class="prelude-val">Ok</span>(ReceivedMessage::Pong(data)),
             Frame::Health { problem } =&gt; {
                 <span class="kw">let </span>problem = std::str::from_utf8(<span class="kw-2">&amp;</span>problem)
-                    .map_err(|<span class="kw">_</span>| RecvError::InvalidProtocolMessageEncoding)<span class="question-mark">?
+                    .context(InvalidProtocolMessageEncodingSnafu)<span class="question-mark">?
                     </span>.to_owned();
                 <span class="kw">let </span>problem = <span class="prelude-val">Some</span>(problem);
                 <span class="prelude-val">Ok</span>(ReceivedMessage::Health { problem })
@@ -945,7 +934,10 @@
                     try_for,
                 })
             }
-            <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(RecvError::UnexpectedFrame(frame.typ())),
+            <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(UnexpectedFrameSnafu {
+                frame_type: frame.typ(),
+            }
+            .build()),
         }
     }
 }

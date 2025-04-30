@@ -386,10 +386,22 @@
 <a href="#385" id="385">385</a>
 <a href="#386" id="386">386</a>
 <a href="#387" id="387">387</a>
-<a href="#388" id="388">388</a></pre></div><pre class="rust"><code><span class="doccomment">//! STUN packets sending and receiving.
+<a href="#388" id="388">388</a>
+<a href="#389" id="389">389</a>
+<a href="#390" id="390">390</a>
+<a href="#391" id="391">391</a>
+<a href="#392" id="392">392</a>
+<a href="#393" id="393">393</a>
+<a href="#394" id="394">394</a>
+<a href="#395" id="395">395</a>
+<a href="#396" id="396">396</a>
+<a href="#397" id="397">397</a>
+<a href="#398" id="398">398</a></pre></div><pre class="rust"><code><span class="doccomment">//! STUN packets sending and receiving.
 
 </span><span class="kw">use </span>std::net::SocketAddr;
 
+<span class="kw">use </span>nested_enum_utils::common_fields;
+<span class="kw">use </span>snafu::{Backtrace, Snafu};
 <span class="kw">use </span>stun_rs::{
     attributes::stun::{Fingerprint, XorMappedAddress},
     DecoderContextBuilder, MessageDecoderBuilder, MessageEncoderBuilder, StunMessageBuilder,
@@ -400,26 +412,34 @@
 };
 
 <span class="doccomment">/// Errors that can occur when handling a STUN packet.
-</span><span class="attr">#[derive(Debug, thiserror::Error)]
+</span><span class="attr">#[common_fields({
+    backtrace: <span class="prelude-ty">Option</span>&lt;Backtrace&gt;,
+    <span class="attr">#[snafu(implicit)]
+    </span>span_trace: n0_snafu::SpanTrace,
+})]
+<span class="attr">#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+#[snafu(visibility(<span class="kw">pub</span>(<span class="kw">crate</span>)))]
 </span><span class="kw">pub enum </span>Error {
     <span class="doccomment">/// The STUN message could not be parsed or is otherwise invalid.
-    </span><span class="attr">#[error(<span class="string">"invalid message"</span>)]
-    </span>InvalidMessage,
+    </span><span class="attr">#[snafu(display(<span class="string">"invalid message"</span>))]
+    </span>InvalidMessage {},
     <span class="doccomment">/// STUN request is not a binding request when it should be.
-    </span><span class="attr">#[error(<span class="string">"not binding"</span>)]
-    </span>NotBinding,
+    </span><span class="attr">#[snafu(display(<span class="string">"not binding"</span>))]
+    </span>NotBinding {},
     <span class="doccomment">/// STUN packet is not a response when it should be.
-    </span><span class="attr">#[error(<span class="string">"not success response"</span>)]
-    </span>NotSuccessResponse,
+    </span><span class="attr">#[snafu(display(<span class="string">"not success response"</span>))]
+    </span>NotSuccessResponse {},
     <span class="doccomment">/// STUN response has malformed attributes.
-    </span><span class="attr">#[error(<span class="string">"malformed attributes"</span>)]
-    </span>MalformedAttrs,
+    </span><span class="attr">#[snafu(display(<span class="string">"malformed attributes"</span>))]
+    </span>MalformedAttrs {},
     <span class="doccomment">/// STUN request didn't end in fingerprint.
-    </span><span class="attr">#[error(<span class="string">"no fingerprint"</span>)]
-    </span>NoFingerprint,
+    </span><span class="attr">#[snafu(display(<span class="string">"no fingerprint"</span>))]
+    </span>NoFingerprint {},
     <span class="doccomment">/// STUN request had bogus fingerprint.
-    </span><span class="attr">#[error(<span class="string">"invalid fingerprint"</span>)]
-    </span>InvalidFingerprint,
+    </span><span class="attr">#[snafu(display(<span class="string">"invalid fingerprint"</span>))]
+    </span>InvalidFingerprint {},
 }
 
 <span class="doccomment">/// Generates a binding request STUN packet.
@@ -468,11 +488,11 @@
         .with_validation() <span class="comment">// ensure fingerprint is validated
         </span>.build();
     <span class="kw">let </span>decoder = MessageDecoderBuilder::default().with_context(ctx).build();
-    <span class="kw">let </span>(msg, <span class="kw">_</span>) = decoder.decode(b).map_err(|<span class="kw">_</span>| Error::InvalidMessage)<span class="question-mark">?</span>;
+    <span class="kw">let </span>(msg, <span class="kw">_</span>) = decoder.decode(b).map_err(|<span class="kw">_</span>| InvalidMessageSnafu.build())<span class="question-mark">?</span>;
 
     <span class="kw">let </span>tx = <span class="kw-2">*</span>msg.transaction_id();
     <span class="kw">if </span>msg.method() != methods::BINDING {
-        <span class="kw">return </span><span class="prelude-val">Err</span>(Error::NotBinding);
+        <span class="kw">return </span><span class="prelude-val">Err</span>(NotBindingSnafu.build());
     }
 
     <span class="comment">// TODO: Tailscale sets the software to tailscale, we should check if we want to do this too.
@@ -483,7 +503,7 @@
         .map(|attr| !attr.is_fingerprint())
         .unwrap_or_default()
     {
-        <span class="kw">return </span><span class="prelude-val">Err</span>(Error::NoFingerprint);
+        <span class="kw">return </span><span class="prelude-val">Err</span>(NoFingerprintSnafu.build());
     }
 
     <span class="prelude-val">Ok</span>(tx)
@@ -493,11 +513,11 @@
 /// The IP address is extracted from the XOR-MAPPED-ADDRESS attribute.
 </span><span class="kw">pub fn </span>parse_response(b: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;(TransactionId, SocketAddr), Error&gt; {
     <span class="kw">let </span>decoder = MessageDecoder::default();
-    <span class="kw">let </span>(msg, <span class="kw">_</span>) = decoder.decode(b).map_err(|<span class="kw">_</span>| Error::InvalidMessage)<span class="question-mark">?</span>;
+    <span class="kw">let </span>(msg, <span class="kw">_</span>) = decoder.decode(b).map_err(|<span class="kw">_</span>| InvalidMessageSnafu.build())<span class="question-mark">?</span>;
 
     <span class="kw">let </span>tx = <span class="kw-2">*</span>msg.transaction_id();
     <span class="kw">if </span>msg.class() != MessageClass::SuccessResponse {
-        <span class="kw">return </span><span class="prelude-val">Err</span>(Error::NotSuccessResponse);
+        <span class="kw">return </span><span class="prelude-val">Err</span>(NotSuccessResponseSnafu.build());
     }
 
     <span class="comment">// Read through the attributes.
@@ -532,7 +552,7 @@
         <span class="kw">return </span><span class="prelude-val">Ok</span>((tx, addr));
     }
 
-    <span class="prelude-val">Err</span>(Error::MalformedAttrs)
+    <span class="prelude-val">Err</span>(MalformedAttrsSnafu.build())
 }
 
 <span class="attr">#[cfg(test)]

@@ -267,12 +267,7 @@
 <a href="#266" id="266">266</a>
 <a href="#267" id="267">267</a>
 <a href="#268" id="268">268</a>
-<a href="#269" id="269">269</a>
-<a href="#270" id="270">270</a>
-<a href="#271" id="271">271</a>
-<a href="#272" id="272">272</a>
-<a href="#273" id="273">273</a>
-<a href="#274" id="274">274</a></pre></div><pre class="rust"><code><span class="doccomment">//! A DNS server and pkarr relay
+<a href="#269" id="269">269</a></pre></div><pre class="rust"><code><span class="doccomment">//! A DNS server and pkarr relay
 
 </span><span class="attr">#![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
@@ -300,7 +295,7 @@
         discovery::pkarr::PkarrRelayClient, dns::DnsResolver, node_info::NodeInfo, RelayUrl,
         SecretKey,
     };
-    <span class="kw">use </span>pkarr::{PkarrClient, SignedPacket};
+    <span class="kw">use </span>pkarr::{SignedPacket, Timestamp};
     <span class="kw">use </span>testresult::TestResult;
     <span class="kw">use </span>tracing_test::traced_test;
 
@@ -375,13 +370,13 @@
                 <span class="number">30</span>,
                 dns::rdata::RData::AAAA(Ipv6Addr::LOCALHOST.into()),
             ));
-            SignedPacket::from_packet(<span class="kw-2">&amp;</span>keypair, <span class="kw-2">&amp;</span>packet)<span class="question-mark">?
+            SignedPacket::new(<span class="kw-2">&amp;</span>keypair, <span class="kw-2">&amp;</span>packet.answers, Timestamp::now())<span class="question-mark">?
         </span>};
-        <span class="kw">let </span>pkarr_client = pkarr::PkarrRelayClient::new(pkarr::RelaySettings {
-            relays: <span class="macro">vec!</span>[pkarr_relay_url.to_string()],
-            ..Default::default()
-        })<span class="question-mark">?</span>;
-        pkarr_client.as_async().publish(<span class="kw-2">&amp;</span>signed_packet).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>pkarr_client = pkarr::Client::builder()
+            .no_default_network()
+            .relays(<span class="kw-2">&amp;</span>[pkarr_relay_url])<span class="question-mark">?
+            </span>.build()<span class="question-mark">?</span>;
+        pkarr_client.publish(<span class="kw-2">&amp;</span>signed_packet, <span class="prelude-val">None</span>).<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="kw">use </span>hickory_server::proto::rr::Name;
         <span class="kw">let </span>pubkey = signed_packet.public_key().to_z32();
@@ -493,7 +488,7 @@
     #[traced_test]
     </span><span class="kw">async fn </span>integration_mainline() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="comment">// run a mainline testnet
-        </span><span class="kw">let </span>testnet = pkarr::mainline::dht::Testnet::new(<span class="number">5</span>);
+        </span><span class="kw">let </span>testnet = pkarr::mainline::Testnet::new_async(<span class="number">5</span>).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>bootstrap = testnet.bootstrap.clone();
 
         <span class="comment">// spawn our server with mainline support
@@ -511,13 +506,11 @@
         <span class="kw">let </span>signed_packet = node_info.to_pkarr_signed_packet(<span class="kw-2">&amp;</span>secret_key, <span class="number">30</span>)<span class="question-mark">?</span>;
 
         <span class="comment">// publish the signed packet to our DHT
-        </span><span class="kw">let </span>pkarr = PkarrClient::builder()
-            .dht_settings(pkarr::mainline::dht::DhtSettings {
-                bootstrap: <span class="prelude-val">Some</span>(testnet.bootstrap),
-                ..Default::default()
-            })
+        </span><span class="kw">let </span>pkarr = pkarr::Client::builder()
+            .no_default_network()
+            .dht(|builder| builder.bootstrap(<span class="kw-2">&amp;</span>testnet.bootstrap))
             .build()<span class="question-mark">?</span>;
-        pkarr.publish(<span class="kw-2">&amp;</span>signed_packet)<span class="question-mark">?</span>;
+        pkarr.publish(<span class="kw-2">&amp;</span>signed_packet, <span class="prelude-val">None</span>).<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="comment">// resolve via DNS from our server, which will lookup from our DHT
         </span><span class="kw">let </span>resolver = test_resolver(nameserver);
@@ -527,9 +520,6 @@
         <span class="macro">assert_eq!</span>(res.relay_url(), <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>relay_url));
 
         server.shutdown().<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">for </span><span class="kw-2">mut </span>node <span class="kw">in </span>testnet.nodes {
-            node.shutdown()<span class="question-mark">?</span>;
-        }
         <span class="prelude-val">Ok</span>(())
     }
 

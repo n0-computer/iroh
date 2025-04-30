@@ -438,7 +438,18 @@
 <a href="#437" id="437">437</a>
 <a href="#438" id="438">438</a>
 <a href="#439" id="439">439</a>
-<a href="#440" id="440">440</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
+<a href="#440" id="440">440</a>
+<a href="#441" id="441">441</a>
+<a href="#442" id="442">442</a>
+<a href="#443" id="443">443</a>
+<a href="#444" id="444">444</a>
+<a href="#445" id="445">445</a>
+<a href="#446" id="446">446</a>
+<a href="#447" id="447">447</a>
+<a href="#448" id="448">448</a>
+<a href="#449" id="449">449</a>
+<a href="#450" id="450">450</a>
+<a href="#451" id="451">451</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
 //!
 //! Based on tailscale/derp/derphttp/derphttp_client.go
 
@@ -462,7 +473,7 @@
 <span class="kw">use </span>tracing::{debug, event, trace, Level};
 <span class="kw">use </span>url::Url;
 
-<span class="kw">pub use </span><span class="self">self</span>::conn::{ConnSendError, HandshakeError, ReceivedMessage, RecvError, SendMessage};
+<span class="kw">pub use </span><span class="self">self</span>::conn::{ReceivedMessage, RecvError, SendError, SendMessage};
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">use </span><span class="kw">crate</span>::dns::{DnsResolver, Error <span class="kw">as </span>DnsError};
 <span class="kw">use crate</span>::{
@@ -494,9 +505,14 @@
     <span class="attr">#[snafu(display(<span class="string">"Invalid relay URL: {url}"</span>))]
     </span>InvalidRelayUrl { url: Url },
     <span class="attr">#[snafu(transparent)]
-    </span>Websocket { source: tokio_websockets::Error },
+    </span>Websocket {
+        <span class="attr">#[cfg(not(wasm_browser))]
+        </span>source: tokio_websockets::Error,
+        <span class="attr">#[cfg(wasm_browser)]
+        </span>source: ws_stream_wasm::WsErr,
+    },
     <span class="attr">#[snafu(transparent)]
-    </span>Handshake { source: HandshakeError },
+    </span>Handshake { source: <span class="kw">crate</span>::protos::relay::Error },
     <span class="attr">#[snafu(transparent)]
     </span>Dial { source: DialError },
     <span class="attr">#[snafu(display(<span class="string">"Unexpected status during upgrade: {code}"</span>))]
@@ -515,30 +531,36 @@
 }
 
 <span class="doccomment">/// Dialing errors
-</span><span class="attr">#[allow(missing_docs)]
-#[derive(Debug, thiserror::Error)]
+</span><span class="attr">#[common_fields({
+    backtrace: <span class="prelude-ty">Option</span>&lt;Backtrace&gt;,
+    <span class="attr">#[snafu(implicit)]
+    </span>span_trace: n0_snafu::SpanTrace,
+})]
+<span class="attr">#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
 #[non_exhaustive]
+#[snafu(visibility(<span class="kw">pub</span>(<span class="kw">crate</span>)))]
 </span><span class="kw">pub enum </span>DialError {
-    <span class="attr">#[error(<span class="string">"Invliad target port"</span>)]
-    </span>InvalidTargetPort,
-    <span class="attr">#[error(transparent)]
+    <span class="attr">#[snafu(display(<span class="string">"Invliad target port"</span>))]
+    </span>InvalidTargetPort {},
+    <span class="attr">#[snafu(transparent)]
     #[cfg(not(wasm_browser))]
-    </span>Dns(<span class="attr">#[from] </span>DnsError),
-    <span class="attr">#[error(<span class="string">"Timeout"</span>)]
-    </span>Timeout(<span class="attr">#[from] </span>time::Elapsed),
-    <span class="attr">#[error(transparent)]
-    </span>Io(<span class="attr">#[from] </span>std::io::Error),
-    <span class="attr">#[error(<span class="string">"Invalid URL {0}"</span>)]
-    </span>InvalidUrl(Url),
-    <span class="attr">#[error(<span class="string">"Failed proxy connection: {0}"</span>)]
-    </span>ProxyConnectInvalidStatus(hyper::StatusCode),
-    <span class="attr">#[error(<span class="string">"Invalid Proxy URL {0}"</span>)]
-    </span>ProxyInvalidUrl(Url),
-    <span class="attr">#[error(<span class="string">"failed to establish proxy connection"</span>)]
-    </span>ProxyConnect(<span class="attr">#[source] </span>hyper::Error),
-    <span class="attr">#[error(<span class="string">"Invalid proxy TLS servername"</span>)]
-    </span>ProxyInvalidTlsServername,
-    <span class="attr">#[error(<span class="string">"Invliad proxy target port"</span>)]
+    </span>Dns { source: DnsError },
+    <span class="attr">#[snafu(transparent)]
+    </span>Timeout { source: time::Elapsed },
+    <span class="attr">#[snafu(transparent)]
+    </span>Io { source: std::io::Error },
+    <span class="attr">#[snafu(display(<span class="string">"Invalid URL: {url}"</span>))]
+    </span>InvalidUrl { url: Url },
+    <span class="attr">#[snafu(display(<span class="string">"Failed proxy connection: {status}"</span>))]
+    </span>ProxyConnectInvalidStatus { status: hyper::StatusCode },
+    <span class="attr">#[snafu(display(<span class="string">"Invalid Proxy URL {proxy_url}"</span>))]
+    </span>ProxyInvalidUrl { proxy_url: Url },
+    <span class="attr">#[snafu(display(<span class="string">"failed to establish proxy connection"</span>))]
+    </span>ProxyConnect { source: hyper::Error },
+    <span class="attr">#[snafu(display(<span class="string">"Invalid proxy TLS servername: {proxy_hostname}"</span>))]
+    </span>ProxyInvalidTlsServername { proxy_hostname: String },
+    <span class="attr">#[snafu(display(<span class="string">"Invalid proxy target port"</span>))]
     </span>ProxyInvalidTargetPort,
 }
 
@@ -662,7 +684,7 @@
                 (conn, <span class="prelude-val">Some</span>(local_addr))
             }
             <span class="attr">#[cfg(wasm_browser)]
-            </span>Protocol::Relay =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(ConnectError::RelayProtoNotAvailable),
+            </span>Protocol::Relay =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(RelayProtoNotAvailableSnafu.build()),
         };
 
         <span class="macro">event!</span>(
@@ -734,7 +756,7 @@
 }
 
 <span class="kw">impl </span>Sink&lt;SendMessage&gt; <span class="kw">for </span>Client {
-    <span class="kw">type </span>Error = ConnSendError;
+    <span class="kw">type </span>Error = SendError;
 
     <span class="kw">fn </span>poll_ready(
         <span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;,
@@ -769,7 +791,7 @@
 }
 
 <span class="kw">impl </span>Sink&lt;SendMessage&gt; <span class="kw">for </span>ClientSink {
-    <span class="kw">type </span>Error = ConnSendError;
+    <span class="kw">type </span>Error = SendError;
 
     <span class="kw">fn </span>poll_ready(
         <span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;,
