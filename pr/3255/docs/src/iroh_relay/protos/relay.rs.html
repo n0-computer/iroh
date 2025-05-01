@@ -868,8 +868,7 @@
 <a href="#867" id="867">867</a>
 <a href="#868" id="868">868</a>
 <a href="#869" id="869">869</a>
-<a href="#870" id="870">870</a>
-<a href="#871" id="871">871</a></pre></div><pre class="rust"><code><span class="doccomment">//! This module implements the relaying protocol used by the `server` and `client`.
+<a href="#870" id="870">870</a></pre></div><pre class="rust"><code><span class="doccomment">//! This module implements the relaying protocol used by the `server` and `client`.
 //!
 //! Protocol flow:
 //!
@@ -1185,11 +1184,10 @@
     <span class="doccomment">/// Tries to decode a frame received over websockets.
     ///
     /// Specifically, bytes received from a binary websocket message frame.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>decode_from_ws_msg(vec: Vec&lt;u8&gt;, cache: <span class="kw-2">&amp;</span>KeyCache) -&gt; anyhow::Result&lt;<span class="self">Self</span>&gt; {
-        <span class="kw">if </span>vec.is_empty() {
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>decode_from_ws_msg(bytes: Bytes, cache: <span class="kw-2">&amp;</span>KeyCache) -&gt; anyhow::Result&lt;<span class="self">Self</span>&gt; {
+        <span class="kw">if </span>bytes.is_empty() {
             <span class="macro">bail!</span>(<span class="string">"error parsing relay::codec::Frame: too few bytes (0)"</span>);
         }
-        <span class="kw">let </span>bytes = Bytes::from(vec);
         <span class="kw">let </span>typ = FrameType::from(bytes[<span class="number">0</span>]);
         <span class="kw">let </span>frame = <span class="self">Self</span>::from_bytes(typ, bytes.slice(<span class="number">1</span>..), cache)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(frame)
@@ -1724,7 +1722,7 @@
         <span class="attr">#[test]
         </span><span class="kw">fn </span>frame_ws_roundtrip(frame <span class="kw">in </span>frame()) {
             <span class="kw">let </span>encoded = frame.clone().encode_for_ws_msg();
-            <span class="kw">let </span>decoded = Frame::decode_from_ws_msg(encoded, <span class="kw-2">&amp;</span>KeyCache::test()).unwrap();
+            <span class="kw">let </span>decoded = Frame::decode_from_ws_msg(Bytes::from(encoded), <span class="kw-2">&amp;</span>KeyCache::test()).unwrap();
             <span class="macro">prop_assert_eq!</span>(frame, decoded);
         }
 

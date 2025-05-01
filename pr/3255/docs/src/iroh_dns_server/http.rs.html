@@ -478,7 +478,7 @@
     </span><span class="kw">let </span>router = Router::new()
         .route(<span class="string">"/dns-query"</span>, get(doh::get).post(doh::post))
         .route(
-            <span class="string">"/pkarr/:key"</span>,
+            <span class="string">"/pkarr/{key}"</span>,
             <span class="kw">if let </span><span class="prelude-val">Some</span>(rate_limit) = rate_limit {
                 get(pkarr::get).put(pkarr::put.layer(rate_limit))
             } <span class="kw">else </span>{

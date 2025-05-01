@@ -2711,7 +2711,201 @@
 <a href="#2710" id="2710">2710</a>
 <a href="#2711" id="2711">2711</a>
 <a href="#2712" id="2712">2712</a>
-<a href="#2713" id="2713">2713</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2713" id="2713">2713</a>
+<a href="#2714" id="2714">2714</a>
+<a href="#2715" id="2715">2715</a>
+<a href="#2716" id="2716">2716</a>
+<a href="#2717" id="2717">2717</a>
+<a href="#2718" id="2718">2718</a>
+<a href="#2719" id="2719">2719</a>
+<a href="#2720" id="2720">2720</a>
+<a href="#2721" id="2721">2721</a>
+<a href="#2722" id="2722">2722</a>
+<a href="#2723" id="2723">2723</a>
+<a href="#2724" id="2724">2724</a>
+<a href="#2725" id="2725">2725</a>
+<a href="#2726" id="2726">2726</a>
+<a href="#2727" id="2727">2727</a>
+<a href="#2728" id="2728">2728</a>
+<a href="#2729" id="2729">2729</a>
+<a href="#2730" id="2730">2730</a>
+<a href="#2731" id="2731">2731</a>
+<a href="#2732" id="2732">2732</a>
+<a href="#2733" id="2733">2733</a>
+<a href="#2734" id="2734">2734</a>
+<a href="#2735" id="2735">2735</a>
+<a href="#2736" id="2736">2736</a>
+<a href="#2737" id="2737">2737</a>
+<a href="#2738" id="2738">2738</a>
+<a href="#2739" id="2739">2739</a>
+<a href="#2740" id="2740">2740</a>
+<a href="#2741" id="2741">2741</a>
+<a href="#2742" id="2742">2742</a>
+<a href="#2743" id="2743">2743</a>
+<a href="#2744" id="2744">2744</a>
+<a href="#2745" id="2745">2745</a>
+<a href="#2746" id="2746">2746</a>
+<a href="#2747" id="2747">2747</a>
+<a href="#2748" id="2748">2748</a>
+<a href="#2749" id="2749">2749</a>
+<a href="#2750" id="2750">2750</a>
+<a href="#2751" id="2751">2751</a>
+<a href="#2752" id="2752">2752</a>
+<a href="#2753" id="2753">2753</a>
+<a href="#2754" id="2754">2754</a>
+<a href="#2755" id="2755">2755</a>
+<a href="#2756" id="2756">2756</a>
+<a href="#2757" id="2757">2757</a>
+<a href="#2758" id="2758">2758</a>
+<a href="#2759" id="2759">2759</a>
+<a href="#2760" id="2760">2760</a>
+<a href="#2761" id="2761">2761</a>
+<a href="#2762" id="2762">2762</a>
+<a href="#2763" id="2763">2763</a>
+<a href="#2764" id="2764">2764</a>
+<a href="#2765" id="2765">2765</a>
+<a href="#2766" id="2766">2766</a>
+<a href="#2767" id="2767">2767</a>
+<a href="#2768" id="2768">2768</a>
+<a href="#2769" id="2769">2769</a>
+<a href="#2770" id="2770">2770</a>
+<a href="#2771" id="2771">2771</a>
+<a href="#2772" id="2772">2772</a>
+<a href="#2773" id="2773">2773</a>
+<a href="#2774" id="2774">2774</a>
+<a href="#2775" id="2775">2775</a>
+<a href="#2776" id="2776">2776</a>
+<a href="#2777" id="2777">2777</a>
+<a href="#2778" id="2778">2778</a>
+<a href="#2779" id="2779">2779</a>
+<a href="#2780" id="2780">2780</a>
+<a href="#2781" id="2781">2781</a>
+<a href="#2782" id="2782">2782</a>
+<a href="#2783" id="2783">2783</a>
+<a href="#2784" id="2784">2784</a>
+<a href="#2785" id="2785">2785</a>
+<a href="#2786" id="2786">2786</a>
+<a href="#2787" id="2787">2787</a>
+<a href="#2788" id="2788">2788</a>
+<a href="#2789" id="2789">2789</a>
+<a href="#2790" id="2790">2790</a>
+<a href="#2791" id="2791">2791</a>
+<a href="#2792" id="2792">2792</a>
+<a href="#2793" id="2793">2793</a>
+<a href="#2794" id="2794">2794</a>
+<a href="#2795" id="2795">2795</a>
+<a href="#2796" id="2796">2796</a>
+<a href="#2797" id="2797">2797</a>
+<a href="#2798" id="2798">2798</a>
+<a href="#2799" id="2799">2799</a>
+<a href="#2800" id="2800">2800</a>
+<a href="#2801" id="2801">2801</a>
+<a href="#2802" id="2802">2802</a>
+<a href="#2803" id="2803">2803</a>
+<a href="#2804" id="2804">2804</a>
+<a href="#2805" id="2805">2805</a>
+<a href="#2806" id="2806">2806</a>
+<a href="#2807" id="2807">2807</a>
+<a href="#2808" id="2808">2808</a>
+<a href="#2809" id="2809">2809</a>
+<a href="#2810" id="2810">2810</a>
+<a href="#2811" id="2811">2811</a>
+<a href="#2812" id="2812">2812</a>
+<a href="#2813" id="2813">2813</a>
+<a href="#2814" id="2814">2814</a>
+<a href="#2815" id="2815">2815</a>
+<a href="#2816" id="2816">2816</a>
+<a href="#2817" id="2817">2817</a>
+<a href="#2818" id="2818">2818</a>
+<a href="#2819" id="2819">2819</a>
+<a href="#2820" id="2820">2820</a>
+<a href="#2821" id="2821">2821</a>
+<a href="#2822" id="2822">2822</a>
+<a href="#2823" id="2823">2823</a>
+<a href="#2824" id="2824">2824</a>
+<a href="#2825" id="2825">2825</a>
+<a href="#2826" id="2826">2826</a>
+<a href="#2827" id="2827">2827</a>
+<a href="#2828" id="2828">2828</a>
+<a href="#2829" id="2829">2829</a>
+<a href="#2830" id="2830">2830</a>
+<a href="#2831" id="2831">2831</a>
+<a href="#2832" id="2832">2832</a>
+<a href="#2833" id="2833">2833</a>
+<a href="#2834" id="2834">2834</a>
+<a href="#2835" id="2835">2835</a>
+<a href="#2836" id="2836">2836</a>
+<a href="#2837" id="2837">2837</a>
+<a href="#2838" id="2838">2838</a>
+<a href="#2839" id="2839">2839</a>
+<a href="#2840" id="2840">2840</a>
+<a href="#2841" id="2841">2841</a>
+<a href="#2842" id="2842">2842</a>
+<a href="#2843" id="2843">2843</a>
+<a href="#2844" id="2844">2844</a>
+<a href="#2845" id="2845">2845</a>
+<a href="#2846" id="2846">2846</a>
+<a href="#2847" id="2847">2847</a>
+<a href="#2848" id="2848">2848</a>
+<a href="#2849" id="2849">2849</a>
+<a href="#2850" id="2850">2850</a>
+<a href="#2851" id="2851">2851</a>
+<a href="#2852" id="2852">2852</a>
+<a href="#2853" id="2853">2853</a>
+<a href="#2854" id="2854">2854</a>
+<a href="#2855" id="2855">2855</a>
+<a href="#2856" id="2856">2856</a>
+<a href="#2857" id="2857">2857</a>
+<a href="#2858" id="2858">2858</a>
+<a href="#2859" id="2859">2859</a>
+<a href="#2860" id="2860">2860</a>
+<a href="#2861" id="2861">2861</a>
+<a href="#2862" id="2862">2862</a>
+<a href="#2863" id="2863">2863</a>
+<a href="#2864" id="2864">2864</a>
+<a href="#2865" id="2865">2865</a>
+<a href="#2866" id="2866">2866</a>
+<a href="#2867" id="2867">2867</a>
+<a href="#2868" id="2868">2868</a>
+<a href="#2869" id="2869">2869</a>
+<a href="#2870" id="2870">2870</a>
+<a href="#2871" id="2871">2871</a>
+<a href="#2872" id="2872">2872</a>
+<a href="#2873" id="2873">2873</a>
+<a href="#2874" id="2874">2874</a>
+<a href="#2875" id="2875">2875</a>
+<a href="#2876" id="2876">2876</a>
+<a href="#2877" id="2877">2877</a>
+<a href="#2878" id="2878">2878</a>
+<a href="#2879" id="2879">2879</a>
+<a href="#2880" id="2880">2880</a>
+<a href="#2881" id="2881">2881</a>
+<a href="#2882" id="2882">2882</a>
+<a href="#2883" id="2883">2883</a>
+<a href="#2884" id="2884">2884</a>
+<a href="#2885" id="2885">2885</a>
+<a href="#2886" id="2886">2886</a>
+<a href="#2887" id="2887">2887</a>
+<a href="#2888" id="2888">2888</a>
+<a href="#2889" id="2889">2889</a>
+<a href="#2890" id="2890">2890</a>
+<a href="#2891" id="2891">2891</a>
+<a href="#2892" id="2892">2892</a>
+<a href="#2893" id="2893">2893</a>
+<a href="#2894" id="2894">2894</a>
+<a href="#2895" id="2895">2895</a>
+<a href="#2896" id="2896">2896</a>
+<a href="#2897" id="2897">2897</a>
+<a href="#2898" id="2898">2898</a>
+<a href="#2899" id="2899">2899</a>
+<a href="#2900" id="2900">2900</a>
+<a href="#2901" id="2901">2901</a>
+<a href="#2902" id="2902">2902</a>
+<a href="#2903" id="2903">2903</a>
+<a href="#2904" id="2904">2904</a>
+<a href="#2905" id="2905">2905</a>
+<a href="#2906" id="2906">2906</a>
+<a href="#2907" id="2907">2907</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -2756,6 +2950,7 @@
     magicsock::{<span class="self">self</span>, Handle, NodeIdMappedAddr},
     tls,
     watchable::Watcher,
+    RelayProtocol,
 };
 
 <span class="kw">mod </span>rtt_actor;
@@ -2823,6 +3018,7 @@
 </span><span class="kw">pub struct </span>Builder {
     secret_key: <span class="prelude-ty">Option</span>&lt;SecretKey&gt;,
     relay_mode: RelayMode,
+    relay_protocol: iroh_relay::http::Protocol,
     alpn_protocols: Vec&lt;Vec&lt;u8&gt;&gt;,
     transport_config: quinn::TransportConfig,
     keylog: bool,
@@ -2850,6 +3046,7 @@
         <span class="self">Self </span>{
             secret_key: Default::default(),
             relay_mode: default_relay_mode(),
+            relay_protocol: iroh_relay::http::Protocol::default(),
             alpn_protocols: Default::default(),
             transport_config,
             keylog: Default::default(),
@@ -2907,6 +3104,7 @@
             addr_v6: <span class="self">self</span>.addr_v6,
             secret_key,
             relay_map,
+            relay_protocol: <span class="self">self</span>.relay_protocol,
             node_map: <span class="self">self</span>.node_map,
             discovery,
             discovery_user_data: <span class="self">self</span>.discovery_user_data,
@@ -2962,7 +3160,7 @@
     <span class="doccomment">/// Sets the [ALPN] protocols that this endpoint will accept on incoming connections.
     ///
     /// Not setting this will still allow creating connections, but to accept incoming
-    /// connections the [ALPN] must be set.
+    /// connections at least one [ALPN] must be set.
     ///
     /// [ALPN]: https://en.wikipedia.org/wiki/Application-Layer_Protocol_Negotiation
     </span><span class="kw">pub fn </span>alpns(<span class="kw-2">mut </span><span class="self">self</span>, alpn_protocols: Vec&lt;Vec&lt;u8&gt;&gt;) -&gt; <span class="self">Self </span>{
@@ -2989,6 +3187,19 @@
     /// [number 0]: https://n0.computer
     </span><span class="kw">pub fn </span>relay_mode(<span class="kw-2">mut </span><span class="self">self</span>, relay_mode: RelayMode) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.relay_mode = relay_mode;
+        <span class="self">self
+    </span>}
+
+    <span class="doccomment">/// Sets the protocol to use for relay connections.
+    ///
+    /// Options are either [`RelayProtocol::Websocket`] or [`RelayProtocol::Relay`].
+    ///
+    /// `Websocket` is considered unstable between iroh versions at the moment.
+    /// The protocol can change in compatibility-breaking ways before iroh 1.0.
+    ///
+    /// Default is set to `Relay` at the moment, until we've stabilized the websocket protocol.
+    </span><span class="kw">pub fn </span>relay_conn_protocol(<span class="kw-2">mut </span><span class="self">self</span>, protocol: RelayProtocol) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.relay_protocol = protocol;
         <span class="self">self
     </span>}
 
@@ -3448,7 +3659,8 @@
             <span class="string">"Attempting connection..."
         </span>);
         <span class="kw">let </span>client_config = {
-            <span class="kw">let </span>alpn_protocols = <span class="macro">vec!</span>[alpn.to_vec()];
+            <span class="kw">let </span><span class="kw-2">mut </span>alpn_protocols = <span class="macro">vec!</span>[alpn.to_vec()];
+            alpn_protocols.extend(options.additional_alpns);
             <span class="kw">let </span>quic_client_config = <span class="self">self</span>.static_config.tls_auth.make_client_config(
                 <span class="kw-2">&amp;</span><span class="self">self</span>.static_config.secret_key,
                 node_id,
@@ -3959,6 +4171,7 @@
 </span><span class="attr">#[derive(Default, Debug, Clone)]
 </span><span class="kw">pub struct </span>ConnectOptions {
     transport_config: <span class="prelude-ty">Option</span>&lt;Arc&lt;TransportConfig&gt;&gt;,
+    additional_alpns: Vec&lt;Vec&lt;u8&gt;&gt;,
 }
 
 <span class="kw">impl </span>ConnectOptions {
@@ -3973,6 +4186,31 @@
     <span class="doccomment">/// Sets the QUIC transport config options for this connection.
     </span><span class="kw">pub fn </span>with_transport_config(<span class="kw-2">mut </span><span class="self">self</span>, transport_config: Arc&lt;TransportConfig&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.transport_config = <span class="prelude-val">Some</span>(transport_config);
+        <span class="self">self
+    </span>}
+
+    <span class="doccomment">/// Sets [ALPN] identifiers that should be signaled as supported on connection, *in
+    /// addition* to the main [ALPN] identifier used in [`Endpoint::connect_with_opts`].
+    ///
+    /// This allows connecting to servers that may only support older versions of your
+    /// protocol. In this case, you would add the older [ALPN] identifiers with this
+    /// function.
+    ///
+    /// You'll know the final negotiated [ALPN] identifier once your connection was
+    /// established using [`Connection::alpn`], or even slightly earlier in the
+    /// handshake by using [`Connecting::alpn`].
+    /// The negotiated [ALPN] identifier may be any of the [ALPN] identifiers in this
+    /// list or the main [ALPN] used in [`Endpoint::connect_with_opts`].
+    ///
+    /// The [ALPN] identifier order on the connect side doesn't matter, since it's the
+    /// accept side that determines the protocol.
+    ///
+    /// For setting the supported [ALPN] identifiers on the accept side, see the endpoint
+    /// builder's [`Builder::alpns`] function.
+    ///
+    /// [ALPN]: https://en.wikipedia.org/wiki/Application-Layer_Protocol_Negotiation
+    </span><span class="kw">pub fn </span>with_additional_alpns(<span class="kw-2">mut </span><span class="self">self</span>, alpns: Vec&lt;Vec&lt;u8&gt;&gt;) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.additional_alpns = alpns;
         <span class="self">self
     </span>}
 }
@@ -4722,6 +4960,7 @@
 
     <span class="kw">use </span>std::time::Instant;
 
+    <span class="kw">use </span>iroh_relay::http::Protocol;
     <span class="kw">use </span>n0_future::StreamExt;
     <span class="kw">use </span>rand::SeedableRng;
     <span class="kw">use </span>testresult::TestResult;
@@ -5001,6 +5240,57 @@
         </span><span class="kw">if </span>start.elapsed() &gt; Duration::from_secs(<span class="number">15</span>) {
             <span class="macro">panic!</span>(<span class="string">"Test too slow, something went wrong"</span>);
         }
+    }
+
+    <span class="attr">#[tokio::test]
+    #[traced_test]
+    </span><span class="kw">async fn </span>endpoint_send_relay_websockets() -&gt; testresult::TestResult {
+        <span class="kw">let </span>(relay_map, _relay_url, _guard) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>client = Endpoint::builder()
+            .relay_conn_protocol(Protocol::Websocket)
+            .relay_mode(RelayMode::Custom(relay_map.clone()))
+            .bind()
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>server = Endpoint::builder()
+            .relay_conn_protocol(Protocol::Websocket)
+            .relay_mode(RelayMode::Custom(relay_map))
+            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
+            .bind()
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="kw">let </span>task = tokio::spawn({
+            <span class="kw">let </span>server = server.clone();
+            <span class="kw">async move </span>{
+                <span class="kw">let </span><span class="prelude-val">Some</span>(conn) = server.accept().<span class="kw">await else </span>{
+                    <span class="macro">bail!</span>(<span class="string">"Expected an incoming connection"</span>);
+                };
+                <span class="kw">let </span>conn = conn.<span class="kw">await</span><span class="question-mark">?</span>;
+                <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.accept_bi().<span class="kw">await</span><span class="question-mark">?</span>;
+                <span class="kw">let </span>data = recv.read_to_end(<span class="number">1000</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+                send.write_all(<span class="kw-2">&amp;</span>data).<span class="kw">await</span><span class="question-mark">?</span>;
+                send.finish()<span class="question-mark">?</span>;
+                conn.closed().<span class="kw">await</span>;
+
+                <span class="prelude-val">Ok</span>(())
+            }
+        });
+
+        <span class="kw">let </span>addr = server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>conn = client.connect(addr, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.open_bi().<span class="kw">await</span><span class="question-mark">?</span>;
+        send.write_all(<span class="string">b"Hello, world!"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        send.finish()<span class="question-mark">?</span>;
+        <span class="kw">let </span>data = recv.read_to_end(<span class="number">1000</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        conn.close(<span class="number">0u32</span>.into(), <span class="string">b"bye!"</span>);
+
+        task.<span class="kw">await</span><span class="question-mark">??</span>;
+
+        client.close().<span class="kw">await</span>;
+        server.close().<span class="kw">await</span>;
+
+        <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>data, <span class="string">b"Hello, world!"</span>);
+
+        <span class="prelude-val">Ok</span>(())
     }
 
     <span class="attr">#[tokio::test]
@@ -5420,6 +5710,104 @@
 
         <span class="macro">assert_eq!</span>(app_close.error_code, <span class="number">42u32</span>.into());
         <span class="macro">assert_eq!</span>(app_close.reason.as_ref(), <span class="string">b"thanks, bye!"</span>);
+
+        <span class="prelude-val">Ok</span>(())
+    }
+
+    <span class="doccomment">/// Configures the accept side to take `accept_alpns` ALPNs, then connects to it with `primary_connect_alpn`
+    /// with `secondary_connect_alpns` set, and finally returns the negotiated ALPN.
+    </span><span class="kw">async fn </span>alpn_connection_test(
+        accept_alpns: Vec&lt;Vec&lt;u8&gt;&gt;,
+        primary_connect_alpn: <span class="kw-2">&amp;</span>[u8],
+        secondary_connect_alpns: Vec&lt;Vec&lt;u8&gt;&gt;,
+    ) -&gt; testresult::TestResult&lt;<span class="prelude-ty">Option</span>&lt;Vec&lt;u8&gt;&gt;&gt; {
+        <span class="kw">let </span>client = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>server = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .alpns(accept_alpns)
+            .bind()
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>server_addr = server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>server_task = tokio::spawn({
+            <span class="kw">let </span>server = server.clone();
+            <span class="kw">async move </span>{
+                <span class="kw">let </span>incoming = server.accept().<span class="kw">await</span>.unwrap();
+                <span class="kw">let </span>conn = incoming.<span class="kw">await</span><span class="question-mark">?</span>;
+                conn.close(<span class="number">0u32</span>.into(), <span class="string">b"bye!"</span>);
+                testresult::TestResult::Ok(conn.alpn())
+            }
+        });
+
+        <span class="kw">let </span>conn = client
+            .connect_with_opts(
+                server_addr,
+                primary_connect_alpn,
+                ConnectOptions::new().with_additional_alpns(secondary_connect_alpns),
+            )
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>conn = conn.<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>client_alpn = conn.alpn();
+        conn.closed().<span class="kw">await</span>;
+        client.close().<span class="kw">await</span>;
+        server.close().<span class="kw">await</span>;
+
+        <span class="kw">let </span>server_alpn = server_task.<span class="kw">await</span><span class="question-mark">??</span>;
+
+        <span class="macro">assert_eq!</span>(client_alpn, server_alpn);
+
+        <span class="prelude-val">Ok</span>(server_alpn)
+    }
+
+    <span class="attr">#[tokio::test]
+    #[traced_test]
+    </span><span class="kw">async fn </span>connect_multiple_alpn_negotiated() -&gt; testresult::TestResult {
+        <span class="kw">const </span>ALPN_ONE: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"alpn/1"</span>;
+        <span class="kw">const </span>ALPN_TWO: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"alpn/2"</span>;
+
+        <span class="macro">assert_eq!</span>(
+            alpn_connection_test(
+                <span class="comment">// Prefer version 2 over version 1 on the accept side
+                </span><span class="macro">vec!</span>[ALPN_TWO.to_vec(), ALPN_ONE.to_vec()],
+                ALPN_TWO,
+                <span class="macro">vec!</span>[ALPN_ONE.to_vec()],
+            )
+            .<span class="kw">await</span><span class="question-mark">?</span>,
+            <span class="prelude-val">Some</span>(ALPN_TWO.to_vec()),
+            <span class="string">"accept side prefers version 2 over 1"
+        </span>);
+
+        <span class="macro">assert_eq!</span>(
+            alpn_connection_test(
+                <span class="comment">// Only support the old version
+                </span><span class="macro">vec!</span>[ALPN_ONE.to_vec()],
+                ALPN_TWO,
+                <span class="macro">vec!</span>[ALPN_ONE.to_vec()],
+            )
+            .<span class="kw">await</span><span class="question-mark">?</span>,
+            <span class="prelude-val">Some</span>(ALPN_ONE.to_vec()),
+            <span class="string">"accept side only supports the old version"
+        </span>);
+
+        <span class="macro">assert_eq!</span>(
+            alpn_connection_test(
+                <span class="macro">vec!</span>[ALPN_TWO.to_vec(), ALPN_ONE.to_vec()],
+                ALPN_ONE,
+                <span class="macro">vec!</span>[ALPN_TWO.to_vec()],
+            )
+            .<span class="kw">await</span><span class="question-mark">?</span>,
+            <span class="prelude-val">Some</span>(ALPN_TWO.to_vec()),
+            <span class="string">"connect side ALPN order doesn't matter"
+        </span>);
+
+        <span class="macro">assert_eq!</span>(
+            alpn_connection_test(<span class="macro">vec!</span>[ALPN_TWO.to_vec(), ALPN_ONE.to_vec()], ALPN_ONE, <span class="macro">vec!</span>[],)
+                .<span class="kw">await</span><span class="question-mark">?</span>,
+            <span class="prelude-val">Some</span>(ALPN_ONE.to_vec()),
+            <span class="string">"connect side only supports the old version"
+        </span>);
 
         <span class="prelude-val">Ok</span>(())
     }
