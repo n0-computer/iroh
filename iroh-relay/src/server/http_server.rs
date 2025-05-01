@@ -72,6 +72,7 @@ fn body_full(content: impl Into<hyper::body::Bytes>) -> BytesBody {
     http_body_util::Full::new(content.into())
 }
 
+#[allow(clippy::result_large_err)]
 fn downcast_upgrade(upgraded: Upgraded) -> Result<(MaybeTlsStream, Bytes), Error> {
     match upgraded.downcast::<hyper_util::rt::TokioIo<MaybeTlsStream>>() {
         Ok(parts) => Ok((parts.io.into_inner(), parts.read_buf)),
@@ -151,8 +152,6 @@ pub(super) struct TlsConfig {
 /// Server accept errors
 #[common_fields({
     backtrace: Option<Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
 })]
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
@@ -160,27 +159,61 @@ pub(super) struct TlsConfig {
 #[snafu(visibility(pub(crate)))]
 pub enum Error {
     #[snafu(display("Unable to receive client information"))]
-    RecvClientKey { source: streams::Error },
+    RecvClientKey {
+        #[allow(clippy::result_large_err)]
+        source: streams::Error,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
     #[snafu(display("Could not downcast the upgraded connection to MaybeTlsStream"))]
-    DowncastUpgrade,
+    DowncastUpgrade {
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
     #[snafu(transparent)]
     Io { source: std::io::Error },
     #[snafu(display("TLS[acme] handshake"))]
-    Handshake { source: std::io::Error },
+    Handshake {
+        source: std::io::Error,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
     #[snafu(display("TLS[acme] serve connection"))]
-    ServeConnection { source: hyper::Error },
+    ServeConnection {
+        source: hyper::Error,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
     #[snafu(display("TLS[manual] timeout"))]
-    Timeout { source: Elapsed },
+    Timeout {
+        source: Elapsed,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
     #[snafu(display("TLS[manual] accept"))]
-    Accept { source: std::io::Error },
+    Accept {
+        source: std::io::Error,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
     #[snafu(display("Cannot deal with buffered data yet: {buf:?}"))]
-    BufferNotEmpty { buf: Bytes },
+    BufferNotEmpty {
+        buf: Bytes,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
     #[snafu(display("Client not authenticated: {key:?}"))]
-    ClientNotAuthenticated { key: PublicKey },
+    ClientNotAuthenticated {
+        key: PublicKey,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
     #[snafu(display("Unexpected client version {version}, expected {expected_version}"))]
     UnexpectedClientVersion {
         version: usize,
         expected_version: usize,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
     },
 }
 

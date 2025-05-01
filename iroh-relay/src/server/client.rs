@@ -20,6 +20,7 @@ use tokio::{
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, error, instrument, trace, warn, Instrument};
 
+use super::clients::SendPacketError;
 use crate::{
     protos::{
         disco,
@@ -28,8 +29,6 @@ use crate::{
     server::{clients::Clients, metrics::Metrics, streams::RelayedStream, ClientRateLimit},
     PingTracker,
 };
-
-use super::clients::SendPacketError;
 
 /// A request to write a dataframe to a Client
 #[derive(Debug, Clone)]
@@ -181,8 +180,6 @@ impl Client {
 /// Handle frame error
 #[common_fields({
     backtrace: Option<Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
 })]
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
@@ -194,18 +191,23 @@ pub enum HandleFrameError {
     #[snafu(transparent)]
     Streams { source: super::streams::Error },
     #[snafu(display("Stream terminated"))]
-    StreamTerminated,
+    StreamTerminated {
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
     #[snafu(transparent)]
     Relay { source: super::protos::relay::Error },
     #[snafu(display("Server issue: {problem:?}"))]
-    Health { problem: Bytes },
+    Health {
+        problem: Bytes,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
 }
 
 /// Run error
 #[common_fields({
     backtrace: Option<Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
 })]
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
@@ -215,25 +217,56 @@ pub enum RunError {
     #[snafu(transparent)]
     SendPacket { source: SendPacketError },
     #[snafu(display("Flush"))]
-    Flush,
+    Flush {
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
     #[snafu(transparent)]
     HandleFrame { source: HandleFrameError },
     #[snafu(display("Server.disco_send_queue dropped"))]
-    DiscoSendQueuePacketDrop,
+    DiscoSendQueuePacketDrop {
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
     #[snafu(display("Failed to send disco packet"))]
-    DiscoPacketSend { source: crate::protos::relay::Error },
+    DiscoPacketSend {
+        source: crate::protos::relay::Error,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
     #[snafu(display("Server.send_queue dropped"))]
-    SendQueuePacketDrop,
+    SendQueuePacketDrop {
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
     #[snafu(display("Failed to send packet"))]
-    PacketSend { source: crate::protos::relay::Error },
+    PacketSend {
+        source: crate::protos::relay::Error,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
     #[snafu(display("Server.node_gone dropped"))]
-    NodeGoneDrop,
+    NodeGoneDrop {
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
     #[snafu(display("NodeGone write frame failed"))]
-    NodeGoneWriteFrame { source: crate::protos::relay::Error },
+    NodeGoneWriteFrame {
+        source: crate::protos::relay::Error,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
     #[snafu(display("Keep alive write frame failed"))]
-    KeepAliveWriteFrame { source: crate::protos::relay::Error },
+    KeepAliveWriteFrame {
+        source: crate::protos::relay::Error,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
     #[snafu(display("Tick flush"))]
-    TickFlush,
+    TickFlush {
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
 }
 
 /// Manages all the reads and writes to this client. It periodically sends a `KEEP_ALIVE`
