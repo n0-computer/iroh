@@ -562,7 +562,8 @@ async fn main() -> Result<()> {
         _ = relay.task_handle() => (),
     }
 
-    relay.shutdown().await
+    relay.shutdown().await?;
+    Ok(())
 }
 
 async fn maybe_load_tls(

@@ -477,12 +477,7 @@ impl Frame {
                 let content = content.slice(PublicKey::LENGTH..);
                 Self::RecvPacket { src_key, content }
             }
-            FrameType::KeepAlive => {
-                if !content.is_empty() {
-                    return Err(Error::InvalidFrame);
-                }
-                Self::KeepAlive
-            }
+            FrameType::KeepAlive => Self::KeepAlive,
             FrameType::NotePreferred => {
                 if content.len() != 1 {
                     return Err(Error::InvalidFrame);
