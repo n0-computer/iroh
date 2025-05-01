@@ -856,7 +856,40 @@
 <a href="#855" id="855">855</a>
 <a href="#856" id="856">856</a>
 <a href="#857" id="857">857</a>
-<a href="#858" id="858">858</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
+<a href="#858" id="858">858</a>
+<a href="#859" id="859">859</a>
+<a href="#860" id="860">860</a>
+<a href="#861" id="861">861</a>
+<a href="#862" id="862">862</a>
+<a href="#863" id="863">863</a>
+<a href="#864" id="864">864</a>
+<a href="#865" id="865">865</a>
+<a href="#866" id="866">866</a>
+<a href="#867" id="867">867</a>
+<a href="#868" id="868">868</a>
+<a href="#869" id="869">869</a>
+<a href="#870" id="870">870</a>
+<a href="#871" id="871">871</a>
+<a href="#872" id="872">872</a>
+<a href="#873" id="873">873</a>
+<a href="#874" id="874">874</a>
+<a href="#875" id="875">875</a>
+<a href="#876" id="876">876</a>
+<a href="#877" id="877">877</a>
+<a href="#878" id="878">878</a>
+<a href="#879" id="879">879</a>
+<a href="#880" id="880">880</a>
+<a href="#881" id="881">881</a>
+<a href="#882" id="882">882</a>
+<a href="#883" id="883">883</a>
+<a href="#884" id="884">884</a>
+<a href="#885" id="885">885</a>
+<a href="#886" id="886">886</a>
+<a href="#887" id="887">887</a>
+<a href="#888" id="888">888</a>
+<a href="#889" id="889">889</a>
+<a href="#890" id="890">890</a>
+<a href="#891" id="891">891</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
 
 </span><span class="kw">use </span>std::{
     collections::HashSet, future::Future, num::NonZeroU32, pin::Pin, sync::Arc, task::Poll,
@@ -878,6 +911,7 @@
 <span class="kw">use </span>tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 <span class="kw">use </span>tracing::{debug, error, instrument, trace, warn, Instrument};
 
+<span class="kw">use </span><span class="kw">super</span>::clients::SendPacketError;
 <span class="kw">use crate</span>::{
     protos::{
         disco,
@@ -886,8 +920,6 @@
     server::{clients::Clients, metrics::Metrics, streams::RelayedStream, ClientRateLimit},
     PingTracker,
 };
-
-<span class="kw">use </span><span class="kw">super</span>::clients::SendPacketError;
 
 <span class="doccomment">/// A request to write a dataframe to a Client
 </span><span class="attr">#[derive(Debug, Clone)]
@@ -1039,10 +1071,8 @@
 <span class="doccomment">/// Handle frame error
 </span><span class="attr">#[common_fields({
     backtrace: <span class="prelude-ty">Option</span>&lt;Backtrace&gt;,
-    <span class="attr">#[snafu(implicit)]
-    </span>span_trace: n0_snafu::SpanTrace,
 })]
-<span class="attr">#[allow(missing_docs)]
+#[allow(missing_docs)]
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
 #[snafu(visibility(<span class="kw">pub</span>(<span class="kw">crate</span>)))]
@@ -1052,20 +1082,25 @@
     <span class="attr">#[snafu(transparent)]
     </span>Streams { source: <span class="kw">super</span>::streams::Error },
     <span class="attr">#[snafu(display(<span class="string">"Stream terminated"</span>))]
-    </span>StreamTerminated,
+    </span>StreamTerminated {
+        <span class="attr">#[snafu(implicit)]
+        </span>span_trace: n0_snafu::SpanTrace,
+    },
     <span class="attr">#[snafu(transparent)]
     </span>Relay { source: <span class="kw">super</span>::protos::relay::Error },
     <span class="attr">#[snafu(display(<span class="string">"Server issue: {problem:?}"</span>))]
-    </span>Health { problem: Bytes },
+    </span>Health {
+        problem: Bytes,
+        <span class="attr">#[snafu(implicit)]
+        </span>span_trace: n0_snafu::SpanTrace,
+    },
 }
 
 <span class="doccomment">/// Run error
 </span><span class="attr">#[common_fields({
     backtrace: <span class="prelude-ty">Option</span>&lt;Backtrace&gt;,
-    <span class="attr">#[snafu(implicit)]
-    </span>span_trace: n0_snafu::SpanTrace,
 })]
-<span class="attr">#[allow(missing_docs)]
+#[allow(missing_docs)]
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
 #[snafu(visibility(<span class="kw">pub</span>(<span class="kw">crate</span>)))]
@@ -1073,25 +1108,56 @@
     <span class="attr">#[snafu(transparent)]
     </span>SendPacket { source: SendPacketError },
     <span class="attr">#[snafu(display(<span class="string">"Flush"</span>))]
-    </span>Flush,
+    </span>Flush {
+        <span class="attr">#[snafu(implicit)]
+        </span>span_trace: n0_snafu::SpanTrace,
+    },
     <span class="attr">#[snafu(transparent)]
     </span>HandleFrame { source: HandleFrameError },
     <span class="attr">#[snafu(display(<span class="string">"Server.disco_send_queue dropped"</span>))]
-    </span>DiscoSendQueuePacketDrop,
+    </span>DiscoSendQueuePacketDrop {
+        <span class="attr">#[snafu(implicit)]
+        </span>span_trace: n0_snafu::SpanTrace,
+    },
     <span class="attr">#[snafu(display(<span class="string">"Failed to send disco packet"</span>))]
-    </span>DiscoPacketSend { source: <span class="kw">crate</span>::protos::relay::Error },
+    </span>DiscoPacketSend {
+        source: <span class="kw">crate</span>::protos::relay::Error,
+        <span class="attr">#[snafu(implicit)]
+        </span>span_trace: n0_snafu::SpanTrace,
+    },
     <span class="attr">#[snafu(display(<span class="string">"Server.send_queue dropped"</span>))]
-    </span>SendQueuePacketDrop,
+    </span>SendQueuePacketDrop {
+        <span class="attr">#[snafu(implicit)]
+        </span>span_trace: n0_snafu::SpanTrace,
+    },
     <span class="attr">#[snafu(display(<span class="string">"Failed to send packet"</span>))]
-    </span>PacketSend { source: <span class="kw">crate</span>::protos::relay::Error },
+    </span>PacketSend {
+        source: <span class="kw">crate</span>::protos::relay::Error,
+        <span class="attr">#[snafu(implicit)]
+        </span>span_trace: n0_snafu::SpanTrace,
+    },
     <span class="attr">#[snafu(display(<span class="string">"Server.node_gone dropped"</span>))]
-    </span>NodeGoneDrop,
+    </span>NodeGoneDrop {
+        <span class="attr">#[snafu(implicit)]
+        </span>span_trace: n0_snafu::SpanTrace,
+    },
     <span class="attr">#[snafu(display(<span class="string">"NodeGone write frame failed"</span>))]
-    </span>NodeGoneWriteFrame { source: <span class="kw">crate</span>::protos::relay::Error },
+    </span>NodeGoneWriteFrame {
+        source: <span class="kw">crate</span>::protos::relay::Error,
+        <span class="attr">#[snafu(implicit)]
+        </span>span_trace: n0_snafu::SpanTrace,
+    },
     <span class="attr">#[snafu(display(<span class="string">"Keep alive write frame failed"</span>))]
-    </span>KeepAliveWriteFrame { source: <span class="kw">crate</span>::protos::relay::Error },
+    </span>KeepAliveWriteFrame {
+        source: <span class="kw">crate</span>::protos::relay::Error,
+        <span class="attr">#[snafu(implicit)]
+        </span>span_trace: n0_snafu::SpanTrace,
+    },
     <span class="attr">#[snafu(display(<span class="string">"Tick flush"</span>))]
-    </span>TickFlush,
+    </span>TickFlush {
+        <span class="attr">#[snafu(implicit)]
+        </span>span_trace: n0_snafu::SpanTrace,
+    },
 }
 
 <span class="doccomment">/// Manages all the reads and writes to this client. It periodically sends a `KEEP_ALIVE`

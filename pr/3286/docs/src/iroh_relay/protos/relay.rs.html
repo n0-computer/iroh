@@ -915,7 +915,9 @@
 <a href="#914" id="914">914</a>
 <a href="#915" id="915">915</a>
 <a href="#916" id="916">916</a>
-<a href="#917" id="917">917</a></pre></div><pre class="rust"><code><span class="doccomment">//! This module implements the relaying protocol used by the `server` and `client`.
+<a href="#917" id="917">917</a>
+<a href="#918" id="918">918</a>
+<a href="#919" id="919">919</a></pre></div><pre class="rust"><code><span class="doccomment">//! This module implements the relaying protocol used by the `server` and `client`.
 //!
 //! Protocol flow:
 //!
@@ -1273,6 +1275,7 @@
     <span class="doccomment">/// Tries to decode a frame received over websockets.
     ///
     /// Specifically, bytes received from a binary websocket message frame.
+    </span><span class="attr">#[allow(clippy::result_large_err)]
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>decode_from_ws_msg(bytes: Bytes, cache: <span class="kw-2">&amp;</span>KeyCache) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, Error&gt; {
         <span class="kw">if </span>bytes.is_empty() {
             <span class="kw">return </span><span class="prelude-val">Err</span>(Error::TooSmall);
@@ -1343,7 +1346,8 @@
         }
     }
 
-    <span class="kw">fn </span>from_bytes(frame_type: FrameType, content: Bytes, cache: <span class="kw-2">&amp;</span>KeyCache) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, Error&gt; {
+    <span class="attr">#[allow(clippy::result_large_err)]
+    </span><span class="kw">fn </span>from_bytes(frame_type: FrameType, content: Bytes, cache: <span class="kw-2">&amp;</span>KeyCache) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, Error&gt; {
         <span class="kw">let </span>res = <span class="kw">match </span>frame_type {
             FrameType::ClientInfo =&gt; {
                 <span class="kw">if </span>content.len() &lt; PublicKey::LENGTH + Signature::BYTE_SIZE + MAGIC.len() {
