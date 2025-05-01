@@ -20,8 +20,8 @@ pub const QUIC_ADDR_DISC_CLOSE_REASON: &[u8] = b"finished";
 
 #[cfg(feature = "server")]
 pub(crate) mod server {
-    use anyhow::Result;
-    use quinn::{crypto::rustls::QuicServerConfig, ApplicationClose};
+    use quinn::{crypto::rustls::QuicServerConfig, ApplicationClose, ConnectionError};
+    use snafu::ResultExt;
     use tokio::task::JoinSet;
     use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
     use tracing::{debug, info, info_span, Instrument};
@@ -33,6 +33,35 @@ pub(crate) mod server {
         bind_addr: SocketAddr,
         cancel: CancellationToken,
         handle: AbortOnDropHandle<()>,
+    }
+
+    /// Server spawn errors
+    #[allow(missing_docs)]
+    #[derive(Debug, Snafu)]
+    #[non_exhaustive]
+    #[snafu(visibility(pub(crate)))]
+    pub enum QuicSpawnError {
+        #[snafu(transparent)]
+        NoInitialCipherSuite {
+            source: NoInitialCipherSuite,
+            backtrace: Option<Backtrace>,
+            #[snafu(implicit)]
+            span_trace: n0_snafu::SpanTrace,
+        },
+        #[snafu(display("Unable to spawn a QUIC endpoint server"))]
+        EndpointServer {
+            source: std::io::Error,
+            backtrace: Option<Backtrace>,
+            #[snafu(implicit)]
+            span_trace: n0_snafu::SpanTrace,
+        },
+        #[snafu(display("Unable to get the local address from the endpoint"))]
+        LocalAddr {
+            source: std::io::Error,
+            backtrace: Option<Backtrace>,
+            #[snafu(implicit)]
+            span_trace: n0_snafu::SpanTrace,
+        },
     }
 
     impl QuicServer {
@@ -66,13 +95,13 @@ pub(crate) mod server {
         /// # Errors
         /// If the given `quic_config` contains a [`rustls::ServerConfig`] that cannot
         /// be converted to a [`QuicServerConfig`], usually because it does not support
-        /// TLS 1.3, this method will error.
+        /// TLS 1.3, a [`NoInitialCipherSuite`] will occur.
         ///
         /// # Panics
         /// If there is a panic during a connection, it will be propagated
         /// up here. Any other errors in a connection will be logged as a
         ///  warning.
-        pub(crate) fn spawn(mut quic_config: QuicConfig) -> Result<Self> {
+        pub(crate) fn spawn(mut quic_config: QuicConfig) -> Result<Self, QuicSpawnError> {
             quic_config.server_config.alpn_protocols =
                 vec![crate::quic::ALPN_QUIC_ADDR_DISC.to_vec()];
             let server_config = QuicServerConfig::try_from(quic_config.server_config)?;
@@ -85,8 +114,9 @@ pub(crate) mod server {
                 // enable sending quic address discovery frames
                 .send_observed_address_reports(true);
 
-            let endpoint = quinn::Endpoint::server(server_config, quic_config.bind_addr)?;
-            let bind_addr = endpoint.local_addr()?;
+            let endpoint = quinn::Endpoint::server(server_config, quic_config.bind_addr)
+                .context(EndpointServerSnafu)?;
+            let bind_addr = endpoint.local_addr().context(LocalAddrSnafu)?;
 
             info!(?bind_addr, "QUIC server listening on");
 
@@ -151,12 +181,13 @@ pub(crate) mod server {
 
         /// Closes the underlying QUIC endpoint and the tasks running the
         /// QUIC connections.
-        pub async fn shutdown(mut self) -> Result<()> {
+        pub async fn shutdown(mut self) {
             self.cancel.cancel();
             if !self.task_handle().is_finished() {
-                self.task_handle().await?
+                // only possible error is a `JoinError`, no errors about what might
+                // have happened during a connection are propagated.
+                _ = self.task_handle().await;
             }
-            Ok(())
         }
     }
 
@@ -176,11 +207,11 @@ pub(crate) mod server {
     }
 
     /// Handle the connection from the client.
-    async fn handle_connection(incoming: quinn::Incoming) -> Result<()> {
+    async fn handle_connection(incoming: quinn::Incoming) -> Result<(), ConnectionError> {
         let connection = match incoming.await {
             Ok(conn) => conn,
             Err(e) => {
-                return Err(e.into());
+                return Err(e);
             }
         };
         debug!("established");
@@ -192,7 +223,7 @@ pub(crate) mod server {
             {
                 Ok(())
             }
-            _ => Err(connection_err.into()),
+            _ => Err(connection_err),
         }
     }
 }
@@ -355,7 +386,7 @@ mod tests {
         // wait until the endpoint delivers the closing message to the server
         client_endpoint.wait_idle().await;
         // shut down the quic server
-        quic_server.shutdown().await?;
+        quic_server.shutdown().await;
 
         assert_eq!(client_addr, addr);
         Ok(())

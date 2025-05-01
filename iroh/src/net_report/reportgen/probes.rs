@@ -190,7 +190,7 @@ pub(super) struct ProbeSet {
 }
 
 #[derive(Debug, Snafu)]
-#[snafu(display("Missmatching probe"))]
+#[snafu(display("Mismatching probe"))]
 struct PushError;
 
 impl ProbeSet {

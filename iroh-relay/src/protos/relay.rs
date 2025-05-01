@@ -356,6 +356,7 @@ impl Frame {
     /// Tries to decode a frame received over websockets.
     ///
     /// Specifically, bytes received from a binary websocket message frame.
+    #[allow(clippy::result_large_err)]
     pub(crate) fn decode_from_ws_msg(bytes: Bytes, cache: &KeyCache) -> Result<Self, Error> {
         if bytes.is_empty() {
             return Err(Error::TooSmall);
@@ -426,6 +427,7 @@ impl Frame {
         }
     }
 
+    #[allow(clippy::result_large_err)]
     fn from_bytes(frame_type: FrameType, content: Bytes, cache: &KeyCache) -> Result<Self, Error> {
         let res = match frame_type {
             FrameType::ClientInfo => {
@@ -477,12 +479,7 @@ impl Frame {
                 let content = content.slice(PublicKey::LENGTH..);
                 Self::RecvPacket { src_key, content }
             }
-            FrameType::KeepAlive => {
-                if !content.is_empty() {
-                    return Err(Error::InvalidFrame);
-                }
-                Self::KeepAlive
-            }
+            FrameType::KeepAlive => Self::KeepAlive,
             FrameType::NotePreferred => {
                 if content.len() != 1 {
                     return Err(Error::InvalidFrame);
