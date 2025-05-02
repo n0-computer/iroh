@@ -67,11 +67,10 @@ use crate::{
 ///
 /// ```no_run
 /// # use std::sync::Arc;
-/// # use anyhow::Result;
 /// # use futures_lite::future::Boxed as BoxedFuture;
 /// # use iroh::{endpoint::Connecting, protocol::{ProtocolHandler, Router}, Endpoint, NodeAddr};
 /// #
-/// # async fn test_compile() -> Result<()> {
+/// # async fn test_compile() -> anyhow::Result<()> {
 /// let endpoint = Endpoint::builder().discovery_n0().bind().await?;
 ///
 /// let router = Router::builder(endpoint)
@@ -252,7 +251,7 @@ impl Router {
     ///
     /// If some [`ProtocolHandler`] panicked in the accept loop, this will propagate
     /// that panic into the result here.
-    pub async fn shutdown(&self) -> anyhow::Result<()> {
+    pub async fn shutdown(&self) -> Result<(), tokio::task::JoinError> {
         if self.is_shutdown() {
             return Ok(());
         }
@@ -470,10 +469,12 @@ impl<P: ProtocolHandler + Clone> ProtocolHandler for AccessLimit<P> {
 
 #[cfg(test)]
 mod tests {
+    use testresult::TestResult;
+
     use super::*;
 
     #[tokio::test]
-    async fn test_shutdown() -> anyhow::Result<()> {
+    async fn test_shutdown() -> TestResult {
         let endpoint = Endpoint::builder().bind().await?;
         let router = Router::builder(endpoint.clone()).spawn();
 
@@ -511,7 +512,7 @@ mod tests {
         }
     }
     #[tokio::test]
-    async fn test_limiter() -> anyhow::Result<()> {
+    async fn test_limiter() -> TestResult {
         let e1 = Endpoint::builder().bind().await?;
         // deny all access
         let proto = AccessLimit::new(Echo, |_node_id| false);

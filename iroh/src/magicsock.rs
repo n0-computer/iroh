@@ -3461,8 +3461,8 @@ impl NetInfo {
 
 #[cfg(test)]
 mod tests {
-    use anyhow::anyhow;
     use rand::RngCore;
+    use testresult::TestResult;
     use tokio_util::task::AbortOnDropHandle;
     use tracing_test::traced_test;
 
@@ -3533,7 +3533,7 @@ mod tests {
     }
 
     impl MagicStack {
-        async fn new(relay_mode: RelayMode) -> anyhow::Result<Self> {
+        async fn new(relay_mode: RelayMode) -> Self {
             let secret_key = SecretKey::generate(rand::thread_rng());
 
             let mut transport_config = quinn::TransportConfig::default();
@@ -3545,12 +3545,13 @@ mod tests {
                 .relay_mode(relay_mode)
                 .alpns(vec![ALPN.to_vec()])
                 .bind()
-                .await?;
+                .await
+                .unwrap();
 
-            Ok(Self {
+            Self {
                 secret_key,
                 endpoint,
-            })
+            }
         }
 
         fn tracked_endpoints(&self) -> Vec<PublicKey> {
@@ -3640,7 +3641,7 @@ mod tests {
     }
 
     #[instrument(skip_all, fields(me = %ep.endpoint.node_id().fmt_short()))]
-    async fn echo_receiver(ep: MagicStack, loss: ExpectedLoss) -> anyhow::Result<()> {
+    async fn echo_receiver(ep: MagicStack, loss: ExpectedLoss) -> TestResult {
         info!("accepting conn");
         let conn = ep.endpoint.accept().await.expect("no conn");
 
@@ -3685,7 +3686,7 @@ mod tests {
         dest_id: PublicKey,
         msg: &[u8],
         loss: ExpectedLoss,
-    ) -> anyhow::Result<()> {
+    ) -> TestResult {
         info!("connecting to {}", dest_id.fmt_short());
         let dest = NodeAddr::new(dest_id);
         let conn = ep.endpoint.connect(dest, ALPN).await?;
@@ -3774,9 +3775,9 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     #[traced_test]
-    async fn test_two_devices_roundtrip_quinn_magic() -> anyhow::Result<()> {
-        let m1 = MagicStack::new(RelayMode::Disabled).await?;
-        let m2 = MagicStack::new(RelayMode::Disabled).await?;
+    async fn test_two_devices_roundtrip_quinn_magic() -> TestResult {
+        let m1 = MagicStack::new(RelayMode::Disabled).await;
+        let m2 = MagicStack::new(RelayMode::Disabled).await;
 
         let _guard = mesh_stacks(vec![m1.clone(), m2.clone()]).await?;
 
@@ -3811,8 +3812,8 @@ mod tests {
     #[traced_test]
     async fn test_regression_network_change_rebind_wakes_connection_driver(
     ) -> testresult::TestResult {
-        let m1 = MagicStack::new(RelayMode::Disabled).await?;
-        let m2 = MagicStack::new(RelayMode::Disabled).await?;
+        let m1 = MagicStack::new(RelayMode::Disabled).await;
+        let m2 = MagicStack::new(RelayMode::Disabled).await;
 
         println!("Net change");
         m1.endpoint.magic_sock().force_network_change(true).await;
@@ -3848,7 +3849,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     #[traced_test]
-    async fn test_two_devices_roundtrip_network_change() -> anyhow::Result<()> {
+    async fn test_two_devices_roundtrip_network_change() -> TestResult {
         time::timeout(
             Duration::from_secs(90),
             test_two_devices_roundtrip_network_change_impl(),
@@ -3858,9 +3859,9 @@ mod tests {
 
     /// Same structure as `test_two_devices_roundtrip_quinn_magic`, but interrupts regularly
     /// with (simulated) network changes.
-    async fn test_two_devices_roundtrip_network_change_impl() -> anyhow::Result<()> {
-        let m1 = MagicStack::new(RelayMode::Disabled).await?;
-        let m2 = MagicStack::new(RelayMode::Disabled).await?;
+    async fn test_two_devices_roundtrip_network_change_impl() -> TestResult {
+        let m1 = MagicStack::new(RelayMode::Disabled).await;
+        let m2 = MagicStack::new(RelayMode::Disabled).await;
 
         let _guard = mesh_stacks(vec![m1.clone(), m2.clone()]).await?;
 
@@ -3956,12 +3957,12 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     #[traced_test]
-    async fn test_two_devices_setup_teardown() -> anyhow::Result<()> {
+    async fn test_two_devices_setup_teardown() -> TestResult {
         for i in 0..10 {
             println!("-- round {i}");
             println!("setting up magic stack");
-            let m1 = MagicStack::new(RelayMode::Disabled).await?;
-            let m2 = MagicStack::new(RelayMode::Disabled).await?;
+            let m1 = MagicStack::new(RelayMode::Disabled).await;
+            let m2 = MagicStack::new(RelayMode::Disabled).await;
 
             let _guard = mesh_stacks(vec![m1.clone(), m2.clone()]).await?;
 
@@ -4195,7 +4196,7 @@ mod tests {
         // This needs an accept task
         let accept_task = tokio::spawn({
             async fn accept(ep: quinn::Endpoint) -> anyhow::Result<()> {
-                let incoming = ep.accept().await.ok_or(anyhow!("no incoming"))?;
+                let incoming = ep.accept().await.ok_or(anyhow::anyhow!("no incoming"))?;
                 let _conn = incoming.accept()?.await?;
 
                 // Keep this connection alive for a while
@@ -4273,7 +4274,7 @@ mod tests {
         // We need a task to accept the connection.
         let accept_task = tokio::spawn({
             async fn accept(ep: quinn::Endpoint) -> anyhow::Result<()> {
-                let incoming = ep.accept().await.ok_or(anyhow!("no incoming"))?;
+                let incoming = ep.accept().await.ok_or(anyhow::anyhow!("no incoming"))?;
                 let conn = incoming.accept()?.await?;
                 let mut stream = conn.accept_uni().await?;
                 stream.read_to_end(1 << 16).await?;
@@ -4426,8 +4427,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_add_node_addr() -> anyhow::Result<()> {
-        let stack = MagicStack::new(RelayMode::Default).await?;
+    async fn test_add_node_addr() -> TestResult {
+        let stack = MagicStack::new(RelayMode::Default).await;
         let mut rng = rand::thread_rng();
 
         assert_eq!(stack.endpoint.magic_sock().node_map.node_count(), 0);

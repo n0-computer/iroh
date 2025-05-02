@@ -42,12 +42,11 @@ use n0_future::{
     task::{self, AbortOnDropHandle, JoinSet},
     time::{self, Duration},
 };
-use snafu::ResultExt;
 use swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
 use tokio::sync::mpsc::{self, error::TrySendError};
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
-use super::{CreateServiceSnafu, DiscoveryError};
+use super::DiscoveryError;
 use crate::{
     discovery::{Discovery, DiscoveryItem, NodeData, NodeInfo},
     watchable::Watchable,
@@ -335,8 +334,7 @@ impl MdnsDiscovery {
         }
         discoverer
             .spawn(rt)
-            .map_err(|e| anyhow::anyhow!(e.to_string()))
-            .context(CreateServiceSnafu { service: "mdns" })
+            .map_err(|e| DiscoveryError::from(e.into_boxed_dyn_error()))
     }
 
     fn socketaddrs_to_addrs(socketaddrs: &BTreeSet<SocketAddr>) -> HashMap<u16, Vec<IpAddr>> {

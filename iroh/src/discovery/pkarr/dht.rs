@@ -15,13 +15,12 @@ use n0_future::{
     time::{self, Duration},
 };
 use pkarr::{Client as PkarrClient, SignedPacket};
-use snafu::ResultExt;
 use url::Url;
 
 use crate::{
     discovery::{
         pkarr::{DEFAULT_PKARR_TTL, N0_DNS_PKARR_RELAY_PROD},
-        CreateServiceSnafu, Discovery, DiscoveryError, DiscoveryItem, NodeData,
+        Discovery, DiscoveryError, DiscoveryItem, NodeData,
     },
     node_info::NodeInfo,
     Endpoint,
@@ -203,10 +202,9 @@ impl Builder {
     /// Builds the discovery mechanism.
     pub fn build(self) -> Result<DhtDiscovery, DiscoveryError> {
         if !(self.dht || self.pkarr_relay.is_some()) {
-            return Err(anyhow::anyhow!(
-                "at least one of DHT or relay must be enabled"
-            ))
-            .context(CreateServiceSnafu { service: "pkarr" });
+            return Err(DiscoveryError::from_err(std::io::Error::other(
+                "at least one of DHT or relay must be enabled",
+            )));
         }
         let pkarr = match self.client {
             Some(client) => client,
@@ -219,13 +217,9 @@ impl Builder {
                 if let Some(url) = &self.pkarr_relay {
                     builder
                         .relays(&[url.clone()])
-                        .map_err(|e| anyhow::anyhow!(e.to_string()))
-                        .context(CreateServiceSnafu { service: "pkarr" })?;
+                        .map_err(DiscoveryError::from_err)?;
                 }
-                builder
-                    .build()
-                    .map_err(|e| anyhow::anyhow!(e.to_string()))
-                    .context(CreateServiceSnafu { service: "pkarr" })?
+                builder.build().map_err(DiscoveryError::from_err)?
             }
         };
         let ttl = self.ttl.unwrap_or(DEFAULT_PKARR_TTL);

@@ -60,7 +60,7 @@ use url::Url;
 
 use super::{
     DiscoveryError, HttpPayloadSnafu, HttpRequestSnafu, HttpSendSnafu, InvalidRelayUrlSnafu,
-    NodeInfoSnafu, PublicKeySnafu, VerifySnafu,
+    NodeInfoSnafu,
 };
 use crate::{
     discovery::{Discovery, DiscoveryItem, NodeData},
@@ -366,9 +366,9 @@ impl PkarrRelayClient {
     /// Resolves a [`SignedPacket`] for the given [`NodeId`].
     pub async fn resolve(&self, node_id: NodeId) -> Result<SignedPacket, DiscoveryError> {
         // We map the error to string, as in browsers the error is !Send
-        let public_key = pkarr::PublicKey::try_from(node_id.as_bytes())
-            .map_err(|e| anyhow::anyhow!(e.to_string()))
-            .context(PublicKeySnafu)?;
+        let public_key =
+            pkarr::PublicKey::try_from(node_id.as_bytes()).map_err(DiscoveryError::from_err)?;
+
         let mut url = self.pkarr_relay_url.clone();
         url.path_segments_mut()
             .map_err(|_| {
@@ -395,9 +395,7 @@ impl PkarrRelayClient {
 
         let payload = response.bytes().await.context(HttpPayloadSnafu)?;
         // We map the error to string, as in browsers the error is !Send
-        SignedPacket::from_relay_payload(&public_key, &payload)
-            .map_err(|e| anyhow::anyhow!(e.to_string()))
-            .context(VerifySnafu)
+        SignedPacket::from_relay_payload(&public_key, &payload).map_err(DiscoveryError::from_err)
     }
 
     /// Publishes a [`SignedPacket`].

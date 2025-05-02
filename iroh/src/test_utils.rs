@@ -1,13 +1,12 @@
 //! Internal utilities to support testing.
 use std::net::Ipv4Addr;
 
-use anyhow::Result;
 pub use dns_and_pkarr_servers::DnsPkarrServer;
 use iroh_base::RelayUrl;
 use iroh_relay::{
     server::{
-        AccessConfig, CertConfig, QuicConfig, RelayConfig, Server, ServerConfig, StunConfig,
-        TlsConfig,
+        AccessConfig, CertConfig, QuicConfig, RelayConfig, Server, ServerConfig, SpawnError,
+        StunConfig, TlsConfig,
     },
     RelayMap, RelayNode, RelayQuicConfig,
 };
@@ -29,7 +28,7 @@ pub struct CleanupDropGuard(pub(crate) oneshot::Sender<()>);
 ///
 /// The returned `Url` is the url of the relay server in the returned [`RelayMap`].
 /// When dropped, the returned [`Server`] does will stop running.
-pub async fn run_relay_server() -> Result<(RelayMap, RelayUrl, Server)> {
+pub async fn run_relay_server() -> Result<(RelayMap, RelayUrl, Server), SpawnError> {
     run_relay_server_with(
         Some(StunConfig {
             bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
@@ -43,7 +42,7 @@ pub async fn run_relay_server() -> Result<(RelayMap, RelayUrl, Server)> {
 ///
 /// The returned `Url` is the url of the relay server in the returned [`RelayMap`].
 /// When dropped, the returned [`Server`] does will stop running.
-pub async fn run_relay_server_with_stun() -> Result<(RelayMap, RelayUrl, Server)> {
+pub async fn run_relay_server_with_stun() -> Result<(RelayMap, RelayUrl, Server), SpawnError> {
     run_relay_server_with(
         Some(StunConfig {
             bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
@@ -65,7 +64,7 @@ pub async fn run_relay_server_with_stun() -> Result<(RelayMap, RelayUrl, Server)
 pub async fn run_relay_server_with(
     stun: Option<StunConfig>,
     quic: bool,
-) -> Result<(RelayMap, RelayUrl, Server)> {
+) -> Result<(RelayMap, RelayUrl, Server), SpawnError> {
     let (certs, server_config) = iroh_relay::server::testing::self_signed_tls_certs_and_config();
 
     let tls = TlsConfig {
@@ -96,7 +95,9 @@ pub async fn run_relay_server_with(
         metrics_addr: None,
     };
     let server = Server::spawn(config).await?;
-    let url: RelayUrl = format!("https://{}", server.https_addr().expect("configured")).parse()?;
+    let url: RelayUrl = format!("https://{}", server.https_addr().expect("configured"))
+        .parse()
+        .expect("invalid relay url");
 
     let quic = server
         .quic_addr()
@@ -113,7 +114,6 @@ pub async fn run_relay_server_with(
 pub(crate) mod dns_and_pkarr_servers {
     use std::{net::SocketAddr, time::Duration};
 
-    use anyhow::Result;
     use iroh_base::{NodeId, SecretKey};
     use url::Url;
 
@@ -145,12 +145,12 @@ pub(crate) mod dns_and_pkarr_servers {
 
     impl DnsPkarrServer {
         /// Run DNS and Pkarr servers on localhost.
-        pub async fn run() -> anyhow::Result<Self> {
+        pub async fn run() -> std::io::Result<Self> {
             Self::run_with_origin("dns.iroh.test".to_string()).await
         }
 
         /// Run DNS and Pkarr servers on localhost with the specified `node_origin` domain.
-        pub async fn run_with_origin(node_origin: String) -> anyhow::Result<Self> {
+        pub async fn run_with_origin(node_origin: String) -> std::io::Result<Self> {
             let state = State::new(node_origin.clone());
             let (nameserver, dns_drop_guard) = run_dns_server(state.clone()).await?;
             let (pkarr_url, pkarr_drop_guard) = run_pkarr_relay(state.clone()).await?;
@@ -183,7 +183,7 @@ pub(crate) mod dns_and_pkarr_servers {
         /// Wait until a Pkarr announce for a node is published to the server.
         ///
         /// If `timeout` elapses an error is returned.
-        pub async fn on_node(&self, node_id: &NodeId, timeout: Duration) -> Result<()> {
+        pub async fn on_node(&self, node_id: &NodeId, timeout: Duration) -> std::io::Result<()> {
             self.state.on_node(node_id, timeout).await
         }
     }
@@ -195,7 +195,6 @@ pub(crate) mod dns_server {
         net::{Ipv4Addr, SocketAddr},
     };
 
-    use anyhow::{ensure, Result};
     use hickory_resolver::proto::{
         op::{header::MessageType, Message},
         serialize::binary::BinDecodable,
@@ -212,18 +211,19 @@ pub(crate) mod dns_server {
             &self,
             query: &Message,
             reply: &mut Message,
-        ) -> impl Future<Output = Result<()>> + Send;
+        ) -> impl Future<Output = std::io::Result<()>> + Send;
     }
 
-    pub type QueryHandlerFunction =
-        Box<dyn Fn(&Message, &mut Message) -> BoxFuture<Result<()>> + Send + Sync + 'static>;
+    pub type QueryHandlerFunction = Box<
+        dyn Fn(&Message, &mut Message) -> BoxFuture<std::io::Result<()>> + Send + Sync + 'static,
+    >;
 
     impl QueryHandler for QueryHandlerFunction {
         fn resolve(
             &self,
             query: &Message,
             reply: &mut Message,
-        ) -> impl Future<Output = Result<()>> + Send {
+        ) -> impl Future<Output = std::io::Result<()>> + Send {
             (self)(query, reply)
         }
     }
@@ -233,7 +233,7 @@ pub(crate) mod dns_server {
     /// Must pass a [`QueryHandler`] that answers queries.
     pub async fn run_dns_server(
         resolver: impl QueryHandler,
-    ) -> Result<(SocketAddr, CleanupDropGuard)> {
+    ) -> std::io::Result<(SocketAddr, CleanupDropGuard)> {
         let bind_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
         let socket = UdpSocket::bind(bind_addr).await?;
         let bound_addr = socket.local_addr()?;
@@ -260,7 +260,7 @@ pub(crate) mod dns_server {
     }
 
     impl<R: QueryHandler> TestDnsServer<R> {
-        async fn run(self) -> Result<()> {
+        async fn run(self) -> std::io::Result<()> {
             let mut buf = [0; 1450];
             loop {
                 let res = self.socket.recv_from(&mut buf).await;
@@ -271,7 +271,7 @@ pub(crate) mod dns_server {
             }
         }
 
-        async fn handle_datagram(&self, from: SocketAddr, buf: &[u8]) -> Result<()> {
+        async fn handle_datagram(&self, from: SocketAddr, buf: &[u8]) -> std::io::Result<()> {
             let packet = Message::from_bytes(buf)?;
             debug!(queries = ?packet.queries(), %from, "received query");
             let mut reply = packet.clone();
@@ -280,7 +280,7 @@ pub(crate) mod dns_server {
             debug!(?reply, %from, "send reply");
             let buf = reply.to_vec()?;
             let len = self.socket.send_to(&buf, from).await?;
-            ensure!(len == buf.len(), "failed to send complete packet");
+            assert_eq!(len, buf.len(), "failed to send complete packet");
             Ok(())
         }
     }
@@ -292,7 +292,6 @@ pub(crate) mod pkarr_relay {
         net::{Ipv4Addr, SocketAddr},
     };
 
-    use anyhow::Result;
     use axum::{
         extract::{Path, State},
         response::IntoResponse,
@@ -307,7 +306,7 @@ pub(crate) mod pkarr_relay {
     use super::CleanupDropGuard;
     use crate::test_utils::pkarr_dns_state::State as AppState;
 
-    pub async fn run_pkarr_relay(state: AppState) -> Result<(Url, CleanupDropGuard)> {
+    pub async fn run_pkarr_relay(state: AppState) -> std::io::Result<(Url, CleanupDropGuard)> {
         let bind_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
         let app = Router::new()
             .route("/pkarr/{key}", put(pkarr_put))
@@ -340,15 +339,16 @@ pub(crate) mod pkarr_relay {
         Path(key): Path<String>,
         body: Bytes,
     ) -> Result<impl IntoResponse, AppError> {
-        let key = pkarr::PublicKey::try_from(key.as_str())?;
-        let signed_packet = pkarr::SignedPacket::from_relay_payload(&key, &body)?;
+        let key = pkarr::PublicKey::try_from(key.as_str()).map_err(std::io::Error::other)?;
+        let signed_packet =
+            pkarr::SignedPacket::from_relay_payload(&key, &body).map_err(std::io::Error::other)?;
         let _updated = state.upsert(signed_packet)?;
         Ok(http::StatusCode::NO_CONTENT)
     }
 
     #[derive(Debug)]
-    struct AppError(anyhow::Error);
-    impl<T: Into<anyhow::Error>> From<T> for AppError {
+    struct AppError(std::io::Error);
+    impl<T: Into<std::io::Error>> From<T> for AppError {
         fn from(value: T) -> Self {
             Self(value.into())
         }
@@ -369,7 +369,6 @@ pub(crate) mod pkarr_dns_state {
         time::Duration,
     };
 
-    use anyhow::{bail, Result};
     use iroh_base::NodeId;
     use iroh_relay::node_info::{NodeIdExt, NodeInfo, IROH_TXT_NAME};
     use pkarr::SignedPacket;
@@ -396,20 +395,21 @@ pub(crate) mod pkarr_dns_state {
             self.notify.notified()
         }
 
-        pub async fn on_node(&self, node: &NodeId, timeout: Duration) -> Result<()> {
+        pub async fn on_node(&self, node: &NodeId, timeout: Duration) -> std::io::Result<()> {
             let timeout = tokio::time::sleep(timeout);
             tokio::pin!(timeout);
             while self.get(node, |p| p.is_none()) {
                 tokio::select! {
-                    _ = &mut timeout => bail!("timeout"),
+                    _ = &mut timeout => return Err(std::io::Error::other("timeout")),
                     _ = self.on_update() => {}
                 }
             }
             Ok(())
         }
 
-        pub fn upsert(&self, signed_packet: SignedPacket) -> anyhow::Result<bool> {
-            let node_id = NodeId::from_bytes(&signed_packet.public_key().to_bytes())?;
+        pub fn upsert(&self, signed_packet: SignedPacket) -> std::io::Result<bool> {
+            let node_id = NodeId::from_bytes(&signed_packet.public_key().to_bytes())
+                .map_err(std::io::Error::other)?;
             let mut map = self.packets.lock().expect("poisoned");
             let updated = match map.entry(node_id) {
                 hash_map::Entry::Vacant(e) => {
@@ -446,7 +446,7 @@ pub(crate) mod pkarr_dns_state {
             query: &hickory_resolver::proto::op::Message,
             reply: &mut hickory_resolver::proto::op::Message,
             ttl: u32,
-        ) -> Result<()> {
+        ) -> std::io::Result<()> {
             for query in query.queries() {
                 let domain_name = query.name().to_string();
                 let Some(node_id) = node_id_from_domain_name(&domain_name) else {
@@ -455,12 +455,13 @@ pub(crate) mod pkarr_dns_state {
 
                 self.get(&node_id, |packet| {
                     if let Some(packet) = packet {
-                        let node_info = NodeInfo::from_pkarr_signed_packet(packet)?;
-                        for record in node_info_to_hickory_records(&node_info, &self.origin, ttl)? {
+                        let node_info = NodeInfo::from_pkarr_signed_packet(packet)
+                            .map_err(std::io::Error::other)?;
+                        for record in node_info_to_hickory_records(&node_info, &self.origin, ttl) {
                             reply.add_answer(record);
                         }
                     }
-                    anyhow::Ok(())
+                    Ok::<_, std::io::Error>(())
                 })?;
             }
             Ok(())
@@ -472,7 +473,7 @@ pub(crate) mod pkarr_dns_state {
             &self,
             query: &hickory_resolver::proto::op::Message,
             reply: &mut hickory_resolver::proto::op::Message,
-        ) -> impl Future<Output = Result<()>> + Send {
+        ) -> impl Future<Output = std::io::Result<()>> + Send {
             const TTL: u32 = 30;
             let res = self.resolve_dns(query, reply, TTL);
             std::future::ready(res)
@@ -502,10 +503,10 @@ pub(crate) mod pkarr_dns_state {
         node_info: &NodeInfo,
         origin: &str,
         ttl: u32,
-    ) -> Result<impl Iterator<Item = hickory_resolver::proto::rr::Record> + 'static> {
+    ) -> impl Iterator<Item = hickory_resolver::proto::rr::Record> + 'static {
         let txt_strings = node_info.to_txt_strings();
-        let records = to_hickory_records(txt_strings, node_info.node_id, origin, ttl)?;
-        Ok(records.collect::<Vec<_>>().into_iter())
+        let records = to_hickory_records(txt_strings, node_info.node_id, origin, ttl);
+        records.collect::<Vec<_>>().into_iter()
     }
 
     /// Converts to a list of [`hickory_resolver::proto::rr::Record`] resource records.
@@ -514,16 +515,15 @@ pub(crate) mod pkarr_dns_state {
         node_id: NodeId,
         origin: &str,
         ttl: u32,
-    ) -> Result<impl Iterator<Item = hickory_resolver::proto::rr::Record> + '_> {
+    ) -> impl Iterator<Item = hickory_resolver::proto::rr::Record> + '_ {
         use hickory_resolver::proto::rr;
         let name = format!("{}.{}.{}", IROH_TXT_NAME, node_id.to_z32(), origin);
-        let name = rr::Name::from_utf8(name)?;
-        let records = txt_strings.into_iter().map(move |s| {
+        let name = rr::Name::from_utf8(name).expect("invalid name");
+        txt_strings.into_iter().map(move |s| {
             let txt = rr::rdata::TXT::new(vec![s]);
             let rdata = rr::RData::TXT(txt);
             rr::Record::from_rdata(name.clone(), ttl, rdata)
-        });
-        Ok(records)
+        })
     }
 
     #[cfg(test)]

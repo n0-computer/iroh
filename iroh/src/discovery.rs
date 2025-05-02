@@ -116,7 +116,7 @@ use n0_future::{
     Stream, TryStreamExt,
 };
 use nested_enum_utils::common_fields;
-use snafu::{ensure, Backtrace, Snafu};
+use snafu::{ensure, Backtrace, GenerateImplicitData, Snafu};
 use tokio::sync::oneshot;
 use tracing::{debug, error_span, warn, Instrument};
 
@@ -140,14 +140,11 @@ pub mod static_provider;
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
-#[snafu(visibility(pub(crate)))]
 pub enum DiscoveryError {
     #[snafu(display("Unable to resolve DNS"))]
     DnsResolver {
         source: iroh_relay::node_info::Error,
     },
-    #[snafu(display("PublicKey error"))]
-    PublicKey { source: anyhow::Error },
     #[snafu(display("Invalid relay URL"))]
     InvalidRelayUrl { url: RelayUrl },
     #[snafu(display("Error sending http request"))]
@@ -156,24 +153,36 @@ pub enum DiscoveryError {
     HttpRequest { status: reqwest::StatusCode },
     #[snafu(display("Http payload error"))]
     HttpPayload { source: reqwest::Error },
-    #[snafu(display("Verifying error"))]
-    Verify { source: anyhow::Error },
     #[snafu(display("NodeInfo error"))]
     NodeInfo {
         source: iroh_relay::node_info::Error,
     },
-    #[snafu(display("Error creating discovery service"))]
-    CreateService {
-        source: anyhow::Error,
-        service: &'static str,
-    },
-
     #[snafu(display("No discovery service configured"))]
     NoServiceConfigured,
     #[snafu(display("Cannot resolve node id"))]
     NodeId { node_id: PublicKey },
     #[snafu(display("Discovery produced no results"))]
     NoResults { node_id: PublicKey },
+
+    #[snafu(transparent)]
+    User {
+        source: Box<dyn std::error::Error + Send + Sync + 'static>,
+    },
+}
+
+impl DiscoveryError {
+    /// Creates a new user error from an arbitary error type.
+    pub fn from_err<T: std::error::Error + Send + Sync + 'static>(source: T) -> Self {
+        let source = Box::new(source);
+        let backtrace = GenerateImplicitData::generate_with_source(&source);
+        let span_trace = GenerateImplicitData::generate_with_source(&source);
+
+        Self::User {
+            source,
+            backtrace,
+            span_trace,
+        }
+    }
 }
 
 /// Node discovery for [`super::Endpoint`].
@@ -751,7 +760,7 @@ mod tests {
     /// This is a smoke test for our discovery mechanism.
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_discovery_simple_shared() -> anyhow::Result<()> {
+    async fn endpoint_discovery_simple_shared() -> TestResult {
         let disco_shared = TestDiscoveryShared::default();
         let (ep1, _guard1) = {
             let secret = SecretKey::generate(rand::thread_rng());
@@ -773,7 +782,7 @@ mod tests {
     /// This test adds an empty discovery which provides no addresses.
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_discovery_combined_with_empty() -> anyhow::Result<()> {
+    async fn endpoint_discovery_combined_with_empty() -> TestResult {
         let disco_shared = TestDiscoveryShared::default();
         let (ep1, _guard1) = {
             let secret = SecretKey::generate(rand::thread_rng());
@@ -804,7 +813,7 @@ mod tests {
     /// will connect successfully.
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_discovery_combined_with_empty_and_wrong() -> anyhow::Result<()> {
+    async fn endpoint_discovery_combined_with_empty_and_wrong() -> TestResult {
         let disco_shared = TestDiscoveryShared::default();
         let (ep1, _guard1) = {
             let secret = SecretKey::generate(rand::thread_rng());
@@ -831,7 +840,7 @@ mod tests {
     /// This test only has the "lying" discovery. It is here to make sure that this actually fails.
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_discovery_combined_wrong_only() -> anyhow::Result<()> {
+    async fn endpoint_discovery_combined_wrong_only() -> TestResult {
         let disco_shared = TestDiscoveryShared::default();
         let (ep1, _guard1) = {
             let secret = SecretKey::generate(rand::thread_rng());
@@ -865,7 +874,7 @@ mod tests {
     /// Connect should still succeed because the discovery service will be invoked (after a delay).
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_discovery_with_wrong_existing_addr() -> anyhow::Result<()> {
+    async fn endpoint_discovery_with_wrong_existing_addr() -> TestResult {
         let disco_shared = TestDiscoveryShared::default();
         let (ep1, _guard1) = {
             let secret = SecretKey::generate(rand::thread_rng());
@@ -890,7 +899,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_discovery_watch() -> anyhow::Result<()> {
+    async fn endpoint_discovery_watch() -> TestResult {
         let disco_shared = TestDiscoveryShared::default();
         let (ep1, _guard1) = {
             let secret = SecretKey::generate(rand::thread_rng());
