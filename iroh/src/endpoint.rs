@@ -625,9 +625,15 @@ pub enum ConnectWithOptsError {
 #[derive(Debug, Snafu)]
 pub enum ConnectError {
     #[snafu(transparent)]
-    Connect { source: ConnectWithOptsError },
+    Connect {
+        #[snafu(source(from(ConnectWithOptsError, Box::new)))]
+        source: Box<ConnectWithOptsError>,
+    },
     #[snafu(transparent)]
-    Connection { source: ConnectionError },
+    Connection {
+        #[snafu(source(from(ConnectionError, Box::new)))]
+        source: Box<ConnectionError>,
+    },
 }
 
 #[allow(missing_docs)]
