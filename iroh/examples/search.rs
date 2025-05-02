@@ -35,7 +35,7 @@ use anyhow::Result;
 use clap::Parser;
 use iroh::{
     endpoint::Connection,
-    protocol::{ProtocolHandler, Router},
+    protocol::{Error as ProtocolError, ProtocolHandler, Router},
     Endpoint, NodeId,
 };
 use n0_future::boxed::BoxFuture;
@@ -127,7 +127,7 @@ impl ProtocolHandler for BlobSearch {
     ///
     /// The returned future runs on a newly spawned tokio task, so it can run as long as
     /// the connection lasts.
-    fn accept(&self, connection: Connection) -> BoxFuture<Result<()>> {
+    fn accept(&self, connection: Connection) -> BoxFuture<Result<(), ProtocolError>> {
         let this = self.clone();
         // We have to return a boxed future from the handler.
         Box::pin(async move {
@@ -140,16 +140,21 @@ impl ProtocolHandler for BlobSearch {
             let (mut send, mut recv) = connection.accept_bi().await?;
 
             // We read the query from the receive stream, while enforcing a max query length.
-            let query_bytes = recv.read_to_end(64).await?;
+            let query_bytes = recv
+                .read_to_end(64)
+                .await
+                .map_err(ProtocolError::from_err)?;
 
             // Now, we can perform the actual query on our local database.
-            let query = String::from_utf8(query_bytes)?;
+            let query = String::from_utf8(query_bytes).map_err(ProtocolError::from_err)?;
             let num_matches = this.query_local(&query).await;
 
             // We want to return a list of hashes. We do the simplest thing possible, and just send
             // one hash after the other. Because the hashes have a fixed size of 32 bytes, this is
             // very easy to parse on the other end.
-            send.write_all(&num_matches.to_le_bytes()).await?;
+            send.write_all(&num_matches.to_le_bytes())
+                .await
+                .map_err(ProtocolError::from_err)?;
 
             // By calling `finish` on the send stream we signal that we will not send anything
             // further, which makes the receive stream on the other end terminate.
