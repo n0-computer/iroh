@@ -3,7 +3,9 @@
 use iroh_base::NodeId;
 pub use iroh_relay::dns::{N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING};
 use n0_future::boxed::BoxStream;
+use snafu::ResultExt;
 
+use super::{DiscoveryError, DnsResolverSnafu};
 use crate::{
     discovery::{Discovery, DiscoveryItem},
     endpoint::force_staging_infra,
@@ -66,13 +68,14 @@ impl Discovery for DnsDiscovery {
         &self,
         ep: Endpoint,
         node_id: NodeId,
-    ) -> Option<BoxStream<anyhow::Result<DiscoveryItem>>> {
+    ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
         let resolver = ep.dns_resolver().clone();
         let origin_domain = self.origin_domain.clone();
         let fut = async move {
             let node_info = resolver
                 .lookup_node_by_id_staggered(&node_id, &origin_domain, DNS_STAGGERING_MS)
-                .await?;
+                .await
+                .context(DnsResolverSnafu)?;
             Ok(DiscoveryItem::new(node_info, "dns", None))
         };
         let stream = n0_future::stream::once_future(fut);
