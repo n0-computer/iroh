@@ -112,7 +112,7 @@ pub enum Error {
 }
 
 impl Error {
-    /// Creates a new user error from an arbitary error type.
+    /// Creates a new user error from an arbitrary error type.
     pub fn from_err<T: std::error::Error + Send + Sync + 'static>(value: T) -> Self {
         Self::User {
             source: Box::new(value),

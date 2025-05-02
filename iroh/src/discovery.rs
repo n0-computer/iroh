@@ -171,7 +171,7 @@ pub enum DiscoveryError {
 }
 
 impl DiscoveryError {
-    /// Creates a new user error from an arbitary error type.
+    /// Creates a new user error from an arbitrary error type.
     pub fn from_err<T: std::error::Error + Send + Sync + 'static>(source: T) -> Self {
         let source = Box::new(source);
         let backtrace = GenerateImplicitData::generate_with_source(&source);
