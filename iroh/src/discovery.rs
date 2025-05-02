@@ -116,7 +116,7 @@ use n0_future::{
     Stream, TryStreamExt,
 };
 use nested_enum_utils::common_fields;
-use snafu::{ensure, Backtrace, IntoError, Snafu};
+use snafu::{ensure, IntoError, Snafu};
 use tokio::sync::oneshot;
 use tracing::{debug, error_span, warn, Instrument};
 
@@ -133,7 +133,7 @@ pub mod static_provider;
 
 /// Discovery errors
 #[common_fields({
-    backtrace: Option<Backtrace>,
+    backtrace: Option<snafu::Backtrace>,
     #[snafu(implicit)]
     span_trace: n0_snafu::SpanTrace,
 })]
@@ -142,7 +142,7 @@ pub mod static_provider;
 #[non_exhaustive]
 pub enum DiscoveryError {
     #[snafu(display("No discovery service configured"))]
-    NoServiceConfigured,
+    NoServiceConfigured {},
     #[snafu(display("Cannot resolve node id"))]
     NodeId { node_id: PublicKey },
     #[snafu(display("Discovery produced no results"))]

@@ -302,7 +302,7 @@ pub enum SpawnError {
 
 /// Server task errors
 #[common_fields({
-    backtrace: Option<Backtrace>,
+    backtrace: Option<snafu::Backtrace>,
     #[snafu(implicit)]
     span_trace: n0_snafu::SpanTrace,
 })]
@@ -314,13 +314,13 @@ pub enum SupervisorError {
     #[snafu(display("Error starting metrics server"))]
     Metrics { source: std::io::Error },
     #[snafu(display("Acme event stream finished"))]
-    AcmeEventStreamFinished,
+    AcmeEventStreamFinished {},
     #[snafu(transparent)]
     JoinError { source: JoinError },
     #[snafu(display("No relay services are enabled"))]
-    NoRelayServicesEnabled,
+    NoRelayServicesEnabled {},
     #[snafu(display("Task cancelled"))]
-    TaskCancelled,
+    TaskCancelled {},
 }
 
 impl Server {

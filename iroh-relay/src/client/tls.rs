@@ -189,7 +189,7 @@ impl MaybeTlsStreamBuilder {
             .resolve_host(&proxy_url, self.prefer_ipv6, DNS_TIMEOUT)
             .await?;
 
-        let proxy_port = url_port(&proxy_url).ok_or(DialError::ProxyInvalidTargetPort)?;
+        let proxy_port = url_port(&proxy_url).context(ProxyInvalidTargetPortSnafu)?;
         let proxy_addr = SocketAddr::new(proxy_ip, proxy_port);
 
         debug!(%proxy_addr, "connecting to proxy");

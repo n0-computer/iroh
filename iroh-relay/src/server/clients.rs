@@ -37,7 +37,7 @@ struct Inner {
 
 /// Send packet errors
 #[common_fields({
-    backtrace: Option<Backtrace>,
+    backtrace: Option<snafu::Backtrace>,
     #[snafu(implicit)]
     span_trace: n0_snafu::SpanTrace,
 })]
@@ -47,9 +47,9 @@ struct Inner {
 #[snafu(visibility(pub(crate)))]
 pub enum SendPacketError {
     #[snafu(display("Failed to send message: full"))]
-    Full,
+    Full {},
     #[snafu(display("Failed to send message: gone"))]
-    Gone,
+    Gone {},
 }
 
 impl Clients {

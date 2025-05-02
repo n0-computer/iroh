@@ -287,11 +287,11 @@ pub(crate) struct SocketState {
 #[snafu(visibility(pub(crate)))]
 pub enum AddNodeAddrError {
     #[snafu(display("Empty addressing info"))]
-    Empty,
+    Empty {},
     #[snafu(display("Empty addressing info, {pruned} direct address have been pruned"))]
     EmptyPruned { pruned: usize },
     #[snafu(display("Adding our own address is not supported"))]
-    OwnAddress,
+    OwnAddress {},
 }
 
 impl MagicSock {

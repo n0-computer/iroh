@@ -152,11 +152,11 @@ pub enum Error {
     #[snafu(transparent)]
     ConnSend { source: SendError },
     #[snafu(display("Too few bytes"))]
-    TooSmall,
+    TooSmall {},
     #[snafu(display("Frame is too large, has {frame_len} bytes"))]
     FrameTooLarge { frame_len: usize },
     #[snafu(display("Invalid frame encoding"))]
-    InvalidFrame,
+    InvalidFrame {},
     #[snafu(display("Invalid frame type: {frame_type}"))]
     InvalidFrameType { frame_type: FrameType },
 }
@@ -359,7 +359,7 @@ impl Frame {
     #[allow(clippy::result_large_err)]
     pub(crate) fn decode_from_ws_msg(bytes: Bytes, cache: &KeyCache) -> Result<Self, Error> {
         if bytes.is_empty() {
-            return Err(Error::TooSmall);
+            return Err(TooSmallSnafu.build());
         }
         let typ = FrameType::from(bytes[0]);
         let frame = Self::from_bytes(typ, bytes.slice(1..), cache)?;
@@ -432,10 +432,10 @@ impl Frame {
         let res = match frame_type {
             FrameType::ClientInfo => {
                 if content.len() < PublicKey::LENGTH + Signature::BYTE_SIZE + MAGIC.len() {
-                    return Err(Error::InvalidFrame);
+                    return Err(InvalidFrameSnafu.build());
                 }
                 if &content[..MAGIC.len()] != MAGIC.as_bytes() {
-                    return Err(Error::InvalidFrame);
+                    return Err(InvalidFrameSnafu.build());
                 }
 
                 let start = MAGIC.len();
@@ -454,7 +454,7 @@ impl Frame {
             }
             FrameType::SendPacket => {
                 if content.len() < PublicKey::LENGTH {
-                    return Err(Error::InvalidFrame);
+                    return Err(InvalidFrameSnafu.build());
                 }
                 let frame_len = content.len() - PublicKey::LENGTH;
                 if frame_len > MAX_PACKET_SIZE {
@@ -467,7 +467,7 @@ impl Frame {
             }
             FrameType::RecvPacket => {
                 if content.len() < PublicKey::LENGTH {
-                    return Err(Error::InvalidFrame);
+                    return Err(InvalidFrameSnafu.build());
                 }
 
                 let frame_len = content.len() - PublicKey::LENGTH;
@@ -482,25 +482,25 @@ impl Frame {
             FrameType::KeepAlive => Self::KeepAlive,
             FrameType::NotePreferred => {
                 if content.len() != 1 {
-                    return Err(Error::InvalidFrame);
+                    return Err(InvalidFrameSnafu.build());
                 }
                 let preferred = match content[0] {
                     PREFERRED => true,
                     NOT_PREFERRED => false,
-                    _ => return Err(Error::InvalidFrame),
+                    _ => return Err(InvalidFrameSnafu.build()),
                 };
                 Self::NotePreferred { preferred }
             }
             FrameType::PeerGone => {
                 if content.len() != PublicKey::LENGTH {
-                    return Err(Error::InvalidFrame);
+                    return Err(InvalidFrameSnafu.build());
                 }
                 let peer = cache.key_from_slice(&content[..32])?;
                 Self::NodeGone { node_id: peer }
             }
             FrameType::Ping => {
                 if content.len() != 8 {
-                    return Err(Error::InvalidFrame);
+                    return Err(InvalidFrameSnafu.build());
                 }
                 let mut data = [0u8; 8];
                 data.copy_from_slice(&content[..8]);
@@ -508,7 +508,7 @@ impl Frame {
             }
             FrameType::Pong => {
                 if content.len() != 8 {
-                    return Err(Error::InvalidFrame);
+                    return Err(InvalidFrameSnafu.build());
                 }
                 let mut data = [0u8; 8];
                 data.copy_from_slice(&content[..8]);
@@ -517,12 +517,18 @@ impl Frame {
             FrameType::Health => Self::Health { problem: content },
             FrameType::Restarting => {
                 if content.len() != 4 + 4 {
-                    return Err(Error::InvalidFrame);
+                    return Err(InvalidFrameSnafu.build());
                 }
-                let reconnect_in =
-                    u32::from_be_bytes(content[..4].try_into().map_err(|_| Error::InvalidFrame)?);
-                let try_for =
-                    u32::from_be_bytes(content[4..].try_into().map_err(|_| Error::InvalidFrame)?);
+                let reconnect_in = u32::from_be_bytes(
+                    content[..4]
+                        .try_into()
+                        .map_err(|_| InvalidFrameSnafu.build())?,
+                );
+                let try_for = u32::from_be_bytes(
+                    content[4..]
+                        .try_into()
+                        .map_err(|_| InvalidFrameSnafu.build())?,
+                );
                 Self::Restarting {
                     reconnect_in,
                     try_for,

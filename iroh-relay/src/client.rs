@@ -110,7 +110,7 @@ pub enum DialError {
     #[snafu(display("Invalid proxy TLS servername: {proxy_hostname}"))]
     ProxyInvalidTlsServername { proxy_hostname: String },
     #[snafu(display("Invalid proxy target port"))]
-    ProxyInvalidTargetPort,
+    ProxyInvalidTargetPort {},
 }
 
 /// Build a Client.
