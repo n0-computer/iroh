@@ -649,7 +649,7 @@
 }
 
 <span class="kw">impl </span>Error {
-    <span class="doccomment">/// Creates a new user error from an arbitary error type.
+    <span class="doccomment">/// Creates a new user error from an arbitrary error type.
     </span><span class="kw">pub fn </span>from_err&lt;T: std::error::Error + Send + Sync + <span class="lifetime">'static</span>&gt;(value: T) -&gt; <span class="self">Self </span>{
         <span class="self">Self</span>::User {
             source: Box::new(value),

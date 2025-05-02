@@ -1307,7 +1307,7 @@
 }
 
 <span class="kw">impl </span>DiscoveryError {
-    <span class="doccomment">/// Creates a new user error from an arbitary error type.
+    <span class="doccomment">/// Creates a new user error from an arbitrary error type.
     </span><span class="kw">pub fn </span>from_err&lt;T: std::error::Error + Send + Sync + <span class="lifetime">'static</span>&gt;(source: T) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>source = Box::new(source);
         <span class="kw">let </span>backtrace = GenerateImplicitData::generate_with_source(<span class="kw-2">&amp;</span>source);
