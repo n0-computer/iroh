@@ -9,9 +9,7 @@
 use std::sync::Arc;
 
 use iroh_base::{PublicKey, SecretKey};
-use nested_enum_utils::common_fields;
-use quinn::crypto::rustls::{NoInitialCipherSuite, QuicClientConfig, QuicServerConfig};
-use snafu::Snafu;
+use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use tracing::warn;
 
 use self::resolver::AlwaysResolvesCert;
@@ -43,7 +41,7 @@ impl Authentication {
         alpn_protocols: Vec<Vec<u8>>,
         session_store: Option<Arc<dyn rustls::client::ClientSessionStore>>,
         keylog: bool,
-    ) -> Result<QuicClientConfig, CreateConfigError> {
+    ) -> QuicClientConfig {
         let cert_resolver = Arc::new(
             AlwaysResolvesCert::new(self, secret_key).expect("Client cert key DER is valid; qed"),
         );
@@ -68,8 +66,7 @@ impl Authentication {
             crypto.key_log = Arc::new(rustls::KeyLogFile::new());
         }
 
-        let config = crypto.try_into()?;
-        Ok(config)
+        crypto.try_into().expect("known good ciphersuites")
     }
 
     /// Create a TLS server configuration.
@@ -106,23 +103,4 @@ impl Authentication {
 
         crypto.try_into().expect("known good ciphersuites")
     }
-}
-
-/// Error for generating TLS configs.
-#[common_fields({
-    backtrace: Option<snafu::Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
-#[derive(Debug, Snafu)]
-pub enum CreateConfigError {
-    /// Error generating the certificate.
-    #[snafu(display("Error generating the certificate"), context(false))]
-    CertError { source: certificate::GenError },
-    /// Error creating QUIC config.
-    #[snafu(display("Error creating QUIC config"), context(false))]
-    ConfigError { source: NoInitialCipherSuite },
-    /// Rustls configuration error
-    #[snafu(display("rustls error"), context(false))]
-    Rustls { source: rustls::Error },
 }

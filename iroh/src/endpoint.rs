@@ -612,8 +612,6 @@ pub enum ConnectWithOptsError {
     SelfConnect {},
     #[snafu(display("No addressing information available"))]
     NoAddress { source: GetMappingAddressError },
-    #[snafu(display("Invalid TLS configuration"))]
-    TlsCreate { source: tls::CreateConfigError },
     #[snafu(display("Unable to connect to remote"))]
     Quinn { source: quinn::ConnectError },
 }
@@ -815,17 +813,13 @@ impl Endpoint {
         );
         let client_config = {
             let alpn_protocols = vec![alpn.to_vec()];
-            let quic_client_config = self
-                .static_config
-                .tls_auth
-                .make_client_config(
-                    &self.static_config.secret_key,
-                    node_id,
-                    alpn_protocols,
-                    Some(self.session_store.clone()),
-                    self.static_config.keylog,
-                )
-                .context(TlsCreateSnafu)?;
+            let quic_client_config = self.static_config.tls_auth.make_client_config(
+                &self.static_config.secret_key,
+                node_id,
+                alpn_protocols,
+                Some(self.session_store.clone()),
+                self.static_config.keylog,
+            );
             let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
             client_config.transport_config(transport_config);
             client_config

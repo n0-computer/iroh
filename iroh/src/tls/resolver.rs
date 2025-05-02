@@ -2,15 +2,33 @@ use std::sync::Arc;
 
 use ed25519_dalek::pkcs8::{spki::der::pem::LineEnding, EncodePrivateKey};
 use iroh_base::SecretKey;
+use nested_enum_utils::common_fields;
+use snafu::Snafu;
 use webpki::types::{pem::PemObject, CertificateDer, PrivatePkcs8KeyDer};
 
-use super::{certificate, CreateConfigError};
+use super::certificate;
 use crate::tls::Authentication;
 
 #[derive(Debug)]
 pub(super) struct AlwaysResolvesCert {
     key: Arc<rustls::sign::CertifiedKey>,
     auth: Authentication,
+}
+
+/// Error for generating TLS configs.
+#[common_fields({
+    backtrace: Option<snafu::Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[derive(Debug, Snafu)]
+pub(super) enum CreateConfigError {
+    /// Error generating the certificate.
+    #[snafu(display("Error generating the certificate"), context(false))]
+    CertError { source: certificate::GenError },
+    /// Rustls configuration error
+    #[snafu(display("rustls error"), context(false))]
+    Rustls { source: rustls::Error },
 }
 
 impl AlwaysResolvesCert {

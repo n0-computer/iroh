@@ -4141,7 +4141,7 @@ mod tests {
     ) -> anyhow::Result<quinn::Connection> {
         let alpns = vec![ALPN.to_vec()];
         let quic_client_config =
-            tls_auth.make_client_config(&ep_secret_key, node_id, alpns, None, true)?;
+            tls_auth.make_client_config(&ep_secret_key, node_id, alpns, None, true);
         let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
         client_config.transport_config(transport_config);
         let connect = ep.connect_with(
