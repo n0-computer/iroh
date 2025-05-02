@@ -15,12 +15,13 @@ use n0_future::{
     time::{self, Duration},
 };
 use pkarr::{Client as PkarrClient, SignedPacket};
+use snafu::ResultExt;
 use url::Url;
 
 use crate::{
     discovery::{
         pkarr::{DEFAULT_PKARR_TTL, N0_DNS_PKARR_RELAY_PROD},
-        Discovery, DiscoveryItem, NodeData,
+        CreateServiceSnafu, Discovery, DiscoveryError, DiscoveryItem, NodeData,
     },
     node_info::NodeInfo,
     Endpoint,
@@ -80,7 +81,10 @@ struct Inner {
 }
 
 impl Inner {
-    async fn resolve_pkarr(&self, key: pkarr::PublicKey) -> Option<anyhow::Result<DiscoveryItem>> {
+    async fn resolve_pkarr(
+        &self,
+        key: pkarr::PublicKey,
+    ) -> Option<Result<DiscoveryItem, DiscoveryError>> {
         tracing::info!(
             "resolving {} from relay and DHT {:?}",
             key.to_z32(),
@@ -197,11 +201,13 @@ impl Builder {
     }
 
     /// Builds the discovery mechanism.
-    pub fn build(self) -> anyhow::Result<DhtDiscovery> {
-        anyhow::ensure!(
-            self.dht || self.pkarr_relay.is_some(),
-            "at least one of DHT or relay must be enabled"
-        );
+    pub fn build(self) -> Result<DhtDiscovery, DiscoveryError> {
+        if !(self.dht || self.pkarr_relay.is_some()) {
+            return Err(anyhow::anyhow!(
+                "at least one of DHT or relay must be enabled"
+            ))
+            .context(CreateServiceSnafu { service: "pkarr" });
+        }
         let pkarr = match self.client {
             Some(client) => client,
             None => {
@@ -211,9 +217,15 @@ impl Builder {
                     builder.dht(|x| x);
                 }
                 if let Some(url) = &self.pkarr_relay {
-                    builder.relays(&[url.clone()])?;
+                    builder
+                        .relays(&[url.clone()])
+                        .map_err(|e| anyhow::anyhow!(e.to_string()))
+                        .context(CreateServiceSnafu { service: "pkarr" })?;
                 }
-                builder.build()?
+                builder
+                    .build()
+                    .map_err(|e| anyhow::anyhow!(e.to_string()))
+                    .context(CreateServiceSnafu { service: "pkarr" })?
             }
         };
         let ttl = self.ttl.unwrap_or(DEFAULT_PKARR_TTL);
@@ -294,7 +306,7 @@ impl Discovery for DhtDiscovery {
         &self,
         _endpoint: Endpoint,
         node_id: NodeId,
-    ) -> Option<BoxStream<anyhow::Result<DiscoveryItem>>> {
+    ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
         let pkarr_public_key =
             pkarr::PublicKey::try_from(node_id.as_bytes()).expect("valid public key");
         tracing::info!("resolving {} as {}", node_id, pkarr_public_key.to_z32());

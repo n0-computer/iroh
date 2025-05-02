@@ -107,8 +107,7 @@
 
 use std::sync::Arc;
 
-use anyhow::{anyhow, ensure, Result};
-use iroh_base::{NodeAddr, NodeId};
+use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
 use n0_future::{
     boxed::BoxStream,
     stream::StreamExt,
@@ -116,7 +115,8 @@ use n0_future::{
     time::{self, Duration},
     Stream, TryStreamExt,
 };
-use snafu::Snafu;
+use nested_enum_utils::common_fields;
+use snafu::{ensure, Backtrace, Snafu};
 use tokio::sync::oneshot;
 use tracing::{debug, error_span, warn, Instrument};
 
@@ -130,6 +130,51 @@ pub mod dns;
 pub mod mdns;
 pub mod pkarr;
 pub mod static_provider;
+
+/// Discovery errors
+#[common_fields({
+    backtrace: Option<Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+#[snafu(visibility(pub(crate)))]
+pub enum DiscoveryError {
+    #[snafu(display("Unable to resolve DNS"))]
+    DnsResolver {
+        source: iroh_relay::node_info::Error,
+    },
+    #[snafu(display("PublicKey error"))]
+    PublicKey { source: anyhow::Error },
+    #[snafu(display("Invalid relay URL"))]
+    InvalidRelayUrl { url: RelayUrl },
+    #[snafu(display("Error sending http request"))]
+    HttpSend { source: reqwest::Error },
+    #[snafu(display("Error resolving http request"))]
+    HttpRequest { status: reqwest::StatusCode },
+    #[snafu(display("Http payload error"))]
+    HttpPayload { source: reqwest::Error },
+    #[snafu(display("Verifying error"))]
+    Verify { source: anyhow::Error },
+    #[snafu(display("NodeInfo error"))]
+    NodeInfo {
+        source: iroh_relay::node_info::Error,
+    },
+    #[snafu(display("Error creating discovery service"))]
+    CreateService {
+        source: anyhow::Error,
+        service: &'static str,
+    },
+
+    #[snafu(display("No discovery service configured"))]
+    NoServiceConfigured,
+    #[snafu(display("Cannot resolve node id"))]
+    NodeId { node_id: PublicKey },
+    #[snafu(display("Discovery produced no results"))]
+    NoResults { node_id: PublicKey },
+}
 
 /// Node discovery for [`super::Endpoint`].
 ///
@@ -165,7 +210,7 @@ pub trait Discovery: std::fmt::Debug + Send + Sync {
         &self,
         _endpoint: Endpoint,
         _node_id: NodeId,
-    ) -> Option<BoxStream<Result<DiscoveryItem>>> {
+    ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
         None
     }
 
@@ -331,7 +376,7 @@ impl Discovery for ConcurrentDiscovery {
         &self,
         endpoint: Endpoint,
         node_id: NodeId,
-    ) -> Option<BoxStream<Result<DiscoveryItem>>> {
+    ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
         let streams = self
             .services
             .iter()
@@ -360,14 +405,14 @@ const MAX_AGE: Duration = Duration::from_secs(10);
 
 /// A wrapper around a tokio task which runs a node discovery.
 pub(super) struct DiscoveryTask {
-    on_first_rx: oneshot::Receiver<Result<()>>,
+    on_first_rx: oneshot::Receiver<Result<(), DiscoveryError>>,
     _task: AbortOnDropHandle<()>,
 }
 
 impl DiscoveryTask {
     /// Starts a discovery task.
-    pub(super) fn start(ep: Endpoint, node_id: NodeId) -> Result<Self> {
-        ensure!(ep.discovery().is_some(), "No discovery services configured");
+    pub(super) fn start(ep: Endpoint, node_id: NodeId) -> Result<Self, DiscoveryError> {
+        ensure!(ep.discovery().is_some(), NoServiceConfiguredSnafu);
         let (on_first_tx, on_first_rx) = oneshot::channel();
         let me = ep.node_id();
         let task = task::spawn(
@@ -393,12 +438,12 @@ impl DiscoveryTask {
         ep: &Endpoint,
         node_id: NodeId,
         delay: Option<Duration>,
-    ) -> Result<Option<Self>> {
+    ) -> Result<Option<Self>, DiscoveryError> {
         // If discovery is not needed, don't even spawn a task.
         if !Self::needs_discovery(ep, node_id) {
             return Ok(None);
         }
-        ensure!(ep.discovery().is_some(), "No discovery services configured");
+        ensure!(ep.discovery().is_some(), NoServiceConfiguredSnafu);
         let (on_first_tx, on_first_rx) = oneshot::channel();
         let ep = ep.clone();
         let me = ep.node_id();
@@ -426,19 +471,20 @@ impl DiscoveryTask {
     }
 
     /// Waits until the discovery task produced at least one result.
-    pub(super) async fn first_arrived(&mut self) -> Result<()> {
+    pub(super) async fn first_arrived(&mut self) -> Result<(), DiscoveryError> {
         let fut = &mut self.on_first_rx;
-        fut.await??;
+        fut.await.expect("sender dropped")?;
         Ok(())
     }
 
-    fn create_stream(ep: &Endpoint, node_id: NodeId) -> Result<BoxStream<Result<DiscoveryItem>>> {
-        let discovery = ep
-            .discovery()
-            .ok_or_else(|| anyhow!("No discovery service configured"))?;
+    fn create_stream(
+        ep: &Endpoint,
+        node_id: NodeId,
+    ) -> Result<BoxStream<Result<DiscoveryItem, DiscoveryError>>, DiscoveryError> {
+        let discovery = ep.discovery().ok_or(NoServiceConfiguredSnafu.build())?;
         let stream = discovery
             .resolve(ep.clone(), node_id)
-            .ok_or_else(|| anyhow!("No discovery service can resolve node {node_id}",))?;
+            .ok_or(NodeIdSnafu { node_id }.build())?;
         Ok(stream)
     }
 
@@ -466,7 +512,11 @@ impl DiscoveryTask {
         }
     }
 
-    async fn run(ep: Endpoint, node_id: NodeId, on_first_tx: oneshot::Sender<Result<()>>) {
+    async fn run(
+        ep: Endpoint,
+        node_id: NodeId,
+        on_first_tx: oneshot::Sender<Result<(), DiscoveryError>>,
+    ) {
         let mut stream = match Self::create_stream(&ep, node_id) {
             Ok(stream) => stream,
             Err(err) => {
@@ -501,8 +551,7 @@ impl DiscoveryTask {
             }
         }
         if let Some(tx) = on_first_tx.take() {
-            let err = anyhow!("Discovery produced no results for {}", node_id.fmt_short());
-            tx.send(Err(err)).ok();
+            tx.send(Err(NoResultsSnafu { node_id }.build())).ok();
         }
     }
 }
@@ -640,7 +689,7 @@ mod tests {
             &self,
             endpoint: Endpoint,
             node_id: NodeId,
-        ) -> Option<BoxStream<Result<DiscoveryItem>>> {
+        ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
             let addr_info = if self.resolve_wrong {
                 let ts = system_time_now() - 100_000;
                 let port: u16 = rand::thread_rng().gen_range(10_000..20_000);
@@ -692,7 +741,7 @@ mod tests {
             &self,
             _endpoint: Endpoint,
             _node_id: NodeId,
-        ) -> Option<BoxStream<Result<DiscoveryItem>>> {
+        ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
             Some(n0_future::stream::empty().boxed())
         }
     }

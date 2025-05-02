@@ -193,7 +193,7 @@ impl Discovery for StaticProvider {
         &self,
         _endpoint: crate::Endpoint,
         node_id: NodeId,
-    ) -> Option<BoxStream<anyhow::Result<super::DiscoveryItem>>> {
+    ) -> Option<BoxStream<Result<super::DiscoveryItem, super::DiscoveryError>>> {
         let guard = self.nodes.read().expect("poisoned");
         let info = guard.get(&node_id);
         match info {

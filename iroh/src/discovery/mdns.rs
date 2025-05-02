@@ -42,10 +42,12 @@ use n0_future::{
     task::{self, AbortOnDropHandle, JoinSet},
     time::{self, Duration},
 };
+use snafu::ResultExt;
 use swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
 use tokio::sync::mpsc::{self, error::TrySendError};
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
+use super::{CreateServiceSnafu, DiscoveryError};
 use crate::{
     discovery::{Discovery, DiscoveryItem, NodeData, NodeInfo},
     watchable::Watchable,
@@ -82,7 +84,7 @@ pub struct MdnsDiscovery {
 #[derive(Debug)]
 enum Message {
     Discovery(String, Peer),
-    Resolve(NodeId, mpsc::Sender<anyhow::Result<DiscoveryItem>>),
+    Resolve(NodeId, mpsc::Sender<Result<DiscoveryItem, DiscoveryError>>),
     Timeout(NodeId, usize),
     Subscribe(mpsc::Sender<DiscoveryItem>),
 }
@@ -137,7 +139,7 @@ impl MdnsDiscovery {
     ///
     /// # Panics
     /// This relies on [`tokio::runtime::Handle::current`] and will panic if called outside of the context of a tokio runtime.
-    pub fn new(node_id: NodeId) -> anyhow::Result<Self> {
+    pub fn new(node_id: NodeId) -> Result<Self, DiscoveryError> {
         debug!("Creating new MdnsDiscovery service");
         let (send, mut recv) = mpsc::channel(64);
         let task_sender = send.clone();
@@ -153,7 +155,7 @@ impl MdnsDiscovery {
             let mut last_id = 0;
             let mut senders: HashMap<
                 PublicKey,
-                HashMap<usize, mpsc::Sender<anyhow::Result<DiscoveryItem>>>,
+                HashMap<usize, mpsc::Sender<Result<DiscoveryItem, DiscoveryError>>>,
             > = HashMap::default();
             let mut timeouts = JoinSet::new();
             loop {
@@ -305,7 +307,7 @@ impl MdnsDiscovery {
         sender: mpsc::Sender<Message>,
         socketaddrs: BTreeSet<SocketAddr>,
         rt: &tokio::runtime::Handle,
-    ) -> anyhow::Result<DropGuard> {
+    ) -> Result<DropGuard, DiscoveryError> {
         let spawn_rt = rt.clone();
         let callback = move |node_id: &str, peer: &Peer| {
             trace!(
@@ -331,7 +333,10 @@ impl MdnsDiscovery {
         for addr in addrs {
             discoverer = discoverer.with_addrs(addr.0, addr.1);
         }
-        discoverer.spawn(rt)
+        discoverer
+            .spawn(rt)
+            .map_err(|e| anyhow::anyhow!(e.to_string()))
+            .context(CreateServiceSnafu { service: "mdns" })
     }
 
     fn socketaddrs_to_addrs(socketaddrs: &BTreeSet<SocketAddr>) -> HashMap<u16, Vec<IpAddr>> {
@@ -376,7 +381,7 @@ impl Discovery for MdnsDiscovery {
         &self,
         _ep: Endpoint,
         node_id: NodeId,
-    ) -> Option<BoxStream<anyhow::Result<DiscoveryItem>>> {
+    ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
         use futures_util::FutureExt;
 
         let (send, recv) = mpsc::channel(20);

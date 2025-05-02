@@ -38,8 +38,8 @@ use crate::discovery::pkarr::PkarrResolver;
 use crate::{discovery::dns::DnsDiscovery, dns::DnsResolver};
 use crate::{
     discovery::{
-        pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryItem, DiscoverySubscribers,
-        DiscoveryTask, Lagged, UserData,
+        pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryError, DiscoveryItem,
+        DiscoverySubscribers, DiscoveryTask, Lagged, UserData,
     },
     magicsock::{self, Handle, NodeIdMappedAddr, OwnAddressSnafu},
     tls,
@@ -661,9 +661,9 @@ pub enum BindError {
 #[snafu(module)]
 pub enum GetMappingAddressError {
     #[snafu(display("Discovery service required due to missing addressing information"))]
-    DiscoveryStart { source: anyhow::Error },
+    DiscoveryStart { source: DiscoveryError },
     #[snafu(display("Discovery service failed"))]
-    Discover { source: anyhow::Error },
+    Discover { source: DiscoveryError },
     #[snafu(display("No addressing information found"))]
     NoAddress {},
 }
