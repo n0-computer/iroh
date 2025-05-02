@@ -479,7 +479,12 @@ impl Frame {
                 let content = content.slice(PublicKey::LENGTH..);
                 Self::RecvPacket { src_key, content }
             }
-            FrameType::KeepAlive => Self::KeepAlive,
+            FrameType::KeepAlive => {
+                if !content.is_empty() {
+                    return Err(InvalidFrameSnafu.build());
+                }
+                Self::KeepAlive
+            }
             FrameType::NotePreferred => {
                 if content.len() != 1 {
                     return Err(InvalidFrameSnafu.build());
@@ -919,7 +924,7 @@ mod proptests {
             codec.encode(frame.clone(), &mut buf).unwrap();
             inject_error(&mut buf);
             let decoded = codec.decode(&mut buf);
-            prop_assert!(decoded.is_err());
+            prop_assert!(decoded.is_err(), "{:?}", decoded);
         }
     }
 }
