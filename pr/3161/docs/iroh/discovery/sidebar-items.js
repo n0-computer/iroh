@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["dns","mdns","pkarr","static_provider"],"struct":["ConcurrentDiscovery","DiscoveryItem","Lagged","NodeData","NodeInfo","UserData"],"trait":["Discovery"]};
+window.SIDEBAR_ITEMS = {"enum":["DiscoveryError"],"mod":["dns","mdns","pkarr","static_provider"],"struct":["ConcurrentDiscovery","DiscoveryItem","Lagged","NodeData","NodeInfo","UserData"],"trait":["Discovery"]};

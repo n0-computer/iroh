@@ -92,12 +92,8 @@
 <a href="#91" id="91">91</a>
 <a href="#92" id="92">92</a>
 <a href="#93" id="93">93</a>
-<a href="#94" id="94">94</a>
-<a href="#95" id="95">95</a>
-<a href="#96" id="96">96</a>
-<a href="#97" id="97">97</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::sync::Arc;
+<a href="#94" id="94">94</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::sync::Arc;
 
-<span class="kw">use </span>anyhow::{anyhow, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>n0_future::{
     task::{<span class="self">self</span>, AbortOnDropHandle},
     time::{<span class="self">self</span>, Duration},
@@ -128,10 +124,8 @@
     </span>Loader: Send + reloadable_state::core::Loader&lt;Value = CertifiedKey&gt; + <span class="lifetime">'static</span>,
 {
     <span class="doccomment">/// Perform the initial load and construct the [`ReloadingResolver`].
-    </span><span class="kw">pub async fn </span>init(loader: Loader, interval: Duration) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="kw">let </span>(reloadable, <span class="kw">_</span>) = Reloadable::init_load(loader)
-            .<span class="kw">await
-            </span>.map_err(|<span class="kw">_</span>| <span class="macro">anyhow!</span>(<span class="string">"Failed to load the certificate"</span>))<span class="question-mark">?</span>;
+    </span><span class="kw">pub async fn </span>init(loader: Loader, interval: Duration) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, Loader::Error&gt; {
+        <span class="kw">let </span>(reloadable, <span class="kw">_</span>) = Reloadable::init_load(loader).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>reloadable = Arc::new(reloadable);
 
         <span class="kw">let </span>cancel_token = CancellationToken::new();

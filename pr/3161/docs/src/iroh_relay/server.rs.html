@@ -1257,7 +1257,59 @@
 <a href="#1256" id="1256">1256</a>
 <a href="#1257" id="1257">1257</a>
 <a href="#1258" id="1258">1258</a>
-<a href="#1259" id="1259">1259</a></pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
+<a href="#1259" id="1259">1259</a>
+<a href="#1260" id="1260">1260</a>
+<a href="#1261" id="1261">1261</a>
+<a href="#1262" id="1262">1262</a>
+<a href="#1263" id="1263">1263</a>
+<a href="#1264" id="1264">1264</a>
+<a href="#1265" id="1265">1265</a>
+<a href="#1266" id="1266">1266</a>
+<a href="#1267" id="1267">1267</a>
+<a href="#1268" id="1268">1268</a>
+<a href="#1269" id="1269">1269</a>
+<a href="#1270" id="1270">1270</a>
+<a href="#1271" id="1271">1271</a>
+<a href="#1272" id="1272">1272</a>
+<a href="#1273" id="1273">1273</a>
+<a href="#1274" id="1274">1274</a>
+<a href="#1275" id="1275">1275</a>
+<a href="#1276" id="1276">1276</a>
+<a href="#1277" id="1277">1277</a>
+<a href="#1278" id="1278">1278</a>
+<a href="#1279" id="1279">1279</a>
+<a href="#1280" id="1280">1280</a>
+<a href="#1281" id="1281">1281</a>
+<a href="#1282" id="1282">1282</a>
+<a href="#1283" id="1283">1283</a>
+<a href="#1284" id="1284">1284</a>
+<a href="#1285" id="1285">1285</a>
+<a href="#1286" id="1286">1286</a>
+<a href="#1287" id="1287">1287</a>
+<a href="#1288" id="1288">1288</a>
+<a href="#1289" id="1289">1289</a>
+<a href="#1290" id="1290">1290</a>
+<a href="#1291" id="1291">1291</a>
+<a href="#1292" id="1292">1292</a>
+<a href="#1293" id="1293">1293</a>
+<a href="#1294" id="1294">1294</a>
+<a href="#1295" id="1295">1295</a>
+<a href="#1296" id="1296">1296</a>
+<a href="#1297" id="1297">1297</a>
+<a href="#1298" id="1298">1298</a>
+<a href="#1299" id="1299">1299</a>
+<a href="#1300" id="1300">1300</a>
+<a href="#1301" id="1301">1301</a>
+<a href="#1302" id="1302">1302</a>
+<a href="#1303" id="1303">1303</a>
+<a href="#1304" id="1304">1304</a>
+<a href="#1305" id="1305">1305</a>
+<a href="#1306" id="1306">1306</a>
+<a href="#1307" id="1307">1307</a>
+<a href="#1308" id="1308">1308</a>
+<a href="#1309" id="1309">1309</a>
+<a href="#1310" id="1310">1310</a>
+<a href="#1311" id="1311">1311</a></pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
 //!
 //! This module provides an API to run a full fledged iroh-relay server.  It is primarily
 //! used by the `iroh-relay` binary in this crate.  It can be used to run a relay server in
@@ -1277,10 +1329,10 @@
 
 </span><span class="kw">use </span>std::{fmt, future::Future, net::SocketAddr, num::NonZeroU32, pin::Pin, sync::Arc};
 
-<span class="kw">use </span>anyhow::{anyhow, bail, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>derive_more::Debug;
 <span class="kw">use </span>http::{
-    response::Builder <span class="kw">as </span>ResponseBuilder, HeaderMap, Method, Request, Response, StatusCode,
+    header::InvalidHeaderValue, response::Builder <span class="kw">as </span>ResponseBuilder, HeaderMap, Method, Request,
+    Response, StatusCode,
 };
 <span class="kw">use </span>hyper::body::Incoming;
 <span class="kw">use </span>iroh_base::NodeId;
@@ -1288,9 +1340,11 @@
 </span><span class="kw">use </span>iroh_base::RelayUrl;
 <span class="kw">use </span>iroh_metrics::inc;
 <span class="kw">use </span>n0_future::{future::Boxed, StreamExt};
+<span class="kw">use </span>nested_enum_utils::common_fields;
+<span class="kw">use </span>snafu::{Backtrace, ResultExt, Snafu};
 <span class="kw">use </span>tokio::{
     net::{TcpListener, UdpSocket},
-    task::JoinSet,
+    task::{JoinError, JoinSet},
 };
 <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 <span class="kw">use </span>tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
@@ -1299,7 +1353,7 @@
     defaults::DEFAULT_KEY_CACHE_CAPACITY,
     http::RELAY_PROBE_PATH,
     protos,
-    quic::server::{QuicServer, ServerHandle <span class="kw">as </span>QuicServerHandle},
+    quic::server::{QuicServer, QuicSpawnError, ServerHandle <span class="kw">as </span>QuicServerHandle},
 };
 
 <span class="kw">mod </span>client;
@@ -1522,7 +1576,7 @@
     <span class="doccomment">/// Handle to the quic server.
     </span>quic_handle: <span class="prelude-ty">Option</span>&lt;QuicServerHandle&gt;,
     <span class="doccomment">/// The main task running the server.
-    </span>supervisor: AbortOnDropHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;,
+    </span>supervisor: AbortOnDropHandle&lt;<span class="prelude-ty">Result</span>&lt;(), SupervisorError&gt;&gt;,
     <span class="doccomment">/// The certificate for the server.
     ///
     /// If the server has manual certificates configured the certificate chain will be
@@ -1530,15 +1584,63 @@
     </span>certificates: <span class="prelude-ty">Option</span>&lt;Vec&lt;rustls::pki_types::CertificateDer&lt;<span class="lifetime">'static</span>&gt;&gt;&gt;,
 }
 
+<span class="doccomment">/// Server spawn errors
+</span><span class="attr">#[common_fields({
+    backtrace: <span class="prelude-ty">Option</span>&lt;Backtrace&gt;,
+    <span class="attr">#[snafu(implicit)]
+    </span>span_trace: n0_snafu::SpanTrace,
+})]
+<span class="attr">#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+#[snafu(visibility(<span class="kw">pub</span>(<span class="kw">crate</span>)))]
+</span><span class="kw">pub enum </span>SpawnError {
+    <span class="attr">#[snafu(display(<span class="string">"Unable to get local address"</span>))]
+    </span>LocalAddr { source: std::io::Error },
+    <span class="attr">#[snafu(display(<span class="string">"Failed to bind STUN listener"</span>))]
+    </span>UdpSocketBind { source: std::io::Error },
+    <span class="attr">#[snafu(display(<span class="string">"Failed to bind STUN listener"</span>))]
+    </span>QuicSpawn { source: QuicSpawnError },
+    <span class="attr">#[snafu(display(<span class="string">"Failed to parse TLS header"</span>))]
+    </span>TlsHeaderParse { source: InvalidHeaderValue },
+    <span class="attr">#[snafu(display(<span class="string">"Failed to bind TcpListener"</span>))]
+    </span>BindTlsListener { source: std::io::Error },
+    <span class="attr">#[snafu(display(<span class="string">"No local address"</span>))]
+    </span>NoLocalAddr { source: std::io::Error },
+    <span class="attr">#[snafu(display(<span class="string">"Failed to bind server socket to {addr}"</span>))]
+    </span>BindTcpListener { addr: SocketAddr },
+}
+
+<span class="doccomment">/// Server task errors
+</span><span class="attr">#[common_fields({
+    backtrace: <span class="prelude-ty">Option</span>&lt;Backtrace&gt;,
+    <span class="attr">#[snafu(implicit)]
+    </span>span_trace: n0_snafu::SpanTrace,
+})]
+<span class="attr">#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+#[snafu(visibility(<span class="kw">pub</span>(<span class="kw">crate</span>)))]
+</span><span class="kw">pub enum </span>SupervisorError {
+    <span class="attr">#[snafu(display(<span class="string">"Error starting metrics server"</span>))]
+    </span>Metrics { source: std::io::Error },
+    <span class="attr">#[snafu(display(<span class="string">"Acme event stream finished"</span>))]
+    </span>AcmeEventStreamFinished,
+    <span class="attr">#[snafu(transparent)]
+    </span>JoinError { source: JoinError },
+    <span class="attr">#[snafu(display(<span class="string">"No relay services are enabled"</span>))]
+    </span>NoRelayServicesEnabled,
+    <span class="attr">#[snafu(display(<span class="string">"Task cancelled"</span>))]
+    </span>TaskCancelled,
+}
+
 <span class="kw">impl </span>Server {
     <span class="doccomment">/// Starts the server.
-    </span><span class="kw">pub async fn </span>spawn&lt;EC, EA&gt;(config: ServerConfig&lt;EC, EA&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt;
+    </span><span class="kw">pub async fn </span>spawn&lt;EC, EA&gt;(config: ServerConfig&lt;EC, EA&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, SpawnError&gt;
     <span class="kw">where
         </span>EC: fmt::Debug + <span class="lifetime">'static</span>,
         EA: fmt::Debug + <span class="lifetime">'static</span>,
     {
-        <span class="kw">use </span>anyhow::Context;
-
         <span class="kw">let </span><span class="kw-2">mut </span>tasks = JoinSet::new();
 
         <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
@@ -1552,8 +1654,9 @@
             });
             tasks.spawn(
                 <span class="kw">async move </span>{
-                    iroh_metrics::metrics::start_metrics_server(addr).<span class="kw">await</span><span class="question-mark">?</span>;
-                    anyhow::Ok(())
+                    iroh_metrics::metrics::start_metrics_server(addr)
+                        .<span class="kw">await
+                        </span>.context(MetricsSnafu)
                 }
                 .instrument(<span class="macro">info_span!</span>(<span class="string">"metrics-server"</span>)),
             );
@@ -1565,14 +1668,18 @@
                 <span class="macro">debug!</span>(<span class="string">"Starting STUN server"</span>);
                 <span class="kw">match </span>UdpSocket::bind(stun.bind_addr).<span class="kw">await </span>{
                     <span class="prelude-val">Ok</span>(sock) =&gt; {
-                        <span class="kw">let </span>addr = sock.local_addr()<span class="question-mark">?</span>;
+                        <span class="kw">let </span>addr = sock.local_addr().context(LocalAddrSnafu)<span class="question-mark">?</span>;
                         <span class="macro">info!</span>(<span class="string">"STUN server listening on {addr}"</span>);
                         tasks.spawn(
-                            server_stun_listener(sock).instrument(<span class="macro">info_span!</span>(<span class="string">"stun-server"</span>, %addr)),
+                            <span class="kw">async move </span>{
+                                server_stun_listener(sock).<span class="kw">await</span>;
+                                <span class="prelude-val">Ok</span>(())
+                            }
+                            .instrument(<span class="macro">info_span!</span>(<span class="string">"stun-server"</span>, %addr)),
                         );
                         <span class="prelude-val">Some</span>(addr)
                     }
-                    <span class="prelude-val">Err</span>(err) =&gt; <span class="macro">bail!</span>(<span class="string">"failed to bind STUN listener: {err:#?}"</span>),
+                    <span class="prelude-val">Err</span>(err) =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(err).context(UdpSocketBindSnafu),
                 }
             }
             <span class="prelude-val">None </span>=&gt; <span class="prelude-val">None</span>,
@@ -1590,7 +1697,7 @@
         <span class="kw">let </span>quic_server = <span class="kw">match </span>config.quic {
             <span class="prelude-val">Some</span>(quic_config) =&gt; {
                 <span class="macro">debug!</span>(<span class="string">"Starting QUIC server {}"</span>, quic_config.bind_addr);
-                <span class="prelude-val">Some</span>(QuicServer::spawn(quic_config)<span class="question-mark">?</span>)
+                <span class="prelude-val">Some</span>(QuicServer::spawn(quic_config).context(QuicSpawnSnafu)<span class="question-mark">?</span>)
             }
             <span class="prelude-val">None </span>=&gt; <span class="prelude-val">None</span>,
         };
@@ -1602,7 +1709,7 @@
                 <span class="macro">debug!</span>(<span class="string">"Starting Relay server"</span>);
                 <span class="kw">let </span><span class="kw-2">mut </span>headers = HeaderMap::new();
                 <span class="kw">for </span>(name, value) <span class="kw">in </span>TLS_HEADERS.iter() {
-                    headers.insert(<span class="kw-2">*</span>name, value.parse()<span class="question-mark">?</span>);
+                    headers.insert(<span class="kw-2">*</span>name, value.parse().context(TlsHeaderParseSnafu)<span class="question-mark">?</span>);
                 }
                 <span class="kw">let </span>relay_bind_addr = <span class="kw">match </span>relay_config.tls {
                     <span class="prelude-val">Some</span>(<span class="kw-2">ref </span>tls) =&gt; tls.https_bind_addr,
@@ -1636,7 +1743,7 @@
                                                 <span class="prelude-val">Err</span>(err) =&gt; <span class="macro">error!</span>(<span class="string">"error: {err:?}"</span>),
                                             }
                                         }
-                                        <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"acme event stream finished"</span>))
+                                        <span class="prelude-val">Err</span>(AcmeEventStreamFinishedSnafu.build())
                                     }
                                     .instrument(<span class="macro">info_span!</span>(<span class="string">"acme"</span>)),
                                 );
@@ -1662,11 +1769,14 @@
                         // these standalone.
                         </span><span class="kw">let </span>http_listener = TcpListener::bind(<span class="kw-2">&amp;</span>relay_config.http_bind_addr)
                             .<span class="kw">await
-                            </span>.context(<span class="string">"failed to bind http"</span>)<span class="question-mark">?</span>;
-                        <span class="kw">let </span>http_addr = http_listener.local_addr()<span class="question-mark">?</span>;
+                            </span>.context(BindTlsListenerSnafu)<span class="question-mark">?</span>;
+                        <span class="kw">let </span>http_addr = http_listener.local_addr().context(NoLocalAddrSnafu)<span class="question-mark">?</span>;
                         tasks.spawn(
-                            run_captive_portal_service(http_listener)
-                                .instrument(<span class="macro">info_span!</span>(<span class="string">"http-service"</span>, addr = %http_addr)),
+                            <span class="kw">async move </span>{
+                                run_captive_portal_service(http_listener).<span class="kw">await</span>;
+                                <span class="prelude-val">Ok</span>(())
+                            }
+                            .instrument(<span class="macro">info_span!</span>(<span class="string">"http-service"</span>, addr = %http_addr)),
                         );
                         <span class="prelude-val">Some</span>(http_addr)
                     }
@@ -1707,7 +1817,7 @@
     <span class="doccomment">/// Requests graceful shutdown.
     ///
     /// Returns once all server tasks have stopped.
-    </span><span class="kw">pub async fn </span>shutdown(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">pub async fn </span>shutdown(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(), SupervisorError&gt; {
         <span class="comment">// Only the Relay server and QUIC server need shutting down, the supervisor will abort the tasks in
         // the JoinSet when the server terminates.
         </span><span class="kw">if let </span><span class="prelude-val">Some</span>(handle) = <span class="self">self</span>.relay_handle {
@@ -1723,7 +1833,7 @@
     ///
     /// This allows waiting for the server's supervisor task to finish.  Can be useful in
     /// case there is an error in the server before it is shut down.
-    </span><span class="kw">pub fn </span>task_handle(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;mut </span>AbortOnDropHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt; {
+    </span><span class="kw">pub fn </span>task_handle(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;mut </span>AbortOnDropHandle&lt;<span class="prelude-ty">Result</span>&lt;(), SupervisorError&gt;&gt; {
         <span class="kw-2">&amp;mut </span><span class="self">self</span>.supervisor
     }
 
@@ -1783,10 +1893,10 @@
 /// The supervisor finishes once all tasks are finished.
 </span><span class="attr">#[instrument(skip_all)]
 </span><span class="kw">async fn </span>relay_supervisor(
-    <span class="kw-2">mut </span>tasks: JoinSet&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;,
+    <span class="kw-2">mut </span>tasks: JoinSet&lt;<span class="prelude-ty">Result</span>&lt;(), SupervisorError&gt;&gt;,
     <span class="kw-2">mut </span>relay_http_server: <span class="prelude-ty">Option</span>&lt;http_server::Server&gt;,
     <span class="kw-2">mut </span>quic_server: <span class="prelude-ty">Option</span>&lt;QuicServer&gt;,
-) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+) -&gt; <span class="prelude-ty">Result</span>&lt;(), SupervisorError&gt; {
     <span class="kw">let </span>quic_enabled = quic_server.is_some();
     <span class="kw">let </span><span class="kw-2">mut </span>quic_fut = <span class="kw">match </span>quic_server {
         <span class="prelude-val">Some</span>(<span class="kw-2">ref mut </span>server) =&gt; n0_future::Either::Left(server.task_handle()),
@@ -1800,9 +1910,9 @@
     <span class="kw">let </span>res = <span class="macro">tokio::select!</span> {
         biased;
         <span class="prelude-val">Some</span>(ret) = tasks.join_next() =&gt; ret,
-        ret = <span class="kw-2">&amp;mut </span>quic_fut, <span class="kw">if </span>quic_enabled =&gt; ret.map(anyhow::Ok),
-        ret = <span class="kw-2">&amp;mut </span>relay_fut, <span class="kw">if </span>relay_enabled =&gt; ret.map(anyhow::Ok),
-        <span class="kw">else </span>=&gt; <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"No relay services are enabled."</span>))),
+        ret = <span class="kw-2">&amp;mut </span>quic_fut, <span class="kw">if </span>quic_enabled =&gt; ret.map(<span class="prelude-val">Ok</span>),
+        ret = <span class="kw-2">&amp;mut </span>relay_fut, <span class="kw">if </span>relay_enabled =&gt; ret.map(<span class="prelude-val">Ok</span>),
+        <span class="kw">else </span>=&gt; <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(NoRelayServicesEnabledSnafu.build())),
     };
     <span class="kw">let </span>ret = <span class="kw">match </span>res {
         <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(())) =&gt; {
@@ -1811,7 +1921,7 @@
         }
         <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err)) =&gt; {
             <span class="macro">error!</span>(%err, <span class="string">"Task failed"</span>);
-            <span class="prelude-val">Err</span>(err.context(<span class="string">"task failed"</span>))
+            <span class="prelude-val">Err</span>(err)
         }
         <span class="prelude-val">Err</span>(err) =&gt; {
             <span class="kw">if let </span><span class="prelude-val">Ok</span>(panic) = err.try_into_panic() {
@@ -1819,7 +1929,7 @@
                 std::panic::resume_unwind(panic);
             }
             <span class="macro">debug!</span>(<span class="string">"Task cancelled"</span>);
-            <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"task cancelled"</span>))
+            <span class="prelude-val">Err</span>(TaskCancelledSnafu.build())
         }
     };
 
@@ -1831,7 +1941,7 @@
 
     <span class="comment">// Ensure the QUIC server is closed
     </span><span class="kw">if let </span><span class="prelude-val">Some</span>(server) = quic_server {
-        server.shutdown().<span class="kw">await</span><span class="question-mark">?</span>;
+        server.shutdown().<span class="kw">await</span>;
     }
 
     <span class="comment">// Stop all remaining tasks
@@ -1843,7 +1953,7 @@
 <span class="doccomment">/// Runs a STUN server.
 ///
 /// When the future is dropped, the server stops.
-</span><span class="kw">async fn </span>server_stun_listener(sock: UdpSocket) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+</span><span class="kw">async fn </span>server_stun_listener(sock: UdpSocket) {
     <span class="macro">info!</span>(addr = <span class="question-mark">?</span>sock.local_addr().ok(), <span class="string">"running STUN server"</span>);
     <span class="kw">let </span>sock = Arc::new(sock);
     <span class="kw">let </span><span class="kw-2">mut </span>buffer = <span class="macro">vec!</span>[<span class="number">0u8</span>; <span class="number">64 </span>&lt;&lt; <span class="number">10</span>];
@@ -1990,7 +2100,7 @@
 </span>}
 
 <span class="doccomment">/// This is a future that never returns, drop it to cancel/abort.
-</span><span class="kw">async fn </span>run_captive_portal_service(http_listener: TcpListener) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+</span><span class="kw">async fn </span>run_captive_portal_service(http_listener: TcpListener) {
     <span class="macro">info!</span>(<span class="string">"serving"</span>);
 
     <span class="comment">// If this future is cancelled, this is dropped and all tasks are aborted.
@@ -2082,7 +2192,7 @@
         http::{Protocol, HTTP_UPGRADE_PROTOCOL},
     };
 
-    <span class="kw">async fn </span>spawn_local_relay() -&gt; <span class="prelude-ty">Result</span>&lt;Server&gt; {
+    <span class="kw">async fn </span>spawn_local_relay() -&gt; std::result::Result&lt;Server, SpawnError&gt; {
         Server::spawn(ServerConfig::&lt;(), ()&gt; {
             relay: <span class="prelude-val">Some</span>(RelayConfig::&lt;(), ()&gt; {
                 http_bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">0</span>).into(),
@@ -2104,7 +2214,7 @@
         client_b: <span class="kw-2">&amp;mut </span><span class="kw">crate</span>::client::Client,
         b_key: NodeId,
         msg: Bytes,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;ReceivedMessage&gt; {
+    ) -&gt; TestResult&lt;ReceivedMessage&gt; {
         <span class="kw">use </span>anyhow::Context;
 
         <span class="comment">// try resend 10 times
@@ -2416,11 +2526,9 @@
         <span class="macro">assert_eq!</span>(response_addr, socket.local_addr().unwrap());
     }
 
-    <span class="kw">use </span>n0_snafu::{TestError, TestResultExt};
-
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_relay_access_control() -&gt; n0_snafu::TestResult {
+    </span><span class="kw">async fn </span>test_relay_access_control() -&gt; TestResult&lt;()&gt; {
         <span class="kw">let </span>current_span = <span class="macro">tracing::info_span!</span>(<span class="string">"this is a test"</span>);
         <span class="kw">let </span>_guard = current_span.enter();
 
@@ -2450,11 +2558,10 @@
             stun: <span class="prelude-val">None</span>,
             metrics_addr: <span class="prelude-val">None</span>,
         })
-        .<span class="kw">await
-        </span>.map_err(TestError::anyhow)<span class="question-mark">?</span>;
+        .<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="kw">let </span>relay_url = <span class="macro">format!</span>(<span class="string">"http://{}"</span>, server.http_addr().unwrap());
-        <span class="kw">let </span>relay_url: RelayUrl = relay_url.parse().context(<span class="string">"url parse"</span>)<span class="question-mark">?</span>;
+        <span class="kw">let </span>relay_url: RelayUrl = relay_url.parse()<span class="question-mark">?</span>;
 
         <span class="comment">// set up client a
         </span><span class="kw">let </span>resolver = dns_resolver();
@@ -2473,8 +2580,7 @@
                 }
             }
         })
-        .<span class="kw">await
-        </span>.context(<span class="string">"waiting for health"</span>)<span class="question-mark">?</span>;
+        .<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="comment">// test that another client has access
 
@@ -2498,9 +2604,7 @@
 
         <span class="comment">// send message from b to c
         </span><span class="kw">let </span>msg = Bytes::from(<span class="string">"hello, c"</span>);
-        <span class="kw">let </span>res = try_send_recv(<span class="kw-2">&amp;mut </span>client_b, <span class="kw-2">&amp;mut </span>client_c, c_key, msg.clone())
-            .<span class="kw">await
-            </span>.map_err(TestError::anyhow)<span class="question-mark">?</span>;
+        <span class="kw">let </span>res = try_send_recv(<span class="kw-2">&amp;mut </span>client_b, <span class="kw-2">&amp;mut </span>client_c, c_key, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="kw">if let </span>ReceivedMessage::ReceivedPacket {
             remote_node_id,

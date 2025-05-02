@@ -457,7 +457,7 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         _endpoint: <span class="kw">crate</span>::Endpoint,
         node_id: NodeId,
-    ) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;anyhow::Result&lt;<span class="kw">super</span>::DiscoveryItem&gt;&gt;&gt; {
+    ) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;<span class="prelude-ty">Result</span>&lt;<span class="kw">super</span>::DiscoveryItem, <span class="kw">super</span>::DiscoveryError&gt;&gt;&gt; {
         <span class="kw">let </span>guard = <span class="self">self</span>.nodes.read().expect(<span class="string">"poisoned"</span>);
         <span class="kw">let </span>info = guard.get(<span class="kw-2">&amp;</span>node_id);
         <span class="kw">match </span>info {

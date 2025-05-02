@@ -1755,7 +1755,162 @@
 <a href="#1754" id="1754">1754</a>
 <a href="#1755" id="1755">1755</a>
 <a href="#1756" id="1756">1756</a>
-<a href="#1757" id="1757">1757</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
+<a href="#1757" id="1757">1757</a>
+<a href="#1758" id="1758">1758</a>
+<a href="#1759" id="1759">1759</a>
+<a href="#1760" id="1760">1760</a>
+<a href="#1761" id="1761">1761</a>
+<a href="#1762" id="1762">1762</a>
+<a href="#1763" id="1763">1763</a>
+<a href="#1764" id="1764">1764</a>
+<a href="#1765" id="1765">1765</a>
+<a href="#1766" id="1766">1766</a>
+<a href="#1767" id="1767">1767</a>
+<a href="#1768" id="1768">1768</a>
+<a href="#1769" id="1769">1769</a>
+<a href="#1770" id="1770">1770</a>
+<a href="#1771" id="1771">1771</a>
+<a href="#1772" id="1772">1772</a>
+<a href="#1773" id="1773">1773</a>
+<a href="#1774" id="1774">1774</a>
+<a href="#1775" id="1775">1775</a>
+<a href="#1776" id="1776">1776</a>
+<a href="#1777" id="1777">1777</a>
+<a href="#1778" id="1778">1778</a>
+<a href="#1779" id="1779">1779</a>
+<a href="#1780" id="1780">1780</a>
+<a href="#1781" id="1781">1781</a>
+<a href="#1782" id="1782">1782</a>
+<a href="#1783" id="1783">1783</a>
+<a href="#1784" id="1784">1784</a>
+<a href="#1785" id="1785">1785</a>
+<a href="#1786" id="1786">1786</a>
+<a href="#1787" id="1787">1787</a>
+<a href="#1788" id="1788">1788</a>
+<a href="#1789" id="1789">1789</a>
+<a href="#1790" id="1790">1790</a>
+<a href="#1791" id="1791">1791</a>
+<a href="#1792" id="1792">1792</a>
+<a href="#1793" id="1793">1793</a>
+<a href="#1794" id="1794">1794</a>
+<a href="#1795" id="1795">1795</a>
+<a href="#1796" id="1796">1796</a>
+<a href="#1797" id="1797">1797</a>
+<a href="#1798" id="1798">1798</a>
+<a href="#1799" id="1799">1799</a>
+<a href="#1800" id="1800">1800</a>
+<a href="#1801" id="1801">1801</a>
+<a href="#1802" id="1802">1802</a>
+<a href="#1803" id="1803">1803</a>
+<a href="#1804" id="1804">1804</a>
+<a href="#1805" id="1805">1805</a>
+<a href="#1806" id="1806">1806</a>
+<a href="#1807" id="1807">1807</a>
+<a href="#1808" id="1808">1808</a>
+<a href="#1809" id="1809">1809</a>
+<a href="#1810" id="1810">1810</a>
+<a href="#1811" id="1811">1811</a>
+<a href="#1812" id="1812">1812</a>
+<a href="#1813" id="1813">1813</a>
+<a href="#1814" id="1814">1814</a>
+<a href="#1815" id="1815">1815</a>
+<a href="#1816" id="1816">1816</a>
+<a href="#1817" id="1817">1817</a>
+<a href="#1818" id="1818">1818</a>
+<a href="#1819" id="1819">1819</a>
+<a href="#1820" id="1820">1820</a>
+<a href="#1821" id="1821">1821</a>
+<a href="#1822" id="1822">1822</a>
+<a href="#1823" id="1823">1823</a>
+<a href="#1824" id="1824">1824</a>
+<a href="#1825" id="1825">1825</a>
+<a href="#1826" id="1826">1826</a>
+<a href="#1827" id="1827">1827</a>
+<a href="#1828" id="1828">1828</a>
+<a href="#1829" id="1829">1829</a>
+<a href="#1830" id="1830">1830</a>
+<a href="#1831" id="1831">1831</a>
+<a href="#1832" id="1832">1832</a>
+<a href="#1833" id="1833">1833</a>
+<a href="#1834" id="1834">1834</a>
+<a href="#1835" id="1835">1835</a>
+<a href="#1836" id="1836">1836</a>
+<a href="#1837" id="1837">1837</a>
+<a href="#1838" id="1838">1838</a>
+<a href="#1839" id="1839">1839</a>
+<a href="#1840" id="1840">1840</a>
+<a href="#1841" id="1841">1841</a>
+<a href="#1842" id="1842">1842</a>
+<a href="#1843" id="1843">1843</a>
+<a href="#1844" id="1844">1844</a>
+<a href="#1845" id="1845">1845</a>
+<a href="#1846" id="1846">1846</a>
+<a href="#1847" id="1847">1847</a>
+<a href="#1848" id="1848">1848</a>
+<a href="#1849" id="1849">1849</a>
+<a href="#1850" id="1850">1850</a>
+<a href="#1851" id="1851">1851</a>
+<a href="#1852" id="1852">1852</a>
+<a href="#1853" id="1853">1853</a>
+<a href="#1854" id="1854">1854</a>
+<a href="#1855" id="1855">1855</a>
+<a href="#1856" id="1856">1856</a>
+<a href="#1857" id="1857">1857</a>
+<a href="#1858" id="1858">1858</a>
+<a href="#1859" id="1859">1859</a>
+<a href="#1860" id="1860">1860</a>
+<a href="#1861" id="1861">1861</a>
+<a href="#1862" id="1862">1862</a>
+<a href="#1863" id="1863">1863</a>
+<a href="#1864" id="1864">1864</a>
+<a href="#1865" id="1865">1865</a>
+<a href="#1866" id="1866">1866</a>
+<a href="#1867" id="1867">1867</a>
+<a href="#1868" id="1868">1868</a>
+<a href="#1869" id="1869">1869</a>
+<a href="#1870" id="1870">1870</a>
+<a href="#1871" id="1871">1871</a>
+<a href="#1872" id="1872">1872</a>
+<a href="#1873" id="1873">1873</a>
+<a href="#1874" id="1874">1874</a>
+<a href="#1875" id="1875">1875</a>
+<a href="#1876" id="1876">1876</a>
+<a href="#1877" id="1877">1877</a>
+<a href="#1878" id="1878">1878</a>
+<a href="#1879" id="1879">1879</a>
+<a href="#1880" id="1880">1880</a>
+<a href="#1881" id="1881">1881</a>
+<a href="#1882" id="1882">1882</a>
+<a href="#1883" id="1883">1883</a>
+<a href="#1884" id="1884">1884</a>
+<a href="#1885" id="1885">1885</a>
+<a href="#1886" id="1886">1886</a>
+<a href="#1887" id="1887">1887</a>
+<a href="#1888" id="1888">1888</a>
+<a href="#1889" id="1889">1889</a>
+<a href="#1890" id="1890">1890</a>
+<a href="#1891" id="1891">1891</a>
+<a href="#1892" id="1892">1892</a>
+<a href="#1893" id="1893">1893</a>
+<a href="#1894" id="1894">1894</a>
+<a href="#1895" id="1895">1895</a>
+<a href="#1896" id="1896">1896</a>
+<a href="#1897" id="1897">1897</a>
+<a href="#1898" id="1898">1898</a>
+<a href="#1899" id="1899">1899</a>
+<a href="#1900" id="1900">1900</a>
+<a href="#1901" id="1901">1901</a>
+<a href="#1902" id="1902">1902</a>
+<a href="#1903" id="1903">1903</a>
+<a href="#1904" id="1904">1904</a>
+<a href="#1905" id="1905">1905</a>
+<a href="#1906" id="1906">1906</a>
+<a href="#1907" id="1907">1907</a>
+<a href="#1908" id="1908">1908</a>
+<a href="#1909" id="1909">1909</a>
+<a href="#1910" id="1910">1910</a>
+<a href="#1911" id="1911">1911</a>
+<a href="#1912" id="1912">1912</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
 //!
 //! It is implemented as an actor with [`Client`] as handle.
 //!
@@ -1782,7 +1937,7 @@
     task::{Context, Poll},
 };
 
-<span class="kw">use </span>anyhow::{anyhow, bail, Context <span class="kw">as _</span>};
+<span class="kw">use </span>http::StatusCode;
 <span class="kw">use </span>iroh_base::RelayUrl;
 <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
 </span><span class="kw">use </span>iroh_metrics::inc;
@@ -1804,6 +1959,7 @@
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">use </span>netwatch::{interfaces, UdpSocket};
 <span class="kw">use </span>rand::seq::IteratorRandom;
+<span class="kw">use </span>snafu::{IntoError, ResultExt, Snafu};
 <span class="kw">use </span>tokio::sync::{mpsc, oneshot};
 <span class="kw">use </span>tracing::{debug, debug_span, error, info_span, trace, warn, Instrument, Span};
 <span class="kw">use </span>url::Host;
@@ -1974,6 +2130,28 @@
     </span>hairpin_actor: hairpin::Client,
 }
 
+<span class="attr">#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+</span><span class="kw">pub enum </span>ActorRunError {
+    <span class="attr">#[snafu(display(<span class="string">"Report generation timed out"</span>))]
+    </span>Timeout,
+    <span class="attr">#[snafu(display(<span class="string">"Client that requested the report is gone"</span>))]
+    </span>ClientGone,
+    <span class="attr">#[snafu(display(<span class="string">"Internal NetReport actor is gone"</span>))]
+    </span>ActorGone,
+    <span class="attr">#[snafu(transparent)]
+    </span>Probes { source: ProbesError },
+}
+
+<span class="attr">#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+</span><span class="kw">pub enum </span>ProbesError {
+    <span class="attr">#[snafu(display(<span class="string">"Probe failed"</span>))]
+    </span>ProbeFailure { source: ProbeError },
+    <span class="attr">#[snafu(display(<span class="string">"All probes failed"</span>))]
+    </span>AllProbesFailed,
+}
+
 <span class="kw">impl </span>Actor {
     <span class="kw">fn </span>addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Addr {
         Addr {
@@ -1986,7 +2164,7 @@
             <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; <span class="macro">debug!</span>(<span class="string">"reportgen actor finished"</span>),
             <span class="prelude-val">Err</span>(err) =&gt; {
                 <span class="self">self</span>.net_report
-                    .send(net_report::Message::ReportAborted { err })
+                    .send(net_report::Message::ReportAborted { reason: err })
                     .<span class="kw">await
                     </span>.ok();
             }
@@ -2005,7 +2183,7 @@
     ///   - Receives actor messages (sent by those futures).
     ///   - Updates the report, cancels unneeded futures.
     /// - Sends the report to the net_report actor.
-    </span><span class="kw">async fn </span>run_inner(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; anyhow::Result&lt;()&gt; {
+    </span><span class="kw">async fn </span>run_inner(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(), ActorRunError&gt; {
         <span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">let </span>port_mapper = <span class="self">self</span>.socket_state.port_mapper.is_some();
         <span class="attr">#[cfg(wasm_browser)]
@@ -2016,7 +2194,7 @@
 
         <span class="kw">let </span><span class="kw-2">mut </span>port_mapping = <span class="self">self</span>.prepare_portmapper_task();
         <span class="kw">let </span><span class="kw-2">mut </span>captive_task = <span class="self">self</span>.prepare_captive_portal_task();
-        <span class="kw">let </span><span class="kw-2">mut </span>probes = <span class="self">self</span>.spawn_probes_task().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span><span class="kw-2">mut </span>probes = <span class="self">self</span>.spawn_probes_task().<span class="kw">await</span>;
 
         <span class="kw">let </span>total_timer = time::sleep(OVERALL_REPORT_TIMEOUT);
         <span class="macro">tokio::pin!</span>(total_timer);
@@ -2033,7 +2211,7 @@
                 biased;
                 <span class="kw">_ </span>= <span class="kw-2">&amp;mut </span>total_timer =&gt; {
                     <span class="macro">trace!</span>(<span class="string">"tick: total_timer expired"</span>);
-                    <span class="macro">bail!</span>(<span class="string">"report timed out"</span>);
+                    <span class="kw">return </span><span class="prelude-val">Err</span>(TimeoutSnafu.build());
                 }
 
                 <span class="kw">_ </span>= <span class="kw-2">&amp;mut </span>probe_timer =&gt; {
@@ -2083,7 +2261,9 @@
                     <span class="macro">trace!</span>(<span class="string">"tick: msg recv: {:?}"</span>, msg);
                     <span class="kw">match </span>msg {
                         <span class="prelude-val">Some</span>(msg) =&gt; <span class="self">self</span>.handle_message(msg),
-                        <span class="prelude-val">None </span>=&gt; <span class="macro">bail!</span>(<span class="string">"msg_rx closed, reportgen client must be dropped"</span>),
+                        <span class="prelude-val">None </span>=&gt; {
+                            <span class="kw">return </span><span class="prelude-val">Err</span>(ClientGoneSnafu.build());
+                        }
                     }
                 }
             }
@@ -2102,7 +2282,8 @@
             .send(net_report::Message::ReportReady {
                 report: Box::new(<span class="self">self</span>.report.clone()),
             })
-            .<span class="kw">await</span><span class="question-mark">?</span>;
+            .<span class="kw">await
+            </span>.map_err(|<span class="kw">_</span>| ActorGoneSnafu.build())<span class="question-mark">?</span>;
 
         <span class="prelude-val">Ok</span>(())
     }
@@ -2289,13 +2470,14 @@
                 <span class="kw">match </span>captive_portal_check.<span class="kw">await </span>{
                     <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(found)) =&gt; <span class="prelude-val">Some</span>(found),
                     <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err)) =&gt; {
-                        <span class="kw">let </span>err: <span class="prelude-ty">Result</span>&lt;reqwest::Error, <span class="kw">_</span>&gt; = err.downcast();
                         <span class="kw">match </span>err {
-                            <span class="prelude-val">Ok</span>(req_err) <span class="kw">if </span>req_err.is_connect() =&gt; {
-                                <span class="macro">debug!</span>(<span class="string">"check_captive_portal failed: {req_err:#}"</span>);
+                            CaptivePortalError::CreateReqwestClient { <span class="kw-2">ref </span>source }
+                            | CaptivePortalError::HttpRequest { <span class="kw-2">ref </span>source } =&gt; {
+                                <span class="kw">if </span>source.is_connect() {
+                                    <span class="macro">debug!</span>(<span class="string">"check_captive_portal failed: {err:#}"</span>);
+                                }
                             }
-                            <span class="prelude-val">Ok</span>(req_err) =&gt; <span class="macro">warn!</span>(<span class="string">"check_captive_portal error: {req_err:#}"</span>),
-                            <span class="prelude-val">Err</span>(any_err) =&gt; <span class="macro">warn!</span>(<span class="string">"check_captive_portal error: {any_err:#}"</span>),
+                            <span class="kw">_ </span>=&gt; <span class="macro">warn!</span>(<span class="string">"check_captive_portal error: {err:#}"</span>),
                         }
                         <span class="prelude-val">None
                     </span>}
@@ -2329,7 +2511,7 @@
     ///     failure permanent.  Probes in a probe set are essentially retries.
     ///   - Once there are [`ProbeReport`]s from enough nodes, all remaining probes are
     ///     aborted.  That is, the main actor loop stops polling them.
-    </span><span class="kw">async fn </span>spawn_probes_task(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; anyhow::Result&lt;JoinSet&lt;anyhow::Result&lt;ProbeReport&gt;&gt;&gt; {
+    </span><span class="kw">async fn </span>spawn_probes_task(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; JoinSet&lt;<span class="prelude-ty">Result</span>&lt;ProbeReport, ProbesError&gt;&gt; {
         <span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">let </span>if_state = interfaces::State::new().<span class="kw">await</span>;
         <span class="attr">#[cfg(not(wasm_browser))]
@@ -2396,15 +2578,15 @@
                     <span class="kw">while let </span><span class="prelude-val">Some</span>(res) = set.join_next().<span class="kw">await </span>{
                         <span class="kw">match </span>res {
                             <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(report)) =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(report),
-                            <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(ProbeError::Error(err, probe))) =&gt; {
+                            <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(ProbeErrorWithProbe::Error(err, probe))) =&gt; {
                                 probe_proto = <span class="prelude-val">Some</span>(probe.proto());
                                 <span class="macro">warn!</span>(<span class="question-mark">?</span>probe, <span class="string">"probe failed: {:#}"</span>, err);
                                 <span class="kw">continue</span>;
                             }
-                            <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(ProbeError::AbortSet(err, probe))) =&gt; {
+                            <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(ProbeErrorWithProbe::AbortSet(err, probe))) =&gt; {
                                 <span class="macro">debug!</span>(<span class="question-mark">?</span>probe, <span class="string">"probe set aborted: {:#}"</span>, err);
                                 set.abort_all();
-                                <span class="kw">return </span><span class="prelude-val">Err</span>(err);
+                                <span class="kw">return </span><span class="prelude-val">Err</span>(ProbeFailureSnafu.into_error(err));
                             }
                             <span class="prelude-val">Err</span>(err) =&gt; {
                                 <span class="macro">warn!</span>(<span class="string">"fatal probe set error, aborting: {:#}"</span>, err);
@@ -2413,14 +2595,14 @@
                         }
                     }
                     <span class="macro">warn!</span>(<span class="question-mark">?</span>probe_proto, <span class="string">"no successful probes in ProbeSet"</span>);
-                    <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"All probes in ProbeSet failed"</span>))
+                    <span class="prelude-val">Err</span>(AllProbesFailedSnafu.build())
                 }
                 .instrument(<span class="macro">info_span!</span>(<span class="string">"probe"</span>)),
             );
         }
         <span class="self">self</span>.outstanding_tasks.probes = <span class="bool-val">true</span>;
 
-        <span class="prelude-val">Ok</span>(probes)
+        probes
     }
 }
 
@@ -2483,11 +2665,57 @@
 /// the others in the set.  So this allows an unsuccessful probe to cancel the remainder of
 /// the set or not.
 </span><span class="attr">#[derive(Debug)]
-</span><span class="kw">enum </span>ProbeError {
+</span><span class="kw">enum </span>ProbeErrorWithProbe {
     <span class="doccomment">/// Abort the current set.
-    </span>AbortSet(anyhow::Error, Probe),
+    </span>AbortSet(ProbeError, Probe),
     <span class="doccomment">/// Continue the other probes in the set.
-    </span>Error(anyhow::Error, Probe),
+    </span>Error(ProbeError, Probe),
+}
+
+<span class="attr">#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[snafu(module)]
+</span><span class="kw">pub enum </span>ProbeError {
+    <span class="attr">#[snafu(display(<span class="string">"Client is gone"</span>))]
+    </span>ClientGone,
+    <span class="attr">#[snafu(display(<span class="string">"Probe is no longer useful"</span>))]
+    </span>NotUseful,
+    <span class="attr">#[snafu(display(<span class="string">"Failed to retrieve the relay address"</span>))]
+    </span>GetRelayAddr { source: GetRelayAddrError },
+    <span class="attr">#[snafu(display(<span class="string">"Failed to run stun probe"</span>))]
+    </span>Stun { source: StunError },
+    <span class="attr">#[snafu(display(<span class="string">"Failed to run QUIC probe"</span>))]
+    </span>Quic { source: QuicError },
+    <span class="attr">#[snafu(display(<span class="string">"Failed to run ICMP probe"</span>))]
+    </span>Icmp { source: PingError },
+}
+
+<span class="attr">#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[snafu(module)]
+</span><span class="kw">pub enum </span>StunError {
+    <span class="attr">#[snafu(display(<span class="string">"No UDP socket available"</span>))]
+    </span>NoSocket,
+    <span class="attr">#[snafu(display(<span class="string">"Stun channel is gone"</span>))]
+    </span>StunChannelGone,
+    <span class="attr">#[snafu(display(<span class="string">"Failed to send full STUN request"</span>))]
+    </span>SendFull,
+    <span class="attr">#[snafu(display(<span class="string">"Failed to send STUN request"</span>))]
+    </span>Send { source: std::io::Error },
+}
+
+<span class="attr">#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[snafu(module)]
+</span><span class="kw">pub enum </span>QuicError {
+    <span class="attr">#[snafu(display(<span class="string">"No QUIC endpoint available"</span>))]
+    </span>NoEndpoint,
+    <span class="attr">#[snafu(display(<span class="string">"URL must have 'host' to use QUIC address discovery probes"</span>))]
+    </span>InvalidUrl,
+    <span class="attr">#[snafu(display(<span class="string">"Failed to create QUIC endpoint"</span>))]
+    </span>CreateClient { source: iroh_relay::quic::Error },
+    <span class="attr">#[snafu(display(<span class="string">"Failed to get address and latency"</span>))]
+    </span>GetAddr { source: iroh_relay::quic::Error },
 }
 
 <span class="doccomment">/// Pieces needed to do QUIC address discovery.
@@ -2513,7 +2741,7 @@
     net_report: net_report::Addr,
     <span class="attr">#[cfg(not(wasm_browser))] </span>pinger: Pinger,
     <span class="attr">#[cfg(not(wasm_browser))] </span>socket_state: SocketState,
-) -&gt; <span class="prelude-ty">Result</span>&lt;ProbeReport, ProbeError&gt; {
+) -&gt; <span class="prelude-ty">Result</span>&lt;ProbeReport, ProbeErrorWithProbe&gt; {
     <span class="kw">if </span>!probe.delay().is_zero() {
         <span class="macro">trace!</span>(<span class="string">"delaying probe"</span>);
         time::sleep(probe.delay()).<span class="kw">await</span>;
@@ -2531,17 +2759,17 @@
     </span>{
         <span class="comment">// this happens on shutdown or if the report is already finished
         </span><span class="macro">debug!</span>(<span class="string">"Failed to check if probe would help: {err:#}"</span>);
-        <span class="kw">return </span><span class="prelude-val">Err</span>(ProbeError::AbortSet(err.into(), probe.clone()));
+        <span class="kw">return </span><span class="prelude-val">Err</span>(ProbeErrorWithProbe::AbortSet(
+            probe_error::ClientGoneSnafu.build(),
+            probe.clone(),
+        ));
     }
 
     <span class="kw">if </span>!would_help_rx.<span class="kw">await</span>.map_err(|<span class="kw">_</span>| {
-        ProbeError::AbortSet(
-            <span class="macro">anyhow!</span>(<span class="string">"ReportCheck actor dropped sender while waiting for ProbeWouldHelp response"</span>),
-            probe.clone(),
-        )
+        ProbeErrorWithProbe::AbortSet(probe_error::ClientGoneSnafu.build(), probe.clone())
     })<span class="question-mark">? </span>{
-        <span class="kw">return </span><span class="prelude-val">Err</span>(ProbeError::AbortSet(
-            <span class="macro">anyhow!</span>(<span class="string">"ReportCheck says probe set no longer useful"</span>),
+        <span class="kw">return </span><span class="prelude-val">Err</span>(ProbeErrorWithProbe::AbortSet(
+            probe_error::NotUsefulSnafu.build(),
             probe,
         ));
     }
@@ -2549,8 +2777,12 @@
     <span class="attr">#[cfg(not(wasm_browser))]
     </span><span class="kw">let </span>relay_addr = get_relay_addr(<span class="kw-2">&amp;</span>socket_state.dns_resolver, <span class="kw-2">&amp;</span>relay_node, probe.proto())
         .<span class="kw">await
-        </span>.context(<span class="string">"no relay node addr"</span>)
-        .map_err(|e| ProbeError::AbortSet(e, probe.clone()))<span class="question-mark">?</span>;
+        </span>.map_err(|e| {
+            ProbeErrorWithProbe::AbortSet(
+                probe_error::GetRelayAddrSnafu.into_error(e),
+                probe.clone(),
+            )
+        })<span class="question-mark">?</span>;
 
     <span class="kw">let </span><span class="kw-2">mut </span>result = ProbeReport::new(probe.clone());
     <span class="kw">match </span>probe {
@@ -2566,8 +2798,8 @@
                     result = run_stun_probe(sock, relay_addr, net_report, probe).<span class="kw">await</span><span class="question-mark">?</span>;
                 }
                 <span class="prelude-val">None </span>=&gt; {
-                    <span class="kw">return </span><span class="prelude-val">Err</span>(ProbeError::AbortSet(
-                        <span class="macro">anyhow!</span>(<span class="string">"No socket for {}, aborting probeset"</span>, probe.proto()),
+                    <span class="kw">return </span><span class="prelude-val">Err</span>(ProbeErrorWithProbe::AbortSet(
+                        probe_error::StunSnafu.into_error(stun_error::NoSocketSnafu.build()),
                         probe.clone(),
                     ));
                 }
@@ -2622,8 +2854,8 @@
                     .<span class="kw">await</span><span class="question-mark">?</span>;
                 }
                 <span class="prelude-val">None </span>=&gt; {
-                    <span class="kw">return </span><span class="prelude-val">Err</span>(ProbeError::AbortSet(
-                        <span class="macro">anyhow!</span>(<span class="string">"No QUIC endpoint for {}"</span>, probe.proto()),
+                    <span class="kw">return </span><span class="prelude-val">Err</span>(ProbeErrorWithProbe::AbortSet(
+                        probe_error::QuicSnafu.into_error(quic_error::NoEndpointSnafu.build()),
                         probe.clone(),
                     ));
                 }
@@ -2642,7 +2874,7 @@
     relay_addr: SocketAddr,
     net_report: net_report::Addr,
     probe: Probe,
-) -&gt; <span class="prelude-ty">Result</span>&lt;ProbeReport, ProbeError&gt; {
+) -&gt; <span class="prelude-ty">Result</span>&lt;ProbeReport, ProbeErrorWithProbe&gt; {
     <span class="kw">match </span>probe.proto() {
         ProbeProto::StunIpv4 =&gt; <span class="macro">debug_assert!</span>(relay_addr.is_ipv4()),
         ProbeProto::StunIpv6 =&gt; <span class="macro">debug_assert!</span>(relay_addr.is_ipv6()),
@@ -2664,10 +2896,12 @@
             inflight_ready_tx,
         ))
         .<span class="kw">await
-        </span>.map_err(|e| ProbeError::Error(e.into(), probe.clone()))<span class="question-mark">?</span>;
-    inflight_ready_rx
-        .<span class="kw">await
-        </span>.map_err(|e| ProbeError::Error(e.into(), probe.clone()))<span class="question-mark">?</span>;
+        </span>.map_err(|<span class="kw">_</span>| {
+            ProbeErrorWithProbe::Error(probe_error::ClientGoneSnafu.build(), probe.clone())
+        })<span class="question-mark">?</span>;
+    inflight_ready_rx.<span class="kw">await</span>.map_err(|<span class="kw">_</span>| {
+        ProbeErrorWithProbe::Error(probe_error::ClientGoneSnafu.build(), probe.clone())
+    })<span class="question-mark">?</span>;
 
     <span class="comment">// Send the probe.
     </span><span class="kw">match </span>sock.send_to(<span class="kw-2">&amp;</span>req, relay_addr).<span class="kw">await </span>{
@@ -2684,22 +2918,27 @@
                 <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
                 </span><span class="macro">inc!</span>(Metrics, stun_packets_sent_ipv6);
             }
-            <span class="kw">let </span>(delay, addr) = stun_rx
-                .<span class="kw">await
-                </span>.map_err(|e| ProbeError::Error(e.into(), probe.clone()))<span class="question-mark">?</span>;
+            <span class="kw">let </span>(delay, addr) = stun_rx.<span class="kw">await</span>.map_err(|<span class="kw">_</span>| {
+                ProbeErrorWithProbe::Error(
+                    probe_error::StunSnafu.into_error(stun_error::StunChannelGoneSnafu.build()),
+                    probe.clone(),
+                )
+            })<span class="question-mark">?</span>;
             result.latency = <span class="prelude-val">Some</span>(delay);
             result.addr = <span class="prelude-val">Some</span>(addr);
             <span class="prelude-val">Ok</span>(result)
         }
         <span class="prelude-val">Ok</span>(n) =&gt; {
-            <span class="kw">let </span>err = <span class="macro">anyhow!</span>(<span class="string">"Failed to send full STUN request: {}"</span>, probe.proto());
+            <span class="kw">let </span>err = stun_error::SendFullSnafu.build();
             <span class="macro">error!</span>(%relay_addr, sent_len=n, req_len=req.len(), <span class="string">"{err:#}"</span>);
-            <span class="prelude-val">Err</span>(ProbeError::Error(err, probe.clone()))
+            <span class="prelude-val">Err</span>(ProbeErrorWithProbe::Error(
+                probe_error::StunSnafu.into_error(err),
+                probe.clone(),
+            ))
         }
         <span class="prelude-val">Err</span>(err) =&gt; {
             <span class="kw">let </span>kind = err.kind();
-            <span class="kw">let </span>err = anyhow::Error::new(err)
-                .context(<span class="macro">format!</span>(<span class="string">"Failed to send STUN request: {}"</span>, probe.proto()));
+            <span class="kw">let </span>err = stun_error::SendSnafu.into_error(err);
 
             <span class="comment">// It is entirely normal that we are on a dual-stack machine with no
             // routed IPv6 network.  So silence that case.
@@ -2708,11 +2947,17 @@
             </span><span class="kw">match </span><span class="macro">format!</span>(<span class="string">"{kind:?}"</span>).as_str() {
                 <span class="string">"NetworkUnreachable" </span>| <span class="string">"HostUnreachable" </span>=&gt; {
                     <span class="macro">debug!</span>(%relay_addr, <span class="string">"{err:#}"</span>);
-                    <span class="prelude-val">Err</span>(ProbeError::AbortSet(err, probe.clone()))
+                    <span class="prelude-val">Err</span>(ProbeErrorWithProbe::AbortSet(
+                        probe_error::StunSnafu.into_error(err),
+                        probe.clone(),
+                    ))
                 }
                 <span class="kw">_ </span>=&gt; {
                     <span class="comment">// No need to log this, our caller does already log this.
-                    </span><span class="prelude-val">Err</span>(ProbeError::Error(err, probe.clone()))
+                    </span><span class="prelude-val">Err</span>(ProbeErrorWithProbe::Error(
+                        probe_error::StunSnafu.into_error(err),
+                        probe.clone(),
+                    ))
                 }
             }
         }
@@ -2738,7 +2983,7 @@
     relay_addr: SocketAddr,
     probe: Probe,
     ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddresses&gt;,
-) -&gt; <span class="prelude-ty">Result</span>&lt;ProbeReport, ProbeError&gt; {
+) -&gt; <span class="prelude-ty">Result</span>&lt;ProbeReport, ProbeErrorWithProbe&gt; {
     <span class="kw">match </span>probe.proto() {
         ProbeProto::QuicIpv4 =&gt; <span class="macro">debug_assert!</span>(relay_addr.is_ipv4()),
         ProbeProto::QuicIpv6 =&gt; <span class="macro">debug_assert!</span>(relay_addr.is_ipv6()),
@@ -2748,18 +2993,28 @@
     <span class="kw">let </span>host = <span class="kw">match </span>url.host_str() {
         <span class="prelude-val">Some</span>(host) =&gt; host,
         <span class="prelude-val">None </span>=&gt; {
-            <span class="kw">return </span><span class="prelude-val">Err</span>(ProbeError::Error(
-                <span class="macro">anyhow!</span>(<span class="string">"URL must have 'host' to use QUIC address discovery probes"</span>),
+            <span class="kw">return </span><span class="prelude-val">Err</span>(ProbeErrorWithProbe::Error(
+                probe_error::QuicSnafu.into_error(quic_error::InvalidUrlSnafu.build()),
                 probe.clone(),
             ));
         }
     };
     <span class="kw">let </span>quic_client = iroh_relay::quic::QuicClient::new(quic_config.ep, quic_config.client_config)
-        .map_err(|e| ProbeError::Error(e.into(), probe.clone()))<span class="question-mark">?</span>;
+        .map_err(|e| {
+            ProbeErrorWithProbe::Error(
+                probe_error::QuicSnafu.into_error(quic_error::CreateClientSnafu.into_error(e)),
+                probe.clone(),
+            )
+        })<span class="question-mark">?</span>;
     <span class="kw">let </span>(addr, latency) = quic_client
         .get_addr_and_latency(relay_addr, host)
         .<span class="kw">await
-        </span>.map_err(|e| ProbeError::Error(e.into(), probe.clone()))<span class="question-mark">?</span>;
+        </span>.map_err(|e| {
+            ProbeErrorWithProbe::Error(
+                probe_error::QuicSnafu.into_error(quic_error::GetAddrSnafu.into_error(e)),
+                probe.clone(),
+            )
+        })<span class="question-mark">?</span>;
     <span class="kw">let </span><span class="kw-2">mut </span>result = ProbeReport::new(probe.clone());
     <span class="kw">if </span><span class="macro">matches!</span>(probe, Probe::QuicIpv4 { .. }) {
         result.ipv4_can_send = <span class="bool-val">true</span>;
@@ -2769,6 +3024,17 @@
     result.addr = <span class="prelude-val">Some</span>(addr);
     result.latency = <span class="prelude-val">Some</span>(latency);
     <span class="prelude-val">Ok</span>(result)
+}
+
+<span class="attr">#[derive(Debug, Snafu)]
+#[snafu(module)]
+</span><span class="kw">enum </span>CaptivePortalError {
+    <span class="attr">#[snafu(transparent)]
+    </span>DnsLookup { source: iroh_relay::dns::Error },
+    <span class="attr">#[snafu(display(<span class="string">"Creating HTTP client failed"</span>))]
+    </span>CreateReqwestClient { source: reqwest::Error },
+    <span class="attr">#[snafu(display(<span class="string">"HTTP request failed"</span>))]
+    </span>HttpRequest { source: reqwest::Error },
 }
 
 <span class="doccomment">/// Reports whether or not we think the system is behind a
@@ -2781,7 +3047,7 @@
     dns_resolver: <span class="kw-2">&amp;</span>DnsResolver,
     dm: <span class="kw-2">&amp;</span>RelayMap,
     preferred_relay: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;,
-) -&gt; anyhow::Result&lt;bool&gt; {
+) -&gt; <span class="prelude-ty">Result</span>&lt;bool, CaptivePortalError&gt; {
     <span class="comment">// If we have a preferred relay node and we can use it for non-STUN requests, try that;
     // otherwise, pick a random one suitable for non-STUN requests.
     </span><span class="kw">let </span>preferred_relay = preferred_relay.and_then(|url| <span class="kw">match </span>dm.get_node(<span class="kw-2">&amp;</span>url) {
@@ -2825,7 +3091,9 @@
             .collect();
         builder = builder.resolve_to_addrs(domain, <span class="kw-2">&amp;</span>addrs);
     }
-    <span class="kw">let </span>client = builder.build()<span class="question-mark">?</span>;
+    <span class="kw">let </span>client = builder
+        .build()
+        .context(captive_portal_error::CreateReqwestClientSnafu)<span class="question-mark">?</span>;
 
     <span class="comment">// Note: the set of valid characters in a challenge and the total
     // length is limited; see is_challenge_char in bin/iroh-relay for more
@@ -2838,7 +3106,8 @@
         .request(reqwest::Method::GET, portal_url)
         .header(<span class="string">"X-Tailscale-Challenge"</span>, <span class="kw-2">&amp;</span>challenge)
         .send()
-        .<span class="kw">await</span><span class="question-mark">?</span>;
+        .<span class="kw">await
+        </span>.context(captive_portal_error::HttpRequestSnafu)<span class="question-mark">?</span>;
 
     <span class="kw">let </span>expected_response = <span class="macro">format!</span>(<span class="string">"response {challenge}"</span>);
     <span class="kw">let </span>is_valid_response = res
@@ -2859,28 +3128,46 @@
 }
 
 <span class="doccomment">/// Returns the proper port based on the protocol of the probe.
-</span><span class="kw">fn </span>get_port(relay_node: <span class="kw-2">&amp;</span>RelayNode, proto: <span class="kw-2">&amp;</span>ProbeProto) -&gt; anyhow::Result&lt;u16&gt; {
+</span><span class="kw">fn </span>get_port(relay_node: <span class="kw-2">&amp;</span>RelayNode, proto: <span class="kw-2">&amp;</span>ProbeProto) -&gt; <span class="prelude-ty">Option</span>&lt;u16&gt; {
     <span class="kw">match </span>proto {
         <span class="attr">#[cfg(not(wasm_browser))]
         </span>ProbeProto::QuicIpv4 | ProbeProto::QuicIpv6 =&gt; {
             <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>quic) = relay_node.quic {
                 <span class="kw">if </span>quic.port == <span class="number">0 </span>{
-                    <span class="prelude-val">Ok</span>(DEFAULT_RELAY_QUIC_PORT)
+                    <span class="prelude-val">Some</span>(DEFAULT_RELAY_QUIC_PORT)
                 } <span class="kw">else </span>{
-                    <span class="prelude-val">Ok</span>(quic.port)
+                    <span class="prelude-val">Some</span>(quic.port)
                 }
             } <span class="kw">else </span>{
-                <span class="macro">bail!</span>(<span class="string">"Relay node not suitable for QUIC address discovery probes"</span>);
-            }
+                <span class="prelude-val">None
+            </span>}
         }
         <span class="kw">_ </span>=&gt; {
             <span class="kw">if </span>relay_node.stun_port == <span class="number">0 </span>{
-                <span class="prelude-val">Ok</span>(DEFAULT_STUN_PORT)
+                <span class="prelude-val">Some</span>(DEFAULT_STUN_PORT)
             } <span class="kw">else </span>{
-                <span class="prelude-val">Ok</span>(relay_node.stun_port)
+                <span class="prelude-val">Some</span>(relay_node.stun_port)
             }
         }
     }
+}
+
+<span class="attr">#[cfg(not(wasm_browser))]
+#[derive(Debug, Snafu)]
+#[snafu(module)]
+</span><span class="kw">pub enum </span>GetRelayAddrError {
+    <span class="attr">#[snafu(display(<span class="string">"No valid hostname in the relay URL"</span>))]
+    </span>InvalidHostname,
+    <span class="attr">#[snafu(display(<span class="string">"No suitable relay address found"</span>))]
+    </span>NoAddrFound,
+    <span class="attr">#[snafu(display(<span class="string">"DNS lookup failed"</span>))]
+    </span>DnsLookup { source: iroh_relay::dns::Error },
+    <span class="attr">#[snafu(display(<span class="string">"Relay node is not suitable for non-STUN probes"</span>))]
+    </span>UnsupportedRelayNode,
+    <span class="attr">#[snafu(display(<span class="string">"HTTPS probes are not implemented"</span>))]
+    </span>UnsupportedHttps,
+    <span class="attr">#[snafu(display(<span class="string">"No port available for this protocol"</span>))]
+    </span>MissingPort,
 }
 
 <span class="doccomment">/// Returns the IP address to use to communicate to this relay node.
@@ -2898,11 +3185,13 @@
     dns_resolver: <span class="kw-2">&amp;</span>DnsResolver,
     relay_node: <span class="kw-2">&amp;</span>RelayNode,
     proto: ProbeProto,
-) -&gt; anyhow::Result&lt;SocketAddr&gt; {
+) -&gt; <span class="prelude-ty">Result</span>&lt;SocketAddr, GetRelayAddrError&gt; {
+    <span class="kw">use </span>snafu::OptionExt;
+
     <span class="kw">if </span>relay_node.stun_only &amp;&amp; !<span class="macro">matches!</span>(proto, ProbeProto::StunIpv4 | ProbeProto::StunIpv6) {
-        <span class="macro">bail!</span>(<span class="string">"Relay node not suitable for non-STUN probes"</span>);
+        <span class="kw">return </span><span class="prelude-val">Err</span>(get_relay_addr_error::UnsupportedRelayNodeSnafu.build());
     }
-    <span class="kw">let </span>port = get_port(relay_node, <span class="kw-2">&amp;</span>proto)<span class="question-mark">?</span>;
+    <span class="kw">let </span>port = get_port(relay_node, <span class="kw-2">&amp;</span>proto).context(get_relay_addr_error::MissingPortSnafu)<span class="question-mark">?</span>;
 
     <span class="kw">match </span>proto {
         ProbeProto::StunIpv4 | ProbeProto::IcmpV4 | ProbeProto::QuicIpv4 =&gt; {
@@ -2913,7 +3202,7 @@
             relay_lookup_ipv6_staggered(dns_resolver, relay_node, port).<span class="kw">await
         </span>}
 
-        ProbeProto::Https =&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Not implemented"</span>)),
+        ProbeProto::Https =&gt; <span class="prelude-val">Err</span>(get_relay_addr_error::UnsupportedHttpsSnafu.build()),
     }
 }
 
@@ -2925,7 +3214,7 @@
     dns_resolver: <span class="kw-2">&amp;</span>DnsResolver,
     relay: <span class="kw-2">&amp;</span>RelayNode,
     port: u16,
-) -&gt; anyhow::Result&lt;SocketAddr&gt; {
+) -&gt; <span class="prelude-ty">Result</span>&lt;SocketAddr, GetRelayAddrError&gt; {
     <span class="kw">match </span>relay.url.host() {
         <span class="prelude-val">Some</span>(url::Host::Domain(hostname)) =&gt; {
             <span class="macro">debug!</span>(%hostname, <span class="string">"Performing DNS A lookup for relay addr"</span>);
@@ -2937,13 +3226,13 @@
                     .next()
                     .map(|ip| ip.to_canonical())
                     .map(|addr| SocketAddr::new(addr, port))
-                    .ok_or(<span class="macro">anyhow!</span>(<span class="string">"No suitable relay addr found"</span>)),
-                <span class="prelude-val">Err</span>(err) =&gt; <span class="prelude-val">Err</span>(anyhow::Error::from(err).context(<span class="string">"No suitable relay addr found"</span>)),
+                    .ok_or(get_relay_addr_error::NoAddrFoundSnafu.build()),
+                <span class="prelude-val">Err</span>(err) =&gt; <span class="prelude-val">Err</span>(get_relay_addr_error::DnsLookupSnafu.into_error(err)),
             }
         }
         <span class="prelude-val">Some</span>(url::Host::Ipv4(addr)) =&gt; <span class="prelude-val">Ok</span>(SocketAddr::new(addr.into(), port)),
-        <span class="prelude-val">Some</span>(url::Host::Ipv6(_addr)) =&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"No suitable relay addr found"</span>)),
-        <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"No valid hostname in RelayUrl"</span>)),
+        <span class="prelude-val">Some</span>(url::Host::Ipv6(_addr)) =&gt; <span class="prelude-val">Err</span>(get_relay_addr_error::NoAddrFoundSnafu.build()),
+        <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Err</span>(get_relay_addr_error::InvalidHostnameSnafu.build()),
     }
 }
 
@@ -2955,7 +3244,7 @@
     dns_resolver: <span class="kw-2">&amp;</span>DnsResolver,
     relay: <span class="kw-2">&amp;</span>RelayNode,
     port: u16,
-) -&gt; anyhow::Result&lt;SocketAddr&gt; {
+) -&gt; <span class="prelude-ty">Result</span>&lt;SocketAddr, GetRelayAddrError&gt; {
     <span class="kw">match </span>relay.url.host() {
         <span class="prelude-val">Some</span>(url::Host::Domain(hostname)) =&gt; {
             <span class="macro">debug!</span>(%hostname, <span class="string">"Performing DNS AAAA lookup for relay addr"</span>);
@@ -2967,13 +3256,13 @@
                     .next()
                     .map(|ip| ip.to_canonical())
                     .map(|addr| SocketAddr::new(addr, port))
-                    .ok_or(<span class="macro">anyhow!</span>(<span class="string">"No suitable relay addr found"</span>)),
-                <span class="prelude-val">Err</span>(err) =&gt; <span class="prelude-val">Err</span>(anyhow::Error::from(err).context(<span class="string">"No suitable relay addr found"</span>)),
+                    .ok_or(get_relay_addr_error::NoAddrFoundSnafu.build()),
+                <span class="prelude-val">Err</span>(err) =&gt; <span class="prelude-val">Err</span>(get_relay_addr_error::DnsLookupSnafu.into_error(err)),
             }
         }
-        <span class="prelude-val">Some</span>(url::Host::Ipv4(_addr)) =&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"No suitable relay addr found"</span>)),
-        <span class="prelude-val">Some</span>(url::Host::Ipv6(addr)) =&gt; <span class="prelude-val">Ok</span>(SocketAddr::new(addr.into(), port)),
-        <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"No valid hostname in RelayUrl"</span>)),
+        <span class="prelude-val">Some</span>(url::Host::Ipv4(addr)) =&gt; <span class="prelude-val">Ok</span>(SocketAddr::new(addr.into(), port)),
+        <span class="prelude-val">Some</span>(url::Host::Ipv6(_addr)) =&gt; <span class="prelude-val">Err</span>(get_relay_addr_error::NoAddrFoundSnafu.build()),
+        <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Err</span>(get_relay_addr_error::InvalidHostnameSnafu.build()),
     }
 }
 
@@ -2986,7 +3275,7 @@
     probe: Probe,
     relay_addr: SocketAddr,
     pinger: Pinger,
-) -&gt; <span class="prelude-ty">Result</span>&lt;ProbeReport, ProbeError&gt; {
+) -&gt; <span class="prelude-ty">Result</span>&lt;ProbeReport, ProbeErrorWithProbe&gt; {
     <span class="kw">match </span>probe.proto() {
         ProbeProto::IcmpV4 =&gt; <span class="macro">debug_assert!</span>(relay_addr.is_ipv4()),
         ProbeProto::IcmpV6 =&gt; <span class="macro">debug_assert!</span>(relay_addr.is_ipv6()),
@@ -2998,13 +3287,13 @@
         .send(relay_addr.ip(), DATA)
         .<span class="kw">await
         </span>.map_err(|err| <span class="kw">match </span>err {
-            PingError::CreateClientIpv4 { source, .. }
-            | PingError::CreateClientIpv6 { source, .. } =&gt; ProbeError::AbortSet(
-                <span class="macro">anyhow!</span>(<span class="string">"Failed to create pinger ({source:#}), aborting probeset"</span>),
-                probe.clone(),
-            ),
+            PingError::CreateClientIpv4 { .. } | PingError::CreateClientIpv6 { .. } =&gt; {
+                ProbeErrorWithProbe::AbortSet(probe_error::IcmpSnafu.into_error(err), probe.clone())
+            }
             <span class="attr">#[cfg(not(wasm_browser))]
-            </span>PingError::Ping { source, .. } =&gt; ProbeError::Error(source.into(), probe.clone()),
+            </span>PingError::Ping { .. } =&gt; {
+                ProbeErrorWithProbe::Error(probe_error::IcmpSnafu.into_error(err), probe.clone())
+            }
         })<span class="question-mark">?</span>;
     <span class="macro">debug!</span>(dst = %relay_addr, len = DATA.len(), <span class="question-mark">?</span>latency, <span class="string">"ICMP ping done"</span>);
     <span class="kw">let </span><span class="kw-2">mut </span>report = ProbeReport::new(probe);
@@ -3022,6 +3311,24 @@
     <span class="prelude-val">Ok</span>(report)
 }
 
+<span class="attr">#[derive(Debug, Snafu)]
+#[snafu(module)]
+</span><span class="kw">enum </span>MeasureHttpsLatencyError {
+    <span class="attr">#[snafu(transparent)]
+    </span>InvalidUrl { source: url::ParseError },
+    <span class="attr">#[snafu(transparent)]
+    </span>DnsLookup { source: iroh_relay::dns::Error },
+    <span class="attr">#[cfg(not(wasm_browser))]
+    #[snafu(display(<span class="string">"Invalid certificate"</span>))]
+    </span>InvalidCertificate { source: reqwest::Error },
+    <span class="attr">#[snafu(display(<span class="string">"Creating HTTP client failed"</span>))]
+    </span>CreateReqwestClient { source: reqwest::Error },
+    <span class="attr">#[snafu(display(<span class="string">"HTTP request failed"</span>))]
+    </span>HttpRequest { source: reqwest::Error },
+    <span class="attr">#[snafu(display(<span class="string">"Error response from server {status}: {:?}"</span>, status.canonical_reason()))]
+    </span>InvalidResponse { status: StatusCode },
+}
+
 <span class="doccomment">/// Executes an HTTPS probe.
 ///
 /// If `certs` is provided they will be added to the trusted root certificates, allowing the
@@ -3031,7 +3338,7 @@
     <span class="attr">#[cfg(not(wasm_browser))] </span>dns_resolver: <span class="kw-2">&amp;</span>DnsResolver,
     node: <span class="kw-2">&amp;</span>RelayNode,
     certs: <span class="prelude-ty">Option</span>&lt;Vec&lt;rustls::pki_types::CertificateDer&lt;<span class="lifetime">'static</span>&gt;&gt;&gt;,
-) -&gt; anyhow::Result&lt;(Duration, IpAddr)&gt; {
+) -&gt; <span class="prelude-ty">Result</span>&lt;(Duration, IpAddr), MeasureHttpsLatencyError&gt; {
     <span class="kw">let </span>url = node.url.join(RELAY_PROBE_PATH)<span class="question-mark">?</span>;
 
     <span class="comment">// This should also use same connection establishment as relay client itself, which
@@ -3064,22 +3371,29 @@
     <span class="attr">#[cfg(not(wasm_browser))]
     </span><span class="kw">if let </span><span class="prelude-val">Some</span>(certs) = certs {
         <span class="kw">for </span>cert <span class="kw">in </span>certs {
-            <span class="kw">let </span>cert = reqwest::Certificate::from_der(<span class="kw-2">&amp;</span>cert)<span class="question-mark">?</span>;
+            <span class="kw">let </span>cert = reqwest::Certificate::from_der(<span class="kw-2">&amp;</span>cert)
+                .context(measure_https_latency_error::InvalidCertificateSnafu)<span class="question-mark">?</span>;
             builder = builder.add_root_certificate(cert);
         }
     }
-    <span class="kw">let </span>client = builder.build()<span class="question-mark">?</span>;
+    <span class="kw">let </span>client = builder
+        .build()
+        .context(measure_https_latency_error::CreateReqwestClientSnafu)<span class="question-mark">?</span>;
 
     <span class="kw">let </span>start = Instant::now();
-    <span class="kw">let </span>response = client.request(reqwest::Method::GET, url).send().<span class="kw">await</span><span class="question-mark">?</span>;
+    <span class="kw">let </span>response = client
+        .request(reqwest::Method::GET, url)
+        .send()
+        .<span class="kw">await
+        </span>.context(measure_https_latency_error::HttpRequestSnafu)<span class="question-mark">?</span>;
     <span class="kw">let </span>latency = start.elapsed();
     <span class="kw">if </span>response.status().is_success() {
         <span class="comment">// Only `None` if a different hyper HttpConnector in the request.
         </span><span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">let </span>remote_ip = response
             .remote_addr()
-            .context(<span class="string">"missing HttpInfo from HttpConnector"</span>)<span class="question-mark">?
-            </span>.ip();
+            .expect(<span class="string">"missing HttpInfo from HttpConnector"</span>)
+            .ip();
         <span class="attr">#[cfg(wasm_browser)]
         </span><span class="kw">let </span>remote_ip = IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED);
 
@@ -3097,10 +3411,10 @@
 
         <span class="prelude-val">Ok</span>((latency, remote_ip))
     } <span class="kw">else </span>{
-        <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(
-            <span class="string">"Error response from server: '{}'"</span>,
-            response.status().canonical_reason().unwrap_or_default()
-        ))
+        <span class="prelude-val">Err</span>(measure_https_latency_error::InvalidResponseSnafu {
+            status: response.status(),
+        }
+        .build())
     }
 }
 
@@ -3436,10 +3750,10 @@
                     );
                     <span class="kw">break</span>;
                 }
-                <span class="prelude-val">Err</span>(ProbeError::Error(err, _probe)) =&gt; {
+                <span class="prelude-val">Err</span>(ProbeErrorWithProbe::Error(err, _probe)) =&gt; {
                     last_err = <span class="prelude-val">Some</span>(err);
                 }
-                <span class="prelude-val">Err</span>(ProbeError::AbortSet(_err, _probe)) =&gt; {
+                <span class="prelude-val">Err</span>(ProbeErrorWithProbe::AbortSet(_err, _probe)) =&gt; {
                     <span class="comment">// We don't have permission, too bad.
                     // panic!("no ping permission: {err:#}");
                     </span><span class="kw">break</span>;
@@ -3461,11 +3775,7 @@
 
         <span class="macro">assert!</span>(latency &gt; Duration::ZERO);
 
-        <span class="kw">let </span>relay_url_ip = relay
-            .url
-            .host_str()
-            .context(<span class="string">"host"</span>)<span class="question-mark">?
-            </span>.parse::&lt;std::net::IpAddr&gt;()<span class="question-mark">?</span>;
+        <span class="kw">let </span>relay_url_ip = relay.url.host_str().unwrap().parse::&lt;std::net::IpAddr&gt;()<span class="question-mark">?</span>;
         <span class="macro">assert_eq!</span>(ip, relay_url_ip);
         <span class="prelude-val">Ok</span>(())
     }
@@ -3500,7 +3810,7 @@
         </span>{
             <span class="prelude-val">Ok</span>(probe) =&gt; probe,
             <span class="prelude-val">Err</span>(e) =&gt; <span class="kw">match </span>e {
-                ProbeError::AbortSet(err, <span class="kw">_</span>) | ProbeError::Error(err, <span class="kw">_</span>) =&gt; {
+                ProbeErrorWithProbe::AbortSet(err, <span class="kw">_</span>) | ProbeErrorWithProbe::Error(err, <span class="kw">_</span>) =&gt; {
                     <span class="kw">return </span><span class="prelude-val">Err</span>(err.into());
                 }
             },

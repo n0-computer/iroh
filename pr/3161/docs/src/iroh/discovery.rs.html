@@ -1076,7 +1076,56 @@
 <a href="#1075" id="1075">1075</a>
 <a href="#1076" id="1076">1076</a>
 <a href="#1077" id="1077">1077</a>
-<a href="#1078" id="1078">1078</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
+<a href="#1078" id="1078">1078</a>
+<a href="#1079" id="1079">1079</a>
+<a href="#1080" id="1080">1080</a>
+<a href="#1081" id="1081">1081</a>
+<a href="#1082" id="1082">1082</a>
+<a href="#1083" id="1083">1083</a>
+<a href="#1084" id="1084">1084</a>
+<a href="#1085" id="1085">1085</a>
+<a href="#1086" id="1086">1086</a>
+<a href="#1087" id="1087">1087</a>
+<a href="#1088" id="1088">1088</a>
+<a href="#1089" id="1089">1089</a>
+<a href="#1090" id="1090">1090</a>
+<a href="#1091" id="1091">1091</a>
+<a href="#1092" id="1092">1092</a>
+<a href="#1093" id="1093">1093</a>
+<a href="#1094" id="1094">1094</a>
+<a href="#1095" id="1095">1095</a>
+<a href="#1096" id="1096">1096</a>
+<a href="#1097" id="1097">1097</a>
+<a href="#1098" id="1098">1098</a>
+<a href="#1099" id="1099">1099</a>
+<a href="#1100" id="1100">1100</a>
+<a href="#1101" id="1101">1101</a>
+<a href="#1102" id="1102">1102</a>
+<a href="#1103" id="1103">1103</a>
+<a href="#1104" id="1104">1104</a>
+<a href="#1105" id="1105">1105</a>
+<a href="#1106" id="1106">1106</a>
+<a href="#1107" id="1107">1107</a>
+<a href="#1108" id="1108">1108</a>
+<a href="#1109" id="1109">1109</a>
+<a href="#1110" id="1110">1110</a>
+<a href="#1111" id="1111">1111</a>
+<a href="#1112" id="1112">1112</a>
+<a href="#1113" id="1113">1113</a>
+<a href="#1114" id="1114">1114</a>
+<a href="#1115" id="1115">1115</a>
+<a href="#1116" id="1116">1116</a>
+<a href="#1117" id="1117">1117</a>
+<a href="#1118" id="1118">1118</a>
+<a href="#1119" id="1119">1119</a>
+<a href="#1120" id="1120">1120</a>
+<a href="#1121" id="1121">1121</a>
+<a href="#1122" id="1122">1122</a>
+<a href="#1123" id="1123">1123</a>
+<a href="#1124" id="1124">1124</a>
+<a href="#1125" id="1125">1125</a>
+<a href="#1126" id="1126">1126</a>
+<a href="#1127" id="1127">1127</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
 //! To connect to an iroh node a [`NodeAddr`] is needed, which may contain a
 //! [`RelayUrl`] or one or more *direct addresses* in addition to the [`NodeId`].
@@ -1185,8 +1234,7 @@
 
 </span><span class="kw">use </span>std::sync::Arc;
 
-<span class="kw">use </span>anyhow::{anyhow, ensure, <span class="prelude-ty">Result</span>};
-<span class="kw">use </span>iroh_base::{NodeAddr, NodeId};
+<span class="kw">use </span>iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
 <span class="kw">use </span>n0_future::{
     boxed::BoxStream,
     stream::StreamExt,
@@ -1194,7 +1242,8 @@
     time::{<span class="self">self</span>, Duration},
     Stream, TryStreamExt,
 };
-<span class="kw">use </span>snafu::Snafu;
+<span class="kw">use </span>nested_enum_utils::common_fields;
+<span class="kw">use </span>snafu::{ensure, Backtrace, Snafu};
 <span class="kw">use </span>tokio::sync::oneshot;
 <span class="kw">use </span>tracing::{debug, error_span, warn, Instrument};
 
@@ -1208,6 +1257,51 @@
 </span><span class="kw">pub mod </span>mdns;
 <span class="kw">pub mod </span>pkarr;
 <span class="kw">pub mod </span>static_provider;
+
+<span class="doccomment">/// Discovery errors
+</span><span class="attr">#[common_fields({
+    backtrace: <span class="prelude-ty">Option</span>&lt;Backtrace&gt;,
+    <span class="attr">#[snafu(implicit)]
+    </span>span_trace: n0_snafu::SpanTrace,
+})]
+<span class="attr">#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+#[snafu(visibility(<span class="kw">pub</span>(<span class="kw">crate</span>)))]
+</span><span class="kw">pub enum </span>DiscoveryError {
+    <span class="attr">#[snafu(display(<span class="string">"Unable to resolve DNS"</span>))]
+    </span>DnsResolver {
+        source: iroh_relay::node_info::Error,
+    },
+    <span class="attr">#[snafu(display(<span class="string">"PublicKey error"</span>))]
+    </span>PublicKey { source: anyhow::Error },
+    <span class="attr">#[snafu(display(<span class="string">"Invalid relay URL"</span>))]
+    </span>InvalidRelayUrl { url: RelayUrl },
+    <span class="attr">#[snafu(display(<span class="string">"Error sending http request"</span>))]
+    </span>HttpSend { source: reqwest::Error },
+    <span class="attr">#[snafu(display(<span class="string">"Error resolving http request"</span>))]
+    </span>HttpRequest { status: reqwest::StatusCode },
+    <span class="attr">#[snafu(display(<span class="string">"Http payload error"</span>))]
+    </span>HttpPayload { source: reqwest::Error },
+    <span class="attr">#[snafu(display(<span class="string">"Verifying error"</span>))]
+    </span>Verify { source: anyhow::Error },
+    <span class="attr">#[snafu(display(<span class="string">"NodeInfo error"</span>))]
+    </span>NodeInfo {
+        source: iroh_relay::node_info::Error,
+    },
+    <span class="attr">#[snafu(display(<span class="string">"Error creating discovery service"</span>))]
+    </span>CreateService {
+        source: anyhow::Error,
+        service: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
+    },
+
+    <span class="attr">#[snafu(display(<span class="string">"No discovery service configured"</span>))]
+    </span>NoServiceConfigured,
+    <span class="attr">#[snafu(display(<span class="string">"Cannot resolve node id"</span>))]
+    </span>NodeId { node_id: PublicKey },
+    <span class="attr">#[snafu(display(<span class="string">"Discovery produced no results"</span>))]
+    </span>NoResults { node_id: PublicKey },
+}
 
 <span class="doccomment">/// Node discovery for [`super::Endpoint`].
 ///
@@ -1243,7 +1337,7 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         _endpoint: Endpoint,
         _node_id: NodeId,
-    ) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem&gt;&gt;&gt; {
+    ) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem, DiscoveryError&gt;&gt;&gt; {
         <span class="prelude-val">None
     </span>}
 
@@ -1409,7 +1503,7 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         endpoint: Endpoint,
         node_id: NodeId,
-    ) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem&gt;&gt;&gt; {
+    ) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem, DiscoveryError&gt;&gt;&gt; {
         <span class="kw">let </span>streams = <span class="self">self
             </span>.services
             .iter()
@@ -1438,14 +1532,14 @@
 
 <span class="doccomment">/// A wrapper around a tokio task which runs a node discovery.
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>DiscoveryTask {
-    on_first_rx: oneshot::Receiver&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;,
+    on_first_rx: oneshot::Receiver&lt;<span class="prelude-ty">Result</span>&lt;(), DiscoveryError&gt;&gt;,
     _task: AbortOnDropHandle&lt;()&gt;,
 }
 
 <span class="kw">impl </span>DiscoveryTask {
     <span class="doccomment">/// Starts a discovery task.
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>start(ep: Endpoint, node_id: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="macro">ensure!</span>(ep.discovery().is_some(), <span class="string">"No discovery services configured"</span>);
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>start(ep: Endpoint, node_id: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, DiscoveryError&gt; {
+        <span class="macro">ensure!</span>(ep.discovery().is_some(), NoServiceConfiguredSnafu);
         <span class="kw">let </span>(on_first_tx, on_first_rx) = oneshot::channel();
         <span class="kw">let </span>me = ep.node_id();
         <span class="kw">let </span>task = task::spawn(
@@ -1471,12 +1565,12 @@
         ep: <span class="kw-2">&amp;</span>Endpoint,
         node_id: NodeId,
         delay: <span class="prelude-ty">Option</span>&lt;Duration&gt;,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>&gt;&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>&gt;, DiscoveryError&gt; {
         <span class="comment">// If discovery is not needed, don't even spawn a task.
         </span><span class="kw">if </span>!<span class="self">Self</span>::needs_discovery(ep, node_id) {
             <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
         }
-        <span class="macro">ensure!</span>(ep.discovery().is_some(), <span class="string">"No discovery services configured"</span>);
+        <span class="macro">ensure!</span>(ep.discovery().is_some(), NoServiceConfiguredSnafu);
         <span class="kw">let </span>(on_first_tx, on_first_rx) = oneshot::channel();
         <span class="kw">let </span>ep = ep.clone();
         <span class="kw">let </span>me = ep.node_id();
@@ -1504,19 +1598,20 @@
     }
 
     <span class="doccomment">/// Waits until the discovery task produced at least one result.
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>first_arrived(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>first_arrived(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(), DiscoveryError&gt; {
         <span class="kw">let </span>fut = <span class="kw-2">&amp;mut </span><span class="self">self</span>.on_first_rx;
-        fut.<span class="kw">await</span><span class="question-mark">??</span>;
+        fut.<span class="kw">await</span>.expect(<span class="string">"sender dropped"</span>)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">fn </span>create_stream(ep: <span class="kw-2">&amp;</span>Endpoint, node_id: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;BoxStream&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem&gt;&gt;&gt; {
-        <span class="kw">let </span>discovery = ep
-            .discovery()
-            .ok_or_else(|| <span class="macro">anyhow!</span>(<span class="string">"No discovery service configured"</span>))<span class="question-mark">?</span>;
+    <span class="kw">fn </span>create_stream(
+        ep: <span class="kw-2">&amp;</span>Endpoint,
+        node_id: NodeId,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;BoxStream&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem, DiscoveryError&gt;&gt;, DiscoveryError&gt; {
+        <span class="kw">let </span>discovery = ep.discovery().ok_or(NoServiceConfiguredSnafu.build())<span class="question-mark">?</span>;
         <span class="kw">let </span>stream = discovery
             .resolve(ep.clone(), node_id)
-            .ok_or_else(|| <span class="macro">anyhow!</span>(<span class="string">"No discovery service can resolve node {node_id}"</span>,))<span class="question-mark">?</span>;
+            .ok_or(NodeIdSnafu { node_id }.build())<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(stream)
     }
 
@@ -1544,7 +1639,11 @@
         }
     }
 
-    <span class="kw">async fn </span>run(ep: Endpoint, node_id: NodeId, on_first_tx: oneshot::Sender&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;) {
+    <span class="kw">async fn </span>run(
+        ep: Endpoint,
+        node_id: NodeId,
+        on_first_tx: oneshot::Sender&lt;<span class="prelude-ty">Result</span>&lt;(), DiscoveryError&gt;&gt;,
+    ) {
         <span class="kw">let </span><span class="kw-2">mut </span>stream = <span class="kw">match </span><span class="self">Self</span>::create_stream(<span class="kw-2">&amp;</span>ep, node_id) {
             <span class="prelude-val">Ok</span>(stream) =&gt; stream,
             <span class="prelude-val">Err</span>(err) =&gt; {
@@ -1579,8 +1678,7 @@
             }
         }
         <span class="kw">if let </span><span class="prelude-val">Some</span>(tx) = on_first_tx.take() {
-            <span class="kw">let </span>err = <span class="macro">anyhow!</span>(<span class="string">"Discovery produced no results for {}"</span>, node_id.fmt_short());
-            tx.send(<span class="prelude-val">Err</span>(err)).ok();
+            tx.send(<span class="prelude-val">Err</span>(NoResultsSnafu { node_id }.build())).ok();
         }
     }
 }
@@ -1718,7 +1816,7 @@
             <span class="kw-2">&amp;</span><span class="self">self</span>,
             endpoint: Endpoint,
             node_id: NodeId,
-        ) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem&gt;&gt;&gt; {
+        ) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem, DiscoveryError&gt;&gt;&gt; {
             <span class="kw">let </span>addr_info = <span class="kw">if </span><span class="self">self</span>.resolve_wrong {
                 <span class="kw">let </span>ts = system_time_now() - <span class="number">100_000</span>;
                 <span class="kw">let </span>port: u16 = rand::thread_rng().gen_range(<span class="number">10_000</span>..<span class="number">20_000</span>);
@@ -1770,7 +1868,7 @@
             <span class="kw-2">&amp;</span><span class="self">self</span>,
             _endpoint: Endpoint,
             _node_id: NodeId,
-        ) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem&gt;&gt;&gt; {
+        ) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem, DiscoveryError&gt;&gt;&gt; {
             <span class="prelude-val">Some</span>(n0_future::stream::empty().boxed())
         }
     }

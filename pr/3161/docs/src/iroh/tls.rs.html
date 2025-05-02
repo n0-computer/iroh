@@ -104,30 +104,7 @@
 <a href="#103" id="103">103</a>
 <a href="#104" id="104">104</a>
 <a href="#105" id="105">105</a>
-<a href="#106" id="106">106</a>
-<a href="#107" id="107">107</a>
-<a href="#108" id="108">108</a>
-<a href="#109" id="109">109</a>
-<a href="#110" id="110">110</a>
-<a href="#111" id="111">111</a>
-<a href="#112" id="112">112</a>
-<a href="#113" id="113">113</a>
-<a href="#114" id="114">114</a>
-<a href="#115" id="115">115</a>
-<a href="#116" id="116">116</a>
-<a href="#117" id="117">117</a>
-<a href="#118" id="118">118</a>
-<a href="#119" id="119">119</a>
-<a href="#120" id="120">120</a>
-<a href="#121" id="121">121</a>
-<a href="#122" id="122">122</a>
-<a href="#123" id="123">123</a>
-<a href="#124" id="124">124</a>
-<a href="#125" id="125">125</a>
-<a href="#126" id="126">126</a>
-<a href="#127" id="127">127</a>
-<a href="#128" id="128">128</a>
-<a href="#129" id="129">129</a></pre></div><pre class="rust"><code><span class="doccomment">//! TLS configuration for iroh.
+<a href="#106" id="106">106</a></pre></div><pre class="rust"><code><span class="doccomment">//! TLS configuration for iroh.
 //!
 //! Currently there are two mechanisms available
 //! - Raw Public Keys, using the TLS extension described in [RFC 7250]
@@ -138,9 +115,7 @@
 </span><span class="kw">use </span>std::sync::Arc;
 
 <span class="kw">use </span>iroh_base::{PublicKey, SecretKey};
-<span class="kw">use </span>nested_enum_utils::common_fields;
-<span class="kw">use </span>quinn::crypto::rustls::{NoInitialCipherSuite, QuicClientConfig, QuicServerConfig};
-<span class="kw">use </span>snafu::Snafu;
+<span class="kw">use </span>quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 <span class="kw">use </span>tracing::warn;
 
 <span class="kw">use </span><span class="self">self</span>::resolver::AlwaysResolvesCert;
@@ -172,7 +147,7 @@
         alpn_protocols: Vec&lt;Vec&lt;u8&gt;&gt;,
         session_store: <span class="prelude-ty">Option</span>&lt;Arc&lt;<span class="kw">dyn </span>rustls::client::ClientSessionStore&gt;&gt;,
         keylog: bool,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;QuicClientConfig, CreateConfigError&gt; {
+    ) -&gt; QuicClientConfig {
         <span class="kw">let </span>cert_resolver = Arc::new(
             AlwaysResolvesCert::new(<span class="self">self</span>, secret_key).expect(<span class="string">"Client cert key DER is valid; qed"</span>),
         );
@@ -197,8 +172,7 @@
             crypto.key_log = Arc::new(rustls::KeyLogFile::new());
         }
 
-        <span class="kw">let </span>config = crypto.try_into()<span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(config)
+        crypto.try_into().expect(<span class="string">"known good ciphersuites"</span>)
     }
 
     <span class="doccomment">/// Create a TLS server configuration.
@@ -211,7 +185,7 @@
         secret_key: <span class="kw-2">&amp;</span>SecretKey,
         alpn_protocols: Vec&lt;Vec&lt;u8&gt;&gt;,
         keylog: bool,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;QuicServerConfig, CreateConfigError&gt; {
+    ) -&gt; QuicServerConfig {
         <span class="kw">let </span>cert_resolver = Arc::new(
             AlwaysResolvesCert::new(<span class="self">self</span>, secret_key).expect(<span class="string">"Server cert key DER is valid; qed"</span>),
         );
@@ -233,27 +207,7 @@
         // This is specified in RFC 9001: https://www.rfc-editor.org/rfc/rfc9001#section-4.6.1
         </span>crypto.max_early_data_size = u32::MAX;
 
-        <span class="kw">let </span>config = crypto.try_into()<span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(config)
+        crypto.try_into().expect(<span class="string">"known good ciphersuites"</span>)
     }
-}
-
-<span class="doccomment">/// Error for generating TLS configs.
-</span><span class="attr">#[common_fields({
-    backtrace: <span class="prelude-ty">Option</span>&lt;snafu::Backtrace&gt;,
-    <span class="attr">#[snafu(implicit)]
-    </span>span_trace: n0_snafu::SpanTrace,
-})]
-<span class="attr">#[derive(Debug, Snafu)]
-</span><span class="kw">pub enum </span>CreateConfigError {
-    <span class="doccomment">/// Error generating the certificate.
-    </span><span class="attr">#[snafu(display(<span class="string">"Error generating the certificate"</span>), context(<span class="bool-val">false</span>))]
-    </span>CertError { source: certificate::GenError },
-    <span class="doccomment">/// Error creating QUIC config.
-    </span><span class="attr">#[snafu(display(<span class="string">"Error creating QUIC config"</span>), context(<span class="bool-val">false</span>))]
-    </span>ConfigError { source: NoInitialCipherSuite },
-    <span class="doccomment">/// Rustls configuration error
-    </span><span class="attr">#[snafu(display(<span class="string">"rustls error"</span>), context(<span class="bool-val">false</span>))]
-    </span>Rustls { source: rustls::Error },
 }
 </code></pre></div></section></main></body></html>

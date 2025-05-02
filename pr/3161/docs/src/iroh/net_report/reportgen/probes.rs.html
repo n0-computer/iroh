@@ -1177,7 +1177,13 @@
 <a href="#1176" id="1176">1176</a>
 <a href="#1177" id="1177">1177</a>
 <a href="#1178" id="1178">1178</a>
-<a href="#1179" id="1179">1179</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay probes.
+<a href="#1179" id="1179">1179</a>
+<a href="#1180" id="1180">1180</a>
+<a href="#1181" id="1181">1181</a>
+<a href="#1182" id="1182">1182</a>
+<a href="#1183" id="1183">1183</a>
+<a href="#1184" id="1184">1184</a>
+<a href="#1185" id="1185">1185</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay probes.
 //!
 //! All the probes try and establish the latency to the relay servers.  Preferably the STUN
 //! probes work and we also learn about our public IP addresses and ports.  But fallback
@@ -1185,12 +1191,12 @@
 
 </span><span class="kw">use </span>std::{collections::BTreeSet, fmt, sync::Arc};
 
-<span class="kw">use </span>anyhow::ensure;
 <span class="kw">use </span>iroh_base::RelayUrl;
 <span class="kw">use </span>iroh_relay::{RelayMap, RelayNode};
 <span class="kw">use </span>n0_future::time::Duration;
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">use </span>netwatch::interfaces;
+<span class="kw">use </span>snafu::Snafu;
 
 <span class="kw">use </span><span class="kw">crate</span>::net_report::Report;
 
@@ -1368,6 +1374,10 @@
     </span>probes: Vec&lt;Probe&gt;,
 }
 
+<span class="attr">#[derive(Debug, Snafu)]
+#[snafu(display(<span class="string">"Mismatching probe"</span>))]
+</span><span class="kw">struct </span>PushError;
+
 <span class="kw">impl </span>ProbeSet {
     <span class="kw">fn </span>new(proto: ProbeProto) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
@@ -1376,8 +1386,10 @@
         }
     }
 
-    <span class="kw">fn </span>push(<span class="kw-2">&amp;mut </span><span class="self">self</span>, probe: Probe) -&gt; anyhow::Result&lt;()&gt; {
-        <span class="macro">ensure!</span>(probe.proto() == <span class="self">self</span>.proto, <span class="string">"mismatching probe proto"</span>);
+    <span class="kw">fn </span>push(<span class="kw-2">&amp;mut </span><span class="self">self</span>, probe: Probe) -&gt; <span class="prelude-ty">Result</span>&lt;(), PushError&gt; {
+        <span class="kw">if </span>probe.proto() != <span class="self">self</span>.proto {
+            <span class="kw">return </span><span class="prelude-val">Err</span>(PushError);
+        }
         <span class="self">self</span>.probes.push(probe);
         <span class="prelude-val">Ok</span>(())
     }

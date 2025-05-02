@@ -96,17 +96,14 @@
 <a href="#95" id="95">95</a>
 <a href="#96" id="96">96</a>
 <a href="#97" id="97">97</a>
-<a href="#98" id="98">98</a>
-<a href="#99" id="99">99</a>
-<a href="#100" id="100">100</a>
-<a href="#101" id="101">101</a>
-<a href="#102" id="102">102</a></pre></div><pre class="rust"><code><span class="doccomment">//! Tickets is a serializable object combining information required for an operation.
+<a href="#98" id="98">98</a></pre></div><pre class="rust"><code><span class="doccomment">//! Tickets is a serializable object combining information required for an operation.
 //! Typically tickets contain all information required for an operation, e.g. an iroh blob
 //! ticket would contain the hash of the data as well as information about how to reach the
 //! provider.
 
 </span><span class="kw">use </span>std::{collections::BTreeSet, net::SocketAddr};
 
+<span class="kw">use </span>nested_enum_utils::common_fields;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>snafu::{Backtrace, Snafu};
 
@@ -160,7 +157,12 @@
 }
 
 <span class="doccomment">/// An error deserializing an iroh ticket.
-</span><span class="attr">#[derive(Debug, Snafu)]
+</span><span class="attr">#[common_fields({
+    backtrace: <span class="prelude-ty">Option</span>&lt;Backtrace&gt;,
+    <span class="attr">#[snafu(implicit)]
+    </span>span_trace: n0_snafu::SpanTrace,
+})]
+<span class="attr">#[derive(Debug, Snafu)]
 #[allow(missing_docs)]
 #[snafu(visibility(<span class="kw">pub</span>(<span class="kw">crate</span>)))]
 </span><span class="kw">pub enum </span>Error {
@@ -169,26 +171,16 @@
     </span>Kind {
         <span class="doccomment">/// The expected prefix.
         </span>expected: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
-        backtrace: <span class="prelude-ty">Option</span>&lt;Backtrace&gt;,
     },
     <span class="doccomment">/// This looks like a ticket, but postcard deserialization failed.
     </span><span class="attr">#[snafu(display(<span class="string">"deserialization failed"</span>))]
-    </span>Postcard {
-        source: postcard::Error,
-        backtrace: <span class="prelude-ty">Option</span>&lt;Backtrace&gt;,
-    },
+    </span>Postcard { source: postcard::Error },
     <span class="doccomment">/// This looks like a ticket, but base32 decoding failed.
     </span><span class="attr">#[snafu(transparent)]
-    </span>Encoding {
-        source: data_encoding::DecodeError,
-        backtrace: <span class="prelude-ty">Option</span>&lt;Backtrace&gt;,
-    },
+    </span>Encoding { source: data_encoding::DecodeError },
     <span class="doccomment">/// Verification of the deserialized bytes failed.
     </span><span class="attr">#[snafu(display(<span class="string">"verification failed: {message}"</span>))]
-    </span>Verify {
-        message: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
-        backtrace: <span class="prelude-ty">Option</span>&lt;Backtrace&gt;,
-    },
+    </span>Verify { message: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str },
 }
 
 <span class="attr">#[derive(Serialize, Deserialize)]

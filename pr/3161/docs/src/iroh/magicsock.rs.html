@@ -4487,11 +4487,7 @@
 <a href="#4486" id="4486">4486</a>
 <a href="#4487" id="4487">4487</a>
 <a href="#4488" id="4488">4488</a>
-<a href="#4489" id="4489">4489</a>
-<a href="#4490" id="4490">4490</a>
-<a href="#4491" id="4491">4491</a>
-<a href="#4492" id="4492">4492</a>
-<a href="#4493" id="4493">4493</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4489" id="4489">4489</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4572,7 +4568,7 @@
     disco::{<span class="self">self</span>, CallMeMaybe, SendAddr},
     discovery::{Discovery, DiscoveryItem, DiscoverySubscribers, NodeData, UserData},
     key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
-    net_report::{<span class="self">self</span>, IpMappedAddresses},
+    net_report::{<span class="self">self</span>, IpMappedAddresses, ReportError},
     watchable::{Watchable, Watcher},
 };
 
@@ -6187,8 +6183,6 @@
     </span>CreateQuinnEndpoint { source: io::Error },
     <span class="attr">#[snafu(display(<span class="string">"Failed to create socket state"</span>))]
     </span>CreateSocketState { source: io::Error },
-    <span class="attr">#[snafu(display(<span class="string">"Failed to create net report client"</span>))]
-    </span>CreateNetReportClient { source: anyhow::Error },
     <span class="attr">#[snafu(display(<span class="string">"Failed to create netmon monitor"</span>))]
     </span>CreateNetmonMonitor { source: netmon::Error },
     <span class="attr">#[snafu(display(<span class="string">"Failed to subscribe netmon monitor"</span>))]
@@ -6242,8 +6236,7 @@
             </span>dns_resolver.clone(),
             <span class="attr">#[cfg(not(wasm_browser))]
             </span><span class="prelude-val">Some</span>(ip_mapped_addrs.clone()),
-        )
-        .context(CreateNetReportClientSnafu)<span class="question-mark">?</span>;
+        );
 
         <span class="kw">let </span>(actor_sender, actor_receiver) = mpsc::channel(<span class="number">256</span>);
         <span class="kw">let </span>(relay_actor_sender, relay_actor_receiver) = mpsc::channel(<span class="number">256</span>);
@@ -6975,7 +6968,7 @@
     <span class="attr">#[snafu(display(<span class="string">"Net report timed out"</span>))]
     </span>Timeout,
     <span class="attr">#[snafu(display(<span class="string">"Net report encountered an error"</span>))]
-    </span>NetReport { source: anyhow::Error },
+    </span>NetReport { source: ReportError },
 }
 
 <span class="kw">impl </span>Actor {
@@ -8001,9 +7994,8 @@
         secret_key: <span class="kw-2">&amp;</span>SecretKey,
         tls_auth: <span class="kw">crate</span>::tls::Authentication,
     ) -&gt; ServerConfig {
-        <span class="kw">let </span>quic_server_config = tls_auth
-            .make_server_config(secret_key, <span class="macro">vec!</span>[], <span class="bool-val">false</span>)
-            .expect(<span class="string">"should generate valid config"</span>);
+        <span class="kw">let </span>quic_server_config = tls_auth.make_server_config(secret_key, <span class="macro">vec!</span>[], <span class="bool-val">false</span>);
+
         <span class="kw">let </span><span class="kw-2">mut </span>server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
         server_config.transport_config(Arc::new(quinn::TransportConfig::default()));
         server_config
@@ -8572,7 +8564,7 @@
         tls_auth: tls::Authentication,
     ) -&gt; anyhow::Result&lt;Handle&gt; {
         <span class="kw">let </span>quic_server_config =
-            tls_auth.make_server_config(<span class="kw-2">&amp;</span>secret_key, <span class="macro">vec!</span>[ALPN.to_vec()], <span class="bool-val">true</span>)<span class="question-mark">?</span>;
+            tls_auth.make_server_config(<span class="kw-2">&amp;</span>secret_key, <span class="macro">vec!</span>[ALPN.to_vec()], <span class="bool-val">true</span>);
         <span class="kw">let </span><span class="kw-2">mut </span>server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
         server_config.transport_config(Arc::new(quinn::TransportConfig::default()));
 
@@ -8638,7 +8630,7 @@
     ) -&gt; anyhow::Result&lt;quinn::Connection&gt; {
         <span class="kw">let </span>alpns = <span class="macro">vec!</span>[ALPN.to_vec()];
         <span class="kw">let </span>quic_client_config =
-            tls_auth.make_client_config(<span class="kw-2">&amp;</span>ep_secret_key, node_id, alpns, <span class="prelude-val">None</span>, <span class="bool-val">true</span>)<span class="question-mark">?</span>;
+            tls_auth.make_client_config(<span class="kw-2">&amp;</span>ep_secret_key, node_id, alpns, <span class="prelude-val">None</span>, <span class="bool-val">true</span>);
         <span class="kw">let </span><span class="kw-2">mut </span>client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
         client_config.transport_config(transport_config);
         <span class="kw">let </span>connect = ep.connect_with(

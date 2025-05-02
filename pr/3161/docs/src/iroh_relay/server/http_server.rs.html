@@ -1165,11 +1165,91 @@
 <a href="#1164" id="1164">1164</a>
 <a href="#1165" id="1165">1165</a>
 <a href="#1166" id="1166">1166</a>
-<a href="#1167" id="1167">1167</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#1167" id="1167">1167</a>
+<a href="#1168" id="1168">1168</a>
+<a href="#1169" id="1169">1169</a>
+<a href="#1170" id="1170">1170</a>
+<a href="#1171" id="1171">1171</a>
+<a href="#1172" id="1172">1172</a>
+<a href="#1173" id="1173">1173</a>
+<a href="#1174" id="1174">1174</a>
+<a href="#1175" id="1175">1175</a>
+<a href="#1176" id="1176">1176</a>
+<a href="#1177" id="1177">1177</a>
+<a href="#1178" id="1178">1178</a>
+<a href="#1179" id="1179">1179</a>
+<a href="#1180" id="1180">1180</a>
+<a href="#1181" id="1181">1181</a>
+<a href="#1182" id="1182">1182</a>
+<a href="#1183" id="1183">1183</a>
+<a href="#1184" id="1184">1184</a>
+<a href="#1185" id="1185">1185</a>
+<a href="#1186" id="1186">1186</a>
+<a href="#1187" id="1187">1187</a>
+<a href="#1188" id="1188">1188</a>
+<a href="#1189" id="1189">1189</a>
+<a href="#1190" id="1190">1190</a>
+<a href="#1191" id="1191">1191</a>
+<a href="#1192" id="1192">1192</a>
+<a href="#1193" id="1193">1193</a>
+<a href="#1194" id="1194">1194</a>
+<a href="#1195" id="1195">1195</a>
+<a href="#1196" id="1196">1196</a>
+<a href="#1197" id="1197">1197</a>
+<a href="#1198" id="1198">1198</a>
+<a href="#1199" id="1199">1199</a>
+<a href="#1200" id="1200">1200</a>
+<a href="#1201" id="1201">1201</a>
+<a href="#1202" id="1202">1202</a>
+<a href="#1203" id="1203">1203</a>
+<a href="#1204" id="1204">1204</a>
+<a href="#1205" id="1205">1205</a>
+<a href="#1206" id="1206">1206</a>
+<a href="#1207" id="1207">1207</a>
+<a href="#1208" id="1208">1208</a>
+<a href="#1209" id="1209">1209</a>
+<a href="#1210" id="1210">1210</a>
+<a href="#1211" id="1211">1211</a>
+<a href="#1212" id="1212">1212</a>
+<a href="#1213" id="1213">1213</a>
+<a href="#1214" id="1214">1214</a>
+<a href="#1215" id="1215">1215</a>
+<a href="#1216" id="1216">1216</a>
+<a href="#1217" id="1217">1217</a>
+<a href="#1218" id="1218">1218</a>
+<a href="#1219" id="1219">1219</a>
+<a href="#1220" id="1220">1220</a>
+<a href="#1221" id="1221">1221</a>
+<a href="#1222" id="1222">1222</a>
+<a href="#1223" id="1223">1223</a>
+<a href="#1224" id="1224">1224</a>
+<a href="#1225" id="1225">1225</a>
+<a href="#1226" id="1226">1226</a>
+<a href="#1227" id="1227">1227</a>
+<a href="#1228" id="1228">1228</a>
+<a href="#1229" id="1229">1229</a>
+<a href="#1230" id="1230">1230</a>
+<a href="#1231" id="1231">1231</a>
+<a href="#1232" id="1232">1232</a>
+<a href="#1233" id="1233">1233</a>
+<a href="#1234" id="1234">1234</a>
+<a href="#1235" id="1235">1235</a>
+<a href="#1236" id="1236">1236</a>
+<a href="#1237" id="1237">1237</a>
+<a href="#1238" id="1238">1238</a>
+<a href="#1239" id="1239">1239</a>
+<a href="#1240" id="1240">1240</a>
+<a href="#1241" id="1241">1241</a>
+<a href="#1242" id="1242">1242</a>
+<a href="#1243" id="1243">1243</a>
+<a href="#1244" id="1244">1244</a>
+<a href="#1245" id="1245">1245</a>
+<a href="#1246" id="1246">1246</a>
+<a href="#1247" id="1247">1247</a>
+<a href="#1248" id="1248">1248</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::HashMap, future::Future, net::SocketAddr, pin::Pin, sync::Arc, time::Duration,
 };
 
-<span class="kw">use </span>anyhow::{bail, ensure, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>derive_more::Debug;
 <span class="kw">use </span>http::{header::CONNECTION, response::Builder <span class="kw">as </span>ResponseBuilder};
@@ -1180,14 +1260,17 @@
     upgrade::Upgraded,
     HeaderMap, Method, Request, Response, StatusCode,
 };
+<span class="kw">use </span>iroh_base::PublicKey;
 <span class="kw">use </span>iroh_metrics::inc;
-<span class="kw">use </span>n0_future::{FutureExt, SinkExt};
+<span class="kw">use </span>n0_future::{time::Elapsed, FutureExt, SinkExt};
+<span class="kw">use </span>nested_enum_utils::common_fields;
+<span class="kw">use </span>snafu::{Backtrace, ResultExt, Snafu};
 <span class="kw">use </span>tokio::net::{TcpListener, TcpStream};
 <span class="kw">use </span>tokio_rustls_acme::AcmeAcceptor;
 <span class="kw">use </span>tokio_util::{codec::Framed, sync::CancellationToken, task::AbortOnDropHandle};
 <span class="kw">use </span>tracing::{debug, debug_span, error, info, info_span, trace, warn, Instrument};
 
-<span class="kw">use super</span>::{clients::Clients, AccessConfig};
+<span class="kw">use super</span>::{clients::Clients, streams, AccessConfig, SpawnError};
 <span class="kw">use crate</span>::{
     defaults::{timeouts::SERVER_WRITE_TIMEOUT, DEFAULT_KEY_CACHE_CAPACITY},
     http::{Protocol, LEGACY_RELAY_PATH, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},
@@ -1198,7 +1281,7 @@
         client::Config,
         metrics::Metrics,
         streams::{MaybeTlsStream, RelayedStream},
-        ClientRateLimit,
+        BindTcpListenerSnafu, ClientRateLimit, NoLocalAddrSnafu,
     },
     KeyCache,
 };
@@ -1237,12 +1320,11 @@
     http_body_util::Full::new(content.into())
 }
 
-<span class="kw">fn </span>downcast_upgrade(upgraded: Upgraded) -&gt; <span class="prelude-ty">Result</span>&lt;(MaybeTlsStream, Bytes)&gt; {
+<span class="attr">#[allow(clippy::result_large_err)]
+</span><span class="kw">fn </span>downcast_upgrade(upgraded: Upgraded) -&gt; <span class="prelude-ty">Result</span>&lt;(MaybeTlsStream, Bytes), Error&gt; {
     <span class="kw">match </span>upgraded.downcast::&lt;hyper_util::rt::TokioIo&lt;MaybeTlsStream&gt;&gt;() {
         <span class="prelude-val">Ok</span>(parts) =&gt; <span class="prelude-val">Ok</span>((parts.io.into_inner(), parts.read_buf)),
-        <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; {
-            <span class="macro">bail!</span>(<span class="string">"could not downcast the upgraded connection to MaybeTlsStream"</span>)
-        }
+        <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="prelude-val">Err</span>(DowncastUpgradeSnafu.build()),
     }
 }
 
@@ -1313,6 +1395,74 @@
     </span><span class="kw">pub</span>(<span class="kw">super</span>) config: Arc&lt;rustls::ServerConfig&gt;,
     <span class="doccomment">/// The kind
     </span><span class="kw">pub</span>(<span class="kw">super</span>) acceptor: TlsAcceptor,
+}
+
+<span class="doccomment">/// Server accept errors
+</span><span class="attr">#[common_fields({
+    backtrace: <span class="prelude-ty">Option</span>&lt;Backtrace&gt;,
+})]
+#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+#[snafu(visibility(<span class="kw">pub</span>(<span class="kw">crate</span>)))]
+</span><span class="kw">pub enum </span>Error {
+    <span class="attr">#[snafu(display(<span class="string">"Unable to receive client information"</span>))]
+    </span>RecvClientKey {
+        <span class="attr">#[allow(clippy::result_large_err)]
+        </span>source: streams::Error,
+        <span class="attr">#[snafu(implicit)]
+        </span>span_trace: n0_snafu::SpanTrace,
+    },
+    <span class="attr">#[snafu(display(<span class="string">"Could not downcast the upgraded connection to MaybeTlsStream"</span>))]
+    </span>DowncastUpgrade {
+        <span class="attr">#[snafu(implicit)]
+        </span>span_trace: n0_snafu::SpanTrace,
+    },
+    <span class="attr">#[snafu(transparent)]
+    </span>Io { source: std::io::Error },
+    <span class="attr">#[snafu(display(<span class="string">"TLS[acme] handshake"</span>))]
+    </span>Handshake {
+        source: std::io::Error,
+        <span class="attr">#[snafu(implicit)]
+        </span>span_trace: n0_snafu::SpanTrace,
+    },
+    <span class="attr">#[snafu(display(<span class="string">"TLS[acme] serve connection"</span>))]
+    </span>ServeConnection {
+        source: hyper::Error,
+        <span class="attr">#[snafu(implicit)]
+        </span>span_trace: n0_snafu::SpanTrace,
+    },
+    <span class="attr">#[snafu(display(<span class="string">"TLS[manual] timeout"</span>))]
+    </span>Timeout {
+        source: Elapsed,
+        <span class="attr">#[snafu(implicit)]
+        </span>span_trace: n0_snafu::SpanTrace,
+    },
+    <span class="attr">#[snafu(display(<span class="string">"TLS[manual] accept"</span>))]
+    </span>Accept {
+        source: std::io::Error,
+        <span class="attr">#[snafu(implicit)]
+        </span>span_trace: n0_snafu::SpanTrace,
+    },
+    <span class="attr">#[snafu(display(<span class="string">"Cannot deal with buffered data yet: {buf:?}"</span>))]
+    </span>BufferNotEmpty {
+        buf: Bytes,
+        <span class="attr">#[snafu(implicit)]
+        </span>span_trace: n0_snafu::SpanTrace,
+    },
+    <span class="attr">#[snafu(display(<span class="string">"Client not authenticated: {key:?}"</span>))]
+    </span>ClientNotAuthenticated {
+        key: PublicKey,
+        <span class="attr">#[snafu(implicit)]
+        </span>span_trace: n0_snafu::SpanTrace,
+    },
+    <span class="attr">#[snafu(display(<span class="string">"Unexpected client version {version}, expected {expected_version}"</span>))]
+    </span>UnexpectedClientVersion {
+        version: usize,
+        expected_version: usize,
+        <span class="attr">#[snafu(implicit)]
+        </span>span_trace: n0_snafu::SpanTrace,
+    },
 }
 
 <span class="doccomment">/// Builder for the Relay HTTP Server.
@@ -1406,7 +1556,7 @@
     </span>}
 
     <span class="doccomment">/// Builds and spawns an HTTP(S) Relay Server.
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>spawn(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Server&gt; {
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>spawn(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Server, SpawnError&gt; {
         <span class="kw">let </span>cancel_token = CancellationToken::new();
 
         <span class="kw">let </span>service = RelayService::new(
@@ -1424,9 +1574,9 @@
 
         </span><span class="kw">let </span>listener = TcpListener::bind(<span class="kw-2">&amp;</span>addr)
             .<span class="kw">await
-            </span>.with_context(|| <span class="macro">format!</span>(<span class="string">"failed to bind server socket to {addr}"</span>))<span class="question-mark">?</span>;
+            </span>.map_err(|<span class="kw">_</span>| BindTcpListenerSnafu { addr }.build())<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>addr = listener.local_addr()<span class="question-mark">?</span>;
+        <span class="kw">let </span>addr = listener.local_addr().context(NoLocalAddrSnafu)<span class="question-mark">?</span>;
         <span class="kw">let </span>http_str = tls_config.as_ref().map_or(<span class="string">"HTTP/WS"</span>, |<span class="kw">_</span>| <span class="string">"HTTPS/WSS"</span>);
         <span class="macro">info!</span>(<span class="string">"[{http_str}] relay: serving on {addr}"</span>);
 
@@ -1658,14 +1808,16 @@
     /// This handler runs while doing the connection upgrade handshake.  Once the connection
     /// is upgraded it sends the stream to the relay server which takes it over.  After
     /// having sent off the connection this handler returns.
-    </span><span class="kw">async fn </span>relay_connection_handler(<span class="kw-2">&amp;</span><span class="self">self</span>, protocol: Protocol, upgraded: Upgraded) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">async fn </span>relay_connection_handler(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        protocol: Protocol,
+        upgraded: Upgraded,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
         <span class="macro">debug!</span>(<span class="question-mark">?</span>protocol, <span class="string">"relay_connection upgraded"</span>);
         <span class="kw">let </span>(io, read_buf) = downcast_upgrade(upgraded)<span class="question-mark">?</span>;
-        <span class="macro">ensure!</span>(
-            read_buf.is_empty(),
-            <span class="string">"can not deal with buffered data yet: {:?}"</span>,
-            read_buf
-        );
+        <span class="kw">if </span>!read_buf.is_empty() {
+            <span class="kw">return </span><span class="prelude-val">Err</span>(BufferNotEmptySnafu { buf: read_buf }.build());
+        }
 
         <span class="self">self</span>.accept(protocol, io).<span class="kw">await
     </span>}
@@ -1680,7 +1832,7 @@
     ///
     /// [`AsyncRead`]: tokio::io::AsyncRead
     /// [`AsyncWrite`]: tokio::io::AsyncWrite
-    </span><span class="kw">async fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, protocol: Protocol, io: MaybeTlsStream) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">async fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, protocol: Protocol, io: MaybeTlsStream) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
         <span class="macro">trace!</span>(<span class="question-mark">?</span>protocol, <span class="string">"accept: start"</span>);
         <span class="kw">let </span><span class="kw-2">mut </span>io = <span class="kw">match </span>protocol {
             Protocol::Relay =&gt; {
@@ -1699,9 +1851,7 @@
             }
         };
         <span class="macro">trace!</span>(<span class="string">"accept: recv client key"</span>);
-        <span class="kw">let </span>(client_key, info) = recv_client_key(<span class="kw-2">&amp;mut </span>io)
-            .<span class="kw">await
-            </span>.context(<span class="string">"unable to receive client information"</span>)<span class="question-mark">?</span>;
+        <span class="kw">let </span>(client_key, info) = recv_client_key(<span class="kw-2">&amp;mut </span>io).<span class="kw">await</span>.context(RecvClientKeySnafu)<span class="question-mark">?</span>;
 
         <span class="macro">trace!</span>(<span class="string">"accept: checking access: {:?}"</span>, <span class="self">self</span>.access);
         <span class="kw">if </span>!<span class="self">self</span>.access.is_allowed(client_key).<span class="kw">await </span>{
@@ -1711,15 +1861,15 @@
             .<span class="kw">await</span><span class="question-mark">?</span>;
             io.flush().<span class="kw">await</span><span class="question-mark">?</span>;
 
-            <span class="macro">bail!</span>(<span class="string">"client is not authenticated: {}"</span>, client_key);
+            <span class="kw">return </span><span class="prelude-val">Err</span>(ClientNotAuthenticatedSnafu { key: client_key }.build());
         }
 
         <span class="kw">if </span>info.version != PROTOCOL_VERSION {
-            <span class="macro">bail!</span>(
-                <span class="string">"unexpected client version {}, expected {}"</span>,
-                info.version,
-                PROTOCOL_VERSION
-            );
+            <span class="kw">return </span><span class="prelude-val">Err</span>(UnexpectedClientVersionSnafu {
+                version: info.version,
+                expected_version: PROTOCOL_VERSION,
+            }
+            .build());
         }
 
         <span class="macro">trace!</span>(<span class="string">"accept: build client conn"</span>);
@@ -1785,14 +1935,16 @@
             </span>}
             <span class="prelude-val">None </span>=&gt; {
                 <span class="macro">debug!</span>(<span class="string">"HTTP: serve connection"</span>);
-                <span class="self">self</span>.serve_connection(MaybeTlsStream::Plain(stream)).<span class="kw">await
-            </span>}
+                <span class="self">self</span>.serve_connection(MaybeTlsStream::Plain(stream))
+                    .<span class="kw">await
+                    </span>.context(ServeConnectionSnafu)
+            }
         };
         <span class="kw">match </span>res {
             <span class="prelude-val">Ok</span>(()) =&gt; {}
-            <span class="prelude-val">Err</span>(error) =&gt; <span class="kw">match </span>error.downcast_ref::&lt;std::io::Error&gt;() {
-                <span class="prelude-val">Some</span>(io_error) <span class="kw">if </span>io_error.kind() == std::io::ErrorKind::UnexpectedEof =&gt; {
-                    <span class="macro">debug!</span>(reason=<span class="question-mark">?</span>error, <span class="string">"peer disconnected"</span>);
+            <span class="prelude-val">Err</span>(error) =&gt; <span class="kw">match </span>error {
+                Error::Io { source, .. } <span class="kw">if </span>source.kind() == std::io::ErrorKind::UnexpectedEof =&gt; {
+                    <span class="macro">debug!</span>(reason=<span class="question-mark">?</span>source, <span class="string">"peer disconnected"</span>);
                 }
                 <span class="kw">_ </span>=&gt; {
                     <span class="macro">error!</span>(<span class="question-mark">?</span>error, <span class="string">"failed to handle connection"</span>);
@@ -1802,7 +1954,11 @@
     }
 
     <span class="doccomment">/// Serve the tls connection
-    </span><span class="kw">async fn </span>tls_serve_connection(<span class="self">self</span>, stream: TcpStream, tls_config: TlsConfig) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">async fn </span>tls_serve_connection(
+        <span class="self">self</span>,
+        stream: TcpStream,
+        tls_config: TlsConfig,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
         <span class="kw">let </span>TlsConfig { acceptor, config } = tls_config;
         <span class="kw">match </span>acceptor {
             TlsAcceptor::LetsEncrypt(a) =&gt; <span class="kw">match </span>a.accept(stream).<span class="kw">await</span><span class="question-mark">? </span>{
@@ -1814,38 +1970,37 @@
                     <span class="kw">let </span>tls_stream = start_handshake
                         .into_stream(config)
                         .<span class="kw">await
-                        </span>.context(<span class="string">"TLS[acme] handshake"</span>)<span class="question-mark">?</span>;
+                        </span>.context(HandshakeSnafu)<span class="question-mark">?</span>;
                     <span class="self">self</span>.serve_connection(MaybeTlsStream::Tls(tls_stream))
                         .<span class="kw">await
-                        </span>.context(<span class="string">"TLS[acme] serve connection"</span>)<span class="question-mark">?</span>;
+                        </span>.context(ServeConnectionSnafu)<span class="question-mark">?</span>;
                 }
             },
             TlsAcceptor::Manual(a) =&gt; {
                 <span class="macro">debug!</span>(<span class="string">"TLS[manual]: accept"</span>);
                 <span class="kw">let </span>tls_stream = tokio::time::timeout(Duration::from_secs(<span class="number">30</span>), a.accept(stream))
                     .<span class="kw">await
-                    </span>.context(<span class="string">"TLS[manual] timeout"</span>)<span class="question-mark">?
-                    </span>.context(<span class="string">"TLS[manual] accept"</span>)<span class="question-mark">?</span>;
+                    </span>.context(TimeoutSnafu)<span class="question-mark">?
+                    </span>.context(AcceptSnafu)<span class="question-mark">?</span>;
 
                 <span class="self">self</span>.serve_connection(MaybeTlsStream::Tls(tls_stream))
                     .<span class="kw">await
-                    </span>.context(<span class="string">"TLS[manual] serve connection"</span>)<span class="question-mark">?</span>;
+                    </span>.context(ServeConnectionSnafu)<span class="question-mark">?</span>;
             }
         }
         <span class="prelude-val">Ok</span>(())
     }
 
     <span class="doccomment">/// Wrapper for the actual http connection (with upgrades)
-    </span><span class="kw">async fn </span>serve_connection&lt;I&gt;(<span class="self">self</span>, io: I) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt;
+    </span><span class="kw">async fn </span>serve_connection&lt;I&gt;(<span class="self">self</span>, io: I) -&gt; <span class="prelude-ty">Result</span>&lt;(), hyper::Error&gt;
     <span class="kw">where
         </span>I: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + Sync + <span class="lifetime">'static</span>,
     {
         hyper::server::conn::http1::Builder::new()
             .serve_connection(hyper_util::rt::TokioIo::new(io), <span class="self">self</span>)
             .with_upgrades()
-            .<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(())
-    }
+            .<span class="kw">await
+    </span>}
 }
 
 <span class="attr">#[derive(Default)]
@@ -1879,6 +2034,7 @@
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>std::sync::Arc;
 
+    <span class="kw">use </span>anyhow::{bail, Context};
     <span class="kw">use </span>bytes::Bytes;
     <span class="kw">use </span>iroh_base::{PublicKey, SecretKey};
     <span class="kw">use </span>n0_future::{SinkExt, StreamExt};
@@ -1922,7 +2078,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_http_clients_and_server() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">async fn </span>test_http_clients_and_server() -&gt; anyhow::Result&lt;()&gt; {
         <span class="kw">let </span>a_key = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>b_key = SecretKey::generate(rand::thread_rng());
 
@@ -1991,7 +2147,10 @@
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">async fn </span>create_test_client(key: SecretKey, server_url: Url) -&gt; <span class="prelude-ty">Result</span>&lt;(PublicKey, Client)&gt; {
+    <span class="kw">async fn </span>create_test_client(
+        key: SecretKey,
+        server_url: Url,
+    ) -&gt; anyhow::Result&lt;(PublicKey, Client)&gt; {
         <span class="kw">let </span>public_key = key.public();
         <span class="kw">let </span>client =
             ClientBuilder::new(server_url, key, DnsResolver::new()).insecure_skip_cert_verify(<span class="bool-val">true</span>);
@@ -2001,7 +2160,7 @@
     }
 
     <span class="kw">fn </span>process_msg(
-        msg: <span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Result</span>&lt;ReceivedMessage, <span class="kw">crate</span>::client::RecvError&gt;&gt;,
+        msg: <span class="prelude-ty">Option</span>&lt;anyhow::Result&lt;ReceivedMessage, <span class="kw">crate</span>::client::RecvError&gt;&gt;,
     ) -&gt; <span class="prelude-ty">Option</span>&lt;(PublicKey, Bytes)&gt; {
         <span class="kw">match </span>msg {
             <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(e)) =&gt; {
@@ -2029,7 +2188,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_https_clients_and_server() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">async fn </span>test_https_clients_and_server() -&gt; anyhow::Result&lt;()&gt; {
         <span class="kw">let </span>a_key = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>b_key = SecretKey::generate(rand::thread_rng());
 
@@ -2104,7 +2263,10 @@
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">async fn </span>make_test_client(client: tokio::io::DuplexStream, key: <span class="kw-2">&amp;</span>SecretKey) -&gt; <span class="prelude-ty">Result</span>&lt;Conn&gt; {
+    <span class="kw">async fn </span>make_test_client(
+        client: tokio::io::DuplexStream,
+        key: <span class="kw-2">&amp;</span>SecretKey,
+    ) -&gt; anyhow::Result&lt;Conn&gt; {
         <span class="kw">let </span>client = MaybeTlsStreamChained::Mem(client);
         <span class="kw">let </span>client = Conn::new_relay(client, KeyCache::test(), key).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(client)
@@ -2112,7 +2274,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_server_basic() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">async fn </span>test_server_basic() -&gt; anyhow::Result&lt;()&gt; {
         <span class="macro">info!</span>(<span class="string">"Create the server."</span>);
         <span class="kw">let </span>service = RelayService::new(
             Default::default(),
@@ -2199,7 +2361,7 @@
     }
 
     <span class="attr">#[tokio::test]
-    </span><span class="kw">async fn </span>test_server_replace_client() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">async fn </span>test_server_replace_client() -&gt; anyhow::Result&lt;()&gt; {
         <span class="macro">info!</span>(<span class="string">"Create the server."</span>);
         <span class="kw">let </span>service = RelayService::new(
             Default::default(),
