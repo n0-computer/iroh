@@ -2872,9 +2872,9 @@ dependencies = [
 
 [[package]]
 name = "nested_enum_utils"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9130744b54f1dee2499dcfe7c3704985740bb42bd0e1b7c292b2cc2b15ffc6a2"
+checksum = "7aa9a338d2f55df2c5f4ddd2789115e8a16ba9f363b2c551a8f9b0695d23bdc2"
 dependencies = [
  "proc-macro-crate",
  "proc-macro2",
