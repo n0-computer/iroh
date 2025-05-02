@@ -5,12 +5,13 @@
 
 use std::{
     fmt::{self, Display, Formatter},
+    future::Future,
     net::SocketAddr,
     str::FromStr,
 };
 
-use async_trait::async_trait;
 use axum::{
+    body::Body,
     extract::{ConnectInfo, FromRequest, FromRequestParts, Query},
     http::Request,
 };
@@ -98,53 +99,63 @@ pub struct DnsRequestQuery(pub(crate) DNSRequest, pub(crate) DnsMimeType);
 #[derive(Debug)]
 pub struct DnsRequestBody(pub(crate) DNSRequest);
 
-#[async_trait]
 impl<S> FromRequestParts<S> for DnsRequestQuery
 where
     S: Send + Sync,
 {
     type Rejection = AppError;
 
-    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        let ConnectInfo(src_addr) = ConnectInfo::from_request_parts(parts, state).await?;
+    #[allow(clippy::manual_async_fn)]
+    fn from_request_parts(
+        parts: &mut Parts,
+        state: &S,
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+        async move {
+            let ConnectInfo(src_addr) = ConnectInfo::from_request_parts(parts, state).await?;
 
-        match parts.headers.get(header::ACCEPT) {
-            Some(content_type) if content_type == "application/dns-message" => {
-                handle_dns_message_query(parts, state, src_addr).await
+            match parts.headers.get(header::ACCEPT) {
+                Some(content_type) if content_type == "application/dns-message" => {
+                    handle_dns_message_query(parts, state, src_addr).await
+                }
+                Some(content_type) if content_type == "application/dns-json" => {
+                    handle_dns_json_query(parts, state, src_addr).await
+                }
+                Some(content_type) if content_type == "application/x-javascript" => {
+                    handle_dns_json_query(parts, state, src_addr).await
+                }
+                None => handle_dns_message_query(parts, state, src_addr).await,
+                _ => Err(AppError::with_status(StatusCode::NOT_ACCEPTABLE)),
             }
-            Some(content_type) if content_type == "application/dns-json" => {
-                handle_dns_json_query(parts, state, src_addr).await
-            }
-            Some(content_type) if content_type == "application/x-javascript" => {
-                handle_dns_json_query(parts, state, src_addr).await
-            }
-            None => handle_dns_message_query(parts, state, src_addr).await,
-            _ => Err(AppError::with_status(StatusCode::NOT_ACCEPTABLE)),
         }
     }
 }
 
-#[async_trait]
 impl<S> FromRequest<S> for DnsRequestBody
 where
     S: Send + Sync,
 {
     type Rejection = AppError;
 
-    async fn from_request(req: axum::extract::Request, state: &S) -> Result<Self, Self::Rejection> {
-        let (mut parts, body) = req.into_parts();
+    #[allow(clippy::manual_async_fn)]
+    fn from_request(
+        req: Request<Body>,
+        state: &S,
+    ) -> impl Future<Output = Result<Self, Self::Rejection>> + Send {
+        async move {
+            let (mut parts, body) = req.into_parts();
 
-        let ConnectInfo(src_addr) = ConnectInfo::from_request_parts(&mut parts, state).await?;
+            let ConnectInfo(src_addr) = ConnectInfo::from_request_parts(&mut parts, state).await?;
 
-        let req = Request::from_parts(parts, body);
+            let req = Request::from_parts(parts, body);
 
-        let body = Bytes::from_request(req, state)
-            .await
-            .map_err(|_| AppError::with_status(StatusCode::INTERNAL_SERVER_ERROR))?;
+            let body = Bytes::from_request(req, state)
+                .await
+                .map_err(|_| AppError::with_status(StatusCode::INTERNAL_SERVER_ERROR))?;
 
-        let request = decode_request(&body, src_addr)?;
+            let request = decode_request(&body, src_addr)?;
 
-        Ok(DnsRequestBody(request))
+            Ok(DnsRequestBody(request))
+        }
     }
 }
 
