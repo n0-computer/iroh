@@ -290,7 +290,6 @@ jobs:
       - name: Install Rust nightly
         run: |
           rustup toolchain install nightly
-          rustup toolchain default nightly
           rustup target add ${{ matrix.target }}
           rustup set default-host ${{ matrix.target }}
 
@@ -304,4 +303,4 @@ jobs:
       - name: cargo check
         run: |
           rm -Force Cargo.lock
-          cargo check -Z minimal-versions --workspace --all-features --lib --bins
+          cargo +nightly check -Z minimal-versions --workspace --all-features --lib --bins
