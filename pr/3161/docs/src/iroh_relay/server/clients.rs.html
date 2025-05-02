@@ -323,7 +323,7 @@
 
 <span class="doccomment">/// Send packet errors
 </span><span class="attr">#[common_fields({
-    backtrace: <span class="prelude-ty">Option</span>&lt;Backtrace&gt;,
+    backtrace: <span class="prelude-ty">Option</span>&lt;snafu::Backtrace&gt;,
     <span class="attr">#[snafu(implicit)]
     </span>span_trace: n0_snafu::SpanTrace,
 })]
@@ -333,9 +333,9 @@
 #[snafu(visibility(<span class="kw">pub</span>(<span class="kw">crate</span>)))]
 </span><span class="kw">pub enum </span>SendPacketError {
     <span class="attr">#[snafu(display(<span class="string">"Failed to send message: full"</span>))]
-    </span>Full,
+    </span>Full {},
     <span class="attr">#[snafu(display(<span class="string">"Failed to send message: gone"</span>))]
-    </span>Gone,
+    </span>Gone {},
 }
 
 <span class="kw">impl </span>Clients {

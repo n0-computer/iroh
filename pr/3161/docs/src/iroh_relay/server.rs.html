@@ -1613,7 +1613,7 @@
 
 <span class="doccomment">/// Server task errors
 </span><span class="attr">#[common_fields({
-    backtrace: <span class="prelude-ty">Option</span>&lt;Backtrace&gt;,
+    backtrace: <span class="prelude-ty">Option</span>&lt;snafu::Backtrace&gt;,
     <span class="attr">#[snafu(implicit)]
     </span>span_trace: n0_snafu::SpanTrace,
 })]
@@ -1625,13 +1625,13 @@
     <span class="attr">#[snafu(display(<span class="string">"Error starting metrics server"</span>))]
     </span>Metrics { source: std::io::Error },
     <span class="attr">#[snafu(display(<span class="string">"Acme event stream finished"</span>))]
-    </span>AcmeEventStreamFinished,
+    </span>AcmeEventStreamFinished {},
     <span class="attr">#[snafu(transparent)]
     </span>JoinError { source: JoinError },
     <span class="attr">#[snafu(display(<span class="string">"No relay services are enabled"</span>))]
-    </span>NoRelayServicesEnabled,
+    </span>NoRelayServicesEnabled {},
     <span class="attr">#[snafu(display(<span class="string">"Task cancelled"</span>))]
-    </span>TaskCancelled,
+    </span>TaskCancelled {},
 }
 
 <span class="kw">impl </span>Server {

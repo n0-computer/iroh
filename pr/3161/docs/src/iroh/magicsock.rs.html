@@ -4777,11 +4777,11 @@
 #[snafu(visibility(<span class="kw">pub</span>(<span class="kw">crate</span>)))]
 </span><span class="kw">pub enum </span>AddNodeAddrError {
     <span class="attr">#[snafu(display(<span class="string">"Empty addressing info"</span>))]
-    </span>Empty,
+    </span>Empty {},
     <span class="attr">#[snafu(display(<span class="string">"Empty addressing info, {pruned} direct address have been pruned"</span>))]
     </span>EmptyPruned { pruned: usize },
     <span class="attr">#[snafu(display(<span class="string">"Adding our own address is not supported"</span>))]
-    </span>OwnAddress,
+    </span>OwnAddress {},
 }
 
 <span class="kw">impl </span>MagicSock {

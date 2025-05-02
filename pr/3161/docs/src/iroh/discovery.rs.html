@@ -1240,7 +1240,7 @@
     Stream, TryStreamExt,
 };
 <span class="kw">use </span>nested_enum_utils::common_fields;
-<span class="kw">use </span>snafu::{ensure, Backtrace, IntoError, Snafu};
+<span class="kw">use </span>snafu::{ensure, IntoError, Snafu};
 <span class="kw">use </span>tokio::sync::oneshot;
 <span class="kw">use </span>tracing::{debug, error_span, warn, Instrument};
 
@@ -1257,7 +1257,7 @@
 
 <span class="doccomment">/// Discovery errors
 </span><span class="attr">#[common_fields({
-    backtrace: <span class="prelude-ty">Option</span>&lt;Backtrace&gt;,
+    backtrace: <span class="prelude-ty">Option</span>&lt;snafu::Backtrace&gt;,
     <span class="attr">#[snafu(implicit)]
     </span>span_trace: n0_snafu::SpanTrace,
 })]
@@ -1266,7 +1266,7 @@
 #[non_exhaustive]
 </span><span class="kw">pub enum </span>DiscoveryError {
     <span class="attr">#[snafu(display(<span class="string">"No discovery service configured"</span>))]
-    </span>NoServiceConfigured,
+    </span>NoServiceConfigured {},
     <span class="attr">#[snafu(display(<span class="string">"Cannot resolve node id"</span>))]
     </span>NodeId { node_id: PublicKey },
     <span class="attr">#[snafu(display(<span class="string">"Discovery produced no results"</span>))]

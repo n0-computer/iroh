@@ -683,7 +683,7 @@
             .resolve_host(<span class="kw-2">&amp;</span>proxy_url, <span class="self">self</span>.prefer_ipv6, DNS_TIMEOUT)
             .<span class="kw">await</span><span class="question-mark">?</span>;
 
-        <span class="kw">let </span>proxy_port = url_port(<span class="kw-2">&amp;</span>proxy_url).ok_or(DialError::ProxyInvalidTargetPort)<span class="question-mark">?</span>;
+        <span class="kw">let </span>proxy_port = url_port(<span class="kw-2">&amp;</span>proxy_url).context(ProxyInvalidTargetPortSnafu)<span class="question-mark">?</span>;
         <span class="kw">let </span>proxy_addr = SocketAddr::new(proxy_ip, proxy_port);
 
         <span class="macro">debug!</span>(%proxy_addr, <span class="string">"connecting to proxy"</span>);
