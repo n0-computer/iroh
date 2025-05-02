@@ -264,7 +264,7 @@ jobs:
 
   minimal-crates-windows:
     timeout-minutes: 30
-    name: "Tests"
+    name: "Minimal Crates (Windows)"
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
