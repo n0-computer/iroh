@@ -150,7 +150,7 @@
 </span><span class="kw">use </span>std::sync::Arc;
 
 <span class="kw">use </span>anyhow::Result;
-<span class="kw">use </span>iroh_metrics::{service::start_metrics_server, MetricsGroup};
+<span class="kw">use </span>iroh_metrics::service::start_metrics_server;
 <span class="kw">use </span>tracing::info;
 
 <span class="kw">use crate</span>::{
@@ -209,8 +209,8 @@
         <span class="kw">let </span>metrics_task = tokio::task::spawn(<span class="kw">async move </span>{
             <span class="kw">if let </span><span class="prelude-val">Some</span>(addr) = metrics_addr {
                 <span class="kw">let </span><span class="kw-2">mut </span>registry = iroh_metrics::Registry::default();
-                metrics.register(<span class="kw-2">&amp;mut </span>registry);
-                start_metrics_server(addr, std::sync::Arc::new(registry)).<span class="kw">await</span><span class="question-mark">?</span>;
+                registry.register(metrics);
+                start_metrics_server(addr, Arc::new(registry)).<span class="kw">await</span><span class="question-mark">?</span>;
             }
             <span class="prelude-val">Ok</span>(())
         });

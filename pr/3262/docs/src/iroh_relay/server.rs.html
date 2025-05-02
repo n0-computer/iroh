@@ -1254,8 +1254,7 @@
 <a href="#1253" id="1253">1253</a>
 <a href="#1254" id="1254">1254</a>
 <a href="#1255" id="1255">1255</a>
-<a href="#1256" id="1256">1256</a>
-<a href="#1257" id="1257">1257</a></pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
+<a href="#1256" id="1256">1256</a></pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
 //!
 //! This module provides an API to run a full fledged iroh-relay server.  It is primarily
 //! used by the `iroh-relay` binary in this crate.  It can be used to run a relay server in
@@ -1284,7 +1283,6 @@
 <span class="kw">use </span>iroh_base::NodeId;
 <span class="attr">#[cfg(feature = <span class="string">"test-utils"</span>)]
 </span><span class="kw">use </span>iroh_base::RelayUrl;
-<span class="kw">use </span>iroh_metrics::MetricsGroupSet;
 <span class="kw">use </span>metrics::RelayMetrics;
 <span class="kw">use </span>n0_future::{future::Boxed, StreamExt};
 <span class="kw">use </span>tokio::{
@@ -1545,7 +1543,7 @@
         </span><span class="kw">if let </span><span class="prelude-val">Some</span>(addr) = config.metrics_addr {
             <span class="macro">debug!</span>(<span class="string">"Starting metrics server"</span>);
             <span class="kw">let </span><span class="kw-2">mut </span>registry = iroh_metrics::Registry::default();
-            metrics.register(<span class="kw-2">&amp;mut </span>registry);
+            registry.register_all(<span class="kw-2">&amp;</span>metrics);
             tasks.spawn(
                 <span class="kw">async move </span>{
                     iroh_metrics::service::start_metrics_server(addr, Arc::new(registry)).<span class="kw">await</span><span class="question-mark">?</span>;

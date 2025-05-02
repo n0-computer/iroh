@@ -106,25 +106,12 @@
 <a href="#105" id="105">105</a>
 <a href="#106" id="106">106</a>
 <a href="#107" id="107">107</a>
-<a href="#108" id="108">108</a>
-<a href="#109" id="109">109</a>
-<a href="#110" id="110">110</a>
-<a href="#111" id="111">111</a>
-<a href="#112" id="112">112</a>
-<a href="#113" id="113">113</a>
-<a href="#114" id="114">114</a>
-<a href="#115" id="115">115</a>
-<a href="#116" id="116">116</a>
-<a href="#117" id="117">117</a>
-<a href="#118" id="118">118</a>
-<a href="#119" id="119">119</a>
-<a href="#120" id="120">120</a>
-<a href="#121" id="121">121</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::sync::Arc;
+<a href="#108" id="108">108</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::sync::Arc;
 
 <span class="kw">use </span>iroh_metrics::{Counter, MetricsGroup, MetricsGroupSet};
 
 <span class="doccomment">/// Metrics tracked for the relay server
-</span><span class="attr">#[derive(Debug, Clone, MetricsGroup)]
+</span><span class="attr">#[derive(Debug, Default, MetricsGroup)]
 #[metrics(name = <span class="string">"relayserver"</span>)]
 </span><span class="kw">pub struct </span>Metrics {
     <span class="comment">/*
@@ -206,7 +193,7 @@
 </span>}
 
 <span class="doccomment">/// StunMetrics tracked for the relay server
-</span><span class="attr">#[derive(Debug, Clone, MetricsGroup)]
+</span><span class="attr">#[derive(Debug, Default, MetricsGroup)]
 #[metrics(name = <span class="string">"stun"</span>)]
 </span><span class="kw">pub struct </span>StunMetrics {
     <span class="doccomment">/// Number of STUN requests made to the server.
@@ -221,23 +208,10 @@
     </span><span class="kw">pub </span>failures: Counter,
 }
 
-<span class="attr">#[derive(Debug, Default, Clone)]
+<span class="attr">#[derive(Debug, Default, Clone, MetricsGroupSet)]
+#[metrics(name = <span class="string">"relay"</span>)]
 </span><span class="kw">pub struct </span>RelayMetrics {
     <span class="kw">pub </span>stun: Arc&lt;StunMetrics&gt;,
     <span class="kw">pub </span>server: Arc&lt;Metrics&gt;,
-}
-
-<span class="kw">impl </span>MetricsGroupSet <span class="kw">for </span>RelayMetrics {
-    <span class="kw">fn </span>name(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str {
-        <span class="string">"relay"
-    </span>}
-
-    <span class="kw">fn </span>groups(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="kw-2">&amp;</span><span class="kw">dyn </span>MetricsGroup&gt; {
-        [
-            <span class="kw-2">&amp;*</span><span class="self">self</span>.stun <span class="kw">as </span><span class="kw-2">&amp;</span><span class="kw">dyn </span>MetricsGroup,
-            <span class="kw-2">&amp;*</span><span class="self">self</span>.server <span class="kw">as </span><span class="kw-2">&amp;</span><span class="kw">dyn </span>MetricsGroup,
-        ]
-        .into_iter()
-    }
 }
 </code></pre></div></section></main></body></html>

@@ -44,7 +44,7 @@
 </span><span class="kw">use </span>iroh_metrics::{Counter, MetricsGroup};
 
 <span class="doccomment">/// Metrics for iroh-dns-server
-</span><span class="attr">#[derive(Debug, Clone, MetricsGroup)]
+</span><span class="attr">#[derive(Debug, Default, MetricsGroup)]
 #[metrics(name = <span class="string">"dns_server"</span>)]
 </span><span class="kw">pub struct </span>Metrics {
     <span class="doccomment">/// Number of pkarr relay puts that updated the state

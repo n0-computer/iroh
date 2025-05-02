@@ -20,10 +20,12 @@
 <a href="#19" id="19">19</a>
 <a href="#20" id="20">20</a>
 <a href="#21" id="21">21</a>
-<a href="#22" id="22">22</a></pre></div><pre class="rust"><code><span class="kw">use </span>iroh_metrics::{Counter, MetricsGroup};
+<a href="#22" id="22">22</a>
+<a href="#23" id="23">23</a></pre></div><pre class="rust"><code><span class="kw">use </span>iroh_metrics::{Counter, MetricsGroup};
+<span class="kw">use </span>serde::{Deserialize, Serialize};
 
 <span class="doccomment">/// Enum of metrics for the module
-</span><span class="attr">#[derive(Debug, Clone, MetricsGroup)]
+</span><span class="attr">#[derive(Debug, Default, MetricsGroup, Serialize, Deserialize)]
 #[metrics(name = <span class="string">"net_report"</span>)]
 #[non_exhaustive]
 </span><span class="kw">pub struct </span>Metrics {
