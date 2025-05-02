@@ -430,8 +430,7 @@
 <a href="#429" id="429">429</a>
 <a href="#430" id="430">430</a>
 <a href="#431" id="431">431</a>
-<a href="#432" id="432">432</a>
-<a href="#433" id="433">433</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service which publishes and resolves node information using a [pkarr] relay.
+<a href="#432" id="432">432</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service which publishes and resolves node information using a [pkarr] relay.
 //!
 //! Public-Key Addressable Resource Records, [pkarr], is a system which allows publishing
 //! [DNS Resource Records] owned by a particular [`SecretKey`] under a name derived from its
@@ -491,16 +490,15 @@
 <span class="kw">use </span>tracing::{debug, error_span, warn, Instrument};
 <span class="kw">use </span>url::Url;
 
+<span class="kw">use super</span>::{
+    DiscoveryError, HttpPayloadSnafu, HttpRequestSnafu, HttpSendSnafu, InvalidRelayUrlSnafu,
+    NodeInfoSnafu, PublicKeySnafu, VerifySnafu,
+};
 <span class="kw">use crate</span>::{
     discovery::{Discovery, DiscoveryItem, NodeData},
     endpoint::force_staging_infra,
     watchable::{Disconnected, Watchable, Watcher},
     Endpoint,
-};
-
-<span class="kw">use super</span>::{
-    DiscoveryError, HttpPayloadSnafu, HttpRequestSnafu, HttpSendSnafu, InvalidRelayUrlSnafu,
-    NodeInfoSnafu, PublicKeySnafu, VerifySnafu,
 };
 
 <span class="attr">#[cfg(feature = <span class="string">"discovery-pkarr-dht"</span>)]

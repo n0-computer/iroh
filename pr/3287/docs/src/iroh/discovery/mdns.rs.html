@@ -509,8 +509,7 @@
 <a href="#508" id="508">508</a>
 <a href="#509" id="509">509</a>
 <a href="#510" id="510">510</a>
-<a href="#511" id="511">511</a>
-<a href="#512" id="512">512</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service that uses an mdns-like service to discover local nodes.
+<a href="#511" id="511">511</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service that uses an mdns-like service to discover local nodes.
 //!
 //! This allows you to use an mdns-like swarm discovery service to find address information about nodes that are on your local network, no relay or outside internet needed.
 //! See the [`swarm-discovery`](https://crates.io/crates/swarm-discovery) crate for more details.
@@ -559,13 +558,12 @@
 <span class="kw">use </span>tokio::sync::mpsc::{<span class="self">self</span>, error::TrySendError};
 <span class="kw">use </span>tracing::{debug, error, info_span, trace, warn, Instrument};
 
+<span class="kw">use super</span>::{CreateServiceSnafu, DiscoveryError};
 <span class="kw">use crate</span>::{
     discovery::{Discovery, DiscoveryItem, NodeData, NodeInfo},
     watchable::Watchable,
     Endpoint,
 };
-
-<span class="kw">use super</span>::{CreateServiceSnafu, DiscoveryError};
 
 <span class="doccomment">/// The n0 local swarm node discovery name
 </span><span class="kw">const </span>N0_LOCAL_SWARM: <span class="kw-2">&amp;</span>str = <span class="string">"iroh.local.swarm"</span>;
