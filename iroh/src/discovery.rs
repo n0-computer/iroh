@@ -107,7 +107,7 @@
 
 use std::sync::Arc;
 
-use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
+use iroh_base::{NodeAddr, NodeId, PublicKey};
 use n0_future::{
     boxed::BoxStream,
     stream::StreamExt,
@@ -116,7 +116,7 @@ use n0_future::{
     Stream, TryStreamExt,
 };
 use nested_enum_utils::common_fields;
-use snafu::{ensure, Backtrace, GenerateImplicitData, Snafu};
+use snafu::{ensure, Backtrace, IntoError, Snafu};
 use tokio::sync::oneshot;
 use tracing::{debug, error_span, warn, Instrument};
 
@@ -141,22 +141,6 @@ pub mod static_provider;
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
 pub enum DiscoveryError {
-    #[snafu(display("Unable to resolve DNS"))]
-    DnsResolver {
-        source: iroh_relay::node_info::Error,
-    },
-    #[snafu(display("Invalid relay URL"))]
-    InvalidRelayUrl { url: RelayUrl },
-    #[snafu(display("Error sending http request"))]
-    HttpSend { source: reqwest::Error },
-    #[snafu(display("Error resolving http request"))]
-    HttpRequest { status: reqwest::StatusCode },
-    #[snafu(display("Http payload error"))]
-    HttpPayload { source: reqwest::Error },
-    #[snafu(display("NodeInfo error"))]
-    NodeInfo {
-        source: iroh_relay::node_info::Error,
-    },
     #[snafu(display("No discovery service configured"))]
     NoServiceConfigured,
     #[snafu(display("Cannot resolve node id"))]
@@ -164,24 +148,28 @@ pub enum DiscoveryError {
     #[snafu(display("Discovery produced no results"))]
     NoResults { node_id: PublicKey },
 
-    #[snafu(transparent)]
+    #[snafu(display("Service '{provenance}' error"))]
     User {
+        provenance: &'static str,
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
     },
 }
 
 impl DiscoveryError {
     /// Creates a new user error from an arbitrary error type.
-    pub fn from_err<T: std::error::Error + Send + Sync + 'static>(source: T) -> Self {
-        let source = Box::new(source);
-        let backtrace = GenerateImplicitData::generate_with_source(&source);
-        let span_trace = GenerateImplicitData::generate_with_source(&source);
+    pub fn from_err<T: std::error::Error + Send + Sync + 'static>(
+        provenance: &'static str,
+        source: T,
+    ) -> Self {
+        UserSnafu { provenance }.into_error(Box::new(source))
+    }
 
-        Self::User {
-            source,
-            backtrace,
-            span_trace,
-        }
+    /// Creates a new user error from an arbitrary boxed error type.
+    pub fn from_err_box(
+        provenance: &'static str,
+        source: Box<dyn std::error::Error + Send + Sync + 'static>,
+    ) -> Self {
+        UserSnafu { provenance }.into_error(source)
     }
 }
 

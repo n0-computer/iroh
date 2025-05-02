@@ -202,9 +202,10 @@ impl Builder {
     /// Builds the discovery mechanism.
     pub fn build(self) -> Result<DhtDiscovery, DiscoveryError> {
         if !(self.dht || self.pkarr_relay.is_some()) {
-            return Err(DiscoveryError::from_err(std::io::Error::other(
-                "at least one of DHT or relay must be enabled",
-            )));
+            return Err(DiscoveryError::from_err(
+                "pkarr",
+                std::io::Error::other("at least one of DHT or relay must be enabled"),
+            ));
         }
         let pkarr = match self.client {
             Some(client) => client,
@@ -217,9 +218,11 @@ impl Builder {
                 if let Some(url) = &self.pkarr_relay {
                     builder
                         .relays(&[url.clone()])
-                        .map_err(DiscoveryError::from_err)?;
+                        .map_err(|e| DiscoveryError::from_err("pkarr", e))?;
                 }
-                builder.build().map_err(DiscoveryError::from_err)?
+                builder
+                    .build()
+                    .map_err(|e| DiscoveryError::from_err("pkarr", e))?
             }
         };
         let ttl = self.ttl.unwrap_or(DEFAULT_PKARR_TTL);
