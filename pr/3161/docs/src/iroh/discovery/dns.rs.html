@@ -81,15 +81,13 @@
 <a href="#80" id="80">80</a>
 <a href="#81" id="81">81</a>
 <a href="#82" id="82">82</a>
-<a href="#83" id="83">83</a>
-<a href="#84" id="84">84</a></pre></div><pre class="rust"><code><span class="doccomment">//! DNS node discovery for iroh
+<a href="#83" id="83">83</a></pre></div><pre class="rust"><code><span class="doccomment">//! DNS node discovery for iroh
 
 </span><span class="kw">use </span>iroh_base::NodeId;
 <span class="kw">pub use </span>iroh_relay::dns::{N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING};
 <span class="kw">use </span>n0_future::boxed::BoxStream;
-<span class="kw">use </span>snafu::ResultExt;
 
-<span class="kw">use super</span>::{DiscoveryError, DnsResolverSnafu};
+<span class="kw">use </span><span class="kw">super</span>::DiscoveryError;
 <span class="kw">use crate</span>::{
     discovery::{Discovery, DiscoveryItem},
     endpoint::force_staging_infra,
@@ -159,7 +157,7 @@
             <span class="kw">let </span>node_info = resolver
                 .lookup_node_by_id_staggered(<span class="kw-2">&amp;</span>node_id, <span class="kw-2">&amp;</span>origin_domain, DNS_STAGGERING_MS)
                 .<span class="kw">await
-                </span>.context(DnsResolverSnafu)<span class="question-mark">?</span>;
+                </span>.map_err(|e| DiscoveryError::from_err(<span class="string">"dns"</span>, e))<span class="question-mark">?</span>;
             <span class="prelude-val">Ok</span>(DiscoveryItem::new(node_info, <span class="string">"dns"</span>, <span class="prelude-val">None</span>))
         };
         <span class="kw">let </span>stream = n0_future::stream::once_future(fut);

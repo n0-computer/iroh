@@ -3002,7 +3002,13 @@
 <a href="#3001" id="3001">3001</a>
 <a href="#3002" id="3002">3002</a>
 <a href="#3003" id="3003">3003</a>
-<a href="#3004" id="3004">3004</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#3004" id="3004">3004</a>
+<a href="#3005" id="3005">3005</a>
+<a href="#3006" id="3006">3006</a>
+<a href="#3007" id="3007">3007</a>
+<a href="#3008" id="3008">3008</a>
+<a href="#3009" id="3009">3009</a>
+<a href="#3010" id="3010">3010</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -3629,9 +3635,15 @@
 <span class="attr">#[derive(Debug, Snafu)]
 </span><span class="kw">pub enum </span>ConnectError {
     <span class="attr">#[snafu(transparent)]
-    </span>Connect { source: ConnectWithOptsError },
+    </span>Connect {
+        <span class="attr">#[snafu(source(from(ConnectWithOptsError, Box::new)))]
+        </span>source: Box&lt;ConnectWithOptsError&gt;,
+    },
     <span class="attr">#[snafu(transparent)]
-    </span>Connection { source: ConnectionError },
+    </span>Connection {
+        <span class="attr">#[snafu(source(from(ConnectionError, Box::new)))]
+        </span>source: Box&lt;ConnectionError&gt;,
+    },
 }
 
 <span class="attr">#[allow(missing_docs)]

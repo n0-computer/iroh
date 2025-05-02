@@ -843,7 +843,7 @@
         }
         discoverer
             .spawn(rt)
-            .map_err(|e| DiscoveryError::from(e.into_boxed_dyn_error()))
+            .map_err(|e| DiscoveryError::from_err_box(<span class="string">"mdns"</span>, e.into_boxed_dyn_error()))
     }
 
     <span class="kw">fn </span>socketaddrs_to_addrs(socketaddrs: <span class="kw-2">&amp;</span>BTreeSet&lt;SocketAddr&gt;) -&gt; HashMap&lt;u16, Vec&lt;IpAddr&gt;&gt; {

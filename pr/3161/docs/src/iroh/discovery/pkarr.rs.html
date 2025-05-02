@@ -428,7 +428,37 @@
 <a href="#427" id="427">427</a>
 <a href="#428" id="428">428</a>
 <a href="#429" id="429">429</a>
-<a href="#430" id="430">430</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service which publishes and resolves node information using a [pkarr] relay.
+<a href="#430" id="430">430</a>
+<a href="#431" id="431">431</a>
+<a href="#432" id="432">432</a>
+<a href="#433" id="433">433</a>
+<a href="#434" id="434">434</a>
+<a href="#435" id="435">435</a>
+<a href="#436" id="436">436</a>
+<a href="#437" id="437">437</a>
+<a href="#438" id="438">438</a>
+<a href="#439" id="439">439</a>
+<a href="#440" id="440">440</a>
+<a href="#441" id="441">441</a>
+<a href="#442" id="442">442</a>
+<a href="#443" id="443">443</a>
+<a href="#444" id="444">444</a>
+<a href="#445" id="445">445</a>
+<a href="#446" id="446">446</a>
+<a href="#447" id="447">447</a>
+<a href="#448" id="448">448</a>
+<a href="#449" id="449">449</a>
+<a href="#450" id="450">450</a>
+<a href="#451" id="451">451</a>
+<a href="#452" id="452">452</a>
+<a href="#453" id="453">453</a>
+<a href="#454" id="454">454</a>
+<a href="#455" id="455">455</a>
+<a href="#456" id="456">456</a>
+<a href="#457" id="457">457</a>
+<a href="#458" id="458">458</a>
+<a href="#459" id="459">459</a>
+<a href="#460" id="460">460</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service which publishes and resolves node information using a [pkarr] relay.
 //!
 //! Public-Key Addressable Resource Records, [pkarr], is a system which allows publishing
 //! [DNS Resource Records] owned by a particular [`SecretKey`] under a name derived from its
@@ -476,22 +506,22 @@
 
 </span><span class="kw">use </span>std::sync::Arc;
 
-<span class="kw">use </span>iroh_base::{NodeId, SecretKey};
+<span class="kw">use </span>iroh_base::{NodeId, RelayUrl, SecretKey};
 <span class="kw">use </span>iroh_relay::node_info::NodeInfo;
 <span class="kw">use </span>n0_future::{
     boxed::BoxStream,
     task::{<span class="self">self</span>, AbortOnDropHandle},
     time::{<span class="self">self</span>, Duration, Instant},
 };
-<span class="kw">use </span>pkarr::SignedPacket;
-<span class="kw">use </span>snafu::ResultExt;
+<span class="kw">use </span>pkarr::{
+    errors::{PublicKeyError, SignedPacketVerifyError},
+    SignedPacket,
+};
+<span class="kw">use </span>snafu::{ResultExt, Snafu};
 <span class="kw">use </span>tracing::{debug, error_span, warn, Instrument};
 <span class="kw">use </span>url::Url;
 
-<span class="kw">use super</span>::{
-    DiscoveryError, HttpPayloadSnafu, HttpRequestSnafu, HttpSendSnafu, InvalidRelayUrlSnafu,
-    NodeInfoSnafu,
-};
+<span class="kw">use </span><span class="kw">super</span>::DiscoveryError;
 <span class="kw">use crate</span>::{
     discovery::{Discovery, DiscoveryItem, NodeData},
     endpoint::force_staging_infra,
@@ -501,6 +531,33 @@
 
 <span class="attr">#[cfg(feature = <span class="string">"discovery-pkarr-dht"</span>)]
 </span><span class="kw">pub mod </span>dht;
+
+<span class="attr">#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+</span><span class="kw">pub enum </span>PkarrError {
+    <span class="attr">#[snafu(display(<span class="string">"Invalid public key"</span>))]
+    </span>PublicKey { source: PublicKeyError },
+    <span class="attr">#[snafu(display(<span class="string">"Packet failed to verify"</span>))]
+    </span>Verify { source: SignedPacketVerifyError },
+    <span class="attr">#[snafu(display(<span class="string">"Invalid relay URL"</span>))]
+    </span>InvalidRelayUrl { url: RelayUrl },
+    <span class="attr">#[snafu(display(<span class="string">"Error sending http request"</span>))]
+    </span>HttpSend { source: reqwest::Error },
+    <span class="attr">#[snafu(display(<span class="string">"Error resolving http request"</span>))]
+    </span>HttpRequest { status: reqwest::StatusCode },
+    <span class="attr">#[snafu(display(<span class="string">"Http payload error"</span>))]
+    </span>HttpPayload { source: reqwest::Error },
+    <span class="attr">#[snafu(display(<span class="string">"NodeInfo error"</span>))]
+    </span>NodeInfo {
+        source: iroh_relay::node_info::Error,
+    },
+}
+
+<span class="kw">impl </span>From&lt;PkarrError&gt; <span class="kw">for </span>DiscoveryError {
+    <span class="kw">fn </span>from(err: PkarrError) -&gt; <span class="self">Self </span>{
+        DiscoveryError::from_err(<span class="string">"pkarr"</span>, err)
+    }
+}
 
 <span class="doccomment">/// The production pkarr relay run by [number 0].
 ///
@@ -796,8 +853,7 @@
     <span class="doccomment">/// Resolves a [`SignedPacket`] for the given [`NodeId`].
     </span><span class="kw">pub async fn </span>resolve(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;SignedPacket, DiscoveryError&gt; {
         <span class="comment">// We map the error to string, as in browsers the error is !Send
-        </span><span class="kw">let </span>public_key =
-            pkarr::PublicKey::try_from(node_id.as_bytes()).map_err(DiscoveryError::from_err)<span class="question-mark">?</span>;
+        </span><span class="kw">let </span>public_key = pkarr::PublicKey::try_from(node_id.as_bytes()).context(PublicKeySnafu)<span class="question-mark">?</span>;
 
         <span class="kw">let </span><span class="kw-2">mut </span>url = <span class="self">self</span>.pkarr_relay_url.clone();
         url.path_segments_mut()
@@ -820,12 +876,15 @@
             <span class="kw">return </span><span class="prelude-val">Err</span>(HttpRequestSnafu {
                 status: response.status(),
             }
-            .build());
+            .build()
+            .into());
         }
 
         <span class="kw">let </span>payload = response.bytes().<span class="kw">await</span>.context(HttpPayloadSnafu)<span class="question-mark">?</span>;
         <span class="comment">// We map the error to string, as in browsers the error is !Send
-        </span>SignedPacket::from_relay_payload(<span class="kw-2">&amp;</span>public_key, <span class="kw-2">&amp;</span>payload).map_err(DiscoveryError::from_err)
+        </span><span class="kw">let </span>packet =
+            SignedPacket::from_relay_payload(<span class="kw-2">&amp;</span>public_key, <span class="kw-2">&amp;</span>payload).context(VerifySnafu)<span class="question-mark">?</span>;
+        <span class="prelude-val">Ok</span>(packet)
     }
 
     <span class="doccomment">/// Publishes a [`SignedPacket`].
@@ -852,7 +911,8 @@
             <span class="kw">return </span><span class="prelude-val">Err</span>(HttpRequestSnafu {
                 status: response.status(),
             }
-            .build());
+            .build()
+            .into());
         }
 
         <span class="prelude-val">Ok</span>(())

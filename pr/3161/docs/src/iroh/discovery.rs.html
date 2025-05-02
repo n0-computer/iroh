@@ -1122,19 +1122,7 @@
 <a href="#1121" id="1121">1121</a>
 <a href="#1122" id="1122">1122</a>
 <a href="#1123" id="1123">1123</a>
-<a href="#1124" id="1124">1124</a>
-<a href="#1125" id="1125">1125</a>
-<a href="#1126" id="1126">1126</a>
-<a href="#1127" id="1127">1127</a>
-<a href="#1128" id="1128">1128</a>
-<a href="#1129" id="1129">1129</a>
-<a href="#1130" id="1130">1130</a>
-<a href="#1131" id="1131">1131</a>
-<a href="#1132" id="1132">1132</a>
-<a href="#1133" id="1133">1133</a>
-<a href="#1134" id="1134">1134</a>
-<a href="#1135" id="1135">1135</a>
-<a href="#1136" id="1136">1136</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
+<a href="#1124" id="1124">1124</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
 //! To connect to an iroh node a [`NodeAddr`] is needed, which may contain a
 //! [`RelayUrl`] or one or more *direct addresses* in addition to the [`NodeId`].
@@ -1243,7 +1231,7 @@
 
 </span><span class="kw">use </span>std::sync::Arc;
 
-<span class="kw">use </span>iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
+<span class="kw">use </span>iroh_base::{NodeAddr, NodeId, PublicKey};
 <span class="kw">use </span>n0_future::{
     boxed::BoxStream,
     stream::StreamExt,
@@ -1252,7 +1240,7 @@
     Stream, TryStreamExt,
 };
 <span class="kw">use </span>nested_enum_utils::common_fields;
-<span class="kw">use </span>snafu::{ensure, Backtrace, GenerateImplicitData, Snafu};
+<span class="kw">use </span>snafu::{ensure, Backtrace, IntoError, Snafu};
 <span class="kw">use </span>tokio::sync::oneshot;
 <span class="kw">use </span>tracing::{debug, error_span, warn, Instrument};
 
@@ -1277,22 +1265,6 @@
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
 </span><span class="kw">pub enum </span>DiscoveryError {
-    <span class="attr">#[snafu(display(<span class="string">"Unable to resolve DNS"</span>))]
-    </span>DnsResolver {
-        source: iroh_relay::node_info::Error,
-    },
-    <span class="attr">#[snafu(display(<span class="string">"Invalid relay URL"</span>))]
-    </span>InvalidRelayUrl { url: RelayUrl },
-    <span class="attr">#[snafu(display(<span class="string">"Error sending http request"</span>))]
-    </span>HttpSend { source: reqwest::Error },
-    <span class="attr">#[snafu(display(<span class="string">"Error resolving http request"</span>))]
-    </span>HttpRequest { status: reqwest::StatusCode },
-    <span class="attr">#[snafu(display(<span class="string">"Http payload error"</span>))]
-    </span>HttpPayload { source: reqwest::Error },
-    <span class="attr">#[snafu(display(<span class="string">"NodeInfo error"</span>))]
-    </span>NodeInfo {
-        source: iroh_relay::node_info::Error,
-    },
     <span class="attr">#[snafu(display(<span class="string">"No discovery service configured"</span>))]
     </span>NoServiceConfigured,
     <span class="attr">#[snafu(display(<span class="string">"Cannot resolve node id"</span>))]
@@ -1300,24 +1272,28 @@
     <span class="attr">#[snafu(display(<span class="string">"Discovery produced no results"</span>))]
     </span>NoResults { node_id: PublicKey },
 
-    <span class="attr">#[snafu(transparent)]
+    <span class="attr">#[snafu(display(<span class="string">"Service '{provenance}' error"</span>))]
     </span>User {
+        provenance: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
         source: Box&lt;<span class="kw">dyn </span>std::error::Error + Send + Sync + <span class="lifetime">'static</span>&gt;,
     },
 }
 
 <span class="kw">impl </span>DiscoveryError {
     <span class="doccomment">/// Creates a new user error from an arbitrary error type.
-    </span><span class="kw">pub fn </span>from_err&lt;T: std::error::Error + Send + Sync + <span class="lifetime">'static</span>&gt;(source: T) -&gt; <span class="self">Self </span>{
-        <span class="kw">let </span>source = Box::new(source);
-        <span class="kw">let </span>backtrace = GenerateImplicitData::generate_with_source(<span class="kw-2">&amp;</span>source);
-        <span class="kw">let </span>span_trace = GenerateImplicitData::generate_with_source(<span class="kw-2">&amp;</span>source);
+    </span><span class="kw">pub fn </span>from_err&lt;T: std::error::Error + Send + Sync + <span class="lifetime">'static</span>&gt;(
+        provenance: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
+        source: T,
+    ) -&gt; <span class="self">Self </span>{
+        UserSnafu { provenance }.into_error(Box::new(source))
+    }
 
-        <span class="self">Self</span>::User {
-            source,
-            backtrace,
-            span_trace,
-        }
+    <span class="doccomment">/// Creates a new user error from an arbitrary boxed error type.
+    </span><span class="kw">pub fn </span>from_err_box(
+        provenance: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
+        source: Box&lt;<span class="kw">dyn </span>std::error::Error + Send + Sync + <span class="lifetime">'static</span>&gt;,
+    ) -&gt; <span class="self">Self </span>{
+        UserSnafu { provenance }.into_error(source)
     }
 }
 
