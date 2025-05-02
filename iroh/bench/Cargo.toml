@@ -10,7 +10,7 @@ anyhow = "1.0.22"
 bytes = "1.7"
 hdrhistogram = { version = "7.2", default-features = false }
 iroh = { path = ".." }
-iroh-metrics = { git = "https://github.com/n0-computer/iroh-metrics", branch = "main" }
+iroh-metrics = "0.34"
 n0-future = "0.1.1"
 quinn = { package = "iroh-quinn", version = "0.13" }
 rand = "0.8"
