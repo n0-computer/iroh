@@ -428,9 +428,7 @@
 <a href="#427" id="427">427</a>
 <a href="#428" id="428">428</a>
 <a href="#429" id="429">429</a>
-<a href="#430" id="430">430</a>
-<a href="#431" id="431">431</a>
-<a href="#432" id="432">432</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service which publishes and resolves node information using a [pkarr] relay.
+<a href="#430" id="430">430</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service which publishes and resolves node information using a [pkarr] relay.
 //!
 //! Public-Key Addressable Resource Records, [pkarr], is a system which allows publishing
 //! [DNS Resource Records] owned by a particular [`SecretKey`] under a name derived from its
@@ -492,7 +490,7 @@
 
 <span class="kw">use super</span>::{
     DiscoveryError, HttpPayloadSnafu, HttpRequestSnafu, HttpSendSnafu, InvalidRelayUrlSnafu,
-    NodeInfoSnafu, PublicKeySnafu, VerifySnafu,
+    NodeInfoSnafu,
 };
 <span class="kw">use crate</span>::{
     discovery::{Discovery, DiscoveryItem, NodeData},
@@ -798,9 +796,9 @@
     <span class="doccomment">/// Resolves a [`SignedPacket`] for the given [`NodeId`].
     </span><span class="kw">pub async fn </span>resolve(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;SignedPacket, DiscoveryError&gt; {
         <span class="comment">// We map the error to string, as in browsers the error is !Send
-        </span><span class="kw">let </span>public_key = pkarr::PublicKey::try_from(node_id.as_bytes())
-            .map_err(|e| <span class="macro">anyhow::anyhow!</span>(e.to_string()))
-            .context(PublicKeySnafu)<span class="question-mark">?</span>;
+        </span><span class="kw">let </span>public_key =
+            pkarr::PublicKey::try_from(node_id.as_bytes()).map_err(DiscoveryError::from_err)<span class="question-mark">?</span>;
+
         <span class="kw">let </span><span class="kw-2">mut </span>url = <span class="self">self</span>.pkarr_relay_url.clone();
         url.path_segments_mut()
             .map_err(|<span class="kw">_</span>| {
@@ -827,9 +825,7 @@
 
         <span class="kw">let </span>payload = response.bytes().<span class="kw">await</span>.context(HttpPayloadSnafu)<span class="question-mark">?</span>;
         <span class="comment">// We map the error to string, as in browsers the error is !Send
-        </span>SignedPacket::from_relay_payload(<span class="kw-2">&amp;</span>public_key, <span class="kw-2">&amp;</span>payload)
-            .map_err(|e| <span class="macro">anyhow::anyhow!</span>(e.to_string()))
-            .context(VerifySnafu)
+        </span>SignedPacket::from_relay_payload(<span class="kw-2">&amp;</span>public_key, <span class="kw-2">&amp;</span>payload).map_err(DiscoveryError::from_err)
     }
 
     <span class="doccomment">/// Publishes a [`SignedPacket`].

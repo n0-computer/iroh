@@ -370,13 +370,7 @@
 <a href="#369" id="369">369</a>
 <a href="#370" id="370">370</a>
 <a href="#371" id="371">371</a>
-<a href="#372" id="372">372</a>
-<a href="#373" id="373">373</a>
-<a href="#374" id="374">374</a>
-<a href="#375" id="375">375</a>
-<a href="#376" id="376">376</a>
-<a href="#377" id="377">377</a>
-<a href="#378" id="378">378</a></pre></div><pre class="rust"><code><span class="doccomment">//! Pkarr based node discovery for iroh, supporting both relay servers and the DHT.
+<a href="#372" id="372">372</a></pre></div><pre class="rust"><code><span class="doccomment">//! Pkarr based node discovery for iroh, supporting both relay servers and the DHT.
 //!
 //! This module contains pkarr-based node discovery for iroh which can use both pkarr
 //! relay servers as well as the Mainline DHT directly.  See the [pkarr module] for an
@@ -393,13 +387,12 @@
     time::{<span class="self">self</span>, Duration},
 };
 <span class="kw">use </span>pkarr::{Client <span class="kw">as </span>PkarrClient, SignedPacket};
-<span class="kw">use </span>snafu::ResultExt;
 <span class="kw">use </span>url::Url;
 
 <span class="kw">use crate</span>::{
     discovery::{
         pkarr::{DEFAULT_PKARR_TTL, N0_DNS_PKARR_RELAY_PROD},
-        CreateServiceSnafu, Discovery, DiscoveryError, DiscoveryItem, NodeData,
+        Discovery, DiscoveryError, DiscoveryItem, NodeData,
     },
     node_info::NodeInfo,
     Endpoint,
@@ -581,10 +574,9 @@
     <span class="doccomment">/// Builds the discovery mechanism.
     </span><span class="kw">pub fn </span>build(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;DhtDiscovery, DiscoveryError&gt; {
         <span class="kw">if </span>!(<span class="self">self</span>.dht || <span class="self">self</span>.pkarr_relay.is_some()) {
-            <span class="kw">return </span><span class="prelude-val">Err</span>(<span class="macro">anyhow::anyhow!</span>(
-                <span class="string">"at least one of DHT or relay must be enabled"
-            </span>))
-            .context(CreateServiceSnafu { service: <span class="string">"pkarr" </span>});
+            <span class="kw">return </span><span class="prelude-val">Err</span>(DiscoveryError::from_err(std::io::Error::other(
+                <span class="string">"at least one of DHT or relay must be enabled"</span>,
+            )));
         }
         <span class="kw">let </span>pkarr = <span class="kw">match </span><span class="self">self</span>.client {
             <span class="prelude-val">Some</span>(client) =&gt; client,
@@ -597,13 +589,9 @@
                 <span class="kw">if let </span><span class="prelude-val">Some</span>(url) = <span class="kw-2">&amp;</span><span class="self">self</span>.pkarr_relay {
                     builder
                         .relays(<span class="kw-2">&amp;</span>[url.clone()])
-                        .map_err(|e| <span class="macro">anyhow::anyhow!</span>(e.to_string()))
-                        .context(CreateServiceSnafu { service: <span class="string">"pkarr" </span>})<span class="question-mark">?</span>;
+                        .map_err(DiscoveryError::from_err)<span class="question-mark">?</span>;
                 }
-                builder
-                    .build()
-                    .map_err(|e| <span class="macro">anyhow::anyhow!</span>(e.to_string()))
-                    .context(CreateServiceSnafu { service: <span class="string">"pkarr" </span>})<span class="question-mark">?
+                builder.build().map_err(DiscoveryError::from_err)<span class="question-mark">?
             </span>}
         };
         <span class="kw">let </span>ttl = <span class="self">self</span>.ttl.unwrap_or(DEFAULT_PKARR_TTL);

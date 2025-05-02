@@ -1125,7 +1125,16 @@
 <a href="#1124" id="1124">1124</a>
 <a href="#1125" id="1125">1125</a>
 <a href="#1126" id="1126">1126</a>
-<a href="#1127" id="1127">1127</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
+<a href="#1127" id="1127">1127</a>
+<a href="#1128" id="1128">1128</a>
+<a href="#1129" id="1129">1129</a>
+<a href="#1130" id="1130">1130</a>
+<a href="#1131" id="1131">1131</a>
+<a href="#1132" id="1132">1132</a>
+<a href="#1133" id="1133">1133</a>
+<a href="#1134" id="1134">1134</a>
+<a href="#1135" id="1135">1135</a>
+<a href="#1136" id="1136">1136</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
 //! To connect to an iroh node a [`NodeAddr`] is needed, which may contain a
 //! [`RelayUrl`] or one or more *direct addresses* in addition to the [`NodeId`].
@@ -1243,7 +1252,7 @@
     Stream, TryStreamExt,
 };
 <span class="kw">use </span>nested_enum_utils::common_fields;
-<span class="kw">use </span>snafu::{ensure, Backtrace, Snafu};
+<span class="kw">use </span>snafu::{ensure, Backtrace, GenerateImplicitData, Snafu};
 <span class="kw">use </span>tokio::sync::oneshot;
 <span class="kw">use </span>tracing::{debug, error_span, warn, Instrument};
 
@@ -1267,14 +1276,11 @@
 <span class="attr">#[allow(missing_docs)]
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
-#[snafu(visibility(<span class="kw">pub</span>(<span class="kw">crate</span>)))]
 </span><span class="kw">pub enum </span>DiscoveryError {
     <span class="attr">#[snafu(display(<span class="string">"Unable to resolve DNS"</span>))]
     </span>DnsResolver {
         source: iroh_relay::node_info::Error,
     },
-    <span class="attr">#[snafu(display(<span class="string">"PublicKey error"</span>))]
-    </span>PublicKey { source: anyhow::Error },
     <span class="attr">#[snafu(display(<span class="string">"Invalid relay URL"</span>))]
     </span>InvalidRelayUrl { url: RelayUrl },
     <span class="attr">#[snafu(display(<span class="string">"Error sending http request"</span>))]
@@ -1283,24 +1289,36 @@
     </span>HttpRequest { status: reqwest::StatusCode },
     <span class="attr">#[snafu(display(<span class="string">"Http payload error"</span>))]
     </span>HttpPayload { source: reqwest::Error },
-    <span class="attr">#[snafu(display(<span class="string">"Verifying error"</span>))]
-    </span>Verify { source: anyhow::Error },
     <span class="attr">#[snafu(display(<span class="string">"NodeInfo error"</span>))]
     </span>NodeInfo {
         source: iroh_relay::node_info::Error,
     },
-    <span class="attr">#[snafu(display(<span class="string">"Error creating discovery service"</span>))]
-    </span>CreateService {
-        source: anyhow::Error,
-        service: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
-    },
-
     <span class="attr">#[snafu(display(<span class="string">"No discovery service configured"</span>))]
     </span>NoServiceConfigured,
     <span class="attr">#[snafu(display(<span class="string">"Cannot resolve node id"</span>))]
     </span>NodeId { node_id: PublicKey },
     <span class="attr">#[snafu(display(<span class="string">"Discovery produced no results"</span>))]
     </span>NoResults { node_id: PublicKey },
+
+    <span class="attr">#[snafu(transparent)]
+    </span>User {
+        source: Box&lt;<span class="kw">dyn </span>std::error::Error + Send + Sync + <span class="lifetime">'static</span>&gt;,
+    },
+}
+
+<span class="kw">impl </span>DiscoveryError {
+    <span class="doccomment">/// Creates a new user error from an arbitary error type.
+    </span><span class="kw">pub fn </span>from_err&lt;T: std::error::Error + Send + Sync + <span class="lifetime">'static</span>&gt;(source: T) -&gt; <span class="self">Self </span>{
+        <span class="kw">let </span>source = Box::new(source);
+        <span class="kw">let </span>backtrace = GenerateImplicitData::generate_with_source(<span class="kw-2">&amp;</span>source);
+        <span class="kw">let </span>span_trace = GenerateImplicitData::generate_with_source(<span class="kw-2">&amp;</span>source);
+
+        <span class="self">Self</span>::User {
+            source,
+            backtrace,
+            span_trace,
+        }
+    }
 }
 
 <span class="doccomment">/// Node discovery for [`super::Endpoint`].
@@ -1878,7 +1896,7 @@
     <span class="doccomment">/// This is a smoke test for our discovery mechanism.
     </span><span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>endpoint_discovery_simple_shared() -&gt; anyhow::Result&lt;()&gt; {
+    </span><span class="kw">async fn </span>endpoint_discovery_simple_shared() -&gt; TestResult {
         <span class="kw">let </span>disco_shared = TestDiscoveryShared::default();
         <span class="kw">let </span>(ep1, _guard1) = {
             <span class="kw">let </span>secret = SecretKey::generate(rand::thread_rng());
@@ -1900,7 +1918,7 @@
     <span class="doccomment">/// This test adds an empty discovery which provides no addresses.
     </span><span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>endpoint_discovery_combined_with_empty() -&gt; anyhow::Result&lt;()&gt; {
+    </span><span class="kw">async fn </span>endpoint_discovery_combined_with_empty() -&gt; TestResult {
         <span class="kw">let </span>disco_shared = TestDiscoveryShared::default();
         <span class="kw">let </span>(ep1, _guard1) = {
             <span class="kw">let </span>secret = SecretKey::generate(rand::thread_rng());
@@ -1931,7 +1949,7 @@
     /// will connect successfully.
     </span><span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>endpoint_discovery_combined_with_empty_and_wrong() -&gt; anyhow::Result&lt;()&gt; {
+    </span><span class="kw">async fn </span>endpoint_discovery_combined_with_empty_and_wrong() -&gt; TestResult {
         <span class="kw">let </span>disco_shared = TestDiscoveryShared::default();
         <span class="kw">let </span>(ep1, _guard1) = {
             <span class="kw">let </span>secret = SecretKey::generate(rand::thread_rng());
@@ -1958,7 +1976,7 @@
     <span class="doccomment">/// This test only has the "lying" discovery. It is here to make sure that this actually fails.
     </span><span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>endpoint_discovery_combined_wrong_only() -&gt; anyhow::Result&lt;()&gt; {
+    </span><span class="kw">async fn </span>endpoint_discovery_combined_wrong_only() -&gt; TestResult {
         <span class="kw">let </span>disco_shared = TestDiscoveryShared::default();
         <span class="kw">let </span>(ep1, _guard1) = {
             <span class="kw">let </span>secret = SecretKey::generate(rand::thread_rng());
@@ -1992,7 +2010,7 @@
     /// Connect should still succeed because the discovery service will be invoked (after a delay).
     </span><span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>endpoint_discovery_with_wrong_existing_addr() -&gt; anyhow::Result&lt;()&gt; {
+    </span><span class="kw">async fn </span>endpoint_discovery_with_wrong_existing_addr() -&gt; TestResult {
         <span class="kw">let </span>disco_shared = TestDiscoveryShared::default();
         <span class="kw">let </span>(ep1, _guard1) = {
             <span class="kw">let </span>secret = SecretKey::generate(rand::thread_rng());
@@ -2017,7 +2035,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>endpoint_discovery_watch() -&gt; anyhow::Result&lt;()&gt; {
+    </span><span class="kw">async fn </span>endpoint_discovery_watch() -&gt; TestResult {
         <span class="kw">let </span>disco_shared = TestDiscoveryShared::default();
         <span class="kw">let </span>(ep1, _guard1) = {
             <span class="kw">let </span>secret = SecretKey::generate(rand::thread_rng());

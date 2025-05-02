@@ -507,9 +507,7 @@
 <a href="#506" id="506">506</a>
 <a href="#507" id="507">507</a>
 <a href="#508" id="508">508</a>
-<a href="#509" id="509">509</a>
-<a href="#510" id="510">510</a>
-<a href="#511" id="511">511</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service that uses an mdns-like service to discover local nodes.
+<a href="#509" id="509">509</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service that uses an mdns-like service to discover local nodes.
 //!
 //! This allows you to use an mdns-like swarm discovery service to find address information about nodes that are on your local network, no relay or outside internet needed.
 //! See the [`swarm-discovery`](https://crates.io/crates/swarm-discovery) crate for more details.
@@ -553,12 +551,11 @@
     task::{<span class="self">self</span>, AbortOnDropHandle, JoinSet},
     time::{<span class="self">self</span>, Duration},
 };
-<span class="kw">use </span>snafu::ResultExt;
 <span class="kw">use </span>swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
 <span class="kw">use </span>tokio::sync::mpsc::{<span class="self">self</span>, error::TrySendError};
 <span class="kw">use </span>tracing::{debug, error, info_span, trace, warn, Instrument};
 
-<span class="kw">use super</span>::{CreateServiceSnafu, DiscoveryError};
+<span class="kw">use </span><span class="kw">super</span>::DiscoveryError;
 <span class="kw">use crate</span>::{
     discovery::{Discovery, DiscoveryItem, NodeData, NodeInfo},
     watchable::Watchable,
@@ -846,8 +843,7 @@
         }
         discoverer
             .spawn(rt)
-            .map_err(|e| <span class="macro">anyhow::anyhow!</span>(e.to_string()))
-            .context(CreateServiceSnafu { service: <span class="string">"mdns" </span>})
+            .map_err(|e| DiscoveryError::from(e.into_boxed_dyn_error()))
     }
 
     <span class="kw">fn </span>socketaddrs_to_addrs(socketaddrs: <span class="kw-2">&amp;</span>BTreeSet&lt;SocketAddr&gt;) -&gt; HashMap&lt;u16, Vec&lt;IpAddr&gt;&gt; {

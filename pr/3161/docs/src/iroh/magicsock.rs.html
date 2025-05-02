@@ -4487,7 +4487,8 @@
 <a href="#4486" id="4486">4486</a>
 <a href="#4487" id="4487">4487</a>
 <a href="#4488" id="4488">4488</a>
-<a href="#4489" id="4489">4489</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4489" id="4489">4489</a>
+<a href="#4490" id="4490">4490</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -7950,8 +7951,8 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
-    <span class="kw">use </span>anyhow::anyhow;
     <span class="kw">use </span>rand::RngCore;
+    <span class="kw">use </span>testresult::TestResult;
     <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
     <span class="kw">use </span>tracing_test::traced_test;
 
@@ -8022,7 +8023,7 @@
     }
 
     <span class="kw">impl </span>MagicStack {
-        <span class="kw">async fn </span>new(relay_mode: RelayMode) -&gt; anyhow::Result&lt;<span class="self">Self</span>&gt; {
+        <span class="kw">async fn </span>new(relay_mode: RelayMode) -&gt; <span class="self">Self </span>{
             <span class="kw">let </span>secret_key = SecretKey::generate(rand::thread_rng());
 
             <span class="kw">let </span><span class="kw-2">mut </span>transport_config = quinn::TransportConfig::default();
@@ -8034,12 +8035,13 @@
                 .relay_mode(relay_mode)
                 .alpns(<span class="macro">vec!</span>[ALPN.to_vec()])
                 .bind()
-                .<span class="kw">await</span><span class="question-mark">?</span>;
+                .<span class="kw">await
+                </span>.unwrap();
 
-            <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
+            <span class="self">Self </span>{
                 secret_key,
                 endpoint,
-            })
+            }
         }
 
         <span class="kw">fn </span>tracked_endpoints(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;PublicKey&gt; {
@@ -8129,7 +8131,7 @@
     }
 
     <span class="attr">#[instrument(skip_all, fields(me = %ep.endpoint.node_id().fmt_short()))]
-    </span><span class="kw">async fn </span>echo_receiver(ep: MagicStack, loss: ExpectedLoss) -&gt; anyhow::Result&lt;()&gt; {
+    </span><span class="kw">async fn </span>echo_receiver(ep: MagicStack, loss: ExpectedLoss) -&gt; TestResult {
         <span class="macro">info!</span>(<span class="string">"accepting conn"</span>);
         <span class="kw">let </span>conn = ep.endpoint.accept().<span class="kw">await</span>.expect(<span class="string">"no conn"</span>);
 
@@ -8174,7 +8176,7 @@
         dest_id: PublicKey,
         msg: <span class="kw-2">&amp;</span>[u8],
         loss: ExpectedLoss,
-    ) -&gt; anyhow::Result&lt;()&gt; {
+    ) -&gt; TestResult {
         <span class="macro">info!</span>(<span class="string">"connecting to {}"</span>, dest_id.fmt_short());
         <span class="kw">let </span>dest = NodeAddr::new(dest_id);
         <span class="kw">let </span>conn = ep.endpoint.connect(dest, ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
@@ -8263,9 +8265,9 @@
 
     <span class="attr">#[tokio::test(flavor = <span class="string">"multi_thread"</span>)]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_two_devices_roundtrip_quinn_magic() -&gt; anyhow::Result&lt;()&gt; {
-        <span class="kw">let </span>m1 = MagicStack::new(RelayMode::Disabled).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>m2 = MagicStack::new(RelayMode::Disabled).<span class="kw">await</span><span class="question-mark">?</span>;
+    </span><span class="kw">async fn </span>test_two_devices_roundtrip_quinn_magic() -&gt; TestResult {
+        <span class="kw">let </span>m1 = MagicStack::new(RelayMode::Disabled).<span class="kw">await</span>;
+        <span class="kw">let </span>m2 = MagicStack::new(RelayMode::Disabled).<span class="kw">await</span>;
 
         <span class="kw">let </span>_guard = mesh_stacks(<span class="macro">vec!</span>[m1.clone(), m2.clone()]).<span class="kw">await</span><span class="question-mark">?</span>;
 
@@ -8300,8 +8302,8 @@
     #[traced_test]
     </span><span class="kw">async fn </span>test_regression_network_change_rebind_wakes_connection_driver(
     ) -&gt; testresult::TestResult {
-        <span class="kw">let </span>m1 = MagicStack::new(RelayMode::Disabled).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>m2 = MagicStack::new(RelayMode::Disabled).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>m1 = MagicStack::new(RelayMode::Disabled).<span class="kw">await</span>;
+        <span class="kw">let </span>m2 = MagicStack::new(RelayMode::Disabled).<span class="kw">await</span>;
 
         <span class="macro">println!</span>(<span class="string">"Net change"</span>);
         m1.endpoint.magic_sock().force_network_change(<span class="bool-val">true</span>).<span class="kw">await</span>;
@@ -8337,7 +8339,7 @@
 
     <span class="attr">#[tokio::test(flavor = <span class="string">"multi_thread"</span>)]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_two_devices_roundtrip_network_change() -&gt; anyhow::Result&lt;()&gt; {
+    </span><span class="kw">async fn </span>test_two_devices_roundtrip_network_change() -&gt; TestResult {
         time::timeout(
             Duration::from_secs(<span class="number">90</span>),
             test_two_devices_roundtrip_network_change_impl(),
@@ -8347,9 +8349,9 @@
 
     <span class="doccomment">/// Same structure as `test_two_devices_roundtrip_quinn_magic`, but interrupts regularly
     /// with (simulated) network changes.
-    </span><span class="kw">async fn </span>test_two_devices_roundtrip_network_change_impl() -&gt; anyhow::Result&lt;()&gt; {
-        <span class="kw">let </span>m1 = MagicStack::new(RelayMode::Disabled).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>m2 = MagicStack::new(RelayMode::Disabled).<span class="kw">await</span><span class="question-mark">?</span>;
+    </span><span class="kw">async fn </span>test_two_devices_roundtrip_network_change_impl() -&gt; TestResult {
+        <span class="kw">let </span>m1 = MagicStack::new(RelayMode::Disabled).<span class="kw">await</span>;
+        <span class="kw">let </span>m2 = MagicStack::new(RelayMode::Disabled).<span class="kw">await</span>;
 
         <span class="kw">let </span>_guard = mesh_stacks(<span class="macro">vec!</span>[m1.clone(), m2.clone()]).<span class="kw">await</span><span class="question-mark">?</span>;
 
@@ -8445,12 +8447,12 @@
 
     <span class="attr">#[tokio::test(flavor = <span class="string">"multi_thread"</span>)]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_two_devices_setup_teardown() -&gt; anyhow::Result&lt;()&gt; {
+    </span><span class="kw">async fn </span>test_two_devices_setup_teardown() -&gt; TestResult {
         <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..<span class="number">10 </span>{
             <span class="macro">println!</span>(<span class="string">"-- round {i}"</span>);
             <span class="macro">println!</span>(<span class="string">"setting up magic stack"</span>);
-            <span class="kw">let </span>m1 = MagicStack::new(RelayMode::Disabled).<span class="kw">await</span><span class="question-mark">?</span>;
-            <span class="kw">let </span>m2 = MagicStack::new(RelayMode::Disabled).<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="kw">let </span>m1 = MagicStack::new(RelayMode::Disabled).<span class="kw">await</span>;
+            <span class="kw">let </span>m2 = MagicStack::new(RelayMode::Disabled).<span class="kw">await</span>;
 
             <span class="kw">let </span>_guard = mesh_stacks(<span class="macro">vec!</span>[m1.clone(), m2.clone()]).<span class="kw">await</span><span class="question-mark">?</span>;
 
@@ -8684,7 +8686,7 @@
         <span class="comment">// This needs an accept task
         </span><span class="kw">let </span>accept_task = tokio::spawn({
             <span class="kw">async fn </span>accept(ep: quinn::Endpoint) -&gt; anyhow::Result&lt;()&gt; {
-                <span class="kw">let </span>incoming = ep.accept().<span class="kw">await</span>.ok_or(<span class="macro">anyhow!</span>(<span class="string">"no incoming"</span>))<span class="question-mark">?</span>;
+                <span class="kw">let </span>incoming = ep.accept().<span class="kw">await</span>.ok_or(<span class="macro">anyhow::anyhow!</span>(<span class="string">"no incoming"</span>))<span class="question-mark">?</span>;
                 <span class="kw">let </span>_conn = incoming.accept()<span class="question-mark">?</span>.<span class="kw">await</span><span class="question-mark">?</span>;
 
                 <span class="comment">// Keep this connection alive for a while
@@ -8762,7 +8764,7 @@
         <span class="comment">// We need a task to accept the connection.
         </span><span class="kw">let </span>accept_task = tokio::spawn({
             <span class="kw">async fn </span>accept(ep: quinn::Endpoint) -&gt; anyhow::Result&lt;()&gt; {
-                <span class="kw">let </span>incoming = ep.accept().<span class="kw">await</span>.ok_or(<span class="macro">anyhow!</span>(<span class="string">"no incoming"</span>))<span class="question-mark">?</span>;
+                <span class="kw">let </span>incoming = ep.accept().<span class="kw">await</span>.ok_or(<span class="macro">anyhow::anyhow!</span>(<span class="string">"no incoming"</span>))<span class="question-mark">?</span>;
                 <span class="kw">let </span>conn = incoming.accept()<span class="question-mark">?</span>.<span class="kw">await</span><span class="question-mark">?</span>;
                 <span class="kw">let </span><span class="kw-2">mut </span>stream = conn.accept_uni().<span class="kw">await</span><span class="question-mark">?</span>;
                 stream.read_to_end(<span class="number">1 </span>&lt;&lt; <span class="number">16</span>).<span class="kw">await</span><span class="question-mark">?</span>;
@@ -8915,8 +8917,8 @@
     }
 
     <span class="attr">#[tokio::test]
-    </span><span class="kw">async fn </span>test_add_node_addr() -&gt; anyhow::Result&lt;()&gt; {
-        <span class="kw">let </span>stack = MagicStack::new(RelayMode::Default).<span class="kw">await</span><span class="question-mark">?</span>;
+    </span><span class="kw">async fn </span>test_add_node_addr() -&gt; TestResult {
+        <span class="kw">let </span>stack = MagicStack::new(RelayMode::Default).<span class="kw">await</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>rng = rand::thread_rng();
 
         <span class="macro">assert_eq!</span>(stack.endpoint.magic_sock().node_map.node_count(), <span class="number">0</span>);

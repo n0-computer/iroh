@@ -534,7 +534,8 @@
 <a href="#533" id="533">533</a>
 <a href="#534" id="534">534</a>
 <a href="#535" id="535">535</a>
-<a href="#536" id="536">536</a></pre></div><pre class="rust"><code><span class="doccomment">//! Tools for spawning an accept loop that routes incoming requests to the right protocol.
+<a href="#536" id="536">536</a>
+<a href="#537" id="537">537</a></pre></div><pre class="rust"><code><span class="doccomment">//! Tools for spawning an accept loop that routes incoming requests to the right protocol.
 //!
 //! ## Example
 //!
@@ -603,11 +604,10 @@
 ///
 /// ```no_run
 /// # use std::sync::Arc;
-/// # use anyhow::Result;
 /// # use futures_lite::future::Boxed as BoxedFuture;
 /// # use iroh::{endpoint::Connecting, protocol::{ProtocolHandler, Router}, Endpoint, NodeAddr};
 /// #
-/// # async fn test_compile() -&gt; Result&lt;()&gt; {
+/// # async fn test_compile() -&gt; anyhow::Result&lt;()&gt; {
 /// let endpoint = Endpoint::builder().discovery_n0().bind().await?;
 ///
 /// let router = Router::builder(endpoint)
@@ -788,7 +788,7 @@
     ///
     /// If some [`ProtocolHandler`] panicked in the accept loop, this will propagate
     /// that panic into the result here.
-    </span><span class="kw">pub async fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; anyhow::Result&lt;()&gt; {
+    </span><span class="kw">pub async fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(), tokio::task::JoinError&gt; {
         <span class="kw">if </span><span class="self">self</span>.is_shutdown() {
             <span class="kw">return </span><span class="prelude-val">Ok</span>(());
         }
@@ -1006,10 +1006,12 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
+    <span class="kw">use </span>testresult::TestResult;
+
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
 
     <span class="attr">#[tokio::test]
-    </span><span class="kw">async fn </span>test_shutdown() -&gt; anyhow::Result&lt;()&gt; {
+    </span><span class="kw">async fn </span>test_shutdown() -&gt; TestResult {
         <span class="kw">let </span>endpoint = Endpoint::builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>router = Router::builder(endpoint.clone()).spawn();
 
@@ -1047,7 +1049,7 @@
         }
     }
     <span class="attr">#[tokio::test]
-    </span><span class="kw">async fn </span>test_limiter() -&gt; anyhow::Result&lt;()&gt; {
+    </span><span class="kw">async fn </span>test_limiter() -&gt; TestResult {
         <span class="kw">let </span>e1 = Endpoint::builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="comment">// deny all access
         </span><span class="kw">let </span>proto = AccessLimit::new(Echo, |_node_id| <span class="bool-val">false</span>);

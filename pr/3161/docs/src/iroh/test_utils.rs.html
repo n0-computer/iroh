@@ -545,13 +545,12 @@
 <a href="#544" id="544">544</a></pre></div><pre class="rust"><code><span class="doccomment">//! Internal utilities to support testing.
 </span><span class="kw">use </span>std::net::Ipv4Addr;
 
-<span class="kw">use </span>anyhow::Result;
 <span class="kw">pub use </span>dns_and_pkarr_servers::DnsPkarrServer;
 <span class="kw">use </span>iroh_base::RelayUrl;
 <span class="kw">use </span>iroh_relay::{
     server::{
-        AccessConfig, CertConfig, QuicConfig, RelayConfig, Server, ServerConfig, StunConfig,
-        TlsConfig,
+        AccessConfig, CertConfig, QuicConfig, RelayConfig, Server, ServerConfig, SpawnError,
+        StunConfig, TlsConfig,
     },
     RelayMap, RelayNode, RelayQuicConfig,
 };
@@ -573,7 +572,7 @@
 ///
 /// The returned `Url` is the url of the relay server in the returned [`RelayMap`].
 /// When dropped, the returned [`Server`] does will stop running.
-</span><span class="kw">pub async fn </span>run_relay_server() -&gt; <span class="prelude-ty">Result</span>&lt;(RelayMap, RelayUrl, Server)&gt; {
+</span><span class="kw">pub async fn </span>run_relay_server() -&gt; <span class="prelude-ty">Result</span>&lt;(RelayMap, RelayUrl, Server), SpawnError&gt; {
     run_relay_server_with(
         <span class="prelude-val">Some</span>(StunConfig {
             bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">0</span>).into(),
@@ -587,7 +586,7 @@
 ///
 /// The returned `Url` is the url of the relay server in the returned [`RelayMap`].
 /// When dropped, the returned [`Server`] does will stop running.
-</span><span class="kw">pub async fn </span>run_relay_server_with_stun() -&gt; <span class="prelude-ty">Result</span>&lt;(RelayMap, RelayUrl, Server)&gt; {
+</span><span class="kw">pub async fn </span>run_relay_server_with_stun() -&gt; <span class="prelude-ty">Result</span>&lt;(RelayMap, RelayUrl, Server), SpawnError&gt; {
     run_relay_server_with(
         <span class="prelude-val">Some</span>(StunConfig {
             bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">0</span>).into(),
@@ -609,7 +608,7 @@
 </span><span class="kw">pub async fn </span>run_relay_server_with(
     stun: <span class="prelude-ty">Option</span>&lt;StunConfig&gt;,
     quic: bool,
-) -&gt; <span class="prelude-ty">Result</span>&lt;(RelayMap, RelayUrl, Server)&gt; {
+) -&gt; <span class="prelude-ty">Result</span>&lt;(RelayMap, RelayUrl, Server), SpawnError&gt; {
     <span class="kw">let </span>(certs, server_config) = iroh_relay::server::testing::self_signed_tls_certs_and_config();
 
     <span class="kw">let </span>tls = TlsConfig {
@@ -640,7 +639,9 @@
         </span>metrics_addr: <span class="prelude-val">None</span>,
     };
     <span class="kw">let </span>server = Server::spawn(config).<span class="kw">await</span><span class="question-mark">?</span>;
-    <span class="kw">let </span>url: RelayUrl = <span class="macro">format!</span>(<span class="string">"https://{}"</span>, server.https_addr().expect(<span class="string">"configured"</span>)).parse()<span class="question-mark">?</span>;
+    <span class="kw">let </span>url: RelayUrl = <span class="macro">format!</span>(<span class="string">"https://{}"</span>, server.https_addr().expect(<span class="string">"configured"</span>))
+        .parse()
+        .expect(<span class="string">"invalid relay url"</span>);
 
     <span class="kw">let </span>quic = server
         .quic_addr()
@@ -657,7 +658,6 @@
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>dns_and_pkarr_servers {
     <span class="kw">use </span>std::{net::SocketAddr, time::Duration};
 
-    <span class="kw">use </span>anyhow::Result;
     <span class="kw">use </span>iroh_base::{NodeId, SecretKey};
     <span class="kw">use </span>url::Url;
 
@@ -689,12 +689,12 @@
 
     <span class="kw">impl </span>DnsPkarrServer {
         <span class="doccomment">/// Run DNS and Pkarr servers on localhost.
-        </span><span class="kw">pub async fn </span>run() -&gt; anyhow::Result&lt;<span class="self">Self</span>&gt; {
+        </span><span class="kw">pub async fn </span>run() -&gt; std::io::Result&lt;<span class="self">Self</span>&gt; {
             <span class="self">Self</span>::run_with_origin(<span class="string">"dns.iroh.test"</span>.to_string()).<span class="kw">await
         </span>}
 
         <span class="doccomment">/// Run DNS and Pkarr servers on localhost with the specified `node_origin` domain.
-        </span><span class="kw">pub async fn </span>run_with_origin(node_origin: String) -&gt; anyhow::Result&lt;<span class="self">Self</span>&gt; {
+        </span><span class="kw">pub async fn </span>run_with_origin(node_origin: String) -&gt; std::io::Result&lt;<span class="self">Self</span>&gt; {
             <span class="kw">let </span>state = State::new(node_origin.clone());
             <span class="kw">let </span>(nameserver, dns_drop_guard) = run_dns_server(state.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
             <span class="kw">let </span>(pkarr_url, pkarr_drop_guard) = run_pkarr_relay(state.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
@@ -727,7 +727,7 @@
         <span class="doccomment">/// Wait until a Pkarr announce for a node is published to the server.
         ///
         /// If `timeout` elapses an error is returned.
-        </span><span class="kw">pub async fn </span>on_node(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: <span class="kw-2">&amp;</span>NodeId, timeout: Duration) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        </span><span class="kw">pub async fn </span>on_node(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: <span class="kw-2">&amp;</span>NodeId, timeout: Duration) -&gt; std::io::Result&lt;()&gt; {
             <span class="self">self</span>.state.on_node(node_id, timeout).<span class="kw">await
         </span>}
     }
@@ -739,7 +739,6 @@
         net::{Ipv4Addr, SocketAddr},
     };
 
-    <span class="kw">use </span>anyhow::{ensure, <span class="prelude-ty">Result</span>};
     <span class="kw">use </span>hickory_resolver::proto::{
         op::{header::MessageType, Message},
         serialize::binary::BinDecodable,
@@ -756,18 +755,19 @@
             <span class="kw-2">&amp;</span><span class="self">self</span>,
             query: <span class="kw-2">&amp;</span>Message,
             reply: <span class="kw-2">&amp;mut </span>Message,
-        ) -&gt; <span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;()&gt;&gt; + Send;
+        ) -&gt; <span class="kw">impl </span>Future&lt;Output = std::io::Result&lt;()&gt;&gt; + Send;
     }
 
-    <span class="kw">pub type </span>QueryHandlerFunction =
-        Box&lt;<span class="kw">dyn </span>Fn(<span class="kw-2">&amp;</span>Message, <span class="kw-2">&amp;mut </span>Message) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt; + Send + Sync + <span class="lifetime">'static</span>&gt;;
+    <span class="kw">pub type </span>QueryHandlerFunction = Box&lt;
+        <span class="kw">dyn </span>Fn(<span class="kw-2">&amp;</span>Message, <span class="kw-2">&amp;mut </span>Message) -&gt; BoxFuture&lt;std::io::Result&lt;()&gt;&gt; + Send + Sync + <span class="lifetime">'static</span>,
+    &gt;;
 
     <span class="kw">impl </span>QueryHandler <span class="kw">for </span>QueryHandlerFunction {
         <span class="kw">fn </span>resolve(
             <span class="kw-2">&amp;</span><span class="self">self</span>,
             query: <span class="kw-2">&amp;</span>Message,
             reply: <span class="kw-2">&amp;mut </span>Message,
-        ) -&gt; <span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;()&gt;&gt; + Send {
+        ) -&gt; <span class="kw">impl </span>Future&lt;Output = std::io::Result&lt;()&gt;&gt; + Send {
             (<span class="self">self</span>)(query, reply)
         }
     }
@@ -777,7 +777,7 @@
     /// Must pass a [`QueryHandler`] that answers queries.
     </span><span class="kw">pub async fn </span>run_dns_server(
         resolver: <span class="kw">impl </span>QueryHandler,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;(SocketAddr, CleanupDropGuard)&gt; {
+    ) -&gt; std::io::Result&lt;(SocketAddr, CleanupDropGuard)&gt; {
         <span class="kw">let </span>bind_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, <span class="number">0</span>));
         <span class="kw">let </span>socket = UdpSocket::bind(bind_addr).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>bound_addr = socket.local_addr()<span class="question-mark">?</span>;
@@ -804,7 +804,7 @@
     }
 
     <span class="kw">impl</span>&lt;R: QueryHandler&gt; TestDnsServer&lt;R&gt; {
-        <span class="kw">async fn </span>run(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        <span class="kw">async fn </span>run(<span class="self">self</span>) -&gt; std::io::Result&lt;()&gt; {
             <span class="kw">let </span><span class="kw-2">mut </span>buf = [<span class="number">0</span>; <span class="number">1450</span>];
             <span class="kw">loop </span>{
                 <span class="kw">let </span>res = <span class="self">self</span>.socket.recv_from(<span class="kw-2">&amp;mut </span>buf).<span class="kw">await</span>;
@@ -815,7 +815,7 @@
             }
         }
 
-        <span class="kw">async fn </span>handle_datagram(<span class="kw-2">&amp;</span><span class="self">self</span>, from: SocketAddr, buf: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        <span class="kw">async fn </span>handle_datagram(<span class="kw-2">&amp;</span><span class="self">self</span>, from: SocketAddr, buf: <span class="kw-2">&amp;</span>[u8]) -&gt; std::io::Result&lt;()&gt; {
             <span class="kw">let </span>packet = Message::from_bytes(buf)<span class="question-mark">?</span>;
             <span class="macro">debug!</span>(queries = <span class="question-mark">?</span>packet.queries(), %from, <span class="string">"received query"</span>);
             <span class="kw">let </span><span class="kw-2">mut </span>reply = packet.clone();
@@ -824,7 +824,7 @@
             <span class="macro">debug!</span>(<span class="question-mark">?</span>reply, %from, <span class="string">"send reply"</span>);
             <span class="kw">let </span>buf = reply.to_vec()<span class="question-mark">?</span>;
             <span class="kw">let </span>len = <span class="self">self</span>.socket.send_to(<span class="kw-2">&amp;</span>buf, from).<span class="kw">await</span><span class="question-mark">?</span>;
-            <span class="macro">ensure!</span>(len == buf.len(), <span class="string">"failed to send complete packet"</span>);
+            <span class="macro">assert_eq!</span>(len, buf.len(), <span class="string">"failed to send complete packet"</span>);
             <span class="prelude-val">Ok</span>(())
         }
     }
@@ -836,7 +836,6 @@
         net::{Ipv4Addr, SocketAddr},
     };
 
-    <span class="kw">use </span>anyhow::Result;
     <span class="kw">use </span>axum::{
         extract::{Path, State},
         response::IntoResponse,
@@ -851,7 +850,7 @@
     <span class="kw">use </span><span class="kw">super</span>::CleanupDropGuard;
     <span class="kw">use </span><span class="kw">crate</span>::test_utils::pkarr_dns_state::State <span class="kw">as </span>AppState;
 
-    <span class="kw">pub async fn </span>run_pkarr_relay(state: AppState) -&gt; <span class="prelude-ty">Result</span>&lt;(Url, CleanupDropGuard)&gt; {
+    <span class="kw">pub async fn </span>run_pkarr_relay(state: AppState) -&gt; std::io::Result&lt;(Url, CleanupDropGuard)&gt; {
         <span class="kw">let </span>bind_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, <span class="number">0</span>));
         <span class="kw">let </span>app = Router::new()
             .route(<span class="string">"/pkarr/{key}"</span>, put(pkarr_put))
@@ -884,15 +883,16 @@
         Path(key): Path&lt;String&gt;,
         body: Bytes,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>IntoResponse, AppError&gt; {
-        <span class="kw">let </span>key = pkarr::PublicKey::try_from(key.as_str())<span class="question-mark">?</span>;
-        <span class="kw">let </span>signed_packet = pkarr::SignedPacket::from_relay_payload(<span class="kw-2">&amp;</span>key, <span class="kw-2">&amp;</span>body)<span class="question-mark">?</span>;
+        <span class="kw">let </span>key = pkarr::PublicKey::try_from(key.as_str()).map_err(std::io::Error::other)<span class="question-mark">?</span>;
+        <span class="kw">let </span>signed_packet =
+            pkarr::SignedPacket::from_relay_payload(<span class="kw-2">&amp;</span>key, <span class="kw-2">&amp;</span>body).map_err(std::io::Error::other)<span class="question-mark">?</span>;
         <span class="kw">let </span>_updated = state.upsert(signed_packet)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(http::StatusCode::NO_CONTENT)
     }
 
     <span class="attr">#[derive(Debug)]
-    </span><span class="kw">struct </span>AppError(anyhow::Error);
-    <span class="kw">impl</span>&lt;T: Into&lt;anyhow::Error&gt;&gt; From&lt;T&gt; <span class="kw">for </span>AppError {
+    </span><span class="kw">struct </span>AppError(std::io::Error);
+    <span class="kw">impl</span>&lt;T: Into&lt;std::io::Error&gt;&gt; From&lt;T&gt; <span class="kw">for </span>AppError {
         <span class="kw">fn </span>from(value: T) -&gt; <span class="self">Self </span>{
             <span class="self">Self</span>(value.into())
         }
@@ -913,7 +913,6 @@
         time::Duration,
     };
 
-    <span class="kw">use </span>anyhow::{bail, <span class="prelude-ty">Result</span>};
     <span class="kw">use </span>iroh_base::NodeId;
     <span class="kw">use </span>iroh_relay::node_info::{NodeIdExt, NodeInfo, IROH_TXT_NAME};
     <span class="kw">use </span>pkarr::SignedPacket;
@@ -940,20 +939,21 @@
             <span class="self">self</span>.notify.notified()
         }
 
-        <span class="kw">pub async fn </span>on_node(<span class="kw-2">&amp;</span><span class="self">self</span>, node: <span class="kw-2">&amp;</span>NodeId, timeout: Duration) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        <span class="kw">pub async fn </span>on_node(<span class="kw-2">&amp;</span><span class="self">self</span>, node: <span class="kw-2">&amp;</span>NodeId, timeout: Duration) -&gt; std::io::Result&lt;()&gt; {
             <span class="kw">let </span>timeout = tokio::time::sleep(timeout);
             <span class="macro">tokio::pin!</span>(timeout);
             <span class="kw">while </span><span class="self">self</span>.get(node, |p| p.is_none()) {
                 <span class="macro">tokio::select!</span> {
-                    <span class="kw">_ </span>= <span class="kw-2">&amp;mut </span>timeout =&gt; <span class="macro">bail!</span>(<span class="string">"timeout"</span>),
+                    <span class="kw">_ </span>= <span class="kw-2">&amp;mut </span>timeout =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(std::io::Error::other(<span class="string">"timeout"</span>)),
                     <span class="kw">_ </span>= <span class="self">self</span>.on_update() =&gt; {}
                 }
             }
             <span class="prelude-val">Ok</span>(())
         }
 
-        <span class="kw">pub fn </span>upsert(<span class="kw-2">&amp;</span><span class="self">self</span>, signed_packet: SignedPacket) -&gt; anyhow::Result&lt;bool&gt; {
-            <span class="kw">let </span>node_id = NodeId::from_bytes(<span class="kw-2">&amp;</span>signed_packet.public_key().to_bytes())<span class="question-mark">?</span>;
+        <span class="kw">pub fn </span>upsert(<span class="kw-2">&amp;</span><span class="self">self</span>, signed_packet: SignedPacket) -&gt; std::io::Result&lt;bool&gt; {
+            <span class="kw">let </span>node_id = NodeId::from_bytes(<span class="kw-2">&amp;</span>signed_packet.public_key().to_bytes())
+                .map_err(std::io::Error::other)<span class="question-mark">?</span>;
             <span class="kw">let </span><span class="kw-2">mut </span>map = <span class="self">self</span>.packets.lock().expect(<span class="string">"poisoned"</span>);
             <span class="kw">let </span>updated = <span class="kw">match </span>map.entry(node_id) {
                 hash_map::Entry::Vacant(e) =&gt; {
@@ -990,7 +990,7 @@
             query: <span class="kw-2">&amp;</span>hickory_resolver::proto::op::Message,
             reply: <span class="kw-2">&amp;mut </span>hickory_resolver::proto::op::Message,
             ttl: u32,
-        ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        ) -&gt; std::io::Result&lt;()&gt; {
             <span class="kw">for </span>query <span class="kw">in </span>query.queries() {
                 <span class="kw">let </span>domain_name = query.name().to_string();
                 <span class="kw">let </span><span class="prelude-val">Some</span>(node_id) = node_id_from_domain_name(<span class="kw-2">&amp;</span>domain_name) <span class="kw">else </span>{
@@ -999,12 +999,13 @@
 
                 <span class="self">self</span>.get(<span class="kw-2">&amp;</span>node_id, |packet| {
                     <span class="kw">if let </span><span class="prelude-val">Some</span>(packet) = packet {
-                        <span class="kw">let </span>node_info = NodeInfo::from_pkarr_signed_packet(packet)<span class="question-mark">?</span>;
-                        <span class="kw">for </span>record <span class="kw">in </span>node_info_to_hickory_records(<span class="kw-2">&amp;</span>node_info, <span class="kw-2">&amp;</span><span class="self">self</span>.origin, ttl)<span class="question-mark">? </span>{
+                        <span class="kw">let </span>node_info = NodeInfo::from_pkarr_signed_packet(packet)
+                            .map_err(std::io::Error::other)<span class="question-mark">?</span>;
+                        <span class="kw">for </span>record <span class="kw">in </span>node_info_to_hickory_records(<span class="kw-2">&amp;</span>node_info, <span class="kw-2">&amp;</span><span class="self">self</span>.origin, ttl) {
                             reply.add_answer(record);
                         }
                     }
-                    anyhow::Ok(())
+                    <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, std::io::Error&gt;(())
                 })<span class="question-mark">?</span>;
             }
             <span class="prelude-val">Ok</span>(())
@@ -1016,7 +1017,7 @@
             <span class="kw-2">&amp;</span><span class="self">self</span>,
             query: <span class="kw-2">&amp;</span>hickory_resolver::proto::op::Message,
             reply: <span class="kw-2">&amp;mut </span>hickory_resolver::proto::op::Message,
-        ) -&gt; <span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;()&gt;&gt; + Send {
+        ) -&gt; <span class="kw">impl </span>Future&lt;Output = std::io::Result&lt;()&gt;&gt; + Send {
             <span class="kw">const </span>TTL: u32 = <span class="number">30</span>;
             <span class="kw">let </span>res = <span class="self">self</span>.resolve_dns(query, reply, TTL);
             std::future::ready(res)
@@ -1046,10 +1047,10 @@
         node_info: <span class="kw-2">&amp;</span>NodeInfo,
         origin: <span class="kw-2">&amp;</span>str,
         ttl: u32,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = hickory_resolver::proto::rr::Record&gt; + <span class="lifetime">'static</span>&gt; {
+    ) -&gt; <span class="kw">impl </span>Iterator&lt;Item = hickory_resolver::proto::rr::Record&gt; + <span class="lifetime">'static </span>{
         <span class="kw">let </span>txt_strings = node_info.to_txt_strings();
-        <span class="kw">let </span>records = to_hickory_records(txt_strings, node_info.node_id, origin, ttl)<span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(records.collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;().into_iter())
+        <span class="kw">let </span>records = to_hickory_records(txt_strings, node_info.node_id, origin, ttl);
+        records.collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;().into_iter()
     }
 
     <span class="doccomment">/// Converts to a list of [`hickory_resolver::proto::rr::Record`] resource records.
@@ -1058,16 +1059,15 @@
         node_id: NodeId,
         origin: <span class="kw-2">&amp;</span>str,
         ttl: u32,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = hickory_resolver::proto::rr::Record&gt; + <span class="lifetime">'_</span>&gt; {
+    ) -&gt; <span class="kw">impl </span>Iterator&lt;Item = hickory_resolver::proto::rr::Record&gt; + <span class="lifetime">'_ </span>{
         <span class="kw">use </span>hickory_resolver::proto::rr;
         <span class="kw">let </span>name = <span class="macro">format!</span>(<span class="string">"{}.{}.{}"</span>, IROH_TXT_NAME, node_id.to_z32(), origin);
-        <span class="kw">let </span>name = rr::Name::from_utf8(name)<span class="question-mark">?</span>;
-        <span class="kw">let </span>records = txt_strings.into_iter().map(<span class="kw">move </span>|s| {
+        <span class="kw">let </span>name = rr::Name::from_utf8(name).expect(<span class="string">"invalid name"</span>);
+        txt_strings.into_iter().map(<span class="kw">move </span>|s| {
             <span class="kw">let </span>txt = rr::rdata::TXT::new(<span class="macro">vec!</span>[s]);
             <span class="kw">let </span>rdata = rr::RData::TXT(txt);
             rr::Record::from_rdata(name.clone(), ttl, rdata)
-        });
-        <span class="prelude-val">Ok</span>(records)
+        })
     }
 
     <span class="attr">#[cfg(test)]
