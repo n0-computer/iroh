@@ -271,7 +271,6 @@ jobs:
       matrix:
         name: [windows-latest]
         rust: ["${{ inputs.rust-version}}"]
-        features: [all, none, default]
         target:
           - x86_64-pc-windows-msvc
         include:
@@ -304,5 +303,5 @@ jobs:
 
       - name: cargo check
         run: |
-          rm -f Cargo.lock
+          rm -Force Cargo.lock
           cargo check -Z minimal-versions --workspace --all-features --lib --bins
