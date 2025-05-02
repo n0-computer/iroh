@@ -82,7 +82,7 @@ impl Authentication {
         secret_key: &SecretKey,
         alpn_protocols: Vec<Vec<u8>>,
         keylog: bool,
-    ) -> Result<QuicServerConfig, CreateConfigError> {
+    ) -> QuicServerConfig {
         let cert_resolver = Arc::new(
             AlwaysResolvesCert::new(self, secret_key).expect("Server cert key DER is valid; qed"),
         );
@@ -104,8 +104,7 @@ impl Authentication {
         // This is specified in RFC 9001: https://www.rfc-editor.org/rfc/rfc9001#section-4.6.1
         crypto.max_early_data_size = u32::MAX;
 
-        let config = crypto.try_into()?;
-        Ok(config)
+        crypto.try_into().expect("known good ciphersuites")
     }
 }
 

@@ -70,7 +70,7 @@ async fn start_accept_side() -> Result<Router> {
     let endpoint = Endpoint::builder().discovery_n0().bind().await?;
 
     // Build our protocol handler and add our protocol, identified by its ALPN, and spawn the node.
-    let router = Router::builder(endpoint).accept(ALPN, Echo).spawn().await?;
+    let router = Router::builder(endpoint).accept(ALPN, Echo).spawn();
 
     Ok(router)
 }

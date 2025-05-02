@@ -3505,9 +3505,8 @@ mod tests {
         secret_key: &SecretKey,
         tls_auth: crate::tls::Authentication,
     ) -> ServerConfig {
-        let quic_server_config = tls_auth
-            .make_server_config(secret_key, vec![], false)
-            .expect("should generate valid config");
+        let quic_server_config = tls_auth.make_server_config(secret_key, vec![], false);
+
         let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
         server_config.transport_config(Arc::new(quinn::TransportConfig::default()));
         server_config
@@ -4076,7 +4075,7 @@ mod tests {
         tls_auth: tls::Authentication,
     ) -> anyhow::Result<Handle> {
         let quic_server_config =
-            tls_auth.make_server_config(&secret_key, vec![ALPN.to_vec()], true)?;
+            tls_auth.make_server_config(&secret_key, vec![ALPN.to_vec()], true);
         let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
         server_config.transport_config(Arc::new(quinn::TransportConfig::default()));
 

@@ -192,7 +192,7 @@ impl Builder {
             1 => Some(discovery.into_iter().next().expect("checked length")),
             _ => Some(Box::new(ConcurrentDiscovery::from_services(discovery))),
         };
-        let server_config = static_config.create_server_config(self.alpn_protocols)?;
+        let server_config = static_config.create_server_config(self.alpn_protocols);
 
         let msock_opts = magicsock::Options {
             addr_v4: self.addr_v4,
@@ -550,17 +550,14 @@ struct StaticConfig {
 
 impl StaticConfig {
     /// Create a [`quinn::ServerConfig`] with the specified ALPN protocols.
-    fn create_server_config(
-        &self,
-        alpn_protocols: Vec<Vec<u8>>,
-    ) -> Result<ServerConfig, tls::CreateConfigError> {
+    fn create_server_config(&self, alpn_protocols: Vec<Vec<u8>>) -> ServerConfig {
         let quic_server_config =
             self.tls_auth
-                .make_server_config(&self.secret_key, alpn_protocols, self.keylog)?;
+                .make_server_config(&self.secret_key, alpn_protocols, self.keylog);
         let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
         server_config.transport_config(self.transport_config.clone());
 
-        Ok(server_config)
+        server_config
     }
 }
 
@@ -644,8 +641,6 @@ pub enum ConnectError {
 #[derive(Debug, Snafu)]
 pub enum BindError {
     #[snafu(transparent)]
-    TlsCreate { source: tls::CreateConfigError },
-    #[snafu(transparent)]
     MagicSpawn {
         source: magicsock::CreateHandleError,
     },
@@ -708,10 +703,9 @@ impl Endpoint {
     ///
     /// This will only affect new incoming connections.
     /// Note that this *overrides* the current list of ALPNs.
-    pub fn set_alpns(&self, alpns: Vec<Vec<u8>>) -> Result<(), tls::CreateConfigError> {
-        let server_config = self.static_config.create_server_config(alpns)?;
+    pub fn set_alpns(&self, alpns: Vec<Vec<u8>>) {
+        let server_config = self.static_config.create_server_config(alpns);
         self.msock.endpoint().set_server_config(Some(server_config));
-        Ok(())
     }
 
     // # Methods for establishing connectivity.
