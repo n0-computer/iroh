@@ -37,7 +37,7 @@ iroh-metrics = { version = "0.32", default-features = false }
 n0-future = "0.1.2"
 num_enum = "0.7"
 pin-project = "1"
-pkarr = { version = "2", default-features = false }
+pkarr = { version = "3.7", default-features = false, features = ["signed_packet"] }
 postcard = { version = "1", default-features = false, features = [
     "alloc",
     "use-std",
@@ -77,7 +77,7 @@ z32 = "1.0.3"
 # server feature
 clap = { version = "4", features = ["derive"], optional = true }
 dashmap = { version = "6.1.0", optional = true }
-governor = { version = "0.7.0", optional = true }
+governor = { version = "0.8.0", optional = true }
 hickory-proto = { version = "0.25.1", default-features = false, optional = true }
 rcgen = { version = "0.13", optional = true }
 regex = { version = "1.7.1", optional = true }
@@ -86,7 +86,7 @@ rustls-cert-reloadable-resolver = { version = "0.7.1", optional = true }
 rustls-cert-file-reader = { version = "0.4.1", optional = true }
 rustls-pemfile = { version = "2.1", optional = true }
 time = { version = "0.3.37", optional = true }
-tokio-rustls-acme = { version = "0.6", optional = true }
+tokio-rustls-acme = { version = "0.7.1", optional = true }
 tokio-websockets = { version = "0.11.3", features = ["rustls-bring-your-own-connector", "ring", "getrandom", "rand", "server"], optional = true } # server-side websocket implementation
 toml = { version = "0.8", optional = true }
 tracing-subscriber = { version = "0.3", features = [

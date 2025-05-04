@@ -14,12 +14,8 @@ use n0_future::{
     stream::StreamExt,
     task::{self, AbortOnDropHandle},
     time::{self, Duration},
-    FutureExt,
 };
-use pkarr::{
-    PkarrClient, PkarrClientAsync, PkarrRelayClient, PkarrRelayClientAsync, RelaySettings,
-    SignedPacket,
-};
+use pkarr::{Client as PkarrClient, SignedPacket};
 use url::Url;
 
 use crate::{
@@ -63,10 +59,7 @@ impl Default for DhtDiscovery {
 #[derive(derive_more::Debug)]
 struct Inner {
     /// Pkarr client for interacting with the DHT.
-    pkarr: PkarrClientAsync,
-    /// Pkarr client for interacting with a pkarr relay
-    #[debug("Option<PkarrRelayClientAsync>")]
-    pkarr_relay: Option<PkarrRelayClientAsync>,
+    pkarr: PkarrClient,
     /// The background task that periodically publishes the node address.
     ///
     /// Due to [`AbortOnDropHandle`], this will be aborted when the discovery is dropped.
@@ -77,8 +70,6 @@ struct Inner {
     secret_key: Option<SecretKey>,
     /// Optional pkarr relay URL to use.
     relay_url: Option<Url>,
-    /// Whether to publish to the mainline DHT.
-    dht: bool,
     /// Time-to-live value for the DNS packets.
     ttl: u32,
     /// True to include the direct addresses in the DNS packet.
@@ -90,57 +81,29 @@ struct Inner {
 }
 
 impl Inner {
-    async fn resolve_relay(&self, key: pkarr::PublicKey) -> Option<Result<DiscoveryItem>> {
-        tracing::info!("resolving {} from relay {:?}", key.to_z32(), self.relay_url);
-
-        let maybe_packet = self
-            .pkarr_relay
-            .as_ref()
-            .expect("checked")
-            .resolve(&key)
-            .await;
-        match maybe_packet {
-            Ok(Some(signed_packet)) => match NodeInfo::from_pkarr_signed_packet(&signed_packet) {
-                Ok(node_info) => {
-                    tracing::info!("discovered node info from relay {:?}", node_info);
-                    Some(Ok(DiscoveryItem::new(node_info, "relay", None)))
-                }
-                Err(_err) => {
-                    tracing::debug!("failed to parse signed packet as node info");
-                    None
-                }
-            },
-            Ok(None) => {
-                tracing::debug!("no signed packet found in relay");
-                None
-            }
-            Err(err) => {
-                tracing::debug!("failed to get signed packet from relay: {}", err);
-                Some(Err(err.into()))
-            }
-        }
-    }
-    async fn resolve_dht(&self, key: pkarr::PublicKey) -> Option<Result<DiscoveryItem>> {
-        tracing::info!("resolving {} from DHT", key.to_z32());
+    async fn resolve_pkarr(&self, key: pkarr::PublicKey) -> Option<Result<DiscoveryItem>> {
+        tracing::info!(
+            "resolving {} from relay and DHT {:?}",
+            key.to_z32(),
+            self.relay_url
+        );
 
         let maybe_packet = self.pkarr.resolve(&key).await;
         match maybe_packet {
-            Ok(Some(signed_packet)) => match NodeInfo::from_pkarr_signed_packet(&signed_packet) {
+            Some(signed_packet) => match NodeInfo::from_pkarr_signed_packet(&signed_packet) {
                 Ok(node_info) => {
-                    tracing::info!("discovered node info from DHT {:?}", &node_info);
-                    Some(Ok(DiscoveryItem::new(node_info, "mainline", None)))
+                    tracing::info!("discovered node info {:?}", node_info);
+                    Some(Ok(DiscoveryItem::new(node_info, "pkarr", None)))
                 }
                 Err(_err) => {
                     tracing::debug!("failed to parse signed packet as node info");
                     None
                 }
             },
-            Ok(None) => {
-                // nothing to do
-                tracing::debug!("no signed packet found in DHT");
+            None => {
+                tracing::debug!("no signed packet found");
                 None
             }
-            Err(err) => Some(Err(err.into())),
         }
     }
 }
@@ -236,37 +199,31 @@ impl Builder {
 
     /// Builds the discovery mechanism.
     pub fn build(self) -> Result<DhtDiscovery> {
-        let pkarr = match self.client {
-            Some(client) => client,
-            None => PkarrClient::new(Default::default())?,
-        };
-        let pkarr = pkarr.as_async();
-        let ttl = self.ttl.unwrap_or(DEFAULT_PKARR_TTL);
-        let relay_url = self.pkarr_relay;
-        let dht = self.dht;
-        let include_direct_addresses = self.include_direct_addresses;
         anyhow::ensure!(
-            dht || relay_url.is_some(),
+            self.dht || self.pkarr_relay.is_some(),
             "at least one of DHT or relay must be enabled"
         );
-
-        let pkarr_relay = match relay_url.clone() {
-            Some(url) => Some(
-                PkarrRelayClient::new(RelaySettings {
-                    relays: vec![url.to_string()],
-                    ..RelaySettings::default()
-                })?
-                .as_async(),
-            ),
-            None => None,
+        let pkarr = match self.client {
+            Some(client) => client,
+            None => {
+                let mut builder = PkarrClient::builder();
+                builder.no_default_network();
+                if self.dht {
+                    builder.dht(|x| x);
+                }
+                if let Some(url) = &self.pkarr_relay {
+                    builder.relays(&[url.clone()])?;
+                }
+                builder.build()?
+            }
         };
+        let ttl = self.ttl.unwrap_or(DEFAULT_PKARR_TTL);
+        let include_direct_addresses = self.include_direct_addresses;
 
         Ok(DhtDiscovery(Arc::new(Inner {
             pkarr,
-            pkarr_relay,
             ttl,
-            relay_url,
-            dht,
+            relay_url: self.pkarr_relay,
             include_direct_addresses,
             secret_key: self.secret_key,
             initial_publish_delay: self.initial_publish_delay,
@@ -292,45 +249,22 @@ impl DhtDiscovery {
         // we have not published anything to the DHT yet.
         time::sleep(this.0.initial_publish_delay).await;
         loop {
-            // publish to the DHT if enabled
-            let dht_publish = async {
-                if this.0.dht {
-                    let res = this.0.pkarr.publish(&signed_packet).await;
-                    match res {
-                        Ok(()) => {
-                            tracing::debug!("pkarr publish success. published under {z32}",);
-                        }
-                        Err(e) => {
-                            // we could do a smaller delay here, but in general DHT publish
-                            // not working is due to a network issue, and if the network changes
-                            // the task will be restarted anyway.
-                            //
-                            // Being unable to publish to the DHT is something that is expected
-                            // to happen from time to time, so this does not warrant a error log.
-                            tracing::warn!("pkarr publish error: {}", e);
-                        }
-                    }
+            // TODO: publish takes a compare-and-swap timestamp, make use of that.
+            let res = this.0.pkarr.publish(&signed_packet, None).await;
+            match res {
+                Ok(()) => {
+                    tracing::debug!("pkarr publish success. published under {z32}",);
                 }
-            };
-            // publish to the relay if enabled
-            let relay_publish = async {
-                if let Some(relay) = this.0.pkarr_relay.as_ref() {
-                    tracing::info!(
-                        "publishing to relay: {:?}",
-                        this.0.relay_url.as_ref().map(|r| r.to_string())
-                    );
-                    match relay.publish(&signed_packet).await {
-                        Ok(_) => {
-                            tracing::debug!("pkarr publish to relay success");
-                        }
-                        Err(e) => {
-                            tracing::warn!("pkarr publish to relay error: {}", e);
-                        }
-                    }
+                Err(e) => {
+                    // we could do a smaller delay here, but in general DHT publish
+                    // not working is due to a network issue, and if the network changes
+                    // the task will be restarted anyway.
+                    //
+                    // Being unable to publish to the DHT is something that is expected
+                    // to happen from time to time, so this does not warrant a error log.
+                    tracing::warn!("pkarr publish error: {}", e);
                 }
-            };
-            // do both at the same time
-            tokio::join!(relay_publish, dht_publish);
+            }
             time::sleep(this.0.republish_delay).await;
         }
     }
@@ -365,21 +299,13 @@ impl Discovery for DhtDiscovery {
         let pkarr_public_key =
             pkarr::PublicKey::try_from(node_id.as_bytes()).expect("valid public key");
         tracing::info!("resolving {} as {}", node_id, pkarr_public_key.to_z32());
-
-        let mut stream = n0_future::FuturesUnorderedBounded::new(2);
-        if self.0.pkarr_relay.is_some() {
-            let key = pkarr_public_key.clone();
-            let discovery = self.0.clone();
-            stream.push(async move { discovery.resolve_relay(key).await }.boxed());
-        }
-
-        if self.0.dht {
-            let key = pkarr_public_key.clone();
-            let discovery = self.0.clone();
-            stream.push(async move { discovery.resolve_dht(key).await }.boxed());
-        }
-
-        Some(stream.filter_map(|t| t).boxed())
+        let discovery = self.0.clone();
+        let stream = n0_future::stream::once_future(async move {
+            discovery.resolve_pkarr(pkarr_public_key).await
+        })
+        .filter_map(|x| x)
+        .boxed();
+        Some(stream)
     }
 }
 
@@ -388,7 +314,6 @@ mod tests {
     use std::collections::BTreeSet;
 
     use iroh_base::RelayUrl;
-    use pkarr::mainline::dht::DhtSettings;
     use testresult::TestResult;
     use tracing_test::traced_test;
 
@@ -400,20 +325,16 @@ mod tests {
     async fn dht_discovery_smoke() -> TestResult {
         let ep = crate::Endpoint::builder().bind().await?;
         let secret = ep.secret_key().clone();
-        let testnet = pkarr::mainline::dht::Testnet::new(2);
-        let settings = pkarr::Settings {
-            dht: DhtSettings {
-                bootstrap: Some(testnet.bootstrap.clone()),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        let client = PkarrClient::new(settings)?;
+        let testnet = pkarr::mainline::Testnet::new_async(3).await?;
+        let client = pkarr::Client::builder()
+            .dht(|builder| builder.bootstrap(&testnet.bootstrap))
+            .build()?;
         let discovery = DhtDiscovery::builder()
             .secret_key(secret.clone())
             .initial_publish_delay(Duration::ZERO)
             .client(client)
             .build()?;
+
         let relay_url: RelayUrl = Url::parse("https://example.com")?.into();
 
         let data = NodeData::default().with_relay_url(Some(relay_url.clone()));

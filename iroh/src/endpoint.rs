@@ -253,7 +253,7 @@ impl Builder {
     /// Sets the [ALPN] protocols that this endpoint will accept on incoming connections.
     ///
     /// Not setting this will still allow creating connections, but to accept incoming
-    /// connections the [ALPN] must be set.
+    /// connections at least one [ALPN] must be set.
     ///
     /// [ALPN]: https://en.wikipedia.org/wiki/Application-Layer_Protocol_Negotiation
     pub fn alpns(mut self, alpn_protocols: Vec<Vec<u8>>) -> Self {
@@ -752,7 +752,8 @@ impl Endpoint {
             "Attempting connection..."
         );
         let client_config = {
-            let alpn_protocols = vec![alpn.to_vec()];
+            let mut alpn_protocols = vec![alpn.to_vec()];
+            alpn_protocols.extend(options.additional_alpns);
             let quic_client_config = self.static_config.tls_auth.make_client_config(
                 &self.static_config.secret_key,
                 node_id,
@@ -1263,6 +1264,7 @@ impl Endpoint {
 #[derive(Default, Debug, Clone)]
 pub struct ConnectOptions {
     transport_config: Option<Arc<TransportConfig>>,
+    additional_alpns: Vec<Vec<u8>>,
 }
 
 impl ConnectOptions {
@@ -1277,6 +1279,31 @@ impl ConnectOptions {
     /// Sets the QUIC transport config options for this connection.
     pub fn with_transport_config(mut self, transport_config: Arc<TransportConfig>) -> Self {
         self.transport_config = Some(transport_config);
+        self
+    }
+
+    /// Sets [ALPN] identifiers that should be signaled as supported on connection, *in
+    /// addition* to the main [ALPN] identifier used in [`Endpoint::connect_with_opts`].
+    ///
+    /// This allows connecting to servers that may only support older versions of your
+    /// protocol. In this case, you would add the older [ALPN] identifiers with this
+    /// function.
+    ///
+    /// You'll know the final negotiated [ALPN] identifier once your connection was
+    /// established using [`Connection::alpn`], or even slightly earlier in the
+    /// handshake by using [`Connecting::alpn`].
+    /// The negotiated [ALPN] identifier may be any of the [ALPN] identifiers in this
+    /// list or the main [ALPN] used in [`Endpoint::connect_with_opts`].
+    ///
+    /// The [ALPN] identifier order on the connect side doesn't matter, since it's the
+    /// accept side that determines the protocol.
+    ///
+    /// For setting the supported [ALPN] identifiers on the accept side, see the endpoint
+    /// builder's [`Builder::alpns`] function.
+    ///
+    /// [ALPN]: https://en.wikipedia.org/wiki/Application-Layer_Protocol_Negotiation
+    pub fn with_additional_alpns(mut self, alpns: Vec<Vec<u8>>) -> Self {
+        self.additional_alpns = alpns;
         self
     }
 }
@@ -2786,6 +2813,104 @@ mod tests {
 
         assert_eq!(app_close.error_code, 42u32.into());
         assert_eq!(app_close.reason.as_ref(), b"thanks, bye!");
+
+        Ok(())
+    }
+
+    /// Configures the accept side to take `accept_alpns` ALPNs, then connects to it with `primary_connect_alpn`
+    /// with `secondary_connect_alpns` set, and finally returns the negotiated ALPN.
+    async fn alpn_connection_test(
+        accept_alpns: Vec<Vec<u8>>,
+        primary_connect_alpn: &[u8],
+        secondary_connect_alpns: Vec<Vec<u8>>,
+    ) -> testresult::TestResult<Option<Vec<u8>>> {
+        let client = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .await?;
+        let server = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .alpns(accept_alpns)
+            .bind()
+            .await?;
+        let server_addr = server.node_addr().await?;
+        let server_task = tokio::spawn({
+            let server = server.clone();
+            async move {
+                let incoming = server.accept().await.unwrap();
+                let conn = incoming.await?;
+                conn.close(0u32.into(), b"bye!");
+                testresult::TestResult::Ok(conn.alpn())
+            }
+        });
+
+        let conn = client
+            .connect_with_opts(
+                server_addr,
+                primary_connect_alpn,
+                ConnectOptions::new().with_additional_alpns(secondary_connect_alpns),
+            )
+            .await?;
+        let conn = conn.await?;
+        let client_alpn = conn.alpn();
+        conn.closed().await;
+        client.close().await;
+        server.close().await;
+
+        let server_alpn = server_task.await??;
+
+        assert_eq!(client_alpn, server_alpn);
+
+        Ok(server_alpn)
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn connect_multiple_alpn_negotiated() -> testresult::TestResult {
+        const ALPN_ONE: &[u8] = b"alpn/1";
+        const ALPN_TWO: &[u8] = b"alpn/2";
+
+        assert_eq!(
+            alpn_connection_test(
+                // Prefer version 2 over version 1 on the accept side
+                vec![ALPN_TWO.to_vec(), ALPN_ONE.to_vec()],
+                ALPN_TWO,
+                vec![ALPN_ONE.to_vec()],
+            )
+            .await?,
+            Some(ALPN_TWO.to_vec()),
+            "accept side prefers version 2 over 1"
+        );
+
+        assert_eq!(
+            alpn_connection_test(
+                // Only support the old version
+                vec![ALPN_ONE.to_vec()],
+                ALPN_TWO,
+                vec![ALPN_ONE.to_vec()],
+            )
+            .await?,
+            Some(ALPN_ONE.to_vec()),
+            "accept side only supports the old version"
+        );
+
+        assert_eq!(
+            alpn_connection_test(
+                vec![ALPN_TWO.to_vec(), ALPN_ONE.to_vec()],
+                ALPN_ONE,
+                vec![ALPN_TWO.to_vec()],
+            )
+            .await?,
+            Some(ALPN_TWO.to_vec()),
+            "connect side ALPN order doesn't matter"
+        );
+
+        assert_eq!(
+            alpn_connection_test(vec![ALPN_TWO.to_vec(), ALPN_ONE.to_vec()], ALPN_ONE, vec![],)
+                .await?,
+            Some(ALPN_ONE.to_vec()),
+            "connect side only supports the old version"
+        );
 
         Ok(())
     }
