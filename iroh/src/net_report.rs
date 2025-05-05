@@ -19,8 +19,6 @@ use std::{
 
 use bytes::Bytes;
 use iroh_base::RelayUrl;
-#[cfg(feature = "metrics")]
-use iroh_metrics::inc;
 #[cfg(not(wasm_browser))]
 use iroh_relay::dns::DnsResolver;
 use iroh_relay::{protos::stun, RelayMap};
@@ -251,6 +249,7 @@ impl Client {
         #[cfg(not(wasm_browser))] port_mapper: Option<portmapper::Client>,
         #[cfg(not(wasm_browser))] dns_resolver: DnsResolver,
         #[cfg(not(wasm_browser))] ip_mapped_addrs: Option<IpMappedAddresses>,
+        metrics: Arc<Metrics>,
     ) -> Self {
         let mut actor = Actor::new(
             #[cfg(not(wasm_browser))]
@@ -259,6 +258,7 @@ impl Client {
             dns_resolver,
             #[cfg(not(wasm_browser))]
             ip_mapped_addrs,
+            metrics,
         );
         let addr = actor.addr();
         let task = task::spawn(
@@ -412,6 +412,7 @@ pub(crate) enum Message {
 #[derive(Debug, Clone)]
 pub struct Addr {
     sender: mpsc::Sender<Message>,
+    metrics: Arc<Metrics>,
 }
 
 impl Addr {
@@ -433,8 +434,7 @@ impl Addr {
             payload,
             from_addr: src,
         }) {
-            #[cfg(feature = "metrics")]
-            inc!(Metrics, stun_packets_dropped);
+            self.metrics.stun_packets_dropped.inc();
             warn!("dropping stun packet from {}", src);
         }
     }
@@ -488,6 +488,7 @@ struct Actor {
     /// The [`IpMappedAddresses`] that allows you to do QAD in iroh
     #[cfg(not(wasm_browser))]
     ip_mapped_addrs: Option<IpMappedAddresses>,
+    metrics: Arc<Metrics>,
 }
 
 impl Actor {
@@ -499,6 +500,7 @@ impl Actor {
         #[cfg(not(wasm_browser))] port_mapper: Option<portmapper::Client>,
         #[cfg(not(wasm_browser))] dns_resolver: DnsResolver,
         #[cfg(not(wasm_browser))] ip_mapped_addrs: Option<IpMappedAddresses>,
+        metrics: Arc<Metrics>,
     ) -> Self {
         // TODO: consider an instrumented flume channel so we have metrics.
         let (sender, receiver) = mpsc::channel(32);
@@ -514,6 +516,7 @@ impl Actor {
             dns_resolver,
             #[cfg(not(wasm_browser))]
             ip_mapped_addrs,
+            metrics,
         }
     }
 
@@ -521,6 +524,7 @@ impl Actor {
     fn addr(&self) -> Addr {
         Addr {
             sender: self.sender.clone(),
+            metrics: self.metrics.clone(),
         }
     }
 
@@ -600,17 +604,16 @@ impl Actor {
             self.reports.last = None; // causes ProbePlan::new below to do a full (initial) plan
             self.reports.next_full = false;
             self.reports.last_full = now;
-            #[cfg(feature = "metrics")]
-            inc!(Metrics, reports_full);
+            self.metrics.reports_full.inc();
         }
-        #[cfg(feature = "metrics")]
-        inc!(Metrics, reports);
+        self.metrics.reports.inc();
 
         let actor = reportgen::Client::new(
             self.addr(),
             self.reports.last.clone(),
             relay_map,
             protocols,
+            self.metrics.clone(),
             #[cfg(not(wasm_browser))]
             socket_state,
         );
@@ -649,10 +652,10 @@ impl Actor {
         #[cfg(feature = "metrics")]
         match &src {
             SocketAddr::V4(_) => {
-                inc!(Metrics, stun_packets_recv_ipv4);
+                self.metrics.stun_packets_recv_ipv4.inc();
             }
             SocketAddr::V6(_) => {
-                inc!(Metrics, stun_packets_recv_ipv6);
+                self.metrics.stun_packets_recv_ipv6.inc();
             }
         }
 
@@ -1099,7 +1102,7 @@ mod tests {
             stun_utils::serve("127.0.0.1".parse().unwrap()).await?;
 
         let resolver = dns::tests::resolver();
-        let mut client = Client::new(None, resolver.clone(), None);
+        let mut client = Client::new(None, resolver.clone(), None, Default::default());
         let dm = stun_utils::relay_map_of([stun_addr].into_iter());
 
         // Note that the ProbePlan will change with each iteration.
@@ -1146,7 +1149,7 @@ mod tests {
 
         // Now create a client and generate a report.
         let resolver = dns::tests::resolver();
-        let mut client = Client::new(None, resolver.clone(), None);
+        let mut client = Client::new(None, resolver.clone(), None, Default::default());
 
         let r = client.get_report_all(dm, None, None, None).await?;
         let mut r: Report = (*r).clone();
@@ -1349,7 +1352,7 @@ mod tests {
         let resolver = dns::tests::resolver();
         for mut tt in tests {
             println!("test: {}", tt.name);
-            let mut actor = Actor::new(None, resolver.clone(), None);
+            let mut actor = Actor::new(None, resolver.clone(), None, Default::default());
             for s in &mut tt.steps {
                 // trigger the timer
                 tokio::time::advance(Duration::from_secs(s.after)).await;
@@ -1384,7 +1387,7 @@ mod tests {
         dbg!(&dm);
 
         let resolver = dns::tests::resolver().clone();
-        let mut client = Client::new(None, resolver, None);
+        let mut client = Client::new(None, resolver, None, Default::default());
 
         // Set up an external socket to send STUN requests from, this will be discovered as
         // our public socket address by STUN.  We send back any packets received on this

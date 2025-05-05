@@ -42,6 +42,7 @@ use crate::{
         DiscoverySubscribers, DiscoveryTask, Lagged, UserData,
     },
     magicsock::{self, Handle, NodeIdMappedAddr, OwnAddressSnafu},
+    metrics::EndpointMetrics,
     tls,
     watchable::{Disconnected, Watcher},
     RelayProtocol,
@@ -194,6 +195,8 @@ impl Builder {
         };
         let server_config = static_config.create_server_config(self.alpn_protocols);
 
+        let metrics = EndpointMetrics::default();
+
         let msock_opts = magicsock::Options {
             addr_v4: self.addr_v4,
             addr_v6: self.addr_v6,
@@ -211,6 +214,7 @@ impl Builder {
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
             #[cfg(any(test, feature = "test-utils"))]
             path_selection: self.path_selection,
+            metrics,
         };
         Endpoint::bind(static_config, msock_opts).await
     }
@@ -255,7 +259,7 @@ impl Builder {
     /// Sets the [ALPN] protocols that this endpoint will accept on incoming connections.
     ///
     /// Not setting this will still allow creating connections, but to accept incoming
-    /// connections the [ALPN] must be set.
+    /// connections at least one [ALPN] must be set.
     ///
     /// [ALPN]: https://en.wikipedia.org/wiki/Application-Layer_Protocol_Negotiation
     pub fn alpns(mut self, alpn_protocols: Vec<Vec<u8>>) -> Self {
@@ -694,7 +698,7 @@ impl Endpoint {
 
         let ep = Self {
             msock: msock.clone(),
-            rtt_actor: Arc::new(rtt_actor::RttHandle::new()),
+            rtt_actor: Arc::new(rtt_actor::RttHandle::new(msock.metrics.magicsock.clone())),
             static_config: Arc::new(static_config),
             session_store: Arc::new(rustls::client::ClientSessionMemoryCache::new(
                 MAX_TLS_TICKETS,
@@ -818,7 +822,8 @@ impl Endpoint {
             "Attempting connection..."
         );
         let client_config = {
-            let alpn_protocols = vec![alpn.to_vec()];
+            let mut alpn_protocols = vec![alpn.to_vec()];
+            alpn_protocols.extend(options.additional_alpns);
             let quic_client_config = self.static_config.tls_auth.make_client_config(
                 &self.static_config.secret_key,
                 node_id,
@@ -1172,6 +1177,122 @@ impl Endpoint {
         self.msock.discovery()
     }
 
+    /// Returns metrics collected for this endpoint.
+    ///
+    /// The endpoint internally collects various metrics about its operation.
+    /// The returned [`EndpointMetrics`] struct contains all of these metrics.
+    ///
+    /// You can access individual metrics directly by using the public fields:
+    /// ```rust
+    /// # use std::collections::BTreeMap;
+    /// # use iroh::endpoint::Endpoint;
+    /// # async fn wrapper() -> testresult::TestResult {
+    /// let endpoint = Endpoint::builder().bind().await?;
+    /// assert_eq!(endpoint.metrics().magicsock.recv_datagrams.get(), 0);
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// [`EndpointMetrics`] implements [`MetricsGroupSet`], and each field
+    /// implements [`MetricsGroup`]. These traits provide methods to iterate over
+    /// the groups in the set, and over the individual metrics in each group, without having
+    /// to access each field manually. With these methods, it is straightforward to collect
+    /// all metrics into a map or push their values to a metrics collector.
+    ///
+    /// For example, the following snippet collects all metrics into a map:
+    /// ```rust
+    /// # use std::collections::BTreeMap;
+    /// # use iroh_metrics::{Metric, MetricsGroup, MetricValue, MetricsGroupSet};
+    /// # use iroh::endpoint::Endpoint;
+    /// # async fn wrapper() -> testresult::TestResult {
+    /// let endpoint = Endpoint::builder().bind().await?;
+    /// let metrics: BTreeMap<String, MetricValue> = endpoint
+    ///     .metrics()
+    ///     .iter()
+    ///     .map(|(group, metric)| {
+    ///         let name = [group, metric.name()].join(":");
+    ///         (name, metric.value())
+    ///     })
+    ///     .collect();
+    ///
+    /// assert_eq!(metrics["magicsock:recv_datagrams"], MetricValue::Counter(0));
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// The metrics can also be encoded into the OpenMetrics text format, as used by Prometheus.
+    /// To do so, use the [`iroh_metrics::Registry`], add the endpoint metrics to the
+    /// registry with [`Registry::register_all`], and encode the metrics to a string with
+    /// [`encode_openmetrics_to_string`]:
+    /// ```rust
+    /// # use iroh_metrics::{Registry, MetricsSource};
+    /// # use iroh::endpoint::Endpoint;
+    /// # async fn wrapper() -> testresult::TestResult {
+    /// let endpoint = Endpoint::builder().bind().await?;
+    /// let mut registry = Registry::default();
+    /// registry.register_all(endpoint.metrics());
+    /// let s = registry.encode_openmetrics_to_string()?;
+    /// assert!(s.contains(r#"TYPE magicsock_recv_datagrams counter"#));
+    /// assert!(s.contains(r#"magicsock_recv_datagrams_total 0"#));
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// Through a registry, you can also add labels or prefixes to metrics with
+    /// [`Registry::sub_registry_with_label`] or [`Registry::sub_registry_with_prefix`].
+    /// Furthermore, [`iroh_metrics::service`] provides functions to easily start services
+    /// to serve the metrics with a HTTP server, dump them to a file, or push them
+    /// to a Prometheus gateway.
+    ///
+    /// For example, the following snippet launches an HTTP server that serves the metrics in the
+    /// OpenMetrics text format:
+    /// ```no_run
+    /// # use std::{sync::{Arc, RwLock}, time::Duration};
+    /// # use iroh_metrics::{Registry, MetricsSource};
+    /// # use iroh::endpoint::Endpoint;
+    /// # async fn wrapper() -> testresult::TestResult {
+    /// // Create a registry, wrapped in a read-write lock so that we can register and serve
+    /// // the metrics independently.
+    /// let registry = Arc::new(RwLock::new(Registry::default()));
+    /// // Spawn a task to serve the metrics on an OpenMetrics HTTP endpoint.
+    /// let metrics_task = tokio::task::spawn({
+    ///     let registry = registry.clone();
+    ///     async move {
+    ///         let addr = "0.0.0.0:9100".parse().unwrap();
+    ///         iroh_metrics::service::start_metrics_server(addr, registry).await
+    ///     }
+    /// });
+    ///
+    /// // Spawn an endpoint and add the metrics to the registry.
+    /// let endpoint = Endpoint::builder().bind().await?;
+    /// registry.write().unwrap().register_all(endpoint.metrics());
+    ///
+    /// // Wait for the metrics server to bind, then fetch the metrics via HTTP.
+    /// tokio::time::sleep(Duration::from_millis(500));
+    /// let res = reqwest::get("http://localhost:9100/metrics")
+    ///     .await?
+    ///     .text()
+    ///     .await?;
+    ///
+    /// assert!(res.contains(r#"TYPE magicsock_recv_datagrams counter"#));
+    /// assert!(res.contains(r#"magicsock_recv_datagrams_total 0"#));
+    /// # metrics_task.abort();
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// [`Registry`]: iroh_metrics::Registry
+    /// [`Registry::register_all`]: iroh_metrics::Registry::register_all
+    /// [`Registry::sub_registry_with_label`]: iroh_metrics::Registry::sub_registry_with_label
+    /// [`Registry::sub_registry_with_prefix`]: iroh_metrics::Registry::sub_registry_with_prefix
+    /// [`encode_openmetrics_to_string`]: iroh_metrics::MetricsSource::encode_openmetrics_to_string
+    /// [`MetricsGroup`]: iroh_metrics::MetricsGroup
+    /// [`MetricsGroupSet`]: iroh_metrics::MetricsGroupSet
+    #[cfg(feature = "metrics")]
+    pub fn metrics(&self) -> &EndpointMetrics {
+        &self.msock.metrics
+    }
+
     // # Methods for less common state updates.
 
     /// Notifies the system of potential network changes.
@@ -1332,6 +1453,7 @@ impl Endpoint {
 #[derive(Default, Debug, Clone)]
 pub struct ConnectOptions {
     transport_config: Option<Arc<TransportConfig>>,
+    additional_alpns: Vec<Vec<u8>>,
 }
 
 impl ConnectOptions {
@@ -1346,6 +1468,31 @@ impl ConnectOptions {
     /// Sets the QUIC transport config options for this connection.
     pub fn with_transport_config(mut self, transport_config: Arc<TransportConfig>) -> Self {
         self.transport_config = Some(transport_config);
+        self
+    }
+
+    /// Sets [ALPN] identifiers that should be signaled as supported on connection, *in
+    /// addition* to the main [ALPN] identifier used in [`Endpoint::connect_with_opts`].
+    ///
+    /// This allows connecting to servers that may only support older versions of your
+    /// protocol. In this case, you would add the older [ALPN] identifiers with this
+    /// function.
+    ///
+    /// You'll know the final negotiated [ALPN] identifier once your connection was
+    /// established using [`Connection::alpn`], or even slightly earlier in the
+    /// handshake by using [`Connecting::alpn`].
+    /// The negotiated [ALPN] identifier may be any of the [ALPN] identifiers in this
+    /// list or the main [ALPN] used in [`Endpoint::connect_with_opts`].
+    ///
+    /// The [ALPN] identifier order on the connect side doesn't matter, since it's the
+    /// accept side that determines the protocol.
+    ///
+    /// For setting the supported [ALPN] identifiers on the accept side, see the endpoint
+    /// builder's [`Builder::alpns`] function.
+    ///
+    /// [ALPN]: https://en.wikipedia.org/wiki/Application-Layer_Protocol_Negotiation
+    pub fn with_additional_alpns(mut self, alpns: Vec<Vec<u8>>) -> Self {
+        self.additional_alpns = alpns;
         self
     }
 }
@@ -2125,7 +2272,8 @@ fn is_cgi() -> bool {
 mod tests {
     use std::time::Instant;
 
-    use anyhow::bail;
+    use anyhow::{bail, Context};
+    use iroh_metrics::MetricsSource;
     use iroh_relay::http::Protocol;
     use n0_future::StreamExt;
     use rand::SeedableRng;
@@ -2879,6 +3027,172 @@ mod tests {
 
         assert_eq!(app_close.error_code, 42u32.into());
         assert_eq!(app_close.reason.as_ref(), b"thanks, bye!");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn metrics_smoke() -> testresult::TestResult {
+        use iroh_metrics::Registry;
+
+        let secret_key = SecretKey::from_bytes(&[0u8; 32]);
+        let client = Endpoint::builder()
+            .secret_key(secret_key)
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .await?;
+        let secret_key = SecretKey::from_bytes(&[1u8; 32]);
+        let server = Endpoint::builder()
+            .secret_key(secret_key)
+            .relay_mode(RelayMode::Disabled)
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .bind()
+            .await?;
+        let server_addr = server.node_addr().await?;
+        let server_task = tokio::task::spawn(async move {
+            let conn = server
+                .accept()
+                .await
+                .context("expected conn")?
+                .accept()?
+                .await?;
+            let mut uni = conn.accept_uni().await?;
+            uni.read_to_end(10).await?;
+            drop(conn);
+            anyhow::Ok(server)
+        });
+        let conn = client.connect(server_addr, TEST_ALPN).await?;
+        let mut uni = conn.open_uni().await?;
+        uni.write_all(b"helloworld").await?;
+        uni.finish()?;
+        conn.closed().await;
+        drop(conn);
+        let server = server_task.await??;
+
+        let m = client.metrics();
+        assert_eq!(m.magicsock.num_direct_conns_added.get(), 1);
+        assert_eq!(m.magicsock.connection_became_direct.get(), 1);
+        assert_eq!(m.magicsock.connection_handshake_success.get(), 1);
+        assert_eq!(m.magicsock.nodes_contacted_directly.get(), 1);
+        assert!(m.magicsock.recv_datagrams.get() > 0);
+
+        let m = server.metrics();
+        assert_eq!(m.magicsock.num_direct_conns_added.get(), 1);
+        assert_eq!(m.magicsock.connection_became_direct.get(), 1);
+        assert_eq!(m.magicsock.nodes_contacted_directly.get(), 1);
+        assert_eq!(m.magicsock.connection_handshake_success.get(), 1);
+        assert!(m.magicsock.recv_datagrams.get() > 0);
+
+        // test openmetrics encoding with labeled subregistries per endpoint
+        fn register_endpoint(registry: &mut Registry, endpoint: &Endpoint) {
+            let id = endpoint.node_id().fmt_short();
+            let sub_registry = registry.sub_registry_with_label("id", id);
+            sub_registry.register_all(endpoint.metrics());
+        }
+        let mut registry = Registry::default();
+        register_endpoint(&mut registry, &client);
+        register_endpoint(&mut registry, &server);
+        let s = registry.encode_openmetrics_to_string()?;
+        assert!(s.contains(r#"magicsock_nodes_contacted_directly_total{id="3b6a27bcce"} 1"#));
+        assert!(s.contains(r#"magicsock_nodes_contacted_directly_total{id="8a88e3dd74"} 1"#));
+        Ok(())
+    }
+
+    /// Configures the accept side to take `accept_alpns` ALPNs, then connects to it with `primary_connect_alpn`
+    /// with `secondary_connect_alpns` set, and finally returns the negotiated ALPN.
+    async fn alpn_connection_test(
+        accept_alpns: Vec<Vec<u8>>,
+        primary_connect_alpn: &[u8],
+        secondary_connect_alpns: Vec<Vec<u8>>,
+    ) -> testresult::TestResult<Option<Vec<u8>>> {
+        let client = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .await?;
+        let server = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .alpns(accept_alpns)
+            .bind()
+            .await?;
+        let server_addr = server.node_addr().await?;
+        let server_task = tokio::spawn({
+            let server = server.clone();
+            async move {
+                let incoming = server.accept().await.unwrap();
+                let conn = incoming.await?;
+                conn.close(0u32.into(), b"bye!");
+                testresult::TestResult::Ok(conn.alpn())
+            }
+        });
+
+        let conn = client
+            .connect_with_opts(
+                server_addr,
+                primary_connect_alpn,
+                ConnectOptions::new().with_additional_alpns(secondary_connect_alpns),
+            )
+            .await?;
+        let conn = conn.await?;
+        let client_alpn = conn.alpn();
+        conn.closed().await;
+        client.close().await;
+        server.close().await;
+
+        let server_alpn = server_task.await??;
+
+        assert_eq!(client_alpn, server_alpn);
+
+        Ok(server_alpn)
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn connect_multiple_alpn_negotiated() -> testresult::TestResult {
+        const ALPN_ONE: &[u8] = b"alpn/1";
+        const ALPN_TWO: &[u8] = b"alpn/2";
+
+        assert_eq!(
+            alpn_connection_test(
+                // Prefer version 2 over version 1 on the accept side
+                vec![ALPN_TWO.to_vec(), ALPN_ONE.to_vec()],
+                ALPN_TWO,
+                vec![ALPN_ONE.to_vec()],
+            )
+            .await?,
+            Some(ALPN_TWO.to_vec()),
+            "accept side prefers version 2 over 1"
+        );
+
+        assert_eq!(
+            alpn_connection_test(
+                // Only support the old version
+                vec![ALPN_ONE.to_vec()],
+                ALPN_TWO,
+                vec![ALPN_ONE.to_vec()],
+            )
+            .await?,
+            Some(ALPN_ONE.to_vec()),
+            "accept side only supports the old version"
+        );
+
+        assert_eq!(
+            alpn_connection_test(
+                vec![ALPN_TWO.to_vec(), ALPN_ONE.to_vec()],
+                ALPN_ONE,
+                vec![ALPN_TWO.to_vec()],
+            )
+            .await?,
+            Some(ALPN_TWO.to_vec()),
+            "connect side ALPN order doesn't matter"
+        );
+
+        assert_eq!(
+            alpn_connection_test(vec![ALPN_TWO.to_vec(), ALPN_ONE.to_vec()], ALPN_ONE, vec![],)
+                .await?,
+            Some(ALPN_ONE.to_vec()),
+            "connect side only supports the old version"
+        );
 
         Ok(())
     }

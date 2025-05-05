@@ -1,6 +1,8 @@
+use std::sync::Arc;
+
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use iroh::{discovery::pkarr::PkarrRelayClient, node_info::NodeInfo, SecretKey};
-use iroh_dns_server::{config::Config, server::Server, ZoneStore};
+use iroh_dns_server::{config::Config, metrics::Metrics, server::Server, ZoneStore};
 use n0_snafu::TestResult as Result;
 use rand_chacha::rand_core::SeedableRng;
 use tokio::runtime::Runtime;
@@ -8,8 +10,13 @@ use tokio::runtime::Runtime;
 const LOCALHOST_PKARR: &str = "http://localhost:8080/pkarr";
 
 async fn start_dns_server(config: Config) -> Result<Server> {
-    let store = ZoneStore::persistent(Config::signed_packet_store_path()?, Default::default())?;
-    Server::spawn(config, store).await
+    let metrics = Arc::new(Metrics::default());
+    let store = ZoneStore::persistent(
+        Config::signed_packet_store_path()?,
+        Default::default(),
+        metrics.clone(),
+    )?;
+    Server::spawn(config, store, metrics).await
 }
 
 fn benchmark_dns_server(c: &mut Criterion) {

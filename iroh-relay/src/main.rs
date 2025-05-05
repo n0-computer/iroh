@@ -734,54 +734,6 @@ async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig<std::io::
     })
 }
 
-mod metrics {
-    use iroh_metrics::{
-        core::{Counter, Metric},
-        struct_iterable::Iterable,
-    };
-
-    /// StunMetrics tracked for the relay server
-    #[allow(missing_docs)]
-    #[derive(Debug, Clone, Iterable)]
-    pub struct StunMetrics {
-        /*
-         * Metrics about STUN requests over ipv6
-         */
-        /// Number of stun requests made
-        pub requests: Counter,
-        /// Number of successful requests over ipv4
-        pub ipv4_success: Counter,
-        /// Number of successful requests over ipv6
-        pub ipv6_success: Counter,
-
-        /// Number of bad requests, either non-stun packets or incorrect binding request
-        pub bad_requests: Counter,
-        /// Number of failures
-        pub failures: Counter,
-    }
-
-    impl Default for StunMetrics {
-        fn default() -> Self {
-            Self {
-                /*
-                 * Metrics about STUN requests
-                 */
-                requests: Counter::new("Number of STUN requests made to the server."),
-                ipv4_success: Counter::new("Number of successful ipv4 STUN requests served."),
-                ipv6_success: Counter::new("Number of successful ipv6 STUN requests served."),
-                bad_requests: Counter::new("Number of bad requests made to the STUN endpoint."),
-                failures: Counter::new("Number of STUN requests that end in failure."),
-            }
-        }
-    }
-
-    impl Metric for StunMetrics {
-        fn name() -> &'static str {
-            "stun"
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::num::NonZeroU32;

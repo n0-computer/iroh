@@ -6,7 +6,6 @@ use std::{
 };
 
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
-use iroh_metrics::inc;
 use n0_future::time::Instant;
 use serde::{Deserialize, Serialize};
 use stun_rs::TransactionId;
@@ -16,9 +15,7 @@ use self::{
     best_addr::ClearReason,
     node_state::{NodeState, Options, PingHandled},
 };
-use super::{
-    metrics::Metrics as MagicsockMetrics, ActorMessage, DiscoMessageSource, NodeIdMappedAddr,
-};
+use super::{metrics::Metrics, ActorMessage, DiscoMessageSource, NodeIdMappedAddr};
 #[cfg(any(test, feature = "test-utils"))]
 use crate::endpoint::PathSelection;
 use crate::{
@@ -55,7 +52,7 @@ const MAX_INACTIVE_NODES: usize = 30;
 ///   These come and go as the node moves around on the internet
 ///
 /// An index of nodeInfos by node key, NodeIdMappedAddr, and discovered ip:port endpoints.
-#[derive(Default, Debug)]
+#[derive(Debug, Default)]
 pub(super) struct NodeMap {
     inner: Mutex<NodeMapInner>,
 }
@@ -129,14 +126,18 @@ pub enum Source {
 impl NodeMap {
     #[cfg(not(any(test, feature = "test-utils")))]
     /// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
-    pub(super) fn load_from_vec(nodes: Vec<NodeAddr>) -> Self {
-        Self::from_inner(NodeMapInner::load_from_vec(nodes))
+    pub(super) fn load_from_vec(nodes: Vec<NodeAddr>, metrics: &Metrics) -> Self {
+        Self::from_inner(NodeMapInner::load_from_vec(nodes, metrics))
     }
 
     #[cfg(any(test, feature = "test-utils"))]
     /// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
-    pub(super) fn load_from_vec(nodes: Vec<NodeAddr>, path_selection: PathSelection) -> Self {
-        Self::from_inner(NodeMapInner::load_from_vec(nodes, path_selection))
+    pub(super) fn load_from_vec(
+        nodes: Vec<NodeAddr>,
+        path_selection: PathSelection,
+        metrics: &Metrics,
+    ) -> Self {
+        Self::from_inner(NodeMapInner::load_from_vec(nodes, path_selection, metrics))
     }
 
     fn from_inner(inner: NodeMapInner) -> Self {
@@ -146,11 +147,11 @@ impl NodeMap {
     }
 
     /// Add the contact information for a node.
-    pub(super) fn add_node_addr(&self, node_addr: NodeAddr, source: Source) {
+    pub(super) fn add_node_addr(&self, node_addr: NodeAddr, source: Source, metrics: &Metrics) {
         self.inner
             .lock()
             .expect("poisoned")
-            .add_node_addr(node_addr, source)
+            .add_node_addr(node_addr, source, metrics)
     }
 
     /// Number of nodes currently listed.
@@ -239,11 +240,12 @@ impl NodeMap {
         &self,
         sender: PublicKey,
         cm: CallMeMaybe,
+        metrics: &Metrics,
     ) -> Vec<PingAction> {
         self.inner
             .lock()
             .expect("poisoned")
-            .handle_call_me_maybe(sender, cm)
+            .handle_call_me_maybe(sender, cm, metrics)
     }
 
     #[allow(clippy::type_complexity)]
@@ -251,6 +253,7 @@ impl NodeMap {
         &self,
         addr: NodeIdMappedAddr,
         have_ipv6: bool,
+        metrics: &Metrics,
     ) -> Option<(
         PublicKey,
         Option<SocketAddr>,
@@ -261,7 +264,7 @@ impl NodeMap {
         let ep = inner.get_mut(NodeStateKey::NodeIdMappedAddr(addr))?;
         let public_key = *ep.public_key();
         trace!(dest = %addr, node_id = %public_key.fmt_short(), "dst mapped to NodeId");
-        let (udp_addr, relay_url, msgs) = ep.get_send_addrs(have_ipv6);
+        let (udp_addr, relay_url, msgs) = ep.get_send_addrs(have_ipv6, metrics);
         Some((public_key, udp_addr, relay_url, msgs))
     }
 
@@ -331,30 +334,34 @@ impl NodeMap {
 impl NodeMapInner {
     #[cfg(not(any(test, feature = "test-utils")))]
     /// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
-    fn load_from_vec(nodes: Vec<NodeAddr>) -> Self {
+    fn load_from_vec(nodes: Vec<NodeAddr>, metrics: &Metrics) -> Self {
         let mut me = Self::default();
         for node_addr in nodes {
-            me.add_node_addr(node_addr, Source::Saved);
+            me.add_node_addr(node_addr, Source::Saved, metrics);
         }
         me
     }
 
     #[cfg(any(test, feature = "test-utils"))]
     /// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
-    fn load_from_vec(nodes: Vec<NodeAddr>, path_selection: PathSelection) -> Self {
+    fn load_from_vec(
+        nodes: Vec<NodeAddr>,
+        path_selection: PathSelection,
+        metrics: &Metrics,
+    ) -> Self {
         let mut me = Self {
             path_selection,
             ..Default::default()
         };
         for node_addr in nodes {
-            me.add_node_addr(node_addr, Source::Saved);
+            me.add_node_addr(node_addr, Source::Saved, metrics);
         }
         me
     }
 
     /// Add the contact information for a node.
     #[instrument(skip_all, fields(node = %node_addr.node_id.fmt_short()))]
-    fn add_node_addr(&mut self, node_addr: NodeAddr, source: Source) {
+    fn add_node_addr(&mut self, node_addr: NodeAddr, source: Source, metrics: &Metrics) {
         let source0 = source.clone();
         let node_id = node_addr.node_id;
         let relay_url = node_addr.relay_url.clone();
@@ -372,6 +379,7 @@ impl NodeMapInner {
             node_addr.relay_url.as_ref(),
             &node_addr.direct_addresses,
             source0,
+            metrics,
         );
         let id = node_state.id();
         for addr in node_addr.direct_addresses() {
@@ -515,7 +523,12 @@ impl NodeMapInner {
     }
 
     #[must_use = "actions must be handled"]
-    fn handle_call_me_maybe(&mut self, sender: NodeId, cm: CallMeMaybe) -> Vec<PingAction> {
+    fn handle_call_me_maybe(
+        &mut self,
+        sender: NodeId,
+        cm: CallMeMaybe,
+        metrics: &Metrics,
+    ) -> Vec<PingAction> {
         let ns_id = NodeStateKey::NodeId(sender);
         if let Some(id) = self.get_id(ns_id.clone()) {
             for number in &cm.my_numbers {
@@ -525,8 +538,8 @@ impl NodeMapInner {
         }
         match self.get_mut(ns_id) {
             None => {
-                inc!(MagicsockMetrics, recv_disco_call_me_maybe_bad_disco);
                 debug!("received call-me-maybe: ignore, node is unknown");
+                metrics.recv_disco_call_me_maybe_bad_disco.inc();
                 vec![]
             }
             Some(ns) => {
@@ -710,6 +723,7 @@ mod tests {
                 Source::NamedApp {
                     name: "test".into(),
                 },
+                &Default::default(),
             )
         }
     }
@@ -755,7 +769,8 @@ mod tests {
                 Some(addr)
             })
             .collect();
-        let loaded_node_map = NodeMap::load_from_vec(addrs.clone(), PathSelection::default());
+        let loaded_node_map =
+            NodeMap::load_from_vec(addrs.clone(), PathSelection::default(), &Default::default());
 
         let mut loaded: Vec<NodeAddr> = loaded_node_map
             .list_remote_infos(Instant::now())

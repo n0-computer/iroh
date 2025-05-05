@@ -3,7 +3,6 @@
 use std::{collections::BTreeMap, num::NonZeroUsize, path::Path, sync::Arc, time::Duration};
 
 use hickory_server::proto::rr::{Name, RecordSet, RecordType, RrKey};
-use iroh_metrics::inc;
 use lru::LruCache;
 use n0_snafu::TestResult as Result;
 use pkarr::{Client as PkarrClient, SignedPacket};
@@ -41,19 +40,24 @@ pub struct ZoneStore {
     cache: Arc<Mutex<ZoneCache>>,
     store: Arc<SignedPacketStore>,
     pkarr: Option<Arc<PkarrClient>>,
+    metrics: Arc<Metrics>,
 }
 
 impl ZoneStore {
     /// Create a persistent store
-    pub fn persistent(path: impl AsRef<Path>, options: ZoneStoreOptions) -> Result<Self> {
-        let packet_store = SignedPacketStore::persistent(path, options)?;
-        Ok(Self::new(packet_store))
+    pub fn persistent(
+        path: impl AsRef<Path>,
+        options: ZoneStoreOptions,
+        metrics: Arc<Metrics>,
+    ) -> Result<Self> {
+        let packet_store = SignedPacketStore::persistent(path, options, metrics.clone())?;
+        Ok(Self::new(packet_store, metrics))
     }
 
     /// Create an in-memory store.
-    pub fn in_memory(options: ZoneStoreOptions) -> Result<Self> {
-        let packet_store = SignedPacketStore::in_memory(options)?;
-        Ok(Self::new(packet_store))
+    pub fn in_memory(options: ZoneStoreOptions, metrics: Arc<Metrics>) -> Result<Self> {
+        let packet_store = SignedPacketStore::in_memory(options, metrics.clone())?;
+        Ok(Self::new(packet_store, metrics))
     }
 
     /// Configure a pkarr client for resolution of packets from the bittorrent mainline DHT.
@@ -77,12 +81,13 @@ impl ZoneStore {
     }
 
     /// Create a new zone store.
-    pub fn new(store: SignedPacketStore) -> Self {
+    pub fn new(store: SignedPacketStore, metrics: Arc<Metrics>) -> Self {
         let zone_cache = ZoneCache::new(DEFAULT_CACHE_CAPACITY);
         Self {
             store: Arc::new(store),
             cache: Arc::new(Mutex::new(zone_cache)),
             pkarr: None,
+            metrics,
         }
     }
 
@@ -144,11 +149,11 @@ impl ZoneStore {
     pub async fn insert(&self, signed_packet: SignedPacket, _source: PacketSource) -> Result<bool> {
         let pubkey = PublicKeyBytes::from_signed_packet(&signed_packet);
         if self.store.upsert(signed_packet).await? {
-            inc!(Metrics, pkarr_publish_update);
+            self.metrics.pkarr_publish_update.inc();
             self.cache.lock().await.remove(&pubkey);
             Ok(true)
         } else {
-            inc!(Metrics, pkarr_publish_noop);
+            self.metrics.pkarr_publish_noop.inc();
             Ok(false)
         }
     }
