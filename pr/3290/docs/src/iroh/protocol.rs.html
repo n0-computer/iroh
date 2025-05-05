@@ -495,9 +495,7 @@
 <a href="#494" id="494">494</a>
 <a href="#495" id="495">495</a>
 <a href="#496" id="496">496</a>
-<a href="#497" id="497">497</a>
-<a href="#498" id="498">498</a>
-<a href="#499" id="499">499</a></pre></div><pre class="rust"><code><span class="doccomment">//! Tools for spawning an accept loop that routes incoming requests to the right protocol.
+<a href="#497" id="497">497</a></pre></div><pre class="rust"><code><span class="doccomment">//! Tools for spawning an accept loop that routes incoming requests to the right protocol.
 //!
 //! ## Example
 //!
@@ -511,8 +509,7 @@
 //!
 //! let router = Router::builder(endpoint)
 //!     .accept(b"/my/alpn", Echo)
-//!     .spawn()
-//!     .await?;
+//!     .spawn();
 //! # Ok(())
 //! # }
 //!
@@ -577,8 +574,7 @@
 ///
 /// let router = Router::builder(endpoint)
 ///     // .accept(&amp;ALPN, &lt;something&gt;)
-///     .spawn()
-///     .await?;
+///     .spawn();
 ///
 /// // wait until the user wants to
 /// tokio::signal::ctrl_c().await?;
