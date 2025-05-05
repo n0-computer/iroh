@@ -395,8 +395,7 @@
 <a href="#394" id="394">394</a>
 <a href="#395" id="395">395</a>
 <a href="#396" id="396">396</a>
-<a href="#397" id="397">397</a>
-<a href="#398" id="398">398</a></pre></div><pre class="rust"><code><span class="doccomment">//! STUN packets sending and receiving.
+<a href="#397" id="397">397</a></pre></div><pre class="rust"><code><span class="doccomment">//! STUN packets sending and receiving.
 
 </span><span class="kw">use </span>std::net::SocketAddr;
 
@@ -420,7 +419,6 @@
 <span class="attr">#[allow(missing_docs)]
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
-#[snafu(visibility(<span class="kw">pub</span>(<span class="kw">crate</span>)))]
 </span><span class="kw">pub enum </span>Error {
     <span class="doccomment">/// The STUN message could not be parsed or is otherwise invalid.
     </span><span class="attr">#[snafu(display(<span class="string">"invalid message"</span>))]

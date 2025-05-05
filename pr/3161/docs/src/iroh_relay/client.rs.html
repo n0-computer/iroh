@@ -447,9 +447,7 @@
 <a href="#446" id="446">446</a>
 <a href="#447" id="447">447</a>
 <a href="#448" id="448">448</a>
-<a href="#449" id="449">449</a>
-<a href="#450" id="450">450</a>
-<a href="#451" id="451">451</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
+<a href="#449" id="449">449</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
 //!
 //! Based on tailscale/derp/derphttp/derphttp_client.go
 
@@ -498,7 +496,6 @@
 <span class="attr">#[allow(missing_docs)]
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
-#[snafu(visibility(<span class="kw">pub</span>(<span class="kw">crate</span>)))]
 </span><span class="kw">pub enum </span>ConnectError {
     <span class="attr">#[snafu(display(<span class="string">"Invalid URL for websocket: {url}"</span>))]
     </span>InvalidWebsocketUrl { url: Url },
@@ -539,7 +536,6 @@
 <span class="attr">#[allow(missing_docs)]
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
-#[snafu(visibility(<span class="kw">pub</span>(<span class="kw">crate</span>)))]
 </span><span class="kw">pub enum </span>DialError {
     <span class="attr">#[snafu(display(<span class="string">"Invliad target port"</span>))]
     </span>InvalidTargetPort {},

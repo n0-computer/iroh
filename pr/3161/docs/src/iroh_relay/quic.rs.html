@@ -519,9 +519,7 @@
 <a href="#518" id="518">518</a>
 <a href="#519" id="519">519</a>
 <a href="#520" id="520">520</a>
-<a href="#521" id="521">521</a>
-<a href="#522" id="522">522</a>
-<a href="#523" id="523">523</a></pre></div><pre class="rust"><code><span class="doccomment">//! Create a QUIC server that accepts connections
+<a href="#521" id="521">521</a></pre></div><pre class="rust"><code><span class="doccomment">//! Create a QUIC server that accepts connections
 //! for QUIC address discovery.
 </span><span class="kw">use </span>std::{net::SocketAddr, sync::Arc};
 
@@ -562,7 +560,6 @@
     </span><span class="attr">#[allow(missing_docs)]
     #[derive(Debug, Snafu)]
     #[non_exhaustive]
-    #[snafu(visibility(<span class="kw">pub</span>(<span class="kw">crate</span>)))]
     </span><span class="kw">pub enum </span>QuicSpawnError {
         <span class="attr">#[snafu(transparent)]
         </span>NoInitialCipherSuite {
@@ -760,7 +757,6 @@
 <span class="attr">#[allow(missing_docs)]
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
-#[snafu(visibility(<span class="kw">pub</span>(<span class="kw">crate</span>)))]
 </span><span class="kw">pub enum </span>Error {
     <span class="attr">#[snafu(transparent)]
     </span>Connect { source: quinn::ConnectError },
