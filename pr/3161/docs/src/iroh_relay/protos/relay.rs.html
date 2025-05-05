@@ -1592,7 +1592,7 @@
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>data_encoding::HEXLOWER;
-    <span class="kw">use </span>testresult::TestResult;
+    <span class="kw">use </span>n0_snafu::{TestResult, TestResultExt};
     <span class="kw">use </span>tokio_util::codec::{FramedRead, FramedWrite};
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
@@ -1609,7 +1609,7 @@
             problem: expect_buf.to_vec().into(),
         };
         write_frame(<span class="kw-2">&amp;mut </span>writer, expected_frame.clone(), <span class="prelude-val">None</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-        writer.flush().<span class="kw">await</span><span class="question-mark">?</span>;
+        writer.flush().<span class="kw">await</span>.context(<span class="string">"flush"</span>)<span class="question-mark">?</span>;
         <span class="macro">println!</span>(<span class="string">"{:?}"</span>, reader);
         <span class="kw">let </span>buf = recv_frame(FrameType::Health, <span class="kw-2">&amp;mut </span>reader).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="macro">assert_eq!</span>(expect_buf.len(), buf.len());
@@ -1642,7 +1642,7 @@
         <span class="kw">let </span>client_info = ClientInfo {
             version: PROTOCOL_VERSION,
         };
-        <span class="kw">let </span>message = postcard::to_stdvec(<span class="kw-2">&amp;</span>client_info)<span class="question-mark">?</span>;
+        <span class="kw">let </span>message = postcard::to_stdvec(<span class="kw-2">&amp;</span>client_info).context(<span class="string">"encode"</span>)<span class="question-mark">?</span>;
         <span class="kw">let </span>signature = client_key.sign(<span class="kw-2">&amp;</span>message);
 
         <span class="kw">let </span>frames = <span class="macro">vec!</span>[

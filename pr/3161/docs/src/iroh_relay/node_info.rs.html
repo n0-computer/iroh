@@ -798,7 +798,9 @@
 <a href="#797" id="797">797</a>
 <a href="#798" id="798">798</a>
 <a href="#799" id="799">799</a>
-<a href="#800" id="800">800</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
+<a href="#800" id="800">800</a>
+<a href="#801" id="801">801</a>
+<a href="#802" id="802">802</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
 //!
 //! Dialing by [`NodeId`] is supported by iroh nodes publishing [Pkarr] records to DNS
 //! servers or the Mainline DHT.  This module supports creating and parsing these records.
@@ -1488,7 +1490,7 @@
         Name,
     };
     <span class="kw">use </span>iroh_base::{NodeId, SecretKey};
-    <span class="kw">use </span>testresult::TestResult;
+    <span class="kw">use </span>n0_snafu::{TestResult, TestResultExt};
 
     <span class="kw">use super</span>::{NodeData, NodeIdExt, NodeInfo};
 
@@ -1533,7 +1535,8 @@
     </span><span class="kw">fn </span>test_from_hickory_lookup() -&gt; TestResult {
         <span class="kw">let </span>name = Name::from_utf8(
             <span class="string">"_iroh.dgjpkxyn3zyrk3zfads5duwdgbqpkwbjxfj4yt7rezidr3fijccy.dns.iroh.link."</span>,
-        )<span class="question-mark">?</span>;
+        )
+        .context(<span class="string">"dns name"</span>)<span class="question-mark">?</span>;
         <span class="kw">let </span>query = Query::query(name.clone(), RecordType::TXT);
         <span class="kw">let </span>records = [
             Record::from_rdata(
@@ -1557,7 +1560,8 @@
                         </span><span class="string">"a55f26132e5e43de834d534332f66a20d480c3e50a13a312a071adea6569981e"
                     </span>)<span class="question-mark">?
                     </span>.to_z32()
-                ))<span class="question-mark">?</span>,
+                ))
+                .context(<span class="string">"name"</span>)<span class="question-mark">?</span>,
                 <span class="number">30</span>,
                 RData::TXT(TXT::new(<span class="macro">vec!</span>[
                     <span class="string">"relay=https://euw1-1.relay.iroh.network./"</span>.to_string()
@@ -1565,7 +1569,7 @@
             ),
             <span class="comment">// Test a record with a completely different name
             </span>Record::from_rdata(
-                Name::from_utf8(<span class="string">"dns.iroh.link."</span>)<span class="question-mark">?</span>,
+                Name::from_utf8(<span class="string">"dns.iroh.link."</span>).context(<span class="string">"name"</span>)<span class="question-mark">?</span>,
                 <span class="number">30</span>,
                 RData::TXT(TXT::new(<span class="macro">vec!</span>[
                     <span class="string">"relay=https://euw1-1.relay.iroh.network./"</span>.to_string()
@@ -1589,8 +1593,8 @@
         )<span class="question-mark">?</span>)
         .with_relay_url(<span class="prelude-val">Some</span>(<span class="string">"https://euw1-1.relay.iroh.network./"</span>.parse()<span class="question-mark">?</span>))
         .with_direct_addresses(BTreeSet::from([
-            <span class="string">"192.168.96.145:60165"</span>.parse()<span class="question-mark">?</span>,
-            <span class="string">"213.208.157.87:60165"</span>.parse()<span class="question-mark">?</span>,
+            <span class="string">"192.168.96.145:60165"</span>.parse().unwrap(),
+            <span class="string">"213.208.157.87:60165"</span>.parse().unwrap(),
         ]));
 
         <span class="macro">assert_eq!</span>(node_info, expected_node_info);

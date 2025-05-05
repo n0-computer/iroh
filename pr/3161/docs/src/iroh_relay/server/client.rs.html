@@ -887,7 +887,14 @@
 <a href="#886" id="886">886</a>
 <a href="#887" id="887">887</a>
 <a href="#888" id="888">888</a>
-<a href="#889" id="889">889</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
+<a href="#889" id="889">889</a>
+<a href="#890" id="890">890</a>
+<a href="#891" id="891">891</a>
+<a href="#892" id="892">892</a>
+<a href="#893" id="893">893</a>
+<a href="#894" id="894">894</a>
+<a href="#895" id="895">895</a>
+<a href="#896" id="896">896</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
 
 </span><span class="kw">use </span>std::{
     collections::HashSet, future::Future, num::NonZeroU32, pin::Pin, sync::Arc, task::Poll,
@@ -900,7 +907,7 @@
 <span class="kw">use </span>n0_future::{FutureExt, Sink, SinkExt, Stream, StreamExt};
 <span class="kw">use </span>nested_enum_utils::common_fields;
 <span class="kw">use </span>rand::Rng;
-<span class="kw">use </span>snafu::{Backtrace, ResultExt, Snafu};
+<span class="kw">use </span>snafu::{Backtrace, Snafu};
 <span class="kw">use </span>time::{Date, OffsetDateTime};
 <span class="kw">use </span>tokio::{
     sync::mpsc::{<span class="self">self</span>, error::TrySendError},
@@ -1219,6 +1226,8 @@
     }
 
     <span class="kw">async fn </span>run_inner(<span class="kw-2">&amp;mut </span><span class="self">self</span>, done: CancellationToken) -&gt; <span class="prelude-ty">Result</span>&lt;(), RunError&gt; {
+        <span class="kw">use </span>snafu::ResultExt;
+
         <span class="comment">// Add some jitter to ping pong interactions, to avoid all pings being sent at the same time
         </span><span class="kw">let </span>next_interval = || {
             <span class="kw">let </span>random_secs = rand::rngs::OsRng.gen_range(<span class="number">1</span>..=<span class="number">5</span>);
@@ -1591,7 +1600,7 @@
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>bytes::Bytes;
     <span class="kw">use </span>iroh_base::SecretKey;
-    <span class="kw">use </span>testresult::TestResult;
+    <span class="kw">use </span>n0_snafu::{TestResult, TestResultExt};
     <span class="kw">use </span>tokio_util::codec::Framed;
     <span class="kw">use </span>tracing::info;
     <span class="kw">use </span>tracing_test::traced_test;
@@ -1643,7 +1652,7 @@
             src: node_id,
             data: Bytes::from(<span class="kw-2">&amp;</span>data[..]),
         };
-        send_queue_s.send(packet.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
+        send_queue_s.send(packet.clone()).<span class="kw">await</span>.context(<span class="string">"send"</span>)<span class="question-mark">?</span>;
         <span class="kw">let </span>frame = recv_frame(FrameType::RecvPacket, <span class="kw-2">&amp;mut </span>io_rw).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="macro">assert_eq!</span>(
             frame,
@@ -1655,7 +1664,10 @@
 
         <span class="comment">// send disco packet
         </span><span class="macro">println!</span>(<span class="string">"  send disco packet"</span>);
-        disco_send_queue_s.send(packet.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
+        disco_send_queue_s
+            .send(packet.clone())
+            .<span class="kw">await
+            </span>.context(<span class="string">"send"</span>)<span class="question-mark">?</span>;
         <span class="kw">let </span>frame = recv_frame(FrameType::RecvPacket, <span class="kw-2">&amp;mut </span>io_rw).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="macro">assert_eq!</span>(
             frame,
@@ -1667,7 +1679,7 @@
 
         <span class="comment">// send peer_gone
         </span><span class="macro">println!</span>(<span class="string">"send peer gone"</span>);
-        peer_gone_s.send(node_id).<span class="kw">await</span><span class="question-mark">?</span>;
+        peer_gone_s.send(node_id).<span class="kw">await</span>.context(<span class="string">"send"</span>)<span class="question-mark">?</span>;
         <span class="kw">let </span>frame = recv_frame(FrameType::PeerGone, <span class="kw-2">&amp;mut </span>io_rw).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="macro">assert_eq!</span>(frame, Frame::NodeGone { node_id });
 
@@ -1693,7 +1705,8 @@
                 dst_key: target,
                 packet: Bytes::from_static(data),
             })
-            .<span class="kw">await</span><span class="question-mark">?</span>;
+            .<span class="kw">await
+            </span>.context(<span class="string">"send"</span>)<span class="question-mark">?</span>;
 
         <span class="comment">// send disco packet
         </span><span class="macro">println!</span>(<span class="string">"  send disco packet"</span>);
@@ -1706,10 +1719,11 @@
                 dst_key: target,
                 packet: disco_data.clone().into(),
             })
-            .<span class="kw">await</span><span class="question-mark">?</span>;
+            .<span class="kw">await
+            </span>.context(<span class="string">"send"</span>)<span class="question-mark">?</span>;
 
         done.cancel();
-        handle.<span class="kw">await</span><span class="question-mark">?</span>;
+        handle.<span class="kw">await</span>.context(<span class="string">"join"</span>)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(())
     }
 
@@ -1720,7 +1734,7 @@
         <span class="kw">const </span>MAX_FRAMES: u32 = <span class="number">100</span>;
 
         <span class="comment">// Rate limiter allowing LIMIT bytes/s
-        </span><span class="kw">let </span>quota = governor::Quota::per_second(NonZeroU32::try_from(LIMIT)<span class="question-mark">?</span>);
+        </span><span class="kw">let </span>quota = governor::Quota::per_second(NonZeroU32::try_from(LIMIT).unwrap());
         <span class="kw">let </span>limiter = governor::RateLimiter::direct(quota);
 
         <span class="comment">// Build the rate limited stream.
@@ -1744,8 +1758,8 @@
 
         <span class="comment">// Send a frame, it should arrive.
         </span><span class="macro">info!</span>(<span class="string">"-- send packet"</span>);
-        frame_writer.send(frame.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
-        frame_writer.flush().<span class="kw">await</span><span class="question-mark">?</span>;
+        frame_writer.send(frame.clone()).<span class="kw">await</span>.context(<span class="string">"send"</span>)<span class="question-mark">?</span>;
+        frame_writer.flush().<span class="kw">await</span>.context(<span class="string">"flush"</span>)<span class="question-mark">?</span>;
         <span class="kw">let </span>recv_frame = tokio::time::timeout(Duration::from_millis(<span class="number">500</span>), stream.next())
             .<span class="kw">await
             </span>.expect(<span class="string">"timeout"</span>)
@@ -1755,8 +1769,8 @@
 
         <span class="comment">// Next frame does not arrive.
         </span><span class="macro">info!</span>(<span class="string">"-- send packet"</span>);
-        frame_writer.send(frame.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
-        frame_writer.flush().<span class="kw">await</span><span class="question-mark">?</span>;
+        frame_writer.send(frame.clone()).<span class="kw">await</span>.context(<span class="string">"send"</span>)<span class="question-mark">?</span>;
+        frame_writer.flush().<span class="kw">await</span>.context(<span class="string">"flush"</span>)<span class="question-mark">?</span>;
         <span class="kw">let </span>res = tokio::time::timeout(Duration::from_millis(<span class="number">100</span>), stream.next()).<span class="kw">await</span>;
         <span class="macro">assert!</span>(res.is_err(), <span class="string">"expecting a timeout"</span>);
         <span class="macro">info!</span>(<span class="string">"-- timeout happened"</span>);

@@ -283,7 +283,9 @@
 <a href="#282" id="282">282</a>
 <a href="#283" id="283">283</a>
 <a href="#284" id="284">284</a>
-<a href="#285" id="285">285</a></pre></div><pre class="rust"><code><span class="doccomment">//! The "Server" side of the client. Uses the `ClientConnManager`.
+<a href="#285" id="285">285</a>
+<a href="#286" id="286">286</a>
+<a href="#287" id="287">287</a></pre></div><pre class="rust"><code><span class="doccomment">//! The "Server" side of the client. Uses the `ClientConnManager`.
 </span><span class="comment">// Based on tailscale/derp/derp_server.go
 
 </span><span class="kw">use </span>std::{
@@ -487,6 +489,7 @@
 
     <span class="kw">use </span>bytes::Bytes;
     <span class="kw">use </span>iroh_base::SecretKey;
+    <span class="kw">use </span>n0_snafu::{TestResult, TestResultExt};
     <span class="kw">use </span>tokio::io::DuplexStream;
     <span class="kw">use </span>tokio_util::codec::{Framed, FramedRead};
 
@@ -514,7 +517,7 @@
     }
 
     <span class="attr">#[tokio::test]
-    </span><span class="kw">async fn </span>test_clients() -&gt; anyhow::Result&lt;()&gt; {
+    </span><span class="kw">async fn </span>test_clients() -&gt; TestResult {
         <span class="kw">let </span>a_key = SecretKey::generate(rand::thread_rng()).public();
         <span class="kw">let </span>b_key = SecretKey::generate(rand::thread_rng()).public();
 
@@ -562,7 +565,8 @@
                 tokio::time::sleep(Duration::from_millis(<span class="number">100</span>)).<span class="kw">await</span>;
             }
         })
-        .<span class="kw">await</span><span class="question-mark">?</span>;
+        .<span class="kw">await
+        </span>.context(<span class="string">"timeout"</span>)<span class="question-mark">?</span>;
         clients.shutdown().<span class="kw">await</span>;
 
         <span class="prelude-val">Ok</span>(())

@@ -519,7 +519,21 @@
 <a href="#518" id="518">518</a>
 <a href="#519" id="519">519</a>
 <a href="#520" id="520">520</a>
-<a href="#521" id="521">521</a></pre></div><pre class="rust"><code><span class="doccomment">//! Create a QUIC server that accepts connections
+<a href="#521" id="521">521</a>
+<a href="#522" id="522">522</a>
+<a href="#523" id="523">523</a>
+<a href="#524" id="524">524</a>
+<a href="#525" id="525">525</a>
+<a href="#526" id="526">526</a>
+<a href="#527" id="527">527</a>
+<a href="#528" id="528">528</a>
+<a href="#529" id="529">529</a>
+<a href="#530" id="530">530</a>
+<a href="#531" id="531">531</a>
+<a href="#532" id="532">532</a>
+<a href="#533" id="533">533</a>
+<a href="#534" id="534">534</a>
+<a href="#535" id="535">535</a></pre></div><pre class="rust"><code><span class="doccomment">//! Create a QUIC server that accepts connections
 //! for QUIC address discovery.
 </span><span class="kw">use </span>std::{net::SocketAddr, sync::Arc};
 
@@ -831,7 +845,7 @@
         // tokio::select! {
         //     _ = cancel.cancelled() =&gt; {
         //         conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
-        //         anyhow::bail!("QUIC address discovery canceled early");
+        //         bail!("QUIC address discovery canceled early");
         //     },
         //     res = external_addresses.wait_for(|addr| addr.is_some()) =&gt; {
         //         let addr = res?.expect("checked");
@@ -864,8 +878,8 @@
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>std::net::Ipv4Addr;
 
-    <span class="kw">use </span>anyhow::Context;
     <span class="kw">use </span>n0_future::{task::AbortOnDropHandle, time};
+    <span class="kw">use </span>n0_snafu::{TestError, TestResult, TestResultExt};
     <span class="kw">use </span>quinn::crypto::rustls::QuicServerConfig;
     <span class="kw">use </span>tokio::time::Instant;
     <span class="kw">use </span>tracing::{debug, info, info_span, Instrument};
@@ -879,8 +893,8 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>quic_endpoint_basic() -&gt; anyhow::Result&lt;()&gt; {
-        <span class="kw">let </span>host: Ipv4Addr = <span class="string">"127.0.0.1"</span>.parse()<span class="question-mark">?</span>;
+    </span><span class="kw">async fn </span>quic_endpoint_basic() -&gt; TestResult {
+        <span class="kw">let </span>host: Ipv4Addr = <span class="string">"127.0.0.1"</span>.parse().unwrap();
         <span class="comment">// create a server config with self signed certificates
         </span><span class="kw">let </span>(<span class="kw">_</span>, server_config) = <span class="kw">super</span>::<span class="kw">super</span>::server::testing::self_signed_tls_certs_and_config();
         <span class="kw">let </span>bind_addr = SocketAddr::new(host.into(), <span class="number">0</span>);
@@ -890,8 +904,9 @@
         })<span class="question-mark">?</span>;
 
         <span class="comment">// create a client-side endpoint
-        </span><span class="kw">let </span>client_endpoint = quinn::Endpoint::client(SocketAddr::new(host.into(), <span class="number">0</span>))<span class="question-mark">?</span>;
-        <span class="kw">let </span>client_addr = client_endpoint.local_addr()<span class="question-mark">?</span>;
+        </span><span class="kw">let </span>client_endpoint =
+            quinn::Endpoint::client(SocketAddr::new(host.into(), <span class="number">0</span>)).context(<span class="string">"client"</span>)<span class="question-mark">?</span>;
+        <span class="kw">let </span>client_addr = client_endpoint.local_addr().context(<span class="string">"local addr"</span>)<span class="question-mark">?</span>;
 
         <span class="comment">// create the client configuration used for the client endpoint when they
         // initiate a connection with the server
@@ -913,15 +928,18 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_qad_client_closes_unresponsive_fast() -&gt; anyhow::Result&lt;()&gt; {
+    </span><span class="kw">async fn </span>test_qad_client_closes_unresponsive_fast() -&gt; TestResult {
         <span class="comment">// create a client-side endpoint
         </span><span class="kw">let </span>client_endpoint =
-            quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), <span class="number">0</span>))<span class="question-mark">?</span>;
+            quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), <span class="number">0</span>))
+                .context(<span class="string">"client"</span>)<span class="question-mark">?</span>;
 
         <span class="comment">// create an socket that does not respond.
         </span><span class="kw">let </span>server_socket =
-            tokio::net::UdpSocket::bind(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), <span class="number">0</span>)).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>server_addr = server_socket.local_addr()<span class="question-mark">?</span>;
+            tokio::net::UdpSocket::bind(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), <span class="number">0</span>))
+                .<span class="kw">await
+                </span>.context(<span class="string">"bind"</span>)<span class="question-mark">?</span>;
+        <span class="kw">let </span>server_addr = server_socket.local_addr().context(<span class="string">"local addr"</span>)<span class="question-mark">?</span>;
 
         <span class="comment">// create the client configuration used for the client endpoint when they
         // initiate a connection with the server
@@ -962,24 +980,28 @@
     /// all packets on the server-side for 2 seconds.
     </span><span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_qad_connect_delayed() -&gt; anyhow::Result&lt;()&gt; {
+    </span><span class="kw">async fn </span>test_qad_connect_delayed() -&gt; TestResult {
         <span class="comment">// Create a socket for our QAD server.  We need the socket separately because we
         // need to pop off messages before we attach it to the Quinn Endpoint.
-        </span><span class="kw">let </span>socket =
-            tokio::net::UdpSocket::bind(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), <span class="number">0</span>)).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>server_addr = socket.local_addr()<span class="question-mark">?</span>;
+        </span><span class="kw">let </span>socket = tokio::net::UdpSocket::bind(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), <span class="number">0</span>))
+            .<span class="kw">await
+            </span>.context(<span class="string">"bind"</span>)<span class="question-mark">?</span>;
+        <span class="kw">let </span>server_addr = socket.local_addr().context(<span class="string">"local addr"</span>)<span class="question-mark">?</span>;
         <span class="macro">info!</span>(addr = <span class="question-mark">?</span>server_addr, <span class="string">"server socket bound"</span>);
 
         <span class="comment">// Create a QAD server with a self-signed cert, all manually.
-        </span><span class="kw">let </span>cert = rcgen::generate_simple_self_signed(<span class="macro">vec!</span>[<span class="string">"localhost"</span>.into()])<span class="question-mark">?</span>;
+        </span><span class="kw">let </span>cert =
+            rcgen::generate_simple_self_signed(<span class="macro">vec!</span>[<span class="string">"localhost"</span>.into()]).context(<span class="string">"self signed"</span>)<span class="question-mark">?</span>;
         <span class="kw">let </span>key = PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
         <span class="kw">let </span><span class="kw-2">mut </span>server_crypto = rustls::ServerConfig::builder()
             .with_no_client_auth()
-            .with_single_cert(<span class="macro">vec!</span>[cert.cert.into()], key.into())<span class="question-mark">?</span>;
+            .with_single_cert(<span class="macro">vec!</span>[cert.cert.into()], key.into())
+            .context(<span class="string">"tls"</span>)<span class="question-mark">?</span>;
         server_crypto.key_log = Arc::new(rustls::KeyLogFile::new());
         server_crypto.alpn_protocols = <span class="macro">vec!</span>[ALPN_QUIC_ADDR_DISC.to_vec()];
-        <span class="kw">let </span><span class="kw-2">mut </span>server_config =
-            quinn::ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(server_crypto)<span class="question-mark">?</span>));
+        <span class="kw">let </span><span class="kw-2">mut </span>server_config = quinn::ServerConfig::with_crypto(Arc::new(
+            QuicServerConfig::try_from(server_crypto).context(<span class="string">"config"</span>)<span class="question-mark">?</span>,
+        ));
         <span class="kw">let </span>transport_config = Arc::get_mut(<span class="kw-2">&amp;mut </span>server_config.transport).unwrap();
         transport_config.send_observed_address_reports(<span class="bool-val">true</span>);
 
@@ -1000,16 +1022,17 @@
                 <span class="kw">let </span>server = quinn::Endpoint::new(
                     Default::default(),
                     <span class="prelude-val">Some</span>(server_config),
-                    socket.into_std()<span class="question-mark">?</span>,
+                    socket.into_std().unwrap(),
                     Arc::new(quinn::TokioRuntime),
-                )<span class="question-mark">?</span>;
+                )
+                .context(<span class="string">"endpoint new"</span>)<span class="question-mark">?</span>;
                 <span class="macro">info!</span>(<span class="string">"accepting conn"</span>);
-                <span class="kw">let </span>incoming = server.accept().<span class="kw">await</span>.context(<span class="string">"no conn"</span>)<span class="question-mark">?</span>;
+                <span class="kw">let </span>incoming = server.accept().<span class="kw">await</span>.expect(<span class="string">"missing conn"</span>);
                 <span class="macro">info!</span>(<span class="string">"incoming!"</span>);
-                <span class="kw">let </span>conn = incoming.<span class="kw">await</span><span class="question-mark">?</span>;
+                <span class="kw">let </span>conn = incoming.<span class="kw">await</span>.context(<span class="string">"incoming"</span>)<span class="question-mark">?</span>;
                 conn.closed().<span class="kw">await</span>;
                 server.wait_idle().<span class="kw">await</span>;
-                <span class="prelude-val">Ok</span>::&lt;(), anyhow::Error&gt;(())
+                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, TestError&gt;(())
             }
             .instrument(<span class="macro">info_span!</span>(<span class="string">"server"</span>)),
         );
@@ -1017,7 +1040,8 @@
 
         <span class="macro">info!</span>(<span class="string">"starting client"</span>);
         <span class="kw">let </span>client_endpoint =
-            quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), <span class="number">0</span>))<span class="question-mark">?</span>;
+            quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), <span class="number">0</span>))
+                .context(<span class="string">"client"</span>)<span class="question-mark">?</span>;
 
         <span class="comment">// create the client configuration used for the client endpoint when they
         // initiate a connection with the server
@@ -1030,12 +1054,16 @@
             Duration::from_secs(<span class="number">10</span>),
             quic_client.get_addr_and_latency(server_addr, <span class="string">"localhost"</span>),
         )
-        .<span class="kw">await</span><span class="question-mark">??</span>;
+        .<span class="kw">await
+        </span>.context(<span class="string">"timeout"</span>)<span class="question-mark">??</span>;
         <span class="kw">let </span>duration = start.elapsed();
         <span class="macro">info!</span>(<span class="question-mark">?</span>duration, <span class="question-mark">?</span>addr, <span class="question-mark">?</span>latency, <span class="string">"QAD succeeded"</span>);
         <span class="macro">assert!</span>(duration &gt;= Duration::from_secs(<span class="number">1</span>));
 
-        time::timeout(Duration::from_secs(<span class="number">10</span>), server_task).<span class="kw">await</span><span class="question-mark">???</span>;
+        time::timeout(Duration::from_secs(<span class="number">10</span>), server_task)
+            .<span class="kw">await
+            </span>.context(<span class="string">"timeout"</span>)<span class="question-mark">?
+            </span>.context(<span class="string">"server task"</span>)<span class="question-mark">??</span>;
 
         <span class="prelude-val">Ok</span>(())
     }

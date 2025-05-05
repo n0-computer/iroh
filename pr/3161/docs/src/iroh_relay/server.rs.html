@@ -1307,7 +1307,12 @@
 <a href="#1306" id="1306">1306</a>
 <a href="#1307" id="1307">1307</a>
 <a href="#1308" id="1308">1308</a>
-<a href="#1309" id="1309">1309</a></pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
+<a href="#1309" id="1309">1309</a>
+<a href="#1310" id="1310">1310</a>
+<a href="#1311" id="1311">1311</a>
+<a href="#1312" id="1312">1312</a>
+<a href="#1313" id="1313">1313</a>
+<a href="#1314" id="1314">1314</a></pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
 //!
 //! This module provides an API to run a full fledged iroh-relay server.  It is primarily
 //! used by the `iroh-relay` binary in this crate.  It can be used to run a relay server in
@@ -2175,17 +2180,23 @@
     <span class="kw">use </span>std::{net::Ipv4Addr, time::Duration};
 
     <span class="kw">use </span>bytes::Bytes;
-    <span class="kw">use </span>http::header::UPGRADE;
+    <span class="kw">use </span>http::{header::UPGRADE, StatusCode};
     <span class="kw">use </span>iroh_base::{NodeId, RelayUrl, SecretKey};
-    <span class="kw">use </span>n0_future::{FutureExt, SinkExt};
-    <span class="kw">use </span>testresult::TestResult;
+    <span class="kw">use </span>n0_future::{FutureExt, SinkExt, StreamExt};
+    <span class="kw">use </span>n0_snafu::{TestResult, TestResultExt};
+    <span class="kw">use </span>tokio::net::UdpSocket;
+    <span class="kw">use </span>tracing::{info, instrument};
     <span class="kw">use </span>tracing_test::traced_test;
 
-    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+    <span class="kw">use super</span>::{
+        Access, AccessConfig, RelayConfig, Server, ServerConfig, SpawnError, StunConfig,
+        NO_CONTENT_CHALLENGE_HEADER, NO_CONTENT_RESPONSE_HEADER,
+    };
     <span class="kw">use crate</span>::{
         client::{conn::ReceivedMessage, ClientBuilder, SendMessage},
         dns::DnsResolver,
         http::{Protocol, HTTP_UPGRADE_PROTOCOL},
+        protos,
     };
 
     <span class="kw">async fn </span>spawn_local_relay() -&gt; std::result::Result&lt;Server, SpawnError&gt; {
@@ -2211,8 +2222,6 @@
         b_key: NodeId,
         msg: Bytes,
     ) -&gt; TestResult&lt;ReceivedMessage&gt; {
-        <span class="kw">use </span>anyhow::Context;
-
         <span class="comment">// try resend 10 times
         </span><span class="kw">for _ in </span><span class="number">0</span>..<span class="number">10 </span>{
             client_a
@@ -2222,7 +2231,7 @@
             else </span>{
                 <span class="kw">continue</span>;
             };
-            <span class="kw">let </span>res = res.context(<span class="string">"stream finished"</span>)<span class="question-mark">??</span>;
+            <span class="kw">let </span>res = res.expect(<span class="string">"stream finished"</span>)<span class="question-mark">?</span>;
             <span class="kw">return </span><span class="prelude-val">Ok</span>(res);
         }
         <span class="macro">panic!</span>(<span class="string">"failed to send and recv message"</span>);
@@ -2576,7 +2585,8 @@
                 }
             }
         })
-        .<span class="kw">await</span><span class="question-mark">?</span>;
+        .<span class="kw">await
+        </span>.context(<span class="string">"timeout"</span>)<span class="question-mark">?</span>;
 
         <span class="comment">// test that another client has access
 
