@@ -3461,17 +3461,32 @@ impl NetInfo {
 
 #[cfg(test)]
 mod tests {
+    use std::{collections::BTreeSet, sync::Arc, time::Duration};
+
+    use bytes::Bytes;
+    use data_encoding::HEXLOWER;
+    use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
+    use iroh_relay::RelayMap;
+    use n0_future::{time, StreamExt};
+    use n0_snafu::{TestResult, TestResultExt};
+    use quinn::ServerConfig;
+    use rand::Rng;
     use rand::RngCore;
-    use testresult::TestResult;
+    use tokio::task::JoinSet;
     use tokio_util::task::AbortOnDropHandle;
+    use tracing::{debug, error, info, info_span, instrument, Instrument};
     use tracing_test::traced_test;
 
-    use super::*;
+    use crate::magicsock::RelayRecvDatagram;
     use crate::{
         defaults::staging::{self, EU_RELAY_HOSTNAME},
         dns::DnsResolver,
+        endpoint::{DirectAddr, PathSelection, Source},
+        magicsock::{node_map, Handle, MagicSock, RelayContents, RelayDatagramRecvQueue},
         tls, Endpoint, RelayMode,
     };
+
+    use super::{split_packets, NodeIdMappedAddr, Options};
 
     const ALPN: &[u8] = b"n0/test/1";
 
@@ -3577,7 +3592,7 @@ mod tests {
     ///
     /// When the returned drop guard is dropped, the tasks doing this updating are stopped.
     #[instrument(skip_all)]
-    async fn mesh_stacks(stacks: Vec<MagicStack>) -> anyhow::Result<JoinSet<()>> {
+    async fn mesh_stacks(stacks: Vec<MagicStack>) -> TestResult<JoinSet<()>> {
         /// Registers endpoint addresses of a node to all other nodes.
         fn update_direct_addrs(
             stacks: &[MagicStack],
@@ -3635,7 +3650,8 @@ mod tests {
                 time::sleep(Duration::from_millis(200)).await;
             }
         })
-        .await?;
+        .await
+        .context("timeout")?;
         info!("all nodes meshed");
         Ok(tasks)
     }
@@ -3646,21 +3662,24 @@ mod tests {
         let conn = ep.endpoint.accept().await.expect("no conn");
 
         info!("connecting");
-        let conn = conn.await?;
+        let conn = conn.await.context("connecting")?;
         info!("accepting bi");
-        let (mut send_bi, mut recv_bi) = conn.accept_bi().await?;
+        let (mut send_bi, mut recv_bi) = conn.accept_bi().await.context("accept bi")?;
 
         info!("reading");
-        let val = recv_bi.read_to_end(usize::MAX).await?;
+        let val = recv_bi
+            .read_to_end(usize::MAX)
+            .await
+            .context("read to end")?;
 
         info!("replying");
         for chunk in val.chunks(12) {
-            send_bi.write_all(chunk).await?;
+            send_bi.write_all(chunk).await.context("write all")?;
         }
 
         info!("finishing");
-        send_bi.finish()?;
-        send_bi.stopped().await?;
+        send_bi.finish().context("finish")?;
+        send_bi.stopped().await.context("stopped")?;
 
         let stats = conn.stats();
         info!("stats: {:#?}", stats);
@@ -3692,17 +3711,20 @@ mod tests {
         let conn = ep.endpoint.connect(dest, ALPN).await?;
 
         info!("opening bi");
-        let (mut send_bi, mut recv_bi) = conn.open_bi().await?;
+        let (mut send_bi, mut recv_bi) = conn.open_bi().await.context("open bi")?;
 
         info!("writing message");
-        send_bi.write_all(msg).await?;
+        send_bi.write_all(msg).await.context("write all")?;
 
         info!("finishing");
-        send_bi.finish()?;
-        send_bi.stopped().await?;
+        send_bi.finish().context("finish")?;
+        send_bi.stopped().await.context("stopped")?;
 
         info!("reading_to_end");
-        let val = recv_bi.read_to_end(usize::MAX).await?;
+        let val = recv_bi
+            .read_to_end(usize::MAX)
+            .await
+            .context("read to end")?;
         assert_eq!(
             val,
             msg,
@@ -3854,7 +3876,8 @@ mod tests {
             Duration::from_secs(90),
             test_two_devices_roundtrip_network_change_impl(),
         )
-        .await?
+        .await
+        .context("timeout")?
     }
 
     /// Same structure as `test_two_devices_roundtrip_quinn_magic`, but interrupts regularly
@@ -4074,7 +4097,7 @@ mod tests {
     async fn magicsock_ep(
         secret_key: SecretKey,
         tls_auth: tls::Authentication,
-    ) -> anyhow::Result<Handle> {
+    ) -> TestResult<Handle> {
         let quic_server_config =
             tls_auth.make_server_config(&secret_key, vec![ALPN.to_vec()], true);
         let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
@@ -4110,7 +4133,7 @@ mod tests {
         addr: NodeIdMappedAddr,
         node_id: NodeId,
         tls_auth: tls::Authentication,
-    ) -> anyhow::Result<quinn::Connection> {
+    ) -> TestResult<quinn::Connection> {
         // Endpoint::connect sets this, do the same to have similar behaviour.
         let mut transport_config = quinn::TransportConfig::default();
         transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
@@ -4139,18 +4162,20 @@ mod tests {
         node_id: NodeId,
         transport_config: Arc<quinn::TransportConfig>,
         tls_auth: tls::Authentication,
-    ) -> anyhow::Result<quinn::Connection> {
+    ) -> TestResult<quinn::Connection> {
         let alpns = vec![ALPN.to_vec()];
         let quic_client_config =
             tls_auth.make_client_config(&ep_secret_key, node_id, alpns, None, true);
         let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
         client_config.transport_config(transport_config);
-        let connect = ep.connect_with(
-            client_config,
-            mapped_addr.private_socket_addr(),
-            "localhost",
-        )?;
-        let connection = connect.await?;
+        let connect = ep
+            .connect_with(
+                client_config,
+                mapped_addr.private_socket_addr(),
+                "localhost",
+            )
+            .context("connect with")?;
+        let connection = connect.await.context("connect")?;
         Ok(connection)
     }
 
@@ -4195,9 +4220,13 @@ mod tests {
 
         // This needs an accept task
         let accept_task = tokio::spawn({
-            async fn accept(ep: quinn::Endpoint) -> anyhow::Result<()> {
-                let incoming = ep.accept().await.ok_or(anyhow::anyhow!("no incoming"))?;
-                let _conn = incoming.accept()?.await?;
+            async fn accept(ep: quinn::Endpoint) -> TestResult<()> {
+                let incoming = ep.accept().await.context("no incoming")?;
+                let _conn = incoming
+                    .accept()
+                    .context("accept")?
+                    .await
+                    .context("connecting")?;
 
                 // Keep this connection alive for a while
                 tokio::time::sleep(Duration::from_secs(10)).await;
@@ -4273,11 +4302,15 @@ mod tests {
 
         // We need a task to accept the connection.
         let accept_task = tokio::spawn({
-            async fn accept(ep: quinn::Endpoint) -> anyhow::Result<()> {
-                let incoming = ep.accept().await.ok_or(anyhow::anyhow!("no incoming"))?;
-                let conn = incoming.accept()?.await?;
-                let mut stream = conn.accept_uni().await?;
-                stream.read_to_end(1 << 16).await?;
+            async fn accept(ep: quinn::Endpoint) -> TestResult<()> {
+                let incoming = ep.accept().await.context("no incoming")?;
+                let conn = incoming
+                    .accept()
+                    .context("accept")?
+                    .await
+                    .context("connecting")?;
+                let mut stream = conn.accept_uni().await.context("accept uni")?;
+                stream.read_to_end(1 << 16).await.context("read to end")?;
                 info!("accept finished");
                 Ok(())
             }
@@ -4452,7 +4485,7 @@ mod tests {
         // relay url only
         let addr = NodeAddr {
             node_id: SecretKey::generate(&mut rng).public(),
-            relay_url: Some("http://my-relay.com".parse()?),
+            relay_url: Some("http://my-relay.com".parse().unwrap()),
             direct_addresses: Default::default(),
         };
         stack
@@ -4465,7 +4498,7 @@ mod tests {
         let addr = NodeAddr {
             node_id: SecretKey::generate(&mut rng).public(),
             relay_url: None,
-            direct_addresses: ["127.0.0.1:1234".parse()?].into_iter().collect(),
+            direct_addresses: ["127.0.0.1:1234".parse().unwrap()].into_iter().collect(),
         };
         stack
             .endpoint
@@ -4476,8 +4509,8 @@ mod tests {
         // both
         let addr = NodeAddr {
             node_id: SecretKey::generate(&mut rng).public(),
-            relay_url: Some("http://my-relay.com".parse()?),
-            direct_addresses: ["127.0.0.1:1234".parse()?].into_iter().collect(),
+            relay_url: Some("http://my-relay.com".parse().unwrap()),
+            direct_addresses: ["127.0.0.1:1234".parse().unwrap()].into_iter().collect(),
         };
         stack
             .endpoint

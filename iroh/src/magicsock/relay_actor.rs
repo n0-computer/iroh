@@ -1310,17 +1310,37 @@ impl Iterator for PacketSplitIter {
 
 #[cfg(test)]
 mod tests {
-    use anyhow::Context;
-    use iroh_base::SecretKey;
+    use std::{
+        sync::{atomic::AtomicBool, Arc},
+        time::Duration,
+    };
+
+    use bytes::Bytes;
+    use iroh_base::{NodeId, RelayUrl, SecretKey};
+    use iroh_relay::PingTracker;
     use n0_future::future;
+    use n0_snafu::{TestError, TestResult, TestResultExt};
     use smallvec::smallvec;
-    use testresult::TestResult;
-    use tokio_util::task::AbortOnDropHandle;
-    use tracing::info;
+    use tokio::sync::{mpsc, oneshot};
+    use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
+    use tracing::{info, info_span, Instrument};
     use tracing_test::traced_test;
 
-    use super::*;
-    use crate::{dns::DnsResolver, test_utils};
+    use crate::{
+        dns::DnsResolver,
+        magicsock::{
+            relay_actor::{
+                PacketizeIter, RELAY_INACTIVE_CLEANUP_TIME, UNDELIVERABLE_DATAGRAM_TIMEOUT,
+            },
+            RelayDatagramRecvQueue, RelayRecvDatagram,
+        },
+        test_utils,
+    };
+
+    use super::{
+        ActiveRelayActor, ActiveRelayActorOptions, ActiveRelayMessage, ActiveRelayPrioMessage,
+        RelayConnectionOptions, RelaySendItem, MAX_PACKET_SIZE,
+    };
 
     #[test]
     fn test_packetize_iter() {
@@ -1456,7 +1476,7 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(10), async move {
             loop {
                 let res = tokio::time::timeout(UNDELIVERABLE_DATAGRAM_TIMEOUT, async {
-                    tx.send(item.clone()).await?;
+                    tx.send(item.clone()).await.context("send item")?;
                     let RelayRecvDatagram {
                         url: _,
                         src: _,
@@ -1465,7 +1485,7 @@ mod tests {
 
                     assert_eq!(buf.as_ref(), item.datagrams[0]);
 
-                    Ok::<_, anyhow::Error>(())
+                    Ok::<_, TestError>(())
                 })
                 .await;
                 if res.is_ok() {
@@ -1517,19 +1537,29 @@ mod tests {
 
         // Now ask to check the connection, triggering a ping but no reconnect.
         let (tx, rx) = oneshot::channel();
-        inbox_tx.send(ActiveRelayMessage::GetLocalAddr(tx)).await?;
+        inbox_tx
+            .send(ActiveRelayMessage::GetLocalAddr(tx))
+            .await
+            .context("send get local addr msg")?;
 
-        let local_addr = rx.await?.context("no local addr")?;
+        let local_addr = rx
+            .await
+            .context("wait for local addr msg")?
+            .context("no local addr")?;
         info!(?local_addr, "check connection with addr");
         inbox_tx
             .send(ActiveRelayMessage::CheckConnection(vec![local_addr.ip()]))
-            .await?;
+            .await
+            .context("send check connection message")?;
 
         // Sync the ActiveRelayActor. Ping blocks it and we want to be sure it has handled
         // another inbox message before continuing.
         let (tx, rx) = oneshot::channel();
-        inbox_tx.send(ActiveRelayMessage::GetLocalAddr(tx)).await?;
-        rx.await?;
+        inbox_tx
+            .send(ActiveRelayMessage::GetLocalAddr(tx))
+            .await
+            .context("send get local addr msg")?;
+        rx.await.context("recv send local addr msg")?;
 
         // Echo should still work.
         info!("second echo");
@@ -1545,7 +1575,8 @@ mod tests {
         info!("check connection");
         inbox_tx
             .send(ActiveRelayMessage::CheckConnection(Vec::new()))
-            .await?;
+            .await
+            .context("send check connection msg")?;
 
         // Give some time to reconnect, mostly to sort logs rather than functional.
         tokio::time::sleep(Duration::from_millis(10)).await;
@@ -1561,7 +1592,7 @@ mod tests {
 
         // Shut down the actor.
         cancel_token.cancel();
-        task.await?;
+        task.await.context("wait for task to finish")?;
 
         Ok(())
     }
@@ -1602,7 +1633,8 @@ mod tests {
                 }
             }
         })
-        .await?;
+        .await
+        .context("timeout")?;
 
         // We now have an idling ActiveRelayActor.  If we advance time just a little it
         // should stay alive.
