@@ -267,7 +267,13 @@
 <a href="#266" id="266">266</a>
 <a href="#267" id="267">267</a>
 <a href="#268" id="268">268</a>
-<a href="#269" id="269">269</a></pre></div><pre class="rust"><code><span class="doccomment">//! HTTP server part of iroh-dns-server
+<a href="#269" id="269">269</a>
+<a href="#270" id="270">270</a>
+<a href="#271" id="271">271</a>
+<a href="#272" id="272">272</a>
+<a href="#273" id="273">273</a>
+<a href="#274" id="274">274</a>
+<a href="#275" id="275">275</a></pre></div><pre class="rust"><code><span class="doccomment">//! HTTP server part of iroh-dns-server
 
 </span><span class="kw">use </span>std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
@@ -275,7 +281,7 @@
 };
 
 <span class="kw">use </span>axum::{
-    extract::{ConnectInfo, Request},
+    extract::{ConnectInfo, Request, State},
     handler::Handler,
     http::Method,
     middleware::{<span class="self">self</span>, Next},
@@ -283,7 +289,6 @@
     routing::get,
     Router,
 };
-<span class="kw">use </span>iroh_metrics::{inc, inc_by};
 <span class="kw">use </span>n0_snafu::{TestResult <span class="kw">as </span><span class="prelude-ty">Result</span>, TestResultExt};
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>snafu::whatever;
@@ -301,7 +306,7 @@
 <span class="kw">mod </span>tls;
 
 <span class="kw">pub use </span><span class="self">self</span>::{rate_limiting::RateLimitConfig, tls::CertMode};
-<span class="kw">use crate</span>::{config::Config, metrics::Metrics, state::AppState};
+<span class="kw">use crate</span>::{config::Config, state::AppState};
 
 <span class="doccomment">/// Config for the HTTP server
 </span><span class="attr">#[derive(Debug, Serialize, Deserialize, Clone)]
@@ -505,13 +510,13 @@
         )
         .route(<span class="string">"/healthcheck"</span>, get(|| <span class="kw">async </span>{ <span class="string">"OK" </span>}))
         .route(<span class="string">"/"</span>, get(|| <span class="kw">async </span>{ <span class="string">"Hi!" </span>}))
-        .with_state(state);
+        .with_state(state.clone());
 
     <span class="comment">// configure app
     </span>router
         .layer(cors)
         .layer(trace)
-        .route_layer(middleware::from_fn(metrics_middleware))
+        .route_layer(middleware::from_fn_with_state(state, metrics_middleware))
 }
 
 <span class="doccomment">/// Record request metrics.
@@ -522,17 +527,24 @@
 //
 // See also
 // https://github.com/tokio-rs/axum/blob/main/examples/prometheus-metrics/src/main.rs#L114
-</span><span class="kw">async fn </span>metrics_middleware(req: Request, next: Next) -&gt; <span class="kw">impl </span>IntoResponse {
+</span><span class="kw">async fn </span>metrics_middleware(
+    State(state): State&lt;AppState&gt;,
+    req: Request,
+    next: Next,
+) -&gt; <span class="kw">impl </span>IntoResponse {
     <span class="kw">let </span>start = Instant::now();
     <span class="kw">let </span>response = next.run(req).<span class="kw">await</span>;
     <span class="kw">let </span>latency = start.elapsed().as_millis();
     <span class="kw">let </span>status = response.status();
-    <span class="macro">inc_by!</span>(Metrics, http_requests_duration_ms, latency <span class="kw">as </span>u64);
-    <span class="macro">inc!</span>(Metrics, http_requests);
+    state
+        .metrics
+        .http_requests_duration_ms
+        .inc_by(latency <span class="kw">as </span>u64);
+    state.metrics.http_requests.inc();
     <span class="kw">if </span>status.is_success() {
-        <span class="macro">inc!</span>(Metrics, http_requests_success);
+        state.metrics.http_requests_success.inc();
     } <span class="kw">else </span>{
-        <span class="macro">inc!</span>(Metrics, http_requests_error);
+        state.metrics.http_requests_error.inc();
     }
     response
 }

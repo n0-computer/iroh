@@ -1122,7 +1122,16 @@
 <a href="#1121" id="1121">1121</a>
 <a href="#1122" id="1122">1122</a>
 <a href="#1123" id="1123">1123</a>
-<a href="#1124" id="1124">1124</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
+<a href="#1124" id="1124">1124</a>
+<a href="#1125" id="1125">1125</a>
+<a href="#1126" id="1126">1126</a>
+<a href="#1127" id="1127">1127</a>
+<a href="#1128" id="1128">1128</a>
+<a href="#1129" id="1129">1129</a>
+<a href="#1130" id="1130">1130</a>
+<a href="#1131" id="1131">1131</a>
+<a href="#1132" id="1132">1132</a>
+<a href="#1133" id="1133">1133</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
 //! To connect to an iroh node a [`NodeAddr`] is needed, which may contain a
 //! [`RelayUrl`] or one or more *direct addresses* in addition to the [`NodeId`].
@@ -1730,11 +1739,10 @@
         time::SystemTime,
     };
 
-    <span class="kw">use </span>anyhow::Context;
     <span class="kw">use </span>iroh_base::{NodeAddr, SecretKey};
+    <span class="kw">use </span>n0_snafu::{TestError, TestResult, TestResultExt};
     <span class="kw">use </span>quinn::{IdleTimeout, TransportConfig};
     <span class="kw">use </span>rand::Rng;
-    <span class="kw">use </span>testresult::TestResult;
     <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
     <span class="kw">use </span>tracing_test::traced_test;
 
@@ -1971,7 +1979,7 @@
         <span class="comment">// 10x faster test via a 3s idle timeout instead of the 30s default
         </span><span class="kw">let </span><span class="kw-2">mut </span>config = TransportConfig::default();
         config.keep_alive_interval(<span class="prelude-val">Some</span>(Duration::from_secs(<span class="number">1</span>)));
-        config.max_idle_timeout(<span class="prelude-val">Some</span>(IdleTimeout::try_from(Duration::from_secs(<span class="number">3</span>))<span class="question-mark">?</span>));
+        config.max_idle_timeout(<span class="prelude-val">Some</span>(IdleTimeout::try_from(Duration::from_secs(<span class="number">3</span>)).unwrap()));
         <span class="kw">let </span>opts = ConnectOptions::new().with_transport_config(Arc::new(config));
 
         <span class="kw">let </span>res = ep2
@@ -2058,7 +2066,7 @@
     <span class="kw">async fn </span>new_endpoint(
         secret: SecretKey,
         disco: <span class="kw">impl </span>Discovery + <span class="lifetime">'static</span>,
-    ) -&gt; (Endpoint, AbortOnDropHandle&lt;anyhow::Result&lt;()&gt;&gt;) {
+    ) -&gt; (Endpoint, AbortOnDropHandle&lt;TestResult&lt;()&gt;&gt;) {
         <span class="kw">let </span>ep = Endpoint::builder()
             .secret_key(secret)
             .discovery(Box::new(disco))
@@ -2076,11 +2084,11 @@
                 <span class="comment">// we skip accept() errors, they can be caused by retransmits
                 </span><span class="kw">while let </span><span class="prelude-val">Some</span>(connecting) = ep.accept().<span class="kw">await</span>.and_then(|inc| inc.accept().ok()) {
                     <span class="comment">// Just accept incoming connections, but don't do anything with them.
-                    </span><span class="kw">let </span>conn = connecting.<span class="kw">await</span><span class="question-mark">?</span>;
+                    </span><span class="kw">let </span>conn = connecting.<span class="kw">await</span>.context(<span class="string">"connecting"</span>)<span class="question-mark">?</span>;
                     connections.push(conn);
                 }
 
-                anyhow::Ok(())
+                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, TestError&gt;(())
             }
         });
 
@@ -2116,10 +2124,10 @@
 /// publish to. The DNS and pkarr servers share their state.
 </span><span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>test_dns_pkarr {
-    <span class="kw">use </span>anyhow::Result;
     <span class="kw">use </span>iroh_base::{NodeAddr, SecretKey};
     <span class="kw">use </span>iroh_relay::{node_info::UserData, RelayMap};
     <span class="kw">use </span>n0_future::time::Duration;
+    <span class="kw">use </span>n0_snafu::{TestError, TestResult, TestResultExt};
     <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
     <span class="kw">use </span>tracing_test::traced_test;
 
@@ -2137,16 +2145,20 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>dns_resolve() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">async fn </span>dns_resolve() -&gt; TestResult&lt;()&gt; {
         <span class="kw">let </span>origin = <span class="string">"testdns.example"</span>.to_string();
         <span class="kw">let </span>state = State::new(origin.clone());
-        <span class="kw">let </span>(nameserver, _dns_drop_guard) = run_dns_server(state.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>(nameserver, _dns_drop_guard) = run_dns_server(state.clone())
+            .<span class="kw">await
+            </span>.context(<span class="string">"Running DNS server"</span>)<span class="question-mark">?</span>;
 
         <span class="kw">let </span>secret_key = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>node_info = NodeInfo::new(secret_key.public())
             .with_relay_url(<span class="prelude-val">Some</span>(<span class="string">"https://relay.example"</span>.parse().unwrap()));
         <span class="kw">let </span>signed_packet = node_info.to_pkarr_signed_packet(<span class="kw-2">&amp;</span>secret_key, <span class="number">30</span>)<span class="question-mark">?</span>;
-        state.upsert(signed_packet)<span class="question-mark">?</span>;
+        state
+            .upsert(signed_packet)
+            .context(<span class="string">"update and insert signed packet"</span>)<span class="question-mark">?</span>;
 
         <span class="kw">let </span>resolver = DnsResolver::with_nameserver(nameserver);
         <span class="kw">let </span>resolved = resolver
@@ -2160,10 +2172,12 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>pkarr_publish_dns_resolve() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">async fn </span>pkarr_publish_dns_resolve() -&gt; TestResult&lt;()&gt; {
         <span class="kw">let </span>origin = <span class="string">"testdns.example"</span>.to_string();
 
-        <span class="kw">let </span>dns_pkarr_server = DnsPkarrServer::run_with_origin(origin.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>dns_pkarr_server = DnsPkarrServer::run_with_origin(origin.clone())
+            .<span class="kw">await
+            </span>.context(<span class="string">"DnsPkarrServer"</span>)<span class="question-mark">?</span>;
 
         <span class="kw">let </span>secret_key = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>node_id = secret_key.public();
@@ -2178,7 +2192,10 @@
         <span class="comment">// does not block, update happens in background task
         </span>publisher.update_node_data(<span class="kw-2">&amp;</span>data);
         <span class="comment">// wait until our shared state received the update from pkarr publishing
-        </span>dns_pkarr_server.on_node(<span class="kw-2">&amp;</span>node_id, PUBLISH_TIMEOUT).<span class="kw">await</span><span class="question-mark">?</span>;
+        </span>dns_pkarr_server
+            .on_node(<span class="kw-2">&amp;</span>node_id, PUBLISH_TIMEOUT)
+            .<span class="kw">await
+            </span>.context(<span class="string">"wait for on node update"</span>)<span class="question-mark">?</span>;
         <span class="kw">let </span>resolved = resolver.lookup_node_by_id(<span class="kw-2">&amp;</span>node_id, <span class="kw-2">&amp;</span>origin).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="macro">println!</span>(<span class="string">"resolved {resolved:?}"</span>);
 
@@ -2197,8 +2214,8 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>pkarr_publish_dns_discover() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">let </span>dns_pkarr_server = DnsPkarrServer::run().<span class="kw">await</span><span class="question-mark">?</span>;
+    </span><span class="kw">async fn </span>pkarr_publish_dns_discover() -&gt; TestResult&lt;()&gt; {
+        <span class="kw">let </span>dns_pkarr_server = DnsPkarrServer::run().<span class="kw">await</span>.context(<span class="string">"DnsPkarrServer run"</span>)<span class="question-mark">?</span>;
         <span class="kw">let </span>(relay_map, _relay_url, _relay_guard) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="kw">let </span>(ep1, _guard1) = ep_with_discovery(<span class="kw-2">&amp;</span>relay_map, <span class="kw-2">&amp;</span>dns_pkarr_server).<span class="kw">await</span><span class="question-mark">?</span>;
@@ -2207,7 +2224,8 @@
         <span class="comment">// wait until our shared state received the update from pkarr publishing
         </span>dns_pkarr_server
             .on_node(<span class="kw-2">&amp;</span>ep1.node_id(), PUBLISH_TIMEOUT)
-            .<span class="kw">await</span><span class="question-mark">?</span>;
+            .<span class="kw">await
+            </span>.context(<span class="string">"wait for on node update"</span>)<span class="question-mark">?</span>;
 
         <span class="comment">// we connect only by node id!
         </span><span class="kw">let </span>res = ep2.connect(ep1.node_id(), TEST_ALPN).<span class="kw">await</span>;
@@ -2218,7 +2236,7 @@
     <span class="kw">async fn </span>ep_with_discovery(
         relay_map: <span class="kw-2">&amp;</span>RelayMap,
         dns_pkarr_server: <span class="kw-2">&amp;</span>DnsPkarrServer,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;(Endpoint, AbortOnDropHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;)&gt; {
+    ) -&gt; TestResult&lt;(Endpoint, AbortOnDropHandle&lt;TestResult&lt;()&gt;&gt;)&gt; {
         <span class="kw">let </span>secret_key = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>ep = Endpoint::builder()
             .relay_mode(RelayMode::Custom(relay_map.clone()))
@@ -2235,11 +2253,11 @@
             <span class="kw">async move </span>{
                 <span class="comment">// we skip accept() errors, they can be caused by retransmits
                 </span><span class="kw">while let </span><span class="prelude-val">Some</span>(connecting) = ep.accept().<span class="kw">await</span>.and_then(|inc| inc.accept().ok()) {
-                    <span class="kw">let </span>_conn = connecting.<span class="kw">await</span><span class="question-mark">?</span>;
+                    <span class="kw">let </span>_conn = connecting.<span class="kw">await</span>.context(<span class="string">"connecting"</span>)<span class="question-mark">?</span>;
                     <span class="comment">// Just accept incoming connections, but don't do anything with them.
                 </span>}
 
-                anyhow::Ok(())
+                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, TestError&gt;(())
             }
         });
 

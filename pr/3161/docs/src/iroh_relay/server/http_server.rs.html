@@ -1252,7 +1252,22 @@
 <a href="#1251" id="1251">1251</a>
 <a href="#1252" id="1252">1252</a>
 <a href="#1253" id="1253">1253</a>
-<a href="#1254" id="1254">1254</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#1254" id="1254">1254</a>
+<a href="#1255" id="1255">1255</a>
+<a href="#1256" id="1256">1256</a>
+<a href="#1257" id="1257">1257</a>
+<a href="#1258" id="1258">1258</a>
+<a href="#1259" id="1259">1259</a>
+<a href="#1260" id="1260">1260</a>
+<a href="#1261" id="1261">1261</a>
+<a href="#1262" id="1262">1262</a>
+<a href="#1263" id="1263">1263</a>
+<a href="#1264" id="1264">1264</a>
+<a href="#1265" id="1265">1265</a>
+<a href="#1266" id="1266">1266</a>
+<a href="#1267" id="1267">1267</a>
+<a href="#1268" id="1268">1268</a>
+<a href="#1269" id="1269">1269</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::HashMap, future::Future, net::SocketAddr, pin::Pin, sync::Arc, time::Duration,
 };
 
@@ -1267,7 +1282,6 @@
     HeaderMap, Method, Request, Response, StatusCode,
 };
 <span class="kw">use </span>iroh_base::PublicKey;
-<span class="kw">use </span>iroh_metrics::inc;
 <span class="kw">use </span>n0_future::{time::Elapsed, FutureExt, SinkExt};
 <span class="kw">use </span>nested_enum_utils::common_fields;
 <span class="kw">use </span>snafu::{Backtrace, Snafu};
@@ -1498,6 +1512,7 @@
     </span>key_cache_capacity: usize,
     <span class="doccomment">/// Access config for nodes.
     </span>access: AccessConfig,
+    metrics: <span class="prelude-ty">Option</span>&lt;Arc&lt;Metrics&gt;&gt;,
 }
 
 <span class="kw">impl </span>ServerBuilder {
@@ -1511,8 +1526,15 @@
             client_rx_ratelimit: <span class="prelude-val">None</span>,
             key_cache_capacity: DEFAULT_KEY_CACHE_CAPACITY,
             access: AccessConfig::Everyone,
+            metrics: <span class="prelude-val">None</span>,
         }
     }
+
+    <span class="doccomment">/// Sets the metrics collector.
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>metrics(<span class="kw-2">mut </span><span class="self">self</span>, metrics: Arc&lt;Metrics&gt;) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.metrics = <span class="prelude-val">Some</span>(metrics);
+        <span class="self">self
+    </span>}
 
     <span class="doccomment">/// Set the access configuration.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>access(<span class="kw-2">mut </span><span class="self">self</span>, access: AccessConfig) -&gt; <span class="self">Self </span>{
@@ -1572,6 +1594,7 @@
             <span class="self">self</span>.client_rx_ratelimit,
             KeyCache::new(<span class="self">self</span>.key_cache_capacity),
             <span class="self">self</span>.access,
+            <span class="self">self</span>.metrics.unwrap_or_default(),
         );
 
         <span class="kw">let </span>addr = <span class="self">self</span>.addr;
@@ -1651,6 +1674,7 @@
     rate_limit: <span class="prelude-ty">Option</span>&lt;ClientRateLimit&gt;,
     key_cache: KeyCache,
     access: AccessConfig,
+    metrics: Arc&lt;Metrics&gt;,
 }
 
 <span class="kw">impl </span>RelayService {
@@ -1845,11 +1869,11 @@
         <span class="macro">trace!</span>(<span class="question-mark">?</span>protocol, <span class="string">"accept: start"</span>);
         <span class="kw">let </span><span class="kw-2">mut </span>io = <span class="kw">match </span>protocol {
             Protocol::Relay =&gt; {
-                <span class="macro">inc!</span>(Metrics, relay_accepts);
+                <span class="self">self</span>.metrics.relay_accepts.inc();
                 RelayedStream::Relay(Framed::new(io, RelayCodec::new(<span class="self">self</span>.key_cache.clone())))
             }
             Protocol::Websocket =&gt; {
-                <span class="macro">inc!</span>(Metrics, websocket_accepts);
+                <span class="self">self</span>.metrics.websocket_accepts.inc();
                 <span class="comment">// Since we already did the HTTP upgrade in the previous step,
                 // we use tokio-websockets to handle this connection
                 // Create a server builder with default config
@@ -1895,7 +1919,9 @@
 
         <span class="comment">// build and register client, starting up read &amp; write loops for the client
         // connection
-        </span><span class="self">self</span>.clients.register(client_conn_builder).<span class="kw">await</span>;
+        </span><span class="self">self</span>.clients
+            .register(client_conn_builder, <span class="self">self</span>.metrics.clone())
+            .<span class="kw">await</span>;
         <span class="prelude-val">Ok</span>(())
     }
 }
@@ -1917,6 +1943,7 @@
         rate_limit: <span class="prelude-ty">Option</span>&lt;ClientRateLimit&gt;,
         key_cache: KeyCache,
         access: AccessConfig,
+        metrics: Arc&lt;Metrics&gt;,
     ) -&gt; <span class="self">Self </span>{
         <span class="self">Self</span>(Arc::new(Inner {
             handlers,
@@ -1926,6 +1953,7 @@
             rate_limit,
             key_cache,
             access,
+            metrics,
         }))
     }
 
@@ -2294,6 +2322,7 @@
             <span class="prelude-val">None</span>,
             KeyCache::test(),
             AccessConfig::Everyone,
+            Default::default(),
         );
 
         <span class="macro">info!</span>(<span class="string">"Create client A and connect it to the server."</span>);
@@ -2381,6 +2410,7 @@
             <span class="prelude-val">None</span>,
             KeyCache::test(),
             AccessConfig::Everyone,
+            Default::default(),
         );
 
         <span class="macro">info!</span>(<span class="string">"Create client A and connect it to the server."</span>);

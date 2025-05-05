@@ -1910,7 +1910,8 @@
 <a href="#1909" id="1909">1909</a>
 <a href="#1910" id="1910">1910</a>
 <a href="#1911" id="1911">1911</a>
-<a href="#1912" id="1912">1912</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
+<a href="#1912" id="1912">1912</a>
+<a href="#1913" id="1913">1913</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
 //!
 //! It is implemented as an actor with [`Client`] as handle.
 //!
@@ -1939,8 +1940,6 @@
 
 <span class="kw">use </span>http::StatusCode;
 <span class="kw">use </span>iroh_base::RelayUrl;
-<span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
-</span><span class="kw">use </span>iroh_metrics::inc;
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">use </span>iroh_relay::dns::DnsResolver;
 <span class="kw">use </span>iroh_relay::{
@@ -1966,9 +1965,7 @@
 
 <span class="attr">#[cfg(wasm_browser)]
 </span><span class="kw">use </span><span class="kw">crate</span>::net_report::portmapper; <span class="comment">// We stub the library
-</span><span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
-</span><span class="kw">use </span><span class="kw">crate</span>::net_report::Metrics;
-<span class="kw">use </span><span class="kw">crate</span>::net_report::{<span class="self">self</span>, Report};
+</span><span class="kw">use </span><span class="kw">crate</span>::net_report::{<span class="self">self</span>, Metrics, Report};
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">use </span><span class="kw">crate</span>::net_report::{
     defaults::timeouts::DNS_TIMEOUT,
@@ -2029,6 +2026,7 @@
         last_report: <span class="prelude-ty">Option</span>&lt;Arc&lt;Report&gt;&gt;,
         relay_map: RelayMap,
         protocols: BTreeSet&lt;ProbeProto&gt;,
+        metrics: Arc&lt;Metrics&gt;,
         <span class="attr">#[cfg(not(wasm_browser))] </span>socket_state: SocketState,
     ) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>(msg_tx, msg_rx) = mpsc::channel(<span class="number">32</span>);
@@ -2048,6 +2046,7 @@
             </span>socket_state,
             <span class="attr">#[cfg(not(wasm_browser))]
             </span>hairpin_actor: hairpin::Client::new(net_report, addr),
+            metrics,
         };
         <span class="kw">let </span>task =
             task::spawn(<span class="kw">async move </span>{ actor.run().<span class="kw">await </span>}.instrument(<span class="macro">info_span!</span>(<span class="string">"reportgen.actor"</span>)));
@@ -2128,6 +2127,7 @@
     <span class="doccomment">/// The hairpin actor.
     </span><span class="attr">#[cfg(not(wasm_browser))]
     </span>hairpin_actor: hairpin::Client,
+    metrics: Arc&lt;Metrics&gt;,
 }
 
 <span class="attr">#[allow(missing_docs)]
@@ -2554,12 +2554,14 @@
                 <span class="attr">#[cfg(not(wasm_browser))]
                 </span><span class="kw">let </span>socket_state = <span class="self">self</span>.socket_state.clone();
 
+                <span class="kw">let </span>metrics = <span class="self">self</span>.metrics.clone();
                 set.spawn(
                     run_probe(
                         reportstate,
                         relay_node,
                         probe.clone(),
                         net_report,
+                        metrics,
                         <span class="attr">#[cfg(not(wasm_browser))]
                         </span>pinger,
                         <span class="attr">#[cfg(not(wasm_browser))]
@@ -2739,6 +2741,7 @@
     relay_node: Arc&lt;RelayNode&gt;,
     probe: Probe,
     net_report: net_report::Addr,
+    metrics: Arc&lt;Metrics&gt;,
     <span class="attr">#[cfg(not(wasm_browser))] </span>pinger: Pinger,
     <span class="attr">#[cfg(not(wasm_browser))] </span>socket_state: SocketState,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;ProbeReport, ProbeErrorWithProbe&gt; {
@@ -2795,7 +2798,7 @@
             };
             <span class="kw">match </span>maybe_sock {
                 <span class="prelude-val">Some</span>(sock) =&gt; {
-                    result = run_stun_probe(sock, relay_addr, net_report, probe).<span class="kw">await</span><span class="question-mark">?</span>;
+                    result = run_stun_probe(sock, relay_addr, net_report, probe, <span class="kw-2">&amp;</span>metrics).<span class="kw">await</span><span class="question-mark">?</span>;
                 }
                 <span class="prelude-val">None </span>=&gt; {
                     <span class="kw">return </span><span class="prelude-val">Err</span>(ProbeErrorWithProbe::AbortSet(
@@ -2874,6 +2877,7 @@
     relay_addr: SocketAddr,
     net_report: net_report::Addr,
     probe: Probe,
+    metrics: <span class="kw-2">&amp;</span>Metrics,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;ProbeReport, ProbeErrorWithProbe&gt; {
     <span class="kw">match </span>probe.proto() {
         ProbeProto::StunIpv4 =&gt; <span class="macro">debug_assert!</span>(relay_addr.is_ipv4()),
@@ -2911,12 +2915,10 @@
 
             <span class="kw">if </span><span class="macro">matches!</span>(probe, Probe::StunIpv4 { .. }) {
                 result.ipv4_can_send = <span class="bool-val">true</span>;
-                <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
-                </span><span class="macro">inc!</span>(Metrics, stun_packets_sent_ipv4);
+                metrics.stun_packets_sent_ipv4.inc();
             } <span class="kw">else </span>{
                 result.ipv6_can_send = <span class="bool-val">true</span>;
-                <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
-                </span><span class="macro">inc!</span>(Metrics, stun_packets_sent_ipv6);
+                metrics.stun_packets_sent_ipv6.inc();
             }
             <span class="kw">let </span>(delay, addr) = stun_rx.<span class="kw">await</span>.map_err(|<span class="kw">_</span>| {
                 ProbeErrorWithProbe::Error(

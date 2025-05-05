@@ -1754,7 +1754,11 @@
 <a href="#1753" id="1753">1753</a>
 <a href="#1754" id="1754">1754</a>
 <a href="#1755" id="1755">1755</a>
-<a href="#1756" id="1756">1756</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#1756" id="1756">1756</a>
+<a href="#1757" id="1757">1757</a>
+<a href="#1758" id="1758">1758</a>
+<a href="#1759" id="1759">1759</a>
+<a href="#1760" id="1760">1760</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{btree_map::Entry, BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
@@ -1762,7 +1766,6 @@
 
 <span class="kw">use </span>data_encoding::HEXLOWER;
 <span class="kw">use </span>iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
-<span class="kw">use </span>iroh_metrics::inc;
 <span class="kw">use </span>iroh_relay::protos::stun;
 <span class="kw">use </span>n0_future::{
     task::{<span class="self">self</span>, AbortOnDropHandle},
@@ -1916,12 +1919,14 @@
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(id: usize, options: Options) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>quic_mapped_addr = NodeIdMappedAddr::generate();
 
-        <span class="kw">if </span>options.relay_url.is_some() {
-            <span class="comment">// we potentially have a relay connection to the node
-            </span><span class="macro">inc!</span>(MagicsockMetrics, num_relay_conns_added);
-        }
+        <span class="comment">// TODO(frando): I don't think we need to track the `num_relay_conns_added`
+        // metric here. We do so in `Self::addr_for_send`.
+        // if options.relay_url.is_some() {
+        //     // we potentially have a relay connection to the node
+        //     inc!(MagicsockMetrics, num_relay_conns_added);
+        // }
 
-        <span class="kw">let </span>now = Instant::now();
+        </span><span class="kw">let </span>now = Instant::now();
 
         NodeState {
             id,
@@ -2036,6 +2041,7 @@
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         now: <span class="kw-2">&amp;</span>Instant,
         have_ipv6: bool,
+        metrics: <span class="kw-2">&amp;</span>MagicsockMetrics,
     ) -&gt; (<span class="prelude-ty">Option</span>&lt;SocketAddr&gt;, <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;) {
         <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
         </span><span class="kw">if </span><span class="self">self</span>.path_selection == PathSelection::RelayOnly {
@@ -2072,7 +2078,7 @@
         };
         <span class="kw">if </span>!<span class="self">self</span>.has_been_direct &amp;&amp; <span class="macro">matches!</span>(<span class="kw-2">&amp;</span>typ, ConnectionType::Direct(<span class="kw">_</span>)) {
             <span class="self">self</span>.has_been_direct = <span class="bool-val">true</span>;
-            <span class="macro">inc!</span>(MagicsockMetrics, nodes_contacted_directly);
+            metrics.nodes_contacted_directly.inc();
         }
         <span class="kw">if let </span><span class="prelude-val">Ok</span>(prev_typ) = <span class="self">self</span>.conn_type.set(typ.clone()) {
             <span class="comment">// The connection type has changed.
@@ -2088,27 +2094,27 @@
             </span><span class="kw">match </span>(prev_typ, typ) {
                 (ConnectionType::Relay(<span class="kw">_</span>), ConnectionType::Direct(<span class="kw">_</span>))
                 | (ConnectionType::Mixed(<span class="kw">_</span>, <span class="kw">_</span>), ConnectionType::Direct(<span class="kw">_</span>)) =&gt; {
-                    <span class="macro">inc!</span>(MagicsockMetrics, num_direct_conns_added);
-                    <span class="macro">inc!</span>(MagicsockMetrics, num_relay_conns_removed);
+                    metrics.num_direct_conns_added.inc();
+                    metrics.num_relay_conns_removed.inc();
                 }
                 (ConnectionType::Direct(<span class="kw">_</span>), ConnectionType::Relay(<span class="kw">_</span>))
                 | (ConnectionType::Direct(<span class="kw">_</span>), ConnectionType::Mixed(<span class="kw">_</span>, <span class="kw">_</span>)) =&gt; {
-                    <span class="macro">inc!</span>(MagicsockMetrics, num_direct_conns_removed);
-                    <span class="macro">inc!</span>(MagicsockMetrics, num_relay_conns_added);
+                    metrics.num_direct_conns_removed.inc();
+                    metrics.num_relay_conns_added.inc();
                 }
                 (ConnectionType::None, ConnectionType::Direct(<span class="kw">_</span>)) =&gt; {
-                    <span class="macro">inc!</span>(MagicsockMetrics, num_direct_conns_added)
+                    metrics.num_direct_conns_added.inc();
                 }
                 (ConnectionType::Direct(<span class="kw">_</span>), ConnectionType::None) =&gt; {
-                    <span class="macro">inc!</span>(MagicsockMetrics, num_direct_conns_removed)
+                    metrics.num_direct_conns_removed.inc();
                 }
                 (ConnectionType::None, ConnectionType::Relay(<span class="kw">_</span>))
                 | (ConnectionType::None, ConnectionType::Mixed(<span class="kw">_</span>, <span class="kw">_</span>)) =&gt; {
-                    <span class="macro">inc!</span>(MagicsockMetrics, num_relay_conns_added)
+                    metrics.num_relay_conns_added.inc();
                 }
                 (ConnectionType::Relay(<span class="kw">_</span>), ConnectionType::None)
                 | (ConnectionType::Mixed(<span class="kw">_</span>, <span class="kw">_</span>), ConnectionType::None) =&gt; {
-                    <span class="macro">inc!</span>(MagicsockMetrics, num_relay_conns_removed)
+                    metrics.num_relay_conns_removed.inc();
                 }
                 <span class="kw">_ </span>=&gt; (),
             }
@@ -2419,16 +2425,17 @@
         new_relay_url: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>RelayUrl&gt;,
         new_addrs: <span class="kw-2">&amp;</span>BTreeSet&lt;SocketAddr&gt;,
         source: <span class="kw">super</span>::Source,
+        metrics: <span class="kw-2">&amp;</span>MagicsockMetrics,
     ) {
         <span class="kw">if </span><span class="self">self</span>.udp_paths.best_addr.is_empty() {
             <span class="comment">// we do not have a direct connection, so changing the relay information may
             // have an effect on our connection status
             </span><span class="kw">if </span><span class="self">self</span>.relay_url.is_none() &amp;&amp; new_relay_url.is_some() {
                 <span class="comment">// we did not have a relay connection before, but now we do
-                </span><span class="macro">inc!</span>(MagicsockMetrics, num_relay_conns_added)
+                </span>metrics.num_relay_conns_added.inc();
             } <span class="kw">else if </span><span class="self">self</span>.relay_url.is_some() &amp;&amp; new_relay_url.is_none() {
                 <span class="comment">// we had a relay connection before but do not have one now
-                </span><span class="macro">inc!</span>(MagicsockMetrics, num_relay_conns_removed)
+                </span>metrics.num_relay_conns_removed.inc();
             }
         }
 
@@ -2921,14 +2928,15 @@
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>get_send_addrs(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         have_ipv6: bool,
+        metrics: <span class="kw-2">&amp;</span>MagicsockMetrics,
     ) -&gt; (<span class="prelude-ty">Option</span>&lt;SocketAddr&gt;, <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;, Vec&lt;PingAction&gt;) {
         <span class="kw">let </span>now = Instant::now();
         <span class="kw">let </span>prev = <span class="self">self</span>.last_used.replace(now);
         <span class="kw">if </span>prev.is_none() {
             <span class="comment">// this is the first time we are trying to connect to this node
-            </span><span class="macro">inc!</span>(MagicsockMetrics, nodes_contacted);
+            </span>metrics.nodes_contacted.inc();
         }
-        <span class="kw">let </span>(udp_addr, relay_url) = <span class="self">self</span>.addr_for_send(<span class="kw-2">&amp;</span>now, have_ipv6);
+        <span class="kw">let </span>(udp_addr, relay_url) = <span class="self">self</span>.addr_for_send(<span class="kw-2">&amp;</span>now, have_ipv6, metrics);
         <span class="kw">let </span><span class="kw-2">mut </span>ping_msgs = Vec::new();
 
         <span class="kw">if </span><span class="self">self</span>.want_call_me_maybe(<span class="kw-2">&amp;</span>now) {

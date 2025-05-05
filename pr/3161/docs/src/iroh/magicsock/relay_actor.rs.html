@@ -1664,7 +1664,52 @@
 <a href="#1663" id="1663">1663</a>
 <a href="#1664" id="1664">1664</a>
 <a href="#1665" id="1665">1665</a>
-<a href="#1666" id="1666">1666</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1666" id="1666">1666</a>
+<a href="#1667" id="1667">1667</a>
+<a href="#1668" id="1668">1668</a>
+<a href="#1669" id="1669">1669</a>
+<a href="#1670" id="1670">1670</a>
+<a href="#1671" id="1671">1671</a>
+<a href="#1672" id="1672">1672</a>
+<a href="#1673" id="1673">1673</a>
+<a href="#1674" id="1674">1674</a>
+<a href="#1675" id="1675">1675</a>
+<a href="#1676" id="1676">1676</a>
+<a href="#1677" id="1677">1677</a>
+<a href="#1678" id="1678">1678</a>
+<a href="#1679" id="1679">1679</a>
+<a href="#1680" id="1680">1680</a>
+<a href="#1681" id="1681">1681</a>
+<a href="#1682" id="1682">1682</a>
+<a href="#1683" id="1683">1683</a>
+<a href="#1684" id="1684">1684</a>
+<a href="#1685" id="1685">1685</a>
+<a href="#1686" id="1686">1686</a>
+<a href="#1687" id="1687">1687</a>
+<a href="#1688" id="1688">1688</a>
+<a href="#1689" id="1689">1689</a>
+<a href="#1690" id="1690">1690</a>
+<a href="#1691" id="1691">1691</a>
+<a href="#1692" id="1692">1692</a>
+<a href="#1693" id="1693">1693</a>
+<a href="#1694" id="1694">1694</a>
+<a href="#1695" id="1695">1695</a>
+<a href="#1696" id="1696">1696</a>
+<a href="#1697" id="1697">1697</a>
+<a href="#1698" id="1698">1698</a>
+<a href="#1699" id="1699">1699</a>
+<a href="#1700" id="1700">1700</a>
+<a href="#1701" id="1701">1701</a>
+<a href="#1702" id="1702">1702</a>
+<a href="#1703" id="1703">1703</a>
+<a href="#1704" id="1704">1704</a>
+<a href="#1705" id="1705">1705</a>
+<a href="#1706" id="1706">1706</a>
+<a href="#1707" id="1707">1707</a>
+<a href="#1708" id="1708">1708</a>
+<a href="#1709" id="1709">1709</a>
+<a href="#1710" id="1710">1710</a>
+<a href="#1711" id="1711">1711</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1706,7 +1751,6 @@
 <span class="kw">use </span>backon::{Backoff, BackoffBuilder, ExponentialBuilder};
 <span class="kw">use </span>bytes::{Bytes, BytesMut};
 <span class="kw">use </span>iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
-<span class="kw">use </span>iroh_metrics::{inc, inc_by};
 <span class="kw">use </span>iroh_relay::{
     <span class="self">self </span><span class="kw">as </span>relay,
     client::{Client, ConnectError, ReceivedMessage, RecvError, SendError, SendMessage},
@@ -1824,6 +1868,7 @@
     </span>inactive_timeout: Pin&lt;Box&lt;time::Sleep&gt;&gt;,
     <span class="doccomment">/// Token indicating the [`ActiveRelayActor`] should stop.
     </span>stop_token: CancellationToken,
+    metrics: Arc&lt;MagicsockMetrics&gt;,
 }
 
 <span class="attr">#[derive(Debug)]
@@ -1866,6 +1911,7 @@
     relay_datagrams_recv: Arc&lt;RelayDatagramRecvQueue&gt;,
     connection_opts: RelayConnectionOptions,
     stop_token: CancellationToken,
+    metrics: Arc&lt;MagicsockMetrics&gt;,
 }
 
 <span class="doccomment">/// Configuration needed to create a connection to a relay server.
@@ -1946,6 +1992,7 @@
             relay_datagrams_recv,
             connection_opts,
             stop_token,
+            metrics,
         } = opts;
         <span class="kw">let </span>relay_client_builder = <span class="self">Self</span>::create_relay_builder(url.clone(), connection_opts);
         ActiveRelayActor {
@@ -1958,6 +2005,7 @@
             is_home_relay: <span class="bool-val">false</span>,
             inactive_timeout: Box::pin(time::sleep(RELAY_INACTIVE_CLEANUP_TIME)),
             stop_token,
+            metrics,
         }
     }
 
@@ -1996,9 +2044,11 @@
     ///
     /// Primarily switches between the dialing and connected states.
     </span><span class="kw">async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>) {
-        <span class="macro">inc!</span>(MagicsockMetrics, num_relay_conns_added);
+        <span class="comment">// TODO(frando): decide what this metric means, it's either wrong here or in node_state.rs.
+        // From the existing description, it is wrong here.
+        // self.metrics.num_relay_conns_added.inc();
 
-        <span class="kw">let </span><span class="kw-2">mut </span>backoff = <span class="self">Self</span>::build_backoff();
+        </span><span class="kw">let </span><span class="kw-2">mut </span>backoff = <span class="self">Self</span>::build_backoff();
 
         <span class="kw">while let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.run_once().<span class="kw">await </span>{
             <span class="macro">warn!</span>(<span class="string">"{err}"</span>);
@@ -2021,8 +2071,10 @@
             }
         }
         <span class="macro">debug!</span>(<span class="string">"exiting"</span>);
-        <span class="macro">inc!</span>(MagicsockMetrics, num_relay_conns_removed);
-    }
+        <span class="comment">// TODO(frando): decide what this metric means, it's either wrong here or in node_state.rs.
+        // From the existing description, it is wrong here.
+        // self.metrics.num_relay_conns_removed.inc();
+    </span>}
 
     <span class="kw">fn </span>build_backoff() -&gt; <span class="kw">impl </span>Backoff {
         ExponentialBuilder::new()
@@ -2286,18 +2338,22 @@
                         <span class="kw-2">&amp;mut </span>send_datagrams_buf,
                         Vec::with_capacity(SEND_DATAGRAM_BATCH_SIZE),
                     );
+                    <span class="comment">// TODO(frando): can we avoid the clone here?
+                    </span><span class="kw">let </span>metrics = <span class="self">self</span>.metrics.clone();
                     <span class="kw">let </span>packet_iter = dgrams.into_iter().flat_map(|datagrams| {
                         PacketizeIter::&lt;<span class="kw">_</span>, MAX_PAYLOAD_SIZE&gt;::new(
                             datagrams.remote_node,
                             datagrams.datagrams.clone(),
                         )
                         .map(|p| {
-                            <span class="macro">inc_by!</span>(MagicsockMetrics, send_relay, p.payload.len() <span class="kw">as _</span>);
-                            SendMessage::SendPacket(p.node_id, p.payload)
+                            <span class="prelude-val">Ok</span>(SendMessage::SendPacket(p.node_id, p.payload))
                         })
-                        .map(<span class="prelude-val">Ok</span>)
                     });
-                    <span class="kw">let </span><span class="kw-2">mut </span>packet_stream = n0_future::stream::iter(packet_iter);
+                    <span class="kw">let </span><span class="kw-2">mut </span>packet_stream = n0_future::stream::iter(packet_iter).inspect(|m| {
+                        <span class="kw">if let </span><span class="prelude-val">Ok</span>(SendMessage::SendPacket(_node_id, payload)) = m {
+                            metrics.send_relay.inc_by(payload.len() <span class="kw">as _</span>);
+                        }
+                    });
                     <span class="kw">let </span>fut = client_sink.send_all(<span class="kw-2">&amp;mut </span>packet_stream);
                     <span class="self">self</span>.run_sending(fut, <span class="kw-2">&amp;mut </span>state, <span class="kw-2">&amp;mut </span>client_stream).<span class="kw">await</span><span class="question-mark">?</span>;
                 }
@@ -2760,6 +2816,7 @@
             relay_datagrams_recv: <span class="self">self</span>.relay_datagram_recv_queue.clone(),
             connection_opts,
             stop_token: <span class="self">self</span>.cancel_token.child_token(),
+            metrics: <span class="self">self</span>.msock.metrics.magicsock.clone(),
         };
         <span class="kw">let </span>actor = ActiveRelayActor::new(opts);
         <span class="self">self</span>.active_relay_tasks.spawn(
@@ -2976,17 +3033,37 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
-    <span class="kw">use </span>anyhow::Context;
-    <span class="kw">use </span>iroh_base::SecretKey;
+    <span class="kw">use </span>std::{
+        sync::{atomic::AtomicBool, Arc},
+        time::Duration,
+    };
+
+    <span class="kw">use </span>bytes::Bytes;
+    <span class="kw">use </span>iroh_base::{NodeId, RelayUrl, SecretKey};
+    <span class="kw">use </span>iroh_relay::PingTracker;
     <span class="kw">use </span>n0_future::future;
+    <span class="kw">use </span>n0_snafu::{TestError, TestResult, TestResultExt};
     <span class="kw">use </span>smallvec::smallvec;
-    <span class="kw">use </span>testresult::TestResult;
-    <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
-    <span class="kw">use </span>tracing::info;
+    <span class="kw">use </span>tokio::sync::{mpsc, oneshot};
+    <span class="kw">use </span>tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
+    <span class="kw">use </span>tracing::{info, info_span, Instrument};
     <span class="kw">use </span>tracing_test::traced_test;
 
-    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-    <span class="kw">use crate</span>::{dns::DnsResolver, test_utils};
+    <span class="kw">use crate</span>::{
+        dns::DnsResolver,
+        magicsock::{
+            relay_actor::{
+                PacketizeIter, RELAY_INACTIVE_CLEANUP_TIME, UNDELIVERABLE_DATAGRAM_TIMEOUT,
+            },
+            RelayDatagramRecvQueue, RelayRecvDatagram,
+        },
+        test_utils,
+    };
+
+    <span class="kw">use super</span>::{
+        ActiveRelayActor, ActiveRelayActorOptions, ActiveRelayMessage, ActiveRelayPrioMessage,
+        RelayConnectionOptions, RelaySendItem, MAX_PACKET_SIZE,
+    };
 
     <span class="attr">#[test]
     </span><span class="kw">fn </span>test_packetize_iter() {
@@ -3046,6 +3123,7 @@
                 protocol: iroh_relay::http::Protocol::default(),
             },
             stop_token,
+            metrics: Default::default(),
         };
         <span class="kw">let </span>task = tokio::spawn(ActiveRelayActor::new(opts).run().instrument(span));
         AbortOnDropHandle::new(task)
@@ -3122,7 +3200,7 @@
         tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), <span class="kw">async move </span>{
             <span class="kw">loop </span>{
                 <span class="kw">let </span>res = tokio::time::timeout(UNDELIVERABLE_DATAGRAM_TIMEOUT, <span class="kw">async </span>{
-                    tx.send(item.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
+                    tx.send(item.clone()).<span class="kw">await</span>.context(<span class="string">"send item"</span>)<span class="question-mark">?</span>;
                     <span class="kw">let </span>RelayRecvDatagram {
                         url: <span class="kw">_</span>,
                         src: <span class="kw">_</span>,
@@ -3131,7 +3209,7 @@
 
                     <span class="macro">assert_eq!</span>(buf.as_ref(), item.datagrams[<span class="number">0</span>]);
 
-                    <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, anyhow::Error&gt;(())
+                    <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, TestError&gt;(())
                 })
                 .<span class="kw">await</span>;
                 <span class="kw">if </span>res.is_ok() {
@@ -3183,19 +3261,29 @@
 
         <span class="comment">// Now ask to check the connection, triggering a ping but no reconnect.
         </span><span class="kw">let </span>(tx, rx) = oneshot::channel();
-        inbox_tx.send(ActiveRelayMessage::GetLocalAddr(tx)).<span class="kw">await</span><span class="question-mark">?</span>;
+        inbox_tx
+            .send(ActiveRelayMessage::GetLocalAddr(tx))
+            .<span class="kw">await
+            </span>.context(<span class="string">"send get local addr msg"</span>)<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>local_addr = rx.<span class="kw">await</span><span class="question-mark">?</span>.context(<span class="string">"no local addr"</span>)<span class="question-mark">?</span>;
+        <span class="kw">let </span>local_addr = rx
+            .<span class="kw">await
+            </span>.context(<span class="string">"wait for local addr msg"</span>)<span class="question-mark">?
+            </span>.context(<span class="string">"no local addr"</span>)<span class="question-mark">?</span>;
         <span class="macro">info!</span>(<span class="question-mark">?</span>local_addr, <span class="string">"check connection with addr"</span>);
         inbox_tx
             .send(ActiveRelayMessage::CheckConnection(<span class="macro">vec!</span>[local_addr.ip()]))
-            .<span class="kw">await</span><span class="question-mark">?</span>;
+            .<span class="kw">await
+            </span>.context(<span class="string">"send check connection message"</span>)<span class="question-mark">?</span>;
 
         <span class="comment">// Sync the ActiveRelayActor. Ping blocks it and we want to be sure it has handled
         // another inbox message before continuing.
         </span><span class="kw">let </span>(tx, rx) = oneshot::channel();
-        inbox_tx.send(ActiveRelayMessage::GetLocalAddr(tx)).<span class="kw">await</span><span class="question-mark">?</span>;
-        rx.<span class="kw">await</span><span class="question-mark">?</span>;
+        inbox_tx
+            .send(ActiveRelayMessage::GetLocalAddr(tx))
+            .<span class="kw">await
+            </span>.context(<span class="string">"send get local addr msg"</span>)<span class="question-mark">?</span>;
+        rx.<span class="kw">await</span>.context(<span class="string">"recv send local addr msg"</span>)<span class="question-mark">?</span>;
 
         <span class="comment">// Echo should still work.
         </span><span class="macro">info!</span>(<span class="string">"second echo"</span>);
@@ -3211,7 +3299,8 @@
         </span><span class="macro">info!</span>(<span class="string">"check connection"</span>);
         inbox_tx
             .send(ActiveRelayMessage::CheckConnection(Vec::new()))
-            .<span class="kw">await</span><span class="question-mark">?</span>;
+            .<span class="kw">await
+            </span>.context(<span class="string">"send check connection msg"</span>)<span class="question-mark">?</span>;
 
         <span class="comment">// Give some time to reconnect, mostly to sort logs rather than functional.
         </span>tokio::time::sleep(Duration::from_millis(<span class="number">10</span>)).<span class="kw">await</span>;
@@ -3227,7 +3316,7 @@
 
         <span class="comment">// Shut down the actor.
         </span>cancel_token.cancel();
-        task.<span class="kw">await</span><span class="question-mark">?</span>;
+        task.<span class="kw">await</span>.context(<span class="string">"wait for task to finish"</span>)<span class="question-mark">?</span>;
 
         <span class="prelude-val">Ok</span>(())
     }
@@ -3268,7 +3357,8 @@
                 }
             }
         })
-        .<span class="kw">await</span><span class="question-mark">?</span>;
+        .<span class="kw">await
+        </span>.context(<span class="string">"timeout"</span>)<span class="question-mark">?</span>;
 
         <span class="comment">// We now have an idling ActiveRelayActor.  If we advance time just a little it
         // should stay alive.

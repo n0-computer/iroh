@@ -159,12 +159,21 @@
 <a href="#158" id="158">158</a>
 <a href="#159" id="159">159</a>
 <a href="#160" id="160">160</a>
-<a href="#161" id="161">161</a></pre></div><pre class="rust"><code><span class="doccomment">//! Actor which coordinates the congestion controller for the magic socket
+<a href="#161" id="161">161</a>
+<a href="#162" id="162">162</a>
+<a href="#163" id="163">163</a>
+<a href="#164" id="164">164</a>
+<a href="#165" id="165">165</a>
+<a href="#166" id="166">166</a>
+<a href="#167" id="167">167</a>
+<a href="#168" id="168">168</a>
+<a href="#169" id="169">169</a>
+<a href="#170" id="170">170</a>
+<a href="#171" id="171">171</a></pre></div><pre class="rust"><code><span class="doccomment">//! Actor which coordinates the congestion controller for the magic socket
 
-</span><span class="kw">use </span>std::{pin::Pin, task::Poll};
+</span><span class="kw">use </span>std::{pin::Pin, sync::Arc, task::Poll};
 
 <span class="kw">use </span>iroh_base::NodeId;
-<span class="kw">use </span>iroh_metrics::inc;
 <span class="kw">use </span>n0_future::{
     task::{<span class="self">self</span>, AbortOnDropHandle},
     MergeUnbounded, Stream, StreamExt,
@@ -182,9 +191,10 @@
 }
 
 <span class="kw">impl </span>RttHandle {
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new() -&gt; <span class="self">Self </span>{
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(metrics: Arc&lt;MagicsockMetrics&gt;) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span><span class="kw-2">mut </span>actor = RttActor {
             connection_events: Default::default(),
+            metrics,
         };
         <span class="kw">let </span>(msg_tx, msg_rx) = mpsc::channel(<span class="number">16</span>);
         <span class="kw">let </span>handle = task::spawn(
@@ -223,6 +233,7 @@
     <span class="doccomment">/// Stream of connection type changes.
     </span><span class="attr">#[debug(<span class="string">"MergeUnbounded&lt;WatcherStream&lt;ConnectionType&gt;&gt;"</span>)]
     </span>connection_events: MergeUnbounded&lt;MappedStream&gt;,
+    metrics: Arc&lt;MagicsockMetrics&gt;,
 }
 
 <span class="attr">#[derive(Debug)]
@@ -236,8 +247,12 @@
     </span>was_direct_before: bool,
 }
 
+<span class="kw">struct </span>ConnectionEvent {
+    became_direct: bool,
+}
+
 <span class="kw">impl </span>Stream <span class="kw">for </span>MappedStream {
-    <span class="kw">type </span>Item = ConnectionType;
+    <span class="kw">type </span>Item = ConnectionEvent;
 
     <span class="doccomment">/// Performs the congestion controller reset for a magic socket path change.
     ///
@@ -251,6 +266,7 @@
     ) -&gt; Poll&lt;<span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt;&gt; {
         <span class="kw">match </span>Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.stream).poll_next(cx) {
             Poll::Ready(<span class="prelude-val">Some</span>(new_conn_type)) =&gt; {
+                <span class="kw">let </span><span class="kw-2">mut </span>became_direct = <span class="bool-val">false</span>;
                 <span class="kw">if </span><span class="self">self</span>.connection.network_path_changed() {
                     <span class="macro">debug!</span>(
                         node_id = %<span class="self">self</span>.node_id.fmt_short(),
@@ -260,10 +276,10 @@
                     <span class="kw">if </span>!<span class="self">self</span>.was_direct_before &amp;&amp; <span class="macro">matches!</span>(new_conn_type, ConnectionType::Direct(<span class="kw">_</span>))
                     {
                         <span class="self">self</span>.was_direct_before = <span class="bool-val">true</span>;
-                        <span class="macro">inc!</span>(MagicsockMetrics, connection_became_direct);
-                    }
-                }
-                Poll::Ready(<span class="prelude-val">Some</span>(new_conn_type))
+                        became_direct = <span class="bool-val">true
+                    </span>}
+                };
+                Poll::Ready(<span class="prelude-val">Some</span>(ConnectionEvent { became_direct }))
             }
             Poll::Ready(<span class="prelude-val">None</span>) =&gt; Poll::Ready(<span class="prelude-val">None</span>),
             Poll::Pending =&gt; Poll::Pending,
@@ -285,7 +301,11 @@
                         <span class="prelude-val">None </span>=&gt; <span class="kw">break</span>,
                     }
                 }
-                _item = <span class="self">self</span>.connection_events.next(), <span class="kw">if </span>!<span class="self">self</span>.connection_events.is_empty() =&gt; {}
+                event = <span class="self">self</span>.connection_events.next(), <span class="kw">if </span>!<span class="self">self</span>.connection_events.is_empty() =&gt; {
+                    <span class="kw">if </span>event.map(|e| e.became_direct).unwrap_or(<span class="bool-val">false</span>) {
+                        <span class="self">self</span>.metrics.connection_became_direct.inc();
+                    }
+                }
             }
         }
         <span class="macro">debug!</span>(<span class="string">"rtt-actor finished"</span>);
@@ -317,7 +337,7 @@
             node_id,
             was_direct_before: <span class="bool-val">false</span>,
         });
-        <span class="macro">inc!</span>(MagicsockMetrics, connection_handshake_success);
+        <span class="self">self</span>.metrics.connection_handshake_success.inc();
     }
 }
 </code></pre></div></section></main></body></html>
