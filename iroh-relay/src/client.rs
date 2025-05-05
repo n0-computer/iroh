@@ -47,7 +47,6 @@ mod util;
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
-#[snafu(visibility(pub(crate)))]
 pub enum ConnectError {
     #[snafu(display("Invalid URL for websocket: {url}"))]
     InvalidWebsocketUrl { url: Url },
@@ -88,7 +87,6 @@ pub enum ConnectError {
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
-#[snafu(visibility(pub(crate)))]
 pub enum DialError {
     #[snafu(display("Invliad target port"))]
     InvalidTargetPort {},

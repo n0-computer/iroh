@@ -44,7 +44,6 @@ struct Inner {
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
-#[snafu(visibility(pub(crate)))]
 pub enum SendPacketError {
     #[snafu(display("Failed to send message: full"))]
     Full {},

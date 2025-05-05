@@ -35,7 +35,6 @@ use crate::{
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
-#[snafu(visibility(pub(crate)))]
 pub enum SendError {
     #[cfg(not(wasm_browser))]
     #[snafu(transparent)]
@@ -60,7 +59,6 @@ pub enum SendError {
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
-#[snafu(visibility(pub(crate)))]
 pub enum RecvError {
     #[snafu(transparent)]
     Io { source: io::Error },

@@ -156,7 +156,6 @@ pub(super) struct TlsConfig {
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
-#[snafu(visibility(pub(crate)))]
 pub enum Error {
     #[snafu(display("Unable to receive client information"))]
     RecvClientKey {
