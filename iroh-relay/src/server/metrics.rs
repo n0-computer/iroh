@@ -73,7 +73,7 @@ pub struct Metrics {
     /// Number of unique client keys per day
     pub unique_client_keys: Counter,
 
-    /// Number of accepted websocket connections.
+    /// Number of accepted websocket connections
     pub websocket_accepts: Counter,
     /// Number of accepted 'iroh derp http' connection upgrades
     pub relay_accepts: Counter,
@@ -84,7 +84,7 @@ pub struct Metrics {
     // pub average_queue_duration:
 }
 
-/// StunMetrics tracked for the relay server
+/// Metrics tracked for the STUN server.
 #[derive(Debug, Default, MetricsGroup)]
 #[metrics(name = "stun")]
 pub struct StunMetrics {
@@ -100,9 +100,12 @@ pub struct StunMetrics {
     pub failures: Counter,
 }
 
+/// All metrics tracked in the relay server.
 #[derive(Debug, Default, Clone, MetricsGroupSet)]
 #[metrics(name = "relay")]
 pub struct RelayMetrics {
+    /// Metrics tracked for the STUN server.
     pub stun: Arc<StunMetrics>,
+    /// Metrics tracked for the relay server.
     pub server: Arc<Metrics>,
 }

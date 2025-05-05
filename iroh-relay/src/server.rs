@@ -27,7 +27,6 @@ use hyper::body::Incoming;
 use iroh_base::NodeId;
 #[cfg(feature = "test-utils")]
 use iroh_base::RelayUrl;
-use metrics::RelayMetrics;
 use n0_future::{future::Boxed, StreamExt};
 use tokio::{
     net::{TcpListener, UdpSocket},
@@ -53,7 +52,7 @@ pub(crate) mod streams;
 pub mod testing;
 
 pub use self::{
-    metrics::{Metrics, StunMetrics},
+    metrics::{Metrics, RelayMetrics, StunMetrics},
     resolver::{ReloadingResolver, DEFAULT_CERT_RELOAD_INTERVAL},
 };
 
