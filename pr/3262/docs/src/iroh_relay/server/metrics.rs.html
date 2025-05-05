@@ -106,7 +106,10 @@
 <a href="#105" id="105">105</a>
 <a href="#106" id="106">106</a>
 <a href="#107" id="107">107</a>
-<a href="#108" id="108">108</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::sync::Arc;
+<a href="#108" id="108">108</a>
+<a href="#109" id="109">109</a>
+<a href="#110" id="110">110</a>
+<a href="#111" id="111">111</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::sync::Arc;
 
 <span class="kw">use </span>iroh_metrics::{Counter, MetricsGroup, MetricsGroupSet};
 
@@ -181,7 +184,7 @@
     <span class="doccomment">/// Number of unique client keys per day
     </span><span class="kw">pub </span>unique_client_keys: Counter,
 
-    <span class="doccomment">/// Number of accepted websocket connections.
+    <span class="doccomment">/// Number of accepted websocket connections
     </span><span class="kw">pub </span>websocket_accepts: Counter,
     <span class="doccomment">/// Number of accepted 'iroh derp http' connection upgrades
     </span><span class="kw">pub </span>relay_accepts: Counter,
@@ -192,7 +195,7 @@
     // pub average_queue_duration:
 </span>}
 
-<span class="doccomment">/// StunMetrics tracked for the relay server
+<span class="doccomment">/// Metrics tracked for the STUN server.
 </span><span class="attr">#[derive(Debug, Default, MetricsGroup)]
 #[metrics(name = <span class="string">"stun"</span>)]
 </span><span class="kw">pub struct </span>StunMetrics {
@@ -208,10 +211,13 @@
     </span><span class="kw">pub </span>failures: Counter,
 }
 
-<span class="attr">#[derive(Debug, Default, Clone, MetricsGroupSet)]
+<span class="doccomment">/// All metrics tracked in the relay server.
+</span><span class="attr">#[derive(Debug, Default, Clone, MetricsGroupSet)]
 #[metrics(name = <span class="string">"relay"</span>)]
 </span><span class="kw">pub struct </span>RelayMetrics {
-    <span class="kw">pub </span>stun: Arc&lt;StunMetrics&gt;,
-    <span class="kw">pub </span>server: Arc&lt;Metrics&gt;,
+    <span class="doccomment">/// Metrics tracked for the STUN server.
+    </span><span class="kw">pub </span>stun: Arc&lt;StunMetrics&gt;,
+    <span class="doccomment">/// Metrics tracked for the relay server.
+    </span><span class="kw">pub </span>server: Arc&lt;Metrics&gt;,
 }
 </code></pre></div></section></main></body></html>

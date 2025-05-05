@@ -214,7 +214,7 @@ The returned <a href="../metrics/struct.EndpointMetrics.html" title="struct iroh
 <div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">let </span>endpoint = Endpoint::builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
 <span class="macro">assert_eq!</span>(endpoint.metrics().magicsock.recv_datagrams.get(), <span class="number">0</span>);</code></pre></div>
 <p><a href="../metrics/struct.EndpointMetrics.html" title="struct iroh::metrics::EndpointMetrics"><code>EndpointMetrics</code></a> implements <a href="iroh_metrics::MetricsGroupSet"><code>MetricsGroupSet</code></a>, and each field
-implements <a href="iroh_metrics::MetricsGroup"><code>MetricsGroup</code></a>. These trait provides methods to iterate over
+implements <a href="iroh_metrics::MetricsGroup"><code>MetricsGroup</code></a>. These traits provide methods to iterate over
 the groups in the set, and over the individual metrics in each group, without having
 to access each field manually. With these methods, it is straightforward to collect
 all metrics into a map or push their values to a metrics collector.</p>
