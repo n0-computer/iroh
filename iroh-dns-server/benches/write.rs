@@ -1,7 +1,7 @@
-use anyhow::Result;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use iroh::{discovery::pkarr::PkarrRelayClient, node_info::NodeInfo, SecretKey};
 use iroh_dns_server::{config::Config, server::Server, ZoneStore};
+use n0_snafu::TestResult as Result;
 use rand_chacha::rand_core::SeedableRng;
 use tokio::runtime::Runtime;
 
