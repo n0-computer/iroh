@@ -134,10 +134,12 @@
 <a href="#133" id="133">133</a>
 <a href="#134" id="134">134</a>
 <a href="#135" id="135">135</a>
-<a href="#136" id="136">136</a></pre></div><pre class="rust"><code><span class="doccomment">//! The main server which combines the DNS and HTTP(S) servers.
+<a href="#136" id="136">136</a>
+<a href="#137" id="137">137</a>
+<a href="#138" id="138">138</a></pre></div><pre class="rust"><code><span class="doccomment">//! The main server which combines the DNS and HTTP(S) servers.
 
-</span><span class="kw">use </span>anyhow::Result;
-<span class="kw">use </span>iroh_metrics::metrics::start_metrics_server;
+</span><span class="kw">use </span>iroh_metrics::metrics::start_metrics_server;
+<span class="kw">use </span>n0_snafu::{TestResult <span class="kw">as </span><span class="prelude-ty">Result</span>, TestResultExt};
 <span class="kw">use </span>tracing::info;
 
 <span class="kw">use crate</span>::{
@@ -160,7 +162,7 @@
         store = store.with_mainline_fallback(bootstrap);
     };
     <span class="kw">let </span>server = Server::spawn(config, store).<span class="kw">await</span><span class="question-mark">?</span>;
-    tokio::signal::ctrl_c().<span class="kw">await</span><span class="question-mark">?</span>;
+    tokio::signal::ctrl_c().<span class="kw">await</span>.context(<span class="string">"ctrl+c"</span>)<span class="question-mark">?</span>;
     <span class="macro">info!</span>(<span class="string">"shutdown"</span>);
     server.shutdown().<span class="kw">await</span><span class="question-mark">?</span>;
     <span class="prelude-val">Ok</span>(())
@@ -170,7 +172,7 @@
 </span><span class="kw">pub struct </span>Server {
     http_server: HttpServer,
     dns_server: DnsServer,
-    metrics_task: tokio::task::JoinHandle&lt;anyhow::Result&lt;()&gt;&gt;,
+    metrics_task: tokio::task::JoinHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;,
 }
 
 <span class="kw">impl </span>Server {
@@ -188,7 +190,7 @@
         <span class="kw">let </span>metrics_addr = config.metrics_addr();
         <span class="kw">let </span>metrics_task = tokio::task::spawn(<span class="kw">async move </span>{
             <span class="kw">if let </span><span class="prelude-val">Some</span>(addr) = metrics_addr {
-                start_metrics_server(addr).<span class="kw">await</span><span class="question-mark">?</span>;
+                start_metrics_server(addr).<span class="kw">await</span>.context(<span class="string">"metrics server"</span>)<span class="question-mark">?</span>;
             }
             <span class="prelude-val">Ok</span>(())
         });
@@ -266,7 +268,9 @@
         <span class="kw">let </span>server = <span class="self">Self</span>::spawn(config, store).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>dns_addr = server.dns_server.local_addr();
         <span class="kw">let </span>http_addr = server.http_server.http_addr().expect(<span class="string">"http is set"</span>);
-        <span class="kw">let </span>http_url = <span class="macro">format!</span>(<span class="string">"http://{http_addr}"</span>).parse()<span class="question-mark">?</span>;
+        <span class="kw">let </span>http_url = <span class="macro">format!</span>(<span class="string">"http://{http_addr}"</span>)
+            .parse::&lt;url::Url&gt;()
+            .context(<span class="string">"url parse"</span>)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>((server, dns_addr, http_url))
     }
 }

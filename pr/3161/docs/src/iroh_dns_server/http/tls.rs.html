@@ -182,20 +182,25 @@
 <a href="#181" id="181">181</a>
 <a href="#182" id="182">182</a>
 <a href="#183" id="183">183</a>
-<a href="#184" id="184">184</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#184" id="184">184</a>
+<a href="#185" id="185">185</a>
+<a href="#186" id="186">186</a>
+<a href="#187" id="187">187</a>
+<a href="#188" id="188">188</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     borrow::Cow,
     io,
     path::{Path, PathBuf},
     sync::{Arc, OnceLock},
 };
 
-<span class="kw">use </span>anyhow::{bail, Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>axum_server::{
     accept::Accept,
     tls_rustls::{RustlsAcceptor, RustlsConfig},
 };
 <span class="kw">use </span>n0_future::{future::Boxed <span class="kw">as </span>BoxFuture, FutureExt};
+<span class="kw">use </span>n0_snafu::{TestResult <span class="kw">as </span><span class="prelude-ty">Result</span>, TestResultExt};
 <span class="kw">use </span>serde::{Deserialize, Serialize};
+<span class="kw">use </span>snafu::whatever;
 <span class="kw">use </span>tokio::io::{AsyncRead, AsyncWrite};
 <span class="kw">use </span>tokio_rustls_acme::{axum::AxumAcceptor, caches::DirCache, AcmeConfig};
 <span class="kw">use </span>tokio_stream::StreamExt;
@@ -258,9 +263,11 @@
 
 <span class="kw">impl </span>TlsAcceptor {
     <span class="kw">async fn </span>self_signed(domains: Vec&lt;String&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="kw">let </span>rcgen::CertifiedKey { cert, key_pair } = rcgen::generate_simple_self_signed(domains)<span class="question-mark">?</span>;
-        <span class="kw">let </span>config =
-            RustlsConfig::from_der(<span class="macro">vec!</span>[cert.der().to_vec()], key_pair.serialize_der()).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>rcgen::CertifiedKey { cert, key_pair } =
+            rcgen::generate_simple_self_signed(domains).context(<span class="string">"generate self signed cert"</span>)<span class="question-mark">?</span>;
+        <span class="kw">let </span>config = RustlsConfig::from_der(<span class="macro">vec!</span>[cert.der().to_vec()], key_pair.serialize_der())
+            .<span class="kw">await
+            </span>.context(<span class="string">"rustls config"</span>)<span class="question-mark">?</span>;
         <span class="kw">let </span>acceptor = RustlsAcceptor::new(config);
         <span class="prelude-val">Ok</span>(<span class="self">Self</span>::Manual(acceptor))
     }
@@ -268,8 +275,9 @@
     <span class="kw">async fn </span>manual(domains: Vec&lt;String&gt;, dir: PathBuf) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>config = rustls::ServerConfig::builder().with_no_client_auth();
         <span class="kw">if </span>domains.len() != <span class="number">1 </span>{
-            <span class="macro">bail!</span>(<span class="string">"Multiple domains in manual mode are not supported"</span>);
+            <span class="macro">whatever!</span>(<span class="string">"Multiple domains in manual mode are not supported"</span>);
         }
+
         <span class="kw">let </span>keyname = escape_hostname(<span class="kw-2">&amp;</span>domains[<span class="number">0</span>]);
         <span class="kw">let </span>cert_path = dir.join(<span class="macro">format!</span>(<span class="string">"{keyname}.crt"</span>));
         <span class="kw">let </span>key_path = dir.join(<span class="macro">format!</span>(<span class="string">"{keyname}.key"</span>));
@@ -277,7 +285,7 @@
         <span class="kw">let </span>certs = load_certs(cert_path).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>secret_key = load_secret_key(key_path).<span class="kw">await</span><span class="question-mark">?</span>;
 
-        <span class="kw">let </span>config = config.with_single_cert(certs, secret_key)<span class="question-mark">?</span>;
+        <span class="kw">let </span>config = config.with_single_cert(certs, secret_key).context(<span class="string">"cert"</span>)<span class="question-mark">?</span>;
         <span class="kw">let </span>config = RustlsConfig::from_config(Arc::new(config));
         <span class="kw">let </span>acceptor = RustlsAcceptor::new(config);
         <span class="prelude-val">Ok</span>(<span class="self">Self</span>::Manual(acceptor))
@@ -324,7 +332,7 @@
         </span>.context(<span class="string">"cannot open certificate file"</span>)<span class="question-mark">?</span>;
     <span class="kw">let </span><span class="kw-2">mut </span>reader = std::io::Cursor::new(certfile);
     <span class="kw">let </span>certs: <span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, std::io::Error&gt; = rustls_pemfile::certs(<span class="kw-2">&amp;mut </span>reader).collect();
-    <span class="kw">let </span>certs = certs<span class="question-mark">?</span>;
+    <span class="kw">let </span>certs = certs.context(<span class="string">"read certs"</span>)<span class="question-mark">?</span>;
 
     <span class="prelude-val">Ok</span>(certs)
 }
@@ -353,7 +361,7 @@
         }
     }
 
-    <span class="macro">bail!</span>(
+    <span class="macro">whatever!</span>(
         <span class="string">"no keys found in {} (encrypted keys not supported)"</span>,
         filename.as_ref().display()
     );

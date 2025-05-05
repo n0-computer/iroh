@@ -255,7 +255,7 @@
     time::Duration,
 };
 
-<span class="kw">use </span>anyhow::{anyhow, Context, <span class="prelude-ty">Result</span>};
+<span class="kw">use </span>n0_snafu::{TestResult <span class="kw">as </span><span class="prelude-ty">Result</span>, TestResultExt};
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>tracing::info;
 
@@ -411,7 +411,7 @@
         <span class="kw">let </span>s = tokio::fs::read_to_string(path.as_ref())
             .<span class="kw">await
             </span>.with_context(|| <span class="macro">format!</span>(<span class="string">"failed to read {}"</span>, path.as_ref().to_string_lossy()))<span class="question-mark">?</span>;
-        <span class="kw">let </span>config: Config = toml::from_str(<span class="kw-2">&amp;</span>s)<span class="question-mark">?</span>;
+        <span class="kw">let </span>config: Config = toml::from_str(<span class="kw-2">&amp;</span>s).context(<span class="string">"toml decode"</span>)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(config)
     }
 
@@ -420,9 +420,9 @@
         <span class="kw">let </span>dir = <span class="kw">if let </span><span class="prelude-val">Some</span>(val) = env::var_os(<span class="string">"IROH_DNS_DATA_DIR"</span>) {
             PathBuf::from(val)
         } <span class="kw">else </span>{
-            <span class="kw">let </span>path = dirs_next::data_dir().ok_or_else(|| {
-                <span class="macro">anyhow!</span>(<span class="string">"operating environment provides no directory for application data"</span>)
-            })<span class="question-mark">?</span>;
+            <span class="kw">let </span>path = dirs_next::data_dir()
+                .context(<span class="string">"operating environment provides no directory for application data"</span>)<span class="question-mark">?</span>;
+
             path.join(<span class="string">"iroh-dns"</span>)
         };
         <span class="prelude-val">Ok</span>(dir)

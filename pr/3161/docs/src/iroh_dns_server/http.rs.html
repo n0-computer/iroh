@@ -258,14 +258,22 @@
 <a href="#257" id="257">257</a>
 <a href="#258" id="258">258</a>
 <a href="#259" id="259">259</a>
-<a href="#260" id="260">260</a></pre></div><pre class="rust"><code><span class="doccomment">//! HTTP server part of iroh-dns-server
+<a href="#260" id="260">260</a>
+<a href="#261" id="261">261</a>
+<a href="#262" id="262">262</a>
+<a href="#263" id="263">263</a>
+<a href="#264" id="264">264</a>
+<a href="#265" id="265">265</a>
+<a href="#266" id="266">266</a>
+<a href="#267" id="267">267</a>
+<a href="#268" id="268">268</a>
+<a href="#269" id="269">269</a></pre></div><pre class="rust"><code><span class="doccomment">//! HTTP server part of iroh-dns-server
 
 </span><span class="kw">use </span>std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     time::Instant,
 };
 
-<span class="kw">use </span>anyhow::{bail, Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>axum::{
     extract::{ConnectInfo, Request},
     handler::Handler,
@@ -276,7 +284,9 @@
     Router,
 };
 <span class="kw">use </span>iroh_metrics::{inc, inc_by};
+<span class="kw">use </span>n0_snafu::{TestResult <span class="kw">as </span><span class="prelude-ty">Result</span>, TestResultExt};
 <span class="kw">use </span>serde::{Deserialize, Serialize};
+<span class="kw">use </span>snafu::whatever;
 <span class="kw">use </span>tokio::{net::TcpListener, task::JoinSet};
 <span class="kw">use </span>tower_http::{
     cors::{<span class="self">self</span>, CorsLayer},
@@ -335,7 +345,7 @@
         state: AppState,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;HttpServer&gt; {
         <span class="kw">if </span>http_config.is_none() &amp;&amp; https_config.is_none() {
-            <span class="macro">bail!</span>(<span class="string">"Either http or https config is required"</span>);
+            <span class="macro">whatever!</span>(<span class="string">"Either http or https config is required"</span>);
         }
 
         <span class="kw">let </span>app = create_app(state, <span class="kw-2">&amp;</span>rate_limit_config);
@@ -349,8 +359,12 @@
                 config.port,
             );
             <span class="kw">let </span>app = app.clone();
-            <span class="kw">let </span>listener = TcpListener::bind(bind_addr).<span class="kw">await</span><span class="question-mark">?</span>.into_std()<span class="question-mark">?</span>;
-            <span class="kw">let </span>bound_addr = listener.local_addr()<span class="question-mark">?</span>;
+            <span class="kw">let </span>listener = TcpListener::bind(bind_addr)
+                .<span class="kw">await
+                </span>.context(<span class="string">"TCP bind"</span>)<span class="question-mark">?
+                </span>.into_std()
+                .context(<span class="string">"into std"</span>)<span class="question-mark">?</span>;
+            <span class="kw">let </span>bound_addr = listener.local_addr().context(<span class="string">"local addr"</span>)<span class="question-mark">?</span>;
             <span class="kw">let </span>fut = axum_server::from_tcp(listener)
                 .serve(app.into_make_service_with_connect_info::&lt;SocketAddr&gt;());
             <span class="macro">info!</span>(<span class="string">"HTTP server listening on {bind_addr}"</span>);
@@ -385,8 +399,12 @@
                     )
                     .<span class="kw">await</span><span class="question-mark">?
             </span>};
-            <span class="kw">let </span>listener = TcpListener::bind(bind_addr).<span class="kw">await</span><span class="question-mark">?</span>.into_std()<span class="question-mark">?</span>;
-            <span class="kw">let </span>bound_addr = listener.local_addr()<span class="question-mark">?</span>;
+            <span class="kw">let </span>listener = TcpListener::bind(bind_addr)
+                .<span class="kw">await
+                </span>.context(<span class="string">"TCP bind"</span>)<span class="question-mark">?
+                </span>.into_std()
+                .context(<span class="string">"into std"</span>)<span class="question-mark">?</span>;
+            <span class="kw">let </span>bound_addr = listener.local_addr().context(<span class="string">"local addr"</span>)<span class="question-mark">?</span>;
             <span class="kw">let </span>fut = axum_server::from_tcp(listener)
                 .acceptor(acceptor)
                 .serve(app.into_make_service_with_connect_info::&lt;SocketAddr&gt;());
@@ -426,18 +444,18 @@
     ///
     /// Runs forever unless tasks fail.
     </span><span class="kw">pub async fn </span>run_until_done(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">let </span><span class="kw-2">mut </span>final_res: anyhow::Result&lt;()&gt; = <span class="prelude-val">Ok</span>(());
+        <span class="kw">let </span><span class="kw-2">mut </span>final_res: <span class="prelude-ty">Result</span>&lt;()&gt; = <span class="prelude-val">Ok</span>(());
         <span class="kw">while let </span><span class="prelude-val">Some</span>(res) = <span class="self">self</span>.tasks.join_next().<span class="kw">await </span>{
             <span class="kw">match </span>res {
                 <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(())) =&gt; {}
                 <span class="prelude-val">Err</span>(err) <span class="kw">if </span>err.is_cancelled() =&gt; {}
                 <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err)) =&gt; {
                     <span class="macro">warn!</span>(<span class="question-mark">?</span>err, <span class="string">"task failed"</span>);
-                    final_res = <span class="prelude-val">Err</span>(anyhow::Error::from(err));
+                    final_res = <span class="prelude-val">Err</span>(err).context(<span class="string">"task"</span>);
                 }
                 <span class="prelude-val">Err</span>(err) =&gt; {
                     <span class="macro">warn!</span>(<span class="question-mark">?</span>err, <span class="string">"task panicked"</span>);
-                    final_res = <span class="prelude-val">Err</span>(err.into());
+                    final_res = <span class="prelude-val">Err</span>(err).context(<span class="string">"join"</span>);
                 }
             }
         }

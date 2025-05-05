@@ -274,7 +274,18 @@
 <a href="#273" id="273">273</a>
 <a href="#274" id="274">274</a>
 <a href="#275" id="275">275</a>
-<a href="#276" id="276">276</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implementation of a DNS name server for iroh node announces
+<a href="#276" id="276">276</a>
+<a href="#277" id="277">277</a>
+<a href="#278" id="278">278</a>
+<a href="#279" id="279">279</a>
+<a href="#280" id="280">280</a>
+<a href="#281" id="281">281</a>
+<a href="#282" id="282">282</a>
+<a href="#283" id="283">283</a>
+<a href="#284" id="284">284</a>
+<a href="#285" id="285">285</a>
+<a href="#286" id="286">286</a>
+<a href="#287" id="287">287</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implementation of a DNS name server for iroh node announces
 
 </span><span class="kw">use </span>std::{
     collections::BTreeMap,
@@ -284,7 +295,6 @@
     time::Duration,
 };
 
-<span class="kw">use </span>anyhow::{anyhow, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>async_trait::async_trait;
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>hickory_server::{
@@ -303,6 +313,7 @@
     store::in_memory::InMemoryAuthority,
 };
 <span class="kw">use </span>iroh_metrics::inc;
+<span class="kw">use </span>n0_snafu::{format_err, TestResult <span class="kw">as </span><span class="prelude-ty">Result</span>, TestResultExt};
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>tokio::{
     net::{TcpListener, UdpSocket},
@@ -359,12 +370,15 @@
             config.port,
         );
 
-        <span class="kw">let </span>socket = UdpSocket::bind(bind_addr).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>socket = UdpSocket::bind(bind_addr).<span class="kw">await</span>.context(<span class="string">"UDP bind"</span>)<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>socket_addr = socket.local_addr()<span class="question-mark">?</span>;
+        <span class="kw">let </span>socket_addr = socket.local_addr().context(<span class="string">"local address"</span>)<span class="question-mark">?</span>;
 
         server.register_socket(socket);
-        server.register_listener(TcpListener::bind(bind_addr).<span class="kw">await</span><span class="question-mark">?</span>, TCP_TIMEOUT);
+        server.register_listener(
+            TcpListener::bind(bind_addr).<span class="kw">await</span>.context(<span class="string">"TCP bind"</span>)<span class="question-mark">?</span>,
+            TCP_TIMEOUT,
+        );
         <span class="macro">info!</span>(<span class="string">"DNS server listening on {}"</span>, bind_addr);
 
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
@@ -380,7 +394,10 @@
 
     <span class="doccomment">/// Shutdown the server an wait for all tasks to complete.
     </span><span class="kw">pub async fn </span>shutdown(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="self">self</span>.server.shutdown_gracefully().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="self">self</span>.server
+            .shutdown_gracefully()
+            .<span class="kw">await
+            </span>.context(<span class="string">"graceful shutdown"</span>)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(())
     }
 
@@ -388,7 +405,10 @@
     ///
     /// Runs forever unless tasks fail.
     </span><span class="kw">pub async fn </span>run_until_done(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="self">self</span>.server.block_until_done().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="self">self</span>.server
+            .block_until_done()
+            .<span class="kw">await
+            </span>.context(<span class="string">"block until done"</span>)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(())
     }
 }
@@ -408,7 +428,8 @@
             .origins
             .iter()
             .map(Name::from_utf8)
-            .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()<span class="question-mark">?</span>;
+            .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()
+            .context(<span class="string">"origin names"</span>)<span class="question-mark">?</span>;
 
         <span class="kw">let </span>(static_authority, serial) = create_static_authority(<span class="kw-2">&amp;</span>origins, config)<span class="question-mark">?</span>;
         <span class="kw">let </span>authority = Arc::new(NodeAuthority::new(
@@ -433,7 +454,7 @@
         <span class="kw">let </span>(tx, <span class="kw-2">mut </span>rx) = broadcast::channel(<span class="number">1</span>);
         <span class="kw">let </span>response_handle = Handle(tx);
         <span class="self">self</span>.handle_request(<span class="kw-2">&amp;</span>request, response_handle).<span class="kw">await</span>;
-        <span class="prelude-val">Ok</span>(rx.recv().<span class="kw">await</span><span class="question-mark">?</span>)
+        rx.recv().<span class="kw">await</span>.context(<span class="string">"recv"</span>)
     }
 }
 
@@ -503,9 +524,10 @@
         RecordType::SOA,
         config.default_soa.split_ascii_whitespace(),
         <span class="prelude-val">None</span>,
-    )<span class="question-mark">?
+    )
+    .context(<span class="string">"rdata"</span>)<span class="question-mark">?
     </span>.into_soa()
-    .map_err(|<span class="kw">_</span>| <span class="macro">anyhow!</span>(<span class="string">"Couldn't parse SOA: {}"</span>, config.default_soa))<span class="question-mark">?</span>;
+    .map_err(|<span class="kw">_</span>| <span class="macro">format_err!</span>(<span class="string">"Couldn't parse SOA: {}"</span>, config.default_soa))<span class="question-mark">?</span>;
     <span class="kw">let </span>serial = soa.serial();
     <span class="kw">let </span><span class="kw-2">mut </span>records = BTreeMap::new();
     <span class="kw">for </span>name <span class="kw">in </span>origins {
@@ -529,7 +551,7 @@
             );
         }
         <span class="kw">if let </span><span class="prelude-val">Some</span>(ns) = <span class="kw-2">&amp;</span>config.rr_ns {
-            <span class="kw">let </span>ns = Name::parse(ns, <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>Name::root()))<span class="question-mark">?</span>;
+            <span class="kw">let </span>ns = Name::parse(ns, <span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>Name::root())).context(<span class="string">"name"</span>)<span class="question-mark">?</span>;
             push_record(
                 <span class="kw-2">&amp;mut </span>records,
                 serial,
@@ -539,7 +561,7 @@
     }
 
     <span class="kw">let </span>static_authority = InMemoryAuthority::new(Name::root(), records, ZoneType::Primary, <span class="bool-val">false</span>)
-        .map_err(|e| <span class="macro">anyhow!</span>(e))<span class="question-mark">?</span>;
+        .map_err(|e| <span class="macro">format_err!</span>(<span class="string">"new authority: {}"</span>, e))<span class="question-mark">?</span>;
 
     <span class="prelude-val">Ok</span>((static_authority, serial))
 }

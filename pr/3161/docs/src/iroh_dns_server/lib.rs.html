@@ -267,7 +267,18 @@
 <a href="#266" id="266">266</a>
 <a href="#267" id="267">267</a>
 <a href="#268" id="268">268</a>
-<a href="#269" id="269">269</a></pre></div><pre class="rust"><code><span class="doccomment">//! A DNS server and pkarr relay
+<a href="#269" id="269">269</a>
+<a href="#270" id="270">270</a>
+<a href="#271" id="271">271</a>
+<a href="#272" id="272">272</a>
+<a href="#273" id="273">273</a>
+<a href="#274" id="274">274</a>
+<a href="#275" id="275">275</a>
+<a href="#276" id="276">276</a>
+<a href="#277" id="277">277</a>
+<a href="#278" id="278">278</a>
+<a href="#279" id="279">279</a>
+<a href="#280" id="280">280</a></pre></div><pre class="rust"><code><span class="doccomment">//! A DNS server and pkarr relay
 
 </span><span class="attr">#![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 
@@ -290,13 +301,12 @@
         time::Duration,
     };
 
-    <span class="kw">use </span>anyhow::Result;
     <span class="kw">use </span>iroh::{
         discovery::pkarr::PkarrRelayClient, dns::DnsResolver, node_info::NodeInfo, RelayUrl,
         SecretKey,
     };
+    <span class="kw">use </span>n0_snafu::{TestResult, TestResultExt};
     <span class="kw">use </span>pkarr::{SignedPacket, Timestamp};
-    <span class="kw">use </span>testresult::TestResult;
     <span class="kw">use </span>tracing_test::traced_test;
 
     <span class="kw">use crate</span>::{
@@ -311,7 +321,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>pkarr_publish_dns_resolve() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">async fn </span>pkarr_publish_dns_resolve() -&gt; TestResult {
         <span class="kw">let </span>(server, nameserver, http_url) = Server::spawn_for_tests().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>pkarr_relay_url = {
             <span class="kw">let </span><span class="kw-2">mut </span>url = http_url.clone();
@@ -327,34 +337,34 @@
                 dns::Name::new(<span class="string">""</span>).unwrap(),
                 dns::CLASS::IN,
                 <span class="number">30</span>,
-                dns::rdata::RData::TXT(<span class="string">"hi0"</span>.try_into()<span class="question-mark">?</span>),
+                dns::rdata::RData::TXT(<span class="string">"hi0"</span>.try_into().unwrap()),
             ));
             <span class="comment">// record at level one
             </span>packet.answers.push(dns::ResourceRecord::new(
                 dns::Name::new(<span class="string">"_hello"</span>).unwrap(),
                 dns::CLASS::IN,
                 <span class="number">30</span>,
-                dns::rdata::RData::TXT(<span class="string">"hi1"</span>.try_into()<span class="question-mark">?</span>),
+                dns::rdata::RData::TXT(<span class="string">"hi1"</span>.try_into().unwrap()),
             ));
             <span class="comment">// record at level two
             </span>packet.answers.push(dns::ResourceRecord::new(
                 dns::Name::new(<span class="string">"_hello.world"</span>).unwrap(),
                 dns::CLASS::IN,
                 <span class="number">30</span>,
-                dns::rdata::RData::TXT(<span class="string">"hi2"</span>.try_into()<span class="question-mark">?</span>),
+                dns::rdata::RData::TXT(<span class="string">"hi2"</span>.try_into().unwrap()),
             ));
             <span class="comment">// multiple records for same name
             </span>packet.answers.push(dns::ResourceRecord::new(
                 dns::Name::new(<span class="string">"multiple"</span>).unwrap(),
                 dns::CLASS::IN,
                 <span class="number">30</span>,
-                dns::rdata::RData::TXT(<span class="string">"hi3"</span>.try_into()<span class="question-mark">?</span>),
+                dns::rdata::RData::TXT(<span class="string">"hi3"</span>.try_into().unwrap()),
             ));
             packet.answers.push(dns::ResourceRecord::new(
                 dns::Name::new(<span class="string">"multiple"</span>).unwrap(),
                 dns::CLASS::IN,
                 <span class="number">30</span>,
-                dns::rdata::RData::TXT(<span class="string">"hi4"</span>.try_into()<span class="question-mark">?</span>),
+                dns::rdata::RData::TXT(<span class="string">"hi4"</span>.try_into().unwrap()),
             ));
             <span class="comment">// record of type A
             </span>packet.answers.push(dns::ResourceRecord::new(
@@ -370,50 +380,56 @@
                 <span class="number">30</span>,
                 dns::rdata::RData::AAAA(Ipv6Addr::LOCALHOST.into()),
             ));
-            SignedPacket::new(<span class="kw-2">&amp;</span>keypair, <span class="kw-2">&amp;</span>packet.answers, Timestamp::now())<span class="question-mark">?
+            SignedPacket::new(<span class="kw-2">&amp;</span>keypair, <span class="kw-2">&amp;</span>packet.answers, Timestamp::now())
+                .context(<span class="string">"signed packet"</span>)<span class="question-mark">?
         </span>};
         <span class="kw">let </span>pkarr_client = pkarr::Client::builder()
             .no_default_network()
-            .relays(<span class="kw-2">&amp;</span>[pkarr_relay_url])<span class="question-mark">?
-            </span>.build()<span class="question-mark">?</span>;
-        pkarr_client.publish(<span class="kw-2">&amp;</span>signed_packet, <span class="prelude-val">None</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+            .relays(<span class="kw-2">&amp;</span>[pkarr_relay_url])
+            .context(<span class="string">"relays"</span>)<span class="question-mark">?
+            </span>.build()
+            .context(<span class="string">"build pkarr client"</span>)<span class="question-mark">?</span>;
+        pkarr_client
+            .publish(<span class="kw-2">&amp;</span>signed_packet, <span class="prelude-val">None</span>)
+            .<span class="kw">await
+            </span>.context(<span class="string">"publish pkarr"</span>)<span class="question-mark">?</span>;
 
         <span class="kw">use </span>hickory_server::proto::rr::Name;
         <span class="kw">let </span>pubkey = signed_packet.public_key().to_z32();
         <span class="kw">let </span>resolver = test_resolver(nameserver);
 
         <span class="comment">// resolve root record
-        </span><span class="kw">let </span>name = Name::from_utf8(<span class="macro">format!</span>(<span class="string">"{pubkey}."</span>))<span class="question-mark">?</span>;
+        </span><span class="kw">let </span>name = Name::from_utf8(<span class="macro">format!</span>(<span class="string">"{pubkey}."</span>)).context(<span class="string">"name"</span>)<span class="question-mark">?</span>;
         <span class="kw">let </span>res = resolver.lookup_txt(name, DNS_TIMEOUT).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>records = res.into_iter().map(|t| t.to_string()).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
         <span class="macro">assert_eq!</span>(records, <span class="macro">vec!</span>[<span class="string">"hi0"</span>.to_string()]);
 
         <span class="comment">// resolve level one record
-        </span><span class="kw">let </span>name = Name::from_utf8(<span class="macro">format!</span>(<span class="string">"_hello.{pubkey}."</span>))<span class="question-mark">?</span>;
+        </span><span class="kw">let </span>name = Name::from_utf8(<span class="macro">format!</span>(<span class="string">"_hello.{pubkey}."</span>)).context(<span class="string">"name"</span>)<span class="question-mark">?</span>;
         <span class="kw">let </span>res = resolver.lookup_txt(name, DNS_TIMEOUT).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>records = res.into_iter().map(|t| t.to_string()).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
         <span class="macro">assert_eq!</span>(records, <span class="macro">vec!</span>[<span class="string">"hi1"</span>.to_string()]);
 
         <span class="comment">// resolve level two record
-        </span><span class="kw">let </span>name = Name::from_utf8(<span class="macro">format!</span>(<span class="string">"_hello.world.{pubkey}."</span>))<span class="question-mark">?</span>;
+        </span><span class="kw">let </span>name = Name::from_utf8(<span class="macro">format!</span>(<span class="string">"_hello.world.{pubkey}."</span>)).context(<span class="string">"name"</span>)<span class="question-mark">?</span>;
         <span class="kw">let </span>res = resolver.lookup_txt(name, DNS_TIMEOUT).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>records = res.into_iter().map(|t| t.to_string()).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
         <span class="macro">assert_eq!</span>(records, <span class="macro">vec!</span>[<span class="string">"hi2"</span>.to_string()]);
 
         <span class="comment">// resolve multiple records for same name
-        </span><span class="kw">let </span>name = Name::from_utf8(<span class="macro">format!</span>(<span class="string">"multiple.{pubkey}."</span>))<span class="question-mark">?</span>;
+        </span><span class="kw">let </span>name = Name::from_utf8(<span class="macro">format!</span>(<span class="string">"multiple.{pubkey}."</span>)).context(<span class="string">"name"</span>)<span class="question-mark">?</span>;
         <span class="kw">let </span>res = resolver.lookup_txt(name, DNS_TIMEOUT).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>records = res.into_iter().map(|t| t.to_string()).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
         <span class="macro">assert_eq!</span>(records, <span class="macro">vec!</span>[<span class="string">"hi3"</span>.to_string(), <span class="string">"hi4"</span>.to_string()]);
 
         <span class="comment">// resolve A record
-        </span><span class="kw">let </span>name = Name::from_utf8(<span class="macro">format!</span>(<span class="string">"{pubkey}."</span>))<span class="question-mark">?</span>;
+        </span><span class="kw">let </span>name = Name::from_utf8(<span class="macro">format!</span>(<span class="string">"{pubkey}."</span>)).context(<span class="string">"name"</span>)<span class="question-mark">?</span>;
         <span class="kw">let </span>res = resolver.lookup_ipv4(name, DNS_TIMEOUT).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>records = res.collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
         <span class="macro">assert_eq!</span>(records, <span class="macro">vec!</span>[Ipv4Addr::LOCALHOST]);
 
         <span class="comment">// resolve AAAA record
-        </span><span class="kw">let </span>name = Name::from_utf8(<span class="macro">format!</span>(<span class="string">"foo.bar.baz.{pubkey}."</span>))<span class="question-mark">?</span>;
+        </span><span class="kw">let </span>name = Name::from_utf8(<span class="macro">format!</span>(<span class="string">"foo.bar.baz.{pubkey}."</span>)).context(<span class="string">"name"</span>)<span class="question-mark">?</span>;
         <span class="kw">let </span>res = resolver.lookup_ipv6(name, DNS_TIMEOUT).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>records = res.collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
         <span class="macro">assert_eq!</span>(records, <span class="macro">vec!</span>[Ipv6Addr::LOCALHOST]);
@@ -424,7 +440,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>integration_smoke() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">async fn </span>integration_smoke() -&gt; TestResult {
         <span class="kw">let </span>(server, nameserver, http_url) = Server::spawn_for_tests().<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="kw">let </span>pkarr_relay = {
@@ -456,7 +472,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>store_eviction() -&gt; TestResult&lt;()&gt; {
+    </span><span class="kw">async fn </span>store_eviction() -&gt; TestResult {
         <span class="kw">let </span>options = ZoneStoreOptions {
             eviction: Duration::from_millis(<span class="number">100</span>),
             eviction_interval: Duration::from_millis(<span class="number">100</span>),
@@ -486,9 +502,11 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>integration_mainline() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">async fn </span>integration_mainline() -&gt; TestResult {
         <span class="comment">// run a mainline testnet
-        </span><span class="kw">let </span>testnet = pkarr::mainline::Testnet::new_async(<span class="number">5</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        </span><span class="kw">let </span>testnet = pkarr::mainline::Testnet::new_async(<span class="number">5</span>)
+            .<span class="kw">await
+            </span>.context(<span class="string">"new testnet"</span>)<span class="question-mark">?</span>;
         <span class="kw">let </span>bootstrap = testnet.bootstrap.clone();
 
         <span class="comment">// spawn our server with mainline support
@@ -509,8 +527,12 @@
         </span><span class="kw">let </span>pkarr = pkarr::Client::builder()
             .no_default_network()
             .dht(|builder| builder.bootstrap(<span class="kw-2">&amp;</span>testnet.bootstrap))
-            .build()<span class="question-mark">?</span>;
-        pkarr.publish(<span class="kw-2">&amp;</span>signed_packet, <span class="prelude-val">None</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+            .build()
+            .context(<span class="string">"build pkarr client"</span>)<span class="question-mark">?</span>;
+        pkarr
+            .publish(<span class="kw-2">&amp;</span>signed_packet, <span class="prelude-val">None</span>)
+            .<span class="kw">await
+            </span>.context(<span class="string">"publish"</span>)<span class="question-mark">?</span>;
 
         <span class="comment">// resolve via DNS from our server, which will lookup from our DHT
         </span><span class="kw">let </span>resolver = test_resolver(nameserver);
@@ -527,7 +549,7 @@
         DnsResolver::with_nameserver(nameserver)
     }
 
-    <span class="kw">fn </span>random_signed_packet() -&gt; <span class="prelude-ty">Result</span>&lt;SignedPacket&gt; {
+    <span class="kw">fn </span>random_signed_packet() -&gt; TestResult&lt;SignedPacket&gt; {
         <span class="kw">let </span>secret_key = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>node_id = secret_key.public();
         <span class="kw">let </span>relay_url: RelayUrl = <span class="string">"https://relay.example."</span>.parse()<span class="question-mark">?</span>;

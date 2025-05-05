@@ -138,14 +138,16 @@
 <a href="#137" id="137">137</a>
 <a href="#138" id="138">138</a>
 <a href="#139" id="139">139</a>
-<a href="#140" id="140">140</a></pre></div><pre class="rust"><code><span class="doccomment">//! DNS Response
+<a href="#140" id="140">140</a>
+<a href="#141" id="141">141</a></pre></div><pre class="rust"><code><span class="doccomment">//! DNS Response
 
 </span><span class="comment">// This module is mostly copied from
 // https://github.com/fission-codes/fission-server/blob/394de877fad021260c69fdb1edd7bb4b2f98108c/fission-core/src/dns.rs
 
-</span><span class="kw">use </span>anyhow::{ensure, <span class="prelude-ty">Result</span>};
-<span class="kw">use </span>hickory_server::proto;
+</span><span class="kw">use </span>hickory_server::proto;
+<span class="kw">use </span>n0_snafu::TestResult <span class="kw">as </span><span class="prelude-ty">Result</span>;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
+<span class="kw">use </span>snafu::ensure_whatever;
 
 <span class="attr">#[derive(Debug, Serialize, Deserialize)]
 </span><span class="doccomment">/// JSON representation of a DNS response
@@ -187,17 +189,17 @@
 <span class="kw">impl </span>DnsResponse {
     <span class="doccomment">/// Create a new JSON response from a DNS message
     </span><span class="kw">pub fn </span>from_message(message: proto::op::Message) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="macro">ensure!</span>(
+        <span class="macro">ensure_whatever!</span>(
             message.message_type() == proto::op::MessageType::Response,
             <span class="string">"Expected message type to be response"
         </span>);
 
-        <span class="macro">ensure!</span>(
+        <span class="macro">ensure_whatever!</span>(
             message.query_count() == message.queries().len() <span class="kw">as </span>u16,
             <span class="string">"Query count mismatch"
         </span>);
 
-        <span class="macro">ensure!</span>(
+        <span class="macro">ensure_whatever!</span>(
             message.answer_count() == message.answers().len() <span class="kw">as </span>u16,
             <span class="string">"Answer count mismatch"
         </span>);

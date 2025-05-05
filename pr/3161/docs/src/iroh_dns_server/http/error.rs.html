@@ -150,8 +150,8 @@
     }
 }
 
-<span class="kw">impl </span>From&lt;anyhow::Error&gt; <span class="kw">for </span>AppError {
-    <span class="kw">fn </span>from(value: anyhow::Error) -&gt; <span class="self">Self </span>{
+<span class="kw">impl </span>From&lt;n0_snafu::TestError&gt; <span class="kw">for </span>AppError {
+    <span class="kw">fn </span>from(value: n0_snafu::TestError) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             status: StatusCode::INTERNAL_SERVER_ERROR,
             detail: <span class="prelude-val">Some</span>(value.to_string()),

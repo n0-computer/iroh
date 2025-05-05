@@ -204,9 +204,11 @@
 <a href="#203" id="203">203</a>
 <a href="#204" id="204">204</a>
 <a href="#205" id="205">205</a>
-<a href="#206" id="206">206</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{fmt, sync::Arc};
+<a href="#206" id="206">206</a>
+<a href="#207" id="207">207</a>
+<a href="#208" id="208">208</a>
+<a href="#209" id="209">209</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{fmt, sync::Arc};
 
-<span class="kw">use </span>anyhow::{bail, ensure, Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>async_trait::async_trait;
 <span class="kw">use </span>hickory_server::{
     authority::{
@@ -220,6 +222,8 @@
     server::RequestInfo,
     store::in_memory::InMemoryAuthority,
 };
+<span class="kw">use </span>n0_snafu::{TestResult <span class="kw">as </span><span class="prelude-ty">Result</span>, TestResultExt};
+<span class="kw">use </span>snafu::whatever;
 <span class="kw">use </span>tracing::{debug, trace};
 
 <span class="kw">use crate</span>::{
@@ -246,7 +250,9 @@
         origins: Vec&lt;Name&gt;,
         serial: u32,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="macro">ensure!</span>(!origins.is_empty(), <span class="string">"at least one origin is required"</span>);
+        <span class="kw">if </span>origins.is_empty() {
+            <span class="macro">whatever!</span>(<span class="string">"at least one origin is required"</span>);
+        }
         <span class="kw">let </span>first_origin = LowerName::from(<span class="kw-2">&amp;</span>origins[<span class="number">0</span>]);
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
             static_authority,
@@ -387,19 +393,19 @@
             <span class="kw">continue</span>;
         }
         <span class="kw">if </span>name.num_labels() &lt; origin.num_labels() + <span class="number">1 </span>{
-            <span class="macro">bail!</span>(<span class="string">"not a valid pkarr name: missing pubkey"</span>);
+            <span class="macro">whatever!</span>(<span class="string">"not a valid pkarr name: missing pubkey"</span>);
         }
         <span class="macro">trace!</span>(<span class="string">"parse {origin}"</span>);
         <span class="kw">let </span>labels = name.iter().rev();
         <span class="kw">let </span><span class="kw-2">mut </span>labels_without_origin = labels.skip(origin.num_labels() <span class="kw">as </span>usize);
         <span class="kw">let </span>pkey_label = labels_without_origin.next().expect(<span class="string">"length checked above"</span>);
-        <span class="kw">let </span>pkey_str = std::str::from_utf8(pkey_label)<span class="question-mark">?</span>;
+        <span class="kw">let </span>pkey_str = std::str::from_utf8(pkey_label).context(<span class="string">"utf8"</span>)<span class="question-mark">?</span>;
         <span class="kw">let </span>pkey =
             PublicKeyBytes::from_z32(pkey_str).context(<span class="string">"not a valid pkarr name: invalid pubkey"</span>)<span class="question-mark">?</span>;
-        <span class="kw">let </span>remaining_name = Name::from_labels(labels_without_origin.rev())<span class="question-mark">?</span>;
+        <span class="kw">let </span>remaining_name = Name::from_labels(labels_without_origin.rev()).context(<span class="string">"name"</span>)<span class="question-mark">?</span>;
         <span class="kw">return </span><span class="prelude-val">Ok</span>((remaining_name, pkey, origin.clone()));
     }
-    <span class="macro">bail!</span>(<span class="string">"name does not match any allowed origin"</span>);
+    <span class="macro">whatever!</span>(<span class="string">"name does not match any allowed origin"</span>);
 }
 
 <span class="kw">fn </span>err_refused(e: <span class="kw">impl </span>fmt::Debug) -&gt; LookupError {
