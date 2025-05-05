@@ -663,7 +663,7 @@ where
 #[cfg(test)]
 mod tests {
     use data_encoding::HEXLOWER;
-    use testresult::TestResult;
+    use n0_snafu::{TestResult, TestResultExt};
     use tokio_util::codec::{FramedRead, FramedWrite};
 
     use super::*;
@@ -680,7 +680,7 @@ mod tests {
             problem: expect_buf.to_vec().into(),
         };
         write_frame(&mut writer, expected_frame.clone(), None).await?;
-        writer.flush().await?;
+        writer.flush().await.context("flush")?;
         println!("{:?}", reader);
         let buf = recv_frame(FrameType::Health, &mut reader).await?;
         assert_eq!(expect_buf.len(), buf.len());
@@ -713,7 +713,7 @@ mod tests {
         let client_info = ClientInfo {
             version: PROTOCOL_VERSION,
         };
-        let message = postcard::to_stdvec(&client_info)?;
+        let message = postcard::to_stdvec(&client_info).context("encode")?;
         let signature = client_key.sign(&message);
 
         let frames = vec![

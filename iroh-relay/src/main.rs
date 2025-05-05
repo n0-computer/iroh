@@ -9,7 +9,6 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{anyhow, bail, Context as _, Result};
 use clap::Parser;
 use http::StatusCode;
 use iroh_base::NodeId;
@@ -21,7 +20,9 @@ use iroh_relay::{
     server::{self as relay, ClientRateLimit, QuicConfig},
 };
 use n0_future::FutureExt;
+use n0_snafu::{TestError, TestResult as Result, TestResultExt};
 use serde::{Deserialize, Serialize};
+use snafu::whatever;
 use tokio_rustls_acme::{caches::DirCache, AcmeConfig};
 use tracing::{debug, warn};
 use tracing_subscriber::{prelude::*, EnvFilter};
@@ -68,7 +69,7 @@ fn load_certs(
     let mut reader = std::io::BufReader::new(certfile);
 
     let certs: Result<Vec<_>, std::io::Error> = rustls_pemfile::certs(&mut reader).collect();
-    let certs = certs?;
+    let certs = certs.context("reading cert")?;
 
     Ok(certs)
 }
@@ -97,7 +98,7 @@ fn load_secret_key(
         }
     }
 
-    bail!(
+    whatever!(
         "no keys found in {} (encrypted keys not supported)",
         filename.display()
     );
@@ -299,10 +300,10 @@ async fn http_access_check_inner(
         }
         Ok(res) if res.status() == StatusCode::OK => match res.text().await {
             Ok(text) if text == "true" => Ok(()),
-            Ok(_) => Err(anyhow!("Invalid response text (must be 'true')")),
+            Ok(_) => whatever!("Invalid response text (must be 'true')"),
             Err(err) => Err(err).context("Failed to read response"),
         },
-        Ok(res) => Err(anyhow!("Received invalid status code ({})", res.status())),
+        Ok(res) => whatever!("Received invalid status code ({})", res.status()),
     }
 }
 
@@ -518,7 +519,7 @@ impl Config {
 
     async fn read_from_file(path: impl AsRef<Path>) -> Result<Self> {
         if !path.as_ref().is_file() {
-            bail!("config-path must be a file");
+            whatever!("config-path must be a file");
         }
         let config_ser = tokio::fs::read_to_string(&path)
             .await
@@ -537,7 +538,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let mut cfg = Config::load(&cli).await?;
     if cfg.enable_quic_addr_discovery && cfg.tls.is_none() {
-        bail!("TLS must be configured in order to spawn a QUIC endpoint");
+        whatever!("TLS must be configured in order to spawn a QUIC endpoint");
     }
     if cli.dev {
         // When in `--dev` mode, do not use https, even when tls is configured.
@@ -549,7 +550,7 @@ async fn main() -> Result<()> {
         }
     }
     if cfg.tls.is_none() && cfg.enable_quic_addr_discovery {
-        bail!("If QUIC address discovery is enabled, TLS must also be configured");
+        whatever!("If QUIC address discovery is enabled, TLS must also be configured");
     };
     let relay_config = build_relay_config(cfg).await?;
     debug!("{relay_config:#?}");
@@ -586,10 +587,13 @@ async fn maybe_load_tls(
             let (private_key, certs) = tokio::task::spawn_blocking(move || {
                 let key = load_secret_key(key_path)?;
                 let certs = load_certs(cert_path)?;
-                anyhow::Ok((key, certs))
+                Ok::<_, TestError>((key, certs))
             })
-            .await??;
-            let server_config = server_config.with_single_cert(certs.clone(), private_key)?;
+            .await
+            .context("join")??;
+            let server_config = server_config
+                .with_single_cert(certs.clone(), private_key)
+                .context("tls config")?;
             (relay::CertConfig::Manual { certs }, server_config)
         }
         CertMode::LetsEncrypt => {
@@ -639,7 +643,11 @@ async fn maybe_load_tls(
                 certs_reader,
             };
 
-            let resolver = Arc::new(relay::ReloadingResolver::init(loader, interval).await?);
+            let resolver = Arc::new(
+                relay::ReloadingResolver::init(loader, interval)
+                    .await
+                    .context("cert loading")?,
+            );
             let server_config = server_config.with_cert_resolver(resolver);
             (relay::CertConfig::Reloading, server_config)
         }
@@ -668,7 +676,7 @@ async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig<std::io::
                 bind_addr: tls.quic_bind_addr,
             });
         } else {
-            bail!("Must have a valid TLS configuration to enable a QUIC server for QUIC address discovery")
+            whatever!("Must have a valid TLS configuration to enable a QUIC server for QUIC address discovery")
         }
     };
     let limits = match cfg.limits {
@@ -676,7 +684,7 @@ async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig<std::io::
             let client_rx = match &limits.client {
                 Some(PerClientRateLimitConfig { rx: Some(rx) }) => {
                     if rx.bytes_per_second.is_none() && rx.max_burst_bytes.is_some() {
-                        bail!("bytes_per_seconds must be specified to enable the rate-limiter");
+                        whatever!("bytes_per_seconds must be specified to enable the rate-limiter");
                     }
                     match rx.bytes_per_second {
                         Some(bps) => Some(ClientRateLimit {
@@ -778,9 +786,9 @@ mod tests {
     use std::num::NonZeroU32;
 
     use iroh_base::SecretKey;
+    use n0_snafu::TestResult;
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
-    use testresult::TestResult;
 
     use super::*;
 

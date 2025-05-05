@@ -2493,7 +2493,6 @@ dependencies = [
 name = "iroh-relay"
 version = "0.34.1"
 dependencies = [
- "anyhow",
  "bytes",
  "cfg_aliases",
  "clap",
@@ -2538,7 +2537,6 @@ dependencies = [
  "snafu",
  "strum",
  "stun-rs",
- "testresult",
  "thiserror 2.0.11",
  "time",
  "tokio",
@@ -2863,8 +2861,7 @@ dependencies = [
 [[package]]
 name = "n0-snafu"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d45499bad1754b7188d8c2a49e5b3e775efb5dc83a6d8cb3a9f71a061cf74fa"
+source = "git+https://github.com/n0-computer/n0-snafu?branch=expand-test-error#4c7604c3cdd9f5f11325e47dba5d2ab0163e7b95"
 dependencies = [
  "anyhow",
  "btparse",

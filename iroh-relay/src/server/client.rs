@@ -11,7 +11,7 @@ use iroh_metrics::{inc, inc_by};
 use n0_future::{FutureExt, Sink, SinkExt, Stream, StreamExt};
 use nested_enum_utils::common_fields;
 use rand::Rng;
-use snafu::{Backtrace, ResultExt, Snafu};
+use snafu::{Backtrace, Snafu};
 use time::{Date, OffsetDateTime};
 use tokio::{
     sync::mpsc::{self, error::TrySendError},
@@ -330,6 +330,8 @@ impl Actor {
     }
 
     async fn run_inner(&mut self, done: CancellationToken) -> Result<(), RunError> {
+        use snafu::ResultExt;
+
         // Add some jitter to ping pong interactions, to avoid all pings being sent at the same time
         let next_interval = || {
             let random_secs = rand::rngs::OsRng.gen_range(1..=5);
@@ -702,7 +704,7 @@ impl ClientCounter {
 mod tests {
     use bytes::Bytes;
     use iroh_base::SecretKey;
-    use testresult::TestResult;
+    use n0_snafu::{TestResult, TestResultExt};
     use tokio_util::codec::Framed;
     use tracing::info;
     use tracing_test::traced_test;
@@ -754,7 +756,7 @@ mod tests {
             src: node_id,
             data: Bytes::from(&data[..]),
         };
-        send_queue_s.send(packet.clone()).await?;
+        send_queue_s.send(packet.clone()).await.context("send")?;
         let frame = recv_frame(FrameType::RecvPacket, &mut io_rw).await?;
         assert_eq!(
             frame,
@@ -766,7 +768,10 @@ mod tests {
 
         // send disco packet
         println!("  send disco packet");
-        disco_send_queue_s.send(packet.clone()).await?;
+        disco_send_queue_s
+            .send(packet.clone())
+            .await
+            .context("send")?;
         let frame = recv_frame(FrameType::RecvPacket, &mut io_rw).await?;
         assert_eq!(
             frame,
@@ -778,7 +783,7 @@ mod tests {
 
         // send peer_gone
         println!("send peer gone");
-        peer_gone_s.send(node_id).await?;
+        peer_gone_s.send(node_id).await.context("send")?;
         let frame = recv_frame(FrameType::PeerGone, &mut io_rw).await?;
         assert_eq!(frame, Frame::NodeGone { node_id });
 
@@ -804,7 +809,8 @@ mod tests {
                 dst_key: target,
                 packet: Bytes::from_static(data),
             })
-            .await?;
+            .await
+            .context("send")?;
 
         // send disco packet
         println!("  send disco packet");
@@ -817,10 +823,11 @@ mod tests {
                 dst_key: target,
                 packet: disco_data.clone().into(),
             })
-            .await?;
+            .await
+            .context("send")?;
 
         done.cancel();
-        handle.await?;
+        handle.await.context("join")?;
         Ok(())
     }
 
@@ -831,7 +838,7 @@ mod tests {
         const MAX_FRAMES: u32 = 100;
 
         // Rate limiter allowing LIMIT bytes/s
-        let quota = governor::Quota::per_second(NonZeroU32::try_from(LIMIT)?);
+        let quota = governor::Quota::per_second(NonZeroU32::try_from(LIMIT).unwrap());
         let limiter = governor::RateLimiter::direct(quota);
 
         // Build the rate limited stream.
@@ -855,8 +862,8 @@ mod tests {
 
         // Send a frame, it should arrive.
         info!("-- send packet");
-        frame_writer.send(frame.clone()).await?;
-        frame_writer.flush().await?;
+        frame_writer.send(frame.clone()).await.context("send")?;
+        frame_writer.flush().await.context("flush")?;
         let recv_frame = tokio::time::timeout(Duration::from_millis(500), stream.next())
             .await
             .expect("timeout")
@@ -866,8 +873,8 @@ mod tests {
 
         // Next frame does not arrive.
         info!("-- send packet");
-        frame_writer.send(frame.clone()).await?;
-        frame_writer.flush().await?;
+        frame_writer.send(frame.clone()).await.context("send")?;
+        frame_writer.flush().await.context("flush")?;
         let res = tokio::time::timeout(Duration::from_millis(100), stream.next()).await;
         assert!(res.is_err(), "expecting a timeout");
         info!("-- timeout happened");

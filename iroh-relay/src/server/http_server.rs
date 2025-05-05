@@ -16,7 +16,7 @@ use iroh_base::PublicKey;
 use iroh_metrics::inc;
 use n0_future::{time::Elapsed, FutureExt, SinkExt};
 use nested_enum_utils::common_fields;
-use snafu::{Backtrace, ResultExt, Snafu};
+use snafu::{Backtrace, Snafu};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls_acme::AcmeAcceptor;
 use tokio_util::{codec::Framed, sync::CancellationToken, task::AbortOnDropHandle};
@@ -308,6 +308,8 @@ impl ServerBuilder {
 
     /// Builds and spawns an HTTP(S) Relay Server.
     pub(super) async fn spawn(self) -> Result<Server, SpawnError> {
+        use snafu::ResultExt;
+
         let cancel_token = CancellationToken::new();
 
         let service = RelayService::new(
@@ -584,6 +586,8 @@ impl Inner {
     /// [`AsyncRead`]: tokio::io::AsyncRead
     /// [`AsyncWrite`]: tokio::io::AsyncWrite
     async fn accept(&self, protocol: Protocol, io: MaybeTlsStream) -> Result<(), Error> {
+        use snafu::ResultExt;
+
         trace!(?protocol, "accept: start");
         let mut io = match protocol {
             Protocol::Relay => {
@@ -679,6 +683,8 @@ impl RelayService {
     ///
     /// If a `tls_config` is given, will serve the connection using HTTPS.
     async fn handle_connection(self, stream: TcpStream, tls_config: Option<TlsConfig>) {
+        use snafu::ResultExt;
+
         let res = match tls_config {
             Some(tls_config) => {
                 debug!("HTTPS: serve connection");
@@ -710,6 +716,8 @@ impl RelayService {
         stream: TcpStream,
         tls_config: TlsConfig,
     ) -> Result<(), Error> {
+        use snafu::ResultExt;
+
         let TlsConfig { acceptor, config } = tls_config;
         match acceptor {
             TlsAcceptor::LetsEncrypt(a) => match a.accept(stream).await? {
@@ -785,11 +793,12 @@ impl std::ops::DerefMut for Handlers {
 mod tests {
     use std::sync::Arc;
 
-    use anyhow::{bail, Context};
     use bytes::Bytes;
     use iroh_base::{PublicKey, SecretKey};
     use n0_future::{SinkExt, StreamExt};
+    use n0_snafu::{TestResult, TestResultExt};
     use reqwest::Url;
+    use snafu::whatever;
     use tracing::info;
     use tracing_test::traced_test;
 
@@ -798,7 +807,7 @@ mod tests {
         client::{
             conn::{Conn, ReceivedMessage, SendMessage},
             streams::MaybeTlsStreamChained,
-            Client, ClientBuilder,
+            Client, ClientBuilder, ConnectError,
         },
         dns::DnsResolver,
     };
@@ -829,7 +838,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_http_clients_and_server() -> anyhow::Result<()> {
+    async fn test_http_clients_and_server() -> TestResult {
         let a_key = SecretKey::generate(rand::thread_rng());
         let b_key = SecretKey::generate(rand::thread_rng());
 
@@ -842,13 +851,12 @@ mod tests {
 
         // get dial info
         let port = addr.port();
-        let addr = {
-            if let std::net::IpAddr::V4(ipv4_addr) = addr.ip() {
-                ipv4_addr
-            } else {
-                bail!("cannot get ipv4 addr from socket addr {addr:?}");
-            }
+        let addr = if let std::net::IpAddr::V4(ipv4_addr) = addr.ip() {
+            ipv4_addr
+        } else {
+            whatever!("cannot get ipv4 addr from socket addr {addr:?}");
         };
+
         info!("addr: {addr}:{port}");
         let relay_addr: Url = format!("http://{addr}:{port}").parse().unwrap();
 
@@ -860,12 +868,12 @@ mod tests {
 
         info!("ping a");
         client_a.send(SendMessage::Ping([1u8; 8])).await?;
-        let pong = client_a.next().await.context("eos")??;
+        let pong = client_a.next().await.expect("eos")?;
         assert!(matches!(pong, ReceivedMessage::Pong(_)));
 
         info!("ping b");
         client_b.send(SendMessage::Ping([2u8; 8])).await?;
-        let pong = client_b.next().await.context("eos")??;
+        let pong = client_b.next().await.expect("eos")?;
         assert!(matches!(pong, ReceivedMessage::Pong(_)));
 
         info!("sending message from a to b");
@@ -901,7 +909,7 @@ mod tests {
     async fn create_test_client(
         key: SecretKey,
         server_url: Url,
-    ) -> anyhow::Result<(PublicKey, Client)> {
+    ) -> Result<(PublicKey, Client), ConnectError> {
         let public_key = key.public();
         let client =
             ClientBuilder::new(server_url, key, DnsResolver::new()).insecure_skip_cert_verify(true);
@@ -911,7 +919,7 @@ mod tests {
     }
 
     fn process_msg(
-        msg: Option<anyhow::Result<ReceivedMessage, crate::client::RecvError>>,
+        msg: Option<Result<ReceivedMessage, crate::client::RecvError>>,
     ) -> Option<(PublicKey, Bytes)> {
         match msg {
             Some(Err(e)) => {
@@ -939,7 +947,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_https_clients_and_server() -> anyhow::Result<()> {
+    async fn test_https_clients_and_server() -> TestResult {
         let a_key = SecretKey::generate(rand::thread_rng());
         let b_key = SecretKey::generate(rand::thread_rng());
 
@@ -956,13 +964,12 @@ mod tests {
 
         // get dial info
         let port = addr.port();
-        let addr = {
-            if let std::net::IpAddr::V4(ipv4_addr) = addr.ip() {
-                ipv4_addr
-            } else {
-                bail!("cannot get ipv4 addr from socket addr {addr:?}");
-            }
+        let addr = if let std::net::IpAddr::V4(ipv4_addr) = addr.ip() {
+            ipv4_addr
+        } else {
+            whatever!("cannot get ipv4 addr from socket addr {addr:?}");
         };
+
         info!("Relay listening on: {addr}:{port}");
 
         let url: Url = format!("https://localhost:{port}").parse().unwrap();
@@ -975,12 +982,12 @@ mod tests {
 
         info!("ping a");
         client_a.send(SendMessage::Ping([1u8; 8])).await?;
-        let pong = client_a.next().await.context("eos")??;
+        let pong = client_a.next().await.expect("eos")?;
         assert!(matches!(pong, ReceivedMessage::Pong(_)));
 
         info!("ping b");
         client_b.send(SendMessage::Ping([2u8; 8])).await?;
-        let pong = client_b.next().await.context("eos")??;
+        let pong = client_b.next().await.expect("eos")?;
         assert!(matches!(pong, ReceivedMessage::Pong(_)));
 
         info!("sending message from a to b");
@@ -1009,7 +1016,7 @@ mod tests {
         client_a.close().await?;
         client_b.close().await?;
         server.shutdown();
-        server.task_handle().await?;
+        server.task_handle().await.context("join")?;
 
         Ok(())
     }
@@ -1017,7 +1024,7 @@ mod tests {
     async fn make_test_client(
         client: tokio::io::DuplexStream,
         key: &SecretKey,
-    ) -> anyhow::Result<Conn> {
+    ) -> TestResult<Conn> {
         let client = MaybeTlsStreamChained::Mem(client);
         let client = Conn::new_relay(client, KeyCache::test(), key).await?;
         Ok(client)
@@ -1025,7 +1032,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_server_basic() -> anyhow::Result<()> {
+    async fn test_server_basic() -> TestResult {
         info!("Create the server.");
         let service = RelayService::new(
             Default::default(),
@@ -1045,7 +1052,7 @@ mod tests {
                 .await
         });
         let mut client_a = make_test_client(client_a, &key_a).await?;
-        handler_task.await??;
+        handler_task.await.context("join")??;
 
         info!("Create client B and connect it to the server.");
         let key_b = SecretKey::generate(rand::thread_rng());
@@ -1057,14 +1064,14 @@ mod tests {
                 .await
         });
         let mut client_b = make_test_client(client_b, &key_b).await?;
-        handler_task.await??;
+        handler_task.await.context("join")??;
 
         info!("Send message from A to B.");
         let msg = Bytes::from_static(b"hello client b!!");
         client_a
             .send(SendMessage::SendPacket(public_key_b, msg.clone()))
             .await?;
-        match client_b.next().await.context("eos")?? {
+        match client_b.next().await.unwrap()? {
             ReceivedMessage::ReceivedPacket {
                 remote_node_id,
                 data,
@@ -1073,7 +1080,7 @@ mod tests {
                 assert_eq!(&msg[..], data);
             }
             msg => {
-                bail!("expected ReceivedPacket msg, got {msg:?}");
+                whatever!("expected ReceivedPacket msg, got {msg:?}");
             }
         }
 
@@ -1082,7 +1089,7 @@ mod tests {
         client_b
             .send(SendMessage::SendPacket(public_key_a, msg.clone()))
             .await?;
-        match client_a.next().await.context("eos")?? {
+        match client_a.next().await.unwrap()? {
             ReceivedMessage::ReceivedPacket {
                 remote_node_id,
                 data,
@@ -1091,7 +1098,7 @@ mod tests {
                 assert_eq!(&msg[..], data);
             }
             msg => {
-                bail!("expected ReceivedPacket msg, got {msg:?}");
+                whatever!("expected ReceivedPacket msg, got {msg:?}");
             }
         }
 
@@ -1112,7 +1119,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_server_replace_client() -> anyhow::Result<()> {
+    async fn test_server_replace_client() -> TestResult {
         info!("Create the server.");
         let service = RelayService::new(
             Default::default(),
@@ -1132,7 +1139,7 @@ mod tests {
                 .await
         });
         let mut client_a = make_test_client(client_a, &key_a).await?;
-        handler_task.await??;
+        handler_task.await.context("join")??;
 
         info!("Create client B and connect it to the server.");
         let key_b = SecretKey::generate(rand::thread_rng());
@@ -1144,14 +1151,14 @@ mod tests {
                 .await
         });
         let mut client_b = make_test_client(client_b, &key_b).await?;
-        handler_task.await??;
+        handler_task.await.context("join")??;
 
         info!("Send message from A to B.");
         let msg = Bytes::from_static(b"hello client b!!");
         client_a
             .send(SendMessage::SendPacket(public_key_b, msg.clone()))
             .await?;
-        match client_b.next().await.context("eos")?? {
+        match client_b.next().await.expect("eos")? {
             ReceivedMessage::ReceivedPacket {
                 remote_node_id,
                 data,
@@ -1160,7 +1167,7 @@ mod tests {
                 assert_eq!(&msg[..], data);
             }
             msg => {
-                bail!("expected ReceivedPacket msg, got {msg:?}");
+                whatever!("expected ReceivedPacket msg, got {msg:?}");
             }
         }
 
@@ -1169,7 +1176,7 @@ mod tests {
         client_b
             .send(SendMessage::SendPacket(public_key_a, msg.clone()))
             .await?;
-        match client_a.next().await.context("eos")?? {
+        match client_a.next().await.expect("eos")? {
             ReceivedMessage::ReceivedPacket {
                 remote_node_id,
                 data,
@@ -1178,7 +1185,7 @@ mod tests {
                 assert_eq!(&msg[..], data);
             }
             msg => {
-                bail!("expected ReceivedPacket msg, got {msg:?}");
+                whatever!("expected ReceivedPacket msg, got {msg:?}");
             }
         }
 
@@ -1190,7 +1197,7 @@ mod tests {
                 .await
         });
         let mut new_client_b = make_test_client(new_client_b, &key_b).await?;
-        handler_task.await??;
+        handler_task.await.context("join")??;
 
         // assert!(client_b.recv().await.is_err());
 
@@ -1199,7 +1206,7 @@ mod tests {
         client_a
             .send(SendMessage::SendPacket(public_key_b, msg.clone()))
             .await?;
-        match new_client_b.next().await.context("eos")?? {
+        match new_client_b.next().await.expect("eos")? {
             ReceivedMessage::ReceivedPacket {
                 remote_node_id,
                 data,
@@ -1208,7 +1215,7 @@ mod tests {
                 assert_eq!(&msg[..], data);
             }
             msg => {
-                bail!("expected ReceivedPacket msg, got {msg:?}");
+                whatever!("expected ReceivedPacket msg, got {msg:?}");
             }
         }
 
@@ -1217,7 +1224,7 @@ mod tests {
         new_client_b
             .send(SendMessage::SendPacket(public_key_a, msg.clone()))
             .await?;
-        match client_a.next().await.context("eos")?? {
+        match client_a.next().await.expect("eos")? {
             ReceivedMessage::ReceivedPacket {
                 remote_node_id,
                 data,
@@ -1226,7 +1233,7 @@ mod tests {
                 assert_eq!(&msg[..], data);
             }
             msg => {
-                bail!("expected ReceivedPacket msg, got {msg:?}");
+                whatever!("expected ReceivedPacket msg, got {msg:?}");
             }
         }
 

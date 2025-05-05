@@ -688,7 +688,7 @@ mod tests {
         Name,
     };
     use iroh_base::{NodeId, SecretKey};
-    use testresult::TestResult;
+    use n0_snafu::{TestResult, TestResultExt};
 
     use super::{NodeData, NodeIdExt, NodeInfo};
 
@@ -733,7 +733,8 @@ mod tests {
     fn test_from_hickory_lookup() -> TestResult {
         let name = Name::from_utf8(
             "_iroh.dgjpkxyn3zyrk3zfads5duwdgbqpkwbjxfj4yt7rezidr3fijccy.dns.iroh.link.",
-        )?;
+        )
+        .context("dns name")?;
         let query = Query::query(name.clone(), RecordType::TXT);
         let records = [
             Record::from_rdata(
@@ -757,7 +758,8 @@ mod tests {
                         "a55f26132e5e43de834d534332f66a20d480c3e50a13a312a071adea6569981e"
                     )?
                     .to_z32()
-                ))?,
+                ))
+                .context("name")?,
                 30,
                 RData::TXT(TXT::new(vec![
                     "relay=https://euw1-1.relay.iroh.network./".to_string()
@@ -765,7 +767,7 @@ mod tests {
             ),
             // Test a record with a completely different name
             Record::from_rdata(
-                Name::from_utf8("dns.iroh.link.")?,
+                Name::from_utf8("dns.iroh.link.").context("name")?,
                 30,
                 RData::TXT(TXT::new(vec![
                     "relay=https://euw1-1.relay.iroh.network./".to_string()
@@ -789,8 +791,8 @@ mod tests {
         )?)
         .with_relay_url(Some("https://euw1-1.relay.iroh.network./".parse()?))
         .with_direct_addresses(BTreeSet::from([
-            "192.168.96.145:60165".parse()?,
-            "213.208.157.87:60165".parse()?,
+            "192.168.96.145:60165".parse().unwrap(),
+            "213.208.157.87:60165".parse().unwrap(),
         ]));
 
         assert_eq!(node_info, expected_node_info);

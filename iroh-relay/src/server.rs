@@ -866,17 +866,23 @@ mod tests {
     use std::{net::Ipv4Addr, time::Duration};
 
     use bytes::Bytes;
-    use http::header::UPGRADE;
+    use http::{header::UPGRADE, StatusCode};
     use iroh_base::{NodeId, RelayUrl, SecretKey};
-    use n0_future::{FutureExt, SinkExt};
-    use testresult::TestResult;
+    use n0_future::{FutureExt, SinkExt, StreamExt};
+    use n0_snafu::{TestResult, TestResultExt};
+    use tokio::net::UdpSocket;
+    use tracing::{info, instrument};
     use tracing_test::traced_test;
 
-    use super::*;
+    use super::{
+        Access, AccessConfig, RelayConfig, Server, ServerConfig, SpawnError, StunConfig,
+        NO_CONTENT_CHALLENGE_HEADER, NO_CONTENT_RESPONSE_HEADER,
+    };
     use crate::{
         client::{conn::ReceivedMessage, ClientBuilder, SendMessage},
         dns::DnsResolver,
         http::{Protocol, HTTP_UPGRADE_PROTOCOL},
+        protos,
     };
 
     async fn spawn_local_relay() -> std::result::Result<Server, SpawnError> {
@@ -902,8 +908,6 @@ mod tests {
         b_key: NodeId,
         msg: Bytes,
     ) -> TestResult<ReceivedMessage> {
-        use anyhow::Context;
-
         // try resend 10 times
         for _ in 0..10 {
             client_a
@@ -913,7 +917,7 @@ mod tests {
             else {
                 continue;
             };
-            let res = res.context("stream finished")??;
+            let res = res.expect("stream finished")?;
             return Ok(res);
         }
         panic!("failed to send and recv message");
@@ -1267,7 +1271,8 @@ mod tests {
                 }
             }
         })
-        .await?;
+        .await
+        .context("timeout")?;
 
         // test that another client has access
 
