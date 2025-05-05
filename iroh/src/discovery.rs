@@ -606,11 +606,10 @@ mod tests {
         time::SystemTime,
     };
 
-    use anyhow::Context;
     use iroh_base::{NodeAddr, SecretKey};
+    use n0_snafu::{TestError, TestResult, TestResultExt};
     use quinn::{IdleTimeout, TransportConfig};
     use rand::Rng;
-    use testresult::TestResult;
     use tokio_util::task::AbortOnDropHandle;
     use tracing_test::traced_test;
 
@@ -847,7 +846,7 @@ mod tests {
         // 10x faster test via a 3s idle timeout instead of the 30s default
         let mut config = TransportConfig::default();
         config.keep_alive_interval(Some(Duration::from_secs(1)));
-        config.max_idle_timeout(Some(IdleTimeout::try_from(Duration::from_secs(3))?));
+        config.max_idle_timeout(Some(IdleTimeout::try_from(Duration::from_secs(3)).unwrap()));
         let opts = ConnectOptions::new().with_transport_config(Arc::new(config));
 
         let res = ep2
@@ -934,7 +933,7 @@ mod tests {
     async fn new_endpoint(
         secret: SecretKey,
         disco: impl Discovery + 'static,
-    ) -> (Endpoint, AbortOnDropHandle<anyhow::Result<()>>) {
+    ) -> (Endpoint, AbortOnDropHandle<TestResult<()>>) {
         let ep = Endpoint::builder()
             .secret_key(secret)
             .discovery(Box::new(disco))
@@ -952,11 +951,11 @@ mod tests {
                 // we skip accept() errors, they can be caused by retransmits
                 while let Some(connecting) = ep.accept().await.and_then(|inc| inc.accept().ok()) {
                     // Just accept incoming connections, but don't do anything with them.
-                    let conn = connecting.await?;
+                    let conn = connecting.await.context("connecting")?;
                     connections.push(conn);
                 }
 
-                anyhow::Ok(())
+                Ok::<_, TestError>(())
             }
         });
 
@@ -995,7 +994,7 @@ mod test_dns_pkarr {
     use iroh_base::{NodeAddr, SecretKey};
     use iroh_relay::{node_info::UserData, RelayMap};
     use n0_future::time::Duration;
-    use n0_snafu::{TestError, TestResult as Result, TestResultExt};
+    use n0_snafu::{TestError, TestResult, TestResultExt};
     use tokio_util::task::AbortOnDropHandle;
     use tracing_test::traced_test;
 
@@ -1013,7 +1012,7 @@ mod test_dns_pkarr {
 
     #[tokio::test]
     #[traced_test]
-    async fn dns_resolve() -> Result<()> {
+    async fn dns_resolve() -> TestResult<()> {
         let origin = "testdns.example".to_string();
         let state = State::new(origin.clone());
         let (nameserver, _dns_drop_guard) = run_dns_server(state.clone())
@@ -1040,7 +1039,7 @@ mod test_dns_pkarr {
 
     #[tokio::test]
     #[traced_test]
-    async fn pkarr_publish_dns_resolve() -> Result<()> {
+    async fn pkarr_publish_dns_resolve() -> TestResult<()> {
         let origin = "testdns.example".to_string();
 
         let dns_pkarr_server = DnsPkarrServer::run_with_origin(origin.clone())
@@ -1082,7 +1081,7 @@ mod test_dns_pkarr {
 
     #[tokio::test]
     #[traced_test]
-    async fn pkarr_publish_dns_discover() -> Result<()> {
+    async fn pkarr_publish_dns_discover() -> TestResult<()> {
         let dns_pkarr_server = DnsPkarrServer::run().await.context("DnsPkarrServer run")?;
         let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
 
@@ -1104,7 +1103,7 @@ mod test_dns_pkarr {
     async fn ep_with_discovery(
         relay_map: &RelayMap,
         dns_pkarr_server: &DnsPkarrServer,
-    ) -> Result<(Endpoint, AbortOnDropHandle<Result<()>>)> {
+    ) -> TestResult<(Endpoint, AbortOnDropHandle<TestResult<()>>)> {
         let secret_key = SecretKey::generate(rand::thread_rng());
         let ep = Endpoint::builder()
             .relay_mode(RelayMode::Custom(relay_map.clone()))
