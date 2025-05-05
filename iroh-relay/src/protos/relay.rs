@@ -137,7 +137,6 @@ pub(crate) struct ClientInfo {
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
-#[snafu(visibility(pub(crate)))]
 pub enum Error {
     #[snafu(transparent)]
     Io { source: std::io::Error },

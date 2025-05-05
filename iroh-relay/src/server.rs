@@ -282,7 +282,6 @@ pub struct Server {
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
-#[snafu(visibility(pub(crate)))]
 pub enum SpawnError {
     #[snafu(display("Unable to get local address"))]
     LocalAddr { source: std::io::Error },
@@ -309,7 +308,6 @@ pub enum SpawnError {
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
-#[snafu(visibility(pub(crate)))]
 pub enum SupervisorError {
     #[snafu(display("Error starting metrics server"))]
     Metrics { source: std::io::Error },

@@ -184,7 +184,6 @@ impl Client {
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
-#[snafu(visibility(pub(crate)))]
 pub enum HandleFrameError {
     #[snafu(transparent)]
     SendPacket { source: SendPacketError },
@@ -212,7 +211,6 @@ pub enum HandleFrameError {
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
-#[snafu(visibility(pub(crate)))]
 pub enum RunError {
     #[snafu(transparent)]
     SendPacket { source: SendPacketError },

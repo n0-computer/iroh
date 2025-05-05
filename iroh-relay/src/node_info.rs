@@ -234,7 +234,6 @@ impl UserData {
 /// Error returned when an input value is too long for [`UserData`].
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
-#[snafu(visibility(pub(crate)))]
 pub struct MaxLengthExceededError {
     backtrace: Option<Backtrace>,
     #[snafu(implicit)]

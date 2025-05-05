@@ -22,7 +22,6 @@ pub use stun_rs::{
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
-#[snafu(visibility(pub(crate)))]
 pub enum Error {
     /// The STUN message could not be parsed or is otherwise invalid.
     #[snafu(display("invalid message"))]

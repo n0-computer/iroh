@@ -39,7 +39,6 @@ pub(crate) mod server {
     #[allow(missing_docs)]
     #[derive(Debug, Snafu)]
     #[non_exhaustive]
-    #[snafu(visibility(pub(crate)))]
     pub enum QuicSpawnError {
         #[snafu(transparent)]
         NoInitialCipherSuite {
@@ -237,7 +236,6 @@ pub(crate) mod server {
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
-#[snafu(visibility(pub(crate)))]
 pub enum Error {
     #[snafu(transparent)]
     Connect { source: quinn::ConnectError },
