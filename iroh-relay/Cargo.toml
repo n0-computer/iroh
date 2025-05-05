@@ -72,7 +72,7 @@ data-encoding = "2.6.0"
 lru = "0.12"
 z32 = "1.0.3"
 snafu = { version = "0.8.5", features = ["rust_1_81"] }
-n0-snafu = { git = "https://github.com/n0-computer/n0-snafu" }
+n0-snafu = "0.1.0"
 nested_enum_utils = "0.2.0"
 
 # server feature
