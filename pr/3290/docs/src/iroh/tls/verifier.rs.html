@@ -340,8 +340,7 @@
 <a href="#339" id="339">339</a>
 <a href="#340" id="340">340</a>
 <a href="#341" id="341">341</a>
-<a href="#342" id="342">342</a>
-<a href="#343" id="343">343</a></pre></div><pre class="rust"><code><span class="doccomment">//! TLS 1.3 certificates and handshakes handling.
+<a href="#342" id="342">342</a></pre></div><pre class="rust"><code><span class="doccomment">//! TLS 1.3 certificates and handshakes handling.
 //!
 //! This module handles a verification of a client/server certificate chain
 //! and signatures allegedly by the given certificates, or using raw public keys.
@@ -425,8 +424,7 @@
         .public()
         .to_public_key_der()
         .expect(<span class="string">"valid key"</span>);
-    <span class="kw">let </span>remote_key = SubjectPublicKeyInfoDer::from(der_key.into_vec());
-    remote_key
+    SubjectPublicKeyInfoDer::from(der_key.into_vec())
 }
 
 <span class="kw">impl </span>ServerCertVerifier <span class="kw">for </span>ServerCertificateVerifier {
