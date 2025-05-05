@@ -1,6 +1,5 @@
 use std::{net::SocketAddr, str::FromStr};
 
-use anyhow::{bail, Result};
 use clap::{Parser, ValueEnum};
 use iroh::{
     discovery::{
@@ -11,6 +10,8 @@ use iroh::{
     node_info::{NodeIdExt, NodeInfo, IROH_TXT_NAME},
     NodeId, SecretKey,
 };
+use n0_snafu::TestResult as Result;
+use snafu::whatever;
 use url::Url;
 
 const LOCALHOST_PKARR: &str = "http://localhost:8080/pkarr";
@@ -67,7 +68,7 @@ async fn main() -> Result<()> {
             s
         }
         Err(_) => {
-            bail!("Environment variable IROH_SECRET is not set. To create a new secret, use the --create option.")
+            whatever!("Environment variable IROH_SECRET is not set. To create a new secret, use the --create option.")
         }
     };
 

@@ -8,7 +8,6 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
 use hickory_server::{
@@ -27,6 +26,7 @@ use hickory_server::{
     store::in_memory::InMemoryAuthority,
 };
 use iroh_metrics::inc;
+use n0_snafu::{format_err, TestResult as Result, TestResultExt};
 use serde::{Deserialize, Serialize};
 use tokio::{
     net::{TcpListener, UdpSocket},
@@ -83,12 +83,15 @@ impl DnsServer {
             config.port,
         );
 
-        let socket = UdpSocket::bind(bind_addr).await?;
+        let socket = UdpSocket::bind(bind_addr).await.context("UDP bind")?;
 
-        let socket_addr = socket.local_addr()?;
+        let socket_addr = socket.local_addr().context("local address")?;
 
         server.register_socket(socket);
-        server.register_listener(TcpListener::bind(bind_addr).await?, TCP_TIMEOUT);
+        server.register_listener(
+            TcpListener::bind(bind_addr).await.context("TCP bind")?,
+            TCP_TIMEOUT,
+        );
         info!("DNS server listening on {}", bind_addr);
 
         Ok(Self {
@@ -104,7 +107,10 @@ impl DnsServer {
 
     /// Shutdown the server an wait for all tasks to complete.
     pub async fn shutdown(mut self) -> Result<()> {
-        self.server.shutdown_gracefully().await?;
+        self.server
+            .shutdown_gracefully()
+            .await
+            .context("graceful shutdown")?;
         Ok(())
     }
 
@@ -112,7 +118,10 @@ impl DnsServer {
     ///
     /// Runs forever unless tasks fail.
     pub async fn run_until_done(mut self) -> Result<()> {
-        self.server.block_until_done().await?;
+        self.server
+            .block_until_done()
+            .await
+            .context("block until done")?;
         Ok(())
     }
 }
@@ -132,7 +141,8 @@ impl DnsHandler {
             .origins
             .iter()
             .map(Name::from_utf8)
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<Vec<_>, _>>()
+            .context("origin names")?;
 
         let (static_authority, serial) = create_static_authority(&origins, config)?;
         let authority = Arc::new(NodeAuthority::new(
@@ -157,7 +167,7 @@ impl DnsHandler {
         let (tx, mut rx) = broadcast::channel(1);
         let response_handle = Handle(tx);
         self.handle_request(&request, response_handle).await;
-        Ok(rx.recv().await?)
+        rx.recv().await.context("recv")
     }
 }
 
@@ -227,9 +237,10 @@ fn create_static_authority(
         RecordType::SOA,
         config.default_soa.split_ascii_whitespace(),
         None,
-    )?
+    )
+    .context("rdata")?
     .into_soa()
-    .map_err(|_| anyhow!("Couldn't parse SOA: {}", config.default_soa))?;
+    .map_err(|_| format_err!("Couldn't parse SOA: {}", config.default_soa))?;
     let serial = soa.serial();
     let mut records = BTreeMap::new();
     for name in origins {
@@ -253,7 +264,7 @@ fn create_static_authority(
             );
         }
         if let Some(ns) = &config.rr_ns {
-            let ns = Name::parse(ns, Some(&Name::root()))?;
+            let ns = Name::parse(ns, Some(&Name::root())).context("name")?;
             push_record(
                 &mut records,
                 serial,
@@ -263,7 +274,7 @@ fn create_static_authority(
     }
 
     let static_authority = InMemoryAuthority::new(Name::root(), records, ZoneType::Primary, false)
-        .map_err(|e| anyhow!(e))?;
+        .map_err(|e| format_err!("new authority: {}", e))?;
 
     Ok((static_authority, serial))
 }

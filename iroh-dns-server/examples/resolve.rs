@@ -4,6 +4,7 @@ use iroh::{
     dns::DnsResolver,
     NodeId,
 };
+use n0_snafu::TestResult as Result;
 
 const LOCALHOST_DNS: &str = "127.0.0.1:5300";
 const EXAMPLE_ORIGIN: &str = "irohdns.example";
@@ -36,13 +37,13 @@ enum Command {
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> Result<()> {
     let args = Cli::parse();
     let (resolver, origin) = match args.env {
         Env::Staging => (DnsResolver::new(), N0_DNS_NODE_ORIGIN_STAGING),
         Env::Prod => (DnsResolver::new(), N0_DNS_NODE_ORIGIN_PROD),
         Env::Dev => (
-            DnsResolver::with_nameserver(LOCALHOST_DNS.parse()?),
+            DnsResolver::with_nameserver(LOCALHOST_DNS.parse().expect("localhost DNS")),
             EXAMPLE_ORIGIN,
         ),
     };

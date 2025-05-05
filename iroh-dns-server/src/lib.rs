@@ -21,13 +21,12 @@ mod tests {
         time::Duration,
     };
 
-    use anyhow::Result;
     use iroh::{
         discovery::pkarr::PkarrRelayClient, dns::DnsResolver, node_info::NodeInfo, RelayUrl,
         SecretKey,
     };
+    use n0_snafu::{TestResult, TestResultExt};
     use pkarr::{SignedPacket, Timestamp};
-    use testresult::TestResult;
     use tracing_test::traced_test;
 
     use crate::{
@@ -42,7 +41,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn pkarr_publish_dns_resolve() -> Result<()> {
+    async fn pkarr_publish_dns_resolve() -> TestResult {
         let (server, nameserver, http_url) = Server::spawn_for_tests().await?;
         let pkarr_relay_url = {
             let mut url = http_url.clone();
@@ -58,34 +57,34 @@ mod tests {
                 dns::Name::new("").unwrap(),
                 dns::CLASS::IN,
                 30,
-                dns::rdata::RData::TXT("hi0".try_into()?),
+                dns::rdata::RData::TXT("hi0".try_into().unwrap()),
             ));
             // record at level one
             packet.answers.push(dns::ResourceRecord::new(
                 dns::Name::new("_hello").unwrap(),
                 dns::CLASS::IN,
                 30,
-                dns::rdata::RData::TXT("hi1".try_into()?),
+                dns::rdata::RData::TXT("hi1".try_into().unwrap()),
             ));
             // record at level two
             packet.answers.push(dns::ResourceRecord::new(
                 dns::Name::new("_hello.world").unwrap(),
                 dns::CLASS::IN,
                 30,
-                dns::rdata::RData::TXT("hi2".try_into()?),
+                dns::rdata::RData::TXT("hi2".try_into().unwrap()),
             ));
             // multiple records for same name
             packet.answers.push(dns::ResourceRecord::new(
                 dns::Name::new("multiple").unwrap(),
                 dns::CLASS::IN,
                 30,
-                dns::rdata::RData::TXT("hi3".try_into()?),
+                dns::rdata::RData::TXT("hi3".try_into().unwrap()),
             ));
             packet.answers.push(dns::ResourceRecord::new(
                 dns::Name::new("multiple").unwrap(),
                 dns::CLASS::IN,
                 30,
-                dns::rdata::RData::TXT("hi4".try_into()?),
+                dns::rdata::RData::TXT("hi4".try_into().unwrap()),
             ));
             // record of type A
             packet.answers.push(dns::ResourceRecord::new(
@@ -101,50 +100,56 @@ mod tests {
                 30,
                 dns::rdata::RData::AAAA(Ipv6Addr::LOCALHOST.into()),
             ));
-            SignedPacket::new(&keypair, &packet.answers, Timestamp::now())?
+            SignedPacket::new(&keypair, &packet.answers, Timestamp::now())
+                .context("signed packet")?
         };
         let pkarr_client = pkarr::Client::builder()
             .no_default_network()
-            .relays(&[pkarr_relay_url])?
-            .build()?;
-        pkarr_client.publish(&signed_packet, None).await?;
+            .relays(&[pkarr_relay_url])
+            .context("relays")?
+            .build()
+            .context("build pkarr client")?;
+        pkarr_client
+            .publish(&signed_packet, None)
+            .await
+            .context("publish pkarr")?;
 
         use hickory_server::proto::rr::Name;
         let pubkey = signed_packet.public_key().to_z32();
         let resolver = test_resolver(nameserver);
 
         // resolve root record
-        let name = Name::from_utf8(format!("{pubkey}."))?;
+        let name = Name::from_utf8(format!("{pubkey}.")).context("name")?;
         let res = resolver.lookup_txt(name, DNS_TIMEOUT).await?;
         let records = res.into_iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert_eq!(records, vec!["hi0".to_string()]);
 
         // resolve level one record
-        let name = Name::from_utf8(format!("_hello.{pubkey}."))?;
+        let name = Name::from_utf8(format!("_hello.{pubkey}.")).context("name")?;
         let res = resolver.lookup_txt(name, DNS_TIMEOUT).await?;
         let records = res.into_iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert_eq!(records, vec!["hi1".to_string()]);
 
         // resolve level two record
-        let name = Name::from_utf8(format!("_hello.world.{pubkey}."))?;
+        let name = Name::from_utf8(format!("_hello.world.{pubkey}.")).context("name")?;
         let res = resolver.lookup_txt(name, DNS_TIMEOUT).await?;
         let records = res.into_iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert_eq!(records, vec!["hi2".to_string()]);
 
         // resolve multiple records for same name
-        let name = Name::from_utf8(format!("multiple.{pubkey}."))?;
+        let name = Name::from_utf8(format!("multiple.{pubkey}.")).context("name")?;
         let res = resolver.lookup_txt(name, DNS_TIMEOUT).await?;
         let records = res.into_iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert_eq!(records, vec!["hi3".to_string(), "hi4".to_string()]);
 
         // resolve A record
-        let name = Name::from_utf8(format!("{pubkey}."))?;
+        let name = Name::from_utf8(format!("{pubkey}.")).context("name")?;
         let res = resolver.lookup_ipv4(name, DNS_TIMEOUT).await?;
         let records = res.collect::<Vec<_>>();
         assert_eq!(records, vec![Ipv4Addr::LOCALHOST]);
 
         // resolve AAAA record
-        let name = Name::from_utf8(format!("foo.bar.baz.{pubkey}."))?;
+        let name = Name::from_utf8(format!("foo.bar.baz.{pubkey}.")).context("name")?;
         let res = resolver.lookup_ipv6(name, DNS_TIMEOUT).await?;
         let records = res.collect::<Vec<_>>();
         assert_eq!(records, vec![Ipv6Addr::LOCALHOST]);
@@ -155,7 +160,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn integration_smoke() -> Result<()> {
+    async fn integration_smoke() -> TestResult {
         let (server, nameserver, http_url) = Server::spawn_for_tests().await?;
 
         let pkarr_relay = {
@@ -187,7 +192,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn store_eviction() -> TestResult<()> {
+    async fn store_eviction() -> TestResult {
         let options = ZoneStoreOptions {
             eviction: Duration::from_millis(100),
             eviction_interval: Duration::from_millis(100),
@@ -217,9 +222,11 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn integration_mainline() -> Result<()> {
+    async fn integration_mainline() -> TestResult {
         // run a mainline testnet
-        let testnet = pkarr::mainline::Testnet::new_async(5).await?;
+        let testnet = pkarr::mainline::Testnet::new_async(5)
+            .await
+            .context("new testnet")?;
         let bootstrap = testnet.bootstrap.clone();
 
         // spawn our server with mainline support
@@ -240,8 +247,12 @@ mod tests {
         let pkarr = pkarr::Client::builder()
             .no_default_network()
             .dht(|builder| builder.bootstrap(&testnet.bootstrap))
-            .build()?;
-        pkarr.publish(&signed_packet, None).await?;
+            .build()
+            .context("build pkarr client")?;
+        pkarr
+            .publish(&signed_packet, None)
+            .await
+            .context("publish")?;
 
         // resolve via DNS from our server, which will lookup from our DHT
         let resolver = test_resolver(nameserver);
@@ -258,7 +269,7 @@ mod tests {
         DnsResolver::with_nameserver(nameserver)
     }
 
-    fn random_signed_packet() -> Result<SignedPacket> {
+    fn random_signed_packet() -> TestResult<SignedPacket> {
         let secret_key = SecretKey::generate(rand::thread_rng());
         let node_id = secret_key.public();
         let relay_url: RelayUrl = "https://relay.example.".parse()?;

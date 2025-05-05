@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 
-use anyhow::Result;
 use clap::Parser;
 use iroh_dns_server::{
     config::Config, metrics::init_metrics, server::run_with_config_until_ctrl_c,
 };
+use n0_snafu::TestResult as Result;
 use tracing::debug;
 
 #[derive(Parser, Debug)]

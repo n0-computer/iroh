@@ -1184,7 +1184,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "33d852cb9b869c2a9b3df2f71a3074817f01e1844f839a144f5fcef059a4eb5d"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2368,7 +2368,6 @@ dependencies = [
 name = "iroh-dns-server"
 version = "0.34.1"
 dependencies = [
- "anyhow",
  "async-trait",
  "axum",
  "axum-server",
@@ -2387,6 +2386,7 @@ dependencies = [
  "iroh-metrics",
  "lru 0.12.5",
  "n0-future",
+ "n0-snafu",
  "pkarr",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
@@ -2396,9 +2396,9 @@ dependencies = [
  "rustls",
  "rustls-pemfile",
  "serde",
+ "snafu",
  "struct_iterable",
  "strum",
- "testresult",
  "tokio",
  "tokio-rustls",
  "tokio-rustls-acme",
@@ -2486,7 +2486,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2562,7 +2562,7 @@ checksum = "e19b23d53f35ce9f56aebc7d1bb4e6ac1e9c0db7ac85c8d1760c04379edced37"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2861,7 +2861,7 @@ dependencies = [
 [[package]]
 name = "n0-snafu"
 version = "0.1.0"
-source = "git+https://github.com/n0-computer/n0-snafu?branch=expand-test-error#4c7604c3cdd9f5f11325e47dba5d2ab0163e7b95"
+source = "git+https://github.com/n0-computer/n0-snafu?branch=expand-test-error#e7496f974c125207af6a9d547045d8d9973c26d0"
 dependencies = [
  "anyhow",
  "btparse",
@@ -3748,7 +3748,7 @@ dependencies = [
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4123,7 +4123,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4821,7 +4821,7 @@ dependencies = [
  "getrandom 0.3.1",
  "once_cell",
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5642,7 +5642,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
