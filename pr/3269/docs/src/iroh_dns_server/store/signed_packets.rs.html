@@ -458,12 +458,11 @@
 <a href="#457" id="457">457</a>
 <a href="#458" id="458">458</a>
 <a href="#459" id="459">459</a>
-<a href="#460" id="460">460</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{future::Future, path::Path, result, time::Duration};
+<a href="#460" id="460">460</a>
+<a href="#461" id="461">461</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{future::Future, path::Path, result, sync::Arc, time::Duration};
 
 <span class="kw">use </span>anyhow::{Context, <span class="prelude-ty">Result</span>};
-<span class="kw">use </span>bytes::Bytes;
-<span class="kw">use </span>iroh_metrics::inc;
-<span class="kw">use </span>pkarr::{system_time, SignedPacket};
+<span class="kw">use </span>pkarr::{SignedPacket, Timestamp};
 <span class="kw">use </span>redb::{
     backends::InMemoryBackend, Database, MultimapTableDefinition, ReadableTable, TableDefinition,
 };
@@ -524,6 +523,7 @@
     recv: PeekableReceiver&lt;Message&gt;,
     cancel: CancellationToken,
     options: Options,
+    metrics: Arc&lt;Metrics&gt;,
 }
 
 <span class="attr">#[derive(Debug, Clone, Copy)]
@@ -580,7 +580,7 @@
             <span class="kw">let </span>transaction = <span class="self">self</span>.db.begin_write()<span class="question-mark">?</span>;
             <span class="kw">let </span><span class="kw-2">mut </span>tables = Tables::new(<span class="kw-2">&amp;</span>transaction)<span class="question-mark">?</span>;
             <span class="kw">let </span>timeout = tokio::time::sleep(<span class="self">self</span>.options.max_batch_time);
-            <span class="kw">let </span>expired = system_time() - expiry_us;
+            <span class="kw">let </span>expired = Timestamp::now() - expiry_us;
             <span class="macro">tokio::pin!</span>(timeout);
             <span class="kw">for _ in </span><span class="number">0</span>..<span class="self">self</span>.options.max_batch_size {
                 <span class="macro">tokio::select!</span> {
@@ -594,7 +594,7 @@
                         <span class="kw">match </span>msg {
                             Message::Get { key, res } =&gt; {
                                 <span class="macro">trace!</span>(<span class="string">"get {}"</span>, key);
-                                <span class="kw">let </span>packet = get_packet(<span class="kw-2">&amp;</span>tables.signed_packets, <span class="kw-2">&amp;</span>key)<span class="question-mark">?</span>;
+                                <span class="kw">let </span>packet = get_packet(<span class="kw-2">&amp;</span>tables.signed_packets, <span class="kw-2">&amp;</span>key).context(<span class="string">"get packet failed"</span>)<span class="question-mark">?</span>;
                                 res.send(packet).ok();
                             }
                             Message::Upsert { packet, res } =&gt; {
@@ -606,35 +606,32 @@
                                         <span class="kw">continue</span>;
                                     } <span class="kw">else </span>{
                                         <span class="comment">// remove the packet from the update time index
-                                        </span>tables.update_time.remove(<span class="kw-2">&amp;</span>packet.timestamp().to_be_bytes(), key.as_bytes())<span class="question-mark">?</span>;
+                                        </span>tables.update_time.remove(<span class="kw-2">&amp;</span>packet.timestamp().to_bytes(), key.as_bytes())<span class="question-mark">?</span>;
                                         <span class="bool-val">true
                                     </span>}
                                 } <span class="kw">else </span>{
                                     <span class="bool-val">false
                                 </span>};
-                                <span class="kw">let </span>value = packet.as_bytes();
+                                <span class="kw">let </span>value = packet.serialize();
                                 tables.signed_packets.insert(key.as_bytes(), <span class="kw-2">&amp;</span>value[..])<span class="question-mark">?</span>;
-                                tables.update_time.insert(<span class="kw-2">&amp;</span>packet.timestamp().to_be_bytes(), key.as_bytes())<span class="question-mark">?</span>;
+                                tables.update_time.insert(<span class="kw-2">&amp;</span>packet.timestamp().to_bytes(), key.as_bytes())<span class="question-mark">?</span>;
                                 <span class="kw">if </span>replaced {
-                                    <span class="macro">inc!</span>(Metrics, store_packets_updated);
+                                    <span class="self">self</span>.metrics.store_packets_updated.inc();
                                 } <span class="kw">else </span>{
-                                    <span class="macro">inc!</span>(Metrics, store_packets_inserted);
+                                    <span class="self">self</span>.metrics.store_packets_inserted.inc();
                                 }
                                 res.send(<span class="bool-val">true</span>).ok();
                             }
                             Message::Remove { key, res } =&gt; {
                                 <span class="macro">trace!</span>(<span class="string">"remove {}"</span>, key);
                                 <span class="kw">let </span>updated = <span class="kw">if let </span><span class="prelude-val">Some</span>(row) = tables.signed_packets.remove(key.as_bytes())<span class="question-mark">? </span>{
-                                    <span class="kw">let </span>packet = SignedPacket::from_bytes(<span class="kw-2">&amp;</span>Bytes::copy_from_slice(row.value()))<span class="question-mark">?</span>;
-                                    tables.update_time.remove(<span class="kw-2">&amp;</span>packet.timestamp().to_be_bytes(), key.as_bytes())<span class="question-mark">?</span>;
-                                    <span class="macro">inc!</span>(Metrics, store_packets_removed);
+                                    <span class="kw">let </span>packet = SignedPacket::deserialize(row.value())<span class="question-mark">?</span>;
+                                    tables.update_time.remove(<span class="kw-2">&amp;</span>packet.timestamp().to_bytes(), key.as_bytes())<span class="question-mark">?</span>;
+                                    <span class="self">self</span>.metrics.store_packets_removed.inc();
                                     <span class="bool-val">true
                                 </span>} <span class="kw">else </span>{
                                     <span class="bool-val">false
                                 </span>};
-                                <span class="kw">if </span>updated {
-                                    <span class="macro">inc!</span>(Metrics, store_packets_removed);
-                                }
                                 res.send(updated).ok();
                             }
                             Message::Snapshot { res } =&gt; {
@@ -647,7 +644,7 @@
                                     <span class="kw">if </span>packet.timestamp() &lt; expired {
                                         tables.update_time.remove(<span class="kw-2">&amp;</span>time, key.as_bytes())<span class="question-mark">?</span>;
                                         <span class="kw">let _ </span>= tables.signed_packets.remove(key.as_bytes())<span class="question-mark">?</span>;
-                                        <span class="macro">inc!</span>(Metrics, store_packets_expired);
+                                        <span class="self">self</span>.metrics.store_packets_expired.inc();
                                     }
                                 }
                             }
@@ -695,7 +692,11 @@
 }
 
 <span class="kw">impl </span>SignedPacketStore {
-    <span class="kw">pub fn </span>persistent(path: <span class="kw">impl </span>AsRef&lt;Path&gt;, options: Options) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+    <span class="kw">pub fn </span>persistent(
+        path: <span class="kw">impl </span>AsRef&lt;Path&gt;,
+        options: Options,
+        metrics: Arc&lt;Metrics&gt;,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>path = path.as_ref();
         <span class="macro">info!</span>(<span class="string">"loading packet database from {}"</span>, path.to_string_lossy());
         <span class="kw">if let </span><span class="prelude-val">Some</span>(parent) = path.parent() {
@@ -709,16 +710,16 @@
         <span class="kw">let </span>db = Database::builder()
             .create(path)
             .context(<span class="string">"failed to open packet database"</span>)<span class="question-mark">?</span>;
-        <span class="self">Self</span>::open(db, options)
+        <span class="self">Self</span>::open(db, options, metrics)
     }
 
-    <span class="kw">pub fn </span>in_memory(options: Options) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+    <span class="kw">pub fn </span>in_memory(options: Options, metrics: Arc&lt;Metrics&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="macro">info!</span>(<span class="string">"using in-memory packet database"</span>);
         <span class="kw">let </span>db = Database::builder().create_with_backend(InMemoryBackend::new())<span class="question-mark">?</span>;
-        <span class="self">Self</span>::open(db, options)
+        <span class="self">Self</span>::open(db, options, metrics)
     }
 
-    <span class="kw">pub fn </span>open(db: Database, options: Options) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+    <span class="kw">pub fn </span>open(db: Database, options: Options, metrics: Arc&lt;Metrics&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="comment">// create tables
         </span><span class="kw">let </span>write_tx = db.begin_write()<span class="question-mark">?</span>;
         <span class="kw">let _ </span>= Tables::new(<span class="kw-2">&amp;</span>write_tx)<span class="question-mark">?</span>;
@@ -733,6 +734,7 @@
             recv: PeekableReceiver::new(recv),
             cancel: cancel2,
             options,
+            metrics,
         };
         <span class="comment">// start an io thread and donate it to the tokio runtime so we can do blocking IO
         // inside the thread despite being in a tokio runtime
@@ -773,10 +775,10 @@
     table: <span class="kw-2">&amp;</span><span class="kw">impl </span>ReadableTable&lt;<span class="kw-2">&amp;</span><span class="lifetime">'static </span>SignedPacketsKey, <span class="kw-2">&amp;</span><span class="lifetime">'static </span>[u8]&gt;,
     key: <span class="kw-2">&amp;</span>PublicKeyBytes,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;SignedPacket&gt;&gt; {
-    <span class="kw">let </span><span class="prelude-val">Some</span>(row) = table.get(key.as_ref())<span class="question-mark">? </span><span class="kw">else </span>{
+    <span class="kw">let </span><span class="prelude-val">Some</span>(row) = table.get(key.as_ref()).context(<span class="string">"database fetch failed"</span>)<span class="question-mark">? </span><span class="kw">else </span>{
         <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
     };
-    <span class="kw">let </span>packet = SignedPacket::from_bytes(<span class="kw-2">&amp;</span>row.value().to_vec().into())<span class="question-mark">?</span>;
+    <span class="kw">let </span>packet = SignedPacket::deserialize(row.value()).context(<span class="string">"parsing signed packet failed"</span>)<span class="question-mark">?</span>;
     <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(packet))
 }
 
@@ -804,11 +806,11 @@
         </span><span class="kw">let </span><span class="prelude-val">Ok</span>(snapshot) = rx.<span class="kw">await else </span>{
             <span class="macro">anyhow::bail!</span>(<span class="string">"failed to get snapshot"</span>);
         };
-        <span class="kw">let </span>expired = system_time() - expiry_us;
+        <span class="kw">let </span>expired = Timestamp::now() - expiry_us;
         <span class="macro">trace!</span>(<span class="string">"evicting packets older than {}"</span>, expired);
         <span class="comment">// if getting the range fails we exit the loop and shut down
         // if individual reads fail we log the error and limp on
-        </span><span class="kw">for </span>item <span class="kw">in </span>snapshot.update_time.range(..expired.to_be_bytes())<span class="question-mark">? </span>{
+        </span><span class="kw">for </span>item <span class="kw">in </span>snapshot.update_time.range(..expired.to_bytes())<span class="question-mark">? </span>{
             <span class="kw">let </span>(time, keys) = <span class="kw">match </span>item {
                 <span class="prelude-val">Ok</span>(v) =&gt; v,
                 <span class="prelude-val">Err</span>(e) =&gt; {

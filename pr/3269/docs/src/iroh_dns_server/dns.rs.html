@@ -274,7 +274,12 @@
 <a href="#273" id="273">273</a>
 <a href="#274" id="274">274</a>
 <a href="#275" id="275">275</a>
-<a href="#276" id="276">276</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implementation of a DNS name server for iroh node announces
+<a href="#276" id="276">276</a>
+<a href="#277" id="277">277</a>
+<a href="#278" id="278">278</a>
+<a href="#279" id="279">279</a>
+<a href="#280" id="280">280</a>
+<a href="#281" id="281">281</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implementation of a DNS name server for iroh node announces
 
 </span><span class="kw">use </span>std::{
     collections::BTreeMap,
@@ -302,7 +307,6 @@
     server::{Request, RequestHandler, ResponseHandler, ResponseInfo},
     store::in_memory::InMemoryAuthority,
 };
-<span class="kw">use </span>iroh_metrics::inc;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>tokio::{
     net::{TcpListener, UdpSocket},
@@ -398,12 +402,13 @@
 </span><span class="kw">pub struct </span>DnsHandler {
     <span class="attr">#[debug(<span class="string">"Catalog"</span>)]
     </span>catalog: Arc&lt;Catalog&gt;,
+    metrics: Arc&lt;Metrics&gt;,
 }
 
 <span class="kw">impl </span>DnsHandler {
     <span class="doccomment">/// Create a DNS server given some settings, a connection to the DB for DID-by-username lookups
     /// and the server DID to serve under `_did.&lt;origin&gt;`.
-    </span><span class="kw">pub fn </span>new(zone_store: ZoneStore, config: <span class="kw-2">&amp;</span>DnsConfig) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+    </span><span class="kw">pub fn </span>new(zone_store: ZoneStore, config: <span class="kw-2">&amp;</span>DnsConfig, metrics: Arc&lt;Metrics&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>origins = config
             .origins
             .iter()
@@ -425,6 +430,7 @@
 
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
             catalog: Arc::new(catalog),
+            metrics,
         })
     }
 
@@ -444,10 +450,14 @@
         request: <span class="kw-2">&amp;</span>Request,
         response_handle: R,
     ) -&gt; ResponseInfo {
-        <span class="macro">inc!</span>(Metrics, dns_requests);
+        <span class="self">self</span>.metrics.dns_requests.inc();
         <span class="kw">match </span>request.protocol() {
-            Protocol::Udp =&gt; <span class="macro">inc!</span>(Metrics, dns_requests_udp),
-            Protocol::Https =&gt; <span class="macro">inc!</span>(Metrics, dns_requests_https),
+            Protocol::Udp =&gt; {
+                <span class="self">self</span>.metrics.dns_requests_udp.inc();
+            }
+            Protocol::Https =&gt; {
+                <span class="self">self</span>.metrics.dns_requests_https.inc();
+            }
             <span class="kw">_ </span>=&gt; {}
         }
         <span class="macro">debug!</span>(protocol=%request.protocol(), queries=<span class="question-mark">?</span>request.queries(), <span class="string">"incoming DNS request"</span>);
@@ -455,12 +465,12 @@
         <span class="kw">let </span>res = <span class="self">self</span>.catalog.handle_request(request, response_handle).<span class="kw">await</span>;
         <span class="kw">match </span><span class="kw-2">&amp;</span>res.response_code() {
             ResponseCode::NoError =&gt; <span class="kw">match </span>res.answer_count() {
-                <span class="number">0 </span>=&gt; <span class="macro">inc!</span>(Metrics, dns_lookup_notfound),
-                <span class="kw">_ </span>=&gt; <span class="macro">inc!</span>(Metrics, dns_lookup_success),
+                <span class="number">0 </span>=&gt; <span class="self">self</span>.metrics.dns_lookup_notfound.inc(),
+                <span class="kw">_ </span>=&gt; <span class="self">self</span>.metrics.dns_lookup_success.inc(),
             },
-            ResponseCode::NXDomain =&gt; <span class="macro">inc!</span>(Metrics, dns_lookup_notfound),
-            <span class="kw">_ </span>=&gt; <span class="macro">inc!</span>(Metrics, dns_lookup_error),
-        }
+            ResponseCode::NXDomain =&gt; <span class="self">self</span>.metrics.dns_lookup_notfound.inc(),
+            <span class="kw">_ </span>=&gt; <span class="self">self</span>.metrics.dns_lookup_error.inc(),
+        };
         res
     }
 }

@@ -304,7 +304,9 @@
 <a href="#303" id="303">303</a>
 <a href="#304" id="304">304</a>
 <a href="#305" id="305">305</a>
-<a href="#306" id="306">306</a></pre></div><pre class="rust"><code><span class="doccomment">//! Actor to run hairpinning check.
+<a href="#306" id="306">306</a>
+<a href="#307" id="307">307</a>
+<a href="#308" id="308">308</a></pre></div><pre class="rust"><code><span class="doccomment">//! Actor to run hairpinning check.
 //!
 //! This actor works as follows:
 //!
@@ -512,6 +514,7 @@
         </span><span class="kw">let </span>(net_report_tx, <span class="kw-2">mut </span>net_report_rx) = mpsc::channel(<span class="number">32</span>);
         <span class="kw">let </span>net_report_addr = net_report::Addr {
             sender: net_report_tx,
+            metrics: Default::default(),
         };
         <span class="kw">let </span>(reportstate_tx, <span class="kw-2">mut </span>reportstate_rx) = mpsc::channel(<span class="number">32</span>);
         <span class="kw">let </span>reportstate_addr = reportgen::Addr {
@@ -588,6 +591,7 @@
         </span><span class="kw">let </span>(net_report_tx, _net_report_rx) = mpsc::channel(<span class="number">32</span>);
         <span class="kw">let </span>net_report_addr = net_report::Addr {
             sender: net_report_tx,
+            metrics: Default::default(),
         };
         <span class="kw">let </span>(reportstate_tx, _reportstate_rx) = mpsc::channel(<span class="number">32</span>);
         <span class="kw">let </span>reportstate_addr = reportgen::Addr {

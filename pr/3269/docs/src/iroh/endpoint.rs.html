@@ -2780,7 +2780,321 @@
 <a href="#2779" id="2779">2779</a>
 <a href="#2780" id="2780">2780</a>
 <a href="#2781" id="2781">2781</a>
-<a href="#2782" id="2782">2782</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#2782" id="2782">2782</a>
+<a href="#2783" id="2783">2783</a>
+<a href="#2784" id="2784">2784</a>
+<a href="#2785" id="2785">2785</a>
+<a href="#2786" id="2786">2786</a>
+<a href="#2787" id="2787">2787</a>
+<a href="#2788" id="2788">2788</a>
+<a href="#2789" id="2789">2789</a>
+<a href="#2790" id="2790">2790</a>
+<a href="#2791" id="2791">2791</a>
+<a href="#2792" id="2792">2792</a>
+<a href="#2793" id="2793">2793</a>
+<a href="#2794" id="2794">2794</a>
+<a href="#2795" id="2795">2795</a>
+<a href="#2796" id="2796">2796</a>
+<a href="#2797" id="2797">2797</a>
+<a href="#2798" id="2798">2798</a>
+<a href="#2799" id="2799">2799</a>
+<a href="#2800" id="2800">2800</a>
+<a href="#2801" id="2801">2801</a>
+<a href="#2802" id="2802">2802</a>
+<a href="#2803" id="2803">2803</a>
+<a href="#2804" id="2804">2804</a>
+<a href="#2805" id="2805">2805</a>
+<a href="#2806" id="2806">2806</a>
+<a href="#2807" id="2807">2807</a>
+<a href="#2808" id="2808">2808</a>
+<a href="#2809" id="2809">2809</a>
+<a href="#2810" id="2810">2810</a>
+<a href="#2811" id="2811">2811</a>
+<a href="#2812" id="2812">2812</a>
+<a href="#2813" id="2813">2813</a>
+<a href="#2814" id="2814">2814</a>
+<a href="#2815" id="2815">2815</a>
+<a href="#2816" id="2816">2816</a>
+<a href="#2817" id="2817">2817</a>
+<a href="#2818" id="2818">2818</a>
+<a href="#2819" id="2819">2819</a>
+<a href="#2820" id="2820">2820</a>
+<a href="#2821" id="2821">2821</a>
+<a href="#2822" id="2822">2822</a>
+<a href="#2823" id="2823">2823</a>
+<a href="#2824" id="2824">2824</a>
+<a href="#2825" id="2825">2825</a>
+<a href="#2826" id="2826">2826</a>
+<a href="#2827" id="2827">2827</a>
+<a href="#2828" id="2828">2828</a>
+<a href="#2829" id="2829">2829</a>
+<a href="#2830" id="2830">2830</a>
+<a href="#2831" id="2831">2831</a>
+<a href="#2832" id="2832">2832</a>
+<a href="#2833" id="2833">2833</a>
+<a href="#2834" id="2834">2834</a>
+<a href="#2835" id="2835">2835</a>
+<a href="#2836" id="2836">2836</a>
+<a href="#2837" id="2837">2837</a>
+<a href="#2838" id="2838">2838</a>
+<a href="#2839" id="2839">2839</a>
+<a href="#2840" id="2840">2840</a>
+<a href="#2841" id="2841">2841</a>
+<a href="#2842" id="2842">2842</a>
+<a href="#2843" id="2843">2843</a>
+<a href="#2844" id="2844">2844</a>
+<a href="#2845" id="2845">2845</a>
+<a href="#2846" id="2846">2846</a>
+<a href="#2847" id="2847">2847</a>
+<a href="#2848" id="2848">2848</a>
+<a href="#2849" id="2849">2849</a>
+<a href="#2850" id="2850">2850</a>
+<a href="#2851" id="2851">2851</a>
+<a href="#2852" id="2852">2852</a>
+<a href="#2853" id="2853">2853</a>
+<a href="#2854" id="2854">2854</a>
+<a href="#2855" id="2855">2855</a>
+<a href="#2856" id="2856">2856</a>
+<a href="#2857" id="2857">2857</a>
+<a href="#2858" id="2858">2858</a>
+<a href="#2859" id="2859">2859</a>
+<a href="#2860" id="2860">2860</a>
+<a href="#2861" id="2861">2861</a>
+<a href="#2862" id="2862">2862</a>
+<a href="#2863" id="2863">2863</a>
+<a href="#2864" id="2864">2864</a>
+<a href="#2865" id="2865">2865</a>
+<a href="#2866" id="2866">2866</a>
+<a href="#2867" id="2867">2867</a>
+<a href="#2868" id="2868">2868</a>
+<a href="#2869" id="2869">2869</a>
+<a href="#2870" id="2870">2870</a>
+<a href="#2871" id="2871">2871</a>
+<a href="#2872" id="2872">2872</a>
+<a href="#2873" id="2873">2873</a>
+<a href="#2874" id="2874">2874</a>
+<a href="#2875" id="2875">2875</a>
+<a href="#2876" id="2876">2876</a>
+<a href="#2877" id="2877">2877</a>
+<a href="#2878" id="2878">2878</a>
+<a href="#2879" id="2879">2879</a>
+<a href="#2880" id="2880">2880</a>
+<a href="#2881" id="2881">2881</a>
+<a href="#2882" id="2882">2882</a>
+<a href="#2883" id="2883">2883</a>
+<a href="#2884" id="2884">2884</a>
+<a href="#2885" id="2885">2885</a>
+<a href="#2886" id="2886">2886</a>
+<a href="#2887" id="2887">2887</a>
+<a href="#2888" id="2888">2888</a>
+<a href="#2889" id="2889">2889</a>
+<a href="#2890" id="2890">2890</a>
+<a href="#2891" id="2891">2891</a>
+<a href="#2892" id="2892">2892</a>
+<a href="#2893" id="2893">2893</a>
+<a href="#2894" id="2894">2894</a>
+<a href="#2895" id="2895">2895</a>
+<a href="#2896" id="2896">2896</a>
+<a href="#2897" id="2897">2897</a>
+<a href="#2898" id="2898">2898</a>
+<a href="#2899" id="2899">2899</a>
+<a href="#2900" id="2900">2900</a>
+<a href="#2901" id="2901">2901</a>
+<a href="#2902" id="2902">2902</a>
+<a href="#2903" id="2903">2903</a>
+<a href="#2904" id="2904">2904</a>
+<a href="#2905" id="2905">2905</a>
+<a href="#2906" id="2906">2906</a>
+<a href="#2907" id="2907">2907</a>
+<a href="#2908" id="2908">2908</a>
+<a href="#2909" id="2909">2909</a>
+<a href="#2910" id="2910">2910</a>
+<a href="#2911" id="2911">2911</a>
+<a href="#2912" id="2912">2912</a>
+<a href="#2913" id="2913">2913</a>
+<a href="#2914" id="2914">2914</a>
+<a href="#2915" id="2915">2915</a>
+<a href="#2916" id="2916">2916</a>
+<a href="#2917" id="2917">2917</a>
+<a href="#2918" id="2918">2918</a>
+<a href="#2919" id="2919">2919</a>
+<a href="#2920" id="2920">2920</a>
+<a href="#2921" id="2921">2921</a>
+<a href="#2922" id="2922">2922</a>
+<a href="#2923" id="2923">2923</a>
+<a href="#2924" id="2924">2924</a>
+<a href="#2925" id="2925">2925</a>
+<a href="#2926" id="2926">2926</a>
+<a href="#2927" id="2927">2927</a>
+<a href="#2928" id="2928">2928</a>
+<a href="#2929" id="2929">2929</a>
+<a href="#2930" id="2930">2930</a>
+<a href="#2931" id="2931">2931</a>
+<a href="#2932" id="2932">2932</a>
+<a href="#2933" id="2933">2933</a>
+<a href="#2934" id="2934">2934</a>
+<a href="#2935" id="2935">2935</a>
+<a href="#2936" id="2936">2936</a>
+<a href="#2937" id="2937">2937</a>
+<a href="#2938" id="2938">2938</a>
+<a href="#2939" id="2939">2939</a>
+<a href="#2940" id="2940">2940</a>
+<a href="#2941" id="2941">2941</a>
+<a href="#2942" id="2942">2942</a>
+<a href="#2943" id="2943">2943</a>
+<a href="#2944" id="2944">2944</a>
+<a href="#2945" id="2945">2945</a>
+<a href="#2946" id="2946">2946</a>
+<a href="#2947" id="2947">2947</a>
+<a href="#2948" id="2948">2948</a>
+<a href="#2949" id="2949">2949</a>
+<a href="#2950" id="2950">2950</a>
+<a href="#2951" id="2951">2951</a>
+<a href="#2952" id="2952">2952</a>
+<a href="#2953" id="2953">2953</a>
+<a href="#2954" id="2954">2954</a>
+<a href="#2955" id="2955">2955</a>
+<a href="#2956" id="2956">2956</a>
+<a href="#2957" id="2957">2957</a>
+<a href="#2958" id="2958">2958</a>
+<a href="#2959" id="2959">2959</a>
+<a href="#2960" id="2960">2960</a>
+<a href="#2961" id="2961">2961</a>
+<a href="#2962" id="2962">2962</a>
+<a href="#2963" id="2963">2963</a>
+<a href="#2964" id="2964">2964</a>
+<a href="#2965" id="2965">2965</a>
+<a href="#2966" id="2966">2966</a>
+<a href="#2967" id="2967">2967</a>
+<a href="#2968" id="2968">2968</a>
+<a href="#2969" id="2969">2969</a>
+<a href="#2970" id="2970">2970</a>
+<a href="#2971" id="2971">2971</a>
+<a href="#2972" id="2972">2972</a>
+<a href="#2973" id="2973">2973</a>
+<a href="#2974" id="2974">2974</a>
+<a href="#2975" id="2975">2975</a>
+<a href="#2976" id="2976">2976</a>
+<a href="#2977" id="2977">2977</a>
+<a href="#2978" id="2978">2978</a>
+<a href="#2979" id="2979">2979</a>
+<a href="#2980" id="2980">2980</a>
+<a href="#2981" id="2981">2981</a>
+<a href="#2982" id="2982">2982</a>
+<a href="#2983" id="2983">2983</a>
+<a href="#2984" id="2984">2984</a>
+<a href="#2985" id="2985">2985</a>
+<a href="#2986" id="2986">2986</a>
+<a href="#2987" id="2987">2987</a>
+<a href="#2988" id="2988">2988</a>
+<a href="#2989" id="2989">2989</a>
+<a href="#2990" id="2990">2990</a>
+<a href="#2991" id="2991">2991</a>
+<a href="#2992" id="2992">2992</a>
+<a href="#2993" id="2993">2993</a>
+<a href="#2994" id="2994">2994</a>
+<a href="#2995" id="2995">2995</a>
+<a href="#2996" id="2996">2996</a>
+<a href="#2997" id="2997">2997</a>
+<a href="#2998" id="2998">2998</a>
+<a href="#2999" id="2999">2999</a>
+<a href="#3000" id="3000">3000</a>
+<a href="#3001" id="3001">3001</a>
+<a href="#3002" id="3002">3002</a>
+<a href="#3003" id="3003">3003</a>
+<a href="#3004" id="3004">3004</a>
+<a href="#3005" id="3005">3005</a>
+<a href="#3006" id="3006">3006</a>
+<a href="#3007" id="3007">3007</a>
+<a href="#3008" id="3008">3008</a>
+<a href="#3009" id="3009">3009</a>
+<a href="#3010" id="3010">3010</a>
+<a href="#3011" id="3011">3011</a>
+<a href="#3012" id="3012">3012</a>
+<a href="#3013" id="3013">3013</a>
+<a href="#3014" id="3014">3014</a>
+<a href="#3015" id="3015">3015</a>
+<a href="#3016" id="3016">3016</a>
+<a href="#3017" id="3017">3017</a>
+<a href="#3018" id="3018">3018</a>
+<a href="#3019" id="3019">3019</a>
+<a href="#3020" id="3020">3020</a>
+<a href="#3021" id="3021">3021</a>
+<a href="#3022" id="3022">3022</a>
+<a href="#3023" id="3023">3023</a>
+<a href="#3024" id="3024">3024</a>
+<a href="#3025" id="3025">3025</a>
+<a href="#3026" id="3026">3026</a>
+<a href="#3027" id="3027">3027</a>
+<a href="#3028" id="3028">3028</a>
+<a href="#3029" id="3029">3029</a>
+<a href="#3030" id="3030">3030</a>
+<a href="#3031" id="3031">3031</a>
+<a href="#3032" id="3032">3032</a>
+<a href="#3033" id="3033">3033</a>
+<a href="#3034" id="3034">3034</a>
+<a href="#3035" id="3035">3035</a>
+<a href="#3036" id="3036">3036</a>
+<a href="#3037" id="3037">3037</a>
+<a href="#3038" id="3038">3038</a>
+<a href="#3039" id="3039">3039</a>
+<a href="#3040" id="3040">3040</a>
+<a href="#3041" id="3041">3041</a>
+<a href="#3042" id="3042">3042</a>
+<a href="#3043" id="3043">3043</a>
+<a href="#3044" id="3044">3044</a>
+<a href="#3045" id="3045">3045</a>
+<a href="#3046" id="3046">3046</a>
+<a href="#3047" id="3047">3047</a>
+<a href="#3048" id="3048">3048</a>
+<a href="#3049" id="3049">3049</a>
+<a href="#3050" id="3050">3050</a>
+<a href="#3051" id="3051">3051</a>
+<a href="#3052" id="3052">3052</a>
+<a href="#3053" id="3053">3053</a>
+<a href="#3054" id="3054">3054</a>
+<a href="#3055" id="3055">3055</a>
+<a href="#3056" id="3056">3056</a>
+<a href="#3057" id="3057">3057</a>
+<a href="#3058" id="3058">3058</a>
+<a href="#3059" id="3059">3059</a>
+<a href="#3060" id="3060">3060</a>
+<a href="#3061" id="3061">3061</a>
+<a href="#3062" id="3062">3062</a>
+<a href="#3063" id="3063">3063</a>
+<a href="#3064" id="3064">3064</a>
+<a href="#3065" id="3065">3065</a>
+<a href="#3066" id="3066">3066</a>
+<a href="#3067" id="3067">3067</a>
+<a href="#3068" id="3068">3068</a>
+<a href="#3069" id="3069">3069</a>
+<a href="#3070" id="3070">3070</a>
+<a href="#3071" id="3071">3071</a>
+<a href="#3072" id="3072">3072</a>
+<a href="#3073" id="3073">3073</a>
+<a href="#3074" id="3074">3074</a>
+<a href="#3075" id="3075">3075</a>
+<a href="#3076" id="3076">3076</a>
+<a href="#3077" id="3077">3077</a>
+<a href="#3078" id="3078">3078</a>
+<a href="#3079" id="3079">3079</a>
+<a href="#3080" id="3080">3080</a>
+<a href="#3081" id="3081">3081</a>
+<a href="#3082" id="3082">3082</a>
+<a href="#3083" id="3083">3083</a>
+<a href="#3084" id="3084">3084</a>
+<a href="#3085" id="3085">3085</a>
+<a href="#3086" id="3086">3086</a>
+<a href="#3087" id="3087">3087</a>
+<a href="#3088" id="3088">3088</a>
+<a href="#3089" id="3089">3089</a>
+<a href="#3090" id="3090">3090</a>
+<a href="#3091" id="3091">3091</a>
+<a href="#3092" id="3092">3092</a>
+<a href="#3093" id="3093">3093</a>
+<a href="#3094" id="3094">3094</a>
+<a href="#3095" id="3095">3095</a>
+<a href="#3096" id="3096">3096</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -2823,6 +3137,7 @@
         DiscoveryTask, Lagged, UserData,
     },
     magicsock::{<span class="self">self</span>, Handle, NodeIdMappedAddr},
+    metrics::EndpointMetrics,
     tls,
     watchable::Watcher,
     RelayProtocol,
@@ -2974,6 +3289,8 @@
         };
         <span class="kw">let </span>server_config = static_config.create_server_config(<span class="self">self</span>.alpn_protocols)<span class="question-mark">?</span>;
 
+        <span class="kw">let </span>metrics = EndpointMetrics::default();
+
         <span class="kw">let </span>msock_opts = magicsock::Options {
             addr_v4: <span class="self">self</span>.addr_v4,
             addr_v6: <span class="self">self</span>.addr_v6,
@@ -2991,6 +3308,7 @@
             </span>insecure_skip_relay_cert_verify: <span class="self">self</span>.insecure_skip_relay_cert_verify,
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>path_selection: <span class="self">self</span>.path_selection,
+            metrics,
         };
         Endpoint::bind(static_config, msock_opts).<span class="kw">await
     </span>}
@@ -3035,7 +3353,7 @@
     <span class="doccomment">/// Sets the [ALPN] protocols that this endpoint will accept on incoming connections.
     ///
     /// Not setting this will still allow creating connections, but to accept incoming
-    /// connections the [ALPN] must be set.
+    /// connections at least one [ALPN] must be set.
     ///
     /// [ALPN]: https://en.wikipedia.org/wiki/Application-Layer_Protocol_Negotiation
     </span><span class="kw">pub fn </span>alpns(<span class="kw-2">mut </span><span class="self">self</span>, alpn_protocols: Vec&lt;Vec&lt;u8&gt;&gt;) -&gt; <span class="self">Self </span>{
@@ -3402,7 +3720,7 @@
 
         <span class="kw">let </span>ep = <span class="self">Self </span>{
             msock: msock.clone(),
-            rtt_actor: Arc::new(rtt_actor::RttHandle::new()),
+            rtt_actor: Arc::new(rtt_actor::RttHandle::new(msock.metrics.magicsock.clone())),
             static_config: Arc::new(static_config),
             session_store: Arc::new(rustls::client::ClientSessionMemoryCache::new(
                 MAX_TLS_TICKETS,
@@ -3534,7 +3852,8 @@
             <span class="string">"Attempting connection..."
         </span>);
         <span class="kw">let </span>client_config = {
-            <span class="kw">let </span>alpn_protocols = <span class="macro">vec!</span>[alpn.to_vec()];
+            <span class="kw">let </span><span class="kw-2">mut </span>alpn_protocols = <span class="macro">vec!</span>[alpn.to_vec()];
+            alpn_protocols.extend(options.additional_alpns);
             <span class="kw">let </span>quic_client_config = <span class="self">self</span>.static_config.tls_auth.make_client_config(
                 <span class="kw-2">&amp;</span><span class="self">self</span>.static_config.secret_key,
                 node_id,
@@ -3885,6 +4204,122 @@
         <span class="self">self</span>.msock.discovery()
     }
 
+    <span class="doccomment">/// Returns metrics collected for this endpoint.
+    ///
+    /// The endpoint internally collects various metrics about its operation.
+    /// The returned [`EndpointMetrics`] struct contains all of these metrics.
+    ///
+    /// You can access individual metrics directly by using the public fields:
+    /// ```rust
+    /// # use std::collections::BTreeMap;
+    /// # use iroh::endpoint::Endpoint;
+    /// # async fn wrapper() -&gt; testresult::TestResult {
+    /// let endpoint = Endpoint::builder().bind().await?;
+    /// assert_eq!(endpoint.metrics().magicsock.recv_datagrams.get(), 0);
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// [`EndpointMetrics`] implements [`MetricsGroupSet`], and each field
+    /// implements [`MetricsGroup`]. These traits provide methods to iterate over
+    /// the groups in the set, and over the individual metrics in each group, without having
+    /// to access each field manually. With these methods, it is straightforward to collect
+    /// all metrics into a map or push their values to a metrics collector.
+    ///
+    /// For example, the following snippet collects all metrics into a map:
+    /// ```rust
+    /// # use std::collections::BTreeMap;
+    /// # use iroh_metrics::{Metric, MetricsGroup, MetricValue, MetricsGroupSet};
+    /// # use iroh::endpoint::Endpoint;
+    /// # async fn wrapper() -&gt; testresult::TestResult {
+    /// let endpoint = Endpoint::builder().bind().await?;
+    /// let metrics: BTreeMap&lt;String, MetricValue&gt; = endpoint
+    ///     .metrics()
+    ///     .iter()
+    ///     .map(|(group, metric)| {
+    ///         let name = [group, metric.name()].join(":");
+    ///         (name, metric.value())
+    ///     })
+    ///     .collect();
+    ///
+    /// assert_eq!(metrics["magicsock:recv_datagrams"], MetricValue::Counter(0));
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// The metrics can also be encoded into the OpenMetrics text format, as used by Prometheus.
+    /// To do so, use the [`iroh_metrics::Registry`], add the endpoint metrics to the
+    /// registry with [`Registry::register_all`], and encode the metrics to a string with
+    /// [`encode_openmetrics_to_string`]:
+    /// ```rust
+    /// # use iroh_metrics::{Registry, MetricsSource};
+    /// # use iroh::endpoint::Endpoint;
+    /// # async fn wrapper() -&gt; testresult::TestResult {
+    /// let endpoint = Endpoint::builder().bind().await?;
+    /// let mut registry = Registry::default();
+    /// registry.register_all(endpoint.metrics());
+    /// let s = registry.encode_openmetrics_to_string()?;
+    /// assert!(s.contains(r#"TYPE magicsock_recv_datagrams counter"#));
+    /// assert!(s.contains(r#"magicsock_recv_datagrams_total 0"#));
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// Through a registry, you can also add labels or prefixes to metrics with
+    /// [`Registry::sub_registry_with_label`] or [`Registry::sub_registry_with_prefix`].
+    /// Furthermore, [`iroh_metrics::service`] provides functions to easily start services
+    /// to serve the metrics with a HTTP server, dump them to a file, or push them
+    /// to a Prometheus gateway.
+    ///
+    /// For example, the following snippet launches an HTTP server that serves the metrics in the
+    /// OpenMetrics text format:
+    /// ```no_run
+    /// # use std::{sync::{Arc, RwLock}, time::Duration};
+    /// # use iroh_metrics::{Registry, MetricsSource};
+    /// # use iroh::endpoint::Endpoint;
+    /// # async fn wrapper() -&gt; testresult::TestResult {
+    /// // Create a registry, wrapped in a read-write lock so that we can register and serve
+    /// // the metrics independently.
+    /// let registry = Arc::new(RwLock::new(Registry::default()));
+    /// // Spawn a task to serve the metrics on an OpenMetrics HTTP endpoint.
+    /// let metrics_task = tokio::task::spawn({
+    ///     let registry = registry.clone();
+    ///     async move {
+    ///         let addr = "0.0.0.0:9100".parse().unwrap();
+    ///         iroh_metrics::service::start_metrics_server(addr, registry).await
+    ///     }
+    /// });
+    ///
+    /// // Spawn an endpoint and add the metrics to the registry.
+    /// let endpoint = Endpoint::builder().bind().await?;
+    /// registry.write().unwrap().register_all(endpoint.metrics());
+    ///
+    /// // Wait for the metrics server to bind, then fetch the metrics via HTTP.
+    /// tokio::time::sleep(Duration::from_millis(500));
+    /// let res = reqwest::get("http://localhost:9100/metrics")
+    ///     .await?
+    ///     .text()
+    ///     .await?;
+    ///
+    /// assert!(res.contains(r#"TYPE magicsock_recv_datagrams counter"#));
+    /// assert!(res.contains(r#"magicsock_recv_datagrams_total 0"#));
+    /// # metrics_task.abort();
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// [`Registry`]: iroh_metrics::Registry
+    /// [`Registry::register_all`]: iroh_metrics::Registry::register_all
+    /// [`Registry::sub_registry_with_label`]: iroh_metrics::Registry::sub_registry_with_label
+    /// [`Registry::sub_registry_with_prefix`]: iroh_metrics::Registry::sub_registry_with_prefix
+    /// [`encode_openmetrics_to_string`]: iroh_metrics::MetricsSource::encode_openmetrics_to_string
+    /// [`MetricsGroup`]: iroh_metrics::MetricsGroup
+    /// [`MetricsGroupSet`]: iroh_metrics::MetricsGroupSet
+    </span><span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
+    </span><span class="kw">pub fn </span>metrics(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>EndpointMetrics {
+        <span class="kw-2">&amp;</span><span class="self">self</span>.msock.metrics
+    }
+
     <span class="comment">// # Methods for less common state updates.
 
     </span><span class="doccomment">/// Notifies the system of potential network changes.
@@ -4045,6 +4480,7 @@
 </span><span class="attr">#[derive(Default, Debug, Clone)]
 </span><span class="kw">pub struct </span>ConnectOptions {
     transport_config: <span class="prelude-ty">Option</span>&lt;Arc&lt;TransportConfig&gt;&gt;,
+    additional_alpns: Vec&lt;Vec&lt;u8&gt;&gt;,
 }
 
 <span class="kw">impl </span>ConnectOptions {
@@ -4059,6 +4495,31 @@
     <span class="doccomment">/// Sets the QUIC transport config options for this connection.
     </span><span class="kw">pub fn </span>with_transport_config(<span class="kw-2">mut </span><span class="self">self</span>, transport_config: Arc&lt;TransportConfig&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.transport_config = <span class="prelude-val">Some</span>(transport_config);
+        <span class="self">self
+    </span>}
+
+    <span class="doccomment">/// Sets [ALPN] identifiers that should be signaled as supported on connection, *in
+    /// addition* to the main [ALPN] identifier used in [`Endpoint::connect_with_opts`].
+    ///
+    /// This allows connecting to servers that may only support older versions of your
+    /// protocol. In this case, you would add the older [ALPN] identifiers with this
+    /// function.
+    ///
+    /// You'll know the final negotiated [ALPN] identifier once your connection was
+    /// established using [`Connection::alpn`], or even slightly earlier in the
+    /// handshake by using [`Connecting::alpn`].
+    /// The negotiated [ALPN] identifier may be any of the [ALPN] identifiers in this
+    /// list or the main [ALPN] used in [`Endpoint::connect_with_opts`].
+    ///
+    /// The [ALPN] identifier order on the connect side doesn't matter, since it's the
+    /// accept side that determines the protocol.
+    ///
+    /// For setting the supported [ALPN] identifiers on the accept side, see the endpoint
+    /// builder's [`Builder::alpns`] function.
+    ///
+    /// [ALPN]: https://en.wikipedia.org/wiki/Application-Layer_Protocol_Negotiation
+    </span><span class="kw">pub fn </span>with_additional_alpns(<span class="kw-2">mut </span><span class="self">self</span>, alpns: Vec&lt;Vec&lt;u8&gt;&gt;) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.additional_alpns = alpns;
         <span class="self">self
     </span>}
 }
@@ -4808,6 +5269,7 @@
 
     <span class="kw">use </span>std::time::Instant;
 
+    <span class="kw">use </span>iroh_metrics::MetricsSource;
     <span class="kw">use </span>iroh_relay::http::Protocol;
     <span class="kw">use </span>n0_future::StreamExt;
     <span class="kw">use </span>rand::SeedableRng;
@@ -5558,6 +6020,172 @@
 
         <span class="macro">assert_eq!</span>(app_close.error_code, <span class="number">42u32</span>.into());
         <span class="macro">assert_eq!</span>(app_close.reason.as_ref(), <span class="string">b"thanks, bye!"</span>);
+
+        <span class="prelude-val">Ok</span>(())
+    }
+
+    <span class="attr">#[tokio::test]
+    #[traced_test]
+    </span><span class="kw">async fn </span>metrics_smoke() -&gt; testresult::TestResult {
+        <span class="kw">use </span>iroh_metrics::Registry;
+
+        <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">0u8</span>; <span class="number">32</span>]);
+        <span class="kw">let </span>client = Endpoint::builder()
+            .secret_key(secret_key)
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">1u8</span>; <span class="number">32</span>]);
+        <span class="kw">let </span>server = Endpoint::builder()
+            .secret_key(secret_key)
+            .relay_mode(RelayMode::Disabled)
+            .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
+            .bind()
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>server_addr = server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>server_task = tokio::task::spawn(<span class="kw">async move </span>{
+            <span class="kw">let </span>conn = server
+                .accept()
+                .<span class="kw">await
+                </span>.context(<span class="string">"expected conn"</span>)<span class="question-mark">?
+                </span>.accept()<span class="question-mark">?
+                </span>.<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="kw">let </span><span class="kw-2">mut </span>uni = conn.accept_uni().<span class="kw">await</span><span class="question-mark">?</span>;
+            uni.read_to_end(<span class="number">10</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+            drop(conn);
+            anyhow::Ok(server)
+        });
+        <span class="kw">let </span>conn = client.connect(server_addr, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span><span class="kw-2">mut </span>uni = conn.open_uni().<span class="kw">await</span><span class="question-mark">?</span>;
+        uni.write_all(<span class="string">b"helloworld"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        uni.finish()<span class="question-mark">?</span>;
+        conn.closed().<span class="kw">await</span>;
+        drop(conn);
+        <span class="kw">let </span>server = server_task.<span class="kw">await</span><span class="question-mark">??</span>;
+
+        <span class="kw">let </span>m = client.metrics();
+        <span class="macro">assert_eq!</span>(m.magicsock.num_direct_conns_added.get(), <span class="number">1</span>);
+        <span class="macro">assert_eq!</span>(m.magicsock.connection_became_direct.get(), <span class="number">1</span>);
+        <span class="macro">assert_eq!</span>(m.magicsock.connection_handshake_success.get(), <span class="number">1</span>);
+        <span class="macro">assert_eq!</span>(m.magicsock.nodes_contacted_directly.get(), <span class="number">1</span>);
+        <span class="macro">assert!</span>(m.magicsock.recv_datagrams.get() &gt; <span class="number">0</span>);
+
+        <span class="kw">let </span>m = server.metrics();
+        <span class="macro">assert_eq!</span>(m.magicsock.num_direct_conns_added.get(), <span class="number">1</span>);
+        <span class="macro">assert_eq!</span>(m.magicsock.connection_became_direct.get(), <span class="number">1</span>);
+        <span class="macro">assert_eq!</span>(m.magicsock.nodes_contacted_directly.get(), <span class="number">1</span>);
+        <span class="macro">assert_eq!</span>(m.magicsock.connection_handshake_success.get(), <span class="number">1</span>);
+        <span class="macro">assert!</span>(m.magicsock.recv_datagrams.get() &gt; <span class="number">0</span>);
+
+        <span class="comment">// test openmetrics encoding with labeled subregistries per endpoint
+        </span><span class="kw">fn </span>register_endpoint(registry: <span class="kw-2">&amp;mut </span>Registry, endpoint: <span class="kw-2">&amp;</span>Endpoint) {
+            <span class="kw">let </span>id = endpoint.node_id().fmt_short();
+            <span class="kw">let </span>sub_registry = registry.sub_registry_with_label(<span class="string">"id"</span>, id);
+            sub_registry.register_all(endpoint.metrics());
+        }
+        <span class="kw">let </span><span class="kw-2">mut </span>registry = Registry::default();
+        register_endpoint(<span class="kw-2">&amp;mut </span>registry, <span class="kw-2">&amp;</span>client);
+        register_endpoint(<span class="kw-2">&amp;mut </span>registry, <span class="kw-2">&amp;</span>server);
+        <span class="kw">let </span>s = registry.encode_openmetrics_to_string()<span class="question-mark">?</span>;
+        <span class="macro">assert!</span>(s.contains(<span class="string">r#"magicsock_nodes_contacted_directly_total{id="3b6a27bcce"} 1"#</span>));
+        <span class="macro">assert!</span>(s.contains(<span class="string">r#"magicsock_nodes_contacted_directly_total{id="8a88e3dd74"} 1"#</span>));
+        <span class="prelude-val">Ok</span>(())
+    }
+
+    <span class="doccomment">/// Configures the accept side to take `accept_alpns` ALPNs, then connects to it with `primary_connect_alpn`
+    /// with `secondary_connect_alpns` set, and finally returns the negotiated ALPN.
+    </span><span class="kw">async fn </span>alpn_connection_test(
+        accept_alpns: Vec&lt;Vec&lt;u8&gt;&gt;,
+        primary_connect_alpn: <span class="kw-2">&amp;</span>[u8],
+        secondary_connect_alpns: Vec&lt;Vec&lt;u8&gt;&gt;,
+    ) -&gt; testresult::TestResult&lt;<span class="prelude-ty">Option</span>&lt;Vec&lt;u8&gt;&gt;&gt; {
+        <span class="kw">let </span>client = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>server = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .alpns(accept_alpns)
+            .bind()
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>server_addr = server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>server_task = tokio::spawn({
+            <span class="kw">let </span>server = server.clone();
+            <span class="kw">async move </span>{
+                <span class="kw">let </span>incoming = server.accept().<span class="kw">await</span>.unwrap();
+                <span class="kw">let </span>conn = incoming.<span class="kw">await</span><span class="question-mark">?</span>;
+                conn.close(<span class="number">0u32</span>.into(), <span class="string">b"bye!"</span>);
+                testresult::TestResult::Ok(conn.alpn())
+            }
+        });
+
+        <span class="kw">let </span>conn = client
+            .connect_with_opts(
+                server_addr,
+                primary_connect_alpn,
+                ConnectOptions::new().with_additional_alpns(secondary_connect_alpns),
+            )
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>conn = conn.<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>client_alpn = conn.alpn();
+        conn.closed().<span class="kw">await</span>;
+        client.close().<span class="kw">await</span>;
+        server.close().<span class="kw">await</span>;
+
+        <span class="kw">let </span>server_alpn = server_task.<span class="kw">await</span><span class="question-mark">??</span>;
+
+        <span class="macro">assert_eq!</span>(client_alpn, server_alpn);
+
+        <span class="prelude-val">Ok</span>(server_alpn)
+    }
+
+    <span class="attr">#[tokio::test]
+    #[traced_test]
+    </span><span class="kw">async fn </span>connect_multiple_alpn_negotiated() -&gt; testresult::TestResult {
+        <span class="kw">const </span>ALPN_ONE: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"alpn/1"</span>;
+        <span class="kw">const </span>ALPN_TWO: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"alpn/2"</span>;
+
+        <span class="macro">assert_eq!</span>(
+            alpn_connection_test(
+                <span class="comment">// Prefer version 2 over version 1 on the accept side
+                </span><span class="macro">vec!</span>[ALPN_TWO.to_vec(), ALPN_ONE.to_vec()],
+                ALPN_TWO,
+                <span class="macro">vec!</span>[ALPN_ONE.to_vec()],
+            )
+            .<span class="kw">await</span><span class="question-mark">?</span>,
+            <span class="prelude-val">Some</span>(ALPN_TWO.to_vec()),
+            <span class="string">"accept side prefers version 2 over 1"
+        </span>);
+
+        <span class="macro">assert_eq!</span>(
+            alpn_connection_test(
+                <span class="comment">// Only support the old version
+                </span><span class="macro">vec!</span>[ALPN_ONE.to_vec()],
+                ALPN_TWO,
+                <span class="macro">vec!</span>[ALPN_ONE.to_vec()],
+            )
+            .<span class="kw">await</span><span class="question-mark">?</span>,
+            <span class="prelude-val">Some</span>(ALPN_ONE.to_vec()),
+            <span class="string">"accept side only supports the old version"
+        </span>);
+
+        <span class="macro">assert_eq!</span>(
+            alpn_connection_test(
+                <span class="macro">vec!</span>[ALPN_TWO.to_vec(), ALPN_ONE.to_vec()],
+                ALPN_ONE,
+                <span class="macro">vec!</span>[ALPN_TWO.to_vec()],
+            )
+            .<span class="kw">await</span><span class="question-mark">?</span>,
+            <span class="prelude-val">Some</span>(ALPN_TWO.to_vec()),
+            <span class="string">"connect side ALPN order doesn't matter"
+        </span>);
+
+        <span class="macro">assert_eq!</span>(
+            alpn_connection_test(<span class="macro">vec!</span>[ALPN_TWO.to_vec(), ALPN_ONE.to_vec()], ALPN_ONE, <span class="macro">vec!</span>[],)
+                .<span class="kw">await</span><span class="question-mark">?</span>,
+            <span class="prelude-val">Some</span>(ALPN_ONE.to_vec()),
+            <span class="string">"connect side only supports the old version"
+        </span>);
 
         <span class="prelude-val">Ok</span>(())
     }

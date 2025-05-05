@@ -1619,7 +1619,20 @@
 <a href="#1618" id="1618">1618</a>
 <a href="#1619" id="1619">1619</a>
 <a href="#1620" id="1620">1620</a>
-<a href="#1621" id="1621">1621</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1621" id="1621">1621</a>
+<a href="#1622" id="1622">1622</a>
+<a href="#1623" id="1623">1623</a>
+<a href="#1624" id="1624">1624</a>
+<a href="#1625" id="1625">1625</a>
+<a href="#1626" id="1626">1626</a>
+<a href="#1627" id="1627">1627</a>
+<a href="#1628" id="1628">1628</a>
+<a href="#1629" id="1629">1629</a>
+<a href="#1630" id="1630">1630</a>
+<a href="#1631" id="1631">1631</a>
+<a href="#1632" id="1632">1632</a>
+<a href="#1633" id="1633">1633</a>
+<a href="#1634" id="1634">1634</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1662,7 +1675,6 @@
 <span class="kw">use </span>backon::{Backoff, BackoffBuilder, ExponentialBuilder};
 <span class="kw">use </span>bytes::{Bytes, BytesMut};
 <span class="kw">use </span>iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
-<span class="kw">use </span>iroh_metrics::{inc, inc_by};
 <span class="kw">use </span>iroh_relay::{
     <span class="self">self </span><span class="kw">as </span>relay,
     client::{Client, ReceivedMessage, SendMessage},
@@ -1778,6 +1790,7 @@
     </span>inactive_timeout: Pin&lt;Box&lt;time::Sleep&gt;&gt;,
     <span class="doccomment">/// Token indicating the [`ActiveRelayActor`] should stop.
     </span>stop_token: CancellationToken,
+    metrics: Arc&lt;MagicsockMetrics&gt;,
 }
 
 <span class="attr">#[derive(Debug)]
@@ -1820,6 +1833,7 @@
     relay_datagrams_recv: Arc&lt;RelayDatagramRecvQueue&gt;,
     connection_opts: RelayConnectionOptions,
     stop_token: CancellationToken,
+    metrics: Arc&lt;MagicsockMetrics&gt;,
 }
 
 <span class="doccomment">/// Configuration needed to create a connection to a relay server.
@@ -1856,6 +1870,7 @@
             relay_datagrams_recv,
             connection_opts,
             stop_token,
+            metrics,
         } = opts;
         <span class="kw">let </span>relay_client_builder = <span class="self">Self</span>::create_relay_builder(url.clone(), connection_opts);
         ActiveRelayActor {
@@ -1868,6 +1883,7 @@
             is_home_relay: <span class="bool-val">false</span>,
             inactive_timeout: Box::pin(time::sleep(RELAY_INACTIVE_CLEANUP_TIME)),
             stop_token,
+            metrics,
         }
     }
 
@@ -1906,9 +1922,11 @@
     ///
     /// Primarily switches between the dialing and connected states.
     </span><span class="kw">async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="macro">inc!</span>(MagicsockMetrics, num_relay_conns_added);
+        <span class="comment">// TODO(frando): decide what this metric means, it's either wrong here or in node_state.rs.
+        // From the existing description, it is wrong here.
+        // self.metrics.num_relay_conns_added.inc();
 
-        <span class="kw">let </span><span class="kw-2">mut </span>backoff = <span class="self">Self</span>::build_backoff();
+        </span><span class="kw">let </span><span class="kw-2">mut </span>backoff = <span class="self">Self</span>::build_backoff();
 
         <span class="kw">while let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.run_once().<span class="kw">await </span>{
             <span class="macro">warn!</span>(<span class="string">"{err}"</span>);
@@ -1928,8 +1946,10 @@
             }
         }
         <span class="macro">debug!</span>(<span class="string">"exiting"</span>);
-        <span class="macro">inc!</span>(MagicsockMetrics, num_relay_conns_removed);
-        <span class="prelude-val">Ok</span>(())
+        <span class="comment">// TODO(frando): decide what this metric means, it's either wrong here or in node_state.rs.
+        // From the existing description, it is wrong here.
+        // self.metrics.num_relay_conns_removed.inc();
+        </span><span class="prelude-val">Ok</span>(())
     }
 
     <span class="kw">fn </span>build_backoff() -&gt; <span class="kw">impl </span>Backoff {
@@ -2194,18 +2214,22 @@
                         <span class="kw-2">&amp;mut </span>send_datagrams_buf,
                         Vec::with_capacity(SEND_DATAGRAM_BATCH_SIZE),
                     );
+                    <span class="comment">// TODO(frando): can we avoid the clone here?
+                    </span><span class="kw">let </span>metrics = <span class="self">self</span>.metrics.clone();
                     <span class="kw">let </span>packet_iter = dgrams.into_iter().flat_map(|datagrams| {
                         PacketizeIter::&lt;<span class="kw">_</span>, MAX_PAYLOAD_SIZE&gt;::new(
                             datagrams.remote_node,
                             datagrams.datagrams.clone(),
                         )
                         .map(|p| {
-                            <span class="macro">inc_by!</span>(MagicsockMetrics, send_relay, p.payload.len() <span class="kw">as _</span>);
-                            SendMessage::SendPacket(p.node_id, p.payload)
+                            <span class="prelude-val">Ok</span>(SendMessage::SendPacket(p.node_id, p.payload))
                         })
-                        .map(<span class="prelude-val">Ok</span>)
                     });
-                    <span class="kw">let </span><span class="kw-2">mut </span>packet_stream = n0_future::stream::iter(packet_iter);
+                    <span class="kw">let </span><span class="kw-2">mut </span>packet_stream = n0_future::stream::iter(packet_iter).inspect(|m| {
+                        <span class="kw">if let </span><span class="prelude-val">Ok</span>(SendMessage::SendPacket(_node_id, payload)) = m {
+                            metrics.send_relay.inc_by(payload.len() <span class="kw">as _</span>);
+                        }
+                    });
                     <span class="kw">let </span>fut = client_sink.send_all(<span class="kw-2">&amp;mut </span>packet_stream);
                     <span class="self">self</span>.run_sending(fut, <span class="kw-2">&amp;mut </span>state, <span class="kw-2">&amp;mut </span>client_stream).<span class="kw">await</span><span class="question-mark">?</span>;
                 }
@@ -2668,6 +2692,7 @@
             relay_datagrams_recv: <span class="self">self</span>.relay_datagram_recv_queue.clone(),
             connection_opts,
             stop_token: <span class="self">self</span>.cancel_token.child_token(),
+            metrics: <span class="self">self</span>.msock.metrics.magicsock.clone(),
         };
         <span class="kw">let </span>actor = ActiveRelayActor::new(opts);
         <span class="self">self</span>.active_relay_tasks.spawn(
@@ -2957,6 +2982,7 @@
                 protocol: iroh_relay::http::Protocol::default(),
             },
             stop_token,
+            metrics: Default::default(),
         };
         <span class="kw">let </span>task = tokio::spawn(ActiveRelayActor::new(opts).run().instrument(span));
         AbortOnDropHandle::new(task)
