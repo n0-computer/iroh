@@ -5,6 +5,7 @@
 
 use std::{
     net::{Ipv6Addr, SocketAddr},
+    num::NonZeroU32,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -688,13 +689,13 @@ async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig<std::io::
                     }
                     match rx.bytes_per_second {
                         Some(bps) => Some(ClientRateLimit {
-                            bytes_per_second: bps
-                                .try_into()
+                            bytes_per_second: TryInto::<NonZeroU32>::try_into(bps)
                                 .context("bytes_per_second must be non-zero u32")?,
                             max_burst_bytes: rx
                                 .max_burst_bytes
                                 .map(|v| {
-                                    v.try_into().context("max_burst_bytes must be non-zero u32")
+                                    TryInto::<NonZeroU32>::try_into(v)
+                                        .context("max_burst_bytes must be non-zero u32")
                                 })
                                 .transpose()?,
                         }),
