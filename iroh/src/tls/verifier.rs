@@ -82,8 +82,7 @@ fn public_key_to_spki(remote_peer_id: &PublicKey) -> SubjectPublicKeyInfoDer<'st
         .public()
         .to_public_key_der()
         .expect("valid key");
-    let remote_key = SubjectPublicKeyInfoDer::from(der_key.into_vec());
-    remote_key
+    SubjectPublicKeyInfoDer::from(der_key.into_vec())
 }
 
 impl ServerCertVerifier for ServerCertificateVerifier {
