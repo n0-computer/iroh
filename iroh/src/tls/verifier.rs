@@ -95,7 +95,10 @@ impl ServerCertVerifier for ServerCertificateVerifier {
         _ocsp_response: &[u8],
         _now: rustls::pki_types::UnixTime,
     ) -> Result<ServerCertVerified, rustls::Error> {
-        let Some(remote_peer_id) = super::name::decode(server_name.to_str().as_ref()) else {
+        let rustls::pki_types::ServerName::DnsName(dns_name) = server_name else {
+            return Err(rustls::Error::UnsupportedNameType);
+        };
+        let Some(remote_peer_id) = super::name::decode(dns_name.as_ref()) else {
             return Err(rustls::Error::InvalidCertificate(
                 CertificateError::NotValidForName,
             ));

@@ -12,8 +12,7 @@
 //!
 //! let router = Router::builder(endpoint)
 //!     .accept(b"/my/alpn", Echo)
-//!     .spawn()
-//!     .await?;
+//!     .spawn();
 //! # Ok(())
 //! # }
 //!
@@ -78,8 +77,7 @@ use crate::{
 ///
 /// let router = Router::builder(endpoint)
 ///     // .accept(&ALPN, <something>)
-///     .spawn()
-///     .await?;
+///     .spawn();
 ///
 /// // wait until the user wants to
 /// tokio::signal::ctrl_c().await?;
