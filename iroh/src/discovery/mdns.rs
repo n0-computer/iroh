@@ -419,7 +419,8 @@ mod tests {
     mod run_in_isolation {
         use iroh_base::SecretKey;
         use n0_future::StreamExt;
-        use testresult::TestResult;
+        use n0_snafu::{TestError, TestResult, TestResultExt};
+        use snafu::whatever;
         use tracing_test::traced_test;
 
         use super::super::*;
@@ -433,7 +434,7 @@ mod tests {
 
             // make addr info for discoverer b
             let user_data: UserData = "foobar".parse()?;
-            let node_data = NodeData::new(None, BTreeSet::from(["0.0.0.0:11111".parse()?]))
+            let node_data = NodeData::new(None, BTreeSet::from(["0.0.0.0:11111".parse().unwrap()]))
                 .with_user_data(Some(user_data.clone()));
             println!("info {node_data:?}");
 
@@ -448,10 +449,12 @@ mod tests {
             // publish discovery_b's address
             discovery_b.publish(&node_data);
             let s1_res = tokio::time::timeout(Duration::from_secs(5), s1.next())
-                .await?
+                .await
+                .context("timeout")?
                 .unwrap()?;
             let s2_res = tokio::time::timeout(Duration::from_secs(5), s2.next())
-                .await?
+                .await
+                .context("timeout")?
                 .unwrap()?;
             assert_eq!(s1_res.node_info().data, node_data);
             assert_eq!(s2_res.node_info().data, node_data);
@@ -467,7 +470,7 @@ mod tests {
             let mut discoverers = vec![];
 
             let (_, discovery) = make_discoverer()?;
-            let node_data = NodeData::new(None, BTreeSet::from(["0.0.0.0:11111".parse()?]));
+            let node_data = NodeData::new(None, BTreeSet::from(["0.0.0.0:11111".parse().unwrap()]));
 
             for i in 0..num_nodes {
                 let (node_id, discovery) = make_discoverer()?;
@@ -488,20 +491,21 @@ mod tests {
                             got_ids.insert((item.node_id(), item.user_data()));
                         }
                     } else {
-                        anyhow::bail!(
+                        whatever!(
                             "no more events, only got {} ids, expected {num_nodes}\n",
                             got_ids.len()
                         );
                     }
                 }
                 assert_eq!(got_ids, node_ids);
-                anyhow::Ok(())
+                Ok::<_, TestError>(())
             };
-            tokio::time::timeout(Duration::from_secs(5), test).await??;
-            Ok(())
+            tokio::time::timeout(Duration::from_secs(5), test)
+                .await
+                .context("timeout")?
         }
 
-        fn make_discoverer() -> anyhow::Result<(PublicKey, MdnsDiscovery)> {
+        fn make_discoverer() -> TestResult<(PublicKey, MdnsDiscovery)> {
             let node_id = SecretKey::generate(rand::thread_rng()).public();
             Ok((node_id, MdnsDiscovery::new(node_id)?))
         }

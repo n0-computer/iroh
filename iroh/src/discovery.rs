@@ -992,10 +992,10 @@ mod tests {
 /// publish to. The DNS and pkarr servers share their state.
 #[cfg(test)]
 mod test_dns_pkarr {
-    use anyhow::Result;
     use iroh_base::{NodeAddr, SecretKey};
     use iroh_relay::{node_info::UserData, RelayMap};
     use n0_future::time::Duration;
+    use n0_snafu::{TestError, TestResult as Result, TestResultExt};
     use tokio_util::task::AbortOnDropHandle;
     use tracing_test::traced_test;
 
@@ -1016,13 +1016,17 @@ mod test_dns_pkarr {
     async fn dns_resolve() -> Result<()> {
         let origin = "testdns.example".to_string();
         let state = State::new(origin.clone());
-        let (nameserver, _dns_drop_guard) = run_dns_server(state.clone()).await?;
+        let (nameserver, _dns_drop_guard) = run_dns_server(state.clone())
+            .await
+            .context("Running DNS server")?;
 
         let secret_key = SecretKey::generate(rand::thread_rng());
         let node_info = NodeInfo::new(secret_key.public())
             .with_relay_url(Some("https://relay.example".parse().unwrap()));
         let signed_packet = node_info.to_pkarr_signed_packet(&secret_key, 30)?;
-        state.upsert(signed_packet)?;
+        state
+            .upsert(signed_packet)
+            .context("update and insert signed packet")?;
 
         let resolver = DnsResolver::with_nameserver(nameserver);
         let resolved = resolver
@@ -1039,7 +1043,9 @@ mod test_dns_pkarr {
     async fn pkarr_publish_dns_resolve() -> Result<()> {
         let origin = "testdns.example".to_string();
 
-        let dns_pkarr_server = DnsPkarrServer::run_with_origin(origin.clone()).await?;
+        let dns_pkarr_server = DnsPkarrServer::run_with_origin(origin.clone())
+            .await
+            .context("DnsPkarrServer")?;
 
         let secret_key = SecretKey::generate(rand::thread_rng());
         let node_id = secret_key.public();
@@ -1054,7 +1060,10 @@ mod test_dns_pkarr {
         // does not block, update happens in background task
         publisher.update_node_data(&data);
         // wait until our shared state received the update from pkarr publishing
-        dns_pkarr_server.on_node(&node_id, PUBLISH_TIMEOUT).await?;
+        dns_pkarr_server
+            .on_node(&node_id, PUBLISH_TIMEOUT)
+            .await
+            .context("wait for on node update")?;
         let resolved = resolver.lookup_node_by_id(&node_id, &origin).await?;
         println!("resolved {resolved:?}");
 
@@ -1074,7 +1083,7 @@ mod test_dns_pkarr {
     #[tokio::test]
     #[traced_test]
     async fn pkarr_publish_dns_discover() -> Result<()> {
-        let dns_pkarr_server = DnsPkarrServer::run().await?;
+        let dns_pkarr_server = DnsPkarrServer::run().await.context("DnsPkarrServer run")?;
         let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
 
         let (ep1, _guard1) = ep_with_discovery(&relay_map, &dns_pkarr_server).await?;
@@ -1083,7 +1092,8 @@ mod test_dns_pkarr {
         // wait until our shared state received the update from pkarr publishing
         dns_pkarr_server
             .on_node(&ep1.node_id(), PUBLISH_TIMEOUT)
-            .await?;
+            .await
+            .context("wait for on node update")?;
 
         // we connect only by node id!
         let res = ep2.connect(ep1.node_id(), TEST_ALPN).await;
@@ -1111,11 +1121,11 @@ mod test_dns_pkarr {
             async move {
                 // we skip accept() errors, they can be caused by retransmits
                 while let Some(connecting) = ep.accept().await.and_then(|inc| inc.accept().ok()) {
-                    let _conn = connecting.await?;
+                    let _conn = connecting.await.context("connecting")?;
                     // Just accept incoming connections, but don't do anything with them.
                 }
 
-                anyhow::Ok(())
+                Ok::<_, TestError>(())
             }
         });
 

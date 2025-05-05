@@ -217,9 +217,8 @@ impl Discovery for StaticProvider {
 
 #[cfg(test)]
 mod tests {
-    use anyhow::Context;
     use iroh_base::{NodeAddr, SecretKey};
-    use testresult::TestResult;
+    use n0_snafu::{TestResult, TestResultExt};
 
     use super::*;
     use crate::Endpoint;
