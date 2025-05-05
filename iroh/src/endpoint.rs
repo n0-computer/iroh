@@ -22,7 +22,6 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
-use data_encoding::BASE32_DNSSEC;
 use ed25519_dalek::{pkcs8::DecodePublicKey, VerifyingKey};
 use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
 use iroh_relay::RelayMap;
@@ -76,16 +75,6 @@ pub use super::magicsock::{
 /// [`Endpoint`] assumes one of those addresses probably works.  If after this delay there
 /// is still no connection the configured [`Discovery`] will be used however.
 const DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(500);
-
-/// Maximum amount of TLS tickets we will cache (by default) for 0-RTT connection
-/// establishment.
-///
-/// 8 tickets per remote endpoint, 32 different endpoints would max out the required storage:
-/// ~200 bytes per session + certificates (which are ~387 bytes)
-/// So 8 * 32 * (200 + 387) = 150.272 bytes, assuming pointers to certificates
-/// are never aliased pointers (they're Arc'ed).
-/// I think 150KB is an acceptable default upper limit for such a cache.
-const MAX_TLS_TICKETS: usize = 8 * 32;
 
 type DiscoveryBuilder = Box<dyn FnOnce(&SecretKey) -> Option<Box<dyn Discovery>> + Send + Sync>;
 
@@ -174,9 +163,8 @@ impl Builder {
             .unwrap_or_else(|| SecretKey::generate(rand::rngs::OsRng));
         let static_config = StaticConfig {
             transport_config: Arc::new(self.transport_config),
-            tls_auth: self.tls_auth,
+            tls_config: tls::TlsConfig::new(self.tls_auth, secret_key.clone()),
             keylog: self.keylog,
-            secret_key: secret_key.clone(),
         };
         #[cfg(not(wasm_browser))]
         let dns_resolver = self.dns_resolver.unwrap_or_default();
@@ -190,7 +178,7 @@ impl Builder {
             1 => Some(discovery.into_iter().next().expect("checked length")),
             _ => Some(Box::new(ConcurrentDiscovery::from_services(discovery))),
         };
-        let server_config = static_config.create_server_config(self.alpn_protocols)?;
+        let server_config = static_config.create_server_config(self.alpn_protocols);
 
         let msock_opts = magicsock::Options {
             addr_v4: self.addr_v4,
@@ -540,22 +528,21 @@ impl Builder {
 /// Configuration for a [`quinn::Endpoint`] that cannot be changed at runtime.
 #[derive(Debug)]
 struct StaticConfig {
-    tls_auth: tls::Authentication,
-    secret_key: SecretKey,
+    pub(crate) tls_config: tls::TlsConfig,
     transport_config: Arc<quinn::TransportConfig>,
     keylog: bool,
 }
 
 impl StaticConfig {
     /// Create a [`quinn::ServerConfig`] with the specified ALPN protocols.
-    fn create_server_config(&self, alpn_protocols: Vec<Vec<u8>>) -> Result<ServerConfig> {
-        let quic_server_config =
-            self.tls_auth
-                .make_server_config(&self.secret_key, alpn_protocols, self.keylog)?;
+    fn create_server_config(&self, alpn_protocols: Vec<Vec<u8>>) -> ServerConfig {
+        let quic_server_config = self
+            .tls_config
+            .make_server_config(alpn_protocols, self.keylog);
         let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
         server_config.transport_config(self.transport_config.clone());
 
-        Ok(server_config)
+        server_config
     }
 }
 
@@ -592,8 +579,6 @@ pub struct Endpoint {
     rtt_actor: Arc<rtt_actor::RttHandle>,
     /// Configuration structs for quinn, holds the transport config, certificate setup, secret key etc.
     static_config: Arc<StaticConfig>,
-    /// Cache for TLS session keys we receive.
-    session_store: Arc<dyn rustls::client::ClientSessionStore>,
 }
 
 impl Endpoint {
@@ -612,7 +597,7 @@ impl Endpoint {
     ///
     /// This is for internal use, the public interface is the [`Builder`] obtained from
     /// [Self::builder]. See the methods on the builder for documentation of the parameters.
-    #[instrument("ep", skip_all, fields(me = %static_config.secret_key.public().fmt_short()))]
+    #[instrument("ep", skip_all, fields(me = %static_config.tls_config.secret_key.public().fmt_short()))]
     async fn bind(static_config: StaticConfig, msock_opts: magicsock::Options) -> Result<Self> {
         let msock = magicsock::MagicSock::spawn(msock_opts).await?;
         trace!("created magicsock");
@@ -622,9 +607,6 @@ impl Endpoint {
             msock: msock.clone(),
             rtt_actor: Arc::new(rtt_actor::RttHandle::new()),
             static_config: Arc::new(static_config),
-            session_store: Arc::new(rustls::client::ClientSessionMemoryCache::new(
-                MAX_TLS_TICKETS,
-            )),
         };
         Ok(ep)
     }
@@ -633,10 +615,9 @@ impl Endpoint {
     ///
     /// This will only affect new incoming connections.
     /// Note that this *overrides* the current list of ALPNs.
-    pub fn set_alpns(&self, alpns: Vec<Vec<u8>>) -> Result<()> {
-        let server_config = self.static_config.create_server_config(alpns)?;
+    pub fn set_alpns(&self, alpns: Vec<Vec<u8>>) {
+        let server_config = self.static_config.create_server_config(alpns);
         self.msock.endpoint().set_server_config(Some(server_config));
-        Ok(())
     }
 
     // # Methods for establishing connectivity.
@@ -754,28 +735,16 @@ impl Endpoint {
         let client_config = {
             let mut alpn_protocols = vec![alpn.to_vec()];
             alpn_protocols.extend(options.additional_alpns);
-            let quic_client_config = self.static_config.tls_auth.make_client_config(
-                &self.static_config.secret_key,
-                node_id,
-                alpn_protocols,
-                Some(self.session_store.clone()),
-                self.static_config.keylog,
-            )?;
+            let quic_client_config = self
+                .static_config
+                .tls_config
+                .make_client_config(alpn_protocols, self.static_config.keylog);
             let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
             client_config.transport_config(transport_config);
             client_config
         };
 
-        // We used to use a constant "localhost" for this - however, that would put all of
-        // the TLS session tickets we receive into the same bucket in the TLS session ticket cache.
-        // So we choose something that'd dependent on the NodeId.
-        // We cannot use hex to encode the NodeId, as that'd encode to 64 characters, but we only
-        // have 63 maximum per DNS subdomain. Base32 is the next best alternative.
-        // We use the `.invalid` TLD, as that's specified (in RFC 2606) to never actually resolve
-        // "for real", unlike `.localhost` which is allowed to resolve to `127.0.0.1`.
-        // We also add "iroh" as a subdomain, although those 5 bytes might not be necessary.
-        // We *could* decide to remove that indicator in the future likely without breakage.
-        let server_name = &format!("{}.iroh.invalid", BASE32_DNSSEC.encode(node_id.as_bytes()));
+        let server_name = &tls::name::encode(node_id);
         let connect = self.msock.endpoint().connect_with(
             client_config,
             mapped_addr.private_socket_addr(),
@@ -879,7 +848,7 @@ impl Endpoint {
 
     /// Returns the secret_key of this endpoint.
     pub fn secret_key(&self) -> &SecretKey {
-        &self.static_config.secret_key
+        &self.static_config.tls_config.secret_key
     }
 
     /// Returns the node id of this endpoint.
@@ -887,7 +856,7 @@ impl Endpoint {
     /// This ID is the unique addressing information of this node and other peers must know
     /// it to be able to connect to this node.
     pub fn node_id(&self) -> NodeId {
-        self.static_config.secret_key.public()
+        self.static_config.tls_config.secret_key.public()
     }
 
     /// Returns the current [`NodeAddr`] for this endpoint.
@@ -1451,7 +1420,7 @@ impl Future for IncomingFuture {
             Poll::Ready(Ok(inner)) => {
                 let conn = Connection {
                     inner,
-                    tls_auth: this.ep.static_config.tls_auth,
+                    tls_auth: this.ep.static_config.tls_config.auth,
                 };
                 try_send_rtt_msg(&conn, this.ep, None);
                 Poll::Ready(Ok(conn))
@@ -1524,7 +1493,7 @@ impl Connecting {
             Ok((inner, zrtt_accepted)) => {
                 let conn = Connection {
                     inner,
-                    tls_auth: self.ep.static_config.tls_auth,
+                    tls_auth: self.ep.static_config.tls_config.auth,
                 };
                 let zrtt_accepted = ZeroRttAccepted {
                     inner: zrtt_accepted,
@@ -1579,7 +1548,7 @@ impl Future for Connecting {
             Poll::Ready(Ok(inner)) => {
                 let conn = Connection {
                     inner,
-                    tls_auth: this.ep.static_config.tls_auth,
+                    tls_auth: this.ep.static_config.tls_config.auth,
                 };
                 try_send_rtt_msg(&conn, this.ep, *this.remote_node_id);
                 Poll::Ready(Ok(conn))

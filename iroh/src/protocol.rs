@@ -255,7 +255,7 @@ impl RouterBuilder {
     }
 
     /// Spawns an accept loop and returns a handle to it encapsulated as the [`Router`].
-    pub async fn spawn(self) -> Result<Router> {
+    pub fn spawn(self) -> Router {
         // Update the endpoint with our alpns.
         let alpns = self
             .protocols
@@ -264,10 +264,7 @@ impl RouterBuilder {
             .collect::<Vec<_>>();
 
         let protocols = Arc::new(self.protocols);
-        if let Err(err) = self.endpoint.set_alpns(alpns) {
-            shutdown(&self.endpoint, protocols.clone()).await;
-            return Err(err);
-        }
+        self.endpoint.set_alpns(alpns);
 
         let mut join_set = JoinSet::new();
         let endpoint = self.endpoint.clone();
@@ -333,11 +330,11 @@ impl RouterBuilder {
         let task = task::spawn(run_loop_fut);
         let task = AbortOnDropHandle::new(task);
 
-        Ok(Router {
+        Router {
             endpoint: self.endpoint,
             task: Arc::new(Mutex::new(Some(task))),
             cancel_token: cancel,
-        })
+        }
     }
 }
 
@@ -441,7 +438,7 @@ mod tests {
     #[tokio::test]
     async fn test_shutdown() -> Result<()> {
         let endpoint = Endpoint::builder().bind().await?;
-        let router = Router::builder(endpoint.clone()).spawn().await?;
+        let router = Router::builder(endpoint.clone()).spawn();
 
         assert!(!router.is_shutdown());
         assert!(!endpoint.is_closed());
@@ -481,10 +478,7 @@ mod tests {
         let e1 = Endpoint::builder().bind().await?;
         // deny all access
         let proto = AccessLimit::new(Echo, |_node_id| false);
-        let r1 = Router::builder(e1.clone())
-            .accept(ECHO_ALPN, proto)
-            .spawn()
-            .await?;
+        let r1 = Router::builder(e1.clone()).accept(ECHO_ALPN, proto).spawn();
 
         let addr1 = r1.endpoint().node_addr().await?;
 
