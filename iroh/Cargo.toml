@@ -129,6 +129,7 @@ wasm-bindgen-futures = "0.4"
 # we don't use instant nor time directly, but need to enable it because backoff and x509_parser use these in browsers and we need to enable some feature flags for that to work
 instant = { version = "0.1", features = ["wasm-bindgen"] }
 time = { version = "0.3", features = ["wasm-bindgen"] }
+getrandom = { version = "0.3.2", features = ["wasm_js"] }
 
 # target-common test/dev dependencies
 [dev-dependencies]
