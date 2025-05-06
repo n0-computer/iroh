@@ -3404,7 +3404,7 @@
 <span class="doccomment">/// Configuration for a [`quinn::Endpoint`] that cannot be changed at runtime.
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">struct </span>StaticConfig {
-    <span class="kw">pub</span>(<span class="kw">crate</span>) tls_config: tls::TlsConfig,
+    tls_config: tls::TlsConfig,
     transport_config: Arc&lt;quinn::TransportConfig&gt;,
     keylog: bool,
 }
