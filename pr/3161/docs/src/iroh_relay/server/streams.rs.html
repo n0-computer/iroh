@@ -188,7 +188,8 @@
 <a href="#187" id="187">187</a>
 <a href="#188" id="188">188</a>
 <a href="#189" id="189">189</a>
-<a href="#190" id="190">190</a></pre></div><pre class="rust"><code><span class="doccomment">//! Streams used in the server-side implementation of iroh relays.
+<a href="#190" id="190">190</a>
+<a href="#191" id="191">191</a></pre></div><pre class="rust"><code><span class="doccomment">//! Streams used in the server-side implementation of iroh relays.
 
 </span><span class="kw">use </span>std::{
     pin::Pin,
@@ -196,6 +197,7 @@
 };
 
 <span class="kw">use </span>n0_future::{Sink, Stream};
+<span class="kw">use </span>snafu::Snafu;
 <span class="kw">use </span>tokio::io::{AsyncRead, AsyncWrite};
 <span class="kw">use </span>tokio_util::codec::Framed;
 <span class="kw">use </span>tokio_websockets::WebSocketStream;
@@ -258,12 +260,12 @@
 }
 
 <span class="doccomment">/// Relay stream errors
-</span><span class="attr">#[derive(Debug, thiserror::Error)]
+</span><span class="attr">#[derive(Debug, Snafu)]
 </span><span class="kw">pub enum </span>Error {
-    <span class="attr">#[error(transparent)]
-    </span>Proto(<span class="attr">#[from] </span><span class="kw">crate</span>::protos::relay::Error),
-    <span class="attr">#[error(transparent)]
-    </span>Ws(<span class="attr">#[from] </span>tokio_websockets::Error),
+    <span class="attr">#[snafu(transparent)]
+    </span>Proto { source: <span class="kw">crate</span>::protos::relay::Error },
+    <span class="attr">#[snafu(transparent)]
+    </span>Ws { source: tokio_websockets::Error },
 }
 
 <span class="kw">impl </span>Stream <span class="kw">for </span>RelayedStream {
