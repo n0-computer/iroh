@@ -134,32 +134,48 @@
 <a href="#133" id="133">133</a>
 <a href="#134" id="134">134</a>
 <a href="#135" id="135">135</a>
-<a href="#136" id="136">136</a></pre></div><pre class="rust"><code><span class="doccomment">//! The main server which combines the DNS and HTTP(S) servers.
+<a href="#136" id="136">136</a>
+<a href="#137" id="137">137</a>
+<a href="#138" id="138">138</a>
+<a href="#139" id="139">139</a>
+<a href="#140" id="140">140</a>
+<a href="#141" id="141">141</a>
+<a href="#142" id="142">142</a>
+<a href="#143" id="143">143</a>
+<a href="#144" id="144">144</a>
+<a href="#145" id="145">145</a>
+<a href="#146" id="146">146</a>
+<a href="#147" id="147">147</a></pre></div><pre class="rust"><code><span class="doccomment">//! The main server which combines the DNS and HTTP(S) servers.
 
-</span><span class="kw">use </span>anyhow::Result;
-<span class="kw">use </span>iroh_metrics::metrics::start_metrics_server;
+</span><span class="kw">use </span>std::sync::Arc;
+
+<span class="kw">use </span>anyhow::Result;
+<span class="kw">use </span>iroh_metrics::service::start_metrics_server;
 <span class="kw">use </span>tracing::info;
 
 <span class="kw">use crate</span>::{
     config::Config,
     dns::{DnsHandler, DnsServer},
     http::HttpServer,
+    metrics::Metrics,
     state::AppState,
     store::ZoneStore,
 };
 
 <span class="doccomment">/// Spawn the server and run until the `Ctrl-C` signal is received, then shutdown.
 </span><span class="kw">pub async fn </span>run_with_config_until_ctrl_c(config: Config) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    <span class="kw">let </span>metrics = Arc::new(Metrics::default());
     <span class="kw">let </span>zone_store_options = config.zone_store.clone().unwrap_or_default();
     <span class="kw">let </span><span class="kw-2">mut </span>store = ZoneStore::persistent(
         Config::signed_packet_store_path()<span class="question-mark">?</span>,
         zone_store_options.into(),
+        metrics.clone(),
     )<span class="question-mark">?</span>;
     <span class="kw">if let </span><span class="prelude-val">Some</span>(bootstrap) = config.mainline_enabled() {
         <span class="macro">info!</span>(<span class="string">"mainline fallback enabled"</span>);
         store = store.with_mainline_fallback(bootstrap);
     };
-    <span class="kw">let </span>server = Server::spawn(config, store).<span class="kw">await</span><span class="question-mark">?</span>;
+    <span class="kw">let </span>server = Server::spawn(config, store, metrics).<span class="kw">await</span><span class="question-mark">?</span>;
     tokio::signal::ctrl_c().<span class="kw">await</span><span class="question-mark">?</span>;
     <span class="macro">info!</span>(<span class="string">"shutdown"</span>);
     server.shutdown().<span class="kw">await</span><span class="question-mark">?</span>;
@@ -180,15 +196,21 @@
     /// * A DNS server task
     /// * A HTTP server task, if `config.http` is not empty
     /// * A HTTPS server task, if `config.https` is not empty
-    </span><span class="kw">pub async fn </span>spawn(config: Config, store: ZoneStore) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="kw">let </span>dns_handler = DnsHandler::new(store.clone(), <span class="kw-2">&amp;</span>config.dns)<span class="question-mark">?</span>;
+    </span><span class="kw">pub async fn </span>spawn(config: Config, store: ZoneStore, metrics: Arc&lt;Metrics&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+        <span class="kw">let </span>dns_handler = DnsHandler::new(store.clone(), <span class="kw-2">&amp;</span>config.dns, metrics.clone())<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>state = AppState { store, dns_handler };
+        <span class="kw">let </span>state = AppState {
+            store,
+            dns_handler,
+            metrics: metrics.clone(),
+        };
 
         <span class="kw">let </span>metrics_addr = config.metrics_addr();
         <span class="kw">let </span>metrics_task = tokio::task::spawn(<span class="kw">async move </span>{
             <span class="kw">if let </span><span class="prelude-val">Some</span>(addr) = metrics_addr {
-                start_metrics_server(addr).<span class="kw">await</span><span class="question-mark">?</span>;
+                <span class="kw">let </span><span class="kw-2">mut </span>registry = iroh_metrics::Registry::default();
+                registry.register(metrics);
+                start_metrics_server(addr, Arc::new(registry)).<span class="kw">await</span><span class="question-mark">?</span>;
             }
             <span class="prelude-val">Ok</span>(())
         });
@@ -258,12 +280,12 @@
         config.https = <span class="prelude-val">None</span>;
         config.metrics = <span class="prelude-val">Some</span>(MetricsConfig::disabled());
 
-        <span class="kw">let </span><span class="kw-2">mut </span>store = ZoneStore::in_memory(options.unwrap_or_default())<span class="question-mark">?</span>;
+        <span class="kw">let </span><span class="kw-2">mut </span>store = ZoneStore::in_memory(options.unwrap_or_default(), Default::default())<span class="question-mark">?</span>;
         <span class="kw">if let </span><span class="prelude-val">Some</span>(bootstrap) = mainline {
             <span class="macro">info!</span>(<span class="string">"mainline fallback enabled"</span>);
             store = store.with_mainline_fallback(bootstrap);
         }
-        <span class="kw">let </span>server = <span class="self">Self</span>::spawn(config, store).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>server = <span class="self">Self</span>::spawn(config, store, Default::default()).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>dns_addr = server.dns_server.local_addr();
         <span class="kw">let </span>http_addr = server.http_server.http_addr().expect(<span class="string">"http is set"</span>);
         <span class="kw">let </span>http_url = <span class="macro">format!</span>(<span class="string">"http://{http_addr}"</span>).parse()<span class="question-mark">?</span>;
