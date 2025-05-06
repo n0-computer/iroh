@@ -528,7 +528,7 @@ impl Builder {
 /// Configuration for a [`quinn::Endpoint`] that cannot be changed at runtime.
 #[derive(Debug)]
 struct StaticConfig {
-    pub(crate) tls_config: tls::TlsConfig,
+    tls_config: tls::TlsConfig,
     transport_config: Arc<quinn::TransportConfig>,
     keylog: bool,
 }
