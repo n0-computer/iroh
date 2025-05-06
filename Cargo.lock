@@ -2509,7 +2509,6 @@ dependencies = [
  "snafu",
  "strum",
  "stun-rs",
- "thiserror 2.0.12",
  "time",
  "tokio",
  "tokio-rustls",

@@ -6,6 +6,7 @@ use std::{
 };
 
 use n0_future::{Sink, Stream};
+use snafu::Snafu;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::codec::Framed;
 use tokio_websockets::WebSocketStream;
@@ -68,12 +69,12 @@ impl Sink<Frame> for RelayedStream {
 }
 
 /// Relay stream errors
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Snafu)]
 pub enum Error {
-    #[error(transparent)]
-    Proto(#[from] crate::protos::relay::Error),
-    #[error(transparent)]
-    Ws(#[from] tokio_websockets::Error),
+    #[snafu(transparent)]
+    Proto { source: crate::protos::relay::Error },
+    #[snafu(transparent)]
+    Ws { source: tokio_websockets::Error },
 }
 
 impl Stream for RelayedStream {
