@@ -41,7 +41,6 @@ use anyhow::{anyhow, Context, Result};
 use backon::{Backoff, BackoffBuilder, ExponentialBuilder};
 use bytes::{Bytes, BytesMut};
 use iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
-use iroh_metrics::{inc, inc_by};
 use iroh_relay::{
     self as relay,
     client::{Client, ReceivedMessage, SendMessage},
@@ -159,6 +158,7 @@ struct ActiveRelayActor {
     inactive_timeout: Pin<Box<time::Sleep>>,
     /// Token indicating the [`ActiveRelayActor`] should stop.
     stop_token: CancellationToken,
+    metrics: Arc<MagicsockMetrics>,
 }
 
 #[derive(Debug)]
@@ -201,6 +201,7 @@ struct ActiveRelayActorOptions {
     relay_datagrams_recv: Arc<RelayDatagramRecvQueue>,
     connection_opts: RelayConnectionOptions,
     stop_token: CancellationToken,
+    metrics: Arc<MagicsockMetrics>,
 }
 
 /// Configuration needed to create a connection to a relay server.
@@ -237,6 +238,7 @@ impl ActiveRelayActor {
             relay_datagrams_recv,
             connection_opts,
             stop_token,
+            metrics,
         } = opts;
         let relay_client_builder = Self::create_relay_builder(url.clone(), connection_opts);
         ActiveRelayActor {
@@ -249,6 +251,7 @@ impl ActiveRelayActor {
             is_home_relay: false,
             inactive_timeout: Box::pin(time::sleep(RELAY_INACTIVE_CLEANUP_TIME)),
             stop_token,
+            metrics,
         }
     }
 
@@ -287,7 +290,9 @@ impl ActiveRelayActor {
     ///
     /// Primarily switches between the dialing and connected states.
     async fn run(mut self) -> Result<()> {
-        inc!(MagicsockMetrics, num_relay_conns_added);
+        // TODO(frando): decide what this metric means, it's either wrong here or in node_state.rs.
+        // From the existing description, it is wrong here.
+        // self.metrics.num_relay_conns_added.inc();
 
         let mut backoff = Self::build_backoff();
 
@@ -309,7 +314,9 @@ impl ActiveRelayActor {
             }
         }
         debug!("exiting");
-        inc!(MagicsockMetrics, num_relay_conns_removed);
+        // TODO(frando): decide what this metric means, it's either wrong here or in node_state.rs.
+        // From the existing description, it is wrong here.
+        // self.metrics.num_relay_conns_removed.inc();
         Ok(())
     }
 
@@ -575,18 +582,22 @@ impl ActiveRelayActor {
                         &mut send_datagrams_buf,
                         Vec::with_capacity(SEND_DATAGRAM_BATCH_SIZE),
                     );
+                    // TODO(frando): can we avoid the clone here?
+                    let metrics = self.metrics.clone();
                     let packet_iter = dgrams.into_iter().flat_map(|datagrams| {
                         PacketizeIter::<_, MAX_PAYLOAD_SIZE>::new(
                             datagrams.remote_node,
                             datagrams.datagrams.clone(),
                         )
                         .map(|p| {
-                            inc_by!(MagicsockMetrics, send_relay, p.payload.len() as _);
-                            SendMessage::SendPacket(p.node_id, p.payload)
+                            Ok(SendMessage::SendPacket(p.node_id, p.payload))
                         })
-                        .map(Ok)
                     });
-                    let mut packet_stream = n0_future::stream::iter(packet_iter);
+                    let mut packet_stream = n0_future::stream::iter(packet_iter).inspect(|m| {
+                        if let Ok(SendMessage::SendPacket(_node_id, payload)) = m {
+                            metrics.send_relay.inc_by(payload.len() as _);
+                        }
+                    });
                     let fut = client_sink.send_all(&mut packet_stream);
                     self.run_sending(fut, &mut state, &mut client_stream).await?;
                 }
@@ -1049,6 +1060,7 @@ impl RelayActor {
             relay_datagrams_recv: self.relay_datagram_recv_queue.clone(),
             connection_opts,
             stop_token: self.cancel_token.child_token(),
+            metrics: self.msock.metrics.magicsock.clone(),
         };
         let actor = ActiveRelayActor::new(opts);
         self.active_relay_tasks.spawn(
@@ -1338,6 +1350,7 @@ mod tests {
                 protocol: iroh_relay::http::Protocol::default(),
             },
             stop_token,
+            metrics: Default::default(),
         };
         let task = tokio::spawn(ActiveRelayActor::new(opts).run().instrument(span));
         AbortOnDropHandle::new(task)

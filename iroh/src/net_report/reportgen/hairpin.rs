@@ -206,6 +206,7 @@ mod tests {
         let (net_report_tx, mut net_report_rx) = mpsc::channel(32);
         let net_report_addr = net_report::Addr {
             sender: net_report_tx,
+            metrics: Default::default(),
         };
         let (reportstate_tx, mut reportstate_rx) = mpsc::channel(32);
         let reportstate_addr = reportgen::Addr {
@@ -282,6 +283,7 @@ mod tests {
         let (net_report_tx, _net_report_rx) = mpsc::channel(32);
         let net_report_addr = net_report::Addr {
             sender: net_report_tx,
+            metrics: Default::default(),
         };
         let (reportstate_tx, _reportstate_rx) = mpsc::channel(32);
         let reportstate_addr = reportgen::Addr {
