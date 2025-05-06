@@ -1911,7 +1911,12 @@
 <a href="#1910" id="1910">1910</a>
 <a href="#1911" id="1911">1911</a>
 <a href="#1912" id="1912">1912</a>
-<a href="#1913" id="1913">1913</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
+<a href="#1913" id="1913">1913</a>
+<a href="#1914" id="1914">1914</a>
+<a href="#1915" id="1915">1915</a>
+<a href="#1916" id="1916">1916</a>
+<a href="#1917" id="1917">1917</a>
+<a href="#1918" id="1918">1918</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
 //!
 //! It is implemented as an actor with [`Client`] as handle.
 //!
@@ -3515,7 +3520,7 @@
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>std::net::{Ipv4Addr, Ipv6Addr};
 
-    <span class="kw">use </span>testresult::TestResult;
+    <span class="kw">use </span>n0_snafu::{TestResult, TestResultExt};
     <span class="kw">use </span>tracing_test::traced_test;
 
     <span class="kw">use super</span>::{<span class="kw">super</span>::test_utils, <span class="kw-2">*</span>};
@@ -3777,7 +3782,12 @@
 
         <span class="macro">assert!</span>(latency &gt; Duration::ZERO);
 
-        <span class="kw">let </span>relay_url_ip = relay.url.host_str().unwrap().parse::&lt;std::net::IpAddr&gt;()<span class="question-mark">?</span>;
+        <span class="kw">let </span>relay_url_ip = relay
+            .url
+            .host_str()
+            .unwrap()
+            .parse::&lt;std::net::IpAddr&gt;()
+            .e()<span class="question-mark">?</span>;
         <span class="macro">assert_eq!</span>(ip, relay_url_ip);
         <span class="prelude-val">Ok</span>(())
     }
@@ -3787,8 +3797,8 @@
     </span><span class="kw">async fn </span>test_quic_probe() -&gt; TestResult {
         <span class="kw">let </span>(server, relay) = test_utils::relay().<span class="kw">await</span>;
         <span class="kw">let </span>client_config = iroh_relay::client::make_dangerous_client_config();
-        <span class="kw">let </span>ep = quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), <span class="number">0</span>))<span class="question-mark">?</span>;
-        <span class="kw">let </span>client_addr = ep.local_addr()<span class="question-mark">?</span>;
+        <span class="kw">let </span>ep = quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), <span class="number">0</span>)).e()<span class="question-mark">?</span>;
+        <span class="kw">let </span>client_addr = ep.local_addr().e()<span class="question-mark">?</span>;
         <span class="kw">let </span>quic_addr_disc = QuicConfig {
             ep: ep.clone(),
             client_config,

@@ -1008,7 +1008,7 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
-    <span class="kw">use </span>testresult::TestResult;
+    <span class="kw">use </span>n0_snafu::{TestResult, TestResultExt};
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
 
@@ -1020,7 +1020,7 @@
         <span class="macro">assert!</span>(!router.is_shutdown());
         <span class="macro">assert!</span>(!endpoint.is_closed());
 
-        router.shutdown().<span class="kw">await</span><span class="question-mark">?</span>;
+        router.shutdown().<span class="kw">await</span>.e()<span class="question-mark">?</span>;
 
         <span class="macro">assert!</span>(router.is_shutdown());
         <span class="macro">assert!</span>(endpoint.is_closed());
@@ -1064,11 +1064,11 @@
         <span class="macro">println!</span>(<span class="string">"connecting"</span>);
         <span class="kw">let </span>conn = e2.connect(addr1, ECHO_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
 
-        <span class="kw">let </span>(_send, <span class="kw-2">mut </span>recv) = conn.open_bi().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>(_send, <span class="kw-2">mut </span>recv) = conn.open_bi().<span class="kw">await</span>.e()<span class="question-mark">?</span>;
         <span class="kw">let </span>response = recv.read_to_end(<span class="number">1000</span>).<span class="kw">await</span>.unwrap_err();
         <span class="macro">assert!</span>(<span class="macro">format!</span>(<span class="string">"{:#?}"</span>, response).contains(<span class="string">"not allowed"</span>));
 
-        r1.shutdown().<span class="kw">await</span><span class="question-mark">?</span>;
+        r1.shutdown().<span class="kw">await</span>.e()<span class="question-mark">?</span>;
         e2.close().<span class="kw">await</span>;
 
         <span class="prelude-val">Ok</span>(())

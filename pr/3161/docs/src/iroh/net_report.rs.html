@@ -2382,8 +2382,8 @@
     <span class="kw">use </span>std::net::Ipv4Addr;
 
     <span class="kw">use </span>bytes::BytesMut;
+    <span class="kw">use </span>n0_snafu::{TestResult, TestResultExt};
     <span class="kw">use </span>netwatch::IpFamily;
-    <span class="kw">use </span>testresult::TestResult;
     <span class="kw">use </span>tokio_util::sync::CancellationToken;
     <span class="kw">use </span>tracing::info;
     <span class="kw">use </span>tracing_test::traced_test;
@@ -2529,7 +2529,7 @@
     #[traced_test]
     </span><span class="kw">async fn </span>test_basic() -&gt; TestResult {
         <span class="kw">let </span>(stun_addr, stun_stats, _cleanup_guard) =
-            stun_utils::serve(<span class="string">"127.0.0.1"</span>.parse().unwrap()).<span class="kw">await</span><span class="question-mark">?</span>;
+            stun_utils::serve(<span class="string">"127.0.0.1"</span>.parse().unwrap()).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
 
         <span class="kw">let </span>resolver = dns::tests::resolver();
         <span class="kw">let </span><span class="kw-2">mut </span>client = Client::new(<span class="prelude-val">None</span>, resolver.clone(), <span class="prelude-val">None</span>, Default::default());
@@ -2573,8 +2573,8 @@
     </span><span class="kw">async fn </span>test_udp_blocked() -&gt; TestResult {
         <span class="comment">// Create a "STUN server", which will never respond to anything.  This is how UDP to
         // the STUN server being blocked will look like from the client's perspective.
-        </span><span class="kw">let </span>blackhole = tokio::net::UdpSocket::bind(<span class="string">"127.0.0.1:0"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>stun_addr = blackhole.local_addr()<span class="question-mark">?</span>;
+        </span><span class="kw">let </span>blackhole = tokio::net::UdpSocket::bind(<span class="string">"127.0.0.1:0"</span>).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+        <span class="kw">let </span>stun_addr = blackhole.local_addr().e()<span class="question-mark">?</span>;
         <span class="kw">let </span>dm = stun_utils::relay_map_of_opts([(stun_addr, <span class="bool-val">false</span>)].into_iter());
 
         <span class="comment">// Now create a client and generate a report.
@@ -2812,7 +2812,7 @@
         // can easily use to identify the packet.
 
         // Setup STUN server and create relay_map.
-        </span><span class="kw">let </span>(stun_addr, _stun_stats, _done) = stun_utils::serve_v4().<span class="kw">await</span><span class="question-mark">?</span>;
+        </span><span class="kw">let </span>(stun_addr, _stun_stats, _done) = stun_utils::serve_v4().<span class="kw">await</span>.e()<span class="question-mark">?</span>;
         <span class="kw">let </span>dm = stun_utils::relay_map_of([stun_addr].into_iter());
         <span class="macro">dbg!</span>(<span class="kw-2">&amp;</span>dm);
 
@@ -2826,7 +2826,7 @@
         // it to this socket, which is forwarnding it back to our net_report client, because
         // this dumb implementation just forwards anything even if it would be garbage.
         // Thus hairpinning detection will declare hairpinning to work.
-        </span><span class="kw">let </span>sock = UdpSocket::bind_local(netwatch::IpFamily::V4, <span class="number">0</span>)<span class="question-mark">?</span>;
+        </span><span class="kw">let </span>sock = UdpSocket::bind_local(netwatch::IpFamily::V4, <span class="number">0</span>).e()<span class="question-mark">?</span>;
         <span class="kw">let </span>sock = Arc::new(sock);
         <span class="macro">info!</span>(addr=<span class="question-mark">?</span>sock.local_addr().unwrap(), <span class="string">"Using local addr"</span>);
         <span class="kw">let </span>task = {

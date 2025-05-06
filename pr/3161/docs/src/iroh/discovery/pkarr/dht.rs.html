@@ -373,7 +373,8 @@
 <a href="#372" id="372">372</a>
 <a href="#373" id="373">373</a>
 <a href="#374" id="374">374</a>
-<a href="#375" id="375">375</a></pre></div><pre class="rust"><code><span class="doccomment">//! Pkarr based node discovery for iroh, supporting both relay servers and the DHT.
+<a href="#375" id="375">375</a>
+<a href="#376" id="376">376</a></pre></div><pre class="rust"><code><span class="doccomment">//! Pkarr based node discovery for iroh, supporting both relay servers and the DHT.
 //!
 //! This module contains pkarr-based node discovery for iroh which can use both pkarr
 //! relay servers as well as the Mainline DHT directly.  See the [pkarr module] for an
@@ -697,7 +698,7 @@
     <span class="kw">use </span>std::collections::BTreeSet;
 
     <span class="kw">use </span>iroh_base::RelayUrl;
-    <span class="kw">use </span>testresult::TestResult;
+    <span class="kw">use </span>n0_snafu::{TestResult, TestResultExt};
     <span class="kw">use </span>tracing_test::traced_test;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
@@ -708,17 +709,18 @@
     </span><span class="kw">async fn </span>dht_discovery_smoke() -&gt; TestResult {
         <span class="kw">let </span>ep = <span class="kw">crate</span>::Endpoint::builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>secret = ep.secret_key().clone();
-        <span class="kw">let </span>testnet = pkarr::mainline::Testnet::new_async(<span class="number">3</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>testnet = pkarr::mainline::Testnet::new_async(<span class="number">3</span>).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
         <span class="kw">let </span>client = pkarr::Client::builder()
             .dht(|builder| builder.bootstrap(<span class="kw-2">&amp;</span>testnet.bootstrap))
-            .build()<span class="question-mark">?</span>;
+            .build()
+            .e()<span class="question-mark">?</span>;
         <span class="kw">let </span>discovery = DhtDiscovery::builder()
             .secret_key(secret.clone())
             .initial_publish_delay(Duration::ZERO)
             .client(client)
             .build()<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>relay_url: RelayUrl = Url::parse(<span class="string">"https://example.com"</span>)<span class="question-mark">?</span>.into();
+        <span class="kw">let </span>relay_url: RelayUrl = Url::parse(<span class="string">"https://example.com"</span>).e()<span class="question-mark">?</span>.into();
 
         <span class="kw">let </span>data = NodeData::default().with_relay_url(<span class="prelude-val">Some</span>(relay_url.clone()));
         discovery.publish(<span class="kw-2">&amp;</span>data);

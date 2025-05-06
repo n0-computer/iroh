@@ -8418,8 +8418,8 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_regression_network_change_rebind_wakes_connection_driver(
-    ) -&gt; testresult::TestResult {
+    </span><span class="kw">async fn </span>test_regression_network_change_rebind_wakes_connection_driver() -&gt; n0_snafu::TestResult
+    {
         <span class="kw">let </span>m1 = MagicStack::new(RelayMode::Disabled).<span class="kw">await</span>;
         <span class="kw">let </span>m2 = MagicStack::new(RelayMode::Disabled).<span class="kw">await</span>;
 
@@ -8434,11 +8434,11 @@
             <span class="kw">async move </span>{
                 <span class="kw">while let </span><span class="prelude-val">Some</span>(incoming) = endpoint.accept().<span class="kw">await </span>{
                     <span class="macro">println!</span>(<span class="string">"Incoming first conn!"</span>);
-                    <span class="kw">let </span>conn = incoming.<span class="kw">await</span><span class="question-mark">?</span>;
+                    <span class="kw">let </span>conn = incoming.<span class="kw">await</span>.e()<span class="question-mark">?</span>;
                     conn.closed().<span class="kw">await</span>;
                 }
 
-                testresult::TestResult::Ok(())
+                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, n0_snafu::TestError&gt;(())
             }
         }));
 

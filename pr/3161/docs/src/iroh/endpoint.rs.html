@@ -6265,7 +6265,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>metrics_smoke() -&gt; testresult::TestResult {
+    </span><span class="kw">async fn </span>metrics_smoke() -&gt; TestResult {
         <span class="kw">use </span>iroh_metrics::Registry;
 
         <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">0u8</span>; <span class="number">32</span>]);
@@ -6332,7 +6332,7 @@
         accept_alpns: Vec&lt;Vec&lt;u8&gt;&gt;,
         primary_connect_alpn: <span class="kw-2">&amp;</span>[u8],
         secondary_connect_alpns: Vec&lt;Vec&lt;u8&gt;&gt;,
-    ) -&gt; testresult::TestResult&lt;<span class="prelude-ty">Option</span>&lt;Vec&lt;u8&gt;&gt;&gt; {
+    ) -&gt; TestResult&lt;<span class="prelude-ty">Option</span>&lt;Vec&lt;u8&gt;&gt;&gt; {
         <span class="kw">let </span>client = Endpoint::builder()
             .relay_mode(RelayMode::Disabled)
             .bind()
@@ -6346,10 +6346,10 @@
         <span class="kw">let </span>server_task = tokio::spawn({
             <span class="kw">let </span>server = server.clone();
             <span class="kw">async move </span>{
-                <span class="kw">let </span>incoming = server.accept().<span class="kw">await</span>.unwrap();
-                <span class="kw">let </span>conn = incoming.<span class="kw">await</span><span class="question-mark">?</span>;
+                <span class="kw">let </span>incoming = server.accept().<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+                <span class="kw">let </span>conn = incoming.<span class="kw">await</span>.e()<span class="question-mark">?</span>;
                 conn.close(<span class="number">0u32</span>.into(), <span class="string">b"bye!"</span>);
-                testresult::TestResult::Ok(conn.alpn())
+                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, n0_snafu::TestError&gt;(conn.alpn())
             }
         });
 
@@ -6360,13 +6360,13 @@
                 ConnectOptions::new().with_additional_alpns(secondary_connect_alpns),
             )
             .<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>conn = conn.<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>conn = conn.<span class="kw">await</span>.e()<span class="question-mark">?</span>;
         <span class="kw">let </span>client_alpn = conn.alpn();
         conn.closed().<span class="kw">await</span>;
         client.close().<span class="kw">await</span>;
         server.close().<span class="kw">await</span>;
 
-        <span class="kw">let </span>server_alpn = server_task.<span class="kw">await</span><span class="question-mark">??</span>;
+        <span class="kw">let </span>server_alpn = server_task.<span class="kw">await</span>.e()<span class="question-mark">??</span>;
 
         <span class="macro">assert_eq!</span>(client_alpn, server_alpn);
 
@@ -6375,7 +6375,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>connect_multiple_alpn_negotiated() -&gt; testresult::TestResult {
+    </span><span class="kw">async fn </span>connect_multiple_alpn_negotiated() -&gt; TestResult {
         <span class="kw">const </span>ALPN_ONE: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"alpn/1"</span>;
         <span class="kw">const </span>ALPN_TWO: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"alpn/2"</span>;
 
