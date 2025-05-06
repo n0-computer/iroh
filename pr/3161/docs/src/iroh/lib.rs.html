@@ -261,7 +261,12 @@
 <a href="#260" id="260">260</a>
 <a href="#261" id="261">261</a>
 <a href="#262" id="262">262</a>
-<a href="#263" id="263">263</a></pre></div><pre class="rust"><code><span class="doccomment">//! Peer-to-peer QUIC connections.
+<a href="#263" id="263">263</a>
+<a href="#264" id="264">264</a>
+<a href="#265" id="265">265</a>
+<a href="#266" id="266">266</a>
+<a href="#267" id="267">267</a>
+<a href="#268" id="268">268</a></pre></div><pre class="rust"><code><span class="doccomment">//! Peer-to-peer QUIC connections.
 //!
 //! iroh is a library to establish direct connectivity between peers.  It exposes an
 //! interface to [QUIC] connections and streams to the user, while implementing direct
@@ -420,8 +425,8 @@
 //! The central struct is the [`Endpoint`], which allows you to connect to other nodes:
 //!
 //! ```no_run
-//! use anyhow::Result;
 //! use iroh::{Endpoint, NodeAddr};
+//! use n0_snafu::{TestResult as Result, TestResultExt};
 //!
 //! async fn connect(addr: NodeAddr) -&gt; Result&lt;()&gt; {
 //!     // The Endpoint is the central object that manages an iroh node.
@@ -429,10 +434,10 @@
 //!
 //!     // Establish a QUIC connection, open a bi-directional stream, exchange messages.
 //!     let conn = ep.connect(addr, b"hello-world").await?;
-//!     let (mut send_stream, mut recv_stream) = conn.open_bi().await?;
-//!     send_stream.write_all(b"hello").await?;
-//!     send_stream.finish()?;
-//!     let _msg = recv_stream.read_to_end(10).await?;
+//!     let (mut send_stream, mut recv_stream) = conn.open_bi().await.context("open bi")?;
+//!     send_stream.write_all(b"hello").await.context("write")?;
+//!     send_stream.finish().context("finish")?;
+//!     let _msg = recv_stream.read_to_end(10).await.context("read")?;
 //!
 //!     // Gracefully close the connection and endpoint.
 //!     conn.close(1u8.into(), b"done");
@@ -445,9 +450,9 @@
 //! Every [`Endpoint`] can also accept connections:
 //!
 //! ```no_run
-//! use anyhow::{Context, Result};
 //! use futures_lite::StreamExt;
 //! use iroh::{Endpoint, NodeAddr};
+//! use n0_snafu::{TestResult as Result, TestResultExt};
 //!
 //! async fn accept() -&gt; Result&lt;()&gt; {
 //!     // To accept connections at least one ALPN must be configured.
@@ -457,11 +462,16 @@
 //!         .await?;
 //!
 //!     // Accept a QUIC connection, accept a bi-directional stream, exchange messages.
-//!     let conn = ep.accept().await.context("no incoming connection")?.await?;
-//!     let (mut send_stream, mut recv_stream) = conn.accept_bi().await?;
-//!     let _msg = recv_stream.read_to_end(10).await?;
-//!     send_stream.write_all(b"world").await?;
-//!     send_stream.finish()?;
+//!     let conn = ep
+//!         .accept()
+//!         .await
+//!         .context("no incoming connection")?
+//!         .await
+//!         .context("accept conn")?;
+//!     let (mut send_stream, mut recv_stream) = conn.accept_bi().await.context("accept stream")?;
+//!     let _msg = recv_stream.read_to_end(10).await.context("read")?;
+//!     send_stream.write_all(b"world").await.context("write")?;
+//!     send_stream.finish().context("finish")?;
 //!
 //!     // Wait for the client to close the connection and gracefully close the endpoint.
 //!     conn.closed().await;

@@ -535,7 +535,8 @@
 <a href="#534" id="534">534</a>
 <a href="#535" id="535">535</a>
 <a href="#536" id="536">536</a>
-<a href="#537" id="537">537</a></pre></div><pre class="rust"><code><span class="doccomment">//! Tools for spawning an accept loop that routes incoming requests to the right protocol.
+<a href="#537" id="537">537</a>
+<a href="#538" id="538">538</a></pre></div><pre class="rust"><code><span class="doccomment">//! Tools for spawning an accept loop that routes incoming requests to the right protocol.
 //!
 //! ## Example
 //!
@@ -605,9 +606,10 @@
 /// ```no_run
 /// # use std::sync::Arc;
 /// # use futures_lite::future::Boxed as BoxedFuture;
+/// # use n0_snafu::TestResultExt;
 /// # use iroh::{endpoint::Connecting, protocol::{ProtocolHandler, Router}, Endpoint, NodeAddr};
 /// #
-/// # async fn test_compile() -&gt; anyhow::Result&lt;()&gt; {
+/// # async fn test_compile() -&gt; n0_snafu::TestResult&lt;()&gt; {
 /// let endpoint = Endpoint::builder().discovery_n0().bind().await?;
 ///
 /// let router = Router::builder(endpoint)
@@ -615,8 +617,8 @@
 ///     .spawn();
 ///
 /// // wait until the user wants to
-/// tokio::signal::ctrl_c().await?;
-/// router.shutdown().await?;
+/// tokio::signal::ctrl_c().await.context("ctrl+c")?;
+/// router.shutdown().await.context("shutdown")?;
 /// # Ok(())
 /// # }
 /// ```

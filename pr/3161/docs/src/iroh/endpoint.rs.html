@@ -3208,7 +3208,10 @@
 <a href="#3207" id="3207">3207</a>
 <a href="#3208" id="3208">3208</a>
 <a href="#3209" id="3209">3209</a>
-<a href="#3210" id="3210">3210</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#3210" id="3210">3210</a>
+<a href="#3211" id="3211">3211</a>
+<a href="#3212" id="3212">3212</a>
+<a href="#3213" id="3213">3213</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -4460,6 +4463,7 @@
     /// # use std::{sync::{Arc, RwLock}, time::Duration};
     /// # use iroh_metrics::{Registry, MetricsSource};
     /// # use iroh::endpoint::Endpoint;
+    /// # use n0_snafu::TestResultExt;
     /// # async fn wrapper() -&gt; n0_snafu::TestResult {
     /// // Create a registry, wrapped in a read-write lock so that we can register and serve
     /// // the metrics independently.
@@ -4480,9 +4484,11 @@
     /// // Wait for the metrics server to bind, then fetch the metrics via HTTP.
     /// tokio::time::sleep(Duration::from_millis(500));
     /// let res = reqwest::get("http://localhost:9100/metrics")
-    ///     .await?
+    ///     .await
+    ///     .context("get")?
     ///     .text()
-    ///     .await?;
+    ///     .await
+    ///     .context("text")?;
     ///
     /// assert!(res.contains(r#"TYPE magicsock_recv_datagrams counter"#));
     /// assert!(res.contains(r#"magicsock_recv_datagrams_total 0"#));
