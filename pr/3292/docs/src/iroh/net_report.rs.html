@@ -1390,9 +1390,7 @@
 <a href="#1389" id="1389">1389</a>
 <a href="#1390" id="1390">1390</a>
 <a href="#1391" id="1391">1391</a>
-<a href="#1392" id="1392">1392</a>
-<a href="#1393" id="1393">1393</a>
-<a href="#1394" id="1394">1394</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
+<a href="#1392" id="1392">1392</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
 //!
 //! NetReport is responsible for finding out the network conditions of the current host, like
 //! whether it is connected to the internet via IPv4 and/or IPv6, what the NAT situation is
@@ -2271,11 +2269,9 @@
 </span><span class="kw">mod </span>test_utils {
     <span class="doccomment">//! Creates a relay server against which to perform tests
 
-    </span><span class="kw">use </span>std::sync::Arc;
+    </span><span class="kw">use </span>iroh_relay::{server, RelayNode, RelayQuicConfig};
 
-    <span class="kw">use </span>iroh_relay::{server, RelayNode, RelayQuicConfig};
-
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>relay() -&gt; (server::Server, Arc&lt;RelayNode&gt;) {
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>relay() -&gt; (server::Server, RelayNode) {
         <span class="kw">let </span>server = server::Server::spawn(server::testing::server_config())
             .<span class="kw">await
             </span>.expect(<span class="string">"should serve relay"</span>);
@@ -2289,7 +2285,7 @@
             quic,
         };
 
-        (server, Arc::new(node_desc))
+        (server, node_desc)
     }
 
     <span class="doccomment">/// Create a [`crate::RelayMap`] of the given size.

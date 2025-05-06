@@ -204,7 +204,11 @@
 <a href="#203" id="203">203</a>
 <a href="#204" id="204">204</a>
 <a href="#205" id="205">205</a>
-<a href="#206" id="206">206</a></pre></div><pre class="rust"><code><span class="doccomment">//! based on tailscale/tailcfg/derpmap.go
+<a href="#206" id="206">206</a>
+<a href="#207" id="207">207</a>
+<a href="#208" id="208">208</a>
+<a href="#209" id="209">209</a>
+<a href="#210" id="210">210</a></pre></div><pre class="rust"><code><span class="doccomment">//! based on tailscale/tailcfg/derpmap.go
 
 </span><span class="kw">use </span>std::{collections::BTreeMap, fmt, sync::Arc};
 
@@ -259,18 +263,6 @@
     }
 }
 
-<span class="kw">impl </span>FromIterator&lt;Arc&lt;RelayNode&gt;&gt; <span class="kw">for </span>RelayMap {
-    <span class="kw">fn </span>from_iter&lt;T: IntoIterator&lt;Item = Arc&lt;RelayNode&gt;&gt;&gt;(iter: T) -&gt; <span class="self">Self </span>{
-        <span class="self">Self </span>{
-            nodes: Arc::new(
-                iter.into_iter()
-                    .map(|node| (node.url.clone(), node))
-                    .collect(),
-            ),
-        }
-    }
-}
-
 <span class="kw">impl </span>FromIterator&lt;RelayNode&gt; <span class="kw">for </span>RelayMap {
     <span class="kw">fn </span>from_iter&lt;T: IntoIterator&lt;Item = RelayNode&gt;&gt;(iter: T) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
@@ -283,7 +275,11 @@
     }
 }
 
-<span class="kw">impl </span>From&lt;RelayUrl&gt; <span class="kw">for </span>RelayMap {
+<span class="doccomment">/// Create a `RelayMap` from a `RelayUrl`.
+///
+/// The `RelayNode`s in the `RelayMap` will have the default stun and quic address
+/// discovery ports.
+</span><span class="kw">impl </span>From&lt;RelayUrl&gt; <span class="kw">for </span>RelayMap {
     <span class="kw">fn </span>from(value: RelayUrl) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             nodes: Arc::new([(value.clone(), Arc::new(value.into()))].into()),
@@ -291,7 +287,11 @@
     }
 }
 
-<span class="kw">impl </span>From&lt;(RelayUrl, u16)&gt; <span class="kw">for </span>RelayMap {
+<span class="doccomment">/// Create a `RelayMap` from a `RelayUrl` and a stun port.
+///
+/// The resulting `RelayMap` contains `RelayNode`s with the default quic address
+/// discovery port.
+</span><span class="kw">impl </span>From&lt;(RelayUrl, u16)&gt; <span class="kw">for </span>RelayMap {
     <span class="kw">fn </span>from(value: (RelayUrl, u16)) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             nodes: Arc::new([(value.<span class="number">0</span>.clone(), Arc::new(value.into()))].into()),
@@ -307,7 +307,11 @@
     }
 }
 
-<span class="kw">impl </span>FromIterator&lt;RelayUrl&gt; <span class="kw">for </span>RelayMap {
+<span class="doccomment">/// Create a `RelayMap` from an interator of `RelayUrl`.
+///
+/// The `RelayNode`s in the `RelayMap` will have the default stun and quic address
+/// discovery ports.
+</span><span class="kw">impl </span>FromIterator&lt;RelayUrl&gt; <span class="kw">for </span>RelayMap {
     <span class="kw">fn </span>from_iter&lt;T: IntoIterator&lt;Item = RelayUrl&gt;&gt;(iter: T) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             nodes: Arc::new(
@@ -319,7 +323,11 @@
     }
 }
 
-<span class="kw">impl </span>FromIterator&lt;(RelayUrl, u16)&gt; <span class="kw">for </span>RelayMap {
+<span class="doccomment">/// Create a `RelayMap` from an iterator of `RelayUrl`s and a stun ports.
+///
+/// The resulting `RelayMap` contains `RelayNode`s with the default quic address
+/// discovery port.
+</span><span class="kw">impl </span>FromIterator&lt;(RelayUrl, u16)&gt; <span class="kw">for </span>RelayMap {
     <span class="kw">fn </span>from_iter&lt;T: IntoIterator&lt;Item = (RelayUrl, u16)&gt;&gt;(iter: T) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             nodes: Arc::new(
