@@ -300,12 +300,12 @@
     time::{Duration, Instant},
 };
 
-<span class="kw">use </span>anyhow::{Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>iroh::{
     endpoint::{Connection, ConnectionError, RecvStream, SendStream, TransportConfig},
     Endpoint, NodeAddr, RelayMap, RelayMode, RelayUrl,
 };
+<span class="kw">use </span>n0_snafu::{TestResult <span class="kw">as </span><span class="prelude-ty">Result</span>, TestResultExt};
 <span class="kw">use </span>tracing::{trace, warn};
 
 <span class="kw">use crate</span>::{
@@ -451,7 +451,7 @@
     <span class="kw">let </span><span class="kw-2">mut </span>num_chunks: u64 = <span class="number">0</span>;
 
     <span class="kw">if </span>read_unordered {
-        <span class="kw">while let </span><span class="prelude-val">Some</span>(chunk) = stream.read_chunk(usize::MAX, <span class="bool-val">false</span>).<span class="kw">await</span><span class="question-mark">? </span>{
+        <span class="kw">while let </span><span class="prelude-val">Some</span>(chunk) = stream.read_chunk(usize::MAX, <span class="bool-val">false</span>).<span class="kw">await</span>.e()<span class="question-mark">? </span>{
             <span class="kw">if </span>first_byte {
                 ttfb = download_start.elapsed();
                 first_byte = <span class="bool-val">false</span>;
@@ -473,7 +473,7 @@
             Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
         ];
 
-        <span class="kw">while let </span><span class="prelude-val">Some</span>(n) = stream.read_chunks(<span class="kw-2">&amp;mut </span>bufs[..]).<span class="kw">await</span><span class="question-mark">? </span>{
+        <span class="kw">while let </span><span class="prelude-val">Some</span>(n) = stream.read_chunks(<span class="kw-2">&amp;mut </span>bufs[..]).<span class="kw">await</span>.e()<span class="question-mark">? </span>{
             <span class="kw">if </span>first_byte {
                 ttfb = download_start.elapsed();
                 first_byte = <span class="bool-val">false</span>;
@@ -572,7 +572,7 @@
                 tokio::spawn(<span class="kw">async move </span>{
                     drain_stream(<span class="kw-2">&amp;mut </span>recv_stream, opt.read_unordered).<span class="kw">await</span><span class="question-mark">?</span>;
                     send_data_on_stream(<span class="kw-2">&amp;mut </span>send_stream, opt.download_size).<span class="kw">await</span><span class="question-mark">?</span>;
-                    <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, anyhow::Error&gt;(())
+                    <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, n0_snafu::TestError&gt;(())
                 });
             }
 

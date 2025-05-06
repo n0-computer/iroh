@@ -173,12 +173,12 @@
 <a href="#172" id="172">172</a>
 <a href="#173" id="173">173</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::collections::BTreeMap;
 
-<span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>clap::Parser;
 <span class="attr">#[cfg(not(any(target_os = <span class="string">"freebsd"</span>, target_os = <span class="string">"openbsd"</span>, target_os = <span class="string">"netbsd"</span>)))]
 </span><span class="kw">use </span>iroh_bench::quinn;
 <span class="kw">use </span>iroh_bench::{configure_tracing_subscriber, iroh, rt, s2n, Commands, Opt};
 <span class="kw">use </span>iroh_metrics::{MetricValue, MetricsGroup};
+<span class="kw">use </span>n0_snafu::TestResult <span class="kw">as </span><span class="prelude-ty">Result</span>;
 
 <span class="kw">fn </span>main() {
     <span class="kw">let </span>cmd = Commands::parse();

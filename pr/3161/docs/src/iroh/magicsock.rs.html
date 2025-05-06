@@ -4554,8 +4554,7 @@
 <a href="#4553" id="4553">4553</a>
 <a href="#4554" id="4554">4554</a>
 <a href="#4555" id="4555">4555</a>
-<a href="#4556" id="4556">4556</a>
-<a href="#4557" id="4557">4557</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4556" id="4556">4556</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -8057,23 +8056,22 @@
     <span class="kw">use </span>n0_future::{time, StreamExt};
     <span class="kw">use </span>n0_snafu::{TestResult, TestResultExt};
     <span class="kw">use </span>quinn::ServerConfig;
-    <span class="kw">use </span>rand::Rng;
-    <span class="kw">use </span>rand::RngCore;
+    <span class="kw">use </span>rand::{Rng, RngCore};
     <span class="kw">use </span>tokio::task::JoinSet;
     <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
     <span class="kw">use </span>tracing::{debug, error, info, info_span, instrument, Instrument};
     <span class="kw">use </span>tracing_test::traced_test;
 
-    <span class="kw">use </span><span class="kw">crate</span>::magicsock::RelayRecvDatagram;
+    <span class="kw">use super</span>::{split_packets, NodeIdMappedAddr, Options};
     <span class="kw">use crate</span>::{
         defaults::staging::{<span class="self">self</span>, EU_RELAY_HOSTNAME},
         dns::DnsResolver,
         endpoint::{DirectAddr, PathSelection, Source},
-        magicsock::{node_map, Handle, MagicSock, RelayContents, RelayDatagramRecvQueue},
+        magicsock::{
+            node_map, Handle, MagicSock, RelayContents, RelayDatagramRecvQueue, RelayRecvDatagram,
+        },
         tls, Endpoint, RelayMode,
     };
-
-    <span class="kw">use super</span>::{split_packets, NodeIdMappedAddr, Options};
 
     <span class="kw">const </span>ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"n0/test/1"</span>;
 

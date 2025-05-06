@@ -265,14 +265,15 @@
 <a href="#264" id="264">264</a>
 <a href="#265" id="265">265</a>
 <a href="#266" id="266">266</a>
-<a href="#267" id="267">267</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#267" id="267">267</a>
+<a href="#268" id="268">268</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::{IpAddr, Ipv4Addr, SocketAddr},
     sync::Arc,
     time::{Duration, Instant},
 };
 
-<span class="kw">use </span>anyhow::{Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>bytes::Bytes;
+<span class="kw">use </span>n0_snafu::{TestResult <span class="kw">as </span><span class="prelude-ty">Result</span>, TestResultExt};
 <span class="kw">use </span>quinn::{
     crypto::rustls::QuicClientConfig, Connection, Endpoint, RecvStream, SendStream, TransportConfig,
 };
@@ -340,7 +341,7 @@
         quinn::Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), <span class="number">0</span>)).unwrap();
 
     <span class="kw">let </span><span class="kw-2">mut </span>roots = RootCertStore::empty();
-    roots.add(server_cert)<span class="question-mark">?</span>;
+    roots.add(server_cert).e()<span class="question-mark">?</span>;
 
     <span class="kw">let </span>provider = rustls::crypto::ring::default_provider();
 
@@ -350,7 +351,8 @@
         .with_root_certificates(roots)
         .with_no_client_auth();
 
-    <span class="kw">let </span><span class="kw-2">mut </span>client_config = quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(crypto)<span class="question-mark">?</span>));
+    <span class="kw">let </span><span class="kw-2">mut </span>client_config =
+        quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(crypto).e()<span class="question-mark">?</span>));
     client_config.transport_config(Arc::new(transport_config(opt.max_streams, opt.initial_mtu)));
 
     <span class="kw">let </span>connection = endpoint
@@ -391,7 +393,7 @@
     <span class="kw">let </span><span class="kw-2">mut </span>num_chunks: u64 = <span class="number">0</span>;
 
     <span class="kw">if </span>read_unordered {
-        <span class="kw">while let </span><span class="prelude-val">Some</span>(chunk) = stream.read_chunk(usize::MAX, <span class="bool-val">false</span>).<span class="kw">await</span><span class="question-mark">? </span>{
+        <span class="kw">while let </span><span class="prelude-val">Some</span>(chunk) = stream.read_chunk(usize::MAX, <span class="bool-val">false</span>).<span class="kw">await</span>.e()<span class="question-mark">? </span>{
             <span class="kw">if </span>first_byte {
                 ttfb = download_start.elapsed();
                 first_byte = <span class="bool-val">false</span>;
@@ -413,7 +415,7 @@
             Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
         ];
 
-        <span class="kw">while let </span><span class="prelude-val">Some</span>(n) = stream.read_chunks(<span class="kw-2">&amp;mut </span>bufs[..]).<span class="kw">await</span><span class="question-mark">? </span>{
+        <span class="kw">while let </span><span class="prelude-val">Some</span>(n) = stream.read_chunks(<span class="kw-2">&amp;mut </span>bufs[..]).<span class="kw">await</span>.e()<span class="question-mark">? </span>{
             <span class="kw">if </span>first_byte {
                 ttfb = download_start.elapsed();
                 first_byte = <span class="bool-val">false</span>;
@@ -512,7 +514,7 @@
                 tokio::spawn(<span class="kw">async move </span>{
                     drain_stream(<span class="kw-2">&amp;mut </span>recv_stream, opt.read_unordered).<span class="kw">await</span><span class="question-mark">?</span>;
                     send_data_on_stream(<span class="kw-2">&amp;mut </span>send_stream, opt.download_size).<span class="kw">await</span><span class="question-mark">?</span>;
-                    <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, anyhow::Error&gt;(())
+                    <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, n0_snafu::TestError&gt;(())
                 });
             }
 

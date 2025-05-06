@@ -1708,8 +1708,7 @@
 <a href="#1707" id="1707">1707</a>
 <a href="#1708" id="1708">1708</a>
 <a href="#1709" id="1709">1709</a>
-<a href="#1710" id="1710">1710</a>
-<a href="#1711" id="1711">1711</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1710" id="1710">1710</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -3049,6 +3048,10 @@
     <span class="kw">use </span>tracing::{info, info_span, Instrument};
     <span class="kw">use </span>tracing_test::traced_test;
 
+    <span class="kw">use super</span>::{
+        ActiveRelayActor, ActiveRelayActorOptions, ActiveRelayMessage, ActiveRelayPrioMessage,
+        RelayConnectionOptions, RelaySendItem, MAX_PACKET_SIZE,
+    };
     <span class="kw">use crate</span>::{
         dns::DnsResolver,
         magicsock::{
@@ -3058,11 +3061,6 @@
             RelayDatagramRecvQueue, RelayRecvDatagram,
         },
         test_utils,
-    };
-
-    <span class="kw">use super</span>::{
-        ActiveRelayActor, ActiveRelayActorOptions, ActiveRelayMessage, ActiveRelayPrioMessage,
-        RelayConnectionOptions, RelaySendItem, MAX_PACKET_SIZE,
     };
 
     <span class="attr">#[test]
