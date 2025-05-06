@@ -53,18 +53,6 @@ impl RelayMap {
     }
 }
 
-impl FromIterator<Arc<RelayNode>> for RelayMap {
-    fn from_iter<T: IntoIterator<Item = Arc<RelayNode>>>(iter: T) -> Self {
-        Self {
-            nodes: Arc::new(
-                iter.into_iter()
-                    .map(|node| (node.url.clone(), node))
-                    .collect(),
-            ),
-        }
-    }
-}
-
 impl FromIterator<RelayNode> for RelayMap {
     fn from_iter<T: IntoIterator<Item = RelayNode>>(iter: T) -> Self {
         Self {
@@ -77,6 +65,10 @@ impl FromIterator<RelayNode> for RelayMap {
     }
 }
 
+/// Create a `RelayMap` from a `RelayUrl`.
+///
+/// The `RelayNode`s in the `RelayMap` will have the default stun and quic address
+/// discovery ports.
 impl From<RelayUrl> for RelayMap {
     fn from(value: RelayUrl) -> Self {
         Self {
@@ -85,6 +77,10 @@ impl From<RelayUrl> for RelayMap {
     }
 }
 
+/// Create a `RelayMap` from a `RelayUrl` and a stun port.
+///
+/// The resulting `RelayMap` contains `RelayNode`s with the default quic address
+/// discovery port.
 impl From<(RelayUrl, u16)> for RelayMap {
     fn from(value: (RelayUrl, u16)) -> Self {
         Self {
@@ -101,6 +97,10 @@ impl From<RelayNode> for RelayMap {
     }
 }
 
+/// Create a `RelayMap` from an iterator of `RelayUrl`.
+///
+/// The `RelayNode`s in the `RelayMap` will have the default stun and quic address
+/// discovery ports.
 impl FromIterator<RelayUrl> for RelayMap {
     fn from_iter<T: IntoIterator<Item = RelayUrl>>(iter: T) -> Self {
         Self {
@@ -113,6 +113,10 @@ impl FromIterator<RelayUrl> for RelayMap {
     }
 }
 
+/// Create a `RelayMap` from an iterator of `RelayUrl`s and a stun ports.
+///
+/// The resulting `RelayMap` contains `RelayNode`s with the default quic address
+/// discovery port.
 impl FromIterator<(RelayUrl, u16)> for RelayMap {
     fn from_iter<T: IntoIterator<Item = (RelayUrl, u16)>>(iter: T) -> Self {
         Self {

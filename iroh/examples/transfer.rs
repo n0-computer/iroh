@@ -10,7 +10,7 @@ use indicatif::HumanBytes;
 use iroh::{
     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher},
     endpoint::{ConnectionError, PathSelection},
-    Endpoint, NodeAddr, RelayMap, RelayMode, RelayUrl, SecretKey,
+    Endpoint, NodeAddr, RelayMode, RelayUrl, SecretKey,
 };
 use iroh_base::ticket::NodeTicket;
 use tracing::info;
