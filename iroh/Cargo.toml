@@ -91,6 +91,7 @@ futures-util = "0.3"
 axum = { version = "0.8", optional = true }
 
 # Examples
+anyhow = { version = "1", optional = true }
 clap = { version = "4", features = ["derive"], optional = true }
 tracing-subscriber = { version = "0.3", features = [
     "env-filter",
@@ -127,7 +128,6 @@ time = { version = "0.3", features = ["wasm-bindgen"] }
 
 # target-common test/dev dependencies
 [dev-dependencies]
-anyhow = "1"
 postcard = { version = "1.1.1", features = ["use-std"] }
 testresult = "0.4.0"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -168,6 +168,7 @@ test-utils = ["iroh-relay/test-utils", "iroh-relay/server", "dep:axum"]
 discovery-local-network = ["dep:swarm-discovery"]
 discovery-pkarr-dht = ["pkarr/dht"]
 examples = [
+  "dep:anyhow",
   "dep:clap",
   "dep:tracing-subscriber",
   "dep:indicatif",
@@ -185,15 +186,19 @@ path = "tests/integration.rs"
 
 [[example]]
 name = "listen"
+required-features = ["examples"]
 
 [[example]]
 name = "connect"
+required-features = ["examples"]
 
 [[example]]
 name = "listen-unreliable"
+required-features = ["examples"]
 
 [[example]]
 name = "connect-unreliable"
+required-features = ["examples"]
 
 [[example]]
 name = "dht_discovery"

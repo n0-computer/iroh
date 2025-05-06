@@ -54,7 +54,7 @@
 //!     Endpoint, SecretKey,
 //! };
 //!
-//! # async fn wrapper() -> anyhow::Result<()> {
+//! # async fn wrapper() -> n0_snafu::TestResult<()> {
 //! let secret_key = SecretKey::generate(rand::rngs::OsRng);
 //! let discovery = ConcurrentDiscovery::from_services(vec![
 //!     Box::new(PkarrPublisher::n0_dns(secret_key.clone())),
@@ -81,7 +81,7 @@
 //! # use iroh::discovery::ConcurrentDiscovery;
 //! # use iroh::SecretKey;
 //! #
-//! # async fn wrapper() -> anyhow::Result<()> {
+//! # async fn wrapper() -> n0_snafu::TestResult<()> {
 //! # let secret_key = SecretKey::generate(rand::rngs::OsRng);
 //! let discovery = ConcurrentDiscovery::from_services(vec![
 //!     Box::new(PkarrPublisher::n0_dns(secret_key.clone())),

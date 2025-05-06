@@ -68,9 +68,10 @@ use crate::{
 /// ```no_run
 /// # use std::sync::Arc;
 /// # use futures_lite::future::Boxed as BoxedFuture;
+/// # use n0_snafu::TestResultExt;
 /// # use iroh::{endpoint::Connecting, protocol::{ProtocolHandler, Router}, Endpoint, NodeAddr};
 /// #
-/// # async fn test_compile() -> anyhow::Result<()> {
+/// # async fn test_compile() -> n0_snafu::TestResult<()> {
 /// let endpoint = Endpoint::builder().discovery_n0().bind().await?;
 ///
 /// let router = Router::builder(endpoint)
@@ -78,8 +79,8 @@ use crate::{
 ///     .spawn();
 ///
 /// // wait until the user wants to
-/// tokio::signal::ctrl_c().await?;
-/// router.shutdown().await?;
+/// tokio::signal::ctrl_c().await.context("ctrl+c")?;
+/// router.shutdown().await.context("shutdown")?;
 /// # Ok(())
 /// # }
 /// ```

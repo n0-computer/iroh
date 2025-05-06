@@ -1250,6 +1250,7 @@ impl Endpoint {
     /// # use std::{sync::{Arc, RwLock}, time::Duration};
     /// # use iroh_metrics::{Registry, MetricsSource};
     /// # use iroh::endpoint::Endpoint;
+    /// # use n0_snafu::TestResultExt;
     /// # async fn wrapper() -> n0_snafu::TestResult {
     /// // Create a registry, wrapped in a read-write lock so that we can register and serve
     /// // the metrics independently.
@@ -1270,9 +1271,11 @@ impl Endpoint {
     /// // Wait for the metrics server to bind, then fetch the metrics via HTTP.
     /// tokio::time::sleep(Duration::from_millis(500));
     /// let res = reqwest::get("http://localhost:9100/metrics")
-    ///     .await?
+    ///     .await
+    ///     .context("get")?
     ///     .text()
-    ///     .await?;
+    ///     .await
+    ///     .context("text")?;
     ///
     /// assert!(res.contains(r#"TYPE magicsock_recv_datagrams counter"#));
     /// assert!(res.contains(r#"magicsock_recv_datagrams_total 0"#));
