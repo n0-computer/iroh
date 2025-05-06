@@ -147,14 +147,14 @@ recently discovered direct addresses.</p>
 <span class="kw">let </span>_addrs = mep.direct_addresses().initialized().<span class="kw">await</span>.unwrap();</code></pre></div>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.net_report" class="method"><a class="src rightside" href="../../src/iroh/endpoint.rs.html#1025-1027">Source</a><h4 class="code-header">pub fn <a href="#method.net_report" class="fn">net_report</a>(&amp;self) -&gt; <a class="struct" href="../watchable/struct.Watcher.html" title="struct iroh::watchable::Watcher">Watcher</a>&lt;<a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/sync/struct.Arc.html" title="struct alloc::sync::Arc">Arc</a>&lt;<a class="struct" href="../net_report/struct.Report.html" title="struct iroh::net_report::Report">Report</a>&gt;&gt;&gt;</h4></section></summary><div class="docblock"><p>Returns a <a href="../watchable/struct.Watcher.html" title="struct iroh::watchable::Watcher"><code>Watcher</code></a> for any net-reports run from this <a href="struct.Endpoint.html" title="struct iroh::endpoint::Endpoint"><code>Endpoint</code></a>.</p>
 <p>A <code>net-report</code> checks the network conditions of the <a href="struct.Endpoint.html" title="struct iroh::endpoint::Endpoint"><code>Endpoint</code></a>, such as
-whether it is connected to the internet via Ipv4 and/or Ipv6, it’s NAT
-status, it’s latency to the relay servers, and it’s public addresses.</p>
+whether it is connected to the internet via Ipv4 and/or Ipv6, its NAT
+status, its latency to the relay servers, and its public addresses.</p>
 <p>The <a href="struct.Endpoint.html" title="struct iroh::endpoint::Endpoint"><code>Endpoint</code></a> continuously runs <code>net-reports</code> to monitor if network
 conditions have changed. This <a href="../watchable/struct.Watcher.html" title="struct iroh::watchable::Watcher"><code>Watcher</code></a> will return the latest result
 of the <code>net-report</code>.</p>
-<p>When issuing the first call to this method the first report  might
+<p>When issuing the first call to this method the first report might
 still be underway, in this case the <a href="../watchable/struct.Watcher.html" title="struct iroh::watchable::Watcher"><code>Watcher</code></a> might not be initialized
-with <a href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.Some" title="variant core::option::Option::Some"><code>Some</code></a> value yet.  Once the first set of report has been successfully
+with <a href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.Some" title="variant core::option::Option::Some"><code>Some</code></a> value yet.  Once the net-report has been successfully
 run, the <a href="../watchable/struct.Watcher.html" title="struct iroh::watchable::Watcher"><code>Watcher</code></a> will always return <a href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html#variant.Some" title="variant core::option::Option::Some"><code>Some</code></a> report immediately, which
 is the most recently run <code>net-report</code>.</p>
 <h5 id="examples-2"><a class="doc-anchor" href="#examples-2">§</a>Examples</h5>
@@ -163,8 +163,8 @@ is the most recently run <code>net-report</code>.</p>
 <div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>futures_lite::StreamExt;
 <span class="kw">use </span>iroh::Endpoint;
 
-<span class="kw">let </span>mep = Endpoint::builder().bind().<span class="kw">await</span>.unwrap();
-<span class="kw">let </span>_addrs = mep.net_report().initialized().<span class="kw">await</span>.unwrap();</code></pre></div>
+<span class="kw">let </span>ep = Endpoint::builder().bind().<span class="kw">await</span>.unwrap();
+<span class="kw">let </span>_report = ep.net_report().initialized().<span class="kw">await</span>.unwrap();</code></pre></div>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.bound_sockets" class="method"><a class="src rightside" href="../../src/iroh/endpoint.rs.html#1034-1036">Source</a><h4 class="code-header">pub fn <a href="#method.bound_sockets" class="fn">bound_sockets</a>(&amp;self) -&gt; (<a class="enum" href="https://doc.rust-lang.org/nightly/core/net/socket_addr/enum.SocketAddr.html" title="enum core::net::socket_addr::SocketAddr">SocketAddr</a>, <a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="enum" href="https://doc.rust-lang.org/nightly/core/net/socket_addr/enum.SocketAddr.html" title="enum core::net::socket_addr::SocketAddr">SocketAddr</a>&gt;)</h4></section><span class="item-info"><div class="stab portability">Available on <strong>non-<code>wasm_browser</code></strong> only.</div></span></summary><div class="docblock"><p>Returns the local socket addresses on which the underlying sockets are bound.</p>
 <p>The <a href="struct.Endpoint.html" title="struct iroh::endpoint::Endpoint"><code>Endpoint</code></a> always binds on an IPv4 address and also tries to bind on an IPv6
 address if available.</p>
