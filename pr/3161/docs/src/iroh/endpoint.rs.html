@@ -3197,7 +3197,18 @@
 <a href="#3196" id="3196">3196</a>
 <a href="#3197" id="3197">3197</a>
 <a href="#3198" id="3198">3198</a>
-<a href="#3199" id="3199">3199</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#3199" id="3199">3199</a>
+<a href="#3200" id="3200">3200</a>
+<a href="#3201" id="3201">3201</a>
+<a href="#3202" id="3202">3202</a>
+<a href="#3203" id="3203">3203</a>
+<a href="#3204" id="3204">3204</a>
+<a href="#3205" id="3205">3205</a>
+<a href="#3206" id="3206">3206</a>
+<a href="#3207" id="3207">3207</a>
+<a href="#3208" id="3208">3208</a>
+<a href="#3209" id="3209">3209</a>
+<a href="#3210" id="3210">3210</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -4385,7 +4396,7 @@
     /// ```rust
     /// # use std::collections::BTreeMap;
     /// # use iroh::endpoint::Endpoint;
-    /// # async fn wrapper() -&gt; testresult::TestResult {
+    /// # async fn wrapper() -&gt; n0_snafu::TestResult {
     /// let endpoint = Endpoint::builder().bind().await?;
     /// assert_eq!(endpoint.metrics().magicsock.recv_datagrams.get(), 0);
     /// # Ok(())
@@ -4403,7 +4414,7 @@
     /// # use std::collections::BTreeMap;
     /// # use iroh_metrics::{Metric, MetricsGroup, MetricValue, MetricsGroupSet};
     /// # use iroh::endpoint::Endpoint;
-    /// # async fn wrapper() -&gt; testresult::TestResult {
+    /// # async fn wrapper() -&gt; n0_snafu::TestResult {
     /// let endpoint = Endpoint::builder().bind().await?;
     /// let metrics: BTreeMap&lt;String, MetricValue&gt; = endpoint
     ///     .metrics()
@@ -4426,7 +4437,7 @@
     /// ```rust
     /// # use iroh_metrics::{Registry, MetricsSource};
     /// # use iroh::endpoint::Endpoint;
-    /// # async fn wrapper() -&gt; testresult::TestResult {
+    /// # async fn wrapper() -&gt; n0_snafu::TestResult {
     /// let endpoint = Endpoint::builder().bind().await?;
     /// let mut registry = Registry::default();
     /// registry.register_all(endpoint.metrics());
@@ -4449,7 +4460,7 @@
     /// # use std::{sync::{Arc, RwLock}, time::Duration};
     /// # use iroh_metrics::{Registry, MetricsSource};
     /// # use iroh::endpoint::Endpoint;
-    /// # async fn wrapper() -&gt; testresult::TestResult {
+    /// # async fn wrapper() -&gt; n0_snafu::TestResult {
     /// // Create a registry, wrapped in a read-write lock so that we can register and serve
     /// // the metrics independently.
     /// let registry = Arc::new(RwLock::new(Registry::default()));
@@ -5469,31 +5480,39 @@
 // https://github.com/n0-computer/iroh/issues/1183
 </span><span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
-    <span class="kw">use </span>std::time::Instant;
+    <span class="kw">use </span>std::{
+        net::SocketAddr,
+        time::{Duration, Instant},
+    };
 
-    <span class="kw">use </span>anyhow::{bail, Context};
+    <span class="kw">use </span>iroh_base::{NodeAddr, NodeId, SecretKey};
     <span class="kw">use </span>iroh_metrics::MetricsSource;
     <span class="kw">use </span>iroh_relay::http::Protocol;
     <span class="kw">use </span>n0_future::StreamExt;
+    <span class="kw">use </span>n0_snafu::{TestError, TestResult, TestResultExt};
+    <span class="kw">use </span>quinn::ConnectionError;
     <span class="kw">use </span>rand::SeedableRng;
-    <span class="kw">use </span>testresult::TestResult;
     <span class="kw">use </span>tracing::{error_span, info, info_span, Instrument};
     <span class="kw">use </span>tracing_test::traced_test;
 
-    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-    <span class="kw">use </span><span class="kw">crate</span>::test_utils::{run_relay_server, run_relay_server_with};
+    <span class="kw">use </span><span class="kw">super</span>::Endpoint;
+    <span class="kw">use crate</span>::{
+        endpoint::{ConnectOptions, ConnectionType, RemoteInfo},
+        test_utils::{run_relay_server, run_relay_server_with},
+        tls, RelayMode,
+    };
 
     <span class="kw">const </span>TEST_ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"n0/iroh/test"</span>;
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_connect_self() {
+    </span><span class="kw">async fn </span>test_connect_self() -&gt; TestResult {
         <span class="kw">let </span>ep = Endpoint::builder()
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
             .bind()
             .<span class="kw">await
-            </span>.unwrap();
-        <span class="kw">let </span>my_addr = ep.node_addr().<span class="kw">await</span>.unwrap();
+            </span>.e()<span class="question-mark">?</span>;
+        <span class="kw">let </span>my_addr = ep.node_addr().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>res = ep.connect(my_addr.clone(), TEST_ALPN).<span class="kw">await</span>;
         <span class="macro">assert!</span>(res.is_err());
         <span class="kw">let </span>err = res.err().unwrap();
@@ -5503,12 +5522,13 @@
         <span class="macro">assert!</span>(res.is_err());
         <span class="kw">let </span>err = res.err().unwrap();
         <span class="macro">assert!</span>(err.to_string().starts_with(<span class="string">"Adding our own address"</span>));
+        <span class="prelude-val">Ok</span>(())
     }
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>endpoint_connect_close() {
-        <span class="kw">let </span>(relay_map, relay_url, _guard) = run_relay_server().<span class="kw">await</span>.unwrap();
+    </span><span class="kw">async fn </span>endpoint_connect_close() -&gt; TestResult {
+        <span class="kw">let </span>(relay_map, relay_url, _guard) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>server_secret_key = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>server_peer_id = server_secret_key.public();
 
@@ -5522,14 +5542,13 @@
                         .relay_mode(RelayMode::Custom(relay_map))
                         .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
                         .bind()
-                        .<span class="kw">await
-                        </span>.unwrap();
+                        .<span class="kw">await</span><span class="question-mark">?</span>;
                     <span class="macro">info!</span>(<span class="string">"accepting connection"</span>);
-                    <span class="kw">let </span>incoming = ep.accept().<span class="kw">await</span>.unwrap();
-                    <span class="kw">let </span>conn = incoming.<span class="kw">await</span>.unwrap();
-                    <span class="kw">let </span><span class="kw-2">mut </span>stream = conn.accept_uni().<span class="kw">await</span>.unwrap();
+                    <span class="kw">let </span>incoming = ep.accept().<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+                    <span class="kw">let </span>conn = incoming.<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+                    <span class="kw">let </span><span class="kw-2">mut </span>stream = conn.accept_uni().<span class="kw">await</span>.e()<span class="question-mark">?</span>;
                     <span class="kw">let </span><span class="kw-2">mut </span>buf = [<span class="number">0u8</span>; <span class="number">5</span>];
-                    stream.read_exact(<span class="kw-2">&amp;mut </span>buf).<span class="kw">await</span>.unwrap();
+                    stream.read_exact(<span class="kw-2">&amp;mut </span>buf).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
                     <span class="macro">info!</span>(<span class="string">"Accepted 1 stream, received {buf:?}.  Closing now."</span>);
                     <span class="comment">// close the connection
                     </span>conn.close(<span class="number">7u8</span>.into(), <span class="string">b"bye"</span>);
@@ -5545,6 +5564,7 @@
                         ))
                     );
                     <span class="macro">info!</span>(<span class="string">"server test completed"</span>);
+                    <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, TestError&gt;(())
                 }
                 .instrument(<span class="macro">info_span!</span>(<span class="string">"test-server"</span>)),
             )
@@ -5557,18 +5577,17 @@
                     .relay_mode(RelayMode::Custom(relay_map))
                     .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
                     .bind()
-                    .<span class="kw">await
-                    </span>.unwrap();
+                    .<span class="kw">await</span><span class="question-mark">?</span>;
                 <span class="macro">info!</span>(<span class="string">"client connecting"</span>);
                 <span class="kw">let </span>node_addr = NodeAddr::new(server_peer_id).with_relay_url(relay_url);
-                <span class="kw">let </span>conn = ep.connect(node_addr, TEST_ALPN).<span class="kw">await</span>.unwrap();
-                <span class="kw">let </span><span class="kw-2">mut </span>stream = conn.open_uni().<span class="kw">await</span>.unwrap();
+                <span class="kw">let </span>conn = ep.connect(node_addr, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
+                <span class="kw">let </span><span class="kw-2">mut </span>stream = conn.open_uni().<span class="kw">await</span>.e()<span class="question-mark">?</span>;
 
                 <span class="comment">// First write is accepted by server.  We need this bit of synchronisation
                 // because if the server closes after simply accepting the connection we can
                 // not be sure our .open_uni() call would succeed as it may already receive
                 // the error.
-                </span>stream.write_all(<span class="string">b"hello"</span>).<span class="kw">await</span>.unwrap();
+                </span>stream.write_all(<span class="string">b"hello"</span>).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
 
                 <span class="macro">info!</span>(<span class="string">"waiting for closed"</span>);
                 <span class="comment">// Remote now closes the connection, we should see an error sometime soon.
@@ -5584,6 +5603,7 @@
                 <span class="kw">let </span>res = conn.open_uni().<span class="kw">await</span>;
                 <span class="macro">assert_eq!</span>(res.unwrap_err(), expected_err);
                 <span class="macro">info!</span>(<span class="string">"client test completed"</span>);
+                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, TestError&gt;(())
             }
             .instrument(<span class="macro">info_span!</span>(<span class="string">"test-client"</span>)),
         );
@@ -5593,19 +5613,23 @@
             n0_future::future::zip(server, client),
         )
         .<span class="kw">await
-        </span>.expect(<span class="string">"timeout"</span>);
-        server.unwrap();
-        client.unwrap();
+        </span>.e()<span class="question-mark">?</span>;
+        server.e()<span class="question-mark">??</span>;
+        client.e()<span class="question-mark">??</span>;
+        <span class="prelude-val">Ok</span>(())
     }
 
     <span class="doccomment">/// Test that peers are properly restored
     </span><span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>restore_peers() {
+    </span><span class="kw">async fn </span>restore_peers() -&gt; TestResult {
         <span class="kw">let </span>secret_key = SecretKey::generate(rand::thread_rng());
 
         <span class="doccomment">/// Create an endpoint for the test.
-        </span><span class="kw">async fn </span>new_endpoint(secret_key: SecretKey, nodes: <span class="prelude-ty">Option</span>&lt;Vec&lt;NodeAddr&gt;&gt;) -&gt; Endpoint {
+        </span><span class="kw">async fn </span>new_endpoint(
+            secret_key: SecretKey,
+            nodes: <span class="prelude-ty">Option</span>&lt;Vec&lt;NodeAddr&gt;&gt;,
+        ) -&gt; TestResult&lt;Endpoint&gt; {
             <span class="kw">let </span><span class="kw-2">mut </span>transport_config = quinn::TransportConfig::default();
             transport_config.max_idle_timeout(<span class="prelude-val">Some</span>(Duration::from_secs(<span class="number">10</span>).try_into().unwrap()));
 
@@ -5615,11 +5639,7 @@
             <span class="kw">if let </span><span class="prelude-val">Some</span>(nodes) = nodes {
                 builder = builder.known_nodes(nodes);
             }
-            builder
-                .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
-                .bind()
-                .<span class="kw">await
-                </span>.unwrap()
+            <span class="prelude-val">Ok</span>(builder.alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()]).bind().<span class="kw">await</span><span class="question-mark">?</span>)
         }
 
         <span class="comment">// create the peer that will be added to the peer map
@@ -5631,9 +5651,9 @@
         <span class="macro">info!</span>(<span class="string">"setting up first endpoint"</span>);
         <span class="comment">// first time, create a magic endpoint without peers but a peers file and add addressing
         // information for a peer
-        </span><span class="kw">let </span>endpoint = new_endpoint(secret_key.clone(), <span class="prelude-val">None</span>).<span class="kw">await</span>;
+        </span><span class="kw">let </span>endpoint = new_endpoint(secret_key.clone(), <span class="prelude-val">None</span>).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="macro">assert_eq!</span>(endpoint.remote_info_iter().count(), <span class="number">0</span>);
-        endpoint.add_node_addr(node_addr.clone()).unwrap();
+        endpoint.add_node_addr(node_addr.clone())<span class="question-mark">?</span>;
 
         <span class="comment">// Grab the current addrs
         </span><span class="kw">let </span>node_addrs: Vec&lt;NodeAddr&gt; = endpoint.remote_info_iter().map(Into::into).collect();
@@ -5646,15 +5666,16 @@
 
         <span class="macro">info!</span>(<span class="string">"restarting endpoint"</span>);
         <span class="comment">// now restart it and check the addressing info of the peer
-        </span><span class="kw">let </span>endpoint = new_endpoint(secret_key, <span class="prelude-val">Some</span>(node_addrs)).<span class="kw">await</span>;
-        <span class="kw">let </span>RemoteInfo { <span class="kw-2">mut </span>addrs, .. } = endpoint.remote_info(peer_id).unwrap();
+        </span><span class="kw">let </span>endpoint = new_endpoint(secret_key, <span class="prelude-val">Some</span>(node_addrs)).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>RemoteInfo { <span class="kw-2">mut </span>addrs, .. } = endpoint.remote_info(peer_id).e()<span class="question-mark">?</span>;
         <span class="kw">let </span>conn_addr = addrs.pop().unwrap().addr;
         <span class="macro">assert_eq!</span>(conn_addr, direct_addr);
+        <span class="prelude-val">Ok</span>(())
     }
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>endpoint_relay_connect_loop() {
+    </span><span class="kw">async fn </span>endpoint_relay_connect_loop() -&gt; TestResult {
         <span class="kw">let </span>start = Instant::now();
         <span class="kw">let </span>n_clients = <span class="number">5</span>;
         <span class="kw">let </span>n_chunks_per_client = <span class="number">2</span>;
@@ -5675,29 +5696,29 @@
                         .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
                         .relay_mode(RelayMode::Custom(relay_map))
                         .bind()
-                        .<span class="kw">await
-                        </span>.unwrap();
+                        .<span class="kw">await</span><span class="question-mark">?</span>;
                     <span class="kw">let </span>eps = ep.bound_sockets();
                     <span class="macro">info!</span>(me = %ep.node_id().fmt_short(), ipv4=%eps.<span class="number">0</span>, ipv6=<span class="question-mark">?</span>eps.<span class="number">1</span>, <span class="string">"server listening on"</span>);
                     <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..n_clients {
                         <span class="kw">let </span>round_start = Instant::now();
                         <span class="macro">info!</span>(<span class="string">"[server] round {i}"</span>);
-                        <span class="kw">let </span>incoming = ep.accept().<span class="kw">await</span>.unwrap();
-                        <span class="kw">let </span>conn = incoming.<span class="kw">await</span>.unwrap();
-                        <span class="kw">let </span>node_id = conn.remote_node_id().unwrap();
+                        <span class="kw">let </span>incoming = ep.accept().<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+                        <span class="kw">let </span>conn = incoming.<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+                        <span class="kw">let </span>node_id = conn.remote_node_id()<span class="question-mark">?</span>;
                         <span class="macro">info!</span>(%i, peer = %node_id.fmt_short(), <span class="string">"accepted connection"</span>);
-                        <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.accept_bi().<span class="kw">await</span>.unwrap();
+                        <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.accept_bi().<span class="kw">await</span>.e()<span class="question-mark">?</span>;
                         <span class="kw">let </span><span class="kw-2">mut </span>buf = <span class="macro">vec!</span>[<span class="number">0u8</span>; chunk_size];
                         <span class="kw">for </span>_i <span class="kw">in </span><span class="number">0</span>..n_chunks_per_client {
-                            recv.read_exact(<span class="kw-2">&amp;mut </span>buf).<span class="kw">await</span>.unwrap();
-                            send.write_all(<span class="kw-2">&amp;</span>buf).<span class="kw">await</span>.unwrap();
+                            recv.read_exact(<span class="kw-2">&amp;mut </span>buf).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+                            send.write_all(<span class="kw-2">&amp;</span>buf).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
                         }
-                        send.finish().unwrap();
-                        send.stopped().<span class="kw">await</span>.unwrap();
-                        recv.read_to_end(<span class="number">0</span>).<span class="kw">await</span>.unwrap();
+                        send.finish().e()<span class="question-mark">?</span>;
+                        send.stopped().<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+                        recv.read_to_end(<span class="number">0</span>).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
                         <span class="macro">info!</span>(%i, peer = %node_id.fmt_short(), <span class="string">"finished"</span>);
                         <span class="macro">info!</span>(<span class="string">"[server] round {i} done in {:?}"</span>, round_start.elapsed());
                     }
+                    <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, TestError&gt;(())
                 }
                 .instrument(<span class="macro">error_span!</span>(<span class="string">"server"</span>)),
             )
@@ -5717,35 +5738,35 @@
                     .relay_mode(RelayMode::Custom(relay_map))
                     .secret_key(client_secret_key)
                     .bind()
-                    .<span class="kw">await
-                    </span>.unwrap();
+                    .<span class="kw">await</span><span class="question-mark">?</span>;
                 <span class="kw">let </span>eps = ep.bound_sockets();
                 <span class="macro">info!</span>(me = %ep.node_id().fmt_short(), ipv4=%eps.<span class="number">0</span>, ipv6=<span class="question-mark">?</span>eps.<span class="number">1</span>, <span class="string">"client bound"</span>);
                 <span class="kw">let </span>node_addr = NodeAddr::new(server_node_id).with_relay_url(relay_url);
                 <span class="macro">info!</span>(to = <span class="question-mark">?</span>node_addr, <span class="string">"client connecting"</span>);
-                <span class="kw">let </span>conn = ep.connect(node_addr, TEST_ALPN).<span class="kw">await</span>.unwrap();
+                <span class="kw">let </span>conn = ep.connect(node_addr, TEST_ALPN).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
                 <span class="macro">info!</span>(<span class="string">"client connected"</span>);
-                <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.open_bi().<span class="kw">await</span>.unwrap();
+                <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.open_bi().<span class="kw">await</span>.e()<span class="question-mark">?</span>;
 
                 <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..n_chunks_per_client {
                     <span class="kw">let </span><span class="kw-2">mut </span>buf = <span class="macro">vec!</span>[i; chunk_size];
-                    send.write_all(<span class="kw-2">&amp;</span>buf).<span class="kw">await</span>.unwrap();
-                    recv.read_exact(<span class="kw-2">&amp;mut </span>buf).<span class="kw">await</span>.unwrap();
+                    send.write_all(<span class="kw-2">&amp;</span>buf).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+                    recv.read_exact(<span class="kw-2">&amp;mut </span>buf).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
                     <span class="macro">assert_eq!</span>(buf, <span class="macro">vec!</span>[i; chunk_size]);
                 }
-                send.finish().unwrap();
-                send.stopped().<span class="kw">await</span>.unwrap();
-                recv.read_to_end(<span class="number">0</span>).<span class="kw">await</span>.unwrap();
+                send.finish().e()<span class="question-mark">?</span>;
+                send.stopped().<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+                recv.read_to_end(<span class="number">0</span>).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
                 <span class="macro">info!</span>(<span class="string">"client finished"</span>);
                 ep.close().<span class="kw">await</span>;
                 <span class="macro">info!</span>(<span class="string">"client closed"</span>);
+                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, TestError&gt;(())
             }
             .instrument(<span class="macro">error_span!</span>(<span class="string">"client"</span>, %i))
-            .<span class="kw">await</span>;
+            .<span class="kw">await</span><span class="question-mark">?</span>;
             <span class="macro">info!</span>(<span class="string">"[client] round {i} done in {:?}"</span>, round_start.elapsed());
         }
 
-        server.<span class="kw">await</span>.unwrap();
+        server.<span class="kw">await</span>.e()<span class="question-mark">??</span>;
 
         <span class="comment">// We appear to have seen this being very slow at times.  So ensure we fail if this
         // test is too slow.  We're only making two connections transferring very little
@@ -5753,11 +5774,13 @@
         </span><span class="kw">if </span>start.elapsed() &gt; Duration::from_secs(<span class="number">15</span>) {
             <span class="macro">panic!</span>(<span class="string">"Test too slow, something went wrong"</span>);
         }
+
+        <span class="prelude-val">Ok</span>(())
     }
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>endpoint_send_relay_websockets() -&gt; testresult::TestResult {
+    </span><span class="kw">async fn </span>endpoint_send_relay_websockets() -&gt; TestResult {
         <span class="kw">let </span>(relay_map, _relay_url, _guard) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>client = Endpoint::builder()
             .relay_conn_protocol(Protocol::Websocket)
@@ -5775,28 +5798,28 @@
             <span class="kw">let </span>server = server.clone();
             <span class="kw">async move </span>{
                 <span class="kw">let </span><span class="prelude-val">Some</span>(conn) = server.accept().<span class="kw">await else </span>{
-                    <span class="macro">bail!</span>(<span class="string">"Expected an incoming connection"</span>);
+                    <span class="macro">snafu::whatever!</span>(<span class="string">"Expected an incoming connection"</span>);
                 };
-                <span class="kw">let </span>conn = conn.<span class="kw">await</span><span class="question-mark">?</span>;
-                <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.accept_bi().<span class="kw">await</span><span class="question-mark">?</span>;
-                <span class="kw">let </span>data = recv.read_to_end(<span class="number">1000</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-                send.write_all(<span class="kw-2">&amp;</span>data).<span class="kw">await</span><span class="question-mark">?</span>;
-                send.finish()<span class="question-mark">?</span>;
+                <span class="kw">let </span>conn = conn.<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+                <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.accept_bi().<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+                <span class="kw">let </span>data = recv.read_to_end(<span class="number">1000</span>).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+                send.write_all(<span class="kw-2">&amp;</span>data).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+                send.finish().e()<span class="question-mark">?</span>;
                 conn.closed().<span class="kw">await</span>;
 
-                <span class="prelude-val">Ok</span>(())
+                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, TestError&gt;(())
             }
         });
 
         <span class="kw">let </span>addr = server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>conn = client.connect(addr, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.open_bi().<span class="kw">await</span><span class="question-mark">?</span>;
-        send.write_all(<span class="string">b"Hello, world!"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-        send.finish()<span class="question-mark">?</span>;
-        <span class="kw">let </span>data = recv.read_to_end(<span class="number">1000</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.open_bi().<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+        send.write_all(<span class="string">b"Hello, world!"</span>).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+        send.finish().e()<span class="question-mark">?</span>;
+        <span class="kw">let </span>data = recv.read_to_end(<span class="number">1000</span>).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
         conn.close(<span class="number">0u32</span>.into(), <span class="string">b"bye!"</span>);
 
-        task.<span class="kw">await</span><span class="question-mark">??</span>;
+        task.<span class="kw">await</span>.e()<span class="question-mark">??</span>;
 
         client.close().<span class="kw">await</span>;
         server.close().<span class="kw">await</span>;
@@ -5808,17 +5831,17 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>endpoint_bidi_send_recv_x509() {
+    </span><span class="kw">async fn </span>endpoint_bidi_send_recv_x509() -&gt; TestResult {
         endpoint_bidi_send_recv(tls::Authentication::X509).<span class="kw">await
     </span>}
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>endpoint_bidi_send_recv_raw_public_key() {
+    </span><span class="kw">async fn </span>endpoint_bidi_send_recv_raw_public_key() -&gt; TestResult {
         endpoint_bidi_send_recv(tls::Authentication::RawPublicKey).<span class="kw">await
     </span>}
 
-    <span class="kw">async fn </span>endpoint_bidi_send_recv(auth: tls::Authentication) {
+    <span class="kw">async fn </span>endpoint_bidi_send_recv(auth: tls::Authentication) -&gt; TestResult {
         <span class="kw">let </span>ep1 = Endpoint::builder()
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Disabled);
@@ -5827,7 +5850,7 @@
             tls::Authentication::X509 =&gt; ep1.tls_x509(),
             tls::Authentication::RawPublicKey =&gt; ep1.tls_raw_public_keys(),
         };
-        <span class="kw">let </span>ep1 = ep1.bind().<span class="kw">await</span>.unwrap();
+        <span class="kw">let </span>ep1 = ep1.bind().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>ep2 = Endpoint::builder()
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Disabled);
@@ -5836,47 +5859,49 @@
             tls::Authentication::X509 =&gt; ep2.tls_x509(),
             tls::Authentication::RawPublicKey =&gt; ep2.tls_raw_public_keys(),
         };
-        <span class="kw">let </span>ep2 = ep2.bind().<span class="kw">await</span>.unwrap();
+        <span class="kw">let </span>ep2 = ep2.bind().<span class="kw">await</span><span class="question-mark">?</span>;
 
-        <span class="kw">let </span>ep1_nodeaddr = ep1.node_addr().<span class="kw">await</span>.unwrap();
-        <span class="kw">let </span>ep2_nodeaddr = ep2.node_addr().<span class="kw">await</span>.unwrap();
-        ep1.add_node_addr(ep2_nodeaddr.clone()).unwrap();
-        ep2.add_node_addr(ep1_nodeaddr.clone()).unwrap();
+        <span class="kw">let </span>ep1_nodeaddr = ep1.node_addr().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>ep2_nodeaddr = ep2.node_addr().<span class="kw">await</span><span class="question-mark">?</span>;
+        ep1.add_node_addr(ep2_nodeaddr.clone())<span class="question-mark">?</span>;
+        ep2.add_node_addr(ep1_nodeaddr.clone())<span class="question-mark">?</span>;
         <span class="kw">let </span>ep1_nodeid = ep1.node_id();
         <span class="kw">let </span>ep2_nodeid = ep2.node_id();
         <span class="macro">eprintln!</span>(<span class="string">"node id 1 {ep1_nodeid}"</span>);
         <span class="macro">eprintln!</span>(<span class="string">"node id 2 {ep2_nodeid}"</span>);
 
-        <span class="kw">async fn </span>connect_hello(ep: Endpoint, dst: NodeAddr) {
-            <span class="kw">let </span>conn = ep.connect(dst, TEST_ALPN).<span class="kw">await</span>.unwrap();
-            <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.open_bi().<span class="kw">await</span>.unwrap();
+        <span class="kw">async fn </span>connect_hello(ep: Endpoint, dst: NodeAddr) -&gt; TestResult {
+            <span class="kw">let </span>conn = ep.connect(dst, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.open_bi().<span class="kw">await</span>.e()<span class="question-mark">?</span>;
             <span class="macro">info!</span>(<span class="string">"sending hello"</span>);
-            send.write_all(<span class="string">b"hello"</span>).<span class="kw">await</span>.unwrap();
-            send.finish().unwrap();
+            send.write_all(<span class="string">b"hello"</span>).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+            send.finish().e()<span class="question-mark">?</span>;
             <span class="macro">info!</span>(<span class="string">"receiving world"</span>);
-            <span class="kw">let </span>m = recv.read_to_end(<span class="number">100</span>).<span class="kw">await</span>.unwrap();
+            <span class="kw">let </span>m = recv.read_to_end(<span class="number">100</span>).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
             <span class="macro">assert_eq!</span>(m, <span class="string">b"world"</span>);
             conn.close(<span class="number">1u8</span>.into(), <span class="string">b"done"</span>);
+            <span class="prelude-val">Ok</span>(())
         }
 
-        <span class="kw">async fn </span>accept_world(ep: Endpoint, src: NodeId) {
-            <span class="kw">let </span>incoming = ep.accept().<span class="kw">await</span>.unwrap();
-            <span class="kw">let </span><span class="kw-2">mut </span>iconn = incoming.accept().unwrap();
-            <span class="kw">let </span>alpn = iconn.alpn().<span class="kw">await</span>.unwrap();
-            <span class="kw">let </span>conn = iconn.<span class="kw">await</span>.unwrap();
-            <span class="kw">let </span>node_id = conn.remote_node_id().unwrap();
+        <span class="kw">async fn </span>accept_world(ep: Endpoint, src: NodeId) -&gt; TestResult {
+            <span class="kw">let </span>incoming = ep.accept().<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+            <span class="kw">let </span><span class="kw-2">mut </span>iconn = incoming.accept().e()<span class="question-mark">?</span>;
+            <span class="kw">let </span>alpn = iconn.alpn().<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="kw">let </span>conn = iconn.<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+            <span class="kw">let </span>node_id = conn.remote_node_id()<span class="question-mark">?</span>;
             <span class="macro">assert_eq!</span>(node_id, src);
             <span class="macro">assert_eq!</span>(alpn, TEST_ALPN);
-            <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.accept_bi().<span class="kw">await</span>.unwrap();
+            <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.accept_bi().<span class="kw">await</span>.e()<span class="question-mark">?</span>;
             <span class="macro">info!</span>(<span class="string">"receiving hello"</span>);
-            <span class="kw">let </span>m = recv.read_to_end(<span class="number">100</span>).<span class="kw">await</span>.unwrap();
+            <span class="kw">let </span>m = recv.read_to_end(<span class="number">100</span>).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
             <span class="macro">assert_eq!</span>(m, <span class="string">b"hello"</span>);
             <span class="macro">info!</span>(<span class="string">"sending hello"</span>);
-            send.write_all(<span class="string">b"world"</span>).<span class="kw">await</span>.unwrap();
-            send.finish().unwrap();
+            send.write_all(<span class="string">b"world"</span>).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+            send.finish().e()<span class="question-mark">?</span>;
             <span class="kw">match </span>conn.closed().<span class="kw">await </span>{
                 ConnectionError::ApplicationClosed(closed) =&gt; {
                     <span class="macro">assert_eq!</span>(closed.error_code, <span class="number">1u8</span>.into());
+                    <span class="prelude-val">Ok</span>(())
                 }
                 <span class="kw">_ </span>=&gt; <span class="macro">panic!</span>(<span class="string">"wrong close error"</span>),
             }
@@ -5907,17 +5932,19 @@
             ),
         ));
 
-        p1_accept.<span class="kw">await</span>.unwrap();
-        p2_accept.<span class="kw">await</span>.unwrap();
-        p1_connect.<span class="kw">await</span>.unwrap();
-        p2_connect.<span class="kw">await</span>.unwrap();
+        p1_accept.<span class="kw">await</span>.e()<span class="question-mark">??</span>;
+        p2_accept.<span class="kw">await</span>.e()<span class="question-mark">??</span>;
+        p1_connect.<span class="kw">await</span>.e()<span class="question-mark">??</span>;
+        p2_connect.<span class="kw">await</span>.e()<span class="question-mark">??</span>;
+
+        <span class="prelude-val">Ok</span>(())
     }
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>endpoint_conn_type_stream() {
+    </span><span class="kw">async fn </span>endpoint_conn_type_stream() -&gt; TestResult {
         <span class="kw">const </span>TIMEOUT: Duration = std::time::Duration::from_secs(<span class="number">15</span>);
-        <span class="kw">let </span>(relay_map, _relay_url, _relay_guard) = run_relay_server().<span class="kw">await</span>.unwrap();
+        <span class="kw">let </span>(relay_map, _relay_url, _relay_guard) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">42</span>);
         <span class="kw">let </span>ep1_secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
         <span class="kw">let </span>ep2_secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
@@ -5927,19 +5954,17 @@
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .bind()
-            .<span class="kw">await
-            </span>.unwrap();
+            .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>ep2 = Endpoint::builder()
             .secret_key(ep2_secret_key)
             .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Custom(relay_map))
             .bind()
-            .<span class="kw">await
-            </span>.unwrap();
+            .<span class="kw">await</span><span class="question-mark">?</span>;
 
-        <span class="kw">async fn </span>handle_direct_conn(ep: <span class="kw-2">&amp;</span>Endpoint, node_id: NodeId) -&gt; anyhow::Result&lt;()&gt; {
-            <span class="kw">let </span><span class="kw-2">mut </span>stream = ep.conn_type(node_id).expect(<span class="string">"missing conn type"</span>).stream();
+        <span class="kw">async fn </span>handle_direct_conn(ep: <span class="kw-2">&amp;</span>Endpoint, node_id: NodeId) -&gt; TestResult {
+            <span class="kw">let </span><span class="kw-2">mut </span>stream = ep.conn_type(node_id).context(<span class="string">"missing conn type"</span>)<span class="question-mark">?</span>.stream();
             <span class="kw">let </span>src = ep.node_id().fmt_short();
             <span class="kw">let </span>dst = node_id.fmt_short();
             <span class="kw">while let </span><span class="prelude-val">Some</span>(conn_type) = stream.next().<span class="kw">await </span>{
@@ -5948,15 +5973,15 @@
                     <span class="kw">return </span><span class="prelude-val">Ok</span>(());
                 }
             }
-            <span class="macro">anyhow::bail!</span>(<span class="string">"conn_type stream ended before `ConnectionType::Direct`"</span>);
+            <span class="macro">snafu::whatever!</span>(<span class="string">"conn_type stream ended before `ConnectionType::Direct`"</span>);
         }
 
-        <span class="kw">async fn </span>accept(ep: <span class="kw-2">&amp;</span>Endpoint) -&gt; NodeId {
-            <span class="kw">let </span>incoming = ep.accept().<span class="kw">await</span>.unwrap();
-            <span class="kw">let </span>conn = incoming.<span class="kw">await</span>.unwrap();
-            <span class="kw">let </span>node_id = conn.remote_node_id().unwrap();
+        <span class="kw">async fn </span>accept(ep: <span class="kw-2">&amp;</span>Endpoint) -&gt; TestResult&lt;NodeId&gt; {
+            <span class="kw">let </span>incoming = ep.accept().<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+            <span class="kw">let </span>conn = incoming.<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+            <span class="kw">let </span>node_id = conn.remote_node_id()<span class="question-mark">?</span>;
             <span class="macro">tracing::info!</span>(node_id=%node_id.fmt_short(), <span class="string">"accepted connection"</span>);
-            node_id
+            <span class="prelude-val">Ok</span>(node_id)
         }
 
         <span class="kw">let </span>ep1_nodeid = ep1.node_id();
@@ -5970,46 +5995,47 @@
         <span class="macro">tracing::info!</span>(<span class="string">"node id 2 {ep2_nodeid}"</span>);
 
         <span class="kw">let </span>ep1_side = <span class="kw">async move </span>{
-            accept(<span class="kw-2">&amp;</span>ep1).<span class="kw">await</span>;
+            accept(<span class="kw-2">&amp;</span>ep1).<span class="kw">await</span><span class="question-mark">?</span>;
             handle_direct_conn(<span class="kw-2">&amp;</span>ep1, ep2_nodeid).<span class="kw">await
         </span>};
 
         <span class="kw">let </span>ep2_side = <span class="kw">async move </span>{
-            ep2.connect(ep1_nodeaddr, TEST_ALPN).<span class="kw">await</span>.unwrap();
+            ep2.connect(ep1_nodeaddr, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
             handle_direct_conn(<span class="kw-2">&amp;</span>ep2, ep1_nodeid).<span class="kw">await
         </span>};
 
         <span class="kw">let </span>res_ep1 = tokio::spawn(tokio::time::timeout(TIMEOUT, ep1_side));
         <span class="kw">let </span>res_ep2 = tokio::spawn(tokio::time::timeout(TIMEOUT, ep2_side));
 
-        <span class="kw">let </span>(r1, r2) = <span class="macro">tokio::try_join!</span>(res_ep1, res_ep2).unwrap();
-        r1.expect(<span class="string">"ep1 timeout"</span>).unwrap();
-        r2.expect(<span class="string">"ep2 timeout"</span>).unwrap();
+        <span class="kw">let </span>(r1, r2) = <span class="macro">tokio::try_join!</span>(res_ep1, res_ep2).e()<span class="question-mark">?</span>;
+        r1.e()<span class="question-mark">??</span>;
+        r2.e()<span class="question-mark">??</span>;
+
+        <span class="prelude-val">Ok</span>(())
     }
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_direct_addresses_no_stun_relay() {
-        <span class="kw">let </span>(relay_map, <span class="kw">_</span>, _guard) = run_relay_server_with(<span class="prelude-val">None</span>, <span class="bool-val">false</span>).<span class="kw">await</span>.unwrap();
+    </span><span class="kw">async fn </span>test_direct_addresses_no_stun_relay() -&gt; TestResult {
+        <span class="kw">let </span>(relay_map, <span class="kw">_</span>, _guard) = run_relay_server_with(<span class="prelude-val">None</span>, <span class="bool-val">false</span>).<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="kw">let </span>ep = Endpoint::builder()
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Custom(relay_map))
             .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
             .bind()
-            .<span class="kw">await
-            </span>.unwrap();
+            .<span class="kw">await</span><span class="question-mark">?</span>;
 
         tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), ep.direct_addresses().initialized())
             .<span class="kw">await
-            </span>.unwrap()
-            .unwrap();
+            </span>.e()<span class="question-mark">??</span>;
+        <span class="prelude-val">Ok</span>(())
     }
 
     <span class="kw">async fn </span>spawn_0rtt_server(
         secret_key: SecretKey,
         log_span: tracing::Span,
-    ) -&gt; anyhow::Result&lt;Endpoint&gt; {
+    ) -&gt; TestResult&lt;Endpoint&gt; {
         <span class="kw">let </span>server = Endpoint::builder()
             .secret_key(secret_key)
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
@@ -6023,7 +6049,7 @@
             <span class="kw">let </span>server = server.clone();
             <span class="kw">async move </span>{
                 <span class="kw">while let </span><span class="prelude-val">Some</span>(incoming) = server.accept().<span class="kw">await </span>{
-                    <span class="kw">let </span>connecting = incoming.accept()<span class="question-mark">?</span>;
+                    <span class="kw">let </span>connecting = incoming.accept().e()<span class="question-mark">?</span>;
                     <span class="kw">let </span>conn = <span class="kw">match </span>connecting.into_0rtt() {
                         <span class="prelude-val">Ok</span>((conn, <span class="kw">_</span>)) =&gt; {
                             <span class="macro">info!</span>(<span class="string">"0rtt accepted"</span>);
@@ -6031,18 +6057,18 @@
                         }
                         <span class="prelude-val">Err</span>(connecting) =&gt; {
                             <span class="macro">info!</span>(<span class="string">"0rtt denied"</span>);
-                            connecting.<span class="kw">await</span><span class="question-mark">?
+                            connecting.<span class="kw">await</span>.e()<span class="question-mark">?
                         </span>}
                     };
-                    <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.accept_bi().<span class="kw">await</span><span class="question-mark">?</span>;
-                    <span class="kw">let </span>data = recv.read_to_end(<span class="number">10_000_000</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-                    send.write_all(<span class="kw-2">&amp;</span>data).<span class="kw">await</span><span class="question-mark">?</span>;
-                    send.finish()<span class="question-mark">?</span>;
+                    <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.accept_bi().<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+                    <span class="kw">let </span>data = recv.read_to_end(<span class="number">10_000_000</span>).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+                    send.write_all(<span class="kw-2">&amp;</span>data).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+                    send.finish().e()<span class="question-mark">?</span>;
 
                     <span class="comment">// Stay alive until the other side closes the connection.
                     </span>conn.closed().<span class="kw">await</span>;
                 }
-                anyhow::Ok(())
+                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, TestError&gt;(())
             }
             .instrument(log_span)
         });
@@ -6053,18 +6079,19 @@
     <span class="kw">async fn </span>connect_client_0rtt_expect_err(
         client: <span class="kw-2">&amp;</span>Endpoint,
         server_addr: NodeAddr,
-    ) -&gt; anyhow::Result&lt;()&gt; {
+    ) -&gt; TestResult {
         <span class="kw">let </span>conn = client
             .connect_with_opts(server_addr, TEST_ALPN, ConnectOptions::new())
             .<span class="kw">await</span><span class="question-mark">?
             </span>.into_0rtt()
             .expect_err(<span class="string">"expected 0rtt to fail"</span>)
-            .<span class="kw">await</span><span class="question-mark">?</span>;
+            .<span class="kw">await
+            </span>.e()<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.open_bi().<span class="kw">await</span><span class="question-mark">?</span>;
-        send.write_all(<span class="string">b"hello"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-        send.finish()<span class="question-mark">?</span>;
-        <span class="kw">let </span>received = recv.read_to_end(<span class="number">1_000</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.open_bi().<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+        send.write_all(<span class="string">b"hello"</span>).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+        send.finish().e()<span class="question-mark">?</span>;
+        <span class="kw">let </span>received = recv.read_to_end(<span class="number">1_000</span>).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
         <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>received, <span class="string">b"hello"</span>);
         conn.close(<span class="number">0u32</span>.into(), <span class="string">b"thx"</span>);
         <span class="prelude-val">Ok</span>(())
@@ -6074,18 +6101,18 @@
         client: <span class="kw-2">&amp;</span>Endpoint,
         server_addr: NodeAddr,
         expect_server_accepts: bool,
-    ) -&gt; anyhow::Result&lt;()&gt; {
+    ) -&gt; TestResult {
         <span class="kw">let </span>(conn, accepted_0rtt) = client
             .connect_with_opts(server_addr, TEST_ALPN, ConnectOptions::new())
             .<span class="kw">await</span><span class="question-mark">?
             </span>.into_0rtt()
-            .map_err(|<span class="kw">_</span>| <span class="string">"0rtt failed"</span>)
-            .unwrap();
+            .ok()
+            .e()<span class="question-mark">?</span>;
 
         <span class="comment">// This is how we send data in 0-RTT:
-        </span><span class="kw">let </span>(<span class="kw-2">mut </span>send, recv) = conn.open_bi().<span class="kw">await</span><span class="question-mark">?</span>;
-        send.write_all(<span class="string">b"hello"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-        send.finish()<span class="question-mark">?</span>;
+        </span><span class="kw">let </span>(<span class="kw-2">mut </span>send, recv) = conn.open_bi().<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+        send.write_all(<span class="string">b"hello"</span>).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+        send.finish().e()<span class="question-mark">?</span>;
         <span class="comment">// When this resolves, we've gotten a response from the server about whether the 0-RTT data above was accepted:
         </span><span class="kw">let </span>accepted = accepted_0rtt.<span class="kw">await</span>;
         <span class="macro">assert_eq!</span>(accepted, expect_server_accepts);
@@ -6093,12 +6120,12 @@
             recv
         } <span class="kw">else </span>{
             <span class="comment">// in this case we need to re-send data by re-creating the connection.
-            </span><span class="kw">let </span>(<span class="kw-2">mut </span>send, recv) = conn.open_bi().<span class="kw">await</span><span class="question-mark">?</span>;
-            send.write_all(<span class="string">b"hello"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-            send.finish()<span class="question-mark">?</span>;
+            </span><span class="kw">let </span>(<span class="kw-2">mut </span>send, recv) = conn.open_bi().<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+            send.write_all(<span class="string">b"hello"</span>).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+            send.finish().e()<span class="question-mark">?</span>;
             recv
         };
-        <span class="kw">let </span>received = recv.read_to_end(<span class="number">1_000</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>received = recv.read_to_end(<span class="number">1_000</span>).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
         <span class="macro">assert_eq!</span>(<span class="kw-2">&amp;</span>received, <span class="string">b"hello"</span>);
         conn.close(<span class="number">0u32</span>.into(), <span class="string">b"thx"</span>);
         <span class="prelude-val">Ok</span>(())
@@ -6193,7 +6220,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>graceful_close() -&gt; testresult::TestResult {
+    </span><span class="kw">async fn </span>graceful_close() -&gt; TestResult {
         <span class="kw">let </span>client = Endpoint::builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>server = Endpoint::builder()
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
@@ -6201,25 +6228,25 @@
             .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>server_addr = server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>server_task = tokio::spawn(<span class="kw">async move </span>{
-            <span class="kw">let </span>incoming = server.accept().<span class="kw">await</span>.unwrap();
-            <span class="kw">let </span>conn = incoming.<span class="kw">await</span><span class="question-mark">?</span>;
-            <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.accept_bi().<span class="kw">await</span><span class="question-mark">?</span>;
-            <span class="kw">let </span>msg = recv.read_to_end(<span class="number">1_000</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-            send.write_all(<span class="kw-2">&amp;</span>msg).<span class="kw">await</span><span class="question-mark">?</span>;
-            send.finish()<span class="question-mark">?</span>;
+            <span class="kw">let </span>incoming = server.accept().<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+            <span class="kw">let </span>conn = incoming.<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+            <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.accept_bi().<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+            <span class="kw">let </span>msg = recv.read_to_end(<span class="number">1_000</span>).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+            send.write_all(<span class="kw-2">&amp;</span>msg).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+            send.finish().e()<span class="question-mark">?</span>;
             <span class="kw">let </span>close_reason = conn.closed().<span class="kw">await</span>;
-            testresult::TestResult::Ok(close_reason)
+            <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, TestError&gt;(close_reason)
         });
 
         <span class="kw">let </span>conn = client.connect(server_addr, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.open_bi().<span class="kw">await</span><span class="question-mark">?</span>;
-        send.write_all(<span class="string">b"Hello, world!"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-        send.finish()<span class="question-mark">?</span>;
-        recv.read_to_end(<span class="number">1_000</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.open_bi().<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+        send.write_all(<span class="string">b"Hello, world!"</span>).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+        send.finish().e()<span class="question-mark">?</span>;
+        recv.read_to_end(<span class="number">1_000</span>).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
         conn.close(<span class="number">42u32</span>.into(), <span class="string">b"thanks, bye!"</span>);
         client.close().<span class="kw">await</span>;
 
-        <span class="kw">let </span>close_err = server_task.<span class="kw">await</span><span class="question-mark">??</span>;
+        <span class="kw">let </span>close_err = server_task.<span class="kw">await</span>.e()<span class="question-mark">??</span>;
         <span class="kw">let </span>ConnectionError::ApplicationClosed(app_close) = close_err <span class="kw">else </span>{
             <span class="macro">panic!</span>(<span class="string">"Unexpected close reason: {close_err:?}"</span>);
         };
@@ -6250,24 +6277,19 @@
             .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>server_addr = server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>server_task = tokio::task::spawn(<span class="kw">async move </span>{
-            <span class="kw">let </span>conn = server
-                .accept()
-                .<span class="kw">await
-                </span>.context(<span class="string">"expected conn"</span>)<span class="question-mark">?
-                </span>.accept()<span class="question-mark">?
-                </span>.<span class="kw">await</span><span class="question-mark">?</span>;
-            <span class="kw">let </span><span class="kw-2">mut </span>uni = conn.accept_uni().<span class="kw">await</span><span class="question-mark">?</span>;
-            uni.read_to_end(<span class="number">10</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="kw">let </span>conn = server.accept().<span class="kw">await</span>.e()<span class="question-mark">?</span>.accept().e()<span class="question-mark">?</span>.<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+            <span class="kw">let </span><span class="kw-2">mut </span>uni = conn.accept_uni().<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+            uni.read_to_end(<span class="number">10</span>).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
             drop(conn);
-            anyhow::Ok(server)
+            <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, TestError&gt;(server)
         });
         <span class="kw">let </span>conn = client.connect(server_addr, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span><span class="kw-2">mut </span>uni = conn.open_uni().<span class="kw">await</span><span class="question-mark">?</span>;
-        uni.write_all(<span class="string">b"helloworld"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-        uni.finish()<span class="question-mark">?</span>;
+        <span class="kw">let </span><span class="kw-2">mut </span>uni = conn.open_uni().<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+        uni.write_all(<span class="string">b"helloworld"</span>).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+        uni.finish().e()<span class="question-mark">?</span>;
         conn.closed().<span class="kw">await</span>;
         drop(conn);
-        <span class="kw">let </span>server = server_task.<span class="kw">await</span><span class="question-mark">??</span>;
+        <span class="kw">let </span>server = server_task.<span class="kw">await</span>.e()<span class="question-mark">??</span>;
 
         <span class="kw">let </span>m = client.metrics();
         <span class="macro">assert_eq!</span>(m.magicsock.num_direct_conns_added.get(), <span class="number">1</span>);
