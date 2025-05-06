@@ -470,7 +470,7 @@ impl<P: ProtocolHandler + Clone> ProtocolHandler for AccessLimit<P> {
 
 #[cfg(test)]
 mod tests {
-    use testresult::TestResult;
+    use n0_snafu::{TestResult, TestResultExt};
 
     use super::*;
 
@@ -482,7 +482,7 @@ mod tests {
         assert!(!router.is_shutdown());
         assert!(!endpoint.is_closed());
 
-        router.shutdown().await?;
+        router.shutdown().await.e()?;
 
         assert!(router.is_shutdown());
         assert!(endpoint.is_closed());
@@ -526,11 +526,11 @@ mod tests {
         println!("connecting");
         let conn = e2.connect(addr1, ECHO_ALPN).await?;
 
-        let (_send, mut recv) = conn.open_bi().await?;
+        let (_send, mut recv) = conn.open_bi().await.e()?;
         let response = recv.read_to_end(1000).await.unwrap_err();
         assert!(format!("{:#?}", response).contains("not allowed"));
 
-        r1.shutdown().await?;
+        r1.shutdown().await.e()?;
         e2.close().await;
 
         Ok(())

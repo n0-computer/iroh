@@ -3862,8 +3862,8 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_regression_network_change_rebind_wakes_connection_driver(
-    ) -> testresult::TestResult {
+    async fn test_regression_network_change_rebind_wakes_connection_driver() -> n0_snafu::TestResult
+    {
         let m1 = MagicStack::new(RelayMode::Disabled).await;
         let m2 = MagicStack::new(RelayMode::Disabled).await;
 
@@ -3878,11 +3878,11 @@ mod tests {
             async move {
                 while let Some(incoming) = endpoint.accept().await {
                     println!("Incoming first conn!");
-                    let conn = incoming.await?;
+                    let conn = incoming.await.e()?;
                     conn.closed().await;
                 }
 
-                testresult::TestResult::Ok(())
+                Ok::<_, n0_snafu::TestError>(())
             }
         }));
 

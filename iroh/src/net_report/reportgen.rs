@@ -1602,7 +1602,7 @@ impl<T: Future + Unpin> Future for MaybeFuture<T> {
 mod tests {
     use std::net::{Ipv4Addr, Ipv6Addr};
 
-    use testresult::TestResult;
+    use n0_snafu::{TestResult, TestResultExt};
     use tracing_test::traced_test;
 
     use super::{super::test_utils, *};
@@ -1864,7 +1864,12 @@ mod tests {
 
         assert!(latency > Duration::ZERO);
 
-        let relay_url_ip = relay.url.host_str().unwrap().parse::<std::net::IpAddr>()?;
+        let relay_url_ip = relay
+            .url
+            .host_str()
+            .unwrap()
+            .parse::<std::net::IpAddr>()
+            .e()?;
         assert_eq!(ip, relay_url_ip);
         Ok(())
     }
@@ -1874,8 +1879,8 @@ mod tests {
     async fn test_quic_probe() -> TestResult {
         let (server, relay) = test_utils::relay().await;
         let client_config = iroh_relay::client::make_dangerous_client_config();
-        let ep = quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0))?;
-        let client_addr = ep.local_addr()?;
+        let ep = quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0)).e()?;
+        let client_addr = ep.local_addr().e()?;
         let quic_addr_disc = QuicConfig {
             ep: ep.clone(),
             client_config,

@@ -9,7 +9,7 @@
 //!
 //! ```no_run
 //! # use iroh::{Endpoint, NodeAddr};
-//! # async fn wrapper() -> testresult::TestResult {
+//! # async fn wrapper() -> n0_snafu::TestResult {
 //! let addr: NodeAddr = todo!();
 //! let ep = Endpoint::builder().bind().await?;
 //! let conn = ep.connect(addr, b"my-alpn").await?;
@@ -23,7 +23,7 @@
 //!
 //! ```no_run
 //! # use iroh::{Endpoint, NodeAddr};
-//! # async fn wrapper() -> testresult::TestResult {
+//! # async fn wrapper() -> n0_snafu::TestResult {
 //! let ep = Endpoint::builder()
 //!     .alpns(vec![b"my-alpn".to_vec()])
 //!     .bind()

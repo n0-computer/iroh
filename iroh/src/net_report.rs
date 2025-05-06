@@ -952,8 +952,8 @@ mod tests {
     use std::net::Ipv4Addr;
 
     use bytes::BytesMut;
+    use n0_snafu::{TestResult, TestResultExt};
     use netwatch::IpFamily;
-    use testresult::TestResult;
     use tokio_util::sync::CancellationToken;
     use tracing::info;
     use tracing_test::traced_test;
@@ -1099,7 +1099,7 @@ mod tests {
     #[traced_test]
     async fn test_basic() -> TestResult {
         let (stun_addr, stun_stats, _cleanup_guard) =
-            stun_utils::serve("127.0.0.1".parse().unwrap()).await?;
+            stun_utils::serve("127.0.0.1".parse().unwrap()).await.e()?;
 
         let resolver = dns::tests::resolver();
         let mut client = Client::new(None, resolver.clone(), None, Default::default());
@@ -1143,8 +1143,8 @@ mod tests {
     async fn test_udp_blocked() -> TestResult {
         // Create a "STUN server", which will never respond to anything.  This is how UDP to
         // the STUN server being blocked will look like from the client's perspective.
-        let blackhole = tokio::net::UdpSocket::bind("127.0.0.1:0").await?;
-        let stun_addr = blackhole.local_addr()?;
+        let blackhole = tokio::net::UdpSocket::bind("127.0.0.1:0").await.e()?;
+        let stun_addr = blackhole.local_addr().e()?;
         let dm = stun_utils::relay_map_of_opts([(stun_addr, false)].into_iter());
 
         // Now create a client and generate a report.
@@ -1382,7 +1382,7 @@ mod tests {
         // can easily use to identify the packet.
 
         // Setup STUN server and create relay_map.
-        let (stun_addr, _stun_stats, _done) = stun_utils::serve_v4().await?;
+        let (stun_addr, _stun_stats, _done) = stun_utils::serve_v4().await.e()?;
         let dm = stun_utils::relay_map_of([stun_addr].into_iter());
         dbg!(&dm);
 
@@ -1396,7 +1396,7 @@ mod tests {
         // it to this socket, which is forwarnding it back to our net_report client, because
         // this dumb implementation just forwards anything even if it would be garbage.
         // Thus hairpinning detection will declare hairpinning to work.
-        let sock = UdpSocket::bind_local(netwatch::IpFamily::V4, 0)?;
+        let sock = UdpSocket::bind_local(netwatch::IpFamily::V4, 0).e()?;
         let sock = Arc::new(sock);
         info!(addr=?sock.local_addr().unwrap(), "Using local addr");
         let task = {

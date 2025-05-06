@@ -3052,7 +3052,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn metrics_smoke() -> testresult::TestResult {
+    async fn metrics_smoke() -> TestResult {
         use iroh_metrics::Registry;
 
         let secret_key = SecretKey::from_bytes(&[0u8; 32]);
@@ -3119,7 +3119,7 @@ mod tests {
         accept_alpns: Vec<Vec<u8>>,
         primary_connect_alpn: &[u8],
         secondary_connect_alpns: Vec<Vec<u8>>,
-    ) -> testresult::TestResult<Option<Vec<u8>>> {
+    ) -> TestResult<Option<Vec<u8>>> {
         let client = Endpoint::builder()
             .relay_mode(RelayMode::Disabled)
             .bind()
@@ -3133,10 +3133,10 @@ mod tests {
         let server_task = tokio::spawn({
             let server = server.clone();
             async move {
-                let incoming = server.accept().await.unwrap();
-                let conn = incoming.await?;
+                let incoming = server.accept().await.e()?;
+                let conn = incoming.await.e()?;
                 conn.close(0u32.into(), b"bye!");
-                testresult::TestResult::Ok(conn.alpn())
+                Ok::<_, n0_snafu::TestError>(conn.alpn())
             }
         });
 
@@ -3147,13 +3147,13 @@ mod tests {
                 ConnectOptions::new().with_additional_alpns(secondary_connect_alpns),
             )
             .await?;
-        let conn = conn.await?;
+        let conn = conn.await.e()?;
         let client_alpn = conn.alpn();
         conn.closed().await;
         client.close().await;
         server.close().await;
 
-        let server_alpn = server_task.await??;
+        let server_alpn = server_task.await.e()??;
 
         assert_eq!(client_alpn, server_alpn);
 
@@ -3162,7 +3162,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn connect_multiple_alpn_negotiated() -> testresult::TestResult {
+    async fn connect_multiple_alpn_negotiated() -> TestResult {
         const ALPN_ONE: &[u8] = b"alpn/1";
         const ALPN_TWO: &[u8] = b"alpn/2";
 

@@ -322,7 +322,7 @@ mod tests {
     use std::collections::BTreeSet;
 
     use iroh_base::RelayUrl;
-    use testresult::TestResult;
+    use n0_snafu::{TestResult, TestResultExt};
     use tracing_test::traced_test;
 
     use super::*;
@@ -333,17 +333,18 @@ mod tests {
     async fn dht_discovery_smoke() -> TestResult {
         let ep = crate::Endpoint::builder().bind().await?;
         let secret = ep.secret_key().clone();
-        let testnet = pkarr::mainline::Testnet::new_async(3).await?;
+        let testnet = pkarr::mainline::Testnet::new_async(3).await.e()?;
         let client = pkarr::Client::builder()
             .dht(|builder| builder.bootstrap(&testnet.bootstrap))
-            .build()?;
+            .build()
+            .e()?;
         let discovery = DhtDiscovery::builder()
             .secret_key(secret.clone())
             .initial_publish_delay(Duration::ZERO)
             .client(client)
             .build()?;
 
-        let relay_url: RelayUrl = Url::parse("https://example.com")?.into();
+        let relay_url: RelayUrl = Url::parse("https://example.com").e()?.into();
 
         let data = NodeData::default().with_relay_url(Some(relay_url.clone()));
         discovery.publish(&data);

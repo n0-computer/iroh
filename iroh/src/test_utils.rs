@@ -529,7 +529,7 @@ pub(crate) mod pkarr_dns_state {
     #[cfg(test)]
     mod tests {
         use iroh_base::NodeId;
-        use testresult::TestResult;
+        use n0_snafu::TestResult;
 
         #[test]
         fn test_node_id_from_domain_name() -> TestResult {
