@@ -1186,7 +1186,7 @@ impl Endpoint {
     /// ```rust
     /// # use std::collections::BTreeMap;
     /// # use iroh::endpoint::Endpoint;
-    /// # async fn wrapper() -> testresult::TestResult {
+    /// # async fn wrapper() -> n0_snafu::TestResult {
     /// let endpoint = Endpoint::builder().bind().await?;
     /// assert_eq!(endpoint.metrics().magicsock.recv_datagrams.get(), 0);
     /// # Ok(())
@@ -1204,7 +1204,7 @@ impl Endpoint {
     /// # use std::collections::BTreeMap;
     /// # use iroh_metrics::{Metric, MetricsGroup, MetricValue, MetricsGroupSet};
     /// # use iroh::endpoint::Endpoint;
-    /// # async fn wrapper() -> testresult::TestResult {
+    /// # async fn wrapper() -> n0_snafu::TestResult {
     /// let endpoint = Endpoint::builder().bind().await?;
     /// let metrics: BTreeMap<String, MetricValue> = endpoint
     ///     .metrics()
@@ -1227,7 +1227,7 @@ impl Endpoint {
     /// ```rust
     /// # use iroh_metrics::{Registry, MetricsSource};
     /// # use iroh::endpoint::Endpoint;
-    /// # async fn wrapper() -> testresult::TestResult {
+    /// # async fn wrapper() -> n0_snafu::TestResult {
     /// let endpoint = Endpoint::builder().bind().await?;
     /// let mut registry = Registry::default();
     /// registry.register_all(endpoint.metrics());
@@ -1250,7 +1250,7 @@ impl Endpoint {
     /// # use std::{sync::{Arc, RwLock}, time::Duration};
     /// # use iroh_metrics::{Registry, MetricsSource};
     /// # use iroh::endpoint::Endpoint;
-    /// # async fn wrapper() -> testresult::TestResult {
+    /// # async fn wrapper() -> n0_snafu::TestResult {
     /// // Create a registry, wrapped in a read-write lock so that we can register and serve
     /// // the metrics independently.
     /// let registry = Arc::new(RwLock::new(Registry::default()));
@@ -2270,31 +2270,39 @@ fn is_cgi() -> bool {
 // https://github.com/n0-computer/iroh/issues/1183
 #[cfg(test)]
 mod tests {
-    use std::time::Instant;
+    use std::{
+        net::SocketAddr,
+        time::{Duration, Instant},
+    };
 
-    use anyhow::{bail, Context};
+    use iroh_base::{NodeAddr, NodeId, SecretKey};
     use iroh_metrics::MetricsSource;
     use iroh_relay::http::Protocol;
     use n0_future::StreamExt;
+    use n0_snafu::{TestError, TestResult, TestResultExt};
+    use quinn::ConnectionError;
     use rand::SeedableRng;
-    use testresult::TestResult;
     use tracing::{error_span, info, info_span, Instrument};
     use tracing_test::traced_test;
 
-    use super::*;
-    use crate::test_utils::{run_relay_server, run_relay_server_with};
+    use super::Endpoint;
+    use crate::{
+        endpoint::{ConnectOptions, ConnectionType, RemoteInfo},
+        test_utils::{run_relay_server, run_relay_server_with},
+        tls, RelayMode,
+    };
 
     const TEST_ALPN: &[u8] = b"n0/iroh/test";
 
     #[tokio::test]
     #[traced_test]
-    async fn test_connect_self() {
+    async fn test_connect_self() -> TestResult {
         let ep = Endpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
             .await
-            .unwrap();
-        let my_addr = ep.node_addr().await.unwrap();
+            .context("bind")?;
+        let my_addr = ep.node_addr().await?;
         let res = ep.connect(my_addr.clone(), TEST_ALPN).await;
         assert!(res.is_err());
         let err = res.err().unwrap();
@@ -2304,12 +2312,13 @@ mod tests {
         assert!(res.is_err());
         let err = res.err().unwrap();
         assert!(err.to_string().starts_with("Adding our own address"));
+        Ok(())
     }
 
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_connect_close() {
-        let (relay_map, relay_url, _guard) = run_relay_server().await.unwrap();
+    async fn endpoint_connect_close() -> TestResult {
+        let (relay_map, relay_url, _guard) = run_relay_server().await?;
         let server_secret_key = SecretKey::generate(rand::thread_rng());
         let server_peer_id = server_secret_key.public();
 
@@ -2323,14 +2332,13 @@ mod tests {
                         .relay_mode(RelayMode::Custom(relay_map))
                         .insecure_skip_relay_cert_verify(true)
                         .bind()
-                        .await
-                        .unwrap();
+                        .await?;
                     info!("accepting connection");
-                    let incoming = ep.accept().await.unwrap();
-                    let conn = incoming.await.unwrap();
-                    let mut stream = conn.accept_uni().await.unwrap();
+                    let incoming = ep.accept().await.context("accept")?;
+                    let conn = incoming.await.context("incoming")?;
+                    let mut stream = conn.accept_uni().await.context("accept_uni")?;
                     let mut buf = [0u8; 5];
-                    stream.read_exact(&mut buf).await.unwrap();
+                    stream.read_exact(&mut buf).await.context("read_exact")?;
                     info!("Accepted 1 stream, received {buf:?}.  Closing now.");
                     // close the connection
                     conn.close(7u8.into(), b"bye");
@@ -2346,6 +2354,7 @@ mod tests {
                         ))
                     );
                     info!("server test completed");
+                    Ok::<_, TestError>(())
                 }
                 .instrument(info_span!("test-server")),
             )
@@ -2358,18 +2367,17 @@ mod tests {
                     .relay_mode(RelayMode::Custom(relay_map))
                     .insecure_skip_relay_cert_verify(true)
                     .bind()
-                    .await
-                    .unwrap();
+                    .await?;
                 info!("client connecting");
                 let node_addr = NodeAddr::new(server_peer_id).with_relay_url(relay_url);
-                let conn = ep.connect(node_addr, TEST_ALPN).await.unwrap();
-                let mut stream = conn.open_uni().await.unwrap();
+                let conn = ep.connect(node_addr, TEST_ALPN).await?;
+                let mut stream = conn.open_uni().await.context("open_uni")?;
 
                 // First write is accepted by server.  We need this bit of synchronisation
                 // because if the server closes after simply accepting the connection we can
                 // not be sure our .open_uni() call would succeed as it may already receive
                 // the error.
-                stream.write_all(b"hello").await.unwrap();
+                stream.write_all(b"hello").await.context("write_all")?;
 
                 info!("waiting for closed");
                 // Remote now closes the connection, we should see an error sometime soon.
@@ -2385,6 +2393,7 @@ mod tests {
                 let res = conn.open_uni().await;
                 assert_eq!(res.unwrap_err(), expected_err);
                 info!("client test completed");
+                Ok::<_, TestError>(())
             }
             .instrument(info_span!("test-client")),
         );
@@ -2394,19 +2403,23 @@ mod tests {
             n0_future::future::zip(server, client),
         )
         .await
-        .expect("timeout");
-        server.unwrap();
-        client.unwrap();
+        .context("timeout")?;
+        server.context("server task")??;
+        client.context("client task")??;
+        Ok(())
     }
 
     /// Test that peers are properly restored
     #[tokio::test]
     #[traced_test]
-    async fn restore_peers() {
+    async fn restore_peers() -> TestResult {
         let secret_key = SecretKey::generate(rand::thread_rng());
 
         /// Create an endpoint for the test.
-        async fn new_endpoint(secret_key: SecretKey, nodes: Option<Vec<NodeAddr>>) -> Endpoint {
+        async fn new_endpoint(
+            secret_key: SecretKey,
+            nodes: Option<Vec<NodeAddr>>,
+        ) -> TestResult<Endpoint> {
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
 
@@ -2416,11 +2429,7 @@ mod tests {
             if let Some(nodes) = nodes {
                 builder = builder.known_nodes(nodes);
             }
-            builder
-                .alpns(vec![TEST_ALPN.to_vec()])
-                .bind()
-                .await
-                .unwrap()
+            Ok(builder.alpns(vec![TEST_ALPN.to_vec()]).bind().await?)
         }
 
         // create the peer that will be added to the peer map
@@ -2432,9 +2441,9 @@ mod tests {
         info!("setting up first endpoint");
         // first time, create a magic endpoint without peers but a peers file and add addressing
         // information for a peer
-        let endpoint = new_endpoint(secret_key.clone(), None).await;
+        let endpoint = new_endpoint(secret_key.clone(), None).await?;
         assert_eq!(endpoint.remote_info_iter().count(), 0);
-        endpoint.add_node_addr(node_addr.clone()).unwrap();
+        endpoint.add_node_addr(node_addr.clone())?;
 
         // Grab the current addrs
         let node_addrs: Vec<NodeAddr> = endpoint.remote_info_iter().map(Into::into).collect();
@@ -2447,15 +2456,16 @@ mod tests {
 
         info!("restarting endpoint");
         // now restart it and check the addressing info of the peer
-        let endpoint = new_endpoint(secret_key, Some(node_addrs)).await;
-        let RemoteInfo { mut addrs, .. } = endpoint.remote_info(peer_id).unwrap();
+        let endpoint = new_endpoint(secret_key, Some(node_addrs)).await?;
+        let RemoteInfo { mut addrs, .. } = endpoint.remote_info(peer_id).context("remote_info")?;
         let conn_addr = addrs.pop().unwrap().addr;
         assert_eq!(conn_addr, direct_addr);
+        Ok(())
     }
 
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_relay_connect_loop() {
+    async fn endpoint_relay_connect_loop() -> TestResult {
         let start = Instant::now();
         let n_clients = 5;
         let n_chunks_per_client = 2;
@@ -2476,29 +2486,29 @@ mod tests {
                         .alpns(vec![TEST_ALPN.to_vec()])
                         .relay_mode(RelayMode::Custom(relay_map))
                         .bind()
-                        .await
-                        .unwrap();
+                        .await?;
                     let eps = ep.bound_sockets();
                     info!(me = %ep.node_id().fmt_short(), ipv4=%eps.0, ipv6=?eps.1, "server listening on");
                     for i in 0..n_clients {
                         let round_start = Instant::now();
                         info!("[server] round {i}");
-                        let incoming = ep.accept().await.unwrap();
-                        let conn = incoming.await.unwrap();
-                        let node_id = conn.remote_node_id().unwrap();
+                        let incoming = ep.accept().await.context("accept")?;
+                        let conn = incoming.await.context("incoming")?;
+                        let node_id = conn.remote_node_id()?;
                         info!(%i, peer = %node_id.fmt_short(), "accepted connection");
-                        let (mut send, mut recv) = conn.accept_bi().await.unwrap();
+                        let (mut send, mut recv) = conn.accept_bi().await.context("accept_bi")?;
                         let mut buf = vec![0u8; chunk_size];
                         for _i in 0..n_chunks_per_client {
-                            recv.read_exact(&mut buf).await.unwrap();
-                            send.write_all(&buf).await.unwrap();
+                            recv.read_exact(&mut buf).await.context("read_exact")?;
+                            send.write_all(&buf).await.context("write_all")?;
                         }
-                        send.finish().unwrap();
-                        send.stopped().await.unwrap();
-                        recv.read_to_end(0).await.unwrap();
+                        send.finish().context("finish")?;
+                        send.stopped().await.context("stopped")?;
+                        recv.read_to_end(0).await.context("read_to_end")?;
                         info!(%i, peer = %node_id.fmt_short(), "finished");
                         info!("[server] round {i} done in {:?}", round_start.elapsed());
                     }
+                    Ok::<_, TestError>(())
                 }
                 .instrument(error_span!("server")),
             )
@@ -2518,35 +2528,35 @@ mod tests {
                     .relay_mode(RelayMode::Custom(relay_map))
                     .secret_key(client_secret_key)
                     .bind()
-                    .await
-                    .unwrap();
+                    .await?;
                 let eps = ep.bound_sockets();
                 info!(me = %ep.node_id().fmt_short(), ipv4=%eps.0, ipv6=?eps.1, "client bound");
                 let node_addr = NodeAddr::new(server_node_id).with_relay_url(relay_url);
                 info!(to = ?node_addr, "client connecting");
-                let conn = ep.connect(node_addr, TEST_ALPN).await.unwrap();
+                let conn = ep.connect(node_addr, TEST_ALPN).await.context("connect")?;
                 info!("client connected");
-                let (mut send, mut recv) = conn.open_bi().await.unwrap();
+                let (mut send, mut recv) = conn.open_bi().await.context("open_bi")?;
 
                 for i in 0..n_chunks_per_client {
                     let mut buf = vec![i; chunk_size];
-                    send.write_all(&buf).await.unwrap();
-                    recv.read_exact(&mut buf).await.unwrap();
+                    send.write_all(&buf).await.context("stream")?;
+                    recv.read_exact(&mut buf).await.context("stream")?;
                     assert_eq!(buf, vec![i; chunk_size]);
                 }
-                send.finish().unwrap();
-                send.stopped().await.unwrap();
-                recv.read_to_end(0).await.unwrap();
+                send.finish().context("stream")?;
+                send.stopped().await.context("stream")?;
+                recv.read_to_end(0).await.context("stream")?;
                 info!("client finished");
                 ep.close().await;
                 info!("client closed");
+                Ok::<_, TestError>(())
             }
             .instrument(error_span!("client", %i))
-            .await;
+            .await?;
             info!("[client] round {i} done in {:?}", round_start.elapsed());
         }
 
-        server.await.unwrap();
+        server.await.context("server task")??;
 
         // We appear to have seen this being very slow at times.  So ensure we fail if this
         // test is too slow.  We're only making two connections transferring very little
@@ -2554,11 +2564,13 @@ mod tests {
         if start.elapsed() > Duration::from_secs(15) {
             panic!("Test too slow, something went wrong");
         }
+
+        Ok(())
     }
 
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_send_relay_websockets() -> testresult::TestResult {
+    async fn endpoint_send_relay_websockets() -> TestResult {
         let (relay_map, _relay_url, _guard) = run_relay_server().await?;
         let client = Endpoint::builder()
             .relay_conn_protocol(Protocol::Websocket)
@@ -2576,28 +2588,30 @@ mod tests {
             let server = server.clone();
             async move {
                 let Some(conn) = server.accept().await else {
-                    bail!("Expected an incoming connection");
+                    snafu::whatever!("Expected an incoming connection");
                 };
-                let conn = conn.await?;
-                let (mut send, mut recv) = conn.accept_bi().await?;
-                let data = recv.read_to_end(1000).await?;
-                send.write_all(&data).await?;
-                send.finish()?;
+                let conn = conn.await.context("conn")?;
+                let (mut send, mut recv) = conn.accept_bi().await.context("accept_bi")?;
+                let data = recv.read_to_end(1000).await.context("read_to_end")?;
+                send.write_all(&data).await.context("write_all")?;
+                send.finish().context("finish")?;
                 conn.closed().await;
 
-                Ok(())
+                Ok::<_, TestError>(())
             }
         });
 
         let addr = server.node_addr().await?;
         let conn = client.connect(addr, TEST_ALPN).await?;
-        let (mut send, mut recv) = conn.open_bi().await?;
-        send.write_all(b"Hello, world!").await?;
-        send.finish()?;
-        let data = recv.read_to_end(1000).await?;
+        let (mut send, mut recv) = conn.open_bi().await.context("open_bi")?;
+        send.write_all(b"Hello, world!")
+            .await
+            .context("write_all")?;
+        send.finish().context("finish")?;
+        let data = recv.read_to_end(1000).await.context("read_to_end")?;
         conn.close(0u32.into(), b"bye!");
 
-        task.await??;
+        task.await.context("server task")??;
 
         client.close().await;
         server.close().await;
@@ -2609,17 +2623,17 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_bidi_send_recv_x509() {
+    async fn endpoint_bidi_send_recv_x509() -> TestResult {
         endpoint_bidi_send_recv(tls::Authentication::X509).await
     }
 
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_bidi_send_recv_raw_public_key() {
+    async fn endpoint_bidi_send_recv_raw_public_key() -> TestResult {
         endpoint_bidi_send_recv(tls::Authentication::RawPublicKey).await
     }
 
-    async fn endpoint_bidi_send_recv(auth: tls::Authentication) {
+    async fn endpoint_bidi_send_recv(auth: tls::Authentication) -> TestResult {
         let ep1 = Endpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Disabled);
@@ -2628,7 +2642,7 @@ mod tests {
             tls::Authentication::X509 => ep1.tls_x509(),
             tls::Authentication::RawPublicKey => ep1.tls_raw_public_keys(),
         };
-        let ep1 = ep1.bind().await.unwrap();
+        let ep1 = ep1.bind().await?;
         let ep2 = Endpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Disabled);
@@ -2637,47 +2651,49 @@ mod tests {
             tls::Authentication::X509 => ep2.tls_x509(),
             tls::Authentication::RawPublicKey => ep2.tls_raw_public_keys(),
         };
-        let ep2 = ep2.bind().await.unwrap();
+        let ep2 = ep2.bind().await?;
 
-        let ep1_nodeaddr = ep1.node_addr().await.unwrap();
-        let ep2_nodeaddr = ep2.node_addr().await.unwrap();
-        ep1.add_node_addr(ep2_nodeaddr.clone()).unwrap();
-        ep2.add_node_addr(ep1_nodeaddr.clone()).unwrap();
+        let ep1_nodeaddr = ep1.node_addr().await?;
+        let ep2_nodeaddr = ep2.node_addr().await?;
+        ep1.add_node_addr(ep2_nodeaddr.clone())?;
+        ep2.add_node_addr(ep1_nodeaddr.clone())?;
         let ep1_nodeid = ep1.node_id();
         let ep2_nodeid = ep2.node_id();
         eprintln!("node id 1 {ep1_nodeid}");
         eprintln!("node id 2 {ep2_nodeid}");
 
-        async fn connect_hello(ep: Endpoint, dst: NodeAddr) {
-            let conn = ep.connect(dst, TEST_ALPN).await.unwrap();
-            let (mut send, mut recv) = conn.open_bi().await.unwrap();
+        async fn connect_hello(ep: Endpoint, dst: NodeAddr) -> TestResult {
+            let conn = ep.connect(dst, TEST_ALPN).await?;
+            let (mut send, mut recv) = conn.open_bi().await.context("open_bi")?;
             info!("sending hello");
-            send.write_all(b"hello").await.unwrap();
-            send.finish().unwrap();
+            send.write_all(b"hello").await.context("write_all")?;
+            send.finish().context("finish")?;
             info!("receiving world");
-            let m = recv.read_to_end(100).await.unwrap();
+            let m = recv.read_to_end(100).await.context("read_to_end")?;
             assert_eq!(m, b"world");
             conn.close(1u8.into(), b"done");
+            Ok(())
         }
 
-        async fn accept_world(ep: Endpoint, src: NodeId) {
-            let incoming = ep.accept().await.unwrap();
-            let mut iconn = incoming.accept().unwrap();
-            let alpn = iconn.alpn().await.unwrap();
-            let conn = iconn.await.unwrap();
-            let node_id = conn.remote_node_id().unwrap();
+        async fn accept_world(ep: Endpoint, src: NodeId) -> TestResult {
+            let incoming = ep.accept().await.context("ep closed")?;
+            let mut iconn = incoming.accept().context("accept")?;
+            let alpn = iconn.alpn().await?;
+            let conn = iconn.await.context("conn")?;
+            let node_id = conn.remote_node_id()?;
             assert_eq!(node_id, src);
             assert_eq!(alpn, TEST_ALPN);
-            let (mut send, mut recv) = conn.accept_bi().await.unwrap();
+            let (mut send, mut recv) = conn.accept_bi().await.context("accept_bi")?;
             info!("receiving hello");
-            let m = recv.read_to_end(100).await.unwrap();
+            let m = recv.read_to_end(100).await.context("read_to_end")?;
             assert_eq!(m, b"hello");
             info!("sending hello");
-            send.write_all(b"world").await.unwrap();
-            send.finish().unwrap();
+            send.write_all(b"world").await.context("write_all")?;
+            send.finish().context("finish")?;
             match conn.closed().await {
                 ConnectionError::ApplicationClosed(closed) => {
                     assert_eq!(closed.error_code, 1u8.into());
+                    Ok(())
                 }
                 _ => panic!("wrong close error"),
             }
@@ -2708,17 +2724,19 @@ mod tests {
             ),
         ));
 
-        p1_accept.await.unwrap();
-        p2_accept.await.unwrap();
-        p1_connect.await.unwrap();
-        p2_connect.await.unwrap();
+        p1_accept.await.context("task")??;
+        p2_accept.await.context("task")??;
+        p1_connect.await.context("task")??;
+        p2_connect.await.context("task")??;
+
+        Ok(())
     }
 
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_conn_type_stream() {
+    async fn endpoint_conn_type_stream() -> TestResult {
         const TIMEOUT: Duration = std::time::Duration::from_secs(15);
-        let (relay_map, _relay_url, _relay_guard) = run_relay_server().await.unwrap();
+        let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
         let ep1_secret_key = SecretKey::generate(&mut rng);
         let ep2_secret_key = SecretKey::generate(&mut rng);
@@ -2728,19 +2746,17 @@ mod tests {
             .alpns(vec![TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .bind()
-            .await
-            .unwrap();
+            .await?;
         let ep2 = Endpoint::builder()
             .secret_key(ep2_secret_key)
             .insecure_skip_relay_cert_verify(true)
             .alpns(vec![TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Custom(relay_map))
             .bind()
-            .await
-            .unwrap();
+            .await?;
 
-        async fn handle_direct_conn(ep: &Endpoint, node_id: NodeId) -> anyhow::Result<()> {
-            let mut stream = ep.conn_type(node_id).expect("missing conn type").stream();
+        async fn handle_direct_conn(ep: &Endpoint, node_id: NodeId) -> TestResult {
+            let mut stream = ep.conn_type(node_id).context("missing conn type")?.stream();
             let src = ep.node_id().fmt_short();
             let dst = node_id.fmt_short();
             while let Some(conn_type) = stream.next().await {
@@ -2749,15 +2765,15 @@ mod tests {
                     return Ok(());
                 }
             }
-            anyhow::bail!("conn_type stream ended before `ConnectionType::Direct`");
+            snafu::whatever!("conn_type stream ended before `ConnectionType::Direct`");
         }
 
-        async fn accept(ep: &Endpoint) -> NodeId {
-            let incoming = ep.accept().await.unwrap();
-            let conn = incoming.await.unwrap();
-            let node_id = conn.remote_node_id().unwrap();
+        async fn accept(ep: &Endpoint) -> TestResult<NodeId> {
+            let incoming = ep.accept().await.context("ep closed")?;
+            let conn = incoming.await.context("incoming")?;
+            let node_id = conn.remote_node_id()?;
             tracing::info!(node_id=%node_id.fmt_short(), "accepted connection");
-            node_id
+            Ok(node_id)
         }
 
         let ep1_nodeid = ep1.node_id();
@@ -2771,46 +2787,47 @@ mod tests {
         tracing::info!("node id 2 {ep2_nodeid}");
 
         let ep1_side = async move {
-            accept(&ep1).await;
+            accept(&ep1).await?;
             handle_direct_conn(&ep1, ep2_nodeid).await
         };
 
         let ep2_side = async move {
-            ep2.connect(ep1_nodeaddr, TEST_ALPN).await.unwrap();
+            ep2.connect(ep1_nodeaddr, TEST_ALPN).await?;
             handle_direct_conn(&ep2, ep1_nodeid).await
         };
 
         let res_ep1 = tokio::spawn(tokio::time::timeout(TIMEOUT, ep1_side));
         let res_ep2 = tokio::spawn(tokio::time::timeout(TIMEOUT, ep2_side));
 
-        let (r1, r2) = tokio::try_join!(res_ep1, res_ep2).unwrap();
-        r1.expect("ep1 timeout").unwrap();
-        r2.expect("ep2 timeout").unwrap();
+        let (r1, r2) = tokio::try_join!(res_ep1, res_ep2).context("try_join")?;
+        r1.context("ep1 timeout")??;
+        r2.context("ep2 timeout")??;
+
+        Ok(())
     }
 
     #[tokio::test]
     #[traced_test]
-    async fn test_direct_addresses_no_stun_relay() {
-        let (relay_map, _, _guard) = run_relay_server_with(None, false).await.unwrap();
+    async fn test_direct_addresses_no_stun_relay() -> TestResult {
+        let (relay_map, _, _guard) = run_relay_server_with(None, false).await?;
 
         let ep = Endpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Custom(relay_map))
             .insecure_skip_relay_cert_verify(true)
             .bind()
-            .await
-            .unwrap();
+            .await?;
 
         tokio::time::timeout(Duration::from_secs(10), ep.direct_addresses().initialized())
             .await
-            .unwrap()
-            .unwrap();
+            .context("timeout")??;
+        Ok(())
     }
 
     async fn spawn_0rtt_server(
         secret_key: SecretKey,
         log_span: tracing::Span,
-    ) -> anyhow::Result<Endpoint> {
+    ) -> TestResult<Endpoint> {
         let server = Endpoint::builder()
             .secret_key(secret_key)
             .alpns(vec![TEST_ALPN.to_vec()])
@@ -2824,7 +2841,7 @@ mod tests {
             let server = server.clone();
             async move {
                 while let Some(incoming) = server.accept().await {
-                    let connecting = incoming.accept()?;
+                    let connecting = incoming.accept().context("accept")?;
                     let conn = match connecting.into_0rtt() {
                         Ok((conn, _)) => {
                             info!("0rtt accepted");
@@ -2832,18 +2849,18 @@ mod tests {
                         }
                         Err(connecting) => {
                             info!("0rtt denied");
-                            connecting.await?
+                            connecting.await.context("connecting")?
                         }
                     };
-                    let (mut send, mut recv) = conn.accept_bi().await?;
-                    let data = recv.read_to_end(10_000_000).await?;
-                    send.write_all(&data).await?;
-                    send.finish()?;
+                    let (mut send, mut recv) = conn.accept_bi().await.context("accept_bi")?;
+                    let data = recv.read_to_end(10_000_000).await.context("read_to_end")?;
+                    send.write_all(&data).await.context("write_all")?;
+                    send.finish().context("finish")?;
 
                     // Stay alive until the other side closes the connection.
                     conn.closed().await;
                 }
-                anyhow::Ok(())
+                Ok::<_, TestError>(())
             }
             .instrument(log_span)
         });
@@ -2854,18 +2871,19 @@ mod tests {
     async fn connect_client_0rtt_expect_err(
         client: &Endpoint,
         server_addr: NodeAddr,
-    ) -> anyhow::Result<()> {
+    ) -> TestResult {
         let conn = client
             .connect_with_opts(server_addr, TEST_ALPN, ConnectOptions::new())
             .await?
             .into_0rtt()
             .expect_err("expected 0rtt to fail")
-            .await?;
+            .await
+            .context("connect")?;
 
-        let (mut send, mut recv) = conn.open_bi().await?;
-        send.write_all(b"hello").await?;
-        send.finish()?;
-        let received = recv.read_to_end(1_000).await?;
+        let (mut send, mut recv) = conn.open_bi().await.context("open_bi")?;
+        send.write_all(b"hello").await.context("write_all")?;
+        send.finish().context("finish")?;
+        let received = recv.read_to_end(1_000).await.context("read_to_end")?;
         assert_eq!(&received, b"hello");
         conn.close(0u32.into(), b"thx");
         Ok(())
@@ -2875,18 +2893,18 @@ mod tests {
         client: &Endpoint,
         server_addr: NodeAddr,
         expect_server_accepts: bool,
-    ) -> anyhow::Result<()> {
+    ) -> TestResult {
         let (conn, accepted_0rtt) = client
             .connect_with_opts(server_addr, TEST_ALPN, ConnectOptions::new())
             .await?
             .into_0rtt()
-            .map_err(|_| "0rtt failed")
-            .unwrap();
+            .ok()
+            .context("0rtt failed")?;
 
         // This is how we send data in 0-RTT:
-        let (mut send, recv) = conn.open_bi().await?;
-        send.write_all(b"hello").await?;
-        send.finish()?;
+        let (mut send, recv) = conn.open_bi().await.context("open_bi")?;
+        send.write_all(b"hello").await.context("write_all")?;
+        send.finish().context("finish")?;
         // When this resolves, we've gotten a response from the server about whether the 0-RTT data above was accepted:
         let accepted = accepted_0rtt.await;
         assert_eq!(accepted, expect_server_accepts);
@@ -2894,12 +2912,12 @@ mod tests {
             recv
         } else {
             // in this case we need to re-send data by re-creating the connection.
-            let (mut send, recv) = conn.open_bi().await?;
-            send.write_all(b"hello").await?;
-            send.finish()?;
+            let (mut send, recv) = conn.open_bi().await.context("open_bi")?;
+            send.write_all(b"hello").await.context("write_all")?;
+            send.finish().context("finish")?;
             recv
         };
-        let received = recv.read_to_end(1_000).await?;
+        let received = recv.read_to_end(1_000).await.context("read_to_end")?;
         assert_eq!(&received, b"hello");
         conn.close(0u32.into(), b"thx");
         Ok(())
@@ -2994,7 +3012,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn graceful_close() -> testresult::TestResult {
+    async fn graceful_close() -> TestResult {
         let client = Endpoint::builder().bind().await?;
         let server = Endpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])
@@ -3002,25 +3020,27 @@ mod tests {
             .await?;
         let server_addr = server.node_addr().await?;
         let server_task = tokio::spawn(async move {
-            let incoming = server.accept().await.unwrap();
-            let conn = incoming.await?;
-            let (mut send, mut recv) = conn.accept_bi().await?;
-            let msg = recv.read_to_end(1_000).await?;
-            send.write_all(&msg).await?;
-            send.finish()?;
+            let incoming = server.accept().await.context("ep closed")?;
+            let conn = incoming.await.context("incoming")?;
+            let (mut send, mut recv) = conn.accept_bi().await.context("accept_bi")?;
+            let msg = recv.read_to_end(1_000).await.context("read_to_end")?;
+            send.write_all(&msg).await.context("write_all")?;
+            send.finish().context("finish")?;
             let close_reason = conn.closed().await;
-            testresult::TestResult::Ok(close_reason)
+            Ok::<_, TestError>(close_reason)
         });
 
         let conn = client.connect(server_addr, TEST_ALPN).await?;
-        let (mut send, mut recv) = conn.open_bi().await?;
-        send.write_all(b"Hello, world!").await?;
-        send.finish()?;
-        recv.read_to_end(1_000).await?;
+        let (mut send, mut recv) = conn.open_bi().await.context("open_bi")?;
+        send.write_all(b"Hello, world!")
+            .await
+            .context("write_all")?;
+        send.finish().context("finish")?;
+        recv.read_to_end(1_000).await.context("read_to_end")?;
         conn.close(42u32.into(), b"thanks, bye!");
         client.close().await;
 
-        let close_err = server_task.await??;
+        let close_err = server_task.await.context("server task")??;
         let ConnectionError::ApplicationClosed(app_close) = close_err else {
             panic!("Unexpected close reason: {close_err:?}");
         };
@@ -3055,20 +3075,22 @@ mod tests {
                 .accept()
                 .await
                 .context("expected conn")?
-                .accept()?
-                .await?;
-            let mut uni = conn.accept_uni().await?;
-            uni.read_to_end(10).await?;
+                .accept()
+                .context("accept")?
+                .await
+                .context("accept")?;
+            let mut uni = conn.accept_uni().await.context("accept_uni")?;
+            uni.read_to_end(10).await.context("read_to_end")?;
             drop(conn);
-            anyhow::Ok(server)
+            Ok::<_, TestError>(server)
         });
         let conn = client.connect(server_addr, TEST_ALPN).await?;
-        let mut uni = conn.open_uni().await?;
-        uni.write_all(b"helloworld").await?;
-        uni.finish()?;
+        let mut uni = conn.open_uni().await.context("open_uni")?;
+        uni.write_all(b"helloworld").await.context("write_all")?;
+        uni.finish().context("finish")?;
         conn.closed().await;
         drop(conn);
-        let server = server_task.await??;
+        let server = server_task.await.context("server task")??;
 
         let m = client.metrics();
         assert_eq!(m.magicsock.num_direct_conns_added.get(), 1);
