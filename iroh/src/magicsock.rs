@@ -3500,23 +3500,22 @@ mod tests {
     use n0_future::{time, StreamExt};
     use n0_snafu::{TestResult, TestResultExt};
     use quinn::ServerConfig;
-    use rand::Rng;
-    use rand::RngCore;
+    use rand::{Rng, RngCore};
     use tokio::task::JoinSet;
     use tokio_util::task::AbortOnDropHandle;
     use tracing::{debug, error, info, info_span, instrument, Instrument};
     use tracing_test::traced_test;
 
-    use crate::magicsock::RelayRecvDatagram;
+    use super::{split_packets, NodeIdMappedAddr, Options};
     use crate::{
         defaults::staging::{self, EU_RELAY_HOSTNAME},
         dns::DnsResolver,
         endpoint::{DirectAddr, PathSelection, Source},
-        magicsock::{node_map, Handle, MagicSock, RelayContents, RelayDatagramRecvQueue},
+        magicsock::{
+            node_map, Handle, MagicSock, RelayContents, RelayDatagramRecvQueue, RelayRecvDatagram,
+        },
         tls, Endpoint, RelayMode,
     };
-
-    use super::{split_packets, NodeIdMappedAddr, Options};
 
     const ALPN: &[u8] = b"n0/test/1";
 

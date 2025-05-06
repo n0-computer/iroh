@@ -1338,6 +1338,10 @@ mod tests {
     use tracing::{info, info_span, Instrument};
     use tracing_test::traced_test;
 
+    use super::{
+        ActiveRelayActor, ActiveRelayActorOptions, ActiveRelayMessage, ActiveRelayPrioMessage,
+        RelayConnectionOptions, RelaySendItem, MAX_PACKET_SIZE,
+    };
     use crate::{
         dns::DnsResolver,
         magicsock::{
@@ -1347,11 +1351,6 @@ mod tests {
             RelayDatagramRecvQueue, RelayRecvDatagram,
         },
         test_utils,
-    };
-
-    use super::{
-        ActiveRelayActor, ActiveRelayActorOptions, ActiveRelayMessage, ActiveRelayPrioMessage,
-        RelayConnectionOptions, RelaySendItem, MAX_PACKET_SIZE,
     };
 
     #[test]
