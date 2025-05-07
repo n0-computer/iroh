@@ -97,7 +97,7 @@ impl From<RelayNode> for RelayMap {
     }
 }
 
-/// Create a `RelayMap` from an iterator of `RelayUrl`.
+/// Creates a [`RelayMap`] from an iterator of [`RelayUrl`].
 ///
 /// The [`RelayNode`]s in the [`RelayMap`] will have the default STUN and QUIC address
 /// discovery ports.
