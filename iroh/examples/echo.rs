@@ -9,7 +9,7 @@
 use anyhow::Result;
 use iroh::{
     endpoint::Connection,
-    protocol::{ProtocolHandler, Router},
+    protocol::{Error as ProtocolError, ProtocolHandler, Router},
     Endpoint, NodeAddr,
 };
 use n0_future::boxed::BoxFuture;
@@ -70,7 +70,7 @@ async fn start_accept_side() -> Result<Router> {
     let endpoint = Endpoint::builder().discovery_n0().bind().await?;
 
     // Build our protocol handler and add our protocol, identified by its ALPN, and spawn the node.
-    let router = Router::builder(endpoint).accept(ALPN, Echo).spawn().await?;
+    let router = Router::builder(endpoint).accept(ALPN, Echo).spawn();
 
     Ok(router)
 }
@@ -83,7 +83,7 @@ impl ProtocolHandler for Echo {
     ///
     /// The returned future runs on a newly spawned tokio task, so it can run as long as
     /// the connection lasts.
-    fn accept(&self, connection: Connection) -> BoxFuture<Result<()>> {
+    fn accept(&self, connection: Connection) -> BoxFuture<Result<(), ProtocolError>> {
         // We have to return a boxed future from the handler.
         Box::pin(async move {
             // We can get the remote's node id from the connection.

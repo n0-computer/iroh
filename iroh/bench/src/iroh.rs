@@ -3,12 +3,12 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{Context, Result};
 use bytes::Bytes;
 use iroh::{
     endpoint::{Connection, ConnectionError, RecvStream, SendStream, TransportConfig},
     Endpoint, NodeAddr, RelayMap, RelayMode, RelayUrl,
 };
+use n0_snafu::{TestResult as Result, TestResultExt};
 use tracing::{trace, warn};
 
 use crate::{
@@ -154,7 +154,7 @@ async fn drain_stream(
     let mut num_chunks: u64 = 0;
 
     if read_unordered {
-        while let Some(chunk) = stream.read_chunk(usize::MAX, false).await? {
+        while let Some(chunk) = stream.read_chunk(usize::MAX, false).await.e()? {
             if first_byte {
                 ttfb = download_start.elapsed();
                 first_byte = false;
@@ -176,7 +176,7 @@ async fn drain_stream(
             Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
         ];
 
-        while let Some(n) = stream.read_chunks(&mut bufs[..]).await? {
+        while let Some(n) = stream.read_chunks(&mut bufs[..]).await.e()? {
             if first_byte {
                 ttfb = download_start.elapsed();
                 first_byte = false;
@@ -275,7 +275,7 @@ pub async fn server(endpoint: Endpoint, opt: Opt) -> Result<()> {
                 tokio::spawn(async move {
                     drain_stream(&mut recv_stream, opt.read_unordered).await?;
                     send_data_on_stream(&mut send_stream, opt.download_size).await?;
-                    Ok::<_, anyhow::Error>(())
+                    Ok::<_, n0_snafu::TestError>(())
                 });
             }
 

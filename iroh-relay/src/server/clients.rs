@@ -9,10 +9,11 @@ use std::{
     },
 };
 
-use anyhow::{bail, Result};
 use bytes::Bytes;
 use dashmap::DashMap;
 use iroh_base::NodeId;
+use nested_enum_utils::common_fields;
+use snafu::Snafu;
 use tokio::sync::mpsc::error::TrySendError;
 use tracing::{debug, trace};
 
@@ -31,6 +32,22 @@ struct Inner {
     sent_to: DashMap<NodeId, HashSet<NodeId>>,
     /// Connection ID Counter
     next_connection_id: AtomicU64,
+}
+
+/// Send packet errors
+#[common_fields({
+    backtrace: Option<snafu::Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+pub enum SendPacketError {
+    #[snafu(display("Failed to send message: full"))]
+    Full {},
+    #[snafu(display("Failed to send message: gone"))]
+    Gone {},
 }
 
 impl Clients {
@@ -109,7 +126,7 @@ impl Clients {
         data: Bytes,
         src: NodeId,
         metrics: &Metrics,
-    ) -> Result<()> {
+    ) -> Result<(), SendPacketError> {
         let Some(client) = self.0.clients.get(&dst) else {
             debug!(dst = dst.fmt_short(), "no connected client, dropped packet");
             metrics.send_packets_dropped.inc();
@@ -126,7 +143,7 @@ impl Clients {
                     dst = dst.fmt_short(),
                     "client too busy to receive packet, dropping packet"
                 );
-                bail!("failed to send message: full");
+                Err(FullSnafu.build())
             }
             Err(TrySendError::Closed(_)) => {
                 debug!(
@@ -134,7 +151,7 @@ impl Clients {
                     "can no longer write to client, dropping message and pruning connection"
                 );
                 client.start_shutdown();
-                bail!("failed to send message: gone");
+                Err(GoneSnafu.build())
             }
         }
     }
@@ -146,7 +163,7 @@ impl Clients {
         data: Bytes,
         src: NodeId,
         metrics: &Metrics,
-    ) -> Result<()> {
+    ) -> Result<(), SendPacketError> {
         let Some(client) = self.0.clients.get(&dst) else {
             debug!(
                 dst = dst.fmt_short(),
@@ -166,7 +183,7 @@ impl Clients {
                     dst = dst.fmt_short(),
                     "client too busy to receive disco packet, dropping packet"
                 );
-                bail!("failed to send message: full");
+                Err(FullSnafu.build())
             }
             Err(TrySendError::Closed(_)) => {
                 debug!(
@@ -174,7 +191,7 @@ impl Clients {
                     "can no longer write to client, dropping disco message and pruning connection"
                 );
                 client.start_shutdown();
-                bail!("failed to send message: gone");
+                Err(GoneSnafu.build())
             }
         }
     }
@@ -186,6 +203,7 @@ mod tests {
 
     use bytes::Bytes;
     use iroh_base::SecretKey;
+    use n0_snafu::{TestResult, TestResultExt};
     use tokio::io::DuplexStream;
     use tokio_util::codec::{Framed, FramedRead};
 
@@ -213,7 +231,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_clients() -> Result<()> {
+    async fn test_clients() -> TestResult {
         let a_key = SecretKey::generate(rand::thread_rng()).public();
         let b_key = SecretKey::generate(rand::thread_rng()).public();
 
@@ -262,7 +280,8 @@ mod tests {
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
         })
-        .await?;
+        .await
+        .context("timeout")?;
         clients.shutdown().await;
 
         Ok(())

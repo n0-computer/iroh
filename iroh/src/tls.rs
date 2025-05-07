@@ -9,7 +9,7 @@
 use std::sync::Arc;
 
 use iroh_base::{PublicKey, SecretKey};
-use quinn::crypto::rustls::{NoInitialCipherSuite, QuicClientConfig, QuicServerConfig};
+use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use tracing::warn;
 
 use self::resolver::AlwaysResolvesCert;
@@ -41,7 +41,7 @@ impl Authentication {
         alpn_protocols: Vec<Vec<u8>>,
         session_store: Option<Arc<dyn rustls::client::ClientSessionStore>>,
         keylog: bool,
-    ) -> Result<QuicClientConfig, CreateConfigError> {
+    ) -> QuicClientConfig {
         let cert_resolver = Arc::new(
             AlwaysResolvesCert::new(self, secret_key).expect("Client cert key DER is valid; qed"),
         );
@@ -66,8 +66,7 @@ impl Authentication {
             crypto.key_log = Arc::new(rustls::KeyLogFile::new());
         }
 
-        let config = crypto.try_into()?;
-        Ok(config)
+        crypto.try_into().expect("known good ciphersuites")
     }
 
     /// Create a TLS server configuration.
@@ -80,7 +79,7 @@ impl Authentication {
         secret_key: &SecretKey,
         alpn_protocols: Vec<Vec<u8>>,
         keylog: bool,
-    ) -> Result<QuicServerConfig, CreateConfigError> {
+    ) -> QuicServerConfig {
         let cert_resolver = Arc::new(
             AlwaysResolvesCert::new(self, secret_key).expect("Server cert key DER is valid; qed"),
         );
@@ -102,21 +101,6 @@ impl Authentication {
         // This is specified in RFC 9001: https://www.rfc-editor.org/rfc/rfc9001#section-4.6.1
         crypto.max_early_data_size = u32::MAX;
 
-        let config = crypto.try_into()?;
-        Ok(config)
+        crypto.try_into().expect("known good ciphersuites")
     }
-}
-
-/// Error for generating TLS configs.
-#[derive(Debug, thiserror::Error)]
-pub(crate) enum CreateConfigError {
-    /// Error generating the certificate.
-    #[error("Error generating the certificate")]
-    CertError(#[from] certificate::GenError),
-    /// Error creating QUIC config.
-    #[error("Error creating QUIC config")]
-    ConfigError(#[from] NoInitialCipherSuite),
-    /// Rustls configuration error
-    #[error("rustls error")]
-    Rustls(#[from] rustls::Error),
 }

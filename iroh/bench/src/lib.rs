@@ -5,8 +5,8 @@ use std::{
     time::Instant,
 };
 
-use anyhow::Result;
 use clap::Parser;
+use n0_snafu::TestResult as Result;
 use stats::Stats;
 use tokio::{
     runtime::{Builder, Runtime},
