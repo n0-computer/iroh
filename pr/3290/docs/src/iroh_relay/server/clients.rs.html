@@ -256,7 +256,19 @@
 <a href="#255" id="255">255</a>
 <a href="#256" id="256">256</a>
 <a href="#257" id="257">257</a>
-<a href="#258" id="258">258</a></pre></div><pre class="rust"><code><span class="doccomment">//! The "Server" side of the client. Uses the `ClientConnManager`.
+<a href="#258" id="258">258</a>
+<a href="#259" id="259">259</a>
+<a href="#260" id="260">260</a>
+<a href="#261" id="261">261</a>
+<a href="#262" id="262">262</a>
+<a href="#263" id="263">263</a>
+<a href="#264" id="264">264</a>
+<a href="#265" id="265">265</a>
+<a href="#266" id="266">266</a>
+<a href="#267" id="267">267</a>
+<a href="#268" id="268">268</a>
+<a href="#269" id="269">269</a>
+<a href="#270" id="270">270</a></pre></div><pre class="rust"><code><span class="doccomment">//! The "Server" side of the client. Uses the `ClientConnManager`.
 </span><span class="comment">// Based on tailscale/derp/derp_server.go
 
 </span><span class="kw">use </span>std::{
@@ -271,7 +283,6 @@
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>dashmap::DashMap;
 <span class="kw">use </span>iroh_base::NodeId;
-<span class="kw">use </span>iroh_metrics::inc;
 <span class="kw">use </span>tokio::sync::mpsc::error::TrySendError;
 <span class="kw">use </span>tracing::{debug, trace};
 
@@ -303,12 +314,12 @@
     }
 
     <span class="doccomment">/// Builds the client handler and starts the read &amp; write loops for the connection.
-    </span><span class="kw">pub async fn </span>register(<span class="kw-2">&amp;</span><span class="self">self</span>, client_config: Config) {
+    </span><span class="kw">pub async fn </span>register(<span class="kw-2">&amp;</span><span class="self">self</span>, client_config: Config, metrics: Arc&lt;Metrics&gt;) {
         <span class="kw">let </span>node_id = client_config.node_id;
         <span class="kw">let </span>connection_id = <span class="self">self</span>.get_connection_id();
         <span class="macro">trace!</span>(remote_node = node_id.fmt_short(), <span class="string">"registering client"</span>);
 
-        <span class="kw">let </span>client = Client::new(client_config, connection_id, <span class="self">self</span>);
+        <span class="kw">let </span>client = Client::new(client_config, connection_id, <span class="self">self</span>, metrics);
         <span class="kw">if let </span><span class="prelude-val">Some</span>(old_client) = <span class="self">self</span>.<span class="number">0</span>.clients.insert(node_id, client) {
             <span class="macro">debug!</span>(
                 remote_node = node_id.fmt_short(),
@@ -362,10 +373,16 @@
     }
 
     <span class="doccomment">/// Attempt to send a packet to client with [`NodeId`] `dst`.
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>send_packet(<span class="kw-2">&amp;</span><span class="self">self</span>, dst: NodeId, data: Bytes, src: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>send_packet(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        dst: NodeId,
+        data: Bytes,
+        src: NodeId,
+        metrics: <span class="kw-2">&amp;</span>Metrics,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">let </span><span class="prelude-val">Some</span>(client) = <span class="self">self</span>.<span class="number">0</span>.clients.get(<span class="kw-2">&amp;</span>dst) <span class="kw">else </span>{
             <span class="macro">debug!</span>(dst = dst.fmt_short(), <span class="string">"no connected client, dropped packet"</span>);
-            <span class="macro">inc!</span>(Metrics, send_packets_dropped);
+            metrics.send_packets_dropped.inc();
             <span class="kw">return </span><span class="prelude-val">Ok</span>(());
         };
         <span class="kw">match </span>client.try_send_packet(src, data) {
@@ -393,13 +410,19 @@
     }
 
     <span class="doccomment">/// Attempt to send a disco packet to client with [`NodeId`] `dst`.
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>send_disco_packet(<span class="kw-2">&amp;</span><span class="self">self</span>, dst: NodeId, data: Bytes, src: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>send_disco_packet(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        dst: NodeId,
+        data: Bytes,
+        src: NodeId,
+        metrics: <span class="kw-2">&amp;</span>Metrics,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">let </span><span class="prelude-val">Some</span>(client) = <span class="self">self</span>.<span class="number">0</span>.clients.get(<span class="kw-2">&amp;</span>dst) <span class="kw">else </span>{
             <span class="macro">debug!</span>(
                 dst = dst.fmt_short(),
                 <span class="string">"no connected client, dropped disco packet"
             </span>);
-            <span class="macro">inc!</span>(Metrics, disco_packets_dropped);
+            metrics.disco_packets_dropped.inc();
             <span class="kw">return </span><span class="prelude-val">Ok</span>(());
         };
         <span class="kw">match </span>client.try_send_disco_packet(src, data) {
@@ -467,11 +490,12 @@
         <span class="kw">let </span>(builder_a, <span class="kw-2">mut </span>a_rw) = test_client_builder(a_key);
 
         <span class="kw">let </span>clients = Clients::default();
-        clients.register(builder_a).<span class="kw">await</span>;
+        <span class="kw">let </span>metrics = Arc::new(Metrics::default());
+        clients.register(builder_a, metrics.clone()).<span class="kw">await</span>;
 
         <span class="comment">// send packet
         </span><span class="kw">let </span>data = <span class="string">b"hello world!"</span>;
-        clients.send_packet(a_key, Bytes::from(<span class="kw-2">&amp;</span>data[..]), b_key)<span class="question-mark">?</span>;
+        clients.send_packet(a_key, Bytes::from(<span class="kw-2">&amp;</span>data[..]), b_key, <span class="kw-2">&amp;</span>metrics)<span class="question-mark">?</span>;
         <span class="kw">let </span>frame = recv_frame(FrameType::RecvPacket, <span class="kw-2">&amp;mut </span>a_rw).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="macro">assert_eq!</span>(
             frame,
@@ -482,7 +506,7 @@
         );
 
         <span class="comment">// send disco packet
-        </span>clients.send_disco_packet(a_key, Bytes::from(<span class="kw-2">&amp;</span>data[..]), b_key)<span class="question-mark">?</span>;
+        </span>clients.send_disco_packet(a_key, Bytes::from(<span class="kw-2">&amp;</span>data[..]), b_key, <span class="kw-2">&amp;</span>metrics)<span class="question-mark">?</span>;
         <span class="kw">let </span>frame = recv_frame(FrameType::RecvPacket, <span class="kw-2">&amp;mut </span>a_rw).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="macro">assert_eq!</span>(
             frame,
