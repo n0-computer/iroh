@@ -3128,7 +3128,22 @@
 <a href="#3127" id="3127">3127</a>
 <a href="#3128" id="3128">3128</a>
 <a href="#3129" id="3129">3129</a>
-<a href="#3130" id="3130">3130</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#3130" id="3130">3130</a>
+<a href="#3131" id="3131">3131</a>
+<a href="#3132" id="3132">3132</a>
+<a href="#3133" id="3133">3133</a>
+<a href="#3134" id="3134">3134</a>
+<a href="#3135" id="3135">3135</a>
+<a href="#3136" id="3136">3136</a>
+<a href="#3137" id="3137">3137</a>
+<a href="#3138" id="3138">3138</a>
+<a href="#3139" id="3139">3139</a>
+<a href="#3140" id="3140">3140</a>
+<a href="#3141" id="3141">3141</a>
+<a href="#3142" id="3142">3142</a>
+<a href="#3143" id="3143">3143</a>
+<a href="#3144" id="3144">3144</a>
+<a href="#3145" id="3145">3145</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -4152,6 +4167,7 @@
     /// let _report = ep.net_report().initialized().await.unwrap();
     /// # });
     /// ```
+    </span><span class="attr">#[doc(hidden)]
     </span><span class="kw">pub fn </span>net_report(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Watcher&lt;<span class="prelude-ty">Option</span>&lt;Arc&lt;Report&gt;&gt;&gt; {
         <span class="self">self</span>.msock.net_report()
     }
@@ -6254,6 +6270,20 @@
             <span class="prelude-val">Some</span>(ALPN_ONE.to_vec()),
             <span class="string">"connect side only supports the old version"
         </span>);
+
+        <span class="prelude-val">Ok</span>(())
+    }
+
+    <span class="attr">#[tokio::test]
+    #[traced_test]
+    </span><span class="kw">async fn </span>watch_net_report() -&gt; testresult::TestResult {
+        <span class="kw">let </span>endpoint = Endpoint::builder()
+            .relay_mode(RelayMode::Staging)
+            .bind()
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="comment">// can get a first report
+        </span>endpoint.net_report().initialized().<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="prelude-val">Ok</span>(())
     }
