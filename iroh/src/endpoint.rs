@@ -1022,6 +1022,7 @@ impl Endpoint {
     /// let _report = ep.net_report().initialized().await.unwrap();
     /// # });
     /// ```
+    #[doc(hidden)]
     pub fn net_report(&self) -> Watcher<Option<Arc<Report>>> {
         self.msock.net_report()
     }
@@ -3136,6 +3137,7 @@ mod tests {
             .bind()
             .await?;
 
+        // can get a first report
         endpoint.net_report().initialized().await?;
 
         Ok(())
