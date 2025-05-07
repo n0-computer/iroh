@@ -65,26 +65,14 @@ impl FromIterator<RelayNode> for RelayMap {
     }
 }
 
-/// Creates a [`RelayMap`] from a [`RelayUrl`].
-///
-/// The [`RelayNode`]s in the [`RelayMap`] will have the default STUN and QUIC address
-/// discovery ports.
 impl From<RelayUrl> for RelayMap {
+    /// Creates a [`RelayMap`] from a [`RelayUrl`].
+    ///
+    /// The [`RelayNode`]s in the [`RelayMap`] will have the default STUN and QUIC address
+    /// discovery ports.
     fn from(value: RelayUrl) -> Self {
         Self {
             nodes: Arc::new([(value.clone(), Arc::new(value.into()))].into()),
-        }
-    }
-}
-
-/// Create a `RelayMap` from a `RelayUrl` and a stun port.
-///
-/// The resulting `RelayMap` contains `RelayNode`s with the default quic address
-/// discovery port.
-impl From<(RelayUrl, u16)> for RelayMap {
-    fn from(value: (RelayUrl, u16)) -> Self {
-        Self {
-            nodes: Arc::new([(value.0.clone(), Arc::new(value.into()))].into()),
         }
     }
 }
@@ -97,32 +85,16 @@ impl From<RelayNode> for RelayMap {
     }
 }
 
-/// Creates a [`RelayMap`] from an iterator of [`RelayUrl`].
-///
-/// The [`RelayNode`]s in the [`RelayMap`] will have the default STUN and QUIC address
-/// discovery ports.
 impl FromIterator<RelayUrl> for RelayMap {
+    /// Creates a [`RelayMap`] from an iterator of [`RelayUrl`].
+    ///
+    /// The [`RelayNode`]s in the [`RelayMap`] will have the default STUN and QUIC address
+    /// discovery ports.
     fn from_iter<T: IntoIterator<Item = RelayUrl>>(iter: T) -> Self {
         Self {
             nodes: Arc::new(
                 iter.into_iter()
                     .map(|url| (url.clone(), Arc::new(url.into())))
-                    .collect(),
-            ),
-        }
-    }
-}
-
-/// Create a `RelayMap` from an iterator of `RelayUrl`s and a stun ports.
-///
-/// The resulting `RelayMap` contains `RelayNode`s with the default quic address
-/// discovery port.
-impl FromIterator<(RelayUrl, u16)> for RelayMap {
-    fn from_iter<T: IntoIterator<Item = (RelayUrl, u16)>>(iter: T) -> Self {
-        Self {
-            nodes: Arc::new(
-                iter.into_iter()
-                    .map(|val| (val.0.clone(), Arc::new(val.into())))
                     .collect(),
             ),
         }
@@ -167,17 +139,6 @@ impl From<RelayUrl> for RelayNode {
             url: value,
             stun_only: false,
             stun_port: DEFAULT_STUN_PORT,
-            quic: quic_config(),
-        }
-    }
-}
-
-impl From<(RelayUrl, u16)> for RelayNode {
-    fn from(value: (RelayUrl, u16)) -> Self {
-        Self {
-            url: value.0,
-            stun_only: false,
-            stun_port: value.1,
             quic: quic_config(),
         }
     }
