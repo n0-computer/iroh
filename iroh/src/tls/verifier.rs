@@ -128,6 +128,12 @@ impl ServerCertVerifier for ServerCertificateVerifier {
 
                 let end_entity_as_spki = SubjectPublicKeyInfoDer::from(end_entity.as_ref());
 
+                // This effectively checks that the `end_entity_as_spki` bytes have the expected
+                // (constant) 12 byte prefix (consisting of the Ed25519 public key ASN.1 object
+                // identifier, some ASN.1 DER encoding bytes signaling that this is a SPKI and
+                // consists of the object identifier and a bit sequence, a zero byte indicating
+                // that the bit sequence is padded with 0 additional bits) matches, as well as
+                // the public key bytes match the `remote_peer_id` public key bytes.
                 if public_key_to_spki(&remote_peer_id) != end_entity_as_spki {
                     return Err(rustls::Error::InvalidCertificate(
                         CertificateError::UnknownIssuer,
