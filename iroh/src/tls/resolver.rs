@@ -4,13 +4,24 @@ use ed25519_dalek::pkcs8::{spki::der::pem::LineEnding, EncodePrivateKey};
 use iroh_base::SecretKey;
 use webpki::types::{pem::PemObject, CertificateDer, PrivatePkcs8KeyDer};
 
-use super::{certificate, CreateConfigError};
+use super::certificate;
 use crate::tls::Authentication;
 
 #[derive(Debug)]
 pub(super) struct AlwaysResolvesCert {
     key: Arc<rustls::sign::CertifiedKey>,
     auth: Authentication,
+}
+
+/// Error for generating TLS configs.
+#[derive(Debug, thiserror::Error)]
+pub(super) enum CreateConfigError {
+    /// Error generating the certificate.
+    #[error("Error generating the certificate")]
+    CertError(#[from] certificate::GenError),
+    /// Rustls configuration error
+    #[error("rustls error")]
+    Rustls(#[from] rustls::Error),
 }
 
 impl AlwaysResolvesCert {
