@@ -340,7 +340,13 @@
 <a href="#339" id="339">339</a>
 <a href="#340" id="340">340</a>
 <a href="#341" id="341">341</a>
-<a href="#342" id="342">342</a></pre></div><pre class="rust"><code><span class="doccomment">//! TLS 1.3 certificates and handshakes handling.
+<a href="#342" id="342">342</a>
+<a href="#343" id="343">343</a>
+<a href="#344" id="344">344</a>
+<a href="#345" id="345">345</a>
+<a href="#346" id="346">346</a>
+<a href="#347" id="347">347</a>
+<a href="#348" id="348">348</a></pre></div><pre class="rust"><code><span class="doccomment">//! TLS 1.3 certificates and handshakes handling.
 //!
 //! This module handles a verification of a client/server certificate chain
 //! and signatures allegedly by the given certificates, or using raw public keys.
@@ -470,7 +476,13 @@
 
                 <span class="kw">let </span>end_entity_as_spki = SubjectPublicKeyInfoDer::from(end_entity.as_ref());
 
-                <span class="kw">if </span>public_key_to_spki(<span class="kw-2">&amp;</span>remote_peer_id) != end_entity_as_spki {
+                <span class="comment">// This effectively checks that the `end_entity_as_spki` bytes have the expected
+                // (constant) 12 byte prefix (consisting of the Ed25519 public key ASN.1 object
+                // identifier, some ASN.1 DER encoding bytes signaling that this is a SPKI and
+                // consists of the object identifier and a bit sequence, a zero byte indicating
+                // that the bit sequence is padded with 0 additional bits) matches, as well as
+                // the public key bytes match the `remote_peer_id` public key bytes.
+                </span><span class="kw">if </span>public_key_to_spki(<span class="kw-2">&amp;</span>remote_peer_id) != end_entity_as_spki {
                     <span class="kw">return </span><span class="prelude-val">Err</span>(rustls::Error::InvalidCertificate(
                         CertificateError::UnknownIssuer,
                     ));
