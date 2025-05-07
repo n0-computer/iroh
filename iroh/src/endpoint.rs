@@ -3127,4 +3127,17 @@ mod tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn watch_net_report() -> testresult::TestResult {
+        let endpoint = Endpoint::builder()
+            .relay_mode(RelayMode::Staging)
+            .bind()
+            .await?;
+
+        endpoint.net_report().initialized().await?;
+
+        Ok(())
+    }
 }
