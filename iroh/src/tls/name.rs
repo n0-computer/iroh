@@ -31,3 +31,25 @@ pub(crate) fn decode(name: &str) -> Option<NodeId> {
     )
     .ok()
 }
+
+#[cfg(test)]
+mod tests {
+    use iroh_base::SecretKey;
+
+    #[test]
+    fn test_roundtrip() {
+        let key = SecretKey::generate(rand::rngs::OsRng);
+        let node_id = key.public();
+        println!("{}", super::encode(node_id));
+        assert_eq!(Some(node_id), super::decode(&super::encode(node_id)));
+    }
+
+    #[test]
+    fn test_snapshot() {
+        let key = SecretKey::from_bytes(&[0; 32]);
+        assert_eq!(
+            super::encode(key.public()),
+            "7dl2ff6emqi2qol3l382krodedij45bn3nh479hqo14a32qpr8kg.iroh.invalid",
+        );
+    }
+}
