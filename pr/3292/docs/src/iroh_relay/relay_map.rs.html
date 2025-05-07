@@ -309,7 +309,7 @@
 
 <span class="doccomment">/// Create a `RelayMap` from an iterator of `RelayUrl`.
 ///
-/// The `RelayNode`s in the `RelayMap` will have the default stun and quic address
+/// The [`RelayNode`]s in the [`RelayMap`] will have the default STUN and QUIC address
 /// discovery ports.
 </span><span class="kw">impl </span>FromIterator&lt;RelayUrl&gt; <span class="kw">for </span>RelayMap {
     <span class="kw">fn </span>from_iter&lt;T: IntoIterator&lt;Item = RelayUrl&gt;&gt;(iter: T) -&gt; <span class="self">Self </span>{
