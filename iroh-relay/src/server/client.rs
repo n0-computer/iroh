@@ -8,7 +8,6 @@ use std::{
 use anyhow::{bail, Context, Result};
 use bytes::Bytes;
 use iroh_base::NodeId;
-use iroh_metrics::{inc, inc_by};
 use n0_future::{FutureExt, Sink, SinkExt, Stream, StreamExt};
 use rand::Rng;
 use time::{Date, OffsetDateTime};
@@ -73,7 +72,12 @@ impl Client {
     /// Creates a client from a connection & starts a read and write loop to handle io to and from
     /// the client
     /// Call [`Client::shutdown`] to close the read and write loops before dropping the [`Client`]
-    pub(super) fn new(config: Config, connection_id: u64, clients: &Clients) -> Client {
+    pub(super) fn new(
+        config: Config,
+        connection_id: u64,
+        clients: &Clients,
+        metrics: Arc<Metrics>,
+    ) -> Client {
         let Config {
             node_id,
             stream: io,
@@ -89,9 +93,9 @@ impl Client {
                     quota = quota.allow_burst(max_burst);
                 }
                 let limiter = governor::RateLimiter::direct(quota);
-                RateLimitedRelayedStream::new(io, limiter)
+                RateLimitedRelayedStream::new(io, limiter, metrics.clone())
             }
-            None => RateLimitedRelayedStream::unlimited(io),
+            None => RateLimitedRelayedStream::unlimited(io, metrics.clone()),
         };
 
         let done = CancellationToken::new();
@@ -111,6 +115,7 @@ impl Client {
             clients: clients.clone(),
             client_counter: ClientCounter::default(),
             ping_tracker: PingTracker::default(),
+            metrics,
         };
 
         // start io loop
@@ -213,6 +218,7 @@ struct Actor {
     /// Statistics about the connected clients
     client_counter: ClientCounter,
     ping_tracker: PingTracker,
+    metrics: Arc<Metrics>,
 }
 
 impl Actor {
@@ -220,9 +226,9 @@ impl Actor {
         // Note the accept and disconnects metrics must be in a pair.  Technically the
         // connection is accepted long before this in the HTTP server, but it is clearer to
         // handle the metric here.
-        inc!(Metrics, accepts);
+        self.metrics.accepts.inc();
         if self.client_counter.update(self.node_id) {
-            inc!(Metrics, unique_client_keys);
+            self.metrics.unique_client_keys.inc();
         }
         match self.run_inner(done).await {
             Err(e) => {
@@ -234,7 +240,7 @@ impl Actor {
         }
 
         self.clients.unregister(self.connection_id, self.node_id);
-        inc!(Metrics, disconnects);
+        self.metrics.disconnects.inc();
     }
 
     async fn run_inner(&mut self, done: CancellationToken) -> Result<()> {
@@ -314,7 +320,7 @@ impl Actor {
         let content = packet.data;
 
         if let Ok(len) = content.len().try_into() {
-            inc_by!(Metrics, bytes_sent, len);
+            self.metrics.bytes_sent.inc_by(len);
         }
         self.write_frame(Frame::RecvPacket { src_key, content })
             .await
@@ -324,11 +330,11 @@ impl Actor {
         trace!("send packet");
         match self.send_raw(packet).await {
             Ok(()) => {
-                inc!(Metrics, send_packets_sent);
+                self.metrics.send_packets_sent.inc();
                 Ok(())
             }
             Err(err) => {
-                inc!(Metrics, send_packets_dropped);
+                self.metrics.send_packets_dropped.inc();
                 Err(err)
             }
         }
@@ -338,11 +344,11 @@ impl Actor {
         trace!("send disco packet");
         match self.send_raw(packet).await {
             Ok(()) => {
-                inc!(Metrics, disco_packets_sent);
+                self.metrics.disco_packets_sent.inc();
                 Ok(())
             }
             Err(err) => {
-                inc!(Metrics, disco_packets_dropped);
+                self.metrics.disco_packets_dropped.inc();
                 Err(err)
             }
         }
@@ -360,13 +366,13 @@ impl Actor {
             Frame::SendPacket { dst_key, packet } => {
                 let packet_len = packet.len();
                 self.handle_frame_send_packet(dst_key, packet)?;
-                inc_by!(Metrics, bytes_recv, packet_len as u64);
+                self.metrics.bytes_recv.inc_by(packet_len as u64);
             }
             Frame::Ping { data } => {
-                inc!(Metrics, got_ping);
+                self.metrics.got_ping.inc();
                 // TODO: add rate limiter
                 self.write_frame(Frame::Pong { data }).await?;
-                inc!(Metrics, sent_pong);
+                self.metrics.sent_pong.inc();
             }
             Frame::Pong { data } => {
                 self.ping_tracker.pong_received(data);
@@ -375,7 +381,7 @@ impl Actor {
                 bail!("server issue: {:?}", problem);
             }
             _ => {
-                inc!(Metrics, unknown_frames);
+                self.metrics.unknown_frames.inc();
             }
         }
         Ok(())
@@ -383,11 +389,13 @@ impl Actor {
 
     fn handle_frame_send_packet(&self, dst: NodeId, data: Bytes) -> Result<()> {
         if disco::looks_like_disco_wrapper(&data) {
-            inc!(Metrics, disco_packets_recv);
-            self.clients.send_disco_packet(dst, data, self.node_id)?;
+            self.metrics.disco_packets_recv.inc();
+            self.clients
+                .send_disco_packet(dst, data, self.node_id, &self.metrics)?;
         } else {
-            inc!(Metrics, send_packets_recv);
-            self.clients.send_packet(dst, data, self.node_id)?;
+            self.metrics.send_packets_recv.inc();
+            self.clients
+                .send_packet(dst, data, self.node_id, &self.metrics)?;
         }
         Ok(())
     }
@@ -406,6 +414,7 @@ struct RateLimitedRelayedStream {
     state: State,
     /// Keeps track if this stream was ever rate-limited.
     limited_once: bool,
+    metrics: Arc<Metrics>,
 }
 
 #[derive(derive_more::Debug)]
@@ -421,21 +430,27 @@ enum State {
 }
 
 impl RateLimitedRelayedStream {
-    fn new(inner: RelayedStream, limiter: governor::DefaultDirectRateLimiter) -> Self {
+    fn new(
+        inner: RelayedStream,
+        limiter: governor::DefaultDirectRateLimiter,
+        metrics: Arc<Metrics>,
+    ) -> Self {
         Self {
             inner,
             limiter: Some(Arc::new(limiter)),
             state: State::Ready,
             limited_once: false,
+            metrics,
         }
     }
 
-    fn unlimited(inner: RelayedStream) -> Self {
+    fn unlimited(inner: RelayedStream, metrics: Arc<Metrics>) -> Self {
         Self {
             inner,
             limiter: None,
             state: State::Ready,
             limited_once: false,
+            metrics,
         }
     }
 }
@@ -444,9 +459,9 @@ impl RateLimitedRelayedStream {
     /// Records metrics about being rate-limited.
     fn record_rate_limited(&mut self) {
         // TODO: add a label for the frame type.
-        inc!(Metrics, frames_rx_ratelimited_total);
+        self.metrics.frames_rx_ratelimited_total.inc();
         if !self.limited_once {
-            inc!(Metrics, conns_rx_ratelimited_total);
+            self.metrics.conns_rx_ratelimited_total.inc();
             self.limited_once = true;
         }
     }
@@ -628,8 +643,9 @@ mod tests {
             RelayedStream::Relay(Framed::new(MaybeTlsStream::Test(io), RelayCodec::test()));
 
         let clients = Clients::default();
+        let metrics = Arc::new(Metrics::default());
         let actor = Actor {
-            stream: RateLimitedRelayedStream::unlimited(stream),
+            stream: RateLimitedRelayedStream::unlimited(stream, metrics.clone()),
             timeout: Duration::from_secs(1),
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
@@ -639,6 +655,7 @@ mod tests {
             clients: clients.clone(),
             client_counter: ClientCounter::default(),
             ping_tracker: PingTracker::default(),
+            metrics,
         };
 
         let done = CancellationToken::new();
@@ -742,7 +759,7 @@ mod tests {
             MaybeTlsStream::Test(io_read),
             RelayCodec::test(),
         ));
-        let mut stream = RateLimitedRelayedStream::new(stream, limiter);
+        let mut stream = RateLimitedRelayedStream::new(stream, limiter, Default::default());
 
         // Prepare a frame to send, assert its size.
         let data = Bytes::from_static(b"hello world!!");

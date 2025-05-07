@@ -85,7 +85,7 @@ async fn main() -> Result<()> {
     let builder = Router::builder(endpoint);
 
     // Add our protocol, identified by our ALPN, to the node, and spawn the node.
-    let router = builder.accept(ALPN, proto.clone()).spawn().await?;
+    let router = builder.accept(ALPN, proto.clone()).spawn();
 
     match args.command {
         Command::Listen { text } => {

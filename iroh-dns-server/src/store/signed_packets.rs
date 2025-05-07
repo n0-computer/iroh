@@ -1,7 +1,6 @@
-use std::{future::Future, path::Path, result, time::Duration};
+use std::{future::Future, path::Path, result, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
-use iroh_metrics::inc;
 use pkarr::{SignedPacket, Timestamp};
 use redb::{
     backends::InMemoryBackend, Database, MultimapTableDefinition, ReadableTable, TableDefinition,
@@ -63,6 +62,7 @@ struct Actor {
     recv: PeekableReceiver<Message>,
     cancel: CancellationToken,
     options: Options,
+    metrics: Arc<Metrics>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -155,9 +155,9 @@ impl Actor {
                                 tables.signed_packets.insert(key.as_bytes(), &value[..])?;
                                 tables.update_time.insert(&packet.timestamp().to_bytes(), key.as_bytes())?;
                                 if replaced {
-                                    inc!(Metrics, store_packets_updated);
+                                    self.metrics.store_packets_updated.inc();
                                 } else {
-                                    inc!(Metrics, store_packets_inserted);
+                                    self.metrics.store_packets_inserted.inc();
                                 }
                                 res.send(true).ok();
                             }
@@ -166,14 +166,11 @@ impl Actor {
                                 let updated = if let Some(row) = tables.signed_packets.remove(key.as_bytes())? {
                                     let packet = SignedPacket::deserialize(row.value())?;
                                     tables.update_time.remove(&packet.timestamp().to_bytes(), key.as_bytes())?;
-                                    inc!(Metrics, store_packets_removed);
+                                    self.metrics.store_packets_removed.inc();
                                     true
                                 } else {
                                     false
                                 };
-                                if updated {
-                                    inc!(Metrics, store_packets_removed);
-                                }
                                 res.send(updated).ok();
                             }
                             Message::Snapshot { res } => {
@@ -186,7 +183,7 @@ impl Actor {
                                     if packet.timestamp() < expired {
                                         tables.update_time.remove(&time, key.as_bytes())?;
                                         let _ = tables.signed_packets.remove(key.as_bytes())?;
-                                        inc!(Metrics, store_packets_expired);
+                                        self.metrics.store_packets_expired.inc();
                                     }
                                 }
                             }
@@ -234,7 +231,11 @@ impl Snapshot {
 }
 
 impl SignedPacketStore {
-    pub fn persistent(path: impl AsRef<Path>, options: Options) -> Result<Self> {
+    pub fn persistent(
+        path: impl AsRef<Path>,
+        options: Options,
+        metrics: Arc<Metrics>,
+    ) -> Result<Self> {
         let path = path.as_ref();
         info!("loading packet database from {}", path.to_string_lossy());
         if let Some(parent) = path.parent() {
@@ -248,16 +249,16 @@ impl SignedPacketStore {
         let db = Database::builder()
             .create(path)
             .context("failed to open packet database")?;
-        Self::open(db, options)
+        Self::open(db, options, metrics)
     }
 
-    pub fn in_memory(options: Options) -> Result<Self> {
+    pub fn in_memory(options: Options, metrics: Arc<Metrics>) -> Result<Self> {
         info!("using in-memory packet database");
         let db = Database::builder().create_with_backend(InMemoryBackend::new())?;
-        Self::open(db, options)
+        Self::open(db, options, metrics)
     }
 
-    pub fn open(db: Database, options: Options) -> Result<Self> {
+    pub fn open(db: Database, options: Options, metrics: Arc<Metrics>) -> Result<Self> {
         // create tables
         let write_tx = db.begin_write()?;
         let _ = Tables::new(&write_tx)?;
@@ -272,6 +273,7 @@ impl SignedPacketStore {
             recv: PeekableReceiver::new(recv),
             cancel: cancel2,
             options,
+            metrics,
         };
         // start an io thread and donate it to the tokio runtime so we can do blocking IO
         // inside the thread despite being in a tokio runtime

@@ -150,6 +150,8 @@ jobs:
   wasm_test:
     name: Build & test wasm32 for browsers
     runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: '--cfg getrandom_backend="wasm_js"'
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
@@ -167,7 +169,7 @@ jobs:
 
       - name: Install cargo-binstall
         uses: cargo-bins/cargo-binstall@main
-      
+
       - name: Install wasm-bindgen-test-runner
         run: cargo binstall wasm-bindgen-cli --locked --no-confirm
 
