@@ -236,3 +236,71 @@ jobs:
           path: output
           retention-days: 1
           compression-level: 0
+
+  minimal-crates:
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        name: [ubuntu-latest, macOS-arm-latest] # TODO: windows
+        include:
+          - name: ubuntu-latest
+            os: ubuntu-latest
+            release-os: linux
+            release-arch: amd64
+            runner: [self-hosted, linux, X64]
+          - name: macOS-arm-latest
+            os: macOS-latest
+            release-os: darwin
+            release-arch: aarch64
+            runner: [self-hosted, macOS, ARM64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: cargo check
+        run: |
+          rm -f Cargo.lock
+          cargo +nightly check -Z minimal-versions --workspace --all-features --lib --bins
+
+  minimal-crates-windows:
+    timeout-minutes: 30
+    name: "Minimal Crates (Windows)"
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        name: [windows-latest]
+        rust: ["${{ inputs.rust-version}}"]
+        target:
+          - x86_64-pc-windows-msvc
+        include:
+          - name: windows-latest
+            os: windows
+            runner: [self-hosted, windows, x64]
+    env:
+      # Using self-hosted runners so use local cache for sccache and
+      # not SCCACHE_GHA_ENABLED.
+      RUSTC_WRAPPER: "sccache"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.git-ref }}
+
+      - name: Install Rust nightly
+        run: |
+          rustup toolchain install nightly
+          rustup target add ${{ matrix.target }}
+          rustup set default-host ${{ matrix.target }}
+
+      - name: Install sccache
+        uses: mozilla-actions/sccache-action@v0.0.9
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          release: false
+
+      - name: cargo check
+        run: |
+          rm -Force Cargo.lock
+          cargo +nightly check -Z minimal-versions --workspace --all-features --lib --bins
