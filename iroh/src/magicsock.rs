@@ -1902,6 +1902,9 @@ impl Actor {
         #[cfg_attr(wasm_browser, allow(unused_mut))]
         let mut portmap_watcher_closed = false;
         let mut link_change_closed = false;
+
+        let mut home_relay_changes = self.msock.my_relay.watch().stream();
+
         loop {
             self.msock.metrics.magicsock.actor_tick_main.inc();
             #[cfg(not(wasm_browser))]
@@ -1934,6 +1937,13 @@ impl Actor {
                     trace!("tick: re_stun {:?}", tick);
                     self.msock.metrics.magicsock.actor_tick_re_stun.inc();
                     self.msock.re_stun("periodic");
+                }
+                new_home_relay = home_relay_changes.next() => {
+                    if new_home_relay.is_some() {
+                        self.msock.publish_my_addr();
+                    } else {
+                        warn!("home_relay watcher stopped");
+                    }
                 }
                 change = portmap_watcher_changed, if !portmap_watcher_closed => {
                     #[cfg(not(wasm_browser))]
@@ -2390,10 +2400,6 @@ impl Actor {
             for transport in &self.msock.transports {
                 transport.on_network_change(&ni);
             }
-
-            // TODO: this is now done, even if nothing as changed
-            // TODO: this should wait for the changes to be done?
-            self.msock.publish_my_addr();
 
             // TODO: set link type
             self.call_net_info_callback(ni).await;
