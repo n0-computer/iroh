@@ -38,7 +38,7 @@ derive_more = { version = "1.0.0", features = [
     "deref",
     "from_str"
 ] }
-ed25519-dalek = { version = "2.0.0", features = ["serde", "rand_core", "zeroize", "pkcs8", "pem"] }
+ed25519-dalek = { version = "2.1.1", features = ["serde", "rand_core", "zeroize", "pkcs8", "pem"] }
 http = "1"
 iroh-base = { version = "0.34.1", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
 iroh-relay = { version = "0.34", path = "../iroh-relay", default-features = false }
@@ -59,12 +59,12 @@ reqwest = { version = "0.12", default-features = false, features = [
 ] }
 ring = "0.17"
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
-serde = { version = "1", features = ["derive", "rc"] }
+serde = { version = "1.0.219", features = ["derive", "rc"] }
 smallvec = "1.11.1"
 strum = { version = "0.26", features = ["derive"] }
-stun-rs = "0.1.5"
+stun-rs = "0.1.11"
 thiserror = "2"
-tokio = { version = "1", features = [
+tokio = { version = "1.44.1", features = [
     "io-util",
     "macros",
     "sync",
@@ -78,6 +78,12 @@ webpki = { package = "rustls-webpki", version = "0.102" }
 webpki-roots = "0.26"
 x509-parser = "0.16"
 z32 = "1.0.3"
+
+# fix minimal versions
+# for n0-futures
+futures-buffered = "0.2.11"
+# for ed25519-dalek
+spki = { version = "0.7.3", features = ["std"] }
 
 # metrics
 iroh-metrics = { version = "0.34", default-features = false }
@@ -123,6 +129,7 @@ wasm-bindgen-futures = "0.4"
 # we don't use instant nor time directly, but need to enable it because backoff and x509_parser use these in browsers and we need to enable some feature flags for that to work
 instant = { version = "0.1", features = ["wasm-bindgen"] }
 time = { version = "0.3", features = ["wasm-bindgen"] }
+getrandom = { version = "0.3.2", features = ["wasm_js"] }
 
 # target-common test/dev dependencies
 [dev-dependencies]
@@ -157,7 +164,7 @@ tracing-subscriber-wasm = "0.1.0"
 wasm-bindgen-test = "0.3"
 
 [build-dependencies]
-cfg_aliases = { version = "0.2" }
+cfg_aliases = { version = "0.2.1" }
 
 [features]
 default = ["metrics"]

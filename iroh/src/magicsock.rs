@@ -3229,9 +3229,8 @@ mod tests {
         secret_key: &SecretKey,
         tls_auth: crate::tls::Authentication,
     ) -> ServerConfig {
-        let quic_server_config = tls_auth
-            .make_server_config(secret_key, vec![], false)
-            .expect("should generate valid config");
+        let quic_server_config = crate::tls::TlsConfig::new(tls_auth, secret_key.clone())
+            .make_server_config(vec![], false);
         let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
         server_config.transport_config(Arc::new(quinn::TransportConfig::default()));
         server_config
@@ -3771,8 +3770,8 @@ mod tests {
         secret_key: SecretKey,
         tls_auth: tls::Authentication,
     ) -> anyhow::Result<Handle> {
-        let quic_server_config =
-            tls_auth.make_server_config(&secret_key, vec![ALPN.to_vec()], true)?;
+        let quic_server_config = tls::TlsConfig::new(tls_auth, secret_key.clone())
+            .make_server_config(vec![ALPN.to_vec()], true);
         let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
         server_config.transport_config(Arc::new(quinn::TransportConfig::default()));
 
@@ -3839,13 +3838,13 @@ mod tests {
     ) -> Result<quinn::Connection> {
         let alpns = vec![ALPN.to_vec()];
         let quic_client_config =
-            tls_auth.make_client_config(&ep_secret_key, node_id, alpns, None, true)?;
+            tls::TlsConfig::new(tls_auth, ep_secret_key.clone()).make_client_config(alpns, true);
         let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
         client_config.transport_config(transport_config);
         let connect = ep.connect_with(
             client_config,
             mapped_addr.private_socket_addr(),
-            "localhost",
+            &tls::name::encode(node_id),
         )?;
         let connection = connect.await?;
         Ok(connection)
