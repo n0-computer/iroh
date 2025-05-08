@@ -37,7 +37,7 @@ use n0_future::{
     boxed::BoxStream,
     task::{self, JoinSet},
     time::{self, Duration, Instant},
-    FutureExt, StreamExt,
+    FutureExt, MergeBounded, StreamExt,
 };
 use netwatch::netmon;
 #[cfg(not(wasm_browser))]
@@ -208,8 +208,6 @@ pub(crate) struct MagicSock {
 
     /// None (or zero nodes) means relay is disabled.
     relay_map: RelayMap,
-    /// Nearest relay node ID; 0 means none/unknown.
-    my_relay: Watchable<Option<RelayUrl>>,
     /// Tracks the networkmap node entity for each node discovery key.
     node_map: NodeMap,
     /// Tracks the mapped IP addresses
@@ -254,15 +252,13 @@ impl MagicSock {
     ///
     /// If `None`, then we are not connected to any relay nodes.
     pub(crate) fn my_relay(&self) -> Option<RelayUrl> {
-        self.my_relay.get()
-    }
-
-    /// Sets the relay node with the best latency.
-    ///
-    /// If we are not connected to any relay nodes, set this to `None`.
-    #[cfg(test)]
-    fn set_my_relay(&self, my_relay: Option<RelayUrl>) -> Option<RelayUrl> {
-        self.my_relay.set(my_relay).unwrap_or_else(|e| e)
+        self.local_addr().into_iter().find_map(|a| {
+            if let transports::Addr::RelayUrl(url, _) = a {
+                Some(url)
+            } else {
+                None
+            }
+        })
     }
 
     fn is_closing(&self) -> bool {
@@ -277,11 +273,11 @@ impl MagicSock {
         self.secret_key.public()
     }
 
-    /// Get the cached version of the Ipv4 and Ipv6 addrs of the current connection.
-    pub(crate) fn local_addr(&self) -> Vec<SocketAddr> {
+    /// Get the cached version of addresses.
+    pub(crate) fn local_addr(&self) -> Vec<transports::Addr> {
         self.transports
             .iter()
-            .filter_map(|t| t.local_addr().ok())
+            .filter_map(|t| t.local_addr())
             .collect()
     }
 
@@ -323,7 +319,18 @@ impl MagicSock {
     /// Note that this can be used to wait for the initial home relay to be known using
     /// [`Watcher::initialized`].
     pub(crate) fn home_relay(&self) -> Watcher<Option<RelayUrl>> {
-        self.my_relay.watch()
+        todo!()
+        // self.tansports
+        //     .iter()
+        //     .map(|t| t.local_addr())
+        //     .find_map(|a| {
+
+        //         if let transports::Addr::RelayUrl(url, _) = a {
+        //             Some(url)
+        //         } else {
+        //             None
+        //         }
+        //     })
     }
 
     /// Returns a [`Watcher`] that reports the [`ConnectionType`] we have to the
@@ -429,7 +436,11 @@ impl MagicSock {
         let addrs: Vec<_> = self
             .transports
             .iter()
-            .filter_map(|t| t.local_addr().ok())
+            .filter_map(|t| {
+                let addr = t.local_addr()?;
+                let addr: SocketAddr = addr.try_into().ok()?;
+                Some(addr)
+            })
             .collect();
 
         if let Some(addr) = addrs.iter().find(|a| a.is_ipv6()) {
@@ -1405,7 +1416,6 @@ impl Handle {
             actor_sender: actor_sender.clone(),
             ipv6_reported,
             relay_map,
-            my_relay,
             net_reporter: net_reporter.addr(),
             disco_secrets: DiscoSecrets::default(),
             node_map,
@@ -1685,7 +1695,11 @@ impl AsyncUdpSocket for MagicSock {
         let addrs: Vec<_> = self
             .transports
             .iter()
-            .filter_map(|t| t.local_addr().ok())
+            .filter_map(|t| {
+                let addr = t.local_addr()?;
+                let addr: SocketAddr = addr.try_into().ok()?;
+                Some(addr)
+            })
             .collect();
 
         if let Some(addr) = addrs.iter().find(|addr| addr.is_ipv6()) {
@@ -1903,7 +1917,8 @@ impl Actor {
         let mut portmap_watcher_closed = false;
         let mut link_change_closed = false;
 
-        let mut home_relay_changes = self.msock.my_relay.watch().stream();
+        let mut local_addr_changes =
+            MergeBounded::from_iter(self.msock.transports.iter().map(|t| t.local_addr_stream()));
 
         loop {
             self.msock.metrics.magicsock.actor_tick_main.inc();
@@ -1938,17 +1953,17 @@ impl Actor {
                     self.msock.metrics.magicsock.actor_tick_re_stun.inc();
                     self.msock.re_stun("periodic");
                 }
-                new_home_relay = home_relay_changes.next() => {
-                    match new_home_relay {
-                        Some(Some(new_home_relay)) => {
-                            trace!(?new_home_relay, "new home relay");
+                new_addr = local_addr_changes.next() => {
+                    match new_addr {
+                        Some(Some(new_addr)) => {
+                            trace!(?new_addr, "new local addr");
                             self.msock.publish_my_addr();
                         }
                         Some(None) => {
-                            trace!("no home relay available");
+                            trace!("empty new local addr");
                         }
                         None => {
-                            warn!("home_relay watcher stopped");
+                            warn!("local addr watcher stopped");
                         }
                     }
                 }
@@ -2189,7 +2204,11 @@ impl Actor {
             .sockets
             .ip
             .iter()
-            .filter_map(|t| Some((t.bind_addr()?, t.local_addr().ok()?)))
+            .filter_map(|t| {
+                let local_addr = t.local_addr()?;
+                let local_addr: SocketAddr = local_addr.try_into().ok()?;
+                Some((t.bind_addr()?, local_addr))
+            })
             .collect();
 
         let msock = self.msock.clone();
@@ -2802,7 +2821,7 @@ mod tests {
     use tracing_test::traced_test;
 
     use super::*;
-    use crate::{defaults::staging::EU_RELAY_HOSTNAME, dns::DnsResolver, tls, Endpoint, RelayMode};
+    use crate::{dns::DnsResolver, tls, Endpoint, RelayMode};
 
     const ALPN: &[u8] = b"n0/test/1";
 
@@ -3335,36 +3354,6 @@ mod tests {
         let eps1 = ms.direct_addresses().initialized().await.unwrap();
         println!("{eps1:?}");
         assert_eq!(eps0, eps1);
-    }
-
-    #[tokio::test]
-    async fn test_watch_home_relay() {
-        // use an empty relay map to get full control of the changes during the test
-        let ops = Options {
-            relay_map: RelayMap::empty(),
-            ..Default::default()
-        };
-        let msock = MagicSock::spawn(ops).await.unwrap();
-        let mut relay_stream = msock.home_relay().stream().filter_map(|r| r);
-
-        // no relay, nothing to report
-        assert_eq!(
-            n0_future::future::poll_once(relay_stream.next()).await,
-            None
-        );
-
-        let url: RelayUrl = format!("https://{}", EU_RELAY_HOSTNAME).parse().unwrap();
-        msock.set_my_relay(Some(url.clone()));
-
-        assert_eq!(relay_stream.next().await, Some(url.clone()));
-
-        // drop the stream and query it again, the result should be immediately available
-
-        let mut relay_stream = msock.home_relay().stream().filter_map(|r| r);
-        assert_eq!(
-            n0_future::future::poll_once(relay_stream.next()).await,
-            Some(Some(url))
-        );
     }
 
     /// Creates a new [`quinn::Endpoint`] hooked up to a [`MagicSock`].

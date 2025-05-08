@@ -39,7 +39,7 @@ use crate::{
         pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryItem, DiscoverySubscribers,
         DiscoveryTask, Lagged, UserData,
     },
-    magicsock::{self, Handle, NodeIdMappedAddr},
+    magicsock::{self, transports, Handle, NodeIdMappedAddr},
     metrics::EndpointMetrics,
     tls,
     watchable::Watcher,
@@ -965,7 +965,7 @@ impl Endpoint {
     ///
     /// The [`Endpoint`] always binds on an IPv4 address and also tries to bind on an IPv6
     /// address if available.
-    pub fn bound_sockets(&self) -> Vec<SocketAddr> {
+    pub fn bound_sockets(&self) -> Vec<transports::Addr> {
         self.msock.local_addr()
     }
 

@@ -6,6 +6,7 @@ use std::{
 };
 
 use iroh_base::{NodeId, RelayUrl};
+use n0_future::Stream;
 
 mod ip;
 pub(crate) mod relay;
@@ -22,7 +23,11 @@ pub trait Transport: std::fmt::Debug + Send + Sync + 'static {
         meta: &mut [RecvMeta],
     ) -> Poll<io::Result<usize>>;
 
-    fn local_addr(&self) -> io::Result<SocketAddr>;
+    fn local_addr(&self) -> Option<Addr>;
+    fn local_addr_stream(
+        &self,
+    ) -> Pin<Box<dyn Stream<Item = Option<Addr>> + Send + Sync + 'static>>;
+
     fn max_transmit_segments(&self) -> usize;
     fn max_receive_segments(&self) -> usize;
     fn may_fragment(&self) -> bool;
@@ -72,7 +77,7 @@ impl Default for RecvMeta {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Addr {
     Ipv4(Ipv4Addr, Option<u16>),
     Ipv6(Ipv6Addr, Option<u16>),

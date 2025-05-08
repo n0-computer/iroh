@@ -99,6 +99,17 @@ impl<T: Clone + Eq> Watchable<T> {
     pub fn get(&self) -> T {
         self.shared.get()
     }
+
+    /// Returns a `Watchable` which has the value mapped.
+    // TODO: this does not update correctly
+    pub fn map<R, F>(&self, f: F) -> Watchable<R>
+    where
+        R: Clone + Eq,
+        F: Fn(T) -> R,
+    {
+        let current = self.shared.get();
+        Watchable::new(f(current))
+    }
 }
 
 /// An observer for a value.

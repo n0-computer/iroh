@@ -10,13 +10,17 @@ use anyhow::{anyhow, Result};
 use atomic_waker::AtomicWaker;
 use bytes::Bytes;
 use concurrent_queue::ConcurrentQueue;
-use n0_future::task::{self, AbortOnDropHandle};
+use iroh_base::{NodeId, RelayUrl};
+use n0_future::{
+    task::{self, AbortOnDropHandle},
+    StreamExt,
+};
 use smallvec::SmallVec;
 use tokio::sync::mpsc;
 use tracing::{error, info_span, trace, warn, Instrument};
 
 use super::{Addr, RecvMeta, Transmit, Transport};
-use crate::magicsock::RelayContents;
+use crate::{magicsock::RelayContents, watchable::Watchable};
 
 mod actor;
 
@@ -35,6 +39,8 @@ pub struct RelayTransport {
     pub(super) relay_datagram_send_channel: RelayDatagramSendChannelSender,
     actor_sender: mpsc::Sender<RelayActorMessage>,
     _actor_handle: AbortOnDropHandle<()>,
+    my_relay: Watchable<Option<RelayUrl>>,
+    my_node_id: NodeId,
 }
 
 impl RelayTransport {
@@ -44,7 +50,11 @@ impl RelayTransport {
 
         let (actor_sender, actor_receiver) = mpsc::channel(256);
 
+        let my_node_id = config.secret_key.public();
+        let my_relay = config.my_relay.clone();
+
         let relay_actor = RelayActor::new(config, relay_datagram_recv_queue.clone());
+
         // TODO: track task
         let actor_handle = AbortOnDropHandle::new(task::spawn(
             async move {
@@ -60,11 +70,9 @@ impl RelayTransport {
             relay_datagram_send_channel: relay_datagram_send_tx,
             actor_sender,
             _actor_handle: actor_handle,
+            my_relay,
+            my_node_id,
         }
-    }
-
-    fn maybe_close_relays_on_rebind(&self) {
-        self.send_relay_actor(RelayActorMessage::MaybeCloseRelaysOnRebind);
     }
 
     fn send_relay_actor(&self, msg: RelayActorMessage) {
@@ -163,8 +171,22 @@ impl Transport for RelayTransport {
         }
     }
 
-    fn local_addr(&self) -> io::Result<SocketAddr> {
-        Err(io::Error::other("no local address for RelayTransport"))
+    fn local_addr(&self) -> Option<Addr> {
+        self.my_relay
+            .get()
+            .map(|url| Addr::RelayUrl(url, self.my_node_id))
+    }
+
+    fn local_addr_stream(
+        &self,
+    ) -> Pin<Box<dyn n0_future::Stream<Item = Option<Addr>> + Send + Sync + 'static>> {
+        let my_node_id = self.my_node_id;
+        Box::pin(
+            self.my_relay
+                .watch()
+                .stream()
+                .map(move |url| url.map(|url| Addr::RelayUrl(url, my_node_id))),
+        )
     }
 
     fn max_transmit_segments(&self) -> usize {
@@ -192,7 +214,8 @@ impl Transport for RelayTransport {
     }
 
     fn rebind(&self) -> io::Result<()> {
-        self.maybe_close_relays_on_rebind();
+        self.send_relay_actor(RelayActorMessage::MaybeCloseRelaysOnRebind);
+
         Ok(())
     }
 

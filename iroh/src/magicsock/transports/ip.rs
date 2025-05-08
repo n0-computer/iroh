@@ -8,19 +8,25 @@ use std::{
 use quinn::AsyncUdpSocket;
 
 use super::{Addr, RecvMeta, Transmit, Transport};
-use crate::magicsock::UdpConn;
+use crate::{magicsock::UdpConn, watchable::Watchable};
 
 #[derive(Clone, Debug)]
 pub struct IpTransport {
     bind_addr: SocketAddr,
     socket: UdpConn,
+    local_addr: Watchable<Option<Addr>>,
 }
 
 impl IpTransport {
     pub fn new(addr: SocketAddr, socket: UdpConn) -> Self {
+        // Currently gets updated on manual rebind
+        // TODO: update when UdpSocket under the hood rebinds automatically
+        let local_addr = Watchable::new(socket.local_addr().ok().map(Into::into));
+
         Self {
             bind_addr: addr,
             socket,
+            local_addr,
         }
     }
 }
@@ -82,8 +88,13 @@ impl Transport for IpTransport {
         }
     }
 
-    fn local_addr(&self) -> io::Result<SocketAddr> {
-        self.socket.local_addr()
+    fn local_addr(&self) -> Option<Addr> {
+        self.local_addr.get()
+    }
+    fn local_addr_stream(
+        &self,
+    ) -> Pin<Box<dyn n0_future::Stream<Item = Option<Addr>> + Send + Sync + 'static>> {
+        Box::pin(self.local_addr.watch().stream())
     }
 
     fn max_transmit_segments(&self) -> usize {
@@ -116,7 +127,11 @@ impl Transport for IpTransport {
     }
 
     fn rebind(&self) -> io::Result<()> {
-        self.socket.as_socket_ref().rebind()
+        self.socket.as_socket_ref().rebind()?;
+        let addr = self.socket.as_socket_ref().local_addr()?;
+        self.local_addr.set(Some(addr.into())).ok();
+
+        Ok(())
     }
 
     fn on_network_change(&self, _info: &crate::magicsock::NetInfo) {
