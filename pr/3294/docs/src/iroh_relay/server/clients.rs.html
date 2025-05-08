@@ -436,7 +436,7 @@
                     dst = dst.fmt_short(),
                     <span class="string">"client too busy to receive disco packet, dropping packet"
                 </span>);
-                <span class="macro">bail!</span>(<span class="string">"failed to disco send message: full"</span>);
+                <span class="macro">bail!</span>(<span class="string">"failed to send disco message: full"</span>);
             }
             <span class="prelude-val">Err</span>(TrySendError::Closed(<span class="kw">_</span>)) =&gt; {
                 <span class="macro">debug!</span>(
@@ -444,7 +444,7 @@
                     <span class="string">"can no longer write to client, dropping disco message and pruning connection"
                 </span>);
                 client.start_shutdown();
-                <span class="macro">bail!</span>(<span class="string">"failed to disco send message: gone"</span>);
+                <span class="macro">bail!</span>(<span class="string">"failed to send disco message: gone"</span>);
             }
         }
     }
