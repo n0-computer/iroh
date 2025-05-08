@@ -13,7 +13,7 @@ use quinn_udp::Transmit;
 
 /// Wrapper struct to implement Quinn's [`AsyncUdpSocket`] for [`UdpSocket`].
 #[derive(Debug, Clone)]
-pub(super) struct UdpConn {
+pub(crate) struct UdpConn {
     inner: Arc<UdpSocket>,
 }
 

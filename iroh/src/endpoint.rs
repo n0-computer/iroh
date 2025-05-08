@@ -1000,8 +1000,7 @@ impl Endpoint {
     ///
     /// The [`Endpoint`] always binds on an IPv4 address and also tries to bind on an IPv6
     /// address if available.
-    #[cfg(not(wasm_browser))]
-    pub fn bound_sockets(&self) -> (SocketAddr, Option<SocketAddr>) {
+    pub fn bound_sockets(&self) -> Vec<SocketAddr> {
         self.msock.local_addr()
     }
 
@@ -2383,7 +2382,8 @@ mod tests {
                         .await
                         .unwrap();
                     let eps = ep.bound_sockets();
-                    info!(me = %ep.node_id().fmt_short(), ipv4=%eps.0, ipv6=?eps.1, "server listening on");
+
+                    info!(me = %ep.node_id().fmt_short(), eps = ?eps, "server listening on");
                     for i in 0..n_clients {
                         let round_start = Instant::now();
                         info!("[server] round {i}");
@@ -2425,7 +2425,8 @@ mod tests {
                     .await
                     .unwrap();
                 let eps = ep.bound_sockets();
-                info!(me = %ep.node_id().fmt_short(), ipv4=%eps.0, ipv6=?eps.1, "client bound");
+
+                info!(me = %ep.node_id().fmt_short(), eps=?eps, "client bound");
                 let node_addr = NodeAddr::new(server_node_id).with_relay_url(relay_url);
                 info!(to = ?node_addr, "client connecting");
                 let conn = ep.connect(node_addr, TEST_ALPN).await.unwrap();
@@ -2545,6 +2546,8 @@ mod tests {
 
         let ep1_nodeaddr = ep1.node_addr().await.unwrap();
         let ep2_nodeaddr = ep2.node_addr().await.unwrap();
+        eprintln!("node addr 1 {ep1_nodeaddr:?}");
+        eprintln!("node addr 2 {ep2_nodeaddr:?}");
         ep1.add_node_addr(ep2_nodeaddr.clone()).unwrap();
         ep2.add_node_addr(ep1_nodeaddr.clone()).unwrap();
         let ep1_nodeid = ep1.node_id();

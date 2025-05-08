@@ -51,17 +51,21 @@ use n0_future::{
     time::{self, Duration, Instant, MissedTickBehavior},
     FuturesUnorderedBounded, SinkExt, StreamExt,
 };
+use netwatch::interfaces;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, event, info_span, instrument, trace, warn, Instrument, Level};
+use tracing::{debug, error, event, info, info_span, instrument, trace, warn, Instrument, Level};
 use url::Url;
 
-use super::RelayDatagramSendChannelReceiver;
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
 use crate::{
-    magicsock::{MagicSock, Metrics as MagicsockMetrics, RelayContents, RelayDatagramRecvQueue},
+    magicsock::{
+        transports::relay::{RelayDatagramRecvQueue, RelayDatagramSendChannelReceiver},
+        Metrics as MagicsockMetrics, NetInfo, RelayContents,
+    },
     util::MaybeFuture,
+    watchable::Watchable,
 };
 
 /// How long a non-home relay connection needs to be idle (last written to) before we close it.
@@ -792,22 +796,22 @@ impl ConnectedRelayState {
 }
 
 pub(super) enum RelayActorMessage {
-    MaybeCloseRelaysOnRebind(Vec<IpAddr>),
-    SetHome { url: RelayUrl },
+    MaybeCloseRelaysOnRebind,
+    NetworkChange { info: NetInfo },
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct RelaySendItem {
+pub(crate) struct RelaySendItem {
     /// The destination for the datagrams.
-    pub(super) remote_node: NodeId,
+    pub(crate) remote_node: NodeId,
     /// The home relay of the remote node.
-    pub(super) url: RelayUrl,
+    pub(crate) url: RelayUrl,
     /// One or more datagrams to send.
-    pub(super) datagrams: RelayContents,
+    pub(crate) datagrams: RelayContents,
 }
 
 pub(super) struct RelayActor {
-    msock: Arc<MagicSock>,
+    config: Config,
     /// Queue on which to put received datagrams.
     ///
     /// [`AsyncUdpSocket::poll_recv`] will read from this queue.
@@ -822,28 +826,37 @@ pub(super) struct RelayActor {
     /// The tasks for the [`ActiveRelayActor`]s in `active_relays` above.
     active_relay_tasks: JoinSet<()>,
     cancel_token: CancellationToken,
-    protocol: iroh_relay::http::Protocol,
+}
+
+#[derive(Debug)]
+pub struct Config {
+    pub my_relay: Watchable<Option<RelayUrl>>,
+    pub secret_key: SecretKey,
+    #[cfg(not(wasm_browser))]
+    pub dns_resolver: DnsResolver,
+    /// Proxy
+    pub proxy_url: Option<Url>,
+    /// If the last net_report report, reports IPv6 to be available.
+    pub ipv6_reported: Arc<AtomicBool>,
+    #[cfg(any(test, feature = "test-utils"))]
+    pub insecure_skip_relay_cert_verify: bool,
+    pub metrics: Arc<MagicsockMetrics>,
+    pub protocol: iroh_relay::http::Protocol,
 }
 
 impl RelayActor {
     pub(super) fn new(
-        msock: Arc<MagicSock>,
+        config: Config,
         relay_datagram_recv_queue: Arc<RelayDatagramRecvQueue>,
-        protocol: iroh_relay::http::Protocol,
     ) -> Self {
         let cancel_token = CancellationToken::new();
         Self {
-            msock,
+            config,
             relay_datagram_recv_queue,
             active_relays: Default::default(),
             active_relay_tasks: JoinSet::new(),
             cancel_token,
-            protocol,
         }
-    }
-
-    pub(super) fn cancel_token(&self) -> CancellationToken {
-        self.cancel_token.clone()
     }
 
     pub(super) async fn run(
@@ -914,11 +927,11 @@ impl RelayActor {
 
     async fn handle_msg(&mut self, msg: RelayActorMessage) {
         match msg {
-            RelayActorMessage::SetHome { url } => {
-                self.set_home_relay(url).await;
+            RelayActorMessage::NetworkChange { info } => {
+                self.on_network_change(info).await;
             }
-            RelayActorMessage::MaybeCloseRelaysOnRebind(ifs) => {
-                self.maybe_close_relays_on_rebind(&ifs).await;
+            RelayActorMessage::MaybeCloseRelaysOnRebind => {
+                self.maybe_close_relays_on_rebind().await;
             }
         }
     }
@@ -948,6 +961,28 @@ impl RelayActor {
                 };
                 Some(fut)
             }
+        }
+    }
+
+    async fn on_network_change(&mut self, info: NetInfo) {
+        let my_relay = self.config.my_relay.get();
+        if info.preferred_relay == my_relay {
+            // No change.
+            return;
+        }
+        let old_relay = self
+            .config
+            .my_relay
+            .set(info.preferred_relay.clone())
+            .unwrap_or_else(|e| e);
+
+        if let Some(relay_url) = info.preferred_relay {
+            self.config.metrics.relay_home_change.inc();
+
+            // On change, notify all currently connected relay servers and
+            // start connecting to our home relay if we are not already.
+            info!("home is now relay {}, was {:?}", relay_url, old_relay);
+            self.set_home_relay(relay_url).await;
         }
     }
 
@@ -1016,7 +1051,7 @@ impl RelayActor {
             Some(e) => e.clone(),
             None => {
                 let handle = self.start_active_relay(url.clone());
-                if Some(&url) == self.msock.my_relay().as_ref() {
+                if Some(&url) == self.config.my_relay.get().as_ref() {
                     if let Err(err) = handle
                         .inbox_addr
                         .try_send(ActiveRelayMessage::SetHomeRelay(true))
@@ -1035,14 +1070,14 @@ impl RelayActor {
         debug!(?url, "Adding relay connection");
 
         let connection_opts = RelayConnectionOptions {
-            secret_key: self.msock.secret_key.clone(),
+            secret_key: self.config.secret_key.clone(),
             #[cfg(not(wasm_browser))]
-            dns_resolver: self.msock.dns_resolver.clone(),
-            proxy_url: self.msock.proxy_url().cloned(),
-            prefer_ipv6: self.msock.ipv6_reported.clone(),
+            dns_resolver: self.config.dns_resolver.clone(),
+            proxy_url: self.config.proxy_url.clone(),
+            prefer_ipv6: self.config.ipv6_reported.clone(),
             #[cfg(any(test, feature = "test-utils"))]
-            insecure_skip_cert_verify: self.msock.insecure_skip_relay_cert_verify,
-            protocol: self.protocol,
+            insecure_skip_cert_verify: self.config.insecure_skip_relay_cert_verify,
+            protocol: self.config.protocol,
         };
 
         // TODO: Replace 64 with PER_CLIENT_SEND_QUEUE_DEPTH once that's unused
@@ -1058,7 +1093,7 @@ impl RelayActor {
             relay_datagrams_recv: self.relay_datagram_recv_queue.clone(),
             connection_opts,
             stop_token: self.cancel_token.child_token(),
-            metrics: self.msock.metrics.magicsock.clone(),
+            metrics: self.config.metrics.clone(),
         };
         let actor = ActiveRelayActor::new(opts);
         self.active_relay_tasks.spawn(
@@ -1084,13 +1119,28 @@ impl RelayActor {
     /// Called in response to a rebind, any relay connection originating from an address
     /// that's not known to be currently a local IP address should be closed.  All the other
     /// relay connections are pinged.
-    async fn maybe_close_relays_on_rebind(&mut self, okay_local_ips: &[IpAddr]) {
-        let send_futs = self.active_relays.values().map(|handle| async move {
-            handle
-                .inbox_addr
-                .send(ActiveRelayMessage::CheckConnection(okay_local_ips.to_vec()))
-                .await
-                .ok();
+    async fn maybe_close_relays_on_rebind(&mut self) {
+        #[cfg(not(wasm_browser))]
+        let ifs = interfaces::State::new().await;
+        #[cfg(not(wasm_browser))]
+        let local_ips: Vec<_> = ifs
+            .interfaces
+            .values()
+            .flat_map(|netif| netif.addrs())
+            .map(|ipnet| ipnet.addr())
+            .collect();
+        // In browsers, we don't have this information. This will do the right thing in the ActiveRelayActor, though.
+        #[cfg(wasm_browser)]
+        let local_ips = Vec::new();
+        let send_futs = self.active_relays.values().map(|handle| {
+            let local_ips = local_ips.clone();
+            async move {
+                handle
+                    .inbox_addr
+                    .send(ActiveRelayMessage::CheckConnection(local_ips))
+                    .await
+                    .ok();
+            }
         });
         n0_future::join_all(send_futs).await;
         self.log_active_relay();
@@ -1102,8 +1152,8 @@ impl RelayActor {
             .retain(|_url, handle| !handle.inbox_addr.is_closed());
 
         // Make sure home relay exists
-        if let Some(ref url) = self.msock.my_relay() {
-            self.active_relay_handle(url.clone());
+        if let Some(url) = self.config.my_relay.get() {
+            self.active_relay_handle(url);
         }
         self.log_active_relay();
     }
@@ -1162,10 +1212,10 @@ struct RelaySendPacket {
 ///
 /// This could be either a QUIC or DISCO packet.
 #[derive(Debug)]
-pub(super) struct RelayRecvDatagram {
-    pub(super) url: RelayUrl,
-    pub(super) src: NodeId,
-    pub(super) buf: Bytes,
+pub(crate) struct RelayRecvDatagram {
+    pub(crate) url: RelayUrl,
+    pub(crate) src: NodeId,
+    pub(crate) buf: Bytes,
 }
 
 /// Combines datagrams into a single DISCO frame of at most MAX_PACKET_SIZE.
