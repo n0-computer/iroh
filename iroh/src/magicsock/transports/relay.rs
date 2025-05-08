@@ -98,7 +98,7 @@ impl Transport for RelayTransport {
         Box::pin(self.relay_datagram_send_channel.clone())
     }
 
-    fn try_send(&self, transmit: &Transmit<'_>) -> io::Result<()> {
+    fn poll_send(&self, transmit: &Transmit<'_>) -> Poll<io::Result<()>> {
         let contents = split_packets(transmit);
         let (dest_url, dest_node) = transmit
             .destination
@@ -116,23 +116,20 @@ impl Transport for RelayTransport {
             Ok(_) => {
                 trace!(node = %dest_node.fmt_short(), relay_url = %dest_url,
                        "send relay: message queued");
-                Ok(())
+                Poll::Ready(Ok(()))
             }
             Err(mpsc::error::TrySendError::Closed(_)) => {
                 error!(node = %dest_node.fmt_short(), relay_url = %dest_url,
                       "send relay: message dropped, channel to actor is closed");
-                Err(io::Error::new(
+                Poll::Ready(Err(io::Error::new(
                     io::ErrorKind::ConnectionReset,
                     "channel to actor is closed",
-                ))
+                )))
             }
             Err(mpsc::error::TrySendError::Full(_)) => {
                 warn!(node = %dest_node.fmt_short(), relay_url = %dest_url,
                       "send relay: message dropped, channel to actor is full");
-                Err(io::Error::new(
-                    io::ErrorKind::WouldBlock,
-                    "channel to actor is full",
-                ))
+                Poll::Pending
             }
         }
     }

@@ -13,7 +13,7 @@ pub(crate) mod relay;
 pub use self::{ip::IpTransport, relay::RelayTransport};
 
 pub trait Transport: std::fmt::Debug + Send + Sync + 'static {
-    fn try_send(&self, transmit: &Transmit<'_>) -> io::Result<()>;
+    fn poll_send(&self, transmit: &Transmit<'_>) -> Poll<io::Result<()>>;
     fn poll_recv(
         &self,
         cx: &mut Context,
@@ -27,7 +27,7 @@ pub trait Transport: std::fmt::Debug + Send + Sync + 'static {
     fn may_fragment(&self) -> bool;
 
     fn is_valid_send_addr(&self, addr: &Addr) -> bool;
-    fn poll_writable(&self, cx: &mut Context) -> Poll<std::io::Result<()>>;
+    fn poll_writable(&self, cx: &mut Context) -> Poll<io::Result<()>>;
     fn create_io_poller(&self) -> Pin<Box<dyn quinn::UdpPoller>>;
 
     /// If this transport is IP based, returns the bound address.

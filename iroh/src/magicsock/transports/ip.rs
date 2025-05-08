@@ -30,8 +30,8 @@ impl Transport for IpTransport {
         self.socket.create_io_poller()
     }
 
-    fn try_send(&self, transmit: &Transmit<'_>) -> io::Result<()> {
-        self.socket.try_send(&quinn_udp::Transmit {
+    fn poll_send(&self, transmit: &Transmit<'_>) -> Poll<io::Result<()>> {
+        let res = self.socket.try_send(&quinn_udp::Transmit {
             destination: transmit
                 .destination
                 .clone()
@@ -44,7 +44,18 @@ impl Transport for IpTransport {
                 .src_ip
                 .clone()
                 .map(|a| a.try_into().expect("invalid src_ip")),
-        })
+        });
+
+        match res {
+            Ok(res) => Poll::Ready(Ok(res)),
+            Err(err) => {
+                if err.kind() == io::ErrorKind::WouldBlock {
+                    Poll::Pending
+                } else {
+                    Poll::Ready(Err(err))
+                }
+            }
+        }
     }
 
     /// NOTE: Receiving on a closed socket will return [`Poll::Pending`] indefinitely.
