@@ -885,7 +885,7 @@ impl MagicSock {
             }
             disco::Message::Pong(pong) => {
                 self.metrics.magicsock.recv_disco_pong.inc();
-                self.node_map.handle_pong(sender, &src, pong);
+                self.node_map.handle_pong(sender, src, pong);
             }
             disco::Message::CallMeMaybe(cm) => {
                 self.metrics.magicsock.recv_disco_call_me_maybe.inc();
@@ -1386,7 +1386,7 @@ impl Handle {
             proxy_url: proxy_url.clone(),
             ipv6_reported: ipv6_reported.clone(),
             #[cfg(any(test, feature = "test-utils"))]
-            insecure_skip_relay_cert_verify: insecure_skip_relay_cert_verify,
+            insecure_skip_relay_cert_verify,
             metrics: metrics.magicsock.clone(),
             protocol: relay_protocol,
         });
@@ -2006,7 +2006,7 @@ impl Actor {
 
                     trace!("tick: link change {}", is_major);
                     self.msock.metrics.magicsock.actor_link_change.inc();
-                    self.handle_network_change(is_major).await;
+                    self.handle_network_change(is_major);
                 }
                 // Even if `discovery_events` yields `None`, it could begin to yield
                 // `Some` again in the future, so we don't want to disable this branch
@@ -2030,7 +2030,7 @@ impl Actor {
         }
     }
 
-    async fn handle_network_change(&mut self, is_major: bool) {
+    fn handle_network_change(&mut self, is_major: bool) {
         debug!("link change detected: major? {}", is_major);
 
         if is_major {
@@ -2097,7 +2097,7 @@ impl Actor {
             }
             #[cfg(test)]
             ActorMessage::ForceNetworkChange(is_major) => {
-                self.handle_network_change(is_major).await;
+                self.handle_network_change(is_major);
             }
         }
 

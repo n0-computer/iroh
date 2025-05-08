@@ -99,6 +99,7 @@ impl Transport for IpTransport {
     }
 
     fn is_valid_send_addr(&self, addr: &Addr) -> bool {
+        #[allow(clippy::match_like_matches_macro)]
         match (self.bind_addr, addr) {
             (SocketAddr::V4(_), Addr::Ipv4(..)) => true,
             (SocketAddr::V6(_), Addr::Ipv6(..)) => true,
