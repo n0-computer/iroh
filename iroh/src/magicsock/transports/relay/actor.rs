@@ -825,29 +825,28 @@ pub(super) struct RelayActor {
     /// The tasks for the [`ActiveRelayActor`]s in `active_relays` above.
     active_relay_tasks: JoinSet<()>,
     cancel_token: CancellationToken,
-    protocol: iroh_relay::http::Protocol,
 }
 
 #[derive(Debug)]
-pub(super) struct Config {
-    pub(super) my_relay: Watchable<Option<RelayUrl>>,
-    pub(super) secret_key: SecretKey,
+pub struct Config {
+    pub my_relay: Watchable<Option<RelayUrl>>,
+    pub secret_key: SecretKey,
     #[cfg(not(wasm_browser))]
-    pub(super) dns_resolver: DnsResolver,
+    pub dns_resolver: DnsResolver,
     /// Proxy
-    pub(super) proxy_url: Option<Url>,
+    pub proxy_url: Option<Url>,
     /// If the last net_report report, reports IPv6 to be available.
-    pub(super) ipv6_reported: Arc<AtomicBool>,
+    pub ipv6_reported: Arc<AtomicBool>,
     #[cfg(any(test, feature = "test-utils"))]
-    pub(super) insecure_skip_relay_cert_verify: bool,
-    pub(super) metrics: Arc<MagicsockMetrics>,
+    pub insecure_skip_relay_cert_verify: bool,
+    pub metrics: Arc<MagicsockMetrics>,
+    pub protocol: iroh_relay::http::Protocol,
 }
 
 impl RelayActor {
     pub(super) fn new(
         config: Config,
         relay_datagram_recv_queue: Arc<RelayDatagramRecvQueue>,
-        protocol: iroh_relay::http::Protocol,
     ) -> Self {
         let cancel_token = CancellationToken::new();
         Self {
@@ -856,7 +855,6 @@ impl RelayActor {
             active_relays: Default::default(),
             active_relay_tasks: JoinSet::new(),
             cancel_token,
-            protocol,
         }
     }
 
@@ -1060,7 +1058,7 @@ impl RelayActor {
             prefer_ipv6: self.config.ipv6_reported.clone(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_cert_verify: self.config.insecure_skip_relay_cert_verify,
-            protocol: self.protocol,
+            protocol: self.config.protocol,
         };
 
         // TODO: Replace 64 with PER_CLIENT_SEND_QUEUE_DEPTH once that's unused

@@ -44,15 +44,13 @@ use netwatch::{interfaces, netmon};
 use netwatch::{ip::LocalAddresses, UdpSocket};
 use quinn::{AsyncUdpSocket, ServerConfig};
 use rand::{seq::SliceRandom, Rng, SeedableRng};
-use relay_actor::RelaySendItem;
 use smallvec::SmallVec;
 use tokio::sync::{self, mpsc, Mutex};
-use tokio_util::sync::CancellationToken;
 use tracing::{
     debug, error, error_span, event, info, info_span, instrument, trace, trace_span, warn,
     Instrument, Level, Span,
 };
-use transports::{IpTransport, RelayTransport};
+use transports::{relay::RelayActorConfig, IpTransport, RelayTransport};
 use url::Url;
 
 #[cfg(not(wasm_browser))]
@@ -60,7 +58,6 @@ use self::udp_conn::UdpConn;
 use self::{
     metrics::Metrics as MagicsockMetrics,
     node_map::{NodeMap, PingAction, PingRole, SendPing},
-    relay_actor::{RelayActor, RelayActorMessage, RelayRecvDatagram},
 };
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
@@ -80,7 +77,6 @@ use crate::{
 
 mod metrics;
 mod node_map;
-mod relay_actor;
 #[cfg(not(wasm_browser))]
 mod udp_conn;
 
@@ -188,8 +184,6 @@ pub(crate) struct MagicSock {
     actor_sender: mpsc::Sender<ActorMessage>,
     /// String representation of the node_id of this node.
     me: String,
-    /// Proxy
-    proxy_url: Option<Url>,
     /// Counter for ordering of [`MagicSock::poll_recv`] polling order.
     poll_recv_counter: AtomicUsize,
 
@@ -247,12 +241,6 @@ pub(crate) struct MagicSock {
     /// Indicates the direct addr update state.
     direct_addr_update_state: DirectAddrUpdateState,
 
-    /// Skip verification of SSL certificates from relay servers
-    ///
-    /// May only be used in tests.
-    #[cfg(any(test, feature = "test-utils"))]
-    insecure_skip_relay_cert_verify: bool,
-
     /// Broadcast channel for listening to discovery updates.
     discovery_subscribers: DiscoverySubscribers,
 
@@ -278,11 +266,6 @@ impl MagicSock {
     /// If `None`, then we are not connected to any relay nodes.
     pub(crate) fn my_relay(&self) -> Option<RelayUrl> {
         self.my_relay.get()
-    }
-
-    /// Get the current proxy configuration.
-    pub(crate) fn proxy_url(&self) -> Option<&Url> {
-        self.proxy_url.as_ref()
     }
 
     /// Sets the relay node with the best latency.
@@ -1510,7 +1493,6 @@ impl Handle {
         )?;
 
         let (actor_sender, actor_receiver) = mpsc::channel(256);
-        let (relay_actor_sender, relay_actor_receiver) = mpsc::channel(256);
         let (udp_disco_sender, mut udp_disco_receiver) = mpsc::channel(256);
 
         // load the node data
@@ -1520,8 +1502,21 @@ impl Handle {
         #[cfg(not(any(test, feature = "test-utils")))]
         let node_map = NodeMap::load_from_vec(node_map, &metrics.magicsock);
 
-        let (relay_transport, relay_datagram_send_rx) = RelayTransport::new();
-        let relay_datagram_recv_queue = relay_transport.relay_datagram_recv_queue.clone();
+        let my_relay = Watchable::new(None);
+        let ipv6_reported = Arc::new(AtomicBool::new(false));
+
+        let relay_transport = RelayTransport::new(RelayActorConfig {
+            my_relay: my_relay.clone(),
+            secret_key: secret_key.clone(),
+            #[cfg(not(wasm_browser))]
+            dns_resolver: dns_resolver.clone(),
+            proxy_url: proxy_url.clone(),
+            ipv6_reported: ipv6_reported.clone(),
+            #[cfg(any(test, feature = "test-utils"))]
+            insecure_skip_relay_cert_verify: insecure_skip_relay_cert_verify,
+            metrics: metrics.magicsock.clone(),
+            protocol: relay_protocol,
+        });
 
         let secret_encryption_key = secret_ed_box(secret_key.secret());
 
@@ -1529,14 +1524,13 @@ impl Handle {
             me,
             secret_key,
             secret_encryption_key,
-            proxy_url,
             #[cfg(not(wasm_browser))]
             sockets,
             closing: AtomicBool::new(false),
             closed: AtomicBool::new(false),
             poll_recv_counter: AtomicUsize::new(0),
             actor_sender: actor_sender.clone(),
-            ipv6_reported: Arc::new(AtomicBool::new(false)),
+            ipv6_reported,
             relay: relay_transport,
             relay_map,
             my_relay: Default::default(),
@@ -1552,8 +1546,6 @@ impl Handle {
             direct_addr_update_state: DirectAddrUpdateState::new(),
             #[cfg(not(wasm_browser))]
             dns_resolver,
-            #[cfg(any(test, feature = "test-utils"))]
-            insecure_skip_relay_cert_verify,
             discovery_subscribers: DiscoverySubscribers::new(),
             metrics,
         });
@@ -1577,31 +1569,6 @@ impl Handle {
         )?;
 
         let mut actor_tasks = JoinSet::default();
-
-        let relay_actor = RelayActor::new(
-            relay_actor::Config {
-                my_relay: msock.my_relay.clone(),
-                secret_key: msock.secret_key.clone(),
-                #[cfg(not(wasm_browser))]
-                dns_resolver: msock.dns_resolver.clone(),
-                proxy_url: msock.proxy_url.clone(),
-                ipv6_reported: msock.ipv6_reported.clone(),
-                #[cfg(any(test, feature = "test-utils"))]
-                insecure_skip_relay_cert_verify: msock.insecure_skip_relay_cert_verify,
-                metrics: msock.metrics.magicsock.clone(),
-            },
-            relay_datagram_recv_queue,
-            relay_protocol,
-        );
-        let relay_actor_cancel_token = relay_actor.cancel_token();
-        actor_tasks.spawn(
-            async move {
-                relay_actor
-                    .run(relay_actor_receiver, relay_datagram_send_rx)
-                    .await;
-            }
-            .instrument(info_span!("relay-actor")),
-        );
 
         #[cfg(not(wasm_browser))]
         let _ = actor_tasks.spawn({
@@ -1654,8 +1621,6 @@ impl Handle {
                 let actor = Actor {
                     msg_receiver: actor_receiver,
                     msg_sender: actor_sender,
-                    relay_actor_sender,
-                    relay_actor_cancel_token,
                     msock,
                     periodic_re_stun_timer: new_re_stun_timer(false),
                     net_info_last: None,
@@ -1964,8 +1929,6 @@ struct Actor {
     msock: Arc<MagicSock>,
     msg_receiver: mpsc::Receiver<ActorMessage>,
     msg_sender: mpsc::Sender<ActorMessage>,
-    relay_actor_sender: mpsc::Sender<RelayActorMessage>,
-    relay_actor_cancel_token: CancellationToken,
     /// When set, is an AfterFunc timer that will call MagicSock::do_periodic_stun.
     periodic_re_stun_timer: time::Interval,
     /// The `NetInfo` provided in the last call to `net_info_func`. It's used to deduplicate calls to netInfoFunc.
@@ -2254,7 +2217,7 @@ impl Actor {
                 self.msock.node_map.notify_shutdown();
                 #[cfg(not(wasm_browser))]
                 self.sockets.port_mapper.deactivate();
-                self.relay_actor_cancel_token.cancel();
+                self.msock.relay.shutdown();
 
                 debug!("shutdown complete");
                 return true;
@@ -2613,9 +2576,7 @@ impl Actor {
             info!("home is now relay {}, was {:?}", relay_url, old_relay);
             self.msock.publish_my_addr();
 
-            self.send_relay_actor(RelayActorMessage::SetHome {
-                url: relay_url.clone(),
-            });
+            self.msock.relay.set_home(relay_url);
         }
     }
 
@@ -2660,7 +2621,7 @@ impl Actor {
     async fn close_stale_relay_connections(&self) {
         let ifs = interfaces::State::new().await;
         #[cfg(not(wasm_browser))]
-        let local_ips = ifs
+        let local_ips: Vec<_> = ifs
             .interfaces
             .values()
             .flat_map(|netif| netif.addrs())
@@ -2669,19 +2630,7 @@ impl Actor {
         // In browsers, we don't have this information. This will do the right thing in the ActiveRelayActor, though.
         #[cfg(wasm_browser)]
         let local_ips = Vec::new();
-        self.send_relay_actor(RelayActorMessage::MaybeCloseRelaysOnRebind(local_ips));
-    }
-
-    fn send_relay_actor(&self, msg: RelayActorMessage) {
-        match self.relay_actor_sender.try_send(msg) {
-            Ok(_) => {}
-            Err(mpsc::error::TrySendError::Closed(_)) => {
-                warn!("unable to send to relay actor, already closed");
-            }
-            Err(mpsc::error::TrySendError::Full(_)) => {
-                warn!("dropping message for relay actor, channel is full");
-            }
-        }
+        self.msock.relay.maybe_close_relays_on_rebind(local_ips)
     }
 }
 

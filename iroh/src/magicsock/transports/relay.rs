@@ -1,6 +1,6 @@
 use std::{
     io,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     pin::Pin,
     sync::Arc,
     task::{Context, Poll, Waker},
@@ -10,12 +10,19 @@ use anyhow::{anyhow, Result};
 use atomic_waker::AtomicWaker;
 use bytes::Bytes;
 use concurrent_queue::ConcurrentQueue;
+use iroh_base::RelayUrl;
 use smallvec::SmallVec;
 use tokio::sync::mpsc;
-use tracing::{error, trace, warn};
+use tokio_util::sync::CancellationToken;
+use tracing::{error, info_span, trace, warn, Instrument};
 
 use super::{Addr, RecvMeta, Transmit, Transport};
-use crate::magicsock::{RelayContents, RelayRecvDatagram, RelaySendItem};
+use crate::magicsock::RelayContents;
+
+mod actor;
+
+pub use self::actor::Config as RelayActorConfig;
+use self::actor::{RelayActor, RelayActorMessage, RelayRecvDatagram, RelaySendItem};
 
 #[derive(Debug, Clone)]
 pub struct RelayTransport {
@@ -27,20 +34,59 @@ pub struct RelayTransport {
     pub(crate) relay_datagram_recv_queue: Arc<RelayDatagramRecvQueue>,
     /// Channel on which to send datagrams via a relay server.
     pub(super) relay_datagram_send_channel: RelayDatagramSendChannelSender,
+    actor_sender: mpsc::Sender<RelayActorMessage>,
+    cancel_token: CancellationToken,
 }
 
 impl RelayTransport {
-    pub fn new() -> (Self, RelayDatagramSendChannelReceiver) {
+    pub fn new(config: RelayActorConfig) -> Self {
         let (relay_datagram_send_tx, relay_datagram_send_rx) = relay_datagram_send_channel();
         let relay_datagram_recv_queue = Arc::new(RelayDatagramRecvQueue::new());
 
-        (
-            Self {
-                relay_datagram_recv_queue,
-                relay_datagram_send_channel: relay_datagram_send_tx,
-            },
-            relay_datagram_send_rx,
-        )
+        let (actor_sender, actor_receiver) = mpsc::channel(256);
+
+        let relay_actor = RelayActor::new(config, relay_datagram_recv_queue.clone());
+        let cancel_token = relay_actor.cancel_token();
+        // TODO: track task
+        tokio::task::spawn(
+            async move {
+                relay_actor
+                    .run(actor_receiver, relay_datagram_send_rx)
+                    .await;
+            }
+            .instrument(info_span!("relay-actor")),
+        );
+
+        Self {
+            relay_datagram_recv_queue,
+            relay_datagram_send_channel: relay_datagram_send_tx,
+            actor_sender,
+            cancel_token,
+        }
+    }
+
+    pub fn set_home(&self, url: &RelayUrl) {
+        self.send_relay_actor(RelayActorMessage::SetHome { url: url.clone() });
+    }
+
+    pub fn maybe_close_relays_on_rebind(&self, local_ips: Vec<IpAddr>) {
+        self.send_relay_actor(RelayActorMessage::MaybeCloseRelaysOnRebind(local_ips));
+    }
+
+    pub fn shutdown(&self) {
+        self.cancel_token.cancel();
+    }
+
+    fn send_relay_actor(&self, msg: RelayActorMessage) {
+        match self.actor_sender.try_send(msg) {
+            Ok(_) => {}
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                warn!("unable to send to relay actor, already closed");
+            }
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                warn!("dropping message for relay actor, channel is full");
+            }
+        }
     }
 }
 
