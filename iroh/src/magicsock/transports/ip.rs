@@ -54,8 +54,21 @@ impl Transport for IpTransport {
         bufs: &mut [io::IoSliceMut<'_>],
         metas: &mut [RecvMeta],
     ) -> Poll<io::Result<usize>> {
-        todo!()
-        // self.socket.poll_recv(cx, bufs, metas)
+        // TODO: figure out how to optimize this
+        let mut quinn_metas = vec![quinn_udp::RecvMeta::default(); metas.len()];
+        match self.socket.poll_recv(cx, bufs, &mut quinn_metas) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(res) => {
+                for (quinn_meta, meta) in quinn_metas.into_iter().zip(metas.iter_mut()) {
+                    meta.addr = quinn_meta.addr.into();
+                    meta.len = quinn_meta.len;
+                    meta.stride = quinn_meta.stride;
+                    meta.ecn = quinn_meta.ecn;
+                    meta.dst_ip = quinn_meta.dst_ip.map(Into::into);
+                }
+                Poll::Ready(res)
+            }
+        }
     }
 
     fn local_addr(&self) -> io::Result<SocketAddr> {

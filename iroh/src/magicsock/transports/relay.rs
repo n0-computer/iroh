@@ -11,6 +11,7 @@ use atomic_waker::AtomicWaker;
 use bytes::Bytes;
 use concurrent_queue::ConcurrentQueue;
 use iroh_base::RelayUrl;
+use n0_future::task::{self, AbortOnDropHandle};
 use smallvec::SmallVec;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -24,7 +25,7 @@ mod actor;
 pub use self::actor::Config as RelayActorConfig;
 use self::actor::{RelayActor, RelayActorMessage, RelayRecvDatagram, RelaySendItem};
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct RelayTransport {
     /// Queue to receive datagrams from relays for [`AsyncUdpSocket::poll_recv`].
     ///
@@ -35,6 +36,7 @@ pub struct RelayTransport {
     /// Channel on which to send datagrams via a relay server.
     pub(super) relay_datagram_send_channel: RelayDatagramSendChannelSender,
     actor_sender: mpsc::Sender<RelayActorMessage>,
+    _actor_handle: AbortOnDropHandle<()>,
     cancel_token: CancellationToken,
 }
 
@@ -48,19 +50,20 @@ impl RelayTransport {
         let relay_actor = RelayActor::new(config, relay_datagram_recv_queue.clone());
         let cancel_token = relay_actor.cancel_token();
         // TODO: track task
-        tokio::task::spawn(
+        let actor_handle = AbortOnDropHandle::new(task::spawn(
             async move {
                 relay_actor
                     .run(actor_receiver, relay_datagram_send_rx)
                     .await;
             }
             .instrument(info_span!("relay-actor")),
-        );
+        ));
 
         Self {
             relay_datagram_recv_queue,
             relay_datagram_send_channel: relay_datagram_send_tx,
             actor_sender,
+            _actor_handle: actor_handle,
             cancel_token,
         }
     }
@@ -142,35 +145,34 @@ impl Transport for RelayTransport {
     ) -> Poll<io::Result<usize>> {
         let mut num_msgs = 0;
         'outer: for (buf_out, meta_out) in bufs.iter_mut().zip(metas.iter_mut()) {
-            loop {
-                let dm = match self.relay_datagram_recv_queue.poll_recv(cx) {
-                    Poll::Ready(Ok(recv)) => recv,
-                    Poll::Ready(Err(err)) => {
-                        error!("relay_recv_channel closed: {err:#}");
-                        return Poll::Ready(Err(io::Error::new(
-                            io::ErrorKind::NotConnected,
-                            "connection closed",
-                        )));
-                    }
-                    Poll::Pending => {
-                        break 'outer;
-                    }
-                };
+            let dm = match self.relay_datagram_recv_queue.poll_recv(cx) {
+                Poll::Ready(Ok(recv)) => recv,
+                Poll::Ready(Err(err)) => {
+                    error!("relay_recv_channel closed: {err:#}");
+                    return Poll::Ready(Err(io::Error::new(
+                        io::ErrorKind::NotConnected,
+                        "connection closed",
+                    )));
+                }
+                Poll::Pending => {
+                    break 'outer;
+                }
+            };
 
-                buf_out[..dm.buf.len()].copy_from_slice(&dm.buf);
-                *meta_out = RecvMeta {
-                    len: dm.buf.len(),
-                    stride: dm.buf.len(),
-                    addr: (dm.url, dm.src).into(),
-                    ecn: None,
-                    dst_ip: None, // TODO: insert the relay url for this relay
-                };
-                num_msgs += 1;
-            }
+            buf_out[..dm.buf.len()].copy_from_slice(&dm.buf);
+            *meta_out = RecvMeta {
+                len: dm.buf.len(),
+                stride: dm.buf.len(),
+                addr: (dm.url, dm.src).into(),
+                ecn: None,
+                dst_ip: None, // TODO: insert the relay url for this relay
+            };
+            num_msgs += 1;
         }
 
         // If we have any msgs to report, they are in the first `num_msgs_total` slots
         if num_msgs > 0 {
+            debug_assert!(num_msgs <= metas.len());
             Poll::Ready(Ok(num_msgs))
         } else {
             Poll::Pending
