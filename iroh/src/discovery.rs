@@ -1037,7 +1037,7 @@ mod test_dns_pkarr {
 
         // we connect only by node id!
         let res = ep2.connect(ep1.node_id(), TEST_ALPN).await;
-        assert!(res.is_ok(), "connection established");
+        assert!(res.is_ok(), "connection established: {:?}", res);
         Ok(())
     }
 

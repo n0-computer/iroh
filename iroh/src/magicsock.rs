@@ -1939,10 +1939,17 @@ impl Actor {
                     self.msock.re_stun("periodic");
                 }
                 new_home_relay = home_relay_changes.next() => {
-                    if new_home_relay.is_some() {
-                        self.msock.publish_my_addr();
-                    } else {
-                        warn!("home_relay watcher stopped");
+                    match new_home_relay {
+                        Some(Some(new_home_relay)) => {
+                            trace!(?new_home_relay, "new home relay");
+                            self.msock.publish_my_addr();
+                        }
+                        Some(None) => {
+                            trace!("no home relay available");
+                        }
+                        None => {
+                            warn!("home_relay watcher stopped");
+                        }
                     }
                 }
                 change = portmap_watcher_changed, if !portmap_watcher_closed => {
