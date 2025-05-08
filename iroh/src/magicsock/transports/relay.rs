@@ -164,7 +164,7 @@ impl Transport for RelayTransport {
     }
 
     fn local_addr(&self) -> io::Result<SocketAddr> {
-        todo!()
+        Err(io::Error::other("no local address for RelayTransport"))
     }
 
     fn max_transmit_segments(&self) -> usize {

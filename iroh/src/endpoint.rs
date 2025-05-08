@@ -965,8 +965,7 @@ impl Endpoint {
     ///
     /// The [`Endpoint`] always binds on an IPv4 address and also tries to bind on an IPv6
     /// address if available.
-    #[cfg(not(wasm_browser))]
-    pub fn bound_sockets(&self) -> Vec<std::io::Result<SocketAddr>> {
+    pub fn bound_sockets(&self) -> Vec<SocketAddr> {
         self.msock.local_addr()
     }
 
@@ -2347,11 +2346,8 @@ mod tests {
                         .bind()
                         .await
                         .unwrap();
-                    let eps = ep
-                        .bound_sockets()
-                        .into_iter()
-                        .collect::<std::io::Result<Vec<_>>>()
-                        .unwrap();
+                    let eps = ep.bound_sockets();
+
                     info!(me = %ep.node_id().fmt_short(), eps = ?eps, "server listening on");
                     for i in 0..n_clients {
                         let round_start = Instant::now();
@@ -2393,11 +2389,8 @@ mod tests {
                     .bind()
                     .await
                     .unwrap();
-                let eps = ep
-                    .bound_sockets()
-                    .into_iter()
-                    .collect::<std::io::Result<Vec<_>>>()
-                    .unwrap();
+                let eps = ep.bound_sockets();
+
                 info!(me = %ep.node_id().fmt_short(), eps=?eps, "client bound");
                 let node_addr = NodeAddr::new(server_node_id).with_relay_url(relay_url);
                 info!(to = ?node_addr, "client connecting");

@@ -196,9 +196,8 @@ pub(crate) struct MagicSock {
     /// Encryption key for this node.
     secret_encryption_key: crypto_box::SecretKey,
 
-    /// Transpors (currently only IP based ones)
+    /// Transports, IP and Relay
     transports: Vec<Box<dyn Transport>>,
-    relay: RelayTransport,
 
     /// Close is in progress (or done)
     closing: AtomicBool,
@@ -279,9 +278,11 @@ impl MagicSock {
     }
 
     /// Get the cached version of the Ipv4 and Ipv6 addrs of the current connection.
-    #[cfg(not(wasm_browser))]
-    pub(crate) fn local_addr(&self) -> Vec<io::Result<SocketAddr>> {
-        self.transports.iter().map(|t| t.local_addr()).collect()
+    pub(crate) fn local_addr(&self) -> Vec<SocketAddr> {
+        self.transports
+            .iter()
+            .filter_map(|t| t.local_addr().ok())
+            .collect()
     }
 
     /// Returns `true` if we have at least one candidate address where we can send packets to.
@@ -582,10 +583,6 @@ impl MagicSock {
             return Some(transport.as_ref());
         }
 
-        if self.relay.is_valid_send_addr(addr) {
-            return Some(&self.relay);
-        }
-
         None
     }
 
@@ -602,8 +599,6 @@ impl MagicSock {
         if self.is_closed() {
             return Poll::Pending;
         }
-
-        // TODO: proper randomization again
 
         let mut transport_metas = vec![transports::RecvMeta::default(); metas.len()];
 
@@ -623,17 +618,16 @@ impl MagicSock {
             };
         }
 
+        // TODO: proper randomization again
         let counter = self.poll_recv_counter.fetch_add(1, Ordering::Relaxed);
         match counter % 2 {
             0 => {
                 for transport in &self.transports {
                     poll_transport!(transport);
                 }
-                poll_transport!(&self.relay);
                 Poll::Pending
             }
             _ => {
-                poll_transport!(&self.relay);
                 for transport in &self.transports {
                     poll_transport!(transport);
                 }
@@ -1355,9 +1349,9 @@ impl Handle {
         let actor_sockets = ActorSocketState::bind(addr_v4, addr_v6, metrics.portmapper.clone())?;
 
         #[cfg(not(wasm_browser))]
-        let transports = actor_sockets.transports();
+        let mut transports = actor_sockets.transports();
         #[cfg(wasm_browser)]
-        let transports = Vec::new();
+        let mut transports = Vec::new();
 
         let ip_mapped_addrs = IpMappedAddresses::default();
 
@@ -1396,6 +1390,7 @@ impl Handle {
             metrics: metrics.magicsock.clone(),
             protocol: relay_protocol,
         });
+        transports.push(Box::new(relay_transport));
 
         let secret_encryption_key = secret_ed_box(secret_key.secret());
 
@@ -1409,7 +1404,6 @@ impl Handle {
             poll_recv_counter: AtomicUsize::new(0),
             actor_sender: actor_sender.clone(),
             ipv6_reported,
-            relay: relay_transport,
             relay_map,
             my_relay,
             net_reporter: net_reporter.addr(),
@@ -1663,13 +1657,11 @@ impl AsyncUdpSocket for MagicSock {
         // Right now however we have one single poller behaving the same for each
         // connection.  It checks all paths and returns Poll::Ready as soon as any path is
         // ready.
-        let mut io_pollers: Vec<_> = self
+        let io_pollers: Vec<_> = self
             .transports
             .iter()
             .map(|t| t.create_io_poller())
             .collect();
-
-        io_pollers.push(self.relay.create_io_poller());
 
         Box::pin(IoPoller { io_pollers })
     }
@@ -2025,19 +2017,15 @@ impl Actor {
         debug!("link change detected: major? {}", is_major);
 
         if is_major {
-            #[cfg(not(wasm_browser))]
-            {
-                for socket in &self.sockets.ip {
-                    if let Err(err) = socket.rebind() {
-                        warn!("failed to rebind socket: {:?}", err);
-                    }
+            for socket in &self.sockets.ip {
+                if let Err(err) = socket.rebind() {
+                    warn!("failed to rebind socket: {:?}", err);
                 }
-                self.msock.dns_resolver.clear_cache();
             }
+
+            #[cfg(not(wasm_browser))]
+            self.msock.dns_resolver.clear_cache();
             self.msock.re_stun("link-change-major");
-            if let Err(err) = self.msock.relay.rebind() {
-                warn!("failed to rebind relay: {:?}", err);
-            }
             self.reset_endpoint_states();
         } else {
             self.msock.re_stun("link-change-minor");
@@ -2402,7 +2390,6 @@ impl Actor {
             for transport in &self.msock.transports {
                 transport.on_network_change(&ni);
             }
-            self.msock.relay.on_network_change(&ni);
 
             // TODO: this is now done, even if nothing as changed
             // TODO: this should wait for the changes to be done?
