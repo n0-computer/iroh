@@ -126,7 +126,7 @@ impl Clients {
                     dst = dst.fmt_short(),
                     "client too busy to receive packet, dropping packet"
                 );
-                bail!("failed to send message: full");
+                bail!("failed to send packet message: full");
             }
             Err(TrySendError::Closed(_)) => {
                 debug!(
@@ -134,7 +134,7 @@ impl Clients {
                     "can no longer write to client, dropping message and pruning connection"
                 );
                 client.start_shutdown();
-                bail!("failed to send message: gone");
+                bail!("failed to send packet message: gone");
             }
         }
     }
@@ -166,7 +166,7 @@ impl Clients {
                     dst = dst.fmt_short(),
                     "client too busy to receive disco packet, dropping packet"
                 );
-                bail!("failed to send message: full");
+                bail!("failed to send disco message: full");
             }
             Err(TrySendError::Closed(_)) => {
                 debug!(
@@ -174,7 +174,7 @@ impl Clients {
                     "can no longer write to client, dropping disco message and pruning connection"
                 );
                 client.start_shutdown();
-                bail!("failed to send message: gone");
+                bail!("failed to send disco message: gone");
             }
         }
     }

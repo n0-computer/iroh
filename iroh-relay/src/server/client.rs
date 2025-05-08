@@ -365,7 +365,9 @@ impl Actor {
         match frame {
             Frame::SendPacket { dst_key, packet } => {
                 let packet_len = packet.len();
-                self.handle_frame_send_packet(dst_key, packet)?;
+                if let Err(err) = self.handle_frame_send_packet(dst_key, packet) {
+                    warn!("failed to handle send packet frame: {err:#}");
+                }
                 self.metrics.bytes_recv.inc_by(packet_len as u64);
             }
             Frame::Ping { data } => {
