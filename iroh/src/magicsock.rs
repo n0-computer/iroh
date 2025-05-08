@@ -39,7 +39,7 @@ use n0_future::{
     time::{self, Duration, Instant},
     FutureExt, StreamExt,
 };
-use netwatch::{interfaces, netmon};
+use netwatch::netmon;
 #[cfg(not(wasm_browser))]
 use netwatch::{ip::LocalAddresses, UdpSocket};
 use quinn::{AsyncUdpSocket, ServerConfig};
@@ -261,6 +261,7 @@ impl MagicSock {
     /// Sets the relay node with the best latency.
     ///
     /// If we are not connected to any relay nodes, set this to `None`.
+    #[cfg(test)]
     fn set_my_relay(&self, my_relay: Option<RelayUrl>) -> Option<RelayUrl> {
         self.my_relay.set(my_relay).unwrap_or_else(|e| e)
     }
@@ -1410,7 +1411,7 @@ impl Handle {
             ipv6_reported,
             relay: relay_transport,
             relay_map,
-            my_relay: Default::default(),
+            my_relay,
             net_reporter: net_reporter.addr(),
             disco_secrets: DiscoSecrets::default(),
             node_map,
@@ -1662,18 +1663,15 @@ impl AsyncUdpSocket for MagicSock {
         // Right now however we have one single poller behaving the same for each
         // connection.  It checks all paths and returns Poll::Ready as soon as any path is
         // ready.
-        let ip_pollers = self
+        let mut io_pollers: Vec<_> = self
             .transports
             .iter()
             .map(|t| t.create_io_poller())
             .collect();
 
-        let relay_poller = self.relay.create_io_poller();
+        io_pollers.push(self.relay.create_io_poller());
 
-        Box::pin(IoPoller {
-            ip_pollers,
-            relay_poller,
-        })
+        Box::pin(IoPoller { io_pollers })
     }
 
     fn try_send(&self, transmit: &quinn_udp::Transmit) -> io::Result<()> {
@@ -1748,22 +1746,20 @@ impl AsyncUdpSocket for MagicSock {
 
 #[derive(Debug)]
 struct IoPoller {
-    ip_pollers: Vec<Pin<Box<dyn quinn::UdpPoller>>>,
-    relay_poller: Pin<Box<dyn quinn::UdpPoller>>,
+    io_pollers: Vec<Pin<Box<dyn quinn::UdpPoller>>>,
 }
 
 impl quinn::UdpPoller for IoPoller {
     fn poll_writable(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
         // This version returns Ready as soon as any of them are ready.
         let this = &mut *self;
-        for poller in &mut this.ip_pollers {
+        for poller in &mut this.io_pollers {
             match poller.as_mut().poll_writable(cx) {
                 Poll::Ready(_) => return Poll::Ready(Ok(())),
                 Poll::Pending => (),
             }
         }
-
-        self.relay_poller.as_mut().poll_writable(cx)
+        Poll::Pending
     }
 }
 
@@ -2039,7 +2035,9 @@ impl Actor {
                 self.msock.dns_resolver.clear_cache();
             }
             self.msock.re_stun("link-change-major");
-            self.close_stale_relay_connections().await;
+            if let Err(err) = self.msock.relay.rebind() {
+                warn!("failed to rebind relay: {:?}", err);
+            }
             self.reset_endpoint_states();
         } else {
             self.msock.re_stun("link-change-minor");
@@ -2401,33 +2399,21 @@ impl Actor {
                 ni.preferred_relay = self.pick_relay_fallback();
             }
 
-            self.set_nearest_relay(ni.preferred_relay.clone());
+            // Notify all transports
+            for transport in &self.msock.transports {
+                transport.on_network_change(&ni);
+            }
+            self.msock.relay.on_network_change(&ni);
+
+            // TODO: this is now done, even if nothing as changed
+            // TODO: this should wait for the changes to be done?
+            self.msock.publish_my_addr();
 
             // TODO: set link type
             self.call_net_info_callback(ni).await;
         }
         #[cfg(not(wasm_browser))]
         self.update_direct_addresses(report);
-    }
-
-    fn set_nearest_relay(&mut self, relay_url: Option<RelayUrl>) {
-        let my_relay = self.msock.my_relay();
-        if relay_url == my_relay {
-            // No change.
-            return;
-        }
-        let old_relay = self.msock.set_my_relay(relay_url.clone());
-
-        if let Some(ref relay_url) = relay_url {
-            self.msock.metrics.magicsock.relay_home_change.inc();
-
-            // On change, notify all currently connected relay servers and
-            // start connecting to our home relay if we are not already.
-            info!("home is now relay {}, was {:?}", relay_url, old_relay);
-            self.msock.publish_my_addr();
-
-            self.msock.relay.set_home(relay_url);
-        }
     }
 
     /// Returns a deterministic relay node to connect to. This is only used if net_report
@@ -2461,26 +2447,6 @@ impl Actor {
     #[instrument(skip_all, fields(me = %self.msock.me))]
     fn reset_endpoint_states(&mut self) {
         self.msock.node_map.reset_node_states()
-    }
-
-    /// Tells the relay actor to close stale relay connections.
-    ///
-    /// The relay connections who's local endpoints no longer exist after a network change
-    /// will error out soon enough.  Closing them eagerly speeds this up however and allows
-    /// re-establishing a relay connection faster.
-    async fn close_stale_relay_connections(&self) {
-        let ifs = interfaces::State::new().await;
-        #[cfg(not(wasm_browser))]
-        let local_ips: Vec<_> = ifs
-            .interfaces
-            .values()
-            .flat_map(|netif| netif.addrs())
-            .map(|ipnet| ipnet.addr())
-            .collect();
-        // In browsers, we don't have this information. This will do the right thing in the ActiveRelayActor, though.
-        #[cfg(wasm_browser)]
-        let local_ips = Vec::new();
-        self.msock.relay.maybe_close_relays_on_rebind(local_ips)
     }
 }
 
@@ -2753,7 +2719,7 @@ impl Display for DirectAddrType {
 
 /// Contains information about the host's network state.
 #[derive(Debug, Clone, PartialEq)]
-struct NetInfo {
+pub(crate) struct NetInfo {
     /// Says whether the host's NAT mappings vary based on the destination IP.
     mapping_varies_by_dest_ip: Option<bool>,
 

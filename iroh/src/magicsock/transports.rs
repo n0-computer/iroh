@@ -11,6 +11,7 @@ mod ip;
 pub(crate) mod relay;
 
 pub use self::{ip::IpTransport, relay::RelayTransport};
+use super::NetInfo;
 
 pub trait Transport: std::fmt::Debug + Send + Sync + 'static {
     fn poll_send(&self, transmit: &Transmit<'_>) -> Poll<io::Result<()>>;
@@ -32,7 +33,12 @@ pub trait Transport: std::fmt::Debug + Send + Sync + 'static {
 
     /// If this transport is IP based, returns the bound address.
     fn bind_addr(&self) -> Option<SocketAddr>;
+
+    /// Rebinds underlying connections, if necessary.
     fn rebind(&self) -> std::io::Result<()>;
+
+    /// Handles potential changes to the underlying network conditions.
+    fn on_network_change(&self, info: &NetInfo);
 }
 
 /// An outgoing packet

@@ -1,6 +1,6 @@
 use std::{
     io,
-    net::{IpAddr, SocketAddr},
+    net::SocketAddr,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll, Waker},
@@ -10,7 +10,6 @@ use anyhow::{anyhow, Result};
 use atomic_waker::AtomicWaker;
 use bytes::Bytes;
 use concurrent_queue::ConcurrentQueue;
-use iroh_base::RelayUrl;
 use n0_future::task::{self, AbortOnDropHandle};
 use smallvec::SmallVec;
 use tokio::sync::mpsc;
@@ -68,12 +67,8 @@ impl RelayTransport {
         }
     }
 
-    pub fn set_home(&self, url: &RelayUrl) {
-        self.send_relay_actor(RelayActorMessage::SetHome { url: url.clone() });
-    }
-
-    pub fn maybe_close_relays_on_rebind(&self, local_ips: Vec<IpAddr>) {
-        self.send_relay_actor(RelayActorMessage::MaybeCloseRelaysOnRebind(local_ips));
+    fn maybe_close_relays_on_rebind(&self) {
+        self.send_relay_actor(RelayActorMessage::MaybeCloseRelaysOnRebind);
     }
 
     pub fn shutdown(&self) {
@@ -205,8 +200,12 @@ impl Transport for RelayTransport {
     }
 
     fn rebind(&self) -> io::Result<()> {
-        // TODO: reconnect to the home relay
-        todo!()
+        self.maybe_close_relays_on_rebind();
+        Ok(())
+    }
+
+    fn on_network_change(&self, info: &crate::magicsock::NetInfo) {
+        self.send_relay_actor(RelayActorMessage::NetworkChange { info: info.clone() });
     }
 }
 

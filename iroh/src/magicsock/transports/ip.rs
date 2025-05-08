@@ -117,4 +117,8 @@ impl Transport for IpTransport {
     fn rebind(&self) -> io::Result<()> {
         self.socket.as_socket_ref().rebind()
     }
+
+    fn on_network_change(&self, _info: &crate::magicsock::NetInfo) {
+        // Nothing to do for now
+    }
 }

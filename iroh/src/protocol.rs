@@ -431,6 +431,8 @@ impl<P: ProtocolHandler + Clone> ProtocolHandler for AccessLimit<P> {
 
 #[cfg(test)]
 mod tests {
+    use tracing_test::traced_test;
+
     use super::*;
 
     #[tokio::test]
@@ -472,6 +474,7 @@ mod tests {
         }
     }
     #[tokio::test]
+    #[traced_test]
     async fn test_limiter() -> Result<()> {
         let e1 = Endpoint::builder().bind().await?;
         // deny all access

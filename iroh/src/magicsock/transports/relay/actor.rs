@@ -51,9 +51,10 @@ use n0_future::{
     time::{self, Duration, Instant, MissedTickBehavior},
     FuturesUnorderedBounded, SinkExt, StreamExt,
 };
+use netwatch::interfaces;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, event, info_span, instrument, trace, warn, Instrument, Level};
+use tracing::{debug, error, event, info, info_span, instrument, trace, warn, Instrument, Level};
 use url::Url;
 
 #[cfg(not(wasm_browser))]
@@ -61,7 +62,7 @@ use crate::dns::DnsResolver;
 use crate::{
     magicsock::{
         transports::relay::{RelayDatagramRecvQueue, RelayDatagramSendChannelReceiver},
-        Metrics as MagicsockMetrics, RelayContents,
+        Metrics as MagicsockMetrics, NetInfo, RelayContents,
     },
     util::MaybeFuture,
     watchable::Watchable,
@@ -795,8 +796,8 @@ impl ConnectedRelayState {
 }
 
 pub(super) enum RelayActorMessage {
-    MaybeCloseRelaysOnRebind(Vec<IpAddr>),
-    SetHome { url: RelayUrl },
+    MaybeCloseRelaysOnRebind,
+    NetworkChange { info: NetInfo },
 }
 
 #[derive(Debug, Clone)]
@@ -930,11 +931,11 @@ impl RelayActor {
 
     async fn handle_msg(&mut self, msg: RelayActorMessage) {
         match msg {
-            RelayActorMessage::SetHome { url } => {
-                self.set_home_relay(url).await;
+            RelayActorMessage::NetworkChange { info } => {
+                self.on_network_change(info).await;
             }
-            RelayActorMessage::MaybeCloseRelaysOnRebind(ifs) => {
-                self.maybe_close_relays_on_rebind(&ifs).await;
+            RelayActorMessage::MaybeCloseRelaysOnRebind => {
+                self.maybe_close_relays_on_rebind().await;
             }
         }
     }
@@ -964,6 +965,28 @@ impl RelayActor {
                 };
                 Some(fut)
             }
+        }
+    }
+
+    async fn on_network_change(&mut self, info: NetInfo) {
+        let my_relay = self.config.my_relay.get();
+        if info.preferred_relay == my_relay {
+            // No change.
+            return;
+        }
+        let old_relay = self
+            .config
+            .my_relay
+            .set(info.preferred_relay.clone())
+            .unwrap_or_else(|e| e);
+
+        if let Some(relay_url) = info.preferred_relay {
+            self.config.metrics.relay_home_change.inc();
+
+            // On change, notify all currently connected relay servers and
+            // start connecting to our home relay if we are not already.
+            info!("home is now relay {}, was {:?}", relay_url, old_relay);
+            self.set_home_relay(relay_url).await;
         }
     }
 
@@ -1100,13 +1123,28 @@ impl RelayActor {
     /// Called in response to a rebind, any relay connection originating from an address
     /// that's not known to be currently a local IP address should be closed.  All the other
     /// relay connections are pinged.
-    async fn maybe_close_relays_on_rebind(&mut self, okay_local_ips: &[IpAddr]) {
-        let send_futs = self.active_relays.values().map(|handle| async move {
-            handle
-                .inbox_addr
-                .send(ActiveRelayMessage::CheckConnection(okay_local_ips.to_vec()))
-                .await
-                .ok();
+    async fn maybe_close_relays_on_rebind(&mut self) {
+        #[cfg(not(wasm_browser))]
+        let ifs = interfaces::State::new().await;
+        #[cfg(not(wasm_browser))]
+        let local_ips: Vec<_> = ifs
+            .interfaces
+            .values()
+            .flat_map(|netif| netif.addrs())
+            .map(|ipnet| ipnet.addr())
+            .collect();
+        // In browsers, we don't have this information. This will do the right thing in the ActiveRelayActor, though.
+        #[cfg(wasm_browser)]
+        let local_ips = Vec::new();
+        let send_futs = self.active_relays.values().map(|handle| {
+            let local_ips = local_ips.clone();
+            async move {
+                handle
+                    .inbox_addr
+                    .send(ActiveRelayMessage::CheckConnection(local_ips))
+                    .await
+                    .ok();
+            }
         });
         n0_future::join_all(send_futs).await;
         self.log_active_relay();
