@@ -9,15 +9,18 @@ use std::{
     },
 };
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 use bytes::Bytes;
 use dashmap::DashMap;
 use iroh_base::NodeId;
 use tokio::sync::mpsc::error::TrySendError;
 use tracing::{debug, trace};
 
-use super::client::{Client, Config};
-use crate::server::metrics::Metrics;
+use super::client::{Client, Config, ForwardPacketError};
+use crate::server::{
+    client::{PacketScope, SendError},
+    metrics::Metrics,
+};
 
 /// Manages the connections to all currently connected clients.
 #[derive(Debug, Default, Clone)]
@@ -109,7 +112,7 @@ impl Clients {
         data: Bytes,
         src: NodeId,
         metrics: &Metrics,
-    ) -> Result<()> {
+    ) -> Result<(), ForwardPacketError> {
         let Some(client) = self.0.clients.get(&dst) else {
             debug!(dst = dst.fmt_short(), "no connected client, dropped packet");
             metrics.send_packets_dropped.inc();
@@ -126,7 +129,10 @@ impl Clients {
                     dst = dst.fmt_short(),
                     "client too busy to receive packet, dropping packet"
                 );
-                bail!("failed to send packet message: full");
+                return Err(ForwardPacketError::new(
+                    PacketScope::Data,
+                    SendError::Closed,
+                ));
             }
             Err(TrySendError::Closed(_)) => {
                 debug!(
@@ -134,7 +140,10 @@ impl Clients {
                     "can no longer write to client, dropping message and pruning connection"
                 );
                 client.start_shutdown();
-                bail!("failed to send packet message: gone");
+                return Err(ForwardPacketError::new(
+                    PacketScope::Data,
+                    SendError::Closed,
+                ));
             }
         }
     }
@@ -146,7 +155,7 @@ impl Clients {
         data: Bytes,
         src: NodeId,
         metrics: &Metrics,
-    ) -> Result<()> {
+    ) -> Result<(), ForwardPacketError> {
         let Some(client) = self.0.clients.get(&dst) else {
             debug!(
                 dst = dst.fmt_short(),
@@ -166,7 +175,7 @@ impl Clients {
                     dst = dst.fmt_short(),
                     "client too busy to receive disco packet, dropping packet"
                 );
-                bail!("failed to send disco message: full");
+                return Err(ForwardPacketError::new(PacketScope::Disco, SendError::Full));
             }
             Err(TrySendError::Closed(_)) => {
                 debug!(
@@ -174,7 +183,10 @@ impl Clients {
                     "can no longer write to client, dropping disco message and pruning connection"
                 );
                 client.start_shutdown();
-                bail!("failed to send disco message: gone");
+                return Err(ForwardPacketError::new(
+                    PacketScope::Disco,
+                    SendError::Closed,
+                ));
             }
         }
     }
