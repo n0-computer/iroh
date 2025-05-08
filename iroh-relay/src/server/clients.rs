@@ -129,10 +129,7 @@ impl Clients {
                     dst = dst.fmt_short(),
                     "client too busy to receive packet, dropping packet"
                 );
-                return Err(ForwardPacketError::new(
-                    PacketScope::Data,
-                    SendError::Closed,
-                ));
+                Err(ForwardPacketError::new(PacketScope::Data, SendError::Full))
             }
             Err(TrySendError::Closed(_)) => {
                 debug!(
@@ -140,10 +137,10 @@ impl Clients {
                     "can no longer write to client, dropping message and pruning connection"
                 );
                 client.start_shutdown();
-                return Err(ForwardPacketError::new(
+                Err(ForwardPacketError::new(
                     PacketScope::Data,
                     SendError::Closed,
-                ));
+                ))
             }
         }
     }
@@ -175,7 +172,7 @@ impl Clients {
                     dst = dst.fmt_short(),
                     "client too busy to receive disco packet, dropping packet"
                 );
-                return Err(ForwardPacketError::new(PacketScope::Disco, SendError::Full));
+                Err(ForwardPacketError::new(PacketScope::Disco, SendError::Full))
             }
             Err(TrySendError::Closed(_)) => {
                 debug!(
@@ -183,10 +180,10 @@ impl Clients {
                     "can no longer write to client, dropping disco message and pruning connection"
                 );
                 client.start_shutdown();
-                return Err(ForwardPacketError::new(
+                Err(ForwardPacketError::new(
                     PacketScope::Disco,
                     SendError::Closed,
-                ));
+                ))
             }
         }
     }
