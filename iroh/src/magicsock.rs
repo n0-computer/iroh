@@ -1814,9 +1814,12 @@ impl AsyncUdpSocket for MagicSock {
             .map(|t| t.create_io_poller())
             .collect();
 
+        let relay_poller = self.relay.create_io_poller();
+
         Box::pin(IoPoller {
             #[cfg(not(wasm_browser))]
             ip_pollers,
+            relay_poller,
         })
     }
 
@@ -1915,6 +1918,7 @@ impl AsyncUdpSocket for MagicSock {
 struct IoPoller {
     #[cfg(not(wasm_browser))]
     ip_pollers: Vec<Pin<Box<dyn quinn::UdpPoller>>>,
+    relay_poller: Pin<Box<dyn quinn::UdpPoller>>,
 }
 
 impl quinn::UdpPoller for IoPoller {
@@ -1928,7 +1932,7 @@ impl quinn::UdpPoller for IoPoller {
             }
         }
 
-        Poll::Pending
+        self.relay_poller.as_mut().poll_writable(cx)
     }
 }
 

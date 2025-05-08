@@ -46,7 +46,7 @@ impl RelayTransport {
 
 impl Transport for RelayTransport {
     fn create_io_poller(&self) -> Pin<Box<dyn quinn::UdpPoller>> {
-        todo!()
+        Box::pin(self.relay_datagram_send_channel.clone())
     }
 
     fn try_send(&self, transmit: &Transmit<'_>) -> io::Result<()> {
@@ -136,15 +136,15 @@ impl Transport for RelayTransport {
     }
 
     fn max_transmit_segments(&self) -> usize {
-        todo!()
+        1
     }
 
     fn max_receive_segments(&self) -> usize {
-        todo!()
+        1
     }
 
     fn may_fragment(&self) -> bool {
-        todo!()
+        false
     }
 
     fn is_valid_send_addr(&self, addr: &Addr) -> bool {
@@ -152,14 +152,15 @@ impl Transport for RelayTransport {
     }
 
     fn poll_writable(&self, cx: &mut Context) -> Poll<io::Result<()>> {
-        todo!()
+        self.relay_datagram_send_channel.poll_writable(cx)
     }
 
     fn bind_addr(&self) -> Option<SocketAddr> {
-        todo!()
+        None
     }
 
     fn rebind(&self) -> io::Result<()> {
+        // TODO: reconnect to the home relay
         todo!()
     }
 }
@@ -264,6 +265,12 @@ pub(super) struct RelayDatagramSendChannelSender {
     wakers: Arc<std::sync::Mutex<Vec<Waker>>>,
 }
 
+impl quinn::UdpPoller for RelayDatagramSendChannelSender {
+    fn poll_writable(self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
+        self.as_ref().poll_writable(cx)
+    }
+}
+
 impl RelayDatagramSendChannelSender {
     fn try_send(
         &self,
@@ -271,7 +278,6 @@ impl RelayDatagramSendChannelSender {
     ) -> Result<(), mpsc::error::TrySendError<RelaySendItem>> {
         self.sender.try_send(item)
     }
-
     fn poll_writable(&self, cx: &mut Context) -> Poll<io::Result<()>> {
         match self.sender.capacity() {
             0 => {
