@@ -1,8 +1,3 @@
-use anyhow::{anyhow, Result};
-use atomic_waker::AtomicWaker;
-use bytes::Bytes;
-use concurrent_queue::ConcurrentQueue;
-use smallvec::SmallVec;
 use std::{
     io,
     net::SocketAddr,
@@ -10,12 +5,17 @@ use std::{
     sync::Arc,
     task::{Context, Poll, Waker},
 };
+
+use anyhow::{anyhow, Result};
+use atomic_waker::AtomicWaker;
+use bytes::Bytes;
+use concurrent_queue::ConcurrentQueue;
+use smallvec::SmallVec;
 use tokio::sync::mpsc;
 use tracing::{error, trace, warn};
 
+use super::{Addr, RecvMeta, Transmit, Transport};
 use crate::magicsock::{RelayContents, RelayRecvDatagram, RelaySendItem};
-
-use super::{RecvMeta, Transmit, Transport};
 
 #[derive(Debug, Clone)]
 pub struct RelayTransport {
@@ -26,7 +26,7 @@ pub struct RelayTransport {
     /// [`AsyncUdpSocket::poll_recv`].
     pub(crate) relay_datagram_recv_queue: Arc<RelayDatagramRecvQueue>,
     /// Channel on which to send datagrams via a relay server.
-    pub(crate) relay_datagram_send_channel: RelayDatagramSendChannelSender,
+    pub(super) relay_datagram_send_channel: RelayDatagramSendChannelSender,
 }
 
 impl RelayTransport {
@@ -51,7 +51,11 @@ impl Transport for RelayTransport {
 
     fn try_send(&self, transmit: &Transmit<'_>) -> io::Result<()> {
         let contents = split_packets(transmit);
-        let (dest_url, dest_node) = transmit.destination.try_into().expect("invalid src");
+        let (dest_url, dest_node) = transmit
+            .destination
+            .clone()
+            .try_into()
+            .expect("invalid src");
 
         let msg = RelaySendItem {
             remote_node: dest_node,
@@ -143,8 +147,8 @@ impl Transport for RelayTransport {
         todo!()
     }
 
-    fn is_valid_send_addr(&self, addr: SocketAddr) -> bool {
-        todo!()
+    fn is_valid_send_addr(&self, addr: &Addr) -> bool {
+        matches!(addr, Addr::RelayUrl(..))
     }
 
     fn poll_writable(&self, cx: &mut Context) -> Poll<io::Result<()>> {
@@ -177,7 +181,7 @@ pub(crate) struct RelayDatagramRecvQueue {
 
 impl RelayDatagramRecvQueue {
     /// Creates a new, empty queue with a fixed size bound of 512 items.
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             queue: ConcurrentQueue::bounded(512),
             waker: AtomicWaker::new(),
@@ -255,7 +259,7 @@ fn relay_datagram_send_channel() -> (
 /// This includes the waker coordination required to support [`AsyncUdpSocket::try_send`]
 /// and [`quinn::UdpPoller::poll_writable`].
 #[derive(Debug, Clone)]
-struct RelayDatagramSendChannelSender {
+pub(super) struct RelayDatagramSendChannelSender {
     sender: mpsc::Sender<RelaySendItem>,
     wakers: Arc<std::sync::Mutex<Vec<Waker>>>,
 }
@@ -332,7 +336,14 @@ fn split_packets(transmit: &Transmit<'_>) -> RelayContents {
 
 #[cfg(test)]
 mod tests {
+    use std::{collections::BTreeSet, time::Duration};
+
+    use iroh_base::NodeId;
+    use tokio::task::JoinSet;
+    use tracing::debug;
+
     use super::*;
+    use crate::defaults::staging;
 
     #[test]
     fn test_split_packets() {
@@ -344,7 +355,7 @@ mod tests {
                 ecn: None,
                 contents,
                 segment_size,
-                src_ip,
+                src_ip: Some(src_ip),
             }
         }
         fn mk_expected(parts: impl IntoIterator<Item = &'static str>) -> RelayContents {
@@ -373,5 +384,59 @@ mod tests {
             split_packets(&mk_transmit(b"hello world", Some(1000))),
             mk_expected(["hello world"])
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_relay_datagram_queue() {
+        let queue = Arc::new(RelayDatagramRecvQueue::new());
+        let url = staging::default_na_relay_node().url;
+        let capacity = queue.queue.capacity().unwrap();
+
+        let mut tasks = JoinSet::new();
+
+        tasks.spawn({
+            let queue = queue.clone();
+            async move {
+                let mut expected_msgs: BTreeSet<usize> = (0..capacity).collect();
+                while !expected_msgs.is_empty() {
+                    let datagram = n0_future::future::poll_fn(|cx| {
+                        queue.poll_recv(cx).map(|result| result.unwrap())
+                    })
+                    .await;
+
+                    let msg_num = usize::from_le_bytes(datagram.buf.as_ref().try_into().unwrap());
+                    debug!("Received {msg_num}");
+
+                    if !expected_msgs.remove(&msg_num) {
+                        panic!("Received message number {msg_num} twice or more, but expected it only exactly once.");
+                    }
+                }
+            }
+        });
+
+        for i in 0..capacity {
+            tasks.spawn({
+                let queue = queue.clone();
+                let url = url.clone();
+                async move {
+                    debug!("Sending {i}");
+                    queue
+                        .try_send(RelayRecvDatagram {
+                            url,
+                            src: NodeId::from_bytes(&[0u8; 32]).unwrap(),
+                            buf: Bytes::copy_from_slice(&i.to_le_bytes()),
+                        })
+                        .unwrap();
+                }
+            });
+        }
+
+        // We expect all of this work to be done in 10 seconds max.
+        if tokio::time::timeout(Duration::from_secs(10), tasks.join_all())
+            .await
+            .is_err()
+        {
+            panic!("Timeout - not all messages between 0 and {capacity} received.");
+        }
     }
 }

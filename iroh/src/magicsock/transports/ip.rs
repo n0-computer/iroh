@@ -7,7 +7,7 @@ use std::{
 
 use quinn::AsyncUdpSocket;
 
-use super::{RecvMeta, Transmit, Transport};
+use super::{Addr, RecvMeta, Transmit, Transport};
 use crate::magicsock::UdpConn;
 
 #[derive(Clone, Debug)]
@@ -74,10 +74,10 @@ impl Transport for IpTransport {
         self.socket.may_fragment()
     }
 
-    fn is_valid_send_addr(&self, addr: SocketAddr) -> bool {
+    fn is_valid_send_addr(&self, addr: &Addr) -> bool {
         match (self.bind_addr, addr) {
-            (SocketAddr::V4(_), SocketAddr::V4(_)) => true,
-            (SocketAddr::V6(_), SocketAddr::V6(_)) => true,
+            (SocketAddr::V4(_), Addr::Ipv4(..)) => true,
+            (SocketAddr::V6(_), Addr::Ipv6(..)) => true,
             _ => false,
         }
     }

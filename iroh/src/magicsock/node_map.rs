@@ -15,7 +15,7 @@ use self::{
     best_addr::ClearReason,
     node_state::{NodeState, Options, PingHandled},
 };
-use super::{metrics::Metrics, ActorMessage, DiscoMessageSource, NodeIdMappedAddr};
+use super::{metrics::Metrics, transports, ActorMessage, NodeIdMappedAddr};
 #[cfg(any(test, feature = "test-utils"))]
 use crate::endpoint::PathSelection;
 use crate::{
@@ -228,7 +228,7 @@ impl NodeMap {
             .handle_ping(sender, src, tx_id)
     }
 
-    pub(super) fn handle_pong(&self, sender: PublicKey, src: &DiscoMessageSource, pong: Pong) {
+    pub(super) fn handle_pong(&self, sender: PublicKey, src: &transports::Addr, pong: Pong) {
         self.inner
             .lock()
             .expect("poisoned")
@@ -512,9 +512,9 @@ impl NodeMapInner {
         }
     }
 
-    fn handle_pong(&mut self, sender: NodeId, src: &DiscoMessageSource, pong: Pong) {
+    fn handle_pong(&mut self, sender: NodeId, src: &transports::Addr, pong: Pong) {
         if let Some(ns) = self.get_mut(NodeStateKey::NodeId(sender)).as_mut() {
-            let insert = ns.handle_pong(&pong, src.into());
+            let insert = ns.handle_pong(&pong, src.clone().into());
             if let Some((src, key)) = insert {
                 self.set_node_key_for_ip_port(src, &key);
             }

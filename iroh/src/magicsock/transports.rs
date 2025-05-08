@@ -10,8 +10,7 @@ use iroh_base::{NodeId, RelayUrl};
 mod ip;
 pub(crate) mod relay;
 
-pub use self::ip::IpTransport;
-pub use self::relay::RelayTransport;
+pub use self::{ip::IpTransport, relay::RelayTransport};
 
 pub trait Transport {
     fn try_send(&self, transmit: &Transmit<'_>) -> io::Result<()>;
@@ -27,7 +26,7 @@ pub trait Transport {
     fn max_receive_segments(&self) -> usize;
     fn may_fragment(&self) -> bool;
 
-    fn is_valid_send_addr(&self, addr: SocketAddr) -> bool;
+    fn is_valid_send_addr(&self, addr: &Addr) -> bool;
     fn poll_writable(&self, cx: &mut Context) -> Poll<std::io::Result<()>>;
     fn create_io_poller(&self) -> Pin<Box<dyn quinn::UdpPoller>>;
 
@@ -130,5 +129,15 @@ impl TryFrom<Addr> for (RelayUrl, NodeId) {
             Addr::RelayUrl(url, node) => Ok((url, node)),
             _ => Err(anyhow::anyhow!("not a valid relay url")),
         }
+    }
+}
+
+impl Addr {
+    pub fn is_relay(&self) -> bool {
+        matches!(self, Self::RelayUrl(..))
+    }
+
+    pub fn is_ip(&self) -> bool {
+        matches!(self, Self::Ipv4(..) | Self::Ipv6(..))
     }
 }

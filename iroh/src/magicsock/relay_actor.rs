@@ -799,13 +799,13 @@ pub(super) enum RelayActorMessage {
 }
 
 #[derive(Debug, Clone)]
-pub(super) struct RelaySendItem {
+pub(crate) struct RelaySendItem {
     /// The destination for the datagrams.
-    pub(super) remote_node: NodeId,
+    pub(crate) remote_node: NodeId,
     /// The home relay of the remote node.
-    pub(super) url: RelayUrl,
+    pub(crate) url: RelayUrl,
     /// One or more datagrams to send.
-    pub(super) datagrams: RelayContents,
+    pub(crate) datagrams: RelayContents,
 }
 
 pub(super) struct RelayActor {
@@ -1164,10 +1164,10 @@ struct RelaySendPacket {
 ///
 /// This could be either a QUIC or DISCO packet.
 #[derive(Debug)]
-pub(super) struct RelayRecvDatagram {
-    pub(super) url: RelayUrl,
-    pub(super) src: NodeId,
-    pub(super) buf: Bytes,
+pub(crate) struct RelayRecvDatagram {
+    pub(crate) url: RelayUrl,
+    pub(crate) src: NodeId,
+    pub(crate) buf: Bytes,
 }
 
 /// Combines datagrams into a single DISCO frame of at most MAX_PACKET_SIZE.
