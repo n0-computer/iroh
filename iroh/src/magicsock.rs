@@ -196,10 +196,8 @@ pub(crate) struct MagicSock {
     /// Encryption key for this node.
     secret_encryption_key: crypto_box::SecretKey,
 
-    /// Sockets & related state
-    #[cfg(not(wasm_browser))]
-    sockets: SocketState,
-
+    /// Transpors (currently only IP based ones)
+    transports: Vec<Box<dyn Transport>>,
     relay: RelayTransport,
 
     /// Close is in progress (or done)
@@ -247,14 +245,6 @@ pub(crate) struct MagicSock {
     pub(crate) metrics: EndpointMetrics,
 }
 
-/// Sockets and related state, grouped together so we can cfg them out for browsers.
-#[cfg(not(wasm_browser))]
-#[derive(Debug)]
-pub(crate) struct SocketState {
-    /// IP based connections
-    ip: Vec<IpTransport>,
-}
-
 impl MagicSock {
     /// Creates a magic [`MagicSock`] listening on [`Options::addr_v4`] and [`Options::addr_v6`].
     pub(crate) async fn spawn(opts: Options) -> Result<Handle> {
@@ -290,7 +280,7 @@ impl MagicSock {
     /// Get the cached version of the Ipv4 and Ipv6 addrs of the current connection.
     #[cfg(not(wasm_browser))]
     pub(crate) fn local_addr(&self) -> Vec<io::Result<SocketAddr>> {
-        self.sockets.ip.iter().map(|t| t.local_addr()).collect()
+        self.transports.iter().map(|t| t.local_addr()).collect()
     }
 
     /// Returns `true` if we have at least one candidate address where we can send packets to.
@@ -435,8 +425,7 @@ impl MagicSock {
     #[cfg_attr(windows, allow(dead_code))]
     fn normalized_local_addr(&self) -> io::Result<SocketAddr> {
         let addrs: Vec<_> = self
-            .sockets
-            .ip
+            .transports
             .iter()
             .filter_map(|t| t.local_addr().ok())
             .collect();
@@ -690,8 +679,8 @@ impl MagicSock {
 
     fn conn_for_addr(&self, addr: &transports::Addr) -> Option<&dyn Transport> {
         #[cfg(not(wasm_browser))]
-        if let Some(transport) = self.sockets.ip.iter().find(|p| p.is_valid_send_addr(addr)) {
-            return Some(transport);
+        if let Some(transport) = self.transports.iter().find(|p| p.is_valid_send_addr(addr)) {
+            return Some(transport.as_ref());
         }
 
         if self.relay.is_valid_send_addr(addr) {
@@ -738,7 +727,7 @@ impl MagicSock {
         let counter = self.poll_recv_counter.fetch_add(1, Ordering::Relaxed);
         match counter % 2 {
             0 => {
-                for transport in &self.sockets.ip {
+                for transport in &self.transports {
                     poll_transport!(transport);
                 }
                 poll_transport!(&self.relay);
@@ -746,23 +735,12 @@ impl MagicSock {
             }
             _ => {
                 poll_transport!(&self.relay);
-                for transport in &self.sockets.ip {
+                for transport in &self.transports {
                     poll_transport!(transport);
                 }
                 Poll::Pending
             }
         }
-    }
-
-    /// poll_recv in browsers is "just" polling the relay receive path
-    #[cfg(wasm_browser)]
-    fn poll_recv(
-        &self,
-        cx: &mut Context,
-        bufs: &mut [io::IoSliceMut<'_>],
-        metas: &mut [transports::RecvMeta],
-    ) -> Poll<io::Result<usize>> {
-        todo!()
     }
 
     /// Process datagrams received from UDP sockets.
@@ -771,7 +749,6 @@ impl MagicSock {
     ///
     /// This fixes up the datagrams to use the correct [`NodeIdMappedAddr`] and extracts DISCO
     /// packets, processing them inside the magic socket.
-    #[cfg(not(wasm_browser))]
     fn process_datagrams(
         &self,
         bufs: &mut [io::IoSliceMut<'_>],
@@ -1478,7 +1455,9 @@ impl Handle {
         let actor_sockets = ActorSocketState::bind(addr_v4, addr_v6, metrics.portmapper.clone())?;
 
         #[cfg(not(wasm_browser))]
-        let sockets = actor_sockets.msock_socket_state()?;
+        let transports = actor_sockets.transports();
+        #[cfg(wasm_browser)]
+        let transports = Vec::new();
 
         let ip_mapped_addrs = IpMappedAddresses::default();
 
@@ -1524,8 +1503,7 @@ impl Handle {
             me,
             secret_key,
             secret_encryption_key,
-            #[cfg(not(wasm_browser))]
-            sockets,
+            transports,
             closing: AtomicBool::new(false),
             closed: AtomicBool::new(false),
             poll_recv_counter: AtomicUsize::new(0),
@@ -1785,10 +1763,8 @@ impl AsyncUdpSocket for MagicSock {
         // Right now however we have one single poller behaving the same for each
         // connection.  It checks all paths and returns Poll::Ready as soon as any path is
         // ready.
-        #[cfg(not(wasm_browser))]
         let ip_pollers = self
-            .sockets
-            .ip
+            .transports
             .iter()
             .map(|t| t.create_io_poller())
             .collect();
@@ -1796,7 +1772,6 @@ impl AsyncUdpSocket for MagicSock {
         let relay_poller = self.relay.create_io_poller();
 
         Box::pin(IoPoller {
-            #[cfg(not(wasm_browser))]
             ip_pollers,
             relay_poller,
         })
@@ -1819,8 +1794,7 @@ impl AsyncUdpSocket for MagicSock {
     #[cfg(not(wasm_browser))]
     fn local_addr(&self) -> io::Result<SocketAddr> {
         let addrs: Vec<_> = self
-            .sockets
-            .ip
+            .transports
             .iter()
             .filter_map(|t| t.local_addr().ok())
             .collect();
@@ -1841,11 +1815,9 @@ impl AsyncUdpSocket for MagicSock {
         Ok(SocketAddr::new(std::net::Ipv6Addr::LOCALHOST.into(), 0))
     }
 
-    #[cfg(not(wasm_browser))]
     fn max_transmit_segments(&self) -> usize {
         let res = self
-            .sockets
-            .ip
+            .transports
             .iter()
             .map(|t| t.max_transmit_segments())
             .min();
@@ -1853,12 +1825,6 @@ impl AsyncUdpSocket for MagicSock {
         res.unwrap_or(1)
     }
 
-    #[cfg(wasm_browser)]
-    fn max_transmit_segments(&self) -> usize {
-        1
-    }
-
-    #[cfg(not(wasm_browser))]
     fn max_receive_segments(&self) -> usize {
         // `max_receive_segments` controls the size of the `RecvMeta` buffer
         // that quinn creates. Having buffers slightly bigger than necessary
@@ -1868,8 +1834,7 @@ impl AsyncUdpSocket for MagicSock {
         // and it's impossible and unnecessary to be refactored that way.
 
         let res = self
-            .sockets
-            .ip
+            .transports
             .iter()
             .map(|t| t.max_receive_segments())
             .max();
@@ -1877,25 +1842,13 @@ impl AsyncUdpSocket for MagicSock {
         res.unwrap_or(1)
     }
 
-    #[cfg(wasm_browser)]
-    fn max_receive_segments(&self) -> usize {
-        1
-    }
-
-    #[cfg(not(wasm_browser))]
     fn may_fragment(&self) -> bool {
-        self.sockets.ip.iter().any(|t| t.may_fragment())
-    }
-
-    #[cfg(wasm_browser)]
-    fn may_fragment(&self) -> bool {
-        false
+        self.transports.iter().any(|t| t.may_fragment())
     }
 }
 
 #[derive(Debug)]
 struct IoPoller {
-    #[cfg(not(wasm_browser))]
     ip_pollers: Vec<Pin<Box<dyn quinn::UdpPoller>>>,
     relay_poller: Pin<Box<dyn quinn::UdpPoller>>,
 }
@@ -2017,12 +1970,11 @@ impl ActorSocketState {
         Ok((v4, v6))
     }
 
-    fn msock_socket_state(&self) -> Result<SocketState> {
-        let socket_state = SocketState {
-            ip: self.ip.clone(),
-        };
-
-        Ok(socket_state)
+    fn transports(&self) -> Vec<Box<dyn Transport>> {
+        self.ip
+            .iter()
+            .map(|t| Box::new(t.clone()) as Box<dyn Transport>)
+            .collect()
     }
 }
 
@@ -2307,8 +2259,7 @@ impl Actor {
                 // port that we are running with. Worst case it's an invalid candidate mapping.
                 let port = self
                     .msock
-                    .sockets
-                    .ip
+                    .transports
                     .iter()
                     .filter_map(|t| t.bind_addr())
                     .map(|addr| addr.port())

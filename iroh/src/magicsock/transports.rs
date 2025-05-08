@@ -12,7 +12,7 @@ pub(crate) mod relay;
 
 pub use self::{ip::IpTransport, relay::RelayTransport};
 
-pub trait Transport {
+pub trait Transport: std::fmt::Debug + Send + Sync + 'static {
     fn try_send(&self, transmit: &Transmit<'_>) -> io::Result<()>;
     fn poll_recv(
         &self,
