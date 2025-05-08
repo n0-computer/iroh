@@ -277,10 +277,7 @@
 <a href="#276" id="276">276</a>
 <a href="#277" id="277">277</a>
 <a href="#278" id="278">278</a>
-<a href="#279" id="279">279</a>
-<a href="#280" id="280">280</a>
-<a href="#281" id="281">281</a>
-<a href="#282" id="282">282</a></pre></div><pre class="rust"><code><span class="doccomment">//! The "Server" side of the client. Uses the `ClientConnManager`.
+<a href="#279" id="279">279</a></pre></div><pre class="rust"><code><span class="doccomment">//! The "Server" side of the client. Uses the `ClientConnManager`.
 </span><span class="comment">// Based on tailscale/derp/derp_server.go
 
 </span><span class="kw">use </span>std::{
@@ -411,10 +408,7 @@
                     dst = dst.fmt_short(),
                     <span class="string">"client too busy to receive packet, dropping packet"
                 </span>);
-                <span class="kw">return </span><span class="prelude-val">Err</span>(ForwardPacketError::new(
-                    PacketScope::Data,
-                    SendError::Closed,
-                ));
+                <span class="prelude-val">Err</span>(ForwardPacketError::new(PacketScope::Data, SendError::Full))
             }
             <span class="prelude-val">Err</span>(TrySendError::Closed(<span class="kw">_</span>)) =&gt; {
                 <span class="macro">debug!</span>(
@@ -422,10 +416,10 @@
                     <span class="string">"can no longer write to client, dropping message and pruning connection"
                 </span>);
                 client.start_shutdown();
-                <span class="kw">return </span><span class="prelude-val">Err</span>(ForwardPacketError::new(
+                <span class="prelude-val">Err</span>(ForwardPacketError::new(
                     PacketScope::Data,
                     SendError::Closed,
-                ));
+                ))
             }
         }
     }
@@ -457,7 +451,7 @@
                     dst = dst.fmt_short(),
                     <span class="string">"client too busy to receive disco packet, dropping packet"
                 </span>);
-                <span class="kw">return </span><span class="prelude-val">Err</span>(ForwardPacketError::new(PacketScope::Disco, SendError::Full));
+                <span class="prelude-val">Err</span>(ForwardPacketError::new(PacketScope::Disco, SendError::Full))
             }
             <span class="prelude-val">Err</span>(TrySendError::Closed(<span class="kw">_</span>)) =&gt; {
                 <span class="macro">debug!</span>(
@@ -465,10 +459,10 @@
                     <span class="string">"can no longer write to client, dropping disco message and pruning connection"
                 </span>);
                 client.start_shutdown();
-                <span class="kw">return </span><span class="prelude-val">Err</span>(ForwardPacketError::new(
+                <span class="prelude-val">Err</span>(ForwardPacketError::new(
                     PacketScope::Disco,
                     SendError::Closed,
-                ));
+                ))
             }
         }
     }
