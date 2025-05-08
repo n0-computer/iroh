@@ -1578,7 +1578,21 @@ impl Handle {
 
         let mut actor_tasks = JoinSet::default();
 
-        let relay_actor = RelayActor::new(msock.clone(), relay_datagram_recv_queue, relay_protocol);
+        let relay_actor = RelayActor::new(
+            relay_actor::Config {
+                my_relay: msock.my_relay.clone(),
+                secret_key: msock.secret_key.clone(),
+                #[cfg(not(wasm_browser))]
+                dns_resolver: msock.dns_resolver.clone(),
+                proxy_url: msock.proxy_url.clone(),
+                ipv6_reported: msock.ipv6_reported.clone(),
+                #[cfg(any(test, feature = "test-utils"))]
+                insecure_skip_relay_cert_verify: msock.insecure_skip_relay_cert_verify,
+                metrics: msock.metrics.magicsock.clone(),
+            },
+            relay_datagram_recv_queue,
+            relay_protocol,
+        );
         let relay_actor_cancel_token = relay_actor.cancel_token();
         actor_tasks.spawn(
             async move {
