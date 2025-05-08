@@ -859,10 +859,6 @@ impl RelayActor {
         }
     }
 
-    pub(super) fn cancel_token(&self) -> CancellationToken {
-        self.cancel_token.clone()
-    }
-
     pub(super) async fn run(
         mut self,
         mut receiver: mpsc::Receiver<RelayActorMessage>,

@@ -2066,7 +2066,6 @@ impl Actor {
                 self.msock.node_map.notify_shutdown();
                 #[cfg(not(wasm_browser))]
                 self.sockets.port_mapper.deactivate();
-                self.msock.relay.shutdown();
 
                 debug!("shutdown complete");
                 return true;

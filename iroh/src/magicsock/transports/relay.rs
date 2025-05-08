@@ -13,7 +13,6 @@ use concurrent_queue::ConcurrentQueue;
 use n0_future::task::{self, AbortOnDropHandle};
 use smallvec::SmallVec;
 use tokio::sync::mpsc;
-use tokio_util::sync::CancellationToken;
 use tracing::{error, info_span, trace, warn, Instrument};
 
 use super::{Addr, RecvMeta, Transmit, Transport};
@@ -36,7 +35,6 @@ pub struct RelayTransport {
     pub(super) relay_datagram_send_channel: RelayDatagramSendChannelSender,
     actor_sender: mpsc::Sender<RelayActorMessage>,
     _actor_handle: AbortOnDropHandle<()>,
-    cancel_token: CancellationToken,
 }
 
 impl RelayTransport {
@@ -47,7 +45,6 @@ impl RelayTransport {
         let (actor_sender, actor_receiver) = mpsc::channel(256);
 
         let relay_actor = RelayActor::new(config, relay_datagram_recv_queue.clone());
-        let cancel_token = relay_actor.cancel_token();
         // TODO: track task
         let actor_handle = AbortOnDropHandle::new(task::spawn(
             async move {
@@ -63,16 +60,11 @@ impl RelayTransport {
             relay_datagram_send_channel: relay_datagram_send_tx,
             actor_sender,
             _actor_handle: actor_handle,
-            cancel_token,
         }
     }
 
     fn maybe_close_relays_on_rebind(&self) {
         self.send_relay_actor(RelayActorMessage::MaybeCloseRelaysOnRebind);
-    }
-
-    pub fn shutdown(&self) {
-        self.cancel_token.cancel();
     }
 
     fn send_relay_actor(&self, msg: RelayActorMessage) {
