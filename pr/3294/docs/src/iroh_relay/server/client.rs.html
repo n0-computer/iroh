@@ -832,7 +832,9 @@
 <a href="#831" id="831">831</a>
 <a href="#832" id="832">832</a>
 <a href="#833" id="833">833</a>
-<a href="#834" id="834">834</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
+<a href="#834" id="834">834</a>
+<a href="#835" id="835">835</a>
+<a href="#836" id="836">836</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
 
 </span><span class="kw">use </span>std::{
     collections::HashSet, future::Future, num::NonZeroU32, pin::Pin, sync::Arc, task::Poll,
@@ -1199,7 +1201,9 @@
         <span class="kw">match </span>frame {
             Frame::SendPacket { dst_key, packet } =&gt; {
                 <span class="kw">let </span>packet_len = packet.len();
-                <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.handle_frame_send_packet(dst_key, packet) {
+                <span class="kw">if let </span><span class="prelude-val">Err</span>(err @ ForwardPacketError { .. }) =
+                    <span class="self">self</span>.handle_frame_send_packet(dst_key, packet)
+                {
                     <span class="macro">warn!</span>(<span class="string">"failed to handle send packet frame: {err:#}"</span>);
                 }
                 <span class="self">self</span>.metrics.bytes_recv.inc_by(packet_len <span class="kw">as </span>u64);
