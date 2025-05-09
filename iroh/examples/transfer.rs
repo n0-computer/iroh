@@ -12,7 +12,7 @@ use iroh::{
         dns::DnsDiscovery,
         pkarr::{PkarrPublisher, N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING},
     },
-    dns::{N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING},
+    dns::{DnsResolver, N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING},
     endpoint::ConnectionError,
     Endpoint, NodeAddr, RelayMap, RelayMode, RelayUrl, SecretKey,
 };
@@ -20,8 +20,14 @@ use iroh_base::ticket::NodeTicket;
 use tokio_stream::StreamExt;
 use tracing::{info, warn};
 use url::Url;
+
 // Transfer ALPN that we are using to communicate over the `Endpoint`
 const TRANSFER_ALPN: &[u8] = b"n0/iroh/transfer/example/0";
+
+const DEV_RELAY_URL: &str = "http://localhost:3340";
+const DEV_PKARR_RELAY_URL: &str = "http://localhost:8080/pkarr";
+const DEV_DNS_ORIGIN_DOMAIN: &str = "irohdns.example";
+const DEV_DNS_SERVER: &str = "127.0.0.1:5300";
 
 /// Transfer data between iroh nodes.
 ///
@@ -43,13 +49,20 @@ struct Cli {
     command: Commands,
 }
 
-#[derive(Clone, Copy, Default, Debug, clap::ValueEnum)]
+#[derive(Clone, Copy, Default, Debug, Eq, PartialEq, clap::ValueEnum)]
 enum Env {
     /// Use the production servers hosted by number0.
     Prod,
     /// Use the staging servers hosted by number0.
     #[default]
     Staging,
+    /// Use localhost servers.
+    ///
+    /// To run the DNS server:
+    ///     cargo run --bin iroh-dns-server
+    /// To run the relay server:
+    ///     cargo run --bin iroh-relay --features server -- --dev
+    Dev,
 }
 
 #[derive(Debug, clap::Parser)]
@@ -58,12 +71,12 @@ struct EndpointArgs {
     ///
     /// If other options are set, those will override the environment defaults.
     #[clap(short, long, value_enum, default_value_t)]
-    environment: Env,
+    env: Env,
     /// Set one or more relay servers to use.
     #[clap(long)]
     relay_url: Vec<String>,
     /// Disable relays completely.
-    #[clap(long, conflicts_with = "relay-url")]
+    #[clap(long, conflicts_with = "relay_url")]
     no_relay: bool,
     /// If set no direct connections will be established.
     #[clap(long)]
@@ -77,6 +90,9 @@ struct EndpointArgs {
     /// Use a custom domain when resolving node info via DNS.
     #[clap(long)]
     dns_origin_domain: Option<String>,
+    /// Use a custom DNS server for resolving relay and node info domains.
+    #[clap(long)]
+    dns_server: Option<String>,
     /// Do not resolve node info via DNS.
     #[clap(long)]
     no_dns_resolve: bool,
@@ -141,50 +157,55 @@ impl EndpointArgs {
             }
         };
 
+        let mut builder = Endpoint::builder();
+
         let relay_mode = if self.no_relay {
             RelayMode::Disabled
         } else {
-            match (self.relay_url.is_empty(), self.environment) {
+            match (self.relay_url.is_empty(), self.env) {
                 (true, Env::Prod) => RelayMode::Default,
                 (true, Env::Staging) => RelayMode::Staging,
+                (true, Env::Dev) => {
+                    let url: RelayUrl = DEV_RELAY_URL.parse().expect("valid url");
+                    RelayMode::Custom(RelayMap::from(url))
+                }
                 (false, _) => {
-                    let urls: Result<Vec<_>, _> = self
+                    let urls = self
                         .relay_url
                         .iter()
                         .map(|u| RelayUrl::from_str(u))
-                        .collect();
-                    let urls = urls.context("failed to parse relay URL")?;
+                        .collect::<Result<Vec<_>, _>>()
+                        .context("failed to parse relay URL")?;
                     RelayMode::Custom(RelayMap::from_iter(urls))
                 }
             }
         };
 
-        let mut endpoint_builder = Endpoint::builder();
-
         if !self.no_pkarr_publish {
-            let url = match (&self.pkarr_relay_url, self.environment) {
+            let url = match (&self.pkarr_relay_url, self.env) {
                 (None, Env::Prod) => N0_DNS_PKARR_RELAY_PROD,
                 (None, Env::Staging) => N0_DNS_PKARR_RELAY_STAGING,
+                (None, Env::Dev) => DEV_PKARR_RELAY_URL,
                 (Some(url), _) => url,
             };
             let url = Url::from_str(url).context("failed to parse pkarr relay url")?;
-            endpoint_builder = endpoint_builder
+            builder = builder
                 .add_discovery(|secret_key| Some(PkarrPublisher::new(secret_key.clone(), url)));
         }
 
         if !self.no_dns_resolve {
-            let origin_domain = match (self.dns_origin_domain, self.environment) {
+            let origin_domain = match (self.dns_origin_domain, self.env) {
                 (None, Env::Prod) => N0_DNS_NODE_ORIGIN_PROD.to_string(),
                 (None, Env::Staging) => N0_DNS_NODE_ORIGIN_STAGING.to_string(),
+                (None, Env::Dev) => DEV_DNS_ORIGIN_DOMAIN.to_string(),
                 (Some(domain), _) => domain,
             };
-            endpoint_builder =
-                endpoint_builder.add_discovery(|_| Some(DnsDiscovery::new(origin_domain)));
+            builder = builder.add_discovery(|_| Some(DnsDiscovery::new(origin_domain)));
         }
 
         #[cfg(feature = "discovery-local-network")]
         if self.mdns {
-            endpoint_builder = endpoint_builder.add_discovery(|secret_key| {
+            builder = builder.add_discovery(|secret_key| {
                 Some(
                     iroh::discovery::mdns::MdnsDiscovery::new(secret_key.public())
                         .expect("Failed to create mDNS discovery"),
@@ -194,11 +215,27 @@ impl EndpointArgs {
 
         #[cfg(feature = "test-utils")]
         if self.relay_only {
-            endpoint_builder =
-                endpoint_builder.path_selection(iroh::endpoint::PathSelection::RelayOnly)
+            builder = builder.path_selection(iroh::endpoint::PathSelection::RelayOnly)
         }
 
-        let endpoint = endpoint_builder
+        let custom_dns_server = if let Some(host) = self.dns_server {
+            Some(
+                tokio::net::lookup_host(host)
+                    .await
+                    .context("failed to resolve DNS server address")?
+                    .next()
+                    .context("failed to resolve DNS server address")?,
+            )
+        } else if self.env == Env::Dev {
+            Some(DEV_DNS_SERVER.parse().expect("valid addr"))
+        } else {
+            None
+        };
+        if let Some(addr) = custom_dns_server {
+            builder = builder.dns_resolver(DnsResolver::with_nameserver(addr));
+        }
+
+        let endpoint = builder
             .secret_key(secret_key)
             .alpns(vec![TRANSFER_ALPN.to_vec()])
             .relay_mode(relay_mode.clone())
@@ -285,7 +322,7 @@ async fn provide(endpoint: Endpoint, size: u64) -> anyhow::Result<()> {
             let conn_type_task = tokio::task::spawn(async move {
                 let remote = node_id.fmt_short();
                 while let Some(conn_type) = conn_type_stream.next().await {
-                    println!("[{remote}] Connection type changed to `{conn_type}`");
+                    println!("[{remote}] Connection type changed to: {conn_type}");
                 }
             });
 
@@ -313,7 +350,7 @@ async fn provide(endpoint: Endpoint, size: u64) -> anyhow::Result<()> {
             let duration = start.elapsed();
 
             println!(
-                "[{remote}] Transferred {} in {:.4}, {}/s",
+                "[{remote}] Transferred {} in {:.4}s, {}/s",
                 HumanBytes(size),
                 duration.as_secs_f64(),
                 HumanBytes((size as f64 / duration.as_secs_f64()) as u64)
@@ -348,7 +385,7 @@ async fn fetch(endpoint: Endpoint, ticket: &str) -> anyhow::Result<()> {
     let mut conn_type_stream = endpoint.conn_type(remote).unwrap().stream();
     let conn_type_task = tokio::task::spawn(async move {
         while let Some(conn_type) = conn_type_stream.next().await {
-            println!("Connection type changed to `{conn_type}`");
+            println!("Connection type changed to: {conn_type}");
         }
     });
 
