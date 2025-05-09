@@ -492,7 +492,8 @@
 <a href="#491" id="491">491</a>
 <a href="#492" id="492">492</a>
 <a href="#493" id="493">493</a>
-<a href="#494" id="494">494</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#494" id="494">494</a>
+<a href="#495" id="495">495</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     future::Future,
     path::Path,
     result,
@@ -696,7 +697,8 @@
                                         <span class="macro">debug!</span>(<span class="string">"packet {key} is no longer expired"</span>);
                                     }
                                 } <span class="kw">else </span>{
-                                    <span class="macro">debug!</span>(<span class="string">"expired packet {key} not found"</span>);
+                                    <span class="macro">debug!</span>(<span class="string">"expired packet {key} not found, remove from expiry table"</span>);
+                                    tables.update_time.remove(<span class="kw-2">&amp;</span>time.to_bytes(), key.as_bytes())<span class="question-mark">?</span>;
                                 }
                             }
                         }
