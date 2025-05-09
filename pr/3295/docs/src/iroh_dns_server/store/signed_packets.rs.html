@@ -481,7 +481,24 @@
 <a href="#480" id="480">480</a>
 <a href="#481" id="481">481</a>
 <a href="#482" id="482">482</a>
-<a href="#483" id="483">483</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{future::Future, path::Path, result, sync::Arc, time::Duration};
+<a href="#483" id="483">483</a>
+<a href="#484" id="484">484</a>
+<a href="#485" id="485">485</a>
+<a href="#486" id="486">486</a>
+<a href="#487" id="487">487</a>
+<a href="#488" id="488">488</a>
+<a href="#489" id="489">489</a>
+<a href="#490" id="490">490</a>
+<a href="#491" id="491">491</a>
+<a href="#492" id="492">492</a>
+<a href="#493" id="493">493</a>
+<a href="#494" id="494">494</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+    future::Future,
+    path::Path,
+    result,
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 
 <span class="kw">use </span>anyhow::{Context, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>pkarr::{SignedPacket, Timestamp};
@@ -535,7 +552,7 @@
         </span>res: oneshot::Sender&lt;Snapshot&gt;,
     },
     CheckExpired {
-        time: [u8; <span class="number">8</span>],
+        time: Timestamp,
         key: PublicKeyBytes,
     },
 }
@@ -602,7 +619,6 @@
             <span class="kw">let </span>transaction = <span class="self">self</span>.db.begin_write()<span class="question-mark">?</span>;
             <span class="kw">let </span><span class="kw-2">mut </span>tables = Tables::new(<span class="kw-2">&amp;</span>transaction)<span class="question-mark">?</span>;
             <span class="kw">let </span>timeout = tokio::time::sleep(<span class="self">self</span>.options.max_batch_time);
-            <span class="kw">let </span>expired = Timestamp::now() - expiry_us;
             <span class="macro">tokio::pin!</span>(timeout);
             <span class="kw">for _ in </span><span class="number">0</span>..<span class="self">self</span>.options.max_batch_size {
                 <span class="macro">tokio::select!</span> {
@@ -668,13 +684,19 @@
                                 res.send(Snapshot::new(<span class="kw-2">&amp;</span><span class="self">self</span>.db)<span class="question-mark">?</span>).ok();
                             }
                             Message::CheckExpired { key, time } =&gt; {
-                                <span class="macro">trace!</span>(<span class="string">"check expired {} at {}"</span>, key, u64::from_be_bytes(time));
+                                <span class="macro">trace!</span>(<span class="string">"check expired {} at {}"</span>, key, fmt_time(time));
                                 <span class="kw">if let </span><span class="prelude-val">Some</span>(packet) = get_packet(<span class="kw-2">&amp;</span>tables.signed_packets, <span class="kw-2">&amp;</span>key)<span class="question-mark">? </span>{
+                                    <span class="kw">let </span>expired = Timestamp::now() - expiry_us;
                                     <span class="kw">if </span>packet.timestamp() &lt; expired {
-                                        tables.update_time.remove(<span class="kw-2">&amp;</span>time, key.as_bytes())<span class="question-mark">?</span>;
+                                        tables.update_time.remove(<span class="kw-2">&amp;</span>time.to_bytes(), key.as_bytes())<span class="question-mark">?</span>;
                                         <span class="kw">let _ </span>= tables.signed_packets.remove(key.as_bytes())<span class="question-mark">?</span>;
                                         <span class="self">self</span>.metrics.store_packets_expired.inc();
+                                        <span class="macro">debug!</span>(<span class="string">"removed expired packet {key}"</span>);
+                                    } <span class="kw">else </span>{
+                                        <span class="macro">debug!</span>(<span class="string">"packet {key} is no longer expired"</span>);
                                     }
+                                } <span class="kw">else </span>{
+                                    <span class="macro">debug!</span>(<span class="string">"expired packet {key} not found"</span>);
                                 }
                             }
                         }
@@ -686,6 +708,10 @@
         }
         <span class="prelude-val">Ok</span>(())
     }
+}
+
+<span class="kw">fn </span>fmt_time(t: Timestamp) -&gt; String {
+    humantime::format_rfc3339_micros(SystemTime::from(t)).to_string()
 }
 
 <span class="doccomment">/// A struct similar to [`redb::Table`] but for all tables that make up the
@@ -851,7 +877,7 @@
             <span class="macro">anyhow::bail!</span>(<span class="string">"failed to get snapshot"</span>);
         };
         <span class="kw">let </span>expired = Timestamp::now() - expiry_us;
-        <span class="macro">trace!</span>(<span class="string">"evicting packets older than {}"</span>, expired);
+        <span class="macro">trace!</span>(<span class="string">"evicting packets older than {}"</span>, fmt_time(expired));
         <span class="comment">// if getting the range fails we exit the loop and shut down
         // if individual reads fail we log the error and limp on
         </span><span class="kw">for </span>item <span class="kw">in </span>snapshot.update_time.range(..expired.to_bytes())<span class="question-mark">? </span>{
@@ -862,26 +888,22 @@
                     <span class="kw">continue</span>;
                 }
             };
-            <span class="kw">let </span>time = time.value();
-            <span class="macro">trace!</span>(<span class="string">"evicting expired packets at {}"</span>, u64::from_be_bytes(time));
+            <span class="kw">let </span>time = Timestamp::from(time.value());
+            <span class="macro">trace!</span>(<span class="string">"evicting expired packets at {}"</span>, fmt_time(time));
             <span class="kw">for </span>item <span class="kw">in </span>keys {
                 <span class="kw">let </span>key = <span class="kw">match </span>item {
                     <span class="prelude-val">Ok</span>(v) =&gt; v,
                     <span class="prelude-val">Err</span>(e) =&gt; {
                         <span class="macro">error!</span>(
                             <span class="string">"failed to read update_time item at {}: {:?}"</span>,
-                            u64::from_be_bytes(time),
+                            fmt_time(time),
                             e
                         );
                         <span class="kw">continue</span>;
                     }
                 };
                 <span class="kw">let </span>key = PublicKeyBytes::new(key.value());
-                <span class="macro">debug!</span>(
-                    <span class="string">"evicting expired packet {} {}"</span>,
-                    u64::from_be_bytes(time),
-                    key
-                );
+                <span class="macro">debug!</span>(<span class="string">"evicting expired packet {} {}"</span>, fmt_time(time), key);
                 send.send(Message::CheckExpired { time, key }).<span class="kw">await</span><span class="question-mark">?</span>;
             }
         }
