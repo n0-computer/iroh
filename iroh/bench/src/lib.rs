@@ -69,12 +69,11 @@ pub struct Opt {
     #[clap(long, default_value = "1200")]
     pub initial_mtu: u16,
     /// Whether to run a local relay and have the server and clients connect to that.
-    ///
-    /// Can be combined with the `DEV_RELAY_ONLY` environment variable (at compile time)
-    /// to test throughput for relay-only traffic locally.
-    /// (e.g. `DEV_RELAY_ONLY=true cargo run --release -- iroh --with-relay`)
+    /// This will force all traffic over the relay and can be used to test
+    /// throughput for relay-only traffic.
+    #[cfg(feature = "local-relay")]
     #[clap(long, default_value_t = false)]
-    pub with_relay: bool,
+    pub only_relay: bool,
 }
 
 pub enum EndpointSelector {
@@ -84,17 +83,16 @@ pub enum EndpointSelector {
 }
 
 impl EndpointSelector {
-    pub async fn close(self) -> Result<()> {
+    pub async fn close(self) {
         match self {
             EndpointSelector::Iroh(endpoint) => {
-                endpoint.close().await?;
+                endpoint.close().await;
             }
             #[cfg(not(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
             EndpointSelector::Quinn(endpoint) => {
                 endpoint.close(0u32.into(), b"");
             }
         }
-        Ok(())
     }
 }
 
@@ -256,7 +254,7 @@ pub async fn client_handler(
     // to `Arc`ing them
     connection.close(0u32, b"Benchmark done");
 
-    endpoint.close().await?;
+    endpoint.close().await;
 
     if opt.stats {
         println!("\nClient connection stats:\n{:#?}", connection.stats());

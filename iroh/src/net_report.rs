@@ -8,9 +8,10 @@
 #![cfg_attr(iroh_docsrs, feature(doc_auto_cfg))]
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
+#![cfg_attr(wasm_browser, allow(unused))]
 
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, HashMap},
     fmt::{self, Debug},
     net::{SocketAddr, SocketAddrV4, SocketAddrV6},
     sync::Arc,
@@ -18,30 +19,58 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use bytes::Bytes;
-use hickory_resolver::TokioResolver as DnsResolver;
 use iroh_base::RelayUrl;
-#[cfg(feature = "metrics")]
-use iroh_metrics::inc;
+#[cfg(not(wasm_browser))]
+use iroh_relay::dns::DnsResolver;
 use iroh_relay::{protos::stun, RelayMap};
-use netwatch::UdpSocket;
-use tokio::{
-    sync::{self, mpsc, oneshot},
+use n0_future::{
+    task::{self, AbortOnDropHandle},
     time::{Duration, Instant},
 };
-use tokio_util::task::AbortOnDropHandle;
+#[cfg(not(wasm_browser))]
+use netwatch::UdpSocket;
+use tokio::sync::{self, mpsc, oneshot};
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
 mod defaults;
+#[cfg(not(wasm_browser))]
 mod dns;
+mod ip_mapped_addrs;
 mod metrics;
+#[cfg(not(wasm_browser))]
 mod ping;
 mod reportgen;
 
-pub use metrics::Metrics;
-use reportgen::ProbeProto;
-pub use reportgen::QuicConfig;
-#[cfg(feature = "stun-utils")]
+mod options;
+
+#[cfg(not(wasm_browser))]
 pub use stun_utils::bind_local_stun_socket;
+
+/// We "vendor" what we need of the library in browsers for simplicity.
+///
+/// We could consider making `portmapper` compile to wasm in the future,
+/// but what we need is so little it's likely not worth it.
+#[cfg(wasm_browser)]
+pub(crate) mod portmapper {
+    /// Output of a port mapping probe.
+    #[derive(Debug, Clone, PartialEq, Eq, derive_more::Display)]
+    #[display("portmap={{ UPnP: {upnp}, PMP: {nat_pmp}, PCP: {pcp} }}")]
+    pub struct ProbeOutput {
+        /// If UPnP can be considered available.
+        pub upnp: bool,
+        /// If PCP can be considered available.
+        pub pcp: bool,
+        /// If PMP can be considered available.
+        pub nat_pmp: bool,
+    }
+}
+
+pub(crate) use ip_mapped_addrs::{IpMappedAddr, IpMappedAddresses};
+pub use metrics::Metrics;
+pub use options::Options;
+pub use reportgen::QuicConfig;
+#[cfg(not(wasm_browser))]
+use reportgen::SocketState;
 
 const FULL_REPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
@@ -209,149 +238,28 @@ impl Default for Reports {
     }
 }
 
-/// Options for running probes
-///
-/// By default, will run icmp over IPv4, icmp over IPv6, and Https probes.
-///
-/// Use [`Options::stun_v4`], [`Options::stun_v6`], and [`Options::quic_config`]
-/// to enable STUN over IPv4, STUN over IPv6, and QUIC address discovery.
-#[derive(Debug)]
-pub struct Options {
-    /// Socket to send IPv4 STUN probes from.
-    ///
-    /// Responses are never read from this socket, they must be passed in via internal
-    /// messaging since, when used internally in iroh, the socket is also used to receive
-    /// other packets from in the magicsocket (`MagicSock`).
-    ///
-    /// If not provided, STUN probes will not be sent over IPv4.
-    stun_sock_v4: Option<Arc<UdpSocket>>,
-    /// Socket to send IPv6 STUN probes from.
-    ///
-    /// Responses are never read from this socket, they must be passed in via internal
-    /// messaging since, when used internally in iroh, the socket is also used to receive
-    /// other packets from in the magicsocket (`MagicSock`).
-    ///
-    /// If not provided, STUN probes will not be sent over IPv6.
-    stun_sock_v6: Option<Arc<UdpSocket>>,
-    /// The configuration needed to launch QUIC address discovery probes.
-    ///
-    /// If not provided, will not run QUIC address discovery.
-    quic_config: Option<QuicConfig>,
-    /// Enable icmp_v4 probes
-    ///
-    /// On by default
-    icmp_v4: bool,
-    /// Enable icmp_v6 probes
-    ///
-    /// On by default
-    icmp_v6: bool,
-    /// Enable https probes
-    ///
-    /// On by default
-    https: bool,
-}
-
-impl Default for Options {
-    fn default() -> Self {
-        Self {
-            stun_sock_v4: None,
-            stun_sock_v6: None,
-            quic_config: None,
-            icmp_v4: true,
-            icmp_v6: true,
-            https: true,
-        }
-    }
-}
-
-impl Options {
-    /// Create an [`Options`] that disables all probes
-    pub fn disabled() -> Self {
-        Self {
-            stun_sock_v4: None,
-            stun_sock_v6: None,
-            quic_config: None,
-            icmp_v4: false,
-            icmp_v6: false,
-            https: false,
-        }
-    }
-
-    /// Set the ipv4 stun socket and enable ipv4 stun probes
-    pub fn stun_v4(mut self, sock: Option<Arc<UdpSocket>>) -> Self {
-        self.stun_sock_v4 = sock;
-        self
-    }
-
-    /// Set the ipv6 stun socket and enable ipv6 stun probes
-    pub fn stun_v6(mut self, sock: Option<Arc<UdpSocket>>) -> Self {
-        self.stun_sock_v6 = sock;
-        self
-    }
-
-    /// Enable quic probes
-    pub fn quic_config(mut self, quic_config: Option<QuicConfig>) -> Self {
-        self.quic_config = quic_config;
-        self
-    }
-
-    /// Enable or disable icmp_v4 probe
-    pub fn icmp_v4(mut self, enable: bool) -> Self {
-        self.icmp_v4 = enable;
-        self
-    }
-
-    /// Enable or disable icmp_v6 probe
-    pub fn icmp_v6(mut self, enable: bool) -> Self {
-        self.icmp_v6 = enable;
-        self
-    }
-
-    /// Enable or disable https probe
-    pub fn https(mut self, enable: bool) -> Self {
-        self.https = enable;
-        self
-    }
-
-    /// Turn the options into set of valid protocols
-    fn to_protocols(&self) -> BTreeSet<ProbeProto> {
-        let mut protocols = BTreeSet::new();
-        if self.stun_sock_v4.is_some() {
-            protocols.insert(ProbeProto::StunIpv4);
-        }
-        if self.stun_sock_v6.is_some() {
-            protocols.insert(ProbeProto::StunIpv6);
-        }
-        if let Some(ref quic) = self.quic_config {
-            if quic.ipv4 {
-                protocols.insert(ProbeProto::QuicIpv4);
-            }
-            if quic.ipv6 {
-                protocols.insert(ProbeProto::QuicIpv6);
-            }
-        }
-        if self.icmp_v4 {
-            protocols.insert(ProbeProto::IcmpV4);
-        }
-        if self.icmp_v6 {
-            protocols.insert(ProbeProto::IcmpV6);
-        }
-        if self.https {
-            protocols.insert(ProbeProto::Https);
-        }
-        protocols
-    }
-}
-
 impl Client {
     /// Creates a new net_report client.
     ///
     /// This starts a connected actor in the background.  Once the client is dropped it will
     /// stop running.
-    pub fn new(port_mapper: Option<portmapper::Client>, dns_resolver: DnsResolver) -> Result<Self> {
-        let mut actor = Actor::new(port_mapper, dns_resolver)?;
+    pub fn new(
+        #[cfg(not(wasm_browser))] port_mapper: Option<portmapper::Client>,
+        #[cfg(not(wasm_browser))] dns_resolver: DnsResolver,
+        #[cfg(not(wasm_browser))] ip_mapped_addrs: Option<IpMappedAddresses>,
+        metrics: Arc<Metrics>,
+    ) -> Result<Self> {
+        let mut actor = Actor::new(
+            #[cfg(not(wasm_browser))]
+            port_mapper,
+            #[cfg(not(wasm_browser))]
+            dns_resolver,
+            #[cfg(not(wasm_browser))]
+            ip_mapped_addrs,
+            metrics,
+        )?;
         let addr = actor.addr();
-        let task = tokio::spawn(
+        let task = task::spawn(
             async move { actor.run().await }.instrument(info_span!("net_report.actor")),
         );
         let drop_guard = AbortOnDropHandle::new(task);
@@ -391,17 +299,21 @@ impl Client {
     /// When `None`, it will disable the QUIC address discovery probes.
     ///
     /// This will attempt to use *all* probe protocols.
-    pub async fn get_report(
+    #[cfg(test)]
+    pub async fn get_report_all(
         &mut self,
         relay_map: RelayMap,
-        stun_sock_v4: Option<Arc<UdpSocket>>,
-        stun_sock_v6: Option<Arc<UdpSocket>>,
-        quic_config: Option<QuicConfig>,
+        #[cfg(not(wasm_browser))] stun_sock_v4: Option<Arc<UdpSocket>>,
+        #[cfg(not(wasm_browser))] stun_sock_v6: Option<Arc<UdpSocket>>,
+        #[cfg(not(wasm_browser))] quic_config: Option<QuicConfig>,
     ) -> Result<Arc<Report>> {
+        #[cfg(not(wasm_browser))]
         let opts = Options::default()
             .stun_v4(stun_sock_v4)
             .stun_v6(stun_sock_v6)
             .quic_config(quic_config);
+        #[cfg(wasm_browser)]
+        let opts = Options::default();
         let rx = self.get_report_channel(relay_map.clone(), opts).await?;
         match rx.await {
             Ok(res) => res,
@@ -414,11 +326,7 @@ impl Client {
     /// It may not be called concurrently with itself, `&mut self` takes care of that.
     ///
     /// Look at [`Options`] for the different configuration options.
-    pub async fn get_report_with_opts(
-        &mut self,
-        relay_map: RelayMap,
-        opts: Options,
-    ) -> Result<Arc<Report>> {
+    pub async fn get_report(&mut self, relay_map: RelayMap, opts: Options) -> Result<Arc<Report>> {
         let rx = self.get_report_channel(relay_map, opts).await?;
         match rx.await {
             Ok(res) => res,
@@ -429,7 +337,7 @@ impl Client {
     /// Get report with channel
     ///
     /// Look at [`Options`] for the different configuration options.
-    pub async fn get_report_channel(
+    pub(crate) async fn get_report_channel(
         &mut self,
         relay_map: RelayMap,
         opts: Options,
@@ -496,6 +404,7 @@ pub(crate) enum Message {
 #[derive(Debug, Clone)]
 pub struct Addr {
     sender: mpsc::Sender<Message>,
+    metrics: Arc<Metrics>,
 }
 
 impl Addr {
@@ -517,8 +426,7 @@ impl Addr {
             payload,
             from_addr: src,
         }) {
-            #[cfg(feature = "metrics")]
-            inc!(Metrics, stun_packets_dropped);
+            self.metrics.stun_packets_dropped.inc();
             warn!("dropping stun packet from {}", src);
         }
     }
@@ -554,6 +462,7 @@ struct Actor {
     ///
     /// The port mapper is responsible for talking to routers via UPnP and the like to try
     /// and open ports.
+    #[cfg(not(wasm_browser))]
     port_mapper: Option<portmapper::Client>,
 
     // Actor state.
@@ -565,7 +474,13 @@ struct Actor {
     current_report_run: Option<ReportRun>,
 
     /// The DNS resolver to use for probes that need to perform DNS lookups
+    #[cfg(not(wasm_browser))]
     dns_resolver: DnsResolver,
+
+    /// The [`IpMappedAddresses`] that allows you to do QAD in iroh
+    #[cfg(not(wasm_browser))]
+    ip_mapped_addrs: Option<IpMappedAddresses>,
+    metrics: Arc<Metrics>,
 }
 
 impl Actor {
@@ -573,17 +488,27 @@ impl Actor {
     ///
     /// This does not start the actor, see [`Actor::run`] for this.  You should not
     /// normally create this directly but rather create a [`Client`].
-    fn new(port_mapper: Option<portmapper::Client>, dns_resolver: DnsResolver) -> Result<Self> {
+    fn new(
+        #[cfg(not(wasm_browser))] port_mapper: Option<portmapper::Client>,
+        #[cfg(not(wasm_browser))] dns_resolver: DnsResolver,
+        #[cfg(not(wasm_browser))] ip_mapped_addrs: Option<IpMappedAddresses>,
+        metrics: Arc<Metrics>,
+    ) -> Result<Self> {
         // TODO: consider an instrumented flume channel so we have metrics.
         let (sender, receiver) = mpsc::channel(32);
         Ok(Self {
             receiver,
             sender,
             reports: Default::default(),
+            #[cfg(not(wasm_browser))]
             port_mapper,
             in_flight_stun_requests: Default::default(),
             current_report_run: None,
+            #[cfg(not(wasm_browser))]
             dns_resolver,
+            #[cfg(not(wasm_browser))]
+            ip_mapped_addrs,
+            metrics,
         })
     }
 
@@ -591,6 +516,7 @@ impl Actor {
     fn addr(&self) -> Addr {
         Addr {
             sender: self.sender.clone(),
+            metrics: self.metrics.clone(),
         }
     }
 
@@ -611,7 +537,7 @@ impl Actor {
                     self.handle_run_check(relay_map, opts, response_tx);
                 }
                 Message::ReportReady { report } => {
-                    self.handle_report_ready(report);
+                    self.handle_report_ready(*report);
                 }
                 Message::ReportAborted { err } => {
                     self.handle_report_aborted(err);
@@ -638,12 +564,16 @@ impl Actor {
         response_tx: oneshot::Sender<Result<Arc<Report>>>,
     ) {
         let protocols = opts.to_protocols();
-        let Options {
-            stun_sock_v4,
-            stun_sock_v6,
-            quic_config,
-            ..
-        } = opts;
+        #[cfg(not(wasm_browser))]
+        let socket_state = SocketState {
+            port_mapper: self.port_mapper.clone(),
+            stun_sock4: opts.stun_sock_v4,
+            stun_sock6: opts.stun_sock_v6,
+            quic_config: opts.quic_config,
+            dns_resolver: self.dns_resolver.clone(),
+            ip_mapped_addrs: self.ip_mapped_addrs.clone(),
+        };
+        trace!("Attempting probes for protocols {protocols:#?}");
         if self.current_report_run.is_some() {
             response_tx
                 .send(Err(anyhow!(
@@ -670,22 +600,18 @@ impl Actor {
             self.reports.last = None; // causes ProbePlan::new below to do a full (initial) plan
             self.reports.next_full = false;
             self.reports.last_full = now;
-            #[cfg(feature = "metrics")]
-            inc!(Metrics, reports_full);
+            self.metrics.reports_full.inc();
         }
-        #[cfg(feature = "metrics")]
-        inc!(Metrics, reports);
+        self.metrics.reports.inc();
 
         let actor = reportgen::Client::new(
             self.addr(),
             self.reports.last.clone(),
-            self.port_mapper.clone(),
             relay_map,
-            stun_sock_v4,
-            stun_sock_v6,
-            quic_config,
-            self.dns_resolver.clone(),
             protocols,
+            self.metrics.clone(),
+            #[cfg(not(wasm_browser))]
+            socket_state,
         );
 
         self.current_report_run = Some(ReportRun {
@@ -694,8 +620,8 @@ impl Actor {
         });
     }
 
-    fn handle_report_ready(&mut self, report: Box<Report>) {
-        let report = self.finish_and_store_report(*report);
+    fn handle_report_ready(&mut self, report: Report) {
+        let report = self.finish_and_store_report(report);
         self.in_flight_stun_requests.clear();
         if let Some(ReportRun { report_tx, .. }) = self.current_report_run.take() {
             report_tx.send(Ok(report)).ok();
@@ -722,10 +648,10 @@ impl Actor {
         #[cfg(feature = "metrics")]
         match &src {
             SocketAddr::V4(_) => {
-                inc!(Metrics, stun_packets_recv_ipv4);
+                self.metrics.stun_packets_recv_ipv4.inc();
             }
             SocketAddr::V6(_) => {
-                inc!(Metrics, stun_packets_recv_ipv6);
+                self.metrics.stun_packets_recv_ipv6.inc();
             }
         }
 
@@ -861,11 +787,18 @@ struct ReportRun {
 }
 
 /// Test if IPv6 works at all, or if it's been hard disabled at the OS level.
-pub fn os_has_ipv6() -> bool {
+#[cfg(not(wasm_browser))]
+fn os_has_ipv6() -> bool {
     UdpSocket::bind_local_v6(0).is_ok()
 }
 
-#[cfg(any(test, feature = "stun-utils"))]
+/// Always returns false in browsers
+#[cfg(wasm_browser)]
+fn os_has_ipv6() -> bool {
+    false
+}
+
+#[cfg(not(wasm_browser))]
 pub(crate) mod stun_utils {
     use anyhow::Context as _;
     use netwatch::IpFamily;
@@ -899,7 +832,7 @@ pub(crate) mod stun_utils {
         );
         {
             let sock = sock.clone();
-            tokio::spawn(
+            task::spawn(
                 async move {
                     debug!("udp stun socket listener started");
                     // TODO: Can we do better for buffers here?  Probably doesn't matter much.
@@ -988,12 +921,12 @@ mod tests {
 
     use bytes::BytesMut;
     use netwatch::IpFamily;
-    use tokio::time;
     use tokio_util::sync::CancellationToken;
     use tracing::info;
+    use tracing_test::traced_test;
 
     use super::*;
-    use crate::{ping::Pinger, stun_utils::bind_local_stun_socket};
+    use crate::net_report::{dns, ping::Pinger, stun_utils::bind_local_stun_socket};
 
     mod stun_utils {
         //! Utils for testing that expose a simple stun server.
@@ -1128,13 +1061,13 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_basic() -> Result<()> {
-        let _guard = iroh_test::logging::setup();
         let (stun_addr, stun_stats, _cleanup_guard) =
             stun_utils::serve("127.0.0.1".parse().unwrap()).await?;
 
-        let resolver = crate::dns::tests::resolver();
-        let mut client = Client::new(None, resolver.clone())?;
+        let resolver = dns::tests::resolver();
+        let mut client = Client::new(None, resolver.clone(), None, Default::default())?;
         let dm = stun_utils::relay_map_of([stun_addr].into_iter());
 
         // Note that the ProbePlan will change with each iteration.
@@ -1142,7 +1075,7 @@ mod tests {
             let cancel = CancellationToken::new();
             let sock = bind_local_stun_socket(IpFamily::V4, client.addr(), cancel.clone());
             println!("--round {}", i);
-            let r = client.get_report(dm.clone(), sock, None, None).await?;
+            let r = client.get_report_all(dm.clone(), sock, None, None).await?;
 
             assert!(r.udp, "want UDP");
             assert_eq!(
@@ -1171,9 +1104,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_udp_blocked() -> Result<()> {
-        let _guard = iroh_test::logging::setup();
-
         // Create a "STUN server", which will never respond to anything.  This is how UDP to
         // the STUN server being blocked will look like from the client's perspective.
         let blackhole = tokio::net::UdpSocket::bind("127.0.0.1:0").await?;
@@ -1181,10 +1113,10 @@ mod tests {
         let dm = stun_utils::relay_map_of_opts([(stun_addr, false)].into_iter());
 
         // Now create a client and generate a report.
-        let resolver = crate::dns::tests::resolver();
-        let mut client = Client::new(None, resolver.clone())?;
+        let resolver = dns::tests::resolver();
+        let mut client = Client::new(None, resolver.clone(), None, Default::default())?;
 
-        let r = client.get_report(dm, None, None, None).await?;
+        let r = client.get_report_all(dm, None, None, None).await?;
         let mut r: Report = (*r).clone();
         r.portmap_probe = None;
 
@@ -1382,13 +1314,13 @@ mod tests {
                 want_relay: Some(relay_url(2)), // 2 got fast enough
             },
         ];
-        let resolver = crate::dns::tests::resolver();
+        let resolver = dns::tests::resolver();
         for mut tt in tests {
             println!("test: {}", tt.name);
-            let mut actor = Actor::new(None, resolver.clone()).unwrap();
+            let mut actor = Actor::new(None, resolver.clone(), None, Default::default()).unwrap();
             for s in &mut tt.steps {
                 // trigger the timer
-                time::advance(Duration::from_secs(s.after)).await;
+                tokio::time::advance(Duration::from_secs(s.after)).await;
                 let r = Arc::try_unwrap(s.r.take().unwrap()).unwrap();
                 s.r = Some(actor.add_report_history_and_set_preferred_relay(r));
             }
@@ -1419,8 +1351,8 @@ mod tests {
         let dm = stun_utils::relay_map_of([stun_addr].into_iter());
         dbg!(&dm);
 
-        let resolver = crate::dns::tests::resolver().clone();
-        let mut client = Client::new(None, resolver)?;
+        let resolver = dns::tests::resolver().clone();
+        let mut client = Client::new(None, resolver, None, Default::default())?;
 
         // Set up an external socket to send STUN requests from, this will be discovered as
         // our public socket address by STUN.  We send back any packets received on this
@@ -1453,7 +1385,7 @@ mod tests {
             )
         };
 
-        let r = client.get_report(dm, Some(sock), None, None).await?;
+        let r = client.get_report_all(dm, Some(sock), None, None).await?;
         dbg!(&r);
         assert_eq!(r.hair_pinning, Some(true));
 

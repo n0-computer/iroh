@@ -327,7 +327,7 @@ impl<W: Watcher, T: Clone + Eq> Watcher for Map<W, T> {
         cx: &mut task::Context<'_>,
     ) -> Poll<Result<Self::Value, Disconnected>> {
         loop {
-            let value = futures_lite::ready!(self.watcher.poll_updated(cx)?);
+            let value = n0_future::ready!(self.watcher.poll_updated(cx)?);
             let mapped = (self.map)(value);
             if mapped != self.current {
                 self.current = mapped.clone();
@@ -383,7 +383,7 @@ impl<T: Clone + Eq + Unpin, W: Watcher<Value = Option<T>> + Unpin> Future
             return Poll::Ready(value);
         }
         loop {
-            if let Some(value) = futures_lite::ready!(self.as_mut().watcher.poll_updated(cx)?) {
+            if let Some(value) = n0_future::ready!(self.as_mut().watcher.poll_updated(cx)?) {
                 return Poll::Ready(Ok(value));
             }
         }
@@ -403,7 +403,7 @@ pub struct Stream<W: Watcher + Unpin> {
     watcher: W,
 }
 
-impl<W: Watcher + Unpin> futures_lite::stream::Stream for Stream<W>
+impl<W: Watcher + Unpin> n0_future::stream::Stream for Stream<W>
 where
     W::Value: Unpin,
 {
@@ -499,7 +499,7 @@ impl<T: Clone> Shared<T> {
 mod tests {
     use std::time::{Duration, Instant};
 
-    use futures_lite::StreamExt;
+    use n0_future::StreamExt;
     use rand::{thread_rng, Rng};
     use tokio::task::JoinSet;
     use tokio_util::sync::CancellationToken;
@@ -603,12 +603,12 @@ mod tests {
         let mut watcher = watchable.watch();
         let mut initialized = watcher.initialized();
 
-        let poll = futures_lite::future::poll_once(&mut initialized).await;
+        let poll = n0_future::future::poll_once(&mut initialized).await;
         assert!(poll.is_none());
 
         watchable.set(Some(1u8)).ok();
 
-        let poll = futures_lite::future::poll_once(&mut initialized).await;
+        let poll = n0_future::future::poll_once(&mut initialized).await;
         assert_eq!(poll.unwrap().unwrap(), 1u8);
     }
 
@@ -619,7 +619,7 @@ mod tests {
         let mut watcher = watchable.watch();
         let mut initialized = watcher.initialized();
 
-        let poll = futures_lite::future::poll_once(&mut initialized).await;
+        let poll = n0_future::future::poll_once(&mut initialized).await;
         assert_eq!(poll.unwrap().unwrap(), 1u8);
     }
 
@@ -635,7 +635,7 @@ mod tests {
             let watchable = Watchable::<Option<u8>>::new(None);
 
             let mut watch = watchable.watch();
-            let thread = thread::spawn(move || futures_lite::future::block_on(watch.initialized()));
+            let thread = thread::spawn(move || n0_future::future::block_on(watch.initialized()));
 
             watchable.set(Some(42)).ok();
 

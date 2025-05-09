@@ -11,7 +11,7 @@
 use std::str::FromStr;
 
 use clap::Parser;
-use iroh::{endpoint::get_remote_node_id, Endpoint, NodeId};
+use iroh::{Endpoint, NodeId};
 use tracing::warn;
 use url::Url;
 
@@ -88,7 +88,7 @@ async fn chat_server(args: Args) -> anyhow::Result<()> {
         };
         tokio::spawn(async move {
             let connection = connecting.await?;
-            let remote_node_id = get_remote_node_id(&connection)?;
+            let remote_node_id = connection.remote_node_id()?;
             println!("got connection from {}", remote_node_id);
             // just leave the tasks hanging. this is just an example.
             let (mut writer, mut reader) = connection.accept_bi().await?;

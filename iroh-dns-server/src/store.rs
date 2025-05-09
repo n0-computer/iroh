@@ -4,9 +4,8 @@ use std::{collections::BTreeMap, num::NonZeroUsize, path::Path, sync::Arc, time:
 
 use anyhow::Result;
 use hickory_server::proto::rr::{Name, RecordSet, RecordType, RrKey};
-use iroh_metrics::inc;
 use lru::LruCache;
-use pkarr::{mainline::dht::DhtSettings, PkarrClient, SignedPacket};
+use pkarr::{Client as PkarrClient, SignedPacket};
 use tokio::sync::Mutex;
 use tracing::{debug, trace};
 use ttl_cache::TtlCache;
@@ -41,19 +40,24 @@ pub struct ZoneStore {
     cache: Arc<Mutex<ZoneCache>>,
     store: Arc<SignedPacketStore>,
     pkarr: Option<Arc<PkarrClient>>,
+    metrics: Arc<Metrics>,
 }
 
 impl ZoneStore {
     /// Create a persistent store
-    pub fn persistent(path: impl AsRef<Path>, options: ZoneStoreOptions) -> Result<Self> {
-        let packet_store = SignedPacketStore::persistent(path, options)?;
-        Ok(Self::new(packet_store))
+    pub fn persistent(
+        path: impl AsRef<Path>,
+        options: ZoneStoreOptions,
+        metrics: Arc<Metrics>,
+    ) -> Result<Self> {
+        let packet_store = SignedPacketStore::persistent(path, options, metrics.clone())?;
+        Ok(Self::new(packet_store, metrics))
     }
 
     /// Create an in-memory store.
-    pub fn in_memory(options: ZoneStoreOptions) -> Result<Self> {
-        let packet_store = SignedPacketStore::in_memory(options)?;
-        Ok(Self::new(packet_store))
+    pub fn in_memory(options: ZoneStoreOptions, metrics: Arc<Metrics>) -> Result<Self> {
+        let packet_store = SignedPacketStore::in_memory(options, metrics.clone())?;
+        Ok(Self::new(packet_store, metrics))
     }
 
     /// Configure a pkarr client for resolution of packets from the bittorrent mainline DHT.
@@ -66,10 +70,7 @@ impl ZoneStore {
         let pkarr_client = match bootstrap {
             BootstrapOption::Default => PkarrClient::builder().build().unwrap(),
             BootstrapOption::Custom(bootstrap) => PkarrClient::builder()
-                .dht_settings(DhtSettings {
-                    bootstrap: Some(bootstrap),
-                    ..Default::default()
-                })
+                .dht(|builder| builder.bootstrap(&bootstrap))
                 .build()
                 .unwrap(),
         };
@@ -80,12 +81,13 @@ impl ZoneStore {
     }
 
     /// Create a new zone store.
-    pub fn new(store: SignedPacketStore) -> Self {
+    pub fn new(store: SignedPacketStore, metrics: Arc<Metrics>) -> Self {
         let zone_cache = ZoneCache::new(DEFAULT_CACHE_CAPACITY);
         Self {
             store: Arc::new(store),
             cache: Arc::new(Mutex::new(zone_cache)),
             pkarr: None,
+            metrics,
         }
     }
 
@@ -116,9 +118,9 @@ impl ZoneStore {
             //
             // it will be cached for some time.
             debug!("DHT resolve {}", key.to_z32());
-            let packet_opt = pkarr.as_ref().clone().as_async().resolve(&key).await?;
+            let packet_opt = pkarr.resolve(&key).await;
             if let Some(packet) = packet_opt {
-                debug!("DHT resolve successful {:?}", packet.packet());
+                debug!("DHT resolve successful {:?}", packet);
                 return self
                     .cache
                     .lock()
@@ -147,11 +149,11 @@ impl ZoneStore {
     pub async fn insert(&self, signed_packet: SignedPacket, _source: PacketSource) -> Result<bool> {
         let pubkey = PublicKeyBytes::from_signed_packet(&signed_packet);
         if self.store.upsert(signed_packet).await? {
-            inc!(Metrics, pkarr_publish_update);
+            self.metrics.pkarr_publish_update.inc();
             self.cache.lock().await.remove(&pubkey);
             Ok(true)
         } else {
-            inc!(Metrics, pkarr_publish_noop);
+            self.metrics.pkarr_publish_noop.inc();
             Ok(false)
         }
     }
@@ -249,12 +251,12 @@ impl CachedZone {
             signed_packet_to_hickory_records_without_origin(signed_packet, |_| true)?;
         Ok(Self {
             records,
-            timestamp: signed_packet.timestamp(),
+            timestamp: signed_packet.timestamp().into(),
         })
     }
 
     fn is_newer_than(&self, signed_packet: &SignedPacket) -> bool {
-        self.timestamp > signed_packet.timestamp()
+        self.timestamp > signed_packet.timestamp().into()
     }
 
     fn resolve(&self, name: &Name, record_type: RecordType) -> Option<Arc<RecordSet>> {

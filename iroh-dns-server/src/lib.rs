@@ -22,19 +22,13 @@ mod tests {
     };
 
     use anyhow::Result;
-    use hickory_resolver::{
-        config::{NameServerConfig, ResolverConfig},
-        Resolver,
-    };
-    use hickory_server::proto::xfer::Protocol;
     use iroh::{
-        discovery::pkarr::PkarrRelayClient,
-        dns::{node_info::NodeInfo, DnsResolver, ResolverExt},
+        discovery::pkarr::PkarrRelayClient, dns::DnsResolver, node_info::NodeInfo, RelayUrl,
         SecretKey,
     };
-    use pkarr::{PkarrClient, SignedPacket};
+    use pkarr::{SignedPacket, Timestamp};
     use testresult::TestResult;
-    use url::Url;
+    use tracing_test::traced_test;
 
     use crate::{
         config::BootstrapOption,
@@ -44,9 +38,11 @@ mod tests {
         ZoneStore,
     };
 
+    const DNS_TIMEOUT: Duration = Duration::from_secs(1);
+
     #[tokio::test]
+    #[traced_test]
     async fn pkarr_publish_dns_resolve() -> Result<()> {
-        iroh_test::logging::setup_multithreaded();
         let (server, nameserver, http_url) = Server::spawn_for_tests().await?;
         let pkarr_relay_url = {
             let mut url = http_url.clone();
@@ -105,13 +101,13 @@ mod tests {
                 30,
                 dns::rdata::RData::AAAA(Ipv6Addr::LOCALHOST.into()),
             ));
-            SignedPacket::from_packet(&keypair, &packet)?
+            SignedPacket::new(&keypair, &packet.answers, Timestamp::now())?
         };
-        let pkarr_client = pkarr::PkarrRelayClient::new(pkarr::RelaySettings {
-            relays: vec![pkarr_relay_url.to_string()],
-            ..Default::default()
-        })?;
-        pkarr_client.as_async().publish(&signed_packet).await?;
+        let pkarr_client = pkarr::Client::builder()
+            .no_default_network()
+            .relays(&[pkarr_relay_url])?
+            .build()?;
+        pkarr_client.publish(&signed_packet, None).await?;
 
         use hickory_server::proto::rr::Name;
         let pubkey = signed_packet.public_key().to_z32();
@@ -119,38 +115,38 @@ mod tests {
 
         // resolve root record
         let name = Name::from_utf8(format!("{pubkey}."))?;
-        let res = resolver.txt_lookup(name).await?;
-        let records = res.iter().map(|t| t.to_string()).collect::<Vec<_>>();
+        let res = resolver.lookup_txt(name, DNS_TIMEOUT).await?;
+        let records = res.into_iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert_eq!(records, vec!["hi0".to_string()]);
 
         // resolve level one record
         let name = Name::from_utf8(format!("_hello.{pubkey}."))?;
-        let res = resolver.txt_lookup(name).await?;
-        let records = res.iter().map(|t| t.to_string()).collect::<Vec<_>>();
+        let res = resolver.lookup_txt(name, DNS_TIMEOUT).await?;
+        let records = res.into_iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert_eq!(records, vec!["hi1".to_string()]);
 
         // resolve level two record
         let name = Name::from_utf8(format!("_hello.world.{pubkey}."))?;
-        let res = resolver.txt_lookup(name).await?;
-        let records = res.iter().map(|t| t.to_string()).collect::<Vec<_>>();
+        let res = resolver.lookup_txt(name, DNS_TIMEOUT).await?;
+        let records = res.into_iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert_eq!(records, vec!["hi2".to_string()]);
 
         // resolve multiple records for same name
         let name = Name::from_utf8(format!("multiple.{pubkey}."))?;
-        let res = resolver.txt_lookup(name).await?;
-        let records = res.iter().map(|t| t.to_string()).collect::<Vec<_>>();
+        let res = resolver.lookup_txt(name, DNS_TIMEOUT).await?;
+        let records = res.into_iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert_eq!(records, vec!["hi3".to_string(), "hi4".to_string()]);
 
         // resolve A record
         let name = Name::from_utf8(format!("{pubkey}."))?;
-        let res = resolver.ipv4_lookup(name).await?;
-        let records = res.iter().map(|t| t.0).collect::<Vec<_>>();
+        let res = resolver.lookup_ipv4(name, DNS_TIMEOUT).await?;
+        let records = res.collect::<Vec<_>>();
         assert_eq!(records, vec![Ipv4Addr::LOCALHOST]);
 
         // resolve AAAA record
         let name = Name::from_utf8(format!("foo.bar.baz.{pubkey}."))?;
-        let res = resolver.ipv6_lookup(name).await?;
-        let records = res.iter().map(|t| t.0).collect::<Vec<_>>();
+        let res = resolver.lookup_ipv6(name, DNS_TIMEOUT).await?;
+        let records = res.collect::<Vec<_>>();
         assert_eq!(records, vec![Ipv6Addr::LOCALHOST]);
 
         server.shutdown().await?;
@@ -158,8 +154,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn integration_smoke() -> Result<()> {
-        iroh_test::logging::setup_multithreaded();
         let (server, nameserver, http_url) = Server::spawn_for_tests().await?;
 
         let pkarr_relay = {
@@ -172,33 +168,33 @@ mod tests {
 
         let secret_key = SecretKey::generate(rand::thread_rng());
         let node_id = secret_key.public();
-        let relay_url: Url = "https://relay.example.".parse()?;
         let pkarr = PkarrRelayClient::new(pkarr_relay);
-        let node_info = NodeInfo::new(node_id, Some(relay_url.clone()), Default::default());
+        let relay_url: RelayUrl = "https://relay.example.".parse()?;
+        let node_info = NodeInfo::new(node_id).with_relay_url(Some(relay_url.clone()));
         let signed_packet = node_info.to_pkarr_signed_packet(&secret_key, 30)?;
 
         pkarr.publish(&signed_packet).await?;
 
         let resolver = test_resolver(nameserver);
-        let res = resolver.lookup_by_id(&node_id, origin).await?;
+        let res = resolver.lookup_node_by_id(&node_id, origin).await?;
 
         assert_eq!(res.node_id, node_id);
-        assert_eq!(res.relay_url.map(Url::from), Some(relay_url));
+        assert_eq!(res.relay_url(), Some(&relay_url));
 
         server.shutdown().await?;
         Ok(())
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn store_eviction() -> TestResult<()> {
-        iroh_test::logging::setup_multithreaded();
         let options = ZoneStoreOptions {
             eviction: Duration::from_millis(100),
             eviction_interval: Duration::from_millis(100),
             max_batch_time: Duration::from_millis(100),
             ..Default::default()
         };
-        let store = ZoneStore::in_memory(options)?;
+        let store = ZoneStore::in_memory(options, Default::default())?;
 
         // create a signed packet
         let signed_packet = random_signed_packet()?;
@@ -220,11 +216,10 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn integration_mainline() -> Result<()> {
-        iroh_test::logging::setup_multithreaded();
-
         // run a mainline testnet
-        let testnet = pkarr::mainline::dht::Testnet::new(5);
+        let testnet = pkarr::mainline::Testnet::new_async(5).await?;
         let bootstrap = testnet.bootstrap.clone();
 
         // spawn our server with mainline support
@@ -237,45 +232,37 @@ mod tests {
         // create a signed packet
         let secret_key = SecretKey::generate(rand::thread_rng());
         let node_id = secret_key.public();
-        let relay_url: Url = "https://relay.example.".parse()?;
-        let node_info = NodeInfo::new(node_id, Some(relay_url.clone()), Default::default());
+        let relay_url: RelayUrl = "https://relay.example.".parse()?;
+        let node_info = NodeInfo::new(node_id).with_relay_url(Some(relay_url.clone()));
         let signed_packet = node_info.to_pkarr_signed_packet(&secret_key, 30)?;
 
         // publish the signed packet to our DHT
-        let pkarr = PkarrClient::builder()
-            .dht_settings(pkarr::mainline::dht::DhtSettings {
-                bootstrap: Some(testnet.bootstrap),
-                ..Default::default()
-            })
+        let pkarr = pkarr::Client::builder()
+            .no_default_network()
+            .dht(|builder| builder.bootstrap(&testnet.bootstrap))
             .build()?;
-        pkarr.publish(&signed_packet)?;
+        pkarr.publish(&signed_packet, None).await?;
 
         // resolve via DNS from our server, which will lookup from our DHT
         let resolver = test_resolver(nameserver);
-        let res = resolver.lookup_by_id(&node_id, origin).await?;
+        let res = resolver.lookup_node_by_id(&node_id, origin).await?;
 
         assert_eq!(res.node_id, node_id);
-        assert_eq!(res.relay_url.map(Url::from), Some(relay_url));
+        assert_eq!(res.relay_url(), Some(&relay_url));
 
         server.shutdown().await?;
-        for mut node in testnet.nodes {
-            node.shutdown()?;
-        }
         Ok(())
     }
 
     fn test_resolver(nameserver: SocketAddr) -> DnsResolver {
-        let mut config = ResolverConfig::new();
-        let nameserver_config = NameServerConfig::new(nameserver, Protocol::Udp);
-        config.add_name_server(nameserver_config);
-        Resolver::tokio(config, Default::default())
+        DnsResolver::with_nameserver(nameserver)
     }
 
     fn random_signed_packet() -> Result<SignedPacket> {
         let secret_key = SecretKey::generate(rand::thread_rng());
         let node_id = secret_key.public();
-        let relay_url: Url = "https://relay.example.".parse()?;
-        let node_info = NodeInfo::new(node_id, Some(relay_url.clone()), Default::default());
+        let relay_url: RelayUrl = "https://relay.example.".parse()?;
+        let node_info = NodeInfo::new(node_id).with_relay_url(Some(relay_url.clone()));
         node_info.to_pkarr_signed_packet(&secret_key, 30)
     }
 }

@@ -1,10 +1,8 @@
 //! The [`BestAddr`] is the currently active best address for UDP sends.
 
-use std::{
-    net::SocketAddr,
-    time::{Duration, Instant},
-};
+use std::net::SocketAddr;
 
+use n0_future::time::{Duration, Instant};
 use tracing::{debug, info};
 
 /// How long we trust a UDP address as the exclusive path (without using relay) without having heard a Pong reply.
@@ -135,6 +133,7 @@ impl BestAddr {
     }
 
     /// Reset the expiry, if the passed in addr matches the currently used one.
+    #[cfg(not(wasm_browser))]
     pub fn reconfirm_if_used(&mut self, addr: SocketAddr, source: Source, confirmed_at: Instant) {
         if let Some(state) = self.0.as_mut() {
             if state.addr.addr == addr {

@@ -6,11 +6,10 @@ use std::{
 };
 
 use anyhow::Result;
-use futures_lite::Stream;
-use futures_sink::Sink;
+use n0_future::{Sink, Stream};
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio_tungstenite::{tungstenite, WebSocketStream};
 use tokio_util::codec::Framed;
+use tokio_websockets::WebSocketStream;
 
 use crate::{
     protos::relay::{Frame, RelayCodec},
@@ -22,13 +21,13 @@ use crate::{
 /// The stream receives message from the client while the sink sends them to the client.
 #[derive(Debug)]
 pub(crate) enum RelayedStream {
-    Derp(Framed<MaybeTlsStream, RelayCodec>),
+    Relay(Framed<MaybeTlsStream, RelayCodec>),
     Ws(WebSocketStream<MaybeTlsStream>, KeyCache),
 }
 
-fn tung_to_io_err(e: tungstenite::Error) -> std::io::Error {
+fn ws_to_io_err(e: tokio_websockets::Error) -> std::io::Error {
     match e {
-        tungstenite::Error::Io(io_err) => io_err,
+        tokio_websockets::Error::Io(io_err) => io_err,
         _ => std::io::Error::new(std::io::ErrorKind::Other, e.to_string()),
     }
 }
@@ -38,31 +37,33 @@ impl Sink<Frame> for RelayedStream {
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
-            Self::Derp(ref mut framed) => Pin::new(framed).poll_ready(cx),
-            Self::Ws(ref mut ws, _) => Pin::new(ws).poll_ready(cx).map_err(tung_to_io_err),
+            Self::Relay(ref mut framed) => Pin::new(framed).poll_ready(cx),
+            Self::Ws(ref mut ws, _) => Pin::new(ws).poll_ready(cx).map_err(ws_to_io_err),
         }
     }
 
     fn start_send(mut self: Pin<&mut Self>, item: Frame) -> Result<(), Self::Error> {
         match *self {
-            Self::Derp(ref mut framed) => Pin::new(framed).start_send(item),
+            Self::Relay(ref mut framed) => Pin::new(framed).start_send(item),
             Self::Ws(ref mut ws, _) => Pin::new(ws)
-                .start_send(tungstenite::Message::Binary(item.encode_for_ws_msg()))
-                .map_err(tung_to_io_err),
+                .start_send(tokio_websockets::Message::binary(
+                    tokio_websockets::Payload::from(item.encode_for_ws_msg()),
+                ))
+                .map_err(ws_to_io_err),
         }
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
-            Self::Derp(ref mut framed) => Pin::new(framed).poll_flush(cx),
-            Self::Ws(ref mut ws, _) => Pin::new(ws).poll_flush(cx).map_err(tung_to_io_err),
+            Self::Relay(ref mut framed) => Pin::new(framed).poll_flush(cx),
+            Self::Ws(ref mut ws, _) => Pin::new(ws).poll_flush(cx).map_err(ws_to_io_err),
         }
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
-            Self::Derp(ref mut framed) => Pin::new(framed).poll_close(cx),
-            Self::Ws(ref mut ws, _) => Pin::new(ws).poll_close(cx).map_err(tung_to_io_err),
+            Self::Relay(ref mut framed) => Pin::new(framed).poll_close(cx),
+            Self::Ws(ref mut ws, _) => Pin::new(ws).poll_close(cx).map_err(ws_to_io_err),
         }
     }
 }
@@ -72,14 +73,25 @@ impl Stream for RelayedStream {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match *self {
-            Self::Derp(ref mut framed) => Pin::new(framed).poll_next(cx),
+            Self::Relay(ref mut framed) => Pin::new(framed).poll_next(cx),
             Self::Ws(ref mut ws, ref cache) => match Pin::new(ws).poll_next(cx) {
-                Poll::Ready(Some(Ok(tungstenite::Message::Binary(vec)))) => {
-                    Poll::Ready(Some(Frame::decode_from_ws_msg(vec, cache)))
-                }
                 Poll::Ready(Some(Ok(msg))) => {
-                    tracing::warn!(?msg, "Got websocket message of unsupported type, skipping.");
-                    Poll::Pending
+                    if msg.is_close() {
+                        // Indicate the stream is done when we receive a close message.
+                        // Note: We don't have to poll the stream to completion for it to close gracefully.
+                        return Poll::Ready(None);
+                    }
+                    if !msg.is_binary() {
+                        tracing::warn!(
+                            ?msg,
+                            "Got websocket message of unsupported type, skipping."
+                        );
+                        return Poll::Pending;
+                    }
+                    Poll::Ready(Some(Frame::decode_from_ws_msg(
+                        msg.into_payload().into(),
+                        cache,
+                    )))
                 }
                 Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e.into()))),
                 Poll::Ready(None) => Poll::Ready(None),

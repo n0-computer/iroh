@@ -40,12 +40,12 @@ To ensure these connections are as fast as possible, we [continuously measure ir
 ### Built on [QUIC]
 
 Iroh uses [Quinn] to establish [QUIC] connections between nodes.
-This way you get authenticated encryption, concurrent streams with stream prioirities, a datagram transport and avoid head-of-line-blocking out of the box.
+This way you get authenticated encryption, concurrent streams with stream priorities, a datagram transport and avoid head-of-line-blocking out of the box.
 
 ## Compose Protocols
 
 Use pre-existing protocols built on iroh instead of writing your own:
-- [iroh-blobs] for [BLAKE3]-based content-addressed blob transfer scaling from kilobytes to terrabytes
+- [iroh-blobs] for [BLAKE3]-based content-addressed blob transfer scaling from kilobytes to terabytes
 - [iroh-gossip] for establishing publish-subscribe overlay networks that scale, requiring only resources that your average phone can handle
 - [iroh-docs] for an eventually-consistent key-value store of [iroh-blobs] blobs
 - [iroh-willow] for an (in-construction) implementation of the [willow protocol]
@@ -76,8 +76,11 @@ send.finish()?;
 let response = recv.read_to_end(1000).await?;
 assert_eq!(&response, b"Hello, world!");
 
+// As the side receiving the last application data - say goodbye
+conn.close(0u32.into(), b"bye!");
+
 // Close the endpoint and all its connections
-endpoint.close().await?;
+endpoint.close().await;
 ```
 
 And on the accepting side:
@@ -94,9 +97,8 @@ let router = Router::builder(endpoint)
 struct Echo;
 
 impl ProtocolHandler for Echo {
-    fn accept(self: Arc<Self>, connecting: Connecting) -> BoxedFuture<Result<()>> {
+    fn accept(&self, connection: Connection) -> BoxedFuture<Result<()>> {
         Box::pin(async move {
-            let connection = connecting.await?;
             let (mut send, mut recv) = connection.accept_bi().await?;
 
             // Echo any bytes received back directly.
@@ -132,7 +134,6 @@ This repository contains a workspace of crates:
 - `iroh`: The core library for hole-punching & communicating with relays.
 - `iroh-relay`: The relay server implementation. This is the code we run in production (and you can, too!).
 - `iroh-base`: Common types like `Hash`, key types or `RelayUrl`.
-- `iroh-test`: Test utilities.
 - `iroh-dns-server`: DNS server implementation powering the `n0_discovery` for NodeIds, running at dns.iroh.link.
 - `iroh-net-report`: Analyzes your host's networking ability & NAT.
 
@@ -166,6 +167,6 @@ Unless you explicitly state otherwise, any contribution intentionally submitted 
 [iroh-yt-video]: https://www.youtube.com/watch?v=RwAt36Xe3UI_
 [Iroh Examples]: https://github.com/n0-computer/iroh-examples
 [Iroh Experiments]: https://github.com/n0-computer/iroh-experiments
-[echo-rs]: /iroh-router/examples/echo.rs
+[echo-rs]: /iroh/examples/echo.rs
 [iroh-perf]: https://perf.iroh.computer
 [docs]: https://iroh.computer/docs

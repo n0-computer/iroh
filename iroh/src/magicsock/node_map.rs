@@ -3,11 +3,10 @@ use std::{
     hash::Hash,
     net::{IpAddr, SocketAddr},
     sync::Mutex,
-    time::Instant,
 };
 
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
-use iroh_metrics::inc;
+use n0_future::time::Instant;
 use serde::{Deserialize, Serialize};
 use stun_rs::TransactionId;
 use tracing::{debug, info, instrument, trace, warn};
@@ -16,9 +15,9 @@ use self::{
     best_addr::ClearReason,
     node_state::{NodeState, Options, PingHandled},
 };
-use super::{
-    metrics::Metrics as MagicsockMetrics, ActorMessage, DiscoMessageSource, QuicMappedAddr,
-};
+use super::{metrics::Metrics, ActorMessage, DiscoMessageSource, NodeIdMappedAddr};
+#[cfg(any(test, feature = "test-utils"))]
+use crate::endpoint::PathSelection;
 use crate::{
     disco::{CallMeMaybe, Pong, SendAddr},
     watcher,
@@ -43,7 +42,7 @@ const MAX_INACTIVE_NODES: usize = 30;
 /// - The node's ID in this map, only useful if you know the ID from an insert or lookup.
 ///   This is static and never changes.
 ///
-/// - The [`QuicMappedAddr`] which internally identifies the node to the QUIC stack.  This
+/// - The [`NodeIdMappedAddr`] which internally identifies the node to the QUIC stack.  This
 ///   is static and never changes.
 ///
 /// - The nodes's public key, aka `PublicKey` or "node_key".  This is static and never changes,
@@ -52,8 +51,8 @@ const MAX_INACTIVE_NODES: usize = 30;
 /// - A public socket address on which they are reachable on the internet, known as ip-port.
 ///   These come and go as the node moves around on the internet
 ///
-/// An index of nodeInfos by node key, QuicMappedAddr, and discovered ip:port endpoints.
-#[derive(Default, Debug)]
+/// An index of nodeInfos by node key, NodeIdMappedAddr, and discovered ip:port endpoints.
+#[derive(Debug, Default)]
 pub(super) struct NodeMap {
     inner: Mutex<NodeMapInner>,
 }
@@ -62,9 +61,11 @@ pub(super) struct NodeMap {
 pub(super) struct NodeMapInner {
     by_node_key: HashMap<NodeId, usize>,
     by_ip_port: HashMap<IpPort, usize>,
-    by_quic_mapped_addr: HashMap<QuicMappedAddr, usize>,
+    by_quic_mapped_addr: HashMap<NodeIdMappedAddr, usize>,
     by_id: HashMap<usize, NodeState>,
     next_id: usize,
+    #[cfg(any(test, feature = "test-utils"))]
+    path_selection: PathSelection,
 }
 
 /// Identifier to look up a [`NodeState`] in the [`NodeMap`].
@@ -75,7 +76,7 @@ pub(super) struct NodeMapInner {
 enum NodeStateKey {
     Idx(usize),
     NodeId(NodeId),
-    QuicMappedAddr(QuicMappedAddr),
+    NodeIdMappedAddr(NodeIdMappedAddr),
     IpPort(IpPort),
 }
 
@@ -123,9 +124,20 @@ pub enum Source {
 }
 
 impl NodeMap {
+    #[cfg(not(any(test, feature = "test-utils")))]
     /// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
-    pub(super) fn load_from_vec(nodes: Vec<NodeAddr>) -> Self {
-        Self::from_inner(NodeMapInner::load_from_vec(nodes))
+    pub(super) fn load_from_vec(nodes: Vec<NodeAddr>, metrics: &Metrics) -> Self {
+        Self::from_inner(NodeMapInner::load_from_vec(nodes, metrics))
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    /// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
+    pub(super) fn load_from_vec(
+        nodes: Vec<NodeAddr>,
+        path_selection: PathSelection,
+        metrics: &Metrics,
+    ) -> Self {
+        Self::from_inner(NodeMapInner::load_from_vec(nodes, path_selection, metrics))
     }
 
     fn from_inner(inner: NodeMapInner) -> Self {
@@ -135,11 +147,11 @@ impl NodeMap {
     }
 
     /// Add the contact information for a node.
-    pub(super) fn add_node_addr(&self, node_addr: NodeAddr, source: Source) {
+    pub(super) fn add_node_addr(&self, node_addr: NodeAddr, source: Source, metrics: &Metrics) {
         self.inner
             .lock()
             .expect("poisoned")
-            .add_node_addr(node_addr, source)
+            .add_node_addr(node_addr, source, metrics)
     }
 
     /// Number of nodes currently listed.
@@ -147,11 +159,15 @@ impl NodeMap {
         self.inner.lock().expect("poisoned").node_count()
     }
 
-    pub(super) fn receive_udp(&self, udp_addr: SocketAddr) -> Option<(PublicKey, QuicMappedAddr)> {
+    #[cfg(not(wasm_browser))]
+    pub(super) fn receive_udp(
+        &self,
+        udp_addr: SocketAddr,
+    ) -> Option<(PublicKey, NodeIdMappedAddr)> {
         self.inner.lock().expect("poisoned").receive_udp(udp_addr)
     }
 
-    pub(super) fn receive_relay(&self, relay_url: &RelayUrl, src: NodeId) -> QuicMappedAddr {
+    pub(super) fn receive_relay(&self, relay_url: &RelayUrl, src: NodeId) -> NodeIdMappedAddr {
         self.inner
             .lock()
             .expect("poisoned")
@@ -190,7 +206,7 @@ impl NodeMap {
     pub(super) fn get_quic_mapped_addr_for_node_key(
         &self,
         node_key: NodeId,
-    ) -> Option<QuicMappedAddr> {
+    ) -> Option<NodeIdMappedAddr> {
         self.inner
             .lock()
             .expect("poisoned")
@@ -224,18 +240,20 @@ impl NodeMap {
         &self,
         sender: PublicKey,
         cm: CallMeMaybe,
+        metrics: &Metrics,
     ) -> Vec<PingAction> {
         self.inner
             .lock()
             .expect("poisoned")
-            .handle_call_me_maybe(sender, cm)
+            .handle_call_me_maybe(sender, cm, metrics)
     }
 
     #[allow(clippy::type_complexity)]
     pub(super) fn get_send_addrs(
         &self,
-        addr: QuicMappedAddr,
+        addr: NodeIdMappedAddr,
         have_ipv6: bool,
+        metrics: &Metrics,
     ) -> Option<(
         PublicKey,
         Option<SocketAddr>,
@@ -243,10 +261,10 @@ impl NodeMap {
         Vec<PingAction>,
     )> {
         let mut inner = self.inner.lock().expect("poisoned");
-        let ep = inner.get_mut(NodeStateKey::QuicMappedAddr(addr))?;
+        let ep = inner.get_mut(NodeStateKey::NodeIdMappedAddr(addr))?;
         let public_key = *ep.public_key();
         trace!(dest = %addr, node_id = %public_key.fmt_short(), "dst mapped to NodeId");
-        let (udp_addr, relay_url, msgs) = ep.get_send_addrs(have_ipv6);
+        let (udp_addr, relay_url, msgs) = ep.get_send_addrs(have_ipv6, metrics);
         Some((public_key, udp_addr, relay_url, msgs))
     }
 
@@ -319,31 +337,54 @@ impl NodeMap {
 }
 
 impl NodeMapInner {
+    #[cfg(not(any(test, feature = "test-utils")))]
     /// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
-    fn load_from_vec(nodes: Vec<NodeAddr>) -> Self {
+    fn load_from_vec(nodes: Vec<NodeAddr>, metrics: &Metrics) -> Self {
         let mut me = Self::default();
         for node_addr in nodes {
-            me.add_node_addr(node_addr, Source::Saved);
+            me.add_node_addr(node_addr, Source::Saved, metrics);
+        }
+        me
+    }
+
+    #[cfg(any(test, feature = "test-utils"))]
+    /// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
+    fn load_from_vec(
+        nodes: Vec<NodeAddr>,
+        path_selection: PathSelection,
+        metrics: &Metrics,
+    ) -> Self {
+        let mut me = Self {
+            path_selection,
+            ..Default::default()
+        };
+        for node_addr in nodes {
+            me.add_node_addr(node_addr, Source::Saved, metrics);
         }
         me
     }
 
     /// Add the contact information for a node.
     #[instrument(skip_all, fields(node = %node_addr.node_id.fmt_short()))]
-    fn add_node_addr(&mut self, node_addr: NodeAddr, source: Source) {
+    fn add_node_addr(&mut self, node_addr: NodeAddr, source: Source, metrics: &Metrics) {
         let source0 = source.clone();
         let node_id = node_addr.node_id;
         let relay_url = node_addr.relay_url.clone();
+        #[cfg(any(test, feature = "test-utils"))]
+        let path_selection = self.path_selection;
         let node_state = self.get_or_insert_with(NodeStateKey::NodeId(node_id), || Options {
             node_id,
             relay_url,
             active: false,
             source,
+            #[cfg(any(test, feature = "test-utils"))]
+            path_selection,
         });
         node_state.update_from_node_addr(
             node_addr.relay_url.as_ref(),
             &node_addr.direct_addresses,
             source0,
+            metrics,
         );
         let id = node_state.id();
         for addr in node_addr.direct_addresses() {
@@ -380,7 +421,7 @@ impl NodeMapInner {
         match id {
             NodeStateKey::Idx(id) => Some(id),
             NodeStateKey::NodeId(node_key) => self.by_node_key.get(&node_key).copied(),
-            NodeStateKey::QuicMappedAddr(addr) => self.by_quic_mapped_addr.get(&addr).copied(),
+            NodeStateKey::NodeIdMappedAddr(addr) => self.by_quic_mapped_addr.get(&addr).copied(),
             NodeStateKey::IpPort(ipp) => self.by_ip_port.get(&ipp).copied(),
         }
     }
@@ -411,10 +452,11 @@ impl NodeMapInner {
     }
 
     /// Marks the node we believe to be at `ipp` as recently used.
-    fn receive_udp(&mut self, udp_addr: SocketAddr) -> Option<(NodeId, QuicMappedAddr)> {
+    #[cfg(not(wasm_browser))]
+    fn receive_udp(&mut self, udp_addr: SocketAddr) -> Option<(NodeId, NodeIdMappedAddr)> {
         let ip_port: IpPort = udp_addr.into();
         let Some(node_state) = self.get_mut(NodeStateKey::IpPort(ip_port)) else {
-            info!(src=%udp_addr, "receive_udp: no node_state found for addr, ignore");
+            trace!(src=%udp_addr, "receive_udp: no node_state found for addr, ignore");
             return None;
         };
         node_state.receive_udp(ip_port, Instant::now());
@@ -422,7 +464,9 @@ impl NodeMapInner {
     }
 
     #[instrument(skip_all, fields(src = %src.fmt_short()))]
-    fn receive_relay(&mut self, relay_url: &RelayUrl, src: NodeId) -> QuicMappedAddr {
+    fn receive_relay(&mut self, relay_url: &RelayUrl, src: NodeId) -> NodeIdMappedAddr {
+        #[cfg(any(test, feature = "test-utils"))]
+        let path_selection = self.path_selection;
         let node_state = self.get_or_insert_with(NodeStateKey::NodeId(src), || {
             trace!("packets from unknown node, insert into node map");
             Options {
@@ -430,6 +474,8 @@ impl NodeMapInner {
                 relay_url: Some(relay_url.clone()),
                 active: true,
                 source: Source::Relay,
+                #[cfg(any(test, feature = "test-utils"))]
+                path_selection,
             }
         });
         node_state.receive_relay(relay_url, src, Instant::now());
@@ -484,7 +530,12 @@ impl NodeMapInner {
     }
 
     #[must_use = "actions must be handled"]
-    fn handle_call_me_maybe(&mut self, sender: NodeId, cm: CallMeMaybe) -> Vec<PingAction> {
+    fn handle_call_me_maybe(
+        &mut self,
+        sender: NodeId,
+        cm: CallMeMaybe,
+        metrics: &Metrics,
+    ) -> Vec<PingAction> {
         let ns_id = NodeStateKey::NodeId(sender);
         if let Some(id) = self.get_id(ns_id.clone()) {
             for number in &cm.my_numbers {
@@ -494,8 +545,8 @@ impl NodeMapInner {
         }
         match self.get_mut(ns_id) {
             None => {
-                inc!(MagicsockMetrics, recv_disco_call_me_maybe_bad_disco);
                 debug!("received call-me-maybe: ignore, node is unknown");
+                metrics.recv_disco_call_me_maybe_bad_disco.inc();
                 vec![]
             }
             Some(ns) => {
@@ -507,6 +558,8 @@ impl NodeMapInner {
     }
 
     fn handle_ping(&mut self, sender: NodeId, src: SendAddr, tx_id: TransactionId) -> PingHandled {
+        #[cfg(any(test, feature = "test-utils"))]
+        let path_selection = self.path_selection;
         let node_state = self.get_or_insert_with(NodeStateKey::NodeId(sender), || {
             debug!("received ping: node unknown, add to node map");
             let source = if src.is_relay() {
@@ -519,6 +572,8 @@ impl NodeMapInner {
                 relay_url: src.relay_url(),
                 active: true,
                 source,
+                #[cfg(any(test, feature = "test-utils"))]
+                path_selection,
             }
         });
 
@@ -663,6 +718,7 @@ mod tests {
     use std::net::Ipv4Addr;
 
     use iroh_base::SecretKey;
+    use tracing_test::traced_test;
 
     use super::{node_state::MAX_INACTIVE_DIRECT_ADDRESSES, *};
 
@@ -674,15 +730,15 @@ mod tests {
                 Source::NamedApp {
                     name: "test".into(),
                 },
+                &Default::default(),
             )
         }
     }
 
     /// Test persisting and loading of known nodes.
     #[tokio::test]
+    #[traced_test]
     async fn restore_from_vec() {
-        let _guard = iroh_test::logging::setup();
-
         let node_map = NodeMap::default();
 
         let mut rng = rand::thread_rng();
@@ -714,20 +770,21 @@ mod tests {
             .into_iter()
             .filter_map(|info| {
                 let addr: NodeAddr = info.into();
-                if addr.direct_addresses.is_empty() && addr.relay_url.is_none() {
+                if addr.is_empty() {
                     return None;
                 }
                 Some(addr)
             })
             .collect();
-        let loaded_node_map = NodeMap::load_from_vec(addrs.clone());
+        let loaded_node_map =
+            NodeMap::load_from_vec(addrs.clone(), PathSelection::default(), &Default::default());
 
         let mut loaded: Vec<NodeAddr> = loaded_node_map
             .list_remote_infos(Instant::now())
             .into_iter()
             .filter_map(|info| {
                 let addr: NodeAddr = info.into();
-                if addr.direct_addresses.is_empty() && addr.relay_url.is_none() {
+                if addr.is_empty() {
                     return None;
                 }
                 Some(addr)
@@ -746,9 +803,8 @@ mod tests {
     }
 
     #[test]
+    #[traced_test]
     fn test_prune_direct_addresses() {
-        let _guard = iroh_test::logging::setup();
-
         let node_map = NodeMap::default();
         let public_key = SecretKey::generate(rand::thread_rng()).public();
         let id = node_map
@@ -762,6 +818,7 @@ mod tests {
                 source: Source::NamedApp {
                     name: "test".into(),
                 },
+                path_selection: PathSelection::default(),
             })
             .id();
 

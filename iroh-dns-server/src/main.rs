@@ -2,9 +2,7 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::Parser;
-use iroh_dns_server::{
-    config::Config, metrics::init_metrics, server::run_with_config_until_ctrl_c,
-};
+use iroh_dns_server::{config::Config, server::run_with_config_until_ctrl_c};
 use tracing::debug;
 
 #[derive(Parser, Debug)]
@@ -27,6 +25,5 @@ async fn main() -> Result<()> {
         Config::default()
     };
 
-    init_metrics();
     run_with_config_until_ctrl_c(config).await
 }

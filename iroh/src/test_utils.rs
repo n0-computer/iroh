@@ -3,10 +3,12 @@ use std::net::Ipv4Addr;
 
 use anyhow::Result;
 pub use dns_and_pkarr_servers::DnsPkarrServer;
-pub use dns_server::create_dns_resolver;
 use iroh_base::RelayUrl;
 use iroh_relay::{
-    server::{CertConfig, QuicConfig, RelayConfig, Server, ServerConfig, StunConfig, TlsConfig},
+    server::{
+        AccessConfig, CertConfig, QuicConfig, RelayConfig, Server, ServerConfig, StunConfig,
+        TlsConfig,
+    },
     RelayMap, RelayNode, RelayQuicConfig,
 };
 use tokio::sync::oneshot;
@@ -65,6 +67,7 @@ pub async fn run_relay_server_with(
     quic: bool,
 ) -> Result<(RelayMap, RelayUrl, Server)> {
     let (certs, server_config) = iroh_relay::server::testing::self_signed_tls_certs_and_config();
+
     let tls = TlsConfig {
         cert: CertConfig::<(), ()>::Manual { certs },
         https_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
@@ -85,6 +88,7 @@ pub async fn run_relay_server_with(
             tls: Some(tls),
             limits: Default::default(),
             key_cache_capacity: Some(1024),
+            access: AccessConfig::Everyone,
         }),
         quic,
         stun,
@@ -113,7 +117,7 @@ pub(crate) mod dns_and_pkarr_servers {
     use iroh_base::{NodeId, SecretKey};
     use url::Url;
 
-    use super::{create_dns_resolver, CleanupDropGuard};
+    use super::CleanupDropGuard;
     use crate::{
         discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery},
         dns::DnsResolver,
@@ -173,7 +177,7 @@ pub(crate) mod dns_and_pkarr_servers {
 
         /// Create a [`DnsResolver`] configured to use the test DNS server.
         pub fn dns_resolver(&self) -> DnsResolver {
-            create_dns_resolver(self.nameserver).expect("failed to create DNS resolver")
+            DnsResolver::with_nameserver(self.nameserver)
         }
 
         /// Wait until a Pkarr announce for a node is published to the server.
@@ -192,15 +196,11 @@ pub(crate) mod dns_server {
     };
 
     use anyhow::{ensure, Result};
-    use futures_lite::future::Boxed as BoxFuture;
-    use hickory_resolver::{
-        config::NameServerConfig,
-        proto::{
-            op::{header::MessageType, Message},
-            serialize::binary::BinDecodable,
-        },
-        TokioResolver,
+    use hickory_resolver::proto::{
+        op::{header::MessageType, Message},
+        serialize::binary::BinDecodable,
     };
+    use n0_future::future::Boxed as BoxFuture;
     use tokio::{net::UdpSocket, sync::oneshot};
     use tracing::{debug, error, warn};
 
@@ -252,16 +252,6 @@ pub(crate) mod dns_server {
             }
         });
         Ok((bound_addr, CleanupDropGuard(tx)))
-    }
-
-    /// Create a DNS resolver with a single nameserver.
-    pub fn create_dns_resolver(nameserver: SocketAddr) -> Result<TokioResolver> {
-        let mut config = hickory_resolver::config::ResolverConfig::new();
-        let nameserver_config =
-            NameServerConfig::new(nameserver, hickory_resolver::proto::xfer::Protocol::Udp);
-        config.add_name_server(nameserver_config);
-        let resolver = hickory_resolver::Resolver::tokio(config, Default::default());
-        Ok(resolver)
     }
 
     struct TestDnsServer<R> {
@@ -320,7 +310,7 @@ pub(crate) mod pkarr_relay {
     pub async fn run_pkarr_relay(state: AppState) -> Result<(Url, CleanupDropGuard)> {
         let bind_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, 0));
         let app = Router::new()
-            .route("/pkarr/:key", put(pkarr_put))
+            .route("/pkarr/{key}", put(pkarr_put))
             .with_state(state);
         let listener = tokio::net::TcpListener::bind(bind_addr).await?;
         let bound_addr = listener.local_addr()?;
@@ -381,12 +371,10 @@ pub(crate) mod pkarr_dns_state {
 
     use anyhow::{bail, Result};
     use iroh_base::NodeId;
+    use iroh_relay::node_info::{NodeIdExt, NodeInfo, IROH_TXT_NAME};
     use pkarr::SignedPacket;
 
-    use crate::{
-        dns::node_info::{node_id_from_hickory_name, NodeInfo},
-        test_utils::dns_server::QueryHandler,
-    };
+    use crate::test_utils::dns_server::QueryHandler;
 
     #[derive(Debug, Clone)]
     pub struct State {
@@ -460,14 +448,15 @@ pub(crate) mod pkarr_dns_state {
             ttl: u32,
         ) -> Result<()> {
             for query in query.queries() {
-                let Some(node_id) = node_id_from_hickory_name(query.name()) else {
+                let domain_name = query.name().to_string();
+                let Some(node_id) = node_id_from_domain_name(&domain_name) else {
                     continue;
                 };
 
                 self.get(&node_id, |packet| {
                     if let Some(packet) = packet {
                         let node_info = NodeInfo::from_pkarr_signed_packet(packet)?;
-                        for record in node_info.to_hickory_records(&self.origin, ttl)? {
+                        for record in node_info_to_hickory_records(&node_info, &self.origin, ttl)? {
                             reply.add_answer(record);
                         }
                     }
@@ -487,6 +476,69 @@ pub(crate) mod pkarr_dns_state {
             const TTL: u32 = 30;
             let res = self.resolve_dns(query, reply, TTL);
             std::future::ready(res)
+        }
+    }
+
+    /// Parses a [`NodeId`] from a DNS domain name.
+    ///
+    /// Splits the domain name into labels on each dot. Expects the first label to be
+    /// [`IROH_TXT_NAME`] and the second label to be a z32 encoded [`NodeId`]. Ignores
+    /// subsequent labels.
+    ///
+    /// Returns a [`NodeId`] if parsed successfully, otherwise `None`.
+    fn node_id_from_domain_name(name: &str) -> Option<NodeId> {
+        let mut labels = name.split(".");
+        let label = labels.next()?;
+        if label != IROH_TXT_NAME {
+            return None;
+        }
+        let label = labels.next()?;
+        let node_id = NodeId::from_z32(label).ok()?;
+        Some(node_id)
+    }
+
+    /// Converts a [`NodeInfo`]into a [`hickory_resolver::proto::rr::Record`] DNS record.
+    fn node_info_to_hickory_records(
+        node_info: &NodeInfo,
+        origin: &str,
+        ttl: u32,
+    ) -> Result<impl Iterator<Item = hickory_resolver::proto::rr::Record> + 'static> {
+        let txt_strings = node_info.to_txt_strings();
+        let records = to_hickory_records(txt_strings, node_info.node_id, origin, ttl)?;
+        Ok(records.collect::<Vec<_>>().into_iter())
+    }
+
+    /// Converts to a list of [`hickory_resolver::proto::rr::Record`] resource records.
+    fn to_hickory_records(
+        txt_strings: Vec<String>,
+        node_id: NodeId,
+        origin: &str,
+        ttl: u32,
+    ) -> Result<impl Iterator<Item = hickory_resolver::proto::rr::Record> + '_> {
+        use hickory_resolver::proto::rr;
+        let name = format!("{}.{}.{}", IROH_TXT_NAME, node_id.to_z32(), origin);
+        let name = rr::Name::from_utf8(name)?;
+        let records = txt_strings.into_iter().map(move |s| {
+            let txt = rr::rdata::TXT::new(vec![s]);
+            let rdata = rr::RData::TXT(txt);
+            rr::Record::from_rdata(name.clone(), ttl, rdata)
+        });
+        Ok(records)
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use iroh_base::NodeId;
+        use testresult::TestResult;
+
+        #[test]
+        fn test_node_id_from_domain_name() -> TestResult {
+            let name = "_iroh.dgjpkxyn3zyrk3zfads5duwdgbqpkwbjxfj4yt7rezidr3fijccy.dns.iroh.link.";
+            let node_id = super::node_id_from_domain_name(name);
+            let expected: NodeId =
+                "1992d53c02cdc04566e5c0edb1ce83305cd550297953a047a445ea3264b54b18".parse()?;
+            assert_eq!(node_id, Some(expected));
+            Ok(())
         }
     }
 }

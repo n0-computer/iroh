@@ -73,6 +73,20 @@ event!(
 );
 ```
 
+## Building documentation
+
+Building the documentation is only supported when using
+`--all-features`.
+
+Additionally you might want to enable documenting the cargo features
+required for certain APIs, which is done by also passing the `--cfg
+iroh_docsrs` flag to rustdoc when building the documentation.  This
+also requires using nightly rust, e.g.:
+
+```sh
+RUSTDOCFLAGS="--cfg iroh_docsrs" cargo +nightly doc --workspace --no-deps --all-features
+```
+
 # License
 
 This project is licensed under either of

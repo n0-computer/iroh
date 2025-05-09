@@ -1,20 +1,15 @@
 //! DNS node discovery for iroh
 
 use anyhow::Result;
-use futures_lite::stream::Boxed as BoxStream;
 use iroh_base::NodeId;
+pub use iroh_relay::dns::{N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING};
+use n0_future::boxed::BoxStream;
 
 use crate::{
     discovery::{Discovery, DiscoveryItem},
-    dns::ResolverExt,
     endpoint::force_staging_infra,
     Endpoint,
 };
-
-/// The n0 testing DNS node origin, for production.
-pub const N0_DNS_NODE_ORIGIN_PROD: &str = "dns.iroh.link";
-/// The n0 testing DNS node origin, for testing.
-pub const N0_DNS_NODE_ORIGIN_STAGING: &str = "staging-dns.iroh.link";
 
 const DNS_STAGGERING_MS: &[u64] = &[200, 300];
 
@@ -72,16 +67,12 @@ impl Discovery for DnsDiscovery {
         let resolver = ep.dns_resolver().clone();
         let origin_domain = self.origin_domain.clone();
         let fut = async move {
-            let node_addr = resolver
-                .lookup_by_id_staggered(&node_id, &origin_domain, DNS_STAGGERING_MS)
+            let node_info = resolver
+                .lookup_node_by_id_staggered(&node_id, &origin_domain, DNS_STAGGERING_MS)
                 .await?;
-            Ok(DiscoveryItem {
-                node_addr,
-                provenance: "dns",
-                last_updated: None,
-            })
+            Ok(DiscoveryItem::new(node_info, "dns", None))
         };
-        let stream = futures_lite::stream::once_future(fut);
+        let stream = n0_future::stream::once_future(fut);
         Some(Box::pin(stream))
     }
 }

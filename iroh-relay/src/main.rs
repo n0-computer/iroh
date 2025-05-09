@@ -9,22 +9,30 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{bail, Context as _, Result};
+use anyhow::{anyhow, bail, Context as _, Result};
 use clap::Parser;
+use http::StatusCode;
+use iroh_base::NodeId;
 use iroh_relay::{
     defaults::{
         DEFAULT_HTTPS_PORT, DEFAULT_HTTP_PORT, DEFAULT_METRICS_PORT, DEFAULT_RELAY_QUIC_PORT,
         DEFAULT_STUN_PORT,
     },
-    server::{self as relay, ClientConnRateLimit, QuicConfig},
+    server::{self as relay, ClientRateLimit, QuicConfig},
 };
+use n0_future::FutureExt;
 use serde::{Deserialize, Serialize};
 use tokio_rustls_acme::{caches::DirCache, AcmeConfig};
-use tracing::debug;
+use tracing::{debug, warn};
 use tracing_subscriber::{prelude::*, EnvFilter};
+use url::Url;
 
 /// The default `http_bind_port` when using `--dev`.
 const DEV_MODE_HTTP_PORT: u16 = 3340;
+/// The header name for setting the node id in HTTP auth requests.
+const X_IROH_NODE_ID: &str = "X-Iroh-NodeId";
+/// Environment variable to read a bearer token for HTTP auth requests from.
+const ENV_HTTP_BEARER_TOKEN: &str = "IROH_RELAY_HTTP_BEARER_TOKEN";
 
 /// A relay server for iroh.
 #[derive(Parser, Debug, Clone)]
@@ -37,14 +45,6 @@ struct Cli {
     /// Running in dev mode will ignore any config file fields pertaining to TLS.
     #[clap(long, default_value_t = false)]
     dev: bool,
-    /// Run in localhost development mode over plain HTTP and the QUIC endpoint for QUIC address discovery.
-    ///
-    /// Defaults to running the relay server on port 3340 and the QUIC endpoint over 7842.
-    ///
-    /// Running in dev-quic mode requires tls configuration for the QUIC endpoint. It will ignore
-    /// any tls configuration for the relay.
-    #[clap(long, default_value_t = false)]
-    dev_quic: bool,
     /// Path to the configuration file.
     ///
     /// If provided and no configuration file exists the default configuration will be
@@ -170,6 +170,140 @@ struct Config {
     metrics_bind_addr: Option<SocketAddr>,
     /// The capacity of the key cache.
     key_cache_capacity: Option<usize>,
+    /// Access control for relaying connections.
+    ///
+    /// This controls which nodes are allowed to relay connections, other endpoints, like STUN are not controlled by this.
+    #[serde(default)]
+    access: AccessConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum AccessConfig {
+    /// Allows everyone
+    #[default]
+    Everyone,
+    /// Allows only these nodes.
+    Allowlist(Vec<NodeId>),
+    /// Allows everyone, except these nodes.
+    Denylist(Vec<NodeId>),
+    /// Performs a HTTP POST request to determine access for each node that connects to the relay.
+    ///
+    /// The request will have a header `X-Iroh-Node-Id` set to the hex-encoded node id attempting
+    /// to connect to the relay.
+    ///
+    /// To grant access, the HTTP endpoint must return a `200` response with `true` as the response text.
+    /// In all other cases, the node will be denied access.
+    Http(HttpAccessConfig),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct HttpAccessConfig {
+    /// The URL to send the `POST` request to.
+    url: Url,
+    /// Optional bearer token for authorizing to the HTTP endpoint.
+    ///
+    /// If set, an `Authorization: Bearer {token}` header will be set on the HTTP request.
+    /// The bearer token can also be set via the `IROH_RELAY_HTTP_BEARER_TOKEN` environment variable.
+    /// If both the config and the environment variable are set, the value from the environment variable
+    /// is used.
+    bearer_token: Option<String>,
+}
+
+impl From<AccessConfig> for iroh_relay::server::AccessConfig {
+    fn from(cfg: AccessConfig) -> Self {
+        match cfg {
+            AccessConfig::Everyone => iroh_relay::server::AccessConfig::Everyone,
+            AccessConfig::Allowlist(allow_list) => {
+                let allow_list = Arc::new(allow_list);
+                iroh_relay::server::AccessConfig::Restricted(Box::new(move |node_id| {
+                    let allow_list = allow_list.clone();
+                    async move {
+                        if allow_list.contains(&node_id) {
+                            iroh_relay::server::Access::Allow
+                        } else {
+                            iroh_relay::server::Access::Deny
+                        }
+                    }
+                    .boxed()
+                }))
+            }
+            AccessConfig::Denylist(deny_list) => {
+                let deny_list = Arc::new(deny_list);
+                iroh_relay::server::AccessConfig::Restricted(Box::new(move |node_id| {
+                    let deny_list = deny_list.clone();
+                    async move {
+                        if deny_list.contains(&node_id) {
+                            iroh_relay::server::Access::Deny
+                        } else {
+                            iroh_relay::server::Access::Allow
+                        }
+                    }
+                    .boxed()
+                }))
+            }
+            AccessConfig::Http(mut config) => {
+                let client = reqwest::Client::default();
+                // Allow to set bearer token via environment variable as well.
+                if let Ok(token) = std::env::var(ENV_HTTP_BEARER_TOKEN) {
+                    config.bearer_token = Some(token);
+                }
+                let config = Arc::new(config);
+                iroh_relay::server::AccessConfig::Restricted(Box::new(move |node_id| {
+                    let client = client.clone();
+                    let config = config.clone();
+                    async move { http_access_check(&client, &config, node_id).await }.boxed()
+                }))
+            }
+        }
+    }
+}
+
+#[tracing::instrument("http-access-check", skip_all, fields(node_id=%node_id.fmt_short()))]
+async fn http_access_check(
+    client: &reqwest::Client,
+    config: &HttpAccessConfig,
+    node_id: NodeId,
+) -> iroh_relay::server::Access {
+    use iroh_relay::server::Access;
+    debug!(url=%config.url, "Check relay access via HTTP POST");
+
+    match http_access_check_inner(client, config, node_id).await {
+        Ok(()) => {
+            debug!("HTTP access check OK: Allow access");
+            Access::Allow
+        }
+        Err(err) => {
+            debug!("HTTP access check failed: Deny access (reason: {err:#})");
+            Access::Deny
+        }
+    }
+}
+
+async fn http_access_check_inner(
+    client: &reqwest::Client,
+    config: &HttpAccessConfig,
+    node_id: NodeId,
+) -> Result<()> {
+    let mut request = client
+        .post(config.url.clone())
+        .header(X_IROH_NODE_ID, node_id.to_string());
+    if let Some(token) = config.bearer_token.as_ref() {
+        request = request.header(http::header::AUTHORIZATION, format!("Bearer {token}"));
+    }
+
+    match request.send().await {
+        Err(err) => {
+            warn!("Failed to retrieve response for HTTP access check: {err:#}");
+            Err(err).context("Failed to fetch response")
+        }
+        Ok(res) if res.status() == StatusCode::OK => match res.text().await {
+            Ok(text) if text == "true" => Ok(()),
+            Ok(_) => Err(anyhow!("Invalid response text (must be 'true')")),
+            Err(err) => Err(err).context("Failed to read response"),
+        },
+        Ok(res) => Err(anyhow!("Received invalid status code ({})", res.status())),
+    }
 }
 
 impl Config {
@@ -202,6 +336,7 @@ impl Default for Config {
             enable_metrics: cfg_defaults::enable_metrics(),
             metrics_bind_addr: None,
             key_cache_capacity: Default::default(),
+            access: AccessConfig::Everyone,
         }
     }
 }
@@ -261,7 +396,7 @@ struct TlsConfig {
     ///
     /// Defaults to the servers' current working directory.
     cert_dir: Option<PathBuf>,
-    /// Path of where to read the certificate from for the `Manual` `cert_mode`.
+    /// Path of where to read the certificate from for the `Manual` and `Reloading` `cert_mode`.
     ///
     /// Defaults to `<cert_dir>/default.crt`.
     ///
@@ -486,11 +621,11 @@ async fn maybe_load_tls(
 
             let key_reader = rustls_cert_file_reader::FileReader::new(
                 key_path,
-                rustls_cert_file_reader::Format::DER,
+                rustls_cert_file_reader::Format::PEM,
             );
             let certs_reader = rustls_cert_file_reader::FileReader::new(
                 cert_path,
-                rustls_cert_file_reader::Format::DER,
+                rustls_cert_file_reader::Format::PEM,
             );
 
             let loader: CertifiedKeyLoader<
@@ -543,7 +678,7 @@ async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig<std::io::
                         bail!("bytes_per_seconds must be specified to enable the rate-limiter");
                     }
                     match rx.bytes_per_second {
-                        Some(bps) => Some(ClientConnRateLimit {
+                        Some(bps) => Some(ClientRateLimit {
                             bytes_per_second: bps
                                 .try_into()
                                 .context("bytes_per_second must be non-zero u32")?,
@@ -574,7 +709,9 @@ async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig<std::io::
         tls: relay_tls.and_then(|tls| if dangerous_http_only { None } else { Some(tls) }),
         limits,
         key_cache_capacity: cfg.key_cache_capacity,
+        access: cfg.access.clone().into(),
     };
+
     let stun_config = relay::StunConfig {
         bind_addr: cfg.stun_bind_addr(),
     };
@@ -587,58 +724,13 @@ async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig<std::io::
     })
 }
 
-mod metrics {
-    use iroh_metrics::{
-        core::{Counter, Metric},
-        struct_iterable::Iterable,
-    };
-
-    /// StunMetrics tracked for the relay server
-    #[allow(missing_docs)]
-    #[derive(Debug, Clone, Iterable)]
-    pub struct StunMetrics {
-        /*
-         * Metrics about STUN requests over ipv6
-         */
-        /// Number of stun requests made
-        pub requests: Counter,
-        /// Number of successful requests over ipv4
-        pub ipv4_success: Counter,
-        /// Number of successful requests over ipv6
-        pub ipv6_success: Counter,
-
-        /// Number of bad requests, either non-stun packets or incorrect binding request
-        pub bad_requests: Counter,
-        /// Number of failures
-        pub failures: Counter,
-    }
-
-    impl Default for StunMetrics {
-        fn default() -> Self {
-            Self {
-                /*
-                 * Metrics about STUN requests
-                 */
-                requests: Counter::new("Number of STUN requests made to the server."),
-                ipv4_success: Counter::new("Number of successful ipv4 STUN requests served."),
-                ipv6_success: Counter::new("Number of successful ipv6 STUN requests served."),
-                bad_requests: Counter::new("Number of bad requests made to the STUN endpoint."),
-                failures: Counter::new("Number of STUN requests that end in failure."),
-            }
-        }
-    }
-
-    impl Metric for StunMetrics {
-        fn name() -> &'static str {
-            "stun"
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::num::NonZeroU32;
 
+    use iroh_base::SecretKey;
+    use rand::SeedableRng;
+    use rand_chacha::ChaCha8Rng;
     use testresult::TestResult;
 
     use super::*;
@@ -674,6 +766,81 @@ mod tests {
         let relay = relay_config.relay.expect("no relay config");
         assert!(relay.limits.client_rx.is_none());
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_access_config() -> TestResult {
+        let config = "
+            access = \"everyone\"
+        ";
+        let config = Config::from_str(config)?;
+        assert_eq!(config.access, AccessConfig::Everyone);
+
+        let mut rng = ChaCha8Rng::seed_from_u64(0);
+        let node_id = SecretKey::generate(&mut rng).public();
+
+        let config = format!(
+            "
+            access.allowlist = [
+              \"{node_id}\",
+            ]
+        "
+        );
+        let config = Config::from_str(dbg!(&config))?;
+        assert_eq!(config.access, AccessConfig::Allowlist(vec![node_id]));
+
+        let config = r#"
+            access.http.url = "https://example.com/foo/bar?boo=baz"
+        "#
+        .to_string();
+        let config = Config::from_str(dbg!(&config))?;
+        assert_eq!(
+            config.access,
+            AccessConfig::Http(HttpAccessConfig {
+                url: "https://example.com/foo/bar?boo=baz".parse().unwrap(),
+                bearer_token: None
+            })
+        );
+        let config = r#"
+            access.http.url = "https://example.com/foo/bar?boo=baz"
+            access.http.bearer_token = "foo"
+        "#
+        .to_string();
+        let config = Config::from_str(dbg!(&config))?;
+        assert_eq!(
+            config.access,
+            AccessConfig::Http(HttpAccessConfig {
+                url: "https://example.com/foo/bar?boo=baz".parse().unwrap(),
+                bearer_token: Some("foo".to_string())
+            })
+        );
+
+        let config = r#"
+            access.http = { url = "https://example.com/foo" }
+        "#
+        .to_string();
+        let config = Config::from_str(dbg!(&config))?;
+        assert_eq!(
+            config.access,
+            AccessConfig::Http(HttpAccessConfig {
+                url: "https://example.com/foo".parse().unwrap(),
+                bearer_token: None
+            })
+        );
+
+        let config = r#"
+            access.http = { url = "https://example.com/foo", bearer_token = "foo" }
+        "#
+        .to_string();
+        let config = Config::from_str(dbg!(&config))?;
+        assert_eq!(
+            config.access,
+            AccessConfig::Http(HttpAccessConfig {
+                url: "https://example.com/foo".parse().unwrap(),
+                bearer_token: Some("foo".to_string())
+            })
+        );
         Ok(())
     }
 }

@@ -5,8 +5,6 @@
 //! Based on rust-libp2p/transports/tls/src/certificate.rs originally licensed under MIT by Parity
 //! Technologies (UK) Ltd.
 
-use std::sync::Arc;
-
 use der::{asn1::OctetStringRef, Decode, Encode, Sequence};
 use iroh_base::{PublicKey, SecretKey, Signature};
 use x509_parser::prelude::*;
@@ -27,45 +25,6 @@ const P2P_SIGNING_PREFIX: [u8; 21] = *b"libp2p-tls-handshake:";
 // Similarly, hash functions with an output length less than 256 bits MUST NOT be used.
 static P2P_SIGNATURE_ALGORITHM: &rcgen::SignatureAlgorithm = &rcgen::PKCS_ECDSA_P256_SHA256;
 
-#[derive(Debug)]
-pub(crate) struct AlwaysResolvesCert(Arc<rustls::sign::CertifiedKey>);
-
-impl AlwaysResolvesCert {
-    pub(crate) fn new(
-        cert: rustls::pki_types::CertificateDer<'static>,
-        key: &rustls::pki_types::PrivateKeyDer<'_>,
-    ) -> Result<Self, rustls::Error> {
-        let certified_key = rustls::sign::CertifiedKey::new(
-            vec![cert],
-            rustls::crypto::ring::sign::any_ecdsa_type(key)?,
-        );
-        Ok(Self(Arc::new(certified_key)))
-    }
-}
-
-impl rustls::client::ResolvesClientCert for AlwaysResolvesCert {
-    fn resolve(
-        &self,
-        _root_hint_subjects: &[&[u8]],
-        _sigschemes: &[rustls::SignatureScheme],
-    ) -> Option<Arc<rustls::sign::CertifiedKey>> {
-        Some(Arc::clone(&self.0))
-    }
-
-    fn has_certs(&self) -> bool {
-        true
-    }
-}
-
-impl rustls::server::ResolvesServerCert for AlwaysResolvesCert {
-    fn resolve(
-        &self,
-        _client_hello: rustls::server::ClientHello<'_>,
-    ) -> Option<Arc<rustls::sign::CertifiedKey>> {
-        Some(Arc::clone(&self.0))
-    }
-}
-
 /// The public host key and the signature are ANS.1-encoded
 /// into the SignedKey data structure, which is carried  in the libp2p Public Key Extension.
 #[derive(Clone, Debug, Eq, PartialEq, Sequence)]
@@ -76,7 +35,7 @@ struct SignedKey<'a> {
 
 /// Generates a self-signed TLS certificate that includes a libp2p-specific
 /// certificate extension containing the public key of the given secret key.
-pub fn generate(
+pub(crate) fn generate(
     identity_secret_key: &SecretKey,
 ) -> Result<
     (
@@ -113,7 +72,7 @@ pub fn generate(
 ///
 /// For this to succeed, the certificate must contain the specified extension and the signature must
 /// match the embedded public key.
-pub fn parse<'a>(
+pub(crate) fn parse<'a>(
     certificate: &'a rustls::pki_types::CertificateDer<'_>,
 ) -> Result<P2pCertificate<'a>, ParseError> {
     let certificate = parse_unverified(certificate.as_ref())?;
@@ -126,7 +85,7 @@ pub fn parse<'a>(
 /// An X.509 certificate with a libp2p-specific extension
 /// is used to secure libp2p connections.
 #[derive(Debug)]
-pub struct P2pCertificate<'a> {
+pub(crate) struct P2pCertificate<'a> {
     certificate: X509Certificate<'a>,
     /// This is a specific libp2p Public Key Extension with two values:
     /// * the public host key
@@ -137,7 +96,7 @@ pub struct P2pCertificate<'a> {
 /// The contents of the specific libp2p extension, containing the public host key
 /// and a signature performed using the private host key.
 #[derive(Debug)]
-pub struct P2pExtension {
+pub(crate) struct P2pExtension {
     public_key: PublicKey,
     /// This signature provides cryptographic proof that the peer was
     /// in possession of the private host key at the time the certificate was signed.
@@ -147,17 +106,17 @@ pub struct P2pExtension {
 /// An error that occurs during certificate generation.
 #[derive(Debug, thiserror::Error)]
 #[error(transparent)]
-pub struct GenError(#[from] rcgen::Error);
+pub(crate) struct GenError(#[from] rcgen::Error);
 
 /// An error that occurs during certificate parsing.
 #[derive(Debug, thiserror::Error)]
 #[error(transparent)]
-pub struct ParseError(#[from] pub(crate) webpki::Error);
+pub(crate) struct ParseError(#[from] pub(crate) webpki::Error);
 
 /// An error that occurs during signature verification.
 #[derive(Debug, thiserror::Error)]
 #[error(transparent)]
-pub struct VerificationError(#[from] pub(crate) webpki::Error);
+pub(crate) struct VerificationError(#[from] pub(crate) webpki::Error);
 
 /// Internal function that only parses but does not verify the certificate.
 ///
@@ -255,13 +214,13 @@ fn make_libp2p_extension(
 
 impl P2pCertificate<'_> {
     /// The [`PublicKey`] of the remote peer.
-    pub fn peer_id(&self) -> PublicKey {
+    pub(crate) fn peer_id(&self) -> PublicKey {
         self.extension.public_key
     }
 
     /// Verify the `signature` of the `message` signed by the secret key corresponding to the public key stored
     /// in the certificate.
-    pub fn verify_signature(
+    pub(crate) fn verify_signature(
         &self,
         signature_scheme: rustls::SignatureScheme,
         message: &[u8],

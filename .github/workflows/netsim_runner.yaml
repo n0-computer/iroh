@@ -109,7 +109,7 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
 
     - name: Install sccache
-      uses: mozilla-actions/sccache-action@v0.0.7
+      uses: mozilla-actions/sccache-action@v0.0.9
 
     - name: Build iroh
       run: |
@@ -135,13 +135,14 @@ jobs:
         cp target/${{inputs.build_profile}}/examples/* ../chuck/netsim/bins/
         cp target/${{inputs.build_profile}}/examples/transfer ../chuck/netsim/bins/iroh-transfer
         cp target/${{inputs.build_profile}}/iroh-relay ../chuck/netsim/bins/iroh-relay
+        cp target/${{inputs.build_profile}}/iroh-dns-server ../chuck/netsim/bins/iroh-dns-server
         cp ../chuck/target/release/chuck ../chuck/netsim/bins/chuck
 
     - name: Get commit sha
       shell: bash
       run: |
         echo "LAST_COMMIT_SHA=$(git rev-parse --short ${GITHUB_SHA})" >> ${GITHUB_ENV}
-  
+
     - name: Run tests
       id: run_tests
       continue-on-error: true
@@ -162,14 +163,14 @@ jobs:
         python3 reports_csv.py --prom --commit ${{ env.LAST_COMMIT_SHA }} > report_prom.txt
         python3 reports_csv.py --metro --commit ${{ env.LAST_COMMIT_SHA }} > report_metro.txt
         python3 reports_csv.py --metro --integration --commit ${{ env.LAST_COMMIT_SHA }} > report_metro_integration.txt
-    
+
     - name: Upload report
       if: always()
       run: |
         export AWS_ACCESS_KEY_ID=${{secrets.S3_ACCESS_KEY_ID}}
         export AWS_SECRET_ACCESS_KEY=${{secrets.S3_ACCESS_KEY}}
         export AWS_DEFAULT_REGION=us-west-2
-        
+
         curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
         unzip -q awscliv2.zip
         sudo ./aws/install --update
@@ -180,7 +181,7 @@ jobs:
         tar -cvzf report.tar.gz report_prom.txt report_table.txt report_metro.txt report_metro_integration.txt logs/ report/ viz/
         if [[ -n "${{ secrets.S3_BUCKET }}" ]]; then
           aws s3 cp ./report.tar.gz s3://${{secrets.S3_REPORT_BUCKET}}/$aws_fname --no-progress
-        fi        
+        fi
 
     - name: Move report
       if: always()
@@ -196,7 +197,7 @@ jobs:
         path: report.tar.gz
         retention-days: 3
         overwrite: true
-    
+
     - name: Fail Job if Tests Failed
       if: ${{ steps.run_tests.outcome == 'failure' }}
       run: |
@@ -221,10 +222,10 @@ jobs:
         body: |
           Netsim report & logs for this PR have been generated and is available at: [LOGS](${{steps.upload-report.outputs.artifact-url}})
           This report will remain available for 3 days.
-          
+
           Last updated for commit: ${{ env.LAST_COMMIT_SHA }}
         edit-mode: replace
-    
+
     - name: Generate report table
       if: ${{ inputs.pr_number != '' && inputs.report_table}}
       id: generate_report_table

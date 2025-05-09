@@ -20,14 +20,14 @@ use std::{fmt, future::Future, net::SocketAddr, num::NonZeroU32, pin::Pin, sync:
 
 use anyhow::{anyhow, bail, Context, Result};
 use derive_more::Debug;
-use futures_lite::StreamExt;
 use http::{
     response::Builder as ResponseBuilder, HeaderMap, Method, Request, Response, StatusCode,
 };
 use hyper::body::Incoming;
+use iroh_base::NodeId;
 #[cfg(feature = "test-utils")]
 use iroh_base::RelayUrl;
-use iroh_metrics::inc;
+use n0_future::{future::Boxed, StreamExt};
 use tokio::{
     net::{TcpListener, UdpSocket},
     task::JoinSet,
@@ -42,8 +42,7 @@ use crate::{
     quic::server::{QuicServer, ServerHandle as QuicServerHandle},
 };
 
-pub(crate) mod actor;
-pub(crate) mod client_conn;
+mod client;
 mod clients;
 mod http_server;
 mod metrics;
@@ -53,9 +52,8 @@ pub(crate) mod streams;
 pub mod testing;
 
 pub use self::{
-    metrics::{Metrics, StunMetrics},
+    metrics::{Metrics, RelayMetrics, StunMetrics},
     resolver::{ReloadingResolver, DEFAULT_CERT_RELOAD_INTERVAL},
-    streams::MaybeTlsStream as MaybeTlsStreamServer,
 };
 
 const NO_CONTENT_CHALLENGE_HEADER: &str = "X-Tailscale-Challenge";
@@ -122,6 +120,40 @@ pub struct RelayConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
     pub limits: Limits,
     /// Key cache capacity.
     pub key_cache_capacity: Option<usize>,
+    /// Access configuration.
+    pub access: AccessConfig,
+}
+
+/// Controls which nodes are allowed to use the relay.
+#[derive(derive_more::Debug)]
+pub enum AccessConfig {
+    /// Everyone
+    Everyone,
+    /// Only nodes for which the function returns `Access::Allow`.
+    #[debug("restricted")]
+    Restricted(Box<dyn Fn(NodeId) -> Boxed<Access> + Send + Sync + 'static>),
+}
+
+impl AccessConfig {
+    /// Is this node allowed?
+    pub async fn is_allowed(&self, node: NodeId) -> bool {
+        match self {
+            Self::Everyone => true,
+            Self::Restricted(check) => {
+                let res = check(node).await;
+                matches!(res, Access::Allow)
+            }
+        }
+    }
+}
+
+/// Access restriction for a node.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum Access {
+    /// Access is allowed.
+    Allow,
+    /// Access is denied.
+    Deny,
 }
 
 /// Configuration for the STUN server.
@@ -177,12 +209,12 @@ pub struct Limits {
     /// Burst limit for accepting new connection. Unlimited if not set.
     pub accept_conn_burst: Option<usize>,
     /// Rate limits for incoming traffic from a client connection.
-    pub client_rx: Option<ClientConnRateLimit>,
+    pub client_rx: Option<ClientRateLimit>,
 }
 
 /// Per-client rate limit configuration.
 #[derive(Debug, Copy, Clone)]
-pub struct ClientConnRateLimit {
+pub struct ClientRateLimit {
     /// Max number of bytes per second to read from the client connection.
     pub bytes_per_second: NonZeroU32,
     /// Max number of bytes to read in a single burst.
@@ -236,6 +268,7 @@ pub struct Server {
     /// If the server has manual certificates configured the certificate chain will be
     /// available here, this can be used by a client to authenticate the server.
     certificates: Option<Vec<rustls::pki_types::CertificateDer<'static>>>,
+    metrics: RelayMetrics,
 }
 
 impl Server {
@@ -247,18 +280,16 @@ impl Server {
     {
         let mut tasks = JoinSet::new();
 
+        let metrics = RelayMetrics::default();
+
         #[cfg(feature = "metrics")]
         if let Some(addr) = config.metrics_addr {
             debug!("Starting metrics server");
-            use iroh_metrics::core::Metric;
-
-            iroh_metrics::core::Core::init(|reg, metrics| {
-                metrics.insert(metrics::Metrics::new(reg));
-                metrics.insert(StunMetrics::new(reg));
-            });
+            let mut registry = iroh_metrics::Registry::default();
+            registry.register_all(&metrics);
             tasks.spawn(
                 async move {
-                    iroh_metrics::metrics::start_metrics_server(addr).await?;
+                    iroh_metrics::service::start_metrics_server(addr, Arc::new(registry)).await?;
                     anyhow::Ok(())
                 }
                 .instrument(info_span!("metrics-server")),
@@ -274,7 +305,8 @@ impl Server {
                         let addr = sock.local_addr()?;
                         info!("STUN server listening on {addr}");
                         tasks.spawn(
-                            server_stun_listener(sock).instrument(info_span!("stun-server", %addr)),
+                            server_stun_listener(sock, metrics.stun.clone())
+                                .instrument(info_span!("stun-server", %addr)),
                         );
                         Some(addr)
                     }
@@ -289,7 +321,7 @@ impl Server {
             relay.tls.as_ref().and_then(|tls| match tls.cert {
                 CertConfig::LetsEncrypt { .. } => None,
                 CertConfig::Manual { ref certs, .. } => Some(certs.clone()),
-                CertConfig::Reloading { .. } => None,
+                CertConfig::Reloading => None,
             })
         });
 
@@ -318,8 +350,10 @@ impl Server {
                     .key_cache_capacity
                     .unwrap_or(DEFAULT_KEY_CACHE_CAPACITY);
                 let mut builder = http_server::ServerBuilder::new(relay_bind_addr)
+                    .metrics(metrics.server.clone())
                     .headers(headers)
                     .key_cache_capacity(key_cache_capacity)
+                    .access(relay_config.access)
                     .request_handler(Method::GET, "/", Box::new(root_handler))
                     .request_handler(Method::GET, "/index.html", Box::new(root_handler))
                     .request_handler(Method::GET, RELAY_PROBE_PATH, Box::new(probe_handler))
@@ -350,7 +384,7 @@ impl Server {
                                     acceptor,
                                 })
                             }
-                            CertConfig::Manual { .. } | CertConfig::Reloading { .. } => {
+                            CertConfig::Manual { .. } | CertConfig::Reloading => {
                                 let server_config = Arc::new(tls_config.server_config);
                                 let acceptor =
                                     tokio_rustls::TlsAcceptor::from(server_config.clone());
@@ -406,6 +440,7 @@ impl Server {
             quic_handle,
             supervisor: AbortOnDropHandle::new(task),
             certificates,
+            metrics,
         })
     }
 
@@ -480,6 +515,11 @@ impl Server {
                 .into()
         })
     }
+
+    /// Returns the metrics collected in the relay server.
+    pub fn metrics(&self) -> &RelayMetrics {
+        &self.metrics
+    }
 }
 
 /// Supervisor for the relay server tasks.
@@ -494,13 +534,13 @@ async fn relay_supervisor(
 ) -> Result<()> {
     let quic_enabled = quic_server.is_some();
     let mut quic_fut = match quic_server {
-        Some(ref mut server) => futures_util::future::Either::Left(server.task_handle()),
-        None => futures_util::future::Either::Right(futures_lite::future::pending()),
+        Some(ref mut server) => n0_future::Either::Left(server.task_handle()),
+        None => n0_future::Either::Right(n0_future::future::pending()),
     };
     let relay_enabled = relay_http_server.is_some();
     let mut relay_fut = match relay_http_server {
-        Some(ref mut server) => futures_util::future::Either::Left(server.task_handle()),
-        None => futures_util::future::Either::Right(futures_lite::future::pending()),
+        Some(ref mut server) => n0_future::Either::Left(server.task_handle()),
+        None => n0_future::Either::Right(n0_future::future::pending()),
     };
     let res = tokio::select! {
         biased;
@@ -548,7 +588,7 @@ async fn relay_supervisor(
 /// Runs a STUN server.
 ///
 /// When the future is dropped, the server stops.
-async fn server_stun_listener(sock: UdpSocket) -> Result<()> {
+async fn server_stun_listener(sock: UdpSocket, metrics: Arc<StunMetrics>) -> Result<()> {
     info!(addr = ?sock.local_addr().ok(), "running STUN server");
     let sock = Arc::new(sock);
     let mut buffer = vec![0u8; 64 << 10];
@@ -567,18 +607,18 @@ async fn server_stun_listener(sock: UdpSocket) -> Result<()> {
             res = sock.recv_from(&mut buffer) => {
                 match res {
                     Ok((n, src_addr)) => {
-                        inc!(StunMetrics, requests);
+                        metrics.requests.inc();
                         let pkt = &buffer[..n];
                         if !protos::stun::is(pkt) {
                             debug!(%src_addr, "STUN: ignoring non stun packet");
-                            inc!(StunMetrics, bad_requests);
+                            metrics.bad_requests.inc();
                             continue;
                         }
                         let pkt = pkt.to_vec();
-                        tasks.spawn(handle_stun_request(src_addr, pkt, sock.clone()));
+                        tasks.spawn(handle_stun_request(src_addr, pkt, sock.clone(), metrics.clone()));
                     }
                     Err(err) => {
-                        inc!(StunMetrics, failures);
+                        metrics.failures.inc();
                         warn!("failed to recv: {err:#}");
                     }
                 }
@@ -588,14 +628,19 @@ async fn server_stun_listener(sock: UdpSocket) -> Result<()> {
 }
 
 /// Handles a single STUN request, doing all logging required.
-async fn handle_stun_request(src_addr: SocketAddr, pkt: Vec<u8>, sock: Arc<UdpSocket>) {
+async fn handle_stun_request(
+    src_addr: SocketAddr,
+    pkt: Vec<u8>,
+    sock: Arc<UdpSocket>,
+    metrics: Arc<StunMetrics>,
+) {
     let (txid, response) = match protos::stun::parse_binding_request(&pkt) {
         Ok(txid) => {
             debug!(%src_addr, %txid, "STUN: received binding request");
             (txid, protos::stun::response(txid, src_addr))
         }
         Err(err) => {
-            inc!(StunMetrics, bad_requests);
+            metrics.bad_requests.inc();
             warn!(%src_addr, "STUN: invalid binding request: {:?}", err);
             return;
         }
@@ -612,14 +657,14 @@ async fn handle_stun_request(src_addr: SocketAddr, pkt: Vec<u8>, sock: Arc<UdpSo
                 );
             } else {
                 match src_addr {
-                    SocketAddr::V4(_) => inc!(StunMetrics, ipv4_success),
-                    SocketAddr::V6(_) => inc!(StunMetrics, ipv6_success),
-                }
+                    SocketAddr::V4(_) => metrics.ipv4_success.inc(),
+                    SocketAddr::V6(_) => metrics.ipv6_success.inc(),
+                };
             }
             trace!(%src_addr, %txid, "sent {len} bytes");
         }
         Err(err) => {
-            inc!(StunMetrics, failures);
+            metrics.failures.inc();
             warn!(%src_addr, %txid, "failed to write response: {err:#}");
         }
     }
@@ -775,11 +820,15 @@ mod tests {
 
     use bytes::Bytes;
     use http::header::UPGRADE;
-    use iroh_base::SecretKey;
+    use iroh_base::{NodeId, RelayUrl, SecretKey};
+    use n0_future::{FutureExt, SinkExt};
+    use testresult::TestResult;
+    use tracing_test::traced_test;
 
     use super::*;
     use crate::{
-        client::{conn::ReceivedMessage, ClientBuilder},
+        client::{conn::ReceivedMessage, ClientBuilder, SendMessage},
+        dns::DnsResolver,
         http::{Protocol, HTTP_UPGRADE_PROTOCOL},
     };
 
@@ -790,6 +839,7 @@ mod tests {
                 tls: None,
                 limits: Default::default(),
                 key_cache_capacity: Some(1024),
+                access: AccessConfig::Everyone,
             }),
             quic: None,
             stun: None,
@@ -798,9 +848,33 @@ mod tests {
         .await
     }
 
+    async fn try_send_recv(
+        client_a: &mut crate::client::Client,
+        client_b: &mut crate::client::Client,
+        b_key: NodeId,
+        msg: Bytes,
+    ) -> Result<ReceivedMessage> {
+        // try resend 10 times
+        for _ in 0..10 {
+            client_a
+                .send(SendMessage::SendPacket(b_key, msg.clone()))
+                .await?;
+            let Ok(res) = tokio::time::timeout(Duration::from_millis(500), client_b.next()).await
+            else {
+                continue;
+            };
+            return res.context("stream finished")?;
+        }
+        panic!("failed to send and recv message");
+    }
+
+    fn dns_resolver() -> DnsResolver {
+        DnsResolver::new()
+    }
+
     #[tokio::test]
+    #[traced_test]
     async fn test_no_services() {
-        let _guard = iroh_test::logging::setup();
         let mut server = Server::spawn(ServerConfig::<(), ()>::default())
             .await
             .unwrap();
@@ -812,14 +886,15 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_conflicting_bind() {
-        let _guard = iroh_test::logging::setup();
         let mut server = Server::spawn(ServerConfig::<(), ()> {
             relay: Some(RelayConfig {
                 http_bind_addr: (Ipv4Addr::LOCALHOST, 1234).into(),
                 tls: None,
                 limits: Default::default(),
                 key_cache_capacity: Some(1024),
+                access: AccessConfig::Everyone,
             }),
             stun: None,
             quic: None,
@@ -835,8 +910,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_root_handler() {
-        let _guard = iroh_test::logging::setup();
         let server = spawn_local_relay().await.unwrap();
         let url = format!("http://{}", server.http_addr().unwrap());
 
@@ -847,8 +922,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_captive_portal_service() {
-        let _guard = iroh_test::logging::setup();
         let server = spawn_local_relay().await.unwrap();
         let url = format!("http://{}/generate_204", server.http_addr().unwrap());
         let challenge = "123az__.";
@@ -868,8 +943,8 @@ mod tests {
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_relay_client_legacy_route() {
-        let _guard = iroh_test::logging::setup();
         let server = spawn_local_relay().await.unwrap();
         // We're testing the legacy endpoint at `/derp`
         let endpoint_url = format!("http://{}/derp", server.http_addr().unwrap());
@@ -886,8 +961,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_relay_clients_both_derp() {
-        let _guard = iroh_test::logging::setup();
+    #[traced_test]
+    async fn test_relay_clients_both_relay() -> TestResult<()> {
         let server = spawn_local_relay().await.unwrap();
         let relay_url = format!("http://{}", server.http_addr().unwrap());
         let relay_url: RelayUrl = relay_url.parse().unwrap();
@@ -895,41 +970,21 @@ mod tests {
         // set up client a
         let a_secret_key = SecretKey::generate(rand::thread_rng());
         let a_key = a_secret_key.public();
-        let resolver = crate::dns::default_resolver().clone();
-        let (client_a, mut client_a_receiver) =
-            ClientBuilder::new(relay_url.clone()).build(a_secret_key, resolver);
-        let connect_client = client_a.clone();
-
-        // give the relay server some time to accept connections
-        if let Err(err) = tokio::time::timeout(Duration::from_secs(10), async move {
-            loop {
-                match connect_client.connect().await {
-                    Ok(_) => break,
-                    Err(err) => {
-                        warn!("client unable to connect to relay server: {err:#}");
-                        tokio::time::sleep(Duration::from_millis(100)).await;
-                    }
-                }
-            }
-        })
-        .await
-        {
-            panic!("error connecting to relay server: {err:#}");
-        }
+        let resolver = dns_resolver();
+        let mut client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver.clone())
+            .connect()
+            .await?;
 
         // set up client b
         let b_secret_key = SecretKey::generate(rand::thread_rng());
         let b_key = b_secret_key.public();
-        let resolver = crate::dns::default_resolver().clone();
-        let (client_b, mut client_b_receiver) =
-            ClientBuilder::new(relay_url.clone()).build(b_secret_key, resolver);
-        client_b.connect().await.unwrap();
+        let mut client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver.clone())
+            .connect()
+            .await?;
 
         // send message from a to b
         let msg = Bytes::from("hello, b");
-        client_a.send(b_key, msg.clone()).await.unwrap();
-
-        let res = client_b_receiver.recv().await.unwrap().unwrap();
+        let res = try_send_recv(&mut client_a, &mut client_b, b_key, msg.clone()).await?;
         if let ReceivedMessage::ReceivedPacket {
             remote_node_id,
             data,
@@ -943,9 +998,7 @@ mod tests {
 
         // send message from b to a
         let msg = Bytes::from("howdy, a");
-        client_b.send(a_key, msg.clone()).await.unwrap();
-
-        let res = client_a_receiver.recv().await.unwrap().unwrap();
+        let res = try_send_recv(&mut client_b, &mut client_a, a_key, msg.clone()).await?;
         if let ReceivedMessage::ReceivedPacket {
             remote_node_id,
             data,
@@ -956,87 +1009,74 @@ mod tests {
         } else {
             panic!("client_a received unexpected message {res:?}");
         }
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_relay_clients_both_websockets() {
-        let _guard = iroh_test::logging::setup();
-        let server = spawn_local_relay().await.unwrap();
+    #[traced_test]
+    async fn test_relay_clients_both_websockets() -> TestResult<()> {
+        let server = spawn_local_relay().await?;
 
         let relay_url = format!("http://{}", server.http_addr().unwrap());
-        let relay_url: RelayUrl = relay_url.parse().unwrap();
+        let relay_url: RelayUrl = relay_url.parse()?;
 
         // set up client a
         let a_secret_key = SecretKey::generate(rand::thread_rng());
         let a_key = a_secret_key.public();
-        let resolver = crate::dns::default_resolver().clone();
-        let (client_a, mut client_a_receiver) = ClientBuilder::new(relay_url.clone())
+        let resolver = dns_resolver();
+        info!("client a build & connect");
+        let mut client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver.clone())
             .protocol(Protocol::Websocket)
-            .build(a_secret_key, resolver);
-        let connect_client = client_a.clone();
-
-        // give the relay server some time to accept connections
-        if let Err(err) = tokio::time::timeout(Duration::from_secs(10), async move {
-            loop {
-                match connect_client.connect().await {
-                    Ok(_) => break,
-                    Err(err) => {
-                        warn!("client unable to connect to relay server: {err:#}");
-                        tokio::time::sleep(Duration::from_millis(100)).await;
-                    }
-                }
-            }
-        })
-        .await
-        {
-            panic!("error connecting to relay server: {err:#}");
-        }
+            .connect()
+            .await?;
 
         // set up client b
         let b_secret_key = SecretKey::generate(rand::thread_rng());
         let b_key = b_secret_key.public();
-        let resolver = crate::dns::default_resolver().clone();
-        let (client_b, mut client_b_receiver) = ClientBuilder::new(relay_url.clone())
+        info!("client b build & connect");
+        let mut client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver.clone())
             .protocol(Protocol::Websocket) // another websocket client
-            .build(b_secret_key, resolver);
-        client_b.connect().await.unwrap();
+            .connect()
+            .await?;
+
+        info!("sending a -> b");
 
         // send message from a to b
         let msg = Bytes::from("hello, b");
-        client_a.send(b_key, msg.clone()).await.unwrap();
-
-        let res = client_b_receiver.recv().await.unwrap().unwrap();
-        if let ReceivedMessage::ReceivedPacket {
+        let res = try_send_recv(&mut client_a, &mut client_b, b_key, msg.clone()).await?;
+        let ReceivedMessage::ReceivedPacket {
             remote_node_id,
             data,
         } = res
-        {
-            assert_eq!(a_key, remote_node_id);
-            assert_eq!(msg, data);
-        } else {
+        else {
             panic!("client_b received unexpected message {res:?}");
-        }
+        };
 
+        assert_eq!(a_key, remote_node_id);
+        assert_eq!(msg, data);
+
+        info!("sending b -> a");
         // send message from b to a
         let msg = Bytes::from("howdy, a");
-        client_b.send(a_key, msg.clone()).await.unwrap();
+        let res = try_send_recv(&mut client_b, &mut client_a, a_key, msg.clone()).await?;
 
-        let res = client_a_receiver.recv().await.unwrap().unwrap();
-        if let ReceivedMessage::ReceivedPacket {
+        let ReceivedMessage::ReceivedPacket {
             remote_node_id,
             data,
         } = res
-        {
-            assert_eq!(b_key, remote_node_id);
-            assert_eq!(msg, data);
-        } else {
+        else {
             panic!("client_a received unexpected message {res:?}");
-        }
+        };
+
+        assert_eq!(b_key, remote_node_id);
+        assert_eq!(msg, data);
+
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_relay_clients_websocket_and_derp() {
-        let _guard = iroh_test::logging::setup();
+    #[traced_test]
+    async fn test_relay_clients_websocket_and_relay() -> TestResult<()> {
         let server = spawn_local_relay().await.unwrap();
 
         let relay_url = format!("http://{}", server.http_addr().unwrap());
@@ -1045,42 +1085,24 @@ mod tests {
         // set up client a
         let a_secret_key = SecretKey::generate(rand::thread_rng());
         let a_key = a_secret_key.public();
-        let resolver = crate::dns::default_resolver().clone();
-        let (client_a, mut client_a_receiver) =
-            ClientBuilder::new(relay_url.clone()).build(a_secret_key, resolver);
-        let connect_client = client_a.clone();
-
-        // give the relay server some time to accept connections
-        if let Err(err) = tokio::time::timeout(Duration::from_secs(10), async move {
-            loop {
-                match connect_client.connect().await {
-                    Ok(_) => break,
-                    Err(err) => {
-                        warn!("client unable to connect to relay server: {err:#}");
-                        tokio::time::sleep(Duration::from_millis(100)).await;
-                    }
-                }
-            }
-        })
-        .await
-        {
-            panic!("error connecting to relay server: {err:#}");
-        }
+        let resolver = dns_resolver();
+        let mut client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver)
+            .connect()
+            .await?;
 
         // set up client b
         let b_secret_key = SecretKey::generate(rand::thread_rng());
         let b_key = b_secret_key.public();
-        let resolver = crate::dns::default_resolver().clone();
-        let (client_b, mut client_b_receiver) = ClientBuilder::new(relay_url.clone())
+        let resolver = dns_resolver();
+        let mut client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver)
             .protocol(Protocol::Websocket) // Use websockets
-            .build(b_secret_key, resolver);
-        client_b.connect().await.unwrap();
+            .connect()
+            .await?;
 
         // send message from a to b
         let msg = Bytes::from("hello, b");
-        client_a.send(b_key, msg.clone()).await.unwrap();
+        let res = try_send_recv(&mut client_a, &mut client_b, b_key, msg.clone()).await?;
 
-        let res = client_b_receiver.recv().await.unwrap().unwrap();
         if let ReceivedMessage::ReceivedPacket {
             remote_node_id,
             data,
@@ -1094,9 +1116,7 @@ mod tests {
 
         // send message from b to a
         let msg = Bytes::from("howdy, a");
-        client_b.send(a_key, msg.clone()).await.unwrap();
-
-        let res = client_a_receiver.recv().await.unwrap().unwrap();
+        let res = try_send_recv(&mut client_b, &mut client_a, a_key, msg.clone()).await?;
         if let ReceivedMessage::ReceivedPacket {
             remote_node_id,
             data,
@@ -1107,11 +1127,12 @@ mod tests {
         } else {
             panic!("client_a received unexpected message {res:?}");
         }
+        Ok(())
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_stun() {
-        let _guard = iroh_test::logging::setup();
         let server = Server::spawn(ServerConfig::<(), ()> {
             relay: None,
             stun: Some(StunConfig {
@@ -1139,5 +1160,96 @@ mod tests {
         let (txid_back, response_addr) = protos::stun::parse_response(&buf).unwrap();
         assert_eq!(txid, txid_back);
         assert_eq!(response_addr, socket.local_addr().unwrap());
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_relay_access_control() -> Result<()> {
+        let a_secret_key = SecretKey::generate(rand::thread_rng());
+        let a_key = a_secret_key.public();
+
+        let server = Server::spawn(ServerConfig::<(), ()> {
+            relay: Some(RelayConfig::<(), ()> {
+                http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
+                tls: None,
+                limits: Default::default(),
+                key_cache_capacity: Some(1024),
+                access: AccessConfig::Restricted(Box::new(move |node_id| {
+                    async move {
+                        info!("checking {}", node_id);
+                        // reject node a
+                        if node_id == a_key {
+                            Access::Deny
+                        } else {
+                            Access::Allow
+                        }
+                    }
+                    .boxed()
+                })),
+            }),
+            quic: None,
+            stun: None,
+            metrics_addr: None,
+        })
+        .await
+        .unwrap();
+        let relay_url = format!("http://{}", server.http_addr().unwrap());
+        let relay_url: RelayUrl = relay_url.parse()?;
+
+        // set up client a
+        let resolver = dns_resolver();
+        let mut client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver)
+            .connect()
+            .await?;
+
+        // the next message should be the rejection of the connection
+        tokio::time::timeout(Duration::from_millis(500), async move {
+            match client_a.next().await.unwrap().unwrap() {
+                ReceivedMessage::Health { problem } => {
+                    assert_eq!(problem, Some("not authenticated".to_string()));
+                }
+                msg => {
+                    panic!("other msg: {:?}", msg);
+                }
+            }
+        })
+        .await?;
+
+        // test that another client has access
+
+        // set up client b
+        let b_secret_key = SecretKey::generate(rand::thread_rng());
+        let b_key = b_secret_key.public();
+
+        let resolver = dns_resolver();
+        let mut client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver)
+            .connect()
+            .await?;
+
+        // set up client c
+        let c_secret_key = SecretKey::generate(rand::thread_rng());
+        let c_key = c_secret_key.public();
+
+        let resolver = dns_resolver();
+        let mut client_c = ClientBuilder::new(relay_url.clone(), c_secret_key, resolver)
+            .connect()
+            .await?;
+
+        // send message from b to c
+        let msg = Bytes::from("hello, c");
+        let res = try_send_recv(&mut client_b, &mut client_c, c_key, msg.clone()).await?;
+
+        if let ReceivedMessage::ReceivedPacket {
+            remote_node_id,
+            data,
+        } = res
+        {
+            assert_eq!(b_key, remote_node_id);
+            assert_eq!(msg, data);
+        } else {
+            panic!("client_c received unexpected message {res:?}");
+        }
+
+        Ok(())
     }
 }

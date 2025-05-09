@@ -12,20 +12,18 @@
 //!  * clients sends `FrameType::SendPacket`
 //!  * server then sends `FrameType::RecvPacket` to recipient
 
-use std::time::Duration;
-
 use anyhow::{bail, ensure};
-use bytes::{Buf, BufMut, Bytes, BytesMut};
-#[cfg(any(test, feature = "server"))]
-use futures_lite::{Stream, StreamExt};
-use futures_sink::Sink;
-use futures_util::SinkExt;
+use bytes::{BufMut, Bytes};
 use iroh_base::{PublicKey, SecretKey, Signature};
+#[cfg(feature = "server")]
+use n0_future::time::Duration;
+use n0_future::{Sink, SinkExt};
+#[cfg(any(test, feature = "server"))]
+use n0_future::{Stream, StreamExt};
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
-use tokio_util::codec::{Decoder, Encoder};
 
-use crate::KeyCache;
+use crate::{client::conn::ConnSendError, KeyCache};
 
 /// The maximum size of a packet sent over relay.
 /// (This only includes the data bytes visible to magicsock, not
@@ -35,19 +33,22 @@ pub const MAX_PACKET_SIZE: usize = 64 * 1024;
 /// The maximum frame size.
 ///
 /// This is also the minimum burst size that a rate-limiter has to accept.
+#[cfg(not(wasm_browser))]
 const MAX_FRAME_SIZE: usize = 1024 * 1024;
 
 /// The Relay magic number, sent in the FrameType::ClientInfo frame upon initial connection.
 const MAGIC: &str = "RELAY🔑";
 
+/// Interval in which we ping the relay server to ensure the connection is alive.
+///
+/// The default QUIC max_idle_timeout is 30s, so setting that to half this time gives some
+/// chance of recovering.
 #[cfg(feature = "server")]
-pub(crate) const KEEP_ALIVE: Duration = Duration::from_secs(60);
-// TODO: what should this be?
-#[cfg(feature = "server")]
-pub(crate) const SERVER_CHANNEL_SIZE: usize = 1024 * 100;
+pub(crate) const PING_INTERVAL: Duration = Duration::from_secs(15);
+
 /// The number of packets buffered for sending per client
+#[cfg(feature = "server")]
 pub(crate) const PER_CLIENT_SEND_QUEUE_DEPTH: usize = 512; //32;
-pub(crate) const PER_CLIENT_READ_QUEUE_DEPTH: usize = 512;
 
 /// ProtocolVersion is bumped whenever there's a wire-incompatible change.
 ///  - version 1 (zero on wire): consistent box headers, in use by employee dev nodes a bit
@@ -98,10 +99,9 @@ pub(crate) enum FrameType {
     /// 8 byte payload, the contents of ping being replied to
     Pong = 13,
     /// Sent from server to client to tell the client if their connection is
-    /// unhealthy somehow. Currently the only unhealthy state is whether the
-    /// connection is detected as a duplicate.
-    /// The entire frame body is the text of the error message. An empty message
-    /// clears the error state.
+    /// unhealthy somehow.
+    ///
+    /// Currently this is used to indicate that the connection was closed because of authentication issues.
     Health = 14,
 
     /// Sent from server to client for the server to declare that it's restarting.
@@ -130,6 +130,7 @@ pub(crate) struct ClientInfo {
 /// Ignores the timeout if `None`
 ///
 /// Does not flush.
+#[cfg(feature = "server")]
 pub(crate) async fn write_frame<S: Sink<Frame, Error = std::io::Error> + Unpin>(
     mut writer: S,
     frame: Frame,
@@ -148,7 +149,7 @@ pub(crate) async fn write_frame<S: Sink<Frame, Error = std::io::Error> + Unpin>(
 /// and the client's [`ClientInfo`], sealed using the server's [`PublicKey`].
 ///
 /// Flushes after writing.
-pub(crate) async fn send_client_key<S: Sink<Frame, Error = std::io::Error> + Unpin>(
+pub(crate) async fn send_client_key<S: Sink<Frame, Error = ConnSendError> + Unpin>(
     mut writer: S,
     client_secret_key: &SecretKey,
     client_info: &ClientInfo,
@@ -179,7 +180,7 @@ pub(crate) async fn recv_client_key<S: Stream<Item = anyhow::Result<Frame>> + Un
 
     // TODO: variable recv size: 256 * 1024
     let buf = tokio::time::timeout(
-        Duration::from_secs(10),
+        std::time::Duration::from_secs(10),
         recv_frame(FrameType::ClientInfo, stream),
     )
     .await
@@ -206,11 +207,13 @@ pub(crate) async fn recv_client_key<S: Stream<Item = anyhow::Result<Frame>> + Un
 ///
 /// This is a framed protocol, using [`tokio_util::codec`] to turn the streams of bytes into
 /// [`Frame`]s.
+#[cfg(not(wasm_browser))]
 #[derive(Debug, Clone)]
 pub(crate) struct RelayCodec {
     cache: KeyCache,
 }
 
+#[cfg(not(wasm_browser))]
 impl RelayCodec {
     #[cfg(test)]
     pub fn test() -> Self {
@@ -279,6 +282,7 @@ impl Frame {
     }
 
     /// Serialized length (without the frame header)
+    #[cfg(not(wasm_browser))] // Not needed with websocket framing - thus not needed in browsers
     pub(crate) fn len(&self) -> usize {
         match self {
             Frame::ClientInfo {
@@ -310,11 +314,10 @@ impl Frame {
     /// Tries to decode a frame received over websockets.
     ///
     /// Specifically, bytes received from a binary websocket message frame.
-    pub(crate) fn decode_from_ws_msg(vec: Vec<u8>, cache: &KeyCache) -> anyhow::Result<Self> {
-        if vec.is_empty() {
+    pub(crate) fn decode_from_ws_msg(bytes: Bytes, cache: &KeyCache) -> anyhow::Result<Self> {
+        if bytes.is_empty() {
             bail!("error parsing relay::codec::Frame: too few bytes (0)");
         }
-        let bytes = Bytes::from(vec);
         let typ = FrameType::from(bytes[0]);
         let frame = Self::from_bytes(typ, bytes.slice(1..), cache)?;
         Ok(frame)
@@ -493,72 +496,86 @@ impl Frame {
     }
 }
 
-const HEADER_LEN: usize = 5;
+// No need for framing when using websockets, thus this is cfg-ed out for browsers:
+#[cfg(not(wasm_browser))]
+// rustc doesn't figure out that the trait impls mean it's not unused
+#[cfg_attr(not(wasm_browser), allow(unused))]
+pub use framing::*;
 
-impl Decoder for RelayCodec {
-    type Item = Frame;
-    type Error = anyhow::Error;
+#[cfg(not(wasm_browser))]
+mod framing {
+    use bytes::{Buf, BytesMut};
+    use tokio_util::codec::{Decoder, Encoder};
 
-    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        // Need at least 5 bytes
-        if src.len() < HEADER_LEN {
-            return Ok(None);
+    use super::*;
+
+    pub(super) const HEADER_LEN: usize = 5;
+
+    impl Decoder for RelayCodec {
+        type Item = Frame;
+        type Error = anyhow::Error;
+
+        fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+            // Need at least 5 bytes
+            if src.len() < HEADER_LEN {
+                return Ok(None);
+            }
+
+            // Can't use the `Buf::get_*` APIs, as that advances the buffer.
+            let Some(frame_type) = src.first().map(|b| FrameType::from(*b)) else {
+                return Ok(None); // Not enough bytes
+            };
+            let Some(frame_len) = src
+                .get(1..5)
+                .and_then(|s| TryInto::<[u8; 4]>::try_into(s).ok())
+                .map(u32::from_be_bytes)
+                .map(|l| l as usize)
+            else {
+                return Ok(None); // Not enough bytes
+            };
+
+            if frame_len > MAX_FRAME_SIZE {
+                anyhow::bail!("Frame of length {} is too large.", frame_len);
+            }
+
+            if src.len() < HEADER_LEN + frame_len {
+                // Optimization: prereserve the buffer space
+                src.reserve(HEADER_LEN + frame_len - src.len());
+
+                return Ok(None);
+            }
+
+            // advance the header
+            src.advance(HEADER_LEN);
+
+            let content = src.split_to(frame_len).freeze();
+            let frame = Frame::from_bytes(frame_type, content, &self.cache)?;
+
+            Ok(Some(frame))
         }
-
-        // Can't use the `Buf::get_*` APIs, as that advances the buffer.
-        let Some(frame_type) = src.first().map(|b| FrameType::from(*b)) else {
-            return Ok(None); // Not enough bytes
-        };
-        let Some(frame_len) = src
-            .get(1..5)
-            .and_then(|s| TryInto::<[u8; 4]>::try_into(s).ok())
-            .map(u32::from_be_bytes)
-            .map(|l| l as usize)
-        else {
-            return Ok(None); // Not enough bytes
-        };
-
-        if frame_len > MAX_FRAME_SIZE {
-            anyhow::bail!("Frame of length {} is too large.", frame_len);
-        }
-
-        if src.len() < HEADER_LEN + frame_len {
-            // Optimization: prereserve the buffer space
-            src.reserve(HEADER_LEN + frame_len - src.len());
-
-            return Ok(None);
-        }
-
-        // advance the header
-        src.advance(HEADER_LEN);
-
-        let content = src.split_to(frame_len).freeze();
-        let frame = Frame::from_bytes(frame_type, content, &self.cache)?;
-
-        Ok(Some(frame))
     }
-}
 
-impl Encoder<Frame> for RelayCodec {
-    type Error = std::io::Error;
+    impl Encoder<Frame> for RelayCodec {
+        type Error = std::io::Error;
 
-    fn encode(&mut self, frame: Frame, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        let frame_len: usize = frame.len();
-        if frame_len > MAX_FRAME_SIZE {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("Frame of length {} is too large.", frame_len),
-            ));
+        fn encode(&mut self, frame: Frame, dst: &mut BytesMut) -> Result<(), Self::Error> {
+            let frame_len: usize = frame.len();
+            if frame_len > MAX_FRAME_SIZE {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("Frame of length {} is too large.", frame_len),
+                ));
+            }
+
+            let frame_len_u32 = u32::try_from(frame_len).expect("just checked");
+
+            dst.reserve(HEADER_LEN + frame_len);
+            dst.put_u8(frame.typ().into());
+            dst.put_u32(frame_len_u32);
+            frame.write_to(dst);
+
+            Ok(())
         }
-
-        let frame_len_u32 = u32::try_from(frame_len).expect("just checked");
-
-        dst.reserve(HEADER_LEN + frame_len);
-        dst.put_u8(frame.typ().into());
-        dst.put_u32(frame_len_u32);
-        frame.write_to(dst);
-
-        Ok(())
     }
 }
 
@@ -586,11 +603,13 @@ pub(crate) async fn recv_frame<S: Stream<Item = anyhow::Result<Frame>> + Unpin>(
 
 #[cfg(test)]
 mod tests {
+    use data_encoding::HEXLOWER;
     use tokio_util::codec::{FramedRead, FramedWrite};
 
     use super::*;
 
     #[tokio::test]
+    #[cfg(feature = "server")]
     async fn test_basic_read_write() -> anyhow::Result<()> {
         let (reader, writer) = tokio::io::duplex(1024);
         let mut reader = FramedRead::new(reader, RelayCodec::test());
@@ -614,7 +633,8 @@ mod tests {
     async fn test_send_recv_client_key() -> anyhow::Result<()> {
         let (reader, writer) = tokio::io::duplex(1024);
         let mut reader = FramedRead::new(reader, RelayCodec::test());
-        let mut writer = FramedWrite::new(writer, RelayCodec::test());
+        let mut writer =
+            FramedWrite::new(writer, RelayCodec::test()).sink_map_err(ConnSendError::from);
 
         let client_key = SecretKey::generate(rand::thread_rng());
         let client_info = ClientInfo {
@@ -706,10 +726,17 @@ mod tests {
 
         for (frame, expected_hex) in frames {
             let bytes = frame.encode_for_ws_msg();
-            // To regenerate the hexdumps:
-            // let hexdump = iroh_test::hexdump::print_hexdump(bytes, []);
-            // println!("{hexdump}");
-            let expected_bytes = iroh_test::hexdump::parse_hexdump(expected_hex)?;
+            let stripped: Vec<u8> = expected_hex
+                .chars()
+                .filter_map(|s| {
+                    if s.is_ascii_whitespace() {
+                        None
+                    } else {
+                        Some(s as u8)
+                    }
+                })
+                .collect();
+            let expected_bytes = HEXLOWER.decode(&stripped).unwrap();
             assert_eq!(bytes, expected_bytes);
         }
 
@@ -719,7 +746,9 @@ mod tests {
 
 #[cfg(test)]
 mod proptests {
+    use bytes::BytesMut;
     use proptest::prelude::*;
+    use tokio_util::codec::{Decoder, Encoder};
 
     use super::*;
 
@@ -823,7 +852,7 @@ mod proptests {
         #[test]
         fn frame_ws_roundtrip(frame in frame()) {
             let encoded = frame.clone().encode_for_ws_msg();
-            let decoded = Frame::decode_from_ws_msg(encoded, &KeyCache::test()).unwrap();
+            let decoded = Frame::decode_from_ws_msg(Bytes::from(encoded), &KeyCache::test()).unwrap();
             prop_assert_eq!(frame, decoded);
         }
 

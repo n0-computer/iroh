@@ -173,7 +173,7 @@
 //!
 //!     // Gracefully close the connection and endpoint.
 //!     conn.close(1u8.into(), b"done");
-//!     ep.close().await?;
+//!     ep.close().await;
 //!     println!("Client closed");
 //!     Ok(())
 //! }
@@ -202,7 +202,7 @@
 //!
 //!     // Wait for the client to close the connection and gracefully close the endpoint.
 //!     conn.closed().await;
-//!     ep.close().await?;
+//!     ep.close().await;
 //!     Ok(())
 //! }
 //! ```
@@ -210,7 +210,7 @@
 //! Please see the examples directory for more nuanced examples.
 //!
 //!
-//! [QUIC]: https://quickwg.org
+//! [QUIC]: https://quicwg.org
 //! [bi-directional streams]: crate::endpoint::Connection::open_bi
 //! [hole punching]: https://en.wikipedia.org/wiki/Hole_punching_(networking)
 //! [socket addresses]: https://doc.rust-lang.org/stable/std/net/enum.SocketAddr.html
@@ -230,29 +230,34 @@
 
 #![recursion_limit = "256"]
 #![deny(missing_docs, rustdoc::broken_intra_doc_links)]
+#![cfg_attr(wasm_browser, allow(unused))]
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![cfg_attr(iroh_docsrs, feature(doc_auto_cfg))]
 
 mod disco;
 mod key;
 mod magicsock;
+mod tls;
 
 pub(crate) mod util;
+#[cfg(wasm_browser)]
+pub(crate) mod web_runtime;
 
 pub mod defaults;
 pub mod discovery;
+#[cfg(not(wasm_browser))]
 pub mod dns;
 pub mod endpoint;
 pub mod metrics;
+pub mod net_report;
 pub mod protocol;
-mod tls;
 pub mod watcher;
 
 pub use endpoint::{Endpoint, RelayMode};
 pub use iroh_base::{
     KeyParsingError, NodeAddr, NodeId, PublicKey, RelayUrl, RelayUrlParseError, SecretKey,
 };
-pub use iroh_relay::{RelayMap, RelayNode};
+pub use iroh_relay::{http::Protocol as RelayProtocol, node_info, RelayMap, RelayNode};
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;

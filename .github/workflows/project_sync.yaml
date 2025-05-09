@@ -1,0 +1,47 @@
+name: Add PRs and Issues to the Project Board
+
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
+
+env:
+  REPOS_LIST: "iroh tools n0.computer ops iroh.computer quic-rpc chuck abao bao-tree iroh-examples iroh.network tokio-rustls-acme iroh-ffi iroh-car iroh-io iroh-blake3 dumbpipe.dev dumbpipe sendme swarmie iroh-c-ffi willow-store quinn iroh-experiments willow-rs iroh-gossip iroh-doctor iroh-blobs iroh-docs iroh-doctor-server iroh-willow iroh-metrics net-tools iroh-node-util workflows ips iroh-roq"
+
+jobs:
+  add-to-project:
+    name: Add to project board
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/create-github-app-token@v1
+        id: app-token
+        with:
+          app-id: ${{ secrets.N0_BOT_APP_ID }}
+          private-key: ${{ secrets.PROJECT_BOARD_PKEY }}
+          owner: n0-computer
+
+      - name: Update PRs
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          for REPO in $REPOS_LIST; do
+            echo "Processing repository: $REPO"
+
+            gh pr list --repo n0-computer/$REPO --state open --json number,projectItems | jq -r '.[] | select(.projectItems | length == 0) | .number' > pr_list.txt
+            while read -r PR_NUMBER; do
+              echo "Processing PR #$PR_NUMBER"
+              gh pr edit "$PR_NUMBER" --repo n0-computer/$REPO --add-project iroh
+            done < pr_list.txt
+          done
+
+      - name: Update ISSUEs
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          for REPO in $REPOS_LIST; do
+            gh issue list --repo n0-computer/$REPO --state open --json number,projectItems | jq -r '.[] | select(.projectItems | length == 0) | .number' > issue_list.txt
+            while read -r ISSUE_NUMBER; do
+              echo "Processing Issue #$ISSUE_NUMBER"
+              gh issue edit "$ISSUE_NUMBER" --repo n0-computer/$REPO --add-project iroh
+            done < issue_list.txt
+          done

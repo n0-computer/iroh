@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::{bail, Context, Result};
 use axum::{
-    extract::{ConnectInfo, Request},
+    extract::{ConnectInfo, Request, State},
     handler::Handler,
     http::Method,
     middleware::{self, Next},
@@ -15,7 +15,6 @@ use axum::{
     routing::get,
     Router,
 };
-use iroh_metrics::{inc, inc_by};
 use serde::{Deserialize, Serialize};
 use tokio::{net::TcpListener, task::JoinSet};
 use tower_http::{
@@ -31,7 +30,7 @@ mod rate_limiting;
 mod tls;
 
 pub use self::{rate_limiting::RateLimitConfig, tls::CertMode};
-use crate::{config::Config, metrics::Metrics, state::AppState};
+use crate::{config::Config, state::AppState};
 
 /// Config for the HTTP server
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -218,7 +217,7 @@ pub(crate) fn create_app(state: AppState, rate_limit_config: &RateLimitConfig) -
     let router = Router::new()
         .route("/dns-query", get(doh::get).post(doh::post))
         .route(
-            "/pkarr/:key",
+            "/pkarr/{key}",
             if let Some(rate_limit) = rate_limit {
                 get(pkarr::get).put(pkarr::put.layer(rate_limit))
             } else {
@@ -227,13 +226,13 @@ pub(crate) fn create_app(state: AppState, rate_limit_config: &RateLimitConfig) -
         )
         .route("/healthcheck", get(|| async { "OK" }))
         .route("/", get(|| async { "Hi!" }))
-        .with_state(state);
+        .with_state(state.clone());
 
     // configure app
     router
         .layer(cors)
         .layer(trace)
-        .route_layer(middleware::from_fn(metrics_middleware))
+        .route_layer(middleware::from_fn_with_state(state, metrics_middleware))
 }
 
 /// Record request metrics.
@@ -244,17 +243,24 @@ pub(crate) fn create_app(state: AppState, rate_limit_config: &RateLimitConfig) -
 //
 // See also
 // https://github.com/tokio-rs/axum/blob/main/examples/prometheus-metrics/src/main.rs#L114
-async fn metrics_middleware(req: Request, next: Next) -> impl IntoResponse {
+async fn metrics_middleware(
+    State(state): State<AppState>,
+    req: Request,
+    next: Next,
+) -> impl IntoResponse {
     let start = Instant::now();
     let response = next.run(req).await;
     let latency = start.elapsed().as_millis();
     let status = response.status();
-    inc_by!(Metrics, http_requests_duration_ms, latency as u64);
-    inc!(Metrics, http_requests);
+    state
+        .metrics
+        .http_requests_duration_ms
+        .inc_by(latency as u64);
+    state.metrics.http_requests.inc();
     if status.is_success() {
-        inc!(Metrics, http_requests_success);
+        state.metrics.http_requests_success.inc();
     } else {
-        inc!(Metrics, http_requests_error);
+        state.metrics.http_requests_error.inc();
     }
     response
 }

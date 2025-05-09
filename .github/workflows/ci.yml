@@ -147,12 +147,19 @@ jobs:
         env:
           RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG' }}
 
-  wasm_build:
-    name: Build wasm32
+  wasm_test:
+    name: Build & test wasm32 for browsers
     runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: '--cfg getrandom_backend="wasm_js"'
     steps:
       - name: Checkout sources
         uses: actions/checkout@v4
+
+      - name: Setup node.js version 22.5 # needed for browser-like websocket API support in node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.5
 
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -160,8 +167,36 @@ jobs:
       - name: Add wasm target
         run: rustup target add wasm32-unknown-unknown
 
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@main
+
+      - name: Install wasm-bindgen-test-runner
+        run: cargo binstall wasm-bindgen-cli --locked --no-confirm
+
+      - name: Install wasm-tools
+        uses: bytecodealliance/actions/wasm-tools/setup@v1
+
       - name: wasm32 build (iroh-base)
-        run: cargo build -p iroh-base --all-features --target wasm32-unknown-unknown
+        run: cargo build --target wasm32-unknown-unknown -p iroh-base --all-features
+
+      - name: wasm32 build (iroh-relay)
+        run: cargo build --target wasm32-unknown-unknown -p iroh-relay --no-default-features
+
+      - name: wasm32 build (iroh)
+        run: cargo build --target wasm32-unknown-unknown -p iroh --no-default-features
+
+      # If the Wasm file contains any 'import "env"' declarations, then
+      # some non-Wasm-compatible code made it into the final code.
+      - name: Ensure no 'import "env"' in iroh-relay Wasm
+        run: |
+          ! wasm-tools print --skeleton target/wasm32-unknown-unknown/debug/iroh_relay.wasm | grep 'import "env"'
+
+      - name: Ensure no 'import "env"' in iroh Wasm
+        run: |
+          ! wasm-tools print --skeleton target/wasm32-unknown-unknown/debug/iroh.wasm | grep 'import "env"'
+
+      - name: Run integration test in wasm
+        run: cargo test -p iroh --test integration --target=wasm32-unknown-unknown --no-default-features
 
   check_semver:
     runs-on: ubuntu-latest
@@ -173,7 +208,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.7
+        uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Setup Environment (PR)
         if: ${{ github.event_name == 'pull_request' }}
@@ -205,7 +240,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - uses: mozilla-actions/sccache-action@v0.0.7
+      - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: taiki-e/install-action@cargo-make
       - run: cargo make format-check
 
@@ -223,13 +258,10 @@ jobs:
         with:
           toolchain: nightly-2024-11-30
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.7
+        uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Docs
         run: cargo doc --workspace --all-features --no-deps --document-private-items
-
-      - name: Docs (default features)
-        run: cargo doc --workspace --no-deps
 
   clippy_check:
     timeout-minutes: 30
@@ -243,7 +275,7 @@ jobs:
         with:
           components: clippy
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.7
+        uses: mozilla-actions/sccache-action@v0.0.9
 
       # TODO: We have a bunch of platform-dependent code so should
       #    probably run this job on the full platform matrix
@@ -270,7 +302,7 @@ jobs:
         with:
           toolchain: ${{ env.MSRV }}
       - name: Install sccache
-        uses: mozilla-actions/sccache-action@v0.0.7
+        uses: mozilla-actions/sccache-action@v0.0.9
 
       - name: Check MSRV all features
         run: |

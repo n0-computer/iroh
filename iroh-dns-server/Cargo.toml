@@ -1,6 +1,6 @@
 [package]
 name = "iroh-dns-server"
-version = "0.30.0"
+version = "0.34.1"
 edition = "2021"
 description = "A pkarr relay and DNS server"
 license = "MIT OR Apache-2.0"
@@ -12,7 +12,7 @@ readme = "README.md"
 [dependencies]
 anyhow = "1.0.80"
 async-trait = "0.1.77"
-axum = { version = "0.7", features = ["macros"] }
+axum = { version = "0.8", features = ["macros"] }
 axum-server = { version = "0.7", features = ["tls-rustls-no-provider"] }
 base64-url = "3.0"
 bytes = "1.7"
@@ -24,14 +24,14 @@ derive_more = { version = "1.0.0", features = [
     "from",
 ] }
 dirs-next = "2.0.0"
-futures-lite = "2.5"
-governor = "0.6.3" #needs new release of tower_governor for 0.7.0
-hickory-server = { version = "=0.25.0-alpha.4", features = ["dns-over-rustls", "dns-over-https-rustls"] }
+governor = "0.8"
+hickory-server = { version = "0.25.1", features = ["https-ring"] }
 http = "1.0.0"
 humantime-serde = "1.1.1"
-iroh-metrics = { version = "0.30.0" }
+iroh-metrics = { version = "0.34", features = ["service"] }
 lru = "0.12.3"
-pkarr = { version = "2.2.0", features = [ "async", "relay", "dht"], default-features = false }
+n0-future = "0.1.2"
+pkarr = { version = "3.7", features = ["relays", "dht"], default-features = false }
 rcgen = "0.13"
 redb = "2.0.0"
 regex = "1.10.3"
@@ -45,27 +45,26 @@ tokio-rustls = { version = "0.26", default-features = false, features = [
     "logging",
     "ring",
 ] }
-tokio-rustls-acme = { version = "0.6", features = ["axum"] }
+tokio-rustls-acme = { version = "0.7.1", features = ["axum"] }
 tokio-stream = "0.1.14"
 tokio-util = "0.7"
 toml = "0.8.10"
 tower-http = { version = "0.6.1", features = ["cors", "trace"] }
-tower_governor = "0.4"
+tower_governor = "0.7"
 tracing = "0.1"
 tracing-subscriber = "0.3.18"
 ttl_cache = "0.5.1"
-url = "2.5"
+url = "2.5.3"
 z32 = "1.1.1"
 
 [dev-dependencies]
 criterion = "0.5.1"
-hickory-resolver = "=0.25.0-alpha.4"
+hickory-resolver = "0.25.0"
 iroh = { path = "../iroh" }
-iroh-test = { path = "../iroh-test" }
-pkarr = { version = "2.2.0", features = ["rand"] }
 rand = "0.8"
 rand_chacha = "0.3.1"
 testresult = "0.4.1"
+tracing-test = "0.2.5"
 
 [[bench]]
 name = "write"

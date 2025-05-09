@@ -49,14 +49,16 @@ The easiest get that is to generate self-signed certificates using `rcgen`
 
 Next, add the certificate paths to your iroh-relay config, here is an example of a config.toml file that will enable quic address discovery.
 ```toml
-[tlsconfig]
+enable_quic_addr_discovery = true
+
+[tls]
 cert_mode = "Manual"
 manual_cert_path = "/path/to/certs/cert.pem"
 manual_key_path = "/path/to/certs/cert.key.pem"
 ```
 
-Then run the server with the `--dev-quic` flag:
-`cargo run --bin iroh-relay -- --config-path=/path/to/config.toml --dev-quic`
+Then run the server with the `--dev` flag, like you would when normally testing locally:
+`cargo run --features="server" --bin iroh-relay -- --config-path=/path/to/config.toml --dev`
 
 The relay server will run over http on port 3340, as it does using the `--dev` flag, but it will also run a QUIC server on port 7824.
 

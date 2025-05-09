@@ -4,14 +4,14 @@ use std::{
     fmt::Debug,
     net::IpAddr,
     sync::{Arc, Mutex},
-    time::Duration,
 };
 
 use anyhow::{Context, Result};
+use n0_future::time::Duration;
 use surge_ping::{Client, Config, IcmpPacket, PingIdentifier, PingSequence, ICMP};
 use tracing::debug;
 
-use crate::defaults::timeouts::DEFAULT_PINGER_TIMEOUT as DEFAULT_TIMEOUT;
+use crate::net_report::defaults::timeouts::DEFAULT_PINGER_TIMEOUT as DEFAULT_TIMEOUT;
 
 /// Whether this error was because we couldn't create a client or a send error.
 #[derive(Debug, thiserror::Error)]
@@ -124,44 +124,14 @@ mod tests {
     use std::net::{Ipv4Addr, Ipv6Addr};
 
     use tracing::error;
+    use tracing_test::traced_test;
 
     use super::*;
 
-    #[tokio::test]
-    #[ignore] // Doesn't work in CI
-    async fn test_ping_google() -> Result<()> {
-        let _guard = iroh_test::logging::setup();
-
-        // Public DNS addrs from google based on
-        // https://developers.google.com/speed/public-dns/docs/using
-
-        let pinger = Pinger::new();
-
-        // IPv4
-        let dur = pinger.send("8.8.8.8".parse()?, &[1u8; 8]).await?;
-        assert!(!dur.is_zero());
-
-        // IPv6
-        match pinger
-            .send("2001:4860:4860:0:0:0:0:8888".parse()?, &[1u8; 8])
-            .await
-        {
-            Ok(dur) => {
-                assert!(!dur.is_zero());
-            }
-            Err(err) => {
-                tracing::error!("IPv6 is not available: {:?}", err);
-            }
-        }
-
-        Ok(())
-    }
-
     // See net_report::reportgen::tests::test_icmp_probe_eu_relay for permissions to ping.
     #[tokio::test]
+    #[traced_test]
     async fn test_ping_localhost() {
-        let _guard = iroh_test::logging::setup();
-
         let pinger = Pinger::new();
 
         match pinger.send(Ipv4Addr::LOCALHOST.into(), b"data").await {

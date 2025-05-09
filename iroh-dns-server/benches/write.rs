@@ -1,15 +1,22 @@
+use std::sync::Arc;
+
 use anyhow::Result;
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use iroh::{discovery::pkarr::PkarrRelayClient, dns::node_info::NodeInfo, SecretKey};
-use iroh_dns_server::{config::Config, server::Server, ZoneStore};
+use iroh::{discovery::pkarr::PkarrRelayClient, node_info::NodeInfo, SecretKey};
+use iroh_dns_server::{config::Config, metrics::Metrics, server::Server, ZoneStore};
 use rand_chacha::rand_core::SeedableRng;
 use tokio::runtime::Runtime;
 
 const LOCALHOST_PKARR: &str = "http://localhost:8080/pkarr";
 
 async fn start_dns_server(config: Config) -> Result<Server> {
-    let store = ZoneStore::persistent(Config::signed_packet_store_path()?, Default::default())?;
-    Server::spawn(config, store).await
+    let metrics = Arc::new(Metrics::default());
+    let store = ZoneStore::persistent(
+        Config::signed_packet_store_path()?,
+        Default::default(),
+        metrics.clone(),
+    )?;
+    Server::spawn(config, store, metrics).await
 }
 
 fn benchmark_dns_server(c: &mut Criterion) {
@@ -29,9 +36,9 @@ fn benchmark_dns_server(c: &mut Criterion) {
                     let node_id = secret_key.public();
 
                     let pkarr_relay = LOCALHOST_PKARR.parse().expect("valid url");
-                    let relay_url = Some("http://localhost:8080".parse().unwrap());
                     let pkarr = PkarrRelayClient::new(pkarr_relay);
-                    let node_info = NodeInfo::new(node_id, relay_url, Default::default());
+                    let relay_url = "http://localhost:8080".parse().unwrap();
+                    let node_info = NodeInfo::new(node_id).with_relay_url(Some(relay_url));
                     let signed_packet = node_info.to_pkarr_signed_packet(&secret_key, 30).unwrap();
 
                     let start = std::time::Instant::now();

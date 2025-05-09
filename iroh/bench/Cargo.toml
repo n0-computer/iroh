@@ -1,6 +1,6 @@
 [package]
 name = "iroh-bench"
-version = "0.30.0"
+version = "0.34.1"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 publish = false
@@ -10,8 +10,10 @@ anyhow = "1.0.22"
 bytes = "1.7"
 hdrhistogram = { version = "7.2", default-features = false }
 iroh = { path = ".." }
-iroh-metrics = "0.30"
-quinn = { package = "iroh-quinn", version = "0.12" }
+iroh-metrics = "0.34"
+n0-future = "0.1.1"
+quinn = { package = "iroh-quinn", version = "0.13" }
+rand = "0.8"
 rcgen = "0.13"
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 clap = { version = "4", features = ["derive"] }
@@ -24,8 +26,6 @@ tracing-subscriber = { version = "0.3.0", default-features = false, features = [
     "time",
     "local-time",
 ] }
-socket2 = "0.5"
-futures-lite = "2.5"
 
 [features]
 default = []

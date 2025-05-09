@@ -1,14 +1,7 @@
-use std::net::SocketAddr;
-
 use clap::{Parser, ValueEnum};
-use hickory_resolver::{
-    config::{NameServerConfig, ResolverConfig},
-    proto::xfer::Protocol,
-    Resolver,
-};
 use iroh::{
     discovery::dns::{N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING},
-    dns::{node_info::TxtAttrs, DnsResolver},
+    dns::DnsResolver,
     NodeId,
 };
 
@@ -46,39 +39,26 @@ enum Command {
 async fn main() -> anyhow::Result<()> {
     let args = Cli::parse();
     let (resolver, origin) = match args.env {
-        Env::Staging => (
-            iroh::dns::default_resolver().clone(),
-            N0_DNS_NODE_ORIGIN_STAGING,
-        ),
-        Env::Prod => (
-            iroh::dns::default_resolver().clone(),
-            N0_DNS_NODE_ORIGIN_PROD,
-        ),
+        Env::Staging => (DnsResolver::new(), N0_DNS_NODE_ORIGIN_STAGING),
+        Env::Prod => (DnsResolver::new(), N0_DNS_NODE_ORIGIN_PROD),
         Env::Dev => (
-            resolver_with_nameserver(LOCALHOST_DNS.parse()?),
+            DnsResolver::with_nameserver(LOCALHOST_DNS.parse()?),
             EXAMPLE_ORIGIN,
         ),
     };
     let resolved = match args.command {
-        Command::Node { node_id } => {
-            TxtAttrs::<String>::lookup_by_id(&resolver, &node_id, origin).await?
-        }
-        Command::Domain { domain } => {
-            TxtAttrs::<String>::lookup_by_name(&resolver, &domain).await?
-        }
+        Command::Node { node_id } => resolver.lookup_node_by_id(&node_id, origin).await?,
+        Command::Domain { domain } => resolver.lookup_node_by_domain_name(&domain).await?,
     };
-    println!("resolved node {}", resolved.node_id());
-    for (key, values) in resolved.attrs() {
-        for value in values {
-            println!("    {key}={value}");
-        }
+    println!("resolved node {}", resolved.node_id);
+    if let Some(url) = resolved.relay_url() {
+        println!("    relay={url}")
+    }
+    for addr in resolved.direct_addresses() {
+        println!("    addr={addr}")
+    }
+    if let Some(user_data) = resolved.user_data() {
+        println!("    user-data={user_data}")
     }
     Ok(())
-}
-
-fn resolver_with_nameserver(nameserver: SocketAddr) -> DnsResolver {
-    let mut config = ResolverConfig::new();
-    let nameserver_config = NameServerConfig::new(nameserver, Protocol::Udp);
-    config.add_name_server(nameserver_config);
-    Resolver::tokio(config, Default::default())
 }

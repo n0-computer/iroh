@@ -330,7 +330,12 @@ fn decode_base32_hex(s: &str) -> Result<[u8; 32], KeyParsingError> {
         // hex
         data_encoding::HEXLOWER.decode_mut(s.as_bytes(), &mut bytes)
     } else {
-        data_encoding::BASE32_NOPAD.decode_mut(s.to_ascii_uppercase().as_bytes(), &mut bytes)
+        let input = s.to_ascii_uppercase();
+        let input = input.as_bytes();
+        if data_encoding::BASE32_NOPAD.decode_len(input.len())? != bytes.len() {
+            return Err(KeyParsingError::DecodeInvalidLength);
+        }
+        data_encoding::BASE32_NOPAD.decode_mut(input, &mut bytes)
     };
     match res {
         Ok(len) => {
@@ -345,7 +350,7 @@ fn decode_base32_hex(s: &str) -> Result<[u8; 32], KeyParsingError> {
 
 #[cfg(test)]
 mod tests {
-    use iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
+    use data_encoding::HEXLOWER;
 
     use super::*;
 
@@ -355,10 +360,10 @@ mod tests {
             PublicKey::from_str("ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6")
                 .unwrap();
         let bytes = postcard::to_stdvec(&public_key).unwrap();
-        let expected =
-            parse_hexdump("ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6")
-                .unwrap();
-        assert_eq_hex!(bytes, expected);
+        let expected = HEXLOWER
+            .decode(b"ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6")
+            .unwrap();
+        assert_eq!(bytes, expected);
     }
 
     #[test]
@@ -389,5 +394,11 @@ mod tests {
             PublicKey::from_str(&key.public().to_string()).unwrap(),
             key.public()
         );
+    }
+
+    #[test]
+    fn test_regression_parse_node_id_panic() {
+        let not_a_node_id = "foobarbaz";
+        assert!(PublicKey::from_str(not_a_node_id).is_err());
     }
 }

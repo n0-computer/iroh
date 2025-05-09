@@ -38,20 +38,19 @@ pub mod quic;
 #[cfg(feature = "server")]
 pub mod server;
 
+mod ping_tracker;
+
 mod key_cache;
 mod relay_map;
 pub(crate) use key_cache::KeyCache;
 
-#[cfg(test)]
-mod dns;
+#[cfg(not(wasm_browser))]
+pub mod dns;
+pub mod node_info;
 
 pub use protos::relay::MAX_PACKET_SIZE;
 
 pub use self::{
-    client::{
-        conn::{Conn as RelayConn, ReceivedMessage},
-        Client as HttpClient, ClientBuilder as HttpClientBuilder, ClientError as HttpClientError,
-        ClientReceiver as HttpClientReceiver,
-    },
+    ping_tracker::PingTracker,
     relay_map::{RelayMap, RelayNode, RelayQuicConfig},
 };

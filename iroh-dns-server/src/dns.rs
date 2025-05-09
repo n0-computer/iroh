@@ -26,7 +26,6 @@ use hickory_server::{
     server::{Request, RequestHandler, ResponseHandler, ResponseInfo},
     store::in_memory::InMemoryAuthority,
 };
-use iroh_metrics::inc;
 use serde::{Deserialize, Serialize};
 use tokio::{
     net::{TcpListener, UdpSocket},
@@ -122,12 +121,13 @@ impl DnsServer {
 pub struct DnsHandler {
     #[debug("Catalog")]
     catalog: Arc<Catalog>,
+    metrics: Arc<Metrics>,
 }
 
 impl DnsHandler {
     /// Create a DNS server given some settings, a connection to the DB for DID-by-username lookups
     /// and the server DID to serve under `_did.<origin>`.
-    pub fn new(zone_store: ZoneStore, config: &DnsConfig) -> Result<Self> {
+    pub fn new(zone_store: ZoneStore, config: &DnsConfig, metrics: Arc<Metrics>) -> Result<Self> {
         let origins = config
             .origins
             .iter()
@@ -149,6 +149,7 @@ impl DnsHandler {
 
         Ok(Self {
             catalog: Arc::new(catalog),
+            metrics,
         })
     }
 
@@ -168,23 +169,27 @@ impl RequestHandler for DnsHandler {
         request: &Request,
         response_handle: R,
     ) -> ResponseInfo {
-        inc!(Metrics, dns_requests);
+        self.metrics.dns_requests.inc();
         match request.protocol() {
-            Protocol::Udp => inc!(Metrics, dns_requests_udp),
-            Protocol::Https => inc!(Metrics, dns_requests_https),
+            Protocol::Udp => {
+                self.metrics.dns_requests_udp.inc();
+            }
+            Protocol::Https => {
+                self.metrics.dns_requests_https.inc();
+            }
             _ => {}
         }
-        debug!(protocol=%request.protocol(), query=%request.query(), "incoming DNS request");
+        debug!(protocol=%request.protocol(), queries=?request.queries(), "incoming DNS request");
 
         let res = self.catalog.handle_request(request, response_handle).await;
         match &res.response_code() {
             ResponseCode::NoError => match res.answer_count() {
-                0 => inc!(Metrics, dns_lookup_notfound),
-                _ => inc!(Metrics, dns_lookup_success),
+                0 => self.metrics.dns_lookup_notfound.inc(),
+                _ => self.metrics.dns_lookup_success.inc(),
             },
-            ResponseCode::NXDomain => inc!(Metrics, dns_lookup_notfound),
-            _ => inc!(Metrics, dns_lookup_error),
-        }
+            ResponseCode::NXDomain => self.metrics.dns_lookup_notfound.inc(),
+            _ => self.metrics.dns_lookup_error.inc(),
+        };
         res
     }
 }
