@@ -7,7 +7,7 @@ use redb::{
 };
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::{metrics::Metrics, util::PublicKeyBytes};
 
@@ -132,9 +132,16 @@ impl Actor {
                     Some(msg) = self.recv.recv() => {
                         match msg {
                             Message::Get { key, res } => {
-                                trace!("get {}", key);
-                                let packet = get_packet(&tables.signed_packets, &key).context("get packet failed")?;
-                                res.send(packet).ok();
+                                match get_packet(&tables.signed_packets, &key) {
+                                    Ok(packet) => {
+                                        trace!("get {key}: {}", packet.is_some());
+                                        res.send(packet).ok();
+                                    },
+                                    Err(err) => {
+                                        warn!("get {key} failed: {err:#}");
+                                        return Err(err).with_context(|| format!("get packet for {key} failed"))
+                                    }
+                                }
                             }
                             Message::Upsert { packet, res } => {
                                 let key = PublicKeyBytes::from_signed_packet(&packet);
