@@ -221,7 +221,7 @@ impl EndpointArgs {
             println!("Our home relay server:\n\t{relay_url}");
         }
 
-        println!("");
+        println!();
 
         Ok(endpoint)
     }
@@ -314,7 +314,7 @@ async fn provide(endpoint: Endpoint, size: u64) -> anyhow::Result<()> {
 
             println!(
                 "[{remote}] Transferred {} in {:.4}, {}/s",
-                HumanBytes(size as u64),
+                HumanBytes(size),
                 duration.as_secs_f64(),
                 HumanBytes((size as f64 / duration.as_secs_f64()) as u64)
             );
