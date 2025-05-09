@@ -202,7 +202,8 @@ impl Actor {
                                         debug!("packet {key} is no longer expired");
                                     }
                                 } else {
-                                    debug!("expired packet {key} not found");
+                                    debug!("expired packet {key} not found, remove from expiry table");
+                                    tables.update_time.remove(&time.to_bytes(), key.as_bytes())?;
                                 }
                             }
                         }
