@@ -156,8 +156,8 @@ impl Actor {
                                         res.send(false).ok();
                                         continue;
                                     } else {
-                                        // remove the packet from the update time index
-                                        tables.update_time.remove(&packet.timestamp().to_bytes(), key.as_bytes())?;
+                                        // remove the old packet from the update time index
+                                        tables.update_time.remove(&existing.timestamp().to_bytes(), key.as_bytes())?;
                                         true
                                     }
                                 } else {
@@ -199,7 +199,8 @@ impl Actor {
                                         self.metrics.store_packets_expired.inc();
                                         debug!("removed expired packet {key}");
                                     } else {
-                                        debug!("packet {key} is no longer expired");
+                                        debug!("packet {key} is no longer expired, removing obsolete expiry entry");
+                                        tables.update_time.remove(&time.to_bytes(), key.as_bytes())?;
                                     }
                                 } else {
                                     debug!("expired packet {key} not found, remove from expiry table");
