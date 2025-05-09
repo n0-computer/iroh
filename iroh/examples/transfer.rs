@@ -45,10 +45,10 @@ struct Cli {
 
 #[derive(Clone, Copy, Default, Debug, clap::ValueEnum)]
 enum Env {
-    /// Use the production servers hosted by n0.
-    #[default]
+    /// Use the production servers hosted by number0.
     Prod,
-    /// Use the staging servers hosted by n0.
+    /// Use the staging servers hosted by number0.
+    #[default]
     Staging,
 }
 
@@ -63,10 +63,10 @@ struct EndpointArgs {
     #[clap(long)]
     relay_url: Vec<String>,
     /// Disable relays completely.
-    #[clap(long)]
+    #[clap(long, conflicts_with = "relay-url")]
     no_relay: bool,
     /// If set no direct connections will be established.
-    #[clap(long, default_value = "false")]
+    #[clap(long)]
     relay_only: bool,
     /// Use a custom pkarr server.
     #[clap(long)]
