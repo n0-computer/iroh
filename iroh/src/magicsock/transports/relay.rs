@@ -11,16 +11,16 @@ use atomic_waker::AtomicWaker;
 use bytes::Bytes;
 use concurrent_queue::ConcurrentQueue;
 use iroh_base::{NodeId, RelayUrl};
-use n0_future::{
-    task::{self, AbortOnDropHandle},
-    StreamExt,
-};
+use n0_future::task::{self, AbortOnDropHandle};
 use smallvec::SmallVec;
 use tokio::sync::mpsc;
 use tracing::{error, info_span, trace, warn, Instrument};
 
 use super::{Addr, RecvMeta, Transmit, Transport};
-use crate::{magicsock::RelayContents, watchable::Watchable};
+use crate::{
+    magicsock::RelayContents,
+    watchable::{Watchable, Watcher as _},
+};
 
 mod actor;
 
@@ -177,16 +177,14 @@ impl Transport for RelayTransport {
             .map(|url| Addr::RelayUrl(url, self.my_node_id))
     }
 
-    fn local_addr_stream(
-        &self,
-    ) -> Pin<Box<dyn n0_future::Stream<Item = Option<Addr>> + Send + Sync + 'static>> {
+    fn local_addr_watch(&self) -> impl crate::watchable::Watcher<Value = Option<Addr>> {
         let my_node_id = self.my_node_id;
-        Box::pin(
-            self.my_relay
-                .watch()
-                .stream()
-                .map(move |url| url.map(|url| Addr::RelayUrl(url, my_node_id))),
-        )
+        let watcher = self
+            .my_relay
+            .watch()
+            .map(move |url| url.map(|url| Addr::RelayUrl(url, my_node_id)))
+            .expect("disconnected");
+        watcher
     }
 
     fn max_transmit_segments(&self) -> usize {

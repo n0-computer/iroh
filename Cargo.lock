@@ -260,6 +260,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "auto_enums"
+version = "0.8.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9c170965892137a3a9aeb000b4524aa3cc022a310e709d848b6e1cdce4ab4781"
+dependencies = [
+ "derive_utils",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.101",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -968,6 +980,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "derive_utils"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ccfae181bab5ab6c5478b2ccb69e4c68a02f8c3ec72f6616bfec9dbc599d2ee0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.101",
+]
+
+[[package]]
 name = "diatomic-waker"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1105,6 +1128,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a1e6a265c649f3f5979b601d26f1d05ada116434c87741c9493cb56218f76cbc"
 dependencies = [
  "heck",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.101",
+]
+
+[[package]]
+name = "enum_dispatch"
+version = "0.3.13"
+source = "git+https://gitlab.com/asomers/enum_dispatch.git?branch=auto_enums#a78cf28027bb3b5775ee3e2b1d1023ae0986600f"
+dependencies = [
+ "auto_enums",
+ "once_cell",
  "proc-macro2",
  "quote",
  "syn 2.0.101",
@@ -2210,6 +2245,7 @@ dependencies = [
  "aead",
  "anyhow",
  "atomic-waker",
+ "auto_enums",
  "axum",
  "backon",
  "bytes",
@@ -2221,6 +2257,7 @@ dependencies = [
  "der",
  "derive_more",
  "ed25519-dalek",
+ "enum_dispatch",
  "futures-buffered",
  "futures-lite",
  "futures-util",

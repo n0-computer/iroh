@@ -23,9 +23,16 @@ pub struct Transports {
 }
 
 impl Transports {
-    fn poll_send(&self, destination: Addr, ransmit: &Transmit<'_>) -> Poll<io::Result<()>> {
-        match transmit.destination {
-            Addr::Ipv4(0, 1)
+    fn poll_send(&self, destination: Addr, transmit: &Transmit<'_>) -> Poll<io::Result<()>> {
+        match destination {
+            Addr::Ipv4(addr, port) => {
+                let addr = SocketAddr::V4(addr, port.unwrap_or_default());
+                for transport in &self.ip {
+                    if transport.is_valid_send_addr(&addr) {
+                        transport.poll_send(addr, transmit)
+                    }
+                }
+            }
         }
     }
 

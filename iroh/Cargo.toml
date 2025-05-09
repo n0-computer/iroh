@@ -39,6 +39,7 @@ derive_more = { version = "1.0.0", features = [
     "from_str"
 ] }
 ed25519-dalek = { version = "2.1.1", features = ["serde", "rand_core", "zeroize", "pkcs8", "pem"] }
+enum_dispatch = { version = "0.3.13", features = ["auto_enums"] }
 http = "1"
 iroh-base = { version = "0.34.1", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
 iroh-relay = { version = "0.34", path = "../iroh-relay", default-features = false }
@@ -102,6 +103,8 @@ tracing-subscriber = { version = "0.3", features = [
 ], optional = true }
 indicatif = { version = "0.17", features = ["tokio"], optional = true }
 parse-size = { version = "=1.0.0", optional = true } # pinned version to avoid bumping msrv to 1.81
+auto_enums = "0.8.7"
+
 
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]

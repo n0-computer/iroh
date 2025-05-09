@@ -8,41 +8,42 @@ use std::{
 use quinn::AsyncUdpSocket;
 
 use super::{Addr, RecvMeta, Transmit, Transport};
-use crate::{magicsock::UdpConn, watchable::Watchable};
+use crate::{
+    magicsock::UdpConn,
+    watchable::{Watchable, Watcher},
+};
 
 #[derive(Clone, Debug)]
 pub struct IpTransport {
     bind_addr: SocketAddr,
     socket: UdpConn,
-    local_addr: Watchable<Option<Addr>>,
+    local_addr: Watchable<Vec<SocketAddr>>,
 }
 
 impl IpTransport {
-    pub fn new(addr: SocketAddr, socket: UdpConn) -> Self {
+    pub fn new(bind_addr: SocketAddr, socket: UdpConn) -> Self {
         // Currently gets updated on manual rebind
         // TODO: update when UdpSocket under the hood rebinds automatically
         let local_addr = Watchable::new(socket.local_addr().ok().map(Into::into));
 
         Self {
-            bind_addr: addr,
+            bind_addr,
             socket,
             local_addr,
         }
     }
-}
 
-impl Transport for IpTransport {
-    fn create_io_poller(&self) -> Pin<Box<dyn quinn::UdpPoller>> {
+    pub fn create_io_poller(&self) -> Pin<Box<dyn quinn::UdpPoller>> {
         self.socket.create_io_poller()
     }
 
-    fn poll_send(&self, transmit: &Transmit<'_>) -> Poll<io::Result<()>> {
+    pub fn poll_send(
+        &self,
+        destination: SocketAddr,
+        transmit: &Transmit<'_>,
+    ) -> Poll<io::Result<()>> {
         let res = self.socket.try_send(&quinn_udp::Transmit {
-            destination: transmit
-                .destination
-                .clone()
-                .try_into()
-                .expect("invalid destination"),
+            destination,
             ecn: transmit.ecn,
             contents: transmit.contents,
             segment_size: transmit.segment_size,
@@ -65,7 +66,7 @@ impl Transport for IpTransport {
     }
 
     /// NOTE: Receiving on a closed socket will return [`Poll::Pending`] indefinitely.
-    fn poll_recv(
+    pub fn poll_recv(
         &self,
         cx: &mut Context,
         bufs: &mut [io::IoSliceMut<'_>],
@@ -88,45 +89,43 @@ impl Transport for IpTransport {
         }
     }
 
-    fn local_addr(&self) -> Option<Addr> {
+    pub fn local_addr(&self) -> Option<Addr> {
         self.local_addr.get()
     }
-    fn local_addr_stream(
-        &self,
-    ) -> Pin<Box<dyn n0_future::Stream<Item = Option<Addr>> + Send + Sync + 'static>> {
-        Box::pin(self.local_addr.watch().stream())
+    pub fn local_addr_watch(&self) -> impl Watcher<Value = Option<Addr>> {
+        self.local_addr.watch()
     }
 
-    fn max_transmit_segments(&self) -> usize {
+    pub fn max_transmit_segments(&self) -> usize {
         self.socket.max_transmit_segments()
     }
 
-    fn max_receive_segments(&self) -> usize {
+    pub fn max_receive_segments(&self) -> usize {
         self.socket.max_receive_segments()
     }
 
-    fn may_fragment(&self) -> bool {
+    pub fn may_fragment(&self) -> bool {
         self.socket.may_fragment()
     }
 
-    fn is_valid_send_addr(&self, addr: &Addr) -> bool {
+    pub fn is_valid_send_addr(&self, addr: &SocketAddr) -> bool {
         #[allow(clippy::match_like_matches_macro)]
         match (self.bind_addr, addr) {
-            (SocketAddr::V4(_), Addr::Ipv4(..)) => true,
-            (SocketAddr::V6(_), Addr::Ipv6(..)) => true,
+            (SocketAddr::V4(_), SocketAddr::V4(..)) => true,
+            (SocketAddr::V6(_), SocketAddr::V6(..)) => true,
             _ => false,
         }
     }
 
-    fn poll_writable(&self, cx: &mut Context) -> Poll<io::Result<()>> {
+    pub fn poll_writable(&self, cx: &mut Context) -> Poll<io::Result<()>> {
         self.socket.as_socket_ref().poll_writable(cx)
     }
 
-    fn bind_addr(&self) -> Option<SocketAddr> {
+    pub fn bind_addr(&self) -> Option<SocketAddr> {
         Some(self.bind_addr)
     }
 
-    fn rebind(&self) -> io::Result<()> {
+    pub fn rebind(&self) -> io::Result<()> {
         self.socket.as_socket_ref().rebind()?;
         let addr = self.socket.as_socket_ref().local_addr()?;
         self.local_addr.set(Some(addr.into())).ok();
@@ -134,7 +133,7 @@ impl Transport for IpTransport {
         Ok(())
     }
 
-    fn on_network_change(&self, _info: &crate::magicsock::NetInfo) {
+    pub fn on_network_change(&self, _info: &crate::magicsock::NetInfo) {
         // Nothing to do for now
     }
 }

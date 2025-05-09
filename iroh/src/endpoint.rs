@@ -42,7 +42,7 @@ use crate::{
     magicsock::{self, transports, Handle, NodeIdMappedAddr},
     metrics::EndpointMetrics,
     tls,
-    watchable::Watcher,
+    watchable::{DirectWatcher, Watcher},
     RelayProtocol,
 };
 
@@ -919,7 +919,7 @@ impl Endpoint {
     /// let _relay_url = mep.home_relay().initialized().await.unwrap();
     /// # });
     /// ```
-    pub fn home_relay(&self) -> Watcher<Option<RelayUrl>> {
+    pub fn home_relay(&self) -> impl Watcher<Value = Option<RelayUrl>> + '_ {
         self.msock.home_relay()
     }
 
@@ -957,7 +957,7 @@ impl Endpoint {
     /// ```
     ///
     /// [STUN]: https://en.wikipedia.org/wiki/STUN
-    pub fn direct_addresses(&self) -> Watcher<Option<BTreeSet<DirectAddr>>> {
+    pub fn direct_addresses(&self) -> impl Watcher<Value = Option<BTreeSet<DirectAddr>>> {
         self.msock.direct_addresses()
     }
 
@@ -1057,7 +1057,7 @@ impl Endpoint {
     /// # Errors
     ///
     /// Will error if we do not have any address information for the given `node_id`.
-    pub fn conn_type(&self, node_id: NodeId) -> Result<Watcher<ConnectionType>> {
+    pub fn conn_type(&self, node_id: NodeId) -> Result<DirectWatcher<ConnectionType>> {
         self.msock.conn_type(node_id)
     }
 

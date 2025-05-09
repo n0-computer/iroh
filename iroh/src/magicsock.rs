@@ -50,7 +50,7 @@ use tracing::{
     debug, error, error_span, event, info, info_span, instrument, trace, trace_span, warn,
     Instrument, Level, Span,
 };
-use transports::{relay::RelayActorConfig, IpTransport, RelayTransport};
+use transports::{relay::RelayActorConfig, IpTransport, RelayTransport, Transport, TransportE};
 use url::Url;
 
 #[cfg(not(wasm_browser))]
@@ -72,7 +72,7 @@ use crate::{
     key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
     metrics::EndpointMetrics,
     net_report::{self, IpMappedAddresses},
-    watchable::{Watchable, Watcher},
+    watchable::{DirectWatcher, Watchable, Watcher},
 };
 
 mod metrics;
@@ -84,7 +84,6 @@ pub(crate) mod transports;
 
 pub use node_map::Source;
 
-use self::transports::Transport;
 pub use self::{
     metrics::Metrics,
     node_map::{ConnectionType, ControlMsg, DirectAddrInfo, RemoteInfo},
@@ -197,7 +196,7 @@ pub(crate) struct MagicSock {
     secret_encryption_key: crypto_box::SecretKey,
 
     /// Transports, IP and Relay
-    transports: Vec<Box<dyn Transport>>,
+    transports: Vec<TransportE>,
 
     /// Close is in progress (or done)
     closing: AtomicBool,
@@ -310,7 +309,7 @@ impl MagicSock {
     /// store [`Some`] set of addresses.
     ///
     /// To get the current direct addresses, use [`Watcher::initialized`].
-    pub(crate) fn direct_addresses(&self) -> Watcher<Option<BTreeSet<DirectAddr>>> {
+    pub(crate) fn direct_addresses(&self) -> impl Watcher<Value = Option<BTreeSet<DirectAddr>>> {
         self.direct_addrs.addrs.watch()
     }
 
@@ -318,19 +317,27 @@ impl MagicSock {
     ///
     /// Note that this can be used to wait for the initial home relay to be known using
     /// [`Watcher::initialized`].
-    pub(crate) fn home_relay(&self) -> Watcher<Option<RelayUrl>> {
-        todo!()
-        // self.tansports
-        //     .iter()
-        //     .map(|t| t.local_addr())
-        //     .find_map(|a| {
+    pub(crate) fn home_relay(&self) -> impl Watcher<Value = Option<RelayUrl>> + '_ {
+        let res = self
+            .transports
+            .iter()
+            .map(|t| t.local_addr_watch())
+            .find_map(move |a| {
+                if let Ok(Some(transports::Addr::RelayUrl(_, _))) = a.get() {
+                    Some(a.map(|a| {
+                        a.map(|a| match a {
+                            transports::Addr::RelayUrl(url, _) => url,
+                            _ => panic!("invalid addr"),
+                        })
+                    }))
+                } else {
+                    None
+                }
+            })
+            .expect("no relay transport")
+            .expect("disconnected");
 
-        //         if let transports::Addr::RelayUrl(url, _) = a {
-        //             Some(url)
-        //         } else {
-        //             None
-        //         }
-        //     })
+        res
     }
 
     /// Returns a [`Watcher`] that reports the [`ConnectionType`] we have to the
@@ -343,7 +350,7 @@ impl MagicSock {
     ///
     /// Will return an error if there is no address information known about the
     /// given `node_id`.
-    pub(crate) fn conn_type(&self, node_id: NodeId) -> Result<Watcher<ConnectionType>> {
+    pub(crate) fn conn_type(&self, node_id: NodeId) -> Result<DirectWatcher<ConnectionType>> {
         self.node_map.conn_type(node_id)
     }
 
@@ -588,10 +595,10 @@ impl MagicSock {
         conn.poll_send(transmit)
     }
 
-    fn conn_for_addr(&self, addr: &transports::Addr) -> Option<&dyn Transport> {
+    fn conn_for_addr(&self, addr: &transports::Addr) -> Option<&TransportE> {
         #[cfg(not(wasm_browser))]
         if let Some(transport) = self.transports.iter().find(|p| p.is_valid_send_addr(addr)) {
-            return Some(transport.as_ref());
+            return Some(transport);
         }
 
         None
@@ -1401,7 +1408,7 @@ impl Handle {
             metrics: metrics.magicsock.clone(),
             protocol: relay_protocol,
         });
-        transports.push(Box::new(relay_transport));
+        transports.push(relay_transport.into());
 
         let secret_encryption_key = secret_ed_box(secret_key.secret());
 
@@ -1871,11 +1878,8 @@ impl ActorSocketState {
         Ok((v4, v6))
     }
 
-    fn transports(&self) -> Vec<Box<dyn Transport>> {
-        self.ip
-            .iter()
-            .map(|t| Box::new(t.clone()) as Box<dyn Transport>)
-            .collect()
+    fn transports(&self) -> Vec<TransportE> {
+        self.ip.iter().map(|t| t.clone().into()).collect()
     }
 }
 
@@ -1917,8 +1921,12 @@ impl Actor {
         let mut portmap_watcher_closed = false;
         let mut link_change_closed = false;
 
-        let mut local_addr_changes =
-            MergeBounded::from_iter(self.msock.transports.iter().map(|t| t.local_addr_stream()));
+        let mut local_addr_changes = MergeBounded::from_iter(
+            self.msock
+                .transports
+                .iter()
+                .map(|t| t.local_addr_watch().stream()),
+        );
 
         loop {
             self.msock.metrics.magicsock.actor_tick_main.inc();

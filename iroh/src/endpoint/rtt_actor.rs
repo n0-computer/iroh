@@ -10,7 +10,7 @@ use n0_future::{
 use tokio::sync::mpsc;
 use tracing::{debug, info_span, Instrument};
 
-use crate::{magicsock::ConnectionType, metrics::MagicsockMetrics, watchable::WatcherStream};
+use crate::{magicsock::ConnectionType, metrics::MagicsockMetrics, watchable::DirectWatcherStream};
 
 #[derive(Debug)]
 pub(super) struct RttHandle {
@@ -47,7 +47,7 @@ pub(super) enum RttMessage {
         /// The connection.
         connection: quinn::WeakConnectionHandle,
         /// Path changes for this connection from the magic socket.
-        conn_type_changes: WatcherStream<ConnectionType>,
+        conn_type_changes: DirectWatcherStream<ConnectionType>,
         /// For reporting-only, the Node ID of this connection.
         node_id: NodeId,
     },
@@ -67,7 +67,7 @@ struct RttActor {
 
 #[derive(Debug)]
 struct MappedStream {
-    stream: WatcherStream<ConnectionType>,
+    stream: DirectWatcherStream<ConnectionType>,
     node_id: NodeId,
     /// Reference to the connection.
     connection: quinn::WeakConnectionHandle,
@@ -157,7 +157,7 @@ impl RttActor {
     fn handle_new_connection(
         &mut self,
         connection: quinn::WeakConnectionHandle,
-        conn_type_changes: WatcherStream<ConnectionType>,
+        conn_type_changes: DirectWatcherStream<ConnectionType>,
         node_id: NodeId,
     ) {
         self.connection_events.push(MappedStream {
