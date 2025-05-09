@@ -7,7 +7,7 @@ use redb::{
 };
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::{metrics::Metrics, util::PublicKeyBytes};
 
@@ -132,9 +132,16 @@ impl Actor {
                     Some(msg) = self.recv.recv() => {
                         match msg {
                             Message::Get { key, res } => {
-                                trace!("get {}", key);
-                                let packet = get_packet(&tables.signed_packets, &key).context("get packet failed")?;
-                                res.send(packet).ok();
+                                match get_packet(&tables.signed_packets, &key) {
+                                    Ok(packet) => {
+                                        trace!("get {key}: {}", packet.is_some());
+                                        res.send(packet).ok();
+                                    },
+                                    Err(err) => {
+                                        warn!("get {key} failed: {err:#}");
+                                        return Err(err).with_context(|| format!("get packet for {key} failed"))
+                                    }
+                                }
                             }
                             Message::Upsert { packet, res } => {
                                 let key = PublicKeyBytes::from_signed_packet(&packet);
@@ -317,8 +324,23 @@ fn get_packet(
     let Some(row) = table.get(key.as_ref()).context("database fetch failed")? else {
         return Ok(None);
     };
-    let packet = SignedPacket::deserialize(row.value()).context("parsing signed packet failed")?;
-    Ok(Some(packet))
+    match SignedPacket::deserialize(row.value()) {
+        Ok(packet) => Ok(Some(packet)),
+        Err(err) => {
+            // Prior to iroh-dns-server v0.35, we stored packets in the default `SignedPacket::as_bytes` serialization from pkarr v2,
+            // which did not include the `last_seen` timestamp added as a prefix in `SignedPacket::serialize` from pkarr v3.
+            // If decoding the packet as a serialized pkarr v3 packet fails, we assume it was stored with iroh-dns-server before v0.35,
+            // and prepend an empty timestamp.
+            let data = row.value();
+            let mut buf = Vec::with_capacity(data.len() + 8);
+            buf.extend(&[0u8; 8]);
+            buf.extend(data);
+            match SignedPacket::deserialize(&buf) {
+                Ok(packet) => Ok(Some(packet)),
+                Err(err2) => Err(anyhow::anyhow!("Failed to decode as pkarr v3: {err:#}. Also failed to decode as pkarr v2: {err2:#}"))
+            }
+        }
+    }
 }
 
 async fn evict_task(send: mpsc::Sender<Message>, options: Options, cancel: CancellationToken) {
