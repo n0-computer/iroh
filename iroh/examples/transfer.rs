@@ -85,7 +85,7 @@ struct EndpointArgs {
     #[clap(long)]
     pkarr_relay_url: Option<String>,
     /// Disable publishing node info to pkarr.
-    #[clap(long)]
+    #[clap(long, conflicts_with = "pkarr_relay_url")]
     no_pkarr_publish: bool,
     /// Use a custom domain when resolving node info via DNS.
     #[clap(long)]
@@ -98,7 +98,7 @@ struct EndpointArgs {
     no_dns_resolve: bool,
     #[cfg(feature = "discovery-local-network")]
     #[clap(long)]
-    /// Enable mDNS discovery,
+    /// Enable mDNS discovery.
     mdns: bool,
 }
 
@@ -113,7 +113,6 @@ enum Commands {
     },
     /// Fetch data.
     Fetch {
-        #[arg(index = 1)]
         ticket: String,
         #[clap(flatten)]
         endpoint_args: EndpointArgs,
@@ -146,9 +145,11 @@ async fn main() -> anyhow::Result<()> {
 
 impl EndpointArgs {
     async fn into_endpoint(self) -> anyhow::Result<Endpoint> {
+        let mut builder = Endpoint::builder();
+
         let secret_key = match std::env::var("IROH_SECRET") {
             Ok(s) => SecretKey::from_str(&s)
-                .context("failed to parse IROH_SECRET environment variable as iroh secret key")?,
+                .context("Failed to parse IROH_SECRET environment variable as iroh secret key")?,
             Err(_) => {
                 let s = SecretKey::generate(rand::rngs::OsRng);
                 println!("Generated a new node secret. To reuse, set");
@@ -156,49 +157,48 @@ impl EndpointArgs {
                 s
             }
         };
-
-        let mut builder = Endpoint::builder();
+        builder = builder.secret_key(secret_key);
 
         let relay_mode = if self.no_relay {
             RelayMode::Disabled
+        } else if !self.relay_url.is_empty() {
+            let urls = self
+                .relay_url
+                .iter()
+                .map(|u| RelayUrl::from_str(u))
+                .collect::<Result<Vec<_>, _>>()
+                .context("Failed to parse relay URL")?;
+            RelayMode::Custom(RelayMap::from_iter(urls))
         } else {
-            match (self.relay_url.is_empty(), self.env) {
-                (true, Env::Prod) => RelayMode::Default,
-                (true, Env::Staging) => RelayMode::Staging,
-                (true, Env::Dev) => {
-                    let url: RelayUrl = DEV_RELAY_URL.parse().expect("valid url");
-                    RelayMode::Custom(RelayMap::from(url))
-                }
-                (false, _) => {
-                    let urls = self
-                        .relay_url
-                        .iter()
-                        .map(|u| RelayUrl::from_str(u))
-                        .collect::<Result<Vec<_>, _>>()
-                        .context("failed to parse relay URL")?;
-                    RelayMode::Custom(RelayMap::from_iter(urls))
-                }
+            match self.env {
+                Env::Prod => RelayMode::Default,
+                Env::Staging => RelayMode::Staging,
+                Env::Dev => RelayMode::Custom(RelayMap::from(
+                    RelayUrl::from_str(DEV_RELAY_URL).expect("valid url"),
+                )),
             }
         };
+        let relay_disabled = matches!(relay_mode, RelayMode::Disabled);
+        builder = builder.relay_mode(relay_mode);
 
         if !self.no_pkarr_publish {
             let url = match (&self.pkarr_relay_url, self.env) {
-                (None, Env::Prod) => N0_DNS_PKARR_RELAY_PROD,
-                (None, Env::Staging) => N0_DNS_PKARR_RELAY_STAGING,
-                (None, Env::Dev) => DEV_PKARR_RELAY_URL,
                 (Some(url), _) => url,
+                (_, Env::Prod) => N0_DNS_PKARR_RELAY_PROD,
+                (_, Env::Staging) => N0_DNS_PKARR_RELAY_STAGING,
+                (_, Env::Dev) => DEV_PKARR_RELAY_URL,
             };
-            let url = Url::from_str(url).context("failed to parse pkarr relay url")?;
+            let url = Url::from_str(url).context("Failed to parse pkarr relay URL")?;
             builder = builder
                 .add_discovery(|secret_key| Some(PkarrPublisher::new(secret_key.clone(), url)));
         }
 
         if !self.no_dns_resolve {
             let origin_domain = match (self.dns_origin_domain, self.env) {
-                (None, Env::Prod) => N0_DNS_NODE_ORIGIN_PROD.to_string(),
-                (None, Env::Staging) => N0_DNS_NODE_ORIGIN_STAGING.to_string(),
-                (None, Env::Dev) => DEV_DNS_ORIGIN_DOMAIN.to_string(),
                 (Some(domain), _) => domain,
+                (_, Env::Prod) => N0_DNS_NODE_ORIGIN_PROD.to_string(),
+                (_, Env::Staging) => N0_DNS_NODE_ORIGIN_STAGING.to_string(),
+                (_, Env::Dev) => DEV_DNS_ORIGIN_DOMAIN.to_string(),
             };
             builder = builder.add_discovery(|_| Some(DnsDiscovery::new(origin_domain)));
         }
@@ -218,81 +218,53 @@ impl EndpointArgs {
             builder = builder.path_selection(iroh::endpoint::PathSelection::RelayOnly)
         }
 
-        let custom_dns_server = if let Some(host) = self.dns_server {
-            Some(
-                tokio::net::lookup_host(host)
-                    .await
-                    .context("failed to resolve DNS server address")?
-                    .next()
-                    .context("failed to resolve DNS server address")?,
-            )
+        if let Some(host) = self.dns_server {
+            let addr = tokio::net::lookup_host(host)
+                .await
+                .context("Failed to resolve DNS server address")?
+                .next()
+                .context("Failed to resolve DNS server address")?;
+            builder = builder.dns_resolver(DnsResolver::with_nameserver(addr));
         } else if self.env == Env::Dev {
-            Some(DEV_DNS_SERVER.parse().expect("valid addr"))
-        } else {
-            None
-        };
-        if let Some(addr) = custom_dns_server {
+            let addr = DEV_DNS_SERVER.parse().expect("valid addr");
             builder = builder.dns_resolver(DnsResolver::with_nameserver(addr));
         }
 
-        let endpoint = builder
-            .secret_key(secret_key)
-            .alpns(vec![TRANSFER_ALPN.to_vec()])
-            .relay_mode(relay_mode.clone())
-            .bind()
-            .await?;
+        let endpoint = builder.alpns(vec![TRANSFER_ALPN.to_vec()]).bind().await?;
 
         let node_id = endpoint.node_id();
         println!("Our node id:\n\t{node_id}");
-
         println!("Our direct addresses:");
         for local_endpoint in endpoint.direct_addresses().initialized().await? {
             println!("\t{} (type: {:?})", local_endpoint.addr, local_endpoint.typ)
         }
-
-        if !matches!(relay_mode, RelayMode::Disabled) {
+        if !relay_disabled {
             let relay_url = endpoint
                 .home_relay()
                 .get()?
-                .expect("should be connected to a relay server, try calling `endpoint.local_endpoints()` or `endpoint.connect()` first, to ensure the endpoint has actually attempted a connection before checking for the connected relay server");
+                .context("Failed to resolve our home relay")?;
             println!("Our home relay server:\n\t{relay_url}");
         }
 
         println!();
-
         Ok(endpoint)
     }
 }
 
 async fn provide(endpoint: Endpoint, size: u64) -> anyhow::Result<()> {
     let node_id = endpoint.node_id();
-    let relay_url = endpoint
-        .home_relay()
-        .get()?
-        .expect("should be connected to a relay server");
-    let local_addrs = endpoint
-        .direct_addresses()
-        .initialized()
-        .await?
-        .into_iter()
-        .map(|endpoint| endpoint.addr)
-        .collect::<Vec<_>>();
 
-    let node_addr = NodeAddr::from_parts(node_id, Some(relay_url.clone()), local_addrs);
+    let node_addr = endpoint.node_addr().await?;
     let ticket = NodeTicket::new(node_addr);
-    println!(
-        "Ticket with our home relay and direct addresses:\n{}\n",
-        ticket
-    );
-    let node_addr = NodeAddr::from_parts(node_id, Some(relay_url), vec![]);
+    println!("Ticket with our home relay and direct addresses:\n{ticket}\n",);
+
+    let mut node_addr = endpoint.node_addr().await?;
+    node_addr.direct_addresses = Default::default();
     let ticket = NodeTicket::new(node_addr);
-    println!(
-        "Ticket with our home relay but no direct addresses:\n{}\n",
-        ticket
-    );
-    let node_addr = NodeAddr::from_parts(node_id, None, vec![]);
-    let ticket = NodeTicket::new(node_addr);
-    println!("Ticket with only our node id:\n{}\n", ticket);
+    println!("Ticket with our home relay but no direct addresses:\n{ticket}\n",);
+
+    let ticket = NodeTicket::new(NodeAddr::new(node_id));
+    println!("Ticket with only our node id:\n{ticket}\n");
 
     // accept incoming connections, returns a normal QUIC connection
     while let Some(incoming) = endpoint.accept().await {
