@@ -140,13 +140,21 @@
 <a href="#139" id="139">139</a>
 <a href="#140" id="140">140</a>
 <a href="#141" id="141">141</a>
-<a href="#142" id="142">142</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#142" id="142">142</a>
+<a href="#143" id="143">143</a>
+<a href="#144" id="144">144</a>
+<a href="#145" id="145">145</a>
+<a href="#146" id="146">146</a>
+<a href="#147" id="147">147</a>
+<a href="#148" id="148">148</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     io,
     net::SocketAddr,
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
 };
 
+<span class="kw">use </span>netwatch::UdpSocket;
 <span class="kw">use </span>quinn::AsyncUdpSocket;
 <span class="kw">use </span>tracing::trace;
 
@@ -281,5 +289,9 @@
     <span class="kw">pub fn </span>on_network_change(<span class="kw-2">&amp;</span><span class="self">self</span>, _info: <span class="kw-2">&amp;</span><span class="kw">crate</span>::magicsock::NetInfo) {
         <span class="comment">// Nothing to do for now
     </span>}
+
+    <span class="kw">pub fn </span>socket(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Arc&lt;UdpSocket&gt; {
+        <span class="self">self</span>.socket.as_socket()
+    }
 }
 </code></pre></div></section></main></body></html>

@@ -3607,7 +3607,19 @@
 <a href="#3606" id="3606">3606</a>
 <a href="#3607" id="3607">3607</a>
 <a href="#3608" id="3608">3608</a>
-<a href="#3609" id="3609">3609</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#3609" id="3609">3609</a>
+<a href="#3610" id="3610">3610</a>
+<a href="#3611" id="3611">3611</a>
+<a href="#3612" id="3612">3612</a>
+<a href="#3613" id="3613">3613</a>
+<a href="#3614" id="3614">3614</a>
+<a href="#3615" id="3615">3615</a>
+<a href="#3616" id="3616">3616</a>
+<a href="#3617" id="3617">3617</a>
+<a href="#3618" id="3618">3618</a>
+<a href="#3619" id="3619">3619</a>
+<a href="#3620" id="3620">3620</a>
+<a href="#3621" id="3621">3621</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4938,6 +4950,21 @@
         <span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">let </span>(ip_transports, port_mapper) = bind_ip(addr_v4, addr_v6, metrics.portmapper.clone())<span class="question-mark">?</span>;
 
+        <span class="attr">#[cfg(not(wasm_browser))]
+        </span><span class="kw">let </span>v4_socket = ip_transports
+            .iter()
+            .find(|t| t.bind_addr().is_ipv4())
+            .expect(<span class="string">"must bind a ipv4 socket"</span>)
+            .socket();
+        <span class="attr">#[cfg(not(wasm_browser))]
+        </span><span class="kw">let </span>v6_socket = ip_transports.iter().find_map(|t| {
+            <span class="kw">if </span>t.bind_addr().is_ipv6() {
+                <span class="prelude-val">Some</span>(t.socket())
+            } <span class="kw">else </span>{
+                <span class="prelude-val">None
+            </span>}
+        });
+
         <span class="kw">let </span>ip_mapped_addrs = IpMappedAddresses::default();
 
         <span class="kw">let </span>net_reporter = net_report::Client::new(
@@ -5060,18 +5087,15 @@
         .with_no_client_auth();
 
         <span class="attr">#[cfg(not(wasm_browser))]
-        </span><span class="kw">let </span>quic_config = <span class="prelude-val">Some</span>(QuicConfig {
-            ep: qad_endpoint,
-            client_config,
-            ipv4: <span class="bool-val">true</span>,
-            ipv6,
-        });
-        <span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">let </span>net_report_config = net_report::Options::default()
-            <span class="comment">// TODO:
-            // .stun_v4(Some(actor_sockets.v4.as_socket().clone()))
-            // .stun_v6(actor_sockets.v6.as_ref().map(|s| s.as_socket().clone()))
-            </span>.quic_config(quic_config);
+            .stun_v4(<span class="prelude-val">Some</span>(v4_socket))
+            .stun_v6(v6_socket)
+            .quic_config(<span class="prelude-val">Some</span>(QuicConfig {
+                ep: qad_endpoint,
+                client_config,
+                ipv4: <span class="bool-val">true</span>,
+                ipv6,
+            }));
         <span class="attr">#[cfg(wasm_browser)]
         </span><span class="kw">let </span>net_report_config = net_report::Options::default();
 
