@@ -735,9 +735,10 @@ enum ProbeError {
 }
 
 /// Pieces needed to do QUIC address discovery.
-#[derive(Debug, Clone)]
+#[derive(derive_more::Debug, Clone)]
 pub struct QuicConfig {
     /// A QUIC Endpoint
+    #[debug("quinn::Endpoint")]
     pub ep: quinn::Endpoint,
     /// A client config.
     pub client_config: rustls::ClientConfig,

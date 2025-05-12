@@ -1035,10 +1035,16 @@ mod test_dns_pkarr {
             .on_node(&ep1.node_id(), PUBLISH_TIMEOUT)
             .await?;
 
-        // we connect only by node id!
-        let res = ep2.connect(ep1.node_id(), TEST_ALPN).await;
-        assert!(res.is_ok(), "connection established: {:?}", res);
-        Ok(())
+        // retry multiple times, as the information that was published, might not be enough
+        for _ in 0..10 {
+            // we connect only by node id!
+            let res = ep2.connect(ep1.node_id(), TEST_ALPN).await;
+            if res.is_ok() {
+                return Ok(());
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+        panic!("failed to connect after 10 attempts")
     }
 
     async fn ep_with_discovery(

@@ -39,7 +39,7 @@ use crate::{
         pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryItem, DiscoverySubscribers,
         DiscoveryTask, Lagged, UserData,
     },
-    magicsock::{self, transports, Handle, NodeIdMappedAddr},
+    magicsock::{self, Handle, NodeIdMappedAddr},
     metrics::EndpointMetrics,
     tls,
     watchable::{DirectWatcher, Watcher},
@@ -911,7 +911,7 @@ impl Endpoint {
     /// To wait for a home relay connection to be established, use [`Watcher::initialized`]:
     /// ```no_run
     /// use futures_lite::StreamExt;
-    /// use iroh::Endpoint;
+    /// use iroh::{watchable::Watcher as _, Endpoint};
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
@@ -947,7 +947,7 @@ impl Endpoint {
     /// To get the first set of direct addresses use [`Watcher::initialized`]:
     /// ```no_run
     /// use futures_lite::StreamExt;
-    /// use iroh::Endpoint;
+    /// use iroh::{watchable::Watcher as _, Endpoint};
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
@@ -965,8 +965,12 @@ impl Endpoint {
     ///
     /// The [`Endpoint`] always binds on an IPv4 address and also tries to bind on an IPv6
     /// address if available.
-    pub fn bound_sockets(&self) -> Vec<transports::Addr> {
-        self.msock.local_addr()
+    pub fn bound_sockets(&self) -> Vec<SocketAddr> {
+        self.msock
+            .local_addr()
+            .into_iter()
+            .filter_map(|addr| addr.try_into().ok())
+            .collect()
     }
 
     // # Getter methods for information about other nodes.

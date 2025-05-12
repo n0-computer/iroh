@@ -44,6 +44,24 @@ impl<T> Clone for Watchable<T> {
     }
 }
 
+/// Abstracts over `Option<T>` and `Vec<T>`
+pub trait Nullable<T> {
+    /// Converts this value into an `Option`.
+    fn into_option(self) -> Option<T>;
+}
+
+impl<T> Nullable<T> for Option<T> {
+    fn into_option(self) -> Option<T> {
+        self
+    }
+}
+
+impl<T> Nullable<T> for Vec<T> {
+    fn into_option(mut self) -> Option<T> {
+        self.pop()
+    }
+}
+
 impl<T: Clone + Eq> Watchable<T> {
     /// Creates a [`Watchable`] initialized to given value.
     pub fn new(value: T) -> Self {
@@ -170,14 +188,17 @@ pub trait Watcher: Clone {
     /// # Cancel Safety
     ///
     /// The returned future is cancel-safe.
-    fn initialized<T>(&mut self) -> InitializedFut<T, Self>
+    fn initialized<T, W>(&mut self) -> InitializedFut<T, W, Self>
     where
-        Self: Watcher<Value = Option<T>>,
+        W: Nullable<T>,
+        Self: Watcher<Value = W>,
     {
         InitializedFut {
             initial: match self.get() {
-                Ok(Some(value)) => Some(Ok(value)),
-                Ok(None) => None,
+                Ok(value) => match value.into_option() {
+                    Some(value) => Some(Ok(value)),
+                    None => None,
+                },
                 Err(Disconnected) => Some(Err(Disconnected)),
             },
             watcher: self,
@@ -545,13 +566,13 @@ impl<W: Watcher> Future for NextFut<'_, W> {
 ///
 /// This Future is cancel-safe.
 #[derive(Debug)]
-pub struct InitializedFut<'a, T, W: Watcher<Value = Option<T>>> {
+pub struct InitializedFut<'a, T, V: Nullable<T>, W: Watcher<Value = V>> {
     initial: Option<Result<T, Disconnected>>,
     watcher: &'a mut W,
 }
 
-impl<T: Clone + Eq + Unpin, W: Watcher<Value = Option<T>> + Unpin> Future
-    for InitializedFut<'_, T, W>
+impl<T: Clone + Eq + Unpin, V: Nullable<T>, W: Watcher<Value = V> + Unpin> Future
+    for InitializedFut<'_, T, V, W>
 {
     type Output = Result<T, Disconnected>;
 
@@ -560,7 +581,8 @@ impl<T: Clone + Eq + Unpin, W: Watcher<Value = Option<T>> + Unpin> Future
             return Poll::Ready(value);
         }
         loop {
-            if let Some(value) = ready!(self.as_mut().watcher.poll_updated(cx)?) {
+            let value = ready!(self.as_mut().watcher.poll_updated(cx)?);
+            if let Some(value) = value.into_option() {
                 return Poll::Ready(Ok(value));
             }
         }
