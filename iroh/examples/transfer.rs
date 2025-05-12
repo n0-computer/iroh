@@ -8,16 +8,42 @@ use bytes::Bytes;
 use clap::{Parser, Subcommand};
 use indicatif::HumanBytes;
 use iroh::{
-    discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher},
-    endpoint::{ConnectionError, PathSelection},
+    discovery::{
+        dns::DnsDiscovery,
+        pkarr::{PkarrPublisher, N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING},
+    },
+    dns::{DnsResolver, N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING},
+    endpoint::ConnectionError,
     watchable::Watcher,
-    Endpoint, NodeAddr, RelayMode, RelayUrl, SecretKey,
+    Endpoint, NodeAddr, NodeId, RelayMap, RelayMode, RelayUrl, SecretKey,
 };
 use iroh_base::ticket::NodeTicket;
-use tracing::info;
+use n0_future::task::AbortOnDropHandle;
+use tokio_stream::StreamExt;
+use tracing::{info, warn};
+use url::Url;
+
 // Transfer ALPN that we are using to communicate over the `Endpoint`
 const TRANSFER_ALPN: &[u8] = b"n0/iroh/transfer/example/0";
 
+const DEV_RELAY_URL: &str = "http://localhost:3340";
+const DEV_PKARR_RELAY_URL: &str = "http://localhost:8080/pkarr";
+const DEV_DNS_ORIGIN_DOMAIN: &str = "irohdns.example";
+const DEV_DNS_SERVER: &str = "127.0.0.1:5300";
+
+/// Transfer data between iroh nodes.
+///
+/// This is a useful example to test connection establishment and transfer speed.
+///
+/// Note that some options are only available with optional features:
+///
+/// --relay-only needs the `test-utils` feature
+///
+/// --mdns needs the `discovery-local-network` feature
+///
+/// To enable all features, run the example with --all-features:
+///
+/// cargo run --release --example transfer --all-features -- ARGS
 #[derive(Parser, Debug)]
 #[command(name = "transfer")]
 struct Cli {
@@ -25,190 +51,293 @@ struct Cli {
     command: Commands,
 }
 
+#[derive(Clone, Copy, Default, Debug, Eq, PartialEq, clap::ValueEnum)]
+enum Env {
+    /// Use the production servers hosted by number0.
+    Prod,
+    /// Use the staging servers hosted by number0.
+    #[default]
+    Staging,
+    /// Use localhost servers.
+    ///
+    /// To run the DNS server:
+    ///     cargo run --bin iroh-dns-server
+    /// To run the relay server:
+    ///     cargo run --bin iroh-relay --features server -- --dev
+    Dev,
+}
+
+impl Env {
+    fn relay_mode(self) -> RelayMode {
+        match self {
+            Env::Prod => RelayMode::Default,
+            Env::Staging => RelayMode::Staging,
+            Env::Dev => RelayMode::Custom(RelayMap::from(
+                RelayUrl::from_str(DEV_RELAY_URL).expect("valid url"),
+            )),
+        }
+    }
+
+    fn pkarr_relay_url(self) -> Url {
+        match self {
+            Env::Prod => N0_DNS_PKARR_RELAY_PROD.parse(),
+            Env::Staging => N0_DNS_PKARR_RELAY_STAGING.parse(),
+            Env::Dev => DEV_PKARR_RELAY_URL.parse(),
+        }
+        .expect("valid url")
+    }
+
+    fn dns_origin_domain(self) -> String {
+        match self {
+            Env::Prod => N0_DNS_NODE_ORIGIN_PROD.to_string(),
+            Env::Staging => N0_DNS_NODE_ORIGIN_STAGING.to_string(),
+            Env::Dev => DEV_DNS_ORIGIN_DOMAIN.to_string(),
+        }
+    }
+}
+
+#[derive(Debug, clap::Parser)]
+struct EndpointArgs {
+    /// Set the environment for relay, pkarr, and DNS servers.
+    ///
+    /// If other options are set, those will override the environment defaults.
+    #[clap(short, long, value_enum, default_value_t)]
+    env: Env,
+    /// Set one or more relay servers to use.
+    #[clap(long)]
+    relay_url: Vec<RelayUrl>,
+    /// Disable relays completely.
+    #[clap(long, conflicts_with = "relay_url")]
+    no_relay: bool,
+    /// If set no direct connections will be established.
+    #[clap(long)]
+    relay_only: bool,
+    /// Use a custom pkarr server.
+    #[clap(long)]
+    pkarr_relay_url: Option<Url>,
+    /// Disable publishing node info to pkarr.
+    #[clap(long, conflicts_with = "pkarr_relay_url")]
+    no_pkarr_publish: bool,
+    /// Use a custom domain when resolving node info via DNS.
+    #[clap(long)]
+    dns_origin_domain: Option<String>,
+    /// Use a custom DNS server for resolving relay and node info domains.
+    #[clap(long)]
+    dns_server: Option<String>,
+    /// Do not resolve node info via DNS.
+    #[clap(long)]
+    no_dns_resolve: bool,
+    #[cfg(feature = "discovery-local-network")]
+    #[clap(long)]
+    /// Enable mDNS discovery.
+    mdns: bool,
+}
+
 #[derive(Subcommand, Debug)]
 enum Commands {
+    /// Provide data.
     Provide {
-        #[clap(long, default_value = "1G", value_parser = parse_byte_size)]
+        #[clap(long, default_value = "100M", value_parser = parse_byte_size)]
         size: u64,
-        #[clap(long)]
-        relay_url: Option<String>,
-        #[clap(long, default_value = "false")]
-        relay_only: bool,
-        #[clap(long)]
-        pkarr_relay_url: Option<String>,
-        #[clap(long)]
-        dns_origin_domain: Option<String>,
+        #[clap(flatten)]
+        endpoint_args: EndpointArgs,
     },
+    /// Fetch data.
     Fetch {
-        #[arg(index = 1)]
         ticket: String,
-        #[clap(long)]
-        relay_url: Option<String>,
-        #[clap(long, default_value = "false")]
-        relay_only: bool,
-        #[clap(long)]
-        pkarr_relay_url: Option<String>,
-        #[clap(long)]
-        dns_origin_domain: Option<String>,
+        #[clap(flatten)]
+        endpoint_args: EndpointArgs,
     },
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let cli = Cli::parse();
-
-    match &cli.command {
+    match cli.command {
         Commands::Provide {
             size,
-            relay_url,
-            relay_only,
-            pkarr_relay_url,
-            dns_origin_domain,
+            endpoint_args,
         } => {
-            provide(
-                *size,
-                relay_url.clone(),
-                *relay_only,
-                pkarr_relay_url.clone(),
-                dns_origin_domain.clone(),
-            )
-            .await?
+            let endpoint = endpoint_args.bind_endpoint().await?;
+            provide(endpoint, size).await?
         }
         Commands::Fetch {
             ticket,
-            relay_url,
-            relay_only,
-            pkarr_relay_url,
-            dns_origin_domain,
+            endpoint_args,
         } => {
-            fetch(
-                ticket,
-                relay_url.clone(),
-                *relay_only,
-                pkarr_relay_url.clone(),
-                dns_origin_domain.clone(),
-            )
-            .await?
+            let endpoint = endpoint_args.bind_endpoint().await?;
+            fetch(endpoint, &ticket).await?
         }
     }
 
     Ok(())
 }
 
-async fn provide(
-    size: u64,
-    relay_url: Option<String>,
-    relay_only: bool,
-    pkarr_relay_url: Option<String>,
-    dns_origin_domain: Option<String>,
-) -> anyhow::Result<()> {
-    let secret_key = SecretKey::generate(rand::rngs::OsRng);
-    let relay_mode = match relay_url {
-        Some(relay_url) => {
-            let relay_url = RelayUrl::from_str(&relay_url)?;
-            RelayMode::Custom(relay_url.into())
-        }
-        None => RelayMode::Default,
-    };
-    let path_selection = match relay_only {
-        true => PathSelection::RelayOnly,
-        false => PathSelection::default(),
-    };
+impl EndpointArgs {
+    async fn bind_endpoint(self) -> Result<Endpoint> {
+        let mut builder = Endpoint::builder();
 
-    let mut endpoint_builder = Endpoint::builder();
-
-    if let Some(pkarr_relay_url) = pkarr_relay_url {
-        let pkarr_relay_url = pkarr_relay_url
-            .parse()
-            .context("Invalid pkarr URL provided")?;
-
-        let pkarr_discovery_closure = move |secret_key: &SecretKey| {
-            let pkarr_d = PkarrPublisher::new(secret_key.clone(), pkarr_relay_url);
-            Some(pkarr_d)
+        let secret_key = match std::env::var("IROH_SECRET") {
+            Ok(s) => SecretKey::from_str(&s)
+                .context("Failed to parse IROH_SECRET environment variable as iroh secret key")?,
+            Err(_) => {
+                let s = SecretKey::generate(rand::rngs::OsRng);
+                println!("Generated a new node secret. To reuse, set");
+                println!("\tIROH_SECRET={s}");
+                s
+            }
         };
-        endpoint_builder = endpoint_builder.add_discovery(pkarr_discovery_closure);
+        builder = builder.secret_key(secret_key);
+
+        let relay_mode = if self.no_relay {
+            RelayMode::Disabled
+        } else if !self.relay_url.is_empty() {
+            RelayMode::Custom(RelayMap::from_iter(self.relay_url))
+        } else {
+            self.env.relay_mode()
+        };
+        builder = builder.relay_mode(relay_mode);
+
+        if !self.no_pkarr_publish {
+            let url = self
+                .pkarr_relay_url
+                .unwrap_or_else(|| self.env.pkarr_relay_url());
+            builder = builder
+                .add_discovery(|secret_key| Some(PkarrPublisher::new(secret_key.clone(), url)));
+        }
+
+        if !self.no_dns_resolve {
+            let domain = self
+                .dns_origin_domain
+                .unwrap_or_else(|| self.env.dns_origin_domain());
+            builder = builder.add_discovery(|_| Some(DnsDiscovery::new(domain)));
+        }
+
+        #[cfg(feature = "discovery-local-network")]
+        if self.mdns {
+            builder = builder.add_discovery(|secret_key| {
+                Some(
+                    iroh::discovery::mdns::MdnsDiscovery::new(secret_key.public())
+                        .expect("Failed to create mDNS discovery"),
+                )
+            });
+        }
+
+        #[cfg(feature = "test-utils")]
+        if self.relay_only {
+            builder = builder.path_selection(iroh::endpoint::PathSelection::RelayOnly)
+        }
+
+        if let Some(host) = self.dns_server {
+            let addr = tokio::net::lookup_host(host)
+                .await
+                .context("Failed to resolve DNS server address")?
+                .next()
+                .context("Failed to resolve DNS server address")?;
+            builder = builder.dns_resolver(DnsResolver::with_nameserver(addr));
+        } else if self.env == Env::Dev {
+            let addr = DEV_DNS_SERVER.parse().expect("valid addr");
+            builder = builder.dns_resolver(DnsResolver::with_nameserver(addr));
+        }
+
+        let endpoint = builder.alpns(vec![TRANSFER_ALPN.to_vec()]).bind().await?;
+
+        let node_id = endpoint.node_id();
+        println!("Our node id:\n\t{node_id}");
+        println!("Our direct addresses:");
+        for local_endpoint in endpoint.direct_addresses().initialized().await? {
+            println!("\t{} (type: {:?})", local_endpoint.addr, local_endpoint.typ)
+        }
+        if !self.no_relay {
+            let relay_url = endpoint
+                .home_relay()
+                .get()?
+                .pop()
+                .context("Failed to resolve our home relay")?;
+            println!("Our home relay server:\n\t{relay_url}");
+        }
+
+        println!();
+        Ok(endpoint)
     }
+}
 
-    if let Some(dns_origin_domain) = dns_origin_domain {
-        let dns_discovery_closure = move |_: &SecretKey| Some(DnsDiscovery::new(dns_origin_domain));
-
-        endpoint_builder = endpoint_builder.add_discovery(dns_discovery_closure);
-    }
-
-    let endpoint = endpoint_builder
-        .secret_key(secret_key)
-        .alpns(vec![TRANSFER_ALPN.to_vec()])
-        .relay_mode(relay_mode)
-        .path_selection(path_selection)
-        .bind()
-        .await?;
-
+async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
     let node_id = endpoint.node_id();
 
-    for local_endpoint in endpoint.direct_addresses().initialized().await? {
-        println!("\t{}", local_endpoint.addr)
-    }
-
-    let relay_url = endpoint
-        .home_relay()
-        .get()?
-        .pop()
-        .expect("should be connected to a relay server");
-    let local_addrs = endpoint
-        .direct_addresses()
-        .initialized()
-        .await?
-        .into_iter()
-        .map(|endpoint| endpoint.addr)
-        .collect::<Vec<_>>();
-
-    let node_addr = NodeAddr::from_parts(node_id, Some(relay_url), local_addrs);
+    let node_addr = endpoint.node_addr().await?;
     let ticket = NodeTicket::new(node_addr);
+    println!("Ticket with our home relay and direct addresses:\n{ticket}\n",);
 
-    println!("NodeTicket: {}", ticket);
+    let mut node_addr = endpoint.node_addr().await?;
+    node_addr.direct_addresses = Default::default();
+    let ticket = NodeTicket::new(node_addr);
+    println!("Ticket with our home relay but no direct addresses:\n{ticket}\n",);
+
+    let ticket = NodeTicket::new(NodeAddr::new(node_id));
+    println!("Ticket with only our node id:\n{ticket}\n");
 
     // accept incoming connections, returns a normal QUIC connection
     while let Some(incoming) = endpoint.accept().await {
         let connecting = match incoming.accept() {
             Ok(connecting) => connecting,
             Err(err) => {
-                tracing::warn!("incoming connection failed: {err:#}");
+                warn!("incoming connection failed: {err:#}");
                 // we can carry on in these cases:
                 // this can be caused by retransmitted datagrams
                 continue;
             }
         };
-        let conn = connecting.await?;
-        let node_id = conn.remote_node_id()?;
-        info!(
-            "new connection from {node_id} with ALPN {}",
-            String::from_utf8_lossy(TRANSFER_ALPN),
-        );
-
         // spawn a task to handle reading and writing off of the connection
+        let endpoint_clone = endpoint.clone();
         tokio::spawn(async move {
+            let conn = connecting.await?;
+            let node_id = conn.remote_node_id()?;
+            info!(
+                "new connection from {node_id} with ALPN {}",
+                String::from_utf8_lossy(TRANSFER_ALPN),
+            );
+
+            let remote = node_id.fmt_short();
+            println!("[{remote}] Connected");
+
+            // Spawn a background task that prints connection type changes. Will be aborted on drop.
+            let _guard = watch_conn_type(&endpoint_clone, node_id);
+
             // accept a bi-directional QUIC connection
             // use the `quinn` APIs to send and recv content
             let (mut send, mut recv) = conn.accept_bi().await?;
             tracing::debug!("accepted bi stream, waiting for data...");
             let message = recv.read_to_end(100).await?;
             let message = String::from_utf8(message)?;
-            println!("received: {message}");
+            println!("[{remote}] Received: \"{message}\"");
 
+            let start = Instant::now();
             send_data_on_stream(&mut send, size).await?;
 
             // We sent the last message, so wait for the client to close the connection once
             // it received this message.
             let res = tokio::time::timeout(Duration::from_secs(3), async move {
                 let closed = conn.closed().await;
+                let remote = node_id.fmt_short();
                 if !matches!(closed, ConnectionError::ApplicationClosed(_)) {
-                    println!("node {node_id} disconnected with an error: {closed:#}");
+                    println!("[{remote}] Node disconnected with an error: {closed:#}");
                 }
             })
             .await;
+            let duration = start.elapsed();
+
+            println!(
+                "[{remote}] Transferred {} in {:.4}s, {}/s",
+                HumanBytes(size),
+                duration.as_secs_f64(),
+                HumanBytes((size as f64 / duration.as_secs_f64()) as u64)
+            );
             if res.is_err() {
-                println!("node {node_id} did not disconnect within 3 seconds");
+                println!("[{remote}] Did not disconnect within 3 seconds");
+            } else {
+                println!("[{remote}] Disconnected");
             }
             Ok::<_, anyhow::Error>(())
         });
@@ -218,85 +347,29 @@ async fn provide(
     Ok(())
 }
 
-async fn fetch(
-    ticket: &str,
-    relay_url: Option<String>,
-    relay_only: bool,
-    pkarr_relay_url: Option<String>,
-    dns_origin_domain: Option<String>,
-) -> anyhow::Result<()> {
+async fn fetch(endpoint: Endpoint, ticket: &str) -> Result<()> {
+    let me = endpoint.node_id().fmt_short();
     let ticket: NodeTicket = ticket.parse()?;
-    let secret_key = SecretKey::generate(rand::rngs::OsRng);
-    let relay_mode = match relay_url {
-        Some(relay_url) => {
-            let relay_url = RelayUrl::from_str(&relay_url)?;
-            RelayMode::Custom(relay_url.into())
-        }
-        None => RelayMode::Default,
-    };
-    let path_selection = match relay_only {
-        true => PathSelection::RelayOnly,
-        false => PathSelection::default(),
-    };
-    let mut endpoint_builder = Endpoint::builder();
-
-    if let Some(pkarr_relay_url) = pkarr_relay_url {
-        let pkarr_relay_url = pkarr_relay_url
-            .parse()
-            .context("Invalid pkarr URL provided")?;
-
-        let pkarr_discovery_closure = move |secret_key: &SecretKey| {
-            let pkarr_d = PkarrPublisher::new(secret_key.clone(), pkarr_relay_url);
-            Some(pkarr_d)
-        };
-        endpoint_builder = endpoint_builder.add_discovery(pkarr_discovery_closure);
-    }
-
-    if let Some(dns_origin_domain) = dns_origin_domain {
-        let dns_discovery_closure = move |_: &SecretKey| Some(DnsDiscovery::new(dns_origin_domain));
-
-        endpoint_builder = endpoint_builder.add_discovery(dns_discovery_closure);
-    }
-
-    let endpoint = endpoint_builder
-        .secret_key(secret_key)
-        .alpns(vec![TRANSFER_ALPN.to_vec()])
-        .relay_mode(relay_mode)
-        .path_selection(path_selection)
-        .bind()
-        .await?;
-
+    let remote_node_id = ticket.node_addr().node_id;
     let start = Instant::now();
-
-    let me = endpoint.node_id();
-    println!("node id: {me}");
-    println!("node listening addresses:");
-    for local_endpoint in endpoint.direct_addresses().initialized().await? {
-        println!("\t{}", local_endpoint.addr)
-    }
-
-    let relay_url = endpoint
-        .home_relay()
-        .get()?
-        .pop()
-        .expect("should be connected to a relay server, try calling `endpoint.local_endpoints()` or `endpoint.connect()` first, to ensure the endpoint has actually attempted a connection before checking for the connected relay server");
-    println!("node relay server url: {relay_url}\n");
 
     // Attempt to connect, over the given ALPN.
     // Returns a Quinn connection.
     let conn = endpoint
-        .connect(ticket.node_addr().clone(), TRANSFER_ALPN)
+        .connect(NodeAddr::from(ticket), TRANSFER_ALPN)
         .await?;
-    info!("connected");
+    println!("Connected to {remote_node_id}");
+    // Spawn a background task that prints connection type changes. Will be aborted on drop.
+    let _guard = watch_conn_type(&endpoint, remote_node_id);
 
     // Use the Quinn API to send and recv content.
     let (mut send, mut recv) = conn.open_bi().await?;
 
-    let message = format!("{me} is saying 'hello!'");
+    let message = format!("{me} is saying hello!");
     send.write_all(message.as_bytes()).await?;
-
     // Call `finish` to signal no more data will be sent on this stream.
     send.finish()?;
+    println!("Sent: \"{message}\"");
 
     let (len, time_to_first_byte, chnk) = drain_stream(&mut recv, false).await?;
 
@@ -306,19 +379,13 @@ async fn fetch(
 
     let duration = start.elapsed();
     println!(
-        "Received {} in {:.4}s with time to first byte {}s in {} chunks",
+        "Received {} in {:.4}s ({}/s, time to first byte {}s, {} chunks)",
         HumanBytes(len as u64),
         duration.as_secs_f64(),
+        HumanBytes((len as f64 / duration.as_secs_f64()) as u64),
         time_to_first_byte.as_secs_f64(),
         chnk
     );
-    println!(
-        "Transferred {} in {:.4}, {}/s",
-        HumanBytes(len as u64),
-        duration.as_secs_f64(),
-        HumanBytes((len as f64 / duration.as_secs_f64()) as u64)
-    );
-
     Ok(())
 }
 
@@ -406,4 +473,17 @@ async fn send_data_on_stream(
 fn parse_byte_size(s: &str) -> Result<u64> {
     let cfg = parse_size::Config::new().with_binary();
     cfg.parse_size(s).map_err(|e| anyhow::anyhow!(e))
+}
+
+fn watch_conn_type(endpoint: &Endpoint, node_id: NodeId) -> AbortOnDropHandle<()> {
+    let mut stream = endpoint.conn_type(node_id).unwrap().stream();
+    let task = tokio::task::spawn(async move {
+        while let Some(conn_type) = stream.next().await {
+            println!(
+                "[{}] Connection type changed to: {conn_type}",
+                node_id.fmt_short()
+            );
+        }
+    });
+    AbortOnDropHandle::new(task)
 }
