@@ -402,6 +402,52 @@ impl<T: Clone + Eq, W: Watcher<Value = Option<T>>> Watcher for JoinOpt<T, W> {
     }
 }
 
+/// JOIN OPT
+#[derive(Debug, Clone)]
+pub struct Merge2<T: Clone + Eq, W: Watcher<Value = Vec<T>>, V: Watcher<Value = Vec<T>>> {
+    a: W,
+    b: V,
+}
+impl<T: Clone + Eq, W: Watcher<Value = Vec<T>>, V: Watcher<Value = Vec<T>>> Merge2<T, W, V> {
+    /// Joins a set of watchers into a single watcher
+    pub fn new(a: W, b: V) -> Self {
+        Self { a, b }
+    }
+}
+
+impl<T: Clone + Eq, W: Watcher<Value = Vec<T>>, V: Watcher<Value = Vec<T>>> Watcher
+    for Merge2<T, W, V>
+{
+    type Value = Vec<T>;
+
+    fn get(&self) -> Result<Self::Value, Disconnected> {
+        let mut out = self.a.get()?;
+        out.extend(self.b.get()?);
+
+        Ok(out)
+    }
+
+    fn poll_updated(
+        &mut self,
+        cx: &mut task::Context<'_>,
+    ) -> Poll<Result<Self::Value, Disconnected>> {
+        'outer: loop {
+            match self.a.poll_updated(cx) {
+                Poll::Ready(Ok(_)) => break 'outer,
+                Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
+                Poll::Pending => {}
+            }
+            match self.b.poll_updated(cx) {
+                Poll::Ready(Ok(_)) => break 'outer,
+                Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
+                Poll::Pending => {}
+            }
+        }
+
+        Poll::Ready(self.get())
+    }
+}
+
 /// Wraps a [`Watcher`] to allow observing a derived value.
 ///
 /// See [`Watcher::map`].

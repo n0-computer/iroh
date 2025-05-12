@@ -6,6 +6,7 @@ use std::{
 };
 
 use iroh_base::{NodeId, RelayUrl};
+use tracing::trace;
 
 mod ip;
 pub(crate) mod relay;
@@ -27,6 +28,8 @@ impl Transports {
 
     pub fn poll_send(&self, destination: &Addr, transmit: &Transmit<'_>) -> Poll<io::Result<()>> {
         // TODO: should this send on all, or only a single transport?
+
+        trace!(?destination, "sending");
 
         match destination {
             Addr::Ipv4(addr, port) => {
@@ -113,8 +116,7 @@ impl Transports {
         });
         let relays = watchable::JoinOpt::new(relays).expect("disconnected");
 
-        // TODO: join relays and ips
-        ips
+        watchable::Merge2::new(ips, relays)
     }
 
     pub fn max_transmit_segments(&self) -> usize {
