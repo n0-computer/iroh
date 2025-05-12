@@ -28,14 +28,14 @@ use self::actor::{RelayActor, RelayActorMessage, RelayRecvDatagram, RelaySendIte
 
 #[derive(Debug)]
 pub struct RelayTransport {
-    /// Queue to receive datagrams from relays for [`AsyncUdpSocket::poll_recv`].
+    /// Queue to receive datagrams from relays for [`quinn::AsyncUdpSocket::poll_recv`].
     ///
     /// Relay datagrams received by relays are put into this queue and consumed by
-    /// [`AsyncUdpSocket`].  This queue takes care of the wakers needed by
-    /// [`AsyncUdpSocket::poll_recv`].
-    pub(crate) relay_datagram_recv_queue: Arc<RelayDatagramRecvQueue>,
+    /// [`quinn::AsyncUdpSocket`].  This queue takes care of the wakers needed by
+    /// [`quinn::AsyncUdpSocket::poll_recv`].
+    relay_datagram_recv_queue: Arc<RelayDatagramRecvQueue>,
     /// Channel on which to send datagrams via a relay server.
-    pub(super) relay_datagram_send_channel: RelayDatagramSendChannelSender,
+    relay_datagram_send_channel: RelayDatagramSendChannelSender,
     actor_sender: mpsc::Sender<RelayActorMessage>,
     _actor_handle: AbortOnDropHandle<()>,
     my_relay: Watchable<Option<RelayUrl>>,
@@ -204,17 +204,16 @@ impl RelayTransport {
 /// and [`MagicSock`].
 ///
 /// [`try_send`]: Self::try_send
-/// [`RelayActor`]: crate::magicsock::RelayActor
 /// [`MagicSock`]: crate::magicsock::MagicSock
 #[derive(Debug)]
-pub(crate) struct RelayDatagramRecvQueue {
+struct RelayDatagramRecvQueue {
     queue: ConcurrentQueue<RelayRecvDatagram>,
     waker: AtomicWaker,
 }
 
 impl RelayDatagramRecvQueue {
     /// Creates a new, empty queue with a fixed size bound of 512 items.
-    pub(crate) fn new() -> Self {
+    fn new() -> Self {
         Self {
             queue: ConcurrentQueue::bounded(512),
             waker: AtomicWaker::new(),
@@ -225,7 +224,7 @@ impl RelayDatagramRecvQueue {
     /// that's registered its waker with a [`poll_recv`] call.
     ///
     /// [`poll_recv`]: Self::poll_recv
-    pub(crate) fn try_send(
+    fn try_send(
         &self,
         item: RelayRecvDatagram,
     ) -> Result<(), concurrent_queue::PushError<RelayRecvDatagram>> {
@@ -244,9 +243,9 @@ impl RelayDatagramRecvQueue {
     /// woken up for new items.
     ///
     /// The reason this method is made available as `&self` is because
-    /// the interface for quinn's [`AsyncUdpSocket::poll_recv`] requires us
+    /// the interface for quinn's [`quinn::AsyncUdpSocket::poll_recv`] requires us
     /// to be able to poll from `&self`.
-    pub(crate) fn poll_recv(&self, cx: &mut Context) -> Poll<Result<RelayRecvDatagram>> {
+    fn poll_recv(&self, cx: &mut Context) -> Poll<Result<RelayRecvDatagram>> {
         match self.queue.pop() {
             Ok(value) => Poll::Ready(Ok(value)),
             Err(concurrent_queue::PopError::Empty) => {
@@ -271,7 +270,7 @@ impl RelayDatagramRecvQueue {
 
 /// Creates a sender and receiver pair for sending datagrams to the [`RelayActor`].
 ///
-/// These includes the waker coordination required to support [`AsyncUdpSocket::try_send`]
+/// These includes the waker coordination required to support [`quinn::AsyncUdpSocket::try_send`]
 /// and [`quinn::UdpPoller::poll_writable`].
 fn relay_datagram_send_channel() -> (
     RelayDatagramSendChannelSender,
@@ -289,10 +288,10 @@ fn relay_datagram_send_channel() -> (
 
 /// Sender to send datagrams to the [`RelayActor`].
 ///
-/// This includes the waker coordination required to support [`AsyncUdpSocket::try_send`]
+/// This includes the waker coordination required to support [`quinn::AsyncUdpSocket::try_send`]
 /// and [`quinn::UdpPoller::poll_writable`].
 #[derive(Debug, Clone)]
-pub(super) struct RelayDatagramSendChannelSender {
+struct RelayDatagramSendChannelSender {
     sender: mpsc::Sender<RelaySendItem>,
     wakers: Arc<std::sync::Mutex<Vec<Waker>>>,
 }
@@ -333,16 +332,16 @@ impl RelayDatagramSendChannelSender {
 
 /// Receiver to send datagrams to the [`RelayActor`].
 ///
-/// This includes the waker coordination required to support [`AsyncUdpSocket::try_send`]
+/// This includes the waker coordination required to support [`quinn::AsyncUdpSocket::try_send`]
 /// and [`quinn::UdpPoller::poll_writable`].
 #[derive(Debug)]
-pub(crate) struct RelayDatagramSendChannelReceiver {
+struct RelayDatagramSendChannelReceiver {
     receiver: mpsc::Receiver<RelaySendItem>,
     wakers: Arc<std::sync::Mutex<Vec<Waker>>>,
 }
 
 impl RelayDatagramSendChannelReceiver {
-    pub(crate) async fn recv(&mut self) -> Option<RelaySendItem> {
+    async fn recv(&mut self) -> Option<RelaySendItem> {
         let item = self.receiver.recv().await;
         let mut wakers = self.wakers.lock().expect("poisoned");
         wakers.drain(..).for_each(Waker::wake);
