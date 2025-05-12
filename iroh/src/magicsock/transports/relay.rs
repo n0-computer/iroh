@@ -15,7 +15,7 @@ use smallvec::SmallVec;
 use tokio::sync::mpsc;
 use tracing::{error, info_span, trace, warn, Instrument};
 
-use super::{RecvMeta, Transmit};
+use super::{Addr, Transmit};
 use crate::{
     magicsock::RelayContents,
     watchable::{Watchable, Watcher as _},
@@ -130,10 +130,15 @@ impl RelayTransport {
         &self,
         cx: &mut Context,
         bufs: &mut [io::IoSliceMut<'_>],
-        metas: &mut [RecvMeta],
+        metas: &mut [quinn_udp::RecvMeta],
+        source_addrs: &mut [Addr],
     ) -> Poll<io::Result<usize>> {
         let mut num_msgs = 0;
-        'outer: for (buf_out, meta_out) in bufs.iter_mut().zip(metas.iter_mut()) {
+        'outer: for ((buf_out, meta_out), addr) in bufs
+            .iter_mut()
+            .zip(metas.iter_mut())
+            .zip(source_addrs.iter_mut())
+        {
             let dm = match self.relay_datagram_recv_queue.poll_recv(cx) {
                 Poll::Ready(Ok(recv)) => recv,
                 Poll::Ready(Err(err)) => {
@@ -149,13 +154,12 @@ impl RelayTransport {
             };
 
             buf_out[..dm.buf.len()].copy_from_slice(&dm.buf);
-            *meta_out = RecvMeta {
-                len: dm.buf.len(),
-                stride: dm.buf.len(),
-                addr: (dm.url, dm.src).into(),
-                ecn: None,
-                dst_ip: None, // TODO: insert the relay url for this relay
-            };
+            meta_out.len = dm.buf.len();
+            meta_out.stride = dm.buf.len();
+            meta_out.ecn = None;
+            meta_out.dst_ip = None; // TODO: insert the relay url for this relay
+
+            *addr = (dm.url, dm.src).into();
             num_msgs += 1;
         }
 

@@ -10,7 +10,7 @@ use netwatch::UdpSocket;
 use quinn::AsyncUdpSocket;
 use tracing::trace;
 
-use super::{RecvMeta, Transmit};
+use super::{Addr, Transmit};
 use crate::{
     magicsock::UdpConn,
     watchable::{Watchable, Watcher},
@@ -74,22 +74,18 @@ impl IpTransport {
         &self,
         cx: &mut Context,
         bufs: &mut [io::IoSliceMut<'_>],
-        metas: &mut [RecvMeta],
+        metas: &mut [quinn_udp::RecvMeta],
+        source_addrs: &mut [Addr],
     ) -> Poll<io::Result<usize>> {
-        // TODO: figure out how to optimize this
-        let mut quinn_metas = vec![quinn_udp::RecvMeta::default(); metas.len()];
-        match self.socket.poll_recv(cx, bufs, &mut quinn_metas) {
+        match self.socket.poll_recv(cx, bufs, metas) {
             Poll::Pending => Poll::Pending,
-            Poll::Ready(res) => {
-                for (quinn_meta, meta) in quinn_metas.into_iter().zip(metas.iter_mut()) {
-                    meta.addr = quinn_meta.addr.into();
-                    meta.len = quinn_meta.len;
-                    meta.stride = quinn_meta.stride;
-                    meta.ecn = quinn_meta.ecn;
-                    meta.dst_ip = quinn_meta.dst_ip.map(Into::into);
+            Poll::Ready(Ok(n)) => {
+                for (addr, el) in source_addrs.iter_mut().zip(metas.iter()).take(n) {
+                    *addr = el.addr.into();
                 }
-                Poll::Ready(res)
+                Poll::Ready(Ok(n))
             }
+            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
         }
     }
 

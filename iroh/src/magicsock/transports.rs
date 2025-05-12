@@ -90,14 +90,15 @@ impl Transports {
         &self,
         cx: &mut Context,
         bufs: &mut [IoSliceMut<'_>],
-        metas: &mut [RecvMeta],
+        metas: &mut [quinn_udp::RecvMeta],
+        source_addrs: &mut [Addr],
     ) -> Poll<io::Result<usize>> {
         debug_assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
 
         // TODO: randomization
         macro_rules! poll_transport {
             ($socket:expr) => {
-                match $socket.poll_recv(cx, bufs, metas)? {
+                match $socket.poll_recv(cx, bufs, metas, source_addrs)? {
                     Poll::Pending | Poll::Ready(0) => {}
                     Poll::Ready(n) => {
                         return Poll::Ready(Ok(n));
@@ -293,32 +294,17 @@ pub struct Transmit<'a> {
     pub src_ip: Option<Addr>,
 }
 
-#[derive(Debug, Clone)]
-pub struct RecvMeta {
-    pub addr: Addr,
-    pub len: usize,
-    pub stride: usize,
-    pub ecn: Option<quinn_udp::EcnCodepoint>,
-    pub dst_ip: Option<Addr>,
-}
-
-impl Default for RecvMeta {
-    fn default() -> Self {
-        Self {
-            addr: SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), 0).into(),
-            len: 0,
-            stride: 0,
-            ecn: None,
-            dst_ip: None,
-        }
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Addr {
     Ipv4(Ipv4Addr, Option<u16>),
     Ipv6(Ipv6Addr, Option<u16>),
     RelayUrl(RelayUrl, NodeId),
+}
+
+impl Default for Addr {
+    fn default() -> Self {
+        Self::Ipv6(Ipv6Addr::UNSPECIFIED, None)
+    }
 }
 
 impl From<IpAddr> for Addr {

@@ -608,12 +608,14 @@ impl MagicSock {
             return Poll::Pending;
         }
 
-        let mut transport_metas = vec![transports::RecvMeta::default(); metas.len()];
-
-        match self.transports.poll_recv(cx, bufs, &mut transport_metas)? {
+        let mut source_addrs = vec![transports::Addr::default(); metas.len()];
+        match self
+            .transports
+            .poll_recv(cx, bufs, metas, &mut source_addrs)?
+        {
             Poll::Pending | Poll::Ready(0) => Poll::Pending,
             Poll::Ready(n) => {
-                self.process_datagrams(&mut bufs[..n], &transport_metas[..n], &mut metas[..n]);
+                self.process_datagrams(&mut bufs[..n], &mut metas[..n], &source_addrs[..n]);
                 Poll::Ready(Ok(n))
             }
         }
@@ -628,14 +630,9 @@ impl MagicSock {
     fn process_datagrams(
         &self,
         bufs: &mut [io::IoSliceMut<'_>],
-        transport_metas: &[transports::RecvMeta],
         metas: &mut [quinn_udp::RecvMeta],
+        source_addrs: &[transports::Addr],
     ) {
-        debug_assert_eq!(
-            bufs.len(),
-            transport_metas.len(),
-            "non matching bufs & metas"
-        );
         debug_assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
 
         // Adding the IP address we received something on results in Quinn using this
@@ -658,25 +655,25 @@ impl MagicSock {
 
         let mut quic_packets_total = 0;
 
-        for ((transport_meta, quinn_meta), buf) in transport_metas
-            .iter()
-            .zip(metas.iter_mut())
+        for ((quinn_meta, buf), source_addr) in metas
+            .iter_mut()
             .zip(bufs.iter_mut())
+            .zip(source_addrs.iter())
         {
             let mut buf_contains_quic_datagrams = false;
             let mut quic_datagram_count = 0;
-            if transport_meta.len > transport_meta.stride {
-                trace!(%transport_meta.len, %transport_meta.stride, "GRO datagram received");
+            if quinn_meta.len > quinn_meta.stride {
+                trace!(%quinn_meta.len, %quinn_meta.stride, "GRO datagram received");
                 self.metrics.magicsock.recv_gro_datagrams.inc();
             }
 
             // Chunk through the datagrams in this GRO payload to find disco and stun
             // packets and forward them to the actor
-            for datagram in buf[..transport_meta.len].chunks_mut(transport_meta.stride) {
-                if datagram.len() < transport_meta.stride {
+            for datagram in buf[..quinn_meta.len].chunks_mut(quinn_meta.stride) {
+                if datagram.len() < quinn_meta.stride {
                     trace!(
                         len = %datagram.len(),
-                        %transport_meta.stride,
+                        %quinn_meta.stride,
                         "Last GRO datagram smaller than stride",
                     );
                 }
@@ -685,21 +682,21 @@ impl MagicSock {
                 // byte of those packets with zero to make Quinn ignore the packet.  This
                 // relies on quinn::EndpointConfig::grease_quic_bit being set to `false`,
                 // which we do in Endpoint::bind.
-                if transport_meta.addr.is_ip() && stun::is(datagram) {
-                    trace!(src = ?transport_meta.addr, len = %transport_meta.stride, "UDP recv: stun packet");
+                if source_addr.is_ip() && stun::is(datagram) {
+                    trace!(src = ?source_addr, len = %quinn_meta.stride, "UDP recv: stun packet");
                     let packet2 = Bytes::copy_from_slice(datagram);
                     self.net_reporter.receive_stun_packet(
                         packet2,
-                        transport_meta.addr.clone().try_into().expect("checked"),
+                        source_addr.clone().try_into().expect("checked"),
                     );
                     datagram[0] = 0u8;
                 } else if let Some((sender, sealed_box)) = disco::source_and_box(datagram) {
-                    trace!(src = ?transport_meta.addr, len = %transport_meta.stride, "UDP recv: disco packet");
-                    self.handle_disco_message(sender, sealed_box, &transport_meta.addr);
+                    trace!(src = ?source_addr, len = %quinn_meta.stride, "UDP recv: disco packet");
+                    self.handle_disco_message(sender, sealed_box, source_addr);
                     datagram[0] = 0u8;
                 } else {
-                    trace!(src = ?transport_meta.addr, len = %transport_meta.stride, "UDP recv: quic packet");
-                    match transport_meta.addr {
+                    trace!(src = ?source_addr, len = %quinn_meta.stride, "UDP recv: quic packet");
+                    match source_addr {
                         transports::Addr::Ipv4(..) => {
                             self.metrics
                                 .magicsock
@@ -730,14 +727,14 @@ impl MagicSock {
                     Addr(SocketAddr),
                     Url(RelayUrl, NodeId),
                 }
-                let addr = match transport_meta.addr {
+                let addr = match source_addr {
                     transports::Addr::Ipv4(ipv4, port) => AddrOrUrl::Addr(SocketAddr::V4(
-                        SocketAddrV4::new(ipv4, port.unwrap_or_default()),
+                        SocketAddrV4::new(*ipv4, port.unwrap_or_default()),
                     )),
                     transports::Addr::Ipv6(ipv6, port) => AddrOrUrl::Addr(SocketAddr::V6(
-                        SocketAddrV6::new(ipv6, port.unwrap_or_default(), 0, 0),
+                        SocketAddrV6::new(*ipv6, port.unwrap_or_default(), 0, 0),
                     )),
-                    transports::Addr::RelayUrl(ref url, id) => AddrOrUrl::Url(url.clone(), id),
+                    transports::Addr::RelayUrl(ref url, id) => AddrOrUrl::Url(url.clone(), *id),
                 };
 
                 match addr {
@@ -759,7 +756,7 @@ impl MagicSock {
                                     trace!(
                                         src = %addr,
                                         count = %quic_datagram_count,
-                                        len = transport_meta.len,
+                                        len = quinn_meta.len,
                                         "UDP recv QUIC address discovery packets",
                                     );
                                     quic_packets_total += quic_datagram_count;
@@ -768,7 +765,7 @@ impl MagicSock {
                                     warn!(
                                         src = %addr,
                                         count = %quic_datagram_count,
-                                        len = transport_meta.len,
+                                        len = quinn_meta.len,
                                         "UDP recv quic packets: no node state found, skipping",
                                     );
                                     // If we have no node state for the from addr, set len to 0 to make
@@ -781,7 +778,7 @@ impl MagicSock {
                                     src = %addr,
                                     node = %node_id.fmt_short(),
                                     count = %quic_datagram_count,
-                                    len = transport_meta.len,
+                                    len = quinn_meta.len,
                                     "UDP recv quic packets",
                                 );
                                 quic_packets_total += quic_datagram_count;
@@ -795,9 +792,6 @@ impl MagicSock {
                         quinn_meta.addr = quic_mapped_addr.private_socket_addr();
                     }
                 }
-                quinn_meta.len = transport_meta.len;
-                quinn_meta.stride = transport_meta.stride;
-                quinn_meta.ecn = transport_meta.ecn;
             } else {
                 // If all datagrams in this buf are DISCO or STUN, set len to zero to make
                 // Quinn skip the buf completely.
