@@ -175,7 +175,7 @@ impl RelayTransport {
 
     pub fn local_addr_watch(
         &self,
-    ) -> impl crate::watchable::Watcher<Value = Option<(RelayUrl, NodeId)>> {
+    ) -> impl crate::watchable::Watcher<Value = Option<(RelayUrl, NodeId)>> + Send + Sync + '_ {
         let my_node_id = self.my_node_id;
         let watcher = self
             .my_relay

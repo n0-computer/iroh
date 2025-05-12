@@ -33,7 +33,10 @@ impl Transports {
                 let addr = SocketAddr::V4(SocketAddrV4::new(*addr, port.unwrap_or_default()));
                 for transport in &self.ip {
                     if transport.is_valid_send_addr(&addr) {
-                        transport.poll_send(addr, transmit)?;
+                        match transport.poll_send(addr, transmit) {
+                            Poll::Pending => {}
+                            Poll::Ready(res) => return Poll::Ready(res),
+                        }
                     }
                 }
             }
@@ -41,14 +44,20 @@ impl Transports {
                 let addr = SocketAddr::V6(SocketAddrV6::new(*addr, port.unwrap_or_default(), 0, 0));
                 for transport in &self.ip {
                     if transport.is_valid_send_addr(&addr) {
-                        transport.poll_send(addr, transmit)?;
+                        match transport.poll_send(addr, transmit) {
+                            Poll::Pending => {}
+                            Poll::Ready(res) => return Poll::Ready(res),
+                        }
                     }
                 }
             }
             Addr::RelayUrl(url, node_id) => {
                 for transport in &self.relay {
                     if transport.is_valid_send_addr(&url, &node_id) {
-                        transport.poll_send(url.clone(), *node_id, transmit)?;
+                        match transport.poll_send(url.clone(), *node_id, transmit) {
+                            Poll::Pending => {}
+                            Poll::Ready(res) => return Poll::Ready(res),
+                        }
                     }
                 }
             }
@@ -89,17 +98,17 @@ impl Transports {
         self.local_addrs_watch().get().expect("not disconnected")
     }
 
-    pub fn local_addrs_watch(&self) -> impl Watcher<Value = Vec<Addr>> {
+    pub fn local_addrs_watch(&self) -> impl Watcher<Value = Vec<Addr>> + Send + Sync {
         let ips = self.ip.iter().map(|t| {
             t.local_addr_watch()
-                .map(|a| a.map(Addr::from))
+                .map(move |a| a.map(Addr::from))
                 .expect("disconnected")
         });
         let ips = watchable::JoinOpt::new(ips).expect("disconnected");
 
         let relays = self.relay.iter().map(|t| {
             t.local_addr_watch()
-                .map(|t| t.map(|(url, id)| Addr::RelayUrl(url, id)))
+                .map(move |t| t.map(|(url, id)| Addr::RelayUrl(url, id)))
                 .expect("disconnected")
         });
         let relays = watchable::JoinOpt::new(relays).expect("disconnected");

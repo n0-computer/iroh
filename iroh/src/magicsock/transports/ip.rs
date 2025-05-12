@@ -92,7 +92,7 @@ impl IpTransport {
     pub fn local_addr(&self) -> Option<SocketAddr> {
         self.local_addr.get()
     }
-    pub fn local_addr_watch(&self) -> impl Watcher<Value = Option<SocketAddr>> {
+    pub fn local_addr_watch(&self) -> impl Watcher<Value = Option<SocketAddr>> + Send {
         self.local_addr.watch()
     }
 

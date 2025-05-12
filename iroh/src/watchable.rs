@@ -105,7 +105,9 @@ impl<T: Clone + Eq> Watchable<T> {
     }
 }
 
+/// Bla
 pub type DirectWatcherStream<T> = Stream<Direct<T>>;
+/// Blub
 pub type DirectWatcher<T> = Direct<T>;
 
 /// A handle to a value that's represented by one or more underlying [`Watchable`]s.
@@ -235,7 +237,7 @@ pub trait Watcher: Clone {
     /// observably changes. For this, it needs to store a clone of `T` in the watcher.
     fn map<T: Clone + Eq>(
         self,
-        map: impl Fn(Self::Value) -> T + 'static,
+        map: impl Fn(Self::Value) -> T + Send + Sync + 'static,
     ) -> Result<Map<Self, T>, Disconnected> {
         Ok(Map {
             current: (map)(self.get()?),
@@ -307,6 +309,7 @@ impl<S: Watcher, T: Watcher> Watcher for (S, T) {
     }
 }
 
+/// JOIN
 #[derive(Debug, Clone)]
 pub struct Join<T: Clone + Eq, W: Watcher<Value = T>> {
     watchers: Vec<W>,
@@ -353,6 +356,7 @@ impl<T: Clone + Eq, W: Watcher<Value = T>> Watcher for Join<T, W> {
     }
 }
 
+/// JOIN OPT
 #[derive(Debug, Clone)]
 pub struct JoinOpt<T: Clone + Eq, W: Watcher<Value = Option<T>>> {
     watchers: Vec<W>,
@@ -404,7 +408,7 @@ impl<T: Clone + Eq, W: Watcher<Value = Option<T>>> Watcher for JoinOpt<T, W> {
 #[derive(derive_more::Debug, Clone)]
 pub struct Map<W: Watcher, T: Clone + Eq> {
     #[debug("Arc<dyn Fn(W::Value) -> T + 'static>")]
-    map: Arc<dyn Fn(W::Value) -> T + 'static>,
+    map: Arc<dyn Fn(W::Value) -> T + Send + Sync + 'static>,
     watcher: W,
     current: T,
 }

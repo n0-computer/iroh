@@ -1797,7 +1797,8 @@ impl Actor {
         let mut portmap_watcher_closed = false;
         let mut link_change_closed = false;
 
-        let mut local_addr_changes = self.msock.transports.local_addrs_watch().stream();
+        let watcher = self.msock.transports.local_addrs_watch();
+        let mut local_addr_changes = watcher.stream();
 
         loop {
             self.msock.metrics.magicsock.actor_tick_main.inc();
