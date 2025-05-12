@@ -1,6 +1,6 @@
 use std::{net::SocketAddr, str::FromStr};
 
-use anyhow::{bail, Result};
+use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
 use iroh::{
     discovery::{
@@ -13,8 +13,9 @@ use iroh::{
 };
 use url::Url;
 
-const LOCALHOST_PKARR: &str = "http://localhost:8080/pkarr";
-const EXAMPLE_ORIGIN: &str = "irohdns.example";
+const DEV_PKARR_RELAY_URL: &str = "http://localhost:8080/pkarr";
+const DEV_DNS_ORIGIN_DOMAIN: &str = "irohdns.example";
+const EXAMPLE_RELAY_URL: &str = "https://relay.iroh.example";
 
 #[derive(ValueEnum, Clone, Debug, Default, Copy, strum::Display)]
 #[strum(serialize_all = "kebab-case")]
@@ -38,19 +39,19 @@ struct Cli {
     env: Env,
     /// Pkarr Relay URL. If set, the --env option will be ignored.
     #[clap(long, conflicts_with = "env")]
-    pkarr_relay: Option<Url>,
-    /// Home relay server to publish for this node
-    #[clap(short, long)]
+    pkarr_relay_url: Option<Url>,
+    /// Home relay server URL to publish.
+    #[clap(short, long, conflicts_with = "no_relay_url")]
     relay_url: Option<Url>,
-    /// Direct addresses to publish for this node
+    /// Do not publish a home relay server URL.
+    #[clap(long)]
+    no_relay_url: bool,
+    /// Direct addresses to publish.
     #[clap(short, long)]
     addr: Vec<SocketAddr>,
     /// User data to publish for this node
     #[clap(short, long)]
     user_data: Option<UserData>,
-    /// Create a new node secret if IROH_SECRET is unset. Only for development / debugging.
-    #[clap(short, long)]
-    create: bool,
 }
 
 #[tokio::main]
@@ -59,28 +60,34 @@ async fn main() -> Result<()> {
     let args = Cli::parse();
 
     let secret_key = match std::env::var("IROH_SECRET") {
-        Ok(s) => SecretKey::from_str(&s)?,
-        Err(_) if args.create => {
+        Ok(s) => SecretKey::from_str(&s)
+            .context("failed to parse IROH_SECRET environment variable as iroh secret key")?,
+        Err(_) => {
             let s = SecretKey::generate(rand::rngs::OsRng);
             println!("Generated a new node secret. To reuse, set");
-            println!("IROH_SECRET={s}");
+            println!("\tIROH_SECRET={s}\n");
             s
-        }
-        Err(_) => {
-            bail!("Environment variable IROH_SECRET is not set. To create a new secret, use the --create option.")
         }
     };
 
     let node_id = secret_key.public();
-    let pkarr_relay = match (args.pkarr_relay, args.env) {
-        (Some(pkarr_relay), _) => pkarr_relay,
+    let pkarr_relay_url = match (args.pkarr_relay_url, args.env) {
+        (Some(url), _) => url,
         (None, Env::Staging) => N0_DNS_PKARR_RELAY_STAGING.parse().expect("valid url"),
         (None, Env::Prod) => N0_DNS_PKARR_RELAY_PROD.parse().expect("valid url"),
-        (None, Env::Dev) => LOCALHOST_PKARR.parse().expect("valid url"),
+        (None, Env::Dev) => DEV_PKARR_RELAY_URL.parse().expect("valid url"),
     };
 
-    println!("announce {node_id}:");
-    if let Some(relay_url) = &args.relay_url {
+    let relay_url = if let Some(relay_url) = args.relay_url {
+        Some(relay_url)
+    } else if !args.no_relay_url {
+        Some(EXAMPLE_RELAY_URL.parse().expect("valid url"))
+    } else {
+        None
+    };
+
+    println!("announce node {node_id}:");
+    if let Some(relay_url) = &relay_url {
         println!("    relay={relay_url}");
     }
     for addr in &args.addr {
@@ -90,11 +97,11 @@ async fn main() -> Result<()> {
         println!("    user-data={user_data}");
     }
     println!();
-    println!("publish to {pkarr_relay} ...");
+    println!("publish to {pkarr_relay_url} ...");
 
-    let pkarr = PkarrRelayClient::new(pkarr_relay);
+    let pkarr = PkarrRelayClient::new(pkarr_relay_url);
     let node_info = NodeInfo::new(node_id)
-        .with_relay_url(args.relay_url.map(Into::into))
+        .with_relay_url(relay_url.map(Into::into))
         .with_direct_addresses(args.addr.into_iter().collect())
         .with_user_data(args.user_data);
     let signed_packet = node_info.to_pkarr_signed_packet(&secret_key, 30)?;
@@ -105,7 +112,10 @@ async fn main() -> Result<()> {
 
     match args.env {
         Env::Staging => {
-            println!("   cargo run --example resolve -- node {}", node_id);
+            println!(
+                "   cargo run --example resolve -- --env staging node {}",
+                node_id
+            );
             println!(
                 "   dig {} TXT",
                 fmt_domain(&node_id, N0_DNS_NODE_ORIGIN_STAGING)
@@ -128,7 +138,7 @@ async fn main() -> Result<()> {
             );
             println!(
                 "    dig @localhost -p 5300 {} TXT",
-                fmt_domain(&node_id, EXAMPLE_ORIGIN)
+                fmt_domain(&node_id, DEV_DNS_ORIGIN_DOMAIN)
             )
         }
     }
