@@ -160,14 +160,14 @@
 </span><span class="kw">pub struct </span>IpTransport {
     bind_addr: SocketAddr,
     socket: UdpConn,
-    local_addr: Watchable&lt;<span class="prelude-ty">Option</span>&lt;SocketAddr&gt;&gt;,
+    local_addr: Watchable&lt;SocketAddr&gt;,
 }
 
 <span class="kw">impl </span>IpTransport {
     <span class="kw">pub fn </span>new(bind_addr: SocketAddr, socket: UdpConn) -&gt; <span class="self">Self </span>{
         <span class="comment">// Currently gets updated on manual rebind
         // TODO: update when UdpSocket under the hood rebinds automatically
-        </span><span class="kw">let </span>local_addr = Watchable::new(socket.local_addr().ok());
+        </span><span class="kw">let </span>local_addr = Watchable::new(socket.local_addr().expect(<span class="string">"invalid socket"</span>));
 
         <span class="self">Self </span>{
             bind_addr,
@@ -233,11 +233,11 @@
         }
     }
 
-    <span class="kw">pub fn </span>local_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;SocketAddr&gt; {
+    <span class="kw">pub fn </span>local_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; SocketAddr {
         <span class="self">self</span>.local_addr.get()
     }
 
-    <span class="kw">pub fn </span>local_addr_watch(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Watcher&lt;Value = <span class="prelude-ty">Option</span>&lt;SocketAddr&gt;&gt; + Send {
+    <span class="kw">pub fn </span>local_addr_watch(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Watcher&lt;Value = SocketAddr&gt; + Send {
         <span class="self">self</span>.local_addr.watch()
     }
 
@@ -273,7 +273,7 @@
     <span class="kw">pub fn </span>rebind(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; io::Result&lt;()&gt; {
         <span class="self">self</span>.socket.as_socket_ref().rebind()<span class="question-mark">?</span>;
         <span class="kw">let </span>addr = <span class="self">self</span>.socket.as_socket_ref().local_addr()<span class="question-mark">?</span>;
-        <span class="self">self</span>.local_addr.set(<span class="prelude-val">Some</span>(addr)).ok();
+        <span class="self">self</span>.local_addr.set(addr).ok();
 
         <span class="prelude-val">Ok</span>(())
     }

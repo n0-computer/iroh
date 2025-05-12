@@ -397,7 +397,18 @@
 <a href="#396" id="396">396</a>
 <a href="#397" id="397">397</a>
 <a href="#398" id="398">398</a>
-<a href="#399" id="399">399</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#399" id="399">399</a>
+<a href="#400" id="400">400</a>
+<a href="#401" id="401">401</a>
+<a href="#402" id="402">402</a>
+<a href="#403" id="403">403</a>
+<a href="#404" id="404">404</a>
+<a href="#405" id="405">405</a>
+<a href="#406" id="406">406</a>
+<a href="#407" id="407">407</a>
+<a href="#408" id="408">408</a>
+<a href="#409" id="409">409</a>
+<a href="#410" id="410">410</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     io::{<span class="self">self</span>, IoSliceMut},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     pin::Pin,
@@ -521,12 +532,11 @@
 
     <span class="attr">#[cfg(not(wasm_browser))]
     </span><span class="kw">pub fn </span>local_addrs_watch(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Watcher&lt;Value = Vec&lt;Addr&gt;&gt; + Send + Sync {
-        <span class="kw">let </span>ips = <span class="self">self</span>.ip.iter().map(|t| {
-            t.local_addr_watch()
-                .map(<span class="kw">move </span>|a| a.map(Addr::from))
-                .expect(<span class="string">"disconnected"</span>)
-        });
-        <span class="kw">let </span>ips = watchable::JoinOpt::new(ips).expect(<span class="string">"disconnected"</span>);
+        <span class="kw">let </span>ips = <span class="self">self
+            </span>.ip
+            .iter()
+            .map(|t| t.local_addr_watch().map(Addr::from).expect(<span class="string">"disconnected"</span>));
+        <span class="kw">let </span>ips = watchable::Join::new(ips).expect(<span class="string">"disconnected"</span>);
 
         <span class="kw">let </span>relays = <span class="self">self</span>.relay.iter().map(|t| {
             t.local_addr_watch()
@@ -546,6 +556,18 @@
                 .expect(<span class="string">"disconnected"</span>)
         });
         watchable::JoinOpt::new(relays).expect(<span class="string">"disconnected"</span>)
+    }
+
+    <span class="doccomment">/// Returns the bound addresses for IP based transports
+    </span><span class="attr">#[cfg(not(wasm_browser))]
+    </span><span class="kw">pub fn </span>ip_bind_addrs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;SocketAddr&gt; {
+        <span class="self">self</span>.ip.iter().map(|t| t.bind_addr()).collect()
+    }
+
+    <span class="doccomment">/// Returns the bound addresses for IP based transports
+    </span><span class="attr">#[cfg(not(wasm_browser))]
+    </span><span class="kw">pub fn </span>ip_local_addrs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;SocketAddr&gt; {
+        <span class="self">self</span>.ip.iter().map(|t| t.local_addr()).collect()
     }
 
     <span class="attr">#[cfg(not(wasm_browser))]

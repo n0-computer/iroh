@@ -3607,24 +3607,7 @@
 <a href="#3606" id="3606">3606</a>
 <a href="#3607" id="3607">3607</a>
 <a href="#3608" id="3608">3608</a>
-<a href="#3609" id="3609">3609</a>
-<a href="#3610" id="3610">3610</a>
-<a href="#3611" id="3611">3611</a>
-<a href="#3612" id="3612">3612</a>
-<a href="#3613" id="3613">3613</a>
-<a href="#3614" id="3614">3614</a>
-<a href="#3615" id="3615">3615</a>
-<a href="#3616" id="3616">3616</a>
-<a href="#3617" id="3617">3617</a>
-<a href="#3618" id="3618">3618</a>
-<a href="#3619" id="3619">3619</a>
-<a href="#3620" id="3620">3620</a>
-<a href="#3621" id="3621">3621</a>
-<a href="#3622" id="3622">3622</a>
-<a href="#3623" id="3623">3623</a>
-<a href="#3624" id="3624">3624</a>
-<a href="#3625" id="3625">3625</a>
-<a href="#3626" id="3626">3626</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#3609" id="3609">3609</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -3831,7 +3814,7 @@
     <span class="doccomment">/// If the last net_report report, reports IPv6 to be available.
     </span>ipv6_reported: Arc&lt;AtomicBool&gt;,
 
-    <span class="doccomment">/// None (or zero nodes) means relay is disabled.
+    <span class="doccomment">/// Zero nodes means relay is disabled.
     </span>relay_map: RelayMap,
     <span class="doccomment">/// Tracks the networkmap node entity for each node discovery key.
     </span>node_map: NodeMap,
@@ -4953,16 +4936,13 @@
         <span class="kw">let </span>addr_v4 = addr_v4.unwrap_or_else(|| SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, <span class="number">0</span>));
 
         <span class="attr">#[cfg(not(wasm_browser))]
-        </span><span class="kw">let </span>actor_sockets = ActorSocketState::bind(addr_v4, addr_v6, metrics.portmapper.clone())<span class="question-mark">?</span>;
-
-        <span class="attr">#[cfg(not(wasm_browser))]
-        </span><span class="kw">let </span>ip_transports = actor_sockets.ip.clone();
+        </span><span class="kw">let </span>(ip_transports, port_mapper) = bind_ip(addr_v4, addr_v6, metrics.portmapper.clone())<span class="question-mark">?</span>;
 
         <span class="kw">let </span>ip_mapped_addrs = IpMappedAddresses::default();
 
         <span class="kw">let </span>net_reporter = net_report::Client::new(
             <span class="attr">#[cfg(not(wasm_browser))]
-            </span><span class="prelude-val">Some</span>(actor_sockets.port_mapper.clone()),
+            </span><span class="prelude-val">Some</span>(port_mapper.clone()),
             <span class="attr">#[cfg(not(wasm_browser))]
             </span>dns_resolver.clone(),
             <span class="attr">#[cfg(not(wasm_browser))]
@@ -4998,6 +4978,8 @@
         <span class="kw">let </span>relay_transports = <span class="macro">vec!</span>[relay_transport];
 
         <span class="kw">let </span>secret_encryption_key = secret_ed_box(secret_key.secret());
+
+        <span class="kw">let </span>ipv6 = ip_transports.iter().any(|t| t.bind_addr().is_ipv6());
 
         <span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">let </span>transports = Transports::new(ip_transports, relay_transports);
@@ -5082,7 +5064,7 @@
             ep: qad_endpoint,
             client_config,
             ipv4: <span class="bool-val">true</span>,
-            ipv6: actor_sockets.ip.iter().any(|t| t.bind_addr().is_ipv6()),
+            ipv6,
         });
         <span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">let </span>net_report_config = net_report::Options::default()
@@ -5103,7 +5085,7 @@
                     periodic_re_stun_timer: new_re_stun_timer(<span class="bool-val">false</span>),
                     net_info_last: <span class="prelude-val">None</span>,
                     <span class="attr">#[cfg(not(wasm_browser))]
-                    </span>sockets: actor_sockets,
+                    </span>port_mapper,
                     no_v4_send: <span class="bool-val">false</span>,
                     net_reporter,
                     network_monitor,
@@ -5326,9 +5308,8 @@
     <span class="doccomment">/// The `NetInfo` provided in the last call to `net_info_func`. It's used to deduplicate calls to netInfoFunc.
     </span>net_info_last: <span class="prelude-ty">Option</span>&lt;NetInfo&gt;,
 
-    <span class="doccomment">/// Socket state, grouped so we can cfg it out as one for browsers
-    </span><span class="attr">#[cfg(not(wasm_browser))]
-    </span>sockets: ActorSocketState,
+    <span class="attr">#[cfg(not(wasm_browser))]
+    </span>port_mapper: portmapper::Client,
 
     <span class="doccomment">/// Configuration for net report
     </span>net_report_config: net_report::Options,
@@ -5344,70 +5325,55 @@
     network_monitor: netmon::Monitor,
 }
 
-<span class="doccomment">/// Actor state that relies on sockets being available.
-///
-/// We group these together into their own struct to make it easier to cfg out at once.
-</span><span class="attr">#[cfg(not(wasm_browser))]
-</span><span class="kw">struct </span>ActorSocketState {
-    <span class="doccomment">/// The NAT-PMP/PCP/UPnP prober/client, for requesting port mappings from NAT devices.
-    </span>port_mapper: portmapper::Client,
+<span class="attr">#[cfg(not(wasm_browser))]
+</span><span class="kw">fn </span>bind_ip(
+    addr_v4: SocketAddrV4,
+    addr_v6: <span class="prelude-ty">Option</span>&lt;SocketAddrV6&gt;,
+    metrics: Arc&lt;portmapper::Metrics&gt;,
+) -&gt; <span class="prelude-ty">Result</span>&lt;(Vec&lt;IpTransport&gt;, portmapper::Client)&gt; {
+    <span class="kw">let </span>port_mapper = portmapper::Client::with_metrics(Default::default(), metrics);
+    <span class="kw">let </span>(v4, v6) = bind_sockets(addr_v4, addr_v6)<span class="question-mark">?</span>;
 
-    <span class="comment">// The underlying Sockets
-    </span>ip: Vec&lt;IpTransport&gt;,
+    <span class="kw">let </span>port = v4.local_addr().map_or(<span class="number">0</span>, |p| p.port());
+    <span class="kw">let </span>v4 = UdpConn::wrap(v4);
+    <span class="kw">let </span>v6 = v6.map(UdpConn::wrap);
+
+    <span class="kw">let </span><span class="kw-2">mut </span>ip = <span class="macro">vec!</span>[IpTransport::new(addr_v4.into(), v4)];
+    <span class="kw">if let </span>(<span class="prelude-val">Some</span>(v6), <span class="prelude-val">Some</span>(addr)) = (v6, addr_v6) {
+        ip.push(IpTransport::new(addr.into(), v6))
+    }
+
+    <span class="comment">// NOTE: we can end up with a zero port if `netwatch::UdpSocket::socket_addr` fails
+    </span><span class="kw">match </span>port.try_into() {
+        <span class="prelude-val">Ok</span>(non_zero_port) =&gt; {
+            port_mapper.update_local_port(non_zero_port);
+        }
+        <span class="prelude-val">Err</span>(_zero_port) =&gt; <span class="macro">debug!</span>(<span class="string">"Skipping port mapping with zero local port"</span>),
+    }
+
+    <span class="prelude-val">Ok</span>((ip, port_mapper))
 }
 
 <span class="attr">#[cfg(not(wasm_browser))]
-</span><span class="kw">impl </span>ActorSocketState {
-    <span class="kw">fn </span>bind(
-        addr_v4: SocketAddrV4,
-        addr_v6: <span class="prelude-ty">Option</span>&lt;SocketAddrV6&gt;,
-        metrics: Arc&lt;portmapper::Metrics&gt;,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="kw">let </span>port_mapper = portmapper::Client::with_metrics(Default::default(), metrics);
-        <span class="kw">let </span>(v4, v6) = <span class="self">Self</span>::bind_sockets(addr_v4, addr_v6)<span class="question-mark">?</span>;
+</span><span class="kw">fn </span>bind_sockets(
+    addr_v4: SocketAddrV4,
+    addr_v6: <span class="prelude-ty">Option</span>&lt;SocketAddrV6&gt;,
+) -&gt; <span class="prelude-ty">Result</span>&lt;(Arc&lt;UdpSocket&gt;, <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;)&gt; {
+    <span class="kw">let </span>v4 = Arc::new(bind_with_fallback(SocketAddr::V4(addr_v4)).context(<span class="string">"bind IPv4 failed"</span>)<span class="question-mark">?</span>);
 
-        <span class="kw">let </span>port = v4.local_addr().map_or(<span class="number">0</span>, |p| p.port());
-        <span class="kw">let </span>v4 = UdpConn::wrap(v4);
-        <span class="kw">let </span>v6 = v6.map(UdpConn::wrap);
+    <span class="kw">let </span>ip4_port = v4.local_addr()<span class="question-mark">?</span>.port();
+    <span class="kw">let </span>ip6_port = ip4_port.checked_add(<span class="number">1</span>).unwrap_or(ip4_port - <span class="number">1</span>);
+    <span class="kw">let </span>addr_v6 =
+        addr_v6.unwrap_or_else(|| SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, ip6_port, <span class="number">0</span>, <span class="number">0</span>));
+    <span class="kw">let </span>v6 = <span class="kw">match </span>bind_with_fallback(SocketAddr::V6(addr_v6)) {
+        <span class="prelude-val">Ok</span>(sock) =&gt; <span class="prelude-val">Some</span>(Arc::new(sock)),
+        <span class="prelude-val">Err</span>(err) =&gt; {
+            <span class="macro">info!</span>(<span class="string">"bind ignoring IPv6 bind failure: {:?}"</span>, err);
+            <span class="prelude-val">None
+        </span>}
+    };
 
-        <span class="kw">let </span><span class="kw-2">mut </span>ip = <span class="macro">vec!</span>[IpTransport::new(addr_v4.into(), v4)];
-        <span class="kw">if let </span>(<span class="prelude-val">Some</span>(v6), <span class="prelude-val">Some</span>(addr)) = (v6, addr_v6) {
-            ip.push(IpTransport::new(addr.into(), v6))
-        }
-
-        <span class="kw">let </span>this = <span class="self">Self </span>{ port_mapper, ip };
-
-        <span class="comment">// NOTE: we can end up with a zero port if `netwatch::UdpSocket::socket_addr` fails
-        </span><span class="kw">match </span>port.try_into() {
-            <span class="prelude-val">Ok</span>(non_zero_port) =&gt; {
-                this.port_mapper.update_local_port(non_zero_port);
-            }
-            <span class="prelude-val">Err</span>(_zero_port) =&gt; <span class="macro">debug!</span>(<span class="string">"Skipping port mapping with zero local port"</span>),
-        }
-
-        <span class="prelude-val">Ok</span>(this)
-    }
-
-    <span class="kw">fn </span>bind_sockets(
-        addr_v4: SocketAddrV4,
-        addr_v6: <span class="prelude-ty">Option</span>&lt;SocketAddrV6&gt;,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;(Arc&lt;UdpSocket&gt;, <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;)&gt; {
-        <span class="kw">let </span>v4 = Arc::new(bind_with_fallback(SocketAddr::V4(addr_v4)).context(<span class="string">"bind IPv4 failed"</span>)<span class="question-mark">?</span>);
-
-        <span class="kw">let </span>ip4_port = v4.local_addr()<span class="question-mark">?</span>.port();
-        <span class="kw">let </span>ip6_port = ip4_port.checked_add(<span class="number">1</span>).unwrap_or(ip4_port - <span class="number">1</span>);
-        <span class="kw">let </span>addr_v6 =
-            addr_v6.unwrap_or_else(|| SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, ip6_port, <span class="number">0</span>, <span class="number">0</span>));
-        <span class="kw">let </span>v6 = <span class="kw">match </span>bind_with_fallback(SocketAddr::V6(addr_v6)) {
-            <span class="prelude-val">Ok</span>(sock) =&gt; <span class="prelude-val">Some</span>(Arc::new(sock)),
-            <span class="prelude-val">Err</span>(err) =&gt; {
-                <span class="macro">info!</span>(<span class="string">"bind ignoring IPv6 bind failure: {:?}"</span>, err);
-                <span class="prelude-val">None
-            </span>}
-        };
-
-        <span class="prelude-val">Ok</span>((v4, v6))
-    }
+    <span class="prelude-val">Ok</span>((v4, v6))
 }
 
 <span class="kw">impl </span>Actor {
@@ -5434,7 +5400,7 @@
         <span class="kw">let </span><span class="kw-2">mut </span>direct_addr_update_receiver =
             <span class="self">self</span>.msock.direct_addr_update_state.running.subscribe();
         <span class="attr">#[cfg(not(wasm_browser))]
-        </span><span class="kw">let </span><span class="kw-2">mut </span>portmap_watcher = <span class="self">self</span>.sockets.port_mapper.watch_external_address();
+        </span><span class="kw">let </span><span class="kw-2">mut </span>portmap_watcher = <span class="self">self</span>.port_mapper.watch_external_address();
 
         <span class="kw">let </span><span class="kw-2">mut </span>discovery_events: BoxStream&lt;DiscoveryItem&gt; = Box::pin(n0_future::stream::empty());
         <span class="kw">if let </span><span class="prelude-val">Some</span>(d) = <span class="self">self</span>.msock.discovery() {
@@ -5611,7 +5577,7 @@
 
                 <span class="self">self</span>.msock.node_map.notify_shutdown();
                 <span class="attr">#[cfg(not(wasm_browser))]
-                </span><span class="self">self</span>.sockets.port_mapper.deactivate();
+                </span><span class="self">self</span>.port_mapper.deactivate();
 
                 <span class="macro">debug!</span>(<span class="string">"shutdown complete"</span>);
                 <span class="kw">return </span><span class="bool-val">true</span>;
@@ -5658,7 +5624,7 @@
 
         <span class="macro">debug!</span>(<span class="string">"starting direct addr update ({})"</span>, why);
         <span class="attr">#[cfg(not(wasm_browser))]
-        </span><span class="self">self</span>.sockets.port_mapper.procure_mapping();
+        </span><span class="self">self</span>.port_mapper.procure_mapping();
         <span class="self">self</span>.update_net_info(why).<span class="kw">await</span>;
     }
 
@@ -5672,7 +5638,7 @@
     /// - The local interfaces IP addresses.
     </span><span class="attr">#[cfg(not(wasm_browser))]
     </span><span class="kw">fn </span>update_direct_addresses(<span class="kw-2">&amp;mut </span><span class="self">self</span>, net_report_report: <span class="prelude-ty">Option</span>&lt;Arc&lt;net_report::Report&gt;&gt;) {
-        <span class="kw">let </span>portmap_watcher = <span class="self">self</span>.sockets.port_mapper.watch_external_address();
+        <span class="kw">let </span>portmap_watcher = <span class="self">self</span>.port_mapper.watch_external_address();
 
         <span class="comment">// We only want to have one DirectAddr for each SocketAddr we have.  So we store
         // this as a map of SocketAddr -&gt; DirectAddrType.  At the end we will construct a
@@ -5700,11 +5666,18 @@
                 // port mapping on their router to the same explicit
                 // port that we are running with. Worst case it's an invalid candidate mapping.
                 </span><span class="kw">let </span>port = <span class="self">self
-                    </span>.sockets
-                    .ip
-                    .iter()
-                    .map(|t| t.bind_addr().port())
-                    .find(|a| <span class="kw-2">*</span>a != <span class="number">0</span>);
+                    </span>.msock
+                    .transports
+                    .ip_bind_addrs()
+                    .into_iter()
+                    .find_map(|addr| {
+                        <span class="kw">if </span>addr.port() != <span class="number">0 </span>{
+                            <span class="prelude-val">Some</span>(addr.port())
+                        } <span class="kw">else </span>{
+                            <span class="prelude-val">None
+                        </span>}
+                    });
+
                 <span class="kw">if let </span><span class="prelude-val">Some</span>(port) = port {
                     <span class="kw">if </span>net_report_report
                         .mapping_varies_by_dest_ip
@@ -5726,13 +5699,11 @@
         }
 
         <span class="kw">let </span>local_addrs: Vec&lt;<span class="kw">_</span>&gt; = <span class="self">self
-            </span>.sockets
-            .ip
-            .iter()
-            .filter_map(|t| {
-                <span class="kw">let </span>local_addr = t.local_addr()<span class="question-mark">?</span>;
-                <span class="prelude-val">Some</span>((t.bind_addr(), local_addr))
-            })
+            </span>.msock
+            .transports
+            .ip_bind_addrs()
+            .into_iter()
+            .zip(<span class="self">self</span>.msock.transports.ip_local_addrs())
             .collect();
 
         <span class="kw">let </span>msock = <span class="self">self</span>.msock.clone();
@@ -5911,12 +5882,7 @@
             <span class="self">self</span>.no_v4_send = !r.ipv4_can_send;
 
             <span class="attr">#[cfg(not(wasm_browser))]
-            </span><span class="kw">let </span>have_port_map = <span class="self">self
-                </span>.sockets
-                .port_mapper
-                .watch_external_address()
-                .borrow()
-                .is_some();
+            </span><span class="kw">let </span>have_port_map = <span class="self">self</span>.port_mapper.watch_external_address().borrow().is_some();
             <span class="attr">#[cfg(wasm_browser)]
             </span><span class="kw">let </span>have_port_map = <span class="bool-val">false</span>;
 
