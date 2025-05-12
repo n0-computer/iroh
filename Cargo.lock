@@ -2335,6 +2335,7 @@ dependencies = [
  "hickory-resolver",
  "hickory-server",
  "http 1.3.1",
+ "humantime",
  "humantime-serde",
  "iroh",
  "iroh-metrics",

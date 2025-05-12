@@ -1,4 +1,10 @@
-use std::{future::Future, path::Path, result, sync::Arc, time::Duration};
+use std::{
+    future::Future,
+    path::Path,
+    result,
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 
 use anyhow::{Context, Result};
 use pkarr::{SignedPacket, Timestamp};
@@ -52,7 +58,7 @@ enum Message {
         res: oneshot::Sender<Snapshot>,
     },
     CheckExpired {
-        time: [u8; 8],
+        time: Timestamp,
         key: PublicKeyBytes,
     },
 }
@@ -119,7 +125,6 @@ impl Actor {
             let transaction = self.db.begin_write()?;
             let mut tables = Tables::new(&transaction)?;
             let timeout = tokio::time::sleep(self.options.max_batch_time);
-            let expired = Timestamp::now() - expiry_us;
             tokio::pin!(timeout);
             for _ in 0..self.options.max_batch_size {
                 tokio::select! {
@@ -151,8 +156,8 @@ impl Actor {
                                         res.send(false).ok();
                                         continue;
                                     } else {
-                                        // remove the packet from the update time index
-                                        tables.update_time.remove(&packet.timestamp().to_bytes(), key.as_bytes())?;
+                                        // remove the old packet from the update time index
+                                        tables.update_time.remove(&existing.timestamp().to_bytes(), key.as_bytes())?;
                                         true
                                     }
                                 } else {
@@ -185,13 +190,21 @@ impl Actor {
                                 res.send(Snapshot::new(&self.db)?).ok();
                             }
                             Message::CheckExpired { key, time } => {
-                                trace!("check expired {} at {}", key, u64::from_be_bytes(time));
+                                trace!("check expired {} at {}", key, fmt_time(time));
                                 if let Some(packet) = get_packet(&tables.signed_packets, &key)? {
+                                    let expired = Timestamp::now() - expiry_us;
                                     if packet.timestamp() < expired {
-                                        tables.update_time.remove(&time, key.as_bytes())?;
+                                        tables.update_time.remove(&time.to_bytes(), key.as_bytes())?;
                                         let _ = tables.signed_packets.remove(key.as_bytes())?;
                                         self.metrics.store_packets_expired.inc();
+                                        debug!("removed expired packet {key}");
+                                    } else {
+                                        debug!("packet {key} is no longer expired, removing obsolete expiry entry");
+                                        tables.update_time.remove(&time.to_bytes(), key.as_bytes())?;
                                     }
+                                } else {
+                                    debug!("expired packet {key} not found, remove from expiry table");
+                                    tables.update_time.remove(&time.to_bytes(), key.as_bytes())?;
                                 }
                             }
                         }
@@ -203,6 +216,10 @@ impl Actor {
         }
         Ok(())
     }
+}
+
+fn fmt_time(t: Timestamp) -> String {
+    humantime::format_rfc3339_micros(SystemTime::from(t)).to_string()
 }
 
 /// A struct similar to [`redb::Table`] but for all tables that make up the
@@ -368,7 +385,7 @@ async fn evict_task_inner(send: mpsc::Sender<Message>, options: Options) -> anyh
             anyhow::bail!("failed to get snapshot");
         };
         let expired = Timestamp::now() - expiry_us;
-        trace!("evicting packets older than {}", expired);
+        trace!("evicting packets older than {}", fmt_time(expired));
         // if getting the range fails we exit the loop and shut down
         // if individual reads fail we log the error and limp on
         for item in snapshot.update_time.range(..expired.to_bytes())? {
@@ -379,26 +396,22 @@ async fn evict_task_inner(send: mpsc::Sender<Message>, options: Options) -> anyh
                     continue;
                 }
             };
-            let time = time.value();
-            trace!("evicting expired packets at {}", u64::from_be_bytes(time));
+            let time = Timestamp::from(time.value());
+            trace!("evicting expired packets at {}", fmt_time(time));
             for item in keys {
                 let key = match item {
                     Ok(v) => v,
                     Err(e) => {
                         error!(
                             "failed to read update_time item at {}: {:?}",
-                            u64::from_be_bytes(time),
+                            fmt_time(time),
                             e
                         );
                         continue;
                     }
                 };
                 let key = PublicKeyBytes::new(key.value());
-                debug!(
-                    "evicting expired packet {} {}",
-                    u64::from_be_bytes(time),
-                    key
-                );
+                debug!("evicting expired packet {} {}", fmt_time(time), key);
                 send.send(Message::CheckExpired { time, key }).await?;
             }
         }
