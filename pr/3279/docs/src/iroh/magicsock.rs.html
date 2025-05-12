@@ -3613,13 +3613,7 @@
 <a href="#3612" id="3612">3612</a>
 <a href="#3613" id="3613">3613</a>
 <a href="#3614" id="3614">3614</a>
-<a href="#3615" id="3615">3615</a>
-<a href="#3616" id="3616">3616</a>
-<a href="#3617" id="3617">3617</a>
-<a href="#3618" id="3618">3618</a>
-<a href="#3619" id="3619">3619</a>
-<a href="#3620" id="3620">3620</a>
-<a href="#3621" id="3621">3621</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#3615" id="3615">3615</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4229,12 +4223,14 @@
             <span class="kw">return </span>Poll::Pending;
         }
 
-        <span class="kw">let </span><span class="kw-2">mut </span>transport_metas = <span class="macro">vec!</span>[transports::RecvMeta::default(); metas.len()];
-
-        <span class="kw">match </span><span class="self">self</span>.transports.poll_recv(cx, bufs, <span class="kw-2">&amp;mut </span>transport_metas)<span class="question-mark">? </span>{
+        <span class="kw">let </span><span class="kw-2">mut </span>source_addrs = <span class="macro">vec!</span>[transports::Addr::default(); metas.len()];
+        <span class="kw">match </span><span class="self">self
+            </span>.transports
+            .poll_recv(cx, bufs, metas, <span class="kw-2">&amp;mut </span>source_addrs)<span class="question-mark">?
+        </span>{
             Poll::Pending | Poll::Ready(<span class="number">0</span>) =&gt; Poll::Pending,
             Poll::Ready(n) =&gt; {
-                <span class="self">self</span>.process_datagrams(<span class="kw-2">&amp;mut </span>bufs[..n], <span class="kw-2">&amp;</span>transport_metas[..n], <span class="kw-2">&amp;mut </span>metas[..n]);
+                <span class="self">self</span>.process_datagrams(<span class="kw-2">&amp;mut </span>bufs[..n], <span class="kw-2">&amp;mut </span>metas[..n], <span class="kw-2">&amp;</span>source_addrs[..n]);
                 Poll::Ready(<span class="prelude-val">Ok</span>(n))
             }
         }
@@ -4249,14 +4245,9 @@
     </span><span class="kw">fn </span>process_datagrams(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         bufs: <span class="kw-2">&amp;mut </span>[io::IoSliceMut&lt;<span class="lifetime">'_</span>&gt;],
-        transport_metas: <span class="kw-2">&amp;</span>[transports::RecvMeta],
         metas: <span class="kw-2">&amp;mut </span>[quinn_udp::RecvMeta],
+        source_addrs: <span class="kw-2">&amp;</span>[transports::Addr],
     ) {
-        <span class="macro">debug_assert_eq!</span>(
-            bufs.len(),
-            transport_metas.len(),
-            <span class="string">"non matching bufs &amp; metas"
-        </span>);
         <span class="macro">debug_assert_eq!</span>(bufs.len(), metas.len(), <span class="string">"non matching bufs &amp; metas"</span>);
 
         <span class="comment">// Adding the IP address we received something on results in Quinn using this
@@ -4279,25 +4270,25 @@
 
         <span class="kw">let </span><span class="kw-2">mut </span>quic_packets_total = <span class="number">0</span>;
 
-        <span class="kw">for </span>((transport_meta, quinn_meta), buf) <span class="kw">in </span>transport_metas
-            .iter()
-            .zip(metas.iter_mut())
+        <span class="kw">for </span>((quinn_meta, buf), source_addr) <span class="kw">in </span>metas
+            .iter_mut()
             .zip(bufs.iter_mut())
+            .zip(source_addrs.iter())
         {
             <span class="kw">let </span><span class="kw-2">mut </span>buf_contains_quic_datagrams = <span class="bool-val">false</span>;
             <span class="kw">let </span><span class="kw-2">mut </span>quic_datagram_count = <span class="number">0</span>;
-            <span class="kw">if </span>transport_meta.len &gt; transport_meta.stride {
-                <span class="macro">trace!</span>(%transport_meta.len, %transport_meta.stride, <span class="string">"GRO datagram received"</span>);
+            <span class="kw">if </span>quinn_meta.len &gt; quinn_meta.stride {
+                <span class="macro">trace!</span>(%quinn_meta.len, %quinn_meta.stride, <span class="string">"GRO datagram received"</span>);
                 <span class="self">self</span>.metrics.magicsock.recv_gro_datagrams.inc();
             }
 
             <span class="comment">// Chunk through the datagrams in this GRO payload to find disco and stun
             // packets and forward them to the actor
-            </span><span class="kw">for </span>datagram <span class="kw">in </span>buf[..transport_meta.len].chunks_mut(transport_meta.stride) {
-                <span class="kw">if </span>datagram.len() &lt; transport_meta.stride {
+            </span><span class="kw">for </span>datagram <span class="kw">in </span>buf[..quinn_meta.len].chunks_mut(quinn_meta.stride) {
+                <span class="kw">if </span>datagram.len() &lt; quinn_meta.stride {
                     <span class="macro">trace!</span>(
                         len = %datagram.len(),
-                        %transport_meta.stride,
+                        %quinn_meta.stride,
                         <span class="string">"Last GRO datagram smaller than stride"</span>,
                     );
                 }
@@ -4306,21 +4297,21 @@
                 // byte of those packets with zero to make Quinn ignore the packet.  This
                 // relies on quinn::EndpointConfig::grease_quic_bit being set to `false`,
                 // which we do in Endpoint::bind.
-                </span><span class="kw">if </span>transport_meta.addr.is_ip() &amp;&amp; stun::is(datagram) {
-                    <span class="macro">trace!</span>(src = <span class="question-mark">?</span>transport_meta.addr, len = %transport_meta.stride, <span class="string">"UDP recv: stun packet"</span>);
+                </span><span class="kw">if </span>source_addr.is_ip() &amp;&amp; stun::is(datagram) {
+                    <span class="macro">trace!</span>(src = <span class="question-mark">?</span>source_addr, len = %quinn_meta.stride, <span class="string">"UDP recv: stun packet"</span>);
                     <span class="kw">let </span>packet2 = Bytes::copy_from_slice(datagram);
                     <span class="self">self</span>.net_reporter.receive_stun_packet(
                         packet2,
-                        transport_meta.addr.clone().try_into().expect(<span class="string">"checked"</span>),
+                        source_addr.clone().try_into().expect(<span class="string">"checked"</span>),
                     );
                     datagram[<span class="number">0</span>] = <span class="number">0u8</span>;
                 } <span class="kw">else if let </span><span class="prelude-val">Some</span>((sender, sealed_box)) = disco::source_and_box(datagram) {
-                    <span class="macro">trace!</span>(src = <span class="question-mark">?</span>transport_meta.addr, len = %transport_meta.stride, <span class="string">"UDP recv: disco packet"</span>);
-                    <span class="self">self</span>.handle_disco_message(sender, sealed_box, <span class="kw-2">&amp;</span>transport_meta.addr);
+                    <span class="macro">trace!</span>(src = <span class="question-mark">?</span>source_addr, len = %quinn_meta.stride, <span class="string">"UDP recv: disco packet"</span>);
+                    <span class="self">self</span>.handle_disco_message(sender, sealed_box, source_addr);
                     datagram[<span class="number">0</span>] = <span class="number">0u8</span>;
                 } <span class="kw">else </span>{
-                    <span class="macro">trace!</span>(src = <span class="question-mark">?</span>transport_meta.addr, len = %transport_meta.stride, <span class="string">"UDP recv: quic packet"</span>);
-                    <span class="kw">match </span>transport_meta.addr {
+                    <span class="macro">trace!</span>(src = <span class="question-mark">?</span>source_addr, len = %quinn_meta.stride, <span class="string">"UDP recv: quic packet"</span>);
+                    <span class="kw">match </span>source_addr {
                         transports::Addr::Ipv4(..) =&gt; {
                             <span class="self">self</span>.metrics
                                 .magicsock
@@ -4351,14 +4342,14 @@
                     Addr(SocketAddr),
                     Url(RelayUrl, NodeId),
                 }
-                <span class="kw">let </span>addr = <span class="kw">match </span>transport_meta.addr {
+                <span class="kw">let </span>addr = <span class="kw">match </span>source_addr {
                     transports::Addr::Ipv4(ipv4, port) =&gt; AddrOrUrl::Addr(SocketAddr::V4(
-                        SocketAddrV4::new(ipv4, port.unwrap_or_default()),
+                        SocketAddrV4::new(<span class="kw-2">*</span>ipv4, port.unwrap_or_default()),
                     )),
                     transports::Addr::Ipv6(ipv6, port) =&gt; AddrOrUrl::Addr(SocketAddr::V6(
-                        SocketAddrV6::new(ipv6, port.unwrap_or_default(), <span class="number">0</span>, <span class="number">0</span>),
+                        SocketAddrV6::new(<span class="kw-2">*</span>ipv6, port.unwrap_or_default(), <span class="number">0</span>, <span class="number">0</span>),
                     )),
-                    transports::Addr::RelayUrl(<span class="kw-2">ref </span>url, id) =&gt; AddrOrUrl::Url(url.clone(), id),
+                    transports::Addr::RelayUrl(<span class="kw-2">ref </span>url, id) =&gt; AddrOrUrl::Url(url.clone(), <span class="kw-2">*</span>id),
                 };
 
                 <span class="kw">match </span>addr {
@@ -4380,7 +4371,7 @@
                                     <span class="macro">trace!</span>(
                                         src = %addr,
                                         count = %quic_datagram_count,
-                                        len = transport_meta.len,
+                                        len = quinn_meta.len,
                                         <span class="string">"UDP recv QUIC address discovery packets"</span>,
                                     );
                                     quic_packets_total += quic_datagram_count;
@@ -4389,7 +4380,7 @@
                                     <span class="macro">warn!</span>(
                                         src = %addr,
                                         count = %quic_datagram_count,
-                                        len = transport_meta.len,
+                                        len = quinn_meta.len,
                                         <span class="string">"UDP recv quic packets: no node state found, skipping"</span>,
                                     );
                                     <span class="comment">// If we have no node state for the from addr, set len to 0 to make
@@ -4402,7 +4393,7 @@
                                     src = %addr,
                                     node = %node_id.fmt_short(),
                                     count = %quic_datagram_count,
-                                    len = transport_meta.len,
+                                    len = quinn_meta.len,
                                     <span class="string">"UDP recv quic packets"</span>,
                                 );
                                 quic_packets_total += quic_datagram_count;
@@ -4416,9 +4407,6 @@
                         quinn_meta.addr = quic_mapped_addr.private_socket_addr();
                     }
                 }
-                quinn_meta.len = transport_meta.len;
-                quinn_meta.stride = transport_meta.stride;
-                quinn_meta.ecn = transport_meta.ecn;
             } <span class="kw">else </span>{
                 <span class="comment">// If all datagrams in this buf are DISCO or STUN, set len to zero to make
                 // Quinn skip the buf completely.

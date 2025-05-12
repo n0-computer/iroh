@@ -142,11 +142,7 @@
 <a href="#141" id="141">141</a>
 <a href="#142" id="142">142</a>
 <a href="#143" id="143">143</a>
-<a href="#144" id="144">144</a>
-<a href="#145" id="145">145</a>
-<a href="#146" id="146">146</a>
-<a href="#147" id="147">147</a>
-<a href="#148" id="148">148</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#144" id="144">144</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     io,
     net::SocketAddr,
     pin::Pin,
@@ -158,7 +154,7 @@
 <span class="kw">use </span>quinn::AsyncUdpSocket;
 <span class="kw">use </span>tracing::trace;
 
-<span class="kw">use super</span>::{RecvMeta, Transmit};
+<span class="kw">use super</span>::{Addr, Transmit};
 <span class="kw">use crate</span>::{
     magicsock::UdpConn,
     watchable::{Watchable, Watcher},
@@ -222,22 +218,18 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         cx: <span class="kw-2">&amp;mut </span>Context,
         bufs: <span class="kw-2">&amp;mut </span>[io::IoSliceMut&lt;<span class="lifetime">'_</span>&gt;],
-        metas: <span class="kw-2">&amp;mut </span>[RecvMeta],
+        metas: <span class="kw-2">&amp;mut </span>[quinn_udp::RecvMeta],
+        source_addrs: <span class="kw-2">&amp;mut </span>[Addr],
     ) -&gt; Poll&lt;io::Result&lt;usize&gt;&gt; {
-        <span class="comment">// TODO: figure out how to optimize this
-        </span><span class="kw">let </span><span class="kw-2">mut </span>quinn_metas = <span class="macro">vec!</span>[quinn_udp::RecvMeta::default(); metas.len()];
-        <span class="kw">match </span><span class="self">self</span>.socket.poll_recv(cx, bufs, <span class="kw-2">&amp;mut </span>quinn_metas) {
+        <span class="kw">match </span><span class="self">self</span>.socket.poll_recv(cx, bufs, metas) {
             Poll::Pending =&gt; Poll::Pending,
-            Poll::Ready(res) =&gt; {
-                <span class="kw">for </span>(quinn_meta, meta) <span class="kw">in </span>quinn_metas.into_iter().zip(metas.iter_mut()) {
-                    meta.addr = quinn_meta.addr.into();
-                    meta.len = quinn_meta.len;
-                    meta.stride = quinn_meta.stride;
-                    meta.ecn = quinn_meta.ecn;
-                    meta.dst_ip = quinn_meta.dst_ip.map(Into::into);
+            Poll::Ready(<span class="prelude-val">Ok</span>(n)) =&gt; {
+                <span class="kw">for </span>(addr, el) <span class="kw">in </span>source_addrs.iter_mut().zip(metas.iter()).take(n) {
+                    <span class="kw-2">*</span>addr = el.addr.into();
                 }
-                Poll::Ready(res)
+                Poll::Ready(<span class="prelude-val">Ok</span>(n))
             }
+            Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; Poll::Ready(<span class="prelude-val">Err</span>(err)),
         }
     }
 

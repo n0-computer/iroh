@@ -475,7 +475,11 @@
 <a href="#474" id="474">474</a>
 <a href="#475" id="475">475</a>
 <a href="#476" id="476">476</a>
-<a href="#477" id="477">477</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#477" id="477">477</a>
+<a href="#478" id="478">478</a>
+<a href="#479" id="479">479</a>
+<a href="#480" id="480">480</a>
+<a href="#481" id="481">481</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     io,
     pin::Pin,
     sync::Arc,
@@ -492,7 +496,7 @@
 <span class="kw">use </span>tokio::sync::mpsc;
 <span class="kw">use </span>tracing::{error, info_span, trace, warn, Instrument};
 
-<span class="kw">use super</span>::{RecvMeta, Transmit};
+<span class="kw">use super</span>::{Addr, Transmit};
 <span class="kw">use crate</span>::{
     magicsock::RelayContents,
     watchable::{Watchable, Watcher <span class="kw">as _</span>},
@@ -607,10 +611,15 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         cx: <span class="kw-2">&amp;mut </span>Context,
         bufs: <span class="kw-2">&amp;mut </span>[io::IoSliceMut&lt;<span class="lifetime">'_</span>&gt;],
-        metas: <span class="kw-2">&amp;mut </span>[RecvMeta],
+        metas: <span class="kw-2">&amp;mut </span>[quinn_udp::RecvMeta],
+        source_addrs: <span class="kw-2">&amp;mut </span>[Addr],
     ) -&gt; Poll&lt;io::Result&lt;usize&gt;&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>num_msgs = <span class="number">0</span>;
-        <span class="lifetime">'outer</span>: <span class="kw">for </span>(buf_out, meta_out) <span class="kw">in </span>bufs.iter_mut().zip(metas.iter_mut()) {
+        <span class="lifetime">'outer</span>: <span class="kw">for </span>((buf_out, meta_out), addr) <span class="kw">in </span>bufs
+            .iter_mut()
+            .zip(metas.iter_mut())
+            .zip(source_addrs.iter_mut())
+        {
             <span class="kw">let </span>dm = <span class="kw">match </span><span class="self">self</span>.relay_datagram_recv_queue.poll_recv(cx) {
                 Poll::Ready(<span class="prelude-val">Ok</span>(recv)) =&gt; recv,
                 Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; {
@@ -626,13 +635,12 @@
             };
 
             buf_out[..dm.buf.len()].copy_from_slice(<span class="kw-2">&amp;</span>dm.buf);
-            <span class="kw-2">*</span>meta_out = RecvMeta {
-                len: dm.buf.len(),
-                stride: dm.buf.len(),
-                addr: (dm.url, dm.src).into(),
-                ecn: <span class="prelude-val">None</span>,
-                dst_ip: <span class="prelude-val">None</span>, <span class="comment">// TODO: insert the relay url for this relay
-            </span>};
+            meta_out.len = dm.buf.len();
+            meta_out.stride = dm.buf.len();
+            meta_out.ecn = <span class="prelude-val">None</span>;
+            meta_out.dst_ip = <span class="prelude-val">None</span>; <span class="comment">// TODO: insert the relay url for this relay
+
+            </span><span class="kw-2">*</span>addr = (dm.url, dm.src).into();
             num_msgs += <span class="number">1</span>;
         }
 
