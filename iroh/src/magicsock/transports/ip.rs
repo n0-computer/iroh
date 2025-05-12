@@ -18,14 +18,14 @@ use crate::{
 pub struct IpTransport {
     bind_addr: SocketAddr,
     socket: UdpConn,
-    local_addr: Watchable<Option<SocketAddr>>,
+    local_addr: Watchable<SocketAddr>,
 }
 
 impl IpTransport {
     pub fn new(bind_addr: SocketAddr, socket: UdpConn) -> Self {
         // Currently gets updated on manual rebind
         // TODO: update when UdpSocket under the hood rebinds automatically
-        let local_addr = Watchable::new(socket.local_addr().ok());
+        let local_addr = Watchable::new(socket.local_addr().expect("invalid socket"));
 
         Self {
             bind_addr,
@@ -91,11 +91,11 @@ impl IpTransport {
         }
     }
 
-    pub fn local_addr(&self) -> Option<SocketAddr> {
+    pub fn local_addr(&self) -> SocketAddr {
         self.local_addr.get()
     }
 
-    pub fn local_addr_watch(&self) -> impl Watcher<Value = Option<SocketAddr>> + Send {
+    pub fn local_addr_watch(&self) -> impl Watcher<Value = SocketAddr> + Send {
         self.local_addr.watch()
     }
 
@@ -131,7 +131,7 @@ impl IpTransport {
     pub fn rebind(&self) -> io::Result<()> {
         self.socket.as_socket_ref().rebind()?;
         let addr = self.socket.as_socket_ref().local_addr()?;
-        self.local_addr.set(Some(addr)).ok();
+        self.local_addr.set(addr).ok();
 
         Ok(())
     }

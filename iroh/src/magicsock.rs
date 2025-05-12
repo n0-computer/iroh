@@ -205,7 +205,7 @@ pub(crate) struct MagicSock {
     /// If the last net_report report, reports IPv6 to be available.
     ipv6_reported: Arc<AtomicBool>,
 
-    /// None (or zero nodes) means relay is disabled.
+    /// Zero nodes means relay is disabled.
     relay_map: RelayMap,
     /// Tracks the networkmap node entity for each node discovery key.
     node_map: NodeMap,
@@ -1327,16 +1327,13 @@ impl Handle {
         let addr_v4 = addr_v4.unwrap_or_else(|| SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0));
 
         #[cfg(not(wasm_browser))]
-        let actor_sockets = ActorSocketState::bind(addr_v4, addr_v6, metrics.portmapper.clone())?;
-
-        #[cfg(not(wasm_browser))]
-        let ip_transports = actor_sockets.ip.clone();
+        let (ip_transports, port_mapper) = bind_ip(addr_v4, addr_v6, metrics.portmapper.clone())?;
 
         let ip_mapped_addrs = IpMappedAddresses::default();
 
         let net_reporter = net_report::Client::new(
             #[cfg(not(wasm_browser))]
-            Some(actor_sockets.port_mapper.clone()),
+            Some(port_mapper.clone()),
             #[cfg(not(wasm_browser))]
             dns_resolver.clone(),
             #[cfg(not(wasm_browser))]
@@ -1372,6 +1369,8 @@ impl Handle {
         let relay_transports = vec![relay_transport];
 
         let secret_encryption_key = secret_ed_box(secret_key.secret());
+
+        let ipv6 = ip_transports.iter().any(|t| t.bind_addr().is_ipv6());
 
         #[cfg(not(wasm_browser))]
         let transports = Transports::new(ip_transports, relay_transports);
@@ -1456,7 +1455,7 @@ impl Handle {
             ep: qad_endpoint,
             client_config,
             ipv4: true,
-            ipv6: actor_sockets.ip.iter().any(|t| t.bind_addr().is_ipv6()),
+            ipv6,
         });
         #[cfg(not(wasm_browser))]
         let net_report_config = net_report::Options::default()
@@ -1477,7 +1476,7 @@ impl Handle {
                     periodic_re_stun_timer: new_re_stun_timer(false),
                     net_info_last: None,
                     #[cfg(not(wasm_browser))]
-                    sockets: actor_sockets,
+                    port_mapper,
                     no_v4_send: false,
                     net_reporter,
                     network_monitor,
@@ -1700,9 +1699,8 @@ struct Actor {
     /// The `NetInfo` provided in the last call to `net_info_func`. It's used to deduplicate calls to netInfoFunc.
     net_info_last: Option<NetInfo>,
 
-    /// Socket state, grouped so we can cfg it out as one for browsers
     #[cfg(not(wasm_browser))]
-    sockets: ActorSocketState,
+    port_mapper: portmapper::Client,
 
     /// Configuration for net report
     net_report_config: net_report::Options,
@@ -1718,70 +1716,55 @@ struct Actor {
     network_monitor: netmon::Monitor,
 }
 
-/// Actor state that relies on sockets being available.
-///
-/// We group these together into their own struct to make it easier to cfg out at once.
 #[cfg(not(wasm_browser))]
-struct ActorSocketState {
-    /// The NAT-PMP/PCP/UPnP prober/client, for requesting port mappings from NAT devices.
-    port_mapper: portmapper::Client,
+fn bind_ip(
+    addr_v4: SocketAddrV4,
+    addr_v6: Option<SocketAddrV6>,
+    metrics: Arc<portmapper::Metrics>,
+) -> Result<(Vec<IpTransport>, portmapper::Client)> {
+    let port_mapper = portmapper::Client::with_metrics(Default::default(), metrics);
+    let (v4, v6) = bind_sockets(addr_v4, addr_v6)?;
 
-    // The underlying Sockets
-    ip: Vec<IpTransport>,
+    let port = v4.local_addr().map_or(0, |p| p.port());
+    let v4 = UdpConn::wrap(v4);
+    let v6 = v6.map(UdpConn::wrap);
+
+    let mut ip = vec![IpTransport::new(addr_v4.into(), v4)];
+    if let (Some(v6), Some(addr)) = (v6, addr_v6) {
+        ip.push(IpTransport::new(addr.into(), v6))
+    }
+
+    // NOTE: we can end up with a zero port if `netwatch::UdpSocket::socket_addr` fails
+    match port.try_into() {
+        Ok(non_zero_port) => {
+            port_mapper.update_local_port(non_zero_port);
+        }
+        Err(_zero_port) => debug!("Skipping port mapping with zero local port"),
+    }
+
+    Ok((ip, port_mapper))
 }
 
 #[cfg(not(wasm_browser))]
-impl ActorSocketState {
-    fn bind(
-        addr_v4: SocketAddrV4,
-        addr_v6: Option<SocketAddrV6>,
-        metrics: Arc<portmapper::Metrics>,
-    ) -> Result<Self> {
-        let port_mapper = portmapper::Client::with_metrics(Default::default(), metrics);
-        let (v4, v6) = Self::bind_sockets(addr_v4, addr_v6)?;
+fn bind_sockets(
+    addr_v4: SocketAddrV4,
+    addr_v6: Option<SocketAddrV6>,
+) -> Result<(Arc<UdpSocket>, Option<Arc<UdpSocket>>)> {
+    let v4 = Arc::new(bind_with_fallback(SocketAddr::V4(addr_v4)).context("bind IPv4 failed")?);
 
-        let port = v4.local_addr().map_or(0, |p| p.port());
-        let v4 = UdpConn::wrap(v4);
-        let v6 = v6.map(UdpConn::wrap);
-
-        let mut ip = vec![IpTransport::new(addr_v4.into(), v4)];
-        if let (Some(v6), Some(addr)) = (v6, addr_v6) {
-            ip.push(IpTransport::new(addr.into(), v6))
+    let ip4_port = v4.local_addr()?.port();
+    let ip6_port = ip4_port.checked_add(1).unwrap_or(ip4_port - 1);
+    let addr_v6 =
+        addr_v6.unwrap_or_else(|| SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, ip6_port, 0, 0));
+    let v6 = match bind_with_fallback(SocketAddr::V6(addr_v6)) {
+        Ok(sock) => Some(Arc::new(sock)),
+        Err(err) => {
+            info!("bind ignoring IPv6 bind failure: {:?}", err);
+            None
         }
+    };
 
-        let this = Self { port_mapper, ip };
-
-        // NOTE: we can end up with a zero port if `netwatch::UdpSocket::socket_addr` fails
-        match port.try_into() {
-            Ok(non_zero_port) => {
-                this.port_mapper.update_local_port(non_zero_port);
-            }
-            Err(_zero_port) => debug!("Skipping port mapping with zero local port"),
-        }
-
-        Ok(this)
-    }
-
-    fn bind_sockets(
-        addr_v4: SocketAddrV4,
-        addr_v6: Option<SocketAddrV6>,
-    ) -> Result<(Arc<UdpSocket>, Option<Arc<UdpSocket>>)> {
-        let v4 = Arc::new(bind_with_fallback(SocketAddr::V4(addr_v4)).context("bind IPv4 failed")?);
-
-        let ip4_port = v4.local_addr()?.port();
-        let ip6_port = ip4_port.checked_add(1).unwrap_or(ip4_port - 1);
-        let addr_v6 =
-            addr_v6.unwrap_or_else(|| SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, ip6_port, 0, 0));
-        let v6 = match bind_with_fallback(SocketAddr::V6(addr_v6)) {
-            Ok(sock) => Some(Arc::new(sock)),
-            Err(err) => {
-                info!("bind ignoring IPv6 bind failure: {:?}", err);
-                None
-            }
-        };
-
-        Ok((v4, v6))
-    }
+    Ok((v4, v6))
 }
 
 impl Actor {
@@ -1808,7 +1791,7 @@ impl Actor {
         let mut direct_addr_update_receiver =
             self.msock.direct_addr_update_state.running.subscribe();
         #[cfg(not(wasm_browser))]
-        let mut portmap_watcher = self.sockets.port_mapper.watch_external_address();
+        let mut portmap_watcher = self.port_mapper.watch_external_address();
 
         let mut discovery_events: BoxStream<DiscoveryItem> = Box::pin(n0_future::stream::empty());
         if let Some(d) = self.msock.discovery() {
@@ -1985,7 +1968,7 @@ impl Actor {
 
                 self.msock.node_map.notify_shutdown();
                 #[cfg(not(wasm_browser))]
-                self.sockets.port_mapper.deactivate();
+                self.port_mapper.deactivate();
 
                 debug!("shutdown complete");
                 return true;
@@ -2032,7 +2015,7 @@ impl Actor {
 
         debug!("starting direct addr update ({})", why);
         #[cfg(not(wasm_browser))]
-        self.sockets.port_mapper.procure_mapping();
+        self.port_mapper.procure_mapping();
         self.update_net_info(why).await;
     }
 
@@ -2046,7 +2029,7 @@ impl Actor {
     /// - The local interfaces IP addresses.
     #[cfg(not(wasm_browser))]
     fn update_direct_addresses(&mut self, net_report_report: Option<Arc<net_report::Report>>) {
-        let portmap_watcher = self.sockets.port_mapper.watch_external_address();
+        let portmap_watcher = self.port_mapper.watch_external_address();
 
         // We only want to have one DirectAddr for each SocketAddr we have.  So we store
         // this as a map of SocketAddr -> DirectAddrType.  At the end we will construct a
@@ -2074,11 +2057,18 @@ impl Actor {
                 // port mapping on their router to the same explicit
                 // port that we are running with. Worst case it's an invalid candidate mapping.
                 let port = self
-                    .sockets
-                    .ip
-                    .iter()
-                    .map(|t| t.bind_addr().port())
-                    .find(|a| *a != 0);
+                    .msock
+                    .transports
+                    .ip_bind_addrs()
+                    .into_iter()
+                    .find_map(|addr| {
+                        if addr.port() != 0 {
+                            Some(addr.port())
+                        } else {
+                            None
+                        }
+                    });
+
                 if let Some(port) = port {
                     if net_report_report
                         .mapping_varies_by_dest_ip
@@ -2100,13 +2090,11 @@ impl Actor {
         }
 
         let local_addrs: Vec<_> = self
-            .sockets
-            .ip
-            .iter()
-            .filter_map(|t| {
-                let local_addr = t.local_addr()?;
-                Some((t.bind_addr(), local_addr))
-            })
+            .msock
+            .transports
+            .ip_bind_addrs()
+            .into_iter()
+            .zip(self.msock.transports.ip_local_addrs())
             .collect();
 
         let msock = self.msock.clone();
@@ -2285,12 +2273,7 @@ impl Actor {
             self.no_v4_send = !r.ipv4_can_send;
 
             #[cfg(not(wasm_browser))]
-            let have_port_map = self
-                .sockets
-                .port_mapper
-                .watch_external_address()
-                .borrow()
-                .is_some();
+            let have_port_map = self.port_mapper.watch_external_address().borrow().is_some();
             #[cfg(wasm_browser)]
             let have_port_map = false;
 

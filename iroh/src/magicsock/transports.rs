@@ -122,12 +122,11 @@ impl Transports {
 
     #[cfg(not(wasm_browser))]
     pub fn local_addrs_watch(&self) -> impl Watcher<Value = Vec<Addr>> + Send + Sync {
-        let ips = self.ip.iter().map(|t| {
-            t.local_addr_watch()
-                .map(move |a| a.map(Addr::from))
-                .expect("disconnected")
-        });
-        let ips = watchable::JoinOpt::new(ips).expect("disconnected");
+        let ips = self
+            .ip
+            .iter()
+            .map(|t| t.local_addr_watch().map(Addr::from).expect("disconnected"));
+        let ips = watchable::Join::new(ips).expect("disconnected");
 
         let relays = self.relay.iter().map(|t| {
             t.local_addr_watch()
@@ -147,6 +146,18 @@ impl Transports {
                 .expect("disconnected")
         });
         watchable::JoinOpt::new(relays).expect("disconnected")
+    }
+
+    /// Returns the bound addresses for IP based transports
+    #[cfg(not(wasm_browser))]
+    pub fn ip_bind_addrs(&self) -> Vec<SocketAddr> {
+        self.ip.iter().map(|t| t.bind_addr()).collect()
+    }
+
+    /// Returns the bound addresses for IP based transports
+    #[cfg(not(wasm_browser))]
+    pub fn ip_local_addrs(&self) -> Vec<SocketAddr> {
+        self.ip.iter().map(|t| t.local_addr()).collect()
     }
 
     #[cfg(not(wasm_browser))]
