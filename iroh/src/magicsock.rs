@@ -322,7 +322,7 @@ impl MagicSock {
     /// store [`Some`] report.
     ///
     /// To get the current `net-report`, use [`Watcher::initialized`].
-    pub(crate) fn net_report(&self) -> Watcher<Option<Arc<Report>>> {
+    pub(crate) fn net_report(&self) -> impl Watcher<Value = Option<Arc<Report>>> {
         self.net_report.watch()
     }
 
@@ -1652,7 +1652,7 @@ impl AsyncUdpSocket for MagicSock {
             return Ok(SocketAddr::new(ip, addr.port()));
         }
 
-        Err(io::Error::other("no vaild address available"))
+        Err(io::Error::other("no valid address available"))
     }
 
     #[cfg(wasm_browser)]

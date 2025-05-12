@@ -120,14 +120,14 @@ impl Transports {
     }
 
     pub fn max_transmit_segments(&self) -> usize {
-        // TODO: does this need to accoutn for the relay transports?
+        // TODO: does this need to account for the relay transports?
 
         let res = self.ip.iter().map(|t| t.max_transmit_segments()).min();
         res.unwrap_or(1)
     }
 
     pub fn max_receive_segments(&self) -> usize {
-        // TODO: does this need to accoutn for the relay transports?
+        // TODO: does this need to account for the relay transports?
 
         // `max_receive_segments` controls the size of the `RecvMeta` buffer
         // that quinn creates. Having buffers slightly bigger than necessary
