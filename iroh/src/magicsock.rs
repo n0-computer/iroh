@@ -37,7 +37,7 @@ use n0_future::{
     boxed::BoxStream,
     task::{self, JoinSet},
     time::{self, Duration, Instant},
-    FutureExt, MergeBounded, StreamExt,
+    FutureExt, StreamExt,
 };
 use netwatch::netmon;
 #[cfg(not(wasm_browser))]
@@ -50,7 +50,7 @@ use tracing::{
     debug, error, error_span, event, info, info_span, instrument, trace, trace_span, warn,
     Instrument, Level, Span,
 };
-use transports::{relay::RelayActorConfig, IpTransport, RelayTransport, Transport, TransportE};
+use transports::{relay::RelayActorConfig, IpTransport, RelayTransport, Transports};
 use url::Url;
 
 #[cfg(not(wasm_browser))]
@@ -196,7 +196,7 @@ pub(crate) struct MagicSock {
     secret_encryption_key: crypto_box::SecretKey,
 
     /// Transports, IP and Relay
-    transports: Vec<TransportE>,
+    transports: Transports,
 
     /// Close is in progress (or done)
     closing: AtomicBool,
@@ -274,10 +274,7 @@ impl MagicSock {
 
     /// Get the cached version of addresses.
     pub(crate) fn local_addr(&self) -> Vec<transports::Addr> {
-        self.transports
-            .iter()
-            .filter_map(|t| t.local_addr())
-            .collect()
+        self.transports.local_addrs()
     }
 
     /// Returns `true` if we have at least one candidate address where we can send packets to.
@@ -317,27 +314,20 @@ impl MagicSock {
     ///
     /// Note that this can be used to wait for the initial home relay to be known using
     /// [`Watcher::initialized`].
-    pub(crate) fn home_relay(&self) -> impl Watcher<Value = Option<RelayUrl>> + '_ {
-        let res = self
-            .transports
-            .iter()
-            .map(|t| t.local_addr_watch())
-            .find_map(move |a| {
-                if let Ok(Some(transports::Addr::RelayUrl(_, _))) = a.get() {
-                    Some(a.map(|a| {
-                        a.map(|a| match a {
-                            transports::Addr::RelayUrl(url, _) => url,
-                            _ => panic!("invalid addr"),
-                        })
-                    }))
-                } else {
-                    None
-                }
-            })
-            .expect("no relay transport")
-            .expect("disconnected");
-
-        res
+    pub(crate) fn home_relay(&self) -> impl Watcher<Value = Vec<RelayUrl>> + '_ {
+        let res = self.transports.local_addrs_watch().map(|addrs| {
+            addrs
+                .into_iter()
+                .filter_map(|addr| {
+                    if let transports::Addr::RelayUrl(url, _) = addr {
+                        Some(url)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        });
+        res.expect("disconnected")
     }
 
     /// Returns a [`Watcher`] that reports the [`ConnectionType`] we have to the
@@ -442,9 +432,9 @@ impl MagicSock {
     fn normalized_local_addr(&self) -> io::Result<SocketAddr> {
         let addrs: Vec<_> = self
             .transports
-            .iter()
-            .filter_map(|t| {
-                let addr = t.local_addr()?;
+            .local_addrs()
+            .into_iter()
+            .filter_map(|addr| {
                 let addr: SocketAddr = addr.try_into().ok()?;
                 Some(addr)
             })
@@ -562,13 +552,12 @@ impl MagicSock {
 
         for destination in available_paths {
             let transmit = transports::Transmit {
-                destination: destination.clone(),
                 ecn: transmit.ecn,
                 contents: transmit.contents,
                 segment_size: transmit.segment_size,
                 src_ip: transmit.src_ip.map(Into::into),
             };
-            let res = self.try_send_transmit(&transmit);
+            let res = self.transports.poll_send(&destination, &transmit);
             match res {
                 Poll::Ready(Ok(())) => {
                     trace!(dst = ?destination, "sent transmit");
@@ -588,22 +577,6 @@ impl MagicSock {
         Ok(())
     }
 
-    fn try_send_transmit(&self, transmit: &transports::Transmit<'_>) -> Poll<io::Result<()>> {
-        let conn = self
-            .conn_for_addr(&transmit.destination)
-            .ok_or_else(|| io::Error::other("no valid socket available"))?;
-        conn.poll_send(transmit)
-    }
-
-    fn conn_for_addr(&self, addr: &transports::Addr) -> Option<&TransportE> {
-        #[cfg(not(wasm_browser))]
-        if let Some(transport) = self.transports.iter().find(|p| p.is_valid_send_addr(addr)) {
-            return Some(transport);
-        }
-
-        None
-    }
-
     /// NOTE: Receiving on a [`Self::closed`] socket will return [`Poll::Pending`] indefinitely.
     #[instrument(skip_all)]
     #[cfg(not(wasm_browser))]
@@ -620,36 +593,11 @@ impl MagicSock {
 
         let mut transport_metas = vec![transports::RecvMeta::default(); metas.len()];
 
-        macro_rules! poll_transport {
-            ($socket:expr) => {
-                match $socket.poll_recv(cx, bufs, &mut transport_metas)? {
-                    Poll::Pending | Poll::Ready(0) => {}
-                    Poll::Ready(n) => {
-                        self.process_datagrams(
-                            &mut bufs[..n],
-                            &transport_metas[..n],
-                            &mut metas[..n],
-                        );
-                        return Poll::Ready(Ok(n));
-                    }
-                }
-            };
-        }
-
-        // TODO: proper randomization again
-        let counter = self.poll_recv_counter.fetch_add(1, Ordering::Relaxed);
-        match counter % 2 {
-            0 => {
-                for transport in &self.transports {
-                    poll_transport!(transport);
-                }
-                Poll::Pending
-            }
-            _ => {
-                for transport in &self.transports {
-                    poll_transport!(transport);
-                }
-                Poll::Pending
+        match self.transports.poll_recv(cx, bufs, &mut transport_metas)? {
+            Poll::Pending | Poll::Ready(0) => Poll::Pending,
+            Poll::Ready(n) => {
+                self.process_datagrams(&mut bufs[..n], &transport_metas[..n], &mut metas[..n]);
+                Poll::Ready(Ok(n))
             }
         }
     }
@@ -1080,23 +1028,17 @@ impl MagicSock {
             SendAddr::Relay(url) => transports::Addr::RelayUrl(url, dst_key),
         };
 
-        n0_future::future::poll_fn(move |cx| {
-            loop {
-                match self.try_send_disco_message(&dst, dst_key, &msg) {
-                    Ok(()) => return Poll::Ready(Ok(())),
-                    Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
-                        // This is the socket .try_send_disco_message_udp used.
-                        let sock = self
-                            .conn_for_addr(&dst)
-                            .ok_or_else(|| io::Error::other("no valid socket available"))?;
-                        match sock.poll_writable(cx) {
-                            Poll::Ready(Ok(())) => continue,
-                            Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
-                            Poll::Pending => return Poll::Pending,
-                        }
+        n0_future::future::poll_fn(move |cx| loop {
+            match self.try_send_disco_message(&dst, dst_key, &msg) {
+                Ok(()) => return Poll::Ready(Ok(())),
+                Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+                    match self.transports.poll_writable(cx, &dst) {
+                        Poll::Ready(Ok(())) => continue,
+                        Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
+                        Poll::Pending => return Poll::Pending,
                     }
-                    Err(err) => return Poll::Ready(Err(err)),
                 }
+                Err(err) => return Poll::Ready(Err(err)),
             }
         })
         .await
@@ -1118,14 +1060,13 @@ impl MagicSock {
         let pkt = self.encode_disco_message(dst_key, msg);
 
         let transmit = transports::Transmit {
-            destination: dst.clone(),
             contents: &pkt,
             ecn: None,
             segment_size: None,
             src_ip: None, // TODO
         };
 
-        match self.try_send_transmit(&transmit) {
+        match self.transports.poll_send(dst, &transmit) {
             Poll::Ready(Ok(())) => {
                 trace!(?dst, %msg, "sent disco message");
                 self.metrics.magicsock.sent_disco_udp.inc();
@@ -1367,9 +1308,9 @@ impl Handle {
         let actor_sockets = ActorSocketState::bind(addr_v4, addr_v6, metrics.portmapper.clone())?;
 
         #[cfg(not(wasm_browser))]
-        let mut transports = actor_sockets.transports();
+        let ip_transports = actor_sockets.ip.clone();
         #[cfg(wasm_browser)]
-        let mut transports = Vec::new();
+        let ip_transports = Vec::new();
 
         let ip_mapped_addrs = IpMappedAddresses::default();
 
@@ -1408,7 +1349,7 @@ impl Handle {
             metrics: metrics.magicsock.clone(),
             protocol: relay_protocol,
         });
-        transports.push(relay_transport.into());
+        let relay_transports = vec![relay_transport.into()];
 
         let secret_encryption_key = secret_ed_box(secret_key.secret());
 
@@ -1416,7 +1357,7 @@ impl Handle {
             me,
             secret_key,
             secret_encryption_key,
-            transports,
+            transports: Transports::new(ip_transports, relay_transports),
             closing: AtomicBool::new(false),
             closed: AtomicBool::new(false),
             poll_recv_counter: AtomicUsize::new(0),
@@ -1490,10 +1431,7 @@ impl Handle {
             ep: qad_endpoint,
             client_config,
             ipv4: true,
-            ipv6: actor_sockets
-                .ip
-                .iter()
-                .any(|t| t.bind_addr().map(|a| a.is_ipv6()).unwrap_or(false)),
+            ipv6: actor_sockets.ip.iter().any(|t| t.bind_addr().is_ipv6()),
         });
         #[cfg(not(wasm_browser))]
         let net_report_config = net_report::Options::default()
@@ -1660,27 +1598,7 @@ enum DiscoBoxError {
 
 impl AsyncUdpSocket for MagicSock {
     fn create_io_poller(self: Arc<Self>) -> Pin<Box<dyn quinn::UdpPoller>> {
-        // To do this properly the MagicSock would need a registry of pollers.  For each
-        // node we would look up the poller or create one.  Then on each try_send we can
-        // look up the correct poller and configure it to poll the paths it needs.
-        //
-        // Note however that the current quinn impl calls UdpPoller::poll_writable()
-        // **before** it calls try_send(), as opposed to how it is documented.  That is a
-        // problem as we would not yet know the path that needs to be polled.  To avoid such
-        // ambiguity the API could be changed to a .poll_send(&self, cx: &mut Context,
-        // io_poller: Pin<&mut dyn UdpPoller>, transmit: &Transmit) -> Poll<io::Result<()>>
-        // instead of the existing .try_send() because then we would have control over this.
-        //
-        // Right now however we have one single poller behaving the same for each
-        // connection.  It checks all paths and returns Poll::Ready as soon as any path is
-        // ready.
-        let io_pollers: Vec<_> = self
-            .transports
-            .iter()
-            .map(|t| t.create_io_poller())
-            .collect();
-
-        Box::pin(IoPoller { io_pollers })
+        self.transports.create_io_poller()
     }
 
     fn try_send(&self, transmit: &quinn_udp::Transmit) -> io::Result<()> {
@@ -1701,9 +1619,9 @@ impl AsyncUdpSocket for MagicSock {
     fn local_addr(&self) -> io::Result<SocketAddr> {
         let addrs: Vec<_> = self
             .transports
-            .iter()
-            .filter_map(|t| {
-                let addr = t.local_addr()?;
+            .local_addrs()
+            .into_iter()
+            .filter_map(|addr| {
                 let addr: SocketAddr = addr.try_into().ok()?;
                 Some(addr)
             })
@@ -1726,53 +1644,15 @@ impl AsyncUdpSocket for MagicSock {
     }
 
     fn max_transmit_segments(&self) -> usize {
-        let res = self
-            .transports
-            .iter()
-            .map(|t| t.max_transmit_segments())
-            .min();
-
-        res.unwrap_or(1)
+        self.transports.max_transmit_segments()
     }
 
     fn max_receive_segments(&self) -> usize {
-        // `max_receive_segments` controls the size of the `RecvMeta` buffer
-        // that quinn creates. Having buffers slightly bigger than necessary
-        // isn't terrible, and makes sure a single socket can read the maximum
-        // amount with a single poll. We considered adding these numbers instead,
-        // but we never get data from both sockets at the same time in `poll_recv`
-        // and it's impossible and unnecessary to be refactored that way.
-
-        let res = self
-            .transports
-            .iter()
-            .map(|t| t.max_receive_segments())
-            .max();
-
-        res.unwrap_or(1)
+        self.transports.max_receive_segments()
     }
 
     fn may_fragment(&self) -> bool {
-        self.transports.iter().any(|t| t.may_fragment())
-    }
-}
-
-#[derive(Debug)]
-struct IoPoller {
-    io_pollers: Vec<Pin<Box<dyn quinn::UdpPoller>>>,
-}
-
-impl quinn::UdpPoller for IoPoller {
-    fn poll_writable(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
-        // This version returns Ready as soon as any of them are ready.
-        let this = &mut *self;
-        for poller in &mut this.io_pollers {
-            match poller.as_mut().poll_writable(cx) {
-                Poll::Ready(_) => return Poll::Ready(Ok(())),
-                Poll::Pending => (),
-            }
-        }
-        Poll::Pending
+        self.transports.may_fragment()
     }
 }
 
@@ -1821,7 +1701,7 @@ struct ActorSocketState {
     /// The NAT-PMP/PCP/UPnP prober/client, for requesting port mappings from NAT devices.
     port_mapper: portmapper::Client,
 
-    // The underlying UDP sockets used to send/rcv packets.
+    // The underlying Sockets
     ip: Vec<IpTransport>,
 }
 
@@ -1877,10 +1757,6 @@ impl ActorSocketState {
 
         Ok((v4, v6))
     }
-
-    fn transports(&self) -> Vec<TransportE> {
-        self.ip.iter().map(|t| t.clone().into()).collect()
-    }
 }
 
 impl Actor {
@@ -1921,12 +1797,7 @@ impl Actor {
         let mut portmap_watcher_closed = false;
         let mut link_change_closed = false;
 
-        let mut local_addr_changes = MergeBounded::from_iter(
-            self.msock
-                .transports
-                .iter()
-                .map(|t| t.local_addr_watch().stream()),
-        );
+        let mut local_addr_changes = self.msock.transports.local_addrs_watch().stream();
 
         loop {
             self.msock.metrics.magicsock.actor_tick_main.inc();
@@ -1963,12 +1834,9 @@ impl Actor {
                 }
                 new_addr = local_addr_changes.next() => {
                     match new_addr {
-                        Some(Some(new_addr)) => {
-                            trace!(?new_addr, "new local addr");
+                        Some(addrs) => {
+                            trace!(?addrs, "local addrs");
                             self.msock.publish_my_addr();
-                        }
-                        Some(None) => {
-                            trace!("empty new local addr");
                         }
                         None => {
                             warn!("local addr watcher stopped");
@@ -2182,11 +2050,10 @@ impl Actor {
                 // port mapping on their router to the same explicit
                 // port that we are running with. Worst case it's an invalid candidate mapping.
                 let port = self
-                    .msock
-                    .transports
+                    .sockets
+                    .ip
                     .iter()
-                    .filter_map(|t| t.bind_addr())
-                    .map(|addr| addr.port())
+                    .map(|t| t.bind_addr().port())
                     .find(|a| *a != 0);
                 if let Some(port) = port {
                     if net_report_report
@@ -2215,7 +2082,7 @@ impl Actor {
             .filter_map(|t| {
                 let local_addr = t.local_addr()?;
                 let local_addr: SocketAddr = local_addr.try_into().ok()?;
-                Some((t.bind_addr()?, local_addr))
+                Some((t.bind_addr(), local_addr))
             })
             .collect();
 
@@ -2431,9 +2298,7 @@ impl Actor {
             }
 
             // Notify all transports
-            for transport in &self.msock.transports {
-                transport.on_network_change(&ni);
-            }
+            self.msock.transports.on_network_change(&ni);
 
             // TODO: set link type
             self.call_net_info_callback(ni).await;

@@ -16,7 +16,7 @@ use smallvec::SmallVec;
 use tokio::sync::mpsc;
 use tracing::{error, info_span, trace, warn, Instrument};
 
-use super::{Addr, RecvMeta, Transmit, Transport};
+use super::{RecvMeta, Transmit};
 use crate::{
     magicsock::RelayContents,
     watchable::{Watchable, Watcher as _},
@@ -86,20 +86,18 @@ impl RelayTransport {
             }
         }
     }
-}
 
-impl Transport for RelayTransport {
-    fn create_io_poller(&self) -> Pin<Box<dyn quinn::UdpPoller>> {
+    pub fn create_io_poller(&self) -> Pin<Box<dyn quinn::UdpPoller>> {
         Box::pin(self.relay_datagram_send_channel.clone())
     }
 
-    fn poll_send(&self, transmit: &Transmit<'_>) -> Poll<io::Result<()>> {
+    pub fn poll_send(
+        &self,
+        dest_url: RelayUrl,
+        dest_node: NodeId,
+        transmit: &Transmit<'_>,
+    ) -> Poll<io::Result<()>> {
         let contents = split_packets(transmit);
-        let (dest_url, dest_node) = transmit
-            .destination
-            .clone()
-            .try_into()
-            .expect("invalid src");
 
         let msg = RelaySendItem {
             remote_node: dest_node,
@@ -129,7 +127,7 @@ impl Transport for RelayTransport {
         }
     }
 
-    fn poll_recv(
+    pub fn poll_recv(
         &self,
         cx: &mut Context,
         bufs: &mut [io::IoSliceMut<'_>],
@@ -171,53 +169,53 @@ impl Transport for RelayTransport {
         }
     }
 
-    fn local_addr(&self) -> Option<Addr> {
-        self.my_relay
-            .get()
-            .map(|url| Addr::RelayUrl(url, self.my_node_id))
+    pub fn local_addr(&self) -> Option<(RelayUrl, NodeId)> {
+        self.my_relay.get().map(|url| (url, self.my_node_id))
     }
 
-    fn local_addr_watch(&self) -> impl crate::watchable::Watcher<Value = Option<Addr>> {
+    pub fn local_addr_watch(
+        &self,
+    ) -> impl crate::watchable::Watcher<Value = Option<(RelayUrl, NodeId)>> {
         let my_node_id = self.my_node_id;
         let watcher = self
             .my_relay
             .watch()
-            .map(move |url| url.map(|url| Addr::RelayUrl(url, my_node_id)))
+            .map(move |url| url.map(|url| (url, my_node_id)))
             .expect("disconnected");
         watcher
     }
 
-    fn max_transmit_segments(&self) -> usize {
+    pub fn max_transmit_segments(&self) -> usize {
         1
     }
 
-    fn max_receive_segments(&self) -> usize {
+    pub fn max_receive_segments(&self) -> usize {
         1
     }
 
-    fn may_fragment(&self) -> bool {
+    pub fn may_fragment(&self) -> bool {
         false
     }
 
-    fn is_valid_send_addr(&self, addr: &Addr) -> bool {
-        matches!(addr, Addr::RelayUrl(..))
+    pub fn is_valid_send_addr(&self, _url: &RelayUrl, _node_id: &NodeId) -> bool {
+        true
     }
 
-    fn poll_writable(&self, cx: &mut Context) -> Poll<io::Result<()>> {
+    pub fn poll_writable(&self, cx: &mut Context) -> Poll<io::Result<()>> {
         self.relay_datagram_send_channel.poll_writable(cx)
     }
 
-    fn bind_addr(&self) -> Option<SocketAddr> {
+    pub fn bind_addr(&self) -> Option<SocketAddr> {
         None
     }
 
-    fn rebind(&self) -> io::Result<()> {
+    pub fn rebind(&self) -> io::Result<()> {
         self.send_relay_actor(RelayActorMessage::MaybeCloseRelaysOnRebind);
 
         Ok(())
     }
 
-    fn on_network_change(&self, info: &crate::magicsock::NetInfo) {
+    pub fn on_network_change(&self, info: &crate::magicsock::NetInfo) {
         self.send_relay_actor(RelayActorMessage::NetworkChange { info: info.clone() });
     }
 }
@@ -412,9 +410,7 @@ mod tests {
     fn test_split_packets() {
         fn mk_transmit(contents: &[u8], segment_size: Option<usize>) -> Transmit<'_> {
             let src_ip = "127.0.0.1:12".parse::<SocketAddr>().unwrap().into();
-            let destination = "127.0.0.1:0".parse::<SocketAddr>().unwrap().into();
             Transmit {
-                destination,
                 ecn: None,
                 contents,
                 segment_size,

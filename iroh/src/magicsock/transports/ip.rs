@@ -7,7 +7,7 @@ use std::{
 
 use quinn::AsyncUdpSocket;
 
-use super::{Addr, RecvMeta, Transmit, Transport};
+use super::{RecvMeta, Transmit};
 use crate::{
     magicsock::UdpConn,
     watchable::{Watchable, Watcher},
@@ -17,14 +17,14 @@ use crate::{
 pub struct IpTransport {
     bind_addr: SocketAddr,
     socket: UdpConn,
-    local_addr: Watchable<Vec<SocketAddr>>,
+    local_addr: Watchable<Option<SocketAddr>>,
 }
 
 impl IpTransport {
     pub fn new(bind_addr: SocketAddr, socket: UdpConn) -> Self {
         // Currently gets updated on manual rebind
         // TODO: update when UdpSocket under the hood rebinds automatically
-        let local_addr = Watchable::new(socket.local_addr().ok().map(Into::into));
+        let local_addr = Watchable::new(socket.local_addr().ok());
 
         Self {
             bind_addr,
@@ -89,10 +89,10 @@ impl IpTransport {
         }
     }
 
-    pub fn local_addr(&self) -> Option<Addr> {
+    pub fn local_addr(&self) -> Option<SocketAddr> {
         self.local_addr.get()
     }
-    pub fn local_addr_watch(&self) -> impl Watcher<Value = Option<Addr>> {
+    pub fn local_addr_watch(&self) -> impl Watcher<Value = Option<SocketAddr>> {
         self.local_addr.watch()
     }
 
@@ -121,8 +121,8 @@ impl IpTransport {
         self.socket.as_socket_ref().poll_writable(cx)
     }
 
-    pub fn bind_addr(&self) -> Option<SocketAddr> {
-        Some(self.bind_addr)
+    pub fn bind_addr(&self) -> SocketAddr {
+        self.bind_addr
     }
 
     pub fn rebind(&self) -> io::Result<()> {

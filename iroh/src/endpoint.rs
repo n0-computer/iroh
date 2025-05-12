@@ -877,7 +877,7 @@ impl Endpoint {
             // Outside browsers, we preserve the "old" behavior of waiting for direct
             // addresses and then adding the relay URL (should we have it)
             let addrs = self.direct_addresses().initialized().await?;
-            let relay = self.home_relay().get()?;
+            let relay = self.home_relay().get()?.first().cloned();
             Ok(NodeAddr::from_parts(
                 self.node_id(),
                 relay,
@@ -919,7 +919,7 @@ impl Endpoint {
     /// let _relay_url = mep.home_relay().initialized().await.unwrap();
     /// # });
     /// ```
-    pub fn home_relay(&self) -> impl Watcher<Value = Option<RelayUrl>> + '_ {
+    pub fn home_relay(&self) -> impl Watcher<Value = Vec<RelayUrl>> + '_ {
         self.msock.home_relay()
     }
 

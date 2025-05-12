@@ -5,16 +5,14 @@ use std::{
     task::{Context, Poll},
 };
 
-use enum_dispatch::enum_dispatch;
 use iroh_base::{NodeId, RelayUrl};
 
 mod ip;
 pub(crate) mod relay;
 
-use crate::watchable::Watcher;
-
 pub use self::{ip::IpTransport, relay::RelayTransport};
 use super::NetInfo;
+use crate::watchable::{self, Watcher};
 
 #[derive(Debug)]
 pub struct Transports {
@@ -23,68 +21,194 @@ pub struct Transports {
 }
 
 impl Transports {
-    fn poll_send(&self, destination: Addr, transmit: &Transmit<'_>) -> Poll<io::Result<()>> {
+    pub fn new(ip: Vec<IpTransport>, relay: Vec<RelayTransport>) -> Self {
+        Self { ip, relay }
+    }
+
+    pub fn poll_send(&self, destination: &Addr, transmit: &Transmit<'_>) -> Poll<io::Result<()>> {
+        // TODO: should this send on all, or only a single transport?
+
         match destination {
             Addr::Ipv4(addr, port) => {
-                let addr = SocketAddr::V4(addr, port.unwrap_or_default());
+                let addr = SocketAddr::V4(SocketAddrV4::new(*addr, port.unwrap_or_default()));
                 for transport in &self.ip {
                     if transport.is_valid_send_addr(&addr) {
-                        transport.poll_send(addr, transmit)
+                        transport.poll_send(addr, transmit)?;
                     }
+                }
+            }
+            Addr::Ipv6(addr, port) => {
+                let addr = SocketAddr::V6(SocketAddrV6::new(*addr, port.unwrap_or_default(), 0, 0));
+                for transport in &self.ip {
+                    if transport.is_valid_send_addr(&addr) {
+                        transport.poll_send(addr, transmit)?;
+                    }
+                }
+            }
+            Addr::RelayUrl(url, node_id) => {
+                for transport in &self.relay {
+                    if transport.is_valid_send_addr(&url, &node_id) {
+                        transport.poll_send(url.clone(), *node_id, transmit)?;
+                    }
+                }
+            }
+        }
+        Poll::Pending
+    }
+
+    pub fn poll_recv(
+        &self,
+        cx: &mut Context,
+        bufs: &mut [IoSliceMut<'_>],
+        metas: &mut [RecvMeta],
+    ) -> Poll<io::Result<usize>> {
+        debug_assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
+
+        // TODO: randomization
+        macro_rules! poll_transport {
+            ($socket:expr) => {
+                match $socket.poll_recv(cx, bufs, metas)? {
+                    Poll::Pending | Poll::Ready(0) => {}
+                    Poll::Ready(n) => {
+                        return Poll::Ready(Ok(n));
+                    }
+                }
+            };
+        }
+
+        for transport in &self.ip {
+            poll_transport!(transport);
+        }
+        for transport in &self.relay {
+            poll_transport!(transport);
+        }
+        Poll::Pending
+    }
+
+    pub fn local_addrs(&self) -> Vec<Addr> {
+        self.local_addrs_watch().get().expect("not disconnected")
+    }
+
+    pub fn local_addrs_watch(&self) -> impl Watcher<Value = Vec<Addr>> {
+        let ips = self.ip.iter().map(|t| {
+            t.local_addr_watch()
+                .map(|a| a.map(Addr::from))
+                .expect("disconnected")
+        });
+        let ips = watchable::JoinOpt::new(ips).expect("disconnected");
+
+        let relays = self.relay.iter().map(|t| {
+            t.local_addr_watch()
+                .map(|t| t.map(|(url, id)| Addr::RelayUrl(url, id)))
+                .expect("disconnected")
+        });
+        let relays = watchable::JoinOpt::new(relays).expect("disconnected");
+
+        // TODO: join relays and ips
+        ips
+    }
+
+    pub fn max_transmit_segments(&self) -> usize {
+        // TODO: does this need to accoutn for the relay transports?
+
+        let res = self.ip.iter().map(|t| t.max_transmit_segments()).min();
+        res.unwrap_or(1)
+    }
+
+    pub fn max_receive_segments(&self) -> usize {
+        // TODO: does this need to accoutn for the relay transports?
+
+        // `max_receive_segments` controls the size of the `RecvMeta` buffer
+        // that quinn creates. Having buffers slightly bigger than necessary
+        // isn't terrible, and makes sure a single socket can read the maximum
+        // amount with a single poll. We considered adding these numbers instead,
+        // but we never get data from both sockets at the same time in `poll_recv`
+        // and it's impossible and unnecessary to be refactored that way.
+
+        let res = self.ip.iter().map(|t| t.max_receive_segments()).max();
+        res.unwrap_or(1)
+    }
+
+    pub fn may_fragment(&self) -> bool {
+        self.ip.iter().any(|t| t.may_fragment())
+    }
+
+    pub fn poll_writable(&self, cx: &mut Context, addr: &Addr) -> Poll<io::Result<()>> {
+        // TODO: what about multiple matches?
+        match addr {
+            Addr::Ipv4(..) | Addr::Ipv6(..) => {
+                let addr: SocketAddr = addr.clone().try_into().unwrap();
+                match self.ip.iter().find(|t| t.is_valid_send_addr(&addr)) {
+                    Some(t) => t.poll_writable(cx),
+                    None => Poll::Pending,
+                }
+            }
+            Addr::RelayUrl(url, node_id) => {
+                match self
+                    .relay
+                    .iter()
+                    .find(|t| t.is_valid_send_addr(url, node_id))
+                {
+                    Some(t) => t.poll_writable(cx),
+                    None => Poll::Pending,
                 }
             }
         }
     }
 
-    fn poll_recv(
-        &self,
-        cx: &mut Context,
-        bufs: &mut [IoSliceMut<'_>],
-        meta: &mut [RecvMeta],
-    ) -> Poll<io::Result<usize>> {
-        todo!()
+    pub fn create_io_poller(&self) -> Pin<Box<dyn quinn::UdpPoller>> {
+        // To do this properly the MagicSock would need a registry of pollers.  For each
+        // node we would look up the poller or create one.  Then on each try_send we can
+        // look up the correct poller and configure it to poll the paths it needs.
+        //
+        // Note however that the current quinn impl calls UdpPoller::poll_writable()
+        // **before** it calls try_send(), as opposed to how it is documented.  That is a
+        // problem as we would not yet know the path that needs to be polled.  To avoid such
+        // ambiguity the API could be changed to a .poll_send(&self, cx: &mut Context,
+        // io_poller: Pin<&mut dyn UdpPoller>, transmit: &Transmit) -> Poll<io::Result<()>>
+        // instead of the existing .try_send() because then we would have control over this.
+        //
+        // Right now however we have one single poller behaving the same for each
+        // connection.  It checks all paths and returns Poll::Ready as soon as any path is
+        // ready.
+        let io_pollers: Vec<_> = self
+            .ip
+            .iter()
+            .map(|t| t.create_io_poller())
+            .chain(self.relay.iter().map(|t| t.create_io_poller()))
+            .collect();
+
+        Box::pin(IoPoller { io_pollers })
     }
 
-    fn local_addr(&self) -> Option<Addr> {
-        todo!()
-    }
-    fn local_addr_watch(&self) {
-        todo!()
-    }
-
-    fn max_transmit_segments(&self) -> usize {
-        todo!()
-    }
-    fn max_receive_segments(&self) -> usize {
-        todo!()
-    }
-    fn may_fragment(&self) -> bool {
-        todo!()
-    }
-
-    fn is_valid_send_addr(&self, addr: &Addr) -> bool {
-        todo!()
-    }
-    fn poll_writable(&self, cx: &mut Context) -> Poll<io::Result<()>> {
-        todo!()
-    }
-    fn create_io_poller(&self) -> Pin<Box<dyn quinn::UdpPoller>> {
-        todo!()
-    }
-
-    /// If this transport is IP based, returns the bound address.
-    fn bind_addr(&self) -> Option<SocketAddr> {
-        todo!()
+    /// Returns a list of a IP based bound addresses
+    pub fn bind_addrs(&self) -> Vec<SocketAddr> {
+        self.ip.iter().map(|t| t.bind_addr()).collect()
     }
 
     /// Rebinds underlying connections, if necessary.
-    fn rebind(&self) -> std::io::Result<()> {
-        todo!()
+    pub fn rebind(&self) -> std::io::Result<()> {
+        // TODO: failure in an earlier transport will skip other rebinds, is that ok?
+
+        for transport in &self.ip {
+            transport.rebind()?;
+        }
+
+        for transport in &self.relay {
+            transport.rebind()?;
+        }
+        Ok(())
     }
 
     /// Handles potential changes to the underlying network conditions.
-    fn on_network_change(&self, info: &NetInfo) {
-        todo!()
+    pub fn on_network_change(&self, info: &NetInfo) {
+        for transport in &self.ip {
+            transport.on_network_change(info);
+        }
+
+        for transport in &self.relay {
+            transport.on_network_change(info);
+        }
     }
 }
 
@@ -191,5 +315,24 @@ impl Addr {
 
     pub fn is_ip(&self) -> bool {
         matches!(self, Self::Ipv4(..) | Self::Ipv6(..))
+    }
+}
+
+#[derive(Debug)]
+pub struct IoPoller {
+    io_pollers: Vec<Pin<Box<dyn quinn::UdpPoller>>>,
+}
+
+impl quinn::UdpPoller for IoPoller {
+    fn poll_writable(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
+        // This version returns Ready as soon as any of them are ready.
+        let this = &mut *self;
+        for poller in &mut this.io_pollers {
+            match poller.as_mut().poll_writable(cx) {
+                Poll::Ready(_) => return Poll::Ready(Ok(())),
+                Poll::Pending => (),
+            }
+        }
+        Poll::Pending
     }
 }

@@ -307,6 +307,97 @@ impl<S: Watcher, T: Watcher> Watcher for (S, T) {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct Join<T: Clone + Eq, W: Watcher<Value = T>> {
+    watchers: Vec<W>,
+    current: Vec<T>,
+}
+impl<T: Clone + Eq, W: Watcher<Value = T>> Join<T, W> {
+    /// Joins a set of watchers into a single watcher
+    pub fn new(watchers: impl Iterator<Item = W>) -> Result<Self, Disconnected> {
+        let watchers: Vec<W> = watchers.into_iter().collect();
+        let mut current = Vec::with_capacity(watchers.len());
+        for watcher in &watchers {
+            current.push(watcher.get()?);
+        }
+
+        Ok(Self { watchers, current })
+    }
+}
+
+impl<T: Clone + Eq, W: Watcher<Value = T>> Watcher for Join<T, W> {
+    type Value = Vec<T>;
+
+    fn get(&self) -> Result<Self::Value, Disconnected> {
+        let mut out = Vec::with_capacity(self.watchers.len());
+        for watcher in &self.watchers {
+            out.push(watcher.get()?);
+        }
+
+        Ok(out)
+    }
+
+    fn poll_updated(
+        &mut self,
+        cx: &mut task::Context<'_>,
+    ) -> Poll<Result<Self::Value, Disconnected>> {
+        loop {
+            for (el, watcher) in self.current.iter_mut().zip(self.watchers.iter_mut()) {
+                let value = ready!(watcher.poll_updated(cx)?);
+                if &value != el {
+                    *el = value;
+                    return Poll::Ready(Ok(self.current.clone()));
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct JoinOpt<T: Clone + Eq, W: Watcher<Value = Option<T>>> {
+    watchers: Vec<W>,
+}
+impl<T: Clone + Eq, W: Watcher<Value = Option<T>>> JoinOpt<T, W> {
+    /// Joins a set of watchers into a single watcher
+    pub fn new(watchers: impl Iterator<Item = W>) -> Result<Self, Disconnected> {
+        let watchers: Vec<W> = watchers.into_iter().collect();
+
+        Ok(Self { watchers })
+    }
+}
+
+impl<T: Clone + Eq, W: Watcher<Value = Option<T>>> Watcher for JoinOpt<T, W> {
+    type Value = Vec<T>;
+
+    fn get(&self) -> Result<Self::Value, Disconnected> {
+        let mut out = Vec::with_capacity(self.watchers.len());
+        for watcher in &self.watchers {
+            if let Some(el) = watcher.get()? {
+                out.push(el);
+            }
+        }
+
+        Ok(out)
+    }
+
+    fn poll_updated(
+        &mut self,
+        cx: &mut task::Context<'_>,
+    ) -> Poll<Result<Self::Value, Disconnected>> {
+        'outer: loop {
+            for watcher in &mut self.watchers {
+                match watcher.poll_updated(cx) {
+                    Poll::Ready(Ok(_)) => break 'outer,
+                    Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
+                    Poll::Pending => {}
+                }
+            }
+        }
+
+        Poll::Ready(self.get())
+    }
+}
+
 /// Wraps a [`Watcher`] to allow observing a derived value.
 ///
 /// See [`Watcher::map`].
