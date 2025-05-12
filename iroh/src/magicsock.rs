@@ -22,7 +22,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     pin::Pin,
     sync::{
-        atomic::{AtomicBool, AtomicU16, AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering},
         Arc, RwLock,
     },
     task::{Context, Poll, Waker},
@@ -197,7 +197,7 @@ pub(crate) struct MagicSock {
     /// Channel on which to send datagrams via a relay server.
     relay_datagram_send_channel: RelayDatagramSendChannelSender,
     /// Counter for ordering of [`MagicSock::poll_recv`] polling order.
-    poll_recv_counter: AtomicUsize,
+    // poll_recv_counter: AtomicUsize,
 
     /// The DNS resolver to be used in this magicsock.
     #[cfg(not(wasm_browser))]
@@ -818,30 +818,35 @@ impl MagicSock {
             };
         }
 
-        let counter = self.poll_recv_counter.fetch_add(1, Ordering::Relaxed);
-        match counter % 3 {
-            0 => {
-                // order of polling: UDPv4, UDPv6, relay
-                poll_ipv4!();
-                poll_ipv6!();
-                poll_relay!();
-                Poll::Pending
-            }
-            1 => {
-                // order of polling: UDPv6, relay, UDPv4
-                poll_ipv6!();
-                poll_relay!();
-                poll_ipv4!();
-                Poll::Pending
-            }
-            _ => {
-                // order of polling: relay, UDPv4, UDPv6
-                poll_relay!();
-                poll_ipv4!();
-                poll_ipv6!();
-                Poll::Pending
-            }
-        }
+        // order of polling: UDPv4, UDPv6, relay
+        poll_ipv4!();
+        poll_ipv6!();
+        poll_relay!();
+        Poll::Pending
+        // let counter = self.poll_recv_counter.fetch_add(1, Ordering::Relaxed);
+        // match counter % 3 {
+        //     0 => {
+        //         // order of polling: UDPv4, UDPv6, relay
+        //         poll_ipv4!();
+        //         poll_ipv6!();
+        //         poll_relay!();
+        //         Poll::Pending
+        //     }
+        //     1 => {
+        //         // order of polling: UDPv6, relay, UDPv4
+        //         poll_ipv6!();
+        //         poll_relay!();
+        //         poll_ipv4!();
+        //         Poll::Pending
+        //     }
+        //     _ => {
+        //         // order of polling: relay, UDPv4, UDPv6
+        //         poll_relay!();
+        //         poll_ipv4!();
+        //         poll_ipv6!();
+        //         Poll::Pending
+        //     }
+        // }
     }
 
     /// poll_recv in browsers is "just" polling the relay receive path
@@ -1772,7 +1777,7 @@ impl Handle {
             closed: AtomicBool::new(false),
             relay_datagram_recv_queue: relay_datagram_recv_queue.clone(),
             relay_datagram_send_channel: relay_datagram_send_tx,
-            poll_recv_counter: AtomicUsize::new(0),
+            // poll_recv_counter: AtomicUsize::new(0),
             actor_sender: actor_sender.clone(),
             ipv6_reported: Arc::new(AtomicBool::new(false)),
             relay_map,
