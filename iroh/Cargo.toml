@@ -39,7 +39,6 @@ derive_more = { version = "1.0.0", features = [
     "from_str"
 ] }
 ed25519-dalek = { version = "2.1.1", features = ["serde", "rand_core", "zeroize", "pkcs8", "pem"] }
-enum_dispatch = { version = "0.3.13", features = ["auto_enums"] }
 http = "1"
 iroh-base = { version = "0.34.1", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
 iroh-relay = { version = "0.34", path = "../iroh-relay", default-features = false }

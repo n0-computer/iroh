@@ -1134,18 +1134,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "enum_dispatch"
-version = "0.3.13"
-source = "git+https://gitlab.com/asomers/enum_dispatch.git?branch=auto_enums#a78cf28027bb3b5775ee3e2b1d1023ae0986600f"
-dependencies = [
- "auto_enums",
- "once_cell",
- "proc-macro2",
- "quote",
- "syn 2.0.101",
-]
-
-[[package]]
 name = "enumflags2"
 version = "0.7.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2257,7 +2245,6 @@ dependencies = [
  "der",
  "derive_more",
  "ed25519-dalek",
- "enum_dispatch",
  "futures-buffered",
  "futures-lite",
  "futures-util",
