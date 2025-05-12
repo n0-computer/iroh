@@ -3613,7 +3613,10 @@
 <a href="#3612" id="3612">3612</a>
 <a href="#3613" id="3613">3613</a>
 <a href="#3614" id="3614">3614</a>
-<a href="#3615" id="3615">3615</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#3615" id="3615">3615</a>
+<a href="#3616" id="3616">3616</a>
+<a href="#3617" id="3617">3617</a>
+<a href="#3618" id="3618">3618</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -5344,15 +5347,29 @@
     metrics: Arc&lt;portmapper::Metrics&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(Vec&lt;IpTransport&gt;, portmapper::Client)&gt; {
     <span class="kw">let </span>port_mapper = portmapper::Client::with_metrics(Default::default(), metrics);
-    <span class="kw">let </span>(v4, v6) = bind_sockets(addr_v4, addr_v6)<span class="question-mark">?</span>;
+
+    <span class="kw">let </span>v4 = Arc::new(bind_with_fallback(SocketAddr::V4(addr_v4)).context(<span class="string">"bind IPv4 failed"</span>)<span class="question-mark">?</span>);
+    <span class="kw">let </span>ip4_port = v4.local_addr()<span class="question-mark">?</span>.port();
+    <span class="kw">let </span>ip6_port = ip4_port.checked_add(<span class="number">1</span>).unwrap_or(ip4_port - <span class="number">1</span>);
+
+    <span class="kw">let </span>addr_v6 =
+        addr_v6.unwrap_or_else(|| SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, ip6_port, <span class="number">0</span>, <span class="number">0</span>));
+
+    <span class="kw">let </span>v6 = <span class="kw">match </span>bind_with_fallback(SocketAddr::V6(addr_v6)) {
+        <span class="prelude-val">Ok</span>(sock) =&gt; <span class="prelude-val">Some</span>(Arc::new(sock)),
+        <span class="prelude-val">Err</span>(err) =&gt; {
+            <span class="macro">info!</span>(<span class="string">"bind ignoring IPv6 bind failure: {:?}"</span>, err);
+            <span class="prelude-val">None
+        </span>}
+    };
 
     <span class="kw">let </span>port = v4.local_addr().map_or(<span class="number">0</span>, |p| p.port());
     <span class="kw">let </span>v4 = UdpConn::wrap(v4);
     <span class="kw">let </span>v6 = v6.map(UdpConn::wrap);
 
     <span class="kw">let </span><span class="kw-2">mut </span>ip = <span class="macro">vec!</span>[IpTransport::new(addr_v4.into(), v4)];
-    <span class="kw">if let </span>(<span class="prelude-val">Some</span>(v6), <span class="prelude-val">Some</span>(addr)) = (v6, addr_v6) {
-        ip.push(IpTransport::new(addr.into(), v6))
+    <span class="kw">if let </span><span class="prelude-val">Some</span>(v6) = v6 {
+        ip.push(IpTransport::new(addr_v6.into(), v6))
     }
 
     <span class="comment">// NOTE: we can end up with a zero port if `netwatch::UdpSocket::socket_addr` fails
@@ -5364,28 +5381,6 @@
     }
 
     <span class="prelude-val">Ok</span>((ip, port_mapper))
-}
-
-<span class="attr">#[cfg(not(wasm_browser))]
-</span><span class="kw">fn </span>bind_sockets(
-    addr_v4: SocketAddrV4,
-    addr_v6: <span class="prelude-ty">Option</span>&lt;SocketAddrV6&gt;,
-) -&gt; <span class="prelude-ty">Result</span>&lt;(Arc&lt;UdpSocket&gt;, <span class="prelude-ty">Option</span>&lt;Arc&lt;UdpSocket&gt;&gt;)&gt; {
-    <span class="kw">let </span>v4 = Arc::new(bind_with_fallback(SocketAddr::V4(addr_v4)).context(<span class="string">"bind IPv4 failed"</span>)<span class="question-mark">?</span>);
-
-    <span class="kw">let </span>ip4_port = v4.local_addr()<span class="question-mark">?</span>.port();
-    <span class="kw">let </span>ip6_port = ip4_port.checked_add(<span class="number">1</span>).unwrap_or(ip4_port - <span class="number">1</span>);
-    <span class="kw">let </span>addr_v6 =
-        addr_v6.unwrap_or_else(|| SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, ip6_port, <span class="number">0</span>, <span class="number">0</span>));
-    <span class="kw">let </span>v6 = <span class="kw">match </span>bind_with_fallback(SocketAddr::V6(addr_v6)) {
-        <span class="prelude-val">Ok</span>(sock) =&gt; <span class="prelude-val">Some</span>(Arc::new(sock)),
-        <span class="prelude-val">Err</span>(err) =&gt; {
-            <span class="macro">info!</span>(<span class="string">"bind ignoring IPv6 bind failure: {:?}"</span>, err);
-            <span class="prelude-val">None
-        </span>}
-    };
-
-    <span class="prelude-val">Ok</span>((v4, v6))
 }
 
 <span class="kw">impl </span>Actor {
@@ -5719,6 +5714,20 @@
             .collect();
 
         <span class="kw">let </span>msock = <span class="self">self</span>.msock.clone();
+        <span class="kw">let </span>has_ipv4_unspecified = local_addrs.iter().find_map(|(<span class="kw">_</span>, a)| {
+            <span class="kw">if </span>a.is_ipv4() &amp;&amp; a.ip().is_unspecified() {
+                <span class="prelude-val">Some</span>(a.port())
+            } <span class="kw">else </span>{
+                <span class="prelude-val">None
+            </span>}
+        });
+        <span class="kw">let </span>has_ipv6_unspecified = local_addrs.iter().find_map(|(<span class="kw">_</span>, a)| {
+            <span class="kw">if </span>a.is_ipv6() &amp;&amp; a.ip().is_unspecified() {
+                <span class="prelude-val">Some</span>(a.port())
+            } <span class="kw">else </span>{
+                <span class="prelude-val">None
+            </span>}
+        });
 
         <span class="comment">// The following code can be slow, we do not want to block the caller since it would
         // block the actor loop.
@@ -5728,7 +5737,7 @@
                 // each local IP address by pairing it with the port the socket is bound on.
                 </span><span class="kw">if </span>local_addrs
                     .iter()
-                    .any(|(bound, <span class="kw">_</span>)| bound.ip().is_unspecified())
+                    .any(|(<span class="kw">_</span>, local)| local.ip().is_unspecified())
                 {
                     <span class="comment">// Depending on the OS and network interfaces attached and their state
                     // enumerating the local interfaces can take a long time.  Especially
@@ -5744,14 +5753,11 @@
                         // or public addresses, this allows testing offline.
                         </span>ips = loopback;
                     }
+
                     <span class="kw">for </span>ip <span class="kw">in </span>ips {
                         <span class="kw">let </span>port_if_unspecified = <span class="kw">match </span>ip {
-                            IpAddr::V4(<span class="kw">_</span>) =&gt; local_addrs
-                                .iter()
-                                .find_map(|(<span class="kw">_</span>, a)| a.is_ipv4().then(|| a.port())),
-                            IpAddr::V6(<span class="kw">_</span>) =&gt; local_addrs
-                                .iter()
-                                .find_map(|(<span class="kw">_</span>, a)| a.is_ipv6().then(|| a.port())),
+                            IpAddr::V4(<span class="kw">_</span>) =&gt; has_ipv4_unspecified,
+                            IpAddr::V6(<span class="kw">_</span>) =&gt; has_ipv6_unspecified,
                         };
                         <span class="kw">if let </span><span class="prelude-val">Some</span>(port) = port_if_unspecified {
                             <span class="kw">let </span>addr = SocketAddr::new(ip, port);
