@@ -90,19 +90,41 @@
 <a href="#89" id="89">89</a>
 <a href="#90" id="90">90</a>
 <a href="#91" id="91">91</a>
-<a href="#92" id="92">92</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::sync::Arc;
+<a href="#92" id="92">92</a>
+<a href="#93" id="93">93</a>
+<a href="#94" id="94">94</a>
+<a href="#95" id="95">95</a>
+<a href="#96" id="96">96</a>
+<a href="#97" id="97">97</a>
+<a href="#98" id="98">98</a>
+<a href="#99" id="99">99</a>
+<a href="#100" id="100">100</a>
+<a href="#101" id="101">101</a>
+<a href="#102" id="102">102</a>
+<a href="#103" id="103">103</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::sync::Arc;
 
 <span class="kw">use </span>ed25519_dalek::pkcs8::{spki::der::pem::LineEnding, EncodePrivateKey};
 <span class="kw">use </span>iroh_base::SecretKey;
 <span class="kw">use </span>webpki::types::{pem::PemObject, CertificateDer, PrivatePkcs8KeyDer};
 
-<span class="kw">use super</span>::{certificate, CreateConfigError};
+<span class="kw">use </span><span class="kw">super</span>::certificate;
 <span class="kw">use </span><span class="kw">crate</span>::tls::Authentication;
 
 <span class="attr">#[derive(Debug)]
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>AlwaysResolvesCert {
     key: Arc&lt;rustls::sign::CertifiedKey&gt;,
     auth: Authentication,
+}
+
+<span class="doccomment">/// Error for generating TLS configs.
+</span><span class="attr">#[derive(Debug, thiserror::Error)]
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">enum </span>CreateConfigError {
+    <span class="doccomment">/// Error generating the certificate.
+    </span><span class="attr">#[error(<span class="string">"Error generating the certificate"</span>)]
+    </span>CertError(<span class="attr">#[from] </span>certificate::GenError),
+    <span class="doccomment">/// Rustls configuration error
+    </span><span class="attr">#[error(<span class="string">"rustls error"</span>)]
+    </span>Rustls(<span class="attr">#[from] </span>rustls::Error),
 }
 
 <span class="kw">impl </span>AlwaysResolvesCert {

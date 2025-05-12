@@ -805,7 +805,36 @@
 <a href="#804" id="804">804</a>
 <a href="#805" id="805">805</a>
 <a href="#806" id="806">806</a>
-<a href="#807" id="807">807</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
+<a href="#807" id="807">807</a>
+<a href="#808" id="808">808</a>
+<a href="#809" id="809">809</a>
+<a href="#810" id="810">810</a>
+<a href="#811" id="811">811</a>
+<a href="#812" id="812">812</a>
+<a href="#813" id="813">813</a>
+<a href="#814" id="814">814</a>
+<a href="#815" id="815">815</a>
+<a href="#816" id="816">816</a>
+<a href="#817" id="817">817</a>
+<a href="#818" id="818">818</a>
+<a href="#819" id="819">819</a>
+<a href="#820" id="820">820</a>
+<a href="#821" id="821">821</a>
+<a href="#822" id="822">822</a>
+<a href="#823" id="823">823</a>
+<a href="#824" id="824">824</a>
+<a href="#825" id="825">825</a>
+<a href="#826" id="826">826</a>
+<a href="#827" id="827">827</a>
+<a href="#828" id="828">828</a>
+<a href="#829" id="829">829</a>
+<a href="#830" id="830">830</a>
+<a href="#831" id="831">831</a>
+<a href="#832" id="832">832</a>
+<a href="#833" id="833">833</a>
+<a href="#834" id="834">834</a>
+<a href="#835" id="835">835</a>
+<a href="#836" id="836">836</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
 
 </span><span class="kw">use </span>std::{
     collections::HashSet, future::Future, num::NonZeroU32, pin::Pin, sync::Arc, task::Poll,
@@ -1172,7 +1201,11 @@
         <span class="kw">match </span>frame {
             Frame::SendPacket { dst_key, packet } =&gt; {
                 <span class="kw">let </span>packet_len = packet.len();
-                <span class="self">self</span>.handle_frame_send_packet(dst_key, packet)<span class="question-mark">?</span>;
+                <span class="kw">if let </span><span class="prelude-val">Err</span>(err @ ForwardPacketError { .. }) =
+                    <span class="self">self</span>.handle_frame_send_packet(dst_key, packet)
+                {
+                    <span class="macro">warn!</span>(<span class="string">"failed to handle send packet frame: {err:#}"</span>);
+                }
                 <span class="self">self</span>.metrics.bytes_recv.inc_by(packet_len <span class="kw">as </span>u64);
             }
             Frame::Ping { data } =&gt; {
@@ -1194,7 +1227,7 @@
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">fn </span>handle_frame_send_packet(<span class="kw-2">&amp;</span><span class="self">self</span>, dst: NodeId, data: Bytes) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    <span class="kw">fn </span>handle_frame_send_packet(<span class="kw-2">&amp;</span><span class="self">self</span>, dst: NodeId, data: Bytes) -&gt; <span class="prelude-ty">Result</span>&lt;(), ForwardPacketError&gt; {
         <span class="kw">if </span>disco::looks_like_disco_wrapper(<span class="kw-2">&amp;</span>data) {
             <span class="self">self</span>.metrics.disco_packets_recv.inc();
             <span class="self">self</span>.clients
@@ -1205,6 +1238,31 @@
                 .send_packet(dst, data, <span class="self">self</span>.node_id, <span class="kw-2">&amp;</span><span class="self">self</span>.metrics)<span class="question-mark">?</span>;
         }
         <span class="prelude-val">Ok</span>(())
+    }
+}
+
+<span class="attr">#[derive(Debug)]
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>PacketScope {
+    Disco,
+    Data,
+}
+
+<span class="attr">#[derive(Debug)]
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>SendError {
+    Full,
+    Closed,
+}
+
+<span class="attr">#[derive(Debug, thiserror::Error)]
+#[error(<span class="string">"failed to forward {scope:?} packet: {reason:?}"</span>)]
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>ForwardPacketError {
+    scope: PacketScope,
+    reason: SendError,
+}
+
+<span class="kw">impl </span>ForwardPacketError {
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new(scope: PacketScope, reason: SendError) -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{ scope, reason }
     }
 }
 

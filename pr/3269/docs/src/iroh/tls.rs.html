@@ -120,7 +120,26 @@
 <a href="#119" id="119">119</a>
 <a href="#120" id="120">120</a>
 <a href="#121" id="121">121</a>
-<a href="#122" id="122">122</a></pre></div><pre class="rust"><code><span class="doccomment">//! TLS configuration for iroh.
+<a href="#122" id="122">122</a>
+<a href="#123" id="123">123</a>
+<a href="#124" id="124">124</a>
+<a href="#125" id="125">125</a>
+<a href="#126" id="126">126</a>
+<a href="#127" id="127">127</a>
+<a href="#128" id="128">128</a>
+<a href="#129" id="129">129</a>
+<a href="#130" id="130">130</a>
+<a href="#131" id="131">131</a>
+<a href="#132" id="132">132</a>
+<a href="#133" id="133">133</a>
+<a href="#134" id="134">134</a>
+<a href="#135" id="135">135</a>
+<a href="#136" id="136">136</a>
+<a href="#137" id="137">137</a>
+<a href="#138" id="138">138</a>
+<a href="#139" id="139">139</a>
+<a href="#140" id="140">140</a>
+<a href="#141" id="141">141</a></pre></div><pre class="rust"><code><span class="doccomment">//! TLS configuration for iroh.
 //!
 //! Currently there are two mechanisms available
 //! - Raw Public Keys, using the TLS extension described in [RFC 7250]
@@ -130,15 +149,26 @@
 
 </span><span class="kw">use </span>std::sync::Arc;
 
-<span class="kw">use </span>iroh_base::{PublicKey, SecretKey};
-<span class="kw">use </span>quinn::crypto::rustls::{NoInitialCipherSuite, QuicClientConfig, QuicServerConfig};
+<span class="kw">use </span>iroh_base::SecretKey;
+<span class="kw">use </span>quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 <span class="kw">use </span>tracing::warn;
 
 <span class="kw">use </span><span class="self">self</span>::resolver::AlwaysResolvesCert;
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>certificate;
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>name;
 <span class="kw">mod </span>resolver;
 <span class="kw">mod </span>verifier;
+
+<span class="doccomment">/// Maximum amount of TLS tickets we will cache (by default) for 0-RTT connection
+/// establishment.
+///
+/// 8 tickets per remote endpoint, 32 different endpoints would max out the required storage:
+/// ~200 bytes per session + certificates (which are ~387 bytes)
+/// So 8 * 32 * (200 + 387) = 150.272 bytes, assuming pointers to certificates
+/// are never aliased pointers (they're Arc'ed).
+/// I think 150KB is an acceptable default upper limit for such a cache.
+</span><span class="kw">const </span>MAX_TLS_TICKETS: usize = <span class="number">8 </span>* <span class="number">32</span>;
 
 <span class="doccomment">/// TLS Authentication mechanism
 </span><span class="attr">#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
@@ -150,46 +180,72 @@
     </span>RawPublicKey,
 }
 
-<span class="kw">impl </span>Authentication {
+<span class="doccomment">/// Configuration for TLS.
+///
+/// The main point of this struct is to keep state that should be kept the same
+/// over multiple TLS sessions the same.
+/// E.g. the `server_verifier` and `client_verifier` Arc pointers are checked to be
+/// the same between different TLS session calls with 0-RTT data in rustls.
+/// This makes sure that's the case.
+</span><span class="attr">#[derive(Debug)]
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>TlsConfig {
+    <span class="kw">pub</span>(<span class="kw">crate</span>) auth: Authentication,
+    <span class="kw">pub</span>(<span class="kw">crate</span>) secret_key: SecretKey,
+    cert_resolver: Arc&lt;AlwaysResolvesCert&gt;,
+    server_verifier: Arc&lt;verifier::ServerCertificateVerifier&gt;,
+    client_verifier: Arc&lt;verifier::ClientCertificateVerifier&gt;,
+    session_store: Arc&lt;<span class="kw">dyn </span>rustls::client::ClientSessionStore&gt;,
+}
+
+<span class="kw">impl </span>TlsConfig {
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new(auth: Authentication, secret_key: SecretKey) -&gt; <span class="self">Self </span>{
+        <span class="kw">let </span>cert_resolver = Arc::new(
+            AlwaysResolvesCert::new(auth, <span class="kw-2">&amp;</span>secret_key).expect(<span class="string">"Client cert key DER is valid; qed"</span>),
+        );
+        <span class="self">Self </span>{
+            auth,
+            secret_key,
+            cert_resolver,
+            server_verifier: Arc::new(verifier::ServerCertificateVerifier::new(auth)),
+            client_verifier: Arc::new(verifier::ClientCertificateVerifier::new(auth)),
+            session_store: Arc::new(rustls::client::ClientSessionMemoryCache::new(
+                MAX_TLS_TICKETS,
+            )),
+        }
+    }
+
     <span class="doccomment">/// Create a TLS client configuration.
     ///
     /// If *keylog* is `true` this will enable logging of the pre-master key to the file in the
     /// `SSLKEYLOGFILE` environment variable.  This can be used to inspect the traffic for
     /// debugging purposes.
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>make_client_config(
-        <span class="self">self</span>,
-        secret_key: <span class="kw-2">&amp;</span>SecretKey,
-        remote_peer_id: PublicKey,
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
         alpn_protocols: Vec&lt;Vec&lt;u8&gt;&gt;,
-        session_store: <span class="prelude-ty">Option</span>&lt;Arc&lt;<span class="kw">dyn </span>rustls::client::ClientSessionStore&gt;&gt;,
         keylog: bool,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;QuicClientConfig, CreateConfigError&gt; {
-        <span class="kw">let </span>cert_resolver = Arc::new(
-            AlwaysResolvesCert::new(<span class="self">self</span>, secret_key).expect(<span class="string">"Client cert key DER is valid; qed"</span>),
-        );
-
+    ) -&gt; QuicClientConfig {
         <span class="kw">let </span><span class="kw-2">mut </span>crypto = rustls::ClientConfig::builder_with_provider(Arc::new(
             rustls::crypto::ring::default_provider(),
         ))
         .with_protocol_versions(verifier::PROTOCOL_VERSIONS)
         .expect(<span class="string">"version supported by ring"</span>)
         .dangerous()
-        .with_custom_certificate_verifier(Arc::new(
-            verifier::ServerCertificateVerifier::with_remote_peer_id(<span class="self">self</span>, remote_peer_id),
-        ))
-        .with_client_cert_resolver(cert_resolver);
+        .with_custom_certificate_verifier(<span class="self">self</span>.server_verifier.clone())
+        .with_client_cert_resolver(<span class="self">self</span>.cert_resolver.clone());
         crypto.alpn_protocols = alpn_protocols;
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(store) = session_store {
-            crypto.resumption = rustls::client::Resumption::store(store);
-            crypto.enable_early_data = <span class="bool-val">true</span>;
-        }
+
+        <span class="comment">// TODO: enable/disable 0-RTT/storing tickets
+        </span>crypto.resumption = rustls::client::Resumption::store(<span class="self">self</span>.session_store.clone());
+        crypto.enable_early_data = <span class="bool-val">true</span>;
+
         <span class="kw">if </span>keylog {
             <span class="macro">warn!</span>(<span class="string">"enabling SSLKEYLOGFILE for TLS pre-master keys"</span>);
             crypto.key_log = Arc::new(rustls::KeyLogFile::new());
         }
 
-        <span class="kw">let </span>config = crypto.try_into()<span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(config)
+        crypto
+            .try_into()
+            .expect(<span class="string">"expected to have a TLS1.3-compatible crypto provider set (hardcoded)"</span>)
     }
 
     <span class="doccomment">/// Create a TLS server configuration.
@@ -198,22 +254,17 @@
     /// `SSLKEYLOGFILE` environment variable.  This can be used to inspect the traffic for
     /// debugging purposes.
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>make_server_config(
-        <span class="self">self</span>,
-        secret_key: <span class="kw-2">&amp;</span>SecretKey,
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
         alpn_protocols: Vec&lt;Vec&lt;u8&gt;&gt;,
         keylog: bool,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;QuicServerConfig, CreateConfigError&gt; {
-        <span class="kw">let </span>cert_resolver = Arc::new(
-            AlwaysResolvesCert::new(<span class="self">self</span>, secret_key).expect(<span class="string">"Server cert key DER is valid; qed"</span>),
-        );
-
+    ) -&gt; QuicServerConfig {
         <span class="kw">let </span><span class="kw-2">mut </span>crypto = rustls::ServerConfig::builder_with_provider(Arc::new(
             rustls::crypto::ring::default_provider(),
         ))
         .with_protocol_versions(verifier::PROTOCOL_VERSIONS)
         .expect(<span class="string">"fixed config"</span>)
-        .with_client_cert_verifier(Arc::new(verifier::ClientCertificateVerifier::new(<span class="self">self</span>)))
-        .with_cert_resolver(cert_resolver);
+        .with_client_cert_verifier(<span class="self">self</span>.client_verifier.clone())
+        .with_cert_resolver(<span class="self">self</span>.cert_resolver.clone());
         crypto.alpn_protocols = alpn_protocols;
         <span class="kw">if </span>keylog {
             <span class="macro">warn!</span>(<span class="string">"enabling SSLKEYLOGFILE for TLS pre-master keys"</span>);
@@ -224,22 +275,9 @@
         // This is specified in RFC 9001: https://www.rfc-editor.org/rfc/rfc9001#section-4.6.1
         </span>crypto.max_early_data_size = u32::MAX;
 
-        <span class="kw">let </span>config = crypto.try_into()<span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(config)
+        crypto
+            .try_into()
+            .expect(<span class="string">"expected to have a TLS1.3-compatible crypto provider set (hardcoded)"</span>)
     }
-}
-
-<span class="doccomment">/// Error for generating TLS configs.
-</span><span class="attr">#[derive(Debug, thiserror::Error)]
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>CreateConfigError {
-    <span class="doccomment">/// Error generating the certificate.
-    </span><span class="attr">#[error(<span class="string">"Error generating the certificate"</span>)]
-    </span>CertError(<span class="attr">#[from] </span>certificate::GenError),
-    <span class="doccomment">/// Error creating QUIC config.
-    </span><span class="attr">#[error(<span class="string">"Error creating QUIC config"</span>)]
-    </span>ConfigError(<span class="attr">#[from] </span>NoInitialCipherSuite),
-    <span class="doccomment">/// Rustls configuration error
-    </span><span class="attr">#[error(<span class="string">"rustls error"</span>)]
-    </span>Rustls(<span class="attr">#[from] </span>rustls::Error),
 }
 </code></pre></div></section></main></body></html>

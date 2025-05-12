@@ -4455,7 +4455,27 @@
 <a href="#4454" id="4454">4454</a>
 <a href="#4455" id="4455">4455</a>
 <a href="#4456" id="4456">4456</a>
-<a href="#4457" id="4457">4457</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4457" id="4457">4457</a>
+<a href="#4458" id="4458">4458</a>
+<a href="#4459" id="4459">4459</a>
+<a href="#4460" id="4460">4460</a>
+<a href="#4461" id="4461">4461</a>
+<a href="#4462" id="4462">4462</a>
+<a href="#4463" id="4463">4463</a>
+<a href="#4464" id="4464">4464</a>
+<a href="#4465" id="4465">4465</a>
+<a href="#4466" id="4466">4466</a>
+<a href="#4467" id="4467">4467</a>
+<a href="#4468" id="4468">4468</a>
+<a href="#4469" id="4469">4469</a>
+<a href="#4470" id="4470">4470</a>
+<a href="#4471" id="4471">4471</a>
+<a href="#4472" id="4472">4472</a>
+<a href="#4473" id="4473">4473</a>
+<a href="#4474" id="4474">4474</a>
+<a href="#4475" id="4475">4475</a>
+<a href="#4476" id="4476">4476</a>
+<a href="#4477" id="4477">4477</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4532,7 +4552,7 @@
     discovery::{Discovery, DiscoveryItem, DiscoverySubscribers, NodeData, UserData},
     key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
     metrics::EndpointMetrics,
-    net_report::{<span class="self">self</span>, IpMappedAddresses},
+    net_report::{<span class="self">self</span>, IpMappedAddresses, Report},
     watchable::{Watchable, Watcher},
 };
 
@@ -4701,6 +4721,9 @@
     <span class="doccomment">/// Our discovered direct addresses.
     </span>direct_addrs: DiscoveredDirectAddrs,
 
+    <span class="doccomment">/// Our latest net-report
+    </span>net_report: Watchable&lt;<span class="prelude-ty">Option</span>&lt;Arc&lt;Report&gt;&gt;&gt;,
+
     <span class="doccomment">/// List of CallMeMaybe disco messages that should be sent out after the next endpoint update
     /// completes
     </span>pending_call_me_maybes: std::sync::Mutex&lt;HashMap&lt;PublicKey, RelayUrl&gt;&gt;,
@@ -4808,6 +4831,21 @@
     /// To get the current direct addresses, use [`Watcher::initialized`].
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>direct_addresses(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Watcher&lt;<span class="prelude-ty">Option</span>&lt;BTreeSet&lt;DirectAddr&gt;&gt;&gt; {
         <span class="self">self</span>.direct_addrs.addrs.watch()
+    }
+
+    <span class="doccomment">/// Returns a [`Watcher`] for this socket's net-report.
+    ///
+    /// The [`MagicSock`] continuously monitors the network conditions for changes.
+    /// Whenever changes are detected this [`Watcher`] will yield a new report.
+    ///
+    /// Upon the first creation on the [`MagicSock`] it may not yet have completed
+    /// a first net-report. In this case, the current item in this [`Watcher`] will
+    /// be [`None`].  Once the first report has been run, the [`Watcher`] will
+    /// store [`Some`] report.
+    ///
+    /// To get the current `net-report`, use [`Watcher::initialized`].
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>net_report(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Watcher&lt;<span class="prelude-ty">Option</span>&lt;Arc&lt;Report&gt;&gt;&gt; {
+        <span class="self">self</span>.net_report.watch()
     }
 
     <span class="doccomment">/// Watch for changes to the home relay.
@@ -6224,6 +6262,7 @@
             discovery,
             discovery_user_data: RwLock::new(discovery_user_data),
             direct_addrs: Default::default(),
+            net_report: Default::default(),
             pending_call_me_maybes: Default::default(),
             direct_addr_update_state: DirectAddrUpdateState::new(),
             <span class="attr">#[cfg(not(wasm_browser))]
@@ -7357,6 +7396,8 @@
 
     <span class="kw">async fn </span>handle_net_report_report(<span class="kw-2">&amp;mut </span><span class="self">self</span>, report: <span class="prelude-ty">Option</span>&lt;Arc&lt;net_report::Report&gt;&gt;) {
         <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>report) = report {
+            <span class="comment">// only returns Err if the report hasn't changed.
+            </span><span class="self">self</span>.msock.net_report.set(<span class="prelude-val">Some</span>(report.clone())).ok();
             <span class="self">self</span>.msock
                 .ipv6_reported
                 .store(report.ipv6, Ordering::Relaxed);
@@ -7917,9 +7958,8 @@
         secret_key: <span class="kw-2">&amp;</span>SecretKey,
         tls_auth: <span class="kw">crate</span>::tls::Authentication,
     ) -&gt; ServerConfig {
-        <span class="kw">let </span>quic_server_config = tls_auth
-            .make_server_config(secret_key, <span class="macro">vec!</span>[], <span class="bool-val">false</span>)
-            .expect(<span class="string">"should generate valid config"</span>);
+        <span class="kw">let </span>quic_server_config = <span class="kw">crate</span>::tls::TlsConfig::new(tls_auth, secret_key.clone())
+            .make_server_config(<span class="macro">vec!</span>[], <span class="bool-val">false</span>);
         <span class="kw">let </span><span class="kw-2">mut </span>server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
         server_config.transport_config(Arc::new(quinn::TransportConfig::default()));
         server_config
@@ -8499,8 +8539,8 @@
         secret_key: SecretKey,
         tls_auth: tls::Authentication,
     ) -&gt; anyhow::Result&lt;Handle&gt; {
-        <span class="kw">let </span>quic_server_config =
-            tls_auth.make_server_config(<span class="kw-2">&amp;</span>secret_key, <span class="macro">vec!</span>[ALPN.to_vec()], <span class="bool-val">true</span>)<span class="question-mark">?</span>;
+        <span class="kw">let </span>quic_server_config = tls::TlsConfig::new(tls_auth, secret_key.clone())
+            .make_server_config(<span class="macro">vec!</span>[ALPN.to_vec()], <span class="bool-val">true</span>);
         <span class="kw">let </span><span class="kw-2">mut </span>server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
         server_config.transport_config(Arc::new(quinn::TransportConfig::default()));
 
@@ -8567,13 +8607,13 @@
     ) -&gt; <span class="prelude-ty">Result</span>&lt;quinn::Connection&gt; {
         <span class="kw">let </span>alpns = <span class="macro">vec!</span>[ALPN.to_vec()];
         <span class="kw">let </span>quic_client_config =
-            tls_auth.make_client_config(<span class="kw-2">&amp;</span>ep_secret_key, node_id, alpns, <span class="prelude-val">None</span>, <span class="bool-val">true</span>)<span class="question-mark">?</span>;
+            tls::TlsConfig::new(tls_auth, ep_secret_key.clone()).make_client_config(alpns, <span class="bool-val">true</span>);
         <span class="kw">let </span><span class="kw-2">mut </span>client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
         client_config.transport_config(transport_config);
         <span class="kw">let </span>connect = ep.connect_with(
             client_config,
             mapped_addr.private_socket_addr(),
-            <span class="string">"localhost"</span>,
+            <span class="kw-2">&amp;</span>tls::name::encode(node_id),
         )<span class="question-mark">?</span>;
         <span class="kw">let </span>connection = connect.<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(connection)

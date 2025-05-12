@@ -1253,7 +1253,40 @@
 <a href="#1252" id="1252">1252</a>
 <a href="#1253" id="1253">1253</a>
 <a href="#1254" id="1254">1254</a>
-<a href="#1255" id="1255">1255</a></pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
+<a href="#1255" id="1255">1255</a>
+<a href="#1256" id="1256">1256</a>
+<a href="#1257" id="1257">1257</a>
+<a href="#1258" id="1258">1258</a>
+<a href="#1259" id="1259">1259</a>
+<a href="#1260" id="1260">1260</a>
+<a href="#1261" id="1261">1261</a>
+<a href="#1262" id="1262">1262</a>
+<a href="#1263" id="1263">1263</a>
+<a href="#1264" id="1264">1264</a>
+<a href="#1265" id="1265">1265</a>
+<a href="#1266" id="1266">1266</a>
+<a href="#1267" id="1267">1267</a>
+<a href="#1268" id="1268">1268</a>
+<a href="#1269" id="1269">1269</a>
+<a href="#1270" id="1270">1270</a>
+<a href="#1271" id="1271">1271</a>
+<a href="#1272" id="1272">1272</a>
+<a href="#1273" id="1273">1273</a>
+<a href="#1274" id="1274">1274</a>
+<a href="#1275" id="1275">1275</a>
+<a href="#1276" id="1276">1276</a>
+<a href="#1277" id="1277">1277</a>
+<a href="#1278" id="1278">1278</a>
+<a href="#1279" id="1279">1279</a>
+<a href="#1280" id="1280">1280</a>
+<a href="#1281" id="1281">1281</a>
+<a href="#1282" id="1282">1282</a>
+<a href="#1283" id="1283">1283</a>
+<a href="#1284" id="1284">1284</a>
+<a href="#1285" id="1285">1285</a>
+<a href="#1286" id="1286">1286</a>
+<a href="#1287" id="1287">1287</a>
+<a href="#1288" id="1288">1288</a></pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
 //!
 //! This module provides an API to run a full fledged iroh-relay server.  It is primarily
 //! used by the `iroh-relay` binary in this crate.  It can be used to run a relay server in
@@ -2505,6 +2538,39 @@
             <span class="macro">panic!</span>(<span class="string">"client_c received unexpected message {res:?}"</span>);
         }
 
+        <span class="prelude-val">Ok</span>(())
+    }
+
+    <span class="attr">#[tokio::test]
+    #[traced_test]
+    </span><span class="kw">async fn </span>test_relay_clients_full() -&gt; TestResult&lt;()&gt; {
+        <span class="kw">let </span>server = spawn_local_relay().<span class="kw">await</span>.unwrap();
+        <span class="kw">let </span>relay_url = <span class="macro">format!</span>(<span class="string">"http://{}"</span>, server.http_addr().unwrap());
+        <span class="kw">let </span>relay_url: RelayUrl = relay_url.parse().unwrap();
+
+        <span class="comment">// set up client a
+        </span><span class="kw">let </span>a_secret_key = SecretKey::generate(rand::thread_rng());
+        <span class="kw">let </span>resolver = dns_resolver();
+        <span class="kw">let </span><span class="kw-2">mut </span>client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver.clone())
+            .connect()
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="comment">// set up client b
+        </span><span class="kw">let </span>b_secret_key = SecretKey::generate(rand::thread_rng());
+        <span class="kw">let </span>b_key = b_secret_key.public();
+        <span class="kw">let </span>_client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver.clone())
+            .connect()
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="comment">// send messages from a to b, without b receiving anything.
+        // we should still keep succeeding to send, even if the packet won't be forwarded
+        // by the relay server because the server's send queue for b fills up.
+        </span><span class="kw">let </span>msg = Bytes::from(<span class="string">"hello, b"</span>);
+        <span class="kw">for </span>_i <span class="kw">in </span><span class="number">0</span>..<span class="number">1000 </span>{
+            client_a
+                .send(SendMessage::SendPacket(b_key, msg.clone()))
+                .<span class="kw">await</span><span class="question-mark">?</span>;
+        }
         <span class="prelude-val">Ok</span>(())
     }
 }
