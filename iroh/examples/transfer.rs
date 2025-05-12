@@ -14,9 +14,10 @@ use iroh::{
     },
     dns::{DnsResolver, N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING},
     endpoint::ConnectionError,
-    Endpoint, NodeAddr, RelayMap, RelayMode, RelayUrl, SecretKey,
+    Endpoint, NodeAddr, NodeId, RelayMap, RelayMode, RelayUrl, SecretKey,
 };
 use iroh_base::ticket::NodeTicket;
+use n0_future::task::AbortOnDropHandle;
 use tokio_stream::StreamExt;
 use tracing::{info, warn};
 use url::Url;
@@ -65,6 +66,35 @@ enum Env {
     Dev,
 }
 
+impl Env {
+    fn relay_mode(self) -> RelayMode {
+        match self {
+            Env::Prod => RelayMode::Default,
+            Env::Staging => RelayMode::Staging,
+            Env::Dev => RelayMode::Custom(RelayMap::from(
+                RelayUrl::from_str(DEV_RELAY_URL).expect("valid url"),
+            )),
+        }
+    }
+
+    fn pkarr_relay_url(self) -> Url {
+        match self {
+            Env::Prod => N0_DNS_PKARR_RELAY_PROD.parse(),
+            Env::Staging => N0_DNS_PKARR_RELAY_STAGING.parse(),
+            Env::Dev => DEV_PKARR_RELAY_URL.parse(),
+        }
+        .expect("valid url")
+    }
+
+    fn dns_origin_domain(self) -> String {
+        match self {
+            Env::Prod => N0_DNS_NODE_ORIGIN_PROD.to_string(),
+            Env::Staging => N0_DNS_NODE_ORIGIN_STAGING.to_string(),
+            Env::Dev => DEV_DNS_ORIGIN_DOMAIN.to_string(),
+        }
+    }
+}
+
 #[derive(Debug, clap::Parser)]
 struct EndpointArgs {
     /// Set the environment for relay, pkarr, and DNS servers.
@@ -74,7 +104,7 @@ struct EndpointArgs {
     env: Env,
     /// Set one or more relay servers to use.
     #[clap(long)]
-    relay_url: Vec<String>,
+    relay_url: Vec<RelayUrl>,
     /// Disable relays completely.
     #[clap(long, conflicts_with = "relay_url")]
     no_relay: bool,
@@ -83,7 +113,7 @@ struct EndpointArgs {
     relay_only: bool,
     /// Use a custom pkarr server.
     #[clap(long)]
-    pkarr_relay_url: Option<String>,
+    pkarr_relay_url: Option<Url>,
     /// Disable publishing node info to pkarr.
     #[clap(long, conflicts_with = "pkarr_relay_url")]
     no_pkarr_publish: bool,
@@ -120,7 +150,7 @@ enum Commands {
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let cli = Cli::parse();
     match cli.command {
@@ -128,14 +158,14 @@ async fn main() -> anyhow::Result<()> {
             size,
             endpoint_args,
         } => {
-            let endpoint = endpoint_args.into_endpoint().await?;
+            let endpoint = endpoint_args.bind_endpoint().await?;
             provide(endpoint, size).await?
         }
         Commands::Fetch {
             ticket,
             endpoint_args,
         } => {
-            let endpoint = endpoint_args.into_endpoint().await?;
+            let endpoint = endpoint_args.bind_endpoint().await?;
             fetch(endpoint, &ticket).await?
         }
     }
@@ -144,7 +174,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 impl EndpointArgs {
-    async fn into_endpoint(self) -> anyhow::Result<Endpoint> {
+    async fn bind_endpoint(self) -> Result<Endpoint> {
         let mut builder = Endpoint::builder();
 
         let secret_key = match std::env::var("IROH_SECRET") {
@@ -162,45 +192,25 @@ impl EndpointArgs {
         let relay_mode = if self.no_relay {
             RelayMode::Disabled
         } else if !self.relay_url.is_empty() {
-            let urls = self
-                .relay_url
-                .iter()
-                .map(|u| RelayUrl::from_str(u))
-                .collect::<Result<Vec<_>, _>>()
-                .context("Failed to parse relay URL")?;
-            RelayMode::Custom(RelayMap::from_iter(urls))
+            RelayMode::Custom(RelayMap::from_iter(self.relay_url))
         } else {
-            match self.env {
-                Env::Prod => RelayMode::Default,
-                Env::Staging => RelayMode::Staging,
-                Env::Dev => RelayMode::Custom(RelayMap::from(
-                    RelayUrl::from_str(DEV_RELAY_URL).expect("valid url"),
-                )),
-            }
+            self.env.relay_mode()
         };
-        let relay_disabled = matches!(relay_mode, RelayMode::Disabled);
         builder = builder.relay_mode(relay_mode);
 
         if !self.no_pkarr_publish {
-            let url = match (&self.pkarr_relay_url, self.env) {
-                (Some(url), _) => url,
-                (_, Env::Prod) => N0_DNS_PKARR_RELAY_PROD,
-                (_, Env::Staging) => N0_DNS_PKARR_RELAY_STAGING,
-                (_, Env::Dev) => DEV_PKARR_RELAY_URL,
-            };
-            let url = Url::from_str(url).context("Failed to parse pkarr relay URL")?;
+            let url = self
+                .pkarr_relay_url
+                .unwrap_or_else(|| self.env.pkarr_relay_url());
             builder = builder
                 .add_discovery(|secret_key| Some(PkarrPublisher::new(secret_key.clone(), url)));
         }
 
         if !self.no_dns_resolve {
-            let origin_domain = match (self.dns_origin_domain, self.env) {
-                (Some(domain), _) => domain,
-                (_, Env::Prod) => N0_DNS_NODE_ORIGIN_PROD.to_string(),
-                (_, Env::Staging) => N0_DNS_NODE_ORIGIN_STAGING.to_string(),
-                (_, Env::Dev) => DEV_DNS_ORIGIN_DOMAIN.to_string(),
-            };
-            builder = builder.add_discovery(|_| Some(DnsDiscovery::new(origin_domain)));
+            let domain = self
+                .dns_origin_domain
+                .unwrap_or_else(|| self.env.dns_origin_domain());
+            builder = builder.add_discovery(|_| Some(DnsDiscovery::new(domain)));
         }
 
         #[cfg(feature = "discovery-local-network")]
@@ -238,7 +248,7 @@ impl EndpointArgs {
         for local_endpoint in endpoint.direct_addresses().initialized().await? {
             println!("\t{} (type: {:?})", local_endpoint.addr, local_endpoint.typ)
         }
-        if !relay_disabled {
+        if !self.no_relay {
             let relay_url = endpoint
                 .home_relay()
                 .get()?
@@ -251,7 +261,7 @@ impl EndpointArgs {
     }
 }
 
-async fn provide(endpoint: Endpoint, size: u64) -> anyhow::Result<()> {
+async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
     let node_id = endpoint.node_id();
 
     let node_addr = endpoint.node_addr().await?;
@@ -277,26 +287,21 @@ async fn provide(endpoint: Endpoint, size: u64) -> anyhow::Result<()> {
                 continue;
             }
         };
-        let conn = connecting.await?;
-        let node_id = conn.remote_node_id()?;
-        info!(
-            "new connection from {node_id} with ALPN {}",
-            String::from_utf8_lossy(TRANSFER_ALPN),
-        );
-
         // spawn a task to handle reading and writing off of the connection
         let endpoint_clone = endpoint.clone();
         tokio::spawn(async move {
+            let conn = connecting.await?;
+            let node_id = conn.remote_node_id()?;
+            info!(
+                "new connection from {node_id} with ALPN {}",
+                String::from_utf8_lossy(TRANSFER_ALPN),
+            );
+
             let remote = node_id.fmt_short();
             println!("[{remote}] Connected");
 
-            let mut conn_type_stream = endpoint_clone.conn_type(node_id).unwrap().stream();
-            let conn_type_task = tokio::task::spawn(async move {
-                let remote = node_id.fmt_short();
-                while let Some(conn_type) = conn_type_stream.next().await {
-                    println!("[{remote}] Connection type changed to: {conn_type}");
-                }
-            });
+            // Spawn a background task that prints connection type changes. Will be aborted on drop.
+            let _guard = watch_conn_type(&endpoint_clone, node_id);
 
             // accept a bi-directional QUIC connection
             // use the `quinn` APIs to send and recv content
@@ -332,7 +337,6 @@ async fn provide(endpoint: Endpoint, size: u64) -> anyhow::Result<()> {
             } else {
                 println!("[{remote}] Disconnected");
             }
-            conn_type_task.abort();
             Ok::<_, anyhow::Error>(())
         });
     }
@@ -341,25 +345,20 @@ async fn provide(endpoint: Endpoint, size: u64) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn fetch(endpoint: Endpoint, ticket: &str) -> anyhow::Result<()> {
+async fn fetch(endpoint: Endpoint, ticket: &str) -> Result<()> {
     let me = endpoint.node_id().fmt_short();
     let ticket: NodeTicket = ticket.parse()?;
+    let remote_node_id = ticket.node_addr().node_id;
     let start = Instant::now();
-
-    let remote = ticket.node_addr().node_id;
 
     // Attempt to connect, over the given ALPN.
     // Returns a Quinn connection.
     let conn = endpoint
-        .connect(ticket.node_addr().clone(), TRANSFER_ALPN)
+        .connect(NodeAddr::from(ticket), TRANSFER_ALPN)
         .await?;
-    println!("Connected to {remote}");
-    let mut conn_type_stream = endpoint.conn_type(remote).unwrap().stream();
-    let conn_type_task = tokio::task::spawn(async move {
-        while let Some(conn_type) = conn_type_stream.next().await {
-            println!("Connection type changed to: {conn_type}");
-        }
-    });
+    println!("Connected to {remote_node_id}");
+    // Spawn a background task that prints connection type changes. Will be aborted on drop.
+    let _guard = watch_conn_type(&endpoint, remote_node_id);
 
     // Use the Quinn API to send and recv content.
     let (mut send, mut recv) = conn.open_bi().await?;
@@ -385,7 +384,6 @@ async fn fetch(endpoint: Endpoint, ticket: &str) -> anyhow::Result<()> {
         time_to_first_byte.as_secs_f64(),
         chnk
     );
-    conn_type_task.abort();
     Ok(())
 }
 
@@ -473,4 +471,17 @@ async fn send_data_on_stream(
 fn parse_byte_size(s: &str) -> Result<u64> {
     let cfg = parse_size::Config::new().with_binary();
     cfg.parse_size(s).map_err(|e| anyhow::anyhow!(e))
+}
+
+fn watch_conn_type(endpoint: &Endpoint, node_id: NodeId) -> AbortOnDropHandle<()> {
+    let mut stream = endpoint.conn_type(node_id).unwrap().stream();
+    let task = tokio::task::spawn(async move {
+        while let Some(conn_type) = stream.next().await {
+            println!(
+                "[{}] Connection type changed to: {conn_type}",
+                node_id.fmt_short()
+            );
+        }
+    });
+    AbortOnDropHandle::new(task)
 }
