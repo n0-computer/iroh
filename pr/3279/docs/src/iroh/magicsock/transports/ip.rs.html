@@ -123,7 +123,24 @@
 <a href="#122" id="122">122</a>
 <a href="#123" id="123">123</a>
 <a href="#124" id="124">124</a>
-<a href="#125" id="125">125</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#125" id="125">125</a>
+<a href="#126" id="126">126</a>
+<a href="#127" id="127">127</a>
+<a href="#128" id="128">128</a>
+<a href="#129" id="129">129</a>
+<a href="#130" id="130">130</a>
+<a href="#131" id="131">131</a>
+<a href="#132" id="132">132</a>
+<a href="#133" id="133">133</a>
+<a href="#134" id="134">134</a>
+<a href="#135" id="135">135</a>
+<a href="#136" id="136">136</a>
+<a href="#137" id="137">137</a>
+<a href="#138" id="138">138</a>
+<a href="#139" id="139">139</a>
+<a href="#140" id="140">140</a>
+<a href="#141" id="141">141</a>
+<a href="#142" id="142">142</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     io,
     net::SocketAddr,
     pin::Pin,
@@ -131,37 +148,46 @@
 };
 
 <span class="kw">use </span>quinn::AsyncUdpSocket;
+<span class="kw">use </span>tracing::trace;
 
-<span class="kw">use super</span>::{Addr, RecvMeta, Transmit, Transport};
-<span class="kw">use </span><span class="kw">crate</span>::magicsock::UdpConn;
+<span class="kw">use super</span>::{RecvMeta, Transmit};
+<span class="kw">use crate</span>::{
+    magicsock::UdpConn,
+    watchable::{Watchable, Watcher},
+};
 
 <span class="attr">#[derive(Clone, Debug)]
 </span><span class="kw">pub struct </span>IpTransport {
     bind_addr: SocketAddr,
     socket: UdpConn,
+    local_addr: Watchable&lt;<span class="prelude-ty">Option</span>&lt;SocketAddr&gt;&gt;,
 }
 
 <span class="kw">impl </span>IpTransport {
-    <span class="kw">pub fn </span>new(addr: SocketAddr, socket: UdpConn) -&gt; <span class="self">Self </span>{
+    <span class="kw">pub fn </span>new(bind_addr: SocketAddr, socket: UdpConn) -&gt; <span class="self">Self </span>{
+        <span class="comment">// Currently gets updated on manual rebind
+        // TODO: update when UdpSocket under the hood rebinds automatically
+        </span><span class="kw">let </span>local_addr = Watchable::new(socket.local_addr().ok());
+
         <span class="self">Self </span>{
-            bind_addr: addr,
+            bind_addr,
             socket,
+            local_addr,
         }
     }
-}
 
-<span class="kw">impl </span>Transport <span class="kw">for </span>IpTransport {
-    <span class="kw">fn </span>create_io_poller(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Pin&lt;Box&lt;<span class="kw">dyn </span>quinn::UdpPoller&gt;&gt; {
+    <span class="kw">pub fn </span>create_io_poller(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Pin&lt;Box&lt;<span class="kw">dyn </span>quinn::UdpPoller&gt;&gt; {
         <span class="self">self</span>.socket.create_io_poller()
     }
 
-    <span class="kw">fn </span>poll_send(<span class="kw-2">&amp;</span><span class="self">self</span>, transmit: <span class="kw-2">&amp;</span>Transmit&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
+    <span class="kw">pub fn </span>poll_send(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        destination: SocketAddr,
+        transmit: <span class="kw-2">&amp;</span>Transmit&lt;<span class="lifetime">'_</span>&gt;,
+    ) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
+        <span class="macro">trace!</span>(<span class="string">"sending to {}"</span>, destination);
         <span class="kw">let </span>res = <span class="self">self</span>.socket.try_send(<span class="kw-2">&amp;</span>quinn_udp::Transmit {
-            destination: transmit
-                .destination
-                .clone()
-                .try_into()
-                .expect(<span class="string">"invalid destination"</span>),
+            destination,
             ecn: transmit.ecn,
             contents: transmit.contents,
             segment_size: transmit.segment_size,
@@ -184,7 +210,7 @@
     }
 
     <span class="doccomment">/// NOTE: Receiving on a closed socket will return [`Poll::Pending`] indefinitely.
-    </span><span class="kw">fn </span>poll_recv(
+    </span><span class="kw">pub fn </span>poll_recv(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         cx: <span class="kw-2">&amp;mut </span>Context,
         bufs: <span class="kw-2">&amp;mut </span>[io::IoSliceMut&lt;<span class="lifetime">'_</span>&gt;],
@@ -207,44 +233,52 @@
         }
     }
 
-    <span class="kw">fn </span>local_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; io::Result&lt;SocketAddr&gt; {
-        <span class="self">self</span>.socket.local_addr()
+    <span class="kw">pub fn </span>local_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;SocketAddr&gt; {
+        <span class="self">self</span>.local_addr.get()
     }
 
-    <span class="kw">fn </span>max_transmit_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+    <span class="kw">pub fn </span>local_addr_watch(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Watcher&lt;Value = <span class="prelude-ty">Option</span>&lt;SocketAddr&gt;&gt; + Send {
+        <span class="self">self</span>.local_addr.watch()
+    }
+
+    <span class="kw">pub fn </span>max_transmit_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
         <span class="self">self</span>.socket.max_transmit_segments()
     }
 
-    <span class="kw">fn </span>max_receive_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+    <span class="kw">pub fn </span>max_receive_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
         <span class="self">self</span>.socket.max_receive_segments()
     }
 
-    <span class="kw">fn </span>may_fragment(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+    <span class="kw">pub fn </span>may_fragment(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
         <span class="self">self</span>.socket.may_fragment()
     }
 
-    <span class="kw">fn </span>is_valid_send_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, addr: <span class="kw-2">&amp;</span>Addr) -&gt; bool {
+    <span class="kw">pub fn </span>is_valid_send_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, addr: <span class="kw-2">&amp;</span>SocketAddr) -&gt; bool {
         <span class="attr">#[allow(clippy::match_like_matches_macro)]
         </span><span class="kw">match </span>(<span class="self">self</span>.bind_addr, addr) {
-            (SocketAddr::V4(<span class="kw">_</span>), Addr::Ipv4(..)) =&gt; <span class="bool-val">true</span>,
-            (SocketAddr::V6(<span class="kw">_</span>), Addr::Ipv6(..)) =&gt; <span class="bool-val">true</span>,
+            (SocketAddr::V4(<span class="kw">_</span>), SocketAddr::V4(..)) =&gt; <span class="bool-val">true</span>,
+            (SocketAddr::V6(<span class="kw">_</span>), SocketAddr::V6(..)) =&gt; <span class="bool-val">true</span>,
             <span class="kw">_ </span>=&gt; <span class="bool-val">false</span>,
         }
     }
 
-    <span class="kw">fn </span>poll_writable(<span class="kw-2">&amp;</span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>Context) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
+    <span class="kw">pub fn </span>poll_writable(<span class="kw-2">&amp;</span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>Context) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
         <span class="self">self</span>.socket.as_socket_ref().poll_writable(cx)
     }
 
-    <span class="kw">fn </span>bind_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;SocketAddr&gt; {
-        <span class="prelude-val">Some</span>(<span class="self">self</span>.bind_addr)
+    <span class="kw">pub fn </span>bind_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; SocketAddr {
+        <span class="self">self</span>.bind_addr
     }
 
-    <span class="kw">fn </span>rebind(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; io::Result&lt;()&gt; {
-        <span class="self">self</span>.socket.as_socket_ref().rebind()
+    <span class="kw">pub fn </span>rebind(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; io::Result&lt;()&gt; {
+        <span class="self">self</span>.socket.as_socket_ref().rebind()<span class="question-mark">?</span>;
+        <span class="kw">let </span>addr = <span class="self">self</span>.socket.as_socket_ref().local_addr()<span class="question-mark">?</span>;
+        <span class="self">self</span>.local_addr.set(<span class="prelude-val">Some</span>(addr)).ok();
+
+        <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">fn </span>on_network_change(<span class="kw-2">&amp;</span><span class="self">self</span>, _info: <span class="kw-2">&amp;</span><span class="kw">crate</span>::magicsock::NetInfo) {
+    <span class="kw">pub fn </span>on_network_change(<span class="kw-2">&amp;</span><span class="self">self</span>, _info: <span class="kw-2">&amp;</span><span class="kw">crate</span>::magicsock::NetInfo) {
         <span class="comment">// Nothing to do for now
     </span>}
 }

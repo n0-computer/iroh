@@ -476,15 +476,8 @@
 <a href="#475" id="475">475</a>
 <a href="#476" id="476">476</a>
 <a href="#477" id="477">477</a>
-<a href="#478" id="478">478</a>
-<a href="#479" id="479">479</a>
-<a href="#480" id="480">480</a>
-<a href="#481" id="481">481</a>
-<a href="#482" id="482">482</a>
-<a href="#483" id="483">483</a>
-<a href="#484" id="484">484</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#478" id="478">478</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     io,
-    net::SocketAddr,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll, Waker},
@@ -494,13 +487,17 @@
 <span class="kw">use </span>atomic_waker::AtomicWaker;
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>concurrent_queue::ConcurrentQueue;
+<span class="kw">use </span>iroh_base::{NodeId, RelayUrl};
 <span class="kw">use </span>n0_future::task::{<span class="self">self</span>, AbortOnDropHandle};
 <span class="kw">use </span>smallvec::SmallVec;
 <span class="kw">use </span>tokio::sync::mpsc;
 <span class="kw">use </span>tracing::{error, info_span, trace, warn, Instrument};
 
-<span class="kw">use super</span>::{Addr, RecvMeta, Transmit, Transport};
-<span class="kw">use </span><span class="kw">crate</span>::magicsock::RelayContents;
+<span class="kw">use super</span>::{RecvMeta, Transmit};
+<span class="kw">use crate</span>::{
+    magicsock::RelayContents,
+    watchable::{Watchable, Watcher <span class="kw">as _</span>},
+};
 
 <span class="kw">mod </span>actor;
 
@@ -519,6 +516,8 @@
     </span><span class="kw">pub</span>(<span class="kw">super</span>) relay_datagram_send_channel: RelayDatagramSendChannelSender,
     actor_sender: mpsc::Sender&lt;RelayActorMessage&gt;,
     _actor_handle: AbortOnDropHandle&lt;()&gt;,
+    my_relay: Watchable&lt;<span class="prelude-ty">Option</span>&lt;RelayUrl&gt;&gt;,
+    my_node_id: NodeId,
 }
 
 <span class="kw">impl </span>RelayTransport {
@@ -528,7 +527,11 @@
 
         <span class="kw">let </span>(actor_sender, actor_receiver) = mpsc::channel(<span class="number">256</span>);
 
+        <span class="kw">let </span>my_node_id = config.secret_key.public();
+        <span class="kw">let </span>my_relay = config.my_relay.clone();
+
         <span class="kw">let </span>relay_actor = RelayActor::new(config, relay_datagram_recv_queue.clone());
+
         <span class="comment">// TODO: track task
         </span><span class="kw">let </span>actor_handle = AbortOnDropHandle::new(task::spawn(
             <span class="kw">async move </span>{
@@ -544,11 +547,9 @@
             relay_datagram_send_channel: relay_datagram_send_tx,
             actor_sender,
             _actor_handle: actor_handle,
+            my_relay,
+            my_node_id,
         }
-    }
-
-    <span class="kw">fn </span>maybe_close_relays_on_rebind(<span class="kw-2">&amp;</span><span class="self">self</span>) {
-        <span class="self">self</span>.send_relay_actor(RelayActorMessage::MaybeCloseRelaysOnRebind);
     }
 
     <span class="kw">fn </span>send_relay_actor(<span class="kw-2">&amp;</span><span class="self">self</span>, msg: RelayActorMessage) {
@@ -562,20 +563,18 @@
             }
         }
     }
-}
 
-<span class="kw">impl </span>Transport <span class="kw">for </span>RelayTransport {
-    <span class="kw">fn </span>create_io_poller(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Pin&lt;Box&lt;<span class="kw">dyn </span>quinn::UdpPoller&gt;&gt; {
+    <span class="kw">pub fn </span>create_io_poller(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Pin&lt;Box&lt;<span class="kw">dyn </span>quinn::UdpPoller&gt;&gt; {
         Box::pin(<span class="self">self</span>.relay_datagram_send_channel.clone())
     }
 
-    <span class="kw">fn </span>poll_send(<span class="kw-2">&amp;</span><span class="self">self</span>, transmit: <span class="kw-2">&amp;</span>Transmit&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
+    <span class="kw">pub fn </span>poll_send(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        dest_url: RelayUrl,
+        dest_node: NodeId,
+        transmit: <span class="kw-2">&amp;</span>Transmit&lt;<span class="lifetime">'_</span>&gt;,
+    ) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
         <span class="kw">let </span>contents = split_packets(transmit);
-        <span class="kw">let </span>(dest_url, dest_node) = transmit
-            .destination
-            .clone()
-            .try_into()
-            .expect(<span class="string">"invalid src"</span>);
 
         <span class="kw">let </span>msg = RelaySendItem {
             remote_node: dest_node,
@@ -605,7 +604,7 @@
         }
     }
 
-    <span class="kw">fn </span>poll_recv(
+    <span class="kw">pub fn </span>poll_recv(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         cx: <span class="kw-2">&amp;mut </span>Context,
         bufs: <span class="kw-2">&amp;mut </span>[io::IoSliceMut&lt;<span class="lifetime">'_</span>&gt;],
@@ -647,40 +646,31 @@
         }
     }
 
-    <span class="kw">fn </span>local_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; io::Result&lt;SocketAddr&gt; {
-        <span class="prelude-val">Err</span>(io::Error::other(<span class="string">"no local address for RelayTransport"</span>))
+    <span class="kw">pub fn </span>local_addr_watch(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+    ) -&gt; <span class="kw">impl </span><span class="kw">crate</span>::watchable::Watcher&lt;Value = <span class="prelude-ty">Option</span>&lt;(RelayUrl, NodeId)&gt;&gt; + Send + Sync {
+        <span class="kw">let </span>my_node_id = <span class="self">self</span>.my_node_id;
+        <span class="self">self</span>.my_relay
+            .watch()
+            .map(<span class="kw">move </span>|url| url.map(|url| (url, my_node_id)))
+            .expect(<span class="string">"disconnected"</span>)
     }
 
-    <span class="kw">fn </span>max_transmit_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-        <span class="number">1
+    <span class="kw">pub fn </span>is_valid_send_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, _url: <span class="kw-2">&amp;</span>RelayUrl, _node_id: <span class="kw-2">&amp;</span>NodeId) -&gt; bool {
+        <span class="bool-val">true
     </span>}
 
-    <span class="kw">fn </span>max_receive_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-        <span class="number">1
-    </span>}
-
-    <span class="kw">fn </span>may_fragment(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-        <span class="bool-val">false
-    </span>}
-
-    <span class="kw">fn </span>is_valid_send_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, addr: <span class="kw-2">&amp;</span>Addr) -&gt; bool {
-        <span class="macro">matches!</span>(addr, Addr::RelayUrl(..))
-    }
-
-    <span class="kw">fn </span>poll_writable(<span class="kw-2">&amp;</span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>Context) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
+    <span class="kw">pub fn </span>poll_writable(<span class="kw-2">&amp;</span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>Context) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
         <span class="self">self</span>.relay_datagram_send_channel.poll_writable(cx)
     }
 
-    <span class="kw">fn </span>bind_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;SocketAddr&gt; {
-        <span class="prelude-val">None
-    </span>}
+    <span class="kw">pub fn </span>rebind(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; io::Result&lt;()&gt; {
+        <span class="self">self</span>.send_relay_actor(RelayActorMessage::MaybeCloseRelaysOnRebind);
 
-    <span class="kw">fn </span>rebind(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; io::Result&lt;()&gt; {
-        <span class="self">self</span>.maybe_close_relays_on_rebind();
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">fn </span>on_network_change(<span class="kw-2">&amp;</span><span class="self">self</span>, info: <span class="kw-2">&amp;</span><span class="kw">crate</span>::magicsock::NetInfo) {
+    <span class="kw">pub fn </span>on_network_change(<span class="kw-2">&amp;</span><span class="self">self</span>, info: <span class="kw-2">&amp;</span><span class="kw">crate</span>::magicsock::NetInfo) {
         <span class="self">self</span>.send_relay_actor(RelayActorMessage::NetworkChange { info: info.clone() });
     }
 }
@@ -862,7 +852,7 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
-    <span class="kw">use </span>std::{collections::BTreeSet, time::Duration};
+    <span class="kw">use </span>std::{collections::BTreeSet, net::SocketAddr, time::Duration};
 
     <span class="kw">use </span>iroh_base::NodeId;
     <span class="kw">use </span>tokio::task::JoinSet;
@@ -875,9 +865,7 @@
     </span><span class="kw">fn </span>test_split_packets() {
         <span class="kw">fn </span>mk_transmit(contents: <span class="kw-2">&amp;</span>[u8], segment_size: <span class="prelude-ty">Option</span>&lt;usize&gt;) -&gt; Transmit&lt;<span class="lifetime">'_</span>&gt; {
             <span class="kw">let </span>src_ip = <span class="string">"127.0.0.1:12"</span>.parse::&lt;SocketAddr&gt;().unwrap().into();
-            <span class="kw">let </span>destination = <span class="string">"127.0.0.1:0"</span>.parse::&lt;SocketAddr&gt;().unwrap().into();
             Transmit {
-                destination,
                 ecn: <span class="prelude-val">None</span>,
                 contents,
                 segment_size,

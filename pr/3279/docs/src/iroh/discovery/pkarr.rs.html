@@ -465,7 +465,7 @@
 <span class="kw">use crate</span>::{
     discovery::{Discovery, DiscoveryItem, NodeData},
     endpoint::force_staging_infra,
-    watchable::{Disconnected, Watchable, Watcher},
+    watchable::{DirectWatcher, Disconnected, Watchable, Watcher},
     Endpoint,
 };
 
@@ -621,7 +621,7 @@
     </span>secret_key: SecretKey,
     <span class="attr">#[debug(<span class="string">"PkarrClient"</span>)]
     </span>pkarr_client: PkarrRelayClient,
-    watcher: Watcher&lt;<span class="prelude-ty">Option</span>&lt;NodeInfo&gt;&gt;,
+    watcher: DirectWatcher&lt;<span class="prelude-ty">Option</span>&lt;NodeInfo&gt;&gt;,
     ttl: u32,
     republish_interval: Duration,
 }

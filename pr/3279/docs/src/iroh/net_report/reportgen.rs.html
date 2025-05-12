@@ -1760,7 +1760,8 @@
 <a href="#1759" id="1759">1759</a>
 <a href="#1760" id="1760">1760</a>
 <a href="#1761" id="1761">1761</a>
-<a href="#1762" id="1762">1762</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
+<a href="#1762" id="1762">1762</a>
+<a href="#1763" id="1763">1763</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
 //!
 //! It is implemented as an actor with [`Client`] as handle.
 //!
@@ -2497,9 +2498,10 @@
 }
 
 <span class="doccomment">/// Pieces needed to do QUIC address discovery.
-</span><span class="attr">#[derive(Debug, Clone)]
+</span><span class="attr">#[derive(derive_more::Debug, Clone)]
 </span><span class="kw">pub struct </span>QuicConfig {
     <span class="doccomment">/// A QUIC Endpoint
+    </span><span class="attr">#[debug(<span class="string">"quinn::Endpoint"</span>)]
     </span><span class="kw">pub </span>ep: quinn::Endpoint,
     <span class="doccomment">/// A client config.
     </span><span class="kw">pub </span>client_config: rustls::ClientConfig,

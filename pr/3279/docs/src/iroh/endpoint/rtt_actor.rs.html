@@ -181,7 +181,7 @@
 <span class="kw">use </span>tokio::sync::mpsc;
 <span class="kw">use </span>tracing::{debug, info_span, Instrument};
 
-<span class="kw">use crate</span>::{magicsock::ConnectionType, metrics::MagicsockMetrics, watchable::WatcherStream};
+<span class="kw">use crate</span>::{magicsock::ConnectionType, metrics::MagicsockMetrics, watchable::DirectWatcherStream};
 
 <span class="attr">#[derive(Debug)]
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>RttHandle {
@@ -218,7 +218,7 @@
         <span class="doccomment">/// The connection.
         </span>connection: quinn::WeakConnectionHandle,
         <span class="doccomment">/// Path changes for this connection from the magic socket.
-        </span>conn_type_changes: WatcherStream&lt;ConnectionType&gt;,
+        </span>conn_type_changes: DirectWatcherStream&lt;ConnectionType&gt;,
         <span class="doccomment">/// For reporting-only, the Node ID of this connection.
         </span>node_id: NodeId,
     },
@@ -238,7 +238,7 @@
 
 <span class="attr">#[derive(Debug)]
 </span><span class="kw">struct </span>MappedStream {
-    stream: WatcherStream&lt;ConnectionType&gt;,
+    stream: DirectWatcherStream&lt;ConnectionType&gt;,
     node_id: NodeId,
     <span class="doccomment">/// Reference to the connection.
     </span>connection: quinn::WeakConnectionHandle,
@@ -328,7 +328,7 @@
     </span><span class="kw">fn </span>handle_new_connection(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         connection: quinn::WeakConnectionHandle,
-        conn_type_changes: WatcherStream&lt;ConnectionType&gt;,
+        conn_type_changes: DirectWatcherStream&lt;ConnectionType&gt;,
         node_id: NodeId,
     ) {
         <span class="self">self</span>.connection_events.push(MappedStream {

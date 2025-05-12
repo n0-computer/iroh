@@ -547,7 +547,348 @@
 <a href="#546" id="546">546</a>
 <a href="#547" id="547">547</a>
 <a href="#548" id="548">548</a>
-<a href="#549" id="549">549</a></pre></div><pre class="rust"><code><span class="doccomment">//! Watchable values.
+<a href="#549" id="549">549</a>
+<a href="#550" id="550">550</a>
+<a href="#551" id="551">551</a>
+<a href="#552" id="552">552</a>
+<a href="#553" id="553">553</a>
+<a href="#554" id="554">554</a>
+<a href="#555" id="555">555</a>
+<a href="#556" id="556">556</a>
+<a href="#557" id="557">557</a>
+<a href="#558" id="558">558</a>
+<a href="#559" id="559">559</a>
+<a href="#560" id="560">560</a>
+<a href="#561" id="561">561</a>
+<a href="#562" id="562">562</a>
+<a href="#563" id="563">563</a>
+<a href="#564" id="564">564</a>
+<a href="#565" id="565">565</a>
+<a href="#566" id="566">566</a>
+<a href="#567" id="567">567</a>
+<a href="#568" id="568">568</a>
+<a href="#569" id="569">569</a>
+<a href="#570" id="570">570</a>
+<a href="#571" id="571">571</a>
+<a href="#572" id="572">572</a>
+<a href="#573" id="573">573</a>
+<a href="#574" id="574">574</a>
+<a href="#575" id="575">575</a>
+<a href="#576" id="576">576</a>
+<a href="#577" id="577">577</a>
+<a href="#578" id="578">578</a>
+<a href="#579" id="579">579</a>
+<a href="#580" id="580">580</a>
+<a href="#581" id="581">581</a>
+<a href="#582" id="582">582</a>
+<a href="#583" id="583">583</a>
+<a href="#584" id="584">584</a>
+<a href="#585" id="585">585</a>
+<a href="#586" id="586">586</a>
+<a href="#587" id="587">587</a>
+<a href="#588" id="588">588</a>
+<a href="#589" id="589">589</a>
+<a href="#590" id="590">590</a>
+<a href="#591" id="591">591</a>
+<a href="#592" id="592">592</a>
+<a href="#593" id="593">593</a>
+<a href="#594" id="594">594</a>
+<a href="#595" id="595">595</a>
+<a href="#596" id="596">596</a>
+<a href="#597" id="597">597</a>
+<a href="#598" id="598">598</a>
+<a href="#599" id="599">599</a>
+<a href="#600" id="600">600</a>
+<a href="#601" id="601">601</a>
+<a href="#602" id="602">602</a>
+<a href="#603" id="603">603</a>
+<a href="#604" id="604">604</a>
+<a href="#605" id="605">605</a>
+<a href="#606" id="606">606</a>
+<a href="#607" id="607">607</a>
+<a href="#608" id="608">608</a>
+<a href="#609" id="609">609</a>
+<a href="#610" id="610">610</a>
+<a href="#611" id="611">611</a>
+<a href="#612" id="612">612</a>
+<a href="#613" id="613">613</a>
+<a href="#614" id="614">614</a>
+<a href="#615" id="615">615</a>
+<a href="#616" id="616">616</a>
+<a href="#617" id="617">617</a>
+<a href="#618" id="618">618</a>
+<a href="#619" id="619">619</a>
+<a href="#620" id="620">620</a>
+<a href="#621" id="621">621</a>
+<a href="#622" id="622">622</a>
+<a href="#623" id="623">623</a>
+<a href="#624" id="624">624</a>
+<a href="#625" id="625">625</a>
+<a href="#626" id="626">626</a>
+<a href="#627" id="627">627</a>
+<a href="#628" id="628">628</a>
+<a href="#629" id="629">629</a>
+<a href="#630" id="630">630</a>
+<a href="#631" id="631">631</a>
+<a href="#632" id="632">632</a>
+<a href="#633" id="633">633</a>
+<a href="#634" id="634">634</a>
+<a href="#635" id="635">635</a>
+<a href="#636" id="636">636</a>
+<a href="#637" id="637">637</a>
+<a href="#638" id="638">638</a>
+<a href="#639" id="639">639</a>
+<a href="#640" id="640">640</a>
+<a href="#641" id="641">641</a>
+<a href="#642" id="642">642</a>
+<a href="#643" id="643">643</a>
+<a href="#644" id="644">644</a>
+<a href="#645" id="645">645</a>
+<a href="#646" id="646">646</a>
+<a href="#647" id="647">647</a>
+<a href="#648" id="648">648</a>
+<a href="#649" id="649">649</a>
+<a href="#650" id="650">650</a>
+<a href="#651" id="651">651</a>
+<a href="#652" id="652">652</a>
+<a href="#653" id="653">653</a>
+<a href="#654" id="654">654</a>
+<a href="#655" id="655">655</a>
+<a href="#656" id="656">656</a>
+<a href="#657" id="657">657</a>
+<a href="#658" id="658">658</a>
+<a href="#659" id="659">659</a>
+<a href="#660" id="660">660</a>
+<a href="#661" id="661">661</a>
+<a href="#662" id="662">662</a>
+<a href="#663" id="663">663</a>
+<a href="#664" id="664">664</a>
+<a href="#665" id="665">665</a>
+<a href="#666" id="666">666</a>
+<a href="#667" id="667">667</a>
+<a href="#668" id="668">668</a>
+<a href="#669" id="669">669</a>
+<a href="#670" id="670">670</a>
+<a href="#671" id="671">671</a>
+<a href="#672" id="672">672</a>
+<a href="#673" id="673">673</a>
+<a href="#674" id="674">674</a>
+<a href="#675" id="675">675</a>
+<a href="#676" id="676">676</a>
+<a href="#677" id="677">677</a>
+<a href="#678" id="678">678</a>
+<a href="#679" id="679">679</a>
+<a href="#680" id="680">680</a>
+<a href="#681" id="681">681</a>
+<a href="#682" id="682">682</a>
+<a href="#683" id="683">683</a>
+<a href="#684" id="684">684</a>
+<a href="#685" id="685">685</a>
+<a href="#686" id="686">686</a>
+<a href="#687" id="687">687</a>
+<a href="#688" id="688">688</a>
+<a href="#689" id="689">689</a>
+<a href="#690" id="690">690</a>
+<a href="#691" id="691">691</a>
+<a href="#692" id="692">692</a>
+<a href="#693" id="693">693</a>
+<a href="#694" id="694">694</a>
+<a href="#695" id="695">695</a>
+<a href="#696" id="696">696</a>
+<a href="#697" id="697">697</a>
+<a href="#698" id="698">698</a>
+<a href="#699" id="699">699</a>
+<a href="#700" id="700">700</a>
+<a href="#701" id="701">701</a>
+<a href="#702" id="702">702</a>
+<a href="#703" id="703">703</a>
+<a href="#704" id="704">704</a>
+<a href="#705" id="705">705</a>
+<a href="#706" id="706">706</a>
+<a href="#707" id="707">707</a>
+<a href="#708" id="708">708</a>
+<a href="#709" id="709">709</a>
+<a href="#710" id="710">710</a>
+<a href="#711" id="711">711</a>
+<a href="#712" id="712">712</a>
+<a href="#713" id="713">713</a>
+<a href="#714" id="714">714</a>
+<a href="#715" id="715">715</a>
+<a href="#716" id="716">716</a>
+<a href="#717" id="717">717</a>
+<a href="#718" id="718">718</a>
+<a href="#719" id="719">719</a>
+<a href="#720" id="720">720</a>
+<a href="#721" id="721">721</a>
+<a href="#722" id="722">722</a>
+<a href="#723" id="723">723</a>
+<a href="#724" id="724">724</a>
+<a href="#725" id="725">725</a>
+<a href="#726" id="726">726</a>
+<a href="#727" id="727">727</a>
+<a href="#728" id="728">728</a>
+<a href="#729" id="729">729</a>
+<a href="#730" id="730">730</a>
+<a href="#731" id="731">731</a>
+<a href="#732" id="732">732</a>
+<a href="#733" id="733">733</a>
+<a href="#734" id="734">734</a>
+<a href="#735" id="735">735</a>
+<a href="#736" id="736">736</a>
+<a href="#737" id="737">737</a>
+<a href="#738" id="738">738</a>
+<a href="#739" id="739">739</a>
+<a href="#740" id="740">740</a>
+<a href="#741" id="741">741</a>
+<a href="#742" id="742">742</a>
+<a href="#743" id="743">743</a>
+<a href="#744" id="744">744</a>
+<a href="#745" id="745">745</a>
+<a href="#746" id="746">746</a>
+<a href="#747" id="747">747</a>
+<a href="#748" id="748">748</a>
+<a href="#749" id="749">749</a>
+<a href="#750" id="750">750</a>
+<a href="#751" id="751">751</a>
+<a href="#752" id="752">752</a>
+<a href="#753" id="753">753</a>
+<a href="#754" id="754">754</a>
+<a href="#755" id="755">755</a>
+<a href="#756" id="756">756</a>
+<a href="#757" id="757">757</a>
+<a href="#758" id="758">758</a>
+<a href="#759" id="759">759</a>
+<a href="#760" id="760">760</a>
+<a href="#761" id="761">761</a>
+<a href="#762" id="762">762</a>
+<a href="#763" id="763">763</a>
+<a href="#764" id="764">764</a>
+<a href="#765" id="765">765</a>
+<a href="#766" id="766">766</a>
+<a href="#767" id="767">767</a>
+<a href="#768" id="768">768</a>
+<a href="#769" id="769">769</a>
+<a href="#770" id="770">770</a>
+<a href="#771" id="771">771</a>
+<a href="#772" id="772">772</a>
+<a href="#773" id="773">773</a>
+<a href="#774" id="774">774</a>
+<a href="#775" id="775">775</a>
+<a href="#776" id="776">776</a>
+<a href="#777" id="777">777</a>
+<a href="#778" id="778">778</a>
+<a href="#779" id="779">779</a>
+<a href="#780" id="780">780</a>
+<a href="#781" id="781">781</a>
+<a href="#782" id="782">782</a>
+<a href="#783" id="783">783</a>
+<a href="#784" id="784">784</a>
+<a href="#785" id="785">785</a>
+<a href="#786" id="786">786</a>
+<a href="#787" id="787">787</a>
+<a href="#788" id="788">788</a>
+<a href="#789" id="789">789</a>
+<a href="#790" id="790">790</a>
+<a href="#791" id="791">791</a>
+<a href="#792" id="792">792</a>
+<a href="#793" id="793">793</a>
+<a href="#794" id="794">794</a>
+<a href="#795" id="795">795</a>
+<a href="#796" id="796">796</a>
+<a href="#797" id="797">797</a>
+<a href="#798" id="798">798</a>
+<a href="#799" id="799">799</a>
+<a href="#800" id="800">800</a>
+<a href="#801" id="801">801</a>
+<a href="#802" id="802">802</a>
+<a href="#803" id="803">803</a>
+<a href="#804" id="804">804</a>
+<a href="#805" id="805">805</a>
+<a href="#806" id="806">806</a>
+<a href="#807" id="807">807</a>
+<a href="#808" id="808">808</a>
+<a href="#809" id="809">809</a>
+<a href="#810" id="810">810</a>
+<a href="#811" id="811">811</a>
+<a href="#812" id="812">812</a>
+<a href="#813" id="813">813</a>
+<a href="#814" id="814">814</a>
+<a href="#815" id="815">815</a>
+<a href="#816" id="816">816</a>
+<a href="#817" id="817">817</a>
+<a href="#818" id="818">818</a>
+<a href="#819" id="819">819</a>
+<a href="#820" id="820">820</a>
+<a href="#821" id="821">821</a>
+<a href="#822" id="822">822</a>
+<a href="#823" id="823">823</a>
+<a href="#824" id="824">824</a>
+<a href="#825" id="825">825</a>
+<a href="#826" id="826">826</a>
+<a href="#827" id="827">827</a>
+<a href="#828" id="828">828</a>
+<a href="#829" id="829">829</a>
+<a href="#830" id="830">830</a>
+<a href="#831" id="831">831</a>
+<a href="#832" id="832">832</a>
+<a href="#833" id="833">833</a>
+<a href="#834" id="834">834</a>
+<a href="#835" id="835">835</a>
+<a href="#836" id="836">836</a>
+<a href="#837" id="837">837</a>
+<a href="#838" id="838">838</a>
+<a href="#839" id="839">839</a>
+<a href="#840" id="840">840</a>
+<a href="#841" id="841">841</a>
+<a href="#842" id="842">842</a>
+<a href="#843" id="843">843</a>
+<a href="#844" id="844">844</a>
+<a href="#845" id="845">845</a>
+<a href="#846" id="846">846</a>
+<a href="#847" id="847">847</a>
+<a href="#848" id="848">848</a>
+<a href="#849" id="849">849</a>
+<a href="#850" id="850">850</a>
+<a href="#851" id="851">851</a>
+<a href="#852" id="852">852</a>
+<a href="#853" id="853">853</a>
+<a href="#854" id="854">854</a>
+<a href="#855" id="855">855</a>
+<a href="#856" id="856">856</a>
+<a href="#857" id="857">857</a>
+<a href="#858" id="858">858</a>
+<a href="#859" id="859">859</a>
+<a href="#860" id="860">860</a>
+<a href="#861" id="861">861</a>
+<a href="#862" id="862">862</a>
+<a href="#863" id="863">863</a>
+<a href="#864" id="864">864</a>
+<a href="#865" id="865">865</a>
+<a href="#866" id="866">866</a>
+<a href="#867" id="867">867</a>
+<a href="#868" id="868">868</a>
+<a href="#869" id="869">869</a>
+<a href="#870" id="870">870</a>
+<a href="#871" id="871">871</a>
+<a href="#872" id="872">872</a>
+<a href="#873" id="873">873</a>
+<a href="#874" id="874">874</a>
+<a href="#875" id="875">875</a>
+<a href="#876" id="876">876</a>
+<a href="#877" id="877">877</a>
+<a href="#878" id="878">878</a>
+<a href="#879" id="879">879</a>
+<a href="#880" id="880">880</a>
+<a href="#881" id="881">881</a>
+<a href="#882" id="882">882</a>
+<a href="#883" id="883">883</a>
+<a href="#884" id="884">884</a>
+<a href="#885" id="885">885</a>
+<a href="#886" id="886">886</a>
+<a href="#887" id="887">887</a>
+<a href="#888" id="888">888</a>
+<a href="#889" id="889">889</a>
+<a href="#890" id="890">890</a></pre></div><pre class="rust"><code><span class="doccomment">//! Watchable values.
 //!
 //! A [`Watchable`] exists to keep track of a value which may change over time.  It allows
 //! observers to be notified of changes to the value.  The aim is to always be aware of the
@@ -556,6 +897,11 @@
 //! In that way, a [`Watchable`] is like a [`tokio::sync::broadcast::Sender`] (and a
 //! [`Watcher`] is like a [`tokio::sync::broadcast::Receiver`]), except that there's no risk
 //! of the channel filling up, but instead you might miss items.
+//!
+//! This module is meant to be imported like this (if you use all of these things):
+//! ```ignore
+//! use iroh::watcher::{self, Watchable, Watcher as _};
+//! ```
 
 </span><span class="attr">#[cfg(not(iroh_loom))]
 </span><span class="kw">use </span>std::sync;
@@ -564,17 +910,16 @@
     future::Future,
     pin::Pin,
     sync::{Arc, Weak},
-    task::{<span class="self">self</span>, Poll, Waker},
+    task::{<span class="self">self</span>, ready, Poll, Waker},
 };
 
 <span class="attr">#[cfg(iroh_loom)]
 </span><span class="kw">use </span>loom::sync;
-<span class="kw">use </span>n0_future::stream::Stream;
 <span class="kw">use </span>sync::{Mutex, RwLock};
 
 <span class="doccomment">/// A wrapper around a value that notifies [`Watcher`]s when the value is modified.
 ///
-/// Only the most recent value is available to any observer, but but observer is guaranteed
+/// Only the most recent value is available to any observer, but the observer is guaranteed
 /// to be notified of the most recent value.
 </span><span class="attr">#[derive(Debug, Default)]
 </span><span class="kw">pub struct </span>Watchable&lt;T&gt; {
@@ -586,6 +931,24 @@
         <span class="self">Self </span>{
             shared: <span class="self">self</span>.shared.clone(),
         }
+    }
+}
+
+<span class="doccomment">/// Abstracts over `Option&lt;T&gt;` and `Vec&lt;T&gt;`
+</span><span class="kw">pub trait </span>Nullable&lt;T&gt; {
+    <span class="doccomment">/// Converts this value into an `Option`.
+    </span><span class="kw">fn </span>into_option(<span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;T&gt;;
+}
+
+<span class="kw">impl</span>&lt;T&gt; Nullable&lt;T&gt; <span class="kw">for </span><span class="prelude-ty">Option</span>&lt;T&gt; {
+    <span class="kw">fn </span>into_option(<span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;T&gt; {
+        <span class="self">self
+    </span>}
+}
+
+<span class="kw">impl</span>&lt;T&gt; Nullable&lt;T&gt; <span class="kw">for </span>Vec&lt;T&gt; {
+    <span class="kw">fn </span>into_option(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;T&gt; {
+        <span class="self">self</span>.pop()
     }
 }
 
@@ -636,9 +999,9 @@
         ret
     }
 
-    <span class="doccomment">/// Creates a [`Watcher`] allowing the value to be observed, but not modified.
-    </span><span class="kw">pub fn </span>watch(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Watcher&lt;T&gt; {
-        Watcher {
+    <span class="doccomment">/// Creates a [`Direct`] [`Watcher`], allowing the value to be observed, but not modified.
+    </span><span class="kw">pub fn </span>watch(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Direct&lt;T&gt; {
+        Direct {
             epoch: <span class="self">self</span>.shared.state.read().expect(<span class="string">"poisoned"</span>).epoch,
             shared: Arc::downgrade(<span class="kw-2">&amp;</span><span class="self">self</span>.shared),
         }
@@ -650,29 +1013,50 @@
     }
 }
 
-<span class="doccomment">/// An observer for a value.
+<span class="doccomment">/// Bla
+</span><span class="kw">pub type </span>DirectWatcherStream&lt;T&gt; = Stream&lt;Direct&lt;T&gt;&gt;;
+<span class="doccomment">/// Blub
+</span><span class="kw">pub type </span>DirectWatcher&lt;T&gt; = Direct&lt;T&gt;;
+
+<span class="doccomment">/// A handle to a value that's represented by one or more underlying [`Watchable`]s.
 ///
-/// The [`Watcher`] can get the current value, and will be notified when the value changes.
-/// Only the most recent value is accessible, and if the thread with the [`Watchable`]
-/// changes the value faster than the thread with the [`Watcher`] can keep up with, then
+/// A [`Watcher`] can get the current value, and will be notified when the value changes.
+/// Only the most recent value is accessible, and if the threads with the underlying [`Watchable`]s
+/// change the value faster than the threads with the [`Watcher`] can keep up with, then
 /// it'll miss in-between values.
 /// When the thread changing the [`Watchable`] pauses updating, the [`Watcher`] will always
 /// end up reporting the most recent state eventually.
-</span><span class="attr">#[derive(Debug, Clone)]
-</span><span class="kw">pub struct </span>Watcher&lt;T&gt; {
-    epoch: u64,
-    shared: Weak&lt;Shared&lt;T&gt;&gt;,
-}
-
-<span class="kw">impl</span>&lt;T: Clone + Eq&gt; Watcher&lt;T&gt; {
-    <span class="doccomment">/// Returns the currently held value.
+///
+/// Watchers can be modified via [`Watcher::map`] to observe a value derived from the original
+/// value via a function.
+///
+/// Watchers can be combined via [`Watcher::or`] to allow observing multiple values at once and
+/// getting an update in case any of the values updates.
+///
+/// One of the underlying [`Watchable`]s might already be dropped. In that case,
+/// the watcher will be "disconnected" and return [`Err(Disconnected)`](Disconnected)
+/// on some function calls or, when turned into a stream, that stream will end.
+</span><span class="kw">pub trait </span>Watcher: Clone {
+    <span class="doccomment">/// The type of value that can change.
     ///
-    /// Returns [`Err(Disconnected)`](Disconnected) if the original
-    /// [`Watchable`] was dropped.
-    </span><span class="kw">pub fn </span>get(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;T, Disconnected&gt; {
-        <span class="kw">let </span>shared = <span class="self">self</span>.shared.upgrade().ok_or(Disconnected)<span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(shared.get())
-    }
+    /// We require `Clone`, because we need to be able to make
+    /// the values have a lifetime that's detached from the original [`Watchable`]'s
+    /// lifetime.
+    ///
+    /// We require `Eq`, to be able to check whether the value actually changed or
+    /// not, so we can notify or not notify accordingly.
+    </span><span class="kw">type </span>Value: Clone + Eq;
+
+    <span class="doccomment">/// Returns the current state of the underlying value, or errors out with
+    /// [`Disconnected`], if one of the underlying [`Watchable`]s has been dropped.
+    </span><span class="kw">fn </span>get(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>::Value, Disconnected&gt;;
+
+    <span class="doccomment">/// Polls for the next value, or returns [`Disconnected`] if one of the underlying
+    /// [`Watchable`]s has been dropped.
+    </span><span class="kw">fn </span>poll_updated(
+        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+        cx: <span class="kw-2">&amp;mut </span>task::Context&lt;<span class="lifetime">'_</span>&gt;,
+    ) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>::Value, Disconnected&gt;&gt;;
 
     <span class="doccomment">/// Returns a future completing with `Ok(value)` once a new value is set, or with
     /// [`Err(Disconnected)`](Disconnected) if the connected [`Watchable`] was dropped.
@@ -680,8 +1064,32 @@
     /// # Cancel Safety
     ///
     /// The returned future is cancel-safe.
-    </span><span class="kw">pub fn </span>updated(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; WatchNextFut&lt;T&gt; {
-        WatchNextFut { watcher: <span class="self">self </span>}
+    </span><span class="kw">fn </span>updated(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; NextFut&lt;<span class="self">Self</span>&gt; {
+        NextFut { watcher: <span class="self">self </span>}
+    }
+
+    <span class="doccomment">/// Returns a future completing once the value is set to [`Some`] value.
+    ///
+    /// If the current value is [`Some`] value, this future will resolve immediately.
+    ///
+    /// This is a utility for the common case of storing an [`Option`] inside a
+    /// [`Watchable`].
+    ///
+    /// # Cancel Safety
+    ///
+    /// The returned future is cancel-safe.
+    </span><span class="kw">fn </span>initialized&lt;T, W&gt;(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; InitializedFut&lt;T, W, <span class="self">Self</span>&gt;
+    <span class="kw">where
+        </span>W: Nullable&lt;T&gt;,
+        <span class="self">Self</span>: Watcher&lt;Value = W&gt;,
+    {
+        InitializedFut {
+            initial: <span class="kw">match </span><span class="self">self</span>.get() {
+                <span class="prelude-val">Ok</span>(value) =&gt; value.into_option().map(<span class="prelude-val">Ok</span>),
+                <span class="prelude-val">Err</span>(Disconnected) =&gt; <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(Disconnected)),
+            },
+            watcher: <span class="self">self</span>,
+        }
     }
 
     <span class="doccomment">/// Returns a stream which will yield the most recent values as items.
@@ -697,10 +1105,14 @@
     /// # Cancel Safety
     ///
     /// The returned stream is cancel-safe.
-    </span><span class="kw">pub fn </span>stream(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; WatcherStream&lt;T&gt; {
-        <span class="macro">debug_assert!</span>(<span class="self">self</span>.epoch &gt; <span class="number">0</span>);
-        <span class="self">self</span>.epoch -= <span class="number">1</span>;
-        WatcherStream { watcher: <span class="self">self </span>}
+    </span><span class="kw">fn </span>stream(<span class="self">self</span>) -&gt; Stream&lt;<span class="self">Self</span>&gt;
+    <span class="kw">where
+        </span><span class="self">Self</span>: Unpin,
+    {
+        Stream {
+            initial: <span class="self">self</span>.get().ok(),
+            watcher: <span class="self">self</span>,
+        }
     }
 
     <span class="doccomment">/// Returns a stream which will yield the most recent values as items, starting from
@@ -717,21 +1129,298 @@
     /// # Cancel Safety
     ///
     /// The returned stream is cancel-safe.
-    </span><span class="kw">pub fn </span>stream_updates_only(<span class="self">self</span>) -&gt; WatcherStream&lt;T&gt; {
-        WatcherStream { watcher: <span class="self">self </span>}
+    </span><span class="kw">fn </span>stream_updates_only(<span class="self">self</span>) -&gt; Stream&lt;<span class="self">Self</span>&gt;
+    <span class="kw">where
+        </span><span class="self">Self</span>: Unpin,
+    {
+        Stream {
+            initial: <span class="prelude-val">None</span>,
+            watcher: <span class="self">self</span>,
+        }
+    }
+
+    <span class="doccomment">/// Maps this watcher with a function that transforms the observed values.
+    ///
+    /// The returned watcher will only register updates, when the *mapped* value
+    /// observably changes. For this, it needs to store a clone of `T` in the watcher.
+    </span><span class="kw">fn </span>map&lt;T: Clone + Eq&gt;(
+        <span class="self">self</span>,
+        map: <span class="kw">impl </span>Fn(<span class="self">Self</span>::Value) -&gt; T + Send + Sync + <span class="lifetime">'static</span>,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;Map&lt;<span class="self">Self</span>, T&gt;, Disconnected&gt; {
+        <span class="prelude-val">Ok</span>(Map {
+            current: (map)(<span class="self">self</span>.get()<span class="question-mark">?</span>),
+            map: Arc::new(map),
+            watcher: <span class="self">self</span>,
+        })
+    }
+
+    <span class="doccomment">/// Returns a watcher that updates every time this or the other watcher
+    /// updates, and yields both watcher's items together when that happens.
+    </span><span class="kw">fn </span>or&lt;W: Watcher&gt;(<span class="self">self</span>, other: W) -&gt; (<span class="self">Self</span>, W) {
+        (<span class="self">self</span>, other)
     }
 }
 
-<span class="kw">impl</span>&lt;T: Clone + Eq&gt; Watcher&lt;<span class="prelude-ty">Option</span>&lt;T&gt;&gt; {
-    <span class="doccomment">/// Returns a future completing once the value is set to [`Some`] value.
-    ///
-    /// If the current value is [`Some`] value, this future will resolve immediately.
-    ///
-    /// This is a utility for the common case of storing an [`Option`] inside a
-    /// [`Watchable`].
-    </span><span class="kw">pub fn </span>initialized(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; WatchInitializedFut&lt;T&gt; {
-        <span class="self">self</span>.epoch = PRE_INITIAL_EPOCH;
-        WatchInitializedFut { watcher: <span class="self">self </span>}
+<span class="doccomment">/// The immediate, direct observer of a [`Watchable`] value.
+///
+/// This type is mainly used via the [`Watcher`] interface.
+</span><span class="attr">#[derive(Debug, Clone)]
+</span><span class="kw">pub struct </span>Direct&lt;T&gt; {
+    epoch: u64,
+    shared: Weak&lt;Shared&lt;T&gt;&gt;,
+}
+
+<span class="kw">impl</span>&lt;T: Clone + Eq&gt; Watcher <span class="kw">for </span>Direct&lt;T&gt; {
+    <span class="kw">type </span>Value = T;
+
+    <span class="kw">fn </span>get(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>::Value, Disconnected&gt; {
+        <span class="kw">let </span>shared = <span class="self">self</span>.shared.upgrade().ok_or(Disconnected)<span class="question-mark">?</span>;
+        <span class="prelude-val">Ok</span>(shared.get())
+    }
+
+    <span class="kw">fn </span>poll_updated(
+        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+        cx: <span class="kw-2">&amp;mut </span>task::Context&lt;<span class="lifetime">'_</span>&gt;,
+    ) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>::Value, Disconnected&gt;&gt; {
+        <span class="kw">let </span><span class="prelude-val">Some</span>(shared) = <span class="self">self</span>.shared.upgrade() <span class="kw">else </span>{
+            <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(Disconnected));
+        };
+        <span class="kw">match </span>shared.poll_updated(cx, <span class="self">self</span>.epoch) {
+            Poll::Pending =&gt; Poll::Pending,
+            Poll::Ready((current_epoch, value)) =&gt; {
+                <span class="self">self</span>.epoch = current_epoch;
+                Poll::Ready(<span class="prelude-val">Ok</span>(value))
+            }
+        }
+    }
+}
+
+<span class="kw">impl</span>&lt;S: Watcher, T: Watcher&gt; Watcher <span class="kw">for </span>(S, T) {
+    <span class="kw">type </span>Value = (S::Value, T::Value);
+
+    <span class="kw">fn </span>get(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>::Value, Disconnected&gt; {
+        <span class="prelude-val">Ok</span>((<span class="self">self</span>.<span class="number">0</span>.get()<span class="question-mark">?</span>, <span class="self">self</span>.<span class="number">1</span>.get()<span class="question-mark">?</span>))
+    }
+
+    <span class="kw">fn </span>poll_updated(
+        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+        cx: <span class="kw-2">&amp;mut </span>task::Context&lt;<span class="lifetime">'_</span>&gt;,
+    ) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>::Value, Disconnected&gt;&gt; {
+        <span class="kw">let </span>poll_0 = <span class="self">self</span>.<span class="number">0</span>.poll_updated(cx)<span class="question-mark">?</span>;
+        <span class="kw">let </span>poll_1 = <span class="self">self</span>.<span class="number">1</span>.poll_updated(cx)<span class="question-mark">?</span>;
+        <span class="kw">match </span>(poll_0, poll_1) {
+            (Poll::Ready(s), Poll::Ready(t)) =&gt; Poll::Ready(<span class="prelude-val">Ok</span>((s, t))),
+            (Poll::Ready(s), Poll::Pending) =&gt; Poll::Ready(<span class="self">self</span>.<span class="number">1</span>.get().map(<span class="kw">move </span>|t| (s, t))),
+            (Poll::Pending, Poll::Ready(t)) =&gt; Poll::Ready(<span class="self">self</span>.<span class="number">0</span>.get().map(<span class="kw">move </span>|s| (s, t))),
+            (Poll::Pending, Poll::Pending) =&gt; Poll::Pending,
+        }
+    }
+}
+
+<span class="doccomment">/// JOIN
+</span><span class="attr">#[derive(Debug, Clone)]
+</span><span class="kw">pub struct </span>Join&lt;T: Clone + Eq, W: Watcher&lt;Value = T&gt;&gt; {
+    watchers: Vec&lt;W&gt;,
+    current: Vec&lt;T&gt;,
+}
+<span class="kw">impl</span>&lt;T: Clone + Eq, W: Watcher&lt;Value = T&gt;&gt; Join&lt;T, W&gt; {
+    <span class="doccomment">/// Joins a set of watchers into a single watcher
+    </span><span class="kw">pub fn </span>new(watchers: <span class="kw">impl </span>Iterator&lt;Item = W&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, Disconnected&gt; {
+        <span class="kw">let </span>watchers: Vec&lt;W&gt; = watchers.into_iter().collect();
+        <span class="kw">let </span><span class="kw-2">mut </span>current = Vec::with_capacity(watchers.len());
+        <span class="kw">for </span>watcher <span class="kw">in </span><span class="kw-2">&amp;</span>watchers {
+            current.push(watcher.get()<span class="question-mark">?</span>);
+        }
+
+        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{ watchers, current })
+    }
+}
+
+<span class="kw">impl</span>&lt;T: Clone + Eq, W: Watcher&lt;Value = T&gt;&gt; Watcher <span class="kw">for </span>Join&lt;T, W&gt; {
+    <span class="kw">type </span>Value = Vec&lt;T&gt;;
+
+    <span class="kw">fn </span>get(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>::Value, Disconnected&gt; {
+        <span class="kw">let </span><span class="kw-2">mut </span>out = Vec::with_capacity(<span class="self">self</span>.watchers.len());
+        <span class="kw">for </span>watcher <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.watchers {
+            out.push(watcher.get()<span class="question-mark">?</span>);
+        }
+
+        <span class="prelude-val">Ok</span>(out)
+    }
+
+    <span class="kw">fn </span>poll_updated(
+        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+        cx: <span class="kw-2">&amp;mut </span>task::Context&lt;<span class="lifetime">'_</span>&gt;,
+    ) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>::Value, Disconnected&gt;&gt; {
+        <span class="kw">for </span>(el, watcher) <span class="kw">in </span><span class="self">self</span>.current.iter_mut().zip(<span class="self">self</span>.watchers.iter_mut()) {
+            <span class="kw">let </span>value = <span class="macro">ready!</span>(watcher.poll_updated(cx)<span class="question-mark">?</span>);
+            <span class="kw">if </span><span class="kw-2">&amp;</span>value != el {
+                <span class="kw-2">*</span>el = value;
+                <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Ok</span>(<span class="self">self</span>.current.clone()));
+            }
+        }
+        Poll::Pending
+    }
+}
+
+<span class="doccomment">/// JOIN OPT
+</span><span class="attr">#[derive(Debug, Clone)]
+</span><span class="kw">pub struct </span>JoinOpt&lt;T: Clone + Eq, W: Watcher&lt;Value = <span class="prelude-ty">Option</span>&lt;T&gt;&gt;&gt; {
+    watchers: Vec&lt;W&gt;,
+    current: Vec&lt;<span class="prelude-ty">Option</span>&lt;T&gt;&gt;,
+}
+<span class="kw">impl</span>&lt;T: Clone + Eq, W: Watcher&lt;Value = <span class="prelude-ty">Option</span>&lt;T&gt;&gt;&gt; JoinOpt&lt;T, W&gt; {
+    <span class="doccomment">/// Joins a set of watchers into a single watcher
+    </span><span class="kw">pub fn </span>new(watchers: <span class="kw">impl </span>Iterator&lt;Item = W&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, Disconnected&gt; {
+        <span class="kw">let </span>watchers: Vec&lt;W&gt; = watchers.into_iter().collect();
+
+        <span class="kw">let </span><span class="kw-2">mut </span>current = Vec::with_capacity(watchers.len());
+        <span class="kw">for </span>watcher <span class="kw">in </span><span class="kw-2">&amp;</span>watchers {
+            current.push(watcher.get()<span class="question-mark">?</span>);
+        }
+
+        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{ watchers, current })
+    }
+}
+
+<span class="kw">impl</span>&lt;T: Clone + Eq, W: Watcher&lt;Value = <span class="prelude-ty">Option</span>&lt;T&gt;&gt;&gt; Watcher <span class="kw">for </span>JoinOpt&lt;T, W&gt; {
+    <span class="kw">type </span>Value = Vec&lt;T&gt;;
+
+    <span class="kw">fn </span>get(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>::Value, Disconnected&gt; {
+        <span class="kw">let </span><span class="kw-2">mut </span>out = Vec::with_capacity(<span class="self">self</span>.watchers.len());
+        <span class="kw">for </span>watcher <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.watchers {
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(el) = watcher.get()<span class="question-mark">? </span>{
+                out.push(el);
+            }
+        }
+
+        <span class="prelude-val">Ok</span>(out)
+    }
+
+    <span class="kw">fn </span>poll_updated(
+        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+        cx: <span class="kw-2">&amp;mut </span>task::Context&lt;<span class="lifetime">'_</span>&gt;,
+    ) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>::Value, Disconnected&gt;&gt; {
+        <span class="kw">for </span>(watcher, el) <span class="kw">in </span><span class="self">self</span>.watchers.iter_mut().zip(<span class="self">self</span>.current.iter_mut()) {
+            <span class="kw">match </span>watcher.poll_updated(cx) {
+                Poll::Ready(<span class="prelude-val">Ok</span>(val)) =&gt; {
+                    <span class="kw">if </span>el != <span class="kw-2">&amp;</span>val {
+                        <span class="kw-2">*</span>el = val;
+                        <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Ok</span>(<span class="self">self
+                            </span>.current
+                            .iter()
+                            .filter_map(|v| v.clone())
+                            .collect()));
+                    }
+                }
+                Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(err)),
+                Poll::Pending =&gt; {}
+            }
+        }
+        Poll::Pending
+    }
+}
+
+<span class="doccomment">/// JOIN OPT
+</span><span class="attr">#[derive(Debug, Clone)]
+</span><span class="kw">pub struct </span>Merge2&lt;T: Clone + Eq, W: Watcher&lt;Value = Vec&lt;T&gt;&gt;, V: Watcher&lt;Value = Vec&lt;T&gt;&gt;&gt; {
+    a: W,
+    b: V,
+    a_current: Vec&lt;T&gt;,
+    b_current: Vec&lt;T&gt;,
+}
+
+<span class="kw">impl</span>&lt;T: Clone + Eq, W: Watcher&lt;Value = Vec&lt;T&gt;&gt;, V: Watcher&lt;Value = Vec&lt;T&gt;&gt;&gt; Merge2&lt;T, W, V&gt; {
+    <span class="doccomment">/// Joins a set of watchers into a single watcher
+    </span><span class="kw">pub fn </span>new(a: W, b: V) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, Disconnected&gt; {
+        <span class="kw">let </span>a_current = a.get()<span class="question-mark">?</span>;
+        <span class="kw">let </span>b_current = b.get()<span class="question-mark">?</span>;
+
+        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
+            a,
+            b,
+            a_current,
+            b_current,
+        })
+    }
+}
+
+<span class="kw">impl</span>&lt;T: Clone + Eq, W: Watcher&lt;Value = Vec&lt;T&gt;&gt;, V: Watcher&lt;Value = Vec&lt;T&gt;&gt;&gt; Watcher
+    <span class="kw">for </span>Merge2&lt;T, W, V&gt;
+{
+    <span class="kw">type </span>Value = Vec&lt;T&gt;;
+
+    <span class="kw">fn </span>get(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>::Value, Disconnected&gt; {
+        <span class="kw">let </span><span class="kw-2">mut </span>out = <span class="self">self</span>.a.get()<span class="question-mark">?</span>;
+        out.extend(<span class="self">self</span>.b.get()<span class="question-mark">?</span>);
+
+        <span class="prelude-val">Ok</span>(out)
+    }
+
+    <span class="kw">fn </span>poll_updated(
+        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+        cx: <span class="kw-2">&amp;mut </span>task::Context&lt;<span class="lifetime">'_</span>&gt;,
+    ) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>::Value, Disconnected&gt;&gt; {
+        <span class="kw">match </span><span class="self">self</span>.a.poll_updated(cx) {
+            Poll::Ready(<span class="prelude-val">Ok</span>(val)) =&gt; {
+                <span class="kw">if </span>val != <span class="self">self</span>.a_current {
+                    <span class="self">self</span>.a_current = val;
+                    <span class="kw">let </span><span class="kw-2">mut </span>res = <span class="self">self</span>.a_current.clone();
+                    res.extend_from_slice(<span class="kw-2">&amp;</span><span class="self">self</span>.b_current);
+                    <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Ok</span>(res));
+                }
+            }
+            Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(err)),
+            Poll::Pending =&gt; {}
+        }
+        <span class="kw">match </span><span class="self">self</span>.b.poll_updated(cx) {
+            Poll::Ready(<span class="prelude-val">Ok</span>(val)) =&gt; {
+                <span class="kw">if </span>val != <span class="self">self</span>.b_current {
+                    <span class="self">self</span>.b_current = val;
+                    <span class="kw">let </span><span class="kw-2">mut </span>res = <span class="self">self</span>.a_current.clone();
+                    res.extend_from_slice(<span class="kw-2">&amp;</span><span class="self">self</span>.b_current);
+                    <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Ok</span>(res));
+                }
+            }
+            Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(err)),
+            Poll::Pending =&gt; {}
+        }
+        Poll::Pending
+    }
+}
+
+<span class="doccomment">/// Wraps a [`Watcher`] to allow observing a derived value.
+///
+/// See [`Watcher::map`].
+</span><span class="attr">#[derive(derive_more::Debug, Clone)]
+</span><span class="kw">pub struct </span>Map&lt;W: Watcher, T: Clone + Eq&gt; {
+    <span class="attr">#[debug(<span class="string">"Arc&lt;dyn Fn(W::Value) -&gt; T + 'static&gt;"</span>)]
+    </span>map: Arc&lt;<span class="kw">dyn </span>Fn(W::Value) -&gt; T + Send + Sync + <span class="lifetime">'static</span>&gt;,
+    watcher: W,
+    current: T,
+}
+
+<span class="kw">impl</span>&lt;W: Watcher, T: Clone + Eq&gt; Watcher <span class="kw">for </span>Map&lt;W, T&gt; {
+    <span class="kw">type </span>Value = T;
+
+    <span class="kw">fn </span>get(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>::Value, Disconnected&gt; {
+        <span class="prelude-val">Ok</span>((<span class="self">self</span>.map)(<span class="self">self</span>.watcher.get()<span class="question-mark">?</span>))
+    }
+
+    <span class="kw">fn </span>poll_updated(
+        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+        cx: <span class="kw-2">&amp;mut </span>task::Context&lt;<span class="lifetime">'_</span>&gt;,
+    ) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>::Value, Disconnected&gt;&gt; {
+        <span class="kw">loop </span>{
+            <span class="kw">let </span>value = <span class="macro">ready!</span>(<span class="self">self</span>.watcher.poll_updated(cx)<span class="question-mark">?</span>);
+            <span class="kw">let </span>mapped = (<span class="self">self</span>.map)(value);
+            <span class="kw">if </span>mapped != <span class="self">self</span>.current {
+                <span class="self">self</span>.current = mapped.clone();
+                <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Ok</span>(mapped));
+            } <span class="kw">else </span>{
+                <span class="self">self</span>.current = mapped;
+            }
+        }
     }
 }
 
@@ -743,24 +1432,15 @@
 ///
 /// This future is cancel-safe.
 </span><span class="attr">#[derive(Debug)]
-</span><span class="kw">pub struct </span>WatchNextFut&lt;<span class="lifetime">'a</span>, T&gt; {
-    watcher: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>Watcher&lt;T&gt;,
+</span><span class="kw">pub struct </span>NextFut&lt;<span class="lifetime">'a</span>, W: Watcher&gt; {
+    watcher: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>W,
 }
 
-<span class="kw">impl</span>&lt;T: Clone + Eq&gt; Future <span class="kw">for </span>WatchNextFut&lt;<span class="lifetime">'_</span>, T&gt; {
-    <span class="kw">type </span>Output = <span class="prelude-ty">Result</span>&lt;T, Disconnected&gt;;
+<span class="kw">impl</span>&lt;W: Watcher&gt; Future <span class="kw">for </span>NextFut&lt;<span class="lifetime">'_</span>, W&gt; {
+    <span class="kw">type </span>Output = <span class="prelude-ty">Result</span>&lt;W::Value, Disconnected&gt;;
 
     <span class="kw">fn </span>poll(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>task::Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="self">Self</span>::Output&gt; {
-        <span class="kw">let </span><span class="prelude-val">Some</span>(shared) = <span class="self">self</span>.watcher.shared.upgrade() <span class="kw">else </span>{
-            <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(Disconnected));
-        };
-        <span class="kw">match </span>shared.poll_next(cx, <span class="self">self</span>.watcher.epoch) {
-            Poll::Pending =&gt; Poll::Pending,
-            Poll::Ready((current_epoch, value)) =&gt; {
-                <span class="self">self</span>.watcher.epoch = current_epoch;
-                Poll::Ready(<span class="prelude-val">Ok</span>(value))
-            }
-        }
+        <span class="self">self</span>.watcher.poll_updated(cx)
     }
 }
 
@@ -773,22 +1453,23 @@
 ///
 /// This Future is cancel-safe.
 </span><span class="attr">#[derive(Debug)]
-</span><span class="kw">pub struct </span>WatchInitializedFut&lt;<span class="lifetime">'a</span>, T&gt; {
-    watcher: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>Watcher&lt;<span class="prelude-ty">Option</span>&lt;T&gt;&gt;,
+</span><span class="kw">pub struct </span>InitializedFut&lt;<span class="lifetime">'a</span>, T, V: Nullable&lt;T&gt;, W: Watcher&lt;Value = V&gt;&gt; {
+    initial: <span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Result</span>&lt;T, Disconnected&gt;&gt;,
+    watcher: <span class="kw-2">&amp;</span><span class="lifetime">'a </span><span class="kw-2">mut </span>W,
 }
 
-<span class="kw">impl</span>&lt;T: Clone + Eq&gt; Future <span class="kw">for </span>WatchInitializedFut&lt;<span class="lifetime">'_</span>, T&gt; {
+<span class="kw">impl</span>&lt;T: Clone + Eq + Unpin, V: Nullable&lt;T&gt;, W: Watcher&lt;Value = V&gt; + Unpin&gt; Future
+    <span class="kw">for </span>InitializedFut&lt;<span class="lifetime">'_</span>, T, V, W&gt;
+{
     <span class="kw">type </span>Output = <span class="prelude-ty">Result</span>&lt;T, Disconnected&gt;;
 
     <span class="kw">fn </span>poll(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>task::Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="self">Self</span>::Output&gt; {
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(value) = <span class="self">self</span>.as_mut().initial.take() {
+            <span class="kw">return </span>Poll::Ready(value);
+        }
         <span class="kw">loop </span>{
-            <span class="kw">let </span><span class="prelude-val">Some</span>(shared) = <span class="self">self</span>.watcher.shared.upgrade() <span class="kw">else </span>{
-                <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(Disconnected));
-            };
-            <span class="kw">let </span>(epoch, value) = <span class="macro">n0_future::ready!</span>(shared.poll_next(cx, <span class="self">self</span>.watcher.epoch));
-            <span class="self">self</span>.watcher.epoch = epoch;
-
-            <span class="kw">if let </span><span class="prelude-val">Some</span>(value) = value {
+            <span class="kw">let </span>value = <span class="macro">ready!</span>(<span class="self">self</span>.as_mut().watcher.poll_updated(cx)<span class="question-mark">?</span>);
+            <span class="kw">if let </span><span class="prelude-val">Some</span>(value) = value.into_option() {
                 <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Ok</span>(value));
             }
         }
@@ -803,23 +1484,25 @@
 ///
 /// This stream is cancel-safe.
 </span><span class="attr">#[derive(Debug, Clone)]
-</span><span class="kw">pub struct </span>WatcherStream&lt;T&gt; {
-    watcher: Watcher&lt;T&gt;,
+</span><span class="kw">pub struct </span>Stream&lt;W: Watcher + Unpin&gt; {
+    initial: <span class="prelude-ty">Option</span>&lt;W::Value&gt;,
+    watcher: W,
 }
 
-<span class="kw">impl</span>&lt;T: Clone + Eq&gt; Stream <span class="kw">for </span>WatcherStream&lt;T&gt; {
-    <span class="kw">type </span>Item = T;
+<span class="kw">impl</span>&lt;W: Watcher + Unpin&gt; n0_future::Stream <span class="kw">for </span>Stream&lt;W&gt;
+<span class="kw">where
+    </span>W::Value: Unpin,
+{
+    <span class="kw">type </span>Item = W::Value;
 
     <span class="kw">fn </span>poll_next(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>task::Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt;&gt; {
-        <span class="kw">let </span><span class="prelude-val">Some</span>(shared) = <span class="self">self</span>.watcher.shared.upgrade() <span class="kw">else </span>{
-            <span class="kw">return </span>Poll::Ready(<span class="prelude-val">None</span>);
-        };
-        <span class="kw">match </span>shared.poll_next(cx, <span class="self">self</span>.watcher.epoch) {
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(value) = <span class="self">self</span>.as_mut().initial.take() {
+            <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Some</span>(value));
+        }
+        <span class="kw">match </span><span class="self">self</span>.as_mut().watcher.poll_updated(cx) {
+            Poll::Ready(<span class="prelude-val">Ok</span>(value)) =&gt; Poll::Ready(<span class="prelude-val">Some</span>(value)),
+            Poll::Ready(<span class="prelude-val">Err</span>(Disconnected)) =&gt; Poll::Ready(<span class="prelude-val">None</span>),
             Poll::Pending =&gt; Poll::Pending,
-            Poll::Ready((epoch, value)) =&gt; {
-                <span class="self">self</span>.watcher.epoch = epoch;
-                Poll::Ready(<span class="prelude-val">Some</span>(value))
-            }
         }
     }
 }
@@ -827,13 +1510,12 @@
 <span class="doccomment">/// The error for when a [`Watcher`] is disconnected from its underlying
 /// [`Watchable`] value, because of that watchable having been dropped.
 </span><span class="attr">#[derive(thiserror::Error, Debug)]
-#[error(<span class="string">"Watch lost connection to underlying Watchable, it was dropped"</span>)]
+#[error(<span class="string">"Watcher lost connection to underlying Watchable, it was dropped"</span>)]
 </span><span class="kw">pub struct </span>Disconnected;
 
 <span class="comment">// Private:
 
 </span><span class="kw">const </span>INITIAL_EPOCH: u64 = <span class="number">1</span>;
-<span class="kw">const </span>PRE_INITIAL_EPOCH: u64 = <span class="number">0</span>;
 
 <span class="doccomment">/// The shared state for a [`Watchable`].
 </span><span class="attr">#[derive(Debug, Default)]
@@ -864,7 +1546,7 @@
         <span class="self">self</span>.state.read().expect(<span class="string">"poisoned"</span>).value.clone()
     }
 
-    <span class="kw">fn </span>poll_next(<span class="kw-2">&amp;</span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>task::Context&lt;<span class="lifetime">'_</span>&gt;, last_epoch: u64) -&gt; Poll&lt;(u64, T)&gt; {
+    <span class="kw">fn </span>poll_updated(<span class="kw-2">&amp;</span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>task::Context&lt;<span class="lifetime">'_</span>&gt;, last_epoch: u64) -&gt; Poll&lt;(u64, T)&gt; {
         {
             <span class="kw">let </span>state = <span class="self">self</span>.state.read().expect(<span class="string">"poisoned"</span>);
             <span class="kw">let </span>epoch = state.epoch;
@@ -903,7 +1585,7 @@
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>std::time::{Duration, Instant};
 
-    <span class="kw">use </span>n0_future::StreamExt;
+    <span class="kw">use </span>futures_lite::StreamExt;
     <span class="kw">use </span>rand::{thread_rng, Rng};
     <span class="kw">use </span>tokio::task::JoinSet;
     <span class="kw">use </span>tokio_util::sync::CancellationToken;
@@ -1007,12 +1689,12 @@
         <span class="kw">let </span><span class="kw-2">mut </span>watcher = watchable.watch();
         <span class="kw">let </span><span class="kw-2">mut </span>initialized = watcher.initialized();
 
-        <span class="kw">let </span>poll = n0_future::future::poll_once(<span class="kw-2">&amp;mut </span>initialized).<span class="kw">await</span>;
+        <span class="kw">let </span>poll = futures_lite::future::poll_once(<span class="kw-2">&amp;mut </span>initialized).<span class="kw">await</span>;
         <span class="macro">assert!</span>(poll.is_none());
 
         watchable.set(<span class="prelude-val">Some</span>(<span class="number">1u8</span>)).ok();
 
-        <span class="kw">let </span>poll = n0_future::future::poll_once(<span class="kw-2">&amp;mut </span>initialized).<span class="kw">await</span>;
+        <span class="kw">let </span>poll = futures_lite::future::poll_once(<span class="kw-2">&amp;mut </span>initialized).<span class="kw">await</span>;
         <span class="macro">assert_eq!</span>(poll.unwrap().unwrap(), <span class="number">1u8</span>);
     }
 
@@ -1023,7 +1705,7 @@
         <span class="kw">let </span><span class="kw-2">mut </span>watcher = watchable.watch();
         <span class="kw">let </span><span class="kw-2">mut </span>initialized = watcher.initialized();
 
-        <span class="kw">let </span>poll = n0_future::future::poll_once(<span class="kw-2">&amp;mut </span>initialized).<span class="kw">await</span>;
+        <span class="kw">let </span>poll = futures_lite::future::poll_once(<span class="kw-2">&amp;mut </span>initialized).<span class="kw">await</span>;
         <span class="macro">assert_eq!</span>(poll.unwrap().unwrap(), <span class="number">1u8</span>);
     }
 
@@ -1039,7 +1721,7 @@
             <span class="kw">let </span>watchable = Watchable::&lt;<span class="prelude-ty">Option</span>&lt;u8&gt;&gt;::new(<span class="prelude-val">None</span>);
 
             <span class="kw">let </span><span class="kw-2">mut </span>watch = watchable.watch();
-            <span class="kw">let </span>thread = thread::spawn(<span class="kw">move </span>|| n0_future::future::block_on(watch.initialized()));
+            <span class="kw">let </span>thread = thread::spawn(<span class="kw">move </span>|| futures_lite::future::block_on(watch.initialized()));
 
             watchable.set(<span class="prelude-val">Some</span>(<span class="number">42</span>)).ok();
 
