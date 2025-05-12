@@ -1378,7 +1378,7 @@ impl Handle {
         let relay_transports = vec![relay_transport];
 
         let secret_encryption_key = secret_ed_box(secret_key.secret());
-
+        #[cfg(not(wasm_browser))]
         let ipv6 = ip_transports.iter().any(|t| t.bind_addr().is_ipv6());
 
         #[cfg(not(wasm_browser))]
