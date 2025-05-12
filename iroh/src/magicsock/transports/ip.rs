@@ -6,6 +6,7 @@ use std::{
 };
 
 use quinn::AsyncUdpSocket;
+use tracing::trace;
 
 use super::{RecvMeta, Transmit};
 use crate::{
@@ -42,6 +43,7 @@ impl IpTransport {
         destination: SocketAddr,
         transmit: &Transmit<'_>,
     ) -> Poll<io::Result<()>> {
+        trace!("sending to {}", destination);
         let res = self.socket.try_send(&quinn_udp::Transmit {
             destination,
             ecn: transmit.ecn,
@@ -92,6 +94,7 @@ impl IpTransport {
     pub fn local_addr(&self) -> Option<SocketAddr> {
         self.local_addr.get()
     }
+
     pub fn local_addr_watch(&self) -> impl Watcher<Value = Option<SocketAddr>> + Send {
         self.local_addr.watch()
     }

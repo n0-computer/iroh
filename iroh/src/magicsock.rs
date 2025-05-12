@@ -217,7 +217,7 @@ pub(crate) struct MagicSock {
     disco_secrets: DiscoSecrets,
 
     /// Disco (ping) queue
-    udp_disco_sender: mpsc::Sender<(SendAddr, PublicKey, disco::Message)>,
+    disco_sender: mpsc::Sender<(SendAddr, PublicKey, disco::Message)>,
 
     /// Optional discovery service
     discovery: Option<Box<dyn Discovery>>,
@@ -557,6 +557,7 @@ impl MagicSock {
                 segment_size: transmit.segment_size,
                 src_ip: transmit.src_ip.map(Into::into),
             };
+
             let res = self.transports.poll_send(&destination, &transmit);
             match res {
                 Poll::Ready(Ok(())) => {
@@ -959,7 +960,7 @@ impl MagicSock {
             node_key: self.public_key(),
         });
         let sent = self
-            .udp_disco_sender
+            .disco_sender
             .try_send((dst.clone(), dst_node, msg))
             .is_ok();
 
@@ -1012,7 +1013,7 @@ impl MagicSock {
         dst_key: PublicKey,
         msg: disco::Message,
     ) -> bool {
-        self.udp_disco_sender.try_send((dst, dst_key, msg)).is_ok()
+        self.disco_sender.try_send((dst, dst_key, msg)).is_ok()
     }
 
     /// Send a disco message. UDP messages will be polled to send directly on the UDP socket.
@@ -1368,7 +1369,7 @@ impl Handle {
             disco_secrets: DiscoSecrets::default(),
             node_map,
             ip_mapped_addrs,
-            udp_disco_sender,
+            disco_sender: udp_disco_sender,
             discovery,
             discovery_user_data: RwLock::new(discovery_user_data),
             direct_addrs: Default::default(),

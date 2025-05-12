@@ -116,7 +116,7 @@ impl Transports {
         });
         let relays = watchable::JoinOpt::new(relays).expect("disconnected");
 
-        watchable::Merge2::new(ips, relays)
+        watchable::Merge2::new(ips, relays).expect("disconnected")
     }
 
     pub fn max_transmit_segments(&self) -> usize {

@@ -102,7 +102,6 @@ tracing-subscriber = { version = "0.3", features = [
 ], optional = true }
 indicatif = { version = "0.17", features = ["tokio"], optional = true }
 parse-size = { version = "=1.0.0", optional = true } # pinned version to avoid bumping msrv to 1.81
-auto_enums = "0.8.7"
 
 
 # non-wasm-in-browser dependencies
