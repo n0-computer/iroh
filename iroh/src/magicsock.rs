@@ -1729,15 +1729,29 @@ fn bind_ip(
     metrics: Arc<portmapper::Metrics>,
 ) -> Result<(Vec<IpTransport>, portmapper::Client)> {
     let port_mapper = portmapper::Client::with_metrics(Default::default(), metrics);
-    let (v4, v6) = bind_sockets(addr_v4, addr_v6)?;
+
+    let v4 = Arc::new(bind_with_fallback(SocketAddr::V4(addr_v4)).context("bind IPv4 failed")?);
+    let ip4_port = v4.local_addr()?.port();
+    let ip6_port = ip4_port.checked_add(1).unwrap_or(ip4_port - 1);
+
+    let addr_v6 =
+        addr_v6.unwrap_or_else(|| SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, ip6_port, 0, 0));
+
+    let v6 = match bind_with_fallback(SocketAddr::V6(addr_v6)) {
+        Ok(sock) => Some(Arc::new(sock)),
+        Err(err) => {
+            info!("bind ignoring IPv6 bind failure: {:?}", err);
+            None
+        }
+    };
 
     let port = v4.local_addr().map_or(0, |p| p.port());
     let v4 = UdpConn::wrap(v4);
     let v6 = v6.map(UdpConn::wrap);
 
     let mut ip = vec![IpTransport::new(addr_v4.into(), v4)];
-    if let (Some(v6), Some(addr)) = (v6, addr_v6) {
-        ip.push(IpTransport::new(addr.into(), v6))
+    if let Some(v6) = v6 {
+        ip.push(IpTransport::new(addr_v6.into(), v6))
     }
 
     // NOTE: we can end up with a zero port if `netwatch::UdpSocket::socket_addr` fails
@@ -1749,28 +1763,6 @@ fn bind_ip(
     }
 
     Ok((ip, port_mapper))
-}
-
-#[cfg(not(wasm_browser))]
-fn bind_sockets(
-    addr_v4: SocketAddrV4,
-    addr_v6: Option<SocketAddrV6>,
-) -> Result<(Arc<UdpSocket>, Option<Arc<UdpSocket>>)> {
-    let v4 = Arc::new(bind_with_fallback(SocketAddr::V4(addr_v4)).context("bind IPv4 failed")?);
-
-    let ip4_port = v4.local_addr()?.port();
-    let ip6_port = ip4_port.checked_add(1).unwrap_or(ip4_port - 1);
-    let addr_v6 =
-        addr_v6.unwrap_or_else(|| SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, ip6_port, 0, 0));
-    let v6 = match bind_with_fallback(SocketAddr::V6(addr_v6)) {
-        Ok(sock) => Some(Arc::new(sock)),
-        Err(err) => {
-            info!("bind ignoring IPv6 bind failure: {:?}", err);
-            None
-        }
-    };
-
-    Ok((v4, v6))
 }
 
 impl Actor {
@@ -2104,6 +2096,20 @@ impl Actor {
             .collect();
 
         let msock = self.msock.clone();
+        let has_ipv4_unspecified = local_addrs.iter().find_map(|(_, a)| {
+            if a.is_ipv4() && a.ip().is_unspecified() {
+                Some(a.port())
+            } else {
+                None
+            }
+        });
+        let has_ipv6_unspecified = local_addrs.iter().find_map(|(_, a)| {
+            if a.is_ipv6() && a.ip().is_unspecified() {
+                Some(a.port())
+            } else {
+                None
+            }
+        });
 
         // The following code can be slow, we do not want to block the caller since it would
         // block the actor loop.
@@ -2113,7 +2119,7 @@ impl Actor {
                 // each local IP address by pairing it with the port the socket is bound on.
                 if local_addrs
                     .iter()
-                    .any(|(bound, _)| bound.ip().is_unspecified())
+                    .any(|(_, local)| local.ip().is_unspecified())
                 {
                     // Depending on the OS and network interfaces attached and their state
                     // enumerating the local interfaces can take a long time.  Especially
@@ -2129,14 +2135,11 @@ impl Actor {
                         // or public addresses, this allows testing offline.
                         ips = loopback;
                     }
+
                     for ip in ips {
                         let port_if_unspecified = match ip {
-                            IpAddr::V4(_) => local_addrs
-                                .iter()
-                                .find_map(|(_, a)| a.is_ipv4().then(|| a.port())),
-                            IpAddr::V6(_) => local_addrs
-                                .iter()
-                                .find_map(|(_, a)| a.is_ipv6().then(|| a.port())),
+                            IpAddr::V4(_) => has_ipv4_unspecified,
+                            IpAddr::V6(_) => has_ipv6_unspecified,
                         };
                         if let Some(port) = port_if_unspecified {
                             let addr = SocketAddr::new(ip, port);
