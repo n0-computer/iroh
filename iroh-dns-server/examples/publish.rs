@@ -98,7 +98,6 @@ async fn main() -> Result<()> {
         .with_direct_addresses(args.addr.into_iter().collect())
         .with_user_data(args.user_data);
     let signed_packet = node_info.to_pkarr_signed_packet(&secret_key, 30)?;
-    tracing::debug!("signed packet: {signed_packet:?}");
     pkarr.publish(&signed_packet).await?;
 
     println!("signed packet published.");
