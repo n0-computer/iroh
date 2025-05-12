@@ -142,7 +142,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dev-dependencies]
 axum = { version = "0.8" }
 clap = { version = "4", features = ["derive"] }
-futures-lite = "2.6"
 pretty_assertions = "1.4"
 rand_chacha = "0.3.1"
 tokio = { version = "1", features = [

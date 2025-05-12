@@ -4,7 +4,7 @@
 //!
 //! ```no_run
 //! # use anyhow::Result;
-//! # use futures_lite::future::Boxed as BoxedFuture;
+//! # use n0_future::future::Boxed as BoxedFuture;
 //! # use iroh::{endpoint::Connection, protocol::{ProtocolHandler, Router}, Endpoint, NodeAddr};
 //! #
 //! # async fn test_compile() -> Result<()> {
@@ -69,7 +69,7 @@ use crate::{
 /// ```no_run
 /// # use std::sync::Arc;
 /// # use anyhow::Result;
-/// # use futures_lite::future::Boxed as BoxedFuture;
+/// # use n0_future::future::Boxed as BoxedFuture;
 /// # use iroh::{endpoint::Connecting, protocol::{ProtocolHandler, Router}, Endpoint, NodeAddr};
 /// #
 /// # async fn test_compile() -> Result<()> {

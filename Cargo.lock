@@ -2222,7 +2222,6 @@ dependencies = [
  "derive_more",
  "ed25519-dalek",
  "futures-buffered",
- "futures-lite",
  "futures-util",
  "getrandom 0.3.2",
  "hickory-resolver",
