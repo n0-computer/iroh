@@ -4993,8 +4993,8 @@
         <span class="kw">let </span>relay_transports = <span class="macro">vec!</span>[relay_transport];
 
         <span class="kw">let </span>secret_encryption_key = secret_ed_box(secret_key.secret());
-
-        <span class="kw">let </span>ipv6 = ip_transports.iter().any(|t| t.bind_addr().is_ipv6());
+        <span class="attr">#[cfg(not(wasm_browser))]
+        </span><span class="kw">let </span>ipv6 = ip_transports.iter().any(|t| t.bind_addr().is_ipv6());
 
         <span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">let </span>transports = Transports::new(ip_transports, relay_transports);
