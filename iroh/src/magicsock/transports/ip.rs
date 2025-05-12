@@ -2,9 +2,11 @@ use std::{
     io,
     net::SocketAddr,
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
 };
 
+use netwatch::UdpSocket;
 use quinn::AsyncUdpSocket;
 use tracing::trace;
 
@@ -138,5 +140,9 @@ impl IpTransport {
 
     pub fn on_network_change(&self, _info: &crate::magicsock::NetInfo) {
         // Nothing to do for now
+    }
+
+    pub fn socket(&self) -> Arc<UdpSocket> {
+        self.socket.as_socket()
     }
 }

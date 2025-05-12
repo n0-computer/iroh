@@ -1329,6 +1329,21 @@ impl Handle {
         #[cfg(not(wasm_browser))]
         let (ip_transports, port_mapper) = bind_ip(addr_v4, addr_v6, metrics.portmapper.clone())?;
 
+        #[cfg(not(wasm_browser))]
+        let v4_socket = ip_transports
+            .iter()
+            .find(|t| t.bind_addr().is_ipv4())
+            .expect("must bind a ipv4 socket")
+            .socket();
+        #[cfg(not(wasm_browser))]
+        let v6_socket = ip_transports.iter().find_map(|t| {
+            if t.bind_addr().is_ipv6() {
+                Some(t.socket())
+            } else {
+                None
+            }
+        });
+
         let ip_mapped_addrs = IpMappedAddresses::default();
 
         let net_reporter = net_report::Client::new(
@@ -1451,18 +1466,15 @@ impl Handle {
         .with_no_client_auth();
 
         #[cfg(not(wasm_browser))]
-        let quic_config = Some(QuicConfig {
-            ep: qad_endpoint,
-            client_config,
-            ipv4: true,
-            ipv6,
-        });
-        #[cfg(not(wasm_browser))]
         let net_report_config = net_report::Options::default()
-            // TODO:
-            // .stun_v4(Some(actor_sockets.v4.as_socket().clone()))
-            // .stun_v6(actor_sockets.v6.as_ref().map(|s| s.as_socket().clone()))
-            .quic_config(quic_config);
+            .stun_v4(Some(v4_socket))
+            .stun_v6(v6_socket)
+            .quic_config(Some(QuicConfig {
+                ep: qad_endpoint,
+                client_config,
+                ipv4: true,
+                ipv6,
+            }));
         #[cfg(wasm_browser)]
         let net_report_config = net_report::Options::default();
 
