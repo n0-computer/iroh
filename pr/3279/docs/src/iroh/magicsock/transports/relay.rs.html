@@ -475,8 +475,7 @@
 <a href="#474" id="474">474</a>
 <a href="#475" id="475">475</a>
 <a href="#476" id="476">476</a>
-<a href="#477" id="477">477</a>
-<a href="#478" id="478">478</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#477" id="477">477</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     io,
     pin::Pin,
     sync::Arc,
@@ -506,14 +505,14 @@
 
 <span class="attr">#[derive(Debug)]
 </span><span class="kw">pub struct </span>RelayTransport {
-    <span class="doccomment">/// Queue to receive datagrams from relays for [`AsyncUdpSocket::poll_recv`].
+    <span class="doccomment">/// Queue to receive datagrams from relays for [`quinn::AsyncUdpSocket::poll_recv`].
     ///
     /// Relay datagrams received by relays are put into this queue and consumed by
-    /// [`AsyncUdpSocket`].  This queue takes care of the wakers needed by
-    /// [`AsyncUdpSocket::poll_recv`].
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) relay_datagram_recv_queue: Arc&lt;RelayDatagramRecvQueue&gt;,
+    /// [`quinn::AsyncUdpSocket`].  This queue takes care of the wakers needed by
+    /// [`quinn::AsyncUdpSocket::poll_recv`].
+    </span>relay_datagram_recv_queue: Arc&lt;RelayDatagramRecvQueue&gt;,
     <span class="doccomment">/// Channel on which to send datagrams via a relay server.
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) relay_datagram_send_channel: RelayDatagramSendChannelSender,
+    </span>relay_datagram_send_channel: RelayDatagramSendChannelSender,
     actor_sender: mpsc::Sender&lt;RelayActorMessage&gt;,
     _actor_handle: AbortOnDropHandle&lt;()&gt;,
     my_relay: Watchable&lt;<span class="prelude-ty">Option</span>&lt;RelayUrl&gt;&gt;,
@@ -682,17 +681,16 @@
 /// and [`MagicSock`].
 ///
 /// [`try_send`]: Self::try_send
-/// [`RelayActor`]: crate::magicsock::RelayActor
 /// [`MagicSock`]: crate::magicsock::MagicSock
 </span><span class="attr">#[derive(Debug)]
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>RelayDatagramRecvQueue {
+</span><span class="kw">struct </span>RelayDatagramRecvQueue {
     queue: ConcurrentQueue&lt;RelayRecvDatagram&gt;,
     waker: AtomicWaker,
 }
 
 <span class="kw">impl </span>RelayDatagramRecvQueue {
     <span class="doccomment">/// Creates a new, empty queue with a fixed size bound of 512 items.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new() -&gt; <span class="self">Self </span>{
+    </span><span class="kw">fn </span>new() -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             queue: ConcurrentQueue::bounded(<span class="number">512</span>),
             waker: AtomicWaker::new(),
@@ -703,7 +701,7 @@
     /// that's registered its waker with a [`poll_recv`] call.
     ///
     /// [`poll_recv`]: Self::poll_recv
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>try_send(
+    </span><span class="kw">fn </span>try_send(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         item: RelayRecvDatagram,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), concurrent_queue::PushError&lt;RelayRecvDatagram&gt;&gt; {
@@ -722,9 +720,9 @@
     /// woken up for new items.
     ///
     /// The reason this method is made available as `&amp;self` is because
-    /// the interface for quinn's [`AsyncUdpSocket::poll_recv`] requires us
+    /// the interface for quinn's [`quinn::AsyncUdpSocket::poll_recv`] requires us
     /// to be able to poll from `&amp;self`.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>poll_recv(<span class="kw-2">&amp;</span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>Context) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;RelayRecvDatagram&gt;&gt; {
+    </span><span class="kw">fn </span>poll_recv(<span class="kw-2">&amp;</span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>Context) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;RelayRecvDatagram&gt;&gt; {
         <span class="kw">match </span><span class="self">self</span>.queue.pop() {
             <span class="prelude-val">Ok</span>(value) =&gt; Poll::Ready(<span class="prelude-val">Ok</span>(value)),
             <span class="prelude-val">Err</span>(concurrent_queue::PopError::Empty) =&gt; {
@@ -749,7 +747,7 @@
 
 <span class="doccomment">/// Creates a sender and receiver pair for sending datagrams to the [`RelayActor`].
 ///
-/// These includes the waker coordination required to support [`AsyncUdpSocket::try_send`]
+/// These includes the waker coordination required to support [`quinn::AsyncUdpSocket::try_send`]
 /// and [`quinn::UdpPoller::poll_writable`].
 </span><span class="kw">fn </span>relay_datagram_send_channel() -&gt; (
     RelayDatagramSendChannelSender,
@@ -767,10 +765,10 @@
 
 <span class="doccomment">/// Sender to send datagrams to the [`RelayActor`].
 ///
-/// This includes the waker coordination required to support [`AsyncUdpSocket::try_send`]
+/// This includes the waker coordination required to support [`quinn::AsyncUdpSocket::try_send`]
 /// and [`quinn::UdpPoller::poll_writable`].
 </span><span class="attr">#[derive(Debug, Clone)]
-</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>RelayDatagramSendChannelSender {
+</span><span class="kw">struct </span>RelayDatagramSendChannelSender {
     sender: mpsc::Sender&lt;RelaySendItem&gt;,
     wakers: Arc&lt;std::sync::Mutex&lt;Vec&lt;Waker&gt;&gt;&gt;,
 }
@@ -811,16 +809,16 @@
 
 <span class="doccomment">/// Receiver to send datagrams to the [`RelayActor`].
 ///
-/// This includes the waker coordination required to support [`AsyncUdpSocket::try_send`]
+/// This includes the waker coordination required to support [`quinn::AsyncUdpSocket::try_send`]
 /// and [`quinn::UdpPoller::poll_writable`].
 </span><span class="attr">#[derive(Debug)]
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>RelayDatagramSendChannelReceiver {
+</span><span class="kw">struct </span>RelayDatagramSendChannelReceiver {
     receiver: mpsc::Receiver&lt;RelaySendItem&gt;,
     wakers: Arc&lt;std::sync::Mutex&lt;Vec&lt;Waker&gt;&gt;&gt;,
 }
 
 <span class="kw">impl </span>RelayDatagramSendChannelReceiver {
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>recv(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;RelaySendItem&gt; {
+    <span class="kw">async fn </span>recv(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;RelaySendItem&gt; {
         <span class="kw">let </span>item = <span class="self">self</span>.receiver.recv().<span class="kw">await</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>wakers = <span class="self">self</span>.wakers.lock().expect(<span class="string">"poisoned"</span>);
         wakers.drain(..).for_each(Waker::wake);
