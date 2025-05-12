@@ -22,7 +22,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     pin::Pin,
     sync::{
-        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, RwLock,
     },
     task::{Context, Poll},
@@ -183,8 +183,6 @@ pub(crate) struct MagicSock {
     actor_sender: mpsc::Sender<ActorMessage>,
     /// String representation of the node_id of this node.
     me: String,
-    /// Counter for ordering of [`MagicSock::poll_recv`] polling order.
-    poll_recv_counter: AtomicUsize,
 
     /// The DNS resolver to be used in this magicsock.
     #[cfg(not(wasm_browser))]
@@ -1350,7 +1348,7 @@ impl Handle {
             metrics: metrics.magicsock.clone(),
             protocol: relay_protocol,
         });
-        let relay_transports = vec![relay_transport.into()];
+        let relay_transports = vec![relay_transport];
 
         let secret_encryption_key = secret_ed_box(secret_key.secret());
 
@@ -1361,7 +1359,6 @@ impl Handle {
             transports: Transports::new(ip_transports, relay_transports),
             closing: AtomicBool::new(false),
             closed: AtomicBool::new(false),
-            poll_recv_counter: AtomicUsize::new(0),
             actor_sender: actor_sender.clone(),
             ipv6_reported,
             relay_map,
@@ -1927,10 +1924,8 @@ impl Actor {
         debug!("link change detected: major? {}", is_major);
 
         if is_major {
-            for socket in &self.sockets.ip {
-                if let Err(err) = socket.rebind() {
-                    warn!("failed to rebind socket: {:?}", err);
-                }
+            if let Err(err) = self.msock.transports.rebind() {
+                warn!("failed to rebind transports: {:?}", err);
             }
 
             #[cfg(not(wasm_browser))]
@@ -2083,7 +2078,6 @@ impl Actor {
             .iter()
             .filter_map(|t| {
                 let local_addr = t.local_addr()?;
-                let local_addr: SocketAddr = local_addr.try_into().ok()?;
                 Some((t.bind_addr(), local_addr))
             })
             .collect();

@@ -195,10 +195,7 @@ pub trait Watcher: Clone {
     {
         InitializedFut {
             initial: match self.get() {
-                Ok(value) => match value.into_option() {
-                    Some(value) => Some(Ok(value)),
-                    None => None,
-                },
+                Ok(value) => value.into_option().map(Ok),
                 Err(Disconnected) => Some(Err(Disconnected)),
             },
             watcher: self,

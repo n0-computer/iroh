@@ -10,6 +10,7 @@ use indicatif::HumanBytes;
 use iroh::{
     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher},
     endpoint::{ConnectionError, PathSelection},
+    watchable::Watcher,
     Endpoint, NodeAddr, RelayMap, RelayMode, RelayUrl, SecretKey,
 };
 use iroh_base::ticket::NodeTicket;
@@ -153,6 +154,7 @@ async fn provide(
     let relay_url = endpoint
         .home_relay()
         .get()?
+        .pop()
         .expect("should be connected to a relay server");
     let local_addrs = endpoint
         .direct_addresses()
@@ -278,6 +280,7 @@ async fn fetch(
     let relay_url = endpoint
         .home_relay()
         .get()?
+        .pop()
         .expect("should be connected to a relay server, try calling `endpoint.local_endpoints()` or `endpoint.connect()` first, to ensure the endpoint has actually attempted a connection before checking for the connected relay server");
     println!("node relay server url: {relay_url}\n");
 

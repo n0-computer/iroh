@@ -1,6 +1,5 @@
 use std::{
     io,
-    net::SocketAddr,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll, Waker},
@@ -169,32 +168,14 @@ impl RelayTransport {
         }
     }
 
-    pub fn local_addr(&self) -> Option<(RelayUrl, NodeId)> {
-        self.my_relay.get().map(|url| (url, self.my_node_id))
-    }
-
     pub fn local_addr_watch(
         &self,
     ) -> impl crate::watchable::Watcher<Value = Option<(RelayUrl, NodeId)>> + Send + Sync {
         let my_node_id = self.my_node_id;
-        let watcher = self
-            .my_relay
+        self.my_relay
             .watch()
             .map(move |url| url.map(|url| (url, my_node_id)))
-            .expect("disconnected");
-        watcher
-    }
-
-    pub fn max_transmit_segments(&self) -> usize {
-        1
-    }
-
-    pub fn max_receive_segments(&self) -> usize {
-        1
-    }
-
-    pub fn may_fragment(&self) -> bool {
-        false
+            .expect("disconnected")
     }
 
     pub fn is_valid_send_addr(&self, _url: &RelayUrl, _node_id: &NodeId) -> bool {
@@ -203,10 +184,6 @@ impl RelayTransport {
 
     pub fn poll_writable(&self, cx: &mut Context) -> Poll<io::Result<()>> {
         self.relay_datagram_send_channel.poll_writable(cx)
-    }
-
-    pub fn bind_addr(&self) -> Option<SocketAddr> {
-        None
     }
 
     pub fn rebind(&self) -> io::Result<()> {
@@ -397,7 +374,7 @@ fn split_packets(transmit: &Transmit<'_>) -> RelayContents {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeSet, time::Duration};
+    use std::{collections::BTreeSet, net::SocketAddr, time::Duration};
 
     use iroh_base::NodeId;
     use tokio::task::JoinSet;

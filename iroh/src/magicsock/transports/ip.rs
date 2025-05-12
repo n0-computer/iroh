@@ -131,7 +131,7 @@ impl IpTransport {
     pub fn rebind(&self) -> io::Result<()> {
         self.socket.as_socket_ref().rebind()?;
         let addr = self.socket.as_socket_ref().local_addr()?;
-        self.local_addr.set(Some(addr.into())).ok();
+        self.local_addr.set(Some(addr)).ok();
 
         Ok(())
     }

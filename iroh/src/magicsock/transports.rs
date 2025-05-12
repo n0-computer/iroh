@@ -56,7 +56,7 @@ impl Transports {
             }
             Addr::RelayUrl(url, node_id) => {
                 for transport in &self.relay {
-                    if transport.is_valid_send_addr(&url, &node_id) {
+                    if transport.is_valid_send_addr(url, node_id) {
                         match transport.poll_send(url.clone(), *node_id, transmit) {
                             Poll::Pending => {}
                             Poll::Ready(res) => return Poll::Ready(res),
@@ -148,7 +148,7 @@ impl Transports {
         // TODO: what about multiple matches?
         match addr {
             Addr::Ipv4(..) | Addr::Ipv6(..) => {
-                let addr: SocketAddr = addr.clone().try_into().unwrap();
+                let addr: SocketAddr = addr.clone().try_into().expect("known good");
                 match self.ip.iter().find(|t| t.is_valid_send_addr(&addr)) {
                     Some(t) => t.poll_writable(cx),
                     None => Poll::Pending,
@@ -190,11 +190,6 @@ impl Transports {
             .collect();
 
         Box::pin(IoPoller { io_pollers })
-    }
-
-    /// Returns a list of a IP based bound addresses
-    pub fn bind_addrs(&self) -> Vec<SocketAddr> {
-        self.ip.iter().map(|t| t.bind_addr()).collect()
     }
 
     /// Rebinds underlying connections, if necessary.
