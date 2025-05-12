@@ -11,7 +11,7 @@ use iroh::{
     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher},
     endpoint::{ConnectionError, PathSelection},
     watchable::Watcher,
-    Endpoint, NodeAddr, RelayMap, RelayMode, RelayUrl, SecretKey,
+    Endpoint, NodeAddr, RelayMode, RelayUrl, SecretKey,
 };
 use iroh_base::ticket::NodeTicket;
 use tracing::info;
@@ -107,8 +107,7 @@ async fn provide(
     let relay_mode = match relay_url {
         Some(relay_url) => {
             let relay_url = RelayUrl::from_str(&relay_url)?;
-            let relay_map = RelayMap::from_url(relay_url);
-            RelayMode::Custom(relay_map)
+            RelayMode::Custom(relay_url.into())
         }
         None => RelayMode::Default,
     };
@@ -231,8 +230,7 @@ async fn fetch(
     let relay_mode = match relay_url {
         Some(relay_url) => {
             let relay_url = RelayUrl::from_str(&relay_url)?;
-            let relay_map = RelayMap::from_url(relay_url);
-            RelayMode::Custom(relay_map)
+            RelayMode::Custom(relay_url.into())
         }
         None => RelayMode::Default,
     };

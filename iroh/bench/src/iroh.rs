@@ -8,7 +8,7 @@ use bytes::Bytes;
 use iroh::{
     endpoint::{Connection, ConnectionError, RecvStream, SendStream, TransportConfig},
     watchable::Watcher as _,
-    Endpoint, NodeAddr, RelayMap, RelayMode, RelayUrl,
+    Endpoint, NodeAddr, RelayMode, RelayUrl,
 };
 use tracing::{trace, warn};
 
@@ -26,9 +26,9 @@ pub fn server_endpoint(
 ) -> (NodeAddr, Endpoint) {
     let _guard = rt.enter();
     rt.block_on(async move {
-        let relay_mode = relay_url.clone().map_or(RelayMode::Disabled, |url| {
-            RelayMode::Custom(RelayMap::from_url(url))
-        });
+        let relay_mode = relay_url
+            .clone()
+            .map_or(RelayMode::Disabled, |url| RelayMode::Custom(url.into()));
 
         #[allow(unused_mut)]
         let mut builder = Endpoint::builder();
@@ -88,9 +88,9 @@ pub async fn connect_client(
     relay_url: Option<RelayUrl>,
     opt: Opt,
 ) -> Result<(Endpoint, Connection)> {
-    let relay_mode = relay_url.clone().map_or(RelayMode::Disabled, |url| {
-        RelayMode::Custom(RelayMap::from_url(url))
-    });
+    let relay_mode = relay_url
+        .clone()
+        .map_or(RelayMode::Disabled, |url| RelayMode::Custom(url.into()));
     #[allow(unused_mut)]
     let mut builder = Endpoint::builder();
     #[cfg(feature = "local-relay")]

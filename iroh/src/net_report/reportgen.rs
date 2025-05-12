@@ -1456,6 +1456,8 @@ mod tests {
         let (_server_b, relay_b) = test_utils::relay().await;
 
         let mut report = Report::default();
+        let relay_a = Arc::new(relay_a);
+        let relay_b = Arc::new(relay_b);
 
         // A STUN IPv4 probe from the the first relay server.
         let probe_report_a = ProbeReport {
@@ -1540,6 +1542,8 @@ mod tests {
     async fn test_update_report_icmp() {
         let (_server_a, relay_a) = test_utils::relay().await;
         let (_server_b, relay_b) = test_utils::relay().await;
+        let relay_a = Arc::new(relay_a);
+        let relay_b = Arc::new(relay_b);
 
         let mut report = Report::default();
 
@@ -1653,7 +1657,7 @@ mod tests {
         let addr = server.stun_addr().expect("test relay serves stun");
         let probe = Probe::IcmpV4 {
             delay: Duration::from_secs(0),
-            node,
+            node: Arc::new(node),
         };
 
         // A single ICMP packet might get lost.  Try several and take the first.
@@ -1718,6 +1722,7 @@ mod tests {
     #[traced_test]
     async fn test_quic_probe() -> TestResult {
         let (server, relay) = test_utils::relay().await;
+        let relay = Arc::new(relay);
         let client_config = iroh_relay::client::make_dangerous_client_config();
         let ep = quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0))?;
         let client_addr = ep.local_addr()?;
@@ -1731,7 +1736,7 @@ mod tests {
         let port = server.quic_addr().unwrap().port();
         let probe = Probe::QuicIpv4 {
             delay: Duration::from_secs(0),
-            node: relay.clone(),
+            node: relay,
         };
         let probe = match run_quic_probe(
             quic_addr_disc,

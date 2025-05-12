@@ -365,7 +365,11 @@ impl Actor {
         match frame {
             Frame::SendPacket { dst_key, packet } => {
                 let packet_len = packet.len();
-                self.handle_frame_send_packet(dst_key, packet)?;
+                if let Err(err @ ForwardPacketError { .. }) =
+                    self.handle_frame_send_packet(dst_key, packet)
+                {
+                    warn!("failed to handle send packet frame: {err:#}");
+                }
                 self.metrics.bytes_recv.inc_by(packet_len as u64);
             }
             Frame::Ping { data } => {
@@ -387,7 +391,7 @@ impl Actor {
         Ok(())
     }
 
-    fn handle_frame_send_packet(&self, dst: NodeId, data: Bytes) -> Result<()> {
+    fn handle_frame_send_packet(&self, dst: NodeId, data: Bytes) -> Result<(), ForwardPacketError> {
         if disco::looks_like_disco_wrapper(&data) {
             self.metrics.disco_packets_recv.inc();
             self.clients
@@ -398,6 +402,31 @@ impl Actor {
                 .send_packet(dst, data, self.node_id, &self.metrics)?;
         }
         Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub(crate) enum PacketScope {
+    Disco,
+    Data,
+}
+
+#[derive(Debug)]
+pub(crate) enum SendError {
+    Full,
+    Closed,
+}
+
+#[derive(Debug, thiserror::Error)]
+#[error("failed to forward {scope:?} packet: {reason:?}")]
+pub(crate) struct ForwardPacketError {
+    scope: PacketScope,
+    reason: SendError,
+}
+
+impl ForwardPacketError {
+    pub(crate) fn new(scope: PacketScope, reason: SendError) -> Self {
+        Self { scope, reason }
     }
 }
 
