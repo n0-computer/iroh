@@ -8,22 +8,30 @@ use std::{
 use iroh_base::{NodeId, RelayUrl};
 use tracing::trace;
 
+#[cfg(not(wasm_browser))]
 mod ip;
 pub(crate) mod relay;
 
-pub use self::{ip::IpTransport, relay::RelayTransport};
+#[cfg(not(wasm_browser))]
+pub use self::ip::IpTransport;
+pub use self::relay::RelayTransport;
 use super::NetInfo;
 use crate::watchable::{self, Watcher};
 
 #[derive(Debug)]
 pub struct Transports {
+    #[cfg(not(wasm_browser))]
     ip: Vec<IpTransport>,
     relay: Vec<RelayTransport>,
 }
 
 impl Transports {
-    pub fn new(ip: Vec<IpTransport>, relay: Vec<RelayTransport>) -> Self {
-        Self { ip, relay }
+    pub fn new(#[cfg(not(wasm_browser))] ip: Vec<IpTransport>, relay: Vec<RelayTransport>) -> Self {
+        Self {
+            #[cfg(not(wasm_browser))]
+            ip,
+            relay,
+        }
     }
 
     pub fn poll_send(&self, destination: &Addr, transmit: &Transmit<'_>) -> Poll<io::Result<()>> {
@@ -32,6 +40,11 @@ impl Transports {
         trace!(?destination, "sending");
 
         match destination {
+            #[cfg(wasm_browser)]
+            Addr::Ipv4(..) => {
+                return Poll::Ready(Err(io::Error::other("IPv4 is unsupported in browser")))
+            }
+            #[cfg(not(wasm_browser))]
             Addr::Ipv4(addr, port) => {
                 let addr = SocketAddr::V4(SocketAddrV4::new(*addr, port.unwrap_or_default()));
                 for transport in &self.ip {
@@ -43,6 +56,11 @@ impl Transports {
                     }
                 }
             }
+            #[cfg(wasm_browser)]
+            Addr::Ipv6(..) => {
+                return Poll::Ready(Err(io::Error::other("IPv6 is unsupported in browser")))
+            }
+            #[cfg(not(wasm_browser))]
             Addr::Ipv6(addr, port) => {
                 let addr = SocketAddr::V6(SocketAddrV6::new(*addr, port.unwrap_or_default(), 0, 0));
                 for transport in &self.ip {
@@ -88,6 +106,7 @@ impl Transports {
             };
         }
 
+        #[cfg(not(wasm_browser))]
         for transport in &self.ip {
             poll_transport!(transport);
         }
@@ -101,6 +120,7 @@ impl Transports {
         self.local_addrs_watch().get().expect("not disconnected")
     }
 
+    #[cfg(not(wasm_browser))]
     pub fn local_addrs_watch(&self) -> impl Watcher<Value = Vec<Addr>> + Send + Sync {
         let ips = self.ip.iter().map(|t| {
             t.local_addr_watch()
@@ -119,6 +139,17 @@ impl Transports {
         watchable::Merge2::new(ips, relays).expect("disconnected")
     }
 
+    #[cfg(wasm_browser)]
+    pub fn local_addrs_watch(&self) -> impl Watcher<Value = Vec<Addr>> + Send + Sync {
+        let relays = self.relay.iter().map(|t| {
+            t.local_addr_watch()
+                .map(move |t| t.map(|(url, id)| Addr::RelayUrl(url, id)))
+                .expect("disconnected")
+        });
+        watchable::JoinOpt::new(relays).expect("disconnected")
+    }
+
+    #[cfg(not(wasm_browser))]
     pub fn max_transmit_segments(&self) -> usize {
         // TODO: does this need to account for the relay transports?
 
@@ -126,6 +157,12 @@ impl Transports {
         res.unwrap_or(1)
     }
 
+    #[cfg(wasm_browser)]
+    pub fn max_transmit_segments(&self) -> usize {
+        1
+    }
+
+    #[cfg(not(wasm_browser))]
     pub fn max_receive_segments(&self) -> usize {
         // TODO: does this need to account for the relay transports?
 
@@ -140,13 +177,29 @@ impl Transports {
         res.unwrap_or(1)
     }
 
+    #[cfg(wasm_browser)]
+    pub fn max_receive_segments(&self) -> usize {
+        1
+    }
+
+    #[cfg(not(wasm_browser))]
     pub fn may_fragment(&self) -> bool {
         self.ip.iter().any(|t| t.may_fragment())
+    }
+
+    #[cfg(wasm_browser)]
+    pub fn may_fragment(&self) -> bool {
+        false
     }
 
     pub fn poll_writable(&self, cx: &mut Context, addr: &Addr) -> Poll<io::Result<()>> {
         // TODO: what about multiple matches?
         match addr {
+            #[cfg(wasm_browser)]
+            Addr::Ipv4(..) | Addr::Ipv6(..) => Poll::Ready(Err(io::Error::other(
+                "IP based addressing is not supported in the browser",
+            ))),
+            #[cfg(not(wasm_browser))]
             Addr::Ipv4(..) | Addr::Ipv6(..) => {
                 let addr: SocketAddr = addr.clone().try_into().expect("known good");
                 match self.ip.iter().find(|t| t.is_valid_send_addr(&addr)) {
@@ -182,12 +235,12 @@ impl Transports {
         // Right now however we have one single poller behaving the same for each
         // connection.  It checks all paths and returns Poll::Ready as soon as any path is
         // ready.
-        let io_pollers: Vec<_> = self
-            .ip
-            .iter()
-            .map(|t| t.create_io_poller())
-            .chain(self.relay.iter().map(|t| t.create_io_poller()))
-            .collect();
+
+        let mut io_pollers = Vec::new();
+        #[cfg(not(wasm_browser))]
+        io_pollers.extend(self.ip.iter().map(|t| t.create_io_poller()));
+
+        io_pollers.extend(self.relay.iter().map(|t| t.create_io_poller()));
 
         Box::pin(IoPoller { io_pollers })
     }
@@ -196,6 +249,7 @@ impl Transports {
     pub fn rebind(&self) -> std::io::Result<()> {
         // TODO: failure in an earlier transport will skip other rebinds, is that ok?
 
+        #[cfg(not(wasm_browser))]
         for transport in &self.ip {
             transport.rebind()?;
         }
@@ -208,6 +262,7 @@ impl Transports {
 
     /// Handles potential changes to the underlying network conditions.
     pub fn on_network_change(&self, info: &NetInfo) {
+        #[cfg(not(wasm_browser))]
         for transport in &self.ip {
             transport.on_network_change(info);
         }

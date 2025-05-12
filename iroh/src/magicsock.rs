@@ -50,14 +50,16 @@ use tracing::{
     debug, error, error_span, event, info, info_span, instrument, trace, trace_span, warn,
     Instrument, Level, Span,
 };
-use transports::{relay::RelayActorConfig, IpTransport, RelayTransport, Transports};
 use url::Url;
 
+#[cfg(not(wasm_browser))]
+use self::transports::IpTransport;
 #[cfg(not(wasm_browser))]
 use self::udp_conn::UdpConn;
 use self::{
     metrics::Metrics as MagicsockMetrics,
     node_map::{NodeMap, PingAction, PingRole, SendPing},
+    transports::{relay::RelayActorConfig, RelayTransport, Transports},
 };
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
@@ -443,7 +445,6 @@ impl MagicSock {
             .ok();
     }
 
-    #[cfg(not(wasm_browser))]
     #[cfg_attr(windows, allow(dead_code))]
     fn normalized_local_addr(&self) -> io::Result<SocketAddr> {
         let addrs: Vec<_> = self
@@ -596,7 +597,6 @@ impl MagicSock {
 
     /// NOTE: Receiving on a [`Self::closed`] socket will return [`Poll::Pending`] indefinitely.
     #[instrument(skip_all)]
-    #[cfg(not(wasm_browser))]
     fn poll_recv(
         &self,
         cx: &mut Context,
@@ -741,6 +741,11 @@ impl MagicSock {
                 };
 
                 match addr {
+                    #[cfg(wasm_browser)]
+                    AddrOrUrl::Addr(addr) => {
+                        panic!("cannot use IP based addressing in the browser");
+                    }
+                    #[cfg(not(wasm_browser))]
                     AddrOrUrl::Addr(addr) => {
                         // UDP
 
@@ -1326,8 +1331,6 @@ impl Handle {
 
         #[cfg(not(wasm_browser))]
         let ip_transports = actor_sockets.ip.clone();
-        #[cfg(wasm_browser)]
-        let ip_transports = Vec::new();
 
         let ip_mapped_addrs = IpMappedAddresses::default();
 
@@ -1370,11 +1373,16 @@ impl Handle {
 
         let secret_encryption_key = secret_ed_box(secret_key.secret());
 
+        #[cfg(not(wasm_browser))]
+        let transports = Transports::new(ip_transports, relay_transports);
+        #[cfg(wasm_browser)]
+        let transports = Transports::new(relay_transports);
+
         let msock = Arc::new(MagicSock {
             me,
             secret_key,
             secret_encryption_key,
-            transports: Transports::new(ip_transports, relay_transports),
+            transports,
             closing: AtomicBool::new(false),
             closed: AtomicBool::new(false),
             actor_sender: actor_sender.clone(),
