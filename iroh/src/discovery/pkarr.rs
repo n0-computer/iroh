@@ -392,10 +392,15 @@ impl PkarrRelayClient {
             .send()
             .await?;
 
-        if !response.status().is_success() {
+        let status = response.status();
+        if !status.is_success() {
+            let text = if let Ok(text) = response.text().await {
+                text
+            } else {
+                "(no details provided)".to_string()
+            };
             bail!(format!(
-                "Publish request failed with status {}",
-                response.status()
+                "Publish request failed with status {status}: {text}",
             ))
         }
 
