@@ -139,8 +139,8 @@ connecting using only the <a href="type.NodeId.html" title="type iroh::NodeId"><
 <p>Every <a href="endpoint/struct.Endpoint.html" title="struct iroh::endpoint::Endpoint"><code>Endpoint</code></a> can also accept connections:</p>
 
 <div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>anyhow::{Context, <span class="prelude-ty">Result</span>};
-<span class="kw">use </span>futures_lite::StreamExt;
 <span class="kw">use </span>iroh::{Endpoint, NodeAddr};
+<span class="kw">use </span>n0_future::StreamExt;
 
 <span class="kw">async fn </span>accept() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
     <span class="comment">// To accept connections at least one ALPN must be configured.
