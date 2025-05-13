@@ -976,7 +976,50 @@
 <a href="#975" id="975">975</a>
 <a href="#976" id="976">976</a>
 <a href="#977" id="977">977</a>
-<a href="#978" id="978">978</a></pre></div><pre class="rust"><code><span class="doccomment">//! Watchable values.
+<a href="#978" id="978">978</a>
+<a href="#979" id="979">979</a>
+<a href="#980" id="980">980</a>
+<a href="#981" id="981">981</a>
+<a href="#982" id="982">982</a>
+<a href="#983" id="983">983</a>
+<a href="#984" id="984">984</a>
+<a href="#985" id="985">985</a>
+<a href="#986" id="986">986</a>
+<a href="#987" id="987">987</a>
+<a href="#988" id="988">988</a>
+<a href="#989" id="989">989</a>
+<a href="#990" id="990">990</a>
+<a href="#991" id="991">991</a>
+<a href="#992" id="992">992</a>
+<a href="#993" id="993">993</a>
+<a href="#994" id="994">994</a>
+<a href="#995" id="995">995</a>
+<a href="#996" id="996">996</a>
+<a href="#997" id="997">997</a>
+<a href="#998" id="998">998</a>
+<a href="#999" id="999">999</a>
+<a href="#1000" id="1000">1000</a>
+<a href="#1001" id="1001">1001</a>
+<a href="#1002" id="1002">1002</a>
+<a href="#1003" id="1003">1003</a>
+<a href="#1004" id="1004">1004</a>
+<a href="#1005" id="1005">1005</a>
+<a href="#1006" id="1006">1006</a>
+<a href="#1007" id="1007">1007</a>
+<a href="#1008" id="1008">1008</a>
+<a href="#1009" id="1009">1009</a>
+<a href="#1010" id="1010">1010</a>
+<a href="#1011" id="1011">1011</a>
+<a href="#1012" id="1012">1012</a>
+<a href="#1013" id="1013">1013</a>
+<a href="#1014" id="1014">1014</a>
+<a href="#1015" id="1015">1015</a>
+<a href="#1016" id="1016">1016</a>
+<a href="#1017" id="1017">1017</a>
+<a href="#1018" id="1018">1018</a>
+<a href="#1019" id="1019">1019</a>
+<a href="#1020" id="1020">1020</a>
+<a href="#1021" id="1021">1021</a></pre></div><pre class="rust"><code><span class="doccomment">//! Watchable values.
 //!
 //! A [`Watchable`] exists to keep track of a value which may change over time.  It allows
 //! observers to be notified of changes to the value.  The aim is to always be aware of the
@@ -1305,7 +1348,7 @@
     }
 }
 
-<span class="doccomment">/// JOIN
+<span class="doccomment">/// Combinator to join two watchers
 </span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>Join&lt;T: Clone + Eq, W: Watcher&lt;Value = T&gt;&gt; {
     watchers: Vec&lt;W&gt;,
@@ -1363,7 +1406,7 @@
     }
 }
 
-<span class="doccomment">/// JOIN OPT
+<span class="doccomment">/// Combinator to join two watchers
 </span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>JoinOpt&lt;T: Clone + Eq, W: Watcher&lt;Value = <span class="prelude-ty">Option</span>&lt;T&gt;&gt;&gt; {
     watchers: Vec&lt;W&gt;,
@@ -1425,27 +1468,17 @@
     }
 }
 
-<span class="doccomment">/// JOIN OPT
+<span class="doccomment">/// Combinator to merge two watchers
 </span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>Merge2&lt;T: Clone + Eq, W: Watcher&lt;Value = Vec&lt;T&gt;&gt;, V: Watcher&lt;Value = Vec&lt;T&gt;&gt;&gt; {
     a: W,
     b: V,
-    a_current: Vec&lt;T&gt;,
-    b_current: Vec&lt;T&gt;,
 }
 
 <span class="kw">impl</span>&lt;T: Clone + Eq, W: Watcher&lt;Value = Vec&lt;T&gt;&gt;, V: Watcher&lt;Value = Vec&lt;T&gt;&gt;&gt; Merge2&lt;T, W, V&gt; {
-    <span class="doccomment">/// Joins a set of watchers into a single watcher
-    </span><span class="kw">pub fn </span>new(a: W, b: V) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, Disconnected&gt; {
-        <span class="kw">let </span>a_current = a.get()<span class="question-mark">?</span>;
-        <span class="kw">let </span>b_current = b.get()<span class="question-mark">?</span>;
-
-        <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
-            a,
-            b,
-            a_current,
-            b_current,
-        })
+    <span class="doccomment">/// Joins two watchers into a single watcher
+    </span><span class="kw">pub fn </span>new(a: W, b: V) -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{ a, b }
     }
 }
 
@@ -1466,25 +1499,18 @@
         cx: <span class="kw-2">&amp;mut </span>task::Context&lt;<span class="lifetime">'_</span>&gt;,
     ) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>::Value, Disconnected&gt;&gt; {
         <span class="kw">match </span><span class="self">self</span>.a.poll_updated(cx) {
-            Poll::Ready(<span class="prelude-val">Ok</span>(val)) =&gt; {
-                <span class="kw">if </span>val != <span class="self">self</span>.a_current {
-                    <span class="self">self</span>.a_current = val;
-                    <span class="kw">let </span><span class="kw-2">mut </span>res = <span class="self">self</span>.a_current.clone();
-                    res.extend_from_slice(<span class="kw-2">&amp;</span><span class="self">self</span>.b_current);
-                    <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Ok</span>(res));
-                }
+            Poll::Ready(<span class="prelude-val">Ok</span>(<span class="kw-2">mut </span>out)) =&gt; {
+                out.extend(<span class="self">self</span>.b.get()<span class="question-mark">?</span>);
+                <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Ok</span>(out));
             }
             Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(err)),
             Poll::Pending =&gt; {}
         }
         <span class="kw">match </span><span class="self">self</span>.b.poll_updated(cx) {
             Poll::Ready(<span class="prelude-val">Ok</span>(val)) =&gt; {
-                <span class="kw">if </span>val != <span class="self">self</span>.b_current {
-                    <span class="self">self</span>.b_current = val;
-                    <span class="kw">let </span><span class="kw-2">mut </span>res = <span class="self">self</span>.a_current.clone();
-                    res.extend_from_slice(<span class="kw-2">&amp;</span><span class="self">self</span>.b_current);
-                    <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Ok</span>(res));
-                }
+                <span class="kw">let </span><span class="kw-2">mut </span>out = <span class="self">self</span>.a.get()<span class="question-mark">?</span>;
+                out.extend(val);
+                <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Ok</span>(out));
             }
             Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(err)),
             Poll::Pending =&gt; {}
@@ -1951,6 +1977,66 @@
         <span class="macro">assert_eq!</span>(
             values,
             <span class="macro">vec!</span>[<span class="macro">vec!</span>[], <span class="macro">vec!</span>[<span class="number">2</span>], <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">3</span>], <span class="macro">vec!</span>[<span class="number">3</span>, <span class="number">3</span>], <span class="macro">vec!</span>[<span class="number">3</span>, <span class="number">4</span>]]
+        );
+    }
+
+    <span class="attr">#[tokio::test]
+    </span><span class="kw">async fn </span>test_merge2() {
+        <span class="kw">let </span>a = Watchable::&lt;<span class="prelude-ty">Option</span>&lt;u8&gt;&gt;::new(<span class="prelude-val">None</span>);
+        <span class="kw">let </span>b = Watchable::&lt;<span class="prelude-ty">Option</span>&lt;u8&gt;&gt;::new(<span class="prelude-val">None</span>);
+        <span class="kw">let </span>c = Watchable::&lt;<span class="prelude-ty">Option</span>&lt;u8&gt;&gt;::new(<span class="prelude-val">None</span>);
+        <span class="kw">let </span>d = Watchable::&lt;<span class="prelude-ty">Option</span>&lt;u8&gt;&gt;::new(<span class="prelude-val">None</span>);
+
+        <span class="kw">let </span>ab = JoinOpt::new([a.watch(), b.watch()].into_iter());
+        <span class="kw">let </span>cd = JoinOpt::new([c.watch(), d.watch()].into_iter());
+
+        <span class="kw">let </span>merge = Merge2::new(ab, cd);
+
+        <span class="kw">let </span>stream = merge.clone().stream();
+        <span class="kw">let </span>handle = tokio::task::spawn(<span class="kw">async move </span>{ stream.take(<span class="number">7</span>).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;().<span class="kw">await </span>});
+
+        <span class="comment">// get
+        </span><span class="macro">assert_eq!</span>(merge.get().unwrap(), Vec::&lt;u8&gt;::new());
+        <span class="comment">// set a
+        </span>a.set(<span class="prelude-val">Some</span>(<span class="number">2u8</span>)).unwrap();
+        tokio::task::yield_now().<span class="kw">await</span>;
+        <span class="macro">assert_eq!</span>(merge.get().unwrap(), <span class="macro">vec!</span>[<span class="number">2</span>]);
+        <span class="comment">// set b
+        </span>b.set(<span class="prelude-val">Some</span>(<span class="number">3u8</span>)).unwrap();
+        tokio::task::yield_now().<span class="kw">await</span>;
+        <span class="macro">assert_eq!</span>(merge.get().unwrap(), <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">3</span>]);
+
+        <span class="comment">// set c
+        </span>c.set(<span class="prelude-val">Some</span>(<span class="number">3u8</span>)).unwrap();
+        tokio::task::yield_now().<span class="kw">await</span>;
+        <span class="macro">assert_eq!</span>(merge.get().unwrap(), <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">3</span>, <span class="number">3</span>]);
+
+        <span class="comment">// set d
+        </span>d.set(<span class="prelude-val">Some</span>(<span class="number">4u8</span>)).unwrap();
+        tokio::task::yield_now().<span class="kw">await</span>;
+        <span class="macro">assert_eq!</span>(merge.get().unwrap(), <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">3</span>, <span class="number">3</span>, <span class="number">4</span>]);
+
+        a.set(<span class="prelude-val">Some</span>(<span class="number">3u8</span>)).unwrap();
+        tokio::task::yield_now().<span class="kw">await</span>;
+        b.set(<span class="prelude-val">Some</span>(<span class="number">4u8</span>)).unwrap();
+        tokio::task::yield_now().<span class="kw">await</span>;
+
+        <span class="kw">let </span>values = tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), handle)
+            .<span class="kw">await
+            </span>.unwrap()
+            .unwrap();
+
+        <span class="macro">assert_eq!</span>(
+            values,
+            <span class="macro">vec!</span>[
+                <span class="macro">vec!</span>[],
+                <span class="macro">vec!</span>[<span class="number">2</span>],
+                <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">3</span>],
+                <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">3</span>, <span class="number">3</span>],
+                <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">3</span>, <span class="number">3</span>, <span class="number">4</span>],
+                <span class="macro">vec!</span>[<span class="number">3</span>, <span class="number">3</span>, <span class="number">3</span>, <span class="number">4</span>],
+                <span class="macro">vec!</span>[<span class="number">3</span>, <span class="number">4</span>, <span class="number">3</span>, <span class="number">4</span>]
+            ]
         );
     }
 }

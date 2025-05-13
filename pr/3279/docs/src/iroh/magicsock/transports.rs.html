@@ -532,7 +532,7 @@
         });
         <span class="kw">let </span>relays = watchable::JoinOpt::new(relays);
 
-        watchable::Merge2::new(ips, relays).expect(<span class="string">"disconnected"</span>)
+        watchable::Merge2::new(ips, relays)
     }
 
     <span class="attr">#[cfg(wasm_browser)]
