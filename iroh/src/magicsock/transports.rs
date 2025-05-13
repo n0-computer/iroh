@@ -136,7 +136,7 @@ impl Transports {
         });
         let relays = watchable::JoinOpt::new(relays);
 
-        watchable::Merge2::new(ips, relays).expect("disconnected")
+        watchable::Merge2::new(ips, relays)
     }
 
     #[cfg(wasm_browser)]

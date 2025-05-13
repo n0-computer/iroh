@@ -327,7 +327,7 @@ impl<S: Watcher, T: Watcher> Watcher for (S, T) {
     }
 }
 
-/// JOIN
+/// Combinator to join two watchers
 #[derive(Debug, Clone)]
 pub struct Join<T: Clone + Eq, W: Watcher<Value = T>> {
     watchers: Vec<W>,
@@ -385,7 +385,7 @@ impl<T: Clone + Eq + std::fmt::Debug, W: Watcher<Value = T>> Watcher for Join<T,
     }
 }
 
-/// JOIN OPT
+/// Combinator to join two watchers
 #[derive(Debug, Clone)]
 pub struct JoinOpt<T: Clone + Eq, W: Watcher<Value = Option<T>>> {
     watchers: Vec<W>,
@@ -447,27 +447,17 @@ impl<T: Clone + Eq, W: Watcher<Value = Option<T>>> Watcher for JoinOpt<T, W> {
     }
 }
 
-/// JOIN OPT
+/// Combinator to merge two watchers
 #[derive(Debug, Clone)]
 pub struct Merge2<T: Clone + Eq, W: Watcher<Value = Vec<T>>, V: Watcher<Value = Vec<T>>> {
     a: W,
     b: V,
-    a_current: Vec<T>,
-    b_current: Vec<T>,
 }
 
 impl<T: Clone + Eq, W: Watcher<Value = Vec<T>>, V: Watcher<Value = Vec<T>>> Merge2<T, W, V> {
-    /// Joins a set of watchers into a single watcher
-    pub fn new(a: W, b: V) -> Result<Self, Disconnected> {
-        let a_current = a.get()?;
-        let b_current = b.get()?;
-
-        Ok(Self {
-            a,
-            b,
-            a_current,
-            b_current,
-        })
+    /// Joins two watchers into a single watcher
+    pub fn new(a: W, b: V) -> Self {
+        Self { a, b }
     }
 }
 
@@ -488,25 +478,18 @@ impl<T: Clone + Eq, W: Watcher<Value = Vec<T>>, V: Watcher<Value = Vec<T>>> Watc
         cx: &mut task::Context<'_>,
     ) -> Poll<Result<Self::Value, Disconnected>> {
         match self.a.poll_updated(cx) {
-            Poll::Ready(Ok(val)) => {
-                if val != self.a_current {
-                    self.a_current = val;
-                    let mut res = self.a_current.clone();
-                    res.extend_from_slice(&self.b_current);
-                    return Poll::Ready(Ok(res));
-                }
+            Poll::Ready(Ok(mut out)) => {
+                out.extend(self.b.get()?);
+                return Poll::Ready(Ok(out));
             }
             Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
             Poll::Pending => {}
         }
         match self.b.poll_updated(cx) {
             Poll::Ready(Ok(val)) => {
-                if val != self.b_current {
-                    self.b_current = val;
-                    let mut res = self.a_current.clone();
-                    res.extend_from_slice(&self.b_current);
-                    return Poll::Ready(Ok(res));
-                }
+                let mut out = self.a.get()?;
+                out.extend(val);
+                return Poll::Ready(Ok(out));
             }
             Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
             Poll::Pending => {}
@@ -973,6 +956,66 @@ mod tests {
         assert_eq!(
             values,
             vec![vec![], vec![2], vec![2, 3], vec![3, 3], vec![3, 4]]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_merge2() {
+        let a = Watchable::<Option<u8>>::new(None);
+        let b = Watchable::<Option<u8>>::new(None);
+        let c = Watchable::<Option<u8>>::new(None);
+        let d = Watchable::<Option<u8>>::new(None);
+
+        let ab = JoinOpt::new([a.watch(), b.watch()].into_iter());
+        let cd = JoinOpt::new([c.watch(), d.watch()].into_iter());
+
+        let merge = Merge2::new(ab, cd);
+
+        let stream = merge.clone().stream();
+        let handle = tokio::task::spawn(async move { stream.take(7).collect::<Vec<_>>().await });
+
+        // get
+        assert_eq!(merge.get().unwrap(), Vec::<u8>::new());
+        // set a
+        a.set(Some(2u8)).unwrap();
+        tokio::task::yield_now().await;
+        assert_eq!(merge.get().unwrap(), vec![2]);
+        // set b
+        b.set(Some(3u8)).unwrap();
+        tokio::task::yield_now().await;
+        assert_eq!(merge.get().unwrap(), vec![2, 3]);
+
+        // set c
+        c.set(Some(3u8)).unwrap();
+        tokio::task::yield_now().await;
+        assert_eq!(merge.get().unwrap(), vec![2, 3, 3]);
+
+        // set d
+        d.set(Some(4u8)).unwrap();
+        tokio::task::yield_now().await;
+        assert_eq!(merge.get().unwrap(), vec![2, 3, 3, 4]);
+
+        a.set(Some(3u8)).unwrap();
+        tokio::task::yield_now().await;
+        b.set(Some(4u8)).unwrap();
+        tokio::task::yield_now().await;
+
+        let values = tokio::time::timeout(Duration::from_secs(5), handle)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(
+            values,
+            vec![
+                vec![],
+                vec![2],
+                vec![2, 3],
+                vec![2, 3, 3],
+                vec![2, 3, 3, 4],
+                vec![3, 3, 3, 4],
+                vec![3, 4, 3, 4]
+            ]
         );
     }
 }
