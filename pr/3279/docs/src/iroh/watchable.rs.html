@@ -936,19 +936,7 @@
 <a href="#935" id="935">935</a>
 <a href="#936" id="936">936</a>
 <a href="#937" id="937">937</a>
-<a href="#938" id="938">938</a>
-<a href="#939" id="939">939</a>
-<a href="#940" id="940">940</a>
-<a href="#941" id="941">941</a>
-<a href="#942" id="942">942</a>
-<a href="#943" id="943">943</a>
-<a href="#944" id="944">944</a>
-<a href="#945" id="945">945</a>
-<a href="#946" id="946">946</a>
-<a href="#947" id="947">947</a>
-<a href="#948" id="948">948</a>
-<a href="#949" id="949">949</a>
-<a href="#950" id="950">950</a></pre></div><pre class="rust"><code><span class="doccomment">//! Watchable values.
+<a href="#938" id="938">938</a></pre></div><pre class="rust"><code><span class="doccomment">//! Watchable values.
 //!
 //! A [`Watchable`] exists to keep track of a value which may change over time.  It allows
 //! observers to be notified of changes to the value.  The aim is to always be aware of the
@@ -1307,13 +1295,11 @@
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         cx: <span class="kw-2">&amp;mut </span>task::Context&lt;<span class="lifetime">'_</span>&gt;,
     ) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>::Value, Disconnected&gt;&gt; {
-        <span class="macro">dbg!</span>(<span class="string">"poll_updated"</span>);
         <span class="kw">let </span><span class="kw-2">mut </span>new_value = <span class="prelude-val">None</span>;
         <span class="kw">for </span>(i, watcher) <span class="kw">in </span><span class="self">self</span>.watchers.iter_mut().enumerate() {
             <span class="kw">match </span>watcher.poll_updated(cx) {
                 Poll::Pending =&gt; {}
                 Poll::Ready(<span class="prelude-val">Ok</span>(value)) =&gt; {
-                    <span class="macro">dbg!</span>(<span class="string">"new value"</span>, i);
                     new_value.replace((i, value));
                     <span class="kw">break</span>;
                 }
@@ -1321,7 +1307,6 @@
             }
         }
 
-        <span class="macro">dbg!</span>(<span class="kw-2">&amp;</span>new_value);
         <span class="kw">if let </span><span class="prelude-val">Some</span>((j, new_value)) = new_value {
             <span class="kw">let </span><span class="kw-2">mut </span>new = Vec::with_capacity(<span class="self">self</span>.watchers.len());
             <span class="kw">for </span>(i, watcher) <span class="kw">in </span><span class="self">self</span>.watchers.iter().enumerate() {
@@ -1331,7 +1316,6 @@
                     new.push(new_value.clone());
                 }
             }
-            <span class="macro">dbg!</span>(<span class="kw-2">&amp;</span>new);
             Poll::Ready(<span class="prelude-val">Ok</span>(new))
         } <span class="kw">else </span>{
             Poll::Pending
@@ -1575,7 +1559,7 @@
         <span class="kw">if let </span><span class="prelude-val">Some</span>(value) = <span class="self">self</span>.as_mut().initial.take() {
             <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Some</span>(value));
         }
-        <span class="kw">match </span><span class="macro">dbg!</span>(<span class="self">self</span>.as_mut().watcher.poll_updated(cx)) {
+        <span class="kw">match </span><span class="self">self</span>.as_mut().watcher.poll_updated(cx) {
             Poll::Ready(<span class="prelude-val">Ok</span>(value)) =&gt; Poll::Ready(<span class="prelude-val">Some</span>(value)),
             Poll::Ready(<span class="prelude-val">Err</span>(Disconnected)) =&gt; Poll::Ready(<span class="prelude-val">None</span>),
             Poll::Pending =&gt; Poll::Pending,
@@ -1861,16 +1845,8 @@
 
         <span class="kw">let </span>ab = Join::new([a.watch(), b.watch()].into_iter());
 
-        <span class="kw">let </span><span class="kw-2">mut </span>stream = ab.clone().stream();
-        <span class="kw">let </span>handle = tokio::task::spawn(<span class="kw">async move </span>{
-            <span class="kw">let </span><span class="kw-2">mut </span>values = Vec::new();
-            <span class="kw">while </span>values.len() &lt; <span class="number">5 </span>{
-                <span class="kw">let </span>value = stream.next().<span class="kw">await</span>.unwrap();
-                <span class="macro">dbg!</span>(<span class="kw-2">&amp;</span>value, values.len());
-                values.push(value);
-            }
-            values
-        });
+        <span class="kw">let </span>stream = ab.clone().stream();
+        <span class="kw">let </span>handle = tokio::task::spawn(<span class="kw">async move </span>{ stream.take(<span class="number">5</span>).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;().<span class="kw">await </span>});
 
         <span class="comment">// get
         </span><span class="macro">assert_eq!</span>(ab.get().unwrap(), <span class="macro">vec!</span>[<span class="number">1</span>, <span class="number">1</span>]);
