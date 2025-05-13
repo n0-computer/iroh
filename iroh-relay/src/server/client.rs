@@ -10,7 +10,7 @@ use iroh_base::NodeId;
 use n0_future::{FutureExt, Sink, SinkExt, Stream, StreamExt};
 use nested_enum_utils::common_fields;
 use rand::Rng;
-use snafu::{Backtrace, Snafu};
+use snafu::{Backtrace, GenerateImplicitData, Snafu};
 use time::{Date, OffsetDateTime};
 use tokio::{
     sync::mpsc::{self, error::TrySendError},
@@ -19,7 +19,6 @@ use tokio::{
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, error, instrument, trace, warn, Instrument};
 
-use super::clients::SendPacketError;
 use crate::{
     protos::{
         disco,
@@ -191,7 +190,7 @@ impl Client {
 #[non_exhaustive]
 pub enum HandleFrameError {
     #[snafu(transparent)]
-    SendPacket { source: SendPacketError },
+    ForwardPacket { source: ForwardPacketError },
     #[snafu(transparent)]
     Streams { source: super::streams::Error },
     #[snafu(display("Stream terminated"))]
@@ -218,7 +217,7 @@ pub enum HandleFrameError {
 #[non_exhaustive]
 pub enum RunError {
     #[snafu(transparent)]
-    SendPacket { source: SendPacketError },
+    ForwardPacket { source: ForwardPacketError },
     #[snafu(display("Flush"))]
     Flush {
         #[snafu(implicit)]
@@ -468,7 +467,11 @@ impl Actor {
         match frame {
             Frame::SendPacket { dst_key, packet } => {
                 let packet_len = packet.len();
-                self.handle_frame_send_packet(dst_key, packet)?;
+                if let Err(err @ ForwardPacketError { .. }) =
+                    self.handle_frame_send_packet(dst_key, packet)
+                {
+                    warn!("failed to handle send packet frame: {err:#}");
+                }
                 self.metrics.bytes_recv.inc_by(packet_len as u64);
             }
             Frame::Ping { data } => {
@@ -488,7 +491,7 @@ impl Actor {
         Ok(())
     }
 
-    fn handle_frame_send_packet(&self, dst: NodeId, data: Bytes) -> Result<(), SendPacketError> {
+    fn handle_frame_send_packet(&self, dst: NodeId, data: Bytes) -> Result<(), ForwardPacketError> {
         if disco::looks_like_disco_wrapper(&data) {
             self.metrics.disco_packets_recv.inc();
             self.clients
@@ -499,6 +502,36 @@ impl Actor {
                 .send_packet(dst, data, self.node_id, &self.metrics)?;
         }
         Ok(())
+    }
+}
+
+#[derive(Debug)]
+pub(crate) enum PacketScope {
+    Disco,
+    Data,
+}
+
+#[derive(Debug)]
+pub(crate) enum SendError {
+    Full,
+    Closed,
+}
+
+#[derive(Debug, Snafu)]
+#[snafu(display("failed to forward {scope:?} packet: {reason:?}"))]
+pub(crate) struct ForwardPacketError {
+    scope: PacketScope,
+    reason: SendError,
+    backtrace: Option<snafu::Backtrace>,
+}
+
+impl ForwardPacketError {
+    pub(crate) fn new(scope: PacketScope, reason: SendError) -> Self {
+        Self {
+            scope,
+            reason,
+            backtrace: GenerateImplicitData::generate(),
+        }
     }
 }
 

@@ -36,7 +36,7 @@ pub mod prod {
 
     /// Get the default [`RelayMap`].
     pub fn default_relay_map() -> RelayMap {
-        RelayMap::from_nodes([
+        RelayMap::from_iter([
             default_na_relay_node(),
             default_eu_relay_node(),
             default_ap_relay_node(),
@@ -103,7 +103,7 @@ pub mod staging {
 
     /// Get the default [`RelayMap`].
     pub fn default_relay_map() -> RelayMap {
-        RelayMap::from_nodes([default_na_relay_node(), default_eu_relay_node()])
+        RelayMap::from_iter([default_na_relay_node(), default_eu_relay_node()])
     }
 
     /// Get the default [`RelayNode`] for NA.

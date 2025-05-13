@@ -1,13 +1,19 @@
-use std::{future::Future, path::Path, result, sync::Arc, time::Duration};
+use std::{
+    future::Future,
+    path::Path,
+    result,
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 
-use n0_snafu::{TestResult as Result, TestResultExt};
+use n0_snafu::{format_err, TestResult as Result, TestResultExt};
 use pkarr::{SignedPacket, Timestamp};
 use redb::{
     backends::InMemoryBackend, Database, MultimapTableDefinition, ReadableTable, TableDefinition,
 };
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::{metrics::Metrics, util::PublicKeyBytes};
 
@@ -52,7 +58,7 @@ enum Message {
         res: oneshot::Sender<Snapshot>,
     },
     CheckExpired {
-        time: [u8; 8],
+        time: Timestamp,
         key: PublicKeyBytes,
     },
 }
@@ -119,7 +125,6 @@ impl Actor {
             let transaction = self.db.begin_write().context("tx begin")?;
             let mut tables = Tables::new(&transaction).context("new tables")?;
             let timeout = tokio::time::sleep(self.options.max_batch_time);
-            let expired = Timestamp::now() - expiry_us;
             tokio::pin!(timeout);
             for _ in 0..self.options.max_batch_size {
                 tokio::select! {
@@ -132,9 +137,16 @@ impl Actor {
                     Some(msg) = self.recv.recv() => {
                         match msg {
                             Message::Get { key, res } => {
-                                trace!("get {}", key);
-                                let packet = get_packet(&tables.signed_packets, &key)?;
-                                res.send(packet).ok();
+                                match get_packet(&tables.signed_packets, &key) {
+                                    Ok(packet) => {
+                                        trace!("get {key}: {}", packet.is_some());
+                                        res.send(packet).ok();
+                                    },
+                                    Err(err) => {
+                                        warn!("get {key} failed: {err:#}");
+                                        return Err(err).with_context(|| format!("get packet for {key} failed"))
+                                    }
+                                }
                             }
                             Message::Upsert { packet, res } => {
                                 let key = PublicKeyBytes::from_signed_packet(&packet);
@@ -144,8 +156,8 @@ impl Actor {
                                         res.send(false).ok();
                                         continue;
                                     } else {
-                                        // remove the packet from the update time index
-                                        tables.update_time.remove(&packet.timestamp().to_bytes(), key.as_bytes()).context("remove packet")?;
+                                        // remove the old packet from the update time index
+                                        tables.update_time.remove(&existing.timestamp().to_bytes(), key.as_bytes()).context("remove")?;
                                         true
                                     }
                                 } else {
@@ -180,13 +192,21 @@ impl Actor {
                                 res.send(Snapshot::new(&self.db)?).ok();
                             }
                             Message::CheckExpired { key, time } => {
-                                trace!("check expired {} at {}", key, u64::from_be_bytes(time));
+                                trace!("check expired {} at {}", key, fmt_time(time));
                                 if let Some(packet) = get_packet(&tables.signed_packets, &key)? {
+                                    let expired = Timestamp::now() - expiry_us;
                                     if packet.timestamp() < expired {
-                                        tables.update_time.remove(&time, key.as_bytes()).context("remove timestamp")?;
-                                        let _ = tables.signed_packets.remove(key.as_bytes()).context("remove packet")?;
+                                        tables.update_time.remove(&time.to_bytes(), key.as_bytes()).context("remove")?;
+                                        let _ = tables.signed_packets.remove(key.as_bytes()).context("remove")?;
                                         self.metrics.store_packets_expired.inc();
+                                        debug!("removed expired packet {key}");
+                                    } else {
+                                        debug!("packet {key} is no longer expired, removing obsolete expiry entry");
+                                        tables.update_time.remove(&time.to_bytes(), key.as_bytes()).context("remove")?;
                                     }
+                                } else {
+                                    debug!("expired packet {key} not found, remove from expiry table");
+                                    tables.update_time.remove(&time.to_bytes(), key.as_bytes()).context("remove")?;
                                 }
                             }
                         }
@@ -198,6 +218,10 @@ impl Actor {
         }
         Ok(())
     }
+}
+
+fn fmt_time(t: Timestamp) -> String {
+    humantime::format_rfc3339_micros(SystemTime::from(t)).to_string()
 }
 
 /// A struct similar to [`redb::Table`] but for all tables that make up the
@@ -332,8 +356,23 @@ fn get_packet(
     let Some(row) = table.get(key.as_ref()).context("database fetch failed")? else {
         return Ok(None);
     };
-    let packet = SignedPacket::deserialize(row.value()).context("parsing signed packet failed")?;
-    Ok(Some(packet))
+    match SignedPacket::deserialize(row.value()) {
+        Ok(packet) => Ok(Some(packet)),
+        Err(err) => {
+            // Prior to iroh-dns-server v0.35, we stored packets in the default `SignedPacket::as_bytes` serialization from pkarr v2,
+            // which did not include the `last_seen` timestamp added as a prefix in `SignedPacket::serialize` from pkarr v3.
+            // If decoding the packet as a serialized pkarr v3 packet fails, we assume it was stored with iroh-dns-server before v0.35,
+            // and prepend an empty timestamp.
+            let data = row.value();
+            let mut buf = Vec::with_capacity(data.len() + 8);
+            buf.extend(&[0u8; 8]);
+            buf.extend(data);
+            match SignedPacket::deserialize(&buf) {
+                Ok(packet) => Ok(Some(packet)),
+                Err(err2) => Err(format_err!("Failed to decode as pkarr v3: {err:#}. Also failed to decode as pkarr v2: {err2:#}"))
+            }
+        }
+    }
 }
 
 async fn evict_task(send: mpsc::Sender<Message>, options: Options, cancel: CancellationToken) {
@@ -360,7 +399,7 @@ async fn evict_task_inner(send: mpsc::Sender<Message>, options: Options) -> Resu
         let snapshot = rx.await.context("failed to get snapshot")?;
 
         let expired = Timestamp::now() - expiry_us;
-        trace!("evicting packets older than {}", expired);
+        trace!("evicting packets older than {}", fmt_time(expired));
         // if getting the range fails we exit the loop and shut down
         // if individual reads fail we log the error and limp on
         for item in snapshot
@@ -375,26 +414,23 @@ async fn evict_task_inner(send: mpsc::Sender<Message>, options: Options) -> Resu
                     continue;
                 }
             };
-            let time = time.value();
-            trace!("evicting expired packets at {}", u64::from_be_bytes(time));
+            let time = Timestamp::from(time.value());
+            trace!("evicting expired packets at {}", fmt_time(time));
             for item in keys {
                 let key = match item {
                     Ok(v) => v,
                     Err(e) => {
                         error!(
                             "failed to read update_time item at {}: {:?}",
-                            u64::from_be_bytes(time),
+                            fmt_time(time),
                             e
                         );
                         continue;
                     }
                 };
                 let key = PublicKeyBytes::new(key.value());
-                debug!(
-                    "evicting expired packet {} {}",
-                    u64::from_be_bytes(time),
-                    key
-                );
+
+                debug!("evicting expired packet {} {}", fmt_time(time), key);
                 send.send(Message::CheckExpired { time, key })
                     .await
                     .context("send")?;

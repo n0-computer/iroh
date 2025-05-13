@@ -1,6 +1,6 @@
 [package]
 name = "iroh-dns-server"
-version = "0.34.1"
+version = "0.35.0"
 edition = "2021"
 description = "A pkarr relay and DNS server"
 license = "MIT OR Apache-2.0"
@@ -26,6 +26,7 @@ dirs-next = "2.0.0"
 governor = "0.8"
 hickory-server = { version = "0.25.1", features = ["https-ring"] }
 http = "1.0.0"
+humantime = "2.2.0"
 humantime-serde = "1.1.1"
 iroh-metrics = { version = "0.34", features = ["service"] }
 lru = "0.12.3"

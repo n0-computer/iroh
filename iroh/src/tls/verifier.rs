@@ -59,11 +59,8 @@ static SUPPORTED_SIG_ALGS: WebPkiSupportedAlgorithms = WebPkiSupportedAlgorithms
 /// Only TLS 1.3 is supported. TLS 1.2 should be disabled in the configuration of `rustls`.
 #[derive(Debug)]
 pub(super) struct ServerCertificateVerifier {
-    /// The peer we intend to connect to.
-    remote_peer_id: PublicKey,
     /// Which TLS authentication mode to operate in.
     auth: Authentication,
-    trusted_spki: Vec<SubjectPublicKeyInfoDer<'static>>,
 }
 
 /// We require the following
@@ -75,21 +72,17 @@ pub(super) struct ServerCertificateVerifier {
 ///
 /// or a raw public key.
 impl ServerCertificateVerifier {
-    pub(super) fn with_remote_peer_id(auth: Authentication, remote_peer_id: PublicKey) -> Self {
-        let mut trusted_spki = Vec::new();
-        let der_key = remote_peer_id
-            .public()
-            .to_public_key_der()
-            .expect("valid key");
-        let remote_key = SubjectPublicKeyInfoDer::from(der_key.into_vec());
-        trusted_spki.push(remote_key);
-
-        Self {
-            remote_peer_id,
-            auth,
-            trusted_spki,
-        }
+    pub(super) fn new(auth: Authentication) -> Self {
+        Self { auth }
     }
+}
+
+fn public_key_to_spki(remote_peer_id: &PublicKey) -> SubjectPublicKeyInfoDer<'static> {
+    let der_key = remote_peer_id
+        .public()
+        .to_public_key_der()
+        .expect("valid key");
+    SubjectPublicKeyInfoDer::from(der_key.into_vec())
 }
 
 impl ServerCertVerifier for ServerCertificateVerifier {
@@ -97,10 +90,19 @@ impl ServerCertVerifier for ServerCertificateVerifier {
         &self,
         end_entity: &Certificate,
         intermediates: &[Certificate],
-        _server_name: &rustls::pki_types::ServerName,
+        server_name: &rustls::pki_types::ServerName,
         _ocsp_response: &[u8],
         _now: rustls::pki_types::UnixTime,
     ) -> Result<ServerCertVerified, rustls::Error> {
+        let rustls::pki_types::ServerName::DnsName(dns_name) = server_name else {
+            return Err(rustls::Error::UnsupportedNameType);
+        };
+        let Some(remote_peer_id) = super::name::decode(dns_name.as_ref()) else {
+            return Err(rustls::Error::InvalidCertificate(
+                CertificateError::NotValidForName,
+            ));
+        };
+
         match self.auth {
             Authentication::X509 => {
                 let peer_id = verify_presented_certs(end_entity, intermediates)?;
@@ -109,7 +111,7 @@ impl ServerCertVerifier for ServerCertificateVerifier {
                 // it is connecting to. Clients MUST verify that the peer ID derived from
                 // the certificate matches the peer ID they intended to connect to,
                 // and MUST abort the connection if there is a mismatch.
-                if self.remote_peer_id != peer_id {
+                if remote_peer_id != peer_id {
                     return Err(rustls::Error::PeerMisbehaved(
                         PeerMisbehaved::BadCertChainExtensions,
                     ));
@@ -126,7 +128,13 @@ impl ServerCertVerifier for ServerCertificateVerifier {
 
                 let end_entity_as_spki = SubjectPublicKeyInfoDer::from(end_entity.as_ref());
 
-                if !self.trusted_spki.contains(&end_entity_as_spki) {
+                // This effectively checks that the `end_entity_as_spki` bytes have the expected
+                // (constant) 12 byte prefix (consisting of the Ed25519 public key ASN.1 object
+                // identifier, some ASN.1 DER encoding bytes signaling that this is a SPKI and
+                // consists of the object identifier and a bit sequence, a zero byte indicating
+                // that the bit sequence is padded with 0 additional bits) matches, as well as
+                // the public key bytes match the `remote_peer_id` public key bytes.
+                if public_key_to_spki(&remote_peer_id) != end_entity_as_spki {
                     return Err(rustls::Error::InvalidCertificate(
                         CertificateError::UnknownIssuer,
                     ));

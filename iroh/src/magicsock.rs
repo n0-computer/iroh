@@ -79,7 +79,7 @@ use crate::{
     discovery::{Discovery, DiscoveryItem, DiscoverySubscribers, NodeData, UserData},
     key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
     metrics::EndpointMetrics,
-    net_report::{self, IpMappedAddresses, ReportError},
+    net_report::{self, IpMappedAddresses, Report, ReportError},
     watchable::{Watchable, Watcher},
 };
 
@@ -248,6 +248,9 @@ pub(crate) struct MagicSock {
     /// Our discovered direct addresses.
     direct_addrs: DiscoveredDirectAddrs,
 
+    /// Our latest net-report
+    net_report: Watchable<Option<Arc<Report>>>,
+
     /// List of CallMeMaybe disco messages that should be sent out after the next endpoint update
     /// completes
     pending_call_me_maybes: std::sync::Mutex<HashMap<PublicKey, RelayUrl>>,
@@ -372,6 +375,21 @@ impl MagicSock {
     /// To get the current direct addresses, use [`Watcher::initialized`].
     pub(crate) fn direct_addresses(&self) -> Watcher<Option<BTreeSet<DirectAddr>>> {
         self.direct_addrs.addrs.watch()
+    }
+
+    /// Returns a [`Watcher`] for this socket's net-report.
+    ///
+    /// The [`MagicSock`] continuously monitors the network conditions for changes.
+    /// Whenever changes are detected this [`Watcher`] will yield a new report.
+    ///
+    /// Upon the first creation on the [`MagicSock`] it may not yet have completed
+    /// a first net-report. In this case, the current item in this [`Watcher`] will
+    /// be [`None`].  Once the first report has been run, the [`Watcher`] will
+    /// store [`Some`] report.
+    ///
+    /// To get the current `net-report`, use [`Watcher::initialized`].
+    pub(crate) fn net_report(&self) -> Watcher<Option<Arc<Report>>> {
+        self.net_report.watch()
     }
 
     /// Watch for changes to the home relay.
@@ -1813,6 +1831,7 @@ impl Handle {
             discovery,
             discovery_user_data: RwLock::new(discovery_user_data),
             direct_addrs: Default::default(),
+            net_report: Default::default(),
             pending_call_me_maybes: Default::default(),
             direct_addr_update_state: DirectAddrUpdateState::new(),
             #[cfg(not(wasm_browser))]
@@ -2976,6 +2995,8 @@ impl Actor {
 
     async fn handle_net_report_report(&mut self, report: Option<Arc<net_report::Report>>) {
         if let Some(ref report) = report {
+            // only returns Err if the report hasn't changed.
+            self.msock.net_report.set(Some(report.clone())).ok();
             self.msock
                 .ipv6_reported
                 .store(report.ipv6, Ordering::Relaxed);
@@ -3550,8 +3571,8 @@ mod tests {
         secret_key: &SecretKey,
         tls_auth: crate::tls::Authentication,
     ) -> ServerConfig {
-        let quic_server_config = tls_auth.make_server_config(secret_key, vec![], false);
-
+        let quic_server_config = crate::tls::TlsConfig::new(tls_auth, secret_key.clone())
+            .make_server_config(vec![], false);
         let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
         server_config.transport_config(Arc::new(quinn::TransportConfig::default()));
         server_config
@@ -4128,8 +4149,8 @@ mod tests {
         secret_key: SecretKey,
         tls_auth: tls::Authentication,
     ) -> TestResult<Handle> {
-        let quic_server_config =
-            tls_auth.make_server_config(&secret_key, vec![ALPN.to_vec()], true);
+        let quic_server_config = tls::TlsConfig::new(tls_auth, secret_key.clone())
+            .make_server_config(vec![ALPN.to_vec()], true);
         let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
         server_config.transport_config(Arc::new(quinn::TransportConfig::default()));
 
@@ -4196,17 +4217,17 @@ mod tests {
     ) -> TestResult<quinn::Connection> {
         let alpns = vec![ALPN.to_vec()];
         let quic_client_config =
-            tls_auth.make_client_config(&ep_secret_key, node_id, alpns, None, true);
+            tls::TlsConfig::new(tls_auth, ep_secret_key.clone()).make_client_config(alpns, true);
         let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
         client_config.transport_config(transport_config);
         let connect = ep
             .connect_with(
                 client_config,
                 mapped_addr.private_socket_addr(),
-                "localhost",
+                &tls::name::encode(node_id),
             )
-            .context("connect with")?;
-        let connection = connect.await.context("connect")?;
+            .context("connect")?;
+        let connection = connect.await.e()?;
         Ok(connection)
     }
 

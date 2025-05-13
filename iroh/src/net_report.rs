@@ -909,11 +909,9 @@ pub(crate) mod stun_utils {
 mod test_utils {
     //! Creates a relay server against which to perform tests
 
-    use std::sync::Arc;
-
     use iroh_relay::{server, RelayNode, RelayQuicConfig};
 
-    pub(crate) async fn relay() -> (server::Server, Arc<RelayNode>) {
+    pub(crate) async fn relay() -> (server::Server, RelayNode) {
         let server = server::Server::spawn(server::testing::server_config())
             .await
             .expect("should serve relay");
@@ -927,7 +925,7 @@ mod test_utils {
             quic,
         };
 
-        (server, Arc::new(node_desc))
+        (server, node_desc)
     }
 
     /// Create a [`crate::RelayMap`] of the given size.
@@ -942,8 +940,7 @@ mod test_utils {
             servers.push(relay_server);
             nodes.push(node);
         }
-        let map = crate::RelayMap::from_nodes(nodes);
-        (servers, map)
+        (servers, crate::RelayMap::from_iter(nodes))
     }
 }
 
@@ -1015,7 +1012,7 @@ mod tests {
                     quic: None,
                 }
             });
-            RelayMap::from_nodes(nodes)
+            RelayMap::from_iter(nodes)
         }
 
         /// Sets up a simple STUN server binding to `0.0.0.0:0`.

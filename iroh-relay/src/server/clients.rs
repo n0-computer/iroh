@@ -12,13 +12,14 @@ use std::{
 use bytes::Bytes;
 use dashmap::DashMap;
 use iroh_base::NodeId;
-use nested_enum_utils::common_fields;
-use snafu::Snafu;
 use tokio::sync::mpsc::error::TrySendError;
 use tracing::{debug, trace};
 
-use super::client::{Client, Config};
-use crate::server::metrics::Metrics;
+use super::client::{Client, Config, ForwardPacketError};
+use crate::server::{
+    client::{PacketScope, SendError},
+    metrics::Metrics,
+};
 
 /// Manages the connections to all currently connected clients.
 #[derive(Debug, Default, Clone)]
@@ -32,22 +33,6 @@ struct Inner {
     sent_to: DashMap<NodeId, HashSet<NodeId>>,
     /// Connection ID Counter
     next_connection_id: AtomicU64,
-}
-
-/// Send packet errors
-#[common_fields({
-    backtrace: Option<snafu::Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
-#[allow(missing_docs)]
-#[derive(Debug, Snafu)]
-#[non_exhaustive]
-pub enum SendPacketError {
-    #[snafu(display("Failed to send message: full"))]
-    Full {},
-    #[snafu(display("Failed to send message: gone"))]
-    Gone {},
 }
 
 impl Clients {
@@ -126,7 +111,7 @@ impl Clients {
         data: Bytes,
         src: NodeId,
         metrics: &Metrics,
-    ) -> Result<(), SendPacketError> {
+    ) -> Result<(), ForwardPacketError> {
         let Some(client) = self.0.clients.get(&dst) else {
             debug!(dst = dst.fmt_short(), "no connected client, dropped packet");
             metrics.send_packets_dropped.inc();
@@ -143,7 +128,7 @@ impl Clients {
                     dst = dst.fmt_short(),
                     "client too busy to receive packet, dropping packet"
                 );
-                Err(FullSnafu.build())
+                Err(ForwardPacketError::new(PacketScope::Data, SendError::Full))
             }
             Err(TrySendError::Closed(_)) => {
                 debug!(
@@ -151,7 +136,10 @@ impl Clients {
                     "can no longer write to client, dropping message and pruning connection"
                 );
                 client.start_shutdown();
-                Err(GoneSnafu.build())
+                Err(ForwardPacketError::new(
+                    PacketScope::Data,
+                    SendError::Closed,
+                ))
             }
         }
     }
@@ -163,7 +151,7 @@ impl Clients {
         data: Bytes,
         src: NodeId,
         metrics: &Metrics,
-    ) -> Result<(), SendPacketError> {
+    ) -> Result<(), ForwardPacketError> {
         let Some(client) = self.0.clients.get(&dst) else {
             debug!(
                 dst = dst.fmt_short(),
@@ -183,7 +171,7 @@ impl Clients {
                     dst = dst.fmt_short(),
                     "client too busy to receive disco packet, dropping packet"
                 );
-                Err(FullSnafu.build())
+                Err(ForwardPacketError::new(PacketScope::Disco, SendError::Full))
             }
             Err(TrySendError::Closed(_)) => {
                 debug!(
@@ -191,7 +179,10 @@ impl Clients {
                     "can no longer write to client, dropping disco message and pruning connection"
                 );
                 client.start_shutdown();
-                Err(GoneSnafu.build())
+                Err(ForwardPacketError::new(
+                    PacketScope::Disco,
+                    SendError::Closed,
+                ))
             }
         }
     }

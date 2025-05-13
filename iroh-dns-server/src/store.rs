@@ -7,7 +7,7 @@ use lru::LruCache;
 use n0_snafu::TestResult as Result;
 use pkarr::{Client as PkarrClient, SignedPacket};
 use tokio::sync::Mutex;
-use tracing::{debug, trace};
+use tracing::{debug, trace, warn};
 use ttl_cache::TtlCache;
 
 use self::signed_packets::SignedPacketStore;
@@ -92,24 +92,46 @@ impl ZoneStore {
     }
 
     /// Resolve a DNS query.
-    #[allow(clippy::unused_async)]
+    #[tracing::instrument("resolve", skip_all, fields(pubkey=%pubkey,name=%name,typ=%record_type))]
     pub async fn resolve(
         &self,
         pubkey: &PublicKeyBytes,
         name: &Name,
         record_type: RecordType,
     ) -> Result<Option<Arc<RecordSet>>> {
-        tracing::info!("{} {}", name, record_type);
+        trace!("store resolve");
         if let Some(rset) = self.cache.lock().await.resolve(pubkey, name, record_type) {
+            debug!(
+                len = rset.records_without_rrsigs().count(),
+                "resolved from cache"
+            );
             return Ok(Some(rset));
         }
 
         if let Some(packet) = self.store.get(pubkey).await? {
-            return self
+            trace!(packet_timestamp = ?packet.timestamp(), "store hit");
+            return match self
                 .cache
                 .lock()
                 .await
-                .insert_and_resolve(&packet, name, record_type);
+                .insert_and_resolve(&packet, name, record_type)
+            {
+                Ok(Some(rset)) => {
+                    debug!(
+                        len = rset.records_without_rrsigs().count(),
+                        "resolved from store"
+                    );
+                    Ok(Some(rset))
+                }
+                Ok(None) => {
+                    debug!("resolved to zone, but no matching records in zone");
+                    Ok(None)
+                }
+                Err(err) => {
+                    warn!("failed to retrieve zone after inserting in cache: {err:#?}");
+                    Err(err)
+                }
+            };
         };
 
         if let Some(pkarr) = self.pkarr.as_ref() {
@@ -226,11 +248,14 @@ impl ZoneCache {
             .map(|old| old.is_newer_than(signed_packet))
             .unwrap_or(false)
         {
-            return Ok(());
+            trace!("insert skip: cached is newer");
+            Ok(())
+        } else {
+            self.cache
+                .put(pubkey, CachedZone::from_signed_packet(signed_packet)?);
+            trace!("inserted into cache");
+            Ok(())
         }
-        self.cache
-            .put(pubkey, CachedZone::from_signed_packet(signed_packet)?);
-        Ok(())
     }
 
     fn remove(&mut self, pubkey: &PublicKeyBytes) {
@@ -260,10 +285,8 @@ impl CachedZone {
     }
 
     fn resolve(&self, name: &Name, record_type: RecordType) -> Option<Arc<RecordSet>> {
+        trace!(name=%name, typ=%record_type, "resolve in zone");
         let key = RrKey::new(name.into(), record_type);
-        for record in self.records.keys() {
-            tracing::info!("record {:?}", record);
-        }
         self.records.get(&key).cloned()
     }
 }

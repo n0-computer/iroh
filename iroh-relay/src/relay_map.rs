@@ -4,7 +4,6 @@ use std::{collections::BTreeMap, fmt, sync::Arc};
 
 use iroh_base::RelayUrl;
 use serde::{Deserialize, Serialize};
-use tracing::warn;
 
 use crate::defaults::{DEFAULT_RELAY_QUIC_PORT, DEFAULT_STUN_PORT};
 
@@ -52,53 +51,53 @@ impl RelayMap {
     pub fn is_empty(&self) -> bool {
         self.nodes.is_empty()
     }
+}
 
-    /// Creates a new [`RelayMap`] with a single relay server configured.
-    ///
-    /// Allows to set a custom STUN port and different IP addresses for IPv4 and IPv6.
-    /// If IP addresses are provided, no DNS lookup will be performed.
-    ///
-    /// Sets the port to the default [`DEFAULT_RELAY_QUIC_PORT`].
-    pub fn default_from_node(url: RelayUrl, stun_port: u16) -> Self {
-        let mut nodes = BTreeMap::new();
-        nodes.insert(
-            url.clone(),
-            RelayNode {
-                url,
-                stun_only: false,
-                stun_port,
-                quic: Some(RelayQuicConfig::default()),
-            }
-            .into(),
-        );
-
-        RelayMap {
-            nodes: Arc::new(nodes),
+impl FromIterator<RelayNode> for RelayMap {
+    fn from_iter<T: IntoIterator<Item = RelayNode>>(iter: T) -> Self {
+        Self {
+            nodes: Arc::new(
+                iter.into_iter()
+                    .map(|node| (node.url.clone(), Arc::new(node)))
+                    .collect(),
+            ),
         }
     }
+}
 
-    /// Returns a [`RelayMap`] from a [`RelayUrl`].
+impl From<RelayUrl> for RelayMap {
+    /// Creates a [`RelayMap`] from a [`RelayUrl`].
     ///
-    /// This will use the default STUN port, the default QUIC port
-    /// (as defined by the `iroh-relay` crate) and IP addresses
-    /// resolved from the URL's host name via DNS.
-    /// relay nodes are specified at <../../docs/relay_nodes.md>
-    pub fn from_url(url: RelayUrl) -> Self {
-        Self::default_from_node(url, DEFAULT_STUN_PORT)
-    }
-
-    /// Constructs the [`RelayMap`] from an iterator of [`RelayNode`]s.
-    pub fn from_nodes<I: Into<Arc<RelayNode>>>(value: impl IntoIterator<Item = I>) -> Self {
-        let mut map = BTreeMap::new();
-        for node in value.into_iter() {
-            let node = node.into();
-            if map.contains_key(&node.url) {
-                warn!("Duplicate node url: {}, skipping", node.url);
-                continue;
-            }
-            map.insert(node.url.clone(), node);
+    /// The [`RelayNode`]s in the [`RelayMap`] will have the default STUN and QUIC address
+    /// discovery ports.
+    fn from(value: RelayUrl) -> Self {
+        Self {
+            nodes: Arc::new([(value.clone(), Arc::new(value.into()))].into()),
         }
-        RelayMap { nodes: map.into() }
+    }
+}
+
+impl From<RelayNode> for RelayMap {
+    fn from(value: RelayNode) -> Self {
+        Self {
+            nodes: Arc::new([(value.url.clone(), Arc::new(value))].into()),
+        }
+    }
+}
+
+impl FromIterator<RelayUrl> for RelayMap {
+    /// Creates a [`RelayMap`] from an iterator of [`RelayUrl`].
+    ///
+    /// The [`RelayNode`]s in the [`RelayMap`] will have the default STUN and QUIC address
+    /// discovery ports.
+    fn from_iter<T: IntoIterator<Item = RelayUrl>>(iter: T) -> Self {
+        Self {
+            nodes: Arc::new(
+                iter.into_iter()
+                    .map(|url| (url.clone(), Arc::new(url.into())))
+                    .collect(),
+            ),
+        }
     }
 }
 
@@ -132,6 +131,17 @@ pub struct RelayNode {
     /// with this relay server.
     #[serde(default = "quic_config")]
     pub quic: Option<RelayQuicConfig>,
+}
+
+impl From<RelayUrl> for RelayNode {
+    fn from(value: RelayUrl) -> Self {
+        Self {
+            url: value,
+            stun_only: false,
+            stun_port: DEFAULT_STUN_PORT,
+            quic: quic_config(),
+        }
+    }
 }
 
 fn quic_config() -> Option<RelayQuicConfig> {
