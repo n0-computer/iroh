@@ -19,7 +19,8 @@ use rustls::{
     CertificateError, DigitallySignedStruct, DistinguishedName, OtherError, PeerMisbehaved,
     SignatureScheme, SupportedProtocolVersion,
 };
-use webpki::{ring as webpki_algs, types::SubjectPublicKeyInfoDer};
+use webpki::ring as webpki_algs;
+use webpki_types::SubjectPublicKeyInfoDer;
 
 use super::{certificate, Authentication};
 
