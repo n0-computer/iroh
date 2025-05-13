@@ -360,13 +360,14 @@ impl<T: Clone + Eq + std::fmt::Debug, W: Watcher<Value = T>> Watcher for Join<T,
         dbg!("poll_updated");
         let mut new_value = None;
         for (i, watcher) in self.watchers.iter_mut().enumerate() {
-            match watcher.poll_updated(cx)? {
+            match watcher.poll_updated(cx) {
                 Poll::Pending => {}
-                Poll::Ready(value) => {
+                Poll::Ready(Ok(value)) => {
                     dbg!("new value", i);
                     new_value.replace((i, value));
                     break;
                 }
+                Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
             }
         }
 
@@ -616,7 +617,7 @@ pub struct Stream<W: Watcher + Unpin> {
 
 impl<W: Watcher + Unpin> n0_future::Stream for Stream<W>
 where
-    W::Value: Unpin,
+    W::Value: Unpin + std::fmt::Debug,
 {
     type Item = W::Value;
 
@@ -624,7 +625,7 @@ where
         if let Some(value) = self.as_mut().initial.take() {
             return Poll::Ready(Some(value));
         }
-        match self.as_mut().watcher.poll_updated(cx) {
+        match dbg!(self.as_mut().watcher.poll_updated(cx)) {
             Poll::Ready(Ok(value)) => Poll::Ready(Some(value)),
             Poll::Ready(Err(Disconnected)) => Poll::Ready(None),
             Poll::Pending => Poll::Pending,
@@ -925,13 +926,17 @@ mod tests {
         assert_eq!(ab.get().unwrap(), vec![1, 1]);
         // set a
         a.set(2u8).unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
         assert_eq!(ab.get().unwrap(), vec![2, 1]);
         // set b
         b.set(3u8).unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
         assert_eq!(ab.get().unwrap(), vec![2, 3]);
 
         a.set(3u8).unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
         b.set(4u8).unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
 
         let values = tokio::time::timeout(Duration::from_secs(5), handle)
             .await
