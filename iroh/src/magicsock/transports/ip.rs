@@ -17,14 +17,14 @@ use crate::{
 };
 
 #[derive(Clone, Debug)]
-pub struct IpTransport {
+pub(crate) struct IpTransport {
     bind_addr: SocketAddr,
     socket: UdpConn,
     local_addr: Watchable<SocketAddr>,
 }
 
 impl IpTransport {
-    pub fn new(bind_addr: SocketAddr, socket: UdpConn) -> Self {
+    pub(crate) fn new(bind_addr: SocketAddr, socket: UdpConn) -> Self {
         // Currently gets updated on manual rebind
         // TODO: update when UdpSocket under the hood rebinds automatically
         let local_addr = Watchable::new(socket.local_addr().expect("invalid socket"));
@@ -36,11 +36,11 @@ impl IpTransport {
         }
     }
 
-    pub fn create_io_poller(&self) -> Pin<Box<dyn quinn::UdpPoller>> {
+    pub(super) fn create_io_poller(&self) -> Pin<Box<dyn quinn::UdpPoller>> {
         self.socket.create_io_poller()
     }
 
-    pub fn poll_send(
+    pub(super) fn poll_send(
         &self,
         destination: SocketAddr,
         transmit: &Transmit<'_>,
@@ -70,7 +70,7 @@ impl IpTransport {
     }
 
     /// NOTE: Receiving on a closed socket will return [`Poll::Pending`] indefinitely.
-    pub fn poll_recv(
+    pub(super) fn poll_recv(
         &self,
         cx: &mut Context,
         bufs: &mut [io::IoSliceMut<'_>],
@@ -89,27 +89,27 @@ impl IpTransport {
         }
     }
 
-    pub fn local_addr(&self) -> SocketAddr {
+    pub(super) fn local_addr(&self) -> SocketAddr {
         self.local_addr.get()
     }
 
-    pub fn local_addr_watch(&self) -> impl Watcher<Value = SocketAddr> + Send {
+    pub(super) fn local_addr_watch(&self) -> impl Watcher<Value = SocketAddr> + Send {
         self.local_addr.watch()
     }
 
-    pub fn max_transmit_segments(&self) -> usize {
+    pub(super) fn max_transmit_segments(&self) -> usize {
         self.socket.max_transmit_segments()
     }
 
-    pub fn max_receive_segments(&self) -> usize {
+    pub(super) fn max_receive_segments(&self) -> usize {
         self.socket.max_receive_segments()
     }
 
-    pub fn may_fragment(&self) -> bool {
+    pub(super) fn may_fragment(&self) -> bool {
         self.socket.may_fragment()
     }
 
-    pub fn is_valid_send_addr(&self, addr: &SocketAddr) -> bool {
+    pub(super) fn is_valid_send_addr(&self, addr: &SocketAddr) -> bool {
         #[allow(clippy::match_like_matches_macro)]
         match (self.bind_addr, addr) {
             (SocketAddr::V4(_), SocketAddr::V4(..)) => true,
@@ -118,15 +118,15 @@ impl IpTransport {
         }
     }
 
-    pub fn poll_writable(&self, cx: &mut Context) -> Poll<io::Result<()>> {
+    pub(super) fn poll_writable(&self, cx: &mut Context) -> Poll<io::Result<()>> {
         self.socket.as_socket_ref().poll_writable(cx)
     }
 
-    pub fn bind_addr(&self) -> SocketAddr {
+    pub(crate) fn bind_addr(&self) -> SocketAddr {
         self.bind_addr
     }
 
-    pub fn rebind(&self) -> io::Result<()> {
+    pub(super) fn rebind(&self) -> io::Result<()> {
         self.socket.as_socket_ref().rebind()?;
         let addr = self.socket.as_socket_ref().local_addr()?;
         self.local_addr.set(addr).ok();
@@ -134,11 +134,11 @@ impl IpTransport {
         Ok(())
     }
 
-    pub fn on_network_change(&self, _info: &crate::magicsock::NetInfo) {
+    pub(super) fn on_network_change(&self, _info: &crate::magicsock::NetInfo) {
         // Nothing to do for now
     }
 
-    pub fn socket(&self) -> Arc<UdpSocket> {
+    pub(crate) fn socket(&self) -> Arc<UdpSocket> {
         self.socket.as_socket()
     }
 }

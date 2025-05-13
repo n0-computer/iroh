@@ -59,7 +59,7 @@ use self::udp_conn::UdpConn;
 use self::{
     metrics::Metrics as MagicsockMetrics,
     node_map::{NodeMap, PingAction, PingRole, SendPing},
-    transports::{relay::RelayActorConfig, RelayTransport, Transports},
+    transports::{RelayActorConfig, RelayTransport, Transports},
 };
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;

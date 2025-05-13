@@ -10,11 +10,11 @@ use tracing::trace;
 
 #[cfg(not(wasm_browser))]
 mod ip;
-pub(crate) mod relay;
+mod relay;
 
 #[cfg(not(wasm_browser))]
-pub use self::ip::IpTransport;
-pub use self::relay::RelayTransport;
+pub(crate) use self::ip::IpTransport;
+pub(crate) use self::relay::{RelayActorConfig, RelayTransport};
 use super::NetInfo;
 use crate::watchable::{self, Watcher};
 
@@ -146,7 +146,7 @@ impl Transports {
                 .map(move |t| t.map(|(url, id)| Addr::RelayUrl(url, id)))
                 .expect("disconnected")
         });
-        watchable::JoinOpt::new(relays).expect("disconnected")
+        watchable::JoinOpt::new(relays)
     }
 
     /// Returns the bound addresses for IP based transports

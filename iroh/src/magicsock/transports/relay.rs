@@ -23,11 +23,11 @@ use crate::{
 
 mod actor;
 
-pub use self::actor::Config as RelayActorConfig;
+pub(crate) use self::actor::Config as RelayActorConfig;
 use self::actor::{RelayActor, RelayActorMessage, RelayRecvDatagram, RelaySendItem};
 
 #[derive(Debug)]
-pub struct RelayTransport {
+pub(crate) struct RelayTransport {
     /// Queue to receive datagrams from relays for [`quinn::AsyncUdpSocket::poll_recv`].
     ///
     /// Relay datagrams received by relays are put into this queue and consumed by
@@ -43,7 +43,7 @@ pub struct RelayTransport {
 }
 
 impl RelayTransport {
-    pub fn new(config: RelayActorConfig) -> Self {
+    pub(crate) fn new(config: RelayActorConfig) -> Self {
         let (relay_datagram_send_tx, relay_datagram_send_rx) = relay_datagram_send_channel();
         let relay_datagram_recv_queue = Arc::new(RelayDatagramRecvQueue::new());
 
@@ -86,11 +86,11 @@ impl RelayTransport {
         }
     }
 
-    pub fn create_io_poller(&self) -> Pin<Box<dyn quinn::UdpPoller>> {
+    pub(super) fn create_io_poller(&self) -> Pin<Box<dyn quinn::UdpPoller>> {
         Box::pin(self.relay_datagram_send_channel.clone())
     }
 
-    pub fn poll_send(
+    pub(super) fn poll_send(
         &self,
         dest_url: RelayUrl,
         dest_node: NodeId,
@@ -126,7 +126,7 @@ impl RelayTransport {
         }
     }
 
-    pub fn poll_recv(
+    pub(super) fn poll_recv(
         &self,
         cx: &mut Context,
         bufs: &mut [io::IoSliceMut<'_>],
@@ -172,7 +172,7 @@ impl RelayTransport {
         }
     }
 
-    pub fn local_addr_watch(
+    pub(super) fn local_addr_watch(
         &self,
     ) -> impl crate::watchable::Watcher<Value = Option<(RelayUrl, NodeId)>> + Send + Sync {
         let my_node_id = self.my_node_id;
@@ -182,21 +182,21 @@ impl RelayTransport {
             .expect("disconnected")
     }
 
-    pub fn is_valid_send_addr(&self, _url: &RelayUrl, _node_id: &NodeId) -> bool {
+    pub(super) fn is_valid_send_addr(&self, _url: &RelayUrl, _node_id: &NodeId) -> bool {
         true
     }
 
-    pub fn poll_writable(&self, cx: &mut Context) -> Poll<io::Result<()>> {
+    pub(super) fn poll_writable(&self, cx: &mut Context) -> Poll<io::Result<()>> {
         self.relay_datagram_send_channel.poll_writable(cx)
     }
 
-    pub fn rebind(&self) -> io::Result<()> {
+    pub(super) fn rebind(&self) -> io::Result<()> {
         self.send_relay_actor(RelayActorMessage::MaybeCloseRelaysOnRebind);
 
         Ok(())
     }
 
-    pub fn on_network_change(&self, info: &crate::magicsock::NetInfo) {
+    pub(super) fn on_network_change(&self, info: &crate::magicsock::NetInfo) {
         self.send_relay_actor(RelayActorMessage::NetworkChange { info: info.clone() });
     }
 }
