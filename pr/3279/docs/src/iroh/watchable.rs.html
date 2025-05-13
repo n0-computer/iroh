@@ -942,7 +942,8 @@
 <a href="#941" id="941">941</a>
 <a href="#942" id="942">942</a>
 <a href="#943" id="943">943</a>
-<a href="#944" id="944">944</a></pre></div><pre class="rust"><code><span class="doccomment">//! Watchable values.
+<a href="#944" id="944">944</a>
+<a href="#945" id="945">945</a></pre></div><pre class="rust"><code><span class="doccomment">//! Watchable values.
 //!
 //! A [`Watchable`] exists to keep track of a value which may change over time.  It allows
 //! observers to be notified of changes to the value.  The aim is to always be aware of the
@@ -1854,13 +1855,15 @@
 
         <span class="kw">let </span>ab = Join::new([a.watch(), b.watch()].into_iter());
 
-        <span class="kw">let </span>stream = ab.clone().stream();
+        <span class="kw">let </span><span class="kw-2">mut </span>stream = ab.clone().stream();
         <span class="kw">let </span>handle = tokio::task::spawn(<span class="kw">async move </span>{
-            <span class="kw">let </span>values: Vec&lt;Vec&lt;u8&gt;&gt; = stream.collect::&lt;Vec&lt;Vec&lt;u8&gt;&gt;&gt;().<span class="kw">await</span>;
-            <span class="macro">assert_eq!</span>(
-                values,
-                <span class="macro">vec!</span>[<span class="macro">vec!</span>[<span class="number">1</span>, <span class="number">1</span>], <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">1</span>], <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">3</span>], <span class="macro">vec!</span>[<span class="number">3</span>, <span class="number">3</span>], <span class="macro">vec!</span>[<span class="number">3</span>, <span class="number">4</span>]]
-            );
+            <span class="kw">let </span><span class="kw-2">mut </span>values = Vec::new();
+            <span class="kw">while </span>values.len() &lt; <span class="number">5 </span>{
+                <span class="kw">let </span>value = stream.next().<span class="kw">await</span>.unwrap();
+                <span class="macro">dbg!</span>(<span class="kw-2">&amp;</span>value, values.len());
+                values.push(value);
+            }
+            values
         });
 
         <span class="comment">// get
@@ -1873,17 +1876,16 @@
         <span class="macro">assert_eq!</span>(ab.get().unwrap(), <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">3</span>]);
 
         a.set(<span class="number">3u8</span>).unwrap();
-        tokio::time::sleep(Duration::from_millis(<span class="number">50</span>)).<span class="kw">await</span>;
         b.set(<span class="number">4u8</span>).unwrap();
 
-        drop(ab); <span class="comment">// cancel the stream
-        </span>drop(a);
-        drop(b);
-
-        tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), handle)
+        <span class="kw">let </span>values = tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), handle)
             .<span class="kw">await
             </span>.unwrap()
-            .unwrap()
+            .unwrap();
+        <span class="macro">assert_eq!</span>(
+            values,
+            <span class="macro">vec!</span>[<span class="macro">vec!</span>[<span class="number">1</span>, <span class="number">1</span>], <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">1</span>], <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">3</span>], <span class="macro">vec!</span>[<span class="number">3</span>, <span class="number">3</span>], <span class="macro">vec!</span>[<span class="number">3</span>, <span class="number">4</span>]]
+        );
     }
 }
 </code></pre></div></section></main></body></html>
