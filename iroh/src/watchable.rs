@@ -331,22 +331,17 @@ impl<S: Watcher, T: Watcher> Watcher for (S, T) {
 #[derive(Debug, Clone)]
 pub struct Join<T: Clone + Eq, W: Watcher<Value = T>> {
     watchers: Vec<W>,
-    current: Vec<T>,
 }
 impl<T: Clone + Eq, W: Watcher<Value = T>> Join<T, W> {
     /// Joins a set of watchers into a single watcher
-    pub fn new(watchers: impl Iterator<Item = W>) -> Result<Self, Disconnected> {
+    pub fn new(watchers: impl Iterator<Item = W>) -> Self {
         let watchers: Vec<W> = watchers.into_iter().collect();
-        let mut current = Vec::with_capacity(watchers.len());
-        for watcher in &watchers {
-            current.push(watcher.get()?);
-        }
 
-        Ok(Self { watchers, current })
+        Self { watchers }
     }
 }
 
-impl<T: Clone + Eq, W: Watcher<Value = T>> Watcher for Join<T, W> {
+impl<T: Clone + Eq + std::fmt::Debug, W: Watcher<Value = T>> Watcher for Join<T, W> {
     type Value = Vec<T>;
 
     fn get(&self) -> Result<Self::Value, Disconnected> {
@@ -362,14 +357,34 @@ impl<T: Clone + Eq, W: Watcher<Value = T>> Watcher for Join<T, W> {
         &mut self,
         cx: &mut task::Context<'_>,
     ) -> Poll<Result<Self::Value, Disconnected>> {
-        for (el, watcher) in self.current.iter_mut().zip(self.watchers.iter_mut()) {
-            let value = ready!(watcher.poll_updated(cx)?);
-            if &value != el {
-                *el = value;
-                return Poll::Ready(Ok(self.current.clone()));
+        dbg!("poll_updated");
+        let mut new_value = None;
+        for (i, watcher) in self.watchers.iter_mut().enumerate() {
+            match watcher.poll_updated(cx)? {
+                Poll::Pending => {}
+                Poll::Ready(value) => {
+                    dbg!("new value", i);
+                    new_value.replace((i, value));
+                    break;
+                }
             }
         }
-        Poll::Pending
+
+        dbg!(&new_value);
+        if let Some((j, new_value)) = new_value {
+            let mut new = Vec::with_capacity(self.watchers.len());
+            for (i, watcher) in self.watchers.iter().enumerate() {
+                if i != j {
+                    new.push(watcher.get()?);
+                } else {
+                    new.push(new_value.clone());
+                }
+            }
+            dbg!(&new);
+            Poll::Ready(Ok(new))
+        } else {
+            Poll::Pending
+        }
     }
 }
 
@@ -881,6 +896,45 @@ mod tests {
                 tokio::task::yield_now().await;
             }
         }
+
+        tokio::time::timeout(Duration::from_secs(10), handle)
+            .await
+            .unwrap()
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_join() {
+        let a = Watchable::new(1u8);
+        let b = Watchable::new(1u8);
+
+        let ab = Join::new([a.watch(), b.watch()].into_iter());
+
+        let stream = ab.clone().stream();
+        let handle = tokio::task::spawn(async move {
+            let values: Vec<Vec<u8>> = stream.collect::<Vec<Vec<u8>>>().await;
+            assert_eq!(
+                values,
+                vec![vec![1, 1], vec![2, 1], vec![2, 3], vec![3, 3], vec![3, 4]]
+            );
+        });
+
+        // get
+        assert_eq!(ab.get().unwrap(), vec![1, 1]);
+        // set a
+        a.set(2u8).unwrap();
+        assert_eq!(ab.get().unwrap(), vec![2, 1]);
+        // set b
+        b.set(3u8).unwrap();
+        assert_eq!(ab.get().unwrap(), vec![2, 3]);
+
+        a.set(3u8).unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        b.set(4u8).unwrap();
+
+        drop(ab); // cancel the stream
+        drop(a);
+        drop(b);
 
         tokio::time::timeout(Duration::from_secs(10), handle)
             .await

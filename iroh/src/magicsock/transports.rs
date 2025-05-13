@@ -127,7 +127,7 @@ impl Transports {
             .ip
             .iter()
             .map(|t| t.local_addr_watch().map(Addr::from).expect("disconnected"));
-        let ips = watchable::Join::new(ips).expect("disconnected");
+        let ips = watchable::Join::new(ips);
 
         let relays = self.relay.iter().map(|t| {
             t.local_addr_watch()
