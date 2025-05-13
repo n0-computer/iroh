@@ -3211,7 +3211,26 @@
 <a href="#3210" id="3210">3210</a>
 <a href="#3211" id="3211">3211</a>
 <a href="#3212" id="3212">3212</a>
-<a href="#3213" id="3213">3213</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#3213" id="3213">3213</a>
+<a href="#3214" id="3214">3214</a>
+<a href="#3215" id="3215">3215</a>
+<a href="#3216" id="3216">3216</a>
+<a href="#3217" id="3217">3217</a>
+<a href="#3218" id="3218">3218</a>
+<a href="#3219" id="3219">3219</a>
+<a href="#3220" id="3220">3220</a>
+<a href="#3221" id="3221">3221</a>
+<a href="#3222" id="3222">3222</a>
+<a href="#3223" id="3223">3223</a>
+<a href="#3224" id="3224">3224</a>
+<a href="#3225" id="3225">3225</a>
+<a href="#3226" id="3226">3226</a>
+<a href="#3227" id="3227">3227</a>
+<a href="#3228" id="3228">3228</a>
+<a href="#3229" id="3229">3229</a>
+<a href="#3230" id="3230">3230</a>
+<a href="#3231" id="3231">3231</a>
+<a href="#3232" id="3232">3232</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -3234,7 +3253,6 @@
     task::Poll,
 };
 
-<span class="kw">use </span>data_encoding::BASE32_DNSSEC;
 <span class="kw">use </span>ed25519_dalek::{pkcs8::DecodePublicKey, VerifyingKey};
 <span class="kw">use </span>iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
 <span class="kw">use </span>iroh_relay::RelayMap;
@@ -3256,6 +3274,7 @@
     },
     magicsock::{<span class="self">self</span>, Handle, NodeIdMappedAddr, OwnAddressSnafu},
     metrics::EndpointMetrics,
+    net_report::Report,
     tls,
     watchable::{Disconnected, Watcher},
     RelayProtocol,
@@ -3292,16 +3311,6 @@
 /// [`Endpoint`] assumes one of those addresses probably works.  If after this delay there
 /// is still no connection the configured [`Discovery`] will be used however.
 </span><span class="kw">const </span>DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(<span class="number">500</span>);
-
-<span class="doccomment">/// Maximum amount of TLS tickets we will cache (by default) for 0-RTT connection
-/// establishment.
-///
-/// 8 tickets per remote endpoint, 32 different endpoints would max out the required storage:
-/// ~200 bytes per session + certificates (which are ~387 bytes)
-/// So 8 * 32 * (200 + 387) = 150.272 bytes, assuming pointers to certificates
-/// are never aliased pointers (they're Arc'ed).
-/// I think 150KB is an acceptable default upper limit for such a cache.
-</span><span class="kw">const </span>MAX_TLS_TICKETS: usize = <span class="number">8 </span>* <span class="number">32</span>;
 
 <span class="kw">type </span>DiscoveryBuilder = Box&lt;<span class="kw">dyn </span>FnOnce(<span class="kw-2">&amp;</span>SecretKey) -&gt; <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Discovery&gt;&gt; + Send + Sync&gt;;
 
@@ -3390,9 +3399,8 @@
             .unwrap_or_else(|| SecretKey::generate(rand::rngs::OsRng));
         <span class="kw">let </span>static_config = StaticConfig {
             transport_config: Arc::new(<span class="self">self</span>.transport_config),
-            tls_auth: <span class="self">self</span>.tls_auth,
+            tls_config: tls::TlsConfig::new(<span class="self">self</span>.tls_auth, secret_key.clone()),
             keylog: <span class="self">self</span>.keylog,
-            secret_key: secret_key.clone(),
         };
         <span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">let </span>dns_resolver = <span class="self">self</span>.dns_resolver.unwrap_or_default();
@@ -3759,8 +3767,7 @@
 <span class="doccomment">/// Configuration for a [`quinn::Endpoint`] that cannot be changed at runtime.
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">struct </span>StaticConfig {
-    tls_auth: tls::Authentication,
-    secret_key: SecretKey,
+    tls_config: tls::TlsConfig,
     transport_config: Arc&lt;quinn::TransportConfig&gt;,
     keylog: bool,
 }
@@ -3768,9 +3775,9 @@
 <span class="kw">impl </span>StaticConfig {
     <span class="doccomment">/// Create a [`quinn::ServerConfig`] with the specified ALPN protocols.
     </span><span class="kw">fn </span>create_server_config(<span class="kw-2">&amp;</span><span class="self">self</span>, alpn_protocols: Vec&lt;Vec&lt;u8&gt;&gt;) -&gt; ServerConfig {
-        <span class="kw">let </span>quic_server_config =
-            <span class="self">self</span>.tls_auth
-                .make_server_config(<span class="kw-2">&amp;</span><span class="self">self</span>.secret_key, alpn_protocols, <span class="self">self</span>.keylog);
+        <span class="kw">let </span>quic_server_config = <span class="self">self
+            </span>.tls_config
+            .make_server_config(alpn_protocols, <span class="self">self</span>.keylog);
         <span class="kw">let </span><span class="kw-2">mut </span>server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
         server_config.transport_config(<span class="self">self</span>.transport_config.clone());
 
@@ -3811,8 +3818,6 @@
     </span>rtt_actor: Arc&lt;rtt_actor::RttHandle&gt;,
     <span class="doccomment">/// Configuration structs for quinn, holds the transport config, certificate setup, secret key etc.
     </span>static_config: Arc&lt;StaticConfig&gt;,
-    <span class="doccomment">/// Cache for TLS session keys we receive.
-    </span>session_store: Arc&lt;<span class="kw">dyn </span>rustls::client::ClientSessionStore&gt;,
 }
 
 <span class="attr">#[allow(missing_docs)]
@@ -3900,7 +3905,7 @@
     ///
     /// This is for internal use, the public interface is the [`Builder`] obtained from
     /// [Self::builder]. See the methods on the builder for documentation of the parameters.
-    </span><span class="attr">#[instrument(<span class="string">"ep"</span>, skip_all, fields(me = %static_config.secret_key.public().fmt_short()))]
+    </span><span class="attr">#[instrument(<span class="string">"ep"</span>, skip_all, fields(me = %static_config.tls_config.secret_key.public().fmt_short()))]
     </span><span class="kw">async fn </span>bind(
         static_config: StaticConfig,
         msock_opts: magicsock::Options,
@@ -3913,9 +3918,6 @@
             msock: msock.clone(),
             rtt_actor: Arc::new(rtt_actor::RttHandle::new(msock.metrics.magicsock.clone())),
             static_config: Arc::new(static_config),
-            session_store: Arc::new(rustls::client::ClientSessionMemoryCache::new(
-                MAX_TLS_TICKETS,
-            )),
         };
         <span class="prelude-val">Ok</span>(ep)
     }
@@ -4037,28 +4039,16 @@
         <span class="kw">let </span>client_config = {
             <span class="kw">let </span><span class="kw-2">mut </span>alpn_protocols = <span class="macro">vec!</span>[alpn.to_vec()];
             alpn_protocols.extend(options.additional_alpns);
-            <span class="kw">let </span>quic_client_config = <span class="self">self</span>.static_config.tls_auth.make_client_config(
-                <span class="kw-2">&amp;</span><span class="self">self</span>.static_config.secret_key,
-                node_id,
-                alpn_protocols,
-                <span class="prelude-val">Some</span>(<span class="self">self</span>.session_store.clone()),
-                <span class="self">self</span>.static_config.keylog,
-            );
+            <span class="kw">let </span>quic_client_config = <span class="self">self
+                </span>.static_config
+                .tls_config
+                .make_client_config(alpn_protocols, <span class="self">self</span>.static_config.keylog);
             <span class="kw">let </span><span class="kw-2">mut </span>client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
             client_config.transport_config(transport_config);
             client_config
         };
 
-        <span class="comment">// We used to use a constant "localhost" for this - however, that would put all of
-        // the TLS session tickets we receive into the same bucket in the TLS session ticket cache.
-        // So we choose something that'd dependent on the NodeId.
-        // We cannot use hex to encode the NodeId, as that'd encode to 64 characters, but we only
-        // have 63 maximum per DNS subdomain. Base32 is the next best alternative.
-        // We use the `.invalid` TLD, as that's specified (in RFC 2606) to never actually resolve
-        // "for real", unlike `.localhost` which is allowed to resolve to `127.0.0.1`.
-        // We also add "iroh" as a subdomain, although those 5 bytes might not be necessary.
-        // We *could* decide to remove that indicator in the future likely without breakage.
-        </span><span class="kw">let </span>server_name = <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"{}.iroh.invalid"</span>, BASE32_DNSSEC.encode(node_id.as_bytes()));
+        <span class="kw">let </span>server_name = <span class="kw-2">&amp;</span>tls::name::encode(node_id);
         <span class="kw">let </span>connect = <span class="self">self
             </span>.msock
             .endpoint()
@@ -4165,7 +4155,7 @@
 
     </span><span class="doccomment">/// Returns the secret_key of this endpoint.
     </span><span class="kw">pub fn </span>secret_key(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>SecretKey {
-        <span class="kw-2">&amp;</span><span class="self">self</span>.static_config.secret_key
+        <span class="kw-2">&amp;</span><span class="self">self</span>.static_config.tls_config.secret_key
     }
 
     <span class="doccomment">/// Returns the node id of this endpoint.
@@ -4173,7 +4163,7 @@
     /// This ID is the unique addressing information of this node and other peers must know
     /// it to be able to connect to this node.
     </span><span class="kw">pub fn </span>node_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; NodeId {
-        <span class="self">self</span>.static_config.secret_key.public()
+        <span class="self">self</span>.static_config.tls_config.secret_key.public()
     }
 
     <span class="doccomment">/// Returns the current [`NodeAddr`] for this endpoint.
@@ -4272,6 +4262,40 @@
     /// [STUN]: https://en.wikipedia.org/wiki/STUN
     </span><span class="kw">pub fn </span>direct_addresses(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Watcher&lt;<span class="prelude-ty">Option</span>&lt;BTreeSet&lt;DirectAddr&gt;&gt;&gt; {
         <span class="self">self</span>.msock.direct_addresses()
+    }
+
+    <span class="doccomment">/// Returns a [`Watcher`] for any net-reports run from this [`Endpoint`].
+    ///
+    /// A `net-report` checks the network conditions of the [`Endpoint`], such as
+    /// whether it is connected to the internet via Ipv4 and/or Ipv6, its NAT
+    /// status, its latency to the relay servers, and its public addresses.
+    ///
+    /// The [`Endpoint`] continuously runs `net-reports` to monitor if network
+    /// conditions have changed. This [`Watcher`] will return the latest result
+    /// of the `net-report`.
+    ///
+    /// When issuing the first call to this method the first report might
+    /// still be underway, in this case the [`Watcher`] might not be initialized
+    /// with [`Some`] value yet.  Once the net-report has been successfully
+    /// run, the [`Watcher`] will always return [`Some`] report immediately, which
+    /// is the most recently run `net-report`.
+    ///
+    /// # Examples
+    ///
+    /// To get the first report use [`Watcher::initialized`]:
+    /// ```no_run
+    /// use futures_lite::StreamExt;
+    /// use iroh::Endpoint;
+    ///
+    /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    /// # rt.block_on(async move {
+    /// let ep = Endpoint::builder().bind().await.unwrap();
+    /// let _report = ep.net_report().initialized().await.unwrap();
+    /// # });
+    /// ```
+    </span><span class="attr">#[doc(hidden)]
+    </span><span class="kw">pub fn </span>net_report(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Watcher&lt;<span class="prelude-ty">Option</span>&lt;Arc&lt;Report&gt;&gt;&gt; {
+        <span class="self">self</span>.msock.net_report()
     }
 
     <span class="doccomment">/// Returns the local socket addresses on which the underlying sockets are bound.
@@ -4856,7 +4880,7 @@
             Poll::Ready(<span class="prelude-val">Ok</span>(inner)) =&gt; {
                 <span class="kw">let </span>conn = Connection {
                     inner,
-                    tls_auth: this.ep.static_config.tls_auth,
+                    tls_auth: this.ep.static_config.tls_config.auth,
                 };
                 try_send_rtt_msg(<span class="kw-2">&amp;</span>conn, this.ep, <span class="prelude-val">None</span>);
                 Poll::Ready(<span class="prelude-val">Ok</span>(conn))
@@ -4945,7 +4969,7 @@
             <span class="prelude-val">Ok</span>((inner, zrtt_accepted)) =&gt; {
                 <span class="kw">let </span>conn = Connection {
                     inner,
-                    tls_auth: <span class="self">self</span>.ep.static_config.tls_auth,
+                    tls_auth: <span class="self">self</span>.ep.static_config.tls_config.auth,
                 };
                 <span class="kw">let </span>zrtt_accepted = ZeroRttAccepted {
                     inner: zrtt_accepted,
@@ -4998,7 +5022,7 @@
             Poll::Ready(<span class="prelude-val">Ok</span>(inner)) =&gt; {
                 <span class="kw">let </span>conn = Connection {
                     inner,
-                    tls_auth: this.ep.static_config.tls_auth,
+                    tls_auth: this.ep.static_config.tls_config.auth,
                 };
                 try_send_rtt_msg(<span class="kw-2">&amp;</span>conn, this.ep, <span class="kw-2">*</span>this.remote_node_id);
                 Poll::Ready(<span class="prelude-val">Ok</span>(conn))
@@ -6420,6 +6444,20 @@
             <span class="prelude-val">Some</span>(ALPN_ONE.to_vec()),
             <span class="string">"connect side only supports the old version"
         </span>);
+
+        <span class="prelude-val">Ok</span>(())
+    }
+
+    <span class="attr">#[tokio::test]
+    #[traced_test]
+    </span><span class="kw">async fn </span>watch_net_report() -&gt; TestResult {
+        <span class="kw">let </span>endpoint = Endpoint::builder()
+            .relay_mode(RelayMode::Staging)
+            .bind()
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="comment">// can get a first report
+        </span>endpoint.net_report().initialized().<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="prelude-val">Ok</span>(())
     }

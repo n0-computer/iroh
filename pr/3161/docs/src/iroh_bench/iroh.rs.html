@@ -303,7 +303,7 @@
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>iroh::{
     endpoint::{Connection, ConnectionError, RecvStream, SendStream, TransportConfig},
-    Endpoint, NodeAddr, RelayMap, RelayMode, RelayUrl,
+    Endpoint, NodeAddr, RelayMode, RelayUrl,
 };
 <span class="kw">use </span>n0_snafu::{TestResult <span class="kw">as </span><span class="prelude-ty">Result</span>, TestResultExt};
 <span class="kw">use </span>tracing::{trace, warn};
@@ -322,9 +322,9 @@
 ) -&gt; (NodeAddr, Endpoint) {
     <span class="kw">let </span>_guard = rt.enter();
     rt.block_on(<span class="kw">async move </span>{
-        <span class="kw">let </span>relay_mode = relay_url.clone().map_or(RelayMode::Disabled, |url| {
-            RelayMode::Custom(RelayMap::from_url(url))
-        });
+        <span class="kw">let </span>relay_mode = relay_url
+            .clone()
+            .map_or(RelayMode::Disabled, |url| RelayMode::Custom(url.into()));
 
         <span class="attr">#[allow(unused_mut)]
         </span><span class="kw">let </span><span class="kw-2">mut </span>builder = Endpoint::builder();
@@ -384,9 +384,9 @@
     relay_url: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;,
     opt: Opt,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(Endpoint, Connection)&gt; {
-    <span class="kw">let </span>relay_mode = relay_url.clone().map_or(RelayMode::Disabled, |url| {
-        RelayMode::Custom(RelayMap::from_url(url))
-    });
+    <span class="kw">let </span>relay_mode = relay_url
+        .clone()
+        .map_or(RelayMode::Disabled, |url| RelayMode::Custom(url.into()));
     <span class="attr">#[allow(unused_mut)]
     </span><span class="kw">let </span><span class="kw-2">mut </span>builder = Endpoint::builder();
     <span class="attr">#[cfg(feature = <span class="string">"local-relay"</span>)]

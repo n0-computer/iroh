@@ -267,7 +267,30 @@
 <a href="#266" id="266">266</a>
 <a href="#267" id="267">267</a>
 <a href="#268" id="268">268</a>
-<a href="#269" id="269">269</a></pre></div><pre class="rust"><code><span class="doccomment">//! Pkarr packet store used to resolve DNS queries.
+<a href="#269" id="269">269</a>
+<a href="#270" id="270">270</a>
+<a href="#271" id="271">271</a>
+<a href="#272" id="272">272</a>
+<a href="#273" id="273">273</a>
+<a href="#274" id="274">274</a>
+<a href="#275" id="275">275</a>
+<a href="#276" id="276">276</a>
+<a href="#277" id="277">277</a>
+<a href="#278" id="278">278</a>
+<a href="#279" id="279">279</a>
+<a href="#280" id="280">280</a>
+<a href="#281" id="281">281</a>
+<a href="#282" id="282">282</a>
+<a href="#283" id="283">283</a>
+<a href="#284" id="284">284</a>
+<a href="#285" id="285">285</a>
+<a href="#286" id="286">286</a>
+<a href="#287" id="287">287</a>
+<a href="#288" id="288">288</a>
+<a href="#289" id="289">289</a>
+<a href="#290" id="290">290</a>
+<a href="#291" id="291">291</a>
+<a href="#292" id="292">292</a></pre></div><pre class="rust"><code><span class="doccomment">//! Pkarr packet store used to resolve DNS queries.
 
 </span><span class="kw">use </span>std::{collections::BTreeMap, num::NonZeroUsize, path::Path, sync::Arc, time::Duration};
 
@@ -276,7 +299,7 @@
 <span class="kw">use </span>n0_snafu::TestResult <span class="kw">as </span><span class="prelude-ty">Result</span>;
 <span class="kw">use </span>pkarr::{Client <span class="kw">as </span>PkarrClient, SignedPacket};
 <span class="kw">use </span>tokio::sync::Mutex;
-<span class="kw">use </span>tracing::{debug, trace};
+<span class="kw">use </span>tracing::{debug, trace, warn};
 <span class="kw">use </span>ttl_cache::TtlCache;
 
 <span class="kw">use </span><span class="self">self</span>::signed_packets::SignedPacketStore;
@@ -361,24 +384,46 @@
     }
 
     <span class="doccomment">/// Resolve a DNS query.
-    </span><span class="attr">#[allow(clippy::unused_async)]
+    </span><span class="attr">#[tracing::instrument(<span class="string">"resolve"</span>, skip_all, fields(pubkey=%pubkey,name=%name,typ=%record_type))]
     </span><span class="kw">pub async fn </span>resolve(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         pubkey: <span class="kw-2">&amp;</span>PublicKeyBytes,
         name: <span class="kw-2">&amp;</span>Name,
         record_type: RecordType,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Arc&lt;RecordSet&gt;&gt;&gt; {
-        <span class="macro">tracing::info!</span>(<span class="string">"{} {}"</span>, name, record_type);
+        <span class="macro">trace!</span>(<span class="string">"store resolve"</span>);
         <span class="kw">if let </span><span class="prelude-val">Some</span>(rset) = <span class="self">self</span>.cache.lock().<span class="kw">await</span>.resolve(pubkey, name, record_type) {
+            <span class="macro">debug!</span>(
+                len = rset.records_without_rrsigs().count(),
+                <span class="string">"resolved from cache"
+            </span>);
             <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(rset));
         }
 
         <span class="kw">if let </span><span class="prelude-val">Some</span>(packet) = <span class="self">self</span>.store.get(pubkey).<span class="kw">await</span><span class="question-mark">? </span>{
-            <span class="kw">return </span><span class="self">self
+            <span class="macro">trace!</span>(packet_timestamp = <span class="question-mark">?</span>packet.timestamp(), <span class="string">"store hit"</span>);
+            <span class="kw">return match </span><span class="self">self
                 </span>.cache
                 .lock()
                 .<span class="kw">await
-                </span>.insert_and_resolve(<span class="kw-2">&amp;</span>packet, name, record_type);
+                </span>.insert_and_resolve(<span class="kw-2">&amp;</span>packet, name, record_type)
+            {
+                <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(rset)) =&gt; {
+                    <span class="macro">debug!</span>(
+                        len = rset.records_without_rrsigs().count(),
+                        <span class="string">"resolved from store"
+                    </span>);
+                    <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(rset))
+                }
+                <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>) =&gt; {
+                    <span class="macro">debug!</span>(<span class="string">"resolved to zone, but no matching records in zone"</span>);
+                    <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>)
+                }
+                <span class="prelude-val">Err</span>(err) =&gt; {
+                    <span class="macro">warn!</span>(<span class="string">"failed to retrieve zone after inserting in cache: {err:#?}"</span>);
+                    <span class="prelude-val">Err</span>(err)
+                }
+            };
         };
 
         <span class="kw">if let </span><span class="prelude-val">Some</span>(pkarr) = <span class="self">self</span>.pkarr.as_ref() {
@@ -495,11 +540,14 @@
             .map(|old| old.is_newer_than(signed_packet))
             .unwrap_or(<span class="bool-val">false</span>)
         {
-            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+            <span class="macro">trace!</span>(<span class="string">"insert skip: cached is newer"</span>);
+            <span class="prelude-val">Ok</span>(())
+        } <span class="kw">else </span>{
+            <span class="self">self</span>.cache
+                .put(pubkey, CachedZone::from_signed_packet(signed_packet)<span class="question-mark">?</span>);
+            <span class="macro">trace!</span>(<span class="string">"inserted into cache"</span>);
+            <span class="prelude-val">Ok</span>(())
         }
-        <span class="self">self</span>.cache
-            .put(pubkey, CachedZone::from_signed_packet(signed_packet)<span class="question-mark">?</span>);
-        <span class="prelude-val">Ok</span>(())
     }
 
     <span class="kw">fn </span>remove(<span class="kw-2">&amp;mut </span><span class="self">self</span>, pubkey: <span class="kw-2">&amp;</span>PublicKeyBytes) {
@@ -529,10 +577,8 @@
     }
 
     <span class="kw">fn </span>resolve(<span class="kw-2">&amp;</span><span class="self">self</span>, name: <span class="kw-2">&amp;</span>Name, record_type: RecordType) -&gt; <span class="prelude-ty">Option</span>&lt;Arc&lt;RecordSet&gt;&gt; {
+        <span class="macro">trace!</span>(name=%name, typ=%record_type, <span class="string">"resolve in zone"</span>);
         <span class="kw">let </span>key = RrKey::new(name.into(), record_type);
-        <span class="kw">for </span>record <span class="kw">in </span><span class="self">self</span>.records.keys() {
-            <span class="macro">tracing::info!</span>(<span class="string">"record {:?}"</span>, record);
-        }
         <span class="self">self</span>.records.get(<span class="kw-2">&amp;</span>key).cloned()
     }
 }

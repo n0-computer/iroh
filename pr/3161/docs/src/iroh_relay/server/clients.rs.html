@@ -278,16 +278,7 @@
 <a href="#277" id="277">277</a>
 <a href="#278" id="278">278</a>
 <a href="#279" id="279">279</a>
-<a href="#280" id="280">280</a>
-<a href="#281" id="281">281</a>
-<a href="#282" id="282">282</a>
-<a href="#283" id="283">283</a>
-<a href="#284" id="284">284</a>
-<a href="#285" id="285">285</a>
-<a href="#286" id="286">286</a>
-<a href="#287" id="287">287</a>
-<a href="#288" id="288">288</a>
-<a href="#289" id="289">289</a></pre></div><pre class="rust"><code><span class="doccomment">//! The "Server" side of the client. Uses the `ClientConnManager`.
+<a href="#280" id="280">280</a></pre></div><pre class="rust"><code><span class="doccomment">//! The "Server" side of the client. Uses the `ClientConnManager`.
 </span><span class="comment">// Based on tailscale/derp/derp_server.go
 
 </span><span class="kw">use </span>std::{
@@ -301,13 +292,14 @@
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>dashmap::DashMap;
 <span class="kw">use </span>iroh_base::NodeId;
-<span class="kw">use </span>nested_enum_utils::common_fields;
-<span class="kw">use </span>snafu::Snafu;
 <span class="kw">use </span>tokio::sync::mpsc::error::TrySendError;
 <span class="kw">use </span>tracing::{debug, trace};
 
-<span class="kw">use </span><span class="kw">super</span>::client::{Client, Config};
-<span class="kw">use </span><span class="kw">crate</span>::server::metrics::Metrics;
+<span class="kw">use </span><span class="kw">super</span>::client::{Client, Config, ForwardPacketError};
+<span class="kw">use </span><span class="kw">crate</span>::server::{
+    client::{PacketScope, SendError},
+    metrics::Metrics,
+};
 
 <span class="doccomment">/// Manages the connections to all currently connected clients.
 </span><span class="attr">#[derive(Debug, Default, Clone)]
@@ -321,22 +313,6 @@
     </span>sent_to: DashMap&lt;NodeId, HashSet&lt;NodeId&gt;&gt;,
     <span class="doccomment">/// Connection ID Counter
     </span>next_connection_id: AtomicU64,
-}
-
-<span class="doccomment">/// Send packet errors
-</span><span class="attr">#[common_fields({
-    backtrace: <span class="prelude-ty">Option</span>&lt;snafu::Backtrace&gt;,
-    <span class="attr">#[snafu(implicit)]
-    </span>span_trace: n0_snafu::SpanTrace,
-})]
-<span class="attr">#[allow(missing_docs)]
-#[derive(Debug, Snafu)]
-#[non_exhaustive]
-</span><span class="kw">pub enum </span>SendPacketError {
-    <span class="attr">#[snafu(display(<span class="string">"Failed to send message: full"</span>))]
-    </span>Full {},
-    <span class="attr">#[snafu(display(<span class="string">"Failed to send message: gone"</span>))]
-    </span>Gone {},
 }
 
 <span class="kw">impl </span>Clients {
@@ -415,7 +391,7 @@
         data: Bytes,
         src: NodeId,
         metrics: <span class="kw-2">&amp;</span>Metrics,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), SendPacketError&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), ForwardPacketError&gt; {
         <span class="kw">let </span><span class="prelude-val">Some</span>(client) = <span class="self">self</span>.<span class="number">0</span>.clients.get(<span class="kw-2">&amp;</span>dst) <span class="kw">else </span>{
             <span class="macro">debug!</span>(dst = dst.fmt_short(), <span class="string">"no connected client, dropped packet"</span>);
             metrics.send_packets_dropped.inc();
@@ -432,7 +408,7 @@
                     dst = dst.fmt_short(),
                     <span class="string">"client too busy to receive packet, dropping packet"
                 </span>);
-                <span class="prelude-val">Err</span>(FullSnafu.build())
+                <span class="prelude-val">Err</span>(ForwardPacketError::new(PacketScope::Data, SendError::Full))
             }
             <span class="prelude-val">Err</span>(TrySendError::Closed(<span class="kw">_</span>)) =&gt; {
                 <span class="macro">debug!</span>(
@@ -440,7 +416,10 @@
                     <span class="string">"can no longer write to client, dropping message and pruning connection"
                 </span>);
                 client.start_shutdown();
-                <span class="prelude-val">Err</span>(GoneSnafu.build())
+                <span class="prelude-val">Err</span>(ForwardPacketError::new(
+                    PacketScope::Data,
+                    SendError::Closed,
+                ))
             }
         }
     }
@@ -452,7 +431,7 @@
         data: Bytes,
         src: NodeId,
         metrics: <span class="kw-2">&amp;</span>Metrics,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), SendPacketError&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), ForwardPacketError&gt; {
         <span class="kw">let </span><span class="prelude-val">Some</span>(client) = <span class="self">self</span>.<span class="number">0</span>.clients.get(<span class="kw-2">&amp;</span>dst) <span class="kw">else </span>{
             <span class="macro">debug!</span>(
                 dst = dst.fmt_short(),
@@ -472,7 +451,7 @@
                     dst = dst.fmt_short(),
                     <span class="string">"client too busy to receive disco packet, dropping packet"
                 </span>);
-                <span class="prelude-val">Err</span>(FullSnafu.build())
+                <span class="prelude-val">Err</span>(ForwardPacketError::new(PacketScope::Disco, SendError::Full))
             }
             <span class="prelude-val">Err</span>(TrySendError::Closed(<span class="kw">_</span>)) =&gt; {
                 <span class="macro">debug!</span>(
@@ -480,7 +459,10 @@
                     <span class="string">"can no longer write to client, dropping disco message and pruning connection"
                 </span>);
                 client.start_shutdown();
-                <span class="prelude-val">Err</span>(GoneSnafu.build())
+                <span class="prelude-val">Err</span>(ForwardPacketError::new(
+                    PacketScope::Disco,
+                    SendError::Closed,
+                ))
             }
         }
     }

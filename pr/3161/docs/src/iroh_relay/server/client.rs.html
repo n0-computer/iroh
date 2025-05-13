@@ -911,7 +911,40 @@
 <a href="#910" id="910">910</a>
 <a href="#911" id="911">911</a>
 <a href="#912" id="912">912</a>
-<a href="#913" id="913">913</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
+<a href="#913" id="913">913</a>
+<a href="#914" id="914">914</a>
+<a href="#915" id="915">915</a>
+<a href="#916" id="916">916</a>
+<a href="#917" id="917">917</a>
+<a href="#918" id="918">918</a>
+<a href="#919" id="919">919</a>
+<a href="#920" id="920">920</a>
+<a href="#921" id="921">921</a>
+<a href="#922" id="922">922</a>
+<a href="#923" id="923">923</a>
+<a href="#924" id="924">924</a>
+<a href="#925" id="925">925</a>
+<a href="#926" id="926">926</a>
+<a href="#927" id="927">927</a>
+<a href="#928" id="928">928</a>
+<a href="#929" id="929">929</a>
+<a href="#930" id="930">930</a>
+<a href="#931" id="931">931</a>
+<a href="#932" id="932">932</a>
+<a href="#933" id="933">933</a>
+<a href="#934" id="934">934</a>
+<a href="#935" id="935">935</a>
+<a href="#936" id="936">936</a>
+<a href="#937" id="937">937</a>
+<a href="#938" id="938">938</a>
+<a href="#939" id="939">939</a>
+<a href="#940" id="940">940</a>
+<a href="#941" id="941">941</a>
+<a href="#942" id="942">942</a>
+<a href="#943" id="943">943</a>
+<a href="#944" id="944">944</a>
+<a href="#945" id="945">945</a>
+<a href="#946" id="946">946</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
 
 </span><span class="kw">use </span>std::{
     collections::HashSet, future::Future, num::NonZeroU32, pin::Pin, sync::Arc, task::Poll,
@@ -923,7 +956,7 @@
 <span class="kw">use </span>n0_future::{FutureExt, Sink, SinkExt, Stream, StreamExt};
 <span class="kw">use </span>nested_enum_utils::common_fields;
 <span class="kw">use </span>rand::Rng;
-<span class="kw">use </span>snafu::{Backtrace, Snafu};
+<span class="kw">use </span>snafu::{Backtrace, GenerateImplicitData, Snafu};
 <span class="kw">use </span>time::{Date, OffsetDateTime};
 <span class="kw">use </span>tokio::{
     sync::mpsc::{<span class="self">self</span>, error::TrySendError},
@@ -932,7 +965,6 @@
 <span class="kw">use </span>tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 <span class="kw">use </span>tracing::{debug, error, instrument, trace, warn, Instrument};
 
-<span class="kw">use </span><span class="kw">super</span>::clients::SendPacketError;
 <span class="kw">use crate</span>::{
     protos::{
         disco,
@@ -1104,7 +1136,7 @@
 #[non_exhaustive]
 </span><span class="kw">pub enum </span>HandleFrameError {
     <span class="attr">#[snafu(transparent)]
-    </span>SendPacket { source: SendPacketError },
+    </span>ForwardPacket { source: ForwardPacketError },
     <span class="attr">#[snafu(transparent)]
     </span>Streams { source: <span class="kw">super</span>::streams::Error },
     <span class="attr">#[snafu(display(<span class="string">"Stream terminated"</span>))]
@@ -1131,7 +1163,7 @@
 #[non_exhaustive]
 </span><span class="kw">pub enum </span>RunError {
     <span class="attr">#[snafu(transparent)]
-    </span>SendPacket { source: SendPacketError },
+    </span>ForwardPacket { source: ForwardPacketError },
     <span class="attr">#[snafu(display(<span class="string">"Flush"</span>))]
     </span>Flush {
         <span class="attr">#[snafu(implicit)]
@@ -1381,7 +1413,11 @@
         <span class="kw">match </span>frame {
             Frame::SendPacket { dst_key, packet } =&gt; {
                 <span class="kw">let </span>packet_len = packet.len();
-                <span class="self">self</span>.handle_frame_send_packet(dst_key, packet)<span class="question-mark">?</span>;
+                <span class="kw">if let </span><span class="prelude-val">Err</span>(err @ ForwardPacketError { .. }) =
+                    <span class="self">self</span>.handle_frame_send_packet(dst_key, packet)
+                {
+                    <span class="macro">warn!</span>(<span class="string">"failed to handle send packet frame: {err:#}"</span>);
+                }
                 <span class="self">self</span>.metrics.bytes_recv.inc_by(packet_len <span class="kw">as </span>u64);
             }
             Frame::Ping { data } =&gt; {
@@ -1401,7 +1437,7 @@
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">fn </span>handle_frame_send_packet(<span class="kw-2">&amp;</span><span class="self">self</span>, dst: NodeId, data: Bytes) -&gt; <span class="prelude-ty">Result</span>&lt;(), SendPacketError&gt; {
+    <span class="kw">fn </span>handle_frame_send_packet(<span class="kw-2">&amp;</span><span class="self">self</span>, dst: NodeId, data: Bytes) -&gt; <span class="prelude-ty">Result</span>&lt;(), ForwardPacketError&gt; {
         <span class="kw">if </span>disco::looks_like_disco_wrapper(<span class="kw-2">&amp;</span>data) {
             <span class="self">self</span>.metrics.disco_packets_recv.inc();
             <span class="self">self</span>.clients
@@ -1412,6 +1448,36 @@
                 .send_packet(dst, data, <span class="self">self</span>.node_id, <span class="kw-2">&amp;</span><span class="self">self</span>.metrics)<span class="question-mark">?</span>;
         }
         <span class="prelude-val">Ok</span>(())
+    }
+}
+
+<span class="attr">#[derive(Debug)]
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>PacketScope {
+    Disco,
+    Data,
+}
+
+<span class="attr">#[derive(Debug)]
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>SendError {
+    Full,
+    Closed,
+}
+
+<span class="attr">#[derive(Debug, Snafu)]
+#[snafu(display(<span class="string">"failed to forward {scope:?} packet: {reason:?}"</span>))]
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>ForwardPacketError {
+    scope: PacketScope,
+    reason: SendError,
+    backtrace: <span class="prelude-ty">Option</span>&lt;snafu::Backtrace&gt;,
+}
+
+<span class="kw">impl </span>ForwardPacketError {
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new(scope: PacketScope, reason: SendError) -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{
+            scope,
+            reason,
+            backtrace: GenerateImplicitData::generate(),
+        }
     }
 }
 

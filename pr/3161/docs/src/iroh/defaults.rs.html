@@ -182,7 +182,7 @@
 
     <span class="doccomment">/// Get the default [`RelayMap`].
     </span><span class="kw">pub fn </span>default_relay_map() -&gt; RelayMap {
-        RelayMap::from_nodes([
+        RelayMap::from_iter([
             default_na_relay_node(),
             default_eu_relay_node(),
             default_ap_relay_node(),
@@ -249,7 +249,7 @@
 
     <span class="doccomment">/// Get the default [`RelayMap`].
     </span><span class="kw">pub fn </span>default_relay_map() -&gt; RelayMap {
-        RelayMap::from_nodes([default_na_relay_node(), default_eu_relay_node()])
+        RelayMap::from_iter([default_na_relay_node(), default_eu_relay_node()])
     }
 
     <span class="doccomment">/// Get the default [`RelayNode`] for NA.

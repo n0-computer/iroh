@@ -1916,7 +1916,12 @@
 <a href="#1915" id="1915">1915</a>
 <a href="#1916" id="1916">1916</a>
 <a href="#1917" id="1917">1917</a>
-<a href="#1918" id="1918">1918</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
+<a href="#1918" id="1918">1918</a>
+<a href="#1919" id="1919">1919</a>
+<a href="#1920" id="1920">1920</a>
+<a href="#1921" id="1921">1921</a>
+<a href="#1922" id="1922">1922</a>
+<a href="#1923" id="1923">1923</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
 //!
 //! It is implemented as an actor with [`Client`] as handle.
 //!
@@ -3533,6 +3538,8 @@
         <span class="kw">let </span>(_server_b, relay_b) = test_utils::relay().<span class="kw">await</span>;
 
         <span class="kw">let </span><span class="kw-2">mut </span>report = Report::default();
+        <span class="kw">let </span>relay_a = Arc::new(relay_a);
+        <span class="kw">let </span>relay_b = Arc::new(relay_b);
 
         <span class="comment">// A STUN IPv4 probe from the the first relay server.
         </span><span class="kw">let </span>probe_report_a = ProbeReport {
@@ -3617,6 +3624,8 @@
     </span><span class="kw">async fn </span>test_update_report_icmp() {
         <span class="kw">let </span>(_server_a, relay_a) = test_utils::relay().<span class="kw">await</span>;
         <span class="kw">let </span>(_server_b, relay_b) = test_utils::relay().<span class="kw">await</span>;
+        <span class="kw">let </span>relay_a = Arc::new(relay_a);
+        <span class="kw">let </span>relay_b = Arc::new(relay_b);
 
         <span class="kw">let </span><span class="kw-2">mut </span>report = Report::default();
 
@@ -3730,7 +3739,7 @@
         <span class="kw">let </span>addr = server.stun_addr().expect(<span class="string">"test relay serves stun"</span>);
         <span class="kw">let </span>probe = Probe::IcmpV4 {
             delay: Duration::from_secs(<span class="number">0</span>),
-            node,
+            node: Arc::new(node),
         };
 
         <span class="comment">// A single ICMP packet might get lost.  Try several and take the first.
@@ -3796,6 +3805,7 @@
     #[traced_test]
     </span><span class="kw">async fn </span>test_quic_probe() -&gt; TestResult {
         <span class="kw">let </span>(server, relay) = test_utils::relay().<span class="kw">await</span>;
+        <span class="kw">let </span>relay = Arc::new(relay);
         <span class="kw">let </span>client_config = iroh_relay::client::make_dangerous_client_config();
         <span class="kw">let </span>ep = quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), <span class="number">0</span>)).e()<span class="question-mark">?</span>;
         <span class="kw">let </span>client_addr = ep.local_addr().e()<span class="question-mark">?</span>;
@@ -3809,7 +3819,7 @@
         <span class="kw">let </span>port = server.quic_addr().unwrap().port();
         <span class="kw">let </span>probe = Probe::QuicIpv4 {
             delay: Duration::from_secs(<span class="number">0</span>),
-            node: relay.clone(),
+            node: relay,
         };
         <span class="kw">let </span>probe = <span class="kw">match </span>run_quic_probe(
             quic_addr_disc,
