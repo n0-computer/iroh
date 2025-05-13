@@ -357,13 +357,11 @@ impl<T: Clone + Eq + std::fmt::Debug, W: Watcher<Value = T>> Watcher for Join<T,
         &mut self,
         cx: &mut task::Context<'_>,
     ) -> Poll<Result<Self::Value, Disconnected>> {
-        dbg!("poll_updated");
         let mut new_value = None;
         for (i, watcher) in self.watchers.iter_mut().enumerate() {
             match watcher.poll_updated(cx) {
                 Poll::Pending => {}
                 Poll::Ready(Ok(value)) => {
-                    dbg!("new value", i);
                     new_value.replace((i, value));
                     break;
                 }
@@ -371,7 +369,6 @@ impl<T: Clone + Eq + std::fmt::Debug, W: Watcher<Value = T>> Watcher for Join<T,
             }
         }
 
-        dbg!(&new_value);
         if let Some((j, new_value)) = new_value {
             let mut new = Vec::with_capacity(self.watchers.len());
             for (i, watcher) in self.watchers.iter().enumerate() {
@@ -381,7 +378,6 @@ impl<T: Clone + Eq + std::fmt::Debug, W: Watcher<Value = T>> Watcher for Join<T,
                     new.push(new_value.clone());
                 }
             }
-            dbg!(&new);
             Poll::Ready(Ok(new))
         } else {
             Poll::Pending
@@ -625,7 +621,7 @@ where
         if let Some(value) = self.as_mut().initial.take() {
             return Poll::Ready(Some(value));
         }
-        match dbg!(self.as_mut().watcher.poll_updated(cx)) {
+        match self.as_mut().watcher.poll_updated(cx) {
             Poll::Ready(Ok(value)) => Poll::Ready(Some(value)),
             Poll::Ready(Err(Disconnected)) => Poll::Ready(None),
             Poll::Pending => Poll::Pending,
@@ -911,16 +907,8 @@ mod tests {
 
         let ab = Join::new([a.watch(), b.watch()].into_iter());
 
-        let mut stream = ab.clone().stream();
-        let handle = tokio::task::spawn(async move {
-            let mut values = Vec::new();
-            while values.len() < 5 {
-                let value = stream.next().await.unwrap();
-                dbg!(&value, values.len());
-                values.push(value);
-            }
-            values
-        });
+        let stream = ab.clone().stream();
+        let handle = tokio::task::spawn(async move { stream.take(5).collect::<Vec<_>>().await });
 
         // get
         assert_eq!(ab.get().unwrap(), vec![1, 1]);
