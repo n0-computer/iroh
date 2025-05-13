@@ -910,13 +910,15 @@ mod tests {
 
         let ab = Join::new([a.watch(), b.watch()].into_iter());
 
-        let stream = ab.clone().stream();
+        let mut stream = ab.clone().stream();
         let handle = tokio::task::spawn(async move {
-            let values: Vec<Vec<u8>> = stream.collect::<Vec<Vec<u8>>>().await;
-            assert_eq!(
-                values,
-                vec![vec![1, 1], vec![2, 1], vec![2, 3], vec![3, 3], vec![3, 4]]
-            );
+            let mut values = Vec::new();
+            while values.len() < 5 {
+                let value = stream.next().await.unwrap();
+                dbg!(&value, values.len());
+                values.push(value);
+            }
+            values
         });
 
         // get
@@ -929,16 +931,15 @@ mod tests {
         assert_eq!(ab.get().unwrap(), vec![2, 3]);
 
         a.set(3u8).unwrap();
-        tokio::time::sleep(Duration::from_millis(50)).await;
         b.set(4u8).unwrap();
 
-        drop(ab); // cancel the stream
-        drop(a);
-        drop(b);
-
-        tokio::time::timeout(Duration::from_secs(10), handle)
+        let values = tokio::time::timeout(Duration::from_secs(5), handle)
             .await
             .unwrap()
-            .unwrap()
+            .unwrap();
+        assert_eq!(
+            values,
+            vec![vec![1, 1], vec![2, 1], vec![2, 3], vec![3, 3], vec![3, 4]]
+        );
     }
 }
