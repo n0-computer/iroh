@@ -523,7 +523,7 @@
             </span>.ip
             .iter()
             .map(|t| t.local_addr_watch().map(Addr::from).expect(<span class="string">"disconnected"</span>));
-        <span class="kw">let </span>ips = watchable::Join::new(ips).expect(<span class="string">"disconnected"</span>);
+        <span class="kw">let </span>ips = watchable::Join::new(ips);
 
         <span class="kw">let </span>relays = <span class="self">self</span>.relay.iter().map(|t| {
             t.local_addr_watch()
