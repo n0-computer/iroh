@@ -406,11 +406,11 @@
 
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">mod </span>ip;
-<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>relay;
+<span class="kw">mod </span>relay;
 
 <span class="attr">#[cfg(not(wasm_browser))]
-</span><span class="kw">pub use </span><span class="self">self</span>::ip::IpTransport;
-<span class="kw">pub use </span><span class="self">self</span>::relay::RelayTransport;
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span><span class="self">self</span>::ip::IpTransport;
+<span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span><span class="self">self</span>::relay::{RelayActorConfig, RelayTransport};
 <span class="kw">use </span><span class="kw">super</span>::NetInfo;
 <span class="kw">use </span><span class="kw">crate</span>::watchable::{<span class="self">self</span>, Watcher};
 
@@ -542,7 +542,7 @@
                 .map(<span class="kw">move </span>|t| t.map(|(url, id)| Addr::RelayUrl(url, id)))
                 .expect(<span class="string">"disconnected"</span>)
         });
-        watchable::JoinOpt::new(relays).expect(<span class="string">"disconnected"</span>)
+        watchable::JoinOpt::new(relays)
     }
 
     <span class="doccomment">/// Returns the bound addresses for IP based transports
