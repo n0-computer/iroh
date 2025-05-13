@@ -6,7 +6,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use anyhow::{Context, Result};
+use n0_snafu::{format_err, TestResult as Result, TestResultExt};
 use pkarr::{SignedPacket, Timestamp};
 use redb::{
     backends::InMemoryBackend, Database, MultimapTableDefinition, ReadableTable, TableDefinition,
@@ -109,7 +109,7 @@ impl Actor {
         }
     }
 
-    async fn run0(&mut self) -> anyhow::Result<()> {
+    async fn run0(&mut self) -> Result<()> {
         let expiry_us = self.options.eviction.as_micros() as u64;
         while let Some(msg) = self.recv.recv().await {
             // if we get a snapshot message here we don't need to do a write transaction
@@ -122,15 +122,15 @@ impl Actor {
             };
             trace!("batch");
             self.recv.push_back(msg).unwrap();
-            let transaction = self.db.begin_write()?;
-            let mut tables = Tables::new(&transaction)?;
+            let transaction = self.db.begin_write().context("tx begin")?;
+            let mut tables = Tables::new(&transaction).context("new tables")?;
             let timeout = tokio::time::sleep(self.options.max_batch_time);
             tokio::pin!(timeout);
             for _ in 0..self.options.max_batch_size {
                 tokio::select! {
                     _ = self.cancel.cancelled() => {
                         drop(tables);
-                        transaction.commit()?;
+                        transaction.commit().context("tx commit")?;
                         return Ok(());
                     }
                     _ = &mut timeout => break,
@@ -157,15 +157,17 @@ impl Actor {
                                         continue;
                                     } else {
                                         // remove the old packet from the update time index
-                                        tables.update_time.remove(&existing.timestamp().to_bytes(), key.as_bytes())?;
+                                        tables.update_time.remove(&existing.timestamp().to_bytes(), key.as_bytes()).context("remove")?;
                                         true
                                     }
                                 } else {
                                     false
                                 };
                                 let value = packet.serialize();
-                                tables.signed_packets.insert(key.as_bytes(), &value[..])?;
-                                tables.update_time.insert(&packet.timestamp().to_bytes(), key.as_bytes())?;
+                                tables.signed_packets
+                                    .insert(key.as_bytes(), &value[..]).context("insert packet")?;
+                                tables.update_time
+                                     .insert(&packet.timestamp().to_bytes(), key.as_bytes()).context("insert timestamp")?;
                                 if replaced {
                                     self.metrics.store_packets_updated.inc();
                                 } else {
@@ -175,9 +177,9 @@ impl Actor {
                             }
                             Message::Remove { key, res } => {
                                 trace!("remove {}", key);
-                                let updated = if let Some(row) = tables.signed_packets.remove(key.as_bytes())? {
-                                    let packet = SignedPacket::deserialize(row.value())?;
-                                    tables.update_time.remove(&packet.timestamp().to_bytes(), key.as_bytes())?;
+                                let updated = if let Some(row) = tables.signed_packets.remove(key.as_bytes()).context("remove packet")? {
+                                    let packet = SignedPacket::deserialize(row.value()).context("deserialize packet")?;
+                                    tables.update_time.remove(&packet.timestamp().to_bytes(), key.as_bytes()).context("remove timestamp")?;
                                     self.metrics.store_packets_removed.inc();
                                     true
                                 } else {
@@ -194,17 +196,17 @@ impl Actor {
                                 if let Some(packet) = get_packet(&tables.signed_packets, &key)? {
                                     let expired = Timestamp::now() - expiry_us;
                                     if packet.timestamp() < expired {
-                                        tables.update_time.remove(&time.to_bytes(), key.as_bytes())?;
-                                        let _ = tables.signed_packets.remove(key.as_bytes())?;
+                                        tables.update_time.remove(&time.to_bytes(), key.as_bytes()).context("remove")?;
+                                        let _ = tables.signed_packets.remove(key.as_bytes()).context("remove")?;
                                         self.metrics.store_packets_expired.inc();
                                         debug!("removed expired packet {key}");
                                     } else {
                                         debug!("packet {key} is no longer expired, removing obsolete expiry entry");
-                                        tables.update_time.remove(&time.to_bytes(), key.as_bytes())?;
+                                        tables.update_time.remove(&time.to_bytes(), key.as_bytes()).context("remove")?;
                                     }
                                 } else {
                                     debug!("expired packet {key} not found, remove from expiry table");
-                                    tables.update_time.remove(&time.to_bytes(), key.as_bytes())?;
+                                    tables.update_time.remove(&time.to_bytes(), key.as_bytes()).context("remove")?;
                                 }
                             }
                         }
@@ -212,7 +214,7 @@ impl Actor {
                 }
             }
             drop(tables);
-            transaction.commit()?;
+            transaction.commit().context("tx commit")?;
         }
         Ok(())
     }
@@ -246,10 +248,14 @@ pub(super) struct Snapshot {
 
 impl Snapshot {
     pub fn new(db: &Database) -> Result<Self> {
-        let tx = db.begin_read()?;
+        let tx = db.begin_read().context("tx begin")?;
         Ok(Self {
-            signed_packets: tx.open_table(SIGNED_PACKETS_TABLE)?,
-            update_time: tx.open_multimap_table(UPDATE_TIME_TABLE)?,
+            signed_packets: tx
+                .open_table(SIGNED_PACKETS_TABLE)
+                .context("open table signed_packets")?,
+            update_time: tx
+                .open_multimap_table(UPDATE_TIME_TABLE)
+                .context("open table update_time")?,
         })
     }
 }
@@ -278,15 +284,17 @@ impl SignedPacketStore {
 
     pub fn in_memory(options: Options, metrics: Arc<Metrics>) -> Result<Self> {
         info!("using in-memory packet database");
-        let db = Database::builder().create_with_backend(InMemoryBackend::new())?;
+        let db = Database::builder()
+            .create_with_backend(InMemoryBackend::new())
+            .context("create db")?;
         Self::open(db, options, metrics)
     }
 
     pub fn open(db: Database, options: Options, metrics: Arc<Metrics>) -> Result<Self> {
         // create tables
-        let write_tx = db.begin_write()?;
-        let _ = Tables::new(&write_tx)?;
-        write_tx.commit()?;
+        let write_tx = db.begin_write().context("tx begin")?;
+        let _ = Tables::new(&write_tx).context("tables new")?;
+        write_tx.commit().context("tx commit")?;
         let (send, recv) = mpsc::channel(1024);
         let send2 = send.clone();
         let cancel = CancellationToken::new();
@@ -315,22 +323,29 @@ impl SignedPacketStore {
 
     pub async fn upsert(&self, packet: SignedPacket) -> Result<bool> {
         let (tx, rx) = oneshot::channel();
-        self.send.send(Message::Upsert { packet, res: tx }).await?;
-        Ok(rx.await?)
+        self.send
+            .send(Message::Upsert { packet, res: tx })
+            .await
+            .context("send")?;
+        rx.await.context("recv")
     }
 
     pub async fn get(&self, key: &PublicKeyBytes) -> Result<Option<SignedPacket>> {
         let (tx, rx) = oneshot::channel();
-        self.send.send(Message::Get { key: *key, res: tx }).await?;
-        Ok(rx.await?)
+        self.send
+            .send(Message::Get { key: *key, res: tx })
+            .await
+            .context("send")?;
+        rx.await.context("recv")
     }
 
     pub async fn remove(&self, key: &PublicKeyBytes) -> Result<bool> {
         let (tx, rx) = oneshot::channel();
         self.send
             .send(Message::Remove { key: *key, res: tx })
-            .await?;
-        Ok(rx.await?)
+            .await
+            .context("send")?;
+        rx.await.context("recv")
     }
 }
 
@@ -354,7 +369,7 @@ fn get_packet(
             buf.extend(data);
             match SignedPacket::deserialize(&buf) {
                 Ok(packet) => Ok(Some(packet)),
-                Err(err2) => Err(anyhow::anyhow!("Failed to decode as pkarr v3: {err:#}. Also failed to decode as pkarr v2: {err2:#}"))
+                Err(err2) => Err(format_err!("Failed to decode as pkarr v3: {err:#}. Also failed to decode as pkarr v2: {err2:#}"))
             }
         }
     }
@@ -375,20 +390,23 @@ async fn evict_task(send: mpsc::Sender<Message>, options: Options, cancel: Cance
 }
 
 /// Periodically check for expired packets and remove them.
-async fn evict_task_inner(send: mpsc::Sender<Message>, options: Options) -> anyhow::Result<()> {
+async fn evict_task_inner(send: mpsc::Sender<Message>, options: Options) -> Result<()> {
     let expiry_us = options.eviction.as_micros() as u64;
     loop {
         let (tx, rx) = oneshot::channel();
         let _ = send.send(Message::Snapshot { res: tx }).await.ok();
         // if we can't get the snapshot we exit the loop, main actor dead
-        let Ok(snapshot) = rx.await else {
-            anyhow::bail!("failed to get snapshot");
-        };
+        let snapshot = rx.await.context("failed to get snapshot")?;
+
         let expired = Timestamp::now() - expiry_us;
         trace!("evicting packets older than {}", fmt_time(expired));
         // if getting the range fails we exit the loop and shut down
         // if individual reads fail we log the error and limp on
-        for item in snapshot.update_time.range(..expired.to_bytes())? {
+        for item in snapshot
+            .update_time
+            .range(..expired.to_bytes())
+            .context("read update_time")?
+        {
             let (time, keys) = match item {
                 Ok(v) => v,
                 Err(e) => {
@@ -411,8 +429,11 @@ async fn evict_task_inner(send: mpsc::Sender<Message>, options: Options) -> anyh
                     }
                 };
                 let key = PublicKeyBytes::new(key.value());
+
                 debug!("evicting expired packet {} {}", fmt_time(time), key);
-                send.send(Message::CheckExpired { time, key }).await?;
+                send.send(Message::CheckExpired { time, key })
+                    .await
+                    .context("send")?;
             }
         }
         // sleep for the eviction interval so we don't constantly check
@@ -440,7 +461,7 @@ impl IoThread {
         F: FnOnce() -> Fut + Send + 'static,
         Fut: Future<Output = ()>,
     {
-        let rt = tokio::runtime::Handle::try_current()?;
+        let rt = tokio::runtime::Handle::try_current().context("get tokio handle")?;
         let handle = std::thread::Builder::new()
             .name(name.into())
             .spawn(move || rt.block_on(f()))

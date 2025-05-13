@@ -41,7 +41,7 @@ use super::{Discovery, DiscoveryItem, NodeData, NodeInfo};
 /// use iroh_base::SecretKey;
 ///
 /// # #[tokio::main]
-/// # async fn main() -> anyhow::Result<()> {
+/// # async fn main() -> n0_snafu::TestResult<()> {
 /// // Create the discovery service and endpoint.
 /// let discovery = StaticProvider::new();
 ///
@@ -108,7 +108,7 @@ impl StaticProvider {
     /// #     Vec::new()
     /// # }
     /// # #[tokio::main]
-    /// # async fn main() -> anyhow::Result<()> {
+    /// # async fn main() -> n0_snafu::TestResult<()> {
     /// // get addrs from somewhere
     /// let addrs = get_addrs();
     ///
@@ -193,7 +193,7 @@ impl Discovery for StaticProvider {
         &self,
         _endpoint: crate::Endpoint,
         node_id: NodeId,
-    ) -> Option<BoxStream<anyhow::Result<super::DiscoveryItem>>> {
+    ) -> Option<BoxStream<Result<super::DiscoveryItem, super::DiscoveryError>>> {
         let guard = self.nodes.read().expect("poisoned");
         let info = guard.get(&node_id);
         match info {
@@ -217,9 +217,8 @@ impl Discovery for StaticProvider {
 
 #[cfg(test)]
 mod tests {
-    use anyhow::Context;
     use iroh_base::{NodeAddr, SecretKey};
-    use testresult::TestResult;
+    use n0_snafu::{TestResult, TestResultExt};
 
     use super::*;
     use crate::Endpoint;

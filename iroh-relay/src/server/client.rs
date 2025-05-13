@@ -5,11 +5,12 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{bail, Context, Result};
 use bytes::Bytes;
 use iroh_base::NodeId;
 use n0_future::{FutureExt, Sink, SinkExt, Stream, StreamExt};
+use nested_enum_utils::common_fields;
 use rand::Rng;
+use snafu::{Backtrace, GenerateImplicitData, Snafu};
 use time::{Date, OffsetDateTime};
 use tokio::{
     sync::mpsc::{self, error::TrySendError},
@@ -180,6 +181,96 @@ impl Client {
     }
 }
 
+/// Handle frame error
+#[common_fields({
+    backtrace: Option<Backtrace>,
+})]
+#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+pub enum HandleFrameError {
+    #[snafu(transparent)]
+    ForwardPacket { source: ForwardPacketError },
+    #[snafu(transparent)]
+    Streams { source: super::streams::Error },
+    #[snafu(display("Stream terminated"))]
+    StreamTerminated {
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
+    #[snafu(transparent)]
+    Relay { source: super::protos::relay::Error },
+    #[snafu(display("Server issue: {problem:?}"))]
+    Health {
+        problem: Bytes,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
+}
+
+/// Run error
+#[common_fields({
+    backtrace: Option<Backtrace>,
+})]
+#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+pub enum RunError {
+    #[snafu(transparent)]
+    ForwardPacket { source: ForwardPacketError },
+    #[snafu(display("Flush"))]
+    Flush {
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
+    #[snafu(transparent)]
+    HandleFrame { source: HandleFrameError },
+    #[snafu(display("Server.disco_send_queue dropped"))]
+    DiscoSendQueuePacketDrop {
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
+    #[snafu(display("Failed to send disco packet"))]
+    DiscoPacketSend {
+        source: crate::protos::relay::Error,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
+    #[snafu(display("Server.send_queue dropped"))]
+    SendQueuePacketDrop {
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
+    #[snafu(display("Failed to send packet"))]
+    PacketSend {
+        source: crate::protos::relay::Error,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
+    #[snafu(display("Server.node_gone dropped"))]
+    NodeGoneDrop {
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
+    #[snafu(display("NodeGone write frame failed"))]
+    NodeGoneWriteFrame {
+        source: crate::protos::relay::Error,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
+    #[snafu(display("Keep alive write frame failed"))]
+    KeepAliveWriteFrame {
+        source: crate::protos::relay::Error,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
+    #[snafu(display("Tick flush"))]
+    TickFlush {
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
+}
+
 /// Manages all the reads and writes to this client. It periodically sends a `KEEP_ALIVE`
 /// message to the client to keep the connection alive.
 ///
@@ -243,7 +334,9 @@ impl Actor {
         self.metrics.disconnects.inc();
     }
 
-    async fn run_inner(&mut self, done: CancellationToken) -> Result<()> {
+    async fn run_inner(&mut self, done: CancellationToken) -> Result<(), RunError> {
+        use snafu::ResultExt;
+
         // Add some jitter to ping pong interactions, to avoid all pings being sent at the same time
         let next_interval = || {
             let random_secs = rand::rngs::OsRng.gen_range(1..=5);
@@ -262,29 +355,29 @@ impl Actor {
                 _ = done.cancelled() => {
                     trace!("actor loop cancelled, exiting");
                     // final flush
-                    self.stream.flush().await.context("flush")?;
+                    self.stream.flush().await.map_err(|_| FlushSnafu.build())?;
                     break;
                 }
                 maybe_frame = self.stream.next() => {
-                    self.handle_frame(maybe_frame).await.context("handle read")?;
+                    self.handle_frame(maybe_frame).await?;
                     // reset the ping interval, we just received a message
                     ping_interval.reset();
                 }
                 // First priority, disco packets
                 packet = self.disco_send_queue.recv() => {
-                    let packet = packet.context("Server.disco_send_queue dropped")?;
-                    self.send_disco_packet(packet).await.context("send packet")?;
+                    let packet = packet.ok_or(DiscoSendQueuePacketDropSnafu.build())?;
+                    self.send_disco_packet(packet).await.context(DiscoPacketSendSnafu)?;
                 }
                 // Second priority, sending regular packets
                 packet = self.send_queue.recv() => {
-                    let packet = packet.context("Server.send_queue dropped")?;
-                    self.send_packet(packet).await.context("send packet")?;
+                    let packet = packet.ok_or(SendQueuePacketDropSnafu.build())?;
+                    self.send_packet(packet).await.context(PacketSendSnafu)?;
                 }
                 // Last priority, sending left nodes
                 node_id = self.node_gone.recv() => {
-                    let node_id = node_id.context("Server.node_gone dropped")?;
+                    let node_id = node_id.ok_or(NodeGoneDropSnafu.build())?;
                     trace!("node_id gone: {:?}", node_id);
-                    self.write_frame(Frame::NodeGone { node_id }).await?;
+                    self.write_frame(Frame::NodeGone { node_id }).await.context(NodeGoneWriteFrameSnafu)?;
                 }
                 _ = self.ping_tracker.timeout() => {
                     trace!("pong timed out");
@@ -295,11 +388,14 @@ impl Actor {
                     // new interval
                     ping_interval.reset_after(next_interval());
                     let data = self.ping_tracker.new_ping();
-                    self.write_frame(Frame::Ping { data }).await?;
+                    self.write_frame(Frame::Ping { data }).await.context(KeepAliveWriteFrameSnafu)?;
                 }
             }
 
-            self.stream.flush().await.context("tick flush")?;
+            self.stream
+                .flush()
+                .await
+                .map_err(|_| TickFlushSnafu.build())?;
         }
         Ok(())
     }
@@ -307,7 +403,7 @@ impl Actor {
     /// Writes the given frame to the connection.
     ///
     /// Errors if the send does not happen within the `timeout` duration
-    async fn write_frame(&mut self, frame: Frame) -> Result<()> {
+    async fn write_frame(&mut self, frame: Frame) -> Result<(), crate::protos::relay::Error> {
         write_frame(&mut self.stream, frame, Some(self.timeout)).await
     }
 
@@ -315,7 +411,7 @@ impl Actor {
     ///
     /// Errors if the send does not happen within the `timeout` duration
     /// Does not flush.
-    async fn send_raw(&mut self, packet: Packet) -> Result<()> {
+    async fn send_raw(&mut self, packet: Packet) -> Result<(), crate::protos::relay::Error> {
         let src_key = packet.src;
         let content = packet.data;
 
@@ -326,7 +422,7 @@ impl Actor {
             .await
     }
 
-    async fn send_packet(&mut self, packet: Packet) -> Result<()> {
+    async fn send_packet(&mut self, packet: Packet) -> Result<(), crate::protos::relay::Error> {
         trace!("send packet");
         match self.send_raw(packet).await {
             Ok(()) => {
@@ -340,7 +436,10 @@ impl Actor {
         }
     }
 
-    async fn send_disco_packet(&mut self, packet: Packet) -> Result<()> {
+    async fn send_disco_packet(
+        &mut self,
+        packet: Packet,
+    ) -> Result<(), crate::protos::relay::Error> {
         trace!("send disco packet");
         match self.send_raw(packet).await {
             Ok(()) => {
@@ -355,11 +454,14 @@ impl Actor {
     }
 
     /// Handles frame read results.
-    async fn handle_frame(&mut self, maybe_frame: Option<Result<Frame>>) -> Result<()> {
+    async fn handle_frame(
+        &mut self,
+        maybe_frame: Option<Result<Frame, super::streams::Error>>,
+    ) -> Result<(), HandleFrameError> {
         trace!(?maybe_frame, "handle incoming frame");
         let frame = match maybe_frame {
             Some(frame) => frame?,
-            None => anyhow::bail!("stream terminated"),
+            None => return Err(StreamTerminatedSnafu.build()),
         };
 
         match frame {
@@ -381,9 +483,7 @@ impl Actor {
             Frame::Pong { data } => {
                 self.ping_tracker.pong_received(data);
             }
-            Frame::Health { problem } => {
-                bail!("server issue: {:?}", problem);
-            }
+            Frame::Health { problem } => return Err(HealthSnafu { problem }.build()),
             _ => {
                 self.metrics.unknown_frames.inc();
             }
@@ -417,16 +517,21 @@ pub(crate) enum SendError {
     Closed,
 }
 
-#[derive(Debug, thiserror::Error)]
-#[error("failed to forward {scope:?} packet: {reason:?}")]
+#[derive(Debug, Snafu)]
+#[snafu(display("failed to forward {scope:?} packet: {reason:?}"))]
 pub(crate) struct ForwardPacketError {
     scope: PacketScope,
     reason: SendError,
+    backtrace: Option<snafu::Backtrace>,
 }
 
 impl ForwardPacketError {
     pub(crate) fn new(scope: PacketScope, reason: SendError) -> Self {
-        Self { scope, reason }
+        Self {
+            scope,
+            reason,
+            backtrace: GenerateImplicitData::generate(),
+        }
     }
 }
 
@@ -453,7 +558,7 @@ enum State {
         /// Future which will complete when the item can be yielded.
         delay: Pin<Box<dyn Future<Output = ()> + Send + Sync>>,
         /// Item to yield when the `delay` future completes.
-        item: anyhow::Result<Frame>,
+        item: Result<Frame, super::streams::Error>,
     },
     Ready,
 }
@@ -497,7 +602,7 @@ impl RateLimitedRelayedStream {
 }
 
 impl Stream for RateLimitedRelayedStream {
-    type Item = anyhow::Result<Frame>;
+    type Item = Result<Frame, super::streams::Error>;
 
     #[instrument(name = "rate_limited_relayed_stream", skip_all)]
     fn poll_next(
@@ -647,7 +752,7 @@ impl ClientCounter {
 mod tests {
     use bytes::Bytes;
     use iroh_base::SecretKey;
-    use testresult::TestResult;
+    use n0_snafu::{TestResult, TestResultExt};
     use tokio_util::codec::Framed;
     use tracing::info;
     use tracing_test::traced_test;
@@ -660,7 +765,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_client_actor_basic() -> Result<()> {
+    async fn test_client_actor_basic() -> TestResult {
         let (send_queue_s, send_queue_r) = mpsc::channel(10);
         let (disco_send_queue_s, disco_send_queue_r) = mpsc::channel(10);
         let (peer_gone_s, peer_gone_r) = mpsc::channel(10);
@@ -701,7 +806,7 @@ mod tests {
             src: node_id,
             data: Bytes::from(&data[..]),
         };
-        send_queue_s.send(packet.clone()).await?;
+        send_queue_s.send(packet.clone()).await.context("send")?;
         let frame = recv_frame(FrameType::RecvPacket, &mut io_rw).await?;
         assert_eq!(
             frame,
@@ -713,7 +818,10 @@ mod tests {
 
         // send disco packet
         println!("  send disco packet");
-        disco_send_queue_s.send(packet.clone()).await?;
+        disco_send_queue_s
+            .send(packet.clone())
+            .await
+            .context("send")?;
         let frame = recv_frame(FrameType::RecvPacket, &mut io_rw).await?;
         assert_eq!(
             frame,
@@ -725,7 +833,7 @@ mod tests {
 
         // send peer_gone
         println!("send peer gone");
-        peer_gone_s.send(node_id).await?;
+        peer_gone_s.send(node_id).await.context("send")?;
         let frame = recv_frame(FrameType::PeerGone, &mut io_rw).await?;
         assert_eq!(frame, Frame::NodeGone { node_id });
 
@@ -751,7 +859,8 @@ mod tests {
                 dst_key: target,
                 packet: Bytes::from_static(data),
             })
-            .await?;
+            .await
+            .context("send")?;
 
         // send disco packet
         println!("  send disco packet");
@@ -764,10 +873,11 @@ mod tests {
                 dst_key: target,
                 packet: disco_data.clone().into(),
             })
-            .await?;
+            .await
+            .context("send")?;
 
         done.cancel();
-        handle.await?;
+        handle.await.context("join")?;
         Ok(())
     }
 
@@ -778,7 +888,7 @@ mod tests {
         const MAX_FRAMES: u32 = 100;
 
         // Rate limiter allowing LIMIT bytes/s
-        let quota = governor::Quota::per_second(NonZeroU32::try_from(LIMIT)?);
+        let quota = governor::Quota::per_second(NonZeroU32::try_from(LIMIT).unwrap());
         let limiter = governor::RateLimiter::direct(quota);
 
         // Build the rate limited stream.
@@ -802,8 +912,8 @@ mod tests {
 
         // Send a frame, it should arrive.
         info!("-- send packet");
-        frame_writer.send(frame.clone()).await?;
-        frame_writer.flush().await?;
+        frame_writer.send(frame.clone()).await.context("send")?;
+        frame_writer.flush().await.context("flush")?;
         let recv_frame = tokio::time::timeout(Duration::from_millis(500), stream.next())
             .await
             .expect("timeout")
@@ -813,8 +923,8 @@ mod tests {
 
         // Next frame does not arrive.
         info!("-- send packet");
-        frame_writer.send(frame.clone()).await?;
-        frame_writer.flush().await?;
+        frame_writer.send(frame.clone()).await.context("send")?;
+        frame_writer.flush().await.context("flush")?;
         let res = tokio::time::timeout(Duration::from_millis(100), stream.next()).await;
         assert!(res.is_err(), "expecting a timeout");
         info!("-- timeout happened");
