@@ -394,7 +394,27 @@
 <a href="#393" id="393">393</a>
 <a href="#394" id="394">394</a>
 <a href="#395" id="395">395</a>
-<a href="#396" id="396">396</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#396" id="396">396</a>
+<a href="#397" id="397">397</a>
+<a href="#398" id="398">398</a>
+<a href="#399" id="399">399</a>
+<a href="#400" id="400">400</a>
+<a href="#401" id="401">401</a>
+<a href="#402" id="402">402</a>
+<a href="#403" id="403">403</a>
+<a href="#404" id="404">404</a>
+<a href="#405" id="405">405</a>
+<a href="#406" id="406">406</a>
+<a href="#407" id="407">407</a>
+<a href="#408" id="408">408</a>
+<a href="#409" id="409">409</a>
+<a href="#410" id="410">410</a>
+<a href="#411" id="411">411</a>
+<a href="#412" id="412">412</a>
+<a href="#413" id="413">413</a>
+<a href="#414" id="414">414</a>
+<a href="#415" id="415">415</a>
+<a href="#416" id="416">416</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     io::{<span class="self">self</span>, IoSliceMut},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     pin::Pin,
@@ -402,7 +422,7 @@
 };
 
 <span class="kw">use </span>iroh_base::{NodeId, RelayUrl};
-<span class="kw">use </span>tracing::trace;
+<span class="kw">use </span>tracing::{trace, warn};
 
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">mod </span>ip;
@@ -415,14 +435,18 @@
 <span class="kw">use </span><span class="kw">crate</span>::watchable::{<span class="self">self</span>, Watcher};
 
 <span class="attr">#[derive(Debug)]
-</span><span class="kw">pub struct </span>Transports {
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>Transports {
     <span class="attr">#[cfg(not(wasm_browser))]
     </span>ip: Vec&lt;IpTransport&gt;,
     relay: Vec&lt;RelayTransport&gt;,
 }
 
 <span class="kw">impl </span>Transports {
-    <span class="kw">pub fn </span>new(<span class="attr">#[cfg(not(wasm_browser))] </span>ip: Vec&lt;IpTransport&gt;, relay: Vec&lt;RelayTransport&gt;) -&gt; <span class="self">Self </span>{
+    <span class="doccomment">/// Create a new transports structure.
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new(
+        <span class="attr">#[cfg(not(wasm_browser))] </span>ip: Vec&lt;IpTransport&gt;,
+        relay: Vec&lt;RelayTransport&gt;,
+    ) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             <span class="attr">#[cfg(not(wasm_browser))]
             </span>ip,
@@ -430,10 +454,15 @@
         }
     }
 
-    <span class="kw">pub fn </span>poll_send(<span class="kw-2">&amp;</span><span class="self">self</span>, destination: <span class="kw-2">&amp;</span>Addr, transmit: <span class="kw-2">&amp;</span>Transmit&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
-        <span class="comment">// TODO: should this send on all, or only a single transport?
-
-        </span><span class="macro">trace!</span>(<span class="question-mark">?</span>destination, <span class="string">"sending"</span>);
+    <span class="doccomment">/// Send the given [`Transmit`] to the given [`Addr`].
+    ///
+    /// Sends on the first matching &amp; ready transport.
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>poll_send(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        destination: <span class="kw-2">&amp;</span>Addr,
+        transmit: <span class="kw-2">&amp;</span>Transmit&lt;<span class="lifetime">'_</span>&gt;,
+    ) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
+        <span class="macro">trace!</span>(<span class="question-mark">?</span>destination, <span class="string">"sending"</span>);
 
         <span class="kw">match </span>destination {
             <span class="attr">#[cfg(wasm_browser)]
@@ -482,7 +511,8 @@
         Poll::Pending
     }
 
-    <span class="kw">pub fn </span>poll_recv(
+    <span class="doccomment">/// Tries to recv data, on all available transports.
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>poll_recv(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         cx: <span class="kw-2">&amp;mut </span>Context,
         bufs: <span class="kw-2">&amp;mut </span>[IoSliceMut&lt;<span class="lifetime">'_</span>&gt;],
@@ -513,30 +543,37 @@
         Poll::Pending
     }
 
-    <span class="kw">pub fn </span>local_addrs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;Addr&gt; {
+    <span class="doccomment">/// Returns a list of all currently known local addresses.
+    ///
+    /// For IP based transports this is the [`SocketAddr`] of the socket,
+    /// for relay transports, this is the home relay.
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>local_addrs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;Addr&gt; {
         <span class="self">self</span>.local_addrs_watch().get().expect(<span class="string">"not disconnected"</span>)
     }
 
-    <span class="attr">#[cfg(not(wasm_browser))]
-    </span><span class="kw">pub fn </span>local_addrs_watch(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Watcher&lt;Value = Vec&lt;Addr&gt;&gt; + Send + Sync {
-        <span class="kw">let </span>ips = <span class="self">self
-            </span>.ip
-            .iter()
-            .map(|t| t.local_addr_watch().map(Addr::from).expect(<span class="string">"disconnected"</span>));
-        <span class="kw">let </span>ips = watchable::Join::new(ips);
+    <span class="doccomment">/// Watch for all currently known local addresses.
+    </span><span class="attr">#[cfg(not(wasm_browser))]
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>local_addrs_watch(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Watcher&lt;Value = Vec&lt;Addr&gt;&gt; + Send + Sync {
+        <span class="kw">let </span>ips = watchable::Join::new(<span class="self">self</span>.ip.iter().map(|t| t.local_addr_watch()));
+        <span class="kw">let </span>relays = watchable::Join::new(<span class="self">self</span>.relay.iter().map(|t| t.local_addr_watch()));
 
-        <span class="kw">let </span>relays = <span class="self">self</span>.relay.iter().map(|t| {
-            t.local_addr_watch()
-                .map(<span class="kw">move </span>|t| t.map(|(url, id)| Addr::RelayUrl(url, id)))
-                .expect(<span class="string">"disconnected"</span>)
-        });
-        <span class="kw">let </span>relays = watchable::JoinOpt::new(relays);
-
-        watchable::Merge2::new(ips, relays)
+        (ips, relays)
+            .map(|(ips, relays)| {
+                ips.into_iter()
+                    .map(Addr::from)
+                    .chain(
+                        relays
+                            .into_iter()
+                            .flatten()
+                            .map(|(relay_url, node_id)| Addr::RelayUrl(relay_url, node_id)),
+                    )
+                    .collect()
+            })
+            .expect(<span class="string">"disconnected"</span>)
     }
 
     <span class="attr">#[cfg(wasm_browser)]
-    </span><span class="kw">pub fn </span>local_addrs_watch(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Watcher&lt;Value = Vec&lt;Addr&gt;&gt; + Send + Sync {
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>local_addrs_watch(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Watcher&lt;Value = Vec&lt;Addr&gt;&gt; + Send + Sync {
         <span class="kw">let </span>relays = <span class="self">self</span>.relay.iter().map(|t| {
             t.local_addr_watch()
                 .map(<span class="kw">move </span>|t| t.map(|(url, id)| Addr::RelayUrl(url, id)))
@@ -547,34 +584,30 @@
 
     <span class="doccomment">/// Returns the bound addresses for IP based transports
     </span><span class="attr">#[cfg(not(wasm_browser))]
-    </span><span class="kw">pub fn </span>ip_bind_addrs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;SocketAddr&gt; {
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>ip_bind_addrs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;SocketAddr&gt; {
         <span class="self">self</span>.ip.iter().map(|t| t.bind_addr()).collect()
     }
 
     <span class="doccomment">/// Returns the bound addresses for IP based transports
     </span><span class="attr">#[cfg(not(wasm_browser))]
-    </span><span class="kw">pub fn </span>ip_local_addrs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;SocketAddr&gt; {
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>ip_local_addrs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;SocketAddr&gt; {
         <span class="self">self</span>.ip.iter().map(|t| t.local_addr()).collect()
     }
 
     <span class="attr">#[cfg(not(wasm_browser))]
-    </span><span class="kw">pub fn </span>max_transmit_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-        <span class="comment">// TODO: does this need to account for the relay transports?
-
-        </span><span class="kw">let </span>res = <span class="self">self</span>.ip.iter().map(|t| t.max_transmit_segments()).min();
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>max_transmit_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+        <span class="kw">let </span>res = <span class="self">self</span>.ip.iter().map(|t| t.max_transmit_segments()).min();
         res.unwrap_or(<span class="number">1</span>)
     }
 
     <span class="attr">#[cfg(wasm_browser)]
-    </span><span class="kw">pub fn </span>max_transmit_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>max_transmit_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
         <span class="number">1
     </span>}
 
     <span class="attr">#[cfg(not(wasm_browser))]
-    </span><span class="kw">pub fn </span>max_receive_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-        <span class="comment">// TODO: does this need to account for the relay transports?
-
-        // `max_receive_segments` controls the size of the `RecvMeta` buffer
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>max_receive_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+        <span class="comment">// `max_receive_segments` controls the size of the `RecvMeta` buffer
         // that quinn creates. Having buffers slightly bigger than necessary
         // isn't terrible, and makes sure a single socket can read the maximum
         // amount with a single poll. We considered adding these numbers instead,
@@ -586,21 +619,22 @@
     }
 
     <span class="attr">#[cfg(wasm_browser)]
-    </span><span class="kw">pub fn </span>max_receive_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>max_receive_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
         <span class="number">1
     </span>}
 
     <span class="attr">#[cfg(not(wasm_browser))]
-    </span><span class="kw">pub fn </span>may_fragment(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>may_fragment(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
         <span class="self">self</span>.ip.iter().any(|t| t.may_fragment())
     }
 
     <span class="attr">#[cfg(wasm_browser)]
-    </span><span class="kw">pub fn </span>may_fragment(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>may_fragment(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
         <span class="bool-val">false
     </span>}
 
-    <span class="kw">pub fn </span>poll_writable(<span class="kw-2">&amp;</span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>Context, addr: <span class="kw-2">&amp;</span>Addr) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
+    <span class="doccomment">/// Check if a transport is writable, aka sendable on, for the given `addr`.
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>poll_writable(<span class="kw-2">&amp;</span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>Context, addr: <span class="kw-2">&amp;</span>Addr) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
         <span class="comment">// TODO: what about multiple matches?
         </span><span class="kw">match </span>addr {
             <span class="attr">#[cfg(wasm_browser)]
@@ -628,7 +662,7 @@
         }
     }
 
-    <span class="kw">pub fn </span>create_io_poller(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Pin&lt;Box&lt;<span class="kw">dyn </span>quinn::UdpPoller&gt;&gt; {
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>create_io_poller(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Pin&lt;Box&lt;<span class="kw">dyn </span>quinn::UdpPoller&gt;&gt; {
         <span class="comment">// To do this properly the MagicSock would need a registry of pollers.  For each
         // node we would look up the poller or create one.  Then on each try_send we can
         // look up the correct poller and configure it to poll the paths it needs.
@@ -654,22 +688,28 @@
     }
 
     <span class="doccomment">/// Rebinds underlying connections, if necessary.
-    </span><span class="kw">pub fn </span>rebind(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; std::io::Result&lt;()&gt; {
-        <span class="comment">// TODO: failure in an earlier transport will skip other rebinds, is that ok?
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>rebind(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; std::io::Result&lt;()&gt; {
+        <span class="kw">let </span><span class="kw-2">mut </span>res = <span class="prelude-val">Ok</span>(());
 
-        </span><span class="attr">#[cfg(not(wasm_browser))]
+        <span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">for </span>transport <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.ip {
-            transport.rebind()<span class="question-mark">?</span>;
+            <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = transport.rebind() {
+                <span class="macro">warn!</span>(<span class="string">"failed to rebind {:?}"</span>, err);
+                res = <span class="prelude-val">Err</span>(err);
+            }
         }
 
         <span class="kw">for </span>transport <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.relay {
-            transport.rebind()<span class="question-mark">?</span>;
+            <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = transport.rebind() {
+                <span class="macro">warn!</span>(<span class="string">"failed to rebind {:?}"</span>, err);
+                res = <span class="prelude-val">Err</span>(err);
+            }
         }
-        <span class="prelude-val">Ok</span>(())
+        res
     }
 
     <span class="doccomment">/// Handles potential changes to the underlying network conditions.
-    </span><span class="kw">pub fn </span>on_network_change(<span class="kw-2">&amp;</span><span class="self">self</span>, info: <span class="kw-2">&amp;</span>NetInfo) {
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>on_network_change(<span class="kw-2">&amp;</span><span class="self">self</span>, info: <span class="kw-2">&amp;</span>NetInfo) {
         <span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">for </span>transport <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.ip {
             transport.on_network_change(info);
@@ -683,15 +723,15 @@
 
 <span class="doccomment">/// An outgoing packet
 </span><span class="attr">#[derive(Debug, Clone)]
-</span><span class="kw">pub struct </span>Transmit&lt;<span class="lifetime">'a</span>&gt; {
-    <span class="kw">pub </span>ecn: <span class="prelude-ty">Option</span>&lt;quinn_udp::EcnCodepoint&gt;,
-    <span class="kw">pub </span>contents: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8],
-    <span class="kw">pub </span>segment_size: <span class="prelude-ty">Option</span>&lt;usize&gt;,
-    <span class="kw">pub </span>src_ip: <span class="prelude-ty">Option</span>&lt;Addr&gt;,
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>Transmit&lt;<span class="lifetime">'a</span>&gt; {
+    <span class="kw">pub</span>(<span class="kw">crate</span>) ecn: <span class="prelude-ty">Option</span>&lt;quinn_udp::EcnCodepoint&gt;,
+    <span class="kw">pub</span>(<span class="kw">crate</span>) contents: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8],
+    <span class="kw">pub</span>(<span class="kw">crate</span>) segment_size: <span class="prelude-ty">Option</span>&lt;usize&gt;,
+    <span class="kw">pub</span>(<span class="kw">crate</span>) src_ip: <span class="prelude-ty">Option</span>&lt;Addr&gt;,
 }
 
 <span class="attr">#[derive(Debug, Clone, PartialEq, Eq)]
-</span><span class="kw">pub enum </span>Addr {
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>Addr {
     Ipv4(Ipv4Addr, <span class="prelude-ty">Option</span>&lt;u16&gt;),
     Ipv6(Ipv6Addr, <span class="prelude-ty">Option</span>&lt;u16&gt;),
     RelayUrl(RelayUrl, NodeId),
