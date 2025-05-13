@@ -134,7 +134,7 @@ impl Transports {
                 .map(move |t| t.map(|(url, id)| Addr::RelayUrl(url, id)))
                 .expect("disconnected")
         });
-        let relays = watchable::JoinOpt::new(relays).expect("disconnected");
+        let relays = watchable::JoinOpt::new(relays);
 
         watchable::Merge2::new(ips, relays).expect("disconnected")
     }
