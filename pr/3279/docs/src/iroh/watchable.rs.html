@@ -943,7 +943,12 @@
 <a href="#942" id="942">942</a>
 <a href="#943" id="943">943</a>
 <a href="#944" id="944">944</a>
-<a href="#945" id="945">945</a></pre></div><pre class="rust"><code><span class="doccomment">//! Watchable values.
+<a href="#945" id="945">945</a>
+<a href="#946" id="946">946</a>
+<a href="#947" id="947">947</a>
+<a href="#948" id="948">948</a>
+<a href="#949" id="949">949</a>
+<a href="#950" id="950">950</a></pre></div><pre class="rust"><code><span class="doccomment">//! Watchable values.
 //!
 //! A [`Watchable`] exists to keep track of a value which may change over time.  It allows
 //! observers to be notified of changes to the value.  The aim is to always be aware of the
@@ -1305,13 +1310,14 @@
         <span class="macro">dbg!</span>(<span class="string">"poll_updated"</span>);
         <span class="kw">let </span><span class="kw-2">mut </span>new_value = <span class="prelude-val">None</span>;
         <span class="kw">for </span>(i, watcher) <span class="kw">in </span><span class="self">self</span>.watchers.iter_mut().enumerate() {
-            <span class="kw">match </span>watcher.poll_updated(cx)<span class="question-mark">? </span>{
+            <span class="kw">match </span>watcher.poll_updated(cx) {
                 Poll::Pending =&gt; {}
-                Poll::Ready(value) =&gt; {
+                Poll::Ready(<span class="prelude-val">Ok</span>(value)) =&gt; {
                     <span class="macro">dbg!</span>(<span class="string">"new value"</span>, i);
                     new_value.replace((i, value));
                     <span class="kw">break</span>;
                 }
+                Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(err)),
             }
         }
 
@@ -1561,7 +1567,7 @@
 
 <span class="kw">impl</span>&lt;W: Watcher + Unpin&gt; n0_future::Stream <span class="kw">for </span>Stream&lt;W&gt;
 <span class="kw">where
-    </span>W::Value: Unpin,
+    </span>W::Value: Unpin + std::fmt::Debug,
 {
     <span class="kw">type </span>Item = W::Value;
 
@@ -1569,7 +1575,7 @@
         <span class="kw">if let </span><span class="prelude-val">Some</span>(value) = <span class="self">self</span>.as_mut().initial.take() {
             <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Some</span>(value));
         }
-        <span class="kw">match </span><span class="self">self</span>.as_mut().watcher.poll_updated(cx) {
+        <span class="kw">match </span><span class="macro">dbg!</span>(<span class="self">self</span>.as_mut().watcher.poll_updated(cx)) {
             Poll::Ready(<span class="prelude-val">Ok</span>(value)) =&gt; Poll::Ready(<span class="prelude-val">Some</span>(value)),
             Poll::Ready(<span class="prelude-val">Err</span>(Disconnected)) =&gt; Poll::Ready(<span class="prelude-val">None</span>),
             Poll::Pending =&gt; Poll::Pending,
@@ -1870,13 +1876,17 @@
         </span><span class="macro">assert_eq!</span>(ab.get().unwrap(), <span class="macro">vec!</span>[<span class="number">1</span>, <span class="number">1</span>]);
         <span class="comment">// set a
         </span>a.set(<span class="number">2u8</span>).unwrap();
+        tokio::time::sleep(Duration::from_millis(<span class="number">50</span>)).<span class="kw">await</span>;
         <span class="macro">assert_eq!</span>(ab.get().unwrap(), <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">1</span>]);
         <span class="comment">// set b
         </span>b.set(<span class="number">3u8</span>).unwrap();
+        tokio::time::sleep(Duration::from_millis(<span class="number">50</span>)).<span class="kw">await</span>;
         <span class="macro">assert_eq!</span>(ab.get().unwrap(), <span class="macro">vec!</span>[<span class="number">2</span>, <span class="number">3</span>]);
 
         a.set(<span class="number">3u8</span>).unwrap();
+        tokio::time::sleep(Duration::from_millis(<span class="number">50</span>)).<span class="kw">await</span>;
         b.set(<span class="number">4u8</span>).unwrap();
+        tokio::time::sleep(Duration::from_millis(<span class="number">50</span>)).<span class="kw">await</span>;
 
         <span class="kw">let </span>values = tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), handle)
             .<span class="kw">await
