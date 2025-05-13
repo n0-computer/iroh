@@ -6,7 +6,7 @@ use std::{
 };
 
 use iroh_base::{NodeId, RelayUrl};
-use tracing::trace;
+use tracing::{trace, warn};
 
 #[cfg(not(wasm_browser))]
 mod ip;
@@ -19,14 +19,18 @@ use super::NetInfo;
 use crate::watchable::{self, Watcher};
 
 #[derive(Debug)]
-pub struct Transports {
+pub(crate) struct Transports {
     #[cfg(not(wasm_browser))]
     ip: Vec<IpTransport>,
     relay: Vec<RelayTransport>,
 }
 
 impl Transports {
-    pub fn new(#[cfg(not(wasm_browser))] ip: Vec<IpTransport>, relay: Vec<RelayTransport>) -> Self {
+    /// Create a new transports structure.
+    pub(crate) fn new(
+        #[cfg(not(wasm_browser))] ip: Vec<IpTransport>,
+        relay: Vec<RelayTransport>,
+    ) -> Self {
         Self {
             #[cfg(not(wasm_browser))]
             ip,
@@ -34,9 +38,14 @@ impl Transports {
         }
     }
 
-    pub fn poll_send(&self, destination: &Addr, transmit: &Transmit<'_>) -> Poll<io::Result<()>> {
-        // TODO: should this send on all, or only a single transport?
-
+    /// Send the given [`Transmit`] to the given [`Addr`].
+    ///
+    /// Sends on the first matching & ready transport.
+    pub(crate) fn poll_send(
+        &self,
+        destination: &Addr,
+        transmit: &Transmit<'_>,
+    ) -> Poll<io::Result<()>> {
         trace!(?destination, "sending");
 
         match destination {
@@ -86,7 +95,8 @@ impl Transports {
         Poll::Pending
     }
 
-    pub fn poll_recv(
+    /// Tries to recv data, on all available transports.
+    pub(crate) fn poll_recv(
         &self,
         cx: &mut Context,
         bufs: &mut [IoSliceMut<'_>],
@@ -117,30 +127,37 @@ impl Transports {
         Poll::Pending
     }
 
-    pub fn local_addrs(&self) -> Vec<Addr> {
+    /// Returns a list of all currently known local addresses.
+    ///
+    /// For IP based transports this is the [`SocketAddr`] of the socket,
+    /// for relay transports, this is the home relay.
+    pub(crate) fn local_addrs(&self) -> Vec<Addr> {
         self.local_addrs_watch().get().expect("not disconnected")
     }
 
+    /// Watch for all currently known local addresses.
     #[cfg(not(wasm_browser))]
-    pub fn local_addrs_watch(&self) -> impl Watcher<Value = Vec<Addr>> + Send + Sync {
-        let ips = self
-            .ip
-            .iter()
-            .map(|t| t.local_addr_watch().map(Addr::from).expect("disconnected"));
-        let ips = watchable::Join::new(ips);
+    pub(crate) fn local_addrs_watch(&self) -> impl Watcher<Value = Vec<Addr>> + Send + Sync {
+        let ips = watchable::Join::new(self.ip.iter().map(|t| t.local_addr_watch()));
+        let relays = watchable::Join::new(self.relay.iter().map(|t| t.local_addr_watch()));
 
-        let relays = self.relay.iter().map(|t| {
-            t.local_addr_watch()
-                .map(move |t| t.map(|(url, id)| Addr::RelayUrl(url, id)))
-                .expect("disconnected")
-        });
-        let relays = watchable::JoinOpt::new(relays);
-
-        watchable::Merge2::new(ips, relays)
+        (ips, relays)
+            .map(|(ips, relays)| {
+                ips.into_iter()
+                    .map(Addr::from)
+                    .chain(
+                        relays
+                            .into_iter()
+                            .flatten()
+                            .map(|(relay_url, node_id)| Addr::RelayUrl(relay_url, node_id)),
+                    )
+                    .collect()
+            })
+            .expect("disconnected")
     }
 
     #[cfg(wasm_browser)]
-    pub fn local_addrs_watch(&self) -> impl Watcher<Value = Vec<Addr>> + Send + Sync {
+    pub(crate) fn local_addrs_watch(&self) -> impl Watcher<Value = Vec<Addr>> + Send + Sync {
         let relays = self.relay.iter().map(|t| {
             t.local_addr_watch()
                 .map(move |t| t.map(|(url, id)| Addr::RelayUrl(url, id)))
@@ -151,33 +168,29 @@ impl Transports {
 
     /// Returns the bound addresses for IP based transports
     #[cfg(not(wasm_browser))]
-    pub fn ip_bind_addrs(&self) -> Vec<SocketAddr> {
+    pub(crate) fn ip_bind_addrs(&self) -> Vec<SocketAddr> {
         self.ip.iter().map(|t| t.bind_addr()).collect()
     }
 
     /// Returns the bound addresses for IP based transports
     #[cfg(not(wasm_browser))]
-    pub fn ip_local_addrs(&self) -> Vec<SocketAddr> {
+    pub(crate) fn ip_local_addrs(&self) -> Vec<SocketAddr> {
         self.ip.iter().map(|t| t.local_addr()).collect()
     }
 
     #[cfg(not(wasm_browser))]
-    pub fn max_transmit_segments(&self) -> usize {
-        // TODO: does this need to account for the relay transports?
-
+    pub(crate) fn max_transmit_segments(&self) -> usize {
         let res = self.ip.iter().map(|t| t.max_transmit_segments()).min();
         res.unwrap_or(1)
     }
 
     #[cfg(wasm_browser)]
-    pub fn max_transmit_segments(&self) -> usize {
+    pub(crate) fn max_transmit_segments(&self) -> usize {
         1
     }
 
     #[cfg(not(wasm_browser))]
-    pub fn max_receive_segments(&self) -> usize {
-        // TODO: does this need to account for the relay transports?
-
+    pub(crate) fn max_receive_segments(&self) -> usize {
         // `max_receive_segments` controls the size of the `RecvMeta` buffer
         // that quinn creates. Having buffers slightly bigger than necessary
         // isn't terrible, and makes sure a single socket can read the maximum
@@ -190,21 +203,22 @@ impl Transports {
     }
 
     #[cfg(wasm_browser)]
-    pub fn max_receive_segments(&self) -> usize {
+    pub(crate) fn max_receive_segments(&self) -> usize {
         1
     }
 
     #[cfg(not(wasm_browser))]
-    pub fn may_fragment(&self) -> bool {
+    pub(crate) fn may_fragment(&self) -> bool {
         self.ip.iter().any(|t| t.may_fragment())
     }
 
     #[cfg(wasm_browser)]
-    pub fn may_fragment(&self) -> bool {
+    pub(crate) fn may_fragment(&self) -> bool {
         false
     }
 
-    pub fn poll_writable(&self, cx: &mut Context, addr: &Addr) -> Poll<io::Result<()>> {
+    /// Check if a transport is writable, aka sendable on, for the given `addr`.
+    pub(crate) fn poll_writable(&self, cx: &mut Context, addr: &Addr) -> Poll<io::Result<()>> {
         // TODO: what about multiple matches?
         match addr {
             #[cfg(wasm_browser)]
@@ -232,7 +246,7 @@ impl Transports {
         }
     }
 
-    pub fn create_io_poller(&self) -> Pin<Box<dyn quinn::UdpPoller>> {
+    pub(crate) fn create_io_poller(&self) -> Pin<Box<dyn quinn::UdpPoller>> {
         // To do this properly the MagicSock would need a registry of pollers.  For each
         // node we would look up the poller or create one.  Then on each try_send we can
         // look up the correct poller and configure it to poll the paths it needs.
@@ -258,22 +272,28 @@ impl Transports {
     }
 
     /// Rebinds underlying connections, if necessary.
-    pub fn rebind(&self) -> std::io::Result<()> {
-        // TODO: failure in an earlier transport will skip other rebinds, is that ok?
+    pub(crate) fn rebind(&self) -> std::io::Result<()> {
+        let mut res = Ok(());
 
         #[cfg(not(wasm_browser))]
         for transport in &self.ip {
-            transport.rebind()?;
+            if let Err(err) = transport.rebind() {
+                warn!("failed to rebind {:?}", err);
+                res = Err(err);
+            }
         }
 
         for transport in &self.relay {
-            transport.rebind()?;
+            if let Err(err) = transport.rebind() {
+                warn!("failed to rebind {:?}", err);
+                res = Err(err);
+            }
         }
-        Ok(())
+        res
     }
 
     /// Handles potential changes to the underlying network conditions.
-    pub fn on_network_change(&self, info: &NetInfo) {
+    pub(crate) fn on_network_change(&self, info: &NetInfo) {
         #[cfg(not(wasm_browser))]
         for transport in &self.ip {
             transport.on_network_change(info);
@@ -287,15 +307,15 @@ impl Transports {
 
 /// An outgoing packet
 #[derive(Debug, Clone)]
-pub struct Transmit<'a> {
-    pub ecn: Option<quinn_udp::EcnCodepoint>,
-    pub contents: &'a [u8],
-    pub segment_size: Option<usize>,
-    pub src_ip: Option<Addr>,
+pub(crate) struct Transmit<'a> {
+    pub(crate) ecn: Option<quinn_udp::EcnCodepoint>,
+    pub(crate) contents: &'a [u8],
+    pub(crate) segment_size: Option<usize>,
+    pub(crate) src_ip: Option<Addr>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Addr {
+pub(crate) enum Addr {
     Ipv4(Ipv4Addr, Option<u16>),
     Ipv6(Ipv6Addr, Option<u16>),
     RelayUrl(RelayUrl, NodeId),
