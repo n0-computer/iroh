@@ -431,7 +431,8 @@
 <a href="#430" id="430">430</a>
 <a href="#431" id="431">431</a>
 <a href="#432" id="432">432</a>
-<a href="#433" id="433">433</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#433" id="433">433</a>
+<a href="#434" id="434">434</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     io::{<span class="self">self</span>, IoSliceMut},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     pin::Pin,
@@ -440,7 +441,8 @@
 };
 
 <span class="kw">use </span>iroh_base::{NodeId, RelayUrl};
-<span class="kw">use </span>netwatch::UdpSocket;
+<span class="attr">#[cfg(not(wasm_browser))]
+</span><span class="kw">use </span>netwatch::UdpSocket;
 <span class="kw">use </span>relay::RelayDatagramSendChannelSender;
 <span class="kw">use </span>tracing::{trace, warn};
 

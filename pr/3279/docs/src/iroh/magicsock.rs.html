@@ -3617,8 +3617,7 @@
 <a href="#3616" id="3616">3616</a>
 <a href="#3617" id="3617">3617</a>
 <a href="#3618" id="3618">3618</a>
-<a href="#3619" id="3619">3619</a>
-<a href="#3620" id="3620">3620</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#3619" id="3619">3619</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -3674,8 +3673,7 @@
 
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">use </span><span class="self">self</span>::transports::IpTransport;
-<span class="attr">#[cfg(not(wasm_browser))]
-</span><span class="kw">use </span><span class="self">self</span>::{
+<span class="kw">use </span><span class="self">self</span>::{
     metrics::Metrics <span class="kw">as </span>MagicsockMetrics,
     node_map::{NodeMap, PingAction, PingRole, SendPing},
     transports::{RelayActorConfig, RelayTransport, Transports},
