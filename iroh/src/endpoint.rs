@@ -1025,7 +1025,7 @@ impl Endpoint {
     /// To get the first report use [`Watcher::initialized`]:
     /// ```no_run
     /// use futures_lite::StreamExt;
-    /// use iroh::Endpoint;
+    /// use iroh::{Endpoint, watcher::Watcher};
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
