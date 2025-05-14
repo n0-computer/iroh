@@ -1200,11 +1200,17 @@ impl MagicSock {
         if let Some(ref discovery) = self.discovery {
             let relay_url = self.my_relay();
             let direct_addrs = self.direct_addrs.sockaddrs();
+
             let user_data = self
                 .discovery_user_data
                 .read()
                 .expect("lock poisened")
                 .clone();
+            if relay_url.is_none() && direct_addrs.is_empty() && user_data.is_none() {
+                // do not bother publishing if we don't have any information
+                return;
+            }
+
             let data = NodeData::new(relay_url, direct_addrs).with_user_data(user_data);
             discovery.publish(&data);
         }
