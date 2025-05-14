@@ -1851,8 +1851,10 @@ impl Actor {
                 new_addr = local_addr_changes.next() => {
                     match new_addr {
                         Some(addrs) => {
-                            trace!(?addrs, "local addrs");
-                            self.msock.publish_my_addr();
+                            if !addrs.is_empty() {
+                                trace!(?addrs, "local addrs");
+                                self.msock.publish_my_addr();
+                            }
                         }
                         None => {
                             warn!("local addr watcher stopped");
