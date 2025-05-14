@@ -2,10 +2,13 @@ use std::{
     io::{self, IoSliceMut},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
 };
 
 use iroh_base::{NodeId, RelayUrl};
+use netwatch::UdpSocket;
+use relay::RelayDatagramSendChannelSender;
 use tracing::{trace, warn};
 
 #[cfg(not(wasm_browser))]
@@ -262,13 +265,16 @@ impl Transports {
         // connection.  It checks all paths and returns Poll::Ready as soon as any path is
         // ready.
 
-        let mut io_pollers = Vec::new();
         #[cfg(not(wasm_browser))]
-        io_pollers.extend(self.ip.iter().map(|t| t.create_io_poller()));
+        let ip_pollers = self.ip.iter().map(|t| t.create_io_poller()).collect();
 
-        io_pollers.extend(self.relay.iter().map(|t| t.create_io_poller()));
+        let relay_pollers = self.relay.iter().map(|t| t.create_io_poller()).collect();
 
-        Box::pin(IoPoller { io_pollers })
+        Box::pin(IoPoller {
+            #[cfg(not(wasm_browser))]
+            ip_pollers,
+            relay_pollers,
+        })
     }
 
     /// Rebinds underlying connections, if necessary.
@@ -398,15 +404,26 @@ impl Addr {
 
 #[derive(Debug)]
 pub struct IoPoller {
-    io_pollers: Vec<Pin<Box<dyn quinn::UdpPoller>>>,
+    #[cfg(not(wasm_browser))]
+    ip_pollers: Vec<Arc<UdpSocket>>,
+    relay_pollers: Vec<RelayDatagramSendChannelSender>,
 }
 
 impl quinn::UdpPoller for IoPoller {
     fn poll_writable(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
         // This version returns Ready as soon as any of them are ready.
+
         let this = &mut *self;
-        for poller in &mut this.io_pollers {
-            match poller.as_mut().poll_writable(cx) {
+        #[cfg(not(wasm_browser))]
+        for poller in &mut this.ip_pollers {
+            match poller.poll_writable(cx) {
+                Poll::Ready(_) => return Poll::Ready(Ok(())),
+                Poll::Pending => (),
+            }
+        }
+
+        for poller in &mut this.relay_pollers {
+            match poller.poll_writable(cx) {
                 Poll::Ready(_) => return Poll::Ready(Ok(())),
                 Poll::Pending => (),
             }

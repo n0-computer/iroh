@@ -1,6 +1,5 @@
 use std::{
     io,
-    pin::Pin,
     sync::Arc,
     task::{Context, Poll, Waker},
 };
@@ -54,7 +53,6 @@ impl RelayTransport {
 
         let relay_actor = RelayActor::new(config, relay_datagram_recv_queue.clone());
 
-        // TODO: track task
         let actor_handle = AbortOnDropHandle::new(task::spawn(
             async move {
                 relay_actor
@@ -86,8 +84,8 @@ impl RelayTransport {
         }
     }
 
-    pub(super) fn create_io_poller(&self) -> Pin<Box<dyn quinn::UdpPoller>> {
-        Box::pin(self.relay_datagram_send_channel.clone())
+    pub(super) fn create_io_poller(&self) -> RelayDatagramSendChannelSender {
+        self.relay_datagram_send_channel.clone()
     }
 
     pub(super) fn poll_send(
@@ -295,15 +293,9 @@ fn relay_datagram_send_channel() -> (
 /// This includes the waker coordination required to support [`quinn::AsyncUdpSocket::try_send`]
 /// and [`quinn::UdpPoller::poll_writable`].
 #[derive(Debug, Clone)]
-struct RelayDatagramSendChannelSender {
+pub(super) struct RelayDatagramSendChannelSender {
     sender: mpsc::Sender<RelaySendItem>,
     wakers: Arc<std::sync::Mutex<Vec<Waker>>>,
-}
-
-impl quinn::UdpPoller for RelayDatagramSendChannelSender {
-    fn poll_writable(self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
-        self.as_ref().poll_writable(cx)
-    }
 }
 
 impl RelayDatagramSendChannelSender {
@@ -313,7 +305,8 @@ impl RelayDatagramSendChannelSender {
     ) -> Result<(), mpsc::error::TrySendError<RelaySendItem>> {
         self.sender.try_send(item)
     }
-    fn poll_writable(&self, cx: &mut Context) -> Poll<io::Result<()>> {
+
+    pub(super) fn poll_writable(&self, cx: &mut Context) -> Poll<io::Result<()>> {
         match self.sender.capacity() {
             0 => {
                 let mut wakers = self.wakers.lock().expect("poisoned");

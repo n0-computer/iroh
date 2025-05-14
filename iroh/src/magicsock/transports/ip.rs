@@ -1,30 +1,25 @@
 use std::{
     io,
     net::SocketAddr,
-    pin::Pin,
     sync::Arc,
     task::{Context, Poll},
 };
 
 use netwatch::UdpSocket;
-use quinn::AsyncUdpSocket;
 use tracing::trace;
 
 use super::{Addr, Transmit};
-use crate::{
-    magicsock::UdpConn,
-    watchable::{Watchable, Watcher},
-};
+use crate::watchable::{Watchable, Watcher};
 
 #[derive(Clone, Debug)]
 pub(crate) struct IpTransport {
     bind_addr: SocketAddr,
-    socket: UdpConn,
+    socket: Arc<UdpSocket>,
     local_addr: Watchable<SocketAddr>,
 }
 
 impl IpTransport {
-    pub(crate) fn new(bind_addr: SocketAddr, socket: UdpConn) -> Self {
+    pub(crate) fn new(bind_addr: SocketAddr, socket: Arc<UdpSocket>) -> Self {
         // Currently gets updated on manual rebind
         // TODO: update when UdpSocket under the hood rebinds automatically
         let local_addr = Watchable::new(socket.local_addr().expect("invalid socket"));
@@ -36,8 +31,8 @@ impl IpTransport {
         }
     }
 
-    pub(super) fn create_io_poller(&self) -> Pin<Box<dyn quinn::UdpPoller>> {
-        self.socket.create_io_poller()
+    pub(super) fn create_io_poller(&self) -> Arc<UdpSocket> {
+        self.socket.clone()
     }
 
     pub(super) fn poll_send(
@@ -46,7 +41,7 @@ impl IpTransport {
         transmit: &Transmit<'_>,
     ) -> Poll<io::Result<()>> {
         trace!("sending to {}", destination);
-        let res = self.socket.try_send(&quinn_udp::Transmit {
+        let res = self.socket.try_send_quinn(&quinn_udp::Transmit {
             destination,
             ecn: transmit.ecn,
             contents: transmit.contents,
@@ -77,7 +72,7 @@ impl IpTransport {
         metas: &mut [quinn_udp::RecvMeta],
         source_addrs: &mut [Addr],
     ) -> Poll<io::Result<usize>> {
-        match self.socket.poll_recv(cx, bufs, metas) {
+        match self.socket.poll_recv_quinn(cx, bufs, metas) {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Ok(n)) => {
                 for (addr, el) in source_addrs.iter_mut().zip(metas.iter()).take(n) {
@@ -98,11 +93,11 @@ impl IpTransport {
     }
 
     pub(super) fn max_transmit_segments(&self) -> usize {
-        self.socket.max_transmit_segments()
+        self.socket.max_gso_segments()
     }
 
     pub(super) fn max_receive_segments(&self) -> usize {
-        self.socket.max_receive_segments()
+        self.socket.gro_segments()
     }
 
     pub(super) fn may_fragment(&self) -> bool {
@@ -119,7 +114,7 @@ impl IpTransport {
     }
 
     pub(super) fn poll_writable(&self, cx: &mut Context) -> Poll<io::Result<()>> {
-        self.socket.as_socket_ref().poll_writable(cx)
+        self.socket.poll_writable(cx)
     }
 
     pub(crate) fn bind_addr(&self) -> SocketAddr {
@@ -127,8 +122,8 @@ impl IpTransport {
     }
 
     pub(super) fn rebind(&self) -> io::Result<()> {
-        self.socket.as_socket_ref().rebind()?;
-        let addr = self.socket.as_socket_ref().local_addr()?;
+        self.socket.rebind()?;
+        let addr = self.socket.local_addr()?;
         self.local_addr.set(addr).ok();
 
         Ok(())
@@ -139,6 +134,6 @@ impl IpTransport {
     }
 
     pub(crate) fn socket(&self) -> Arc<UdpSocket> {
-        self.socket.as_socket()
+        self.socket.clone()
     }
 }

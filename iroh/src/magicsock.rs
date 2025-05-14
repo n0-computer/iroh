@@ -55,7 +55,6 @@ use url::Url;
 #[cfg(not(wasm_browser))]
 use self::transports::IpTransport;
 #[cfg(not(wasm_browser))]
-use self::udp_conn::UdpConn;
 use self::{
     metrics::Metrics as MagicsockMetrics,
     node_map::{NodeMap, PingAction, PingRole, SendPing},
@@ -79,8 +78,6 @@ use crate::{
 
 mod metrics;
 mod node_map;
-#[cfg(not(wasm_browser))]
-mod udp_conn;
 
 pub(crate) mod transports;
 
@@ -1746,8 +1743,6 @@ fn bind_ip(
     };
 
     let port = v4.local_addr().map_or(0, |p| p.port());
-    let v4 = UdpConn::wrap(v4);
-    let v6 = v6.map(UdpConn::wrap);
 
     let mut ip = vec![IpTransport::new(addr_v4.into(), v4)];
     if let Some(v6) = v6 {
