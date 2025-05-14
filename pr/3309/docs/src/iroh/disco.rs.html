@@ -630,7 +630,7 @@
 <span class="doccomment">/// If `p` looks like a disco message it returns the slice of `p` that represents the disco public key source,
 /// and the part that is the box.
 </span><span class="kw">pub fn </span>source_and_box_bytes(p: <span class="kw-2">&amp;</span>Bytes) -&gt; <span class="prelude-ty">Option</span>&lt;(PublicKey, Bytes)&gt; {
-    <span class="kw">if </span>!looks_like_disco_wrapper(<span class="kw-2">&amp;</span>p) {
+    <span class="kw">if </span>!looks_like_disco_wrapper(p) {
         <span class="kw">return </span><span class="prelude-val">None</span>;
     }
 
