@@ -9,17 +9,25 @@ use netwatch::UdpSocket;
 use tracing::trace;
 
 use super::{Addr, Transmit};
-use crate::watchable::{Watchable, Watcher};
+use crate::{
+    metrics::MagicsockMetrics,
+    watchable::{Watchable, Watcher},
+};
 
 #[derive(Clone, Debug)]
 pub(crate) struct IpTransport {
     bind_addr: SocketAddr,
     socket: Arc<UdpSocket>,
     local_addr: Watchable<SocketAddr>,
+    metrics: Arc<MagicsockMetrics>,
 }
 
 impl IpTransport {
-    pub(crate) fn new(bind_addr: SocketAddr, socket: Arc<UdpSocket>) -> Self {
+    pub(crate) fn new(
+        bind_addr: SocketAddr,
+        socket: Arc<UdpSocket>,
+        metrics: Arc<MagicsockMetrics>,
+    ) -> Self {
         // Currently gets updated on manual rebind
         // TODO: update when UdpSocket under the hood rebinds automatically
         let local_addr = Watchable::new(socket.local_addr().expect("invalid socket"));
@@ -28,6 +36,7 @@ impl IpTransport {
             bind_addr,
             socket,
             local_addr,
+            metrics,
         }
     }
 
@@ -41,6 +50,7 @@ impl IpTransport {
         transmit: &Transmit<'_>,
     ) -> Poll<io::Result<()>> {
         trace!("sending to {}", destination);
+        let total_bytes = transmit.contents.len() as u64;
         let res = self.socket.try_send_quinn(&quinn_udp::Transmit {
             destination,
             ecn: transmit.ecn,
@@ -53,7 +63,17 @@ impl IpTransport {
         });
 
         match res {
-            Ok(res) => Poll::Ready(Ok(res)),
+            Ok(res) => {
+                match destination {
+                    SocketAddr::V4(_) => {
+                        self.metrics.send_ipv4.inc_by(total_bytes);
+                    }
+                    SocketAddr::V6(_) => {
+                        self.metrics.send_ipv6.inc_by(total_bytes);
+                    }
+                }
+                Poll::Ready(Ok(res))
+            }
             Err(err) => {
                 if err.kind() == io::ErrorKind::WouldBlock {
                     Poll::Pending

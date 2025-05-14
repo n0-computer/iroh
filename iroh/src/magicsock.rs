@@ -1318,7 +1318,7 @@ impl Handle {
         let addr_v4 = addr_v4.unwrap_or_else(|| SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0));
 
         #[cfg(not(wasm_browser))]
-        let (ip_transports, port_mapper) = bind_ip(addr_v4, addr_v6, metrics.portmapper.clone())?;
+        let (ip_transports, port_mapper) = bind_ip(addr_v4, addr_v6, &metrics)?;
 
         #[cfg(not(wasm_browser))]
         let v4_socket = ip_transports
@@ -1723,9 +1723,10 @@ struct Actor {
 fn bind_ip(
     addr_v4: SocketAddrV4,
     addr_v6: Option<SocketAddrV6>,
-    metrics: Arc<portmapper::Metrics>,
+    metrics: &EndpointMetrics,
 ) -> Result<(Vec<IpTransport>, portmapper::Client)> {
-    let port_mapper = portmapper::Client::with_metrics(Default::default(), metrics);
+    let port_mapper =
+        portmapper::Client::with_metrics(Default::default(), metrics.portmapper.clone());
 
     let v4 = Arc::new(bind_with_fallback(SocketAddr::V4(addr_v4)).context("bind IPv4 failed")?);
     let ip4_port = v4.local_addr()?.port();
@@ -1744,9 +1745,17 @@ fn bind_ip(
 
     let port = v4.local_addr().map_or(0, |p| p.port());
 
-    let mut ip = vec![IpTransport::new(addr_v4.into(), v4)];
+    let mut ip = vec![IpTransport::new(
+        addr_v4.into(),
+        v4,
+        metrics.magicsock.clone(),
+    )];
     if let Some(v6) = v6 {
-        ip.push(IpTransport::new(addr_v6.into(), v6))
+        ip.push(IpTransport::new(
+            addr_v6.into(),
+            v6,
+            metrics.magicsock.clone(),
+        ))
     }
 
     // NOTE: we can end up with a zero port if `netwatch::UdpSocket::socket_addr` fails
