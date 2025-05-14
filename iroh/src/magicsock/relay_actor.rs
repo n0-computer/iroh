@@ -662,29 +662,28 @@ impl ActiveRelayActor {
                     state.last_packet_src = Some(remote_node_id);
                     state.nodes_present.insert(remote_node_id);
                 }
-                match crate::disco::source_and_box_bytes(&data) {
-                    Some((source, sealed_box)) => {
-                        if remote_node_id != source {
-                            // TODO: return here?
-                            warn!("Received relay disco message from connection for {}, but with message from {}", remote_node_id.fmt_short(), source.fmt_short());
-                        }
-                        let message = RelayDiscoMessage {
-                            source,
-                            sealed_box,
-                            relay_url: self.url.clone(),
-                            relay_remote_node_id: remote_node_id,
-                        };
-                        if let Err(err) = self.relay_disco_recv.try_send(message) {
-                            warn!("Dropping received relay disco packet: {err:#}");
-                        }
-                    }
-                    None => {
-                        for datagram in PacketSplitIter::new(self.url.clone(), remote_node_id, data)
-                        {
-                            let Ok(datagram) = datagram else {
-                                warn!("Invalid packet split");
-                                break;
+                for datagram in PacketSplitIter::new(self.url.clone(), remote_node_id, data) {
+                    let Ok(datagram) = datagram else {
+                        warn!("Invalid packet split");
+                        break;
+                    };
+                    match crate::disco::source_and_box_bytes(&datagram.buf) {
+                        Some((source, sealed_box)) => {
+                            if remote_node_id != source {
+                                // TODO: return here?
+                                warn!("Received relay disco message from connection for {}, but with message from {}", remote_node_id.fmt_short(), source.fmt_short());
+                            }
+                            let message = RelayDiscoMessage {
+                                source,
+                                sealed_box,
+                                relay_url: datagram.url.clone(),
+                                relay_remote_node_id: datagram.src,
                             };
+                            if let Err(err) = self.relay_disco_recv.try_send(message) {
+                                warn!("Dropping received relay disco packet: {err:#}");
+                            }
+                        }
+                        None => {
                             if let Err(err) = self.relay_datagrams_recv.try_send(datagram) {
                                 warn!("Dropping received relay data packet: {err:#}");
                             }
