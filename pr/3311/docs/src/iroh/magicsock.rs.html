@@ -7523,10 +7523,10 @@
         }
         <span class="kw">let </span>relay_map = <span class="self">self</span>.msock.relay_map.clone();
 
-        <span class="comment">// run a non-sparse report, meaning the report will ensure
-        // that each probe protocol response is received for each relay
-        // before finishing
-        </span><span class="kw">let </span>opts = <span class="self">self</span>.net_report_config.clone().sparse(<span class="bool-val">false</span>);
+        <span class="kw">let </span><span class="kw-2">mut </span>opts = <span class="self">self</span>.net_report_config.clone();
+        <span class="kw">if </span><span class="macro">cfg!</span>(not(wasm_browser)) {
+            opts = opts.sparse(<span class="bool-val">false</span>);
+        }
         <span class="kw">let </span>res = <span class="self">self</span>.net_reporter.get_report_channel(relay_map, opts).<span class="kw">await</span>;
         tx.send(res).ok();
     }
