@@ -414,14 +414,34 @@
 <a href="#413" id="413">413</a>
 <a href="#414" id="414">414</a>
 <a href="#415" id="415">415</a>
-<a href="#416" id="416">416</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#416" id="416">416</a>
+<a href="#417" id="417">417</a>
+<a href="#418" id="418">418</a>
+<a href="#419" id="419">419</a>
+<a href="#420" id="420">420</a>
+<a href="#421" id="421">421</a>
+<a href="#422" id="422">422</a>
+<a href="#423" id="423">423</a>
+<a href="#424" id="424">424</a>
+<a href="#425" id="425">425</a>
+<a href="#426" id="426">426</a>
+<a href="#427" id="427">427</a>
+<a href="#428" id="428">428</a>
+<a href="#429" id="429">429</a>
+<a href="#430" id="430">430</a>
+<a href="#431" id="431">431</a>
+<a href="#432" id="432">432</a>
+<a href="#433" id="433">433</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     io::{<span class="self">self</span>, IoSliceMut},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
 };
 
 <span class="kw">use </span>iroh_base::{NodeId, RelayUrl};
+<span class="kw">use </span>netwatch::UdpSocket;
+<span class="kw">use </span>relay::RelayDatagramSendChannelSender;
 <span class="kw">use </span>tracing::{trace, warn};
 
 <span class="attr">#[cfg(not(wasm_browser))]
@@ -678,13 +698,16 @@
         // connection.  It checks all paths and returns Poll::Ready as soon as any path is
         // ready.
 
-        </span><span class="kw">let </span><span class="kw-2">mut </span>io_pollers = Vec::new();
-        <span class="attr">#[cfg(not(wasm_browser))]
-        </span>io_pollers.extend(<span class="self">self</span>.ip.iter().map(|t| t.create_io_poller()));
+        </span><span class="attr">#[cfg(not(wasm_browser))]
+        </span><span class="kw">let </span>ip_pollers = <span class="self">self</span>.ip.iter().map(|t| t.create_io_poller()).collect();
 
-        io_pollers.extend(<span class="self">self</span>.relay.iter().map(|t| t.create_io_poller()));
+        <span class="kw">let </span>relay_pollers = <span class="self">self</span>.relay.iter().map(|t| t.create_io_poller()).collect();
 
-        Box::pin(IoPoller { io_pollers })
+        Box::pin(IoPoller {
+            <span class="attr">#[cfg(not(wasm_browser))]
+            </span>ip_pollers,
+            relay_pollers,
+        })
     }
 
     <span class="doccomment">/// Rebinds underlying connections, if necessary.
@@ -814,15 +837,26 @@
 
 <span class="attr">#[derive(Debug)]
 </span><span class="kw">pub struct </span>IoPoller {
-    io_pollers: Vec&lt;Pin&lt;Box&lt;<span class="kw">dyn </span>quinn::UdpPoller&gt;&gt;&gt;,
+    <span class="attr">#[cfg(not(wasm_browser))]
+    </span>ip_pollers: Vec&lt;Arc&lt;UdpSocket&gt;&gt;,
+    relay_pollers: Vec&lt;RelayDatagramSendChannelSender&gt;,
 }
 
 <span class="kw">impl </span>quinn::UdpPoller <span class="kw">for </span>IoPoller {
     <span class="kw">fn </span>poll_writable(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
         <span class="comment">// This version returns Ready as soon as any of them are ready.
+
         </span><span class="kw">let </span>this = <span class="kw-2">&amp;mut *</span><span class="self">self</span>;
-        <span class="kw">for </span>poller <span class="kw">in </span><span class="kw-2">&amp;mut </span>this.io_pollers {
-            <span class="kw">match </span>poller.as_mut().poll_writable(cx) {
+        <span class="attr">#[cfg(not(wasm_browser))]
+        </span><span class="kw">for </span>poller <span class="kw">in </span><span class="kw-2">&amp;mut </span>this.ip_pollers {
+            <span class="kw">match </span>poller.poll_writable(cx) {
+                Poll::Ready(<span class="kw">_</span>) =&gt; <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Ok</span>(())),
+                Poll::Pending =&gt; (),
+            }
+        }
+
+        <span class="kw">for </span>poller <span class="kw">in </span><span class="kw-2">&amp;mut </span>this.relay_pollers {
+            <span class="kw">match </span>poller.poll_writable(cx) {
                 Poll::Ready(<span class="kw">_</span>) =&gt; <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Ok</span>(())),
                 Poll::Pending =&gt; (),
             }

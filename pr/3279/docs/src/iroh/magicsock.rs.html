@@ -3611,12 +3611,7 @@
 <a href="#3610" id="3610">3610</a>
 <a href="#3611" id="3611">3611</a>
 <a href="#3612" id="3612">3612</a>
-<a href="#3613" id="3613">3613</a>
-<a href="#3614" id="3614">3614</a>
-<a href="#3615" id="3615">3615</a>
-<a href="#3616" id="3616">3616</a>
-<a href="#3617" id="3617">3617</a>
-<a href="#3618" id="3618">3618</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#3613" id="3613">3613</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -3673,8 +3668,7 @@
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">use </span><span class="self">self</span>::transports::IpTransport;
 <span class="attr">#[cfg(not(wasm_browser))]
-</span><span class="kw">use </span><span class="self">self</span>::udp_conn::UdpConn;
-<span class="kw">use </span><span class="self">self</span>::{
+</span><span class="kw">use </span><span class="self">self</span>::{
     metrics::Metrics <span class="kw">as </span>MagicsockMetrics,
     node_map::{NodeMap, PingAction, PingRole, SendPing},
     transports::{RelayActorConfig, RelayTransport, Transports},
@@ -3697,8 +3691,6 @@
 
 <span class="kw">mod </span>metrics;
 <span class="kw">mod </span>node_map;
-<span class="attr">#[cfg(not(wasm_browser))]
-</span><span class="kw">mod </span>udp_conn;
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>transports;
 
@@ -5364,8 +5356,6 @@
     };
 
     <span class="kw">let </span>port = v4.local_addr().map_or(<span class="number">0</span>, |p| p.port());
-    <span class="kw">let </span>v4 = UdpConn::wrap(v4);
-    <span class="kw">let </span>v6 = v6.map(UdpConn::wrap);
 
     <span class="kw">let </span><span class="kw-2">mut </span>ip = <span class="macro">vec!</span>[IpTransport::new(addr_v4.into(), v4)];
     <span class="kw">if let </span><span class="prelude-val">Some</span>(v6) = v6 {

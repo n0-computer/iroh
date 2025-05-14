@@ -137,38 +137,28 @@
 <a href="#136" id="136">136</a>
 <a href="#137" id="137">137</a>
 <a href="#138" id="138">138</a>
-<a href="#139" id="139">139</a>
-<a href="#140" id="140">140</a>
-<a href="#141" id="141">141</a>
-<a href="#142" id="142">142</a>
-<a href="#143" id="143">143</a>
-<a href="#144" id="144">144</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#139" id="139">139</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     io,
     net::SocketAddr,
-    pin::Pin,
     sync::Arc,
     task::{Context, Poll},
 };
 
 <span class="kw">use </span>netwatch::UdpSocket;
-<span class="kw">use </span>quinn::AsyncUdpSocket;
 <span class="kw">use </span>tracing::trace;
 
 <span class="kw">use super</span>::{Addr, Transmit};
-<span class="kw">use crate</span>::{
-    magicsock::UdpConn,
-    watchable::{Watchable, Watcher},
-};
+<span class="kw">use </span><span class="kw">crate</span>::watchable::{Watchable, Watcher};
 
 <span class="attr">#[derive(Clone, Debug)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>IpTransport {
     bind_addr: SocketAddr,
-    socket: UdpConn,
+    socket: Arc&lt;UdpSocket&gt;,
     local_addr: Watchable&lt;SocketAddr&gt;,
 }
 
 <span class="kw">impl </span>IpTransport {
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new(bind_addr: SocketAddr, socket: UdpConn) -&gt; <span class="self">Self </span>{
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new(bind_addr: SocketAddr, socket: Arc&lt;UdpSocket&gt;) -&gt; <span class="self">Self </span>{
         <span class="comment">// Currently gets updated on manual rebind
         // TODO: update when UdpSocket under the hood rebinds automatically
         </span><span class="kw">let </span>local_addr = Watchable::new(socket.local_addr().expect(<span class="string">"invalid socket"</span>));
@@ -180,8 +170,8 @@
         }
     }
 
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>create_io_poller(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Pin&lt;Box&lt;<span class="kw">dyn </span>quinn::UdpPoller&gt;&gt; {
-        <span class="self">self</span>.socket.create_io_poller()
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>create_io_poller(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Arc&lt;UdpSocket&gt; {
+        <span class="self">self</span>.socket.clone()
     }
 
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>poll_send(
@@ -190,7 +180,7 @@
         transmit: <span class="kw-2">&amp;</span>Transmit&lt;<span class="lifetime">'_</span>&gt;,
     ) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
         <span class="macro">trace!</span>(<span class="string">"sending to {}"</span>, destination);
-        <span class="kw">let </span>res = <span class="self">self</span>.socket.try_send(<span class="kw-2">&amp;</span>quinn_udp::Transmit {
+        <span class="kw">let </span>res = <span class="self">self</span>.socket.try_send_quinn(<span class="kw-2">&amp;</span>quinn_udp::Transmit {
             destination,
             ecn: transmit.ecn,
             contents: transmit.contents,
@@ -221,7 +211,7 @@
         metas: <span class="kw-2">&amp;mut </span>[quinn_udp::RecvMeta],
         source_addrs: <span class="kw-2">&amp;mut </span>[Addr],
     ) -&gt; Poll&lt;io::Result&lt;usize&gt;&gt; {
-        <span class="kw">match </span><span class="self">self</span>.socket.poll_recv(cx, bufs, metas) {
+        <span class="kw">match </span><span class="self">self</span>.socket.poll_recv_quinn(cx, bufs, metas) {
             Poll::Pending =&gt; Poll::Pending,
             Poll::Ready(<span class="prelude-val">Ok</span>(n)) =&gt; {
                 <span class="kw">for </span>(addr, el) <span class="kw">in </span>source_addrs.iter_mut().zip(metas.iter()).take(n) {
@@ -242,11 +232,11 @@
     }
 
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>max_transmit_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-        <span class="self">self</span>.socket.max_transmit_segments()
+        <span class="self">self</span>.socket.max_gso_segments()
     }
 
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>max_receive_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-        <span class="self">self</span>.socket.max_receive_segments()
+        <span class="self">self</span>.socket.gro_segments()
     }
 
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>may_fragment(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
@@ -263,7 +253,7 @@
     }
 
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>poll_writable(<span class="kw-2">&amp;</span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>Context) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
-        <span class="self">self</span>.socket.as_socket_ref().poll_writable(cx)
+        <span class="self">self</span>.socket.poll_writable(cx)
     }
 
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>bind_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; SocketAddr {
@@ -271,8 +261,8 @@
     }
 
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>rebind(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; io::Result&lt;()&gt; {
-        <span class="self">self</span>.socket.as_socket_ref().rebind()<span class="question-mark">?</span>;
-        <span class="kw">let </span>addr = <span class="self">self</span>.socket.as_socket_ref().local_addr()<span class="question-mark">?</span>;
+        <span class="self">self</span>.socket.rebind()<span class="question-mark">?</span>;
+        <span class="kw">let </span>addr = <span class="self">self</span>.socket.local_addr()<span class="question-mark">?</span>;
         <span class="self">self</span>.local_addr.set(addr).ok();
 
         <span class="prelude-val">Ok</span>(())
@@ -283,7 +273,7 @@
     </span>}
 
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>socket(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Arc&lt;UdpSocket&gt; {
-        <span class="self">self</span>.socket.as_socket()
+        <span class="self">self</span>.socket.clone()
     }
 }
 </code></pre></div></section></main></body></html>

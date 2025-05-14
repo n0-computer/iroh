@@ -472,16 +472,8 @@
 <a href="#471" id="471">471</a>
 <a href="#472" id="472">472</a>
 <a href="#473" id="473">473</a>
-<a href="#474" id="474">474</a>
-<a href="#475" id="475">475</a>
-<a href="#476" id="476">476</a>
-<a href="#477" id="477">477</a>
-<a href="#478" id="478">478</a>
-<a href="#479" id="479">479</a>
-<a href="#480" id="480">480</a>
-<a href="#481" id="481">481</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#474" id="474">474</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     io,
-    pin::Pin,
     sync::Arc,
     task::{Context, Poll, Waker},
 };
@@ -535,8 +527,7 @@
 
         <span class="kw">let </span>relay_actor = RelayActor::new(config, relay_datagram_recv_queue.clone());
 
-        <span class="comment">// TODO: track task
-        </span><span class="kw">let </span>actor_handle = AbortOnDropHandle::new(task::spawn(
+        <span class="kw">let </span>actor_handle = AbortOnDropHandle::new(task::spawn(
             <span class="kw">async move </span>{
                 relay_actor
                     .run(actor_receiver, relay_datagram_send_rx)
@@ -567,8 +558,8 @@
         }
     }
 
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>create_io_poller(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Pin&lt;Box&lt;<span class="kw">dyn </span>quinn::UdpPoller&gt;&gt; {
-        Box::pin(<span class="self">self</span>.relay_datagram_send_channel.clone())
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>create_io_poller(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; RelayDatagramSendChannelSender {
+        <span class="self">self</span>.relay_datagram_send_channel.clone()
     }
 
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>poll_send(
@@ -776,15 +767,9 @@
 /// This includes the waker coordination required to support [`quinn::AsyncUdpSocket::try_send`]
 /// and [`quinn::UdpPoller::poll_writable`].
 </span><span class="attr">#[derive(Debug, Clone)]
-</span><span class="kw">struct </span>RelayDatagramSendChannelSender {
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>RelayDatagramSendChannelSender {
     sender: mpsc::Sender&lt;RelaySendItem&gt;,
     wakers: Arc&lt;std::sync::Mutex&lt;Vec&lt;Waker&gt;&gt;&gt;,
-}
-
-<span class="kw">impl </span>quinn::UdpPoller <span class="kw">for </span>RelayDatagramSendChannelSender {
-    <span class="kw">fn </span>poll_writable(<span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
-        <span class="self">self</span>.as_ref().poll_writable(cx)
-    }
 }
 
 <span class="kw">impl </span>RelayDatagramSendChannelSender {
@@ -794,7 +779,8 @@
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), mpsc::error::TrySendError&lt;RelaySendItem&gt;&gt; {
         <span class="self">self</span>.sender.try_send(item)
     }
-    <span class="kw">fn </span>poll_writable(<span class="kw-2">&amp;</span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>Context) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
+
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>poll_writable(<span class="kw-2">&amp;</span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>Context) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
         <span class="kw">match </span><span class="self">self</span>.sender.capacity() {
             <span class="number">0 </span>=&gt; {
                 <span class="kw">let </span><span class="kw-2">mut </span>wakers = <span class="self">self</span>.wakers.lock().expect(<span class="string">"poisoned"</span>);
