@@ -926,7 +926,7 @@ impl Endpoint {
     }
 
     /// Returns a [`Watcher`] for the current [`NodeAddr`] for this endpoint.
-    /// 
+    ///
     /// When compiled to Wasm, this function returns a watcher that initializes
     /// with a [`NodeAddr`] that only contains a relay URL, but no direct addresses,
     /// as there are no APIs for directly using sockets in browsers.
@@ -1032,7 +1032,7 @@ impl Endpoint {
     /// To get the first report use [`Watcher::initialized`]:
     /// ```no_run
     /// use futures_lite::StreamExt;
-    /// use iroh::{Endpoint, watcher::Watcher};
+    /// use iroh::{watcher::Watcher, Endpoint};
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
