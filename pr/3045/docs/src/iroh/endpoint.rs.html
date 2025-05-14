@@ -3167,7 +3167,11 @@
 <a href="#3166" id="3166">3166</a>
 <a href="#3167" id="3167">3167</a>
 <a href="#3168" id="3168">3168</a>
-<a href="#3169" id="3169">3169</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#3169" id="3169">3169</a>
+<a href="#3170" id="3170">3170</a>
+<a href="#3171" id="3171">3171</a>
+<a href="#3172" id="3172">3172</a>
+<a href="#3173" id="3173">3173</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -4099,9 +4103,11 @@
         // of connecting to us.
         </span><span class="kw">let </span>watch_relay = <span class="self">self</span>.home_relay();
         <span class="kw">let </span>node_id = <span class="self">self</span>.node_id();
-        watch_relay.map(<span class="kw">move </span>|relay| {
-            relay.map(|relay| NodeAddr::from_parts(node_id, relay, std::iter::empty()))
-        })
+        watch_relay
+            .map(<span class="kw">move </span>|relay| {
+                relay.map(|relay| NodeAddr::from_parts(node_id, relay, std::iter::empty()))
+            })
+            .expect(<span class="string">"watchable is alive - cannot be disconnected yet"</span>)
     }
 
     <span class="doccomment">/// Returns a [`Watcher`] for the [`RelayUrl`] of the Relay server used as home relay.
@@ -5675,11 +5681,13 @@
         <span class="kw">let </span>(relay_map, _relay_url, _guard) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>client = Endpoint::builder()
             .relay_conn_protocol(Protocol::Websocket)
+            .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .bind()
             .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>server = Endpoint::builder()
             .relay_conn_protocol(Protocol::Websocket)
+            .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
             .relay_mode(RelayMode::Custom(relay_map))
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
             .bind()
