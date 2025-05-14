@@ -123,11 +123,6 @@ impl<T: Clone + Eq> Watchable<T> {
     }
 }
 
-/// Bla
-pub type DirectWatcherStream<T> = Stream<Direct<T>>;
-/// Blub
-pub type DirectWatcher<T> = Direct<T>;
-
 /// A handle to a value that's represented by one or more underlying [`Watchable`]s.
 ///
 /// A [`Watcher`] can get the current value, and will be notified when the value changes.

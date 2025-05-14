@@ -20,7 +20,7 @@ mod relay;
 pub(crate) use self::ip::IpTransport;
 pub(crate) use self::relay::{RelayActorConfig, RelayTransport};
 use super::NetInfo;
-use crate::watchable::{self, Watcher};
+use crate::watcher::{self, Watcher};
 
 #[derive(Debug)]
 pub(crate) struct Transports {
@@ -142,8 +142,8 @@ impl Transports {
     /// Watch for all currently known local addresses.
     #[cfg(not(wasm_browser))]
     pub(crate) fn local_addrs_watch(&self) -> impl Watcher<Value = Vec<Addr>> + Send + Sync {
-        let ips = watchable::Join::new(self.ip.iter().map(|t| t.local_addr_watch()));
-        let relays = watchable::Join::new(self.relay.iter().map(|t| t.local_addr_watch()));
+        let ips = watcher::Join::new(self.ip.iter().map(|t| t.local_addr_watch()));
+        let relays = watcher::Join::new(self.relay.iter().map(|t| t.local_addr_watch()));
 
         (ips, relays)
             .map(|(ips, relays)| {
@@ -167,7 +167,7 @@ impl Transports {
                 .map(move |t| t.map(|(url, id)| Addr::RelayUrl(url, id)))
                 .expect("disconnected")
         });
-        watchable::JoinOpt::new(relays)
+        watcher::JoinOpt::new(relays)
     }
 
     /// Returns the bound addresses for IP based transports

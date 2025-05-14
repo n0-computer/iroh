@@ -26,7 +26,7 @@ use crate::endpoint::PathSelection;
 use crate::{
     disco::{self, SendAddr},
     magicsock::{ActorMessage, MagicsockMetrics, NodeIdMappedAddr, HEARTBEAT_INTERVAL},
-    watchable::{DirectWatcher, Watchable},
+    watcher::{self, Watchable},
 };
 
 /// Number of addresses that are not active that we keep around per node.
@@ -202,7 +202,7 @@ impl NodeState {
         self.id
     }
 
-    pub(super) fn conn_type(&self) -> DirectWatcher<ConnectionType> {
+    pub(super) fn conn_type(&self) -> watcher::Direct<ConnectionType> {
         self.conn_type.watch()
     }
 

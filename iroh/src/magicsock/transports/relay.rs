@@ -17,7 +17,7 @@ use tracing::{error, info_span, trace, warn, Instrument};
 use super::{Addr, Transmit};
 use crate::{
     magicsock::RelayContents,
-    watchable::{Watchable, Watcher as _},
+    watcher::{Watchable, Watcher as _},
 };
 
 mod actor;
@@ -172,7 +172,7 @@ impl RelayTransport {
 
     pub(super) fn local_addr_watch(
         &self,
-    ) -> impl crate::watchable::Watcher<Value = Option<(RelayUrl, NodeId)>> + Send + Sync {
+    ) -> impl crate::watcher::Watcher<Value = Option<(RelayUrl, NodeId)>> + Send + Sync {
         let my_node_id = self.my_node_id;
         self.my_relay
             .watch()

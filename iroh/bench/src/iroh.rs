@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use bytes::Bytes;
 use iroh::{
     endpoint::{Connection, ConnectionError, RecvStream, SendStream, TransportConfig},
-    watchable::Watcher as _,
+    watcher::Watcher as _,
     Endpoint, NodeAddr, RelayMode, RelayUrl,
 };
 use tracing::{trace, warn};

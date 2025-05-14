@@ -65,7 +65,7 @@ use crate::{
         Metrics as MagicsockMetrics, NetInfo, RelayContents,
     },
     util::MaybeFuture,
-    watchable::Watchable,
+    watcher::Watchable,
 };
 
 /// How long a non-home relay connection needs to be idle (last written to) before we close it.

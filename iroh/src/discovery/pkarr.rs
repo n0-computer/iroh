@@ -61,7 +61,7 @@ use url::Url;
 use crate::{
     discovery::{Discovery, DiscoveryItem, NodeData},
     endpoint::force_staging_infra,
-    watchable::{DirectWatcher, Disconnected, Watchable, Watcher},
+    watcher::{self, Disconnected, Watchable, Watcher as _},
     Endpoint,
 };
 
@@ -217,7 +217,7 @@ struct PublisherService {
     secret_key: SecretKey,
     #[debug("PkarrClient")]
     pkarr_client: PkarrRelayClient,
-    watcher: DirectWatcher<Option<NodeInfo>>,
+    watcher: watcher::Direct<Option<NodeInfo>>,
     ttl: u32,
     republish_interval: Duration,
 }

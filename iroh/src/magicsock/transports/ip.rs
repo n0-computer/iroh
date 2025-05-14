@@ -11,7 +11,7 @@ use tracing::trace;
 use super::{Addr, Transmit};
 use crate::{
     metrics::MagicsockMetrics,
-    watchable::{Watchable, Watcher},
+    watcher::{Watchable, Watcher},
 };
 
 #[derive(Clone, Debug)]

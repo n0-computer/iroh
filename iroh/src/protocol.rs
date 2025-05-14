@@ -434,6 +434,7 @@ mod tests {
     use tracing_test::traced_test;
 
     use super::*;
+    use crate::watcher::Watcher;
 
     #[tokio::test]
     async fn test_shutdown() -> Result<()> {
@@ -481,7 +482,7 @@ mod tests {
         let proto = AccessLimit::new(Echo, |_node_id| false);
         let r1 = Router::builder(e1.clone()).accept(ECHO_ALPN, proto).spawn();
 
-        let addr1 = r1.endpoint().node_addr().await?;
+        let addr1 = r1.endpoint().node_addr().initialized().await?;
 
         let e2 = Endpoint::builder().bind().await?;
 
