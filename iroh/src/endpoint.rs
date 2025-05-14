@@ -1032,7 +1032,7 @@ impl Endpoint {
     /// # });
     /// ```
     #[doc(hidden)]
-    pub fn net_report(&self) -> impl Watcher<Value = Option<Arc<Report>>> {
+    pub fn net_report(&self) -> watcher::Direct<Option<Arc<Report>>> {
         self.msock.net_report()
     }
 

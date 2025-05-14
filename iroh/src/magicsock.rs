@@ -76,7 +76,7 @@ use crate::{
     key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
     metrics::EndpointMetrics,
     net_report::{self, IpMappedAddresses, Report},
-    watcher::{self, Watchable, Watcher},
+    watcher::{self, Watchable},
 };
 
 mod metrics;
@@ -370,7 +370,7 @@ impl MagicSock {
     /// store [`Some`] report.
     ///
     /// To get the current `net-report`, use [`Watcher::initialized`].
-    pub(crate) fn net_report(&self) -> impl Watcher<Value = Option<Arc<Report>>> {
+    pub(crate) fn net_report(&self) -> watcher::Direct<Option<Arc<Report>>> {
         self.net_report.watch()
     }
 
@@ -3453,7 +3453,9 @@ mod tests {
     use crate::{
         defaults::staging::{self, EU_RELAY_HOSTNAME},
         dns::DnsResolver,
-        tls, Endpoint, RelayMode,
+        tls,
+        watcher::Watcher as _,
+        Endpoint, RelayMode,
     };
 
     const ALPN: &[u8] = b"n0/test/1";
