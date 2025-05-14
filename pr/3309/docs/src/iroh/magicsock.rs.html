@@ -4466,7 +4466,8 @@
 <a href="#4465" id="4465">4465</a>
 <a href="#4466" id="4466">4466</a>
 <a href="#4467" id="4467">4467</a>
-<a href="#4468" id="4468">4468</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4468" id="4468">4468</a>
+<a href="#4469" id="4469">4469</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -6282,6 +6283,7 @@
                         },
                     );
                 }
+                <span class="macro">debug!</span>(<span class="string">"relay-disco-recv actor closed"</span>);
             }
             .instrument(<span class="macro">info_span!</span>(<span class="string">"relay-disco-recv"</span>))
         });

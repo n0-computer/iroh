@@ -2296,7 +2296,7 @@
                     };
                     <span class="kw">match </span>msg {
                         <span class="prelude-val">Ok</span>(msg) =&gt; {
-                            <span class="self">self</span>.handle_relay_msg(msg, <span class="kw-2">&amp;mut </span>state).<span class="kw">await</span>;
+                            <span class="self">self</span>.handle_relay_msg(msg, <span class="kw-2">&amp;mut </span>state);
                             <span class="comment">// reset the ping timer, we have just received a message
                             </span>ping_interval.reset();
                         },
@@ -2319,7 +2319,7 @@
         res.map_err(|err| state.map_err(err))
     }
 
-    <span class="kw">async fn </span>handle_relay_msg(<span class="kw-2">&amp;mut </span><span class="self">self</span>, msg: ReceivedMessage, state: <span class="kw-2">&amp;mut </span>ConnectedRelayState) {
+    <span class="kw">fn </span>handle_relay_msg(<span class="kw-2">&amp;mut </span><span class="self">self</span>, msg: ReceivedMessage, state: <span class="kw-2">&amp;mut </span>ConnectedRelayState) {
         <span class="kw">match </span>msg {
             ReceivedMessage::ReceivedPacket {
                 remote_node_id,
@@ -2354,7 +2354,7 @@
                                 relay_url: datagram.url.clone(),
                                 relay_remote_node_id: datagram.src,
                             };
-                            <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.relay_disco_recv.send(message).<span class="kw">await </span>{
+                            <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.relay_disco_recv.try_send(message) {
                                 <span class="macro">warn!</span>(<span class="string">"Dropping received relay disco packet: {err:#}"</span>);
                             }
                         }
@@ -2452,7 +2452,7 @@
                         <span class="kw">break </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Stream closed by server."</span>));
                     };
                     <span class="kw">match </span>msg {
-                        <span class="prelude-val">Ok</span>(msg) =&gt; <span class="self">self</span>.handle_relay_msg(msg, state).<span class="kw">await</span>,
+                        <span class="prelude-val">Ok</span>(msg) =&gt; <span class="self">self</span>.handle_relay_msg(msg, state),
                         <span class="prelude-val">Err</span>(err) =&gt; <span class="kw">break </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Client stream read error: {err:#}"</span>)),
                     }
                 }
