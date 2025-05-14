@@ -94,6 +94,12 @@ pub type NodeAddrWatcher = watcher::Map<
     ),
     Option<NodeAddr>,
 >;
+/// A type alias for the return value of [`Endpoint::node_addr`].
+///
+/// This type implements [`Watcher`] with `Value` being an optional [`NodeAddr`].
+///
+/// We return a named type instead of `impl Watcher<Value = NodeAddr>`, as this allows
+/// you to e.g. store the watcher in a struct.
 #[cfg(wasm_browser)]
 pub type NodeAddrWatcher = watcher::Map<watcher::Direct<Option<RelayUrl>>, Option<NodeAddr>>;
 
