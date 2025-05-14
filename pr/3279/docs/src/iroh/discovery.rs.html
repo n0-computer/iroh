@@ -1074,14 +1074,7 @@
 <a href="#1073" id="1073">1073</a>
 <a href="#1074" id="1074">1074</a>
 <a href="#1075" id="1075">1075</a>
-<a href="#1076" id="1076">1076</a>
-<a href="#1077" id="1077">1077</a>
-<a href="#1078" id="1078">1078</a>
-<a href="#1079" id="1079">1079</a>
-<a href="#1080" id="1080">1080</a>
-<a href="#1081" id="1081">1081</a>
-<a href="#1082" id="1082">1082</a>
-<a href="#1083" id="1083">1083</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
+<a href="#1076" id="1076">1076</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
 //! To connect to an iroh node a [`NodeAddr`] is needed, which may contain a
 //! [`RelayUrl`] or one or more *direct addresses* in addition to the [`NodeId`].
@@ -2121,16 +2114,9 @@
             .on_node(<span class="kw-2">&amp;</span>ep1.node_id(), PUBLISH_TIMEOUT)
             .<span class="kw">await</span><span class="question-mark">?</span>;
 
-        <span class="comment">// retry multiple times, as the information that was published, might not be enough
-        </span><span class="kw">for _ in </span><span class="number">0</span>..<span class="number">10 </span>{
-            <span class="comment">// we connect only by node id!
-            </span><span class="kw">let </span>res = ep2.connect(ep1.node_id(), TEST_ALPN).<span class="kw">await</span>;
-            <span class="kw">if </span>res.is_ok() {
-                <span class="kw">return </span><span class="prelude-val">Ok</span>(());
-            }
-            tokio::time::sleep(Duration::from_secs(<span class="number">1</span>)).<span class="kw">await</span>;
-        }
-        <span class="macro">panic!</span>(<span class="string">"failed to connect after 10 attempts"</span>)
+        <span class="comment">// we connect only by node id!
+        </span><span class="kw">let </span>_conn = ep2.connect(ep1.node_id(), TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="prelude-val">Ok</span>(())
     }
 
     <span class="kw">async fn </span>ep_with_discovery(
