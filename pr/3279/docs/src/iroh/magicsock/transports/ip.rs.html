@@ -137,7 +137,27 @@
 <a href="#136" id="136">136</a>
 <a href="#137" id="137">137</a>
 <a href="#138" id="138">138</a>
-<a href="#139" id="139">139</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#139" id="139">139</a>
+<a href="#140" id="140">140</a>
+<a href="#141" id="141">141</a>
+<a href="#142" id="142">142</a>
+<a href="#143" id="143">143</a>
+<a href="#144" id="144">144</a>
+<a href="#145" id="145">145</a>
+<a href="#146" id="146">146</a>
+<a href="#147" id="147">147</a>
+<a href="#148" id="148">148</a>
+<a href="#149" id="149">149</a>
+<a href="#150" id="150">150</a>
+<a href="#151" id="151">151</a>
+<a href="#152" id="152">152</a>
+<a href="#153" id="153">153</a>
+<a href="#154" id="154">154</a>
+<a href="#155" id="155">155</a>
+<a href="#156" id="156">156</a>
+<a href="#157" id="157">157</a>
+<a href="#158" id="158">158</a>
+<a href="#159" id="159">159</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     io,
     net::SocketAddr,
     sync::Arc,
@@ -148,17 +168,25 @@
 <span class="kw">use </span>tracing::trace;
 
 <span class="kw">use super</span>::{Addr, Transmit};
-<span class="kw">use </span><span class="kw">crate</span>::watchable::{Watchable, Watcher};
+<span class="kw">use crate</span>::{
+    metrics::MagicsockMetrics,
+    watchable::{Watchable, Watcher},
+};
 
 <span class="attr">#[derive(Clone, Debug)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>IpTransport {
     bind_addr: SocketAddr,
     socket: Arc&lt;UdpSocket&gt;,
     local_addr: Watchable&lt;SocketAddr&gt;,
+    metrics: Arc&lt;MagicsockMetrics&gt;,
 }
 
 <span class="kw">impl </span>IpTransport {
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new(bind_addr: SocketAddr, socket: Arc&lt;UdpSocket&gt;) -&gt; <span class="self">Self </span>{
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new(
+        bind_addr: SocketAddr,
+        socket: Arc&lt;UdpSocket&gt;,
+        metrics: Arc&lt;MagicsockMetrics&gt;,
+    ) -&gt; <span class="self">Self </span>{
         <span class="comment">// Currently gets updated on manual rebind
         // TODO: update when UdpSocket under the hood rebinds automatically
         </span><span class="kw">let </span>local_addr = Watchable::new(socket.local_addr().expect(<span class="string">"invalid socket"</span>));
@@ -167,6 +195,7 @@
             bind_addr,
             socket,
             local_addr,
+            metrics,
         }
     }
 
@@ -180,6 +209,7 @@
         transmit: <span class="kw-2">&amp;</span>Transmit&lt;<span class="lifetime">'_</span>&gt;,
     ) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
         <span class="macro">trace!</span>(<span class="string">"sending to {}"</span>, destination);
+        <span class="kw">let </span>total_bytes = transmit.contents.len() <span class="kw">as </span>u64;
         <span class="kw">let </span>res = <span class="self">self</span>.socket.try_send_quinn(<span class="kw-2">&amp;</span>quinn_udp::Transmit {
             destination,
             ecn: transmit.ecn,
@@ -192,7 +222,17 @@
         });
 
         <span class="kw">match </span>res {
-            <span class="prelude-val">Ok</span>(res) =&gt; Poll::Ready(<span class="prelude-val">Ok</span>(res)),
+            <span class="prelude-val">Ok</span>(res) =&gt; {
+                <span class="kw">match </span>destination {
+                    SocketAddr::V4(<span class="kw">_</span>) =&gt; {
+                        <span class="self">self</span>.metrics.send_ipv4.inc_by(total_bytes);
+                    }
+                    SocketAddr::V6(<span class="kw">_</span>) =&gt; {
+                        <span class="self">self</span>.metrics.send_ipv6.inc_by(total_bytes);
+                    }
+                }
+                Poll::Ready(<span class="prelude-val">Ok</span>(res))
+            }
             <span class="prelude-val">Err</span>(err) =&gt; {
                 <span class="kw">if </span>err.kind() == io::ErrorKind::WouldBlock {
                     Poll::Pending

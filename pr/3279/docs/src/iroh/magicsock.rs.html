@@ -3611,7 +3611,16 @@
 <a href="#3610" id="3610">3610</a>
 <a href="#3611" id="3611">3611</a>
 <a href="#3612" id="3612">3612</a>
-<a href="#3613" id="3613">3613</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#3613" id="3613">3613</a>
+<a href="#3614" id="3614">3614</a>
+<a href="#3615" id="3615">3615</a>
+<a href="#3616" id="3616">3616</a>
+<a href="#3617" id="3617">3617</a>
+<a href="#3618" id="3618">3618</a>
+<a href="#3619" id="3619">3619</a>
+<a href="#3620" id="3620">3620</a>
+<a href="#3621" id="3621">3621</a>
+<a href="#3622" id="3622">3622</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4931,7 +4940,7 @@
         <span class="kw">let </span>addr_v4 = addr_v4.unwrap_or_else(|| SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, <span class="number">0</span>));
 
         <span class="attr">#[cfg(not(wasm_browser))]
-        </span><span class="kw">let </span>(ip_transports, port_mapper) = bind_ip(addr_v4, addr_v6, metrics.portmapper.clone())<span class="question-mark">?</span>;
+        </span><span class="kw">let </span>(ip_transports, port_mapper) = bind_ip(addr_v4, addr_v6, <span class="kw-2">&amp;</span>metrics)<span class="question-mark">?</span>;
 
         <span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">let </span>v4_socket = ip_transports
@@ -5336,9 +5345,10 @@
 </span><span class="kw">fn </span>bind_ip(
     addr_v4: SocketAddrV4,
     addr_v6: <span class="prelude-ty">Option</span>&lt;SocketAddrV6&gt;,
-    metrics: Arc&lt;portmapper::Metrics&gt;,
+    metrics: <span class="kw-2">&amp;</span>EndpointMetrics,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(Vec&lt;IpTransport&gt;, portmapper::Client)&gt; {
-    <span class="kw">let </span>port_mapper = portmapper::Client::with_metrics(Default::default(), metrics);
+    <span class="kw">let </span>port_mapper =
+        portmapper::Client::with_metrics(Default::default(), metrics.portmapper.clone());
 
     <span class="kw">let </span>v4 = Arc::new(bind_with_fallback(SocketAddr::V4(addr_v4)).context(<span class="string">"bind IPv4 failed"</span>)<span class="question-mark">?</span>);
     <span class="kw">let </span>ip4_port = v4.local_addr()<span class="question-mark">?</span>.port();
@@ -5357,9 +5367,17 @@
 
     <span class="kw">let </span>port = v4.local_addr().map_or(<span class="number">0</span>, |p| p.port());
 
-    <span class="kw">let </span><span class="kw-2">mut </span>ip = <span class="macro">vec!</span>[IpTransport::new(addr_v4.into(), v4)];
+    <span class="kw">let </span><span class="kw-2">mut </span>ip = <span class="macro">vec!</span>[IpTransport::new(
+        addr_v4.into(),
+        v4,
+        metrics.magicsock.clone(),
+    )];
     <span class="kw">if let </span><span class="prelude-val">Some</span>(v6) = v6 {
-        ip.push(IpTransport::new(addr_v6.into(), v6))
+        ip.push(IpTransport::new(
+            addr_v6.into(),
+            v6,
+            metrics.magicsock.clone(),
+        ))
     }
 
     <span class="comment">// NOTE: we can end up with a zero port if `netwatch::UdpSocket::socket_addr` fails
