@@ -2940,9 +2940,12 @@ impl Actor {
         }
         let relay_map = self.msock.relay_map.clone();
 
+        #[cfg(wasm_browser)]
+        let opts = self.net_report_config.clone();
         // run a non-sparse report, meaning the report will ensure
         // that each probe protocol response is received for each relay
         // before finishing
+        #[cfg(not(wasm_browser))]
         let opts = self.net_report_config.clone().sparse(false);
         let res = self.net_reporter.get_report_channel(relay_map, opts).await;
         tx.send(res).ok();
