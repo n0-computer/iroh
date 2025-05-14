@@ -1825,6 +1825,7 @@ impl Handle {
                         },
                     );
                 }
+                debug!("relay-disco-recv actor closed");
             }
             .instrument(info_span!("relay-disco-recv"))
         });
