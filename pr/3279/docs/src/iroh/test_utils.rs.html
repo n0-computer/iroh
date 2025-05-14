@@ -543,7 +543,13 @@
 <a href="#542" id="542">542</a>
 <a href="#543" id="543">543</a>
 <a href="#544" id="544">544</a>
-<a href="#545" id="545">545</a></pre></div><pre class="rust"><code><span class="doccomment">//! Internal utilities to support testing.
+<a href="#545" id="545">545</a>
+<a href="#546" id="546">546</a>
+<a href="#547" id="547">547</a>
+<a href="#548" id="548">548</a>
+<a href="#549" id="549">549</a>
+<a href="#550" id="550">550</a>
+<a href="#551" id="551">551</a></pre></div><pre class="rust"><code><span class="doccomment">//! Internal utilities to support testing.
 </span><span class="kw">use </span>std::net::Ipv4Addr;
 
 <span class="kw">use </span>anyhow::Result;
@@ -945,7 +951,13 @@
         <span class="kw">pub async fn </span>on_node(<span class="kw-2">&amp;</span><span class="self">self</span>, node: <span class="kw-2">&amp;</span>NodeId, timeout: Duration) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
             <span class="kw">let </span>timeout = tokio::time::sleep(timeout);
             <span class="macro">tokio::pin!</span>(timeout);
-            <span class="kw">while </span><span class="self">self</span>.get(node, |p| p.is_none()) {
+            <span class="kw">while </span><span class="self">self</span>.get(node, |p| {
+                <span class="kw">let </span>node_info = p
+                    .as_ref()
+                    .and_then(|p| NodeInfo::from_pkarr_signed_packet(p).ok());
+                <span class="macro">eprintln!</span>(<span class="string">"got info {:#?}"</span>, node_info);
+                p.is_none()
+            }) {
                 <span class="macro">tokio::select!</span> {
                     <span class="kw">_ </span>= <span class="kw-2">&amp;mut </span>timeout =&gt; <span class="macro">bail!</span>(<span class="string">"timeout"</span>),
                     <span class="kw">_ </span>= <span class="self">self</span>.on_update() =&gt; {}
