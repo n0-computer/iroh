@@ -312,11 +312,160 @@
 <a href="#311" id="311">311</a>
 <a href="#312" id="312">312</a>
 <a href="#313" id="313">313</a>
-<a href="#314" id="314">314</a></pre></div><pre class="rust"><code><span class="doccomment">//! Create a QUIC server that accepts connections
+<a href="#314" id="314">314</a>
+<a href="#315" id="315">315</a>
+<a href="#316" id="316">316</a>
+<a href="#317" id="317">317</a>
+<a href="#318" id="318">318</a>
+<a href="#319" id="319">319</a>
+<a href="#320" id="320">320</a>
+<a href="#321" id="321">321</a>
+<a href="#322" id="322">322</a>
+<a href="#323" id="323">323</a>
+<a href="#324" id="324">324</a>
+<a href="#325" id="325">325</a>
+<a href="#326" id="326">326</a>
+<a href="#327" id="327">327</a>
+<a href="#328" id="328">328</a>
+<a href="#329" id="329">329</a>
+<a href="#330" id="330">330</a>
+<a href="#331" id="331">331</a>
+<a href="#332" id="332">332</a>
+<a href="#333" id="333">333</a>
+<a href="#334" id="334">334</a>
+<a href="#335" id="335">335</a>
+<a href="#336" id="336">336</a>
+<a href="#337" id="337">337</a>
+<a href="#338" id="338">338</a>
+<a href="#339" id="339">339</a>
+<a href="#340" id="340">340</a>
+<a href="#341" id="341">341</a>
+<a href="#342" id="342">342</a>
+<a href="#343" id="343">343</a>
+<a href="#344" id="344">344</a>
+<a href="#345" id="345">345</a>
+<a href="#346" id="346">346</a>
+<a href="#347" id="347">347</a>
+<a href="#348" id="348">348</a>
+<a href="#349" id="349">349</a>
+<a href="#350" id="350">350</a>
+<a href="#351" id="351">351</a>
+<a href="#352" id="352">352</a>
+<a href="#353" id="353">353</a>
+<a href="#354" id="354">354</a>
+<a href="#355" id="355">355</a>
+<a href="#356" id="356">356</a>
+<a href="#357" id="357">357</a>
+<a href="#358" id="358">358</a>
+<a href="#359" id="359">359</a>
+<a href="#360" id="360">360</a>
+<a href="#361" id="361">361</a>
+<a href="#362" id="362">362</a>
+<a href="#363" id="363">363</a>
+<a href="#364" id="364">364</a>
+<a href="#365" id="365">365</a>
+<a href="#366" id="366">366</a>
+<a href="#367" id="367">367</a>
+<a href="#368" id="368">368</a>
+<a href="#369" id="369">369</a>
+<a href="#370" id="370">370</a>
+<a href="#371" id="371">371</a>
+<a href="#372" id="372">372</a>
+<a href="#373" id="373">373</a>
+<a href="#374" id="374">374</a>
+<a href="#375" id="375">375</a>
+<a href="#376" id="376">376</a>
+<a href="#377" id="377">377</a>
+<a href="#378" id="378">378</a>
+<a href="#379" id="379">379</a>
+<a href="#380" id="380">380</a>
+<a href="#381" id="381">381</a>
+<a href="#382" id="382">382</a>
+<a href="#383" id="383">383</a>
+<a href="#384" id="384">384</a>
+<a href="#385" id="385">385</a>
+<a href="#386" id="386">386</a>
+<a href="#387" id="387">387</a>
+<a href="#388" id="388">388</a>
+<a href="#389" id="389">389</a>
+<a href="#390" id="390">390</a>
+<a href="#391" id="391">391</a>
+<a href="#392" id="392">392</a>
+<a href="#393" id="393">393</a>
+<a href="#394" id="394">394</a>
+<a href="#395" id="395">395</a>
+<a href="#396" id="396">396</a>
+<a href="#397" id="397">397</a>
+<a href="#398" id="398">398</a>
+<a href="#399" id="399">399</a>
+<a href="#400" id="400">400</a>
+<a href="#401" id="401">401</a>
+<a href="#402" id="402">402</a>
+<a href="#403" id="403">403</a>
+<a href="#404" id="404">404</a>
+<a href="#405" id="405">405</a>
+<a href="#406" id="406">406</a>
+<a href="#407" id="407">407</a>
+<a href="#408" id="408">408</a>
+<a href="#409" id="409">409</a>
+<a href="#410" id="410">410</a>
+<a href="#411" id="411">411</a>
+<a href="#412" id="412">412</a>
+<a href="#413" id="413">413</a>
+<a href="#414" id="414">414</a>
+<a href="#415" id="415">415</a>
+<a href="#416" id="416">416</a>
+<a href="#417" id="417">417</a>
+<a href="#418" id="418">418</a>
+<a href="#419" id="419">419</a>
+<a href="#420" id="420">420</a>
+<a href="#421" id="421">421</a>
+<a href="#422" id="422">422</a>
+<a href="#423" id="423">423</a>
+<a href="#424" id="424">424</a>
+<a href="#425" id="425">425</a>
+<a href="#426" id="426">426</a>
+<a href="#427" id="427">427</a>
+<a href="#428" id="428">428</a>
+<a href="#429" id="429">429</a>
+<a href="#430" id="430">430</a>
+<a href="#431" id="431">431</a>
+<a href="#432" id="432">432</a>
+<a href="#433" id="433">433</a>
+<a href="#434" id="434">434</a>
+<a href="#435" id="435">435</a>
+<a href="#436" id="436">436</a>
+<a href="#437" id="437">437</a>
+<a href="#438" id="438">438</a>
+<a href="#439" id="439">439</a>
+<a href="#440" id="440">440</a>
+<a href="#441" id="441">441</a>
+<a href="#442" id="442">442</a>
+<a href="#443" id="443">443</a>
+<a href="#444" id="444">444</a>
+<a href="#445" id="445">445</a>
+<a href="#446" id="446">446</a>
+<a href="#447" id="447">447</a>
+<a href="#448" id="448">448</a>
+<a href="#449" id="449">449</a>
+<a href="#450" id="450">450</a>
+<a href="#451" id="451">451</a>
+<a href="#452" id="452">452</a>
+<a href="#453" id="453">453</a>
+<a href="#454" id="454">454</a>
+<a href="#455" id="455">455</a>
+<a href="#456" id="456">456</a>
+<a href="#457" id="457">457</a>
+<a href="#458" id="458">458</a>
+<a href="#459" id="459">459</a>
+<a href="#460" id="460">460</a>
+<a href="#461" id="461">461</a>
+<a href="#462" id="462">462</a></pre></div><pre class="rust"><code><span class="doccomment">//! Create a QUIC server that accepts connections
 //! for QUIC address discovery.
 </span><span class="kw">use </span>std::{net::SocketAddr, sync::Arc};
 
 <span class="kw">use </span>anyhow::Result;
+<span class="kw">use </span>n0_future::time::Duration;
 <span class="kw">use </span>quinn::{crypto::rustls::QuicClientConfig, VarInt};
 
 <span class="doccomment">/// ALPN for our quic addr discovery
@@ -526,6 +675,17 @@
 
         <span class="comment">// enable the receive side of address discovery
         </span><span class="kw">let </span><span class="kw-2">mut </span>transport = quinn_proto::TransportConfig::default();
+        <span class="comment">// Setting the initial RTT estimate to a low value means
+        // we're sacrificing initial throughput, which is fine for
+        // QAD, which doesn't require us to have good initial throughput.
+        // It also implies a 999ms probe timeout, which means that
+        // if the packet gets lots (e.g. because we're probing ipv6, but
+        // ipv6 packets always get lost in our network configuration) we
+        // time out *closing the connection* after only 999ms.
+        // Even if the round trip time is bigger than 999ms, this doesn't
+        // prevent us from connecting, since that's dependent on the idle
+        // timeout (set to 30s by default).
+        </span>transport.initial_rtt(Duration::from_millis(<span class="number">111</span>));
         transport.receive_observed_address_reports(<span class="bool-val">true</span>);
         client_config.transport_config(Arc::new(transport));
 
@@ -575,7 +735,7 @@
         <span class="comment">// if we've sent to an ipv4 address, but received an observed address
         // that is ivp6 then the address is an [IPv4-Mapped IPv6 Addresses](https://doc.rust-lang.org/beta/std/net/struct.Ipv6Addr.html#ipv4-mapped-ipv6-addresses)
         </span>observed_addr = SocketAddr::new(observed_addr.ip().to_canonical(), observed_addr.port());
-        <span class="kw">let </span>latency = conn.rtt() / <span class="number">2</span>;
+        <span class="kw">let </span>latency = conn.rtt();
         <span class="comment">// gracefully close the connections
         </span>conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
         <span class="prelude-val">Ok</span>((observed_addr, latency))
@@ -586,16 +746,23 @@
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>std::net::Ipv4Addr;
 
+    <span class="kw">use </span>anyhow::Context;
+    <span class="kw">use </span>n0_future::{task::AbortOnDropHandle, time};
+    <span class="kw">use </span>quinn::crypto::rustls::QuicServerConfig;
+    <span class="kw">use </span>tokio::time::Instant;
+    <span class="kw">use </span>tracing::{debug, info, info_span, Instrument};
+    <span class="kw">use </span>tracing_test::traced_test;
+    <span class="kw">use </span>webpki::types::PrivatePkcs8KeyDer;
+
     <span class="kw">use super</span>::{
         server::{QuicConfig, QuicServer},
         <span class="kw-2">*</span>,
     };
 
     <span class="attr">#[tokio::test]
+    #[traced_test]
     </span><span class="kw">async fn </span>quic_endpoint_basic() -&gt; anyhow::Result&lt;()&gt; {
         <span class="kw">let </span>host: Ipv4Addr = <span class="string">"127.0.0.1"</span>.parse()<span class="question-mark">?</span>;
-        <span class="kw">let </span>_guard = iroh_test::logging::setup();
-
         <span class="comment">// create a server config with self signed certificates
         </span><span class="kw">let </span>(<span class="kw">_</span>, server_config) = <span class="kw">super</span>::<span class="kw">super</span>::server::testing::self_signed_tls_certs_and_config();
         <span class="kw">let </span>bind_addr = SocketAddr::new(host.into(), <span class="number">0</span>);
@@ -623,6 +790,135 @@
         </span>quic_server.shutdown().<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="macro">assert_eq!</span>(client_addr, addr);
+        <span class="prelude-val">Ok</span>(())
+    }
+
+    <span class="attr">#[tokio::test]
+    #[traced_test]
+    </span><span class="kw">async fn </span>test_qad_client_closes_unresponsive_fast() -&gt; anyhow::Result&lt;()&gt; {
+        <span class="comment">// create a client-side endpoint
+        </span><span class="kw">let </span>client_endpoint =
+            quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), <span class="number">0</span>))<span class="question-mark">?</span>;
+
+        <span class="comment">// create an socket that does not respond.
+        </span><span class="kw">let </span>server_socket =
+            tokio::net::UdpSocket::bind(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), <span class="number">0</span>)).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>server_addr = server_socket.local_addr()<span class="question-mark">?</span>;
+
+        <span class="comment">// create the client configuration used for the client endpoint when they
+        // initiate a connection with the server
+        </span><span class="kw">let </span>client_config = <span class="kw">crate</span>::client::make_dangerous_client_config();
+        <span class="kw">let </span>quic_client = QuicClient::new(client_endpoint.clone(), client_config)<span class="question-mark">?</span>;
+
+        <span class="comment">// Start a connection attempt with nirvana - this will fail
+        </span><span class="kw">let </span>task = AbortOnDropHandle::new(tokio::spawn({
+            <span class="kw">async move </span>{
+                quic_client
+                    .get_addr_and_latency(server_addr, <span class="string">"localhost"</span>)
+                    .<span class="kw">await
+            </span>}
+        }));
+
+        <span class="comment">// Even if we wait longer than the probe timeout, we will still be attempting to connect:
+        </span>tokio::time::sleep(Duration::from_millis(<span class="number">1000</span>)).<span class="kw">await</span>;
+        <span class="macro">assert!</span>(!task.is_finished());
+
+        <span class="comment">// time the closing of the client endpoint
+        </span><span class="kw">let </span>before = Instant::now();
+        client_endpoint.close(<span class="number">0u32</span>.into(), <span class="string">b"byeeeee"</span>);
+        client_endpoint.wait_idle().<span class="kw">await</span>;
+        <span class="kw">let </span>time = Instant::now().duration_since(before);
+
+        <span class="macro">println!</span>(<span class="string">"Closed in {time:?}"</span>);
+        <span class="macro">assert!</span>(Duration::from_millis(<span class="number">900</span>) &lt; time);
+        <span class="macro">assert!</span>(time &lt; Duration::from_millis(<span class="number">1100</span>));
+
+        <span class="prelude-val">Ok</span>(())
+    }
+
+    <span class="doccomment">/// Makes sure that, even though the RTT was set to some fairly low value,
+    /// we *do* try to connect for longer than what the time out would be after closing
+    /// the connection, when we *don't* close the connection.
+    ///
+    /// In this case we don't simulate it via synthetically high RTT, but by dropping
+    /// all packets on the server-side for 2 seconds.
+    </span><span class="attr">#[tokio::test]
+    #[traced_test]
+    </span><span class="kw">async fn </span>test_qad_connect_delayed() -&gt; anyhow::Result&lt;()&gt; {
+        <span class="comment">// Create a socket for our QAD server.  We need the socket separately because we
+        // need to pop off messages before we attach it to the Quinn Endpoint.
+        </span><span class="kw">let </span>socket =
+            tokio::net::UdpSocket::bind(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), <span class="number">0</span>)).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>server_addr = socket.local_addr()<span class="question-mark">?</span>;
+        <span class="macro">info!</span>(addr = <span class="question-mark">?</span>server_addr, <span class="string">"server socket bound"</span>);
+
+        <span class="comment">// Create a QAD server with a self-signed cert, all manually.
+        </span><span class="kw">let </span>cert = rcgen::generate_simple_self_signed(<span class="macro">vec!</span>[<span class="string">"localhost"</span>.into()])<span class="question-mark">?</span>;
+        <span class="kw">let </span>key = PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
+        <span class="kw">let </span><span class="kw-2">mut </span>server_crypto = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(<span class="macro">vec!</span>[cert.cert.into()], key.into())<span class="question-mark">?</span>;
+        server_crypto.key_log = Arc::new(rustls::KeyLogFile::new());
+        server_crypto.alpn_protocols = <span class="macro">vec!</span>[ALPN_QUIC_ADDR_DISC.to_vec()];
+        <span class="kw">let </span><span class="kw-2">mut </span>server_config =
+            quinn::ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(server_crypto)<span class="question-mark">?</span>));
+        <span class="kw">let </span>transport_config = Arc::get_mut(<span class="kw-2">&amp;mut </span>server_config.transport).unwrap();
+        transport_config.send_observed_address_reports(<span class="bool-val">true</span>);
+
+        <span class="kw">let </span>start = Instant::now();
+        <span class="kw">let </span>server_task = tokio::spawn(
+            <span class="kw">async move </span>{
+                <span class="macro">info!</span>(<span class="string">"Dropping all packets"</span>);
+                time::timeout(Duration::from_secs(<span class="number">2</span>), <span class="kw">async </span>{
+                    <span class="kw">let </span><span class="kw-2">mut </span>buf = [<span class="number">0u8</span>; <span class="number">1500</span>];
+                    <span class="kw">loop </span>{
+                        <span class="kw">let </span>(len, src) = socket.recv_from(<span class="kw-2">&amp;mut </span>buf).<span class="kw">await</span>.unwrap();
+                        <span class="macro">debug!</span>(%len, <span class="question-mark">?</span>src, <span class="string">"Dropped a packet"</span>);
+                    }
+                })
+                .<span class="kw">await
+                </span>.ok();
+                <span class="macro">info!</span>(<span class="string">"starting server"</span>);
+                <span class="kw">let </span>server = quinn::Endpoint::new(
+                    Default::default(),
+                    <span class="prelude-val">Some</span>(server_config),
+                    socket.into_std()<span class="question-mark">?</span>,
+                    Arc::new(quinn::TokioRuntime),
+                )<span class="question-mark">?</span>;
+                <span class="macro">info!</span>(<span class="string">"accepting conn"</span>);
+                <span class="kw">let </span>incoming = server.accept().<span class="kw">await</span>.context(<span class="string">"no conn"</span>)<span class="question-mark">?</span>;
+                <span class="macro">info!</span>(<span class="string">"incoming!"</span>);
+                <span class="kw">let </span>conn = incoming.<span class="kw">await</span><span class="question-mark">?</span>;
+                conn.closed().<span class="kw">await</span>;
+                server.wait_idle().<span class="kw">await</span>;
+                <span class="prelude-val">Ok</span>::&lt;(), anyhow::Error&gt;(())
+            }
+            .instrument(<span class="macro">info_span!</span>(<span class="string">"server"</span>)),
+        );
+        <span class="kw">let </span>server_task = AbortOnDropHandle::new(server_task);
+
+        <span class="macro">info!</span>(<span class="string">"starting client"</span>);
+        <span class="kw">let </span>client_endpoint =
+            quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), <span class="number">0</span>))<span class="question-mark">?</span>;
+
+        <span class="comment">// create the client configuration used for the client endpoint when they
+        // initiate a connection with the server
+        </span><span class="kw">let </span>client_config = <span class="kw">crate</span>::client::make_dangerous_client_config();
+        <span class="kw">let </span>quic_client = QuicClient::new(client_endpoint.clone(), client_config)<span class="question-mark">?</span>;
+
+        <span class="comment">// Now we should still connect, but it should take more than 1s.
+        </span><span class="macro">info!</span>(<span class="string">"making QAD request"</span>);
+        <span class="kw">let </span>(addr, latency) = time::timeout(
+            Duration::from_secs(<span class="number">10</span>),
+            quic_client.get_addr_and_latency(server_addr, <span class="string">"localhost"</span>),
+        )
+        .<span class="kw">await</span><span class="question-mark">??</span>;
+        <span class="kw">let </span>duration = start.elapsed();
+        <span class="macro">info!</span>(<span class="question-mark">?</span>duration, <span class="question-mark">?</span>addr, <span class="question-mark">?</span>latency, <span class="string">"QAD succeeded"</span>);
+        <span class="macro">assert!</span>(duration &gt;= Duration::from_secs(<span class="number">1</span>));
+
+        time::timeout(Duration::from_secs(<span class="number">10</span>), server_task).<span class="kw">await</span><span class="question-mark">???</span>;
+
         <span class="prelude-val">Ok</span>(())
     }
 }

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["default_resolver","resolver"],"mod":["node_info"],"trait":["ResolverExt"],"type":["DnsResolver"]};
+window.SIDEBAR_ITEMS = {"constant":["N0_DNS_NODE_ORIGIN_PROD","N0_DNS_NODE_ORIGIN_STAGING"],"struct":["DnsResolver"]};

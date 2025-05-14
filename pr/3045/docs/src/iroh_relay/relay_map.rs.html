@@ -156,11 +156,23 @@
 <a href="#155" id="155">155</a>
 <a href="#156" id="156">156</a>
 <a href="#157" id="157">157</a>
-<a href="#158" id="158">158</a></pre></div><pre class="rust"><code><span class="doccomment">//! based on tailscale/tailcfg/derpmap.go
+<a href="#158" id="158">158</a>
+<a href="#159" id="159">159</a>
+<a href="#160" id="160">160</a>
+<a href="#161" id="161">161</a>
+<a href="#162" id="162">162</a>
+<a href="#163" id="163">163</a>
+<a href="#164" id="164">164</a>
+<a href="#165" id="165">165</a>
+<a href="#166" id="166">166</a>
+<a href="#167" id="167">167</a>
+<a href="#168" id="168">168</a>
+<a href="#169" id="169">169</a>
+<a href="#170" id="170">170</a>
+<a href="#171" id="171">171</a></pre></div><pre class="rust"><code><span class="doccomment">//! based on tailscale/tailcfg/derpmap.go
 
 </span><span class="kw">use </span>std::{collections::BTreeMap, fmt, sync::Arc};
 
-<span class="kw">use </span>anyhow::{ensure, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>iroh_base::RelayUrl;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 
@@ -210,50 +222,53 @@
     </span><span class="kw">pub fn </span>is_empty(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
         <span class="self">self</span>.nodes.is_empty()
     }
+}
 
-    <span class="doccomment">/// Creates a new [`RelayMap`] with a single relay server configured.
-    ///
-    /// Allows to set a custom STUN port and different IP addresses for IPv4 and IPv6.
-    /// If IP addresses are provided, no DNS lookup will be performed.
-    ///
-    /// Sets the port to the default [`DEFAULT_RELAY_QUIC_PORT`].
-    </span><span class="kw">pub fn </span>default_from_node(url: RelayUrl, stun_port: u16) -&gt; <span class="self">Self </span>{
-        <span class="kw">let </span><span class="kw-2">mut </span>nodes = BTreeMap::new();
-        nodes.insert(
-            url.clone(),
-            RelayNode {
-                url,
-                stun_only: <span class="bool-val">false</span>,
-                stun_port,
-                quic: <span class="prelude-val">Some</span>(RelayQuicConfig::default()),
-            }
-            .into(),
-        );
-
-        RelayMap {
-            nodes: Arc::new(nodes),
+<span class="kw">impl </span>FromIterator&lt;RelayNode&gt; <span class="kw">for </span>RelayMap {
+    <span class="kw">fn </span>from_iter&lt;T: IntoIterator&lt;Item = RelayNode&gt;&gt;(iter: T) -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{
+            nodes: Arc::new(
+                iter.into_iter()
+                    .map(|node| (node.url.clone(), Arc::new(node)))
+                    .collect(),
+            ),
         }
     }
+}
 
-    <span class="doccomment">/// Returns a [`RelayMap`] from a [`RelayUrl`].
+<span class="kw">impl </span>From&lt;RelayUrl&gt; <span class="kw">for </span>RelayMap {
+    <span class="doccomment">/// Creates a [`RelayMap`] from a [`RelayUrl`].
     ///
-    /// This will use the default STUN port, the default QUIC port
-    /// (as defined by the `iroh-relay` crate) and IP addresses
-    /// resolved from the URL's host name via DNS.
-    /// relay nodes are specified at &lt;../../docs/relay_nodes.md&gt;
-    </span><span class="kw">pub fn </span>from_url(url: RelayUrl) -&gt; <span class="self">Self </span>{
-        <span class="self">Self</span>::default_from_node(url, DEFAULT_STUN_PORT)
-    }
-
-    <span class="doccomment">/// Constructs the [`RelayMap`] from an iterator of [`RelayNode`]s.
-    </span><span class="kw">pub fn </span>from_nodes&lt;I: Into&lt;Arc&lt;RelayNode&gt;&gt;&gt;(value: <span class="kw">impl </span>IntoIterator&lt;Item = I&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="kw">let </span><span class="kw-2">mut </span>map = BTreeMap::new();
-        <span class="kw">for </span>node <span class="kw">in </span>value.into_iter() {
-            <span class="kw">let </span>node = node.into();
-            <span class="macro">ensure!</span>(!map.contains_key(<span class="kw-2">&amp;</span>node.url), <span class="string">"Duplicate node url"</span>);
-            map.insert(node.url.clone(), node);
+    /// The [`RelayNode`]s in the [`RelayMap`] will have the default STUN and QUIC address
+    /// discovery ports.
+    </span><span class="kw">fn </span>from(value: RelayUrl) -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{
+            nodes: Arc::new([(value.clone(), Arc::new(value.into()))].into()),
         }
-        <span class="prelude-val">Ok</span>(RelayMap { nodes: map.into() })
+    }
+}
+
+<span class="kw">impl </span>From&lt;RelayNode&gt; <span class="kw">for </span>RelayMap {
+    <span class="kw">fn </span>from(value: RelayNode) -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{
+            nodes: Arc::new([(value.url.clone(), Arc::new(value))].into()),
+        }
+    }
+}
+
+<span class="kw">impl </span>FromIterator&lt;RelayUrl&gt; <span class="kw">for </span>RelayMap {
+    <span class="doccomment">/// Creates a [`RelayMap`] from an iterator of [`RelayUrl`].
+    ///
+    /// The [`RelayNode`]s in the [`RelayMap`] will have the default STUN and QUIC address
+    /// discovery ports.
+    </span><span class="kw">fn </span>from_iter&lt;T: IntoIterator&lt;Item = RelayUrl&gt;&gt;(iter: T) -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{
+            nodes: Arc::new(
+                iter.into_iter()
+                    .map(|url| (url.clone(), Arc::new(url.into())))
+                    .collect(),
+            ),
+        }
     }
 }
 
@@ -287,6 +302,17 @@
     /// with this relay server.
     </span><span class="attr">#[serde(default = <span class="string">"quic_config"</span>)]
     </span><span class="kw">pub </span>quic: <span class="prelude-ty">Option</span>&lt;RelayQuicConfig&gt;,
+}
+
+<span class="kw">impl </span>From&lt;RelayUrl&gt; <span class="kw">for </span>RelayNode {
+    <span class="kw">fn </span>from(value: RelayUrl) -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{
+            url: value,
+            stun_only: <span class="bool-val">false</span>,
+            stun_port: DEFAULT_STUN_PORT,
+            quic: quic_config(),
+        }
+    }
 }
 
 <span class="kw">fn </span>quic_config() -&gt; <span class="prelude-ty">Option</span>&lt;RelayQuicConfig&gt; {

@@ -225,99 +225,272 @@
 <a href="#224" id="224">224</a>
 <a href="#225" id="225">225</a>
 <a href="#226" id="226">226</a>
-<a href="#227" id="227">227</a></pre></div><pre class="rust"><code><span class="doccomment">//! TLS 1.3 certificates and handshakes handling for libp2p
+<a href="#227" id="227">227</a>
+<a href="#228" id="228">228</a>
+<a href="#229" id="229">229</a>
+<a href="#230" id="230">230</a>
+<a href="#231" id="231">231</a>
+<a href="#232" id="232">232</a>
+<a href="#233" id="233">233</a>
+<a href="#234" id="234">234</a>
+<a href="#235" id="235">235</a>
+<a href="#236" id="236">236</a>
+<a href="#237" id="237">237</a>
+<a href="#238" id="238">238</a>
+<a href="#239" id="239">239</a>
+<a href="#240" id="240">240</a>
+<a href="#241" id="241">241</a>
+<a href="#242" id="242">242</a>
+<a href="#243" id="243">243</a>
+<a href="#244" id="244">244</a>
+<a href="#245" id="245">245</a>
+<a href="#246" id="246">246</a>
+<a href="#247" id="247">247</a>
+<a href="#248" id="248">248</a>
+<a href="#249" id="249">249</a>
+<a href="#250" id="250">250</a>
+<a href="#251" id="251">251</a>
+<a href="#252" id="252">252</a>
+<a href="#253" id="253">253</a>
+<a href="#254" id="254">254</a>
+<a href="#255" id="255">255</a>
+<a href="#256" id="256">256</a>
+<a href="#257" id="257">257</a>
+<a href="#258" id="258">258</a>
+<a href="#259" id="259">259</a>
+<a href="#260" id="260">260</a>
+<a href="#261" id="261">261</a>
+<a href="#262" id="262">262</a>
+<a href="#263" id="263">263</a>
+<a href="#264" id="264">264</a>
+<a href="#265" id="265">265</a>
+<a href="#266" id="266">266</a>
+<a href="#267" id="267">267</a>
+<a href="#268" id="268">268</a>
+<a href="#269" id="269">269</a>
+<a href="#270" id="270">270</a>
+<a href="#271" id="271">271</a>
+<a href="#272" id="272">272</a>
+<a href="#273" id="273">273</a>
+<a href="#274" id="274">274</a>
+<a href="#275" id="275">275</a>
+<a href="#276" id="276">276</a>
+<a href="#277" id="277">277</a>
+<a href="#278" id="278">278</a>
+<a href="#279" id="279">279</a>
+<a href="#280" id="280">280</a>
+<a href="#281" id="281">281</a>
+<a href="#282" id="282">282</a>
+<a href="#283" id="283">283</a>
+<a href="#284" id="284">284</a>
+<a href="#285" id="285">285</a>
+<a href="#286" id="286">286</a>
+<a href="#287" id="287">287</a>
+<a href="#288" id="288">288</a>
+<a href="#289" id="289">289</a>
+<a href="#290" id="290">290</a>
+<a href="#291" id="291">291</a>
+<a href="#292" id="292">292</a>
+<a href="#293" id="293">293</a>
+<a href="#294" id="294">294</a>
+<a href="#295" id="295">295</a>
+<a href="#296" id="296">296</a>
+<a href="#297" id="297">297</a>
+<a href="#298" id="298">298</a>
+<a href="#299" id="299">299</a>
+<a href="#300" id="300">300</a>
+<a href="#301" id="301">301</a>
+<a href="#302" id="302">302</a>
+<a href="#303" id="303">303</a>
+<a href="#304" id="304">304</a>
+<a href="#305" id="305">305</a>
+<a href="#306" id="306">306</a>
+<a href="#307" id="307">307</a>
+<a href="#308" id="308">308</a>
+<a href="#309" id="309">309</a>
+<a href="#310" id="310">310</a>
+<a href="#311" id="311">311</a>
+<a href="#312" id="312">312</a>
+<a href="#313" id="313">313</a>
+<a href="#314" id="314">314</a>
+<a href="#315" id="315">315</a>
+<a href="#316" id="316">316</a>
+<a href="#317" id="317">317</a>
+<a href="#318" id="318">318</a>
+<a href="#319" id="319">319</a>
+<a href="#320" id="320">320</a>
+<a href="#321" id="321">321</a>
+<a href="#322" id="322">322</a>
+<a href="#323" id="323">323</a>
+<a href="#324" id="324">324</a>
+<a href="#325" id="325">325</a>
+<a href="#326" id="326">326</a>
+<a href="#327" id="327">327</a>
+<a href="#328" id="328">328</a>
+<a href="#329" id="329">329</a>
+<a href="#330" id="330">330</a>
+<a href="#331" id="331">331</a>
+<a href="#332" id="332">332</a>
+<a href="#333" id="333">333</a>
+<a href="#334" id="334">334</a>
+<a href="#335" id="335">335</a>
+<a href="#336" id="336">336</a>
+<a href="#337" id="337">337</a>
+<a href="#338" id="338">338</a>
+<a href="#339" id="339">339</a>
+<a href="#340" id="340">340</a>
+<a href="#341" id="341">341</a>
+<a href="#342" id="342">342</a>
+<a href="#343" id="343">343</a>
+<a href="#344" id="344">344</a>
+<a href="#345" id="345">345</a>
+<a href="#346" id="346">346</a>
+<a href="#347" id="347">347</a>
+<a href="#348" id="348">348</a></pre></div><pre class="rust"><code><span class="doccomment">//! TLS 1.3 certificates and handshakes handling.
 //!
 //! This module handles a verification of a client/server certificate chain
-//! and signatures allegedly by the given certificates.
+//! and signatures allegedly by the given certificates, or using raw public keys.
 //!
-//! Based on rust-libp2p/transports/tls/src/verifier.rs originally licensed under MIT by Parity
-//! Technologies (UK) Ltd.
+//!
+//! libp2p-tls certificate part is based on rust-libp2p/transports/tls/src/verifier.rs originally
+//! licensed under MIT by Parity Technologies (UK) Ltd.
+
 </span><span class="kw">use </span>std::sync::Arc;
 
+<span class="kw">use </span>ed25519_dalek::pkcs8::EncodePublicKey;
 <span class="kw">use </span>iroh_base::PublicKey;
 <span class="kw">use </span>rustls::{
     client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
+    crypto::{verify_tls13_signature_with_raw_key, WebPkiSupportedAlgorithms},
     pki_types::CertificateDer <span class="kw">as </span>Certificate,
     server::danger::{ClientCertVerified, ClientCertVerifier},
     CertificateError, DigitallySignedStruct, DistinguishedName, OtherError, PeerMisbehaved,
     SignatureScheme, SupportedProtocolVersion,
 };
+<span class="kw">use </span>webpki::{ring <span class="kw">as </span>webpki_algs, types::SubjectPublicKeyInfoDer};
 
-<span class="kw">use </span><span class="kw">super</span>::certificate;
+<span class="kw">use super</span>::{certificate, Authentication};
 
-<span class="doccomment">/// The protocol versions supported by this verifier.
-///
-/// The spec says:
-///
-/// &gt; The libp2p handshake uses TLS 1.3 (and higher).
-/// &gt; Endpoints MUST NOT negotiate lower TLS versions.
-</span><span class="kw">pub static </span>PROTOCOL_VERSIONS: <span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>SupportedProtocolVersion] = <span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>rustls::version::TLS13];
+<span class="doccomment">/// The only TLS version we support is 1.3
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">static </span>PROTOCOL_VERSIONS: <span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>SupportedProtocolVersion] = <span class="kw-2">&amp;</span>[<span class="kw-2">&amp;</span>rustls::version::TLS13];
 
-<span class="doccomment">/// Implementation of the `rustls` certificate verification traits for libp2p.
+<span class="kw">static </span>SUPPORTED_SIG_ALGS: WebPkiSupportedAlgorithms = WebPkiSupportedAlgorithms {
+    all: <span class="kw-2">&amp;</span>[
+        webpki_algs::ECDSA_P256_SHA256,
+        webpki_algs::ECDSA_P256_SHA384,
+        webpki_algs::ECDSA_P384_SHA256,
+        webpki_algs::ECDSA_P384_SHA384,
+        webpki_algs::ED25519,
+    ],
+    mapping: <span class="kw-2">&amp;</span>[
+        <span class="comment">// Note: for TLS1.2 the curve is not fixed by SignatureScheme. For TLS1.3 it is.
+        </span>(
+            SignatureScheme::ECDSA_NISTP384_SHA384,
+            <span class="kw-2">&amp;</span>[
+                webpki_algs::ECDSA_P384_SHA384,
+                webpki_algs::ECDSA_P256_SHA384,
+            ],
+        ),
+        (
+            SignatureScheme::ECDSA_NISTP256_SHA256,
+            <span class="kw-2">&amp;</span>[
+                webpki_algs::ECDSA_P256_SHA256,
+                webpki_algs::ECDSA_P384_SHA256,
+            ],
+        ),
+        (SignatureScheme::ED25519, <span class="kw-2">&amp;</span>[webpki_algs::ED25519]),
+    ],
+};
+
+<span class="doccomment">/// Implementation of the `rustls` certificate verification traits
 ///
 /// Only TLS 1.3 is supported. TLS 1.2 should be disabled in the configuration of `rustls`.
 </span><span class="attr">#[derive(Debug)]
-</span><span class="kw">pub struct </span>Libp2pCertificateVerifier {
-    <span class="doccomment">/// The peer ID we intend to connect to
-    </span>remote_peer_id: <span class="prelude-ty">Option</span>&lt;PublicKey&gt;,
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>ServerCertificateVerifier {
+    <span class="doccomment">/// Which TLS authentication mode to operate in.
+    </span>auth: Authentication,
 }
 
-<span class="doccomment">/// libp2p requires the following of X.509 server certificate chains:
+<span class="doccomment">/// We require the following
+/// Either X.509 server certificate chains:
 ///
 /// - Exactly one certificate must be presented.
 /// - The certificate must be self-signed.
-/// - The certificate must have a valid libp2p extension that includes a
-///   signature of its public key.
-</span><span class="kw">impl </span>Libp2pCertificateVerifier {
-    <span class="kw">pub fn </span>new() -&gt; <span class="self">Self </span>{
-        <span class="self">Self </span>{
-            remote_peer_id: <span class="prelude-val">None</span>,
-        }
-    }
-    <span class="kw">pub fn </span>with_remote_peer_id(remote_peer_id: <span class="prelude-ty">Option</span>&lt;PublicKey&gt;) -&gt; <span class="self">Self </span>{
-        <span class="self">Self </span>{ remote_peer_id }
-    }
-
-    <span class="doccomment">/// Return the list of SignatureSchemes that this verifier will handle,
-    /// in `verify_tls12_signature` and `verify_tls13_signature` calls.
-    ///
-    /// This should be in priority order, with the most preferred first.
-    </span><span class="kw">fn </span>verification_schemes() -&gt; Vec&lt;SignatureScheme&gt; {
-        <span class="macro">vec!</span>[
-            <span class="comment">// TODO SignatureScheme::ECDSA_NISTP521_SHA512 is not supported by `ring` yet
-            </span>SignatureScheme::ECDSA_NISTP384_SHA384,
-            SignatureScheme::ECDSA_NISTP256_SHA256,
-            <span class="comment">// TODO SignatureScheme::ED448 is not supported by `ring` yet
-            </span>SignatureScheme::ED25519,
-            <span class="comment">// In particular, RSA SHOULD NOT be used.
-        </span>]
+/// - The certificate must have a valid libp2p extension that includes a signature of its public key.
+///
+/// or a raw public key.
+</span><span class="kw">impl </span>ServerCertificateVerifier {
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(auth: Authentication) -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{ auth }
     }
 }
 
-<span class="kw">impl </span>ServerCertVerifier <span class="kw">for </span>Libp2pCertificateVerifier {
+<span class="kw">fn </span>public_key_to_spki(remote_peer_id: <span class="kw-2">&amp;</span>PublicKey) -&gt; SubjectPublicKeyInfoDer&lt;<span class="lifetime">'static</span>&gt; {
+    <span class="kw">let </span>der_key = remote_peer_id
+        .public()
+        .to_public_key_der()
+        .expect(<span class="string">"valid key"</span>);
+    SubjectPublicKeyInfoDer::from(der_key.into_vec())
+}
+
+<span class="kw">impl </span>ServerCertVerifier <span class="kw">for </span>ServerCertificateVerifier {
     <span class="kw">fn </span>verify_server_cert(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         end_entity: <span class="kw-2">&amp;</span>Certificate,
         intermediates: <span class="kw-2">&amp;</span>[Certificate],
-        _server_name: <span class="kw-2">&amp;</span>rustls::pki_types::ServerName,
+        server_name: <span class="kw-2">&amp;</span>rustls::pki_types::ServerName,
         _ocsp_response: <span class="kw-2">&amp;</span>[u8],
         _now: rustls::pki_types::UnixTime,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;ServerCertVerified, rustls::Error&gt; {
-        <span class="kw">let </span>peer_id = verify_presented_certs(end_entity, intermediates)<span class="question-mark">?</span>;
+        <span class="kw">let </span>rustls::pki_types::ServerName::DnsName(dns_name) = server_name <span class="kw">else </span>{
+            <span class="kw">return </span><span class="prelude-val">Err</span>(rustls::Error::UnsupportedNameType);
+        };
+        <span class="kw">let </span><span class="prelude-val">Some</span>(remote_peer_id) = <span class="kw">super</span>::name::decode(dns_name.as_ref()) <span class="kw">else </span>{
+            <span class="kw">return </span><span class="prelude-val">Err</span>(rustls::Error::InvalidCertificate(
+                CertificateError::NotValidForName,
+            ));
+        };
 
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>remote_peer_id) = <span class="self">self</span>.remote_peer_id {
-            <span class="comment">// The public host key allows the peer to calculate the peer ID of the peer
-            // it is connecting to. Clients MUST verify that the peer ID derived from
-            // the certificate matches the peer ID they intended to connect to,
-            // and MUST abort the connection if there is a mismatch.
-            </span><span class="kw">if </span>remote_peer_id != <span class="kw-2">&amp;</span>peer_id {
-                <span class="kw">return </span><span class="prelude-val">Err</span>(rustls::Error::PeerMisbehaved(
-                    PeerMisbehaved::BadCertChainExtensions,
-                ));
+        <span class="kw">match </span><span class="self">self</span>.auth {
+            Authentication::X509 =&gt; {
+                <span class="kw">let </span>peer_id = verify_presented_certs(end_entity, intermediates)<span class="question-mark">?</span>;
+
+                <span class="comment">// The public host key allows the peer to calculate the peer ID of the peer
+                // it is connecting to. Clients MUST verify that the peer ID derived from
+                // the certificate matches the peer ID they intended to connect to,
+                // and MUST abort the connection if there is a mismatch.
+                </span><span class="kw">if </span>remote_peer_id != peer_id {
+                    <span class="kw">return </span><span class="prelude-val">Err</span>(rustls::Error::PeerMisbehaved(
+                        PeerMisbehaved::BadCertChainExtensions,
+                    ));
+                }
+
+                <span class="prelude-val">Ok</span>(ServerCertVerified::assertion())
+            }
+            Authentication::RawPublicKey =&gt; {
+                <span class="kw">if </span>!intermediates.is_empty() {
+                    <span class="kw">return </span><span class="prelude-val">Err</span>(rustls::Error::InvalidCertificate(
+                        CertificateError::UnknownIssuer,
+                    ));
+                }
+
+                <span class="kw">let </span>end_entity_as_spki = SubjectPublicKeyInfoDer::from(end_entity.as_ref());
+
+                <span class="comment">// This effectively checks that the `end_entity_as_spki` bytes have the expected
+                // (constant) 12 byte prefix (consisting of the Ed25519 public key ASN.1 object
+                // identifier, some ASN.1 DER encoding bytes signaling that this is a SPKI and
+                // consists of the object identifier and a bit sequence, a zero byte indicating
+                // that the bit sequence is padded with 0 additional bits) matches, as well as
+                // the public key bytes match the `remote_peer_id` public key bytes.
+                </span><span class="kw">if </span>public_key_to_spki(<span class="kw-2">&amp;</span>remote_peer_id) != end_entity_as_spki {
+                    <span class="kw">return </span><span class="prelude-val">Err</span>(rustls::Error::InvalidCertificate(
+                        CertificateError::UnknownIssuer,
+                    ));
+                }
+
+                <span class="prelude-val">Ok</span>(ServerCertVerified::assertion())
             }
         }
-
-        <span class="prelude-val">Ok</span>(ServerCertVerified::assertion())
     }
 
     <span class="kw">fn </span>verify_tls12_signature(
@@ -326,7 +499,9 @@
         _cert: <span class="kw-2">&amp;</span>Certificate,
         _dss: <span class="kw-2">&amp;</span>DigitallySignedStruct,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;HandshakeSignatureValid, rustls::Error&gt; {
-        <span class="macro">unreachable!</span>(<span class="string">"`PROTOCOL_VERSIONS` only allows TLS 1.3"</span>)
+        <span class="prelude-val">Err</span>(rustls::Error::PeerIncompatible(
+            rustls::PeerIncompatible::Tls12NotOffered,
+        ))
     }
 
     <span class="kw">fn </span>verify_tls13_signature(
@@ -335,22 +510,61 @@
         cert: <span class="kw-2">&amp;</span>Certificate,
         dss: <span class="kw-2">&amp;</span>DigitallySignedStruct,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;HandshakeSignatureValid, rustls::Error&gt; {
-        verify_tls13_signature(cert, dss.scheme, message, dss.signature())
+        <span class="kw">match </span><span class="self">self</span>.auth {
+            Authentication::X509 =&gt; {
+                verify_tls13_signature(cert, dss.scheme, message, dss.signature())
+            }
+            Authentication::RawPublicKey =&gt; verify_tls13_signature_with_raw_key(
+                message,
+                <span class="kw-2">&amp;</span>SubjectPublicKeyInfoDer::from(cert.as_ref()),
+                dss,
+                <span class="kw-2">&amp;</span>SUPPORTED_SIG_ALGS,
+            ),
+        }
     }
 
     <span class="kw">fn </span>supported_verify_schemes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;SignatureScheme&gt; {
-        <span class="self">Self</span>::verification_schemes()
+        SUPPORTED_SIG_ALGS.supported_schemes()
+    }
+
+    <span class="kw">fn </span>requires_raw_public_keys(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+        <span class="macro">matches!</span>(<span class="self">self</span>.auth, Authentication::RawPublicKey)
     }
 }
 
-<span class="doccomment">/// libp2p requires the following of X.509 client certificate chains:
+<span class="doccomment">/// Implementation of the `rustls` certificate verification traits.
+///
+/// Only TLS 1.3 is supported. TLS 1.2 should be disabled in the configuration of `rustls`.
+</span><span class="attr">#[derive(Debug)]
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>ClientCertificateVerifier {
+    <span class="doccomment">/// Which TLS authentication mode to operate in.
+    </span>auth: Authentication,
+}
+
+<span class="doccomment">/// We require the following
+/// Either X.509 server certificate chains:
+///
+/// - Exactly one certificate must be presented.
+/// - The certificate must be self-signed.
+/// - The certificate must have a valid libp2p extension that includes a signature of its public key.
+///
+/// or a raw public key.
+</span><span class="kw">impl </span>ClientCertificateVerifier {
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(auth: Authentication) -&gt; <span class="self">Self </span>{
+        <span class="self">Self </span>{ auth }
+    }
+}
+
+<span class="doccomment">/// We requires either following of X.509 client certificate chains:
 ///
 /// - Exactly one certificate must be presented. In particular, client
 ///   authentication is mandatory in libp2p.
 /// - The certificate must be self-signed.
 /// - The certificate must have a valid libp2p extension that includes a
 ///   signature of its public key.
-</span><span class="kw">impl </span>ClientCertVerifier <span class="kw">for </span>Libp2pCertificateVerifier {
+///
+/// or a valid raw public key configuration
+</span><span class="kw">impl </span>ClientCertVerifier <span class="kw">for </span>ClientCertificateVerifier {
     <span class="kw">fn </span>offer_client_auth(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
         <span class="bool-val">true
     </span>}
@@ -361,9 +575,21 @@
         intermediates: <span class="kw-2">&amp;</span>[Certificate],
         _now: rustls::pki_types::UnixTime,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;ClientCertVerified, rustls::Error&gt; {
-        verify_presented_certs(end_entity, intermediates)<span class="question-mark">?</span>;
+        <span class="kw">match </span><span class="self">self</span>.auth {
+            Authentication::X509 =&gt; {
+                verify_presented_certs(end_entity, intermediates)<span class="question-mark">?</span>;
+                <span class="prelude-val">Ok</span>(ClientCertVerified::assertion())
+            }
+            Authentication::RawPublicKey =&gt; {
+                <span class="kw">if </span>!intermediates.is_empty() {
+                    <span class="kw">return </span><span class="prelude-val">Err</span>(rustls::Error::InvalidCertificate(
+                        CertificateError::UnknownIssuer,
+                    ));
+                }
 
-        <span class="prelude-val">Ok</span>(ClientCertVerified::assertion())
+                <span class="prelude-val">Ok</span>(ClientCertVerified::assertion())
+            }
+        }
     }
 
     <span class="kw">fn </span>verify_tls12_signature(
@@ -372,7 +598,9 @@
         _cert: <span class="kw-2">&amp;</span>Certificate,
         _dss: <span class="kw-2">&amp;</span>DigitallySignedStruct,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;HandshakeSignatureValid, rustls::Error&gt; {
-        <span class="macro">unreachable!</span>(<span class="string">"`PROTOCOL_VERSIONS` only allows TLS 1.3"</span>)
+        <span class="prelude-val">Err</span>(rustls::Error::PeerIncompatible(
+            rustls::PeerIncompatible::Tls12NotOffered,
+        ))
     }
 
     <span class="kw">fn </span>verify_tls13_signature(
@@ -381,15 +609,29 @@
         cert: <span class="kw-2">&amp;</span>Certificate,
         dss: <span class="kw-2">&amp;</span>DigitallySignedStruct,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;HandshakeSignatureValid, rustls::Error&gt; {
-        verify_tls13_signature(cert, dss.scheme, message, dss.signature())
+        <span class="kw">match </span><span class="self">self</span>.auth {
+            Authentication::X509 =&gt; {
+                verify_tls13_signature(cert, dss.scheme, message, dss.signature())
+            }
+            Authentication::RawPublicKey =&gt; verify_tls13_signature_with_raw_key(
+                message,
+                <span class="kw-2">&amp;</span>SubjectPublicKeyInfoDer::from(cert.as_ref()),
+                dss,
+                <span class="kw-2">&amp;</span>SUPPORTED_SIG_ALGS,
+            ),
+        }
     }
 
     <span class="kw">fn </span>supported_verify_schemes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;SignatureScheme&gt; {
-        <span class="self">Self</span>::verification_schemes()
+        SUPPORTED_SIG_ALGS.supported_schemes()
     }
 
     <span class="kw">fn </span>root_hint_subjects(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[DistinguishedName] {
         <span class="kw-2">&amp;</span>[][..]
+    }
+
+    <span class="kw">fn </span>requires_raw_public_keys(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+        <span class="macro">matches!</span>(<span class="self">self</span>.auth, Authentication::RawPublicKey)
     }
 }
 

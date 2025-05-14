@@ -250,19 +250,31 @@
 <a href="#249" id="249">249</a>
 <a href="#250" id="250">250</a>
 <a href="#251" id="251">251</a>
-<a href="#252" id="252">252</a></pre></div><pre class="rust"><code><span class="doccomment">//! Extractors for DNS-over-HTTPS requests
+<a href="#252" id="252">252</a>
+<a href="#253" id="253">253</a>
+<a href="#254" id="254">254</a>
+<a href="#255" id="255">255</a>
+<a href="#256" id="256">256</a>
+<a href="#257" id="257">257</a>
+<a href="#258" id="258">258</a>
+<a href="#259" id="259">259</a>
+<a href="#260" id="260">260</a>
+<a href="#261" id="261">261</a>
+<a href="#262" id="262">262</a>
+<a href="#263" id="263">263</a></pre></div><pre class="rust"><code><span class="doccomment">//! Extractors for DNS-over-HTTPS requests
 
 </span><span class="comment">// This module is mostly copied from
 // https://github.com/fission-codes/fission-server/blob/394de877fad021260c69fdb1edd7bb4b2f98108c/fission-server/src/extract/doh.rs
 
 </span><span class="kw">use </span>std::{
     fmt::{<span class="self">self</span>, Display, Formatter},
+    future::Future,
     net::SocketAddr,
     str::FromStr,
 };
 
-<span class="kw">use </span>async_trait::async_trait;
 <span class="kw">use </span>axum::{
+    body::Body,
     extract::{ConnectInfo, FromRequest, FromRequestParts, Query},
     http::Request,
 };
@@ -350,53 +362,63 @@
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub struct </span>DnsRequestBody(<span class="kw">pub</span>(<span class="kw">crate</span>) DNSRequest);
 
-<span class="attr">#[async_trait]
-</span><span class="kw">impl</span>&lt;S&gt; FromRequestParts&lt;S&gt; <span class="kw">for </span>DnsRequestQuery
+<span class="kw">impl</span>&lt;S&gt; FromRequestParts&lt;S&gt; <span class="kw">for </span>DnsRequestQuery
 <span class="kw">where
     </span>S: Send + Sync,
 {
     <span class="kw">type </span>Rejection = AppError;
 
-    <span class="kw">async fn </span>from_request_parts(parts: <span class="kw-2">&amp;mut </span>Parts, state: <span class="kw-2">&amp;</span>S) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, <span class="self">Self</span>::Rejection&gt; {
-        <span class="kw">let </span>ConnectInfo(src_addr) = ConnectInfo::from_request_parts(parts, state).<span class="kw">await</span><span class="question-mark">?</span>;
+    <span class="attr">#[allow(clippy::manual_async_fn)]
+    </span><span class="kw">fn </span>from_request_parts(
+        parts: <span class="kw-2">&amp;mut </span>Parts,
+        state: <span class="kw-2">&amp;</span>S,
+    ) -&gt; <span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, <span class="self">Self</span>::Rejection&gt;&gt; + Send {
+        <span class="kw">async move </span>{
+            <span class="kw">let </span>ConnectInfo(src_addr) = ConnectInfo::from_request_parts(parts, state).<span class="kw">await</span><span class="question-mark">?</span>;
 
-        <span class="kw">match </span>parts.headers.get(header::ACCEPT) {
-            <span class="prelude-val">Some</span>(content_type) <span class="kw">if </span>content_type == <span class="string">"application/dns-message" </span>=&gt; {
-                handle_dns_message_query(parts, state, src_addr).<span class="kw">await
-            </span>}
-            <span class="prelude-val">Some</span>(content_type) <span class="kw">if </span>content_type == <span class="string">"application/dns-json" </span>=&gt; {
-                handle_dns_json_query(parts, state, src_addr).<span class="kw">await
-            </span>}
-            <span class="prelude-val">Some</span>(content_type) <span class="kw">if </span>content_type == <span class="string">"application/x-javascript" </span>=&gt; {
-                handle_dns_json_query(parts, state, src_addr).<span class="kw">await
-            </span>}
-            <span class="prelude-val">None </span>=&gt; handle_dns_message_query(parts, state, src_addr).<span class="kw">await</span>,
-            <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(AppError::with_status(StatusCode::NOT_ACCEPTABLE)),
+            <span class="kw">match </span>parts.headers.get(header::ACCEPT) {
+                <span class="prelude-val">Some</span>(content_type) <span class="kw">if </span>content_type == <span class="string">"application/dns-message" </span>=&gt; {
+                    handle_dns_message_query(parts, state, src_addr).<span class="kw">await
+                </span>}
+                <span class="prelude-val">Some</span>(content_type) <span class="kw">if </span>content_type == <span class="string">"application/dns-json" </span>=&gt; {
+                    handle_dns_json_query(parts, state, src_addr).<span class="kw">await
+                </span>}
+                <span class="prelude-val">Some</span>(content_type) <span class="kw">if </span>content_type == <span class="string">"application/x-javascript" </span>=&gt; {
+                    handle_dns_json_query(parts, state, src_addr).<span class="kw">await
+                </span>}
+                <span class="prelude-val">None </span>=&gt; handle_dns_message_query(parts, state, src_addr).<span class="kw">await</span>,
+                <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(AppError::with_status(StatusCode::NOT_ACCEPTABLE)),
+            }
         }
     }
 }
 
-<span class="attr">#[async_trait]
-</span><span class="kw">impl</span>&lt;S&gt; FromRequest&lt;S&gt; <span class="kw">for </span>DnsRequestBody
+<span class="kw">impl</span>&lt;S&gt; FromRequest&lt;S&gt; <span class="kw">for </span>DnsRequestBody
 <span class="kw">where
     </span>S: Send + Sync,
 {
     <span class="kw">type </span>Rejection = AppError;
 
-    <span class="kw">async fn </span>from_request(req: axum::extract::Request, state: <span class="kw-2">&amp;</span>S) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, <span class="self">Self</span>::Rejection&gt; {
-        <span class="kw">let </span>(<span class="kw-2">mut </span>parts, body) = req.into_parts();
+    <span class="attr">#[allow(clippy::manual_async_fn)]
+    </span><span class="kw">fn </span>from_request(
+        req: Request&lt;Body&gt;,
+        state: <span class="kw-2">&amp;</span>S,
+    ) -&gt; <span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, <span class="self">Self</span>::Rejection&gt;&gt; + Send {
+        <span class="kw">async move </span>{
+            <span class="kw">let </span>(<span class="kw-2">mut </span>parts, body) = req.into_parts();
 
-        <span class="kw">let </span>ConnectInfo(src_addr) = ConnectInfo::from_request_parts(<span class="kw-2">&amp;mut </span>parts, state).<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="kw">let </span>ConnectInfo(src_addr) = ConnectInfo::from_request_parts(<span class="kw-2">&amp;mut </span>parts, state).<span class="kw">await</span><span class="question-mark">?</span>;
 
-        <span class="kw">let </span>req = Request::from_parts(parts, body);
+            <span class="kw">let </span>req = Request::from_parts(parts, body);
 
-        <span class="kw">let </span>body = Bytes::from_request(req, state)
-            .<span class="kw">await
-            </span>.map_err(|<span class="kw">_</span>| AppError::with_status(StatusCode::INTERNAL_SERVER_ERROR))<span class="question-mark">?</span>;
+            <span class="kw">let </span>body = Bytes::from_request(req, state)
+                .<span class="kw">await
+                </span>.map_err(|<span class="kw">_</span>| AppError::with_status(StatusCode::INTERNAL_SERVER_ERROR))<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>request = decode_request(<span class="kw-2">&amp;</span>body, src_addr)<span class="question-mark">?</span>;
+            <span class="kw">let </span>request = decode_request(<span class="kw-2">&amp;</span>body, src_addr)<span class="question-mark">?</span>;
 
-        <span class="prelude-val">Ok</span>(DnsRequestBody(request))
+            <span class="prelude-val">Ok</span>(DnsRequestBody(request))
+        }
     }
 }
 

@@ -365,135 +365,32 @@
 <a href="#364" id="364">364</a>
 <a href="#365" id="365">365</a>
 <a href="#366" id="366">366</a>
-<a href="#367" id="367">367</a>
-<a href="#368" id="368">368</a>
-<a href="#369" id="369">369</a>
-<a href="#370" id="370">370</a>
-<a href="#371" id="371">371</a>
-<a href="#372" id="372">372</a>
-<a href="#373" id="373">373</a>
-<a href="#374" id="374">374</a>
-<a href="#375" id="375">375</a>
-<a href="#376" id="376">376</a>
-<a href="#377" id="377">377</a>
-<a href="#378" id="378">378</a>
-<a href="#379" id="379">379</a>
-<a href="#380" id="380">380</a>
-<a href="#381" id="381">381</a>
-<a href="#382" id="382">382</a>
-<a href="#383" id="383">383</a>
-<a href="#384" id="384">384</a>
-<a href="#385" id="385">385</a>
-<a href="#386" id="386">386</a>
-<a href="#387" id="387">387</a>
-<a href="#388" id="388">388</a>
-<a href="#389" id="389">389</a>
-<a href="#390" id="390">390</a>
-<a href="#391" id="391">391</a>
-<a href="#392" id="392">392</a>
-<a href="#393" id="393">393</a>
-<a href="#394" id="394">394</a>
-<a href="#395" id="395">395</a>
-<a href="#396" id="396">396</a>
-<a href="#397" id="397">397</a>
-<a href="#398" id="398">398</a>
-<a href="#399" id="399">399</a>
-<a href="#400" id="400">400</a>
-<a href="#401" id="401">401</a>
-<a href="#402" id="402">402</a>
-<a href="#403" id="403">403</a>
-<a href="#404" id="404">404</a>
-<a href="#405" id="405">405</a>
-<a href="#406" id="406">406</a>
-<a href="#407" id="407">407</a>
-<a href="#408" id="408">408</a>
-<a href="#409" id="409">409</a>
-<a href="#410" id="410">410</a>
-<a href="#411" id="411">411</a>
-<a href="#412" id="412">412</a>
-<a href="#413" id="413">413</a>
-<a href="#414" id="414">414</a>
-<a href="#415" id="415">415</a>
-<a href="#416" id="416">416</a>
-<a href="#417" id="417">417</a>
-<a href="#418" id="418">418</a>
-<a href="#419" id="419">419</a>
-<a href="#420" id="420">420</a>
-<a href="#421" id="421">421</a>
-<a href="#422" id="422">422</a>
-<a href="#423" id="423">423</a>
-<a href="#424" id="424">424</a>
-<a href="#425" id="425">425</a>
-<a href="#426" id="426">426</a>
-<a href="#427" id="427">427</a>
-<a href="#428" id="428">428</a>
-<a href="#429" id="429">429</a>
-<a href="#430" id="430">430</a>
-<a href="#431" id="431">431</a>
-<a href="#432" id="432">432</a>
-<a href="#433" id="433">433</a>
-<a href="#434" id="434">434</a>
-<a href="#435" id="435">435</a>
-<a href="#436" id="436">436</a>
-<a href="#437" id="437">437</a>
-<a href="#438" id="438">438</a>
-<a href="#439" id="439">439</a>
-<a href="#440" id="440">440</a>
-<a href="#441" id="441">441</a>
-<a href="#442" id="442">442</a>
-<a href="#443" id="443">443</a>
-<a href="#444" id="444">444</a>
-<a href="#445" id="445">445</a>
-<a href="#446" id="446">446</a>
-<a href="#447" id="447">447</a>
-<a href="#448" id="448">448</a>
-<a href="#449" id="449">449</a>
-<a href="#450" id="450">450</a>
-<a href="#451" id="451">451</a>
-<a href="#452" id="452">452</a>
-<a href="#453" id="453">453</a>
-<a href="#454" id="454">454</a>
-<a href="#455" id="455">455</a>
-<a href="#456" id="456">456</a>
-<a href="#457" id="457">457</a>
-<a href="#458" id="458">458</a>
-<a href="#459" id="459">459</a>
-<a href="#460" id="460">460</a>
-<a href="#461" id="461">461</a>
-<a href="#462" id="462">462</a>
-<a href="#463" id="463">463</a></pre></div><pre class="rust"><code><span class="doccomment">//! Pkarr based node discovery for iroh, supporting both relay servers and the DHT.
+<a href="#367" id="367">367</a></pre></div><pre class="rust"><code><span class="doccomment">//! Pkarr based node discovery for iroh, supporting both relay servers and the DHT.
 //!
 //! This module contains pkarr-based node discovery for iroh which can use both pkarr
 //! relay servers as well as the Mainline DHT directly.  See the [pkarr module] for an
 //! overview of pkarr.
 //!
 //! [pkarr module]: super
-</span><span class="kw">use </span>std::{
-    collections::BTreeSet,
-    net::SocketAddr,
-    sync::{Arc, Mutex},
-    time::Duration,
-};
+</span><span class="kw">use </span>std::sync::{Arc, Mutex};
 
 <span class="kw">use </span>anyhow::Result;
-<span class="kw">use </span>futures_lite::{
-    stream::{Boxed, StreamExt},
-    FutureExt,
+<span class="kw">use </span>iroh_base::{NodeId, SecretKey};
+<span class="kw">use </span>n0_future::{
+    boxed::BoxStream,
+    stream::StreamExt,
+    task::{<span class="self">self</span>, AbortOnDropHandle},
+    time::{<span class="self">self</span>, Duration},
 };
-<span class="kw">use </span>iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
-<span class="kw">use </span>pkarr::{
-    PkarrClient, PkarrClientAsync, PkarrRelayClient, PkarrRelayClientAsync, RelaySettings,
-    SignedPacket,
-};
-<span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
+<span class="kw">use </span>pkarr::{Client <span class="kw">as </span>PkarrClient, SignedPacket};
 <span class="kw">use </span>url::Url;
 
 <span class="kw">use crate</span>::{
     discovery::{
         pkarr::{DEFAULT_PKARR_TTL, N0_DNS_PKARR_RELAY_PROD},
-        Discovery, DiscoveryItem,
+        Discovery, DiscoveryItem, NodeData,
     },
-    dns::node_info::NodeInfo,
+    node_info::NodeInfo,
     Endpoint,
 };
 
@@ -529,10 +426,7 @@
 <span class="attr">#[derive(derive_more::Debug)]
 </span><span class="kw">struct </span>Inner {
     <span class="doccomment">/// Pkarr client for interacting with the DHT.
-    </span>pkarr: PkarrClientAsync,
-    <span class="doccomment">/// Pkarr client for interacting with a pkarr relay
-    </span><span class="attr">#[debug(<span class="string">"Option&lt;PkarrRelayClientAsync&gt;"</span>)]
-    </span>pkarr_relay: <span class="prelude-ty">Option</span>&lt;PkarrRelayClientAsync&gt;,
+    </span>pkarr: PkarrClient,
     <span class="doccomment">/// The background task that periodically publishes the node address.
     ///
     /// Due to [`AbortOnDropHandle`], this will be aborted when the discovery is dropped.
@@ -543,8 +437,6 @@
     </span>secret_key: <span class="prelude-ty">Option</span>&lt;SecretKey&gt;,
     <span class="doccomment">/// Optional pkarr relay URL to use.
     </span>relay_url: <span class="prelude-ty">Option</span>&lt;Url&gt;,
-    <span class="doccomment">/// Whether to publish to the mainline DHT.
-    </span>dht: bool,
     <span class="doccomment">/// Time-to-live value for the DNS packets.
     </span>ttl: u32,
     <span class="doccomment">/// True to include the direct addresses in the DNS packet.
@@ -556,68 +448,29 @@
 }
 
 <span class="kw">impl </span>Inner {
-    <span class="kw">async fn </span>resolve_relay(<span class="kw-2">&amp;</span><span class="self">self</span>, key: pkarr::PublicKey) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem&gt;&gt; {
-        <span class="macro">tracing::info!</span>(<span class="string">"resolving {} from relay {:?}"</span>, key.to_z32(), <span class="self">self</span>.relay_url);
-
-        <span class="kw">let </span>maybe_packet = <span class="self">self
-            </span>.pkarr_relay
-            .as_ref()
-            .expect(<span class="string">"checked"</span>)
-            .resolve(<span class="kw-2">&amp;</span>key)
-            .<span class="kw">await</span>;
-        <span class="kw">match </span>maybe_packet {
-            <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(signed_packet)) =&gt; <span class="kw">match </span>NodeInfo::from_pkarr_signed_packet(<span class="kw-2">&amp;</span>signed_packet) {
-                <span class="prelude-val">Ok</span>(node_info) =&gt; {
-                    <span class="kw">let </span>node_addr: NodeAddr = node_info.into();
-
-                    <span class="macro">tracing::info!</span>(<span class="string">"discovered node info from relay {:?}"</span>, node_addr);
-                    <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(DiscoveryItem {
-                        node_addr,
-                        provenance: <span class="string">"relay"</span>,
-                        last_updated: <span class="prelude-val">None</span>,
-                    }))
-                }
-                <span class="prelude-val">Err</span>(_err) =&gt; {
-                    <span class="macro">tracing::debug!</span>(<span class="string">"failed to parse signed packet as node info"</span>);
-                    <span class="prelude-val">None
-                </span>}
-            },
-            <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>) =&gt; {
-                <span class="macro">tracing::debug!</span>(<span class="string">"no signed packet found in relay"</span>);
-                <span class="prelude-val">None
-            </span>}
-            <span class="prelude-val">Err</span>(err) =&gt; {
-                <span class="macro">tracing::debug!</span>(<span class="string">"failed to get signed packet from relay: {}"</span>, err);
-                <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(err.into()))
-            }
-        }
-    }
-    <span class="kw">async fn </span>resolve_dht(<span class="kw-2">&amp;</span><span class="self">self</span>, key: pkarr::PublicKey) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem&gt;&gt; {
-        <span class="macro">tracing::info!</span>(<span class="string">"resolving {} from DHT"</span>, key.to_z32());
+    <span class="kw">async fn </span>resolve_pkarr(<span class="kw-2">&amp;</span><span class="self">self</span>, key: pkarr::PublicKey) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem&gt;&gt; {
+        <span class="macro">tracing::info!</span>(
+            <span class="string">"resolving {} from relay and DHT {:?}"</span>,
+            key.to_z32(),
+            <span class="self">self</span>.relay_url
+        );
 
         <span class="kw">let </span>maybe_packet = <span class="self">self</span>.pkarr.resolve(<span class="kw-2">&amp;</span>key).<span class="kw">await</span>;
         <span class="kw">match </span>maybe_packet {
-            <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(signed_packet)) =&gt; <span class="kw">match </span>NodeInfo::from_pkarr_signed_packet(<span class="kw-2">&amp;</span>signed_packet) {
+            <span class="prelude-val">Some</span>(signed_packet) =&gt; <span class="kw">match </span>NodeInfo::from_pkarr_signed_packet(<span class="kw-2">&amp;</span>signed_packet) {
                 <span class="prelude-val">Ok</span>(node_info) =&gt; {
-                    <span class="kw">let </span>node_addr: NodeAddr = node_info.into();
-                    <span class="macro">tracing::info!</span>(<span class="string">"discovered node info from DHT {:?}"</span>, node_addr);
-                    <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(DiscoveryItem {
-                        node_addr,
-                        provenance: <span class="string">"mainline"</span>,
-                        last_updated: <span class="prelude-val">None</span>,
-                    }))
+                    <span class="macro">tracing::info!</span>(<span class="string">"discovered node info {:?}"</span>, node_info);
+                    <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(DiscoveryItem::new(node_info, <span class="string">"pkarr"</span>, <span class="prelude-val">None</span>)))
                 }
                 <span class="prelude-val">Err</span>(_err) =&gt; {
                     <span class="macro">tracing::debug!</span>(<span class="string">"failed to parse signed packet as node info"</span>);
                     <span class="prelude-val">None
                 </span>}
             },
-            <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>) =&gt; {
-                <span class="comment">// nothing to do
-                </span><span class="macro">tracing::debug!</span>(<span class="string">"no signed packet found in DHT"</span>);
+            <span class="prelude-val">None </span>=&gt; {
+                <span class="macro">tracing::debug!</span>(<span class="string">"no signed packet found"</span>);
                 <span class="prelude-val">None
             </span>}
-            <span class="prelude-val">Err</span>(err) =&gt; <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(err.into())),
         }
     }
 }
@@ -713,37 +566,31 @@
 
     <span class="doccomment">/// Builds the discovery mechanism.
     </span><span class="kw">pub fn </span>build(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;DhtDiscovery&gt; {
-        <span class="kw">let </span>pkarr = <span class="kw">match </span><span class="self">self</span>.client {
-            <span class="prelude-val">Some</span>(client) =&gt; client,
-            <span class="prelude-val">None </span>=&gt; PkarrClient::new(Default::default())<span class="question-mark">?</span>,
-        };
-        <span class="kw">let </span>pkarr = pkarr.as_async();
-        <span class="kw">let </span>ttl = <span class="self">self</span>.ttl.unwrap_or(DEFAULT_PKARR_TTL);
-        <span class="kw">let </span>relay_url = <span class="self">self</span>.pkarr_relay;
-        <span class="kw">let </span>dht = <span class="self">self</span>.dht;
-        <span class="kw">let </span>include_direct_addresses = <span class="self">self</span>.include_direct_addresses;
         <span class="macro">anyhow::ensure!</span>(
-            dht || relay_url.is_some(),
+            <span class="self">self</span>.dht || <span class="self">self</span>.pkarr_relay.is_some(),
             <span class="string">"at least one of DHT or relay must be enabled"
         </span>);
-
-        <span class="kw">let </span>pkarr_relay = <span class="kw">match </span>relay_url.clone() {
-            <span class="prelude-val">Some</span>(url) =&gt; <span class="prelude-val">Some</span>(
-                PkarrRelayClient::new(RelaySettings {
-                    relays: <span class="macro">vec!</span>[url.to_string()],
-                    ..RelaySettings::default()
-                })<span class="question-mark">?
-                </span>.as_async(),
-            ),
-            <span class="prelude-val">None </span>=&gt; <span class="prelude-val">None</span>,
+        <span class="kw">let </span>pkarr = <span class="kw">match </span><span class="self">self</span>.client {
+            <span class="prelude-val">Some</span>(client) =&gt; client,
+            <span class="prelude-val">None </span>=&gt; {
+                <span class="kw">let </span><span class="kw-2">mut </span>builder = PkarrClient::builder();
+                builder.no_default_network();
+                <span class="kw">if </span><span class="self">self</span>.dht {
+                    builder.dht(|x| x);
+                }
+                <span class="kw">if let </span><span class="prelude-val">Some</span>(url) = <span class="kw-2">&amp;</span><span class="self">self</span>.pkarr_relay {
+                    builder.relays(<span class="kw-2">&amp;</span>[url.clone()])<span class="question-mark">?</span>;
+                }
+                builder.build()<span class="question-mark">?
+            </span>}
         };
+        <span class="kw">let </span>ttl = <span class="self">self</span>.ttl.unwrap_or(DEFAULT_PKARR_TTL);
+        <span class="kw">let </span>include_direct_addresses = <span class="self">self</span>.include_direct_addresses;
 
         <span class="prelude-val">Ok</span>(DhtDiscovery(Arc::new(Inner {
             pkarr,
-            pkarr_relay,
             ttl,
-            relay_url,
-            dht,
+            relay_url: <span class="self">self</span>.pkarr_relay,
             include_direct_addresses,
             secret_key: <span class="self">self</span>.secret_key,
             initial_publish_delay: <span class="self">self</span>.initial_publish_delay,
@@ -767,74 +614,46 @@
             .to_z32();
         <span class="comment">// initial delay. If the task gets aborted before this delay is over,
         // we have not published anything to the DHT yet.
-        </span>tokio::time::sleep(this.<span class="number">0</span>.initial_publish_delay).<span class="kw">await</span>;
+        </span>time::sleep(this.<span class="number">0</span>.initial_publish_delay).<span class="kw">await</span>;
         <span class="kw">loop </span>{
-            <span class="comment">// publish to the DHT if enabled
-            </span><span class="kw">let </span>dht_publish = <span class="kw">async </span>{
-                <span class="kw">if </span>this.<span class="number">0</span>.dht {
-                    <span class="kw">let </span>res = this.<span class="number">0</span>.pkarr.publish(<span class="kw-2">&amp;</span>signed_packet).<span class="kw">await</span>;
-                    <span class="kw">match </span>res {
-                        <span class="prelude-val">Ok</span>(()) =&gt; {
-                            <span class="macro">tracing::debug!</span>(<span class="string">"pkarr publish success. published under {z32}"</span>,);
-                        }
-                        <span class="prelude-val">Err</span>(e) =&gt; {
-                            <span class="comment">// we could do a smaller delay here, but in general DHT publish
-                            // not working is due to a network issue, and if the network changes
-                            // the task will be restarted anyway.
-                            //
-                            // Being unable to publish to the DHT is something that is expected
-                            // to happen from time to time, so this does not warrant a error log.
-                            </span><span class="macro">tracing::warn!</span>(<span class="string">"pkarr publish error: {}"</span>, e);
-                        }
-                    }
+            <span class="comment">// TODO: publish takes a compare-and-swap timestamp, make use of that.
+            </span><span class="kw">let </span>res = this.<span class="number">0</span>.pkarr.publish(<span class="kw-2">&amp;</span>signed_packet, <span class="prelude-val">None</span>).<span class="kw">await</span>;
+            <span class="kw">match </span>res {
+                <span class="prelude-val">Ok</span>(()) =&gt; {
+                    <span class="macro">tracing::debug!</span>(<span class="string">"pkarr publish success. published under {z32}"</span>,);
                 }
-            };
-            <span class="comment">// publish to the relay if enabled
-            </span><span class="kw">let </span>relay_publish = <span class="kw">async </span>{
-                <span class="kw">if let </span><span class="prelude-val">Some</span>(relay) = this.<span class="number">0</span>.pkarr_relay.as_ref() {
-                    <span class="macro">tracing::info!</span>(
-                        <span class="string">"publishing to relay: {:?}"</span>,
-                        this.<span class="number">0</span>.relay_url.as_ref().map(|r| r.to_string())
-                    );
-                    <span class="kw">match </span>relay.publish(<span class="kw-2">&amp;</span>signed_packet).<span class="kw">await </span>{
-                        <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; {
-                            <span class="macro">tracing::debug!</span>(<span class="string">"pkarr publish to relay success"</span>);
-                        }
-                        <span class="prelude-val">Err</span>(e) =&gt; {
-                            <span class="macro">tracing::warn!</span>(<span class="string">"pkarr publish to relay error: {}"</span>, e);
-                        }
-                    }
+                <span class="prelude-val">Err</span>(e) =&gt; {
+                    <span class="comment">// we could do a smaller delay here, but in general DHT publish
+                    // not working is due to a network issue, and if the network changes
+                    // the task will be restarted anyway.
+                    //
+                    // Being unable to publish to the DHT is something that is expected
+                    // to happen from time to time, so this does not warrant a error log.
+                    </span><span class="macro">tracing::warn!</span>(<span class="string">"pkarr publish error: {}"</span>, e);
                 }
-            };
-            <span class="comment">// do both at the same time
-            </span><span class="macro">tokio::join!</span>(relay_publish, dht_publish);
-            tokio::time::sleep(this.<span class="number">0</span>.republish_delay).<span class="kw">await</span>;
+            }
+            time::sleep(this.<span class="number">0</span>.republish_delay).<span class="kw">await</span>;
         }
     }
 }
 
 <span class="kw">impl </span>Discovery <span class="kw">for </span>DhtDiscovery {
-    <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, url: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>RelayUrl&gt;, addrs: <span class="kw-2">&amp;</span>BTreeSet&lt;SocketAddr&gt;) {
+    <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, data: <span class="kw-2">&amp;</span>NodeData) {
         <span class="kw">let </span><span class="prelude-val">Some</span>(keypair) = <span class="kw-2">&amp;</span><span class="self">self</span>.<span class="number">0</span>.secret_key <span class="kw">else </span>{
             <span class="macro">tracing::debug!</span>(<span class="string">"no keypair set, not publishing"</span>);
             <span class="kw">return</span>;
         };
-        <span class="macro">tracing::debug!</span>(<span class="string">"publishing {:?}, {:?}"</span>, url, addrs);
-        <span class="kw">let </span>info = NodeInfo {
-            node_id: keypair.public(),
-            relay_url: url.cloned().map(Url::from),
-            direct_addresses: <span class="kw">if </span><span class="self">self</span>.<span class="number">0</span>.include_direct_addresses {
-                addrs.clone()
-            } <span class="kw">else </span>{
-                Default::default()
-            },
-        };
+        <span class="macro">tracing::debug!</span>(<span class="string">"publishing {data:?}"</span>);
+        <span class="kw">let </span><span class="kw-2">mut </span>info = NodeInfo::from_parts(keypair.public(), data.clone());
+        <span class="kw">if </span>!<span class="self">self</span>.<span class="number">0</span>.include_direct_addresses {
+            info.clear_direct_addresses();
+        }
         <span class="kw">let </span><span class="prelude-val">Ok</span>(signed_packet) = info.to_pkarr_signed_packet(keypair, <span class="self">self</span>.<span class="number">0</span>.ttl) <span class="kw">else </span>{
             <span class="macro">tracing::warn!</span>(<span class="string">"failed to create signed packet"</span>);
             <span class="kw">return</span>;
         };
         <span class="kw">let </span>this = <span class="self">self</span>.clone();
-        <span class="kw">let </span>curr = tokio::spawn(this.publish_loop(keypair.clone(), signed_packet));
+        <span class="kw">let </span>curr = task::spawn(this.publish_loop(keypair.clone(), signed_packet));
         <span class="kw">let </span><span class="kw-2">mut </span>task = <span class="self">self</span>.<span class="number">0</span>.task.lock().expect(<span class="string">"poisoned"</span>);
         <span class="kw-2">*</span>task = <span class="prelude-val">Some</span>(AbortOnDropHandle::new(curr));
     }
@@ -843,25 +662,17 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         _endpoint: Endpoint,
         node_id: NodeId,
-    ) -&gt; <span class="prelude-ty">Option</span>&lt;Boxed&lt;anyhow::Result&lt;DiscoveryItem&gt;&gt;&gt; {
+    ) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;anyhow::Result&lt;DiscoveryItem&gt;&gt;&gt; {
         <span class="kw">let </span>pkarr_public_key =
             pkarr::PublicKey::try_from(node_id.as_bytes()).expect(<span class="string">"valid public key"</span>);
         <span class="macro">tracing::info!</span>(<span class="string">"resolving {} as {}"</span>, node_id, pkarr_public_key.to_z32());
-
-        <span class="kw">let </span><span class="kw-2">mut </span>stream = futures_buffered::FuturesUnorderedBounded::new(<span class="number">2</span>);
-        <span class="kw">if </span><span class="self">self</span>.<span class="number">0</span>.pkarr_relay.is_some() {
-            <span class="kw">let </span>key = pkarr_public_key.clone();
-            <span class="kw">let </span>discovery = <span class="self">self</span>.<span class="number">0</span>.clone();
-            stream.push(<span class="kw">async move </span>{ discovery.resolve_relay(key).<span class="kw">await </span>}.boxed());
-        }
-
-        <span class="kw">if </span><span class="self">self</span>.<span class="number">0</span>.dht {
-            <span class="kw">let </span>key = pkarr_public_key.clone();
-            <span class="kw">let </span>discovery = <span class="self">self</span>.<span class="number">0</span>.clone();
-            stream.push(<span class="kw">async move </span>{ discovery.resolve_dht(key).<span class="kw">await </span>}.boxed());
-        }
-
-        <span class="prelude-val">Some</span>(stream.filter_map(|t| t).boxed())
+        <span class="kw">let </span>discovery = <span class="self">self</span>.<span class="number">0</span>.clone();
+        <span class="kw">let </span>stream = n0_future::stream::once_future(<span class="kw">async move </span>{
+            discovery.resolve_pkarr(pkarr_public_key).<span class="kw">await
+        </span>})
+        .filter_map(|x| x)
+        .boxed();
+        <span class="prelude-val">Some</span>(stream)
     }
 }
 
@@ -870,34 +681,31 @@
     <span class="kw">use </span>std::collections::BTreeSet;
 
     <span class="kw">use </span>iroh_base::RelayUrl;
-    <span class="kw">use </span>pkarr::mainline::dht::DhtSettings;
     <span class="kw">use </span>testresult::TestResult;
+    <span class="kw">use </span>tracing_test::traced_test;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
 
     <span class="attr">#[tokio::test]
     #[ignore = <span class="string">"flaky"</span>]
+    #[traced_test]
     </span><span class="kw">async fn </span>dht_discovery_smoke() -&gt; TestResult {
-        <span class="kw">let </span>_logging_guard = iroh_test::logging::setup();
         <span class="kw">let </span>ep = <span class="kw">crate</span>::Endpoint::builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>secret = ep.secret_key().clone();
-        <span class="kw">let </span>testnet = pkarr::mainline::dht::Testnet::new(<span class="number">2</span>);
-        <span class="kw">let </span>settings = pkarr::Settings {
-            dht: DhtSettings {
-                bootstrap: <span class="prelude-val">Some</span>(testnet.bootstrap.clone()),
-                ..Default::default()
-            },
-            ..Default::default()
-        };
-        <span class="kw">let </span>client = PkarrClient::new(settings)<span class="question-mark">?</span>;
+        <span class="kw">let </span>testnet = pkarr::mainline::Testnet::new_async(<span class="number">3</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>client = pkarr::Client::builder()
+            .dht(|builder| builder.bootstrap(<span class="kw-2">&amp;</span>testnet.bootstrap))
+            .build()<span class="question-mark">?</span>;
         <span class="kw">let </span>discovery = DhtDiscovery::builder()
             .secret_key(secret.clone())
             .initial_publish_delay(Duration::ZERO)
             .client(client)
             .build()<span class="question-mark">?</span>;
+
         <span class="kw">let </span>relay_url: RelayUrl = Url::parse(<span class="string">"https://example.com"</span>)<span class="question-mark">?</span>.into();
 
-        discovery.publish(<span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>relay_url), <span class="kw-2">&amp;</span>Default::default());
+        <span class="kw">let </span>data = NodeData::default().with_relay_url(<span class="prelude-val">Some</span>(relay_url.clone()));
+        discovery.publish(<span class="kw-2">&amp;</span>data);
 
         <span class="comment">// publish is fire and forget, so we have no way to wait until it is done.
         </span>tokio::time::timeout(Duration::from_secs(<span class="number">30</span>), <span class="kw">async move </span>{
@@ -910,8 +718,8 @@
                     .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
                     .<span class="kw">await</span>;
                 <span class="kw">for </span>item <span class="kw">in </span>items.into_iter().flatten() {
-                    <span class="kw">if let </span><span class="prelude-val">Some</span>(url) = item.node_addr.relay_url {
-                        found_relay_urls.insert(url);
+                    <span class="kw">if let </span><span class="prelude-val">Some</span>(url) = item.relay_url() {
+                        found_relay_urls.insert(url.clone());
                     }
                 }
                 <span class="kw">if </span>found_relay_urls.contains(<span class="kw-2">&amp;</span>relay_url) {

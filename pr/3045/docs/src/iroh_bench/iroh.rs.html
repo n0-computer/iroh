@@ -286,7 +286,17 @@
 <a href="#285" id="285">285</a>
 <a href="#286" id="286">286</a>
 <a href="#287" id="287">287</a>
-<a href="#288" id="288">288</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#288" id="288">288</a>
+<a href="#289" id="289">289</a>
+<a href="#290" id="290">290</a>
+<a href="#291" id="291">291</a>
+<a href="#292" id="292">292</a>
+<a href="#293" id="293">293</a>
+<a href="#294" id="294">294</a>
+<a href="#295" id="295">295</a>
+<a href="#296" id="296">296</a>
+<a href="#297" id="297">297</a>
+<a href="#298" id="298">298</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::SocketAddr,
     time::{Duration, Instant},
 };
@@ -296,7 +306,7 @@
 <span class="kw">use </span>iroh::{
     endpoint::{Connection, ConnectionError, RecvStream, SendStream, TransportConfig},
     watcher::Watcher <span class="kw">as _</span>,
-    Endpoint, NodeAddr, RelayMap, RelayMode, RelayUrl,
+    Endpoint, NodeAddr, RelayMode, RelayUrl,
 };
 <span class="kw">use </span>tracing::{trace, warn};
 
@@ -314,15 +324,20 @@
 ) -&gt; (NodeAddr, Endpoint) {
     <span class="kw">let </span>_guard = rt.enter();
     rt.block_on(<span class="kw">async move </span>{
-        <span class="kw">let </span>relay_mode = relay_url.clone().map_or(RelayMode::Disabled, |url| {
-            RelayMode::Custom(RelayMap::from_url(url))
-        });
+        <span class="kw">let </span>relay_mode = relay_url
+            .clone()
+            .map_or(RelayMode::Disabled, |url| RelayMode::Custom(url.into()));
 
         <span class="attr">#[allow(unused_mut)]
         </span><span class="kw">let </span><span class="kw-2">mut </span>builder = Endpoint::builder();
         <span class="attr">#[cfg(feature = <span class="string">"local-relay"</span>)]
         </span>{
-            builder = builder.insecure_skip_relay_cert_verify(relay_url.is_some())
+            builder = builder.insecure_skip_relay_cert_verify(relay_url.is_some());
+            <span class="kw">let </span>path_selection = <span class="kw">match </span>opt.only_relay {
+                <span class="bool-val">true </span>=&gt; iroh::endpoint::PathSelection::RelayOnly,
+                <span class="bool-val">false </span>=&gt; iroh::endpoint::PathSelection::default(),
+            };
+            builder = builder.path_selection(path_selection);
         }
         <span class="kw">let </span>ep = builder
             .alpns(<span class="macro">vec!</span>[ALPN.to_vec()])
@@ -371,14 +386,19 @@
     relay_url: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;,
     opt: Opt,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(Endpoint, Connection)&gt; {
-    <span class="kw">let </span>relay_mode = relay_url.clone().map_or(RelayMode::Disabled, |url| {
-        RelayMode::Custom(RelayMap::from_url(url))
-    });
+    <span class="kw">let </span>relay_mode = relay_url
+        .clone()
+        .map_or(RelayMode::Disabled, |url| RelayMode::Custom(url.into()));
     <span class="attr">#[allow(unused_mut)]
     </span><span class="kw">let </span><span class="kw-2">mut </span>builder = Endpoint::builder();
     <span class="attr">#[cfg(feature = <span class="string">"local-relay"</span>)]
     </span>{
-        builder = builder.insecure_skip_relay_cert_verify(relay_url.is_some())
+        builder = builder.insecure_skip_relay_cert_verify(relay_url.is_some());
+        <span class="kw">let </span>path_selection = <span class="kw">match </span>opt.only_relay {
+            <span class="bool-val">true </span>=&gt; iroh::endpoint::PathSelection::RelayOnly,
+            <span class="bool-val">false </span>=&gt; iroh::endpoint::PathSelection::default(),
+        };
+        builder = builder.path_selection(path_selection);
     }
     <span class="kw">let </span>endpoint = builder
         .alpns(<span class="macro">vec!</span>[ALPN.to_vec()])

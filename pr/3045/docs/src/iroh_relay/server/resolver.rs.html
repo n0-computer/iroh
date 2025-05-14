@@ -91,15 +91,23 @@
 <a href="#90" id="90">90</a>
 <a href="#91" id="91">91</a>
 <a href="#92" id="92">92</a>
-<a href="#93" id="93">93</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{sync::Arc, time::Duration};
+<a href="#93" id="93">93</a>
+<a href="#94" id="94">94</a>
+<a href="#95" id="95">95</a>
+<a href="#96" id="96">96</a>
+<a href="#97" id="97">97</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::sync::Arc;
 
 <span class="kw">use </span>anyhow::{anyhow, <span class="prelude-ty">Result</span>};
+<span class="kw">use </span>n0_future::{
+    task::{<span class="self">self</span>, AbortOnDropHandle},
+    time::{<span class="self">self</span>, Duration},
+};
 <span class="kw">use </span>reloadable_state::Reloadable;
 <span class="kw">use </span>rustls::{
     server::{ClientHello, ResolvesServerCert},
     sign::CertifiedKey,
 };
-<span class="kw">use </span>tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
+<span class="kw">use </span>tokio_util::sync::CancellationToken;
 
 <span class="doccomment">/// The default certificate reload interval.
 </span><span class="kw">pub const </span>DEFAULT_CERT_RELOAD_INTERVAL: Duration = Duration::from_secs(<span class="number">60 </span>* <span class="number">60 </span>* <span class="number">24</span>);
@@ -131,8 +139,8 @@
         <span class="comment">// Spawn a task to reload the certificate every interval.
         </span><span class="kw">let </span>_reloadable = reloadable.clone();
         <span class="kw">let </span>_cancel_token = cancel_token.clone();
-        <span class="kw">let </span>_handle = tokio::spawn(<span class="kw">async move </span>{
-            <span class="kw">let </span><span class="kw-2">mut </span>interval = tokio::time::interval(interval);
+        <span class="kw">let </span>_handle = task::spawn(<span class="kw">async move </span>{
+            <span class="kw">let </span><span class="kw-2">mut </span>interval = time::interval(interval);
             <span class="kw">loop </span>{
                 <span class="macro">tokio::select!</span> {
                     <span class="kw">_ </span>= interval.tick() =&gt; {

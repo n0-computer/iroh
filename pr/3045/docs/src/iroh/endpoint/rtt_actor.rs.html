@@ -169,54 +169,17 @@
 <a href="#168" id="168">168</a>
 <a href="#169" id="169">169</a>
 <a href="#170" id="170">170</a>
-<a href="#171" id="171">171</a>
-<a href="#172" id="172">172</a>
-<a href="#173" id="173">173</a>
-<a href="#174" id="174">174</a>
-<a href="#175" id="175">175</a>
-<a href="#176" id="176">176</a>
-<a href="#177" id="177">177</a>
-<a href="#178" id="178">178</a>
-<a href="#179" id="179">179</a>
-<a href="#180" id="180">180</a>
-<a href="#181" id="181">181</a>
-<a href="#182" id="182">182</a>
-<a href="#183" id="183">183</a>
-<a href="#184" id="184">184</a>
-<a href="#185" id="185">185</a>
-<a href="#186" id="186">186</a>
-<a href="#187" id="187">187</a>
-<a href="#188" id="188">188</a>
-<a href="#189" id="189">189</a>
-<a href="#190" id="190">190</a>
-<a href="#191" id="191">191</a>
-<a href="#192" id="192">192</a>
-<a href="#193" id="193">193</a>
-<a href="#194" id="194">194</a>
-<a href="#195" id="195">195</a>
-<a href="#196" id="196">196</a>
-<a href="#197" id="197">197</a>
-<a href="#198" id="198">198</a>
-<a href="#199" id="199">199</a>
-<a href="#200" id="200">200</a>
-<a href="#201" id="201">201</a>
-<a href="#202" id="202">202</a>
-<a href="#203" id="203">203</a>
-<a href="#204" id="204">204</a>
-<a href="#205" id="205">205</a></pre></div><pre class="rust"><code><span class="doccomment">//! Actor which coordinates the congestion controller for the magic socket
+<a href="#171" id="171">171</a></pre></div><pre class="rust"><code><span class="doccomment">//! Actor which coordinates the congestion controller for the magic socket
 
-</span><span class="kw">use </span>std::collections::HashMap;
+</span><span class="kw">use </span>std::{pin::Pin, sync::Arc, task::Poll};
 
-<span class="kw">use </span>futures_concurrency::stream::stream_group;
-<span class="kw">use </span>futures_lite::StreamExt;
 <span class="kw">use </span>iroh_base::NodeId;
-<span class="kw">use </span>iroh_metrics::inc;
-<span class="kw">use </span>tokio::{
-    sync::{mpsc, Notify},
-    time::Duration,
+<span class="kw">use </span>n0_future::{
+    task::{<span class="self">self</span>, AbortOnDropHandle},
+    MergeUnbounded, Stream, StreamExt,
 };
-<span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
-<span class="kw">use </span>tracing::{debug, error, info_span, trace, Instrument};
+<span class="kw">use </span>tokio::sync::mpsc;
+<span class="kw">use </span>tracing::{debug, info_span, Instrument};
 
 <span class="kw">use crate</span>::{magicsock::ConnectionType, metrics::MagicsockMetrics, watcher};
 
@@ -228,14 +191,13 @@
 }
 
 <span class="kw">impl </span>RttHandle {
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new() -&gt; <span class="self">Self </span>{
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(metrics: Arc&lt;MagicsockMetrics&gt;) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span><span class="kw-2">mut </span>actor = RttActor {
-            connection_events: stream_group::StreamGroup::new().keyed(),
-            connections: HashMap::new(),
-            tick: Notify::new(),
+            connection_events: Default::default(),
+            metrics,
         };
         <span class="kw">let </span>(msg_tx, msg_rx) = mpsc::channel(<span class="number">16</span>);
-        <span class="kw">let </span>handle = tokio::spawn(
+        <span class="kw">let </span>handle = task::spawn(
             <span class="kw">async move </span>{
                 actor.run(msg_rx).<span class="kw">await</span>;
             }
@@ -266,21 +228,63 @@
 ///
 /// The magic socket can change the underlying network path, between two nodes.  If we can
 /// inform the QUIC congestion controller of this event it will work much more efficiently.
-</span><span class="attr">#[derive(Debug)]
+</span><span class="attr">#[derive(derive_more::Debug)]
 </span><span class="kw">struct </span>RttActor {
     <span class="doccomment">/// Stream of connection type changes.
-    </span>connection_events: stream_group::Keyed&lt;watcher::Stream&lt;watcher::Direct&lt;ConnectionType&gt;&gt;&gt;,
-    <span class="doccomment">/// References to the connections.
-    ///
-    /// These are weak references so not to keep the connections alive.  The key allows
-    /// removing the corresponding stream from `conn_type_changes`.
-    /// The boolean is an indiciator of whether this connection was direct before.
+    </span><span class="attr">#[debug(<span class="string">"MergeUnbounded&lt;WatcherStream&lt;ConnectionType&gt;&gt;"</span>)]
+    </span>connection_events: MergeUnbounded&lt;MappedStream&gt;,
+    metrics: Arc&lt;MagicsockMetrics&gt;,
+}
+
+<span class="attr">#[derive(Debug)]
+</span><span class="kw">struct </span>MappedStream {
+    stream: watcher::Stream&lt;watcher::Direct&lt;ConnectionType&gt;&gt;,
+    node_id: NodeId,
+    <span class="doccomment">/// Reference to the connection.
+    </span>connection: quinn::WeakConnectionHandle,
+    <span class="doccomment">/// This an indiciator of whether this connection was direct before.
     /// This helps establish metrics on number of connections that became direct.
-    </span>connections: HashMap&lt;stream_group::Key, (quinn::WeakConnectionHandle, NodeId, bool)&gt;,
-    <span class="doccomment">/// A way to notify the main actor loop to run over.
+    </span>was_direct_before: bool,
+}
+
+<span class="kw">struct </span>ConnectionEvent {
+    became_direct: bool,
+}
+
+<span class="kw">impl </span>Stream <span class="kw">for </span>MappedStream {
+    <span class="kw">type </span>Item = ConnectionEvent;
+
+    <span class="doccomment">/// Performs the congestion controller reset for a magic socket path change.
     ///
-    /// E.g. when a new stream was added.
-    </span>tick: Notify,
+    /// Regardless of which kind of path we are changed to, the congestion controller needs
+    /// resetting.  Even when switching to mixed we should reset the state as e.g. switching
+    /// from direct to mixed back to direct should be a rare exception and is a bug if this
+    /// happens commonly.
+    </span><span class="kw">fn </span>poll_next(
+        <span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;,
+        cx: <span class="kw-2">&amp;mut </span>std::task::Context&lt;<span class="lifetime">'_</span>&gt;,
+    ) -&gt; Poll&lt;<span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt;&gt; {
+        <span class="kw">match </span>Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.stream).poll_next(cx) {
+            Poll::Ready(<span class="prelude-val">Some</span>(new_conn_type)) =&gt; {
+                <span class="kw">let </span><span class="kw-2">mut </span>became_direct = <span class="bool-val">false</span>;
+                <span class="kw">if </span><span class="self">self</span>.connection.network_path_changed() {
+                    <span class="macro">debug!</span>(
+                        node_id = %<span class="self">self</span>.node_id.fmt_short(),
+                        new_type = <span class="question-mark">?</span>new_conn_type,
+                        <span class="string">"Congestion controller state reset"</span>,
+                    );
+                    <span class="kw">if </span>!<span class="self">self</span>.was_direct_before &amp;&amp; <span class="macro">matches!</span>(new_conn_type, ConnectionType::Direct(<span class="kw">_</span>))
+                    {
+                        <span class="self">self</span>.was_direct_before = <span class="bool-val">true</span>;
+                        became_direct = <span class="bool-val">true
+                    </span>}
+                };
+                Poll::Ready(<span class="prelude-val">Some</span>(ConnectionEvent { became_direct }))
+            }
+            Poll::Ready(<span class="prelude-val">None</span>) =&gt; Poll::Ready(<span class="prelude-val">None</span>),
+            Poll::Pending =&gt; Poll::Pending,
+        }
+    }
 }
 
 <span class="kw">impl </span>RttActor {
@@ -288,8 +292,6 @@
     ///
     /// The main loop will finish when the sender is dropped.
     </span><span class="kw">async fn </span>run(<span class="kw-2">&amp;mut </span><span class="self">self</span>, <span class="kw-2">mut </span>msg_rx: mpsc::Receiver&lt;RttMessage&gt;) {
-        <span class="kw">let </span><span class="kw-2">mut </span>cleanup_interval = tokio::time::interval(Duration::from_secs(<span class="number">5</span>));
-        cleanup_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         <span class="kw">loop </span>{
             <span class="macro">tokio::select!</span> {
                 biased;
@@ -299,11 +301,11 @@
                         <span class="prelude-val">None </span>=&gt; <span class="kw">break</span>,
                     }
                 }
-                item = <span class="self">self</span>.connection_events.next(), <span class="kw">if </span>!<span class="self">self</span>.connection_events.is_empty() =&gt; {
-                    <span class="self">self</span>.do_reset_rtt(item);
+                event = <span class="self">self</span>.connection_events.next(), <span class="kw">if </span>!<span class="self">self</span>.connection_events.is_empty() =&gt; {
+                    <span class="kw">if </span>event.map(|e| e.became_direct).unwrap_or(<span class="bool-val">false</span>) {
+                        <span class="self">self</span>.metrics.connection_became_direct.inc();
+                    }
                 }
-                <span class="kw">_ </span>= cleanup_interval.tick() =&gt; <span class="self">self</span>.do_connections_cleanup(),
-                () = <span class="self">self</span>.tick.notified() =&gt; <span class="kw">continue</span>,
             }
         }
         <span class="macro">debug!</span>(<span class="string">"rtt-actor finished"</span>);
@@ -329,83 +331,13 @@
         conn_type_changes: watcher::Stream&lt;watcher::Direct&lt;ConnectionType&gt;&gt;,
         node_id: NodeId,
     ) {
-        <span class="kw">let </span>key = <span class="self">self</span>.connection_events.insert(conn_type_changes);
-        <span class="self">self</span>.connections.insert(key, (connection, node_id, <span class="bool-val">false</span>));
-        <span class="self">self</span>.tick.notify_one();
-        <span class="macro">inc!</span>(MagicsockMetrics, connection_handshake_success);
-    }
-
-    <span class="doccomment">/// Performs the congestion controller reset for a magic socket path change.
-    ///
-    /// Regardless of which kind of path we are changed to, the congestion controller needs
-    /// resetting.  Even when switching to mixed we should reset the state as e.g. switching
-    /// from direct to mixed back to direct should be a rare exception and is a bug if this
-    /// happens commonly.
-    </span><span class="kw">fn </span>do_reset_rtt(<span class="kw-2">&amp;mut </span><span class="self">self</span>, item: <span class="prelude-ty">Option</span>&lt;(stream_group::Key, ConnectionType)&gt;) {
-        <span class="kw">match </span>item {
-            <span class="prelude-val">Some</span>((key, new_conn_type)) =&gt; <span class="kw">match </span><span class="self">self</span>.connections.get_mut(<span class="kw-2">&amp;</span>key) {
-                <span class="prelude-val">Some</span>((handle, node_id, was_direct_before)) =&gt; {
-                    <span class="kw">if </span>handle.network_path_changed() {
-                        <span class="macro">debug!</span>(
-                            node_id = %node_id.fmt_short(),
-                            new_type = <span class="question-mark">?</span>new_conn_type,
-                            <span class="string">"Congestion controller state reset"</span>,
-                        );
-                        <span class="kw">if </span>!<span class="kw-2">*</span>was_direct_before &amp;&amp; <span class="macro">matches!</span>(new_conn_type, ConnectionType::Direct(<span class="kw">_</span>))
-                        {
-                            <span class="kw-2">*</span>was_direct_before = <span class="bool-val">true</span>;
-                            <span class="macro">inc!</span>(MagicsockMetrics, connection_became_direct);
-                        }
-                    } <span class="kw">else </span>{
-                        <span class="macro">debug!</span>(
-                            node_id = %node_id.fmt_short(),
-                            <span class="string">"removing dropped connection"</span>,
-                        );
-                        <span class="self">self</span>.connection_events.remove(key);
-                    }
-                }
-                <span class="prelude-val">None </span>=&gt; <span class="macro">error!</span>(<span class="string">"No connection found for stream item"</span>),
-            },
-            <span class="prelude-val">None </span>=&gt; {
-                <span class="macro">trace!</span>(<span class="string">"No more connections"</span>);
-            }
-        }
-    }
-
-    <span class="doccomment">/// Performs cleanup for closed connection.
-    </span><span class="kw">fn </span>do_connections_cleanup(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
-        <span class="kw">for </span>(key, (handle, node_id, <span class="kw">_</span>)) <span class="kw">in </span><span class="self">self</span>.connections.iter() {
-            <span class="kw">if </span>!handle.is_alive() {
-                <span class="macro">trace!</span>(node_id = %node_id.fmt_short(), <span class="string">"removing stale connection"</span>);
-                <span class="self">self</span>.connection_events.remove(<span class="kw-2">*</span>key);
-            }
-        }
-    }
-}
-
-<span class="attr">#[cfg(test)]
-</span><span class="kw">mod </span>tests {
-    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-
-    <span class="attr">#[tokio::test]
-    </span><span class="kw">async fn </span>test_actor_mspc_close() {
-        <span class="kw">let </span><span class="kw-2">mut </span>actor = RttActor {
-            connection_events: stream_group::StreamGroup::new().keyed(),
-            connections: HashMap::new(),
-            tick: Notify::new(),
-        };
-        <span class="kw">let </span>(msg_tx, msg_rx) = mpsc::channel(<span class="number">16</span>);
-        <span class="kw">let </span>handle = tokio::spawn(<span class="kw">async move </span>{
-            actor.run(msg_rx).<span class="kw">await</span>;
+        <span class="self">self</span>.connection_events.push(MappedStream {
+            stream: conn_type_changes,
+            connection,
+            node_id,
+            was_direct_before: <span class="bool-val">false</span>,
         });
-
-        <span class="comment">// Dropping the msg_tx should stop the actor
-        </span>drop(msg_tx);
-
-        <span class="kw">let </span>task_res = tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), handle)
-            .<span class="kw">await
-            </span>.expect(<span class="string">"timeout - actor did not finish"</span>);
-        <span class="macro">assert!</span>(task_res.is_ok());
+        <span class="self">self</span>.metrics.connection_handshake_success.inc();
     }
 }
 </code></pre></div></section></main></body></html>

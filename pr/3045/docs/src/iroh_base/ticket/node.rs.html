@@ -200,7 +200,16 @@
 <a href="#199" id="199">199</a>
 <a href="#200" id="200">200</a>
 <a href="#201" id="201">201</a>
-<a href="#202" id="202">202</a></pre></div><pre class="rust"><code><span class="doccomment">//! Tickets for nodes.
+<a href="#202" id="202">202</a>
+<a href="#203" id="203">203</a>
+<a href="#204" id="204">204</a>
+<a href="#205" id="205">205</a>
+<a href="#206" id="206">206</a>
+<a href="#207" id="207">207</a>
+<a href="#208" id="208">208</a>
+<a href="#209" id="209">209</a>
+<a href="#210" id="210">210</a>
+<a href="#211" id="211">211</a></pre></div><pre class="rust"><code><span class="doccomment">//! Tickets for nodes.
 
 </span><span class="kw">use </span>std::str::FromStr;
 
@@ -337,7 +346,7 @@
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>std::net::{Ipv4Addr, SocketAddr};
 
-    <span class="kw">use </span>iroh_test::{assert_eq_hex, hexdump::parse_hexdump};
+    <span class="kw">use </span>data_encoding::HEXLOWER;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
     <span class="kw">use </span><span class="kw">crate</span>::key::{PublicKey, SecretKey};
@@ -390,16 +399,25 @@
                     .as_bytes(),
             )
             .unwrap();
-        <span class="kw">let </span>expected = parse_hexdump(<span class="string">"
-            00 # variant
-            ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6 # node id, 32 bytes, see above
-            01 # relay url present
-            10 687474703a2f2f646572702e6d652e2f # relay url, 16 bytes, see above
-            01 # one direct address
-            00 # ipv4
-            7f000001 8008 # address, see above
-        "</span>).unwrap();
-        <span class="macro">assert_eq_hex!</span>(base32, expected);
+        <span class="kw">let </span>expected = [
+            <span class="comment">// variant
+            </span><span class="string">"00"</span>,
+            <span class="comment">// node id, 32 bytes, see above
+            </span><span class="string">"ae58ff8833241ac82d6ff7611046ed67b5072d142c588d0063e942d9a75502b6"</span>,
+            <span class="comment">// relay url present
+            </span><span class="string">"01"</span>,
+            <span class="comment">// relay url, 16 bytes, see above
+            </span><span class="string">"10"</span>,
+            <span class="string">"687474703a2f2f646572702e6d652e2f"</span>,
+            <span class="comment">// one direct address
+            </span><span class="string">"01"</span>,
+            <span class="comment">// ipv4
+            </span><span class="string">"00"</span>,
+            <span class="comment">// address, see above
+            </span><span class="string">"7f0000018008"</span>,
+        ];
+        <span class="kw">let </span>expected = HEXLOWER.decode(expected.concat().as_bytes()).unwrap();
+        <span class="macro">assert_eq!</span>(base32, expected);
     }
 }
 </code></pre></div></section></main></body></html>

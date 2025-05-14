@@ -265,17 +265,41 @@
 <a href="#264" id="264">264</a>
 <a href="#265" id="265">265</a>
 <a href="#266" id="266">266</a>
-<a href="#267" id="267">267</a></pre></div><pre class="rust"><code><span class="doccomment">//! Pkarr packet store used to resolve DNS queries.
+<a href="#267" id="267">267</a>
+<a href="#268" id="268">268</a>
+<a href="#269" id="269">269</a>
+<a href="#270" id="270">270</a>
+<a href="#271" id="271">271</a>
+<a href="#272" id="272">272</a>
+<a href="#273" id="273">273</a>
+<a href="#274" id="274">274</a>
+<a href="#275" id="275">275</a>
+<a href="#276" id="276">276</a>
+<a href="#277" id="277">277</a>
+<a href="#278" id="278">278</a>
+<a href="#279" id="279">279</a>
+<a href="#280" id="280">280</a>
+<a href="#281" id="281">281</a>
+<a href="#282" id="282">282</a>
+<a href="#283" id="283">283</a>
+<a href="#284" id="284">284</a>
+<a href="#285" id="285">285</a>
+<a href="#286" id="286">286</a>
+<a href="#287" id="287">287</a>
+<a href="#288" id="288">288</a>
+<a href="#289" id="289">289</a>
+<a href="#290" id="290">290</a>
+<a href="#291" id="291">291</a>
+<a href="#292" id="292">292</a></pre></div><pre class="rust"><code><span class="doccomment">//! Pkarr packet store used to resolve DNS queries.
 
 </span><span class="kw">use </span>std::{collections::BTreeMap, num::NonZeroUsize, path::Path, sync::Arc, time::Duration};
 
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">use </span>hickory_server::proto::rr::{Name, RecordSet, RecordType, RrKey};
-<span class="kw">use </span>iroh_metrics::inc;
 <span class="kw">use </span>lru::LruCache;
-<span class="kw">use </span>pkarr::{mainline::dht::DhtSettings, PkarrClient, SignedPacket};
+<span class="kw">use </span>pkarr::{Client <span class="kw">as </span>PkarrClient, SignedPacket};
 <span class="kw">use </span>tokio::sync::Mutex;
-<span class="kw">use </span>tracing::{debug, trace};
+<span class="kw">use </span>tracing::{debug, trace, warn};
 <span class="kw">use </span>ttl_cache::TtlCache;
 
 <span class="kw">use </span><span class="self">self</span>::signed_packets::SignedPacketStore;
@@ -308,19 +332,24 @@
     cache: Arc&lt;Mutex&lt;ZoneCache&gt;&gt;,
     store: Arc&lt;SignedPacketStore&gt;,
     pkarr: <span class="prelude-ty">Option</span>&lt;Arc&lt;PkarrClient&gt;&gt;,
+    metrics: Arc&lt;Metrics&gt;,
 }
 
 <span class="kw">impl </span>ZoneStore {
     <span class="doccomment">/// Create a persistent store
-    </span><span class="kw">pub fn </span>persistent(path: <span class="kw">impl </span>AsRef&lt;Path&gt;, options: ZoneStoreOptions) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="kw">let </span>packet_store = SignedPacketStore::persistent(path, options)<span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(<span class="self">Self</span>::new(packet_store))
+    </span><span class="kw">pub fn </span>persistent(
+        path: <span class="kw">impl </span>AsRef&lt;Path&gt;,
+        options: ZoneStoreOptions,
+        metrics: Arc&lt;Metrics&gt;,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+        <span class="kw">let </span>packet_store = SignedPacketStore::persistent(path, options, metrics.clone())<span class="question-mark">?</span>;
+        <span class="prelude-val">Ok</span>(<span class="self">Self</span>::new(packet_store, metrics))
     }
 
     <span class="doccomment">/// Create an in-memory store.
-    </span><span class="kw">pub fn </span>in_memory(options: ZoneStoreOptions) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="kw">let </span>packet_store = SignedPacketStore::in_memory(options)<span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(<span class="self">Self</span>::new(packet_store))
+    </span><span class="kw">pub fn </span>in_memory(options: ZoneStoreOptions, metrics: Arc&lt;Metrics&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+        <span class="kw">let </span>packet_store = SignedPacketStore::in_memory(options, metrics.clone())<span class="question-mark">?</span>;
+        <span class="prelude-val">Ok</span>(<span class="self">Self</span>::new(packet_store, metrics))
     }
 
     <span class="doccomment">/// Configure a pkarr client for resolution of packets from the bittorrent mainline DHT.
@@ -333,10 +362,7 @@
         <span class="kw">let </span>pkarr_client = <span class="kw">match </span>bootstrap {
             BootstrapOption::Default =&gt; PkarrClient::builder().build().unwrap(),
             BootstrapOption::Custom(bootstrap) =&gt; PkarrClient::builder()
-                .dht_settings(DhtSettings {
-                    bootstrap: <span class="prelude-val">Some</span>(bootstrap),
-                    ..Default::default()
-                })
+                .dht(|builder| builder.bootstrap(<span class="kw-2">&amp;</span>bootstrap))
                 .build()
                 .unwrap(),
         };
@@ -347,34 +373,57 @@
     }
 
     <span class="doccomment">/// Create a new zone store.
-    </span><span class="kw">pub fn </span>new(store: SignedPacketStore) -&gt; <span class="self">Self </span>{
+    </span><span class="kw">pub fn </span>new(store: SignedPacketStore, metrics: Arc&lt;Metrics&gt;) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>zone_cache = ZoneCache::new(DEFAULT_CACHE_CAPACITY);
         <span class="self">Self </span>{
             store: Arc::new(store),
             cache: Arc::new(Mutex::new(zone_cache)),
             pkarr: <span class="prelude-val">None</span>,
+            metrics,
         }
     }
 
     <span class="doccomment">/// Resolve a DNS query.
-    </span><span class="attr">#[allow(clippy::unused_async)]
+    </span><span class="attr">#[tracing::instrument(<span class="string">"resolve"</span>, skip_all, fields(pubkey=%pubkey,name=%name,typ=%record_type))]
     </span><span class="kw">pub async fn </span>resolve(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         pubkey: <span class="kw-2">&amp;</span>PublicKeyBytes,
         name: <span class="kw-2">&amp;</span>Name,
         record_type: RecordType,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Arc&lt;RecordSet&gt;&gt;&gt; {
-        <span class="macro">tracing::info!</span>(<span class="string">"{} {}"</span>, name, record_type);
+        <span class="macro">trace!</span>(<span class="string">"store resolve"</span>);
         <span class="kw">if let </span><span class="prelude-val">Some</span>(rset) = <span class="self">self</span>.cache.lock().<span class="kw">await</span>.resolve(pubkey, name, record_type) {
+            <span class="macro">debug!</span>(
+                len = rset.records_without_rrsigs().count(),
+                <span class="string">"resolved from cache"
+            </span>);
             <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(rset));
         }
 
         <span class="kw">if let </span><span class="prelude-val">Some</span>(packet) = <span class="self">self</span>.store.get(pubkey).<span class="kw">await</span><span class="question-mark">? </span>{
-            <span class="kw">return </span><span class="self">self
+            <span class="macro">trace!</span>(packet_timestamp = <span class="question-mark">?</span>packet.timestamp(), <span class="string">"store hit"</span>);
+            <span class="kw">return match </span><span class="self">self
                 </span>.cache
                 .lock()
                 .<span class="kw">await
-                </span>.insert_and_resolve(<span class="kw-2">&amp;</span>packet, name, record_type);
+                </span>.insert_and_resolve(<span class="kw-2">&amp;</span>packet, name, record_type)
+            {
+                <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(rset)) =&gt; {
+                    <span class="macro">debug!</span>(
+                        len = rset.records_without_rrsigs().count(),
+                        <span class="string">"resolved from store"
+                    </span>);
+                    <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(rset))
+                }
+                <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>) =&gt; {
+                    <span class="macro">debug!</span>(<span class="string">"resolved to zone, but no matching records in zone"</span>);
+                    <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>)
+                }
+                <span class="prelude-val">Err</span>(err) =&gt; {
+                    <span class="macro">warn!</span>(<span class="string">"failed to retrieve zone after inserting in cache: {err:#?}"</span>);
+                    <span class="prelude-val">Err</span>(err)
+                }
+            };
         };
 
         <span class="kw">if let </span><span class="prelude-val">Some</span>(pkarr) = <span class="self">self</span>.pkarr.as_ref() {
@@ -383,9 +432,9 @@
             //
             // it will be cached for some time.
             </span><span class="macro">debug!</span>(<span class="string">"DHT resolve {}"</span>, key.to_z32());
-            <span class="kw">let </span>packet_opt = pkarr.as_ref().clone().as_async().resolve(<span class="kw-2">&amp;</span>key).<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="kw">let </span>packet_opt = pkarr.resolve(<span class="kw-2">&amp;</span>key).<span class="kw">await</span>;
             <span class="kw">if let </span><span class="prelude-val">Some</span>(packet) = packet_opt {
-                <span class="macro">debug!</span>(<span class="string">"DHT resolve successful {:?}"</span>, packet.packet());
+                <span class="macro">debug!</span>(<span class="string">"DHT resolve successful {:?}"</span>, packet);
                 <span class="kw">return </span><span class="self">self
                     </span>.cache
                     .lock()
@@ -414,11 +463,11 @@
     </span><span class="kw">pub async fn </span>insert(<span class="kw-2">&amp;</span><span class="self">self</span>, signed_packet: SignedPacket, _source: PacketSource) -&gt; <span class="prelude-ty">Result</span>&lt;bool&gt; {
         <span class="kw">let </span>pubkey = PublicKeyBytes::from_signed_packet(<span class="kw-2">&amp;</span>signed_packet);
         <span class="kw">if </span><span class="self">self</span>.store.upsert(signed_packet).<span class="kw">await</span><span class="question-mark">? </span>{
-            <span class="macro">inc!</span>(Metrics, pkarr_publish_update);
+            <span class="self">self</span>.metrics.pkarr_publish_update.inc();
             <span class="self">self</span>.cache.lock().<span class="kw">await</span>.remove(<span class="kw-2">&amp;</span>pubkey);
             <span class="prelude-val">Ok</span>(<span class="bool-val">true</span>)
         } <span class="kw">else </span>{
-            <span class="macro">inc!</span>(Metrics, pkarr_publish_noop);
+            <span class="self">self</span>.metrics.pkarr_publish_noop.inc();
             <span class="prelude-val">Ok</span>(<span class="bool-val">false</span>)
         }
     }
@@ -491,11 +540,14 @@
             .map(|old| old.is_newer_than(signed_packet))
             .unwrap_or(<span class="bool-val">false</span>)
         {
-            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+            <span class="macro">trace!</span>(<span class="string">"insert skip: cached is newer"</span>);
+            <span class="prelude-val">Ok</span>(())
+        } <span class="kw">else </span>{
+            <span class="self">self</span>.cache
+                .put(pubkey, CachedZone::from_signed_packet(signed_packet)<span class="question-mark">?</span>);
+            <span class="macro">trace!</span>(<span class="string">"inserted into cache"</span>);
+            <span class="prelude-val">Ok</span>(())
         }
-        <span class="self">self</span>.cache
-            .put(pubkey, CachedZone::from_signed_packet(signed_packet)<span class="question-mark">?</span>);
-        <span class="prelude-val">Ok</span>(())
     }
 
     <span class="kw">fn </span>remove(<span class="kw-2">&amp;mut </span><span class="self">self</span>, pubkey: <span class="kw-2">&amp;</span>PublicKeyBytes) {
@@ -516,19 +568,17 @@
             signed_packet_to_hickory_records_without_origin(signed_packet, |<span class="kw">_</span>| <span class="bool-val">true</span>)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(<span class="self">Self </span>{
             records,
-            timestamp: signed_packet.timestamp(),
+            timestamp: signed_packet.timestamp().into(),
         })
     }
 
     <span class="kw">fn </span>is_newer_than(<span class="kw-2">&amp;</span><span class="self">self</span>, signed_packet: <span class="kw-2">&amp;</span>SignedPacket) -&gt; bool {
-        <span class="self">self</span>.timestamp &gt; signed_packet.timestamp()
+        <span class="self">self</span>.timestamp &gt; signed_packet.timestamp().into()
     }
 
     <span class="kw">fn </span>resolve(<span class="kw-2">&amp;</span><span class="self">self</span>, name: <span class="kw-2">&amp;</span>Name, record_type: RecordType) -&gt; <span class="prelude-ty">Option</span>&lt;Arc&lt;RecordSet&gt;&gt; {
+        <span class="macro">trace!</span>(name=%name, typ=%record_type, <span class="string">"resolve in zone"</span>);
         <span class="kw">let </span>key = RrKey::new(name.into(), record_type);
-        <span class="kw">for </span>record <span class="kw">in </span><span class="self">self</span>.records.keys() {
-            <span class="macro">tracing::info!</span>(<span class="string">"record {:?}"</span>, record);
-        }
         <span class="self">self</span>.records.get(<span class="kw-2">&amp;</span>key).cloned()
     }
 }

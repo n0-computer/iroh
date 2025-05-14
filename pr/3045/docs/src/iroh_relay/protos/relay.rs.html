@@ -839,7 +839,36 @@
 <a href="#838" id="838">838</a>
 <a href="#839" id="839">839</a>
 <a href="#840" id="840">840</a>
-<a href="#841" id="841">841</a></pre></div><pre class="rust"><code><span class="doccomment">//! This module implements the relaying protocol used by the `server` and `client`.
+<a href="#841" id="841">841</a>
+<a href="#842" id="842">842</a>
+<a href="#843" id="843">843</a>
+<a href="#844" id="844">844</a>
+<a href="#845" id="845">845</a>
+<a href="#846" id="846">846</a>
+<a href="#847" id="847">847</a>
+<a href="#848" id="848">848</a>
+<a href="#849" id="849">849</a>
+<a href="#850" id="850">850</a>
+<a href="#851" id="851">851</a>
+<a href="#852" id="852">852</a>
+<a href="#853" id="853">853</a>
+<a href="#854" id="854">854</a>
+<a href="#855" id="855">855</a>
+<a href="#856" id="856">856</a>
+<a href="#857" id="857">857</a>
+<a href="#858" id="858">858</a>
+<a href="#859" id="859">859</a>
+<a href="#860" id="860">860</a>
+<a href="#861" id="861">861</a>
+<a href="#862" id="862">862</a>
+<a href="#863" id="863">863</a>
+<a href="#864" id="864">864</a>
+<a href="#865" id="865">865</a>
+<a href="#866" id="866">866</a>
+<a href="#867" id="867">867</a>
+<a href="#868" id="868">868</a>
+<a href="#869" id="869">869</a>
+<a href="#870" id="870">870</a></pre></div><pre class="rust"><code><span class="doccomment">//! This module implements the relaying protocol used by the `server` and `client`.
 //!
 //! Protocol flow:
 //!
@@ -853,20 +882,18 @@
 //!  * clients sends `FrameType::SendPacket`
 //!  * server then sends `FrameType::RecvPacket` to recipient
 
-</span><span class="kw">use </span>std::time::Duration;
-
-<span class="kw">use </span>anyhow::{bail, ensure};
-<span class="kw">use </span>bytes::{Buf, BufMut, Bytes, BytesMut};
-<span class="attr">#[cfg(any(test, feature = <span class="string">"server"</span>))]
-</span><span class="kw">use </span>futures_lite::{Stream, StreamExt};
-<span class="kw">use </span>futures_sink::Sink;
-<span class="kw">use </span>futures_util::SinkExt;
+</span><span class="kw">use </span>anyhow::{bail, ensure};
+<span class="kw">use </span>bytes::{BufMut, Bytes};
 <span class="kw">use </span>iroh_base::{PublicKey, SecretKey, Signature};
+<span class="attr">#[cfg(feature = <span class="string">"server"</span>)]
+</span><span class="kw">use </span>n0_future::time::Duration;
+<span class="kw">use </span>n0_future::{Sink, SinkExt};
+<span class="attr">#[cfg(any(test, feature = <span class="string">"server"</span>))]
+</span><span class="kw">use </span>n0_future::{Stream, StreamExt};
 <span class="kw">use </span>postcard::experimental::max_size::MaxSize;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
-<span class="kw">use </span>tokio_util::codec::{Decoder, Encoder};
 
-<span class="kw">use </span><span class="kw">crate</span>::KeyCache;
+<span class="kw">use crate</span>::{client::conn::ConnSendError, KeyCache};
 
 <span class="doccomment">/// The maximum size of a packet sent over relay.
 /// (This only includes the data bytes visible to magicsock, not
@@ -876,21 +903,24 @@
 <span class="doccomment">/// The maximum frame size.
 ///
 /// This is also the minimum burst size that a rate-limiter has to accept.
+</span><span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">const </span>MAX_FRAME_SIZE: usize = <span class="number">1024 </span>* <span class="number">1024</span>;
 
 <span class="doccomment">/// The Relay magic number, sent in the FrameType::ClientInfo frame upon initial connection.
 </span><span class="kw">const </span>MAGIC: <span class="kw-2">&amp;</span>str = <span class="string">"RELAY🔑"</span>;
 
-<span class="attr">#[cfg(feature = <span class="string">"server"</span>)]
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>KEEP_ALIVE: Duration = Duration::from_secs(<span class="number">60</span>);
-<span class="comment">// TODO: what should this be?
+<span class="doccomment">/// Interval in which we ping the relay server to ensure the connection is alive.
+///
+/// The default QUIC max_idle_timeout is 30s, so setting that to half this time gives some
+/// chance of recovering.
 </span><span class="attr">#[cfg(feature = <span class="string">"server"</span>)]
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>SERVER_CHANNEL_SIZE: usize = <span class="number">1024 </span>* <span class="number">100</span>;
-<span class="doccomment">/// The number of packets buffered for sending per client
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>PER_CLIENT_SEND_QUEUE_DEPTH: usize = <span class="number">512</span>; <span class="comment">//32;
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>PER_CLIENT_READ_QUEUE_DEPTH: usize = <span class="number">512</span>;
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>PING_INTERVAL: Duration = Duration::from_secs(<span class="number">15</span>);
 
-<span class="doccomment">/// ProtocolVersion is bumped whenever there's a wire-incompatible change.
+<span class="doccomment">/// The number of packets buffered for sending per client
+</span><span class="attr">#[cfg(feature = <span class="string">"server"</span>)]
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>PER_CLIENT_SEND_QUEUE_DEPTH: usize = <span class="number">512</span>; <span class="comment">//32;
+
+</span><span class="doccomment">/// ProtocolVersion is bumped whenever there's a wire-incompatible change.
 ///  - version 1 (zero on wire): consistent box headers, in use by employee dev nodes a bit
 ///  - version 2: received packets have src addrs in FrameType::RecvPacket at beginning.
 ///
@@ -939,10 +969,9 @@
     <span class="doccomment">/// 8 byte payload, the contents of ping being replied to
     </span>Pong = <span class="number">13</span>,
     <span class="doccomment">/// Sent from server to client to tell the client if their connection is
-    /// unhealthy somehow. Currently the only unhealthy state is whether the
-    /// connection is detected as a duplicate.
-    /// The entire frame body is the text of the error message. An empty message
-    /// clears the error state.
+    /// unhealthy somehow.
+    ///
+    /// Currently this is used to indicate that the connection was closed because of authentication issues.
     </span>Health = <span class="number">14</span>,
 
     <span class="doccomment">/// Sent from server to client for the server to declare that it's restarting.
@@ -971,6 +1000,7 @@
 /// Ignores the timeout if `None`
 ///
 /// Does not flush.
+</span><span class="attr">#[cfg(feature = <span class="string">"server"</span>)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>write_frame&lt;S: Sink&lt;Frame, Error = std::io::Error&gt; + Unpin&gt;(
     <span class="kw-2">mut </span>writer: S,
     frame: Frame,
@@ -989,7 +1019,7 @@
 /// and the client's [`ClientInfo`], sealed using the server's [`PublicKey`].
 ///
 /// Flushes after writing.
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>send_client_key&lt;S: Sink&lt;Frame, Error = std::io::Error&gt; + Unpin&gt;(
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>send_client_key&lt;S: Sink&lt;Frame, Error = ConnSendError&gt; + Unpin&gt;(
     <span class="kw-2">mut </span>writer: S,
     client_secret_key: <span class="kw-2">&amp;</span>SecretKey,
     client_info: <span class="kw-2">&amp;</span>ClientInfo,
@@ -1020,7 +1050,7 @@
 
     // TODO: variable recv size: 256 * 1024
     </span><span class="kw">let </span>buf = tokio::time::timeout(
-        Duration::from_secs(<span class="number">10</span>),
+        std::time::Duration::from_secs(<span class="number">10</span>),
         recv_frame(FrameType::ClientInfo, stream),
     )
     .<span class="kw">await
@@ -1047,12 +1077,14 @@
 ///
 /// This is a framed protocol, using [`tokio_util::codec`] to turn the streams of bytes into
 /// [`Frame`]s.
-</span><span class="attr">#[derive(Debug, Clone)]
+</span><span class="attr">#[cfg(not(wasm_browser))]
+#[derive(Debug, Clone)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>RelayCodec {
     cache: KeyCache,
 }
 
-<span class="kw">impl </span>RelayCodec {
+<span class="attr">#[cfg(not(wasm_browser))]
+</span><span class="kw">impl </span>RelayCodec {
     <span class="attr">#[cfg(test)]
     </span><span class="kw">pub fn </span>test() -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
@@ -1120,6 +1152,7 @@
     }
 
     <span class="doccomment">/// Serialized length (without the frame header)
+    </span><span class="attr">#[cfg(not(wasm_browser))] </span><span class="comment">// Not needed with websocket framing - thus not needed in browsers
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>len(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
         <span class="kw">match </span><span class="self">self </span>{
             Frame::ClientInfo {
@@ -1151,11 +1184,10 @@
     <span class="doccomment">/// Tries to decode a frame received over websockets.
     ///
     /// Specifically, bytes received from a binary websocket message frame.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>decode_from_ws_msg(vec: Vec&lt;u8&gt;, cache: <span class="kw-2">&amp;</span>KeyCache) -&gt; anyhow::Result&lt;<span class="self">Self</span>&gt; {
-        <span class="kw">if </span>vec.is_empty() {
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>decode_from_ws_msg(bytes: Bytes, cache: <span class="kw-2">&amp;</span>KeyCache) -&gt; anyhow::Result&lt;<span class="self">Self</span>&gt; {
+        <span class="kw">if </span>bytes.is_empty() {
             <span class="macro">bail!</span>(<span class="string">"error parsing relay::codec::Frame: too few bytes (0)"</span>);
         }
-        <span class="kw">let </span>bytes = Bytes::from(vec);
         <span class="kw">let </span>typ = FrameType::from(bytes[<span class="number">0</span>]);
         <span class="kw">let </span>frame = <span class="self">Self</span>::from_bytes(typ, bytes.slice(<span class="number">1</span>..), cache)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(frame)
@@ -1334,72 +1366,86 @@
     }
 }
 
-<span class="kw">const </span>HEADER_LEN: usize = <span class="number">5</span>;
+<span class="comment">// No need for framing when using websockets, thus this is cfg-ed out for browsers:
+</span><span class="attr">#[cfg(not(wasm_browser))]
+</span><span class="comment">// rustc doesn't figure out that the trait impls mean it's not unused
+</span><span class="attr">#[cfg_attr(not(wasm_browser), allow(unused))]
+</span><span class="kw">pub use </span>framing::<span class="kw-2">*</span>;
 
-<span class="kw">impl </span>Decoder <span class="kw">for </span>RelayCodec {
-    <span class="kw">type </span>Item = Frame;
-    <span class="kw">type </span>Error = anyhow::Error;
+<span class="attr">#[cfg(not(wasm_browser))]
+</span><span class="kw">mod </span>framing {
+    <span class="kw">use </span>bytes::{Buf, BytesMut};
+    <span class="kw">use </span>tokio_util::codec::{Decoder, Encoder};
 
-    <span class="kw">fn </span>decode(<span class="kw-2">&amp;mut </span><span class="self">self</span>, src: <span class="kw-2">&amp;mut </span>BytesMut) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt;, <span class="self">Self</span>::Error&gt; {
-        <span class="comment">// Need at least 5 bytes
-        </span><span class="kw">if </span>src.len() &lt; HEADER_LEN {
-            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
+    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">const </span>HEADER_LEN: usize = <span class="number">5</span>;
+
+    <span class="kw">impl </span>Decoder <span class="kw">for </span>RelayCodec {
+        <span class="kw">type </span>Item = Frame;
+        <span class="kw">type </span>Error = anyhow::Error;
+
+        <span class="kw">fn </span>decode(<span class="kw-2">&amp;mut </span><span class="self">self</span>, src: <span class="kw-2">&amp;mut </span>BytesMut) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt;, <span class="self">Self</span>::Error&gt; {
+            <span class="comment">// Need at least 5 bytes
+            </span><span class="kw">if </span>src.len() &lt; HEADER_LEN {
+                <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
+            }
+
+            <span class="comment">// Can't use the `Buf::get_*` APIs, as that advances the buffer.
+            </span><span class="kw">let </span><span class="prelude-val">Some</span>(frame_type) = src.first().map(|b| FrameType::from(<span class="kw-2">*</span>b)) <span class="kw">else </span>{
+                <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>); <span class="comment">// Not enough bytes
+            </span>};
+            <span class="kw">let </span><span class="prelude-val">Some</span>(frame_len) = src
+                .get(<span class="number">1</span>..<span class="number">5</span>)
+                .and_then(|s| TryInto::&lt;[u8; <span class="number">4</span>]&gt;::try_into(s).ok())
+                .map(u32::from_be_bytes)
+                .map(|l| l <span class="kw">as </span>usize)
+            <span class="kw">else </span>{
+                <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>); <span class="comment">// Not enough bytes
+            </span>};
+
+            <span class="kw">if </span>frame_len &gt; MAX_FRAME_SIZE {
+                <span class="macro">anyhow::bail!</span>(<span class="string">"Frame of length {} is too large."</span>, frame_len);
+            }
+
+            <span class="kw">if </span>src.len() &lt; HEADER_LEN + frame_len {
+                <span class="comment">// Optimization: prereserve the buffer space
+                </span>src.reserve(HEADER_LEN + frame_len - src.len());
+
+                <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
+            }
+
+            <span class="comment">// advance the header
+            </span>src.advance(HEADER_LEN);
+
+            <span class="kw">let </span>content = src.split_to(frame_len).freeze();
+            <span class="kw">let </span>frame = Frame::from_bytes(frame_type, content, <span class="kw-2">&amp;</span><span class="self">self</span>.cache)<span class="question-mark">?</span>;
+
+            <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(frame))
         }
-
-        <span class="comment">// Can't use the `Buf::get_*` APIs, as that advances the buffer.
-        </span><span class="kw">let </span><span class="prelude-val">Some</span>(frame_type) = src.first().map(|b| FrameType::from(<span class="kw-2">*</span>b)) <span class="kw">else </span>{
-            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>); <span class="comment">// Not enough bytes
-        </span>};
-        <span class="kw">let </span><span class="prelude-val">Some</span>(frame_len) = src
-            .get(<span class="number">1</span>..<span class="number">5</span>)
-            .and_then(|s| TryInto::&lt;[u8; <span class="number">4</span>]&gt;::try_into(s).ok())
-            .map(u32::from_be_bytes)
-            .map(|l| l <span class="kw">as </span>usize)
-        <span class="kw">else </span>{
-            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>); <span class="comment">// Not enough bytes
-        </span>};
-
-        <span class="kw">if </span>frame_len &gt; MAX_FRAME_SIZE {
-            <span class="macro">anyhow::bail!</span>(<span class="string">"Frame of length {} is too large."</span>, frame_len);
-        }
-
-        <span class="kw">if </span>src.len() &lt; HEADER_LEN + frame_len {
-            <span class="comment">// Optimization: prereserve the buffer space
-            </span>src.reserve(HEADER_LEN + frame_len - src.len());
-
-            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>);
-        }
-
-        <span class="comment">// advance the header
-        </span>src.advance(HEADER_LEN);
-
-        <span class="kw">let </span>content = src.split_to(frame_len).freeze();
-        <span class="kw">let </span>frame = Frame::from_bytes(frame_type, content, <span class="kw-2">&amp;</span><span class="self">self</span>.cache)<span class="question-mark">?</span>;
-
-        <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(frame))
     }
-}
 
-<span class="kw">impl </span>Encoder&lt;Frame&gt; <span class="kw">for </span>RelayCodec {
-    <span class="kw">type </span>Error = std::io::Error;
+    <span class="kw">impl </span>Encoder&lt;Frame&gt; <span class="kw">for </span>RelayCodec {
+        <span class="kw">type </span>Error = std::io::Error;
 
-    <span class="kw">fn </span>encode(<span class="kw-2">&amp;mut </span><span class="self">self</span>, frame: Frame, dst: <span class="kw-2">&amp;mut </span>BytesMut) -&gt; <span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt; {
-        <span class="kw">let </span>frame_len: usize = frame.len();
-        <span class="kw">if </span>frame_len &gt; MAX_FRAME_SIZE {
-            <span class="kw">return </span><span class="prelude-val">Err</span>(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                <span class="macro">format!</span>(<span class="string">"Frame of length {} is too large."</span>, frame_len),
-            ));
+        <span class="kw">fn </span>encode(<span class="kw-2">&amp;mut </span><span class="self">self</span>, frame: Frame, dst: <span class="kw-2">&amp;mut </span>BytesMut) -&gt; <span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt; {
+            <span class="kw">let </span>frame_len: usize = frame.len();
+            <span class="kw">if </span>frame_len &gt; MAX_FRAME_SIZE {
+                <span class="kw">return </span><span class="prelude-val">Err</span>(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    <span class="macro">format!</span>(<span class="string">"Frame of length {} is too large."</span>, frame_len),
+                ));
+            }
+
+            <span class="kw">let </span>frame_len_u32 = u32::try_from(frame_len).expect(<span class="string">"just checked"</span>);
+
+            dst.reserve(HEADER_LEN + frame_len);
+            dst.put_u8(frame.typ().into());
+            dst.put_u32(frame_len_u32);
+            frame.write_to(dst);
+
+            <span class="prelude-val">Ok</span>(())
         }
-
-        <span class="kw">let </span>frame_len_u32 = u32::try_from(frame_len).expect(<span class="string">"just checked"</span>);
-
-        dst.reserve(HEADER_LEN + frame_len);
-        dst.put_u8(frame.typ().into());
-        dst.put_u32(frame_len_u32);
-        frame.write_to(dst);
-
-        <span class="prelude-val">Ok</span>(())
     }
 }
 
@@ -1427,11 +1473,13 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
+    <span class="kw">use </span>data_encoding::HEXLOWER;
     <span class="kw">use </span>tokio_util::codec::{FramedRead, FramedWrite};
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
 
     <span class="attr">#[tokio::test]
+    #[cfg(feature = <span class="string">"server"</span>)]
     </span><span class="kw">async fn </span>test_basic_read_write() -&gt; anyhow::Result&lt;()&gt; {
         <span class="kw">let </span>(reader, writer) = tokio::io::duplex(<span class="number">1024</span>);
         <span class="kw">let </span><span class="kw-2">mut </span>reader = FramedRead::new(reader, RelayCodec::test());
@@ -1455,7 +1503,8 @@
     </span><span class="kw">async fn </span>test_send_recv_client_key() -&gt; anyhow::Result&lt;()&gt; {
         <span class="kw">let </span>(reader, writer) = tokio::io::duplex(<span class="number">1024</span>);
         <span class="kw">let </span><span class="kw-2">mut </span>reader = FramedRead::new(reader, RelayCodec::test());
-        <span class="kw">let </span><span class="kw-2">mut </span>writer = FramedWrite::new(writer, RelayCodec::test());
+        <span class="kw">let </span><span class="kw-2">mut </span>writer =
+            FramedWrite::new(writer, RelayCodec::test()).sink_map_err(ConnSendError::from);
 
         <span class="kw">let </span>client_key = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>client_info = ClientInfo {
@@ -1547,10 +1596,17 @@
 
         <span class="kw">for </span>(frame, expected_hex) <span class="kw">in </span>frames {
             <span class="kw">let </span>bytes = frame.encode_for_ws_msg();
-            <span class="comment">// To regenerate the hexdumps:
-            // let hexdump = iroh_test::hexdump::print_hexdump(bytes, []);
-            // println!("{hexdump}");
-            </span><span class="kw">let </span>expected_bytes = iroh_test::hexdump::parse_hexdump(expected_hex)<span class="question-mark">?</span>;
+            <span class="kw">let </span>stripped: Vec&lt;u8&gt; = expected_hex
+                .chars()
+                .filter_map(|s| {
+                    <span class="kw">if </span>s.is_ascii_whitespace() {
+                        <span class="prelude-val">None
+                    </span>} <span class="kw">else </span>{
+                        <span class="prelude-val">Some</span>(s <span class="kw">as </span>u8)
+                    }
+                })
+                .collect();
+            <span class="kw">let </span>expected_bytes = HEXLOWER.decode(<span class="kw-2">&amp;</span>stripped).unwrap();
             <span class="macro">assert_eq!</span>(bytes, expected_bytes);
         }
 
@@ -1560,7 +1616,9 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>proptests {
+    <span class="kw">use </span>bytes::BytesMut;
     <span class="kw">use </span>proptest::prelude::<span class="kw-2">*</span>;
+    <span class="kw">use </span>tokio_util::codec::{Decoder, Encoder};
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
 
@@ -1664,7 +1722,7 @@
         <span class="attr">#[test]
         </span><span class="kw">fn </span>frame_ws_roundtrip(frame <span class="kw">in </span>frame()) {
             <span class="kw">let </span>encoded = frame.clone().encode_for_ws_msg();
-            <span class="kw">let </span>decoded = Frame::decode_from_ws_msg(encoded, <span class="kw-2">&amp;</span>KeyCache::test()).unwrap();
+            <span class="kw">let </span>decoded = Frame::decode_from_ws_msg(Bytes::from(encoded), <span class="kw-2">&amp;</span>KeyCache::test()).unwrap();
             <span class="macro">prop_assert_eq!</span>(frame, decoded);
         }
 
