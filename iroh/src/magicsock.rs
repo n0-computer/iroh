@@ -370,6 +370,9 @@ impl MagicSock {
     /// store [`Some`] report.
     ///
     /// To get the current `net-report`, use [`Watcher::initialized`].
+    ///
+    /// [`Watcher`]: crate::watcher::Watcher
+    /// [`Watcher::initialized`]: crate::watcher::Watcher::initialized
     pub(crate) fn net_report(&self) -> watcher::Direct<Option<Arc<Report>>> {
         self.net_report.watch()
     }
