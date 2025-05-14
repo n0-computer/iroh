@@ -3171,7 +3171,14 @@
 <a href="#3170" id="3170">3170</a>
 <a href="#3171" id="3171">3171</a>
 <a href="#3172" id="3172">3172</a>
-<a href="#3173" id="3173">3173</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#3173" id="3173">3173</a>
+<a href="#3174" id="3174">3174</a>
+<a href="#3175" id="3175">3175</a>
+<a href="#3176" id="3176">3176</a>
+<a href="#3177" id="3177">3177</a>
+<a href="#3178" id="3178">3178</a>
+<a href="#3179" id="3179">3179</a>
+<a href="#3180" id="3180">3180</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -3259,6 +3266,7 @@
 ///
 /// We return a named type instead of `impl Watcher&lt;Value = NodeAddr&gt;`, as this allows
 /// you to e.g. store the watcher in a struct.
+</span><span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">pub type </span>NodeAddrWatcher = watcher::Map&lt;
     (
         watcher::Direct&lt;<span class="prelude-ty">Option</span>&lt;BTreeSet&lt;DirectAddr&gt;&gt;&gt;,
@@ -3266,6 +3274,8 @@
     ),
     <span class="prelude-ty">Option</span>&lt;NodeAddr&gt;,
 &gt;;
+<span class="attr">#[cfg(wasm_browser)]
+</span><span class="kw">pub type </span>NodeAddrWatcher = watcher::Map&lt;watcher::Direct&lt;<span class="prelude-ty">Option</span>&lt;RelayUrl&gt;&gt;, <span class="prelude-ty">Option</span>&lt;NodeAddr&gt;&gt;;
 
 <span class="doccomment">/// Defines the mode of path selection for all traffic flowing through
 /// the endpoint.
@@ -4095,9 +4105,13 @@
             .expect(<span class="string">"watchable is alive - cannot be disconnected yet"</span>)
     }
 
-    <span class="doccomment">/// TODO(matheus23) docs
+    <span class="doccomment">/// Returns a [`Watcher`] for the current [`NodeAddr`] for this endpoint.
+    /// 
+    /// When compiled to Wasm, this function returns a watcher that initializes
+    /// with a [`NodeAddr`] that only contains a relay URL, but no direct addresses,
+    /// as there are no APIs for directly using sockets in browsers.
     </span><span class="attr">#[cfg(wasm_browser)]
-    </span><span class="kw">pub fn </span>node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; watcher::Map&lt;watcher::Direct&lt;<span class="prelude-ty">Option</span>&lt;RelayUrl&gt;&gt;, <span class="prelude-ty">Option</span>&lt;NodeAddr&gt;&gt; {
+    </span><span class="kw">pub fn </span>node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; NodeAddrWatcher {
         <span class="comment">// In browsers, there will never be any direct addresses, so we wait
         // for the home relay instead. This makes the `NodeAddr` have *some* way
         // of connecting to us.
@@ -4105,7 +4119,7 @@
         <span class="kw">let </span>node_id = <span class="self">self</span>.node_id();
         watch_relay
             .map(<span class="kw">move </span>|relay| {
-                relay.map(|relay| NodeAddr::from_parts(node_id, relay, std::iter::empty()))
+                relay.map(|relay| NodeAddr::from_parts(node_id, <span class="prelude-val">Some</span>(relay), std::iter::empty()))
             })
             .expect(<span class="string">"watchable is alive - cannot be disconnected yet"</span>)
     }
