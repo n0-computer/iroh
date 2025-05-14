@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["Direct","Disconnected","InitializedFut","Join","JoinOpt","Map","Merge2","NextFut","Stream","Watchable"],"trait":["Nullable","Watcher"]};
+window.SIDEBAR_ITEMS = {"struct":["Direct","Disconnected","InitializedFut","Join","JoinOpt","Map","NextFut","Stream","Watchable"],"trait":["Nullable","Watcher"]};
