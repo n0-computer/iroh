@@ -1252,4 +1252,37 @@ mod tests {
 
         Ok(())
     }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_relay_clients_full() -> TestResult<()> {
+        let server = spawn_local_relay().await.unwrap();
+        let relay_url = format!("http://{}", server.http_addr().unwrap());
+        let relay_url: RelayUrl = relay_url.parse().unwrap();
+
+        // set up client a
+        let a_secret_key = SecretKey::generate(rand::thread_rng());
+        let resolver = dns_resolver();
+        let mut client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver.clone())
+            .connect()
+            .await?;
+
+        // set up client b
+        let b_secret_key = SecretKey::generate(rand::thread_rng());
+        let b_key = b_secret_key.public();
+        let _client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver.clone())
+            .connect()
+            .await?;
+
+        // send messages from a to b, without b receiving anything.
+        // we should still keep succeeding to send, even if the packet won't be forwarded
+        // by the relay server because the server's send queue for b fills up.
+        let msg = Bytes::from("hello, b");
+        for _i in 0..1000 {
+            client_a
+                .send(SendMessage::SendPacket(b_key, msg.clone()))
+                .await?;
+        }
+        Ok(())
+    }
 }

@@ -101,13 +101,14 @@ pub async fn run_relay_server_with(
     let quic = server
         .quic_addr()
         .map(|addr| RelayQuicConfig { port: addr.port() });
-    let m = RelayMap::from_nodes([RelayNode {
+    let n: RelayMap = RelayNode {
         url: url.clone(),
         stun_only: false,
         stun_port: server.stun_addr().map_or(DEFAULT_STUN_PORT, |s| s.port()),
         quic,
-    }])?;
-    Ok((m, url, server))
+    }
+    .into();
+    Ok((n, url, server))
 }
 
 pub(crate) mod dns_and_pkarr_servers {

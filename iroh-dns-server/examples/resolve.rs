@@ -1,3 +1,4 @@
+use anyhow::Context;
 use clap::{Parser, ValueEnum};
 use iroh::{
     discovery::dns::{N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING},
@@ -5,8 +6,8 @@ use iroh::{
     NodeId,
 };
 
-const LOCALHOST_DNS: &str = "127.0.0.1:5300";
-const EXAMPLE_ORIGIN: &str = "irohdns.example";
+const DEV_DNS_SERVER: &str = "127.0.0.1:5300";
+const DEV_DNS_ORIGIN_DOMAIN: &str = "irohdns.example";
 
 #[derive(ValueEnum, Clone, Debug, Default)]
 pub enum Env {
@@ -23,6 +24,7 @@ pub enum Env {
 struct Cli {
     #[clap(value_enum, short, long, default_value_t = Env::Staging)]
     env: Env,
+    dns_server: Option<String>,
     #[clap(subcommand)]
     command: Command,
 }
@@ -30,7 +32,13 @@ struct Cli {
 #[derive(Debug, Parser)]
 enum Command {
     /// Resolve node info by node id.
-    Node { node_id: NodeId },
+    Node {
+        /// The node id to resolve.
+        node_id: NodeId,
+        /// Use a custom domain when resolving node info via DNS.
+        #[clap(long)]
+        dns_origin_domain: Option<String>,
+    },
     /// Resolve node info by domain.
     Domain { domain: String },
 }
@@ -38,16 +46,33 @@ enum Command {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Cli::parse();
-    let (resolver, origin) = match args.env {
-        Env::Staging => (DnsResolver::new(), N0_DNS_NODE_ORIGIN_STAGING),
-        Env::Prod => (DnsResolver::new(), N0_DNS_NODE_ORIGIN_PROD),
-        Env::Dev => (
-            DnsResolver::with_nameserver(LOCALHOST_DNS.parse()?),
-            EXAMPLE_ORIGIN,
-        ),
+    let resolver = if let Some(host) = args.dns_server {
+        let addr = tokio::net::lookup_host(host)
+            .await?
+            .next()
+            .context("failed to resolve DNS server address")?;
+        DnsResolver::with_nameserver(addr)
+    } else {
+        match args.env {
+            Env::Staging | Env::Prod => DnsResolver::new(),
+            Env::Dev => {
+                DnsResolver::with_nameserver(DEV_DNS_SERVER.parse().expect("valid address"))
+            }
+        }
     };
     let resolved = match args.command {
-        Command::Node { node_id } => resolver.lookup_node_by_id(&node_id, origin).await?,
+        Command::Node {
+            node_id,
+            dns_origin_domain,
+        } => {
+            let origin_domain = match (&dns_origin_domain, args.env) {
+                (Some(domain), _) => domain,
+                (None, Env::Prod) => N0_DNS_NODE_ORIGIN_PROD,
+                (None, Env::Staging) => N0_DNS_NODE_ORIGIN_STAGING,
+                (None, Env::Dev) => DEV_DNS_ORIGIN_DOMAIN,
+            };
+            resolver.lookup_node_by_id(&node_id, origin_domain).await?
+        }
         Command::Domain { domain } => resolver.lookup_node_by_domain_name(&domain).await?,
     };
     println!("resolved node {}", resolved.node_id);
