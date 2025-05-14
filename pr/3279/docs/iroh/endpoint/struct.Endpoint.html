@@ -123,7 +123,7 @@ some time to connect to find and connect to the home relay server.</p>
 <h5 id="examples"><a class="doc-anchor" href="#examples">§</a>Examples</h5>
 <p>To wait for a home relay connection to be established, use <a href="../watcher/trait.Watcher.html#method.initialized" title="method iroh::watcher::Watcher::initialized"><code>Watcher::initialized</code></a>:</p>
 
-<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>iroh::{watchable::Watcher <span class="kw">as _</span>, Endpoint};
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>iroh::{watcher::Watcher <span class="kw">as _</span>, Endpoint};
 <span class="kw">use </span>n0_future::StreamExt;
 
 <span class="kw">let </span>mep = Endpoint::builder().bind().<span class="kw">await</span>.unwrap();
@@ -146,7 +146,7 @@ recently discovered direct addresses.</p>
 <h5 id="examples-1"><a class="doc-anchor" href="#examples-1">§</a>Examples</h5>
 <p>To get the first set of direct addresses use <a href="../watcher/trait.Watcher.html#method.initialized" title="method iroh::watcher::Watcher::initialized"><code>Watcher::initialized</code></a>:</p>
 
-<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>iroh::{watchable::Watcher <span class="kw">as _</span>, Endpoint};
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>iroh::{watcher::Watcher <span class="kw">as _</span>, Endpoint};
 <span class="kw">use </span>n0_future::StreamExt;
 
 <span class="kw">let </span>mep = Endpoint::builder().bind().<span class="kw">await</span>.unwrap();
