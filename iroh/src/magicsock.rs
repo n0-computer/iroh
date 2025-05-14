@@ -1348,7 +1348,7 @@ impl Handle {
         )?;
 
         let (actor_sender, actor_receiver) = mpsc::channel(256);
-        let (udp_disco_sender, mut udp_disco_receiver) = mpsc::channel(256);
+        let (disco_sender, mut disco_receiver) = mpsc::channel(256);
 
         // load the node data
         let node_map = node_map.unwrap_or_default();
@@ -1397,7 +1397,7 @@ impl Handle {
             disco_secrets: DiscoSecrets::default(),
             node_map,
             ip_mapped_addrs,
-            disco_sender: udp_disco_sender,
+            disco_sender,
             discovery,
             discovery_user_data: RwLock::new(discovery_user_data),
             direct_addrs: Default::default(),
@@ -1434,7 +1434,7 @@ impl Handle {
         let _ = actor_tasks.spawn({
             let msock = msock.clone();
             async move {
-                while let Some((dst, dst_key, msg)) = udp_disco_receiver.recv().await {
+                while let Some((dst, dst_key, msg)) = disco_receiver.recv().await {
                     if let Err(err) = msock.send_disco_message(dst.clone(), dst_key, msg).await {
                         warn!(%dst, node = %dst_key.fmt_short(), ?err, "failed to send disco message (UDP)");
                     }
@@ -1469,37 +1469,35 @@ impl Handle {
         #[cfg(wasm_browser)]
         let net_report_config = net_report::Options::default();
 
-        actor_tasks.spawn({
-            let msock = msock.clone();
+        let actor = Actor {
+            msg_receiver: actor_receiver,
+            msg_sender: actor_sender,
+            msock: msock.clone(),
+            periodic_re_stun_timer: new_re_stun_timer(false),
+            net_info_last: None,
+            #[cfg(not(wasm_browser))]
+            port_mapper,
+            no_v4_send: false,
+            net_reporter,
+            network_monitor,
+            net_report_config,
+        };
+        actor_tasks.spawn(
             async move {
-                let actor = Actor {
-                    msg_receiver: actor_receiver,
-                    msg_sender: actor_sender,
-                    msock,
-                    periodic_re_stun_timer: new_re_stun_timer(false),
-                    net_info_last: None,
-                    #[cfg(not(wasm_browser))]
-                    port_mapper,
-                    no_v4_send: false,
-                    net_reporter,
-                    network_monitor,
-                    net_report_config,
-                };
-
                 if let Err(err) = actor.run().await {
                     warn!("relay handler errored: {:?}", err);
                 }
             }
-            .instrument(info_span!("actor"))
-        });
+            .instrument(info_span!("actor")),
+        );
 
-        let c = Handle {
+        let actor_tasks = Arc::new(Mutex::new(actor_tasks));
+
+        Ok(Handle {
             msock,
-            actor_tasks: Arc::new(Mutex::new(actor_tasks)),
+            actor_tasks,
             endpoint,
-        };
-
-        Ok(c)
+        })
     }
 
     /// The underlying [`quinn::Endpoint`]
