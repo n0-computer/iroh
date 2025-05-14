@@ -24,6 +24,7 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, ensure, Context, Result};
+use bytes::Bytes;
 use data_encoding::HEXLOWER;
 use iroh_base::{PublicKey, RelayUrl};
 use serde::{Deserialize, Serialize};
@@ -99,6 +100,19 @@ pub fn source_and_box(p: &[u8]) -> Option<(PublicKey, &[u8])> {
     let source = &p[MAGIC_LEN..MAGIC_LEN + KEY_LEN];
     let sender = PublicKey::try_from(source).ok()?;
     let sealed_box = &p[MAGIC_LEN + KEY_LEN..];
+    Some((sender, sealed_box))
+}
+
+/// If `p` looks like a disco message it returns the slice of `p` that represents the disco public key source,
+/// and the part that is the box.
+pub fn source_and_box_bytes(p: &Bytes) -> Option<(PublicKey, Bytes)> {
+    if !looks_like_disco_wrapper(&p) {
+        return None;
+    }
+
+    let source = &p[MAGIC_LEN..MAGIC_LEN + KEY_LEN];
+    let sender = PublicKey::try_from(source).ok()?;
+    let sealed_box = p.slice(MAGIC_LEN + KEY_LEN..);
     Some((sender, sealed_box))
 }
 

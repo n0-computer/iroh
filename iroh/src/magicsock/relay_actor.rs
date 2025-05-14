@@ -60,7 +60,10 @@ use super::RelayDatagramSendChannelReceiver;
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
 use crate::{
-    magicsock::{MagicSock, Metrics as MagicsockMetrics, RelayContents, RelayDatagramRecvQueue},
+    magicsock::{
+        DiscoMessageSource, MagicSock, Metrics as MagicsockMetrics, RelayContents,
+        RelayDatagramRecvQueue,
+    },
     util::MaybeFuture,
 };
 
@@ -135,6 +138,8 @@ struct ActiveRelayActor {
     inbox: mpsc::Receiver<ActiveRelayMessage>,
     /// Queue for received relay datagrams.
     relay_datagrams_recv: Arc<RelayDatagramRecvQueue>,
+    /// Queue for received relay disco packets.
+    relay_disco_recv: mpsc::Sender<RelayDiscoMessage>,
     /// Channel on which we queue packets to send to the relay.
     relay_datagrams_send: mpsc::Receiver<RelaySendItem>,
 
@@ -157,6 +162,14 @@ struct ActiveRelayActor {
     /// Token indicating the [`ActiveRelayActor`] should stop.
     stop_token: CancellationToken,
     metrics: Arc<MagicsockMetrics>,
+}
+
+#[derive(Debug)]
+struct RelayDiscoMessage {
+    source: PublicKey,
+    sealed_box: Bytes,
+    relay_url: RelayUrl,
+    relay_remote_node_id: PublicKey,
 }
 
 #[derive(Debug)]
@@ -197,6 +210,7 @@ struct ActiveRelayActorOptions {
     inbox: mpsc::Receiver<ActiveRelayMessage>,
     relay_datagrams_send: mpsc::Receiver<RelaySendItem>,
     relay_datagrams_recv: Arc<RelayDatagramRecvQueue>,
+    relay_disco_recv: mpsc::Sender<RelayDiscoMessage>,
     connection_opts: RelayConnectionOptions,
     stop_token: CancellationToken,
     metrics: Arc<MagicsockMetrics>,
@@ -234,6 +248,7 @@ impl ActiveRelayActor {
             inbox,
             relay_datagrams_send,
             relay_datagrams_recv,
+            relay_disco_recv,
             connection_opts,
             stop_token,
             metrics,
@@ -244,6 +259,7 @@ impl ActiveRelayActor {
             inbox,
             relay_datagrams_recv,
             relay_datagrams_send,
+            relay_disco_recv,
             url,
             relay_client_builder,
             is_home_relay: false,
@@ -646,13 +662,33 @@ impl ActiveRelayActor {
                     state.last_packet_src = Some(remote_node_id);
                     state.nodes_present.insert(remote_node_id);
                 }
-                for datagram in PacketSplitIter::new(self.url.clone(), remote_node_id, data) {
-                    let Ok(datagram) = datagram else {
-                        warn!("Invalid packet split");
-                        break;
-                    };
-                    if let Err(err) = self.relay_datagrams_recv.try_send(datagram) {
-                        warn!("Dropping received relay packet: {err:#}");
+                match crate::disco::source_and_box_bytes(&data) {
+                    Some((source, sealed_box)) => {
+                        if remote_node_id != source {
+                            // TODO: return here?
+                            warn!("Received relay disco message from connection for {}, but with message from {}", remote_node_id.fmt_short(), source.fmt_short());
+                        }
+                        let message = RelayDiscoMessage {
+                            source,
+                            sealed_box,
+                            relay_url: self.url.clone(),
+                            relay_remote_node_id: remote_node_id,
+                        };
+                        if let Err(err) = self.relay_disco_recv.try_send(message) {
+                            warn!("Dropping received relay disco packet: {err:#}");
+                        }
+                    }
+                    None => {
+                        for datagram in PacketSplitIter::new(self.url.clone(), remote_node_id, data)
+                        {
+                            let Ok(datagram) = datagram else {
+                                warn!("Invalid packet split");
+                                break;
+                            };
+                            if let Err(err) = self.relay_datagrams_recv.try_send(datagram) {
+                                warn!("Dropping received relay data packet: {err:#}");
+                            }
+                        }
                     }
                 }
             }
@@ -814,6 +850,8 @@ pub(super) struct RelayActor {
     ///
     /// [`AsyncUdpSocket::poll_recv`]: quinn::AsyncUdpSocket::poll_recv
     relay_datagram_recv_queue: Arc<RelayDatagramRecvQueue>,
+    relay_disco_recv_tx: mpsc::Sender<RelayDiscoMessage>,
+    relay_disco_recv_rx: mpsc::Receiver<RelayDiscoMessage>,
     /// The actors managing each currently used relay server.
     ///
     /// These actors will exit when they have any inactivity.  Otherwise they will keep
@@ -832,9 +870,12 @@ impl RelayActor {
         protocol: iroh_relay::http::Protocol,
     ) -> Self {
         let cancel_token = CancellationToken::new();
+        let (relay_disco_recv_tx, relay_disco_recv_rx) = mpsc::channel(1024);
         Self {
             msock,
             relay_datagram_recv_queue,
+            relay_disco_recv_tx,
+            relay_disco_recv_rx,
             active_relays: Default::default(),
             active_relay_tasks: JoinSet::new(),
             cancel_token,
@@ -861,6 +902,17 @@ impl RelayActor {
                 _ = self.cancel_token.cancelled() => {
                     debug!("shutting down");
                     break;
+                }
+                Some(message) = self.relay_disco_recv_rx.recv() => {
+                    self.msock.
+                        handle_disco_message(
+                            message.source,
+                            &message.sealed_box,
+                            DiscoMessageSource::Relay {
+                                url: message.relay_url,
+                                key: message.relay_remote_node_id
+                            },
+                        );
                 }
                 Some(res) = self.active_relay_tasks.join_next() => {
                     match res {
@@ -1056,6 +1108,7 @@ impl RelayActor {
             inbox: inbox_rx,
             relay_datagrams_send: send_datagram_rx,
             relay_datagrams_recv: self.relay_datagram_recv_queue.clone(),
+            relay_disco_recv: self.relay_disco_recv_tx.clone(),
             connection_opts,
             stop_token: self.cancel_token.child_token(),
             metrics: self.msock.metrics.magicsock.clone(),
@@ -1331,6 +1384,7 @@ mod tests {
         inbox_rx: mpsc::Receiver<ActiveRelayMessage>,
         relay_datagrams_send: mpsc::Receiver<RelaySendItem>,
         relay_datagrams_recv: Arc<RelayDatagramRecvQueue>,
+        relay_disco_recv: mpsc::Sender<RelayDiscoMessage>,
         span: tracing::Span,
     ) -> AbortOnDropHandle<anyhow::Result<()>> {
         let opts = ActiveRelayActorOptions {
@@ -1339,6 +1393,7 @@ mod tests {
             inbox: inbox_rx,
             relay_datagrams_send,
             relay_datagrams_recv,
+            relay_disco_recv,
             connection_opts: RelayConnectionOptions {
                 secret_key,
                 dns_resolver: DnsResolver::new(),
@@ -1363,6 +1418,7 @@ mod tests {
         let secret_key = SecretKey::from_bytes(&[8u8; 32]);
         let recv_datagram_queue = Arc::new(RelayDatagramRecvQueue::new());
         let (send_datagram_tx, send_datagram_rx) = mpsc::channel(16);
+        let (relay_disco_recv_tx, _relay_disco_recv_rx) = mpsc::channel(16);
         let (prio_inbox_tx, prio_inbox_rx) = mpsc::channel(8);
         let (inbox_tx, inbox_rx) = mpsc::channel(16);
         let cancel_token = CancellationToken::new();
@@ -1374,6 +1430,7 @@ mod tests {
             inbox_rx,
             send_datagram_rx,
             recv_datagram_queue.clone(),
+            relay_disco_recv_tx,
             info_span!("echo-node"),
         );
         let echo_task = tokio::spawn({
@@ -1455,6 +1512,7 @@ mod tests {
 
         let secret_key = SecretKey::from_bytes(&[1u8; 32]);
         let datagram_recv_queue = Arc::new(RelayDatagramRecvQueue::new());
+        let (relay_disco_recv_tx, _relay_disco_recv_rx) = mpsc::channel(16);
         let (send_datagram_tx, send_datagram_rx) = mpsc::channel(16);
         let (_prio_inbox_tx, prio_inbox_rx) = mpsc::channel(8);
         let (inbox_tx, inbox_rx) = mpsc::channel(16);
@@ -1467,6 +1525,7 @@ mod tests {
             inbox_rx,
             send_datagram_rx,
             datagram_recv_queue.clone(),
+            relay_disco_recv_tx,
             info_span!("actor-under-test"),
         );
 
@@ -1541,6 +1600,7 @@ mod tests {
 
         let secret_key = SecretKey::from_bytes(&[1u8; 32]);
         let datagram_recv_queue = Arc::new(RelayDatagramRecvQueue::new());
+        let (relay_disco_recv_tx, _relay_disco_recv_rx) = mpsc::channel(16);
         let (_send_datagram_tx, send_datagram_rx) = mpsc::channel(16);
         let (_prio_inbox_tx, prio_inbox_rx) = mpsc::channel(8);
         let (inbox_tx, inbox_rx) = mpsc::channel(16);
@@ -1553,6 +1613,7 @@ mod tests {
             inbox_rx,
             send_datagram_rx,
             datagram_recv_queue.clone(),
+            relay_disco_recv_tx,
             info_span!("actor-under-test"),
         );
 
