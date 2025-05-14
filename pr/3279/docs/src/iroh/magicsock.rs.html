@@ -3617,7 +3617,15 @@
 <a href="#3616" id="3616">3616</a>
 <a href="#3617" id="3617">3617</a>
 <a href="#3618" id="3618">3618</a>
-<a href="#3619" id="3619">3619</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#3619" id="3619">3619</a>
+<a href="#3620" id="3620">3620</a>
+<a href="#3621" id="3621">3621</a>
+<a href="#3622" id="3622">3622</a>
+<a href="#3623" id="3623">3623</a>
+<a href="#3624" id="3624">3624</a>
+<a href="#3625" id="3625">3625</a>
+<a href="#3626" id="3626">3626</a>
+<a href="#3627" id="3627">3627</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -3691,7 +3699,7 @@
     key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
     metrics::EndpointMetrics,
     net_report::{<span class="self">self</span>, IpMappedAddresses, Report},
-    watchable::{DirectWatcher, Watchable, Watcher},
+    watcher::{<span class="self">self</span>, Watchable, Watcher},
 };
 
 <span class="kw">mod </span>metrics;
@@ -3924,7 +3932,10 @@
     /// store [`Some`] set of addresses.
     ///
     /// To get the current direct addresses, use [`Watcher::initialized`].
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>direct_addresses(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Watcher&lt;Value = <span class="prelude-ty">Option</span>&lt;BTreeSet&lt;DirectAddr&gt;&gt;&gt; {
+    ///
+    /// [`Watcher`]: crate::watcher::Watcher
+    /// [`Watcher::initialized`]: crate::watcher::Watcher::initialized
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>direct_addresses(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; watcher::Direct&lt;<span class="prelude-ty">Option</span>&lt;BTreeSet&lt;DirectAddr&gt;&gt;&gt; {
         <span class="self">self</span>.direct_addrs.addrs.watch()
     }
 
@@ -3939,7 +3950,10 @@
     /// store [`Some`] report.
     ///
     /// To get the current `net-report`, use [`Watcher::initialized`].
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>net_report(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Watcher&lt;Value = <span class="prelude-ty">Option</span>&lt;Arc&lt;Report&gt;&gt;&gt; {
+    ///
+    /// [`Watcher`]: crate::watcher::Watcher
+    /// [`Watcher::initialized`]: crate::watcher::Watcher::initialized
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>net_report(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; watcher::Direct&lt;<span class="prelude-ty">Option</span>&lt;Arc&lt;Report&gt;&gt;&gt; {
         <span class="self">self</span>.net_report.watch()
     }
 
@@ -3973,7 +3987,9 @@
     ///
     /// Will return an error if there is no address information known about the
     /// given `node_id`.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>conn_type(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;DirectWatcher&lt;ConnectionType&gt;&gt; {
+    ///
+    /// [`Watcher`]: crate::watcher::Watcher
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>conn_type(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;watcher::Direct&lt;ConnectionType&gt;&gt; {
         <span class="self">self</span>.node_map.conn_type(node_id)
     }
 
@@ -6709,7 +6725,7 @@
         <span class="macro">println!</span>(<span class="string">"first conn!"</span>);
         <span class="kw">let </span>conn = m1
             .endpoint
-            .connect(m2.endpoint.node_addr().<span class="kw">await</span><span class="question-mark">?</span>, ALPN)
+            .connect(m2.endpoint.node_addr().initialized().<span class="kw">await</span><span class="question-mark">?</span>, ALPN)
             .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="macro">println!</span>(<span class="string">"Closing first conn"</span>);
         conn.close(<span class="number">0u32</span>.into(), <span class="string">b"bye lolz"</span>);

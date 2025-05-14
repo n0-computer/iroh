@@ -491,7 +491,7 @@
 <span class="kw">use super</span>::{Addr, Transmit};
 <span class="kw">use crate</span>::{
     magicsock::RelayContents,
-    watchable::{Watchable, Watcher <span class="kw">as _</span>},
+    watcher::{Watchable, Watcher <span class="kw">as _</span>},
 };
 
 <span class="kw">mod </span>actor;
@@ -646,7 +646,7 @@
 
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>local_addr_watch(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-    ) -&gt; <span class="kw">impl </span><span class="kw">crate</span>::watchable::Watcher&lt;Value = <span class="prelude-ty">Option</span>&lt;(RelayUrl, NodeId)&gt;&gt; + Send + Sync {
+    ) -&gt; <span class="kw">impl </span><span class="kw">crate</span>::watcher::Watcher&lt;Value = <span class="prelude-ty">Option</span>&lt;(RelayUrl, NodeId)&gt;&gt; + Send + Sync {
         <span class="kw">let </span>my_node_id = <span class="self">self</span>.my_node_id;
         <span class="self">self</span>.my_relay
             .watch()

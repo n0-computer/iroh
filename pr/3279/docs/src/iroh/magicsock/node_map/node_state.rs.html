@@ -1786,7 +1786,7 @@
 <span class="kw">use crate</span>::{
     disco::{<span class="self">self</span>, SendAddr},
     magicsock::{ActorMessage, MagicsockMetrics, NodeIdMappedAddr, HEARTBEAT_INTERVAL},
-    watchable::{DirectWatcher, Watchable},
+    watcher::{<span class="self">self</span>, Watchable},
 };
 
 <span class="doccomment">/// Number of addresses that are not active that we keep around per node.
@@ -1962,7 +1962,7 @@
         <span class="self">self</span>.id
     }
 
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>conn_type(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; DirectWatcher&lt;ConnectionType&gt; {
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>conn_type(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; watcher::Direct&lt;ConnectionType&gt; {
         <span class="self">self</span>.conn_type.watch()
     }
 

@@ -1,1 +1,0 @@
-window.SIDEBAR_ITEMS = {"struct":["Direct","Disconnected","InitializedFut","Join","JoinOpt","Map","Merge2","NextFut","Stream","Watchable"],"trait":["Nullable","Watcher"],"type":["DirectWatcher","DirectWatcherStream"]};
