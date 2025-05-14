@@ -7,6 +7,7 @@ use std::{
 };
 
 use iroh_base::{NodeId, RelayUrl};
+#[cfg(not(wasm_browser))]
 use netwatch::UdpSocket;
 use relay::RelayDatagramSendChannelSender;
 use tracing::{trace, warn};

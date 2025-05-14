@@ -54,7 +54,6 @@ use url::Url;
 
 #[cfg(not(wasm_browser))]
 use self::transports::IpTransport;
-#[cfg(not(wasm_browser))]
 use self::{
     metrics::Metrics as MagicsockMetrics,
     node_map::{NodeMap, PingAction, PingRole, SendPing},
