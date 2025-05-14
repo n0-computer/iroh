@@ -4581,7 +4581,10 @@
 <a href="#4580" id="4580">4580</a>
 <a href="#4581" id="4581">4581</a>
 <a href="#4582" id="4582">4582</a>
-<a href="#4583" id="4583">4583</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4583" id="4583">4583</a>
+<a href="#4584" id="4584">4584</a>
+<a href="#4585" id="4585">4585</a>
+<a href="#4586" id="4586">4586</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -7523,10 +7526,13 @@
         }
         <span class="kw">let </span>relay_map = <span class="self">self</span>.msock.relay_map.clone();
 
-        <span class="kw">let </span><span class="kw-2">mut </span>opts = <span class="self">self</span>.net_report_config.clone();
-        <span class="kw">if </span><span class="macro">cfg!</span>(not(wasm_browser)) {
-            opts = opts.sparse(<span class="bool-val">false</span>);
-        }
+        <span class="attr">#[cfg(wasm_browser)]
+        </span><span class="kw">let </span>opts = <span class="self">self</span>.net_report_config.clone();
+        <span class="comment">// run a non-sparse report, meaning the report will ensure
+        // that each probe protocol response is received for each relay
+        // before finishing
+        </span><span class="attr">#[cfg(not(wasm_browser))]
+        </span><span class="kw">let </span>opts = <span class="self">self</span>.net_report_config.clone().sparse(<span class="bool-val">false</span>);
         <span class="kw">let </span>res = <span class="self">self</span>.net_reporter.get_report_channel(relay_map, opts).<span class="kw">await</span>;
         tx.send(res).ok();
     }
