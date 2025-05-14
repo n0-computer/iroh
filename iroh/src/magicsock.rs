@@ -1094,11 +1094,6 @@ impl MagicSock {
             return None;
         }
 
-        if self.handle_relay_disco_message(&dm.buf, &dm.url, dm.src) {
-            // DISCO messages are handled internally in the MagicSock, do not pass to Quinn.
-            return None;
-        }
-
         let quic_mapped_addr = self.node_map.receive_relay(&dm.url, dm.src);
 
         // Normalize local_ip
@@ -1117,32 +1112,6 @@ impl MagicSock {
             ecn: None,
         };
         Some((dm.src, meta, dm.buf))
-    }
-
-    fn handle_relay_disco_message(
-        &self,
-        msg: &[u8],
-        url: &RelayUrl,
-        relay_node_src: PublicKey,
-    ) -> bool {
-        match disco::source_and_box(msg) {
-            Some((source, sealed_box)) => {
-                if relay_node_src != source {
-                    // TODO: return here?
-                    warn!("Received relay disco message from connection for {}, but with message from {}", relay_node_src.fmt_short(), source.fmt_short());
-                }
-                self.handle_disco_message(
-                    source,
-                    sealed_box,
-                    DiscoMessageSource::Relay {
-                        url: url.clone(),
-                        key: relay_node_src,
-                    },
-                );
-                true
-            }
-            None => false,
-        }
     }
 
     /// Handles a discovery message.
