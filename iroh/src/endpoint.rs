@@ -944,7 +944,7 @@ impl Endpoint {
     ///
     /// To wait for a home relay connection to be established, use [`Watcher::initialized`]:
     /// ```no_run
-    /// use iroh::{watchable::Watcher as _, Endpoint};
+    /// use iroh::{watcher::Watcher as _, Endpoint};
     /// use n0_future::StreamExt;
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
@@ -980,7 +980,7 @@ impl Endpoint {
     ///
     /// To get the first set of direct addresses use [`Watcher::initialized`]:
     /// ```no_run
-    /// use iroh::{watchable::Watcher as _, Endpoint};
+    /// use iroh::{watcher::Watcher as _, Endpoint};
     /// use n0_future::StreamExt;
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
@@ -1015,7 +1015,7 @@ impl Endpoint {
     ///
     /// To get the first report use [`Watcher::initialized`]:
     /// ```no_run
-    /// use iroh::{watchable::Watcher as _, Endpoint};
+    /// use iroh::{watcher::Watcher as _, Endpoint};
     /// use n0_future::StreamExt;
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
