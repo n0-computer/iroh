@@ -3618,9 +3618,7 @@
 <a href="#3617" id="3617">3617</a>
 <a href="#3618" id="3618">3618</a>
 <a href="#3619" id="3619">3619</a>
-<a href="#3620" id="3620">3620</a>
-<a href="#3621" id="3621">3621</a>
-<a href="#3622" id="3622">3622</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#3620" id="3620">3620</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4970,7 +4968,7 @@
         )<span class="question-mark">?</span>;
 
         <span class="kw">let </span>(actor_sender, actor_receiver) = mpsc::channel(<span class="number">256</span>);
-        <span class="kw">let </span>(udp_disco_sender, <span class="kw-2">mut </span>udp_disco_receiver) = mpsc::channel(<span class="number">256</span>);
+        <span class="kw">let </span>(disco_sender, <span class="kw-2">mut </span>disco_receiver) = mpsc::channel(<span class="number">256</span>);
 
         <span class="comment">// load the node data
         </span><span class="kw">let </span>node_map = node_map.unwrap_or_default();
@@ -5019,7 +5017,7 @@
             disco_secrets: DiscoSecrets::default(),
             node_map,
             ip_mapped_addrs,
-            disco_sender: udp_disco_sender,
+            disco_sender,
             discovery,
             discovery_user_data: RwLock::new(discovery_user_data),
             direct_addrs: Default::default(),
@@ -5056,7 +5054,7 @@
         </span><span class="kw">let _ </span>= actor_tasks.spawn({
             <span class="kw">let </span>msock = msock.clone();
             <span class="kw">async move </span>{
-                <span class="kw">while let </span><span class="prelude-val">Some</span>((dst, dst_key, msg)) = udp_disco_receiver.recv().<span class="kw">await </span>{
+                <span class="kw">while let </span><span class="prelude-val">Some</span>((dst, dst_key, msg)) = disco_receiver.recv().<span class="kw">await </span>{
                     <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = msock.send_disco_message(dst.clone(), dst_key, msg).<span class="kw">await </span>{
                         <span class="macro">warn!</span>(%dst, node = %dst_key.fmt_short(), <span class="question-mark">?</span>err, <span class="string">"failed to send disco message (UDP)"</span>);
                     }
@@ -5091,37 +5089,35 @@
         <span class="attr">#[cfg(wasm_browser)]
         </span><span class="kw">let </span>net_report_config = net_report::Options::default();
 
-        actor_tasks.spawn({
-            <span class="kw">let </span>msock = msock.clone();
+        <span class="kw">let </span>actor = Actor {
+            msg_receiver: actor_receiver,
+            msg_sender: actor_sender,
+            msock: msock.clone(),
+            periodic_re_stun_timer: new_re_stun_timer(<span class="bool-val">false</span>),
+            net_info_last: <span class="prelude-val">None</span>,
+            <span class="attr">#[cfg(not(wasm_browser))]
+            </span>port_mapper,
+            no_v4_send: <span class="bool-val">false</span>,
+            net_reporter,
+            network_monitor,
+            net_report_config,
+        };
+        actor_tasks.spawn(
             <span class="kw">async move </span>{
-                <span class="kw">let </span>actor = Actor {
-                    msg_receiver: actor_receiver,
-                    msg_sender: actor_sender,
-                    msock,
-                    periodic_re_stun_timer: new_re_stun_timer(<span class="bool-val">false</span>),
-                    net_info_last: <span class="prelude-val">None</span>,
-                    <span class="attr">#[cfg(not(wasm_browser))]
-                    </span>port_mapper,
-                    no_v4_send: <span class="bool-val">false</span>,
-                    net_reporter,
-                    network_monitor,
-                    net_report_config,
-                };
-
                 <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = actor.run().<span class="kw">await </span>{
                     <span class="macro">warn!</span>(<span class="string">"relay handler errored: {:?}"</span>, err);
                 }
             }
-            .instrument(<span class="macro">info_span!</span>(<span class="string">"actor"</span>))
-        });
+            .instrument(<span class="macro">info_span!</span>(<span class="string">"actor"</span>)),
+        );
 
-        <span class="kw">let </span>c = Handle {
+        <span class="kw">let </span>actor_tasks = Arc::new(Mutex::new(actor_tasks));
+
+        <span class="prelude-val">Ok</span>(Handle {
             msock,
-            actor_tasks: Arc::new(Mutex::new(actor_tasks)),
+            actor_tasks,
             endpoint,
-        };
-
-        <span class="prelude-val">Ok</span>(c)
+        })
     }
 
     <span class="doccomment">/// The underlying [`quinn::Endpoint`]
