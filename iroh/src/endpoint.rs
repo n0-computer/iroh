@@ -86,6 +86,7 @@ type DiscoveryBuilder = Box<dyn FnOnce(&SecretKey) -> Option<Box<dyn Discovery>>
 ///
 /// We return a named type instead of `impl Watcher<Value = NodeAddr>`, as this allows
 /// you to e.g. store the watcher in a struct.
+#[cfg(not(wasm_browser))]
 pub type NodeAddrWatcher = watcher::Map<
     (
         watcher::Direct<Option<BTreeSet<DirectAddr>>>,
@@ -93,6 +94,8 @@ pub type NodeAddrWatcher = watcher::Map<
     ),
     Option<NodeAddr>,
 >;
+#[cfg(wasm_browser)]
+pub type NodeAddrWatcher = watcher::Map<watcher::Direct<Option<RelayUrl>>, Option<NodeAddr>>;
 
 /// Defines the mode of path selection for all traffic flowing through
 /// the endpoint.
@@ -922,9 +925,13 @@ impl Endpoint {
             .expect("watchable is alive - cannot be disconnected yet")
     }
 
-    /// TODO(matheus23) docs
+    /// Returns a [`Watcher`] for the current [`NodeAddr`] for this endpoint.
+    /// 
+    /// When compiled to Wasm, this function returns a watcher that initializes
+    /// with a [`NodeAddr`] that only contains a relay URL, but no direct addresses,
+    /// as there are no APIs for directly using sockets in browsers.
     #[cfg(wasm_browser)]
-    pub fn node_addr(&self) -> watcher::Map<watcher::Direct<Option<RelayUrl>>, Option<NodeAddr>> {
+    pub fn node_addr(&self) -> NodeAddrWatcher {
         // In browsers, there will never be any direct addresses, so we wait
         // for the home relay instead. This makes the `NodeAddr` have *some* way
         // of connecting to us.
@@ -932,7 +939,7 @@ impl Endpoint {
         let node_id = self.node_id();
         watch_relay
             .map(move |relay| {
-                relay.map(|relay| NodeAddr::from_parts(node_id, relay, std::iter::empty()))
+                relay.map(|relay| NodeAddr::from_parts(node_id, Some(relay), std::iter::empty()))
             })
             .expect("watchable is alive - cannot be disconnected yet")
     }
