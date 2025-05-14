@@ -49,7 +49,7 @@ use tracing::{debug, error, info_span, trace, warn, Instrument};
 
 use crate::{
     discovery::{Discovery, DiscoveryItem, NodeData, NodeInfo},
-    watchable::Watchable,
+    watcher::{Watchable, Watcher as _},
     Endpoint,
 };
 
