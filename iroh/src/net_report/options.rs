@@ -132,7 +132,6 @@ mod imp {
         /// When `false`, the report will run until
         /// all probe protocol/relay node combinations
         /// have been returned, or timeout occurs.
-
         ///
         /// The default is `true`.
         pub fn sparse(mut self, sparse: bool) -> Self {

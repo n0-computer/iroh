@@ -67,11 +67,10 @@ mod probes;
 pub use probes::ProbeProto;
 use probes::{Probe, ProbePlan};
 
+use super::ProbeResult;
 use crate::net_report::defaults::timeouts::{
     CAPTIVE_PORTAL_DELAY, CAPTIVE_PORTAL_TIMEOUT, OVERALL_REPORT_TIMEOUT, PROBES_TIMEOUT,
 };
-
-use super::ProbeResult;
 
 const ENOUGH_NODES: usize = 3;
 
@@ -116,6 +115,7 @@ impl Client {
     ///
     /// When `false`, the report will ensure that one of each probe protocol/relay
     /// combination is processed (within the timeout).
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         net_report: net_report::Addr,
         last_report: Option<Arc<Report>>,
@@ -725,7 +725,7 @@ impl OutstandingTasks {
     }
 }
 
-/// The success result of [`run_probe`].
+/// The success result of `run_probe`.
 #[derive(Debug, Clone)]
 pub struct ProbeReport {
     /// Whether we can send IPv4 UDP packets.

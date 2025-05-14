@@ -76,7 +76,7 @@ use crate::{
     key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
     metrics::EndpointMetrics,
     net_report::{self, IpMappedAddresses, NetReporter, Report},
-    watcher::{self, Watchable},
+    watcher::{self, Watchable, Watcher},
 };
 
 mod metrics;
@@ -2019,7 +2019,7 @@ impl Handle {
     /// over all of the returned probes using `.next()`, or
     /// you can just `.await` the [`NetReporter`] to get
     /// the [`Report`].
-    async fn run_diagnostic_net_report(&self) -> Result<NetReporter> {
+    pub(crate) async fn run_diagnostic_net_report(&self) -> Result<NetReporter> {
         let rx = self.msock.run_diagnostic_net_report().await?;
         rx.await?
     }
@@ -3527,9 +3527,7 @@ mod tests {
     use crate::{
         defaults::staging::{self, EU_RELAY_HOSTNAME},
         dns::DnsResolver,
-        tls,
-        watcher::Watcher as _,
-        Endpoint, RelayMode,
+        tls, Endpoint, RelayMode,
     };
 
     const ALPN: &[u8] = b"n0/test/1";

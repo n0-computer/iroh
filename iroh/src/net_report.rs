@@ -46,7 +46,6 @@ mod reportgen;
 mod options;
 
 pub use reportgen::ProbeReport;
-
 #[cfg(not(wasm_browser))]
 pub use stun_utils::bind_local_stun_socket;
 
