@@ -106,7 +106,7 @@ pub fn source_and_box(p: &[u8]) -> Option<(PublicKey, &[u8])> {
 /// If `p` looks like a disco message it returns the slice of `p` that represents the disco public key source,
 /// and the part that is the box.
 pub fn source_and_box_bytes(p: &Bytes) -> Option<(PublicKey, Bytes)> {
-    if !looks_like_disco_wrapper(&p) {
+    if !looks_like_disco_wrapper(p) {
         return None;
     }
 
