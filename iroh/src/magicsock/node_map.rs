@@ -310,7 +310,7 @@ impl NodeMap {
     /// Will return an error if there is not an entry in the [`NodeMap`] for
     /// the `node_id`
     ///
-    /// [`Watcher`]: crate::watchable::Watcher
+    /// [`Watcher`]: crate::watcher::Watcher
     pub(super) fn conn_type(
         &self,
         node_id: NodeId,
