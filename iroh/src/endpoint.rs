@@ -898,11 +898,9 @@ impl Endpoint {
                     relays.pop(),
                     addrs.into_iter().map(|x| x.addr),
                 )),
-                None => Some(NodeAddr::from_parts(
-                    node_id,
-                    relays.pop(),
-                    std::iter::empty(),
-                )),
+                None => relays.pop().map(|relay_url| {
+                    NodeAddr::from_parts(node_id, Some(relay_url), std::iter::empty())
+                }),
             })
             .expect("watchable is alive - cannot be disconnected yet")
     }
@@ -921,9 +919,9 @@ impl Endpoint {
         let node_id = self.node_id();
         watch_relay
             .map(move |mut relays| {
-                relays
-                    .pop()
-                    .map(|relay| NodeAddr::from_parts(node_id, Some(relay), std::iter::empty()))
+                relays.pop().map(|relay_url| {
+                    NodeAddr::from_parts(node_id, Some(relay_url), std::iter::empty())
+                })
             })
             .expect("watchable is alive - cannot be disconnected yet")
     }
