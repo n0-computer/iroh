@@ -3627,7 +3627,13 @@
 <a href="#3626" id="3626">3626</a>
 <a href="#3627" id="3627">3627</a>
 <a href="#3628" id="3628">3628</a>
-<a href="#3629" id="3629">3629</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#3629" id="3629">3629</a>
+<a href="#3630" id="3630">3630</a>
+<a href="#3631" id="3631">3631</a>
+<a href="#3632" id="3632">3632</a>
+<a href="#3633" id="3633">3633</a>
+<a href="#3634" id="3634">3634</a>
+<a href="#3635" id="3635">3635</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4829,11 +4835,17 @@
         <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>discovery) = <span class="self">self</span>.discovery {
             <span class="kw">let </span>relay_url = <span class="self">self</span>.my_relay();
             <span class="kw">let </span>direct_addrs = <span class="self">self</span>.direct_addrs.sockaddrs();
+
             <span class="kw">let </span>user_data = <span class="self">self
                 </span>.discovery_user_data
                 .read()
                 .expect(<span class="string">"lock poisened"</span>)
                 .clone();
+            <span class="kw">if </span>relay_url.is_none() &amp;&amp; direct_addrs.is_empty() &amp;&amp; user_data.is_none() {
+                <span class="comment">// do not bother publishing if we don't have any information
+                </span><span class="kw">return</span>;
+            }
+
             <span class="kw">let </span>data = NodeData::new(relay_url, direct_addrs).with_user_data(user_data);
             discovery.publish(<span class="kw-2">&amp;</span>data);
         }
