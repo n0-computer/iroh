@@ -930,9 +930,11 @@ impl Endpoint {
         // of connecting to us.
         let watch_relay = self.home_relay();
         let node_id = self.node_id();
-        watch_relay.map(move |relay| {
-            relay.map(|relay| NodeAddr::from_parts(node_id, relay, std::iter::empty()))
-        })
+        watch_relay
+            .map(move |relay| {
+                relay.map(|relay| NodeAddr::from_parts(node_id, relay, std::iter::empty()))
+            })
+            .expect("watchable is alive - cannot be disconnected yet")
     }
 
     /// Returns a [`Watcher`] for the [`RelayUrl`] of the Relay server used as home relay.
@@ -2506,11 +2508,13 @@ mod tests {
         let (relay_map, _relay_url, _guard) = run_relay_server().await?;
         let client = Endpoint::builder()
             .relay_conn_protocol(Protocol::Websocket)
+            .insecure_skip_relay_cert_verify(true)
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .bind()
             .await?;
         let server = Endpoint::builder()
             .relay_conn_protocol(Protocol::Websocket)
+            .insecure_skip_relay_cert_verify(true)
             .relay_mode(RelayMode::Custom(relay_map))
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
