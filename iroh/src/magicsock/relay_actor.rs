@@ -60,10 +60,7 @@ use super::RelayDatagramSendChannelReceiver;
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
 use crate::{
-    magicsock::{
-        DiscoMessageSource, MagicSock, Metrics as MagicsockMetrics, RelayContents,
-        RelayDatagramRecvQueue,
-    },
+    magicsock::{MagicSock, Metrics as MagicsockMetrics, RelayContents, RelayDatagramRecvQueue},
     util::MaybeFuture,
 };
 
@@ -165,11 +162,11 @@ struct ActiveRelayActor {
 }
 
 #[derive(Debug)]
-struct RelayDiscoMessage {
-    source: PublicKey,
-    sealed_box: Bytes,
-    relay_url: RelayUrl,
-    relay_remote_node_id: PublicKey,
+pub(super) struct RelayDiscoMessage {
+    pub(super) source: PublicKey,
+    pub(super) sealed_box: Bytes,
+    pub(super) relay_url: RelayUrl,
+    pub(super) relay_remote_node_id: PublicKey,
 }
 
 #[derive(Debug)]
@@ -850,7 +847,6 @@ pub(super) struct RelayActor {
     /// [`AsyncUdpSocket::poll_recv`]: quinn::AsyncUdpSocket::poll_recv
     relay_datagram_recv_queue: Arc<RelayDatagramRecvQueue>,
     relay_disco_recv_tx: mpsc::Sender<RelayDiscoMessage>,
-    relay_disco_recv_rx: mpsc::Receiver<RelayDiscoMessage>,
     /// The actors managing each currently used relay server.
     ///
     /// These actors will exit when they have any inactivity.  Otherwise they will keep
@@ -866,15 +862,14 @@ impl RelayActor {
     pub(super) fn new(
         msock: Arc<MagicSock>,
         relay_datagram_recv_queue: Arc<RelayDatagramRecvQueue>,
+        relay_disco_recv_tx: mpsc::Sender<RelayDiscoMessage>,
         protocol: iroh_relay::http::Protocol,
     ) -> Self {
         let cancel_token = CancellationToken::new();
-        let (relay_disco_recv_tx, relay_disco_recv_rx) = mpsc::channel(1024);
         Self {
             msock,
             relay_datagram_recv_queue,
             relay_disco_recv_tx,
-            relay_disco_recv_rx,
             active_relays: Default::default(),
             active_relay_tasks: JoinSet::new(),
             cancel_token,
@@ -901,17 +896,6 @@ impl RelayActor {
                 _ = self.cancel_token.cancelled() => {
                     debug!("shutting down");
                     break;
-                }
-                Some(message) = self.relay_disco_recv_rx.recv() => {
-                    self.msock.
-                        handle_disco_message(
-                            message.source,
-                            &message.sealed_box,
-                            DiscoMessageSource::Relay {
-                                url: message.relay_url,
-                                key: message.relay_remote_node_id
-                            },
-                        );
                 }
                 Some(res) = self.active_relay_tasks.join_next() => {
                     match res {

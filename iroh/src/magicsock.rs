@@ -1796,7 +1796,13 @@ impl Handle {
 
         let mut actor_tasks = JoinSet::default();
 
-        let relay_actor = RelayActor::new(msock.clone(), relay_datagram_recv_queue, relay_protocol);
+        let (relay_disco_recv_tx, mut relay_disco_recv_rx) = tokio::sync::mpsc::channel(1024);
+        let relay_actor = RelayActor::new(
+            msock.clone(),
+            relay_datagram_recv_queue,
+            relay_disco_recv_tx,
+            relay_protocol,
+        );
         let relay_actor_cancel_token = relay_actor.cancel_token();
         actor_tasks.spawn(
             async move {
@@ -1806,6 +1812,22 @@ impl Handle {
             }
             .instrument(info_span!("relay-actor")),
         );
+        actor_tasks.spawn({
+            let msock = msock.clone();
+            async move {
+                while let Some(message) = relay_disco_recv_rx.recv().await {
+                    msock.handle_disco_message(
+                        message.source,
+                        &message.sealed_box,
+                        DiscoMessageSource::Relay {
+                            url: message.relay_url,
+                            key: message.relay_remote_node_id,
+                        },
+                    );
+                }
+            }
+            .instrument(info_span!("relay-disco-recv"))
+        });
 
         #[cfg(not(wasm_browser))]
         let _ = actor_tasks.spawn({
