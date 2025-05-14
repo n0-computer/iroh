@@ -265,11 +265,11 @@ impl EndpointArgs {
 async fn provide(endpoint: Endpoint, size: u64) -> Result<()> {
     let node_id = endpoint.node_id();
 
-    let node_addr = endpoint.node_addr().await?;
+    let node_addr = endpoint.node_addr().initialized().await?;
     let ticket = NodeTicket::new(node_addr);
     println!("Ticket with our home relay and direct addresses:\n{ticket}\n",);
 
-    let mut node_addr = endpoint.node_addr().await?;
+    let mut node_addr = endpoint.node_addr().initialized().await?;
     node_addr.direct_addresses = Default::default();
     let ticket = NodeTicket::new(node_addr);
     println!("Ticket with our home relay but no direct addresses:\n{ticket}\n",);

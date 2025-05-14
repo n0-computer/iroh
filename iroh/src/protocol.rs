@@ -431,9 +431,8 @@ impl<P: ProtocolHandler + Clone> ProtocolHandler for AccessLimit<P> {
 
 #[cfg(test)]
 mod tests {
-    use crate::watcher::Watcher;
-
     use super::*;
+    use crate::watcher::Watcher;
 
     #[tokio::test]
     async fn test_shutdown() -> Result<()> {
