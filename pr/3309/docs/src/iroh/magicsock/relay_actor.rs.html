@@ -1676,24 +1676,7 @@
 <a href="#1675" id="1675">1675</a>
 <a href="#1676" id="1676">1676</a>
 <a href="#1677" id="1677">1677</a>
-<a href="#1678" id="1678">1678</a>
-<a href="#1679" id="1679">1679</a>
-<a href="#1680" id="1680">1680</a>
-<a href="#1681" id="1681">1681</a>
-<a href="#1682" id="1682">1682</a>
-<a href="#1683" id="1683">1683</a>
-<a href="#1684" id="1684">1684</a>
-<a href="#1685" id="1685">1685</a>
-<a href="#1686" id="1686">1686</a>
-<a href="#1687" id="1687">1687</a>
-<a href="#1688" id="1688">1688</a>
-<a href="#1689" id="1689">1689</a>
-<a href="#1690" id="1690">1690</a>
-<a href="#1691" id="1691">1691</a>
-<a href="#1692" id="1692">1692</a>
-<a href="#1693" id="1693">1693</a>
-<a href="#1694" id="1694">1694</a>
-<a href="#1695" id="1695">1695</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1678" id="1678">1678</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1755,10 +1738,7 @@
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">use </span><span class="kw">crate</span>::dns::DnsResolver;
 <span class="kw">use crate</span>::{
-    magicsock::{
-        DiscoMessageSource, MagicSock, Metrics <span class="kw">as </span>MagicsockMetrics, RelayContents,
-        RelayDatagramRecvQueue,
-    },
+    magicsock::{MagicSock, Metrics <span class="kw">as </span>MagicsockMetrics, RelayContents, RelayDatagramRecvQueue},
     util::MaybeFuture,
 };
 
@@ -1860,11 +1840,11 @@
 }
 
 <span class="attr">#[derive(Debug)]
-</span><span class="kw">struct </span>RelayDiscoMessage {
-    source: PublicKey,
-    sealed_box: Bytes,
-    relay_url: RelayUrl,
-    relay_remote_node_id: PublicKey,
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>RelayDiscoMessage {
+    <span class="kw">pub</span>(<span class="kw">super</span>) source: PublicKey,
+    <span class="kw">pub</span>(<span class="kw">super</span>) sealed_box: Bytes,
+    <span class="kw">pub</span>(<span class="kw">super</span>) relay_url: RelayUrl,
+    <span class="kw">pub</span>(<span class="kw">super</span>) relay_remote_node_id: PublicKey,
 }
 
 <span class="attr">#[derive(Debug)]
@@ -2357,29 +2337,28 @@
                     </span>state.last_packet_src = <span class="prelude-val">Some</span>(remote_node_id);
                     state.nodes_present.insert(remote_node_id);
                 }
-                <span class="kw">match </span><span class="kw">crate</span>::disco::source_and_box_bytes(<span class="kw-2">&amp;</span>data) {
-                    <span class="prelude-val">Some</span>((source, sealed_box)) =&gt; {
-                        <span class="kw">if </span>remote_node_id != source {
-                            <span class="comment">// TODO: return here?
-                            </span><span class="macro">warn!</span>(<span class="string">"Received relay disco message from connection for {}, but with message from {}"</span>, remote_node_id.fmt_short(), source.fmt_short());
-                        }
-                        <span class="kw">let </span>message = RelayDiscoMessage {
-                            source,
-                            sealed_box,
-                            relay_url: <span class="self">self</span>.url.clone(),
-                            relay_remote_node_id: remote_node_id,
-                        };
-                        <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.relay_disco_recv.try_send(message) {
-                            <span class="macro">warn!</span>(<span class="string">"Dropping received relay disco packet: {err:#}"</span>);
-                        }
-                    }
-                    <span class="prelude-val">None </span>=&gt; {
-                        <span class="kw">for </span>datagram <span class="kw">in </span>PacketSplitIter::new(<span class="self">self</span>.url.clone(), remote_node_id, data)
-                        {
-                            <span class="kw">let </span><span class="prelude-val">Ok</span>(datagram) = datagram <span class="kw">else </span>{
-                                <span class="macro">warn!</span>(<span class="string">"Invalid packet split"</span>);
-                                <span class="kw">break</span>;
+                <span class="kw">for </span>datagram <span class="kw">in </span>PacketSplitIter::new(<span class="self">self</span>.url.clone(), remote_node_id, data) {
+                    <span class="kw">let </span><span class="prelude-val">Ok</span>(datagram) = datagram <span class="kw">else </span>{
+                        <span class="macro">warn!</span>(<span class="string">"Invalid packet split"</span>);
+                        <span class="kw">break</span>;
+                    };
+                    <span class="kw">match </span><span class="kw">crate</span>::disco::source_and_box_bytes(<span class="kw-2">&amp;</span>datagram.buf) {
+                        <span class="prelude-val">Some</span>((source, sealed_box)) =&gt; {
+                            <span class="kw">if </span>remote_node_id != source {
+                                <span class="comment">// TODO: return here?
+                                </span><span class="macro">warn!</span>(<span class="string">"Received relay disco message from connection for {}, but with message from {}"</span>, remote_node_id.fmt_short(), source.fmt_short());
+                            }
+                            <span class="kw">let </span>message = RelayDiscoMessage {
+                                source,
+                                sealed_box,
+                                relay_url: datagram.url.clone(),
+                                relay_remote_node_id: datagram.src,
                             };
+                            <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.relay_disco_recv.try_send(message) {
+                                <span class="macro">warn!</span>(<span class="string">"Dropping received relay disco packet: {err:#}"</span>);
+                            }
+                        }
+                        <span class="prelude-val">None </span>=&gt; {
                             <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.relay_datagrams_recv.try_send(datagram) {
                                 <span class="macro">warn!</span>(<span class="string">"Dropping received relay data packet: {err:#}"</span>);
                             }
@@ -2546,7 +2525,6 @@
     /// [`AsyncUdpSocket::poll_recv`]: quinn::AsyncUdpSocket::poll_recv
     </span>relay_datagram_recv_queue: Arc&lt;RelayDatagramRecvQueue&gt;,
     relay_disco_recv_tx: mpsc::Sender&lt;RelayDiscoMessage&gt;,
-    relay_disco_recv_rx: mpsc::Receiver&lt;RelayDiscoMessage&gt;,
     <span class="doccomment">/// The actors managing each currently used relay server.
     ///
     /// These actors will exit when they have any inactivity.  Otherwise they will keep
@@ -2562,15 +2540,14 @@
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(
         msock: Arc&lt;MagicSock&gt;,
         relay_datagram_recv_queue: Arc&lt;RelayDatagramRecvQueue&gt;,
+        relay_disco_recv_tx: mpsc::Sender&lt;RelayDiscoMessage&gt;,
         protocol: iroh_relay::http::Protocol,
     ) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>cancel_token = CancellationToken::new();
-        <span class="kw">let </span>(relay_disco_recv_tx, relay_disco_recv_rx) = mpsc::channel(<span class="number">1024</span>);
         <span class="self">Self </span>{
             msock,
             relay_datagram_recv_queue,
             relay_disco_recv_tx,
-            relay_disco_recv_rx,
             active_relays: Default::default(),
             active_relay_tasks: JoinSet::new(),
             cancel_token,
@@ -2597,17 +2574,6 @@
                 <span class="kw">_ </span>= <span class="self">self</span>.cancel_token.cancelled() =&gt; {
                     <span class="macro">debug!</span>(<span class="string">"shutting down"</span>);
                     <span class="kw">break</span>;
-                }
-                <span class="prelude-val">Some</span>(message) = <span class="self">self</span>.relay_disco_recv_rx.recv() =&gt; {
-                    <span class="self">self</span>.msock.
-                        handle_disco_message(
-                            message.source,
-                            <span class="kw-2">&amp;</span>message.sealed_box,
-                            DiscoMessageSource::Relay {
-                                url: message.relay_url,
-                                key: message.relay_remote_node_id
-                            },
-                        );
                 }
                 <span class="prelude-val">Some</span>(res) = <span class="self">self</span>.active_relay_tasks.join_next() =&gt; {
                     <span class="kw">match </span>res {

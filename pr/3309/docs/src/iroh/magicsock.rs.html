@@ -4444,7 +4444,29 @@
 <a href="#4443" id="4443">4443</a>
 <a href="#4444" id="4444">4444</a>
 <a href="#4445" id="4445">4445</a>
-<a href="#4446" id="4446">4446</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4446" id="4446">4446</a>
+<a href="#4447" id="4447">4447</a>
+<a href="#4448" id="4448">4448</a>
+<a href="#4449" id="4449">4449</a>
+<a href="#4450" id="4450">4450</a>
+<a href="#4451" id="4451">4451</a>
+<a href="#4452" id="4452">4452</a>
+<a href="#4453" id="4453">4453</a>
+<a href="#4454" id="4454">4454</a>
+<a href="#4455" id="4455">4455</a>
+<a href="#4456" id="4456">4456</a>
+<a href="#4457" id="4457">4457</a>
+<a href="#4458" id="4458">4458</a>
+<a href="#4459" id="4459">4459</a>
+<a href="#4460" id="4460">4460</a>
+<a href="#4461" id="4461">4461</a>
+<a href="#4462" id="4462">4462</a>
+<a href="#4463" id="4463">4463</a>
+<a href="#4464" id="4464">4464</a>
+<a href="#4465" id="4465">4465</a>
+<a href="#4466" id="4466">4466</a>
+<a href="#4467" id="4467">4467</a>
+<a href="#4468" id="4468">4468</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -6231,7 +6253,13 @@
 
         <span class="kw">let </span><span class="kw-2">mut </span>actor_tasks = JoinSet::default();
 
-        <span class="kw">let </span>relay_actor = RelayActor::new(msock.clone(), relay_datagram_recv_queue, relay_protocol);
+        <span class="kw">let </span>(relay_disco_recv_tx, <span class="kw-2">mut </span>relay_disco_recv_rx) = tokio::sync::mpsc::channel(<span class="number">1024</span>);
+        <span class="kw">let </span>relay_actor = RelayActor::new(
+            msock.clone(),
+            relay_datagram_recv_queue,
+            relay_disco_recv_tx,
+            relay_protocol,
+        );
         <span class="kw">let </span>relay_actor_cancel_token = relay_actor.cancel_token();
         actor_tasks.spawn(
             <span class="kw">async move </span>{
@@ -6241,6 +6269,22 @@
             }
             .instrument(<span class="macro">info_span!</span>(<span class="string">"relay-actor"</span>)),
         );
+        actor_tasks.spawn({
+            <span class="kw">let </span>msock = msock.clone();
+            <span class="kw">async move </span>{
+                <span class="kw">while let </span><span class="prelude-val">Some</span>(message) = relay_disco_recv_rx.recv().<span class="kw">await </span>{
+                    msock.handle_disco_message(
+                        message.source,
+                        <span class="kw-2">&amp;</span>message.sealed_box,
+                        DiscoMessageSource::Relay {
+                            url: message.relay_url,
+                            key: message.relay_remote_node_id,
+                        },
+                    );
+                }
+            }
+            .instrument(<span class="macro">info_span!</span>(<span class="string">"relay-disco-recv"</span>))
+        });
 
         <span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">let _ </span>= actor_tasks.spawn({
