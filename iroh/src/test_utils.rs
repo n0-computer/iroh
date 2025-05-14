@@ -400,7 +400,13 @@ pub(crate) mod pkarr_dns_state {
         pub async fn on_node(&self, node: &NodeId, timeout: Duration) -> Result<()> {
             let timeout = tokio::time::sleep(timeout);
             tokio::pin!(timeout);
-            while self.get(node, |p| p.is_none()) {
+            while self.get(node, |p| {
+                let node_info = p
+                    .as_ref()
+                    .and_then(|p| NodeInfo::from_pkarr_signed_packet(p).ok());
+                eprintln!("got info {:#?}", node_info);
+                p.is_none()
+            }) {
                 tokio::select! {
                     _ = &mut timeout => bail!("timeout"),
                     _ = self.on_update() => {}
