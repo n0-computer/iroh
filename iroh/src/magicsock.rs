@@ -28,6 +28,7 @@ use std::{
     task::{Context, Poll},
 };
 
+use anyhow::{Context as _, Result};
 use bytes::Bytes;
 use data_encoding::HEXLOWER;
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
@@ -224,7 +225,7 @@ pub(crate) struct MagicSock {
     direct_addrs: DiscoveredDirectAddrs,
 
     /// Our latest net-report
-    net_report: Watchable<Option<Arc<Report>>>,
+    net_report: Watchable<(Option<Arc<Report>>, &'static str)>,
 
     /// List of CallMeMaybe disco messages that should be sent out after the next endpoint update
     /// completes
@@ -358,7 +359,7 @@ impl MagicSock {
     ///
     /// [`Watcher`]: n0_watcher::Watcher
     /// [`Watcher::initialized`]: n0_watcher::Watcher::initialized
-    pub(crate) fn net_report(&self) -> n0_watcher::Direct<Option<Arc<Report>>> {
+    pub(crate) fn net_report(&self) -> n0_watcher::Direct<(Option<Arc<Report>>, &'static str)> {
         self.net_report.watch()
     }
 
@@ -1123,6 +1124,20 @@ impl MagicSock {
             discovery.publish(&data);
         }
     }
+
+    /// Called when a direct addr update is done, no matter if it was successful or not.
+    fn finalize_direct_addrs_update(&self, why: &'static str) {
+        let new_why = self.direct_addr_update_state.next_update();
+        if !self.is_closed() {
+            if let Some(new_why) = new_why {
+                self.direct_addr_update_state.run(new_why);
+                return;
+            }
+        }
+
+        self.direct_addr_update_state.finish_run();
+        debug!("direct addr update done ({})", why);
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1428,7 +1443,6 @@ impl Handle {
 
         let actor = Actor {
             msg_receiver: actor_receiver,
-            msg_sender: actor_sender,
             msock: msock.clone(),
             periodic_re_stun_timer: new_re_stun_timer(false),
             net_info_last: None,
@@ -1668,10 +1682,6 @@ enum ActorMessage {
     Shutdown,
     PingActions(Vec<PingAction>),
     EndpointPingExpired(usize, stun_rs::TransactionId),
-    NetReport(
-        Result<Option<Arc<net_report::Report>>, NetReportError>,
-        &'static str,
-    ),
     NetworkChange,
     #[cfg(test)]
     ForceNetworkChange(bool),
@@ -1680,7 +1690,6 @@ enum ActorMessage {
 struct Actor {
     msock: Arc<MagicSock>,
     msg_receiver: mpsc::Receiver<ActorMessage>,
-    msg_sender: mpsc::Sender<ActorMessage>,
     /// When set, is an AfterFunc timer that will call MagicSock::do_periodic_stun.
     periodic_re_stun_timer: time::Interval,
     /// The `NetInfo` provided in the last call to `net_info_func`. It's used to deduplicate calls to netInfoFunc.
@@ -1793,6 +1802,7 @@ impl Actor {
         #[cfg_attr(wasm_browser, allow(unused_mut))]
         let mut portmap_watcher_closed = false;
 
+        let mut net_report_watcher = self.msock.net_report.watch();
         loop {
             self.msock.metrics.magicsock.actor_tick_main.inc();
             #[cfg(not(wasm_browser))]
@@ -1836,6 +1846,20 @@ impl Actor {
                         }
                         Err(_) => {
                             warn!("local addr watcher stopped");
+                        }
+                    }
+                }
+                report = net_report_watcher.updated() => {
+                    match report {
+                        Ok((report, _why)) => {
+                            self.handle_net_report_report(report).await;
+                            #[cfg(not(wasm_browser))]
+                            {
+                                self.periodic_re_stun_timer = new_re_stun_timer(true);
+                            }
+                        }
+                        Err(_) => {
+                            warn!("net report watcher stopped");
                         }
                     }
                 }
@@ -1957,20 +1981,6 @@ impl Actor {
             }
             ActorMessage::EndpointPingExpired(id, txid) => {
                 self.msock.node_map.notify_ping_timeout(id, txid);
-            }
-            ActorMessage::NetReport(report, why) => {
-                match report {
-                    Ok(report) => {
-                        self.handle_net_report_report(report).await;
-                    }
-                    Err(err) => {
-                        warn!(
-                            "failed to generate net_report report for: {}: {:?}",
-                            why, err
-                        );
-                    }
-                }
-                self.finalize_direct_addrs_update(why);
             }
             ActorMessage::NetworkChange => {
                 self.network_monitor.network_change().await.ok();
@@ -2154,24 +2164,6 @@ impl Actor {
         );
     }
 
-    /// Called when a direct addr update is done, no matter if it was successful or not.
-    fn finalize_direct_addrs_update(&mut self, why: &'static str) {
-        let new_why = self.msock.direct_addr_update_state.next_update();
-        if !self.msock.is_closed() {
-            if let Some(new_why) = new_why {
-                self.msock.direct_addr_update_state.run(new_why);
-                return;
-            }
-            #[cfg(not(wasm_browser))]
-            {
-                self.periodic_re_stun_timer = new_re_stun_timer(true);
-            }
-        }
-
-        self.msock.direct_addr_update_state.finish_run();
-        debug!("direct addr update done ({})", why);
-    }
-
     /// Updates `NetInfo.HavePortMap` to true.
     #[instrument(level = "debug", skip_all)]
     fn set_net_info_have_port_map(&mut self) {
@@ -2211,10 +2203,7 @@ impl Actor {
         }
         if self.msock.relay_map.is_empty() {
             debug!("skipping net_report, empty RelayMap");
-            self.msg_sender
-                .send(ActorMessage::NetReport(Ok(None), why))
-                .await
-                .ok();
+            self.msock.net_report.set((None, why)).ok();
             return;
         }
 
@@ -2222,28 +2211,32 @@ impl Actor {
         let opts = self.net_report_config.clone();
 
         debug!("requesting net_report report");
+        let msock = self.msock.clone();
         match self.net_reporter.get_report_channel(relay_map, opts).await {
             Ok(rx) => {
-                let msg_sender = self.msg_sender.clone();
                 task::spawn(async move {
                     let report = time::timeout(NET_REPORT_TIMEOUT, rx).await;
-                    let report = match report {
-                        Ok(Ok(Ok(report))) => Ok(Some(report)),
-                        Ok(Ok(Err(err))) => Err(NetReportSnafu.into_error(err)),
-                        Ok(Err(_)) => Err(NotReceivedSnafu.build()),
-                        Err(_) => Err(TimeoutSnafu.build()),
-                    };
-                    msg_sender
-                        .send(ActorMessage::NetReport(report, why))
-                        .await
-                        .ok();
-                    // The receiver of the NetReport message will call
-                    // .finalize_direct_addrs_update().
+                    match report {
+                        Ok(Ok(Ok(report))) => {
+                            msock.net_report.set((Some(report), why)).ok();
+                        }
+                        Ok(Ok(Err(err))) => {
+                            warn!("failed to generate net report: {:?}", err);
+                        }
+                        Ok(Err(_)) => {
+                            warn!("net_report report not received");
+                        }
+                        Err(err) => {
+                            warn!("net_report report timeout: {:?}", err);
+                        }
+                    }
+
+                    msock.finalize_direct_addrs_update(why);
                 });
             }
             Err(err) => {
                 warn!("unable to start net_report generation: {:?}", err);
-                self.finalize_direct_addrs_update(why);
+                self.msock.finalize_direct_addrs_update(why);
             }
         }
     }
@@ -2251,7 +2244,6 @@ impl Actor {
     async fn handle_net_report_report(&mut self, report: Option<Arc<net_report::Report>>) {
         if let Some(ref report) = report {
             // only returns Err if the report hasn't changed.
-            self.msock.net_report.set(Some(report.clone())).ok();
             self.msock
                 .ipv6_reported
                 .store(report.ipv6, Ordering::Relaxed);
@@ -2687,17 +2679,8 @@ impl NetInfo {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeSet, sync::Arc, time::Duration};
-
-    use data_encoding::HEXLOWER;
-    use iroh_base::{NodeAddr, NodeId, PublicKey, SecretKey};
-    use iroh_relay::RelayMap;
-    use n0_future::{time, StreamExt};
     use n0_snafu::{Result, ResultExt};
-    use n0_watcher::Watcher;
-    use quinn::ServerConfig;
-    use rand::{Rng, RngCore};
-    use tokio::task::JoinSet;
+    use rand::RngCore;
     use tokio_util::task::AbortOnDropHandle;
     use tracing::{error, info, info_span, instrument, Instrument};
     use tracing_test::traced_test;
