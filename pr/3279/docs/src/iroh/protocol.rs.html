@@ -932,10 +932,10 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
+    <span class="kw">use </span>n0_watcher::Watcher;
     <span class="kw">use </span>tracing_test::traced_test;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
-    <span class="kw">use </span><span class="kw">crate</span>::watcher::Watcher;
 
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_shutdown() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {

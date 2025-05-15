@@ -305,9 +305,9 @@
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>iroh::{
     endpoint::{Connection, ConnectionError, RecvStream, SendStream, TransportConfig},
-    watcher::Watcher <span class="kw">as _</span>,
     Endpoint, NodeAddr, RelayMode, RelayUrl,
 };
+<span class="kw">use </span>n0_watcher::Watcher <span class="kw">as _</span>;
 <span class="kw">use </span>tracing::{trace, warn};
 
 <span class="kw">use crate</span>::{

@@ -3165,7 +3165,10 @@
 <a href="#3164" id="3164">3164</a>
 <a href="#3165" id="3165">3165</a>
 <a href="#3166" id="3166">3166</a>
-<a href="#3167" id="3167">3167</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#3167" id="3167">3167</a>
+<a href="#3168" id="3168">3168</a>
+<a href="#3169" id="3169">3169</a>
+<a href="#3170" id="3170">3170</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -3193,6 +3196,7 @@
 <span class="kw">use </span>iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
 <span class="kw">use </span>iroh_relay::RelayMap;
 <span class="kw">use </span>n0_future::{time::Duration, Stream};
+<span class="kw">use </span>n0_watcher::Watcher;
 <span class="kw">use </span>pin_project::pin_project;
 <span class="kw">use </span>tracing::{debug, instrument, trace, warn};
 <span class="kw">use </span>url::Url;
@@ -3209,9 +3213,7 @@
     magicsock::{<span class="self">self</span>, Handle, NodeIdMappedAddr},
     metrics::EndpointMetrics,
     net_report::Report,
-    tls,
-    watcher::{<span class="self">self</span>, Watcher},
-    RelayProtocol,
+    tls, RelayProtocol,
 };
 
 <span class="kw">mod </span>rtt_actor;
@@ -4040,7 +4042,8 @@
     ///
     /// ```no_run
     /// # async fn wrapper() -&gt; testresult::TestResult {
-    /// use iroh::{watcher::Watcher, Endpoint};
+    /// use iroh::Endpoint;
+    /// use n0_watcher::Watcher;
     ///
     /// let endpoint = Endpoint::builder()
     ///     .alpns(vec![b"my-alpn".to_vec()])
@@ -4052,7 +4055,7 @@
     /// # }
     /// ```
     </span><span class="attr">#[cfg(not(wasm_browser))]
-    </span><span class="kw">pub fn </span>node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>watcher::Watcher&lt;Value = <span class="prelude-ty">Option</span>&lt;NodeAddr&gt;&gt; + <span class="lifetime">'_ </span>{
+    </span><span class="kw">pub fn </span>node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>n0_watcher::Watcher&lt;Value = <span class="prelude-ty">Option</span>&lt;NodeAddr&gt;&gt; + <span class="lifetime">'_ </span>{
         <span class="kw">let </span>watch_addrs = <span class="self">self</span>.direct_addresses();
         <span class="kw">let </span>watch_relay = <span class="self">self</span>.home_relay();
         <span class="kw">let </span>node_id = <span class="self">self</span>.node_id();
@@ -4078,7 +4081,7 @@
     /// with a [`NodeAddr`] that only contains a relay URL, but no direct addresses,
     /// as there are no APIs for directly using sockets in browsers.
     </span><span class="attr">#[cfg(wasm_browser)]
-    </span><span class="kw">pub fn </span>node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>watcher::Watcher&lt;Value = <span class="prelude-ty">Option</span>&lt;NodeAddr&gt;&gt; + <span class="lifetime">'_ </span>{
+    </span><span class="kw">pub fn </span>node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>n0_watcher::Watcher&lt;Value = <span class="prelude-ty">Option</span>&lt;NodeAddr&gt;&gt; + <span class="lifetime">'_ </span>{
         <span class="comment">// In browsers, there will never be any direct addresses, so we wait
         // for the home relay instead. This makes the `NodeAddr` have *some* way
         // of connecting to us.
@@ -4109,8 +4112,9 @@
     ///
     /// To wait for a home relay connection to be established, use [`Watcher::initialized`]:
     /// ```no_run
-    /// use iroh::{watcher::Watcher as _, Endpoint};
+    /// use iroh::Endpoint;
     /// use n0_future::StreamExt;
+    /// use n0_watcher::Watcher as _;
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
@@ -4118,7 +4122,7 @@
     /// let _relay_url = mep.home_relay().initialized().await.unwrap();
     /// # });
     /// ```
-    </span><span class="kw">pub fn </span>home_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>watcher::Watcher&lt;Value = Vec&lt;RelayUrl&gt;&gt; + <span class="lifetime">'_ </span>{
+    </span><span class="kw">pub fn </span>home_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>n0_watcher::Watcher&lt;Value = Vec&lt;RelayUrl&gt;&gt; + <span class="lifetime">'_ </span>{
         <span class="self">self</span>.msock.home_relay()
     }
 
@@ -4145,8 +4149,9 @@
     ///
     /// To get the first set of direct addresses use [`Watcher::initialized`]:
     /// ```no_run
-    /// use iroh::{watcher::Watcher as _, Endpoint};
+    /// use iroh::Endpoint;
     /// use n0_future::StreamExt;
+    /// use n0_watcher::Watcher as _;
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
@@ -4156,7 +4161,7 @@
     /// ```
     ///
     /// [STUN]: https://en.wikipedia.org/wiki/STUN
-    </span><span class="kw">pub fn </span>direct_addresses(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; watcher::Direct&lt;<span class="prelude-ty">Option</span>&lt;BTreeSet&lt;DirectAddr&gt;&gt;&gt; {
+    </span><span class="kw">pub fn </span>direct_addresses(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; n0_watcher::Direct&lt;<span class="prelude-ty">Option</span>&lt;BTreeSet&lt;DirectAddr&gt;&gt;&gt; {
         <span class="self">self</span>.msock.direct_addresses()
     }
 
@@ -4180,8 +4185,9 @@
     ///
     /// To get the first report use [`Watcher::initialized`]:
     /// ```no_run
-    /// use iroh::{watcher::Watcher as _, Endpoint};
+    /// use iroh::Endpoint;
     /// use n0_future::StreamExt;
+    /// use n0_watcher::Watcher as _;
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
@@ -4190,7 +4196,7 @@
     /// # });
     /// ```
     </span><span class="attr">#[doc(hidden)]
-    </span><span class="kw">pub fn </span>net_report(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; watcher::Direct&lt;<span class="prelude-ty">Option</span>&lt;Arc&lt;Report&gt;&gt;&gt; {
+    </span><span class="kw">pub fn </span>net_report(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; n0_watcher::Direct&lt;<span class="prelude-ty">Option</span>&lt;Arc&lt;Report&gt;&gt;&gt; {
         <span class="self">self</span>.msock.net_report()
     }
 
@@ -4294,7 +4300,7 @@
     /// # Errors
     ///
     /// Will error if we do not have any address information for the given `node_id`.
-    </span><span class="kw">pub fn </span>conn_type(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;watcher::Direct&lt;ConnectionType&gt;&gt; {
+    </span><span class="kw">pub fn </span>conn_type(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;n0_watcher::Direct&lt;ConnectionType&gt;&gt; {
         <span class="self">self</span>.msock.conn_type(node_id)
     }
 

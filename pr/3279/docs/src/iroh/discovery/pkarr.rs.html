@@ -463,6 +463,7 @@
     task::{<span class="self">self</span>, AbortOnDropHandle},
     time::{<span class="self">self</span>, Duration, Instant},
 };
+<span class="kw">use </span>n0_watcher::{Disconnected, Watchable, Watcher <span class="kw">as _</span>};
 <span class="kw">use </span>pkarr::SignedPacket;
 <span class="kw">use </span>tracing::{debug, error_span, warn, Instrument};
 <span class="kw">use </span>url::Url;
@@ -470,7 +471,6 @@
 <span class="kw">use crate</span>::{
     discovery::{Discovery, DiscoveryItem, NodeData},
     endpoint::force_staging_infra,
-    watcher::{<span class="self">self</span>, Disconnected, Watchable, Watcher <span class="kw">as _</span>},
     Endpoint,
 };
 
@@ -626,7 +626,7 @@
     </span>secret_key: SecretKey,
     <span class="attr">#[debug(<span class="string">"PkarrClient"</span>)]
     </span>pkarr_client: PkarrRelayClient,
-    watcher: watcher::Direct&lt;<span class="prelude-ty">Option</span>&lt;NodeInfo&gt;&gt;,
+    watcher: n0_watcher::Direct&lt;<span class="prelude-ty">Option</span>&lt;NodeInfo&gt;&gt;,
     ttl: u32,
     republish_interval: Duration,
 }

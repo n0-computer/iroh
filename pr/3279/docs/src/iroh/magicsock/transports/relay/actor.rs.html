@@ -1735,6 +1735,7 @@
     time::{<span class="self">self</span>, Duration, Instant, MissedTickBehavior},
     FuturesUnorderedBounded, SinkExt, StreamExt,
 };
+<span class="kw">use </span>n0_watcher::Watchable;
 <span class="kw">use </span>netwatch::interfaces;
 <span class="kw">use </span>tokio::sync::{mpsc, oneshot};
 <span class="kw">use </span>tokio_util::sync::CancellationToken;
@@ -1749,7 +1750,6 @@
         Metrics <span class="kw">as </span>MagicsockMetrics, NetInfo, RelayContents,
     },
     util::MaybeFuture,
-    watcher::Watchable,
 };
 
 <span class="doccomment">/// How long a non-home relay connection needs to be idle (last written to) before we close it.

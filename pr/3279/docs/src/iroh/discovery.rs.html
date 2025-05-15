@@ -1074,7 +1074,8 @@
 <a href="#1073" id="1073">1073</a>
 <a href="#1074" id="1074">1074</a>
 <a href="#1075" id="1075">1075</a>
-<a href="#1076" id="1076">1076</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
+<a href="#1076" id="1076">1076</a>
+<a href="#1077" id="1077">1077</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
 //! To connect to an iroh node a [`NodeAddr`] is needed, which may contain a
 //! [`RelayUrl`] or one or more *direct addresses* in addition to the [`NodeId`].
@@ -1634,6 +1635,7 @@
 
     <span class="kw">use </span>anyhow::Context;
     <span class="kw">use </span>iroh_base::{NodeAddr, SecretKey};
+    <span class="kw">use </span>n0_watcher::Watcher <span class="kw">as _</span>;
     <span class="kw">use </span>quinn::{IdleTimeout, TransportConfig};
     <span class="kw">use </span>rand::Rng;
     <span class="kw">use </span>testresult::TestResult;
@@ -1641,7 +1643,7 @@
     <span class="kw">use </span>tracing_test::traced_test;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
-    <span class="kw">use crate</span>::{endpoint::ConnectOptions, watcher::Watcher <span class="kw">as _</span>, RelayMode};
+    <span class="kw">use crate</span>::{endpoint::ConnectOptions, RelayMode};
 
     <span class="kw">type </span>InfoStore = HashMap&lt;NodeId, (NodeData, u64)&gt;;
 

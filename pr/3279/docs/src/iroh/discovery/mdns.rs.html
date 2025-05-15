@@ -546,13 +546,13 @@
     task::{<span class="self">self</span>, AbortOnDropHandle, JoinSet},
     time::{<span class="self">self</span>, Duration},
 };
+<span class="kw">use </span>n0_watcher::{Watchable, Watcher <span class="kw">as _</span>};
 <span class="kw">use </span>swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
 <span class="kw">use </span>tokio::sync::mpsc::{<span class="self">self</span>, error::TrySendError};
 <span class="kw">use </span>tracing::{debug, error, info_span, trace, warn, Instrument};
 
 <span class="kw">use crate</span>::{
     discovery::{Discovery, DiscoveryItem, NodeData, NodeInfo},
-    watcher::{Watchable, Watcher <span class="kw">as _</span>},
     Endpoint,
 };
 

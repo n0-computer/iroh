@@ -155,23 +155,19 @@
 <a href="#154" id="154">154</a>
 <a href="#155" id="155">155</a>
 <a href="#156" id="156">156</a>
-<a href="#157" id="157">157</a>
-<a href="#158" id="158">158</a>
-<a href="#159" id="159">159</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#157" id="157">157</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     io,
     net::SocketAddr,
     sync::Arc,
     task::{Context, Poll},
 };
 
+<span class="kw">use </span>n0_watcher::{Watchable, Watcher};
 <span class="kw">use </span>netwatch::UdpSocket;
 <span class="kw">use </span>tracing::trace;
 
 <span class="kw">use super</span>::{Addr, Transmit};
-<span class="kw">use crate</span>::{
-    metrics::MagicsockMetrics,
-    watcher::{Watchable, Watcher},
-};
+<span class="kw">use </span><span class="kw">crate</span>::metrics::MagicsockMetrics;
 
 <span class="attr">#[derive(Clone, Debug)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>IpTransport {

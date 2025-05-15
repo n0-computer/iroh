@@ -441,6 +441,7 @@
 };
 
 <span class="kw">use </span>iroh_base::{NodeId, RelayUrl};
+<span class="kw">use </span>n0_watcher::Watcher;
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">use </span>netwatch::UdpSocket;
 <span class="kw">use </span>relay::RelayDatagramSendChannelSender;
@@ -454,7 +455,6 @@
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span><span class="self">self</span>::ip::IpTransport;
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span><span class="self">self</span>::relay::{RelayActorConfig, RelayTransport};
 <span class="kw">use </span><span class="kw">super</span>::NetInfo;
-<span class="kw">use </span><span class="kw">crate</span>::watcher::{<span class="self">self</span>, Watcher};
 
 <span class="attr">#[derive(Debug)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>Transports {
@@ -576,8 +576,8 @@
     <span class="doccomment">/// Watch for all currently known local addresses.
     </span><span class="attr">#[cfg(not(wasm_browser))]
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>local_addrs_watch(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Watcher&lt;Value = Vec&lt;Addr&gt;&gt; + Send + Sync {
-        <span class="kw">let </span>ips = watcher::Join::new(<span class="self">self</span>.ip.iter().map(|t| t.local_addr_watch()));
-        <span class="kw">let </span>relays = watcher::Join::new(<span class="self">self</span>.relay.iter().map(|t| t.local_addr_watch()));
+        <span class="kw">let </span>ips = n0_watcher::Join::new(<span class="self">self</span>.ip.iter().map(|t| t.local_addr_watch()));
+        <span class="kw">let </span>relays = n0_watcher::Join::new(<span class="self">self</span>.relay.iter().map(|t| t.local_addr_watch()));
 
         (ips, relays)
             .map(|(ips, relays)| {

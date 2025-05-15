@@ -903,10 +903,7 @@
 <a href="#902" id="902">902</a>
 <a href="#903" id="903">903</a>
 <a href="#904" id="904">904</a>
-<a href="#905" id="905">905</a>
-<a href="#906" id="906">906</a>
-<a href="#907" id="907">907</a>
-<a href="#908" id="908">908</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#905" id="905">905</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{hash_map::Entry, BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
@@ -924,12 +921,9 @@
     node_state::{NodeState, Options, PingHandled},
 };
 <span class="kw">use super</span>::{metrics::Metrics, transports, ActorMessage, NodeIdMappedAddr};
+<span class="kw">use </span><span class="kw">crate</span>::disco::{CallMeMaybe, Pong, SendAddr};
 <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
 </span><span class="kw">use </span><span class="kw">crate</span>::endpoint::PathSelection;
-<span class="kw">use crate</span>::{
-    disco::{CallMeMaybe, Pong, SendAddr},
-    watcher,
-};
 
 <span class="kw">mod </span>best_addr;
 <span class="kw">mod </span>node_state;
@@ -1218,11 +1212,11 @@
     /// Will return an error if there is not an entry in the [`NodeMap`] for
     /// the `node_id`
     ///
-    /// [`Watcher`]: crate::watcher::Watcher
+    /// [`Watcher`]: n0_watcher::Watcher
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>conn_type(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         node_id: NodeId,
-    ) -&gt; anyhow::Result&lt;watcher::Direct&lt;ConnectionType&gt;&gt; {
+    ) -&gt; anyhow::Result&lt;n0_watcher::Direct&lt;ConnectionType&gt;&gt; {
         <span class="self">self</span>.inner.lock().expect(<span class="string">"poisoned"</span>).conn_type(node_id)
     }
 
@@ -1418,7 +1412,7 @@
     ///
     /// Will return an error if there is not an entry in the [`NodeMap`] for
     /// the `public_key`
-    </span><span class="kw">fn </span>conn_type(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; anyhow::Result&lt;watcher::Direct&lt;ConnectionType&gt;&gt; {
+    </span><span class="kw">fn </span>conn_type(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; anyhow::Result&lt;n0_watcher::Direct&lt;ConnectionType&gt;&gt; {
         <span class="kw">match </span><span class="self">self</span>.get(NodeStateKey::NodeId(node_id)) {
             <span class="prelude-val">Some</span>(ep) =&gt; <span class="prelude-val">Ok</span>(ep.conn_type()),
             <span class="prelude-val">None </span>=&gt; <span class="macro">anyhow::bail!</span>(<span class="string">"No endpoint for {node_id:?} found"</span>),

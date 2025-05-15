@@ -470,9 +470,7 @@
 <a href="#469" id="469">469</a>
 <a href="#470" id="470">470</a>
 <a href="#471" id="471">471</a>
-<a href="#472" id="472">472</a>
-<a href="#473" id="473">473</a>
-<a href="#474" id="474">474</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#472" id="472">472</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     io,
     sync::Arc,
     task::{Context, Poll, Waker},
@@ -484,15 +482,13 @@
 <span class="kw">use </span>concurrent_queue::ConcurrentQueue;
 <span class="kw">use </span>iroh_base::{NodeId, RelayUrl};
 <span class="kw">use </span>n0_future::task::{<span class="self">self</span>, AbortOnDropHandle};
+<span class="kw">use </span>n0_watcher::{Watchable, Watcher <span class="kw">as _</span>};
 <span class="kw">use </span>smallvec::SmallVec;
 <span class="kw">use </span>tokio::sync::mpsc;
 <span class="kw">use </span>tracing::{error, info_span, trace, warn, Instrument};
 
 <span class="kw">use super</span>::{Addr, Transmit};
-<span class="kw">use crate</span>::{
-    magicsock::RelayContents,
-    watcher::{Watchable, Watcher <span class="kw">as _</span>},
-};
+<span class="kw">use </span><span class="kw">crate</span>::magicsock::RelayContents;
 
 <span class="kw">mod </span>actor;
 
@@ -646,7 +642,7 @@
 
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>local_addr_watch(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-    ) -&gt; <span class="kw">impl </span><span class="kw">crate</span>::watcher::Watcher&lt;Value = <span class="prelude-ty">Option</span>&lt;(RelayUrl, NodeId)&gt;&gt; + Send + Sync {
+    ) -&gt; <span class="kw">impl </span>n0_watcher::Watcher&lt;Value = <span class="prelude-ty">Option</span>&lt;(RelayUrl, NodeId)&gt;&gt; + Send + Sync {
         <span class="kw">let </span>my_node_id = <span class="self">self</span>.my_node_id;
         <span class="self">self</span>.my_relay
             .watch()

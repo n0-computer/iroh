@@ -3668,6 +3668,7 @@
     time::{<span class="self">self</span>, Duration, Instant},
     FutureExt, StreamExt,
 };
+<span class="kw">use </span>n0_watcher::{<span class="self">self</span>, Watchable, Watcher};
 <span class="kw">use </span>netwatch::netmon;
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">use </span>netwatch::{ip::LocalAddresses, UdpSocket};
@@ -3701,7 +3702,6 @@
     key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
     metrics::EndpointMetrics,
     net_report::{<span class="self">self</span>, IpMappedAddresses, Report},
-    watcher::{<span class="self">self</span>, Watchable, Watcher},
 };
 
 <span class="kw">mod </span>metrics;
@@ -3935,9 +3935,9 @@
     ///
     /// To get the current direct addresses, use [`Watcher::initialized`].
     ///
-    /// [`Watcher`]: crate::watcher::Watcher
-    /// [`Watcher::initialized`]: crate::watcher::Watcher::initialized
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>direct_addresses(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; watcher::Direct&lt;<span class="prelude-ty">Option</span>&lt;BTreeSet&lt;DirectAddr&gt;&gt;&gt; {
+    /// [`Watcher`]: n0_watcher::Watcher
+    /// [`Watcher::initialized`]: n0_watcher::Watcher::initialized
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>direct_addresses(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; n0_watcher::Direct&lt;<span class="prelude-ty">Option</span>&lt;BTreeSet&lt;DirectAddr&gt;&gt;&gt; {
         <span class="self">self</span>.direct_addrs.addrs.watch()
     }
 
@@ -3953,9 +3953,9 @@
     ///
     /// To get the current `net-report`, use [`Watcher::initialized`].
     ///
-    /// [`Watcher`]: crate::watcher::Watcher
-    /// [`Watcher::initialized`]: crate::watcher::Watcher::initialized
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>net_report(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; watcher::Direct&lt;<span class="prelude-ty">Option</span>&lt;Arc&lt;Report&gt;&gt;&gt; {
+    /// [`Watcher`]: n0_watcher::Watcher
+    /// [`Watcher::initialized`]: n0_watcher::Watcher::initialized
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>net_report(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; n0_watcher::Direct&lt;<span class="prelude-ty">Option</span>&lt;Arc&lt;Report&gt;&gt;&gt; {
         <span class="self">self</span>.net_report.watch()
     }
 
@@ -3990,8 +3990,8 @@
     /// Will return an error if there is no address information known about the
     /// given `node_id`.
     ///
-    /// [`Watcher`]: crate::watcher::Watcher
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>conn_type(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;watcher::Direct&lt;ConnectionType&gt;&gt; {
+    /// [`Watcher`]: n0_watcher::Watcher
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>conn_type(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;n0_watcher::Direct&lt;ConnectionType&gt;&gt; {
         <span class="self">self</span>.node_map.conn_type(node_id)
     }
 
