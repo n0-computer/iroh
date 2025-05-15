@@ -3625,7 +3625,9 @@
 <a href="#3624" id="3624">3624</a>
 <a href="#3625" id="3625">3625</a>
 <a href="#3626" id="3626">3626</a>
-<a href="#3627" id="3627">3627</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#3627" id="3627">3627</a>
+<a href="#3628" id="3628">3628</a>
+<a href="#3629" id="3629">3629</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -5289,7 +5291,8 @@
             <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="kw-2">*</span>addr);
         }
         <span class="kw">if let </span><span class="prelude-val">Some</span>(SocketAddr::V4(addr)) = addrs.first() {
-            <span class="kw">let </span>ip = addr.ip().to_ipv6_mapped().into();
+            <span class="comment">// Pretend to be IPv6, because our `MappedAddr`s need to be IPv6.
+            </span><span class="kw">let </span>ip = addr.ip().to_ipv6_mapped().into();
             <span class="kw">return </span><span class="prelude-val">Ok</span>(SocketAddr::new(ip, addr.port()));
         }
 
@@ -5298,7 +5301,8 @@
 
     <span class="attr">#[cfg(wasm_browser)]
     </span><span class="kw">fn </span>local_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; io::Result&lt;SocketAddr&gt; {
-        <span class="prelude-val">Ok</span>(SocketAddr::new(std::net::Ipv6Addr::LOCALHOST.into(), <span class="number">0</span>))
+        <span class="comment">// Again, we need to pretend we're IPv6, because of our `MappedAddr`s.
+        </span><span class="prelude-val">Ok</span>(SocketAddr::new(std::net::Ipv6Addr::LOCALHOST.into(), <span class="number">0</span>))
     }
 
     <span class="kw">fn </span>max_transmit_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
