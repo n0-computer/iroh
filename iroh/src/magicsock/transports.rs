@@ -162,12 +162,10 @@ impl Transports {
 
     #[cfg(wasm_browser)]
     pub(crate) fn local_addrs_watch(&self) -> impl Watcher<Value = Vec<Addr>> + Send + Sync {
-        let relays = self.relay.iter().map(|t| {
-            t.local_addr_watch()
-                .map(|t| t.map(Addr::from))
-                .expect("disconnected")
-        });
-        watcher::JoinOpt::new(relays)
+        let relays = self.relay.iter().map(|t| t.local_addr_watch());
+        n0_watcher::Join::new(relays)
+            .map(|relays| relays.into_iter().flatten().map(Addr::from).collect())
+            .expect("disconnected")
     }
 
     /// Returns the bound addresses for IP based transports

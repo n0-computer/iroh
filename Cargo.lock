@@ -2806,7 +2806,7 @@ dependencies = [
 [[package]]
 name = "n0-watcher"
 version = "0.1.0"
-source = "git+https://github.com/n0-computer/n0-watcher?branch=feat-combinators#dcfe39aa60820f98e4603edb62ed864533395325"
+source = "git+https://github.com/n0-computer/n0-watcher?branch=feat-combinators#e080e05385d83e4ab81568c4a9a78dec2b0b075d"
 dependencies = [
  "derive_more",
  "n0-future",
