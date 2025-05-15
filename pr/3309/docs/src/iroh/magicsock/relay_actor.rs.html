@@ -1787,7 +1787,13 @@
 <a href="#1786" id="1786">1786</a>
 <a href="#1787" id="1787">1787</a>
 <a href="#1788" id="1788">1788</a>
-<a href="#1789" id="1789">1789</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1789" id="1789">1789</a>
+<a href="#1790" id="1790">1790</a>
+<a href="#1791" id="1791">1791</a>
+<a href="#1792" id="1792">1792</a>
+<a href="#1793" id="1793">1793</a>
+<a href="#1794" id="1794">1794</a>
+<a href="#1795" id="1795">1795</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -2593,7 +2599,9 @@
     relay_datagrams_recv: <span class="kw-2">&amp;</span>RelayDatagramRecvQueue,
     relay_disco_recv: <span class="kw-2">&amp;mut </span>mpsc::Sender&lt;RelayDiscoMessage&gt;,
 ) {
-    <span class="kw">let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref mut </span>pending) = maybe_pending <span class="kw">else </span>{
+    <span class="comment">// We take a mutable reference onto the inner value.
+    // we're not `take`ing it here, because this would make the function not cancellation safe.
+    </span><span class="kw">let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref mut </span>pending) = maybe_pending <span class="kw">else </span>{
         <span class="kw">return</span>;
     };
     <span class="kw">let </span>disco_permit = <span class="kw">match </span>pending.blocked_on {
@@ -2610,7 +2618,11 @@
             <span class="prelude-val">Some</span>(permit)
         }
     };
-    <span class="kw">let </span>pending = maybe_pending.take().unwrap();
+    <span class="comment">// We now take the inner value by value. it is cancellation safe here because
+    // no further `await`s occur after here.
+    // The unwrap is guaranteed to be safe because we checked above that it is not none.
+    </span><span class="attr">#[allow(clippy::unwrap_used, reason = <span class="string">"checked above"</span>)]
+    </span><span class="kw">let </span>pending = maybe_pending.take().unwrap();
     <span class="kw">if let </span><span class="prelude-val">Some</span>(pending) = handle_received_packet_iter(
         pending.packet_iter,
         disco_permit,
