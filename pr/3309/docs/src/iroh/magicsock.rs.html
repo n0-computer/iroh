@@ -4467,7 +4467,41 @@
 <a href="#4466" id="4466">4466</a>
 <a href="#4467" id="4467">4467</a>
 <a href="#4468" id="4468">4468</a>
-<a href="#4469" id="4469">4469</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4469" id="4469">4469</a>
+<a href="#4470" id="4470">4470</a>
+<a href="#4471" id="4471">4471</a>
+<a href="#4472" id="4472">4472</a>
+<a href="#4473" id="4473">4473</a>
+<a href="#4474" id="4474">4474</a>
+<a href="#4475" id="4475">4475</a>
+<a href="#4476" id="4476">4476</a>
+<a href="#4477" id="4477">4477</a>
+<a href="#4478" id="4478">4478</a>
+<a href="#4479" id="4479">4479</a>
+<a href="#4480" id="4480">4480</a>
+<a href="#4481" id="4481">4481</a>
+<a href="#4482" id="4482">4482</a>
+<a href="#4483" id="4483">4483</a>
+<a href="#4484" id="4484">4484</a>
+<a href="#4485" id="4485">4485</a>
+<a href="#4486" id="4486">4486</a>
+<a href="#4487" id="4487">4487</a>
+<a href="#4488" id="4488">4488</a>
+<a href="#4489" id="4489">4489</a>
+<a href="#4490" id="4490">4490</a>
+<a href="#4491" id="4491">4491</a>
+<a href="#4492" id="4492">4492</a>
+<a href="#4493" id="4493">4493</a>
+<a href="#4494" id="4494">4494</a>
+<a href="#4495" id="4495">4495</a>
+<a href="#4496" id="4496">4496</a>
+<a href="#4497" id="4497">4497</a>
+<a href="#4498" id="4498">4498</a>
+<a href="#4499" id="4499">4499</a>
+<a href="#4500" id="4500">4500</a>
+<a href="#4501" id="4501">4501</a>
+<a href="#4502" id="4502">4502</a>
+<a href="#4503" id="4503">4503</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4545,7 +4579,7 @@
     key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
     metrics::EndpointMetrics,
     net_report::{<span class="self">self</span>, IpMappedAddresses, Report},
-    watchable::{Watchable, Watcher},
+    watcher::{<span class="self">self</span>, Watchable},
 };
 
 <span class="kw">mod </span>metrics;
@@ -4821,7 +4855,10 @@
     /// store [`Some`] set of addresses.
     ///
     /// To get the current direct addresses, use [`Watcher::initialized`].
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>direct_addresses(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Watcher&lt;<span class="prelude-ty">Option</span>&lt;BTreeSet&lt;DirectAddr&gt;&gt;&gt; {
+    ///
+    /// [`Watcher`]: crate::watcher::Watcher
+    /// [`Watcher::initialized`]: crate::watcher::Watcher::initialized
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>direct_addresses(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; watcher::Direct&lt;<span class="prelude-ty">Option</span>&lt;BTreeSet&lt;DirectAddr&gt;&gt;&gt; {
         <span class="self">self</span>.direct_addrs.addrs.watch()
     }
 
@@ -4836,7 +4873,10 @@
     /// store [`Some`] report.
     ///
     /// To get the current `net-report`, use [`Watcher::initialized`].
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>net_report(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Watcher&lt;<span class="prelude-ty">Option</span>&lt;Arc&lt;Report&gt;&gt;&gt; {
+    ///
+    /// [`Watcher`]: crate::watcher::Watcher
+    /// [`Watcher::initialized`]: crate::watcher::Watcher::initialized
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>net_report(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; watcher::Direct&lt;<span class="prelude-ty">Option</span>&lt;Arc&lt;Report&gt;&gt;&gt; {
         <span class="self">self</span>.net_report.watch()
     }
 
@@ -4844,7 +4884,10 @@
     ///
     /// Note that this can be used to wait for the initial home relay to be known using
     /// [`Watcher::initialized`].
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>home_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Watcher&lt;<span class="prelude-ty">Option</span>&lt;RelayUrl&gt;&gt; {
+    ///
+    /// [`Watcher`]: crate::watcher::Watcher
+    /// [`Watcher::initialized`]: crate::watcher::Watcher::initialized
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>home_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; watcher::Direct&lt;<span class="prelude-ty">Option</span>&lt;RelayUrl&gt;&gt; {
         <span class="self">self</span>.my_relay.watch()
     }
 
@@ -4858,7 +4901,9 @@
     ///
     /// Will return an error if there is no address information known about the
     /// given `node_id`.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>conn_type(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;Watcher&lt;ConnectionType&gt;&gt; {
+    ///
+    /// [`Watcher`]: crate::watcher::Watcher
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>conn_type(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;watcher::Direct&lt;ConnectionType&gt;&gt; {
         <span class="self">self</span>.node_map.conn_type(node_id)
     }
 
@@ -6573,7 +6618,8 @@
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">struct </span>RelayDatagramRecvQueue {
     queue: ConcurrentQueue&lt;RelayRecvDatagram&gt;,
-    waker: AtomicWaker,
+    recv_waker: AtomicWaker,
+    send_waker: AtomicWaker,
 }
 
 <span class="kw">impl </span>RelayDatagramRecvQueue {
@@ -6581,7 +6627,8 @@
     </span><span class="kw">fn </span>new() -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             queue: ConcurrentQueue::bounded(<span class="number">512</span>),
-            waker: AtomicWaker::new(),
+            recv_waker: AtomicWaker::new(),
+            send_waker: AtomicWaker::new(),
         }
     }
 
@@ -6594,8 +6641,19 @@
         item: RelayRecvDatagram,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), concurrent_queue::PushError&lt;RelayRecvDatagram&gt;&gt; {
         <span class="self">self</span>.queue.push(item).inspect(|<span class="kw">_</span>| {
-            <span class="self">self</span>.waker.wake();
+            <span class="self">self</span>.recv_waker.wake();
         })
+    }
+
+    <span class="kw">fn </span>poll_send_ready(<span class="kw-2">&amp;</span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt; {
+        <span class="kw">if </span><span class="self">self</span>.queue.is_closed() {
+            Poll::Ready(<span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Queue closed"</span>)))
+        } <span class="kw">else if </span>!<span class="self">self</span>.queue.is_full() {
+            Poll::Ready(<span class="prelude-val">Ok</span>(()))
+        } <span class="kw">else </span>{
+            <span class="self">self</span>.send_waker.register(cx.waker());
+            Poll::Pending
+        }
     }
 
     <span class="doccomment">/// Polls for new items in the queue.
@@ -6612,23 +6670,31 @@
     /// to be able to poll from `&amp;self`.
     </span><span class="kw">fn </span>poll_recv(<span class="kw-2">&amp;</span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>Context) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;RelayRecvDatagram&gt;&gt; {
         <span class="kw">match </span><span class="self">self</span>.queue.pop() {
-            <span class="prelude-val">Ok</span>(value) =&gt; Poll::Ready(<span class="prelude-val">Ok</span>(value)),
+            <span class="prelude-val">Ok</span>(value) =&gt; {
+                <span class="self">self</span>.send_waker.wake();
+                Poll::Ready(<span class="prelude-val">Ok</span>(value))
+            }
             <span class="prelude-val">Err</span>(concurrent_queue::PopError::Empty) =&gt; {
-                <span class="self">self</span>.waker.register(cx.waker());
+                <span class="self">self</span>.recv_waker.register(cx.waker());
 
                 <span class="kw">match </span><span class="self">self</span>.queue.pop() {
                     <span class="prelude-val">Ok</span>(value) =&gt; {
-                        <span class="self">self</span>.waker.take();
+                        <span class="self">self</span>.send_waker.wake();
+                        <span class="self">self</span>.recv_waker.take();
                         Poll::Ready(<span class="prelude-val">Ok</span>(value))
                     }
                     <span class="prelude-val">Err</span>(concurrent_queue::PopError::Empty) =&gt; Poll::Pending,
                     <span class="prelude-val">Err</span>(concurrent_queue::PopError::Closed) =&gt; {
-                        <span class="self">self</span>.waker.take();
+                        <span class="self">self</span>.recv_waker.take();
+                        <span class="self">self</span>.send_waker.wake();
                         Poll::Ready(<span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Queue closed"</span>)))
                     }
                 }
             }
-            <span class="prelude-val">Err</span>(concurrent_queue::PopError::Closed) =&gt; Poll::Ready(<span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Queue closed"</span>))),
+            <span class="prelude-val">Err</span>(concurrent_queue::PopError::Closed) =&gt; {
+                <span class="self">self</span>.send_waker.wake();
+                Poll::Ready(<span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Queue closed"</span>)))
+            }
         }
     }
 }
@@ -7906,7 +7972,9 @@
     <span class="kw">use crate</span>::{
         defaults::staging::{<span class="self">self</span>, EU_RELAY_HOSTNAME},
         dns::DnsResolver,
-        tls, Endpoint, RelayMode,
+        tls,
+        watcher::Watcher <span class="kw">as _</span>,
+        Endpoint, RelayMode,
     };
 
     <span class="kw">const </span>ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"n0/test/1"</span>;
@@ -8285,7 +8353,7 @@
         <span class="macro">println!</span>(<span class="string">"first conn!"</span>);
         <span class="kw">let </span>conn = m1
             .endpoint
-            .connect(m2.endpoint.node_addr().<span class="kw">await</span><span class="question-mark">?</span>, ALPN)
+            .connect(m2.endpoint.node_addr().initialized().<span class="kw">await</span><span class="question-mark">?</span>, ALPN)
             .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="macro">println!</span>(<span class="string">"Closing first conn"</span>);
         conn.close(<span class="number">0u32</span>.into(), <span class="string">b"bye lolz"</span>);
