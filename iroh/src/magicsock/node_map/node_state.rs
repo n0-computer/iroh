@@ -11,6 +11,7 @@ use n0_future::{
     task::{self, AbortOnDropHandle},
     time::{self, Duration, Instant},
 };
+use n0_watcher::Watchable;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{debug, event, info, instrument, trace, warn, Level};
@@ -26,7 +27,6 @@ use crate::endpoint::PathSelection;
 use crate::{
     disco::{self, SendAddr},
     magicsock::{ActorMessage, MagicsockMetrics, NodeIdMappedAddr, HEARTBEAT_INTERVAL},
-    watcher::{self, Watchable},
 };
 
 /// Number of addresses that are not active that we keep around per node.
@@ -202,7 +202,7 @@ impl NodeState {
         self.id
     }
 
-    pub(super) fn conn_type(&self) -> watcher::Direct<ConnectionType> {
+    pub(super) fn conn_type(&self) -> n0_watcher::Direct<ConnectionType> {
         self.conn_type.watch()
     }
 

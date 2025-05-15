@@ -51,6 +51,7 @@ use n0_future::{
     time::{self, Duration, Instant, MissedTickBehavior},
     FuturesUnorderedBounded, SinkExt, StreamExt,
 };
+use n0_watcher::Watchable;
 use netwatch::interfaces;
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
@@ -65,7 +66,6 @@ use crate::{
         Metrics as MagicsockMetrics, NetInfo, RelayContents,
     },
     util::MaybeFuture,
-    watcher::Watchable,
 };
 
 /// How long a non-home relay connection needs to be idle (last written to) before we close it.

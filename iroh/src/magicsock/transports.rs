@@ -7,6 +7,7 @@ use std::{
 };
 
 use iroh_base::{NodeId, RelayUrl};
+use n0_watcher::Watcher;
 #[cfg(not(wasm_browser))]
 use netwatch::UdpSocket;
 use relay::RelayDatagramSendChannelSender;
@@ -20,7 +21,6 @@ mod relay;
 pub(crate) use self::ip::IpTransport;
 pub(crate) use self::relay::{RelayActorConfig, RelayTransport};
 use super::NetInfo;
-use crate::watcher::{self, Watcher};
 
 #[derive(Debug)]
 pub(crate) struct Transports {
@@ -142,8 +142,8 @@ impl Transports {
     /// Watch for all currently known local addresses.
     #[cfg(not(wasm_browser))]
     pub(crate) fn local_addrs_watch(&self) -> impl Watcher<Value = Vec<Addr>> + Send + Sync {
-        let ips = watcher::Join::new(self.ip.iter().map(|t| t.local_addr_watch()));
-        let relays = watcher::Join::new(self.relay.iter().map(|t| t.local_addr_watch()));
+        let ips = n0_watcher::Join::new(self.ip.iter().map(|t| t.local_addr_watch()));
+        let relays = n0_watcher::Join::new(self.relay.iter().map(|t| t.local_addr_watch()));
 
         (ips, relays)
             .map(|(ips, relays)| {

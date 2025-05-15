@@ -5,14 +5,12 @@ use std::{
     task::{Context, Poll},
 };
 
+use n0_watcher::{Watchable, Watcher};
 use netwatch::UdpSocket;
 use tracing::trace;
 
 use super::{Addr, Transmit};
-use crate::{
-    metrics::MagicsockMetrics,
-    watcher::{Watchable, Watcher},
-};
+use crate::metrics::MagicsockMetrics;
 
 #[derive(Clone, Debug)]
 pub(crate) struct IpTransport {

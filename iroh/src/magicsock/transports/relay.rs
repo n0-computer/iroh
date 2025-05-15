@@ -10,15 +10,13 @@ use bytes::Bytes;
 use concurrent_queue::ConcurrentQueue;
 use iroh_base::{NodeId, RelayUrl};
 use n0_future::task::{self, AbortOnDropHandle};
+use n0_watcher::{Watchable, Watcher as _};
 use smallvec::SmallVec;
 use tokio::sync::mpsc;
 use tracing::{error, info_span, trace, warn, Instrument};
 
 use super::{Addr, Transmit};
-use crate::{
-    magicsock::RelayContents,
-    watcher::{Watchable, Watcher as _},
-};
+use crate::magicsock::RelayContents;
 
 mod actor;
 
@@ -172,7 +170,7 @@ impl RelayTransport {
 
     pub(super) fn local_addr_watch(
         &self,
-    ) -> impl crate::watcher::Watcher<Value = Option<(RelayUrl, NodeId)>> + Send + Sync {
+    ) -> impl n0_watcher::Watcher<Value = Option<(RelayUrl, NodeId)>> + Send + Sync {
         let my_node_id = self.my_node_id;
         self.my_relay
             .watch()

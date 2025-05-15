@@ -251,7 +251,6 @@ pub mod endpoint;
 pub mod metrics;
 pub mod net_report;
 pub mod protocol;
-pub mod watcher;
 
 pub use endpoint::{Endpoint, RelayMode};
 pub use iroh_base::{

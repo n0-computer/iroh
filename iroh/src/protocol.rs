@@ -431,10 +431,10 @@ impl<P: ProtocolHandler + Clone> ProtocolHandler for AccessLimit<P> {
 
 #[cfg(test)]
 mod tests {
+    use n0_watcher::Watcher;
     use tracing_test::traced_test;
 
     use super::*;
-    use crate::watcher::Watcher;
 
     #[tokio::test]
     async fn test_shutdown() -> Result<()> {

@@ -39,6 +39,7 @@ use n0_future::{
     time::{self, Duration, Instant},
     FutureExt, StreamExt,
 };
+use n0_watcher::{self, Watchable, Watcher};
 use netwatch::netmon;
 #[cfg(not(wasm_browser))]
 use netwatch::{ip::LocalAddresses, UdpSocket};
@@ -72,7 +73,6 @@ use crate::{
     key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
     metrics::EndpointMetrics,
     net_report::{self, IpMappedAddresses, Report},
-    watcher::{self, Watchable, Watcher},
 };
 
 mod metrics;
@@ -306,9 +306,9 @@ impl MagicSock {
     ///
     /// To get the current direct addresses, use [`Watcher::initialized`].
     ///
-    /// [`Watcher`]: crate::watcher::Watcher
-    /// [`Watcher::initialized`]: crate::watcher::Watcher::initialized
-    pub(crate) fn direct_addresses(&self) -> watcher::Direct<Option<BTreeSet<DirectAddr>>> {
+    /// [`Watcher`]: n0_watcher::Watcher
+    /// [`Watcher::initialized`]: n0_watcher::Watcher::initialized
+    pub(crate) fn direct_addresses(&self) -> n0_watcher::Direct<Option<BTreeSet<DirectAddr>>> {
         self.direct_addrs.addrs.watch()
     }
 
@@ -324,9 +324,9 @@ impl MagicSock {
     ///
     /// To get the current `net-report`, use [`Watcher::initialized`].
     ///
-    /// [`Watcher`]: crate::watcher::Watcher
-    /// [`Watcher::initialized`]: crate::watcher::Watcher::initialized
-    pub(crate) fn net_report(&self) -> watcher::Direct<Option<Arc<Report>>> {
+    /// [`Watcher`]: n0_watcher::Watcher
+    /// [`Watcher::initialized`]: n0_watcher::Watcher::initialized
+    pub(crate) fn net_report(&self) -> n0_watcher::Direct<Option<Arc<Report>>> {
         self.net_report.watch()
     }
 
@@ -361,8 +361,8 @@ impl MagicSock {
     /// Will return an error if there is no address information known about the
     /// given `node_id`.
     ///
-    /// [`Watcher`]: crate::watcher::Watcher
-    pub(crate) fn conn_type(&self, node_id: NodeId) -> Result<watcher::Direct<ConnectionType>> {
+    /// [`Watcher`]: n0_watcher::Watcher
+    pub(crate) fn conn_type(&self, node_id: NodeId) -> Result<n0_watcher::Direct<ConnectionType>> {
         self.node_map.conn_type(node_id)
     }
 

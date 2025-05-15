@@ -558,6 +558,7 @@ mod tests {
 
     use anyhow::Context;
     use iroh_base::{NodeAddr, SecretKey};
+    use n0_watcher::Watcher as _;
     use quinn::{IdleTimeout, TransportConfig};
     use rand::Rng;
     use testresult::TestResult;
@@ -565,7 +566,7 @@ mod tests {
     use tracing_test::traced_test;
 
     use super::*;
-    use crate::{endpoint::ConnectOptions, watcher::Watcher as _, RelayMode};
+    use crate::{endpoint::ConnectOptions, RelayMode};
 
     type InfoStore = HashMap<NodeId, (NodeData, u64)>;
 

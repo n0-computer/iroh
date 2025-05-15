@@ -2236,6 +2236,7 @@ dependencies = [
  "iroh-quinn-udp",
  "iroh-relay",
  "n0-future",
+ "n0-watcher",
  "netdev",
  "netwatch",
  "parse-size",
@@ -2309,6 +2310,7 @@ dependencies = [
  "iroh-metrics",
  "iroh-quinn",
  "n0-future",
+ "n0-watcher",
  "rand 0.8.5",
  "rcgen",
  "rustls",
@@ -2799,6 +2801,16 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-time",
+]
+
+[[package]]
+name = "n0-watcher"
+version = "0.1.0"
+source = "git+https://github.com/n0-computer/n0-watcher?branch=feat-combinators#dcfe39aa60820f98e4603edb62ed864533395325"
+dependencies = [
+ "derive_more",
+ "n0-future",
+ "thiserror 2.0.12",
 ]
 
 [[package]]

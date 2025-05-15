@@ -26,6 +26,7 @@ use ed25519_dalek::{pkcs8::DecodePublicKey, VerifyingKey};
 use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
 use iroh_relay::RelayMap;
 use n0_future::{time::Duration, Stream};
+use n0_watcher::Watcher;
 use pin_project::pin_project;
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
@@ -42,9 +43,7 @@ use crate::{
     magicsock::{self, Handle, NodeIdMappedAddr},
     metrics::EndpointMetrics,
     net_report::Report,
-    tls,
-    watcher::{self, Watcher},
-    RelayProtocol,
+    tls, RelayProtocol,
 };
 
 mod rtt_actor;
@@ -873,7 +872,8 @@ impl Endpoint {
     ///
     /// ```no_run
     /// # async fn wrapper() -> testresult::TestResult {
-    /// use iroh::{watcher::Watcher, Endpoint};
+    /// use iroh::Endpoint;
+    /// use n0_watcher::Watcher;
     ///
     /// let endpoint = Endpoint::builder()
     ///     .alpns(vec![b"my-alpn".to_vec()])
@@ -885,7 +885,7 @@ impl Endpoint {
     /// # }
     /// ```
     #[cfg(not(wasm_browser))]
-    pub fn node_addr(&self) -> impl watcher::Watcher<Value = Option<NodeAddr>> + '_ {
+    pub fn node_addr(&self) -> impl n0_watcher::Watcher<Value = Option<NodeAddr>> + '_ {
         let watch_addrs = self.direct_addresses();
         let watch_relay = self.home_relay();
         let node_id = self.node_id();
@@ -911,7 +911,7 @@ impl Endpoint {
     /// with a [`NodeAddr`] that only contains a relay URL, but no direct addresses,
     /// as there are no APIs for directly using sockets in browsers.
     #[cfg(wasm_browser)]
-    pub fn node_addr(&self) -> impl watcher::Watcher<Value = Option<NodeAddr>> + '_ {
+    pub fn node_addr(&self) -> impl n0_watcher::Watcher<Value = Option<NodeAddr>> + '_ {
         // In browsers, there will never be any direct addresses, so we wait
         // for the home relay instead. This makes the `NodeAddr` have *some* way
         // of connecting to us.
@@ -942,8 +942,9 @@ impl Endpoint {
     ///
     /// To wait for a home relay connection to be established, use [`Watcher::initialized`]:
     /// ```no_run
-    /// use iroh::{watcher::Watcher as _, Endpoint};
+    /// use iroh::Endpoint;
     /// use n0_future::StreamExt;
+    /// use n0_watcher::Watcher as _;
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
@@ -951,7 +952,7 @@ impl Endpoint {
     /// let _relay_url = mep.home_relay().initialized().await.unwrap();
     /// # });
     /// ```
-    pub fn home_relay(&self) -> impl watcher::Watcher<Value = Vec<RelayUrl>> + '_ {
+    pub fn home_relay(&self) -> impl n0_watcher::Watcher<Value = Vec<RelayUrl>> + '_ {
         self.msock.home_relay()
     }
 
@@ -978,8 +979,9 @@ impl Endpoint {
     ///
     /// To get the first set of direct addresses use [`Watcher::initialized`]:
     /// ```no_run
-    /// use iroh::{watcher::Watcher as _, Endpoint};
+    /// use iroh::Endpoint;
     /// use n0_future::StreamExt;
+    /// use n0_watcher::Watcher as _;
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
@@ -989,7 +991,7 @@ impl Endpoint {
     /// ```
     ///
     /// [STUN]: https://en.wikipedia.org/wiki/STUN
-    pub fn direct_addresses(&self) -> watcher::Direct<Option<BTreeSet<DirectAddr>>> {
+    pub fn direct_addresses(&self) -> n0_watcher::Direct<Option<BTreeSet<DirectAddr>>> {
         self.msock.direct_addresses()
     }
 
@@ -1013,8 +1015,9 @@ impl Endpoint {
     ///
     /// To get the first report use [`Watcher::initialized`]:
     /// ```no_run
-    /// use iroh::{watcher::Watcher as _, Endpoint};
+    /// use iroh::Endpoint;
     /// use n0_future::StreamExt;
+    /// use n0_watcher::Watcher as _;
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
@@ -1023,7 +1026,7 @@ impl Endpoint {
     /// # });
     /// ```
     #[doc(hidden)]
-    pub fn net_report(&self) -> watcher::Direct<Option<Arc<Report>>> {
+    pub fn net_report(&self) -> n0_watcher::Direct<Option<Arc<Report>>> {
         self.msock.net_report()
     }
 
@@ -1127,7 +1130,7 @@ impl Endpoint {
     /// # Errors
     ///
     /// Will error if we do not have any address information for the given `node_id`.
-    pub fn conn_type(&self, node_id: NodeId) -> Result<watcher::Direct<ConnectionType>> {
+    pub fn conn_type(&self, node_id: NodeId) -> Result<n0_watcher::Direct<ConnectionType>> {
         self.msock.conn_type(node_id)
     }
 
