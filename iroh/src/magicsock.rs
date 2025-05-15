@@ -1662,6 +1662,7 @@ impl AsyncUdpSocket for MagicSock {
             return Ok(*addr);
         }
         if let Some(SocketAddr::V4(addr)) = addrs.first() {
+            // Pretend to be IPv6, because our `MappedAddr`s need to be IPv6.
             let ip = addr.ip().to_ipv6_mapped().into();
             return Ok(SocketAddr::new(ip, addr.port()));
         }
@@ -1671,6 +1672,7 @@ impl AsyncUdpSocket for MagicSock {
 
     #[cfg(wasm_browser)]
     fn local_addr(&self) -> io::Result<SocketAddr> {
+        // Again, we need to pretend we're IPv6, because of our `MappedAddr`s.
         Ok(SocketAddr::new(std::net::Ipv6Addr::LOCALHOST.into(), 0))
     }
 
