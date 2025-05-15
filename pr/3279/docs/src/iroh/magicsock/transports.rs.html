@@ -430,9 +430,7 @@
 <a href="#429" id="429">429</a>
 <a href="#430" id="430">430</a>
 <a href="#431" id="431">431</a>
-<a href="#432" id="432">432</a>
-<a href="#433" id="433">433</a>
-<a href="#434" id="434">434</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#432" id="432">432</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     io::{<span class="self">self</span>, IoSliceMut},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     pin::Pin,
@@ -596,12 +594,10 @@
 
     <span class="attr">#[cfg(wasm_browser)]
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>local_addrs_watch(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Watcher&lt;Value = Vec&lt;Addr&gt;&gt; + Send + Sync {
-        <span class="kw">let </span>relays = <span class="self">self</span>.relay.iter().map(|t| {
-            t.local_addr_watch()
-                .map(|t| t.map(Addr::from))
-                .expect(<span class="string">"disconnected"</span>)
-        });
-        watcher::JoinOpt::new(relays)
+        <span class="kw">let </span>relays = <span class="self">self</span>.relay.iter().map(|t| t.local_addr_watch());
+        n0_watcher::Join::new(relays)
+            .map(|relays| relays.into_iter().flatten().map(Addr::from).collect())
+            .expect(<span class="string">"disconnected"</span>)
     }
 
     <span class="doccomment">/// Returns the bound addresses for IP based transports
