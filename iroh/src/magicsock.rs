@@ -2115,7 +2115,8 @@ impl RelayDatagramSendChannelReceiver {
 #[derive(Debug)]
 struct RelayDatagramRecvQueue {
     queue: ConcurrentQueue<RelayRecvDatagram>,
-    waker: AtomicWaker,
+    recv_waker: AtomicWaker,
+    send_waker: AtomicWaker,
 }
 
 impl RelayDatagramRecvQueue {
@@ -2123,7 +2124,8 @@ impl RelayDatagramRecvQueue {
     fn new() -> Self {
         Self {
             queue: ConcurrentQueue::bounded(512),
-            waker: AtomicWaker::new(),
+            recv_waker: AtomicWaker::new(),
+            send_waker: AtomicWaker::new(),
         }
     }
 
@@ -2136,8 +2138,19 @@ impl RelayDatagramRecvQueue {
         item: RelayRecvDatagram,
     ) -> Result<(), concurrent_queue::PushError<RelayRecvDatagram>> {
         self.queue.push(item).inspect(|_| {
-            self.waker.wake();
+            self.recv_waker.wake();
         })
+    }
+
+    fn poll_send_ready(&self, cx: &mut Context<'_>) -> Poll<Result<()>> {
+        if self.queue.is_closed() {
+            Poll::Ready(Err(anyhow!("Queue closed")))
+        } else if !self.queue.is_full() {
+            Poll::Ready(Ok(()))
+        } else {
+            self.send_waker.register(cx.waker());
+            Poll::Pending
+        }
     }
 
     /// Polls for new items in the queue.
@@ -2154,23 +2167,31 @@ impl RelayDatagramRecvQueue {
     /// to be able to poll from `&self`.
     fn poll_recv(&self, cx: &mut Context) -> Poll<Result<RelayRecvDatagram>> {
         match self.queue.pop() {
-            Ok(value) => Poll::Ready(Ok(value)),
+            Ok(value) => {
+                self.send_waker.wake();
+                Poll::Ready(Ok(value))
+            }
             Err(concurrent_queue::PopError::Empty) => {
-                self.waker.register(cx.waker());
+                self.recv_waker.register(cx.waker());
 
                 match self.queue.pop() {
                     Ok(value) => {
-                        self.waker.take();
+                        self.send_waker.wake();
+                        self.recv_waker.take();
                         Poll::Ready(Ok(value))
                     }
                     Err(concurrent_queue::PopError::Empty) => Poll::Pending,
                     Err(concurrent_queue::PopError::Closed) => {
-                        self.waker.take();
+                        self.recv_waker.take();
+                        self.send_waker.wake();
                         Poll::Ready(Err(anyhow!("Queue closed")))
                     }
                 }
             }
-            Err(concurrent_queue::PopError::Closed) => Poll::Ready(Err(anyhow!("Queue closed"))),
+            Err(concurrent_queue::PopError::Closed) => {
+                self.send_waker.wake();
+                Poll::Ready(Err(anyhow!("Queue closed")))
+            }
         }
     }
 }
