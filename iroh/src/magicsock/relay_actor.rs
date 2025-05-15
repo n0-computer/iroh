@@ -136,10 +136,6 @@ struct ActiveRelayActor {
     prio_inbox: mpsc::Receiver<ActiveRelayPrioMessage>,
     /// Inbox for messages which involve sending to the relay server.
     inbox: mpsc::Receiver<ActiveRelayMessage>,
-    /// Queue for received relay datagrams.
-    relay_datagrams_recv: Arc<RelayDatagramRecvQueue>,
-    /// Queue for received relay disco packets.
-    relay_disco_recv: mpsc::Sender<RelayDiscoMessage>,
     /// Channel on which we queue packets to send to the relay.
     relay_datagrams_send: mpsc::Receiver<RelaySendItem>,
 
@@ -162,20 +158,7 @@ struct ActiveRelayActor {
     /// Token indicating the [`ActiveRelayActor`] should stop.
     stop_token: CancellationToken,
     metrics: Arc<MagicsockMetrics>,
-    /// Received relay packets that could not yet be forwarded to the magicsocket.
-    pending_received: Option<PendingRecv>,
-}
-
-#[derive(Debug)]
-struct PendingRecv {
-    packet_iter: PacketSplitIter,
-    blocked_on: RecvPath,
-}
-
-#[derive(Debug)]
-enum RecvPath {
-    Data,
-    Disco,
+    receive_queue: ReceiveQueue,
 }
 
 #[derive(Debug)]
@@ -271,16 +254,18 @@ impl ActiveRelayActor {
         ActiveRelayActor {
             prio_inbox,
             inbox,
-            relay_datagrams_recv,
             relay_datagrams_send,
-            relay_disco_recv,
             url,
             relay_client_builder,
             is_home_relay: false,
             inactive_timeout: Box::pin(time::sleep(RELAY_INACTIVE_CLEANUP_TIME)),
             stop_token,
             metrics,
-            pending_received: None,
+            receive_queue: ReceiveQueue {
+                relay_datagrams_recv,
+                relay_disco_recv,
+                pending: None,
+            },
         }
     }
 
@@ -630,8 +615,8 @@ impl ActiveRelayActor {
                     let fut = client_sink.send_all(&mut packet_stream);
                     self.run_sending(fut, &mut state, &mut client_stream).await?;
                 }
-                _ = forward_pending(&mut self.pending_received, &self.relay_datagrams_recv, &mut self.relay_disco_recv), if self.pending_received.is_some() => {}
-                msg = client_stream.next(), if self.pending_received.is_none() => {
+                () = self.receive_queue.forward_pending(), if self.receive_queue.is_pending() => {}
+                msg = client_stream.next(), if !self.receive_queue.is_pending() => {
                     let Some(msg) = msg else {
                         break Err(anyhow!("Stream closed by server."));
                     };
@@ -678,15 +663,8 @@ impl ActiveRelayActor {
                     state.last_packet_src = Some(remote_node_id);
                     state.nodes_present.insert(remote_node_id);
                 }
-                let packet_iter = PacketSplitIter::new(self.url.clone(), remote_node_id, data);
-                if let Some(pending) = handle_received_packet_iter(
-                    packet_iter,
-                    None,
-                    &self.relay_datagrams_recv,
-                    &mut self.relay_disco_recv,
-                ) {
-                    self.pending_received = Some(pending);
-                }
+                let packets = PacketSplitIter::new(self.url.clone(), remote_node_id, data);
+                self.receive_queue.queue_packets(packets);
             }
             ReceivedMessage::NodeGone(node_id) => {
                 state.nodes_present.remove(&node_id);
@@ -769,8 +747,8 @@ impl ActiveRelayActor {
                     break Err(anyhow!("Ping timeout"));
                 }
                 // No need to read the inbox or datagrams to send.
-                _ = forward_pending(&mut self.pending_received, &self.relay_datagrams_recv, &mut self.relay_disco_recv), if self.pending_received.is_some() => {}
-                msg = client_stream.next(), if self.pending_received.is_none() => {
+                () = self.receive_queue.forward_pending(), if self.receive_queue.is_pending() => {}
+                msg = client_stream.next(), if !self.receive_queue.is_pending() => {
                     let Some(msg) = msg else {
                         break Err(anyhow!("Stream closed by server."));
                     };
@@ -789,103 +767,128 @@ impl ActiveRelayActor {
     }
 }
 
-/// Forward pending received packets to their queues.
-///
-/// If `maybe_pending` is not empty, this will wait for the path the last received item
-/// is blocked on (via [`PendingRecv::blocked_on`]) to become unblocked. It will then forward
-/// the pending items, until a queue is blocked again. In that case, the remaining items will
-/// be put back into `maybe_pending`. If all items could be sent, `maybe_pending` will be set
-/// to `None`.
-///
-/// This function is cancellation-safe: If the future is dropped at any point, all items are guaranteed
-/// to either be sent into their respective queues, or are still in `maybe_pending`.
-async fn forward_pending(
-    maybe_pending: &mut Option<PendingRecv>,
-    relay_datagrams_recv: &RelayDatagramRecvQueue,
-    relay_disco_recv: &mut mpsc::Sender<RelayDiscoMessage>,
-) {
-    // We take a mutable reference onto the inner value.
-    // we're not `take`ing it here, because this would make the function not cancellation safe.
-    let Some(ref mut pending) = maybe_pending else {
-        return;
-    };
-    let disco_permit = match pending.blocked_on {
-        RecvPath::Data => {
-            std::future::poll_fn(|cx| relay_datagrams_recv.poll_send_ready(cx))
-                .await
-                .ok();
-            None
-        }
-        RecvPath::Disco => {
-            let Ok(permit) = relay_disco_recv.clone().reserve_owned().await else {
-                return;
-            };
-            Some(permit)
-        }
-    };
-    // We now take the inner value by value. it is cancellation safe here because
-    // no further `await`s occur after here.
-    // The unwrap is guaranteed to be safe because we checked above that it is not none.
-    #[allow(clippy::unwrap_used, reason = "checked above")]
-    let pending = maybe_pending.take().unwrap();
-    if let Some(pending) = handle_received_packet_iter(
-        pending.packet_iter,
-        disco_permit,
-        relay_datagrams_recv,
-        relay_disco_recv,
-    ) {
-        *maybe_pending = Some(pending);
-    }
+#[derive(Debug)]
+struct ReceiveQueue {
+    /// Received relay packets that could not yet be forwarded to the magicsocket.
+    pending: Option<PendingRecv>,
+    /// Queue for received relay datagrams.
+    relay_datagrams_recv: Arc<RelayDatagramRecvQueue>,
+    /// Queue for received relay disco packets.
+    relay_disco_recv: mpsc::Sender<RelayDiscoMessage>,
 }
 
-fn handle_received_packet_iter(
-    mut packet_iter: PacketSplitIter,
-    mut disco_permit: Option<OwnedPermit<RelayDiscoMessage>>,
-    relay_datagrams_recv: &RelayDatagramRecvQueue,
-    relay_disco_recv: &mut mpsc::Sender<RelayDiscoMessage>,
-) -> Option<PendingRecv> {
-    let remote_node_id = packet_iter.remote_node_id();
-    for datagram in &mut packet_iter {
-        let Ok(datagram) = datagram else {
-            warn!("Invalid packet split");
-            return None;
+#[derive(Debug)]
+struct PendingRecv {
+    packets: PacketSplitIter,
+    blocked_on: RecvPath,
+}
+
+#[derive(Debug)]
+enum RecvPath {
+    Data,
+    Disco,
+}
+
+impl ReceiveQueue {
+    fn is_pending(&self) -> bool {
+        self.pending.is_some()
+    }
+
+    fn queue_packets(&mut self, packets: PacketSplitIter) {
+        debug_assert!(
+            !self.is_pending(),
+            "ReceiveQueue::queue_packets may not be called if is_pending() returns true"
+        );
+        self.handle_packets(packets, None);
+    }
+
+    /// Forward pending received packets to their queues.
+    ///
+    /// This will wait for the path the last received item is blocked on (via [`PendingRecv::blocked_on`])
+    /// to become unblocked. It will then forward the pending items, until a queue is blocked again.
+    /// In that case, the remaining items will be stored and [`Self::is_pending`] returns true.
+    ///
+    /// This function is cancellation-safe: If the future is dropped at any point, all items are guaranteed
+    /// to either be sent into their respective queues or preserved here.
+    async fn forward_pending(&mut self) {
+        // We take a reference onto the inner value.
+        // we're not `take`ing it here, because this would make the function not cancellation safe.
+        let Some(ref pending) = self.pending else {
+            return;
         };
-        match crate::disco::source_and_box_bytes(&datagram.buf) {
-            Some((source, sealed_box)) => {
-                if remote_node_id != source {
-                    // TODO: return here?
-                    warn!("Received relay disco message from connection for {}, but with message from {}", remote_node_id.fmt_short(), source.fmt_short());
-                }
-                let message = RelayDiscoMessage {
-                    source,
-                    sealed_box,
-                    relay_url: datagram.url.clone(),
-                    relay_remote_node_id: datagram.src,
-                };
-                if let Some(permit) = disco_permit.take() {
-                    permit.send(message);
-                } else if let Err(err) = relay_disco_recv.try_send(message) {
-                    warn!("Dropping received relay disco packet: {err:#}");
-                    packet_iter.push_front(datagram);
-                    return Some(PendingRecv {
-                        packet_iter,
-                        blocked_on: RecvPath::Disco,
-                    });
-                }
+        let disco_permit = match pending.blocked_on {
+            RecvPath::Data => {
+                std::future::poll_fn(|cx| self.relay_datagrams_recv.poll_send_ready(cx))
+                    .await
+                    .ok();
+                None
             }
-            None => {
-                if let Err(err) = relay_datagrams_recv.try_send(datagram) {
-                    warn!("Dropping received relay data packet: {err:#}");
-                    packet_iter.push_front(err.into_inner());
-                    return Some(PendingRecv {
-                        packet_iter,
-                        blocked_on: RecvPath::Data,
-                    });
+            RecvPath::Disco => {
+                let Ok(permit) = self.relay_disco_recv.clone().reserve_owned().await else {
+                    return;
+                };
+                Some(permit)
+            }
+        };
+        let packets = self
+            .pending
+            .take()
+            .expect("checked to be not empty")
+            .packets;
+        self.handle_packets(packets, disco_permit);
+    }
+
+    fn handle_packets(
+        &mut self,
+        mut packet_iter: PacketSplitIter,
+        mut disco_permit: Option<OwnedPermit<RelayDiscoMessage>>,
+    ) {
+        let remote_node_id = packet_iter.remote_node_id();
+        for datagram in &mut packet_iter {
+            let Ok(datagram) = datagram else {
+                warn!("Invalid packet split");
+                self.pending = None;
+                return;
+            };
+            match crate::disco::source_and_box_bytes(&datagram.buf) {
+                Some((source, sealed_box)) => {
+                    if remote_node_id != source {
+                        // TODO: return here?
+                        warn!("Received relay disco message from connection for {}, but with message from {}", remote_node_id.fmt_short(), source.fmt_short());
+                    }
+                    let message = RelayDiscoMessage {
+                        source,
+                        sealed_box,
+                        relay_url: datagram.url.clone(),
+                        relay_remote_node_id: datagram.src,
+                    };
+                    if let Some(permit) = disco_permit.take() {
+                        permit.send(message);
+                    } else if let Err(err) = self.relay_disco_recv.try_send(message) {
+                        warn!("Relay disco receive queue blocked: {err}");
+                        packet_iter.push_front(datagram);
+                        self.pending = Some(PendingRecv {
+                            packets: packet_iter,
+                            blocked_on: RecvPath::Disco,
+                        });
+                        return;
+                    }
+                }
+                None => {
+                    if let Err(err) = self.relay_datagrams_recv.try_send(datagram) {
+                        warn!("Relay data receive queue blocked: {err}");
+                        packet_iter.push_front(err.into_inner());
+                        self.pending = Some(PendingRecv {
+                            packets: packet_iter,
+                            blocked_on: RecvPath::Data,
+                        });
+                        return;
+                    }
                 }
             }
         }
+        self.pending = None;
     }
-    None
 }
 
 /// Shared state when the [`ActiveRelayActor`] is connected to a relay server.
