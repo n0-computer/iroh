@@ -549,7 +549,8 @@
 <a href="#548" id="548">548</a>
 <a href="#549" id="549">549</a>
 <a href="#550" id="550">550</a>
-<a href="#551" id="551">551</a></pre></div><pre class="rust"><code><span class="doccomment">//! Internal utilities to support testing.
+<a href="#551" id="551">551</a>
+<a href="#552" id="552">552</a></pre></div><pre class="rust"><code><span class="doccomment">//! Internal utilities to support testing.
 </span><span class="kw">use </span>std::net::Ipv4Addr;
 
 <span class="kw">use </span>anyhow::Result;
@@ -925,6 +926,7 @@
     <span class="kw">use </span>iroh_base::NodeId;
     <span class="kw">use </span>iroh_relay::node_info::{NodeIdExt, NodeInfo, IROH_TXT_NAME};
     <span class="kw">use </span>pkarr::SignedPacket;
+    <span class="kw">use </span>tracing::debug;
 
     <span class="kw">use </span><span class="kw">crate</span>::test_utils::dns_server::QueryHandler;
 
@@ -955,7 +957,7 @@
                 <span class="kw">let </span>node_info = p
                     .as_ref()
                     .and_then(|p| NodeInfo::from_pkarr_signed_packet(p).ok());
-                <span class="macro">eprintln!</span>(<span class="string">"got info {:#?}"</span>, node_info);
+                <span class="macro">debug!</span>(<span class="string">"got info {:#?}"</span>, node_info);
                 p.is_none()
             }) {
                 <span class="macro">tokio::select!</span> {

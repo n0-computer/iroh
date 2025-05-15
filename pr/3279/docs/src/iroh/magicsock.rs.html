@@ -3625,15 +3625,7 @@
 <a href="#3624" id="3624">3624</a>
 <a href="#3625" id="3625">3625</a>
 <a href="#3626" id="3626">3626</a>
-<a href="#3627" id="3627">3627</a>
-<a href="#3628" id="3628">3628</a>
-<a href="#3629" id="3629">3629</a>
-<a href="#3630" id="3630">3630</a>
-<a href="#3631" id="3631">3631</a>
-<a href="#3632" id="3632">3632</a>
-<a href="#3633" id="3633">3633</a>
-<a href="#3634" id="3634">3634</a>
-<a href="#3635" id="3635">3635</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#3627" id="3627">3627</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4090,10 +4082,7 @@
             </span>.transports
             .local_addrs()
             .into_iter()
-            .filter_map(|addr| {
-                <span class="kw">let </span>addr: SocketAddr = addr.try_into().ok()<span class="question-mark">?</span>;
-                <span class="prelude-val">Some</span>(addr)
-            })
+            .filter_map(|addr| SocketAddr::try_from(addr).ok())
             .collect();
 
         <span class="kw">if let </span><span class="prelude-val">Some</span>(addr) = addrs.iter().find(|a| a.is_ipv6()) {
@@ -4125,7 +4114,7 @@
             ));
         }
 
-        <span class="kw">let </span><span class="kw-2">mut </span>available_paths = Vec::new();
+        <span class="kw">let </span><span class="kw-2">mut </span>active_paths = Vec::new();
 
         <span class="kw">match </span>MappedAddr::from(transmit.destination) {
             MappedAddr::None(dest) =&gt; {
@@ -4158,10 +4147,10 @@
                         }
 
                         <span class="kw">if let </span><span class="prelude-val">Some</span>(addr) = udp_addr {
-                            available_paths.push(transports::Addr::from(addr));
+                            active_paths.push(transports::Addr::from(addr));
                         }
                         <span class="kw">if let </span><span class="prelude-val">Some</span>(url) = relay_url {
-                            available_paths.push(transports::Addr::RelayUrl(url, node_id));
+                            active_paths.push(transports::Addr::RelayUrl(url, node_id));
                         }
                     }
                     <span class="prelude-val">None </span>=&gt; {
@@ -4182,7 +4171,7 @@
                 // Get the socket addr
                 </span><span class="kw">match </span><span class="self">self</span>.ip_mapped_addrs.get_ip_addr(<span class="kw-2">&amp;</span>dest) {
                     <span class="prelude-val">Some</span>(addr) =&gt; {
-                        available_paths.push(transports::Addr::from(addr));
+                        active_paths.push(transports::Addr::from(addr));
                     }
                     <span class="prelude-val">None </span>=&gt; {
                         <span class="macro">error!</span>(%dest, <span class="string">"unknown mapped address"</span>);
@@ -4191,7 +4180,7 @@
             }
         }
 
-        <span class="kw">if </span>available_paths.is_empty() {
+        <span class="kw">if </span>active_paths.is_empty() {
             <span class="comment">// Returning Ok here means we let QUIC timeout.
             // Returning an error would immediately fail a connection.
             // The philosophy of quinn-udp is that a UDP connection could
@@ -4202,11 +4191,11 @@
             <span class="kw">return </span><span class="prelude-val">Ok</span>(());
         }
 
-        <span class="kw">let </span><span class="kw-2">mut </span>results = Vec::with_capacity(available_paths.len());
+        <span class="kw">let </span><span class="kw-2">mut </span>results = Vec::with_capacity(active_paths.len());
 
-        <span class="macro">trace!</span>(<span class="question-mark">?</span>available_paths, <span class="string">"attempting to send"</span>);
+        <span class="macro">trace!</span>(<span class="question-mark">?</span>active_paths, <span class="string">"attempting to send"</span>);
 
-        <span class="kw">for </span>destination <span class="kw">in </span>available_paths {
+        <span class="kw">for </span>destination <span class="kw">in </span>active_paths {
             <span class="kw">let </span>transmit = transports::Transmit {
                 ecn: transmit.ecn,
                 contents: transmit.contents,
@@ -4578,7 +4567,11 @@
             txn = <span class="question-mark">?</span>dm.tx_id,
         );
 
-        <span class="kw">if </span>!<span class="self">self</span>.send_disco_message_queued(addr.clone(), sender, pong) {
+        <span class="kw">if </span><span class="self">self
+            </span>.disco_sender
+            .try_send((addr.clone(), sender, pong))
+            .is_err()
+        {
             <span class="macro">warn!</span>(%addr, <span class="string">"failed to queue pong"</span>);
         }
 
@@ -4652,22 +4645,6 @@
             }
         }
         <span class="prelude-val">Ok</span>(())
-    }
-
-    <span class="doccomment">/// Send a disco message. UDP messages will be queued.
-    ///
-    /// If `dst` is [`SendAddr::Relay`], the message will be pushed into the relay client channel.
-    /// If `dst` is [`SendAddr::Udp`], the message will be pushed into the udp disco send channel.
-    ///
-    /// Returns true if the channel had capacity for the message, and false if the message was
-    /// dropped.
-    </span><span class="kw">fn </span>send_disco_message_queued(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        dst: SendAddr,
-        dst_key: PublicKey,
-        msg: disco::Message,
-    ) -&gt; bool {
-        <span class="self">self</span>.disco_sender.try_send((dst, dst_key, msg)).is_ok()
     }
 
     <span class="doccomment">/// Send a disco message. UDP messages will be polled to send directly on the UDP socket.
@@ -4783,7 +4760,11 @@
             .expect(<span class="string">"poisoned"</span>)
             .drain()
         {
-            <span class="kw">if </span>!<span class="self">self</span>.send_disco_message_queued(SendAddr::Relay(url), public_key, msg.clone()) {
+            <span class="kw">if </span><span class="self">self
+                </span>.disco_sender
+                .try_send((SendAddr::Relay(url), public_key, msg.clone()))
+                .is_err()
+            {
                 <span class="macro">warn!</span>(node = %public_key.fmt_short(), <span class="string">"relay channel full, dropping call-me-maybe"</span>);
             }
         }
@@ -4799,7 +4780,11 @@
             <span class="prelude-val">Ok</span>(()) =&gt; {
                 <span class="kw">let </span>msg = <span class="self">self</span>.direct_addrs.to_call_me_maybe_message();
                 <span class="kw">let </span>msg = disco::Message::CallMeMaybe(msg);
-                <span class="kw">if </span>!<span class="self">self</span>.send_disco_message_queued(SendAddr::Relay(url.clone()), dst_node, msg) {
+                <span class="kw">if </span><span class="self">self
+                    </span>.disco_sender
+                    .try_send((SendAddr::Relay(url.clone()), dst_node, msg.clone()))
+                    .is_err()
+                {
                     <span class="macro">warn!</span>(dstkey = %dst_node.fmt_short(), relayurl = %url,
                       <span class="string">"relay channel full, dropping call-me-maybe"</span>);
                 } <span class="kw">else </span>{
@@ -5453,8 +5438,7 @@
         </span><span class="kw">let </span><span class="kw-2">mut </span>portmap_watcher_closed = <span class="bool-val">false</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>link_change_closed = <span class="bool-val">false</span>;
 
-        <span class="kw">let </span>watcher = <span class="self">self</span>.msock.transports.local_addrs_watch();
-        <span class="kw">let </span><span class="kw-2">mut </span>local_addr_changes = watcher.stream();
+        <span class="kw">let </span><span class="kw-2">mut </span>watcher = <span class="self">self</span>.msock.transports.local_addrs_watch();
 
         <span class="kw">loop </span>{
             <span class="self">self</span>.msock.metrics.magicsock.actor_tick_main.inc();
@@ -5489,15 +5473,15 @@
                     <span class="self">self</span>.msock.metrics.magicsock.actor_tick_re_stun.inc();
                     <span class="self">self</span>.msock.re_stun(<span class="string">"periodic"</span>);
                 }
-                new_addr = local_addr_changes.next() =&gt; {
+                new_addr = watcher.updated() =&gt; {
                     <span class="kw">match </span>new_addr {
-                        <span class="prelude-val">Some</span>(addrs) =&gt; {
+                        <span class="prelude-val">Ok</span>(addrs) =&gt; {
                             <span class="kw">if </span>!addrs.is_empty() {
                                 <span class="macro">trace!</span>(<span class="question-mark">?</span>addrs, <span class="string">"local addrs"</span>);
                                 <span class="self">self</span>.msock.publish_my_addr();
                             }
                         }
-                        <span class="prelude-val">None </span>=&gt; {
+                        <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; {
                             <span class="macro">warn!</span>(<span class="string">"local addr watcher stopped"</span>);
                         }
                     }

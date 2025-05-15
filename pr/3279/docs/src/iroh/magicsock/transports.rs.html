@@ -598,7 +598,7 @@
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>local_addrs_watch(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Watcher&lt;Value = Vec&lt;Addr&gt;&gt; + Send + Sync {
         <span class="kw">let </span>relays = <span class="self">self</span>.relay.iter().map(|t| {
             t.local_addr_watch()
-                .map(<span class="kw">move </span>|t| t.map(|(url, id)| Addr::RelayUrl(url, id)))
+                .map(|t| t.map(Addr::from))
                 .expect(<span class="string">"disconnected"</span>)
         });
         watcher::JoinOpt::new(relays)
