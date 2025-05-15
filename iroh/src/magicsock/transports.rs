@@ -164,7 +164,7 @@ impl Transports {
     pub(crate) fn local_addrs_watch(&self) -> impl Watcher<Value = Vec<Addr>> + Send + Sync {
         let relays = self.relay.iter().map(|t| {
             t.local_addr_watch()
-                .map(move |t| t.map(|(url, id)| Addr::RelayUrl(url, id)))
+                .map(|t| t.map(Addr::from))
                 .expect("disconnected")
         });
         watcher::JoinOpt::new(relays)

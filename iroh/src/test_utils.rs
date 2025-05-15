@@ -374,6 +374,7 @@ pub(crate) mod pkarr_dns_state {
     use iroh_base::NodeId;
     use iroh_relay::node_info::{NodeIdExt, NodeInfo, IROH_TXT_NAME};
     use pkarr::SignedPacket;
+    use tracing::debug;
 
     use crate::test_utils::dns_server::QueryHandler;
 
@@ -404,7 +405,7 @@ pub(crate) mod pkarr_dns_state {
                 let node_info = p
                     .as_ref()
                     .and_then(|p| NodeInfo::from_pkarr_signed_packet(p).ok());
-                eprintln!("got info {:#?}", node_info);
+                debug!("got info {:#?}", node_info);
                 p.is_none()
             }) {
                 tokio::select! {

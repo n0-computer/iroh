@@ -455,10 +455,7 @@ impl MagicSock {
             .transports
             .local_addrs()
             .into_iter()
-            .filter_map(|addr| {
-                let addr: SocketAddr = addr.try_into().ok()?;
-                Some(addr)
-            })
+            .filter_map(|addr| SocketAddr::try_from(addr).ok())
             .collect();
 
         if let Some(addr) = addrs.iter().find(|a| a.is_ipv6()) {
@@ -490,7 +487,7 @@ impl MagicSock {
             ));
         }
 
-        let mut available_paths = Vec::new();
+        let mut active_paths = Vec::new();
 
         match MappedAddr::from(transmit.destination) {
             MappedAddr::None(dest) => {
@@ -523,10 +520,10 @@ impl MagicSock {
                         }
 
                         if let Some(addr) = udp_addr {
-                            available_paths.push(transports::Addr::from(addr));
+                            active_paths.push(transports::Addr::from(addr));
                         }
                         if let Some(url) = relay_url {
-                            available_paths.push(transports::Addr::RelayUrl(url, node_id));
+                            active_paths.push(transports::Addr::RelayUrl(url, node_id));
                         }
                     }
                     None => {
@@ -547,7 +544,7 @@ impl MagicSock {
                 // Get the socket addr
                 match self.ip_mapped_addrs.get_ip_addr(&dest) {
                     Some(addr) => {
-                        available_paths.push(transports::Addr::from(addr));
+                        active_paths.push(transports::Addr::from(addr));
                     }
                     None => {
                         error!(%dest, "unknown mapped address");
@@ -556,7 +553,7 @@ impl MagicSock {
             }
         }
 
-        if available_paths.is_empty() {
+        if active_paths.is_empty() {
             // Returning Ok here means we let QUIC timeout.
             // Returning an error would immediately fail a connection.
             // The philosophy of quinn-udp is that a UDP connection could
@@ -567,11 +564,11 @@ impl MagicSock {
             return Ok(());
         }
 
-        let mut results = Vec::with_capacity(available_paths.len());
+        let mut results = Vec::with_capacity(active_paths.len());
 
-        trace!(?available_paths, "attempting to send");
+        trace!(?active_paths, "attempting to send");
 
-        for destination in available_paths {
+        for destination in active_paths {
             let transmit = transports::Transmit {
                 ecn: transmit.ecn,
                 contents: transmit.contents,
@@ -943,7 +940,11 @@ impl MagicSock {
             txn = ?dm.tx_id,
         );
 
-        if !self.send_disco_message_queued(addr.clone(), sender, pong) {
+        if self
+            .disco_sender
+            .try_send((addr.clone(), sender, pong))
+            .is_err()
+        {
             warn!(%addr, "failed to queue pong");
         }
 
@@ -1017,22 +1018,6 @@ impl MagicSock {
             }
         }
         Ok(())
-    }
-
-    /// Send a disco message. UDP messages will be queued.
-    ///
-    /// If `dst` is [`SendAddr::Relay`], the message will be pushed into the relay client channel.
-    /// If `dst` is [`SendAddr::Udp`], the message will be pushed into the udp disco send channel.
-    ///
-    /// Returns true if the channel had capacity for the message, and false if the message was
-    /// dropped.
-    fn send_disco_message_queued(
-        &self,
-        dst: SendAddr,
-        dst_key: PublicKey,
-        msg: disco::Message,
-    ) -> bool {
-        self.disco_sender.try_send((dst, dst_key, msg)).is_ok()
     }
 
     /// Send a disco message. UDP messages will be polled to send directly on the UDP socket.
@@ -1148,7 +1133,11 @@ impl MagicSock {
             .expect("poisoned")
             .drain()
         {
-            if !self.send_disco_message_queued(SendAddr::Relay(url), public_key, msg.clone()) {
+            if self
+                .disco_sender
+                .try_send((SendAddr::Relay(url), public_key, msg.clone()))
+                .is_err()
+            {
                 warn!(node = %public_key.fmt_short(), "relay channel full, dropping call-me-maybe");
             }
         }
@@ -1164,7 +1153,11 @@ impl MagicSock {
             Ok(()) => {
                 let msg = self.direct_addrs.to_call_me_maybe_message();
                 let msg = disco::Message::CallMeMaybe(msg);
-                if !self.send_disco_message_queued(SendAddr::Relay(url.clone()), dst_node, msg) {
+                if self
+                    .disco_sender
+                    .try_send((SendAddr::Relay(url.clone()), dst_node, msg.clone()))
+                    .is_err()
+                {
                     warn!(dstkey = %dst_node.fmt_short(), relayurl = %url,
                       "relay channel full, dropping call-me-maybe");
                 } else {
@@ -1818,8 +1811,7 @@ impl Actor {
         let mut portmap_watcher_closed = false;
         let mut link_change_closed = false;
 
-        let watcher = self.msock.transports.local_addrs_watch();
-        let mut local_addr_changes = watcher.stream();
+        let mut watcher = self.msock.transports.local_addrs_watch();
 
         loop {
             self.msock.metrics.magicsock.actor_tick_main.inc();
@@ -1854,15 +1846,15 @@ impl Actor {
                     self.msock.metrics.magicsock.actor_tick_re_stun.inc();
                     self.msock.re_stun("periodic");
                 }
-                new_addr = local_addr_changes.next() => {
+                new_addr = watcher.updated() => {
                     match new_addr {
-                        Some(addrs) => {
+                        Ok(addrs) => {
                             if !addrs.is_empty() {
                                 trace!(?addrs, "local addrs");
                                 self.msock.publish_my_addr();
                             }
                         }
-                        None => {
+                        Err(_) => {
                             warn!("local addr watcher stopped");
                         }
                     }
