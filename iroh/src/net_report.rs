@@ -26,9 +26,11 @@ use iroh_relay::{protos::stun, RelayMap};
 use n0_future::{
     task::{self, AbortOnDropHandle},
     time::{Duration, Instant},
+    FutureExt,
 };
 #[cfg(not(wasm_browser))]
 use netwatch::UdpSocket;
+use reportgen::ProbeProto;
 use tokio::sync::{self, mpsc, oneshot};
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
@@ -43,6 +45,7 @@ mod reportgen;
 
 mod options;
 
+pub use reportgen::ProbeReport;
 #[cfg(not(wasm_browser))]
 pub use stun_utils::bind_local_stun_socket;
 
@@ -71,6 +74,8 @@ pub use options::Options;
 pub use reportgen::QuicConfig;
 #[cfg(not(wasm_browser))]
 use reportgen::SocketState;
+
+use crate::watcher::{self, Watchable};
 
 const FULL_REPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
@@ -315,10 +320,7 @@ impl Client {
         #[cfg(wasm_browser)]
         let opts = Options::default();
         let rx = self.get_report_channel(relay_map.clone(), opts).await?;
-        match rx.await {
-            Ok(res) => res,
-            Err(_) => Err(anyhow!("channel closed, actor awol")),
-        }
+        rx.await
     }
 
     /// Runs a net_report, returning the report.
@@ -328,10 +330,7 @@ impl Client {
     /// Look at [`Options`] for the different configuration options.
     pub async fn get_report(&mut self, relay_map: RelayMap, opts: Options) -> Result<Arc<Report>> {
         let rx = self.get_report_channel(relay_map, opts).await?;
-        match rx.await {
-            Ok(res) => res,
-            Err(_) => Err(anyhow!("channel closed, actor awol")),
-        }
+        rx.await
     }
 
     /// Get report with channel
@@ -341,16 +340,115 @@ impl Client {
         &mut self,
         relay_map: RelayMap,
         opts: Options,
-    ) -> Result<oneshot::Receiver<Result<Arc<Report>>>> {
-        let (tx, rx) = oneshot::channel();
+    ) -> Result<NetReporter> {
+        let (reporter, sender) = NetReporter::new();
         self.addr
             .send(Message::RunCheck {
                 relay_map,
                 opts,
-                response_tx: tx,
+                response_tx: sender,
             })
             .await?;
-        Ok(rx)
+        Ok(reporter)
+    }
+
+    /// Watch if a report is currently running.
+    ///
+    /// Returns a `Watcher`. If the content is
+    /// `true`, a report is currently running. If
+    /// `false`, no report is currentnly running.
+    pub async fn is_running(addr: &Addr) -> Result<watcher::Direct<bool>> {
+        let (tx, rx) = oneshot::channel();
+        addr.send(Message::TrackRuns(tx)).await?;
+        let is_running = rx.await?;
+        Ok(is_running)
+    }
+}
+
+/// ProbeResult
+#[derive(Debug)]
+pub struct ProbeResult {
+    proto: ProbeProto,
+    relay_url: RelayUrl,
+    addr: Option<SocketAddr>,
+    latency: Option<Duration>,
+}
+
+impl From<ProbeReport> for ProbeResult {
+    fn from(value: ProbeReport) -> Self {
+        Self {
+            proto: value.proto(),
+            relay_url: value.relay_url(),
+            addr: value.addr,
+            latency: value.latency,
+        }
+    }
+}
+
+impl fmt::Display for ProbeResult {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut s = format!("{} probe to {}", self.proto, self.relay_url);
+        if let Some(latency) = self.latency {
+            s.push_str(&format!(" successful ({:?})", latency));
+        } else {
+            s.push_str(" unsuccessful");
+        }
+
+        if let Some(addr) = self.addr {
+            s.push_str(&format!(", public address found: {}", addr));
+        }
+        write!(f, "{s}")
+    }
+}
+
+/// NetReporter allows you to track and receive information about the probes
+/// and report in the current net-report run.
+///
+/// ProbeReports may be dropped if the NetReporter is not polled.
+#[derive(Debug)]
+pub struct NetReporter {
+    recv: mpsc::Receiver<ProbeResult>,
+    report: oneshot::Receiver<Result<Arc<Report>>>,
+}
+
+#[derive(Debug)]
+pub(crate) struct ProbeSender {
+    send: mpsc::Sender<ProbeResult>,
+    report: oneshot::Sender<Result<Arc<Report>>>,
+}
+
+impl NetReporter {
+    fn new() -> (Self, ProbeSender) {
+        let (send, recv) = mpsc::channel(10);
+        let (tx, rx) = oneshot::channel();
+        (Self { recv, report: rx }, ProbeSender { send, report: tx })
+    }
+}
+
+impl n0_future::Stream for NetReporter {
+    type Item = ProbeResult;
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        self.recv.poll_recv(cx)
+    }
+}
+
+impl n0_future::Future for NetReporter {
+    type Output = Result<Arc<Report>>;
+
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        match self.report.poll(cx) {
+            std::task::Poll::Ready(Ok(result)) => std::task::Poll::Ready(result),
+            std::task::Poll::Ready(Err(err)) => {
+                std::task::Poll::Ready(Err(anyhow::Error::from(err)))
+            }
+            std::task::Poll::Pending => std::task::Poll::Pending,
+        }
     }
 }
 
@@ -377,7 +475,7 @@ pub(crate) enum Message {
         /// Options for the report
         opts: Options,
         /// Channel to receive the response.
-        response_tx: oneshot::Sender<Result<Arc<Report>>>,
+        response_tx: ProbeSender,
     },
     /// A report produced by the [`reportgen`] actor.
     ReportReady { report: Box<Report> },
@@ -395,6 +493,8 @@ pub(crate) enum Message {
     /// The sender is signalled once the STUN packet is registered with the actor and will
     /// correctly accept the STUN response.
     InFlightStun(Inflight, oneshot::Sender<()>),
+    /// Track whether a report is running.
+    TrackRuns(oneshot::Sender<watcher::Direct<bool>>),
 }
 
 /// Sender to the main service.
@@ -481,6 +581,9 @@ struct Actor {
     #[cfg(not(wasm_browser))]
     ip_mapped_addrs: Option<IpMappedAddresses>,
     metrics: Arc<Metrics>,
+
+    /// Is a report currently running?
+    is_running: Watchable<bool>,
 }
 
 impl Actor {
@@ -509,6 +612,7 @@ impl Actor {
             #[cfg(not(wasm_browser))]
             ip_mapped_addrs,
             metrics,
+            is_running: Watchable::new(false),
         })
     }
 
@@ -548,6 +652,9 @@ impl Actor {
                 Message::InFlightStun(inflight, response_tx) => {
                     self.handle_in_flight_stun(inflight, response_tx);
                 }
+                Message::TrackRuns(rx) => {
+                    rx.send(self.is_running.watch()).ok();
+                }
             }
         }
     }
@@ -557,12 +664,7 @@ impl Actor {
     /// If *stun_sock_v4* or *stun_sock_v6* are not provided this will bind the sockets
     /// itself.  This is not ideal since really you want to send STUN probes from the
     /// sockets you will be using.
-    fn handle_run_check(
-        &mut self,
-        relay_map: RelayMap,
-        opts: Options,
-        response_tx: oneshot::Sender<Result<Arc<Report>>>,
-    ) {
+    fn handle_run_check(&mut self, relay_map: RelayMap, opts: Options, response_tx: ProbeSender) {
         let protocols = opts.to_protocols();
         #[cfg(not(wasm_browser))]
         let socket_state = SocketState {
@@ -574,14 +676,17 @@ impl Actor {
             ip_mapped_addrs: self.ip_mapped_addrs.clone(),
         };
         trace!("Attempting probes for protocols {protocols:#?}");
-        if self.current_report_run.is_some() {
+        if self.is_running.get() {
             response_tx
+                .report
                 .send(Err(anyhow!(
                     "ignoring RunCheck request: reportgen actor already running"
                 )))
                 .ok();
             return;
         }
+
+        self.is_running.set(true).expect("checked");
 
         let now = Instant::now();
 
@@ -604,6 +709,11 @@ impl Actor {
         }
         self.metrics.reports.inc();
 
+        let ProbeSender {
+            report: report_tx,
+            send: probes_tx,
+        } = response_tx;
+
         let actor = reportgen::Client::new(
             self.addr(),
             self.reports.last.clone(),
@@ -612,11 +722,13 @@ impl Actor {
             self.metrics.clone(),
             #[cfg(not(wasm_browser))]
             socket_state,
+            probes_tx,
+            opts.sparse,
         );
 
         self.current_report_run = Some(ReportRun {
             _reportgen: actor,
-            report_tx: response_tx,
+            report_tx,
         });
     }
 
@@ -626,6 +738,7 @@ impl Actor {
         if let Some(ReportRun { report_tx, .. }) = self.current_report_run.take() {
             report_tx.send(Ok(report)).ok();
         }
+        self.is_running.set(false).ok();
     }
 
     fn handle_report_aborted(&mut self, err: anyhow::Error) {
@@ -633,6 +746,7 @@ impl Actor {
         if let Some(ReportRun { report_tx, .. }) = self.current_report_run.take() {
             report_tx.send(Err(err.context("report aborted"))).ok();
         }
+        self.is_running.set(false).ok();
     }
 
     /// Handles [`Message::StunPacket`].

@@ -41,7 +41,7 @@ use crate::{
     },
     magicsock::{self, Handle, NodeIdMappedAddr},
     metrics::EndpointMetrics,
-    net_report::Report,
+    net_report::{NetReporter, Report},
     tls,
     watcher::{self, Watcher},
     RelayProtocol,
@@ -1049,6 +1049,13 @@ impl Endpoint {
     #[doc(hidden)]
     pub fn net_report(&self) -> watcher::Direct<Option<Arc<Report>>> {
         self.msock.net_report()
+    }
+
+    /// Run a diagnsotic net report that ensures all probe protocols get
+    /// reported at least once
+    #[doc(hidden)]
+    pub async fn run_diagnostic_net_report(&self) -> Result<NetReporter> {
+        self.msock.run_diagnostic_net_report().await
     }
 
     /// Returns the local socket addresses on which the underlying sockets are bound.
