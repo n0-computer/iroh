@@ -10,10 +10,10 @@ use anyhow::Result;
 use iroh::{
     endpoint::Connection,
     protocol::{ProtocolHandler, Router},
-    watcher::Watcher as _,
     Endpoint, NodeAddr,
 };
 use n0_future::boxed::BoxFuture;
+use n0_watcher::Watcher as _;
 
 /// Each protocol is identified by its ALPN string.
 ///
