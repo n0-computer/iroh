@@ -137,6 +137,11 @@ impl RelayLatencies {
         Default::default()
     }
 
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
     /// Updates a relay's latency, if it is faster than before.
     fn update_relay(&mut self, url: RelayUrl, latency: Duration) {
         let val = self.0.entry(url).or_insert(latency);
@@ -154,24 +159,9 @@ impl RelayLatencies {
         }
     }
 
-    /// Returns the maximum latency for all relays.
-    ///
-    /// If there are not yet any latencies this will return [`DEFAULT_MAX_LATENCY`].
-    fn max_latency(&self) -> Duration {
-        self.0
-            .values()
-            .max()
-            .copied()
-            .unwrap_or(DEFAULT_MAX_LATENCY)
-    }
-
     /// Returns an iterator over all the relays and their latencies.
     pub fn iter(&self) -> impl Iterator<Item = (&'_ RelayUrl, Duration)> + '_ {
         self.0.iter().map(|(k, v)| (k, *v))
-    }
-
-    fn len(&self) -> usize {
-        self.0.len()
     }
 
     fn is_empty(&self) -> bool {
@@ -710,54 +700,61 @@ mod test_utils {
 mod tests {
     use std::net::{Ipv4Addr, SocketAddr};
 
-    use bytes::BytesMut;
     use n0_snafu::{Result, ResultExt};
     use netwatch::IpFamily;
     use tokio_util::sync::CancellationToken;
-    use tracing::info;
     use tracing_test::traced_test;
 
     use super::*;
     use crate::net_report::dns;
 
-    // #[tokio::test]
-    // #[traced_test]
-    // async fn test_basic() -> Result<()> {
-    //     // TODO: quic setup
+    #[tokio::test]
+    #[traced_test]
+    async fn test_basic() -> Result<()> {
+        let (server, relay) = test_utils::relay().await;
+        let client_config = iroh_relay::client::make_dangerous_client_config();
+        let ep = quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0)).e()?;
+        let quic_addr_disc = QuicConfig {
+            ep: ep.clone(),
+            client_config,
+            ipv4: true,
+            ipv6: true,
+        };
+        let relay_map = RelayMap::from(relay);
 
-    //     let resolver = dns::tests::resolver();
-    //     let mut client = Client::new(None, resolver.clone(), None, Default::default())?;
-    //     // Note that the ProbePlan will change with each iteration.
-    //     for i in 0..5 {
-    //         let cancel = CancellationToken::new();
-    //         println!("--round {}", i);
-    //         let r = client.get_report_all(dm.clone(), None).await?;
+        let resolver = dns::tests::resolver();
+        let mut client = Client::new(None, resolver.clone(), None, Default::default());
 
-    //         assert!(r.udp, "want UDP");
-    //         assert_eq!(
-    //             r.relay_latency.len(),
-    //             1,
-    //             "expected 1 key in RelayLatency; got {}",
-    //             r.relay_latency.len()
-    //         );
-    //         assert!(
-    //             r.relay_latency.iter().next().is_some(),
-    //             "expected key 1 in RelayLatency; got {:?}",
-    //             r.relay_latency
-    //         );
-    //         assert!(r.global_v4.is_some(), "expected globalV4 set");
-    //         assert!(r.preferred_relay.is_some(),);
-    //         cancel.cancel();
-    //     }
+        // Note that the ProbePlan will change with each iteration.
+        for i in 0..5 {
+            let cancel = CancellationToken::new();
+            println!("--round {}", i);
+            let r = client
+                .get_report_all(relay_map.clone(), Some(quic_addr_disc.clone()))
+                .await?;
 
-    //     assert!(
-    //         stun_stats.total().await >= 5,
-    //         "expected at least 5 stun, got {}",
-    //         stun_stats.total().await,
-    //     );
+            assert!(r.udp, "want UDP");
+            assert_eq!(
+                r.relay_latency.len(),
+                1,
+                "expected 1 key in RelayLatency; got {}",
+                r.relay_latency.len()
+            );
+            assert!(
+                r.relay_latency.iter().next().is_some(),
+                "expected key 1 in RelayLatency; got {:?}",
+                r.relay_latency
+            );
+            assert!(r.global_v4.is_some(), "expected globalV4 set");
+            assert!(r.preferred_relay.is_some(),);
+            cancel.cancel();
+        }
 
-    //     Ok(())
-    // }
+        ep.wait_idle().await;
+        server.shutdown().await?;
+
+        Ok(())
+    }
 
     #[tokio::test(flavor = "current_thread", start_paused = true)]
     async fn test_add_report_history_set_preferred_relay() -> Result {
