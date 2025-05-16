@@ -45,13 +45,13 @@ use n0_future::{
 use netwatch::interfaces;
 use rand::seq::IteratorRandom;
 use snafu::{IntoError, ResultExt, Snafu};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc;
 use tracing::{debug, debug_span, info_span, trace, warn, Instrument, Span};
 use url::Host;
 
 #[cfg(wasm_browser)]
 use crate::net_report::portmapper; // We stub the library
-use crate::net_report::{self, Report};
+use crate::net_report::{self, Report, DEFAULT_MAX_LATENCY};
 #[cfg(not(wasm_browser))]
 use crate::net_report::{
     defaults::timeouts::DNS_TIMEOUT, dns::DNS_STAGGERING_MS, ip_mapped_addrs::IpMappedAddresses,
@@ -113,9 +113,9 @@ impl Client {
             net_report: net_report.clone(),
             last_report,
             relay_map,
-            report: Report::default(),
             outstanding_tasks: OutstandingTasks::default(),
             protocols,
+            probe_reports: Vec::new(),
             #[cfg(not(wasm_browser))]
             socket_state,
             #[cfg(any(test, feature = "test-utils"))]
@@ -154,11 +154,6 @@ impl Addr {
 /// Messages to send to the reportstate [`Actor`].
 #[derive(Debug)]
 enum Message {
-    /// Check whether executing a probe would still help.
-    // TODO: Ideally we remove the need for this message and the logic is inverted: once we
-    // get a probe result we cancel all probes that are no longer needed.  But for now it's
-    // this way around to ease conversion.
-    ProbeWouldHelp(Probe, Arc<RelayNode>, oneshot::Sender<bool>),
     /// Abort all remaining probes.
     AbortProbes,
 }
@@ -182,8 +177,6 @@ struct Actor {
     relay_map: RelayMap,
 
     // Internal state.
-    /// The report being built.
-    report: Report,
     /// Which tasks the [`Actor`] is still waiting on.
     ///
     /// This is essentially the summary of all the work the [`Actor`] is doing.
@@ -191,6 +184,8 @@ struct Actor {
     /// Protocols we should attempt to create probes for, if we have the correct
     /// configuration for that protocol.
     protocols: BTreeSet<ProbeProto>,
+    /// The probes from the current run
+    probe_reports: Vec<Result<ProbeReport, ProbesError>>,
 
     /// Any socket-related state that doesn't exist/work in browsers
     #[cfg(not(wasm_browser))]
@@ -261,8 +256,6 @@ impl Actor {
         let port_mapper = false;
         debug!(%port_mapper, "reportstate actor starting");
 
-        self.report.os_has_ipv6 = super::os_has_ipv6();
-
         let mut port_mapping = self.prepare_portmapper_task();
         let mut captive_task = self.prepare_captive_portal_task();
         let mut probes = self.spawn_probes_task().await;
@@ -271,6 +264,9 @@ impl Actor {
         tokio::pin!(total_timer);
         let probe_timer = time::sleep(PROBES_TIMEOUT);
         tokio::pin!(probe_timer);
+
+        let mut portmap_probe = None;
+        let mut captive_portal = None;
 
         loop {
             trace!(awaiting = ?self.outstanding_tasks, "tick; awaiting tasks");
@@ -298,7 +294,7 @@ impl Actor {
                 // Drive the portmapper.
                 pm = &mut port_mapping, if self.outstanding_tasks.port_mapper => {
                     debug!(report=?pm, "tick: portmapper probe report");
-                    self.report.portmap_probe = pm;
+                    portmap_probe = pm;
                     port_mapping.inner = None;
                     self.outstanding_tasks.port_mapper = false;
                 }
@@ -307,8 +303,9 @@ impl Actor {
                 set_result = probes.join_next(), if self.outstanding_tasks.probes => {
                     trace!("tick: probes done: {:?}", set_result);
                     match set_result {
-                        Some(Ok(Ok(report))) => self.handle_probe_report(report),
-                        Some(Ok(Err(_))) => (),
+                        Some(Ok(report)) => {
+                            self.handle_probe_report(report);
+                        },
                         Some(Err(e)) => {
                             warn!("probes task error: {:?}", e);
                         }
@@ -322,7 +319,7 @@ impl Actor {
                 // Drive the captive task.
                 found = &mut captive_task, if self.outstanding_tasks.captive_task => {
                     trace!("tick: captive portal task done");
-                    self.report.captive_portal = found;
+                    captive_portal = found;
                     captive_task.inner = None;
                     self.outstanding_tasks.captive_task = false;
                 }
@@ -348,15 +345,42 @@ impl Actor {
             drop(probes);
         }
 
+        let report = self.build_report(portmap_probe, captive_portal);
+
         debug!("Sending report to net_report actor");
         self.net_report
             .send(net_report::Message::ReportReady {
-                report: Box::new(self.report.clone()),
+                report: Box::new(report),
             })
             .await
             .map_err(|_| ActorGoneSnafu.build())?;
 
         Ok(())
+    }
+
+    /// Builds the final report
+    fn build_report(
+        &mut self,
+        portmap_probe: Option<portmapper::ProbeOutput>,
+        captive_portal: Option<bool>,
+    ) -> Report {
+        let mut report = Report::default();
+        report.portmap_probe = portmap_probe;
+        report.captive_portal = captive_portal;
+        report.os_has_ipv6 = super::os_has_ipv6();
+
+        for probe in self.probe_reports.drain(..) {
+            match probe {
+                Ok(probe) => {
+                    update_report(&mut report, &probe);
+                }
+                Err(err) => {
+                    trace!("failed report: {:?}", err);
+                }
+            }
+        }
+
+        report
     }
 
     /// Handles an actor message.
@@ -365,36 +389,48 @@ impl Actor {
     fn handle_message(&mut self, msg: Message) {
         trace!(?msg, "handling message");
         match msg {
-            Message::ProbeWouldHelp(probe, relay_node, response_tx) => {
-                let res = self.probe_would_help(probe, relay_node);
-                if response_tx.send(res).is_err() {
-                    debug!("probe dropped before ProbeWouldHelp response sent");
-                }
-            }
             Message::AbortProbes => {
                 self.handle_abort_probes();
             }
         }
     }
 
-    fn handle_probe_report(&mut self, probe_report: ProbeReport) {
+    fn handle_probe_report(&mut self, probe_report: Result<ProbeReport, ProbesError>) {
         debug!(?probe_report, "finished probe");
-        update_report(&mut self.report, probe_report);
+        self.probe_reports.push(probe_report);
 
         // Once we've heard from enough relay servers (3), start a timer to give up on the other
         // probes. The timer's duration is a function of whether this is our initial full
         // probe or an incremental one. For incremental ones, wait for the duration of the
         // slowest relay. For initial ones, double that.
         let enough_relays = std::cmp::min(self.relay_map.len(), ENOUGH_NODES);
-        if self.report.relay_latency.len() == enough_relays {
-            let timeout = self.report.relay_latency.max_latency();
+        let latencies: Vec<Duration> = self
+            .probe_reports
+            .iter()
+            .filter_map(|r| r.as_ref().ok().and_then(|r| r.latency))
+            .collect();
+
+        let have_enough_latencies = latencies.len() >= enough_relays;
+
+        let timeout = if have_enough_latencies {
+            let timeout = latencies
+                .iter()
+                .max()
+                .copied()
+                .unwrap_or(DEFAULT_MAX_LATENCY);
             let timeout = match self.last_report.is_some() {
                 true => timeout,
                 false => timeout * 2,
             };
+            Some(timeout)
+        } else {
+            None
+        };
+
+        if let Some(timeout) = timeout {
             let reportcheck = self.addr();
             debug!(
-                reports=self.report.relay_latency.len(),
+                reports=latencies.len(),
                 delay=?timeout,
                 "Have enough probe reports, aborting further probes soon",
             );
@@ -414,35 +450,6 @@ impl Actor {
         }
     }
 
-    /// Whether running this probe would still improve our report.
-    fn probe_would_help(&mut self, probe: Probe, relay_node: Arc<RelayNode>) -> bool {
-        // If the probe is for a relay we don't yet know about, that would help.
-        if self.report.relay_latency.get(&relay_node.url).is_none() {
-            return true;
-        }
-
-        // If the probe is for IPv6 and we don't yet have an IPv6 report, that would help.
-        #[cfg(not(wasm_browser))]
-        if probe.proto() == ProbeProto::QuicIpv6 && self.report.relay_v6_latency.is_empty() {
-            return true;
-        }
-
-        // For IPv4, we need at least two IPv4 results overall to
-        // determine whether we're behind a NAT that shows us as
-        // different source IPs and/or ports depending on who we're
-        // talking to. If we don't yet have two results yet
-        // (`mapping_varies_by_dest_ip` is blank), then another IPv4 probe
-        // would be good.
-        #[cfg(not(wasm_browser))]
-        if probe.proto() == ProbeProto::QuicIpv4 && self.report.mapping_varies_by_dest_ip.is_none()
-        {
-            return true;
-        }
-
-        // Otherwise not interesting.
-        false
-    }
-
     /// Stops further probes.
     ///
     /// This makes sure that no further probes are run and also cancels the captive portal
@@ -451,7 +458,12 @@ impl Actor {
     fn handle_abort_probes(&mut self) {
         trace!("handle abort probes");
         self.outstanding_tasks.probes = false;
-        if self.report.udp {
+        if self
+            .probe_reports
+            .iter()
+            .filter_map(|r| r.as_ref().ok())
+            .any(|r| r.probe.is_udp())
+        {
             self.outstanding_tasks.port_mapper = false;
             self.outstanding_tasks.captive_task = false;
         }
@@ -596,7 +608,6 @@ impl Actor {
         for probe_set in plan.iter() {
             let mut set = JoinSet::default();
             for probe in probe_set {
-                let reportstate = self.addr();
                 let relay_node = probe.node().clone();
                 let probe = probe.clone();
 
@@ -605,7 +616,6 @@ impl Actor {
 
                 set.spawn(
                     run_probe(
-                        reportstate,
                         relay_node,
                         probe.clone(),
                         #[cfg(not(wasm_browser))]
@@ -782,7 +792,6 @@ pub struct QuicConfig {
 /// If *stun_sock4* and *stun_sock6* are `None` the STUN probes are disabled.
 #[allow(clippy::too_many_arguments)]
 async fn run_probe(
-    reportstate: Addr,
     relay_node: Arc<RelayNode>,
     probe: Probe,
     #[cfg(not(wasm_browser))] socket_state: SocketState,
@@ -794,45 +803,8 @@ async fn run_probe(
     }
     debug!("starting probe");
 
-    let (would_help_tx, would_help_rx) = oneshot::channel();
-    if let Err(err) = reportstate
-        .send(Message::ProbeWouldHelp(
-            probe.clone(),
-            relay_node.clone(),
-            would_help_tx,
-        ))
-        .await
-    {
-        // this happens on shutdown or if the report is already finished
-        debug!("Failed to check if probe would help: {err:#}");
-        return Err(ProbeErrorWithProbe::AbortSet(
-            probe_error::ClientGoneSnafu.build(),
-            probe.clone(),
-        ));
-    }
-
-    if !would_help_rx.await.map_err(|_| {
-        ProbeErrorWithProbe::AbortSet(probe_error::ClientGoneSnafu.build(), probe.clone())
-    })? {
-        return Err(ProbeErrorWithProbe::AbortSet(
-            probe_error::NotUsefulSnafu.build(),
-            probe,
-        ));
-    }
-
-    #[cfg(not(wasm_browser))]
-    let relay_addr = get_relay_addr(&socket_state.dns_resolver, &relay_node, probe.proto())
-        .await
-        .map_err(|e| {
-            ProbeErrorWithProbe::AbortSet(
-                probe_error::GetRelayAddrSnafu.into_error(e),
-                probe.clone(),
-            )
-        })?;
-
     let mut result = ProbeReport::new(probe.clone());
     match probe {
-        #[cfg(not(wasm_browser))]
         Probe::Https { ref node, .. } => {
             debug!("sending probe HTTPS");
             match measure_https_latency(
@@ -866,6 +838,15 @@ async fn run_probe(
         #[cfg(not(wasm_browser))]
         Probe::QuicIpv4 { ref node, .. } | Probe::QuicIpv6 { ref node, .. } => {
             debug!("sending QUIC address discovery probe");
+            let relay_addr = get_relay_addr(&socket_state.dns_resolver, &relay_node, probe.proto())
+                .await
+                .map_err(|e| {
+                    ProbeErrorWithProbe::AbortSet(
+                        probe_error::GetRelayAddrSnafu.into_error(e),
+                        probe.clone(),
+                    )
+                })?;
+
             let url = node.url.clone();
             match socket_state.quic_config {
                 Some(quic_config) => {
@@ -1123,9 +1104,7 @@ async fn get_relay_addr(
 
     match proto {
         ProbeProto::QuicIpv4 => relay_lookup_ipv4_staggered(dns_resolver, relay_node, port).await,
-
         ProbeProto::QuicIpv6 => relay_lookup_ipv6_staggered(dns_resolver, relay_node, port).await,
-
         ProbeProto::Https => Err(get_relay_addr_error::UnsupportedHttpsSnafu.build()),
     }
 }
@@ -1297,7 +1276,7 @@ async fn measure_https_latency(
 }
 
 /// Updates a net_report [`Report`] with a new [`ProbeReport`].
-fn update_report(report: &mut Report, probe_report: ProbeReport) {
+fn update_report(report: &mut Report, probe_report: &ProbeReport) {
     let relay_node = probe_report.probe.node();
     if let Some(latency) = probe_report.latency {
         report
