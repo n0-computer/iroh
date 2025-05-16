@@ -2116,7 +2116,7 @@ impl RelayDatagramSendChannelReceiver {
 struct RelayDatagramRecvQueue {
     queue: ConcurrentQueue<RelayRecvDatagram>,
     recv_waker: AtomicWaker,
-    send_waker: AtomicWaker,
+    send_wakers: ConcurrentQueue<Waker>,
 }
 
 impl RelayDatagramRecvQueue {
@@ -2125,7 +2125,7 @@ impl RelayDatagramRecvQueue {
         Self {
             queue: ConcurrentQueue::bounded(512),
             recv_waker: AtomicWaker::new(),
-            send_waker: AtomicWaker::new(),
+            send_wakers: ConcurrentQueue::unbounded(),
         }
     }
 
@@ -2142,14 +2142,42 @@ impl RelayDatagramRecvQueue {
         })
     }
 
+    /// Polls for whether the queue has free slots for sending items.
+    ///
+    /// If the queue has free slots, this returns [`Poll::Ready`].
+    /// If the queue is full, [`Poll::Pending`] is returned and the waker
+    /// is stored and woken once the queue has free slots.
+    ///
+    /// This can be called from multiple tasks concurrently. If a slot becomes
+    /// available, all stored wakers will be woken simultaneously.
+    /// This also means that even if [`Poll::Ready`] is returned, it is not
+    /// guaranteed that [`Self::try_send`] will return `Ok` on the next call,
+    /// because another send task could have used the slot already.
     fn poll_send_ready(&self, cx: &mut Context<'_>) -> Poll<Result<()>> {
         if self.queue.is_closed() {
             Poll::Ready(Err(anyhow!("Queue closed")))
         } else if !self.queue.is_full() {
             Poll::Ready(Ok(()))
         } else {
-            self.send_waker.register(cx.waker());
-            Poll::Pending
+            match self.send_wakers.push(cx.waker().clone()) {
+                Ok(()) => Poll::Pending,
+                Err(concurrent_queue::PushError::Full(_)) => {
+                    unreachable!("Send waker queue is unbounded")
+                }
+                Err(concurrent_queue::PushError::Closed(_)) => {
+                    Poll::Ready(Err(anyhow!("Queue closed")))
+                }
+            }
+        }
+    }
+
+    async fn send_ready(&self) -> Result<()> {
+        std::future::poll_fn(|cx| self.poll_send_ready(cx)).await
+    }
+
+    fn wake_senders(&self) {
+        while let Ok(waker) = self.send_wakers.pop() {
+            waker.wake();
         }
     }
 
@@ -2168,7 +2196,7 @@ impl RelayDatagramRecvQueue {
     fn poll_recv(&self, cx: &mut Context) -> Poll<Result<RelayRecvDatagram>> {
         match self.queue.pop() {
             Ok(value) => {
-                self.send_waker.wake();
+                self.wake_senders();
                 Poll::Ready(Ok(value))
             }
             Err(concurrent_queue::PopError::Empty) => {
@@ -2176,20 +2204,20 @@ impl RelayDatagramRecvQueue {
 
                 match self.queue.pop() {
                     Ok(value) => {
-                        self.send_waker.wake();
                         self.recv_waker.take();
+                        self.wake_senders();
                         Poll::Ready(Ok(value))
                     }
                     Err(concurrent_queue::PopError::Empty) => Poll::Pending,
                     Err(concurrent_queue::PopError::Closed) => {
                         self.recv_waker.take();
-                        self.send_waker.wake();
+                        self.wake_senders();
                         Poll::Ready(Err(anyhow!("Queue closed")))
                     }
                 }
             }
             Err(concurrent_queue::PopError::Closed) => {
-                self.send_waker.wake();
+                self.wake_senders();
                 Poll::Ready(Err(anyhow!("Queue closed")))
             }
         }
