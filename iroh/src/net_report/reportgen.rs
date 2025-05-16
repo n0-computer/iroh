@@ -585,7 +585,6 @@ impl Actor {
                         relay_node,
                         probe.clone(),
                         #[cfg(not(wasm_browser))]
-                        #[cfg(not(wasm_browser))]
                         socket_state,
                     )
                     .instrument(debug_span!("run_probe", %probe)),
