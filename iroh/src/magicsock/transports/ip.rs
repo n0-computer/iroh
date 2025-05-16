@@ -150,8 +150,4 @@ impl IpTransport {
     pub(super) fn on_network_change(&self, _info: &crate::magicsock::NetInfo) {
         // Nothing to do for now
     }
-
-    pub(crate) fn socket(&self) -> Arc<UdpSocket> {
-        self.socket.clone()
-    }
 }

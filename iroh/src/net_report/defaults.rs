@@ -29,10 +29,4 @@ pub(crate) mod timeouts {
     pub(crate) const CAPTIVE_PORTAL_TIMEOUT: Duration = Duration::from_secs(2);
 
     pub(crate) const DNS_TIMEOUT: Duration = Duration::from_secs(3);
-
-    /// The amount of time we wait for a hairpinned packet to come back.
-    pub(crate) const HAIRPIN_CHECK_TIMEOUT: Duration = Duration::from_millis(100);
-
-    /// Default Pinger timeout
-    pub(crate) const DEFAULT_PINGER_TIMEOUT: Duration = Duration::from_secs(5);
 }

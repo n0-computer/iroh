@@ -28,11 +28,11 @@ use std::{
     task::{Context, Poll},
 };
 
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{Context as _, Result};
 use bytes::Bytes;
 use data_encoding::HEXLOWER;
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
-use iroh_relay::{protos::stun, RelayMap};
+use iroh_relay::RelayMap;
 use n0_future::{
     boxed::BoxStream,
     task::{self, JoinSet},
@@ -207,8 +207,6 @@ pub(crate) struct MagicSock {
     node_map: NodeMap,
     /// Tracks the mapped IP addresses
     ip_mapped_addrs: IpMappedAddresses,
-    /// NetReport client
-    net_reporter: net_report::Addr,
     /// The state for an active DiscoKey.
     disco_secrets: DiscoSecrets,
 
@@ -225,7 +223,7 @@ pub(crate) struct MagicSock {
     direct_addrs: DiscoveredDirectAddrs,
 
     /// Our latest net-report
-    net_report: Watchable<Option<Arc<Report>>>,
+    net_report: Watchable<(Option<Arc<Report>>, &'static str)>,
 
     /// List of CallMeMaybe disco messages that should be sent out after the next endpoint update
     /// completes
@@ -326,7 +324,7 @@ impl MagicSock {
     ///
     /// [`Watcher`]: n0_watcher::Watcher
     /// [`Watcher::initialized`]: n0_watcher::Watcher::initialized
-    pub(crate) fn net_report(&self) -> n0_watcher::Direct<Option<Arc<Report>>> {
+    pub(crate) fn net_report(&self) -> n0_watcher::Direct<(Option<Arc<Report>>, &'static str)> {
         self.net_report.watch()
     }
 
@@ -683,15 +681,7 @@ impl MagicSock {
                 // byte of those packets with zero to make Quinn ignore the packet.  This
                 // relies on quinn::EndpointConfig::grease_quic_bit being set to `false`,
                 // which we do in Endpoint::bind.
-                if source_addr.is_ip() && stun::is(datagram) {
-                    trace!(src = ?source_addr, len = %quinn_meta.stride, "UDP recv: stun packet");
-                    let packet2 = Bytes::copy_from_slice(datagram);
-                    self.net_reporter.receive_stun_packet(
-                        packet2,
-                        source_addr.clone().try_into().expect("checked"),
-                    );
-                    datagram[0] = 0u8;
-                } else if let Some((sender, sealed_box)) = disco::source_and_box(datagram) {
+                if let Some((sender, sealed_box)) = disco::source_and_box(datagram) {
                     trace!(src = ?source_addr, len = %quinn_meta.stride, "UDP recv: disco packet");
                     self.handle_disco_message(sender, sealed_box, source_addr);
                     datagram[0] = 0u8;
@@ -1208,6 +1198,20 @@ impl MagicSock {
             discovery.publish(&data);
         }
     }
+
+    /// Called when a direct addr update is done, no matter if it was successful or not.
+    fn finalize_direct_addrs_update(&self, why: &'static str) {
+        let new_why = self.direct_addr_update_state.next_update();
+        if !self.is_closed() {
+            if let Some(new_why) = new_why {
+                self.direct_addr_update_state.run(new_why);
+                return;
+            }
+        }
+
+        self.direct_addr_update_state.finish_run();
+        debug!("direct addr update done ({})", why);
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1326,21 +1330,6 @@ impl Handle {
         #[cfg(not(wasm_browser))]
         let (ip_transports, port_mapper) = bind_ip(addr_v4, addr_v6, &metrics)?;
 
-        #[cfg(not(wasm_browser))]
-        let v4_socket = ip_transports
-            .iter()
-            .find(|t| t.bind_addr().is_ipv4())
-            .expect("must bind a ipv4 socket")
-            .socket();
-        #[cfg(not(wasm_browser))]
-        let v6_socket = ip_transports.iter().find_map(|t| {
-            if t.bind_addr().is_ipv6() {
-                Some(t.socket())
-            } else {
-                None
-            }
-        });
-
         let ip_mapped_addrs = IpMappedAddresses::default();
 
         let net_reporter = net_report::Client::new(
@@ -1399,7 +1388,6 @@ impl Handle {
             actor_sender: actor_sender.clone(),
             ipv6_reported,
             relay_map,
-            net_reporter: net_reporter.addr(),
             disco_secrets: DiscoSecrets::default(),
             node_map,
             ip_mapped_addrs,
@@ -1463,21 +1451,17 @@ impl Handle {
         .with_no_client_auth();
 
         #[cfg(not(wasm_browser))]
-        let net_report_config = net_report::Options::default()
-            .stun_v4(Some(v4_socket))
-            .stun_v6(v6_socket)
-            .quic_config(Some(QuicConfig {
-                ep: qad_endpoint,
-                client_config,
-                ipv4: true,
-                ipv6,
-            }));
+        let net_report_config = net_report::Options::default().quic_config(Some(QuicConfig {
+            ep: qad_endpoint,
+            client_config,
+            ipv4: true,
+            ipv6,
+        }));
         #[cfg(wasm_browser)]
         let net_report_config = net_report::Options::default();
 
         let actor = Actor {
             msg_receiver: actor_receiver,
-            msg_sender: actor_sender,
             msock: msock.clone(),
             periodic_re_stun_timer: new_re_stun_timer(false),
             net_info_last: None,
@@ -1693,7 +1677,6 @@ impl AsyncUdpSocket for MagicSock {
 enum ActorMessage {
     Shutdown,
     EndpointPingExpired(usize, stun_rs::TransactionId),
-    NetReport(Result<Option<Arc<net_report::Report>>>, &'static str),
     NetworkChange,
     #[cfg(test)]
     ForceNetworkChange(bool),
@@ -1702,7 +1685,6 @@ enum ActorMessage {
 struct Actor {
     msock: Arc<MagicSock>,
     msg_receiver: mpsc::Receiver<ActorMessage>,
-    msg_sender: mpsc::Sender<ActorMessage>,
     /// When set, is an AfterFunc timer that will call MagicSock::do_periodic_stun.
     periodic_re_stun_timer: time::Interval,
     /// The `NetInfo` provided in the last call to `net_info_func`. It's used to deduplicate calls to netInfoFunc.
@@ -1815,6 +1797,8 @@ impl Actor {
 
         let mut watcher = self.msock.transports.local_addrs_watch();
 
+        let mut net_report_watcher = self.msock.net_report.watch();
+
         loop {
             self.msock.metrics.magicsock.actor_tick_main.inc();
             #[cfg(not(wasm_browser))]
@@ -1858,6 +1842,20 @@ impl Actor {
                         }
                         Err(_) => {
                             warn!("local addr watcher stopped");
+                        }
+                    }
+                }
+                report = net_report_watcher.updated() => {
+                    match report {
+                        Ok((report, _why)) => {
+                            self.handle_net_report_report(report).await;
+                            #[cfg(not(wasm_browser))]
+                            {
+                                self.periodic_re_stun_timer = new_re_stun_timer(true);
+                            }
+                        }
+                        Err(_) => {
+                            warn!("net report watcher stopped");
                         }
                     }
                 }
@@ -1984,20 +1982,6 @@ impl Actor {
             }
             ActorMessage::EndpointPingExpired(id, txid) => {
                 self.msock.node_map.notify_ping_timeout(id, txid);
-            }
-            ActorMessage::NetReport(report, why) => {
-                match report {
-                    Ok(report) => {
-                        self.handle_net_report_report(report).await;
-                    }
-                    Err(err) => {
-                        warn!(
-                            "failed to generate net_report report for: {}: {:?}",
-                            why, err
-                        );
-                    }
-                }
-                self.finalize_direct_addrs_update(why);
             }
             ActorMessage::NetworkChange => {
                 self.network_monitor.network_change().await.ok();
@@ -2183,24 +2167,6 @@ impl Actor {
         );
     }
 
-    /// Called when a direct addr update is done, no matter if it was successful or not.
-    fn finalize_direct_addrs_update(&mut self, why: &'static str) {
-        let new_why = self.msock.direct_addr_update_state.next_update();
-        if !self.msock.is_closed() {
-            if let Some(new_why) = new_why {
-                self.msock.direct_addr_update_state.run(new_why);
-                return;
-            }
-            #[cfg(not(wasm_browser))]
-            {
-                self.periodic_re_stun_timer = new_re_stun_timer(true);
-            }
-        }
-
-        self.msock.direct_addr_update_state.finish_run();
-        debug!("direct addr update done ({})", why);
-    }
-
     /// Updates `NetInfo.HavePortMap` to true.
     #[instrument(level = "debug", skip_all)]
     fn set_net_info_have_port_map(&mut self) {
@@ -2240,10 +2206,7 @@ impl Actor {
         }
         if self.msock.relay_map.is_empty() {
             debug!("skipping net_report, empty RelayMap");
-            self.msg_sender
-                .send(ActorMessage::NetReport(Ok(None), why))
-                .await
-                .ok();
+            self.msock.net_report.set((None, why)).ok();
             return;
         }
 
@@ -2251,28 +2214,32 @@ impl Actor {
         let opts = self.net_report_config.clone();
 
         debug!("requesting net_report report");
+        let msock = self.msock.clone();
         match self.net_reporter.get_report_channel(relay_map, opts).await {
             Ok(rx) => {
-                let msg_sender = self.msg_sender.clone();
                 task::spawn(async move {
                     let report = time::timeout(NET_REPORT_TIMEOUT, rx).await;
-                    let report: anyhow::Result<_> = match report {
-                        Ok(Ok(Ok(report))) => Ok(Some(report)),
-                        Ok(Ok(Err(err))) => Err(err),
-                        Ok(Err(_)) => Err(anyhow!("net_report report not received")),
-                        Err(err) => Err(anyhow!("net_report report timeout: {:?}", err)),
-                    };
-                    msg_sender
-                        .send(ActorMessage::NetReport(report, why))
-                        .await
-                        .ok();
-                    // The receiver of the NetReport message will call
-                    // .finalize_direct_addrs_update().
+                    match report {
+                        Ok(Ok(Ok(report))) => {
+                            msock.net_report.set((Some(report), why)).ok();
+                        }
+                        Ok(Ok(Err(err))) => {
+                            warn!("failed to generate net report: {:?}", err);
+                        }
+                        Ok(Err(_)) => {
+                            warn!("net_report report not received");
+                        }
+                        Err(err) => {
+                            warn!("net_report report timeout: {:?}", err);
+                        }
+                    }
+
+                    msock.finalize_direct_addrs_update(why);
                 });
             }
             Err(err) => {
                 warn!("unable to start net_report generation: {:?}", err);
-                self.finalize_direct_addrs_update(why);
+                self.msock.finalize_direct_addrs_update(why);
             }
         }
     }
@@ -2280,7 +2247,6 @@ impl Actor {
     async fn handle_net_report_report(&mut self, report: Option<Arc<net_report::Report>>) {
         if let Some(ref report) = report {
             // only returns Err if the report hasn't changed.
-            self.msock.net_report.set(Some(report.clone())).ok();
             self.msock
                 .ipv6_reported
                 .store(report.ipv6, Ordering::Relaxed);
@@ -2300,15 +2266,12 @@ impl Actor {
             let mut ni = NetInfo {
                 relay_latency: Default::default(),
                 mapping_varies_by_dest_ip: r.mapping_varies_by_dest_ip,
-                hair_pinning: r.hair_pinning,
                 #[cfg(not(wasm_browser))]
                 portmap_probe: r.portmap_probe.clone(),
                 have_port_map,
                 working_ipv6: Some(r.ipv6),
                 os_has_ipv6: Some(r.os_has_ipv6),
                 working_udp: Some(r.udp),
-                working_icmp_v4: r.icmpv4,
-                working_icmp_v6: r.icmpv6,
                 preferred_relay: r.preferred_relay.clone(),
             };
             for (rid, d) in r.relay_v4_latency.iter() {
@@ -2642,9 +2605,6 @@ pub(crate) struct NetInfo {
     /// Says whether the host's NAT mappings vary based on the destination IP.
     mapping_varies_by_dest_ip: Option<bool>,
 
-    /// If their router does hairpinning. It reports true even if there's no NAT involved.
-    hair_pinning: Option<bool>,
-
     /// Whether the host has IPv6 internet connectivity.
     working_ipv6: Option<bool>,
 
@@ -2653,12 +2613,6 @@ pub(crate) struct NetInfo {
 
     /// Whether the host has UDP internet connectivity.
     working_udp: Option<bool>,
-
-    /// Whether ICMPv4 works, `None` means not checked.
-    working_icmp_v4: Option<bool>,
-
-    /// Whether ICMPv6 works, `None` means not checked.
-    working_icmp_v6: Option<bool>,
 
     /// Whether we have an existing portmap open (UPnP, PMP, or PCP).
     have_port_map: bool,
@@ -2687,27 +2641,15 @@ impl NetInfo {
     /// This tries to compare the network situation, without taking into account things
     /// expected to change a little like e.g. latency to the relay server.
     fn basically_equal(&self, other: &Self) -> bool {
-        let eq_icmp_v4 = match (self.working_icmp_v4, other.working_icmp_v4) {
-            (Some(slf), Some(other)) => slf == other,
-            _ => true, // ignore for comparison if only one report had this info
-        };
-        let eq_icmp_v6 = match (self.working_icmp_v6, other.working_icmp_v6) {
-            (Some(slf), Some(other)) => slf == other,
-            _ => true, // ignore for comparison if only one report had this info
-        };
-
         #[cfg(not(wasm_browser))]
         let probe_eq = self.portmap_probe == other.portmap_probe;
         #[cfg(wasm_browser)]
         let probe_eq = true;
 
         self.mapping_varies_by_dest_ip == other.mapping_varies_by_dest_ip
-            && self.hair_pinning == other.hair_pinning
             && self.working_ipv6 == other.working_ipv6
             && self.os_has_ipv6 == other.os_has_ipv6
             && self.working_udp == other.working_udp
-            && eq_icmp_v4
-            && eq_icmp_v6
             && self.have_port_map == other.have_port_map
             && probe_eq
             && self.preferred_relay == other.preferred_relay
@@ -2716,7 +2658,7 @@ impl NetInfo {
 
 #[cfg(test)]
 mod tests {
-    use anyhow::Context;
+    use anyhow::{anyhow, Context};
     use rand::RngCore;
     use tokio_util::task::AbortOnDropHandle;
     use tracing_test::traced_test;

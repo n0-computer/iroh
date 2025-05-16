@@ -32,7 +32,6 @@ use iroh_relay::dns::DnsResolver;
 use iroh_relay::{
     defaults::{DEFAULT_RELAY_QUIC_PORT, DEFAULT_STUN_PORT},
     http::RELAY_PROBE_PATH,
-    protos::stun,
     RelayMap, RelayNode,
 };
 #[cfg(wasm_browser)]
@@ -43,25 +42,20 @@ use n0_future::{
     StreamExt as _,
 };
 #[cfg(not(wasm_browser))]
-use netwatch::{interfaces, UdpSocket};
+use netwatch::interfaces;
 use rand::seq::IteratorRandom;
-use tokio::sync::{mpsc, oneshot};
-use tracing::{debug, debug_span, error, info_span, trace, warn, Instrument, Span};
+use tokio::sync::mpsc;
+use tracing::{debug, debug_span, info_span, trace, warn, Instrument, Span};
 use url::Host;
 
 #[cfg(wasm_browser)]
 use crate::net_report::portmapper; // We stub the library
-use crate::net_report::{self, Metrics, Report};
+use crate::net_report::{self, Report, DEFAULT_MAX_LATENCY};
 #[cfg(not(wasm_browser))]
 use crate::net_report::{
-    defaults::timeouts::DNS_TIMEOUT,
-    dns::DNS_STAGGERING_MS,
-    ip_mapped_addrs::IpMappedAddresses,
-    ping::{PingError, Pinger},
+    defaults::timeouts::DNS_TIMEOUT, dns::DNS_STAGGERING_MS, ip_mapped_addrs::IpMappedAddresses,
 };
 
-#[cfg(not(wasm_browser))]
-mod hairpin;
 mod probes;
 
 pub use probes::ProbeProto;
@@ -90,10 +84,6 @@ pub(super) struct Client {
 pub(crate) struct SocketState {
     /// The portmapper client, if there is one.
     pub(crate) port_mapper: Option<portmapper::Client>,
-    /// Socket to send IPv4 STUN requests from.
-    pub(crate) stun_sock4: Option<Arc<UdpSocket>>,
-    /// Socket so send IPv6 STUN requests from.
-    pub(crate) stun_sock6: Option<Arc<UdpSocket>>,
     /// QUIC configuration to do QUIC address Discovery
     pub(crate) quic_config: Option<QuicConfig>,
     /// The DNS resolver to use for probes that need to resolve DNS records.
@@ -112,27 +102,20 @@ impl Client {
         last_report: Option<Arc<Report>>,
         relay_map: RelayMap,
         protocols: BTreeSet<ProbeProto>,
-        metrics: Arc<Metrics>,
         #[cfg(not(wasm_browser))] socket_state: SocketState,
     ) -> Self {
         let (msg_tx, msg_rx) = mpsc::channel(32);
-        let addr = Addr {
-            sender: msg_tx.clone(),
-        };
         let mut actor = Actor {
             msg_tx,
             msg_rx,
             net_report: net_report.clone(),
             last_report,
             relay_map,
-            report: Report::default(),
             outstanding_tasks: OutstandingTasks::default(),
             protocols,
+            probe_reports: Vec::new(),
             #[cfg(not(wasm_browser))]
             socket_state,
-            #[cfg(not(wasm_browser))]
-            hairpin_actor: hairpin::Client::new(net_report, addr),
-            metrics,
         };
         let task =
             task::spawn(async move { actor.run().await }.instrument(info_span!("reportgen.actor")));
@@ -167,13 +150,6 @@ impl Addr {
 /// Messages to send to the reportstate [`Actor`].
 #[derive(Debug)]
 enum Message {
-    /// Set the hairpinning availability in the report.
-    HairpinResult(bool),
-    /// Check whether executing a probe would still help.
-    // TODO: Ideally we remove the need for this message and the logic is inverted: once we
-    // get a probe result we cancel all probes that are no longer needed.  But for now it's
-    // this way around to ease conversion.
-    ProbeWouldHelp(Probe, Arc<RelayNode>, oneshot::Sender<bool>),
     /// Abort all remaining probes.
     AbortProbes,
 }
@@ -197,8 +173,6 @@ struct Actor {
     relay_map: RelayMap,
 
     // Internal state.
-    /// The report being built.
-    report: Report,
     /// Which tasks the [`Actor`] is still waiting on.
     ///
     /// This is essentially the summary of all the work the [`Actor`] is doing.
@@ -206,14 +180,12 @@ struct Actor {
     /// Protocols we should attempt to create probes for, if we have the correct
     /// configuration for that protocol.
     protocols: BTreeSet<ProbeProto>,
+    /// The probes from the current run
+    probe_reports: Vec<Result<ProbeReport, anyhow::Error>>,
 
     /// Any socket-related state that doesn't exist/work in browsers
     #[cfg(not(wasm_browser))]
     socket_state: SocketState,
-    /// The hairpin actor.
-    #[cfg(not(wasm_browser))]
-    hairpin_actor: hairpin::Client,
-    metrics: Arc<Metrics>,
 }
 
 impl Actor {
@@ -254,8 +226,6 @@ impl Actor {
         let port_mapper = false;
         debug!(%port_mapper, "reportstate actor starting");
 
-        self.report.os_has_ipv6 = super::os_has_ipv6();
-
         let mut port_mapping = self.prepare_portmapper_task();
         let mut captive_task = self.prepare_captive_portal_task();
         let mut probes = self.spawn_probes_task().await?;
@@ -264,6 +234,9 @@ impl Actor {
         tokio::pin!(total_timer);
         let probe_timer = time::sleep(PROBES_TIMEOUT);
         tokio::pin!(probe_timer);
+
+        let mut portmap_probe = None;
+        let mut captive_portal = None;
 
         loop {
             trace!(awaiting = ?self.outstanding_tasks, "tick; awaiting tasks");
@@ -291,7 +264,7 @@ impl Actor {
                 // Drive the portmapper.
                 pm = &mut port_mapping, if self.outstanding_tasks.port_mapper => {
                     debug!(report=?pm, "tick: portmapper probe report");
-                    self.report.portmap_probe = pm;
+                    portmap_probe = pm;
                     port_mapping.inner = None;
                     self.outstanding_tasks.port_mapper = false;
                 }
@@ -300,8 +273,9 @@ impl Actor {
                 set_result = probes.join_next(), if self.outstanding_tasks.probes => {
                     trace!("tick: probes done: {:?}", set_result);
                     match set_result {
-                        Some(Ok(Ok(report))) => self.handle_probe_report(report),
-                        Some(Ok(Err(_))) => (),
+                        Some(Ok(report)) => {
+                            self.handle_probe_report(report);
+                        },
                         Some(Err(e)) => {
                             warn!("probes task error: {:?}", e);
                         }
@@ -315,7 +289,7 @@ impl Actor {
                 // Drive the captive task.
                 found = &mut captive_task, if self.outstanding_tasks.captive_task => {
                     trace!("tick: captive portal task done");
-                    self.report.captive_portal = found;
+                    captive_portal = found;
                     captive_task.inner = None;
                     self.outstanding_tasks.captive_task = false;
                 }
@@ -339,14 +313,41 @@ impl Actor {
             drop(probes);
         }
 
+        let report = self.build_report(portmap_probe, captive_portal);
+
         debug!("Sending report to net_report actor");
         self.net_report
             .send(net_report::Message::ReportReady {
-                report: Box::new(self.report.clone()),
+                report: Box::new(report),
             })
             .await?;
 
         Ok(())
+    }
+
+    /// Builds the final report
+    fn build_report(
+        &mut self,
+        portmap_probe: Option<portmapper::ProbeOutput>,
+        captive_portal: Option<bool>,
+    ) -> Report {
+        let mut report = Report::default();
+        report.portmap_probe = portmap_probe;
+        report.captive_portal = captive_portal;
+        report.os_has_ipv6 = super::os_has_ipv6();
+
+        for probe in self.probe_reports.drain(..) {
+            match probe {
+                Ok(probe) => {
+                    update_report(&mut report, &probe);
+                }
+                Err(err) => {
+                    trace!("failed report: {:?}", err);
+                }
+            }
+        }
+
+        report
     }
 
     /// Handles an actor message.
@@ -355,49 +356,48 @@ impl Actor {
     fn handle_message(&mut self, msg: Message) {
         trace!(?msg, "handling message");
         match msg {
-            Message::HairpinResult(works) => {
-                self.report.hair_pinning = Some(works);
-                self.outstanding_tasks.hairpin = false;
-            }
-            Message::ProbeWouldHelp(probe, relay_node, response_tx) => {
-                let res = self.probe_would_help(probe, relay_node);
-                if response_tx.send(res).is_err() {
-                    debug!("probe dropped before ProbeWouldHelp response sent");
-                }
-            }
             Message::AbortProbes => {
                 self.handle_abort_probes();
             }
         }
     }
 
-    fn handle_probe_report(&mut self, probe_report: ProbeReport) {
+    fn handle_probe_report(&mut self, probe_report: Result<ProbeReport, anyhow::Error>) {
         debug!(?probe_report, "finished probe");
-        update_report(&mut self.report, probe_report);
-
-        // When we discover the first IPv4 address we want to start the hairpin actor.
-        #[cfg(not(wasm_browser))]
-        if let Some(ref addr) = self.report.global_v4 {
-            if !self.hairpin_actor.has_started() {
-                self.hairpin_actor.start_check(*addr);
-                self.outstanding_tasks.hairpin = true;
-            }
-        }
+        self.probe_reports.push(probe_report);
 
         // Once we've heard from enough relay servers (3), start a timer to give up on the other
         // probes. The timer's duration is a function of whether this is our initial full
         // probe or an incremental one. For incremental ones, wait for the duration of the
         // slowest relay. For initial ones, double that.
         let enough_relays = std::cmp::min(self.relay_map.len(), ENOUGH_NODES);
-        if self.report.relay_latency.len() == enough_relays {
-            let timeout = self.report.relay_latency.max_latency();
+        let latencies: Vec<Duration> = self
+            .probe_reports
+            .iter()
+            .filter_map(|r| r.as_ref().ok().and_then(|r| r.latency))
+            .collect();
+
+        let have_enough_latencies = latencies.len() >= enough_relays;
+
+        let timeout = if have_enough_latencies {
+            let timeout = latencies
+                .iter()
+                .max()
+                .copied()
+                .unwrap_or(DEFAULT_MAX_LATENCY);
             let timeout = match self.last_report.is_some() {
                 true => timeout,
                 false => timeout * 2,
             };
+            Some(timeout)
+        } else {
+            None
+        };
+
+        if let Some(timeout) = timeout {
             let reportcheck = self.addr();
             debug!(
-                reports=self.report.relay_latency.len(),
+                reports=latencies.len(),
                 delay=?timeout,
                 "Have enough probe reports, aborting further probes soon",
             );
@@ -417,35 +417,6 @@ impl Actor {
         }
     }
 
-    /// Whether running this probe would still improve our report.
-    fn probe_would_help(&mut self, probe: Probe, relay_node: Arc<RelayNode>) -> bool {
-        // If the probe is for a relay we don't yet know about, that would help.
-        if self.report.relay_latency.get(&relay_node.url).is_none() {
-            return true;
-        }
-
-        // If the probe is for IPv6 and we don't yet have an IPv6 report, that would help.
-        #[cfg(not(wasm_browser))]
-        if probe.proto() == ProbeProto::StunIpv6 && self.report.relay_v6_latency.is_empty() {
-            return true;
-        }
-
-        // For IPv4, we need at least two IPv4 results overall to
-        // determine whether we're behind a NAT that shows us as
-        // different source IPs and/or ports depending on who we're
-        // talking to. If we don't yet have two results yet
-        // (`mapping_varies_by_dest_ip` is blank), then another IPv4 probe
-        // would be good.
-        #[cfg(not(wasm_browser))]
-        if probe.proto() == ProbeProto::StunIpv4 && self.report.mapping_varies_by_dest_ip.is_none()
-        {
-            return true;
-        }
-
-        // Otherwise not interesting.
-        false
-    }
-
     /// Stops further probes.
     ///
     /// This makes sure that no further probes are run and also cancels the captive portal
@@ -454,7 +425,12 @@ impl Actor {
     fn handle_abort_probes(&mut self) {
         trace!("handle abort probes");
         self.outstanding_tasks.probes = false;
-        if self.report.udp {
+        if self
+            .probe_reports
+            .iter()
+            .filter_map(|r| r.as_ref().ok())
+            .any(|r| r.probe.is_udp())
+        {
             self.outstanding_tasks.port_mapper = false;
             self.outstanding_tasks.captive_task = false;
         }
@@ -593,37 +569,21 @@ impl Actor {
         };
         trace!(%plan, "probe plan");
 
-        // The pinger is created here so that any sockets that might be bound for it are
-        // shared between the probes that use it.  It binds sockets lazily, so we can always
-        // create it.
-        #[cfg(not(wasm_browser))]
-        let pinger = Pinger::new();
-
         // A collection of futures running probe sets.
         let mut probes = JoinSet::default();
         for probe_set in plan.iter() {
             let mut set = JoinSet::default();
             for probe in probe_set {
-                let reportstate = self.addr();
                 let relay_node = probe.node().clone();
                 let probe = probe.clone();
-                let net_report = self.net_report.clone();
 
-                #[cfg(not(wasm_browser))]
-                let pinger = pinger.clone();
                 #[cfg(not(wasm_browser))]
                 let socket_state = self.socket_state.clone();
 
-                let metrics = self.metrics.clone();
                 set.spawn(
                     run_probe(
-                        reportstate,
                         relay_node,
                         probe.clone(),
-                        net_report,
-                        metrics,
-                        #[cfg(not(wasm_browser))]
-                        pinger,
                         #[cfg(not(wasm_browser))]
                         socket_state,
                     )
@@ -693,10 +653,6 @@ struct ProbeReport {
     ipv4_can_send: bool,
     /// Whether we can send IPv6 UDP packets.
     ipv6_can_send: bool,
-    /// Whether we can send ICMPv4 packets, `None` if not checked.
-    icmpv4: Option<bool>,
-    /// Whether we can send ICMPv6 packets, `None` if not checked.
-    icmpv6: Option<bool>,
     /// The latency to the relay node.
     latency: Option<Duration>,
     /// The probe that generated this report.
@@ -711,8 +667,6 @@ impl ProbeReport {
             probe,
             ipv4_can_send: false,
             ipv6_can_send: false,
-            icmpv4: None,
-            icmpv6: None,
             latency: None,
             addr: None,
         }
@@ -752,12 +706,8 @@ pub struct QuicConfig {
 ///
 /// If *stun_sock4* and *stun_sock6* are `None` the STUN probes are disabled.
 async fn run_probe(
-    reportstate: Addr,
     relay_node: Arc<RelayNode>,
     probe: Probe,
-    net_report: net_report::Addr,
-    metrics: Arc<Metrics>,
-    #[cfg(not(wasm_browser))] pinger: Pinger,
     #[cfg(not(wasm_browser))] socket_state: SocketState,
 ) -> Result<ProbeReport, ProbeError> {
     if !probe.delay().is_zero() {
@@ -766,63 +716,8 @@ async fn run_probe(
     }
     debug!("starting probe");
 
-    let (would_help_tx, would_help_rx) = oneshot::channel();
-    if let Err(err) = reportstate
-        .send(Message::ProbeWouldHelp(
-            probe.clone(),
-            relay_node.clone(),
-            would_help_tx,
-        ))
-        .await
-    {
-        // this happens on shutdown or if the report is already finished
-        debug!("Failed to check if probe would help: {err:#}");
-        return Err(ProbeError::AbortSet(err.into(), probe.clone()));
-    }
-
-    if !would_help_rx.await.map_err(|_| {
-        ProbeError::AbortSet(
-            anyhow!("ReportCheck actor dropped sender while waiting for ProbeWouldHelp response"),
-            probe.clone(),
-        )
-    })? {
-        return Err(ProbeError::AbortSet(
-            anyhow!("ReportCheck says probe set no longer useful"),
-            probe,
-        ));
-    }
-
-    #[cfg(not(wasm_browser))]
-    let relay_addr = get_relay_addr(&socket_state.dns_resolver, &relay_node, probe.proto())
-        .await
-        .context("no relay node addr")
-        .map_err(|e| ProbeError::AbortSet(e, probe.clone()))?;
-
     let mut result = ProbeReport::new(probe.clone());
     match probe {
-        #[cfg(not(wasm_browser))]
-        Probe::StunIpv4 { .. } | Probe::StunIpv6 { .. } => {
-            let maybe_sock = if matches!(probe, Probe::StunIpv4 { .. }) {
-                socket_state.stun_sock4.as_ref()
-            } else {
-                socket_state.stun_sock6.as_ref()
-            };
-            match maybe_sock {
-                Some(sock) => {
-                    result = run_stun_probe(sock, relay_addr, net_report, probe, &metrics).await?;
-                }
-                None => {
-                    return Err(ProbeError::AbortSet(
-                        anyhow!("No socket for {}, aborting probeset", probe.proto()),
-                        probe.clone(),
-                    ));
-                }
-            }
-        }
-        #[cfg(not(wasm_browser))]
-        Probe::IcmpV4 { .. } | Probe::IcmpV6 { .. } => {
-            result = run_icmp_probe(probe, relay_addr, pinger).await?
-        }
         Probe::Https { ref node, .. } => {
             debug!("sending probe HTTPS");
             match measure_https_latency(
@@ -855,6 +750,11 @@ async fn run_probe(
         #[cfg(not(wasm_browser))]
         Probe::QuicIpv4 { ref node, .. } | Probe::QuicIpv6 { ref node, .. } => {
             debug!("sending QUIC address discovery probe");
+            let relay_addr = get_relay_addr(&socket_state.dns_resolver, &relay_node, probe.proto())
+                .await
+                .context("no relay node addr")
+                .map_err(|e| ProbeError::AbortSet(e, probe.clone()))?;
+
             let url = node.url.clone();
             match socket_state.quic_config {
                 Some(quic_config) => {
@@ -879,89 +779,6 @@ async fn run_probe(
 
     trace!("probe successful");
     Ok(result)
-}
-
-/// Run a STUN IPv4 or IPv6 probe.
-#[cfg(not(wasm_browser))]
-async fn run_stun_probe(
-    sock: &Arc<UdpSocket>,
-    relay_addr: SocketAddr,
-    net_report: net_report::Addr,
-    probe: Probe,
-    metrics: &Metrics,
-) -> Result<ProbeReport, ProbeError> {
-    match probe.proto() {
-        ProbeProto::StunIpv4 => debug_assert!(relay_addr.is_ipv4()),
-        ProbeProto::StunIpv6 => debug_assert!(relay_addr.is_ipv6()),
-        _ => debug_assert!(false, "wrong probe"),
-    }
-    let txid = stun::TransactionId::default();
-    let req = stun::request(txid);
-
-    // Setup net_report to give us back the incoming STUN response.
-    let (stun_tx, stun_rx) = oneshot::channel();
-    let (inflight_ready_tx, inflight_ready_rx) = oneshot::channel();
-    net_report
-        .send(net_report::Message::InFlightStun(
-            net_report::Inflight {
-                txn: txid,
-                start: Instant::now(),
-                s: stun_tx,
-            },
-            inflight_ready_tx,
-        ))
-        .await
-        .map_err(|e| ProbeError::Error(e.into(), probe.clone()))?;
-    inflight_ready_rx
-        .await
-        .map_err(|e| ProbeError::Error(e.into(), probe.clone()))?;
-
-    // Send the probe.
-    match sock.send_to(&req, relay_addr).await {
-        Ok(n) if n == req.len() => {
-            debug!(%relay_addr, %txid, "sending {} probe", probe.proto());
-            let mut result = ProbeReport::new(probe.clone());
-
-            if matches!(probe, Probe::StunIpv4 { .. }) {
-                result.ipv4_can_send = true;
-                metrics.stun_packets_sent_ipv4.inc();
-            } else {
-                result.ipv6_can_send = true;
-                metrics.stun_packets_sent_ipv6.inc();
-            }
-            let (delay, addr) = stun_rx
-                .await
-                .map_err(|e| ProbeError::Error(e.into(), probe.clone()))?;
-            result.latency = Some(delay);
-            result.addr = Some(addr);
-            Ok(result)
-        }
-        Ok(n) => {
-            let err = anyhow!("Failed to send full STUN request: {}", probe.proto());
-            error!(%relay_addr, sent_len=n, req_len=req.len(), "{err:#}");
-            Err(ProbeError::Error(err, probe.clone()))
-        }
-        Err(err) => {
-            let kind = err.kind();
-            let err = anyhow::Error::new(err)
-                .context(format!("Failed to send STUN request: {}", probe.proto()));
-
-            // It is entirely normal that we are on a dual-stack machine with no
-            // routed IPv6 network.  So silence that case.
-            // NetworkUnreachable and HostUnreachable are still experimental (io_error_more
-            // #86442) but it is already emitted.  So hack around this.
-            match format!("{kind:?}").as_str() {
-                "NetworkUnreachable" | "HostUnreachable" => {
-                    debug!(%relay_addr, "{err:#}");
-                    Err(ProbeError::AbortSet(err, probe.clone()))
-                }
-                _ => {
-                    // No need to log this, our caller does already log this.
-                    Err(ProbeError::Error(err, probe.clone()))
-                }
-            }
-        }
-    }
 }
 
 #[cfg(not(wasm_browser))]
@@ -1144,20 +961,11 @@ async fn get_relay_addr(
     relay_node: &RelayNode,
     proto: ProbeProto,
 ) -> Result<SocketAddr> {
-    if relay_node.stun_only && !matches!(proto, ProbeProto::StunIpv4 | ProbeProto::StunIpv6) {
-        bail!("Relay node not suitable for non-STUN probes");
-    }
     let port = get_port(relay_node, &proto)?;
 
     match proto {
-        ProbeProto::StunIpv4 | ProbeProto::IcmpV4 | ProbeProto::QuicIpv4 => {
-            relay_lookup_ipv4_staggered(dns_resolver, relay_node, port).await
-        }
-
-        ProbeProto::StunIpv6 | ProbeProto::IcmpV6 | ProbeProto::QuicIpv6 => {
-            relay_lookup_ipv6_staggered(dns_resolver, relay_node, port).await
-        }
-
+        ProbeProto::QuicIpv4 => relay_lookup_ipv4_staggered(dns_resolver, relay_node, port).await,
+        ProbeProto::QuicIpv6 => relay_lookup_ipv6_staggered(dns_resolver, relay_node, port).await,
         ProbeProto::Https => Err(anyhow!("Not implemented")),
     }
 }
@@ -1220,50 +1028,6 @@ async fn relay_lookup_ipv6_staggered(
         Some(url::Host::Ipv6(addr)) => Ok(SocketAddr::new(addr.into(), port)),
         None => Err(anyhow!("No valid hostname in RelayUrl")),
     }
-}
-
-/// Runs an ICMP IPv4 or IPv6 probe.
-///
-/// The `pinger` is passed in so the ping sockets are only bound once
-/// for the probe set.
-#[cfg(not(wasm_browser))]
-async fn run_icmp_probe(
-    probe: Probe,
-    relay_addr: SocketAddr,
-    pinger: Pinger,
-) -> Result<ProbeReport, ProbeError> {
-    match probe.proto() {
-        ProbeProto::IcmpV4 => debug_assert!(relay_addr.is_ipv4()),
-        ProbeProto::IcmpV6 => debug_assert!(relay_addr.is_ipv6()),
-        _ => debug_assert!(false, "wrong probe"),
-    }
-    const DATA: &[u8; 15] = b"iroh icmp probe";
-    debug!(dst = %relay_addr, len = DATA.len(), "ICMP Ping started");
-    let latency = pinger
-        .send(relay_addr.ip(), DATA)
-        .await
-        .map_err(|err| match err {
-            PingError::Client(err) => ProbeError::AbortSet(
-                anyhow!("Failed to create pinger ({err:#}), aborting probeset"),
-                probe.clone(),
-            ),
-            #[cfg(not(wasm_browser))]
-            PingError::Ping(err) => ProbeError::Error(err.into(), probe.clone()),
-        })?;
-    debug!(dst = %relay_addr, len = DATA.len(), ?latency, "ICMP ping done");
-    let mut report = ProbeReport::new(probe);
-    report.latency = Some(latency);
-    match relay_addr {
-        SocketAddr::V4(_) => {
-            report.ipv4_can_send = true;
-            report.icmpv4 = Some(true);
-        }
-        SocketAddr::V6(_) => {
-            report.ipv6_can_send = true;
-            report.icmpv6 = Some(true);
-        }
-    }
-    Ok(report)
 }
 
 /// Executes an HTTPS probe.
@@ -1349,7 +1113,7 @@ async fn measure_https_latency(
 }
 
 /// Updates a net_report [`Report`] with a new [`ProbeReport`].
-fn update_report(report: &mut Report, probe_report: ProbeReport) {
+fn update_report(report: &mut Report, probe_report: &ProbeReport) {
     let relay_node = probe_report.probe.node();
     if let Some(latency) = probe_report.latency {
         report
@@ -1359,10 +1123,7 @@ fn update_report(report: &mut Report, probe_report: ProbeReport) {
         #[cfg(not(wasm_browser))]
         if matches!(
             probe_report.probe.proto(),
-            ProbeProto::StunIpv4
-                | ProbeProto::StunIpv6
-                | ProbeProto::QuicIpv4
-                | ProbeProto::QuicIpv6
+            ProbeProto::QuicIpv4 | ProbeProto::QuicIpv6
         ) {
             report.udp = true;
 
@@ -1404,14 +1165,6 @@ fn update_report(report: &mut Report, probe_report: ProbeReport) {
     }
     report.ipv4_can_send |= probe_report.ipv4_can_send;
     report.ipv6_can_send |= probe_report.ipv6_can_send;
-    report.icmpv4 = report
-        .icmpv4
-        .map(|val| val || probe_report.icmpv4.unwrap_or_default())
-        .or(probe_report.icmpv4);
-    report.icmpv6 = report
-        .icmpv6
-        .map(|val| val || probe_report.icmpv6.unwrap_or_default())
-        .or(probe_report.icmpv6);
 }
 
 /// Resolves to pending if the inner is `None`.
@@ -1441,263 +1194,13 @@ impl<T: Future + Unpin> Future for MaybeFuture<T> {
 
 #[cfg(test)]
 mod tests {
-    use std::net::{Ipv4Addr, Ipv6Addr};
+    use std::net::Ipv4Addr;
 
     use testresult::TestResult;
     use tracing_test::traced_test;
 
     use super::{super::test_utils, *};
     use crate::net_report::dns;
-
-    #[tokio::test]
-    #[traced_test]
-    async fn test_update_report_stun_working() {
-        let (_server_a, relay_a) = test_utils::relay().await;
-        let (_server_b, relay_b) = test_utils::relay().await;
-
-        let mut report = Report::default();
-        let relay_a = Arc::new(relay_a);
-        let relay_b = Arc::new(relay_b);
-
-        // A STUN IPv4 probe from the the first relay server.
-        let probe_report_a = ProbeReport {
-            ipv4_can_send: true,
-            ipv6_can_send: false,
-            icmpv4: None,
-            icmpv6: None,
-            latency: Some(Duration::from_millis(5)),
-            probe: Probe::StunIpv4 {
-                delay: Duration::ZERO,
-                node: relay_a.clone(),
-            },
-            addr: Some((Ipv4Addr::new(203, 0, 113, 1), 1234).into()),
-        };
-        update_report(&mut report, probe_report_a.clone());
-
-        assert!(report.udp);
-        assert_eq!(
-            report.relay_latency.get(&relay_a.url).unwrap(),
-            Duration::from_millis(5)
-        );
-        assert_eq!(
-            report.relay_v4_latency.get(&relay_a.url).unwrap(),
-            Duration::from_millis(5)
-        );
-        assert!(report.ipv4_can_send);
-        assert!(!report.ipv6_can_send);
-
-        // A second STUN IPv4 probe, same external IP detected but slower.
-        let probe_report_b = ProbeReport {
-            latency: Some(Duration::from_millis(8)),
-            probe: Probe::StunIpv4 {
-                delay: Duration::ZERO,
-                node: relay_b.clone(),
-            },
-            ..probe_report_a
-        };
-        update_report(&mut report, probe_report_b);
-
-        assert!(report.udp);
-        assert_eq!(
-            report.relay_latency.get(&relay_a.url).unwrap(),
-            Duration::from_millis(5)
-        );
-        assert_eq!(
-            report.relay_v4_latency.get(&relay_a.url).unwrap(),
-            Duration::from_millis(5)
-        );
-        assert!(report.ipv4_can_send);
-        assert!(!report.ipv6_can_send);
-
-        // A STUN IPv6 probe, this one is faster.
-        let probe_report_a_ipv6 = ProbeReport {
-            ipv4_can_send: false,
-            ipv6_can_send: true,
-            icmpv4: None,
-            icmpv6: None,
-            latency: Some(Duration::from_millis(4)),
-            probe: Probe::StunIpv6 {
-                delay: Duration::ZERO,
-                node: relay_a.clone(),
-            },
-            addr: Some((Ipv6Addr::new(2001, 0xdb8, 0, 0, 0, 0, 0, 1), 1234).into()),
-        };
-        update_report(&mut report, probe_report_a_ipv6);
-
-        assert!(report.udp);
-        assert_eq!(
-            report.relay_latency.get(&relay_a.url).unwrap(),
-            Duration::from_millis(4)
-        );
-        assert_eq!(
-            report.relay_v6_latency.get(&relay_a.url).unwrap(),
-            Duration::from_millis(4)
-        );
-        assert!(report.ipv4_can_send);
-        assert!(report.ipv6_can_send);
-    }
-
-    #[tokio::test]
-    #[traced_test]
-    async fn test_update_report_icmp() {
-        let (_server_a, relay_a) = test_utils::relay().await;
-        let (_server_b, relay_b) = test_utils::relay().await;
-        let relay_a = Arc::new(relay_a);
-        let relay_b = Arc::new(relay_b);
-
-        let mut report = Report::default();
-
-        // An ICMPv4 probe from the EU relay server.
-        let probe_report_eu = ProbeReport {
-            ipv4_can_send: true,
-            ipv6_can_send: false,
-            icmpv4: Some(true),
-            icmpv6: None,
-            latency: Some(Duration::from_millis(5)),
-            probe: Probe::IcmpV4 {
-                delay: Duration::ZERO,
-                node: relay_a.clone(),
-            },
-            addr: Some((Ipv4Addr::new(203, 0, 113, 1), 1234).into()),
-        };
-        update_report(&mut report, probe_report_eu.clone());
-
-        assert!(!report.udp);
-        assert!(report.ipv4_can_send);
-        assert_eq!(report.icmpv4, Some(true));
-
-        // A second ICMPv4 probe which did not work.
-        let probe_report_na = ProbeReport {
-            ipv4_can_send: false,
-            ipv6_can_send: false,
-            icmpv4: Some(false),
-            icmpv6: None,
-            latency: None,
-            probe: Probe::IcmpV4 {
-                delay: Duration::ZERO,
-                node: relay_b.clone(),
-            },
-            addr: None,
-        };
-        update_report(&mut report, probe_report_na);
-
-        assert_eq!(report.icmpv4, Some(true));
-
-        // Behold, a STUN probe arrives!
-        let probe_report_eu_stun = ProbeReport {
-            ipv4_can_send: true,
-            ipv6_can_send: false,
-            icmpv4: None,
-            icmpv6: None,
-            latency: Some(Duration::from_millis(5)),
-            probe: Probe::StunIpv4 {
-                delay: Duration::ZERO,
-                node: relay_a.clone(),
-            },
-            addr: Some((Ipv4Addr::new(203, 0, 113, 1), 1234).into()),
-        };
-        update_report(&mut report, probe_report_eu_stun);
-
-        assert!(report.udp);
-        assert_eq!(report.icmpv4, Some(true));
-    }
-
-    // # ICMP permissions on Linux
-    //
-    // ## Using capabilities: CAP_NET_RAW
-    //
-    // To run ICMP tests on Linux you need CAP_NET_RAW capabilities.  When running tests
-    // this means you first need to build the binary, set the capabilities and finally run
-    // the tests.
-    //
-    // Build the test binary:
-    //
-    //    cargo nextest run -p iroh net_report::reportgen::tests --no-run
-    //
-    // Find out the test binary location:
-    //
-    //    cargo nextest list --message-format json -p iroh net_report::reportgen::tests \
-    //       | jq '."rust-suites"."iroh"."binary-path"' | tr -d \"
-    //
-    // Set the CAP_NET_RAW permission, note that nextest runs each test in a child process
-    // so the capabilities need to be inherited:
-    //
-    //    sudo setcap CAP_NET_RAW=eip target/debug/deps/iroh-abc123
-    //
-    // Finally run the test:
-    //
-    //    cargo nextest run -p iroh net_report::reportgen::tests
-    //
-    // This allows the pinger to create a SOCK_RAW socket for IPPROTO_ICMP.
-    //
-    //
-    // ## Using sysctl
-    //
-    // Now you know the hard way, you can also get this permission a little easier, but
-    // slightly less secure, by allowing any process running with your group ID to create a
-    // SOCK_DGRAM for IPPROTO_ICMP.
-    //
-    // First find out your group ID:
-    //
-    //    id --group
-    //
-    // Then allow this group to send pings.  Note that this is an inclusive range:
-    //
-    //    sudo sysctl net.ipv4.ping_group_range="1234 1234"
-    //
-    // Note that this does not survive a reboot usually, commonly you need to edit
-    // /etc/sysctl.conf or /etc/sysctl.d/* to persist this across reboots.
-    //
-    // TODO: Not sure what about IPv6 pings using sysctl.
-    #[tokio::test]
-    #[traced_test]
-    async fn test_icmpk_probe() {
-        let pinger = Pinger::new();
-        let (server, node) = test_utils::relay().await;
-        let addr = server.stun_addr().expect("test relay serves stun");
-        let probe = Probe::IcmpV4 {
-            delay: Duration::from_secs(0),
-            node: Arc::new(node),
-        };
-
-        // A single ICMP packet might get lost.  Try several and take the first.
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        let mut tasks = JoinSet::new();
-        for i in 0..8 {
-            let probe = probe.clone();
-            let pinger = pinger.clone();
-            let tx = tx.clone();
-            tasks.spawn(async move {
-                time::sleep(Duration::from_millis(i * 100)).await;
-                let res = run_icmp_probe(probe, addr, pinger).await;
-                tx.send(res).ok();
-            });
-        }
-        let mut last_err = None;
-        while let Some(res) = rx.recv().await {
-            match res {
-                Ok(report) => {
-                    dbg!(&report);
-                    assert_eq!(report.icmpv4, Some(true));
-                    assert!(
-                        report.latency.expect("should have a latency") > Duration::from_secs(0)
-                    );
-                    break;
-                }
-                Err(ProbeError::Error(err, _probe)) => {
-                    last_err = Some(err);
-                }
-                Err(ProbeError::AbortSet(_err, _probe)) => {
-                    // We don't have permission, too bad.
-                    // panic!("no ping permission: {err:#}");
-                    break;
-                }
-            }
-        }
-        if let Some(err) = last_err {
-            panic!("Ping error: {err:#}");
-        }
-    }
 
     #[tokio::test]
     async fn test_measure_https_latency() -> TestResult {
