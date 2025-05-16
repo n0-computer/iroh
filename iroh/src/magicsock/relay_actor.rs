@@ -42,7 +42,7 @@ use bytes::{Bytes, BytesMut};
 use iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_relay::{
     self as relay,
-    client::{Client, ConnectError, ReceivedMessage, RecvError, SendError, SendMessage},
+    client::{Client, ConnectError, ReceivedMessage, SendMessage},
     PingTracker, MAX_PACKET_SIZE,
 };
 use n0_future::{
@@ -251,10 +251,10 @@ enum RunError {
     LocalAddrMissing {},
     #[snafu(display("Stream closed by server."))]
     StreamClosedServer {},
-    #[snafu(display("Client stream read failed"))]
-    ClientStreamRead { source: RecvError },
-    #[snafu(display("Client stream write failed"))]
-    ClientStreamWrite { source: SendError },
+    #[snafu(display("Client stream io failed"))]
+    ClientStream {
+        source: iroh_relay::protos::relay::Error,
+    },
 }
 
 #[allow(missing_docs)]
@@ -526,7 +526,7 @@ impl ActiveRelayActor {
         );
 
         let (mut client_stream, client_sink) = client.split();
-        let mut client_sink = client_sink.sink_map_err(|e| ClientStreamWriteSnafu.into_error(e));
+        let mut client_sink = client_sink.sink_map_err(|e| ClientStreamSnafu.into_error(e));
 
         let mut state = ConnectedRelayState {
             ping_tracker: PingTracker::default(),
@@ -656,7 +656,7 @@ impl ActiveRelayActor {
                             // reset the ping timer, we have just received a message
                             ping_interval.reset();
                         },
-                        Err(err) => break Err(ClientStreamReadSnafu.into_error(err)),
+                        Err(err) => break Err(ClientStreamSnafu.into_error(err)),
                     }
                 }
                 _ = &mut self.inactive_timeout, if !self.is_home_relay => {
@@ -725,7 +725,9 @@ impl ActiveRelayActor {
                 let problem = problem.as_deref().unwrap_or("unknown");
                 warn!("Relay server reports problem: {problem}");
             }
-            ReceivedMessage::KeepAlive | ReceivedMessage::ServerRestarting { .. } => {
+            ReceivedMessage::KeepAlive
+            | ReceivedMessage::ServerRestarting { .. }
+            | ReceivedMessage::ServerChallenge { .. } => {
                 trace!("Ignoring {msg:?}")
             }
         }
@@ -790,7 +792,7 @@ impl ActiveRelayActor {
                     };
                     match msg {
                         Ok(msg) => self.handle_relay_msg(msg, state),
-                        Err(err) => break Err(ClientStreamReadSnafu.into_error(err)),
+                        Err(err) => break Err(ClientStreamSnafu.into_error(err)),
                     }
                 }
                 _ = &mut self.inactive_timeout, if !self.is_home_relay => {

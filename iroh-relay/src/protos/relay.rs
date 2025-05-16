@@ -12,6 +12,8 @@
 //!  * clients sends `FrameType::SendPacket`
 //!  * server then sends `FrameType::RecvPacket` to recipient
 
+use std::fmt::Debug;
+
 use bytes::{BufMut, Bytes};
 use iroh_base::{PublicKey, SecretKey, Signature, SignatureError};
 #[cfg(feature = "server")]
@@ -24,7 +26,7 @@ use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 use snafu::{Backtrace, Snafu};
 
-use crate::{client::conn::SendError, KeyCache};
+use crate::KeyCache;
 
 /// The maximum size of a packet sent over relay.
 /// (This only includes the data bytes visible to magicsock, not
@@ -76,6 +78,8 @@ const NOT_PREFERRED: u8 = 0u8;
 #[derive(Debug, PartialEq, Eq, num_enum::IntoPrimitive, num_enum::FromPrimitive, Clone, Copy)]
 #[repr(u8)]
 pub enum FrameType {
+    /// TODO(matheus23): Docs
+    ServerChallenge = 1,
     /// magic + 32b pub key + 24B nonce + bytes
     ClientInfo = 2,
     /// 32B dest pub key + packet bytes
@@ -122,7 +126,7 @@ impl std::fmt::Display for FrameType {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, MaxSize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, MaxSize, PartialEq, Eq)]
 pub(crate) struct ClientInfo {
     /// The relay protocol version that the client was built with.
     pub(crate) version: usize,
@@ -137,9 +141,22 @@ pub(crate) struct ClientInfo {
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
+#[snafu(visibility(pub(crate)))]
 pub enum Error {
     #[snafu(transparent)]
     Io { source: std::io::Error },
+    #[snafu(transparent)]
+    WebsocketIo {
+        #[cfg(not(wasm_browser))]
+        source: tokio_websockets::Error,
+        #[cfg(wasm_browser)]
+        source: ws_stream_wasm::WsErr,
+    },
+    #[snafu(display("Exceeds max packet size ({MAX_PACKET_SIZE}): {size}"))]
+    ExceedsMaxPacketSize { size: usize },
+    #[snafu(display("invalid protocol message encoding"))]
+    InvalidProtocolMessageEncoding { source: std::str::Utf8Error },
+
     #[snafu(display("unexpected frame: got {got}, expected {expected}"))]
     UnexpectedFrame { got: FrameType, expected: FrameType },
     #[snafu(transparent)]
@@ -148,8 +165,6 @@ pub enum Error {
     Timeout { source: time::Elapsed },
     #[snafu(transparent)]
     InvalidSignature { source: SignatureError },
-    #[snafu(transparent)]
-    ConnSend { source: SendError },
     #[snafu(display("Too few bytes"))]
     TooSmall {},
     #[snafu(display("Frame is too large, has {frame_len} bytes"))]
@@ -164,11 +179,10 @@ pub enum Error {
 /// Ignores the timeout if `None`
 ///
 /// Does not flush.
-#[cfg(feature = "server")]
-pub(crate) async fn write_frame<S: Sink<Frame, Error = std::io::Error> + Unpin>(
-    mut writer: S,
+pub(crate) async fn write_frame(
+    mut writer: impl Sink<Frame, Error = Error> + Unpin,
     frame: Frame,
-    timeout: Option<Duration>,
+    timeout: Option<tokio::time::Duration>,
 ) -> Result<(), Error> {
     if let Some(duration) = timeout {
         tokio::time::timeout(duration, writer.send(frame)).await??;
@@ -183,65 +197,69 @@ pub(crate) async fn write_frame<S: Sink<Frame, Error = std::io::Error> + Unpin>(
 /// and the client's [`ClientInfo`], sealed using the server's [`PublicKey`].
 ///
 /// Flushes after writing.
-pub(crate) async fn send_client_key<S: Sink<Frame, Error = SendError> + Unpin>(
-    mut writer: S,
+pub(crate) async fn relay_handshake_clientside(
+    mut io: &mut (impl Sink<Frame, Error = Error> + Stream<Item = Result<Frame, Error>> + Unpin),
     client_secret_key: &SecretKey,
     client_info: &ClientInfo,
 ) -> Result<(), Error> {
-    let msg = postcard::to_stdvec(client_info)?;
-    let signature = client_secret_key.sign(&msg);
+    let Frame::ServerChallenge { message } = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        recv_frame(FrameType::ServerChallenge, &mut io),
+    )
+    .await??
+    else {
+        panic!("impossible: checked by `recv_frame` above");
+    };
 
-    writer
-        .send(Frame::ClientInfo {
-            client_public_key: client_secret_key.public(),
-            message: msg.into(),
-            signature,
-        })
-        .await?;
-    writer.flush().await?;
+    // TODO(matheus23): write_frame?
+    io.send(Frame::ClientInfo {
+        client_public_key: client_secret_key.public(),
+        info: client_info.clone(),
+        signature: client_secret_key.sign(&message),
+    })
+    .await?;
+    io.flush().await?;
     Ok(())
 }
 
 /// Reads the `FrameType::ClientInfo` frame from the client (its proof of identity)
 /// upon it's initial connection.
 #[cfg(any(test, feature = "server"))]
-pub(crate) async fn recv_client_key<E, S: Stream<Item = Result<Frame, E>> + Unpin>(
-    stream: S,
-) -> Result<(PublicKey, ClientInfo), E>
-where
-    E: From<Error>,
-{
+pub(crate) async fn relay_handshake_serverside(
+    io: &mut (impl Sink<Frame, Error = Error> + Stream<Item = Result<Frame, Error>> + Unpin),
+    rng: &mut (impl rand::CryptoRng + rand::Rng),
+) -> Result<(PublicKey, ClientInfo), Error> {
+    let mut message = [0u8; 16];
+    rng.fill_bytes(&mut message);
+
+    // TODO(matheus23): write_frame?
+    io.send(Frame::ServerChallenge {
+        message: Bytes::copy_from_slice(&message),
+    })
+    .await?;
+    io.flush().await?;
+
     // the client is untrusted at this point, limit the input size even smaller than our usual
     // maximum frame size, and give a timeout
 
     // TODO: variable recv size: 256 * 1024
-    let buf = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        recv_frame(FrameType::ClientInfo, stream),
-    )
-    .await
-    .map_err(Error::from)??;
-
-    if let Frame::ClientInfo {
+    let Frame::ClientInfo {
         client_public_key,
-        message,
+        info: _info, // TODO
         signature,
-    } = buf
-    {
-        client_public_key
-            .verify(&message, &signature)
-            .map_err(Error::from)?;
+    } = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        recv_frame(FrameType::ClientInfo, io),
+    )
+    .await??
+    else {
+        panic!("impossible: checked by `recv_frame` above");
+    };
 
-        let info: ClientInfo = postcard::from_bytes(&message).map_err(Error::from)?;
-        Ok((client_public_key, info))
-    } else {
-        Err(UnexpectedFrameSnafu {
-            got: buf.typ(),
-            expected: FrameType::ClientInfo,
-        }
-        .build()
-        .into())
-    }
+    client_public_key.verify(&message, &signature)?;
+
+    let info: ClientInfo = postcard::from_bytes(&message)?;
+    Ok((client_public_key, info))
 }
 
 /// The protocol for the relay server.
@@ -271,9 +289,12 @@ impl RelayCodec {
 /// The frames in the [`RelayCodec`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Frame {
-    ClientInfo {
-        client_public_key: PublicKey,
+    ServerChallenge {
         message: Bytes,
+    },
+    ClientInfo {
+        info: ClientInfo,
+        client_public_key: PublicKey,
         signature: Signature,
     },
     SendPacket {
@@ -309,6 +330,7 @@ pub(crate) enum Frame {
 impl Frame {
     pub(crate) fn typ(&self) -> FrameType {
         match self {
+            Frame::ServerChallenge { .. } => FrameType::ServerChallenge,
             Frame::ClientInfo { .. } => FrameType::ClientInfo,
             Frame::SendPacket { .. } => FrameType::SendPacket,
             Frame::RecvPacket { .. } => FrameType::RecvPacket,
@@ -326,11 +348,17 @@ impl Frame {
     #[cfg(not(wasm_browser))] // Not needed with websocket framing - thus not needed in browsers
     pub(crate) fn len(&self) -> usize {
         match self {
+            Frame::ServerChallenge { message } => MAGIC.len() + message.len(),
             Frame::ClientInfo {
                 client_public_key: _,
-                message,
+                info: _,
                 signature: _,
-            } => MAGIC.len() + PublicKey::LENGTH + message.len() + Signature::BYTE_SIZE,
+            } => {
+                MAGIC.len()
+                    + PublicKey::LENGTH
+                    + ClientInfo::POSTCARD_MAX_SIZE
+                    + Signature::BYTE_SIZE
+            }
             Frame::SendPacket { dst_key: _, packet } => PublicKey::LENGTH + packet.len(),
             Frame::RecvPacket {
                 src_key: _,
@@ -378,15 +406,23 @@ impl Frame {
     /// Writes it self to the given buffer.
     fn write_to(&self, dst: &mut impl BufMut) {
         match self {
+            Frame::ServerChallenge { message } => {
+                dst.put(MAGIC.as_bytes());
+                dst.put(message.as_ref());
+            }
             Frame::ClientInfo {
                 client_public_key,
-                message,
+                info,
                 signature,
             } => {
                 dst.put(MAGIC.as_bytes());
                 dst.put(client_public_key.as_ref());
                 dst.put(&signature.to_bytes()[..]);
-                dst.put(&message[..]);
+                dst.put(
+                    postcard::to_allocvec(&info)
+                        .expect("serialization shouldn't fail")
+                        .as_ref(),
+                );
             }
             Frame::SendPacket { dst_key, packet } => {
                 dst.put(dst_key.as_ref());
@@ -447,7 +483,7 @@ impl Frame {
                 let message = content.slice(start..);
                 Self::ClientInfo {
                     client_public_key,
-                    message,
+                    info: postcard::from_bytes(&message)?,
                     signature,
                 }
             }
@@ -606,7 +642,7 @@ mod framing {
     }
 
     impl Encoder<Frame> for RelayCodec {
-        type Error = std::io::Error;
+        type Error = Error;
 
         fn encode(&mut self, frame: Frame, dst: &mut BytesMut) -> Result<(), Self::Error> {
             let frame_len: usize = frame.len();
@@ -614,7 +650,8 @@ mod framing {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
                     format!("Frame of length {} is too large.", frame_len),
-                ));
+                )
+                .into());
             }
 
             let frame_len_u32 = u32::try_from(frame_len).expect("just checked");
@@ -632,13 +669,10 @@ mod framing {
 /// Receives the next frame and matches the frame type. If the correct type is found returns the content,
 /// otherwise an error.
 #[cfg(any(test, feature = "server"))]
-pub(crate) async fn recv_frame<E, S: Stream<Item = Result<Frame, E>> + Unpin>(
+pub(crate) async fn recv_frame(
     frame_type: FrameType,
-    mut stream: S,
-) -> Result<Frame, E>
-where
-    Error: Into<E>,
-{
+    mut stream: impl Stream<Item = Result<Frame, Error>> + Unpin,
+) -> Result<Frame, Error> {
     match stream.next().await {
         Some(Ok(frame)) => {
             if frame_type != frame.typ() {
@@ -646,17 +680,15 @@ where
                     got: frame.typ(),
                     expected: frame_type,
                 }
-                .build()
-                .into());
+                .build());
             }
             Ok(frame)
         }
-        Some(Err(err)) => Err(err),
+        Some(Err(err)) => Err(err.into()),
         None => Err(Error::from(std::io::Error::new(
             std::io::ErrorKind::UnexpectedEof,
             "expected frame".to_string(),
-        ))
-        .into()),
+        ))),
     }
 }
 
@@ -664,7 +696,7 @@ where
 mod tests {
     use data_encoding::HEXLOWER;
     use n0_snafu::{TestResult, TestResultExt};
-    use tokio_util::codec::{FramedRead, FramedWrite};
+    use tokio_util::codec::{Framed, FramedRead, FramedWrite};
 
     use super::*;
 
@@ -680,7 +712,7 @@ mod tests {
             problem: expect_buf.to_vec().into(),
         };
         write_frame(&mut writer, expected_frame.clone(), None).await?;
-        writer.flush().await.context("flush")?;
+        writer.flush().await.e()?;
         println!("{:?}", reader);
         let buf = recv_frame(FrameType::Health, &mut reader).await?;
         assert_eq!(expect_buf.len(), buf.len());
@@ -691,17 +723,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_recv_client_key() -> TestResult {
-        let (reader, writer) = tokio::io::duplex(1024);
-        let mut reader = FramedRead::new(reader, RelayCodec::test());
-        let mut writer = FramedWrite::new(writer, RelayCodec::test()).sink_map_err(SendError::from);
+        let (client, server) = tokio::io::duplex(1024);
+        let mut client = Framed::new(client, RelayCodec::test());
+        let mut server = Framed::new(server, RelayCodec::test());
 
         let client_key = SecretKey::generate(rand::thread_rng());
         let client_info = ClientInfo {
             version: PROTOCOL_VERSION,
         };
         println!("client_key pub {:?}", client_key.public());
-        send_client_key(&mut writer, &client_key, &client_info).await?;
-        let (client_pub_key, got_client_info) = recv_client_key(&mut reader).await?;
+        relay_handshake_clientside(&mut client, &client_key, &client_info).await?;
+        let (client_pub_key, got_client_info) =
+            relay_handshake_serverside(&mut server, &mut rand::thread_rng()).await?;
         assert_eq!(client_key.public(), client_pub_key);
         assert_eq!(client_info, got_client_info);
         Ok(())
@@ -713,14 +746,15 @@ mod tests {
         let client_info = ClientInfo {
             version: PROTOCOL_VERSION,
         };
-        let message = postcard::to_stdvec(&client_info).context("encode")?;
+        let message = postcard::to_stdvec(&client_info).e()?;
         let signature = client_key.sign(&message);
 
         let frames = vec![
             (
                 Frame::ClientInfo {
                     client_public_key: client_key.public(),
-                    message: Bytes::from(message),
+                    // message: Bytes::from(message),
+                    info: client_info,
                     signature,
                 },
                 "02 52 45 4c 41 59 f0 9f 94 91 19 7f 6b 23 e1 6c
@@ -835,7 +869,7 @@ mod proptests {
             let signature = secret_key.sign(&msg);
             Frame::ClientInfo {
                 client_public_key: secret_key.public(),
-                message: msg.into(),
+                info,
                 signature,
             }
         });
@@ -877,7 +911,8 @@ mod proptests {
                 | FrameType::Pong
                 | FrameType::Restarting
                 | FrameType::PeerGone => true,
-                FrameType::ClientInfo
+                FrameType::ServerChallenge
+                | FrameType::ClientInfo
                 | FrameType::Health
                 | FrameType::SendPacket
                 | FrameType::RecvPacket

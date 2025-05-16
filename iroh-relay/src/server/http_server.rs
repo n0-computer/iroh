@@ -21,12 +21,13 @@ use tokio_rustls_acme::AcmeAcceptor;
 use tokio_util::{codec::Framed, sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, debug_span, error, info, info_span, trace, warn, Instrument};
 
-use super::{clients::Clients, streams, AccessConfig, SpawnError};
+use super::{clients::Clients, AccessConfig, SpawnError};
 use crate::{
     defaults::{timeouts::SERVER_WRITE_TIMEOUT, DEFAULT_KEY_CACHE_CAPACITY},
     http::{Protocol, LEGACY_RELAY_PATH, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},
     protos::relay::{
-        recv_client_key, Frame, RelayCodec, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
+        relay_handshake_serverside, Frame, RelayCodec, PER_CLIENT_SEND_QUEUE_DEPTH,
+        PROTOCOL_VERSION,
     },
     server::{
         client::Config,
@@ -159,7 +160,13 @@ pub enum Error {
     #[snafu(display("Unable to receive client information"))]
     RecvClientKey {
         #[allow(clippy::result_large_err)]
-        source: streams::Error,
+        source: crate::protos::relay::Error,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
+    #[snafu(display("Could not send frame to report auth status"))]
+    AuthReport {
+        source: crate::protos::relay::Error,
         #[snafu(implicit)]
         span_trace: n0_snafu::SpanTrace,
     },
@@ -615,15 +622,18 @@ impl Inner {
             }
         };
         trace!("accept: recv client key");
-        let (client_key, info) = recv_client_key(&mut io).await.context(RecvClientKeySnafu)?;
+        let (client_key, info) = relay_handshake_serverside(&mut io, &mut rand::rngs::OsRng)
+            .await
+            .context(RecvClientKeySnafu)?;
 
         trace!("accept: checking access: {:?}", self.access);
         if !self.access.is_allowed(client_key).await {
             io.send(Frame::Health {
                 problem: Bytes::from_static(b"not authenticated"),
             })
-            .await?;
-            io.flush().await?;
+            .await
+            .context(AuthReportSnafu)?;
+            io.flush().await.context(AuthReportSnafu)?;
 
             return Err(ClientNotAuthenticatedSnafu { key: client_key }.build());
         }
@@ -932,7 +942,7 @@ mod tests {
     }
 
     fn process_msg(
-        msg: Option<Result<ReceivedMessage, crate::client::RecvError>>,
+        msg: Option<Result<ReceivedMessage, crate::protos::relay::Error>>,
     ) -> Option<(PublicKey, Bytes)> {
         match msg {
             Some(Err(e)) => {

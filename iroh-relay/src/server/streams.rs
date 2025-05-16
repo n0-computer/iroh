@@ -6,13 +6,12 @@ use std::{
 };
 
 use n0_future::{Sink, Stream};
-use snafu::Snafu;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::codec::Framed;
 use tokio_websockets::WebSocketStream;
 
 use crate::{
-    protos::relay::{Frame, RelayCodec},
+    protos::relay::{Error, Frame, RelayCodec},
     KeyCache,
 };
 
@@ -25,56 +24,40 @@ pub(crate) enum RelayedStream {
     Ws(WebSocketStream<MaybeTlsStream>, KeyCache),
 }
 
-fn ws_to_io_err(e: tokio_websockets::Error) -> std::io::Error {
-    match e {
-        tokio_websockets::Error::Io(io_err) => io_err,
-        _ => std::io::Error::new(std::io::ErrorKind::Other, e.to_string()),
-    }
-}
-
 impl Sink<Frame> for RelayedStream {
-    type Error = std::io::Error;
+    type Error = Error;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
-            Self::Relay(ref mut framed) => Pin::new(framed).poll_ready(cx),
-            Self::Ws(ref mut ws, _) => Pin::new(ws).poll_ready(cx).map_err(ws_to_io_err),
+            Self::Relay(ref mut framed) => Pin::new(framed).poll_ready(cx).map_err(Error::from),
+            Self::Ws(ref mut ws, _) => Pin::new(ws).poll_ready(cx).map_err(Error::from),
         }
     }
 
     fn start_send(mut self: Pin<&mut Self>, item: Frame) -> Result<(), Self::Error> {
         match *self {
-            Self::Relay(ref mut framed) => Pin::new(framed).start_send(item),
+            Self::Relay(ref mut framed) => Pin::new(framed).start_send(item).map_err(Error::from),
             Self::Ws(ref mut ws, _) => Pin::new(ws)
                 .start_send(tokio_websockets::Message::binary(
                     tokio_websockets::Payload::from(item.encode_for_ws_msg()),
                 ))
-                .map_err(ws_to_io_err),
+                .map_err(Error::from),
         }
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
-            Self::Relay(ref mut framed) => Pin::new(framed).poll_flush(cx),
-            Self::Ws(ref mut ws, _) => Pin::new(ws).poll_flush(cx).map_err(ws_to_io_err),
+            Self::Relay(ref mut framed) => Pin::new(framed).poll_flush(cx).map_err(Error::from),
+            Self::Ws(ref mut ws, _) => Pin::new(ws).poll_flush(cx).map_err(Error::from),
         }
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
-            Self::Relay(ref mut framed) => Pin::new(framed).poll_close(cx),
-            Self::Ws(ref mut ws, _) => Pin::new(ws).poll_close(cx).map_err(ws_to_io_err),
+            Self::Relay(ref mut framed) => Pin::new(framed).poll_close(cx).map_err(Error::from),
+            Self::Ws(ref mut ws, _) => Pin::new(ws).poll_close(cx).map_err(Error::from),
         }
     }
-}
-
-/// Relay stream errors
-#[derive(Debug, Snafu)]
-pub enum Error {
-    #[snafu(transparent)]
-    Proto { source: crate::protos::relay::Error },
-    #[snafu(transparent)]
-    Ws { source: tokio_websockets::Error },
 }
 
 impl Stream for RelayedStream {

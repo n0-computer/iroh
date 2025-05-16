@@ -3,81 +3,25 @@
 //! based on tailscale/derp/derp_client.go
 
 use std::{
-    io,
     pin::Pin,
-    str::Utf8Error,
     task::{ready, Context, Poll},
 };
 
 use bytes::Bytes;
 use iroh_base::{NodeId, SecretKey};
-use n0_future::{time::Duration, Sink, Stream};
-use nested_enum_utils::common_fields;
-use snafu::{Backtrace, ResultExt, Snafu};
+use n0_future::{time::Duration, Sink, Stream, TryStreamExt};
+use snafu::ResultExt;
 #[cfg(not(wasm_browser))]
 use tokio_util::codec::Framed;
 use tracing::debug;
 
-use super::KeyCache;
-use crate::protos::relay::{ClientInfo, Frame, MAX_PACKET_SIZE, PROTOCOL_VERSION};
+use super::{ConnectError, KeyCache};
+use crate::protos::relay::{ClientInfo, Frame, FrameType, MAX_PACKET_SIZE, PROTOCOL_VERSION};
 #[cfg(not(wasm_browser))]
 use crate::{
     client::streams::{MaybeTlsStream, MaybeTlsStreamChained, ProxyStream},
     protos::relay::RelayCodec,
 };
-
-/// Error for sending messages to the relay server.
-#[common_fields({
-    backtrace: Option<Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
-#[allow(missing_docs)]
-#[derive(Debug, Snafu)]
-#[non_exhaustive]
-pub enum SendError {
-    #[cfg(not(wasm_browser))]
-    #[snafu(transparent)]
-    RelayIo { source: io::Error },
-    #[snafu(transparent)]
-    WebsocketIo {
-        #[cfg(not(wasm_browser))]
-        source: tokio_websockets::Error,
-        #[cfg(wasm_browser)]
-        source: ws_stream_wasm::WsErr,
-    },
-    #[snafu(display("Exceeds max packet size ({MAX_PACKET_SIZE}): {size}"))]
-    ExceedsMaxPacketSize { size: usize },
-}
-
-/// Errors when receiving messages from the relay server.
-#[common_fields({
-    backtrace: Option<Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
-#[allow(missing_docs)]
-#[derive(Debug, Snafu)]
-#[non_exhaustive]
-pub enum RecvError {
-    #[snafu(transparent)]
-    Io { source: io::Error },
-    #[snafu(transparent)]
-    Protocol { source: crate::protos::relay::Error },
-    #[snafu(transparent)]
-    Websocket {
-        #[cfg(not(wasm_browser))]
-        source: tokio_websockets::Error,
-        #[cfg(wasm_browser)]
-        source: ws_stream_wasm::WsErr,
-    },
-    #[snafu(display("invalid protocol message encoding"))]
-    InvalidProtocolMessageEncoding { source: Utf8Error },
-    #[snafu(display("Unexpected frame received: {frame_type}"))]
-    UnexpectedFrame {
-        frame_type: crate::protos::relay::FrameType,
-    },
-}
 
 /// A connection to a relay server.
 ///
@@ -149,7 +93,7 @@ impl Conn {
         conn: tokio_websockets::WebSocketStream<MaybeTlsStream<ProxyStream>>,
         key_cache: KeyCache,
         secret_key: &SecretKey,
-    ) -> Result<Self, crate::protos::relay::Error> {
+    ) -> Result<Self, ConnectError> {
         let mut conn = Self::Ws { conn, key_cache };
 
         // exchange information with the server
@@ -169,14 +113,19 @@ async fn server_handshake(
         version: PROTOCOL_VERSION,
     };
     debug!("server_handshake: sending client_key: {:?}", &client_info);
-    crate::protos::relay::send_client_key(&mut *writer, secret_key, &client_info).await?;
+    crate::protos::relay::relay_handshake_clientside(
+        &mut writer.map_ok(Frame::from),
+        secret_key,
+        &client_info,
+    )
+    .await?;
 
     debug!("server_handshake: done");
     Ok(())
 }
 
 impl Stream for Conn {
-    type Item = Result<ReceivedMessage, RecvError>;
+    type Item = Result<ReceivedMessage, crate::protos::relay::Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match *self {
@@ -234,7 +183,7 @@ impl Stream for Conn {
 }
 
 impl Sink<Frame> for Conn {
-    type Error = SendError;
+    type Error = crate::protos::relay::Error;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
@@ -252,7 +201,9 @@ impl Sink<Frame> for Conn {
     fn start_send(mut self: Pin<&mut Self>, frame: Frame) -> Result<(), Self::Error> {
         if let Frame::SendPacket { dst_key: _, packet } = &frame {
             if packet.len() > MAX_PACKET_SIZE {
-                return Err(ExceedsMaxPacketSizeSnafu { size: packet.len() }.build());
+                return Err(
+                    crate::protos::relay::ExceedsMaxPacketSizeSnafu { size: packet.len() }.build(),
+                );
             }
         }
         match *self {
@@ -299,7 +250,7 @@ impl Sink<Frame> for Conn {
 }
 
 impl Sink<SendMessage> for Conn {
-    type Error = SendError;
+    type Error = crate::protos::relay::Error;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
@@ -317,7 +268,10 @@ impl Sink<SendMessage> for Conn {
     fn start_send(mut self: Pin<&mut Self>, item: SendMessage) -> Result<(), Self::Error> {
         if let SendMessage::SendPacket(_, bytes) = &item {
             let size = bytes.len();
-            snafu::ensure!(size <= MAX_PACKET_SIZE, ExceedsMaxPacketSizeSnafu { size });
+            snafu::ensure!(
+                size <= MAX_PACKET_SIZE,
+                crate::protos::relay::ExceedsMaxPacketSizeSnafu { size }
+            );
         }
         let frame = Frame::from(item);
         match *self {
@@ -368,6 +322,11 @@ impl Sink<SendMessage> for Conn {
 /// This is a type-validated version of the `Frame`s on the `RelayCodec`.
 #[derive(derive_more::Debug, Clone)]
 pub enum ReceivedMessage {
+    /// The server challenge
+    ServerChallenge {
+        /// TODO(matheus23): Docs
+        message: Bytes,
+    },
     /// Represents an incoming packet.
     ReceivedPacket {
         /// The [`NodeId`] of the packet sender.
@@ -413,7 +372,7 @@ pub enum ReceivedMessage {
 }
 
 impl TryFrom<Frame> for ReceivedMessage {
-    type Error = RecvError;
+    type Error = crate::protos::relay::Error;
 
     fn try_from(frame: Frame) -> std::result::Result<Self, Self::Error> {
         match frame {
@@ -434,7 +393,7 @@ impl TryFrom<Frame> for ReceivedMessage {
             Frame::Pong { data } => Ok(ReceivedMessage::Pong(data)),
             Frame::Health { problem } => {
                 let problem = std::str::from_utf8(&problem)
-                    .context(InvalidProtocolMessageEncodingSnafu)?
+                    .context(crate::protos::relay::InvalidProtocolMessageEncodingSnafu)?
                     .to_owned();
                 let problem = Some(problem);
                 Ok(ReceivedMessage::Health { problem })
@@ -450,10 +409,42 @@ impl TryFrom<Frame> for ReceivedMessage {
                     try_for,
                 })
             }
-            _ => Err(UnexpectedFrameSnafu {
-                frame_type: frame.typ(),
+            _ => Err(crate::protos::relay::UnexpectedFrameSnafu {
+                expected: FrameType::Unknown,
+                got: frame.typ(),
             }
             .build()),
+        }
+    }
+}
+
+impl From<ReceivedMessage> for Frame {
+    fn from(msg: ReceivedMessage) -> Self {
+        match msg {
+            ReceivedMessage::ServerChallenge { message } => Frame::ServerChallenge { message },
+            ReceivedMessage::ReceivedPacket {
+                remote_node_id,
+                data,
+            } => Frame::RecvPacket {
+                src_key: remote_node_id,
+                content: data,
+            },
+            ReceivedMessage::NodeGone(node_id) => Frame::NodeGone { node_id },
+            ReceivedMessage::Ping(data) => Frame::Ping { data },
+            ReceivedMessage::Pong(data) => Frame::Pong { data },
+            ReceivedMessage::KeepAlive => Frame::KeepAlive,
+            ReceivedMessage::Health { problem } => Frame::Health {
+                problem: problem.map_or(Bytes::new(), |problem| {
+                    Bytes::copy_from_slice(problem.as_bytes())
+                }),
+            },
+            ReceivedMessage::ServerRestarting {
+                reconnect_in,
+                try_for,
+            } => Frame::Restarting {
+                reconnect_in: reconnect_in.as_millis() as u32,
+                try_for: try_for.as_millis() as u32,
+            },
         }
     }
 }

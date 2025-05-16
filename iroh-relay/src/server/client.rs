@@ -192,8 +192,8 @@ impl Client {
 pub enum HandleFrameError {
     #[snafu(transparent)]
     SendPacket { source: SendPacketError },
-    #[snafu(transparent)]
-    Streams { source: super::streams::Error },
+    // #[snafu(transparent)]
+    // Streams { source: super::streams::Error },
     #[snafu(display("Stream terminated"))]
     StreamTerminated {
         #[snafu(implicit)]
@@ -457,7 +457,7 @@ impl Actor {
     /// Handles frame read results.
     async fn handle_frame(
         &mut self,
-        maybe_frame: Option<Result<Frame, super::streams::Error>>,
+        maybe_frame: Option<Result<Frame, crate::protos::relay::Error>>,
     ) -> Result<(), HandleFrameError> {
         trace!(?maybe_frame, "handle incoming frame");
         let frame = match maybe_frame {
@@ -525,7 +525,7 @@ enum State {
         /// Future which will complete when the item can be yielded.
         delay: Pin<Box<dyn Future<Output = ()> + Send + Sync>>,
         /// Item to yield when the `delay` future completes.
-        item: Result<Frame, super::streams::Error>,
+        item: Result<Frame, crate::protos::relay::Error>,
     },
     Ready,
 }
@@ -569,7 +569,7 @@ impl RateLimitedRelayedStream {
 }
 
 impl Stream for RateLimitedRelayedStream {
-    type Item = Result<Frame, super::streams::Error>;
+    type Item = Result<Frame, crate::protos::relay::Error>;
 
     #[instrument(name = "rate_limited_relayed_stream", skip_all)]
     fn poll_next(
@@ -655,7 +655,7 @@ impl Stream for RateLimitedRelayedStream {
 }
 
 impl Sink<Frame> for RateLimitedRelayedStream {
-    type Error = std::io::Error;
+    type Error = crate::protos::relay::Error;
 
     fn poll_ready(
         mut self: Pin<&mut Self>,

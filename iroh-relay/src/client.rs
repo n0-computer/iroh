@@ -22,7 +22,7 @@ use tracing::warn;
 use tracing::{debug, event, trace, Level};
 use url::Url;
 
-pub use self::conn::{ReceivedMessage, RecvError, SendError, SendMessage};
+pub use self::conn::{ReceivedMessage, SendMessage};
 #[cfg(not(wasm_browser))]
 use crate::dns::{DnsResolver, Error as DnsError};
 use crate::{
@@ -60,7 +60,7 @@ pub enum ConnectError {
         source: ws_stream_wasm::WsErr,
     },
     #[snafu(transparent)]
-    Handshake { source: crate::protos::relay::Error },
+    Protocol { source: crate::protos::relay::Error },
     #[snafu(transparent)]
     Dial { source: DialError },
     #[snafu(display("Unexpected status during upgrade: {code}"))]
@@ -295,7 +295,7 @@ impl Client {
 }
 
 impl Stream for Client {
-    type Item = Result<ReceivedMessage, RecvError>;
+    type Item = Result<ReceivedMessage, crate::protos::relay::Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Option<Self::Item>> {
         Pin::new(&mut self.conn).poll_next(cx)
@@ -303,7 +303,7 @@ impl Stream for Client {
 }
 
 impl Sink<SendMessage> for Client {
-    type Error = SendError;
+    type Error = crate::protos::relay::Error;
 
     fn poll_ready(
         mut self: Pin<&mut Self>,
@@ -338,7 +338,7 @@ pub struct ClientSink {
 }
 
 impl Sink<SendMessage> for ClientSink {
-    type Error = SendError;
+    type Error = crate::protos::relay::Error;
 
     fn poll_ready(
         mut self: Pin<&mut Self>,
@@ -381,7 +381,7 @@ impl ClientStream {
 }
 
 impl Stream for ClientStream {
-    type Item = Result<ReceivedMessage, RecvError>;
+    type Item = Result<ReceivedMessage, crate::protos::relay::Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Option<Self::Item>> {
         Pin::new(&mut self.stream).poll_next(cx)
