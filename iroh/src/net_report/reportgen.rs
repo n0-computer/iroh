@@ -619,7 +619,6 @@ impl Actor {
                         relay_node,
                         probe.clone(),
                         #[cfg(not(wasm_browser))]
-                        #[cfg(not(wasm_browser))]
                         socket_state,
                         #[cfg(any(test, feature = "test-utils"))]
                         self.insecure_skip_relay_cert_verify,
