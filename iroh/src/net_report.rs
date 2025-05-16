@@ -13,15 +13,14 @@
 use std::{
     collections::{BTreeMap, HashMap},
     fmt::{self, Debug},
-    net::{SocketAddr, SocketAddrV4, SocketAddrV6},
+    net::{SocketAddrV4, SocketAddrV6},
     sync::Arc,
 };
 
-use bytes::Bytes;
 use iroh_base::RelayUrl;
 #[cfg(not(wasm_browser))]
 use iroh_relay::dns::DnsResolver;
-use iroh_relay::{protos::stun, RelayMap};
+use iroh_relay::RelayMap;
 use n0_future::{
     task::{self, AbortOnDropHandle},
     time::{Duration, Instant},
@@ -31,22 +30,17 @@ use nested_enum_utils::common_fields;
 use netwatch::UdpSocket;
 use reportgen::ActorRunError;
 use snafu::Snafu;
-use tokio::sync::{self, mpsc, oneshot};
-use tracing::{debug, error, info_span, trace, warn, Instrument};
+use tokio::sync::{mpsc, oneshot};
+use tracing::{debug, error, info_span, trace, Instrument};
 
 mod defaults;
 #[cfg(not(wasm_browser))]
 mod dns;
 mod ip_mapped_addrs;
 mod metrics;
-#[cfg(not(wasm_browser))]
-mod ping;
 mod reportgen;
 
 mod options;
-
-#[cfg(not(wasm_browser))]
-pub use stun_utils::bind_local_stun_socket;
 
 /// We "vendor" what we need of the library in browsers for simplicity.
 ///
@@ -92,9 +86,9 @@ const DEFAULT_MAX_LATENCY: Duration = Duration::from_millis(100);
 pub struct Report {
     /// A UDP STUN round trip completed.
     pub udp: bool,
-    /// An IPv6 STUN round trip completed.
+    /// An IPv6 round trip completed.
     pub ipv6: bool,
-    /// An IPv4 STUN round trip completed.
+    /// An IPv4 round trip completed.
     pub ipv4: bool,
     /// An IPv6 packet was able to be sent
     pub ipv6_can_send: bool,
@@ -102,10 +96,6 @@ pub struct Report {
     pub ipv4_can_send: bool,
     /// could bind a socket to ::1
     pub os_has_ipv6: bool,
-    /// An ICMPv4 round trip completed, `None` if not checked.
-    pub icmpv4: Option<bool>,
-    /// An ICMPv6 round trip completed, `None` if not checked.
-    pub icmpv6: Option<bool>,
     /// Whether STUN results depend on which STUN server you're talking to (on IPv4).
     pub mapping_varies_by_dest_ip: Option<bool>,
     /// Whether STUN results depend on which STUN server you're talking to (on IPv6).
@@ -113,9 +103,6 @@ pub struct Report {
     /// Note that we don't really expect this to happen and are merely logging this if
     /// detecting rather than using it.  For now.
     pub mapping_varies_by_dest_ipv6: Option<bool>,
-    /// Whether the router supports communicating between two local devices through the NATted
-    /// public IP address (on IPv4).
-    pub hair_pinning: Option<bool>,
     /// Probe indicating the presence of port mapping protocols on the LAN.
     pub portmap_probe: Option<portmapper::ProbeOutput>,
     /// `None` for unknown
@@ -283,15 +270,6 @@ impl Client {
     ///
     /// It may not be called concurrently with itself, `&mut self` takes care of that.
     ///
-    /// The *stun_conn4* and *stun_conn6* endpoints are bound UDP sockets to use to send out
-    /// STUN packets.  This function **will not read from the sockets**, as they may be
-    /// receiving other traffic as well, normally they are the sockets carrying the real
-    /// traffic. Thus all stun packets received on those sockets should be passed to
-    /// `Addr::receive_stun_packet` in order for this function to receive the stun
-    /// responses and function correctly.
-    ///
-    /// If these are not passed in this will bind sockets for STUN itself, though results
-    /// may not be as reliable.
     ///
     /// The *quic_config* takes a [`QuicConfig`], a combination of a QUIC endpoint and
     /// a client configuration that can be use for verifying the relay server connection.
@@ -305,15 +283,10 @@ impl Client {
     pub async fn get_report_all(
         &mut self,
         relay_map: RelayMap,
-        #[cfg(not(wasm_browser))] stun_sock_v4: Option<Arc<UdpSocket>>,
-        #[cfg(not(wasm_browser))] stun_sock_v6: Option<Arc<UdpSocket>>,
         #[cfg(not(wasm_browser))] quic_config: Option<QuicConfig>,
     ) -> Result<Arc<Report>, ReportError> {
         #[cfg(not(wasm_browser))]
-        let opts = Options::default()
-            .stun_v4(stun_sock_v4)
-            .stun_v6(stun_sock_v6)
-            .quic_config(quic_config);
+        let opts = Options::default().quic_config(quic_config);
         #[cfg(wasm_browser)]
         let opts = Options::default();
 
@@ -362,16 +335,6 @@ impl Client {
     }
 }
 
-#[derive(Debug)]
-pub(crate) struct Inflight {
-    /// The STUN transaction ID.
-    txn: stun::TransactionId,
-    /// The time the STUN probe was sent.
-    start: Instant,
-    /// Response to send STUN results: latency of STUN response and the discovered address.
-    s: sync::oneshot::Sender<(Duration, SocketAddr)>,
-}
-
 /// Messages to send to the [`Actor`].
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
@@ -391,19 +354,7 @@ pub(crate) enum Message {
     /// A report produced by the [`reportgen`] actor.
     ReportReady { report: Box<Report> },
     /// The [`reportgen`] actor failed to produce a report.
-    ReportAborted { reason: ActorRunError },
-    /// An incoming STUN packet to parse.
-    StunPacket {
-        /// The raw UDP payload.
-        payload: Bytes,
-        /// The address this was claimed to be received from.
-        from_addr: SocketAddr,
-    },
-    /// A probe wants to register an in-flight STUN request.
-    ///
-    /// The sender is signalled once the STUN packet is registered with the actor and will
-    /// correctly accept the STUN response.
-    InFlightStun(Inflight, oneshot::Sender<()>),
+    ReportAborted { err: ActorRunError },
 }
 
 /// Sender to the main service.
@@ -413,33 +364,9 @@ pub(crate) enum Message {
 #[derive(Debug, Clone)]
 pub struct Addr {
     sender: mpsc::Sender<Message>,
-    metrics: Arc<Metrics>,
 }
 
 impl Addr {
-    /// Pass a received STUN packet to the net_reporter.
-    ///
-    /// Normally the UDP sockets to send STUN messages from are passed in so that STUN
-    /// packets are sent from the sockets that carry the real traffic.  However because
-    /// these sockets carry real traffic they will also receive non-STUN traffic, thus the
-    /// net_report actor does not read from the sockets directly.  If you receive a STUN
-    /// packet on the socket you should pass it to this method.
-    ///
-    /// It is safe to call this even when the net_report actor does not currently have any
-    /// in-flight STUN probes.  The actor will simply ignore any stray STUN packets.
-    ///
-    /// There is an implicit queue here which may drop packets if the actor does not keep up
-    /// consuming them.
-    pub fn receive_stun_packet(&self, payload: Bytes, src: SocketAddr) {
-        if let Err(mpsc::error::TrySendError::Full(_)) = self.sender.try_send(Message::StunPacket {
-            payload,
-            from_addr: src,
-        }) {
-            self.metrics.stun_packets_dropped.inc();
-            warn!("dropping stun packet from {}", src);
-        }
-    }
-
     async fn send(&self, msg: Message) -> Result<(), mpsc::error::SendError<Message>> {
         self.sender.send(msg).await.inspect_err(|_| {
             error!("net_report actor lost");
@@ -475,10 +402,6 @@ struct Actor {
     port_mapper: Option<portmapper::Client>,
 
     // Actor state.
-    /// Information about the currently in-flight STUN requests.
-    ///
-    /// This is used to complete the STUN probe when receiving STUN packets.
-    in_flight_stun_requests: HashMap<stun::TransactionId, Inflight>,
     /// The [`reportgen`] actor currently generating a report.
     current_report_run: Option<ReportRun>,
 
@@ -511,7 +434,6 @@ impl Actor {
             reports: Default::default(),
             #[cfg(not(wasm_browser))]
             port_mapper,
-            in_flight_stun_requests: Default::default(),
             current_report_run: None,
             #[cfg(not(wasm_browser))]
             dns_resolver,
@@ -525,7 +447,6 @@ impl Actor {
     fn addr(&self) -> Addr {
         Addr {
             sender: self.sender.clone(),
-            metrics: self.metrics.clone(),
         }
     }
 
@@ -548,14 +469,8 @@ impl Actor {
                 Message::ReportReady { report } => {
                     self.handle_report_ready(*report);
                 }
-                Message::ReportAborted { reason: err } => {
+                Message::ReportAborted { err } => {
                     self.handle_report_aborted(err);
-                }
-                Message::StunPacket { payload, from_addr } => {
-                    self.handle_stun_packet(&payload, from_addr);
-                }
-                Message::InFlightStun(inflight, response_tx) => {
-                    self.handle_in_flight_stun(inflight, response_tx);
                 }
             }
         }
@@ -576,8 +491,6 @@ impl Actor {
         #[cfg(not(wasm_browser))]
         let socket_state = SocketState {
             port_mapper: self.port_mapper.clone(),
-            stun_sock4: opts.stun_sock_v4,
-            stun_sock6: opts.stun_sock_v6,
             quic_config: opts.quic_config,
             dns_resolver: self.dns_resolver.clone(),
             ip_mapped_addrs: self.ip_mapped_addrs.clone(),
@@ -614,7 +527,6 @@ impl Actor {
             self.reports.last.clone(),
             relay_map,
             protocols,
-            self.metrics.clone(),
             #[cfg(not(wasm_browser))]
             socket_state,
             #[cfg(any(test, feature = "test-utils"))]
@@ -629,82 +541,15 @@ impl Actor {
 
     fn handle_report_ready(&mut self, report: Report) {
         let report = self.finish_and_store_report(report);
-        self.in_flight_stun_requests.clear();
         if let Some(ReportRun { report_tx, .. }) = self.current_report_run.take() {
             report_tx.send(Ok(report)).ok();
         }
     }
 
     fn handle_report_aborted(&mut self, reason: ActorRunError) {
-        self.in_flight_stun_requests.clear();
         if let Some(ReportRun { report_tx, .. }) = self.current_report_run.take() {
             report_tx.send(Err(AbortSnafu { reason }.build())).ok();
         }
-    }
-
-    /// Handles [`Message::StunPacket`].
-    ///
-    /// If there are currently no in-flight stun requests registered this is dropped,
-    /// otherwise forwarded to the probe.
-    fn handle_stun_packet(&mut self, pkt: &[u8], src: SocketAddr) {
-        trace!(%src, "received STUN packet");
-        if self.in_flight_stun_requests.is_empty() {
-            return;
-        }
-
-        #[cfg(feature = "metrics")]
-        match &src {
-            SocketAddr::V4(_) => {
-                self.metrics.stun_packets_recv_ipv4.inc();
-            }
-            SocketAddr::V6(_) => {
-                self.metrics.stun_packets_recv_ipv6.inc();
-            }
-        }
-
-        match stun::parse_response(pkt) {
-            Ok((txn, addr_port)) => match self.in_flight_stun_requests.remove(&txn) {
-                Some(inf) => {
-                    debug!(%src, %txn, "received known STUN packet");
-                    let elapsed = inf.start.elapsed();
-                    inf.s.send((elapsed, addr_port)).ok();
-                }
-                None => {
-                    debug!(%src, %txn, "received unexpected STUN message response");
-                }
-            },
-            Err(err) => {
-                match stun::parse_binding_request(pkt) {
-                    Ok(txn) => {
-                        // Is this our hairpin request?
-                        match self.in_flight_stun_requests.remove(&txn) {
-                            Some(inf) => {
-                                debug!(%src, %txn, "received our hairpin STUN request");
-                                let elapsed = inf.start.elapsed();
-                                inf.s.send((elapsed, src)).ok();
-                            }
-                            None => {
-                                debug!(%src, %txn, "unknown STUN request");
-                            }
-                        }
-                    }
-                    Err(_) => {
-                        debug!(%src, "received invalid STUN response: {err:#}");
-                    }
-                }
-            }
-        }
-    }
-
-    /// Handles [`Message::InFlightStun`].
-    ///
-    /// The in-flight request is added to [`Actor::in_flight_stun_requests`] so that
-    /// [`Actor::handle_stun_packet`] can forward packets correctly.
-    ///
-    /// *response_tx* is to signal the actor message has been handled.
-    fn handle_in_flight_stun(&mut self, inflight: Inflight, response_tx: oneshot::Sender<()>) {
-        self.in_flight_stun_requests.insert(inflight.txn, inflight);
-        response_tx.send(()).ok();
     }
 
     fn finish_and_store_report(&mut self, report: Report) -> Arc<Report> {
@@ -822,93 +667,6 @@ fn os_has_ipv6() -> bool {
     false
 }
 
-#[cfg(not(wasm_browser))]
-pub(crate) mod stun_utils {
-    use netwatch::IpFamily;
-    use tokio_util::sync::CancellationToken;
-
-    use super::*;
-
-    /// Attempts to bind a local socket to send STUN packets from.
-    ///
-    /// If successful this returns the bound socket and will forward STUN responses to the
-    /// provided *actor_addr*.  The *cancel_token* serves to stop the packet forwarding when the
-    /// socket is no longer needed.
-    pub fn bind_local_stun_socket(
-        network: IpFamily,
-        actor_addr: Addr,
-        cancel_token: CancellationToken,
-    ) -> Option<Arc<UdpSocket>> {
-        let sock = match UdpSocket::bind(network, 0) {
-            Ok(sock) => Arc::new(sock),
-            Err(err) => {
-                debug!("failed to bind STUN socket: {}", err);
-                return None;
-            }
-        };
-        let span = info_span!(
-            "stun_udp_listener",
-            local_addr = sock
-                .local_addr()
-                .map(|a| a.to_string())
-                .unwrap_or(String::from("-")),
-        );
-        {
-            let sock = sock.clone();
-            task::spawn(
-                async move {
-                    debug!("udp stun socket listener started");
-                    // TODO: Can we do better for buffers here?  Probably doesn't matter much.
-                    let mut buf = vec![0u8; 64 << 10];
-                    loop {
-                        tokio::select! {
-                            biased;
-                            _ = cancel_token.cancelled() => break,
-                            res = recv_stun_once(&sock, &mut buf, &actor_addr) => {
-                                if let Err(err) = res {
-                                    warn!(%err, "stun recv failed");
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    debug!("udp stun socket listener stopped");
-                }
-                .instrument(span),
-            );
-        }
-        Some(sock)
-    }
-
-    #[derive(Debug, Snafu)]
-    enum RecvStunError {
-        #[snafu(transparent)]
-        Recv { source: std::io::Error },
-        #[snafu(display("Internal actor is gone"))]
-        ActorGone,
-    }
-
-    /// Receive STUN response from a UDP socket, pass it to the actor.
-    async fn recv_stun_once(
-        sock: &UdpSocket,
-        buf: &mut [u8],
-        actor_addr: &Addr,
-    ) -> Result<(), RecvStunError> {
-        let (count, mut from_addr) = sock.recv_from(buf).await?;
-
-        let payload = &buf[..count];
-        from_addr.set_ip(from_addr.ip().to_canonical());
-        let msg = Message::StunPacket {
-            payload: Bytes::from(payload.to_vec()),
-            from_addr,
-        };
-        actor_addr
-            .send(msg)
-            .await
-            .map_err(|_| ActorGoneSnafu.build())
-    }
-}
-
 #[cfg(test)]
 mod test_utils {
     //! Creates a relay server against which to perform tests
@@ -950,6 +708,8 @@ mod test_utils {
 
 #[cfg(test)]
 mod tests {
+    use std::net::{Ipv4Addr, SocketAddr};
+
     use bytes::BytesMut;
     use n0_snafu::{Result, ResultExt};
     use netwatch::IpFamily;
@@ -958,184 +718,46 @@ mod tests {
     use tracing_test::traced_test;
 
     use super::*;
-    use crate::net_report::{dns, stun_utils::bind_local_stun_socket};
+    use crate::net_report::dns;
 
-    mod stun_utils {
-        //! Utils for testing that expose a simple stun server.
+    // #[tokio::test]
+    // #[traced_test]
+    // async fn test_basic() -> Result<()> {
+    //     // TODO: quic setup
 
-        use std::{net::IpAddr, sync::Arc};
+    //     let resolver = dns::tests::resolver();
+    //     let mut client = Client::new(None, resolver.clone(), None, Default::default())?;
+    //     // Note that the ProbePlan will change with each iteration.
+    //     for i in 0..5 {
+    //         let cancel = CancellationToken::new();
+    //         println!("--round {}", i);
+    //         let r = client.get_report_all(dm.clone(), None).await?;
 
-        use iroh_base::RelayUrl;
-        use iroh_relay::RelayNode;
-        use tokio::{
-            net,
-            sync::{oneshot, Mutex},
-        };
-        use tracing::{debug, trace};
+    //         assert!(r.udp, "want UDP");
+    //         assert_eq!(
+    //             r.relay_latency.len(),
+    //             1,
+    //             "expected 1 key in RelayLatency; got {}",
+    //             r.relay_latency.len()
+    //         );
+    //         assert!(
+    //             r.relay_latency.iter().next().is_some(),
+    //             "expected key 1 in RelayLatency; got {:?}",
+    //             r.relay_latency
+    //         );
+    //         assert!(r.global_v4.is_some(), "expected globalV4 set");
+    //         assert!(r.preferred_relay.is_some(),);
+    //         cancel.cancel();
+    //     }
 
-        use super::*;
+    //     assert!(
+    //         stun_stats.total().await >= 5,
+    //         "expected at least 5 stun, got {}",
+    //         stun_stats.total().await,
+    //     );
 
-        /// A drop guard to clean up test infrastructure.
-        ///
-        /// After dropping the test infrastructure will asynchronously shutdown and release its
-        /// resources.
-        // Nightly sees the sender as dead code currently, but we only rely on Drop of the
-        // sender.
-        #[derive(Debug)]
-        pub struct CleanupDropGuard {
-            _guard: oneshot::Sender<()>,
-        }
-
-        // (read_ipv4, read_ipv6)
-        #[derive(Debug, Default, Clone)]
-        pub struct StunStats(Arc<Mutex<(usize, usize)>>);
-
-        impl StunStats {
-            pub async fn total(&self) -> usize {
-                let s = self.0.lock().await;
-                s.0 + s.1
-            }
-        }
-
-        pub fn relay_map_of(stun: impl Iterator<Item = SocketAddr>) -> RelayMap {
-            relay_map_of_opts(stun.map(|addr| (addr, true)))
-        }
-
-        pub fn relay_map_of_opts(stun: impl Iterator<Item = (SocketAddr, bool)>) -> RelayMap {
-            let nodes = stun.map(|(addr, stun_only)| {
-                let host = addr.ip();
-                let port = addr.port();
-
-                let url: RelayUrl = format!("http://{host}:{port}").parse().unwrap();
-                RelayNode {
-                    url,
-                    stun_port: port,
-                    stun_only,
-                    quic: None,
-                }
-            });
-            RelayMap::from_iter(nodes)
-        }
-
-        /// Sets up a simple STUN server binding to `0.0.0.0:0`.
-        ///
-        /// See [`serve`] for more details.
-        pub(crate) async fn serve_v4() -> std::io::Result<(SocketAddr, StunStats, CleanupDropGuard)>
-        {
-            serve(std::net::Ipv4Addr::UNSPECIFIED.into()).await
-        }
-
-        /// Sets up a simple STUN server.
-        pub(crate) async fn serve(
-            ip: IpAddr,
-        ) -> std::io::Result<(SocketAddr, StunStats, CleanupDropGuard)> {
-            let stats = StunStats::default();
-
-            let pc = net::UdpSocket::bind((ip, 0)).await?;
-            let mut addr = pc.local_addr()?;
-            match addr.ip() {
-                IpAddr::V4(ip) => {
-                    if ip.octets() == [0, 0, 0, 0] {
-                        addr.set_ip("127.0.0.1".parse().unwrap());
-                    }
-                }
-                _ => unreachable!("using ipv4"),
-            }
-
-            println!("STUN listening on {}", addr);
-            let (_guard, r) = oneshot::channel();
-            let stats_c = stats.clone();
-            tokio::task::spawn(async move {
-                run_stun(pc, stats_c, r).await;
-            });
-
-            Ok((addr, stats, CleanupDropGuard { _guard }))
-        }
-
-        async fn run_stun(pc: net::UdpSocket, stats: StunStats, mut done: oneshot::Receiver<()>) {
-            let mut buf = vec![0u8; 64 << 10];
-            loop {
-                trace!("read loop");
-                tokio::select! {
-                    _ = &mut done => {
-                        debug!("shutting down");
-                        break;
-                    }
-                    res = pc.recv_from(&mut buf) => match res {
-                        Ok((n, addr)) => {
-                            trace!("read packet {}bytes from {}", n, addr);
-                            let pkt = &buf[..n];
-                            if !stun::is(pkt) {
-                                debug!("received non STUN pkt");
-                                continue;
-                            }
-                            if let Ok(txid) = stun::parse_binding_request(pkt) {
-                                debug!("received binding request");
-                                let mut s = stats.0.lock().await;
-                                if addr.is_ipv4() {
-                                    s.0 += 1;
-                                } else {
-                                    s.1 += 1;
-                                }
-                                drop(s);
-
-                                let res = stun::response(txid, addr);
-                                if let Err(err) = pc.send_to(&res, addr).await {
-                                    eprintln!("STUN server write failed: {:?}", err);
-                                }
-                            }
-                        }
-                        Err(err) => {
-                            eprintln!("failed to read: {:?}", err);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    #[tokio::test]
-    #[traced_test]
-    async fn test_basic() -> Result {
-        let (stun_addr, stun_stats, _cleanup_guard) =
-            stun_utils::serve("127.0.0.1".parse().unwrap()).await.e()?;
-
-        let resolver = dns::tests::resolver();
-        let mut client = Client::new(None, resolver.clone(), None, Default::default());
-        let dm = stun_utils::relay_map_of([stun_addr].into_iter());
-
-        // Note that the ProbePlan will change with each iteration.
-        for i in 0..5 {
-            let cancel = CancellationToken::new();
-            let sock = bind_local_stun_socket(IpFamily::V4, client.addr(), cancel.clone());
-            println!("--round {}", i);
-            let r = client.get_report_all(dm.clone(), sock, None, None).await?;
-
-            assert!(r.udp, "want UDP");
-            assert_eq!(
-                r.relay_latency.len(),
-                1,
-                "expected 1 key in RelayLatency; got {}",
-                r.relay_latency.len()
-            );
-            assert!(
-                r.relay_latency.iter().next().is_some(),
-                "expected key 1 in RelayLatency; got {:?}",
-                r.relay_latency
-            );
-            assert!(r.global_v4.is_some(), "expected globalV4 set");
-            assert!(r.preferred_relay.is_some(),);
-            cancel.cancel();
-        }
-
-        assert!(
-            stun_stats.total().await >= 5,
-            "expected at least 5 stun, got {}",
-            stun_stats.total().await,
-        );
-
-        Ok(())
-    }
+    //     Ok(())
+    // }
 
     #[tokio::test(flavor = "current_thread", start_paused = true)]
     async fn test_add_report_history_set_preferred_relay() -> Result {
@@ -1315,63 +937,6 @@ mod tests {
             assert_eq!(got, want, "preferred_relay");
         }
 
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_hairpin() -> Result {
-        // Hairpinning is initiated after we discover our own IPv4 socket address (IP +
-        // port) via STUN, so the test needs to have a STUN server and perform STUN over
-        // IPv4 first.  Hairpinning detection works by sending a STUN *request* to **our own
-        // public socket address** (IP + port).  If the router supports hairpinning the STUN
-        // request is returned back to us and received on our public address.  This doesn't
-        // need to be a STUN request, but STUN already has a unique transaction ID which we
-        // can easily use to identify the packet.
-
-        // Setup STUN server and create relay_map.
-        let (stun_addr, _stun_stats, _done) = stun_utils::serve_v4().await.e()?;
-        let dm = stun_utils::relay_map_of([stun_addr].into_iter());
-        dbg!(&dm);
-
-        let resolver = dns::tests::resolver().clone();
-        let mut client = Client::new(None, resolver, None, Default::default());
-
-        // Set up an external socket to send STUN requests from, this will be discovered as
-        // our public socket address by STUN.  We send back any packets received on this
-        // socket to the net_report client using Client::receive_stun_packet.  Once we sent
-        // the hairpin STUN request (from a different randomly bound socket) we are sending
-        // it to this socket, which is forwarnding it back to our net_report client, because
-        // this dumb implementation just forwards anything even if it would be garbage.
-        // Thus hairpinning detection will declare hairpinning to work.
-        let sock = UdpSocket::bind_local(netwatch::IpFamily::V4, 0).e()?;
-        let sock = Arc::new(sock);
-        info!(addr=?sock.local_addr().unwrap(), "Using local addr");
-        let task = {
-            let sock = sock.clone();
-            let addr = client.addr.clone();
-            tokio::spawn(
-                async move {
-                    let mut buf = BytesMut::zeroed(64 << 10);
-                    loop {
-                        let (count, src) = sock.recv_from(&mut buf).await.unwrap();
-                        info!(
-                            addr=?sock.local_addr().unwrap(),
-                            %count,
-                            "Forwarding payload to net_report client",
-                        );
-                        let payload = buf.split_to(count).freeze();
-                        addr.receive_stun_packet(payload, src);
-                    }
-                }
-                .instrument(info_span!("pkt-fwd")),
-            )
-        };
-
-        let r = client.get_report_all(dm, Some(sock), None, None).await?;
-        dbg!(&r);
-        assert_eq!(r.hair_pinning, Some(true));
-
-        task.abort();
         Ok(())
     }
 }
