@@ -102,12 +102,23 @@ impl Probe {
 
     pub(super) fn node(&self) -> &Arc<RelayNode> {
         match self {
+            #[cfg(not(wasm_browser))]
             Probe::Https { node, .. }
             | Probe::QuicIpv4 { node, .. }
             | Probe::QuicIpv6 { node, .. } => node,
             #[cfg(wasm_browser)]
             Probe::Https { node, .. } => node,
         }
+    }
+
+    #[cfg(not(wasm_browser))]
+    pub(super) fn is_udp(&self) -> bool {
+        matches!(self, Self::QuicIpv4 { .. } | Self::QuicIpv6 { .. })
+    }
+
+    #[cfg(wasm_browser)]
+    pub(super) fn is_udp(&self) -> bool {
+        false
     }
 }
 
