@@ -369,10 +369,6 @@ impl Addr {
     pub fn is_relay(&self) -> bool {
         matches!(self, Self::Relay(..))
     }
-
-    pub fn is_ip(&self) -> bool {
-        matches!(self, Self::Ip(..))
-    }
 }
 
 #[derive(Debug)]
