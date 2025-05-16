@@ -1,6 +1,6 @@
 [package]
 name = "iroh-relay"
-version = "0.35.0"
+version = { workspace = true }
 edition = "2021"
 readme = "README.md"
 description = "Iroh's relay server and client"
