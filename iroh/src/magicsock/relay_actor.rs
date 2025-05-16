@@ -255,13 +255,14 @@ impl ActiveRelayActor {
             prio_inbox,
             inbox,
             relay_datagrams_send,
-            url,
+            url: url.clone(),
             relay_client_builder,
             is_home_relay: false,
             inactive_timeout: Box::pin(time::sleep(RELAY_INACTIVE_CLEANUP_TIME)),
             stop_token,
             metrics,
             receive_queue: ReceiveQueue {
+                relay_url: url,
                 relay_datagrams_recv,
                 relay_disco_recv,
                 pending: None,
@@ -454,6 +455,7 @@ impl ActiveRelayActor {
                         }
                     }
                 }
+                _ = self.receive_queue.forward_pending(), if self.receive_queue.is_pending() => {},
                 _ = &mut self.inactive_timeout, if !self.is_home_relay => {
                     debug!(?RELAY_INACTIVE_CLEANUP_TIME, "Inactive, exiting.");
                     break None;
@@ -615,7 +617,11 @@ impl ActiveRelayActor {
                     let fut = client_sink.send_all(&mut packet_stream);
                     self.run_sending(fut, &mut state, &mut client_stream).await?;
                 }
-                () = self.receive_queue.forward_pending(), if self.receive_queue.is_pending() => {}
+                res = self.receive_queue.forward_pending(), if self.receive_queue.is_pending() => {
+                    if let Err(err) = res {
+                        break Err(err);
+                    }
+                }
                 msg = client_stream.next(), if !self.receive_queue.is_pending() => {
                     let Some(msg) = msg else {
                         break Err(anyhow!("Stream closed by server."));
@@ -659,12 +665,11 @@ impl ActiveRelayActor {
                     .map(|p| *p != remote_node_id)
                     .unwrap_or(true)
                 {
-                    // Avoid map lookup with high throughput single peer.
+                    // Avoid map                () = self.receive_queue.forward_pending(), if self.receive_queue.is_pending() => {} lookup with high throughput single peer.
                     state.last_packet_src = Some(remote_node_id);
                     state.nodes_present.insert(remote_node_id);
                 }
-                let packets = PacketSplitIter::new(self.url.clone(), remote_node_id, data);
-                self.receive_queue.queue_packets(packets);
+                self.receive_queue.queue_packets(remote_node_id, data);
             }
             ReceivedMessage::NodeGone(node_id) => {
                 state.nodes_present.remove(&node_id);
@@ -747,7 +752,11 @@ impl ActiveRelayActor {
                     break Err(anyhow!("Ping timeout"));
                 }
                 // No need to read the inbox or datagrams to send.
-                () = self.receive_queue.forward_pending(), if self.receive_queue.is_pending() => {}
+                res = self.receive_queue.forward_pending(), if self.receive_queue.is_pending() => {
+                    if let Err(err) = res {
+                        break Err(err);
+                    }
+                }
                 msg = client_stream.next(), if !self.receive_queue.is_pending() => {
                     let Some(msg) = msg else {
                         break Err(anyhow!("Stream closed by server."));
@@ -769,6 +778,7 @@ impl ActiveRelayActor {
 
 #[derive(Debug)]
 struct ReceiveQueue {
+    relay_url: RelayUrl,
     /// Received relay packets that could not yet be forwarded to the magicsocket.
     pending: Option<PendingRecv>,
     /// Queue for received relay datagrams.
@@ -794,8 +804,19 @@ impl ReceiveQueue {
         self.pending.is_some()
     }
 
-    fn queue_packets(&mut self, packets: PacketSplitIter) {
-        debug_assert!(
+    /// Send packets to their respective queues.
+    ///
+    /// If a queue is blocked, the packets that were not yet sent will be stored on [`Self`],
+    /// and [`Self::is_pending`] will return true. You then need to await [`Self::forward_pending`]
+    /// in a loop until [`Self::is_pending`] returns false again. Only then call [`Self::queue_packets`]
+    /// again. Otherwise this function will panic.
+    ///
+    /// ## Panics
+    ///
+    /// Panics if [`Self::is_pending`] returns `true`.
+    fn queue_packets(&mut self, remote_node_id: NodeId, data: Bytes) {
+        let packets = PacketSplitIter::new(self.relay_url.clone(), remote_node_id, data);
+        assert!(
             !self.is_pending(),
             "ReceiveQueue::queue_packets may not be called if is_pending() returns true"
         );
@@ -808,47 +829,49 @@ impl ReceiveQueue {
     /// to become unblocked. It will then forward the pending items, until a queue is blocked again.
     /// In that case, the remaining items will be stored and [`Self::is_pending`] returns true.
     ///
+    /// Returns an error if the queue we're blocked on is closed.
+    ///
     /// This function is cancellation-safe: If the future is dropped at any point, all items are guaranteed
     /// to either be sent into their respective queues or preserved here.
-    async fn forward_pending(&mut self) {
+    async fn forward_pending(&mut self) -> Result<()> {
         // We take a reference onto the inner value.
         // we're not `take`ing it here, because this would make the function not cancellation safe.
         let Some(ref pending) = self.pending else {
-            return;
+            return Ok(());
         };
         let disco_permit = match pending.blocked_on {
             RecvPath::Data => {
-                std::future::poll_fn(|cx| self.relay_datagrams_recv.poll_send_ready(cx))
-                    .await
-                    .ok();
+                // The data receive queue does not have permits, so we can only wait for free slots.
+                self.relay_datagrams_recv.send_ready().await?;
                 None
             }
             RecvPath::Disco => {
-                let Ok(permit) = self.relay_disco_recv.clone().reserve_owned().await else {
-                    return;
-                };
+                // The disco receive channel has permits, so we can reserve a permit to use afterwards
+                // to send at least one item.
+                let permit = self.relay_disco_recv.clone().reserve_owned().await?;
                 Some(permit)
             }
         };
+        // We checked above that `self.pending` is not `None` so this `expect` is safe.
         let packets = self
             .pending
             .take()
             .expect("checked to be not empty")
             .packets;
         self.handle_packets(packets, disco_permit);
+        Ok(())
     }
 
     fn handle_packets(
         &mut self,
-        mut packet_iter: PacketSplitIter,
+        mut packets: PacketSplitIter,
         mut disco_permit: Option<OwnedPermit<RelayDiscoMessage>>,
     ) {
-        let remote_node_id = packet_iter.remote_node_id();
-        for datagram in &mut packet_iter {
+        let remote_node_id = packets.remote_node_id();
+        for datagram in &mut packets {
             let Ok(datagram) = datagram else {
                 warn!("Invalid packet split");
-                self.pending = None;
-                return;
+                break;
             };
             match crate::disco::source_and_box_bytes(&datagram.buf) {
                 Some((source, sealed_box)) => {
@@ -866,9 +889,9 @@ impl ReceiveQueue {
                         permit.send(message);
                     } else if let Err(err) = self.relay_disco_recv.try_send(message) {
                         warn!("Relay disco receive queue blocked: {err}");
-                        packet_iter.push_front(datagram);
+                        packets.push_front(datagram);
                         self.pending = Some(PendingRecv {
-                            packets: packet_iter,
+                            packets,
                             blocked_on: RecvPath::Disco,
                         });
                         return;
@@ -877,9 +900,9 @@ impl ReceiveQueue {
                 None => {
                     if let Err(err) = self.relay_datagrams_recv.try_send(datagram) {
                         warn!("Relay data receive queue blocked: {err}");
-                        packet_iter.push_front(err.into_inner());
+                        packets.push_front(err.into_inner());
                         self.pending = Some(PendingRecv {
-                            packets: packet_iter,
+                            packets,
                             blocked_on: RecvPath::Data,
                         });
                         return;
