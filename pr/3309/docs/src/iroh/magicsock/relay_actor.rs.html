@@ -1793,7 +1793,33 @@
 <a href="#1792" id="1792">1792</a>
 <a href="#1793" id="1793">1793</a>
 <a href="#1794" id="1794">1794</a>
-<a href="#1795" id="1795">1795</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1795" id="1795">1795</a>
+<a href="#1796" id="1796">1796</a>
+<a href="#1797" id="1797">1797</a>
+<a href="#1798" id="1798">1798</a>
+<a href="#1799" id="1799">1799</a>
+<a href="#1800" id="1800">1800</a>
+<a href="#1801" id="1801">1801</a>
+<a href="#1802" id="1802">1802</a>
+<a href="#1803" id="1803">1803</a>
+<a href="#1804" id="1804">1804</a>
+<a href="#1805" id="1805">1805</a>
+<a href="#1806" id="1806">1806</a>
+<a href="#1807" id="1807">1807</a>
+<a href="#1808" id="1808">1808</a>
+<a href="#1809" id="1809">1809</a>
+<a href="#1810" id="1810">1810</a>
+<a href="#1811" id="1811">1811</a>
+<a href="#1812" id="1812">1812</a>
+<a href="#1813" id="1813">1813</a>
+<a href="#1814" id="1814">1814</a>
+<a href="#1815" id="1815">1815</a>
+<a href="#1816" id="1816">1816</a>
+<a href="#1817" id="1817">1817</a>
+<a href="#1818" id="1818">1818</a>
+<a href="#1819" id="1819">1819</a>
+<a href="#1820" id="1820">1820</a>
+<a href="#1821" id="1821">1821</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1931,10 +1957,6 @@
     </span>prio_inbox: mpsc::Receiver&lt;ActiveRelayPrioMessage&gt;,
     <span class="doccomment">/// Inbox for messages which involve sending to the relay server.
     </span>inbox: mpsc::Receiver&lt;ActiveRelayMessage&gt;,
-    <span class="doccomment">/// Queue for received relay datagrams.
-    </span>relay_datagrams_recv: Arc&lt;RelayDatagramRecvQueue&gt;,
-    <span class="doccomment">/// Queue for received relay disco packets.
-    </span>relay_disco_recv: mpsc::Sender&lt;RelayDiscoMessage&gt;,
     <span class="doccomment">/// Channel on which we queue packets to send to the relay.
     </span>relay_datagrams_send: mpsc::Receiver&lt;RelaySendItem&gt;,
 
@@ -1957,20 +1979,7 @@
     <span class="doccomment">/// Token indicating the [`ActiveRelayActor`] should stop.
     </span>stop_token: CancellationToken,
     metrics: Arc&lt;MagicsockMetrics&gt;,
-    <span class="doccomment">/// Received relay packets that could not yet be forwarded to the magicsocket.
-    </span>pending_received: <span class="prelude-ty">Option</span>&lt;PendingRecv&gt;,
-}
-
-<span class="attr">#[derive(Debug)]
-</span><span class="kw">struct </span>PendingRecv {
-    packet_iter: PacketSplitIter,
-    blocked_on: RecvPath,
-}
-
-<span class="attr">#[derive(Debug)]
-</span><span class="kw">enum </span>RecvPath {
-    Data,
-    Disco,
+    receive_queue: ReceiveQueue,
 }
 
 <span class="attr">#[derive(Debug)]
@@ -2066,16 +2075,19 @@
         ActiveRelayActor {
             prio_inbox,
             inbox,
-            relay_datagrams_recv,
             relay_datagrams_send,
-            relay_disco_recv,
-            url,
+            url: url.clone(),
             relay_client_builder,
             is_home_relay: <span class="bool-val">false</span>,
             inactive_timeout: Box::pin(time::sleep(RELAY_INACTIVE_CLEANUP_TIME)),
             stop_token,
             metrics,
-            pending_received: <span class="prelude-val">None</span>,
+            receive_queue: ReceiveQueue {
+                relay_url: url,
+                relay_datagrams_recv,
+                relay_disco_recv,
+                pending: <span class="prelude-val">None</span>,
+            },
         }
     }
 
@@ -2264,6 +2276,7 @@
                         }
                     }
                 }
+                <span class="kw">_ </span>= <span class="self">self</span>.receive_queue.forward_pending(), <span class="kw">if </span><span class="self">self</span>.receive_queue.is_pending() =&gt; {},
                 <span class="kw">_ </span>= <span class="kw-2">&amp;mut </span><span class="self">self</span>.inactive_timeout, <span class="kw">if </span>!<span class="self">self</span>.is_home_relay =&gt; {
                     <span class="macro">debug!</span>(<span class="question-mark">?</span>RELAY_INACTIVE_CLEANUP_TIME, <span class="string">"Inactive, exiting."</span>);
                     <span class="kw">break </span><span class="prelude-val">None</span>;
@@ -2425,8 +2438,12 @@
                     <span class="kw">let </span>fut = client_sink.send_all(<span class="kw-2">&amp;mut </span>packet_stream);
                     <span class="self">self</span>.run_sending(fut, <span class="kw-2">&amp;mut </span>state, <span class="kw-2">&amp;mut </span>client_stream).<span class="kw">await</span><span class="question-mark">?</span>;
                 }
-                <span class="kw">_ </span>= forward_pending(<span class="kw-2">&amp;mut </span><span class="self">self</span>.pending_received, <span class="kw-2">&amp;</span><span class="self">self</span>.relay_datagrams_recv, <span class="kw-2">&amp;mut </span><span class="self">self</span>.relay_disco_recv), <span class="kw">if </span><span class="self">self</span>.pending_received.is_some() =&gt; {}
-                msg = client_stream.next(), <span class="kw">if </span><span class="self">self</span>.pending_received.is_none() =&gt; {
+                res = <span class="self">self</span>.receive_queue.forward_pending(), <span class="kw">if </span><span class="self">self</span>.receive_queue.is_pending() =&gt; {
+                    <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = res {
+                        <span class="kw">break </span><span class="prelude-val">Err</span>(err);
+                    }
+                }
+                msg = client_stream.next(), <span class="kw">if </span>!<span class="self">self</span>.receive_queue.is_pending() =&gt; {
                     <span class="kw">let </span><span class="prelude-val">Some</span>(msg) = msg <span class="kw">else </span>{
                         <span class="kw">break </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Stream closed by server."</span>));
                     };
@@ -2469,19 +2486,11 @@
                     .map(|p| <span class="kw-2">*</span>p != remote_node_id)
                     .unwrap_or(<span class="bool-val">true</span>)
                 {
-                    <span class="comment">// Avoid map lookup with high throughput single peer.
+                    <span class="comment">// Avoid map                () = self.receive_queue.forward_pending(), if self.receive_queue.is_pending() =&gt; {} lookup with high throughput single peer.
                     </span>state.last_packet_src = <span class="prelude-val">Some</span>(remote_node_id);
                     state.nodes_present.insert(remote_node_id);
                 }
-                <span class="kw">let </span>packet_iter = PacketSplitIter::new(<span class="self">self</span>.url.clone(), remote_node_id, data);
-                <span class="kw">if let </span><span class="prelude-val">Some</span>(pending) = handle_received_packet_iter(
-                    packet_iter,
-                    <span class="prelude-val">None</span>,
-                    <span class="kw-2">&amp;</span><span class="self">self</span>.relay_datagrams_recv,
-                    <span class="kw-2">&amp;mut </span><span class="self">self</span>.relay_disco_recv,
-                ) {
-                    <span class="self">self</span>.pending_received = <span class="prelude-val">Some</span>(pending);
-                }
+                <span class="self">self</span>.receive_queue.queue_packets(remote_node_id, data);
             }
             ReceivedMessage::NodeGone(node_id) =&gt; {
                 state.nodes_present.remove(<span class="kw-2">&amp;</span>node_id);
@@ -2564,8 +2573,12 @@
                     <span class="kw">break </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Ping timeout"</span>));
                 }
                 <span class="comment">// No need to read the inbox or datagrams to send.
-                </span><span class="kw">_ </span>= forward_pending(<span class="kw-2">&amp;mut </span><span class="self">self</span>.pending_received, <span class="kw-2">&amp;</span><span class="self">self</span>.relay_datagrams_recv, <span class="kw-2">&amp;mut </span><span class="self">self</span>.relay_disco_recv), <span class="kw">if </span><span class="self">self</span>.pending_received.is_some() =&gt; {}
-                msg = client_stream.next(), <span class="kw">if </span><span class="self">self</span>.pending_received.is_none() =&gt; {
+                </span>res = <span class="self">self</span>.receive_queue.forward_pending(), <span class="kw">if </span><span class="self">self</span>.receive_queue.is_pending() =&gt; {
+                    <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = res {
+                        <span class="kw">break </span><span class="prelude-val">Err</span>(err);
+                    }
+                }
+                msg = client_stream.next(), <span class="kw">if </span>!<span class="self">self</span>.receive_queue.is_pending() =&gt; {
                     <span class="kw">let </span><span class="prelude-val">Some</span>(msg) = msg <span class="kw">else </span>{
                         <span class="kw">break </span><span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Stream closed by server."</span>));
                     };
@@ -2584,104 +2597,143 @@
     }
 }
 
-<span class="doccomment">/// Forward pending received packets to their queues.
-///
-/// If `maybe_pending` is not empty, this will wait for the path the last received item
-/// is blocked on (via [`PendingRecv::blocked_on`]) to become unblocked. It will then forward
-/// the pending items, until a queue is blocked again. In that case, the remaining items will
-/// be put back into `maybe_pending`. If all items could be sent, `maybe_pending` will be set
-/// to `None`.
-///
-/// This function is cancellation-safe: If the future is dropped at any point, all items are guaranteed
-/// to either be sent into their respective queues, or are still in `maybe_pending`.
-</span><span class="kw">async fn </span>forward_pending(
-    maybe_pending: <span class="kw-2">&amp;mut </span><span class="prelude-ty">Option</span>&lt;PendingRecv&gt;,
-    relay_datagrams_recv: <span class="kw-2">&amp;</span>RelayDatagramRecvQueue,
-    relay_disco_recv: <span class="kw-2">&amp;mut </span>mpsc::Sender&lt;RelayDiscoMessage&gt;,
-) {
-    <span class="comment">// We take a mutable reference onto the inner value.
-    // we're not `take`ing it here, because this would make the function not cancellation safe.
-    </span><span class="kw">let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref mut </span>pending) = maybe_pending <span class="kw">else </span>{
-        <span class="kw">return</span>;
-    };
-    <span class="kw">let </span>disco_permit = <span class="kw">match </span>pending.blocked_on {
-        RecvPath::Data =&gt; {
-            std::future::poll_fn(|cx| relay_datagrams_recv.poll_send_ready(cx))
-                .<span class="kw">await
-                </span>.ok();
-            <span class="prelude-val">None
-        </span>}
-        RecvPath::Disco =&gt; {
-            <span class="kw">let </span><span class="prelude-val">Ok</span>(permit) = relay_disco_recv.clone().reserve_owned().<span class="kw">await else </span>{
-                <span class="kw">return</span>;
-            };
-            <span class="prelude-val">Some</span>(permit)
-        }
-    };
-    <span class="comment">// We now take the inner value by value. it is cancellation safe here because
-    // no further `await`s occur after here.
-    // The unwrap is guaranteed to be safe because we checked above that it is not none.
-    </span><span class="attr">#[allow(clippy::unwrap_used, reason = <span class="string">"checked above"</span>)]
-    </span><span class="kw">let </span>pending = maybe_pending.take().unwrap();
-    <span class="kw">if let </span><span class="prelude-val">Some</span>(pending) = handle_received_packet_iter(
-        pending.packet_iter,
-        disco_permit,
-        relay_datagrams_recv,
-        relay_disco_recv,
-    ) {
-        <span class="kw-2">*</span>maybe_pending = <span class="prelude-val">Some</span>(pending);
-    }
+<span class="attr">#[derive(Debug)]
+</span><span class="kw">struct </span>ReceiveQueue {
+    relay_url: RelayUrl,
+    <span class="doccomment">/// Received relay packets that could not yet be forwarded to the magicsocket.
+    </span>pending: <span class="prelude-ty">Option</span>&lt;PendingRecv&gt;,
+    <span class="doccomment">/// Queue for received relay datagrams.
+    </span>relay_datagrams_recv: Arc&lt;RelayDatagramRecvQueue&gt;,
+    <span class="doccomment">/// Queue for received relay disco packets.
+    </span>relay_disco_recv: mpsc::Sender&lt;RelayDiscoMessage&gt;,
 }
 
-<span class="kw">fn </span>handle_received_packet_iter(
-    <span class="kw-2">mut </span>packet_iter: PacketSplitIter,
-    <span class="kw-2">mut </span>disco_permit: <span class="prelude-ty">Option</span>&lt;OwnedPermit&lt;RelayDiscoMessage&gt;&gt;,
-    relay_datagrams_recv: <span class="kw-2">&amp;</span>RelayDatagramRecvQueue,
-    relay_disco_recv: <span class="kw-2">&amp;mut </span>mpsc::Sender&lt;RelayDiscoMessage&gt;,
-) -&gt; <span class="prelude-ty">Option</span>&lt;PendingRecv&gt; {
-    <span class="kw">let </span>remote_node_id = packet_iter.remote_node_id();
-    <span class="kw">for </span>datagram <span class="kw">in </span><span class="kw-2">&amp;mut </span>packet_iter {
-        <span class="kw">let </span><span class="prelude-val">Ok</span>(datagram) = datagram <span class="kw">else </span>{
-            <span class="macro">warn!</span>(<span class="string">"Invalid packet split"</span>);
-            <span class="kw">return </span><span class="prelude-val">None</span>;
+<span class="attr">#[derive(Debug)]
+</span><span class="kw">struct </span>PendingRecv {
+    packets: PacketSplitIter,
+    blocked_on: RecvPath,
+}
+
+<span class="attr">#[derive(Debug)]
+</span><span class="kw">enum </span>RecvPath {
+    Data,
+    Disco,
+}
+
+<span class="kw">impl </span>ReceiveQueue {
+    <span class="kw">fn </span>is_pending(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+        <span class="self">self</span>.pending.is_some()
+    }
+
+    <span class="doccomment">/// Send packets to their respective queues.
+    ///
+    /// If a queue is blocked, the packets that were not yet sent will be stored on [`Self`],
+    /// and [`Self::is_pending`] will return true. You then need to await [`Self::forward_pending`]
+    /// in a loop until [`Self::is_pending`] returns false again. Only then call [`Self::queue_packets`]
+    /// again. Otherwise this function will panic.
+    ///
+    /// ## Panics
+    ///
+    /// Panics if [`Self::is_pending`] returns `true`.
+    </span><span class="kw">fn </span>queue_packets(<span class="kw-2">&amp;mut </span><span class="self">self</span>, remote_node_id: NodeId, data: Bytes) {
+        <span class="kw">let </span>packets = PacketSplitIter::new(<span class="self">self</span>.relay_url.clone(), remote_node_id, data);
+        <span class="macro">assert!</span>(
+            !<span class="self">self</span>.is_pending(),
+            <span class="string">"ReceiveQueue::queue_packets may not be called if is_pending() returns true"
+        </span>);
+        <span class="self">self</span>.handle_packets(packets, <span class="prelude-val">None</span>);
+    }
+
+    <span class="doccomment">/// Forward pending received packets to their queues.
+    ///
+    /// This will wait for the path the last received item is blocked on (via [`PendingRecv::blocked_on`])
+    /// to become unblocked. It will then forward the pending items, until a queue is blocked again.
+    /// In that case, the remaining items will be stored and [`Self::is_pending`] returns true.
+    ///
+    /// Returns an error if the queue we're blocked on is closed.
+    ///
+    /// This function is cancellation-safe: If the future is dropped at any point, all items are guaranteed
+    /// to either be sent into their respective queues or preserved here.
+    </span><span class="kw">async fn </span>forward_pending(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        <span class="comment">// We take a reference onto the inner value.
+        // we're not `take`ing it here, because this would make the function not cancellation safe.
+        </span><span class="kw">let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>pending) = <span class="self">self</span>.pending <span class="kw">else </span>{
+            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
         };
-        <span class="kw">match </span><span class="kw">crate</span>::disco::source_and_box_bytes(<span class="kw-2">&amp;</span>datagram.buf) {
-            <span class="prelude-val">Some</span>((source, sealed_box)) =&gt; {
-                <span class="kw">if </span>remote_node_id != source {
-                    <span class="comment">// TODO: return here?
-                    </span><span class="macro">warn!</span>(<span class="string">"Received relay disco message from connection for {}, but with message from {}"</span>, remote_node_id.fmt_short(), source.fmt_short());
-                }
-                <span class="kw">let </span>message = RelayDiscoMessage {
-                    source,
-                    sealed_box,
-                    relay_url: datagram.url.clone(),
-                    relay_remote_node_id: datagram.src,
-                };
-                <span class="kw">if let </span><span class="prelude-val">Some</span>(permit) = disco_permit.take() {
-                    permit.send(message);
-                } <span class="kw">else if let </span><span class="prelude-val">Err</span>(err) = relay_disco_recv.try_send(message) {
-                    <span class="macro">warn!</span>(<span class="string">"Dropping received relay disco packet: {err:#}"</span>);
-                    packet_iter.push_front(datagram);
-                    <span class="kw">return </span><span class="prelude-val">Some</span>(PendingRecv {
-                        packet_iter,
-                        blocked_on: RecvPath::Disco,
-                    });
-                }
+        <span class="kw">let </span>disco_permit = <span class="kw">match </span>pending.blocked_on {
+            RecvPath::Data =&gt; {
+                <span class="comment">// The data receive queue does not have permits, so we can only wait for free slots.
+                </span><span class="self">self</span>.relay_datagrams_recv.send_ready().<span class="kw">await</span><span class="question-mark">?</span>;
+                <span class="prelude-val">None
+            </span>}
+            RecvPath::Disco =&gt; {
+                <span class="comment">// The disco receive channel has permits, so we can reserve a permit to use afterwards
+                // to send at least one item.
+                </span><span class="kw">let </span>permit = <span class="self">self</span>.relay_disco_recv.clone().reserve_owned().<span class="kw">await</span><span class="question-mark">?</span>;
+                <span class="prelude-val">Some</span>(permit)
             }
-            <span class="prelude-val">None </span>=&gt; {
-                <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = relay_datagrams_recv.try_send(datagram) {
-                    <span class="macro">warn!</span>(<span class="string">"Dropping received relay data packet: {err:#}"</span>);
-                    packet_iter.push_front(err.into_inner());
-                    <span class="kw">return </span><span class="prelude-val">Some</span>(PendingRecv {
-                        packet_iter,
-                        blocked_on: RecvPath::Data,
-                    });
+        };
+        <span class="comment">// We checked above that `self.pending` is not `None` so this `expect` is safe.
+        </span><span class="kw">let </span>packets = <span class="self">self
+            </span>.pending
+            .take()
+            .expect(<span class="string">"checked to be not empty"</span>)
+            .packets;
+        <span class="self">self</span>.handle_packets(packets, disco_permit);
+        <span class="prelude-val">Ok</span>(())
+    }
+
+    <span class="kw">fn </span>handle_packets(
+        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+        <span class="kw-2">mut </span>packets: PacketSplitIter,
+        <span class="kw-2">mut </span>disco_permit: <span class="prelude-ty">Option</span>&lt;OwnedPermit&lt;RelayDiscoMessage&gt;&gt;,
+    ) {
+        <span class="kw">let </span>remote_node_id = packets.remote_node_id();
+        <span class="kw">for </span>datagram <span class="kw">in </span><span class="kw-2">&amp;mut </span>packets {
+            <span class="kw">let </span><span class="prelude-val">Ok</span>(datagram) = datagram <span class="kw">else </span>{
+                <span class="macro">warn!</span>(<span class="string">"Invalid packet split"</span>);
+                <span class="kw">break</span>;
+            };
+            <span class="kw">match </span><span class="kw">crate</span>::disco::source_and_box_bytes(<span class="kw-2">&amp;</span>datagram.buf) {
+                <span class="prelude-val">Some</span>((source, sealed_box)) =&gt; {
+                    <span class="kw">if </span>remote_node_id != source {
+                        <span class="comment">// TODO: return here?
+                        </span><span class="macro">warn!</span>(<span class="string">"Received relay disco message from connection for {}, but with message from {}"</span>, remote_node_id.fmt_short(), source.fmt_short());
+                    }
+                    <span class="kw">let </span>message = RelayDiscoMessage {
+                        source,
+                        sealed_box,
+                        relay_url: datagram.url.clone(),
+                        relay_remote_node_id: datagram.src,
+                    };
+                    <span class="kw">if let </span><span class="prelude-val">Some</span>(permit) = disco_permit.take() {
+                        permit.send(message);
+                    } <span class="kw">else if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.relay_disco_recv.try_send(message) {
+                        <span class="macro">warn!</span>(<span class="string">"Relay disco receive queue blocked: {err}"</span>);
+                        packets.push_front(datagram);
+                        <span class="self">self</span>.pending = <span class="prelude-val">Some</span>(PendingRecv {
+                            packets,
+                            blocked_on: RecvPath::Disco,
+                        });
+                        <span class="kw">return</span>;
+                    }
+                }
+                <span class="prelude-val">None </span>=&gt; {
+                    <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.relay_datagrams_recv.try_send(datagram) {
+                        <span class="macro">warn!</span>(<span class="string">"Relay data receive queue blocked: {err}"</span>);
+                        packets.push_front(err.into_inner());
+                        <span class="self">self</span>.pending = <span class="prelude-val">Some</span>(PendingRecv {
+                            packets,
+                            blocked_on: RecvPath::Data,
+                        });
+                        <span class="kw">return</span>;
+                    }
                 }
             }
         }
+        <span class="self">self</span>.pending = <span class="prelude-val">None</span>;
     }
-    <span class="prelude-val">None
-</span>}
+}
 
 <span class="doccomment">/// Shared state when the [`ActiveRelayActor`] is connected to a relay server.
 ///

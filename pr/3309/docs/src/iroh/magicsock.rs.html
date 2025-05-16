@@ -4501,7 +4501,35 @@
 <a href="#4500" id="4500">4500</a>
 <a href="#4501" id="4501">4501</a>
 <a href="#4502" id="4502">4502</a>
-<a href="#4503" id="4503">4503</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4503" id="4503">4503</a>
+<a href="#4504" id="4504">4504</a>
+<a href="#4505" id="4505">4505</a>
+<a href="#4506" id="4506">4506</a>
+<a href="#4507" id="4507">4507</a>
+<a href="#4508" id="4508">4508</a>
+<a href="#4509" id="4509">4509</a>
+<a href="#4510" id="4510">4510</a>
+<a href="#4511" id="4511">4511</a>
+<a href="#4512" id="4512">4512</a>
+<a href="#4513" id="4513">4513</a>
+<a href="#4514" id="4514">4514</a>
+<a href="#4515" id="4515">4515</a>
+<a href="#4516" id="4516">4516</a>
+<a href="#4517" id="4517">4517</a>
+<a href="#4518" id="4518">4518</a>
+<a href="#4519" id="4519">4519</a>
+<a href="#4520" id="4520">4520</a>
+<a href="#4521" id="4521">4521</a>
+<a href="#4522" id="4522">4522</a>
+<a href="#4523" id="4523">4523</a>
+<a href="#4524" id="4524">4524</a>
+<a href="#4525" id="4525">4525</a>
+<a href="#4526" id="4526">4526</a>
+<a href="#4527" id="4527">4527</a>
+<a href="#4528" id="4528">4528</a>
+<a href="#4529" id="4529">4529</a>
+<a href="#4530" id="4530">4530</a>
+<a href="#4531" id="4531">4531</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -6619,7 +6647,7 @@
 </span><span class="kw">struct </span>RelayDatagramRecvQueue {
     queue: ConcurrentQueue&lt;RelayRecvDatagram&gt;,
     recv_waker: AtomicWaker,
-    send_waker: AtomicWaker,
+    send_wakers: ConcurrentQueue&lt;Waker&gt;,
 }
 
 <span class="kw">impl </span>RelayDatagramRecvQueue {
@@ -6628,7 +6656,7 @@
         <span class="self">Self </span>{
             queue: ConcurrentQueue::bounded(<span class="number">512</span>),
             recv_waker: AtomicWaker::new(),
-            send_waker: AtomicWaker::new(),
+            send_wakers: ConcurrentQueue::unbounded(),
         }
     }
 
@@ -6645,14 +6673,42 @@
         })
     }
 
-    <span class="kw">fn </span>poll_send_ready(<span class="kw-2">&amp;</span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt; {
+    <span class="doccomment">/// Polls for whether the queue has free slots for sending items.
+    ///
+    /// If the queue has free slots, this returns [`Poll::Ready`].
+    /// If the queue is full, [`Poll::Pending`] is returned and the waker
+    /// is stored and woken once the queue has free slots.
+    ///
+    /// This can be called from multiple tasks concurrently. If a slot becomes
+    /// available, all stored wakers will be woken simultaneously.
+    /// This also means that even if [`Poll::Ready`] is returned, it is not
+    /// guaranteed that [`Self::try_send`] will return `Ok` on the next call,
+    /// because another send task could have used the slot already.
+    </span><span class="kw">fn </span>poll_send_ready(<span class="kw-2">&amp;</span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt; {
         <span class="kw">if </span><span class="self">self</span>.queue.is_closed() {
             Poll::Ready(<span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Queue closed"</span>)))
         } <span class="kw">else if </span>!<span class="self">self</span>.queue.is_full() {
             Poll::Ready(<span class="prelude-val">Ok</span>(()))
         } <span class="kw">else </span>{
-            <span class="self">self</span>.send_waker.register(cx.waker());
-            Poll::Pending
+            <span class="kw">match </span><span class="self">self</span>.send_wakers.push(cx.waker().clone()) {
+                <span class="prelude-val">Ok</span>(()) =&gt; Poll::Pending,
+                <span class="prelude-val">Err</span>(concurrent_queue::PushError::Full(<span class="kw">_</span>)) =&gt; {
+                    <span class="macro">unreachable!</span>(<span class="string">"Send waker queue is unbounded"</span>)
+                }
+                <span class="prelude-val">Err</span>(concurrent_queue::PushError::Closed(<span class="kw">_</span>)) =&gt; {
+                    Poll::Ready(<span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Queue closed"</span>)))
+                }
+            }
+        }
+    }
+
+    <span class="kw">async fn </span>send_ready(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        std::future::poll_fn(|cx| <span class="self">self</span>.poll_send_ready(cx)).<span class="kw">await
+    </span>}
+
+    <span class="kw">fn </span>wake_senders(<span class="kw-2">&amp;</span><span class="self">self</span>) {
+        <span class="kw">while let </span><span class="prelude-val">Ok</span>(waker) = <span class="self">self</span>.send_wakers.pop() {
+            waker.wake();
         }
     }
 
@@ -6671,7 +6727,7 @@
     </span><span class="kw">fn </span>poll_recv(<span class="kw-2">&amp;</span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>Context) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;RelayRecvDatagram&gt;&gt; {
         <span class="kw">match </span><span class="self">self</span>.queue.pop() {
             <span class="prelude-val">Ok</span>(value) =&gt; {
-                <span class="self">self</span>.send_waker.wake();
+                <span class="self">self</span>.wake_senders();
                 Poll::Ready(<span class="prelude-val">Ok</span>(value))
             }
             <span class="prelude-val">Err</span>(concurrent_queue::PopError::Empty) =&gt; {
@@ -6679,20 +6735,20 @@
 
                 <span class="kw">match </span><span class="self">self</span>.queue.pop() {
                     <span class="prelude-val">Ok</span>(value) =&gt; {
-                        <span class="self">self</span>.send_waker.wake();
                         <span class="self">self</span>.recv_waker.take();
+                        <span class="self">self</span>.wake_senders();
                         Poll::Ready(<span class="prelude-val">Ok</span>(value))
                     }
                     <span class="prelude-val">Err</span>(concurrent_queue::PopError::Empty) =&gt; Poll::Pending,
                     <span class="prelude-val">Err</span>(concurrent_queue::PopError::Closed) =&gt; {
                         <span class="self">self</span>.recv_waker.take();
-                        <span class="self">self</span>.send_waker.wake();
+                        <span class="self">self</span>.wake_senders();
                         Poll::Ready(<span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Queue closed"</span>)))
                     }
                 }
             }
             <span class="prelude-val">Err</span>(concurrent_queue::PopError::Closed) =&gt; {
-                <span class="self">self</span>.send_waker.wake();
+                <span class="self">self</span>.wake_senders();
                 Poll::Ready(<span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Queue closed"</span>)))
             }
         }
