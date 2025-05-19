@@ -232,9 +232,9 @@ struct Reports {
     /// Do a full relay scan, even if last is `Some`.
     next_full: bool,
     /// Some previous reports.
-    prev: HashMap<Instant, Arc<Report>>,
+    prev: HashMap<Instant, Report>,
     /// Most recent report.
-    last: Option<Arc<Report>>,
+    last: Option<Report>,
     /// Time of last full (non-incremental) report.
     last_full: Instant,
 }
@@ -307,7 +307,7 @@ impl Client {
         &mut self,
         relay_map: RelayMap,
         #[cfg(not(wasm_browser))] quic_config: Option<QuicConfig>,
-    ) -> Result<Arc<Report>> {
+    ) -> Result<Report> {
         #[cfg(not(wasm_browser))]
         let opts = Options::default().quic_config(quic_config);
         #[cfg(wasm_browser)]
@@ -324,7 +324,7 @@ impl Client {
     /// It may not be called concurrently with itself, `&mut self` takes care of that.
     ///
     /// Look at [`Options`] for the different configuration options.
-    pub async fn get_report(&mut self, relay_map: RelayMap, opts: Options) -> Result<Arc<Report>> {
+    pub async fn get_report(&mut self, relay_map: RelayMap, opts: Options) -> Result<Report> {
         let rx = self.get_report_channel(relay_map, opts).await?;
         match rx.await {
             Ok(res) => res,
@@ -339,7 +339,7 @@ impl Client {
         &mut self,
         relay_map: RelayMap,
         opts: Options,
-    ) -> Result<oneshot::Receiver<Result<Arc<Report>>>> {
+    ) -> Result<oneshot::Receiver<Result<Report>>> {
         let (tx, rx) = oneshot::channel();
         self.addr
             .send(Message::RunCheck {
@@ -366,7 +366,7 @@ pub(crate) enum Message {
         /// Options for the report
         opts: Options,
         /// Channel to receive the response.
-        response_tx: oneshot::Sender<Result<Arc<Report>>>,
+        response_tx: oneshot::Sender<Result<Report>>,
     },
     /// A report produced by the [`reportgen`] actor.
     ReportReady { report: Box<Report> },
@@ -502,7 +502,7 @@ impl Actor {
         &mut self,
         relay_map: RelayMap,
         opts: Options,
-        response_tx: oneshot::Sender<Result<Arc<Report>>>,
+        response_tx: oneshot::Sender<Result<Report>>,
     ) {
         let protocols = opts.to_protocols();
         #[cfg(not(wasm_browser))]
@@ -573,7 +573,7 @@ impl Actor {
         }
     }
 
-    fn finish_and_store_report(&mut self, report: Report) -> Arc<Report> {
+    fn finish_and_store_report(&mut self, report: Report) -> Report {
         let report = self.add_report_history_and_set_preferred_relay(report);
         debug!("{report:?}");
         report
@@ -581,7 +581,7 @@ impl Actor {
 
     /// Adds `r` to the set of recent Reports and mutates `r.preferred_relay` to contain the best recent one.
     /// `r` is stored ref counted and a reference is returned.
-    fn add_report_history_and_set_preferred_relay(&mut self, mut r: Report) -> Arc<Report> {
+    fn add_report_history_and_set_preferred_relay(&mut self, mut r: Report) -> Report {
         let mut prev_relay = None;
         if let Some(ref last) = self.reports.last {
             prev_relay.clone_from(&last.preferred_relay);
@@ -642,7 +642,6 @@ impl Actor {
             }
         }
 
-        let r = Arc::new(r);
         self.reports.prev.insert(now, r.clone());
         self.reports.last = Some(r.clone());
 
@@ -656,7 +655,7 @@ struct ReportRun {
     /// The handle of the [`reportgen`] actor, cancels the actor on drop.
     _reportgen: reportgen::Client,
     /// Where to send the completed report.
-    report_tx: oneshot::Sender<Result<Arc<Report>>>,
+    report_tx: oneshot::Sender<Result<Report>>,
 }
 
 /// Test if IPv6 works at all, or if it's been hard disabled at the OS level.
@@ -775,7 +774,7 @@ mod tests {
         }
 
         // report returns a *Report from (relay host, Duration)+ pairs.
-        fn report(a: impl IntoIterator<Item = (&'static str, u64)>) -> Option<Arc<Report>> {
+        fn report(a: impl IntoIterator<Item = (&'static str, u64)>) -> Option<Report> {
             let mut report = Report::default();
             for (s, d) in a {
                 assert!(s.starts_with('d'), "invalid relay server key");
@@ -786,12 +785,12 @@ mod tests {
                     .insert(relay_url(id), Duration::from_secs(d));
             }
 
-            Some(Arc::new(report))
+            Some(report)
         }
         struct Step {
             /// Delay in seconds
             after: u64,
-            r: Option<Arc<Report>>,
+            r: Option<Report>,
         }
         struct Test {
             name: &'static str,
@@ -934,7 +933,7 @@ mod tests {
             for s in &mut tt.steps {
                 // trigger the timer
                 tokio::time::advance(Duration::from_secs(s.after)).await;
-                let r = Arc::try_unwrap(s.r.take().unwrap()).unwrap();
+                let r = s.r.take().unwrap();
                 s.r = Some(actor.add_report_history_and_set_preferred_relay(r));
             }
             let last_report = tt.steps.last().unwrap().r.clone().unwrap();

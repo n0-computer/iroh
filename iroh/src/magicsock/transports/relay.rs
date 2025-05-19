@@ -142,8 +142,10 @@ pub(super) struct RelayNetworkChangeSender {
 }
 
 impl RelayNetworkChangeSender {
-    pub(super) fn on_network_change(&self, info: &crate::magicsock::NetInfo) {
-        self.send_relay_actor(RelayActorMessage::NetworkChange { info: info.clone() });
+    pub(super) fn on_network_change(&self, report: &crate::magicsock::Report) {
+        self.send_relay_actor(RelayActorMessage::NetworkChange {
+            report: report.clone(),
+        });
     }
 
     pub(super) fn rebind(&self) -> io::Result<()> {
