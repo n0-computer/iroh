@@ -153,11 +153,9 @@
 <a href="#152" id="152">152</a>
 <a href="#153" id="153">153</a>
 <a href="#154" id="154">154</a>
-<a href="#155" id="155">155</a>
-<a href="#156" id="156">156</a>
-<a href="#157" id="157">157</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#155" id="155">155</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     io,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     sync::Arc,
     task::{Context, Poll},
 };
@@ -202,6 +200,7 @@
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>poll_send(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         destination: SocketAddr,
+        src: <span class="prelude-ty">Option</span>&lt;IpAddr&gt;,
         transmit: <span class="kw-2">&amp;</span>Transmit&lt;<span class="lifetime">'_</span>&gt;,
     ) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
         <span class="macro">trace!</span>(<span class="string">"sending to {}"</span>, destination);
@@ -211,10 +210,7 @@
             ecn: transmit.ecn,
             contents: transmit.contents,
             segment_size: transmit.segment_size,
-            src_ip: transmit
-                .src_ip
-                .clone()
-                .map(|a| a.try_into().expect(<span class="string">"invalid src_ip"</span>)),
+            src_ip: src,
         });
 
         <span class="kw">match </span>res {

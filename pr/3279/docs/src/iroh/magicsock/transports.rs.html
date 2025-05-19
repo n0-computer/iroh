@@ -423,16 +423,9 @@
 <a href="#422" id="422">422</a>
 <a href="#423" id="423">423</a>
 <a href="#424" id="424">424</a>
-<a href="#425" id="425">425</a>
-<a href="#426" id="426">426</a>
-<a href="#427" id="427">427</a>
-<a href="#428" id="428">428</a>
-<a href="#429" id="429">429</a>
-<a href="#430" id="430">430</a>
-<a href="#431" id="431">431</a>
-<a href="#432" id="432">432</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#425" id="425">425</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     io::{<span class="self">self</span>, IoSliceMut},
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -454,7 +447,9 @@
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span><span class="self">self</span>::relay::{RelayActorConfig, RelayTransport};
 <span class="kw">use </span><span class="kw">super</span>::NetInfo;
 
-<span class="attr">#[derive(Debug)]
+<span class="doccomment">/// Manages the different underlying data transports that the magicsock
+/// can support.
+</span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>Transports {
     <span class="attr">#[cfg(not(wasm_browser))]
     </span>ip: Vec&lt;IpTransport&gt;,
@@ -462,7 +457,7 @@
 }
 
 <span class="kw">impl </span>Transports {
-    <span class="doccomment">/// Create a new transports structure.
+    <span class="doccomment">/// Creates a new transports structure.
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>new(
         <span class="attr">#[cfg(not(wasm_browser))] </span>ip: Vec&lt;IpTransport&gt;,
         relay: Vec&lt;RelayTransport&gt;,
@@ -480,6 +475,7 @@
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>poll_send(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         destination: <span class="kw-2">&amp;</span>Addr,
+        src: <span class="prelude-ty">Option</span>&lt;IpAddr&gt;,
         transmit: <span class="kw-2">&amp;</span>Transmit&lt;<span class="lifetime">'_</span>&gt;,
     ) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
         <span class="macro">trace!</span>(<span class="question-mark">?</span>destination, <span class="string">"sending"</span>);
@@ -490,11 +486,11 @@
                 <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(io::Error::other(<span class="string">"IPv4 is unsupported in browser"</span>)))
             }
             <span class="attr">#[cfg(not(wasm_browser))]
-            </span>Addr::Ipv4(addr, port) =&gt; {
-                <span class="kw">let </span>addr = SocketAddr::V4(SocketAddrV4::new(<span class="kw-2">*</span>addr, port.unwrap_or_default()));
+            </span>Addr::Ipv4(addr) =&gt; {
+                <span class="kw">let </span>addr = SocketAddr::V4(<span class="kw-2">*</span>addr);
                 <span class="kw">for </span>transport <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.ip {
                     <span class="kw">if </span>transport.is_valid_send_addr(<span class="kw-2">&amp;</span>addr) {
-                        <span class="kw">match </span>transport.poll_send(addr, transmit) {
+                        <span class="kw">match </span>transport.poll_send(addr, src, transmit) {
                             Poll::Pending =&gt; {}
                             Poll::Ready(res) =&gt; <span class="kw">return </span>Poll::Ready(res),
                         }
@@ -506,11 +502,11 @@
                 <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(io::Error::other(<span class="string">"IPv6 is unsupported in browser"</span>)))
             }
             <span class="attr">#[cfg(not(wasm_browser))]
-            </span>Addr::Ipv6(addr, port) =&gt; {
-                <span class="kw">let </span>addr = SocketAddr::V6(SocketAddrV6::new(<span class="kw-2">*</span>addr, port.unwrap_or_default(), <span class="number">0</span>, <span class="number">0</span>));
+            </span>Addr::Ipv6(addr) =&gt; {
+                <span class="kw">let </span>addr = SocketAddr::V6(<span class="kw-2">*</span>addr);
                 <span class="kw">for </span>transport <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.ip {
                     <span class="kw">if </span>transport.is_valid_send_addr(<span class="kw-2">&amp;</span>addr) {
-                        <span class="kw">match </span>transport.poll_send(addr, transmit) {
+                        <span class="kw">match </span>transport.poll_send(addr, src, transmit) {
                             Poll::Pending =&gt; {}
                             Poll::Ready(res) =&gt; <span class="kw">return </span>Poll::Ready(res),
                         }
@@ -748,36 +744,26 @@
     <span class="kw">pub</span>(<span class="kw">crate</span>) ecn: <span class="prelude-ty">Option</span>&lt;quinn_udp::EcnCodepoint&gt;,
     <span class="kw">pub</span>(<span class="kw">crate</span>) contents: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>[u8],
     <span class="kw">pub</span>(<span class="kw">crate</span>) segment_size: <span class="prelude-ty">Option</span>&lt;usize&gt;,
-    <span class="kw">pub</span>(<span class="kw">crate</span>) src_ip: <span class="prelude-ty">Option</span>&lt;Addr&gt;,
 }
 
 <span class="attr">#[derive(Debug, Clone, PartialEq, Eq)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>Addr {
-    Ipv4(Ipv4Addr, <span class="prelude-ty">Option</span>&lt;u16&gt;),
-    Ipv6(Ipv6Addr, <span class="prelude-ty">Option</span>&lt;u16&gt;),
+    Ipv4(SocketAddrV4),
+    Ipv6(SocketAddrV6),
     RelayUrl(RelayUrl, NodeId),
 }
 
 <span class="kw">impl </span>Default <span class="kw">for </span>Addr {
     <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
-        <span class="self">Self</span>::Ipv6(Ipv6Addr::UNSPECIFIED, <span class="prelude-val">None</span>)
-    }
-}
-
-<span class="kw">impl </span>From&lt;IpAddr&gt; <span class="kw">for </span>Addr {
-    <span class="kw">fn </span>from(value: IpAddr) -&gt; <span class="self">Self </span>{
-        <span class="kw">match </span>value {
-            IpAddr::V4(addr) =&gt; <span class="self">Self</span>::Ipv4(addr, <span class="prelude-val">None</span>),
-            IpAddr::V6(addr) =&gt; <span class="self">Self</span>::Ipv6(addr, <span class="prelude-val">None</span>),
-        }
+        <span class="self">Self</span>::Ipv6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, <span class="number">0</span>, <span class="number">0</span>, <span class="number">0</span>))
     }
 }
 
 <span class="kw">impl </span>From&lt;SocketAddr&gt; <span class="kw">for </span>Addr {
     <span class="kw">fn </span>from(value: SocketAddr) -&gt; <span class="self">Self </span>{
         <span class="kw">match </span>value {
-            SocketAddr::V4(addr) =&gt; <span class="self">Self</span>::Ipv4(<span class="kw-2">*</span>addr.ip(), <span class="prelude-val">Some</span>(addr.port())),
-            SocketAddr::V6(addr) =&gt; <span class="self">Self</span>::Ipv6(<span class="kw-2">*</span>addr.ip(), <span class="prelude-val">Some</span>(addr.port())),
+            SocketAddr::V4(addr) =&gt; <span class="self">Self</span>::Ipv4(addr),
+            SocketAddr::V6(addr) =&gt; <span class="self">Self</span>::Ipv6(addr),
         }
     }
 }
@@ -793,8 +779,8 @@
 
     <span class="kw">fn </span>try_from(value: Addr) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, <span class="self">Self</span>::Error&gt; {
         <span class="kw">match </span>value {
-            Addr::Ipv4(addr, <span class="prelude-val">Some</span>(port)) =&gt; <span class="prelude-val">Ok</span>(SocketAddr::V4(SocketAddrV4::new(addr, port))),
-            Addr::Ipv6(addr, <span class="prelude-val">Some</span>(port)) =&gt; <span class="prelude-val">Ok</span>(SocketAddr::V6(SocketAddrV6::new(addr, port, <span class="number">0</span>, <span class="number">0</span>))),
+            Addr::Ipv4(addr) =&gt; <span class="prelude-val">Ok</span>(SocketAddr::V4(addr)),
+            Addr::Ipv6(addr) =&gt; <span class="prelude-val">Ok</span>(SocketAddr::V6(addr)),
             <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow::anyhow!</span>(<span class="string">"not a valid socket addr"</span>)),
         }
     }
@@ -805,8 +791,8 @@
 
     <span class="kw">fn </span>try_from(value: Addr) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, <span class="self">Self</span>::Error&gt; {
         <span class="kw">match </span>value {
-            Addr::Ipv4(addr, <span class="kw">_</span>) =&gt; <span class="prelude-val">Ok</span>(IpAddr::V4(addr)),
-            Addr::Ipv6(addr, <span class="kw">_</span>) =&gt; <span class="prelude-val">Ok</span>(IpAddr::V6(addr)),
+            Addr::Ipv4(addr) =&gt; <span class="prelude-val">Ok</span>(IpAddr::V4(<span class="kw-2">*</span>addr.ip())),
+            Addr::Ipv6(addr) =&gt; <span class="prelude-val">Ok</span>(IpAddr::V6(<span class="kw-2">*</span>addr.ip())),
             <span class="kw">_ </span>=&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow::anyhow!</span>(<span class="string">"not a valid socket addr"</span>)),
         }
     }

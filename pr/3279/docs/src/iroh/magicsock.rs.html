@@ -3622,12 +3622,7 @@
 <a href="#3621" id="3621">3621</a>
 <a href="#3622" id="3622">3622</a>
 <a href="#3623" id="3623">3623</a>
-<a href="#3624" id="3624">3624</a>
-<a href="#3625" id="3625">3625</a>
-<a href="#3626" id="3626">3626</a>
-<a href="#3627" id="3627">3627</a>
-<a href="#3628" id="3628">3628</a>
-<a href="#3629" id="3629">3629</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#3624" id="3624">3624</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4116,7 +4111,7 @@
             ));
         }
 
-        <span class="kw">let </span><span class="kw-2">mut </span>active_paths = Vec::new();
+        <span class="kw">let </span><span class="kw-2">mut </span>active_paths = SmallVec::&lt;[<span class="kw">_</span>; <span class="number">3</span>]&gt;::new();
 
         <span class="kw">match </span>MappedAddr::from(transmit.destination) {
             MappedAddr::None(dest) =&gt; {
@@ -4193,19 +4188,19 @@
             <span class="kw">return </span><span class="prelude-val">Ok</span>(());
         }
 
-        <span class="kw">let </span><span class="kw-2">mut </span>results = Vec::with_capacity(active_paths.len());
+        <span class="kw">let </span><span class="kw-2">mut </span>results = SmallVec::&lt;[<span class="kw">_</span>; <span class="number">3</span>]&gt;::new();
 
         <span class="macro">trace!</span>(<span class="question-mark">?</span>active_paths, <span class="string">"attempting to send"</span>);
 
         <span class="kw">for </span>destination <span class="kw">in </span>active_paths {
+            <span class="kw">let </span>src = transmit.src_ip;
             <span class="kw">let </span>transmit = transports::Transmit {
                 ecn: transmit.ecn,
                 contents: transmit.contents,
                 segment_size: transmit.segment_size,
-                src_ip: transmit.src_ip.map(Into::into),
             };
 
-            <span class="kw">let </span>res = <span class="self">self</span>.transports.poll_send(<span class="kw-2">&amp;</span>destination, <span class="kw-2">&amp;</span>transmit);
+            <span class="kw">let </span>res = <span class="self">self</span>.transports.poll_send(<span class="kw-2">&amp;</span>destination, src, <span class="kw-2">&amp;</span>transmit);
             <span class="kw">match </span>res {
                 Poll::Ready(<span class="prelude-val">Ok</span>(())) =&gt; {
                     <span class="macro">trace!</span>(dst = <span class="question-mark">?</span>destination, <span class="string">"sent transmit"</span>);
@@ -4358,12 +4353,8 @@
                     Url(RelayUrl, NodeId),
                 }
                 <span class="kw">let </span>addr = <span class="kw">match </span>source_addr {
-                    transports::Addr::Ipv4(ipv4, port) =&gt; AddrOrUrl::Addr(SocketAddr::V4(
-                        SocketAddrV4::new(<span class="kw-2">*</span>ipv4, port.unwrap_or_default()),
-                    )),
-                    transports::Addr::Ipv6(ipv6, port) =&gt; AddrOrUrl::Addr(SocketAddr::V6(
-                        SocketAddrV6::new(<span class="kw-2">*</span>ipv6, port.unwrap_or_default(), <span class="number">0</span>, <span class="number">0</span>),
-                    )),
+                    transports::Addr::Ipv4(ipv4) =&gt; AddrOrUrl::Addr(SocketAddr::V4(<span class="kw-2">*</span>ipv4)),
+                    transports::Addr::Ipv6(ipv6) =&gt; AddrOrUrl::Addr(SocketAddr::V6(<span class="kw-2">*</span>ipv6)),
                     transports::Addr::RelayUrl(<span class="kw-2">ref </span>url, id) =&gt; AddrOrUrl::Url(url.clone(), <span class="kw-2">*</span>id),
                 };
 
@@ -4657,8 +4648,8 @@
         msg: disco::Message,
     ) -&gt; io::Result&lt;()&gt; {
         <span class="kw">let </span>dst = <span class="kw">match </span>dst {
-            SendAddr::Udp(SocketAddr::V4(v4)) =&gt; transports::Addr::Ipv4(<span class="kw-2">*</span>v4.ip(), <span class="prelude-val">Some</span>(v4.port())),
-            SendAddr::Udp(SocketAddr::V6(v6)) =&gt; transports::Addr::Ipv6(<span class="kw-2">*</span>v6.ip(), <span class="prelude-val">Some</span>(v6.port())),
+            SendAddr::Udp(SocketAddr::V4(v4)) =&gt; transports::Addr::Ipv4(v4),
+            SendAddr::Udp(SocketAddr::V6(v6)) =&gt; transports::Addr::Ipv6(v6),
             SendAddr::Relay(url) =&gt; transports::Addr::RelayUrl(url, dst_key),
         };
 
@@ -4697,10 +4688,9 @@
             contents: <span class="kw-2">&amp;</span>pkt,
             ecn: <span class="prelude-val">None</span>,
             segment_size: <span class="prelude-val">None</span>,
-            src_ip: <span class="prelude-val">None</span>, <span class="comment">// TODO
-        </span>};
+        };
 
-        <span class="kw">match </span><span class="self">self</span>.transports.poll_send(dst, <span class="kw-2">&amp;</span>transmit) {
+        <span class="kw">match </span><span class="self">self</span>.transports.poll_send(dst, <span class="prelude-val">None</span>, <span class="kw-2">&amp;</span>transmit) {
             Poll::Ready(<span class="prelude-val">Ok</span>(())) =&gt; {
                 <span class="macro">trace!</span>(<span class="question-mark">?</span>dst, %msg, <span class="string">"sent disco message"</span>);
                 <span class="self">self</span>.metrics.magicsock.sent_disco_udp.inc();
@@ -4740,8 +4730,8 @@
         });
 
         <span class="kw">let </span>addr = <span class="kw">match </span>dst {
-            SendAddr::Udp(SocketAddr::V4(v4)) =&gt; transports::Addr::Ipv4(<span class="kw-2">*</span>v4.ip(), <span class="prelude-val">Some</span>(v4.port())),
-            SendAddr::Udp(SocketAddr::V6(v6)) =&gt; transports::Addr::Ipv6(<span class="kw-2">*</span>v6.ip(), <span class="prelude-val">Some</span>(v6.port())),
+            SendAddr::Udp(SocketAddr::V4(v4)) =&gt; transports::Addr::Ipv4(v4),
+            SendAddr::Udp(SocketAddr::V6(v6)) =&gt; transports::Addr::Ipv6(v6),
             SendAddr::Relay(<span class="kw-2">ref </span>url) =&gt; transports::Addr::RelayUrl(url.clone(), dst_node),
         };
 

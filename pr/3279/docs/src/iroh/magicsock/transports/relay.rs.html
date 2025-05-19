@@ -468,9 +468,7 @@
 <a href="#467" id="467">467</a>
 <a href="#468" id="468">468</a>
 <a href="#469" id="469">469</a>
-<a href="#470" id="470">470</a>
-<a href="#471" id="471">471</a>
-<a href="#472" id="472">472</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#470" id="470">470</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     io,
     sync::Arc,
     task::{Context, Poll, Waker},
@@ -602,7 +600,7 @@
         source_addrs: <span class="kw-2">&amp;mut </span>[Addr],
     ) -&gt; Poll&lt;io::Result&lt;usize&gt;&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>num_msgs = <span class="number">0</span>;
-        <span class="lifetime">'outer</span>: <span class="kw">for </span>((buf_out, meta_out), addr) <span class="kw">in </span>bufs
+        <span class="kw">for </span>((buf_out, meta_out), addr) <span class="kw">in </span>bufs
             .iter_mut()
             .zip(metas.iter_mut())
             .zip(source_addrs.iter_mut())
@@ -617,7 +615,7 @@
                     )));
                 }
                 Poll::Pending =&gt; {
-                    <span class="kw">break </span><span class="lifetime">'outer</span>;
+                    <span class="kw">break</span>;
                 }
             };
 
@@ -840,7 +838,7 @@
 
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
-    <span class="kw">use </span>std::{collections::BTreeSet, net::SocketAddr, time::Duration};
+    <span class="kw">use </span>std::{collections::BTreeSet, time::Duration};
 
     <span class="kw">use </span>iroh_base::NodeId;
     <span class="kw">use </span>tokio::task::JoinSet;
@@ -852,12 +850,10 @@
     <span class="attr">#[test]
     </span><span class="kw">fn </span>test_split_packets() {
         <span class="kw">fn </span>mk_transmit(contents: <span class="kw-2">&amp;</span>[u8], segment_size: <span class="prelude-ty">Option</span>&lt;usize&gt;) -&gt; Transmit&lt;<span class="lifetime">'_</span>&gt; {
-            <span class="kw">let </span>src_ip = <span class="string">"127.0.0.1:12"</span>.parse::&lt;SocketAddr&gt;().unwrap().into();
             Transmit {
                 ecn: <span class="prelude-val">None</span>,
                 contents,
                 segment_size,
-                src_ip: <span class="prelude-val">Some</span>(src_ip),
             }
         }
         <span class="kw">fn </span>mk_expected(parts: <span class="kw">impl </span>IntoIterator&lt;Item = <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str&gt;) -&gt; RelayContents {

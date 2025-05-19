@@ -520,11 +520,7 @@
 <a href="#519" id="519">519</a>
 <a href="#520" id="520">520</a>
 <a href="#521" id="521">521</a>
-<a href="#522" id="522">522</a>
-<a href="#523" id="523">523</a>
-<a href="#524" id="524">524</a>
-<a href="#525" id="525">525</a>
-<a href="#526" id="526">526</a></pre></div><pre class="rust"><code><span class="doccomment">//! Contains the discovery message types.
+<a href="#522" id="522">522</a></pre></div><pre class="rust"><code><span class="doccomment">//! Contains the discovery message types.
 //!
 //! A discovery message is:
 //!
@@ -688,12 +684,8 @@
 <span class="kw">impl </span>From&lt;transports::Addr&gt; <span class="kw">for </span>SendAddr {
     <span class="kw">fn </span>from(addr: transports::Addr) -&gt; <span class="self">Self </span>{
         <span class="kw">match </span>addr {
-            transports::Addr::Ipv4(ipv4, port) =&gt; {
-                SendAddr::Udp(SocketAddr::new(ipv4.into(), port.unwrap_or_default()))
-            }
-            transports::Addr::Ipv6(ipv6, port) =&gt; {
-                SendAddr::Udp(SocketAddr::new(ipv6.into(), port.unwrap_or_default()))
-            }
+            transports::Addr::Ipv4(ipv4) =&gt; SendAddr::Udp(SocketAddr::V4(ipv4)),
+            transports::Addr::Ipv6(ipv6) =&gt; SendAddr::Udp(SocketAddr::V6(ipv6)),
             transports::Addr::RelayUrl(url, <span class="kw">_</span>) =&gt; SendAddr::Relay(url),
         }
     }
