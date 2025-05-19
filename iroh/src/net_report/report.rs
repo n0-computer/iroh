@@ -69,7 +69,7 @@ impl Report {
             #[cfg(not(wasm_browser))]
             if matches!(
                 probe_report.probe.proto(),
-                ProbeProto::QuicIpv4 | ProbeProto::QuicIpv6
+                ProbeProto::QadIpv4 | ProbeProto::QadIpv6
             ) {
                 self.udp = true;
 
@@ -124,9 +124,9 @@ impl RelayLatencies {
         let list = match probe {
             ProbeProto::Https => &mut self.https,
             #[cfg(not(wasm_browser))]
-            ProbeProto::QuicIpv4 => &mut self.ipv4,
+            ProbeProto::QadIpv4 => &mut self.ipv4,
             #[cfg(not(wasm_browser))]
-            ProbeProto::QuicIpv6 => &mut self.ipv6,
+            ProbeProto::QadIpv6 => &mut self.ipv6,
         };
         let old_latency = list.entry(url).or_insert(latency);
         if latency < *old_latency {
@@ -143,11 +143,11 @@ impl RelayLatencies {
         }
         #[cfg(not(wasm_browser))]
         for (url, latency) in other.ipv4.iter() {
-            self.update_relay(url.clone(), *latency, ProbeProto::QuicIpv4);
+            self.update_relay(url.clone(), *latency, ProbeProto::QadIpv4);
         }
         #[cfg(not(wasm_browser))]
         for (url, latency) in other.ipv6.iter() {
-            self.update_relay(url.clone(), *latency, ProbeProto::QuicIpv6);
+            self.update_relay(url.clone(), *latency, ProbeProto::QadIpv6);
         }
     }
 

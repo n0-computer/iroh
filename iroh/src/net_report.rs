@@ -500,7 +500,7 @@ mod tests {
                 report.relay_latency.update_relay(
                     relay_url(id),
                     Duration::from_secs(d),
-                    ProbeProto::QuicIpv4,
+                    ProbeProto::QadIpv4,
                 );
             }
 
