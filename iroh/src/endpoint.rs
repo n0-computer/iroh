@@ -1081,7 +1081,7 @@ impl Endpoint {
     /// # });
     /// ```
     #[doc(hidden)]
-    pub fn net_report(&self) -> n0_watcher::Direct<(Option<Arc<Report>>, &'static str)> {
+    pub fn net_report(&self) -> impl Watcher<Value = Option<Report>> {
         self.msock.net_report()
     }
 

@@ -222,7 +222,7 @@ pub(crate) struct MagicSock {
     direct_addrs: DiscoveredDirectAddrs,
 
     /// Our latest net-report
-    net_report: Watchable<(Option<Arc<Report>>, &'static str)>,
+    net_report: Watchable<(Option<Report>, &'static str)>,
 
     /// List of CallMeMaybe disco messages that should be sent out after the next endpoint update
     /// completes
@@ -356,8 +356,11 @@ impl MagicSock {
     ///
     /// [`Watcher`]: n0_watcher::Watcher
     /// [`Watcher::initialized`]: n0_watcher::Watcher::initialized
-    pub(crate) fn net_report(&self) -> n0_watcher::Direct<(Option<Arc<Report>>, &'static str)> {
-        self.net_report.watch()
+    pub(crate) fn net_report(&self) -> impl Watcher<Value = Option<Report>> {
+        self.net_report
+            .watch()
+            .map(|(r, _)| r)
+            .expect("disconnected")
     }
 
     /// Watch for changes to the home relay.
@@ -1331,7 +1334,7 @@ impl Handle {
             discovery,
             discovery_user_data: RwLock::new(discovery_user_data),
             direct_addrs: Default::default(),
-            net_report: Default::default(),
+            net_report: Watchable::new((None, "init")),
             pending_call_me_maybes: Default::default(),
             direct_addr_update_state: DirectAddrUpdateState::new(),
             #[cfg(not(wasm_browser))]
@@ -1415,7 +1418,6 @@ impl Handle {
             msg_receiver: actor_receiver,
             msock: msock.clone(),
             periodic_re_stun_timer: new_re_stun_timer(false),
-            net_info_last: None,
             #[cfg(not(wasm_browser))]
             port_mapper,
             no_v4_send: false,
@@ -1662,8 +1664,6 @@ struct Actor {
     msg_receiver: mpsc::Receiver<ActorMessage>,
     /// When set, is an AfterFunc timer that will call MagicSock::do_periodic_stun.
     periodic_re_stun_timer: time::Interval,
-    /// The `NetInfo` provided in the last call to `net_info_func`. It's used to deduplicate calls to netInfoFunc.
-    net_info_last: Option<NetInfo>,
 
     #[cfg(not(wasm_browser))]
     port_mapper: portmapper::Client,
@@ -1821,8 +1821,8 @@ impl Actor {
                 }
                 report = net_report_watcher.updated() => {
                     match report {
-                        Ok((report, _why)) => {
-                            self.handle_net_report_report(report).await;
+                        Ok((report, _)) => {
+                            self.handle_net_report_report(report);
                             #[cfg(not(wasm_browser))]
                             {
                                 self.periodic_re_stun_timer = new_re_stun_timer(true);
@@ -1993,7 +1993,7 @@ impl Actor {
     /// - A net_report report.
     /// - The local interfaces IP addresses.
     #[cfg(not(wasm_browser))]
-    fn update_direct_addresses(&mut self, net_report_report: Option<Arc<net_report::Report>>) {
+    fn update_direct_addresses(&mut self, net_report_report: Option<&net_report::Report>) {
         let portmap_watcher = self.port_mapper.watch_external_address();
 
         // We only want to have one DirectAddr for each SocketAddr we have.  So we store
@@ -2007,7 +2007,6 @@ impl Actor {
             addrs
                 .entry(portmap_ext)
                 .or_insert(DirectAddrType::Portmapped);
-            self.set_net_info_have_port_map();
         }
 
         // Next add STUN addresses from the net_report report.
@@ -2134,30 +2133,6 @@ impl Actor {
         );
     }
 
-    /// Updates `NetInfo.HavePortMap` to true.
-    #[instrument(level = "debug", skip_all)]
-    fn set_net_info_have_port_map(&mut self) {
-        if let Some(ref mut net_info_last) = self.net_info_last {
-            if net_info_last.have_port_map {
-                // No change.
-                return;
-            }
-            net_info_last.have_port_map = true;
-            self.net_info_last = Some(net_info_last.clone());
-        }
-    }
-
-    #[instrument(level = "debug", skip_all)]
-    async fn call_net_info_callback(&mut self, ni: NetInfo) {
-        if let Some(ref net_info_last) = self.net_info_last {
-            if ni.basically_equal(net_info_last) {
-                return;
-            }
-        }
-
-        self.net_info_last = Some(ni);
-    }
-
     /// Calls net_report.
     ///
     /// Note that invoking this is managed by [`DirectAddrUpdateState`] via
@@ -2211,13 +2186,11 @@ impl Actor {
         }
     }
 
-    async fn handle_net_report_report(&mut self, report: Option<Arc<net_report::Report>>) {
-        if let Some(ref report) = report {
+    fn handle_net_report_report(&mut self, mut report: Option<net_report::Report>) {
+        if let Some(ref mut r) = report {
             // only returns Err if the report hasn't changed.
-            self.msock
-                .ipv6_reported
-                .store(report.ipv6, Ordering::Relaxed);
-            let r = &report;
+            self.msock.ipv6_reported.store(r.ipv6, Ordering::Relaxed);
+
             trace!(
                 "setting no_v4_send {} -> {}",
                 self.no_v4_send,
@@ -2225,35 +2198,17 @@ impl Actor {
             );
             self.no_v4_send = !r.ipv4_can_send;
 
-            #[cfg(not(wasm_browser))]
-            let have_port_map = self.port_mapper.watch_external_address().borrow().is_some();
-            #[cfg(wasm_browser)]
-            let have_port_map = false;
-
-            let mut ni = NetInfo {
-                mapping_varies_by_dest_ip: r.mapping_varies_by_dest_ip,
-                #[cfg(not(wasm_browser))]
-                portmap_probe: r.portmap_probe.clone(),
-                have_port_map,
-                working_ipv6: Some(r.ipv6),
-                os_has_ipv6: Some(r.os_has_ipv6),
-                working_udp: Some(r.udp),
-                preferred_relay: r.preferred_relay.clone(),
-            };
-
-            if ni.preferred_relay.is_none() {
+            if r.preferred_relay.is_none() {
                 // Perhaps UDP is blocked. Pick a deterministic but arbitrary one.
-                ni.preferred_relay = self.pick_relay_fallback();
+                r.preferred_relay = self.pick_relay_fallback();
             }
 
             // Notify all transports
-            self.network_change_sender.on_network_change(&ni);
-
-            // TODO: set link type
-            self.call_net_info_callback(ni).await;
+            self.network_change_sender.on_network_change(r);
         }
+
         #[cfg(not(wasm_browser))]
-        self.update_direct_addresses(report);
+        self.update_direct_addresses(report.as_ref());
     }
 
     /// Returns a deterministic relay node to connect to. This is only used if net_report
@@ -2554,57 +2509,6 @@ impl Display for DirectAddrType {
             DirectAddrType::Portmapped => write!(f, "portmap"),
             DirectAddrType::Stun4LocalPort => write!(f, "stun4localport"),
         }
-    }
-}
-
-/// Contains information about the host's network state.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) struct NetInfo {
-    /// Says whether the host's NAT mappings vary based on the destination IP.
-    mapping_varies_by_dest_ip: Option<bool>,
-
-    /// Whether the host has IPv6 internet connectivity.
-    working_ipv6: Option<bool>,
-
-    /// Whether the OS supports IPv6 at all, regardless of whether IPv6 internet connectivity is available.
-    os_has_ipv6: Option<bool>,
-
-    /// Whether the host has UDP internet connectivity.
-    working_udp: Option<bool>,
-
-    /// Whether we have an existing portmap open (UPnP, PMP, or PCP).
-    have_port_map: bool,
-
-    /// Probe indicating the presence of port mapping protocols on the LAN.
-    #[cfg(not(wasm_browser))]
-    portmap_probe: Option<portmapper::ProbeOutput>,
-
-    /// This node's preferred relay server for incoming traffic.
-    ///
-    /// The node might be be temporarily connected to multiple relay servers (to send to
-    /// other nodes) but this is the relay on which you can always contact this node.  Also
-    /// known as home relay.
-    preferred_relay: Option<RelayUrl>,
-}
-
-impl NetInfo {
-    /// Checks if this is probably still the same network as *other*.
-    ///
-    /// This tries to compare the network situation, without taking into account things
-    /// expected to change a little like e.g. latency to the relay server.
-    fn basically_equal(&self, other: &Self) -> bool {
-        #[cfg(not(wasm_browser))]
-        let probe_eq = self.portmap_probe == other.portmap_probe;
-        #[cfg(wasm_browser)]
-        let probe_eq = true;
-
-        self.mapping_varies_by_dest_ip == other.mapping_varies_by_dest_ip
-            && self.working_ipv6 == other.working_ipv6
-            && self.os_has_ipv6 == other.os_has_ipv6
-            && self.working_udp == other.working_udp
-            && self.have_port_map == other.have_port_map
-            && probe_eq
-            && self.preferred_relay == other.preferred_relay
     }
 }
 

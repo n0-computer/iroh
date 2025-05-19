@@ -87,10 +87,6 @@ impl IpTransport {
         }
     }
 
-    pub(crate) fn socket(&self) -> Arc<UdpSocket> {
-        self.socket.clone()
-    }
-
     pub(super) fn create_sender(&self) -> IpSender {
         let sender = self.socket.clone().create_sender();
         IpSender {
@@ -116,7 +112,7 @@ impl IpNetworkChangeSender {
         Ok(())
     }
 
-    pub(super) fn on_network_change(&self, _info: &crate::magicsock::NetInfo) {
+    pub(super) fn on_network_change(&self, _info: &crate::magicsock::Report) {
         // Nothing to do for now
     }
 }
