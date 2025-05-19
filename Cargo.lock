@@ -2806,7 +2806,8 @@ dependencies = [
 [[package]]
 name = "n0-watcher"
 version = "0.1.0"
-source = "git+https://github.com/n0-computer/n0-watcher?branch=feat-combinators#e080e05385d83e4ab81568c4a9a78dec2b0b075d"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "813443be5d70d9ed05ad04577f0db9fa1d655336911d2ac271b63eb2da363ea1"
 dependencies = [
  "derive_more",
  "n0-future",

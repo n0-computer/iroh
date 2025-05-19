@@ -43,7 +43,7 @@ http = "1"
 iroh-base = { version = "0.35.0", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
 iroh-relay = { version = "0.35", path = "../iroh-relay", default-features = false }
 n0-future = "0.1.2"
-n0-watcher = { git = "https://github.com/n0-computer/n0-watcher", branch = "feat-combinators" }
+n0-watcher = "0.1"
 netwatch = { version = "0.5" }
 pin-project = "1"
 pkarr = { version = "3.7", default-features = false, features = [
