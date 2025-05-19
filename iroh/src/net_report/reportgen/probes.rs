@@ -51,10 +51,10 @@ pub enum ProbeProto {
     Https,
     /// QUIC Address Discovery Ipv4
     #[cfg(not(wasm_browser))]
-    QuicIpv4,
+    QadIpv4,
     /// QUIC Address Discovery Ipv6
     #[cfg(not(wasm_browser))]
-    QuicIpv6,
+    QadIpv6,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, derive_more::Display)]
@@ -66,13 +66,13 @@ pub(crate) enum Probe {
     },
     #[display("QAD Ipv4 after {delay:?} to {node}")]
     #[cfg(not(wasm_browser))]
-    QuicIpv4 {
+    QadIpv4 {
         delay: Duration,
         node: Arc<RelayNode>,
     },
     #[display("QAD Ipv6 after {delay:?} to {node}")]
     #[cfg(not(wasm_browser))]
-    QuicIpv6 {
+    QadIpv6 {
         delay: Duration,
         node: Arc<RelayNode>,
     },
@@ -83,8 +83,8 @@ impl Probe {
         match self {
             #[cfg(not(wasm_browser))]
             Probe::Https { delay, .. }
-            | Probe::QuicIpv4 { delay, .. }
-            | Probe::QuicIpv6 { delay, .. } => *delay,
+            | Probe::QadIpv4 { delay, .. }
+            | Probe::QadIpv6 { delay, .. } => *delay,
             #[cfg(wasm_browser)]
             Probe::Https { delay, .. } => *delay,
         }
@@ -94,9 +94,9 @@ impl Probe {
         match self {
             Probe::Https { .. } => ProbeProto::Https,
             #[cfg(not(wasm_browser))]
-            Probe::QuicIpv4 { .. } => ProbeProto::QuicIpv4,
+            Probe::QadIpv4 { .. } => ProbeProto::QadIpv4,
             #[cfg(not(wasm_browser))]
-            Probe::QuicIpv6 { .. } => ProbeProto::QuicIpv6,
+            Probe::QadIpv6 { .. } => ProbeProto::QadIpv6,
         }
     }
 
@@ -104,8 +104,8 @@ impl Probe {
         match self {
             #[cfg(not(wasm_browser))]
             Probe::Https { node, .. }
-            | Probe::QuicIpv4 { node, .. }
-            | Probe::QuicIpv6 { node, .. } => node,
+            | Probe::QadIpv4 { node, .. }
+            | Probe::QadIpv6 { node, .. } => node,
             #[cfg(wasm_browser)]
             Probe::Https { node, .. } => node,
         }
@@ -113,7 +113,7 @@ impl Probe {
 
     #[cfg(not(wasm_browser))]
     pub(super) fn is_udp(&self) -> bool {
-        matches!(self, Self::QuicIpv4 { .. } | Self::QuicIpv6 { .. })
+        matches!(self, Self::QadIpv4 { .. } | Self::QadIpv6 { .. })
     }
 
     #[cfg(wasm_browser)]
@@ -221,15 +221,15 @@ impl ProbePlan {
         let mut max_high_prio_delay: Option<Duration> = None;
 
         for relay_node in relay_map.nodes() {
-            let mut quic_ipv4_probes = ProbeSet::new(ProbeProto::QuicIpv4);
-            let mut quic_ipv6_probes = ProbeSet::new(ProbeProto::QuicIpv6);
+            let mut quic_ipv4_probes = ProbeSet::new(ProbeProto::QadIpv4);
+            let mut quic_ipv6_probes = ProbeSet::new(ProbeProto::QadIpv6);
 
             for attempt in 0..3 {
                 let delay = DEFAULT_INITIAL_RETRANSMIT * attempt as u32;
 
                 if if_state.have_v4 {
                     quic_ipv4_probes
-                        .push(Probe::QuicIpv4 {
+                        .push(Probe::QadIpv4 {
                             delay,
                             node: relay_node.clone(),
                         })
@@ -237,7 +237,7 @@ impl ProbePlan {
                 }
                 if if_state.have_v6 {
                     quic_ipv6_probes
-                        .push(Probe::QuicIpv6 {
+                        .push(Probe::QadIpv6 {
                             delay,
                             node: relay_node.clone(),
                         })
@@ -363,15 +363,15 @@ impl ProbePlan {
                 .map(|l| l * 120 / 100) // increases latency by 20%, why?
                 .unwrap_or(DEFAULT_ACTIVE_RETRANSMIT_DELAY);
 
-            let mut quic_ipv4_probes = ProbeSet::new(ProbeProto::QuicIpv4);
-            let mut quic_ipv6_probes = ProbeSet::new(ProbeProto::QuicIpv6);
+            let mut quic_ipv4_probes = ProbeSet::new(ProbeProto::QadIpv4);
+            let mut quic_ipv6_probes = ProbeSet::new(ProbeProto::QadIpv6);
 
             for attempt in 0..attempts {
                 let delay = (retransmit_delay * attempt as u32)
                     + (ACTIVE_RETRANSMIT_EXTRA_DELAY * attempt as u32);
                 if do4 {
                     quic_ipv4_probes
-                        .push(Probe::QuicIpv4 {
+                        .push(Probe::QadIpv4 {
                             delay,
                             node: relay_node.clone(),
                         })
@@ -379,7 +379,7 @@ impl ProbePlan {
                 }
                 if do6 {
                     quic_ipv6_probes
-                        .push(Probe::QuicIpv6 {
+                        .push(Probe::QadIpv6 {
                             delay,
                             node: relay_node.clone(),
                         })
@@ -490,7 +490,7 @@ impl ProbePlan {
     fn has_priority_probes(&self) -> bool {
         #[cfg(not(wasm_browser))]
         for probe in &self.set {
-            if matches!(probe.proto, ProbeProto::QuicIpv4 | ProbeProto::QuicIpv6) {
+            if matches!(probe.proto, ProbeProto::QadIpv4 | ProbeProto::QadIpv6) {
                 return true;
             }
         }
@@ -585,11 +585,7 @@ mod tests {
     }
 
     fn default_protocols() -> BTreeSet<ProbeProto> {
-        BTreeSet::from([
-            ProbeProto::QuicIpv4,
-            ProbeProto::QuicIpv6,
-            ProbeProto::Https,
-        ])
+        BTreeSet::from([ProbeProto::QadIpv4, ProbeProto::QadIpv6, ProbeProto::Https])
     }
 
     #[tokio::test]
@@ -602,14 +598,14 @@ mod tests {
 
         let mut expected_plan: ProbePlan = [
             probeset! {
-                proto: ProbeProto::QuicIpv4,
+                proto: ProbeProto::QadIpv4,
                 relay: relay_node_1.clone(),
                 delays: [Duration::ZERO,
                          Duration::from_millis(100),
                          Duration::from_millis(200)],
             },
             probeset! {
-                proto: ProbeProto::QuicIpv6,
+                proto: ProbeProto::QadIpv6,
                 relay: relay_node_1.clone(),
                 delays: [Duration::ZERO,
                          Duration::from_millis(100),
@@ -623,14 +619,14 @@ mod tests {
                          Duration::from_millis(500)],
             },
             probeset! {
-                proto: ProbeProto::QuicIpv4,
+                proto: ProbeProto::QadIpv4,
                 relay: relay_node_2.clone(),
                 delays: [Duration::ZERO,
                          Duration::from_millis(100),
                          Duration::from_millis(200)],
             },
             probeset! {
-                proto: ProbeProto::QuicIpv6,
+                proto: ProbeProto::QadIpv6,
                 relay: relay_node_2.clone(),
                 delays: [Duration::ZERO,
                          Duration::from_millis(100),
@@ -710,12 +706,12 @@ mod tests {
             latencies.update_relay(
                 relay_node_1.url.clone(),
                 Duration::from_millis(2),
-                ProbeProto::QuicIpv4,
+                ProbeProto::QadIpv4,
             );
             latencies.update_relay(
                 relay_node_2.url.clone(),
                 Duration::from_millis(2),
-                ProbeProto::QuicIpv4,
+                ProbeProto::QadIpv4,
             );
             let last_report = Report {
                 udp: true,
@@ -741,7 +737,7 @@ mod tests {
             );
             let mut expected_plan: ProbePlan = [
                 probeset! {
-                    proto: ProbeProto::QuicIpv4,
+                    proto: ProbeProto::QadIpv4,
                     relay: relay_node_1.clone(),
                     delays: [Duration::ZERO,
                              Duration::from_micros(52_400),
@@ -749,7 +745,7 @@ mod tests {
                              Duration::from_micros(157_200)],
                 },
                 probeset! {
-                    proto: ProbeProto::QuicIpv6,
+                    proto: ProbeProto::QadIpv6,
                     relay: relay_node_1.clone(),
                     delays: [Duration::ZERO,
                              Duration::from_micros(52_400),
@@ -765,13 +761,13 @@ mod tests {
                              Duration::from_micros(364_400)],
                 },
                 probeset! {
-                    proto: ProbeProto::QuicIpv4,
+                    proto: ProbeProto::QadIpv4,
                     relay: relay_node_2.clone(),
                     delays: [Duration::ZERO,
                              Duration::from_micros(52_400)],
                 },
                 probeset! {
-                    proto: ProbeProto::QuicIpv6,
+                    proto: ProbeProto::QadIpv6,
                     relay: relay_node_2.clone(),
                     delays: [Duration::ZERO,
                              Duration::from_micros(52_400)],
@@ -807,10 +803,10 @@ mod tests {
     ) -> Report {
         let mut latencies = RelayLatencies::default();
         if let Some(latency_1) = latency_1 {
-            latencies.update_relay(url_1.clone(), latency_1, ProbeProto::QuicIpv4);
+            latencies.update_relay(url_1.clone(), latency_1, ProbeProto::QadIpv4);
         }
         if let Some(latency_2) = latency_2 {
-            latencies.update_relay(url_2.clone(), latency_2, ProbeProto::QuicIpv4);
+            latencies.update_relay(url_2.clone(), latency_2, ProbeProto::QadIpv4);
         }
         Report {
             udp: true,

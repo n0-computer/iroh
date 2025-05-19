@@ -75,10 +75,10 @@ mod imp {
             let mut protocols = BTreeSet::new();
             if let Some(ref quic) = self.quic_config {
                 if quic.ipv4 {
-                    protocols.insert(ProbeProto::QuicIpv4);
+                    protocols.insert(ProbeProto::QadIpv4);
                 }
                 if quic.ipv6 {
-                    protocols.insert(ProbeProto::QuicIpv6);
+                    protocols.insert(ProbeProto::QadIpv6);
                 }
             }
             if self.https {
