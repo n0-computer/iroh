@@ -322,8 +322,8 @@ impl ProbePlan {
         // further relay servers can reuse this delay.
         let mut max_stun_delay: Option<Duration> = None;
 
-        let had_stun_ipv4 = !last_report.relay_v4_latency.is_empty();
-        let had_stun_ipv6 = !last_report.relay_v6_latency.is_empty();
+        let had_stun_ipv4 = !last_report.relay_latency.ipv4().is_empty();
+        let had_stun_ipv6 = !last_report.relay_latency.ipv6().is_empty();
         let had_both = if_state.have_v6 && had_stun_ipv4 && had_stun_ipv6;
         let sorted_relays = sort_relays(relay_map, last_report);
         for (ri, (url, relay_node)) in sorted_relays.into_iter().enumerate() {
@@ -707,8 +707,16 @@ mod tests {
         for i in 0..10 {
             println!("round {}", i);
             let mut latencies = RelayLatencies::new();
-            latencies.update_relay(relay_node_1.url.clone(), Duration::from_millis(2));
-            latencies.update_relay(relay_node_2.url.clone(), Duration::from_millis(2));
+            latencies.update_relay(
+                relay_node_1.url.clone(),
+                Duration::from_millis(2),
+                ProbeProto::QuicIpv4,
+            );
+            latencies.update_relay(
+                relay_node_2.url.clone(),
+                Duration::from_millis(2),
+                ProbeProto::QuicIpv4,
+            );
             let last_report = Report {
                 udp: true,
                 ipv6: true,
@@ -721,8 +729,6 @@ mod tests {
                 portmap_probe: None,
                 preferred_relay: Some(relay_node_1.url.clone()),
                 relay_latency: latencies.clone(),
-                relay_v4_latency: latencies.clone(),
-                relay_v6_latency: latencies.clone(),
                 global_v4: None,
                 global_v6: None,
                 captive_portal: None,
@@ -801,10 +807,10 @@ mod tests {
     ) -> Report {
         let mut latencies = RelayLatencies::new();
         if let Some(latency_1) = latency_1 {
-            latencies.update_relay(url_1.clone(), latency_1);
+            latencies.update_relay(url_1.clone(), latency_1, ProbeProto::QuicIpv4);
         }
         if let Some(latency_2) = latency_2 {
-            latencies.update_relay(url_2.clone(), latency_2);
+            latencies.update_relay(url_2.clone(), latency_2, ProbeProto::QuicIpv4);
         }
         Report {
             udp: true,
@@ -817,9 +823,7 @@ mod tests {
             mapping_varies_by_dest_ipv6: Some(false),
             portmap_probe: None,
             preferred_relay: Some(url_1.clone()),
-            relay_latency: latencies.clone(),
-            relay_v4_latency: latencies.clone(),
-            relay_v6_latency: latencies.clone(),
+            relay_latency: latencies,
             global_v4: None,
             global_v6: None,
             captive_portal: None,
