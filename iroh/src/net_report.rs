@@ -28,7 +28,7 @@ use n0_future::{
 use nested_enum_utils::common_fields;
 #[cfg(not(wasm_browser))]
 use netwatch::UdpSocket;
-use reportgen::ActorRunError;
+use reportgen::{ActorRunError, ProbeProto};
 use snafu::Snafu;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{debug, error, info_span, trace, Instrument};
@@ -109,10 +109,6 @@ pub struct Report {
     pub preferred_relay: Option<RelayUrl>,
     /// keyed by relay Url
     pub relay_latency: RelayLatencies,
-    /// keyed by relay Url
-    pub relay_v4_latency: RelayLatencies,
-    /// keyed by relay Url
-    pub relay_v6_latency: RelayLatencies,
     /// ip:port of global IPv4
     pub global_v4: Option<SocketAddrV4>,
     /// `[ip]:port` of global IPv6
@@ -130,23 +126,27 @@ impl fmt::Display for Report {
 
 /// Latencies per relay node.
 #[derive(Debug, Default, PartialEq, Eq, Clone)]
-pub struct RelayLatencies(BTreeMap<RelayUrl, Duration>);
+pub struct RelayLatencies {
+    ipv4: BTreeMap<RelayUrl, Duration>,
+    ipv6: BTreeMap<RelayUrl, Duration>,
+    https: BTreeMap<RelayUrl, Duration>,
+}
 
 impl RelayLatencies {
     fn new() -> Self {
         Default::default()
     }
 
-    #[cfg(test)]
-    fn len(&self) -> usize {
-        self.0.len()
-    }
-
     /// Updates a relay's latency, if it is faster than before.
-    fn update_relay(&mut self, url: RelayUrl, latency: Duration) {
-        let val = self.0.entry(url).or_insert(latency);
-        if latency < *val {
-            *val = latency;
+    fn update_relay(&mut self, url: RelayUrl, latency: Duration, probe: ProbeProto) {
+        let list = match probe {
+            ProbeProto::Https => &mut self.https,
+            ProbeProto::QuicIpv4 => &mut self.ipv4,
+            ProbeProto::QuicIpv6 => &mut self.ipv6,
+        };
+        let old_latency = list.entry(url).or_insert(latency);
+        if latency < *old_latency {
+            *old_latency = latency;
         }
     }
 
@@ -154,22 +154,56 @@ impl RelayLatencies {
     ///
     /// For each relay the latency is updated using [`RelayLatencies::update_relay`].
     fn merge(&mut self, other: &RelayLatencies) {
-        for (url, latency) in other.iter() {
-            self.update_relay(url.clone(), latency);
+        for (url, latency) in other.https.iter() {
+            self.update_relay(url.clone(), *latency, ProbeProto::Https);
+        }
+        for (url, latency) in other.ipv4.iter() {
+            self.update_relay(url.clone(), *latency, ProbeProto::QuicIpv4);
+        }
+        for (url, latency) in other.ipv6.iter() {
+            self.update_relay(url.clone(), *latency, ProbeProto::QuicIpv6);
         }
     }
 
     /// Returns an iterator over all the relays and their latencies.
     pub fn iter(&self) -> impl Iterator<Item = (&'_ RelayUrl, Duration)> + '_ {
-        self.0.iter().map(|(k, v)| (k, *v))
+        self.https
+            .iter()
+            .chain(self.ipv4.iter())
+            .chain(self.ipv6.iter())
+            .map(|(k, v)| (k, *v))
     }
 
     fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.https.is_empty() && self.ipv4.is_empty() && self.ipv6.is_empty()
     }
 
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.https.len() + self.ipv4.len() + self.ipv6.len()
+    }
+
+    /// Returns the lowest latency across records.
     fn get(&self, url: &RelayUrl) -> Option<Duration> {
-        self.0.get(url).copied()
+        let mut list = Vec::with_capacity(3);
+        if let Some(val) = self.https.get(url) {
+            list.push(*val);
+        }
+        if let Some(val) = self.ipv4.get(url) {
+            list.push(*val);
+        }
+        if let Some(val) = self.ipv6.get(url) {
+            list.push(*val);
+        }
+        list.into_iter().min()
+    }
+
+    fn ipv4(&self) -> &BTreeMap<RelayUrl, Duration> {
+        &self.ipv4
+    }
+
+    fn ipv6(&self) -> &BTreeMap<RelayUrl, Duration> {
+        &self.ipv6
     }
 }
 
@@ -770,7 +804,7 @@ mod tests {
                 let id: u16 = s[1..].parse().unwrap();
                 report
                     .relay_latency
-                    .0
+                    .ipv4
                     .insert(relay_url(id), Duration::from_secs(d));
             }
 
