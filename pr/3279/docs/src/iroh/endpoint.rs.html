@@ -3168,7 +3168,9 @@
 <a href="#3167" id="3167">3167</a>
 <a href="#3168" id="3168">3168</a>
 <a href="#3169" id="3169">3169</a>
-<a href="#3170" id="3170">3170</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#3170" id="3170">3170</a>
+<a href="#3171" id="3171">3171</a>
+<a href="#3172" id="3172">3172</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -4721,6 +4723,7 @@
     /// This requires the client to retry with address validation.
     ///
     /// Errors if `remote_address_validated()` is true.
+    </span><span class="attr">#[allow(clippy::result_large_err)]
     </span><span class="kw">pub fn </span>retry(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(), RetryError&gt; {
         <span class="self">self</span>.inner.retry()
     }
@@ -4850,6 +4853,7 @@
     ///
     /// You can use [`RecvStream::is_0rtt`] to check whether a stream has been opened in 0-RTT
     /// and thus whether parts of the stream are operating under this reduced security level.
+    </span><span class="attr">#[allow(clippy::result_large_err)]
     </span><span class="kw">pub fn </span>into_0rtt(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(Connection, ZeroRttAccepted), <span class="self">Self</span>&gt; {
         <span class="kw">match </span><span class="self">self</span>.inner.into_0rtt() {
             <span class="prelude-val">Ok</span>((inner, zrtt_accepted)) =&gt; {
