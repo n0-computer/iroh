@@ -11,7 +11,7 @@
 #![cfg_attr(wasm_browser, allow(unused))]
 
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::BTreeMap,
     fmt::{self, Debug},
     net::{SocketAddrV4, SocketAddrV6},
     sync::Arc,
@@ -256,7 +256,7 @@ struct Reports {
     /// Do a full relay scan, even if last is `Some`.
     next_full: bool,
     /// Some previous reports.
-    prev: HashMap<Instant, Report>,
+    prev: BTreeMap<Instant, Report>,
     /// Most recent report.
     last: Option<Report>,
     /// Time of last full (non-incremental) report.
@@ -337,23 +337,6 @@ impl Client {
         #[cfg(wasm_browser)]
         let opts = Options::default();
 
-        let rx = self.get_report_channel(relay_map, opts).await?;
-        match rx.await {
-            Ok(res) => res,
-            Err(_) => Err(ActorGoneSnafu.build()),
-        }
-    }
-
-    /// Runs a net_report, returning the report.
-    ///
-    /// It may not be called concurrently with itself, `&mut self` takes care of that.
-    ///
-    /// Look at [`Options`] for the different configuration options.
-    pub async fn get_report(
-        &mut self,
-        relay_map: RelayMap,
-        opts: Options,
-    ) -> Result<Report, ReportError> {
         let rx = self.get_report_channel(relay_map, opts).await?;
         match rx.await {
             Ok(res) => res,
@@ -524,10 +507,6 @@ impl Actor {
     }
 
     /// Starts a check run as requested by the [`Message::RunCheck`] message.
-    ///
-    /// If *stun_sock_v4* or *stun_sock_v6* are not provided this will bind the sockets
-    /// itself.  This is not ideal since really you want to send STUN probes from the
-    /// sockets you will be using.
     fn handle_run_check(
         &mut self,
         relay_map: RelayMap,
@@ -586,8 +565,10 @@ impl Actor {
         });
     }
 
-    fn handle_report_ready(&mut self, report: Report) {
-        let report = self.finish_and_store_report(report);
+    fn handle_report_ready(&mut self, mut report: Report) {
+        self.add_report_history_and_set_preferred_relay(&mut report);
+        debug!("{report:?}");
+
         if let Some(ReportRun { report_tx, .. }) = self.current_report_run.take() {
             report_tx.send(Ok(report)).ok();
         }
@@ -599,15 +580,8 @@ impl Actor {
         }
     }
 
-    fn finish_and_store_report(&mut self, report: Report) -> Report {
-        let report = self.add_report_history_and_set_preferred_relay(report);
-        debug!("{report:?}");
-        report
-    }
-
     /// Adds `r` to the set of recent Reports and mutates `r.preferred_relay` to contain the best recent one.
-    /// `r` is stored ref counted and a reference is returned.
-    fn add_report_history_and_set_preferred_relay(&mut self, mut r: Report) -> Report {
+    fn add_report_history_and_set_preferred_relay(&mut self, r: &mut Report) {
         let mut prev_relay = None;
         if let Some(ref last) = self.reports.last {
             prev_relay.clone_from(&last.preferred_relay);
@@ -623,8 +597,7 @@ impl Actor {
             .reports
             .prev
             .iter()
-            .map(|(a, b)| -> (&Instant, &Report) { (a, b) })
-            .chain(std::iter::once((&now, &r)));
+            .map(|(a, b)| -> (&Instant, &Report) { (a, b) });
 
         let mut to_remove = Vec::new();
         for (t, pr) in prevs_iter {
@@ -634,6 +607,8 @@ impl Actor {
             }
             best_recent.merge(&pr.relay_latency);
         }
+        // merge in current run
+        best_recent.merge(&r.relay_latency);
 
         for t in to_remove {
             self.reports.prev.remove(&t);
@@ -670,8 +645,6 @@ impl Actor {
 
         self.reports.prev.insert(now, r.clone());
         self.reports.last = Some(r.clone());
-
-        r
     }
 }
 
@@ -978,8 +951,7 @@ mod tests {
             for s in &mut tt.steps {
                 // trigger the timer
                 tokio::time::advance(Duration::from_secs(s.after)).await;
-                let r = s.r.take().unwrap();
-                s.r = Some(actor.add_report_history_and_set_preferred_relay(r));
+                actor.add_report_history_and_set_preferred_relay(s.r.as_mut().unwrap());
             }
             let last_report = tt.steps.last().unwrap().r.clone().unwrap();
             let got = actor.reports.prev.len();
