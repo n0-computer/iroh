@@ -198,7 +198,7 @@ pub(crate) async fn write_frame(
 ///
 /// Flushes after writing.
 pub(crate) async fn relay_handshake_clientside(
-    mut io: &mut (impl Sink<Frame, Error = Error> + Stream<Item = Result<Frame, Error>> + Unpin),
+    mut io: impl Sink<Frame, Error = Error> + Stream<Item = Result<Frame, Error>> + Unpin,
     client_secret_key: &SecretKey,
     client_info: &ClientInfo,
 ) -> Result<(), Error> {
@@ -211,12 +211,15 @@ pub(crate) async fn relay_handshake_clientside(
         panic!("impossible: checked by `recv_frame` above");
     };
 
-    // TODO(matheus23): write_frame?
-    io.send(Frame::ClientInfo {
-        client_public_key: client_secret_key.public(),
-        info: client_info.clone(),
-        signature: client_secret_key.sign(&message),
-    })
+    write_frame(
+        &mut io,
+        Frame::ClientInfo {
+            client_public_key: client_secret_key.public(),
+            info: client_info.clone(),
+            signature: client_secret_key.sign(&message),
+        },
+        None,
+    )
     .await?;
     io.flush().await?;
     Ok(())
@@ -226,16 +229,19 @@ pub(crate) async fn relay_handshake_clientside(
 /// upon it's initial connection.
 #[cfg(any(test, feature = "server"))]
 pub(crate) async fn relay_handshake_serverside(
-    io: &mut (impl Sink<Frame, Error = Error> + Stream<Item = Result<Frame, Error>> + Unpin),
+    mut io: impl Sink<Frame, Error = Error> + Stream<Item = Result<Frame, Error>> + Unpin,
     rng: &mut (impl rand::CryptoRng + rand::Rng),
 ) -> Result<(PublicKey, ClientInfo), Error> {
     let mut message = [0u8; 16];
     rng.fill_bytes(&mut message);
 
-    // TODO(matheus23): write_frame?
-    io.send(Frame::ServerChallenge {
-        message: Bytes::copy_from_slice(&message),
-    })
+    write_frame(
+        &mut io,
+        Frame::ServerChallenge {
+            message: Bytes::copy_from_slice(&message),
+        },
+        Some(Duration::from_secs(10)),
+    )
     .await?;
     io.flush().await?;
 
@@ -249,7 +255,7 @@ pub(crate) async fn relay_handshake_serverside(
         signature,
     } = tokio::time::timeout(
         std::time::Duration::from_secs(10),
-        recv_frame(FrameType::ClientInfo, io),
+        recv_frame(FrameType::ClientInfo, &mut io),
     )
     .await??
     else {
