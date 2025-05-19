@@ -336,10 +336,12 @@ impl Actor {
         portmap_probe: Option<portmapper::ProbeOutput>,
         captive_portal: Option<bool>,
     ) -> Report {
-        let mut report = Report::default();
-        report.portmap_probe = portmap_probe;
-        report.captive_portal = captive_portal;
-        report.os_has_ipv6 = super::os_has_ipv6();
+        let mut report = Report {
+            portmap_probe,
+            captive_portal,
+            os_has_ipv6: super::os_has_ipv6(),
+            ..Default::default()
+        };
 
         for probe in self.probe_reports.drain(..) {
             match probe {
@@ -1122,9 +1124,11 @@ async fn measure_https_latency(
 fn update_report(report: &mut Report, probe_report: &ProbeReport) {
     let relay_node = probe_report.probe.node();
     if let Some(latency) = probe_report.latency {
-        report
-            .relay_latency
-            .update_relay(relay_node.url.clone(), latency);
+        report.relay_latency.update_relay(
+            relay_node.url.clone(),
+            latency,
+            probe_report.probe.proto(),
+        );
 
         #[cfg(not(wasm_browser))]
         if matches!(
@@ -1136,9 +1140,6 @@ fn update_report(report: &mut Report, probe_report: &ProbeReport) {
             match probe_report.addr {
                 Some(SocketAddr::V4(ipp)) => {
                     report.ipv4 = true;
-                    report
-                        .relay_v4_latency
-                        .update_relay(relay_node.url.clone(), latency);
                     if report.global_v4.is_none() {
                         report.global_v4 = Some(ipp);
                     } else if report.global_v4 != Some(ipp) {
@@ -1149,9 +1150,6 @@ fn update_report(report: &mut Report, probe_report: &ProbeReport) {
                 }
                 Some(SocketAddr::V6(ipp)) => {
                     report.ipv6 = true;
-                    report
-                        .relay_v6_latency
-                        .update_relay(relay_node.url.clone(), latency);
                     if report.global_v6.is_none() {
                         report.global_v6 = Some(ipp);
                     } else if report.global_v6 != Some(ipp) {
