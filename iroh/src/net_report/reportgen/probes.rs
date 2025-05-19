@@ -58,7 +58,7 @@ pub enum ProbeProto {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, derive_more::Display)]
-pub(super) enum Probe {
+pub(crate) enum Probe {
     #[display("HTTPS after {delay:?} to {node}")]
     Https {
         delay: Duration,
@@ -90,7 +90,7 @@ impl Probe {
         }
     }
 
-    pub(super) fn proto(&self) -> ProbeProto {
+    pub(crate) fn proto(&self) -> ProbeProto {
         match self {
             Probe::Https { .. } => ProbeProto::Https,
             #[cfg(not(wasm_browser))]
@@ -100,7 +100,7 @@ impl Probe {
         }
     }
 
-    pub(super) fn node(&self) -> &Arc<RelayNode> {
+    pub(crate) fn node(&self) -> &Arc<RelayNode> {
         match self {
             #[cfg(not(wasm_browser))]
             Probe::Https { node, .. }
