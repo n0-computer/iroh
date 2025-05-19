@@ -101,7 +101,7 @@ impl Client {
         protocols: BTreeSet<ProbeProto>,
         #[cfg(not(wasm_browser))] socket_state: SocketState,
         #[cfg(any(test, feature = "test-utils"))] insecure_skip_relay_cert_verify: bool,
-    ) -> (Self, mpsc::Receiver<ProbeRunMessage>) {
+    ) -> (Self, mpsc::Receiver<ProbeFinished>) {
         let (msg_tx, msg_rx) = mpsc::channel(32);
         let mut actor = Actor {
             msg_tx,
@@ -130,7 +130,7 @@ impl Client {
 /// This actor starts, generates a single report and exits.
 #[derive(Debug)]
 struct Actor {
-    msg_tx: mpsc::Sender<ProbeRunMessage>,
+    msg_tx: mpsc::Sender<ProbeFinished>,
 
     // Provided state
     /// The previous report, if it exists.
@@ -179,10 +179,10 @@ pub enum ProbesError {
 }
 
 #[derive(Debug)]
-pub(super) enum ProbeRunMessage {
-    ProbeFinished(Result<ProbeReport, ProbesError>),
-    PortmapProbeFinished(Option<portmapper::ProbeOutput>),
-    CaptivePortalProbeFinished(Option<bool>),
+pub(super) enum ProbeFinished {
+    Regular(Result<ProbeReport, ProbesError>),
+    Portmap(Option<portmapper::ProbeOutput>),
+    CaptivePortal(Option<bool>),
 }
 
 impl Actor {
@@ -256,7 +256,7 @@ impl Actor {
                 // Drive the portmapper.
                 pm = &mut port_mapping, if self.outstanding_tasks.port_mapper => {
                     debug!(report=?pm, "tick: portmapper probe report");
-                    self.msg_tx.send(ProbeRunMessage::PortmapProbeFinished(pm)).await.ok();
+                    self.msg_tx.send(ProbeFinished::Portmap(pm)).await.ok();
                     port_mapping.as_mut().set_none();
                     self.outstanding_tasks.port_mapper = false;
                 }
@@ -267,7 +267,7 @@ impl Actor {
                     match set_result {
                         Some(Ok(report)) => {
                             have_udp |= report.as_ref().map(|r| r.probe.is_udp()).unwrap_or_default();
-                            self.msg_tx.send(ProbeRunMessage::ProbeFinished(report)).await.ok();
+                            self.msg_tx.send(ProbeFinished::Regular(report)).await.ok();
                         },
                         Some(Err(e)) => {
                             warn!("probes task join error: {:?}", e);
@@ -286,7 +286,7 @@ impl Actor {
                 // Drive the captive task.
                 found = &mut captive_task, if self.outstanding_tasks.captive_task => {
                     trace!("tick: captive portal task done");
-                    self.msg_tx.send(ProbeRunMessage::CaptivePortalProbeFinished(found)).await.ok();
+                    self.msg_tx.send(ProbeFinished::CaptivePortal(found)).await.ok();
                     captive_task.as_mut().set_none();
                     self.outstanding_tasks.captive_task = false;
                 }
