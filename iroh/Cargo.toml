@@ -206,6 +206,10 @@ name = "search"
 required-features = ["examples"]
 
 [[example]]
+name = "search-v2"
+required-features = ["examples"]
+
+[[example]]
 name = "echo"
 required-features = ["examples"]
 
