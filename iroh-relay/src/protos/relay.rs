@@ -750,24 +750,23 @@ mod tests {
         let client_info = ClientInfo {
             version: PROTOCOL_VERSION,
         };
-        let message = postcard::to_stdvec(&client_info).e()?;
-        let signature = client_key.sign(&message);
+        let signature = client_key.sign(b"<server challenge>");
 
         let frames = vec![
             (
                 Frame::ClientInfo {
                     client_public_key: client_key.public(),
-                    // message: Bytes::from(message),
                     info: client_info,
                     signature,
                 },
                 "02 52 45 4c 41 59 f0 9f 94 91 19 7f 6b 23 e1 6c
                 85 32 c6 ab c8 38 fa cd 5e a7 89 be 0c 76 b2 92
-                03 34 03 9b fa 8b 3d 36 8d 61 88 e7 7b 22 f2 92
-                ab 37 43 5d a8 de 0b c8 cb 84 e2 88 f4 e7 3b 35
-                82 a5 27 31 e9 ff 98 65 46 5c 87 e0 5e 8d 42 7d
-                f4 22 bb 6e 85 e1 c0 5f 6f 74 98 37 ba a4 a5 c7
-                eb a3 23 0d 77 56 99 10 43 0e 03",
+                03 34 03 9b fa 8b 3d 36 8d 61
+                c0 5f 44 15 3b 17 a6 3f f1 89 f6 04 01 fb fe 78
+                99 03 e5 0b bc cf b1 8c b1 e8 ce 81 8a 66 cf fa
+                6c b6 b5 c8 ea 25 63 a6 02 d6 bc 9d 9c c5 f9 e2
+                83 16 18 3c 21 8d 76 bb 53 a2 99 52 ad 6e 85 04
+                03",
             ),
             (
                 Frame::Health {
@@ -823,18 +822,17 @@ mod tests {
 
         for (frame, expected_hex) in frames {
             let bytes = frame.encode_for_ws_msg();
-            let stripped: Vec<u8> = expected_hex
+            let stripped: String = expected_hex
                 .chars()
                 .filter_map(|s| {
                     if s.is_ascii_whitespace() {
                         None
                     } else {
-                        Some(s as u8)
+                        Some(s)
                     }
                 })
                 .collect();
-            let expected_bytes = HEXLOWER.decode(&stripped).unwrap();
-            assert_eq!(bytes, expected_bytes);
+            assert_eq!(HEXLOWER.encode(&bytes), stripped);
         }
 
         Ok(())

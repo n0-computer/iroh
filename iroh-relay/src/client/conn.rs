@@ -376,6 +376,7 @@ impl TryFrom<Frame> for ReceivedMessage {
 
     fn try_from(frame: Frame) -> std::result::Result<Self, Self::Error> {
         match frame {
+            Frame::ServerChallenge { message } => Ok(ReceivedMessage::ServerChallenge { message }),
             Frame::KeepAlive => {
                 // A one-way keep-alive message that doesn't require an ack.
                 // This predated FrameType::Ping/FrameType::Pong.
