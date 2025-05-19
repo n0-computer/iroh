@@ -495,7 +495,8 @@
 <a href="#494" id="494">494</a>
 <a href="#495" id="495">495</a>
 <a href="#496" id="496">496</a>
-<a href="#497" id="497">497</a></pre></div><pre class="rust"><code><span class="doccomment">//! Tools for spawning an accept loop that routes incoming requests to the right protocol.
+<a href="#497" id="497">497</a>
+<a href="#498" id="498">498</a></pre></div><pre class="rust"><code><span class="doccomment">//! Tools for spawning an accept loop that routes incoming requests to the right protocol.
 //!
 //! ## Example
 //!
@@ -929,6 +930,7 @@
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
+    <span class="kw">use </span><span class="kw">crate</span>::watcher::Watcher;
 
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_shutdown() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
@@ -975,7 +977,7 @@
         </span><span class="kw">let </span>proto = AccessLimit::new(Echo, |_node_id| <span class="bool-val">false</span>);
         <span class="kw">let </span>r1 = Router::builder(e1.clone()).accept(ECHO_ALPN, proto).spawn();
 
-        <span class="kw">let </span>addr1 = r1.endpoint().node_addr().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>addr1 = r1.endpoint().node_addr().initialized().<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="kw">let </span>e2 = Endpoint::builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
 

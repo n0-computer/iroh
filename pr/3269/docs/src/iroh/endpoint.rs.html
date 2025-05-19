@@ -3112,7 +3112,81 @@
 <a href="#3111" id="3111">3111</a>
 <a href="#3112" id="3112">3112</a>
 <a href="#3113" id="3113">3113</a>
-<a href="#3114" id="3114">3114</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#3114" id="3114">3114</a>
+<a href="#3115" id="3115">3115</a>
+<a href="#3116" id="3116">3116</a>
+<a href="#3117" id="3117">3117</a>
+<a href="#3118" id="3118">3118</a>
+<a href="#3119" id="3119">3119</a>
+<a href="#3120" id="3120">3120</a>
+<a href="#3121" id="3121">3121</a>
+<a href="#3122" id="3122">3122</a>
+<a href="#3123" id="3123">3123</a>
+<a href="#3124" id="3124">3124</a>
+<a href="#3125" id="3125">3125</a>
+<a href="#3126" id="3126">3126</a>
+<a href="#3127" id="3127">3127</a>
+<a href="#3128" id="3128">3128</a>
+<a href="#3129" id="3129">3129</a>
+<a href="#3130" id="3130">3130</a>
+<a href="#3131" id="3131">3131</a>
+<a href="#3132" id="3132">3132</a>
+<a href="#3133" id="3133">3133</a>
+<a href="#3134" id="3134">3134</a>
+<a href="#3135" id="3135">3135</a>
+<a href="#3136" id="3136">3136</a>
+<a href="#3137" id="3137">3137</a>
+<a href="#3138" id="3138">3138</a>
+<a href="#3139" id="3139">3139</a>
+<a href="#3140" id="3140">3140</a>
+<a href="#3141" id="3141">3141</a>
+<a href="#3142" id="3142">3142</a>
+<a href="#3143" id="3143">3143</a>
+<a href="#3144" id="3144">3144</a>
+<a href="#3145" id="3145">3145</a>
+<a href="#3146" id="3146">3146</a>
+<a href="#3147" id="3147">3147</a>
+<a href="#3148" id="3148">3148</a>
+<a href="#3149" id="3149">3149</a>
+<a href="#3150" id="3150">3150</a>
+<a href="#3151" id="3151">3151</a>
+<a href="#3152" id="3152">3152</a>
+<a href="#3153" id="3153">3153</a>
+<a href="#3154" id="3154">3154</a>
+<a href="#3155" id="3155">3155</a>
+<a href="#3156" id="3156">3156</a>
+<a href="#3157" id="3157">3157</a>
+<a href="#3158" id="3158">3158</a>
+<a href="#3159" id="3159">3159</a>
+<a href="#3160" id="3160">3160</a>
+<a href="#3161" id="3161">3161</a>
+<a href="#3162" id="3162">3162</a>
+<a href="#3163" id="3163">3163</a>
+<a href="#3164" id="3164">3164</a>
+<a href="#3165" id="3165">3165</a>
+<a href="#3166" id="3166">3166</a>
+<a href="#3167" id="3167">3167</a>
+<a href="#3168" id="3168">3168</a>
+<a href="#3169" id="3169">3169</a>
+<a href="#3170" id="3170">3170</a>
+<a href="#3171" id="3171">3171</a>
+<a href="#3172" id="3172">3172</a>
+<a href="#3173" id="3173">3173</a>
+<a href="#3174" id="3174">3174</a>
+<a href="#3175" id="3175">3175</a>
+<a href="#3176" id="3176">3176</a>
+<a href="#3177" id="3177">3177</a>
+<a href="#3178" id="3178">3178</a>
+<a href="#3179" id="3179">3179</a>
+<a href="#3180" id="3180">3180</a>
+<a href="#3181" id="3181">3181</a>
+<a href="#3182" id="3182">3182</a>
+<a href="#3183" id="3183">3183</a>
+<a href="#3184" id="3184">3184</a>
+<a href="#3185" id="3185">3185</a>
+<a href="#3186" id="3186">3186</a>
+<a href="#3187" id="3187">3187</a>
+<a href="#3188" id="3188">3188</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -3157,7 +3231,7 @@
     metrics::EndpointMetrics,
     net_report::Report,
     tls,
-    watchable::Watcher,
+    watcher::{<span class="self">self</span>, Watcher},
     RelayProtocol,
 };
 
@@ -3193,6 +3267,29 @@
 </span><span class="kw">const </span>DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(<span class="number">500</span>);
 
 <span class="kw">type </span>DiscoveryBuilder = Box&lt;<span class="kw">dyn </span>FnOnce(<span class="kw-2">&amp;</span>SecretKey) -&gt; <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Discovery&gt;&gt; + Send + Sync&gt;;
+
+<span class="doccomment">/// A type alias for the return value of [`Endpoint::node_addr`].
+///
+/// This type implements [`Watcher`] with `Value` being an optional [`NodeAddr`].
+///
+/// We return a named type instead of `impl Watcher&lt;Value = NodeAddr&gt;`, as this allows
+/// you to e.g. store the watcher in a struct.
+</span><span class="attr">#[cfg(not(wasm_browser))]
+</span><span class="kw">pub type </span>NodeAddrWatcher = watcher::Map&lt;
+    (
+        watcher::Direct&lt;<span class="prelude-ty">Option</span>&lt;BTreeSet&lt;DirectAddr&gt;&gt;&gt;,
+        watcher::Direct&lt;<span class="prelude-ty">Option</span>&lt;RelayUrl&gt;&gt;,
+    ),
+    <span class="prelude-ty">Option</span>&lt;NodeAddr&gt;,
+&gt;;
+<span class="doccomment">/// A type alias for the return value of [`Endpoint::node_addr`].
+///
+/// This type implements [`Watcher`] with `Value` being an optional [`NodeAddr`].
+///
+/// We return a named type instead of `impl Watcher&lt;Value = NodeAddr&gt;`, as this allows
+/// you to e.g. store the watcher in a struct.
+</span><span class="attr">#[cfg(wasm_browser)]
+</span><span class="kw">pub type </span>NodeAddrWatcher = watcher::Map&lt;watcher::Direct&lt;<span class="prelude-ty">Option</span>&lt;RelayUrl&gt;&gt;, <span class="prelude-ty">Option</span>&lt;NodeAddr&gt;&gt;;
 
 <span class="doccomment">/// Defines the mode of path selection for all traffic flowing through
 /// the endpoint.
@@ -3978,35 +4075,67 @@
         <span class="self">self</span>.static_config.tls_config.secret_key.public()
     }
 
-    <span class="doccomment">/// Returns the current [`NodeAddr`] for this endpoint.
+    <span class="doccomment">/// Returns a [`Watcher`] for the current [`NodeAddr`] for this endpoint.
     ///
-    /// The returned [`NodeAddr`] will have the current [`RelayUrl`] and direct addresses
-    /// as they would be returned by [`Endpoint::home_relay`] and
-    /// [`Endpoint::direct_addresses`].
+    /// The observed [`NodeAddr`] will have the current [`RelayUrl`] and direct addresses
+    /// as they would be returned by [`Endpoint::home_relay`] and [`Endpoint::direct_addresses`].
     ///
-    /// In browsers, because direct addresses are unavailable, this will only wait for
-    /// the home relay to be available before returning.
-    </span><span class="kw">pub async fn </span>node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;NodeAddr&gt; {
-        <span class="attr">#[cfg(not(wasm_browser))]
-        </span>{
-            <span class="comment">// Outside browsers, we preserve the "old" behavior of waiting for direct
-            // addresses and then adding the relay URL (should we have it)
-            </span><span class="kw">let </span>addrs = <span class="self">self</span>.direct_addresses().initialized().<span class="kw">await</span><span class="question-mark">?</span>;
-            <span class="kw">let </span>relay = <span class="self">self</span>.home_relay().get()<span class="question-mark">?</span>;
-            <span class="prelude-val">Ok</span>(NodeAddr::from_parts(
-                <span class="self">self</span>.node_id(),
-                relay,
-                addrs.into_iter().map(|x| x.addr),
-            ))
-        }
-        <span class="attr">#[cfg(wasm_browser)]
-        </span>{
-            <span class="comment">// In browsers, there will never be any direct addresses, so we wait
-            // for the home relay instead. This make the `NodeAddr` have *some* way
-            // of connecting to us.
-            </span><span class="kw">let </span>relay = <span class="self">self</span>.home_relay().initialized().<span class="kw">await</span><span class="question-mark">?</span>;
-            <span class="prelude-val">Ok</span>(NodeAddr::new(<span class="self">self</span>.node_id()).with_relay_url(relay))
-        }
+    /// Use [`Watcher::initialized`] to wait for a [`NodeAddr`] that is ready to be connected to:
+    ///
+    /// ```no_run
+    /// # async fn wrapper() -&gt; testresult::TestResult {
+    /// use iroh::{watcher::Watcher, Endpoint};
+    ///
+    /// let endpoint = Endpoint::builder()
+    ///     .alpns(vec![b"my-alpn".to_vec()])
+    ///     .bind()
+    ///     .await?;
+    /// let node_addr = endpoint.node_addr().initialized().await?;
+    /// # let _ = node_addr;
+    /// # Ok(())
+    /// # }
+    /// ```
+    </span><span class="attr">#[cfg(not(wasm_browser))]
+    </span><span class="kw">pub fn </span>node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; NodeAddrWatcher {
+        <span class="kw">let </span>watch_addrs = <span class="self">self</span>.direct_addresses();
+        <span class="kw">let </span>watch_relay = <span class="self">self</span>.home_relay();
+        <span class="kw">let </span>node_id = <span class="self">self</span>.node_id();
+
+        watch_addrs
+            .or(watch_relay)
+            .map(<span class="kw">move </span>|(addrs, relay)| <span class="kw">match </span>(addrs, relay) {
+                (<span class="prelude-val">Some</span>(addrs), relay) =&gt; <span class="prelude-val">Some</span>(NodeAddr::from_parts(
+                    node_id,
+                    relay,
+                    addrs.into_iter().map(|x| x.addr),
+                )),
+                (<span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(relay)) =&gt; <span class="prelude-val">Some</span>(NodeAddr::from_parts(
+                    node_id,
+                    <span class="prelude-val">Some</span>(relay),
+                    std::iter::empty(),
+                )),
+                (<span class="prelude-val">None</span>, <span class="prelude-val">None</span>) =&gt; <span class="prelude-val">None</span>,
+            })
+            .expect(<span class="string">"watchable is alive - cannot be disconnected yet"</span>)
+    }
+
+    <span class="doccomment">/// Returns a [`Watcher`] for the current [`NodeAddr`] for this endpoint.
+    ///
+    /// When compiled to Wasm, this function returns a watcher that initializes
+    /// with a [`NodeAddr`] that only contains a relay URL, but no direct addresses,
+    /// as there are no APIs for directly using sockets in browsers.
+    </span><span class="attr">#[cfg(wasm_browser)]
+    </span><span class="kw">pub fn </span>node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; NodeAddrWatcher {
+        <span class="comment">// In browsers, there will never be any direct addresses, so we wait
+        // for the home relay instead. This makes the `NodeAddr` have *some* way
+        // of connecting to us.
+        </span><span class="kw">let </span>watch_relay = <span class="self">self</span>.home_relay();
+        <span class="kw">let </span>node_id = <span class="self">self</span>.node_id();
+        watch_relay
+            .map(<span class="kw">move </span>|relay| {
+                relay.map(|relay| NodeAddr::from_parts(node_id, <span class="prelude-val">Some</span>(relay), std::iter::empty()))
+            })
+            .expect(<span class="string">"watchable is alive - cannot be disconnected yet"</span>)
     }
 
     <span class="doccomment">/// Returns a [`Watcher`] for the [`RelayUrl`] of the Relay server used as home relay.
@@ -4026,7 +4155,7 @@
     /// To wait for a home relay connection to be established, use [`Watcher::initialized`]:
     /// ```no_run
     /// use futures_lite::StreamExt;
-    /// use iroh::Endpoint;
+    /// use iroh::{watcher::Watcher, Endpoint};
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
@@ -4034,7 +4163,7 @@
     /// let _relay_url = mep.home_relay().initialized().await.unwrap();
     /// # });
     /// ```
-    </span><span class="kw">pub fn </span>home_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Watcher&lt;<span class="prelude-ty">Option</span>&lt;RelayUrl&gt;&gt; {
+    </span><span class="kw">pub fn </span>home_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; watcher::Direct&lt;<span class="prelude-ty">Option</span>&lt;RelayUrl&gt;&gt; {
         <span class="self">self</span>.msock.home_relay()
     }
 
@@ -4062,7 +4191,7 @@
     /// To get the first set of direct addresses use [`Watcher::initialized`]:
     /// ```no_run
     /// use futures_lite::StreamExt;
-    /// use iroh::Endpoint;
+    /// use iroh::{watcher::Watcher, Endpoint};
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
@@ -4072,7 +4201,7 @@
     /// ```
     ///
     /// [STUN]: https://en.wikipedia.org/wiki/STUN
-    </span><span class="kw">pub fn </span>direct_addresses(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Watcher&lt;<span class="prelude-ty">Option</span>&lt;BTreeSet&lt;DirectAddr&gt;&gt;&gt; {
+    </span><span class="kw">pub fn </span>direct_addresses(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; watcher::Direct&lt;<span class="prelude-ty">Option</span>&lt;BTreeSet&lt;DirectAddr&gt;&gt;&gt; {
         <span class="self">self</span>.msock.direct_addresses()
     }
 
@@ -4097,7 +4226,7 @@
     /// To get the first report use [`Watcher::initialized`]:
     /// ```no_run
     /// use futures_lite::StreamExt;
-    /// use iroh::Endpoint;
+    /// use iroh::{watcher::Watcher, Endpoint};
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
@@ -4106,7 +4235,7 @@
     /// # });
     /// ```
     </span><span class="attr">#[doc(hidden)]
-    </span><span class="kw">pub fn </span>net_report(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Watcher&lt;<span class="prelude-ty">Option</span>&lt;Arc&lt;Report&gt;&gt;&gt; {
+    </span><span class="kw">pub fn </span>net_report(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; watcher::Direct&lt;<span class="prelude-ty">Option</span>&lt;Arc&lt;Report&gt;&gt;&gt; {
         <span class="self">self</span>.msock.net_report()
     }
 
@@ -4207,7 +4336,7 @@
     /// # Errors
     ///
     /// Will error if we do not have any address information for the given `node_id`.
-    </span><span class="kw">pub fn </span>conn_type(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;Watcher&lt;ConnectionType&gt;&gt; {
+    </span><span class="kw">pub fn </span>conn_type(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;watcher::Direct&lt;ConnectionType&gt;&gt; {
         <span class="self">self</span>.msock.conn_type(node_id)
     }
 
@@ -4628,6 +4757,7 @@
     /// This requires the client to retry with address validation.
     ///
     /// Errors if `remote_address_validated()` is true.
+    </span><span class="attr">#[allow(clippy::result_large_err)]
     </span><span class="kw">pub fn </span>retry(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(), RetryError&gt; {
         <span class="self">self</span>.inner.retry()
     }
@@ -4757,6 +4887,7 @@
     ///
     /// You can use [`RecvStream::is_0rtt`] to check whether a stream has been opened in 0-RTT
     /// and thus whether parts of the stream are operating under this reduced security level.
+    </span><span class="attr">#[allow(clippy::result_large_err)]
     </span><span class="kw">pub fn </span>into_0rtt(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(Connection, ZeroRttAccepted), <span class="self">Self</span>&gt; {
         <span class="kw">match </span><span class="self">self</span>.inner.into_0rtt() {
             <span class="prelude-val">Ok</span>((inner, zrtt_accepted)) =&gt; {
@@ -5293,7 +5424,7 @@
 
     <span class="kw">use </span>iroh_metrics::MetricsSource;
     <span class="kw">use </span>iroh_relay::http::Protocol;
-    <span class="kw">use </span>n0_future::StreamExt;
+    <span class="kw">use </span>n0_future::{task::AbortOnDropHandle, StreamExt};
     <span class="kw">use </span>rand::SeedableRng;
     <span class="kw">use </span>testresult::TestResult;
     <span class="kw">use </span>tracing::{error_span, info, info_span, Instrument};
@@ -5312,7 +5443,7 @@
             .bind()
             .<span class="kw">await
             </span>.unwrap();
-        <span class="kw">let </span>my_addr = ep.node_addr().<span class="kw">await</span>.unwrap();
+        <span class="kw">let </span>my_addr = ep.node_addr().initialized().<span class="kw">await</span>.unwrap();
         <span class="kw">let </span>res = ep.connect(my_addr.clone(), TEST_ALPN).<span class="kw">await</span>;
         <span class="macro">assert!</span>(res.is_err());
         <span class="kw">let </span>err = res.err().unwrap();
@@ -5580,11 +5711,13 @@
         <span class="kw">let </span>(relay_map, _relay_url, _guard) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>client = Endpoint::builder()
             .relay_conn_protocol(Protocol::Websocket)
+            .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .bind()
             .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>server = Endpoint::builder()
             .relay_conn_protocol(Protocol::Websocket)
+            .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
             .relay_mode(RelayMode::Custom(relay_map))
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
             .bind()
@@ -5607,7 +5740,7 @@
             }
         });
 
-        <span class="kw">let </span>addr = server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>addr = server.node_addr().initialized().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>conn = client.connect(addr, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.open_bi().<span class="kw">await</span><span class="question-mark">?</span>;
         send.write_all(<span class="string">b"Hello, world!"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
@@ -5657,8 +5790,8 @@
         };
         <span class="kw">let </span>ep2 = ep2.bind().<span class="kw">await</span>.unwrap();
 
-        <span class="kw">let </span>ep1_nodeaddr = ep1.node_addr().<span class="kw">await</span>.unwrap();
-        <span class="kw">let </span>ep2_nodeaddr = ep2.node_addr().<span class="kw">await</span>.unwrap();
+        <span class="kw">let </span>ep1_nodeaddr = ep1.node_addr().initialized().<span class="kw">await</span>.unwrap();
+        <span class="kw">let </span>ep2_nodeaddr = ep2.node_addr().initialized().<span class="kw">await</span>.unwrap();
         ep1.add_node_addr(ep2_nodeaddr.clone()).unwrap();
         ep2.add_node_addr(ep1_nodeaddr.clone()).unwrap();
         <span class="kw">let </span>ep1_nodeid = ep1.node_id();
@@ -5734,9 +5867,9 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>endpoint_conn_type_stream() {
+    </span><span class="kw">async fn </span>endpoint_conn_type_becomes_direct() -&gt; TestResult {
         <span class="kw">const </span>TIMEOUT: Duration = std::time::Duration::from_secs(<span class="number">15</span>);
-        <span class="kw">let </span>(relay_map, _relay_url, _relay_guard) = run_relay_server().<span class="kw">await</span>.unwrap();
+        <span class="kw">let </span>(relay_map, _relay_url, _relay_guard) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">42</span>);
         <span class="kw">let </span>ep1_secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
         <span class="kw">let </span>ep2_secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
@@ -5746,18 +5879,16 @@
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .bind()
-            .<span class="kw">await
-            </span>.unwrap();
+            .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>ep2 = Endpoint::builder()
             .secret_key(ep2_secret_key)
             .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>)
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Custom(relay_map))
             .bind()
-            .<span class="kw">await
-            </span>.unwrap();
+            .<span class="kw">await</span><span class="question-mark">?</span>;
 
-        <span class="kw">async fn </span>handle_direct_conn(ep: <span class="kw-2">&amp;</span>Endpoint, node_id: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        <span class="kw">async fn </span>wait_for_conn_type_direct(ep: <span class="kw-2">&amp;</span>Endpoint, node_id: NodeId) -&gt; TestResult {
             <span class="kw">let </span><span class="kw-2">mut </span>stream = ep.conn_type(node_id)<span class="question-mark">?</span>.stream();
             <span class="kw">let </span>src = ep.node_id().fmt_short();
             <span class="kw">let </span>dst = node_id.fmt_short();
@@ -5767,43 +5898,56 @@
                     <span class="kw">return </span><span class="prelude-val">Ok</span>(());
                 }
             }
-            <span class="macro">anyhow::bail!</span>(<span class="string">"conn_type stream ended before `ConnectionType::Direct`"</span>);
+            <span class="macro">panic!</span>(<span class="string">"conn_type stream ended before `ConnectionType::Direct`"</span>);
         }
 
-        <span class="kw">async fn </span>accept(ep: <span class="kw-2">&amp;</span>Endpoint) -&gt; NodeId {
-            <span class="kw">let </span>incoming = ep.accept().<span class="kw">await</span>.unwrap();
-            <span class="kw">let </span>conn = incoming.<span class="kw">await</span>.unwrap();
-            <span class="kw">let </span>node_id = conn.remote_node_id().unwrap();
+        <span class="kw">async fn </span>accept(ep: <span class="kw-2">&amp;</span>Endpoint) -&gt; TestResult&lt;Connection&gt; {
+            <span class="kw">let </span>incoming = ep.accept().<span class="kw">await</span>.expect(<span class="string">"ep closed"</span>);
+            <span class="kw">let </span>conn = incoming.<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="kw">let </span>node_id = conn.remote_node_id()<span class="question-mark">?</span>;
             <span class="macro">tracing::info!</span>(node_id=%node_id.fmt_short(), <span class="string">"accepted connection"</span>);
-            node_id
+            <span class="prelude-val">Ok</span>(conn)
         }
 
         <span class="kw">let </span>ep1_nodeid = ep1.node_id();
         <span class="kw">let </span>ep2_nodeid = ep2.node_id();
 
-        <span class="kw">let </span>ep1_nodeaddr = ep1.node_addr().<span class="kw">await</span>.unwrap();
+        <span class="kw">let </span>ep1_nodeaddr = ep1.node_addr().initialized().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="macro">tracing::info!</span>(
             <span class="string">"node id 1 {ep1_nodeid}, relay URL {:?}"</span>,
             ep1_nodeaddr.relay_url()
         );
         <span class="macro">tracing::info!</span>(<span class="string">"node id 2 {ep2_nodeid}"</span>);
 
-        <span class="kw">let </span>ep1_side = <span class="kw">async move </span>{
-            accept(<span class="kw-2">&amp;</span>ep1).<span class="kw">await</span>;
-            handle_direct_conn(<span class="kw-2">&amp;</span>ep1, ep2_nodeid).<span class="kw">await
-        </span>};
+        <span class="kw">let </span>ep1_side = tokio::time::timeout(TIMEOUT, <span class="kw">async move </span>{
+            <span class="kw">let </span>conn = accept(<span class="kw-2">&amp;</span>ep1).<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="kw">let </span><span class="kw-2">mut </span>send = conn.open_uni().<span class="kw">await</span><span class="question-mark">?</span>;
+            wait_for_conn_type_direct(<span class="kw-2">&amp;</span>ep1, ep2_nodeid).<span class="kw">await</span><span class="question-mark">?</span>;
+            send.write_all(<span class="string">b"Conn is direct"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+            send.finish()<span class="question-mark">?</span>;
+            conn.closed().<span class="kw">await</span>;
+            TestResult::Ok(())
+        });
 
-        <span class="kw">let </span>ep2_side = <span class="kw">async move </span>{
-            ep2.connect(ep1_nodeaddr, TEST_ALPN).<span class="kw">await</span>.unwrap();
-            handle_direct_conn(<span class="kw-2">&amp;</span>ep2, ep1_nodeid).<span class="kw">await
-        </span>};
+        <span class="kw">let </span>ep2_side = tokio::time::timeout(TIMEOUT, <span class="kw">async move </span>{
+            <span class="kw">let </span>conn = ep2.connect(ep1_nodeaddr, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="kw">let </span><span class="kw-2">mut </span>recv = conn.accept_uni().<span class="kw">await</span><span class="question-mark">?</span>;
+            wait_for_conn_type_direct(<span class="kw-2">&amp;</span>ep2, ep1_nodeid).<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="kw">let </span>read = recv.read_to_end(<span class="number">100</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+            <span class="macro">assert_eq!</span>(read, <span class="string">b"Conn is direct"</span>.to_vec());
+            conn.close(<span class="number">0u32</span>.into(), <span class="string">b"done"</span>);
+            conn.closed().<span class="kw">await</span>;
+            TestResult::Ok(())
+        });
 
-        <span class="kw">let </span>res_ep1 = tokio::spawn(tokio::time::timeout(TIMEOUT, ep1_side));
-        <span class="kw">let </span>res_ep2 = tokio::spawn(tokio::time::timeout(TIMEOUT, ep2_side));
+        <span class="kw">let </span>res_ep1 = AbortOnDropHandle::new(tokio::spawn(ep1_side));
+        <span class="kw">let </span>res_ep2 = AbortOnDropHandle::new(tokio::spawn(ep2_side));
 
-        <span class="kw">let </span>(r1, r2) = <span class="macro">tokio::try_join!</span>(res_ep1, res_ep2).unwrap();
-        r1.expect(<span class="string">"ep1 timeout"</span>).unwrap();
-        r2.expect(<span class="string">"ep2 timeout"</span>).unwrap();
+        <span class="kw">let </span>(r1, r2) = <span class="macro">tokio::try_join!</span>(res_ep1, res_ep2)<span class="question-mark">?</span>;
+        r1<span class="question-mark">??</span>;
+        r2<span class="question-mark">??</span>;
+
+        <span class="prelude-val">Ok</span>(())
     }
 
     <span class="attr">#[tokio::test]
@@ -5933,9 +6077,10 @@
         )
         .<span class="kw">await</span><span class="question-mark">?</span>;
 
-        connect_client_0rtt_expect_err(<span class="kw-2">&amp;</span>client, server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        connect_client_0rtt_expect_err(<span class="kw-2">&amp;</span>client, server.node_addr().initialized().<span class="kw">await</span><span class="question-mark">?</span>).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="comment">// The second 0rtt attempt should work
-        </span>connect_client_0rtt_expect_ok(<span class="kw-2">&amp;</span>client, server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>, <span class="bool-val">true</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        </span>connect_client_0rtt_expect_ok(<span class="kw-2">&amp;</span>client, server.node_addr().initialized().<span class="kw">await</span><span class="question-mark">?</span>, <span class="bool-val">true</span>)
+            .<span class="kw">await</span><span class="question-mark">?</span>;
 
         client.close().<span class="kw">await</span>;
         server.close().<span class="kw">await</span>;
@@ -5959,7 +6104,7 @@
         )
         .<span class="kw">await</span><span class="question-mark">?</span>;
 
-        connect_client_0rtt_expect_err(<span class="kw-2">&amp;</span>client, server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        connect_client_0rtt_expect_err(<span class="kw-2">&amp;</span>client, server.node_addr().initialized().<span class="kw">await</span><span class="question-mark">?</span>).<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="comment">// connecting with another endpoint should not interfere with our
         // TLS session ticket cache for the first endpoint:
@@ -5968,10 +6113,11 @@
             <span class="macro">info_span!</span>(<span class="string">"another"</span>),
         )
         .<span class="kw">await</span><span class="question-mark">?</span>;
-        connect_client_0rtt_expect_err(<span class="kw-2">&amp;</span>client, another.node_addr().<span class="kw">await</span><span class="question-mark">?</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        connect_client_0rtt_expect_err(<span class="kw-2">&amp;</span>client, another.node_addr().initialized().<span class="kw">await</span><span class="question-mark">?</span>).<span class="kw">await</span><span class="question-mark">?</span>;
         another.close().<span class="kw">await</span>;
 
-        connect_client_0rtt_expect_ok(<span class="kw-2">&amp;</span>client, server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>, <span class="bool-val">true</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        connect_client_0rtt_expect_ok(<span class="kw-2">&amp;</span>client, server.node_addr().initialized().<span class="kw">await</span><span class="question-mark">?</span>, <span class="bool-val">true</span>)
+            .<span class="kw">await</span><span class="question-mark">?</span>;
 
         client.close().<span class="kw">await</span>;
         server.close().<span class="kw">await</span>;
@@ -5990,8 +6136,9 @@
         <span class="kw">let </span>server_key = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>server = spawn_0rtt_server(server_key.clone(), <span class="macro">info_span!</span>(<span class="string">"server-initial"</span>)).<span class="kw">await</span><span class="question-mark">?</span>;
 
-        connect_client_0rtt_expect_err(<span class="kw-2">&amp;</span>client, server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>).<span class="kw">await</span><span class="question-mark">?</span>;
-        connect_client_0rtt_expect_ok(<span class="kw-2">&amp;</span>client, server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>, <span class="bool-val">true</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        connect_client_0rtt_expect_err(<span class="kw-2">&amp;</span>client, server.node_addr().initialized().<span class="kw">await</span><span class="question-mark">?</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        connect_client_0rtt_expect_ok(<span class="kw-2">&amp;</span>client, server.node_addr().initialized().<span class="kw">await</span><span class="question-mark">?</span>, <span class="bool-val">true</span>)
+            .<span class="kw">await</span><span class="question-mark">?</span>;
 
         server.close().<span class="kw">await</span>;
 
@@ -6000,7 +6147,8 @@
         <span class="comment">// we expect the client to *believe* it can 0-RTT connect to the server (hence expect_ok),
         // but the server will reject the early data because it discarded necessary state
         // to decrypt it when restarting.
-        </span>connect_client_0rtt_expect_ok(<span class="kw-2">&amp;</span>client, server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>, <span class="bool-val">false</span>).<span class="kw">await</span><span class="question-mark">?</span>;
+        </span>connect_client_0rtt_expect_ok(<span class="kw-2">&amp;</span>client, server.node_addr().initialized().<span class="kw">await</span><span class="question-mark">?</span>, <span class="bool-val">false</span>)
+            .<span class="kw">await</span><span class="question-mark">?</span>;
 
         client.close().<span class="kw">await</span>;
 
@@ -6015,7 +6163,7 @@
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
             .bind()
             .<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>server_addr = server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>server_addr = server.node_addr().initialized().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>server_task = tokio::spawn(<span class="kw">async move </span>{
             <span class="kw">let </span>incoming = server.accept().<span class="kw">await</span>.unwrap();
             <span class="kw">let </span>conn = incoming.<span class="kw">await</span><span class="question-mark">?</span>;
@@ -6064,7 +6212,7 @@
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
             .bind()
             .<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>server_addr = server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>server_addr = server.node_addr().initialized().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>server_task = tokio::task::spawn(<span class="kw">async move </span>{
             <span class="kw">let </span>conn = server
                 .accept()
@@ -6130,7 +6278,7 @@
             .alpns(accept_alpns)
             .bind()
             .<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>server_addr = server.node_addr().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>server_addr = server.node_addr().initialized().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>server_task = tokio::spawn({
             <span class="kw">let </span>server = server.clone();
             <span class="kw">async move </span>{

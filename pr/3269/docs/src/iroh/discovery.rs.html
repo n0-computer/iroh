@@ -1072,7 +1072,10 @@
 <a href="#1071" id="1071">1071</a>
 <a href="#1072" id="1072">1072</a>
 <a href="#1073" id="1073">1073</a>
-<a href="#1074" id="1074">1074</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
+<a href="#1074" id="1074">1074</a>
+<a href="#1075" id="1075">1075</a>
+<a href="#1076" id="1076">1076</a>
+<a href="#1077" id="1077">1077</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
 //! To connect to an iroh node a [`NodeAddr`] is needed, which may contain a
 //! [`RelayUrl`] or one or more *direct addresses* in addition to the [`NodeId`].
@@ -1639,7 +1642,7 @@
     <span class="kw">use </span>tracing_test::traced_test;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
-    <span class="kw">use crate</span>::{endpoint::ConnectOptions, RelayMode};
+    <span class="kw">use crate</span>::{endpoint::ConnectOptions, watcher::Watcher <span class="kw">as _</span>, RelayMode};
 
     <span class="kw">type </span>InfoStore = HashMap&lt;NodeId, (NodeData, u64)&gt;;
 
@@ -1786,7 +1789,7 @@
         </span>};
         <span class="kw">let </span>ep1_addr = NodeAddr::new(ep1.node_id());
         <span class="comment">// wait for our address to be updated and thus published at least once
-        </span>ep1.node_addr().<span class="kw">await</span><span class="question-mark">?</span>;
+        </span>ep1.node_addr().initialized().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>_conn = ep2.connect(ep1_addr, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(())
     }
@@ -1812,7 +1815,10 @@
         </span>};
         <span class="kw">let </span>ep1_addr = NodeAddr::new(ep1.node_id());
         <span class="comment">// wait for out address to be updated and thus published at least once
-        </span>ep1.node_addr().<span class="kw">await</span>.context(<span class="string">"waiting for NodeAddr"</span>)<span class="question-mark">?</span>;
+        </span>ep1.node_addr()
+            .initialized()
+            .<span class="kw">await
+            </span>.context(<span class="string">"waiting for NodeAddr"</span>)<span class="question-mark">?</span>;
         <span class="kw">let </span>_conn = ep2
             .connect(ep1_addr, TEST_ALPN)
             .<span class="kw">await
@@ -1844,7 +1850,7 @@
             new_endpoint(secret, disco).<span class="kw">await
         </span>};
         <span class="comment">// wait for out address to be updated and thus published at least once
-        </span>ep1.node_addr().<span class="kw">await</span><span class="question-mark">?</span>;
+        </span>ep1.node_addr().initialized().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>_conn = ep2.connect(ep1.node_id(), TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(())
     }
@@ -1866,7 +1872,7 @@
             new_endpoint(secret, disco).<span class="kw">await
         </span>};
         <span class="comment">// wait for out address to be updated and thus published at least once
-        </span>ep1.node_addr().<span class="kw">await</span><span class="question-mark">?</span>;
+        </span>ep1.node_addr().initialized().<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="comment">// 10x faster test via a 3s idle timeout instead of the 30s default
         </span><span class="kw">let </span><span class="kw-2">mut </span>config = TransportConfig::default();
@@ -1899,7 +1905,7 @@
             new_endpoint(secret, disco).<span class="kw">await
         </span>};
         <span class="comment">// wait for out address to be updated and thus published at least once
-        </span>ep1.node_addr().<span class="kw">await</span><span class="question-mark">?</span>;
+        </span>ep1.node_addr().initialized().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>ep1_wrong_addr = NodeAddr {
             node_id: ep1.node_id(),
             relay_url: <span class="prelude-val">None</span>,
@@ -1927,7 +1933,7 @@
         <span class="kw">let </span><span class="kw-2">mut </span>stream = ep1.discovery_stream();
 
         <span class="comment">// wait for ep2 node addr to be updated and connect from ep1 -&gt; discovery via resolve
-        </span>ep2.node_addr().<span class="kw">await</span><span class="question-mark">?</span>;
+        </span>ep2.node_addr().initialized().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let _ </span>= ep1.connect(ep2.node_id(), TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="kw">let </span>item = tokio::time::timeout(Duration::from_secs(<span class="number">1</span>), stream.next())
