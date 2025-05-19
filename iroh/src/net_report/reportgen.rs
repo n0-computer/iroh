@@ -674,7 +674,7 @@ async fn run_probe(
         }
 
         #[cfg(not(wasm_browser))]
-        Probe::QuicIpv4 { ref node, .. } | Probe::QuicIpv6 { ref node, .. } => {
+        Probe::QadIpv4 { ref node, .. } | Probe::QadIpv6 { ref node, .. } => {
             debug!("sending QUIC address discovery probe");
             let relay_addr = get_relay_addr(&socket_state.dns_resolver, &relay_node, probe.proto())
                 .await
@@ -732,8 +732,8 @@ async fn run_quic_probe(
     ip_mapped_addrs: Option<IpMappedAddresses>,
 ) -> Result<ProbeReport, ProbeErrorWithProbe> {
     match probe.proto() {
-        ProbeProto::QuicIpv4 => debug_assert!(relay_addr.is_ipv4()),
-        ProbeProto::QuicIpv6 => debug_assert!(relay_addr.is_ipv6()),
+        ProbeProto::QadIpv4 => debug_assert!(relay_addr.is_ipv4()),
+        ProbeProto::QadIpv6 => debug_assert!(relay_addr.is_ipv6()),
         _ => debug_assert!(false, "wrong probe"),
     }
     let relay_addr = maybe_to_mapped_addr(ip_mapped_addrs, relay_addr);
@@ -763,7 +763,7 @@ async fn run_quic_probe(
             )
         })?;
     let mut result = ProbeReport::new(probe.clone());
-    if matches!(probe, Probe::QuicIpv4 { .. }) {
+    if matches!(probe, Probe::QadIpv4 { .. }) {
         result.ipv4_can_send = true;
     } else {
         result.ipv6_can_send = true;
@@ -880,7 +880,7 @@ async fn check_captive_portal(
 fn get_port(relay_node: &RelayNode, proto: &ProbeProto) -> Option<u16> {
     match proto {
         #[cfg(not(wasm_browser))]
-        ProbeProto::QuicIpv4 | ProbeProto::QuicIpv6 => {
+        ProbeProto::QadIpv4 | ProbeProto::QadIpv6 => {
             if let Some(ref quic) = relay_node.quic {
                 if quic.port == 0 {
                     Some(DEFAULT_RELAY_QUIC_PORT)
@@ -941,8 +941,8 @@ async fn get_relay_addr(
     let port = get_port(relay_node, &proto).context(get_relay_addr_error::MissingPortSnafu)?;
 
     match proto {
-        ProbeProto::QuicIpv4 => relay_lookup_ipv4_staggered(dns_resolver, relay_node, port).await,
-        ProbeProto::QuicIpv6 => relay_lookup_ipv6_staggered(dns_resolver, relay_node, port).await,
+        ProbeProto::QadIpv4 => relay_lookup_ipv4_staggered(dns_resolver, relay_node, port).await,
+        ProbeProto::QadIpv6 => relay_lookup_ipv6_staggered(dns_resolver, relay_node, port).await,
         ProbeProto::Https => Err(get_relay_addr_error::UnsupportedHttpsSnafu.build()),
     }
 }
@@ -1158,7 +1158,7 @@ mod tests {
         };
         let url = relay.url.clone();
         let port = server.quic_addr().unwrap().port();
-        let probe = Probe::QuicIpv4 {
+        let probe = Probe::QadIpv4 {
             delay: Duration::from_secs(0),
             node: relay,
         };
