@@ -1421,7 +1421,7 @@ impl Handle {
             #[cfg(not(wasm_browser))]
             port_mapper,
             no_v4_send: false,
-            net_reporter,
+            net_reporter: Arc::new(Mutex::new(net_reporter)),
             network_monitor,
             net_report_config,
             network_change_sender,
@@ -1677,7 +1677,7 @@ struct Actor {
     no_v4_send: bool,
 
     /// The prober that discovers local network conditions, including the closest relay relay and NAT mappings.
-    net_reporter: net_report::Client,
+    net_reporter: Arc<Mutex<net_report::Client>>,
 
     network_monitor: netmon::Monitor,
     network_change_sender: transports::NetworkChangeSender,
@@ -2157,30 +2157,24 @@ impl Actor {
 
         debug!("requesting net_report report");
         let msock = self.msock.clone();
-        match self.net_reporter.get_report_channel(relay_map, opts).await {
-            Ok(rx) => {
-                task::spawn(async move {
-                    let report = time::timeout(NET_REPORT_TIMEOUT, rx).await;
-                    match report {
-                        Ok(Ok(report)) => {
-                            msock.net_report.set((Some(report), why)).ok();
-                        }
-                        Ok(Err(_)) => {
-                            warn!("net_report report not received");
-                        }
-                        Err(err) => {
-                            warn!("net_report report timeout: {:?}", err);
-                        }
-                    }
+        let net_reporter = self.net_reporter.clone();
 
-                    msock.finalize_direct_addrs_update(why);
-                });
+        task::spawn(async move {
+            let mut net_reporter = net_reporter.lock().await;
+            let fut = time::timeout(NET_REPORT_TIMEOUT, net_reporter.get_report(relay_map, opts));
+            match fut.await {
+                Ok(Ok(report)) => {
+                    msock.net_report.set((Some(report), why)).ok();
+                }
+                Ok(Err(_)) => {
+                    warn!("net_report report not received");
+                }
+                Err(err) => {
+                    warn!("net_report report timeout: {:?}", err);
+                }
             }
-            Err(err) => {
-                warn!("unable to start net_report generation: {:?}", err);
-                self.msock.finalize_direct_addrs_update(why);
-            }
-        }
+            msock.finalize_direct_addrs_update(why);
+        });
     }
 
     fn handle_net_report_report(&mut self, mut report: Option<net_report::Report>) {

@@ -25,9 +25,8 @@ use n0_future::time::{Duration, Instant};
 use nested_enum_utils::common_fields;
 #[cfg(not(wasm_browser))]
 use netwatch::UdpSocket;
-use reportgen::{ActorRunError, ProbeProto, ProbeReport, ProbeRunMessage};
+use reportgen::{ActorRunError, ProbeFinished, ProbeProto, ProbeReport};
 use snafu::Snafu;
-use tokio::sync::oneshot;
 use tracing::{debug, trace, warn};
 
 mod defaults;
@@ -296,13 +295,24 @@ impl RelayLatencies {
 /// `Addr::receive_stun_packet`.
 #[derive(Debug)]
 pub struct Client {
+    /// The port mapper client, if those are requested.
+    ///
+    /// The port mapper is responsible for talking to routers via UPnP and the like to try
+    /// and open ports.
     #[cfg(not(wasm_browser))]
     port_mapper: Option<portmapper::Client>,
+    /// The DNS resolver to use for probes that need to perform DNS lookups
     #[cfg(not(wasm_browser))]
     dns_resolver: DnsResolver,
+    /// The [`IpMappedAddresses`] that allows you to do QAD in iroh
     #[cfg(not(wasm_browser))]
     ip_mapped_addrs: Option<IpMappedAddresses>,
     metrics: Arc<Metrics>,
+
+    /// A collection of previously generated reports.
+    ///
+    /// Sometimes it is useful to look at past reports to decide what to do.
+    reports: Reports,
 }
 
 #[derive(Debug)]
@@ -320,7 +330,7 @@ struct Reports {
 impl Default for Reports {
     fn default() -> Self {
         Self {
-            next_full: Default::default(),
+            next_full: true,
             prev: Default::default(),
             last: Default::default(),
             last_full: Instant::now(),
@@ -330,9 +340,6 @@ impl Default for Reports {
 
 impl Client {
     /// Creates a new net_report client.
-    ///
-    /// This starts a connected actor in the background.  Once the client is dropped it will
-    /// stop running.
     pub fn new(
         #[cfg(not(wasm_browser))] port_mapper: Option<portmapper::Client>,
         #[cfg(not(wasm_browser))] dns_resolver: DnsResolver,
@@ -347,6 +354,7 @@ impl Client {
             #[cfg(not(wasm_browser))]
             ip_mapped_addrs,
             metrics,
+            reports: Reports::default(),
         }
     }
 
@@ -373,102 +381,19 @@ impl Client {
         let opts = Options::default().quic_config(quic_config);
         #[cfg(wasm_browser)]
         let opts = Options::default();
-
-        let rx = self.get_report_channel(relay_map, opts).await?;
-        match rx.await {
-            Ok(res) => Ok(res),
-            Err(_) => Err(ActorGoneSnafu.build()),
-        }
+        let report = self.get_report(relay_map.clone(), opts).await?;
+        Ok(report)
     }
 
-    /// Get report with channel
+    /// Get a report
     ///
     /// Look at [`Options`] for the different configuration options.
-    pub(crate) async fn get_report_channel(
+    pub(crate) async fn get_report(
         &mut self,
         relay_map: RelayMap,
         opts: Options,
-    ) -> Result<oneshot::Receiver<Report>, ReportError> {
-        let (tx, rx) = oneshot::channel();
-
-        let mut actor = Actor::new(
-            #[cfg(not(wasm_browser))]
-            self.port_mapper.clone(),
-            #[cfg(not(wasm_browser))]
-            self.dns_resolver.clone(),
-            #[cfg(not(wasm_browser))]
-            self.ip_mapped_addrs.clone(),
-            self.metrics.clone(),
-        );
-        actor.run(relay_map, opts, tx).await;
-
-        Ok(rx)
-    }
-}
-
-/// The net_report actor.
-///
-/// This actor runs for the entire duration there's a [`Client`] connected.
-#[derive(Debug)]
-struct Actor {
-    /// A collection of previously generated reports.
-    ///
-    /// Sometimes it is useful to look at past reports to decide what to do.
-    reports: Reports,
-
-    // Actor configuration.
-    /// The port mapper client, if those are requested.
-    ///
-    /// The port mapper is responsible for talking to routers via UPnP and the like to try
-    /// and open ports.
-    #[cfg(not(wasm_browser))]
-    port_mapper: Option<portmapper::Client>,
-
-    // Actor state.
-    /// The DNS resolver to use for probes that need to perform DNS lookups
-    #[cfg(not(wasm_browser))]
-    dns_resolver: DnsResolver,
-
-    /// The [`IpMappedAddresses`] that allows you to do QAD in iroh
-    #[cfg(not(wasm_browser))]
-    ip_mapped_addrs: Option<IpMappedAddresses>,
-    metrics: Arc<Metrics>,
-}
-
-impl Actor {
-    /// Creates a new actor.
-    ///
-    /// This does not start the actor, see [`Actor::run`] for this.  You should not
-    /// normally create this directly but rather create a [`Client`].
-    fn new(
-        #[cfg(not(wasm_browser))] port_mapper: Option<portmapper::Client>,
-        #[cfg(not(wasm_browser))] dns_resolver: DnsResolver,
-        #[cfg(not(wasm_browser))] ip_mapped_addrs: Option<IpMappedAddresses>,
-        metrics: Arc<Metrics>,
-    ) -> Self {
-        Self {
-            reports: Default::default(),
-            #[cfg(not(wasm_browser))]
-            port_mapper,
-            #[cfg(not(wasm_browser))]
-            dns_resolver,
-            #[cfg(not(wasm_browser))]
-            ip_mapped_addrs,
-            metrics,
-        }
-    }
-
-    /// Run the actor.
-    ///
-    /// It will now run and handle messages.  Once the connected [`Client`] (including all
-    /// its clones) is dropped this will terminate.
-    async fn run(
-        &mut self,
-        relay_map: RelayMap,
-        opts: Options,
-        response_tx: oneshot::Sender<Report>,
-    ) {
-        debug!("net_report actor starting");
+    ) -> Result<Report, ReportError> {
+        debug!("net_report starting");
 
         let protocols = opts.to_protocols();
         #[cfg(not(wasm_browser))]
@@ -502,7 +427,7 @@ impl Actor {
         self.metrics.reports.inc();
 
         let enough_relays = std::cmp::min(relay_map.len(), ENOUGH_NODES);
-        let (_actor, mut probe_rx) = reportgen::Client::new(
+        let (actor, mut probe_rx) = reportgen::Client::new(
             self.reports.last.clone(),
             relay_map,
             protocols,
@@ -524,6 +449,7 @@ impl Actor {
                 biased;
 
                 _ = &mut timeout_fut, if timeout_fut.is_some() => {
+                    drop(actor); // shuts down the probes
                     break;
                 }
 
@@ -533,7 +459,7 @@ impl Actor {
                     };
                     trace!(?probe_res, "handling probe");
                     match probe_res {
-                        ProbeRunMessage::ProbeFinished(probe) => match probe {
+                        ProbeFinished::Regular(probe) => match probe {
                             Ok(probe) => {
                                 report.update(&probe);
                                 if let Some(timeout) = self.have_enough_reports(enough_relays, &report) {
@@ -544,10 +470,10 @@ impl Actor {
                                 trace!("probe errored: {:?}", err);
                             }
                         },
-                        ProbeRunMessage::CaptivePortalProbeFinished(portal) => {
+                        ProbeFinished::CaptivePortal(portal) => {
                             report.captive_portal = portal;
                         }
-                        ProbeRunMessage::PortmapProbeFinished(portmap) => {
+                        ProbeFinished::Portmap(portmap) => {
                             report.portmap_probe = portmap;
                         }
                     }
@@ -558,7 +484,7 @@ impl Actor {
         self.add_report_history_and_set_preferred_relay(&mut report);
         debug!("{report:?}");
 
-        response_tx.send(report).ok();
+        Ok(report)
     }
 
     fn have_enough_reports(&self, enough_relays: usize, report: &Report) -> Option<Duration> {
@@ -949,14 +875,14 @@ mod tests {
         let resolver = dns::tests::resolver();
         for mut tt in tests {
             println!("test: {}", tt.name);
-            let mut actor = Actor::new(None, resolver.clone(), None, Default::default());
+            let mut client = Client::new(None, resolver.clone(), None, Default::default());
             for s in &mut tt.steps {
                 // trigger the timer
                 tokio::time::advance(Duration::from_secs(s.after)).await;
-                actor.add_report_history_and_set_preferred_relay(s.r.as_mut().unwrap());
+                client.add_report_history_and_set_preferred_relay(s.r.as_mut().unwrap());
             }
             let last_report = tt.steps.last().unwrap().r.clone().unwrap();
-            let got = actor.reports.prev.len();
+            let got = client.reports.prev.len();
             let want = tt.want_prev_len;
             assert_eq!(got, want, "prev length");
             let got = &last_report.preferred_relay;
