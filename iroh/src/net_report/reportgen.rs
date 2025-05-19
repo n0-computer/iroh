@@ -100,7 +100,7 @@ impl Client {
     /// it shuts down.  Dropping this handle will abort the actor.
     pub(super) fn new(
         net_report: net_report::Addr,
-        last_report: Option<Arc<Report>>,
+        last_report: Option<Report>,
         relay_map: RelayMap,
         protocols: BTreeSet<ProbeProto>,
         #[cfg(not(wasm_browser))] socket_state: SocketState,
@@ -172,7 +172,7 @@ struct Actor {
 
     // Provided state
     /// The previous report, if it exists.
-    last_report: Option<Arc<Report>>,
+    last_report: Option<Report>,
     /// The relay configuration.
     relay_map: RelayMap,
 
