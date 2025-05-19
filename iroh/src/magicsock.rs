@@ -2231,7 +2231,6 @@ impl Actor {
             let have_port_map = false;
 
             let mut ni = NetInfo {
-                relay_latency: Default::default(),
                 mapping_varies_by_dest_ip: r.mapping_varies_by_dest_ip,
                 #[cfg(not(wasm_browser))]
                 portmap_probe: r.portmap_probe.clone(),
@@ -2241,14 +2240,6 @@ impl Actor {
                 working_udp: Some(r.udp),
                 preferred_relay: r.preferred_relay.clone(),
             };
-            for (rid, d) in r.relay_v4_latency.iter() {
-                ni.relay_latency
-                    .insert(format!("{rid}-v4"), d.as_secs_f64());
-            }
-            for (rid, d) in r.relay_v6_latency.iter() {
-                ni.relay_latency
-                    .insert(format!("{rid}-v6"), d.as_secs_f64());
-            }
 
             if ni.preferred_relay.is_none() {
                 // Perhaps UDP is blocked. Pick a deterministic but arbitrary one.
@@ -2594,12 +2585,6 @@ pub(crate) struct NetInfo {
     /// other nodes) but this is the relay on which you can always contact this node.  Also
     /// known as home relay.
     preferred_relay: Option<RelayUrl>,
-
-    /// The fastest recent time to reach various relay STUN servers, in seconds.
-    ///
-    /// This should only be updated rarely, or when there's a
-    /// material change, as any change here also gets uploaded to the control plane.
-    relay_latency: BTreeMap<String, f64>,
 }
 
 impl NetInfo {
