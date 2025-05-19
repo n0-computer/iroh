@@ -13,7 +13,7 @@
 use std::{
     collections::BTreeMap,
     fmt::{self, Debug},
-    net::{SocketAddrV4, SocketAddrV6},
+    net::{SocketAddr, SocketAddrV4, SocketAddrV6},
     sync::Arc,
 };
 
@@ -21,17 +21,14 @@ use iroh_base::RelayUrl;
 #[cfg(not(wasm_browser))]
 use iroh_relay::dns::DnsResolver;
 use iroh_relay::RelayMap;
-use n0_future::{
-    task::{self, AbortOnDropHandle},
-    time::{Duration, Instant},
-};
+use n0_future::time::{Duration, Instant};
 use nested_enum_utils::common_fields;
 #[cfg(not(wasm_browser))]
 use netwatch::UdpSocket;
-use reportgen::{ActorRunError, ProbeProto};
+use reportgen::{ActorRunError, ProbeProto, ProbeReport, ProbeRunMessage};
 use snafu::Snafu;
-use tokio::sync::{mpsc, oneshot};
-use tracing::{debug, error, info_span, trace, Instrument};
+use tokio::sync::oneshot;
+use tracing::{debug, trace, warn};
 
 mod defaults;
 #[cfg(not(wasm_browser))]
@@ -68,6 +65,8 @@ pub use reportgen::QuicConfig;
 #[cfg(not(wasm_browser))]
 use reportgen::SocketState;
 
+use crate::util::MaybeFuture;
+
 const FULL_REPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
 /// The maximum latency of all nodes, if none are found yet.
@@ -78,6 +77,8 @@ const FULL_REPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
 /// never happen unless there already is at least one latency.  Yet here we are, defining a
 /// default which will never be used.
 const DEFAULT_MAX_LATENCY: Duration = Duration::from_millis(100);
+
+const ENOUGH_NODES: usize = 3;
 
 /// A net_report report.
 ///
@@ -121,6 +122,59 @@ pub struct Report {
 impl fmt::Display for Report {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Debug::fmt(&self, f)
+    }
+}
+
+impl Report {
+    /// Updates a net_report [`Report`] with a new [`ProbeReport`].
+    fn update(&mut self, probe_report: &ProbeReport) {
+        let relay_node = probe_report.probe.node();
+        if let Some(latency) = probe_report.latency {
+            self.relay_latency.update_relay(
+                relay_node.url.clone(),
+                latency,
+                probe_report.probe.proto(),
+            );
+
+            #[cfg(not(wasm_browser))]
+            if matches!(
+                probe_report.probe.proto(),
+                ProbeProto::QuicIpv4 | ProbeProto::QuicIpv6
+            ) {
+                self.udp = true;
+
+                match probe_report.addr {
+                    Some(SocketAddr::V4(ipp)) => {
+                        self.ipv4 = true;
+                        if self.global_v4.is_none() {
+                            self.global_v4 = Some(ipp);
+                        } else if self.global_v4 != Some(ipp) {
+                            self.mapping_varies_by_dest_ip = Some(true);
+                        } else if self.mapping_varies_by_dest_ip.is_none() {
+                            self.mapping_varies_by_dest_ip = Some(false);
+                        }
+                    }
+                    Some(SocketAddr::V6(ipp)) => {
+                        self.ipv6 = true;
+                        if self.global_v6.is_none() {
+                            self.global_v6 = Some(ipp);
+                        } else if self.global_v6 != Some(ipp) {
+                            self.mapping_varies_by_dest_ipv6 = Some(true);
+                            warn!("IPv6 Address detected by STUN varies by destination");
+                        } else if self.mapping_varies_by_dest_ipv6.is_none() {
+                            self.mapping_varies_by_dest_ipv6 = Some(false);
+                        }
+                    }
+                    None => {
+                        // If we are here we had a relay server latency reported from a STUN probe.
+                        // Thus we must have a reported address.
+                        debug_assert!(probe_report.addr.is_some());
+                    }
+                }
+            }
+        }
+        self.ipv4_can_send |= probe_report.ipv4_can_send;
+        self.ipv6_can_send |= probe_report.ipv6_can_send;
     }
 }
 
@@ -242,13 +296,13 @@ impl RelayLatencies {
 /// `Addr::receive_stun_packet`.
 #[derive(Debug)]
 pub struct Client {
-    /// Channel to send message to the [`Actor`].
-    ///
-    /// If all senders are dropped, in other words all clones of this struct are dropped,
-    /// the actor will terminate.
-    addr: Addr,
-    /// Ensures the actor is terminated when the client is dropped.
-    _drop_guard: Arc<AbortOnDropHandle<()>>,
+    #[cfg(not(wasm_browser))]
+    port_mapper: Option<portmapper::Client>,
+    #[cfg(not(wasm_browser))]
+    dns_resolver: DnsResolver,
+    #[cfg(not(wasm_browser))]
+    ip_mapped_addrs: Option<IpMappedAddresses>,
+    metrics: Arc<Metrics>,
 }
 
 #[derive(Debug)]
@@ -285,7 +339,7 @@ impl Client {
         #[cfg(not(wasm_browser))] ip_mapped_addrs: Option<IpMappedAddresses>,
         metrics: Arc<Metrics>,
     ) -> Self {
-        let mut actor = Actor::new(
+        Client {
             #[cfg(not(wasm_browser))]
             port_mapper,
             #[cfg(not(wasm_browser))]
@@ -293,24 +347,7 @@ impl Client {
             #[cfg(not(wasm_browser))]
             ip_mapped_addrs,
             metrics,
-        );
-        let addr = actor.addr();
-        let task = task::spawn(
-            async move { actor.run().await }.instrument(info_span!("net_report.actor")),
-        );
-        let drop_guard = AbortOnDropHandle::new(task);
-        Client {
-            addr,
-            _drop_guard: Arc::new(drop_guard),
         }
-    }
-
-    /// Returns a new address to send messages to this actor.
-    ///
-    /// Unlike the client itself the returned [`Addr`] does not own the actor task, it only
-    /// allows sending messages to the actor.
-    pub fn addr(&self) -> Addr {
-        self.addr.clone()
     }
 
     /// Runs a net_report, returning the report.
@@ -339,7 +376,7 @@ impl Client {
 
         let rx = self.get_report_channel(relay_map, opts).await?;
         match rx.await {
-            Ok(res) => res,
+            Ok(res) => Ok(res),
             Err(_) => Err(ActorGoneSnafu.build()),
         }
     }
@@ -351,56 +388,21 @@ impl Client {
         &mut self,
         relay_map: RelayMap,
         opts: Options,
-    ) -> Result<oneshot::Receiver<Result<Report, ReportError>>, ReportError> {
+    ) -> Result<oneshot::Receiver<Report>, ReportError> {
         let (tx, rx) = oneshot::channel();
-        self.addr
-            .send(Message::RunCheck {
-                relay_map,
-                opts,
-                response_tx: tx,
-            })
-            .await
-            .map_err(|_| ActorGoneSnafu.build())?;
+
+        let mut actor = Actor::new(
+            #[cfg(not(wasm_browser))]
+            self.port_mapper.clone(),
+            #[cfg(not(wasm_browser))]
+            self.dns_resolver.clone(),
+            #[cfg(not(wasm_browser))]
+            self.ip_mapped_addrs.clone(),
+            self.metrics.clone(),
+        );
+        actor.run(relay_map, opts, tx).await;
+
         Ok(rx)
-    }
-}
-
-/// Messages to send to the [`Actor`].
-#[derive(Debug)]
-#[allow(clippy::large_enum_variant)]
-pub(crate) enum Message {
-    /// Run a net_report.
-    ///
-    /// Only one net_report can be run at a time, trying to run multiple concurrently will
-    /// fail.
-    RunCheck {
-        /// The map of relays we want to probe
-        relay_map: RelayMap,
-        /// Options for the report
-        opts: Options,
-        /// Channel to receive the response.
-        response_tx: oneshot::Sender<Result<Report, ReportError>>,
-    },
-    /// A report produced by the [`reportgen`] actor.
-    ReportReady { report: Box<Report> },
-    /// The [`reportgen`] actor failed to produce a report.
-    ReportAborted { err: ActorRunError },
-}
-
-/// Sender to the main service.
-///
-/// Unlike [`Client`] this is the raw channel to send messages over.  Keeping this alive
-/// will not keep the actor alive, which makes this handy to pass to internal tasks.
-#[derive(Debug, Clone)]
-pub struct Addr {
-    sender: mpsc::Sender<Message>,
-}
-
-impl Addr {
-    async fn send(&self, msg: Message) -> Result<(), mpsc::error::SendError<Message>> {
-        self.sender.send(msg).await.inspect_err(|_| {
-            error!("net_report actor lost");
-        })
     }
 }
 
@@ -409,15 +411,6 @@ impl Addr {
 /// This actor runs for the entire duration there's a [`Client`] connected.
 #[derive(Debug)]
 struct Actor {
-    // Actor plumbing.
-    /// Actor messages channel.
-    ///
-    /// If there are no more senders the actor stops.
-    receiver: mpsc::Receiver<Message>,
-    /// The sender side of the messages channel.
-    ///
-    /// This allows creating new [`Addr`]s from the actor.
-    sender: mpsc::Sender<Message>,
     /// A collection of previously generated reports.
     ///
     /// Sometimes it is useful to look at past reports to decide what to do.
@@ -432,9 +425,6 @@ struct Actor {
     port_mapper: Option<portmapper::Client>,
 
     // Actor state.
-    /// The [`reportgen`] actor currently generating a report.
-    current_report_run: Option<ReportRun>,
-
     /// The DNS resolver to use for probes that need to perform DNS lookups
     #[cfg(not(wasm_browser))]
     dns_resolver: DnsResolver,
@@ -456,15 +446,10 @@ impl Actor {
         #[cfg(not(wasm_browser))] ip_mapped_addrs: Option<IpMappedAddresses>,
         metrics: Arc<Metrics>,
     ) -> Self {
-        // TODO: consider an instrumented flume channel so we have metrics.
-        let (sender, receiver) = mpsc::channel(32);
         Self {
-            receiver,
-            sender,
             reports: Default::default(),
             #[cfg(not(wasm_browser))]
             port_mapper,
-            current_report_run: None,
             #[cfg(not(wasm_browser))]
             dns_resolver,
             #[cfg(not(wasm_browser))]
@@ -473,46 +458,18 @@ impl Actor {
         }
     }
 
-    /// Returns the channel to send messages to the actor.
-    fn addr(&self) -> Addr {
-        Addr {
-            sender: self.sender.clone(),
-        }
-    }
-
     /// Run the actor.
     ///
     /// It will now run and handle messages.  Once the connected [`Client`] (including all
     /// its clones) is dropped this will terminate.
-    async fn run(&mut self) {
-        debug!("net_report actor starting");
-        while let Some(msg) = self.receiver.recv().await {
-            trace!(?msg, "handling message");
-            match msg {
-                Message::RunCheck {
-                    relay_map,
-                    opts,
-                    response_tx,
-                } => {
-                    self.handle_run_check(relay_map, opts, response_tx);
-                }
-                Message::ReportReady { report } => {
-                    self.handle_report_ready(*report);
-                }
-                Message::ReportAborted { err } => {
-                    self.handle_report_aborted(err);
-                }
-            }
-        }
-    }
-
-    /// Starts a check run as requested by the [`Message::RunCheck`] message.
-    fn handle_run_check(
+    async fn run(
         &mut self,
         relay_map: RelayMap,
         opts: Options,
-        response_tx: oneshot::Sender<Result<Report, ReportError>>,
+        response_tx: oneshot::Sender<Report>,
     ) {
+        debug!("net_report actor starting");
+
         let protocols = opts.to_protocols();
         #[cfg(not(wasm_browser))]
         let socket_state = SocketState {
@@ -522,10 +479,6 @@ impl Actor {
             ip_mapped_addrs: self.ip_mapped_addrs.clone(),
         };
         trace!("Attempting probes for protocols {protocols:#?}");
-        if self.current_report_run.is_some() {
-            response_tx.send(Err(AlreadyRunningSnafu.build())).ok();
-            return;
-        }
 
         let now = Instant::now();
 
@@ -548,8 +501,8 @@ impl Actor {
         }
         self.metrics.reports.inc();
 
-        let actor = reportgen::Client::new(
-            self.addr(),
+        let enough_relays = std::cmp::min(relay_map.len(), ENOUGH_NODES);
+        let (_actor, mut probe_rx) = reportgen::Client::new(
             self.reports.last.clone(),
             relay_map,
             protocols,
@@ -559,24 +512,82 @@ impl Actor {
             opts.insecure_skip_relay_cert_verify,
         );
 
-        self.current_report_run = Some(ReportRun {
-            _reportgen: actor,
-            report_tx: response_tx,
-        });
-    }
+        let mut report = Report {
+            os_has_ipv6: os_has_ipv6(),
+            ..Default::default()
+        };
 
-    fn handle_report_ready(&mut self, mut report: Report) {
+        let mut timeout_fut = std::pin::pin!(MaybeFuture::default());
+
+        loop {
+            tokio::select! {
+                biased;
+
+                _ = &mut timeout_fut, if timeout_fut.is_some() => {
+                    break;
+                }
+
+                maybe_probe = probe_rx.recv() => {
+                    let Some(probe_res) = maybe_probe else {
+                        break;
+                    };
+                    trace!(?probe_res, "handling probe");
+                    match probe_res {
+                        ProbeRunMessage::ProbeFinished(probe) => match probe {
+                            Ok(probe) => {
+                                report.update(&probe);
+                                if let Some(timeout) = self.have_enough_reports(enough_relays, &report) {
+                                    timeout_fut.as_mut().set_future(tokio::time::sleep(timeout));
+                                }
+                            }
+                            Err(err) => {
+                                trace!("probe errored: {:?}", err);
+                            }
+                        },
+                        ProbeRunMessage::CaptivePortalProbeFinished(portal) => {
+                            report.captive_portal = portal;
+                        }
+                        ProbeRunMessage::PortmapProbeFinished(portmap) => {
+                            report.portmap_probe = portmap;
+                        }
+                    }
+                }
+            }
+        }
+
         self.add_report_history_and_set_preferred_relay(&mut report);
         debug!("{report:?}");
 
-        if let Some(ReportRun { report_tx, .. }) = self.current_report_run.take() {
-            report_tx.send(Ok(report)).ok();
-        }
+        response_tx.send(report).ok();
     }
 
-    fn handle_report_aborted(&mut self, reason: ActorRunError) {
-        if let Some(ReportRun { report_tx, .. }) = self.current_report_run.take() {
-            report_tx.send(Err(AbortSnafu { reason }.build())).ok();
+    fn have_enough_reports(&self, enough_relays: usize, report: &Report) -> Option<Duration> {
+        // Once we've heard from enough relay servers (3), start a timer to give up on the other
+        // probes. The timer's duration is a function of whether this is our initial full
+        // probe or an incremental one. For incremental ones, wait for the duration of the
+        // slowest relay. For initial ones, double that.
+        let latencies: Vec<Duration> = report.relay_latency.iter().map(|(_, l)| l).collect();
+        let have_enough_latencies = latencies.len() >= enough_relays;
+
+        if have_enough_latencies {
+            let timeout = latencies
+                .iter()
+                .max()
+                .copied()
+                .unwrap_or(DEFAULT_MAX_LATENCY);
+            let timeout = match self.reports.last.is_some() {
+                true => timeout,
+                false => timeout * 2,
+            };
+            debug!(
+                reports=latencies.len(),
+                delay=?timeout,
+                "Have enough probe reports, aborting further probes soon",
+            );
+
+            Some(timeout)
+        } else {
+            None
         }
     }
 
@@ -646,15 +657,6 @@ impl Actor {
         self.reports.prev.insert(now, r.clone());
         self.reports.last = Some(r.clone());
     }
-}
-
-/// State the net_report actor needs for an in-progress report generation.
-#[derive(Debug)]
-struct ReportRun {
-    /// The handle of the [`reportgen`] actor, cancels the actor on drop.
-    _reportgen: reportgen::Client,
-    /// Where to send the completed report.
-    report_tx: oneshot::Sender<Result<Report, ReportError>>,
 }
 
 #[allow(missing_docs)]

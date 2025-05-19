@@ -2162,11 +2162,8 @@ impl Actor {
                 task::spawn(async move {
                     let report = time::timeout(NET_REPORT_TIMEOUT, rx).await;
                     match report {
-                        Ok(Ok(Ok(report))) => {
+                        Ok(Ok(report)) => {
                             msock.net_report.set((Some(report), why)).ok();
-                        }
-                        Ok(Ok(Err(err))) => {
-                            warn!("failed to generate net report: {:?}", err);
                         }
                         Ok(Err(_)) => {
                             warn!("net_report report not received");
