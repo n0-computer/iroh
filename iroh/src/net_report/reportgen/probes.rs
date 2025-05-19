@@ -318,7 +318,7 @@ impl ProbePlan {
             protocols: protocols.clone(),
         };
 
-        // The first time we need add probes after the STUN we record this delay, so that
+        // The first time we need to add probes after the STUN we record this delay, so that
         // further relay servers can reuse this delay.
         let mut max_stun_delay: Option<Duration> = None;
 
