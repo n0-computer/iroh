@@ -2,7 +2,7 @@ use std::{
     io::{self, IoSliceMut},
     net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     pin::Pin,
-    sync::Arc,
+    sync::{atomic::AtomicUsize, Arc},
     task::{Context, Poll},
 };
 
@@ -29,6 +29,8 @@ pub(crate) struct Transports {
     #[cfg(not(wasm_browser))]
     ip: Vec<IpTransport>,
     relay: Vec<RelayTransport>,
+
+    poll_recv_counter: AtomicUsize,
 }
 
 impl Transports {
@@ -41,6 +43,7 @@ impl Transports {
             #[cfg(not(wasm_browser))]
             ip,
             relay,
+            poll_recv_counter: Default::default(),
         }
     }
 
@@ -112,7 +115,6 @@ impl Transports {
     ) -> Poll<io::Result<usize>> {
         debug_assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
 
-        // TODO: randomization
         macro_rules! poll_transport {
             ($socket:expr) => {
                 match $socket.poll_recv(cx, bufs, metas, source_addrs)? {
@@ -124,13 +126,30 @@ impl Transports {
             };
         }
 
-        #[cfg(not(wasm_browser))]
-        for transport in &self.ip {
-            poll_transport!(transport);
+        // To improve fairness, every other call reverses the ordering of polling.
+
+        let counter = self
+            .poll_recv_counter
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+        if counter % 2 == 0 {
+            #[cfg(not(wasm_browser))]
+            for transport in &self.ip {
+                poll_transport!(transport);
+            }
+            for transport in &self.relay {
+                poll_transport!(transport);
+            }
+        } else {
+            for transport in self.relay.iter().rev() {
+                poll_transport!(transport);
+            }
+            #[cfg(not(wasm_browser))]
+            for transport in self.ip.iter().rev() {
+                poll_transport!(transport);
+            }
         }
-        for transport in &self.relay {
-            poll_transport!(transport);
-        }
+
         Poll::Pending
     }
 
