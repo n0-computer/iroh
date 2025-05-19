@@ -10,14 +10,8 @@
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![cfg_attr(wasm_browser, allow(unused))]
 
-use std::{
-    collections::BTreeMap,
-    fmt::{self, Debug},
-    net::{SocketAddr, SocketAddrV4, SocketAddrV6},
-    sync::Arc,
-};
+use std::{collections::BTreeMap, fmt::Debug, sync::Arc};
 
-use iroh_base::RelayUrl;
 #[cfg(not(wasm_browser))]
 use iroh_relay::dns::DnsResolver;
 use iroh_relay::RelayMap;
@@ -25,15 +19,16 @@ use n0_future::time::{Duration, Instant};
 use nested_enum_utils::common_fields;
 #[cfg(not(wasm_browser))]
 use netwatch::UdpSocket;
-use reportgen::{ActorRunError, ProbeFinished, ProbeProto, ProbeReport};
+use reportgen::{ActorRunError, ProbeFinished, ProbeReport};
 use snafu::Snafu;
-use tracing::{debug, trace, warn};
+use tracing::{debug, trace};
 
 mod defaults;
 #[cfg(not(wasm_browser))]
 mod dns;
 mod ip_mapped_addrs;
 mod metrics;
+mod report;
 mod reportgen;
 
 mod options;
@@ -58,12 +53,15 @@ pub(crate) mod portmapper {
 }
 
 pub(crate) use ip_mapped_addrs::{IpMappedAddr, IpMappedAddresses};
-pub use metrics::Metrics;
-pub use options::Options;
-pub use reportgen::QuicConfig;
-#[cfg(not(wasm_browser))]
-use reportgen::SocketState;
 
+#[cfg(not(wasm_browser))]
+use self::reportgen::SocketState;
+pub use self::{
+    metrics::Metrics,
+    options::Options,
+    report::{RelayLatencies, Report},
+    reportgen::QuicConfig,
+};
 use crate::util::MaybeFuture;
 
 const FULL_REPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
@@ -79,210 +77,6 @@ const DEFAULT_MAX_LATENCY: Duration = Duration::from_millis(100);
 
 const ENOUGH_NODES: usize = 3;
 
-/// A net_report report.
-///
-/// Can be obtained by calling [`Client::get_report`].
-#[derive(Default, Debug, PartialEq, Eq, Clone)]
-pub struct Report {
-    /// A UDP STUN round trip completed.
-    pub udp: bool,
-    /// An IPv6 round trip completed.
-    pub ipv6: bool,
-    /// An IPv4 round trip completed.
-    pub ipv4: bool,
-    /// An IPv6 packet was able to be sent
-    pub ipv6_can_send: bool,
-    /// an IPv4 packet was able to be sent
-    pub ipv4_can_send: bool,
-    /// could bind a socket to ::1
-    pub os_has_ipv6: bool,
-    /// Whether STUN results depend on which STUN server you're talking to (on IPv4).
-    pub mapping_varies_by_dest_ip: Option<bool>,
-    /// Whether STUN results depend on which STUN server you're talking to (on IPv6).
-    ///
-    /// Note that we don't really expect this to happen and are merely logging this if
-    /// detecting rather than using it.  For now.
-    pub mapping_varies_by_dest_ipv6: Option<bool>,
-    /// Probe indicating the presence of port mapping protocols on the LAN.
-    pub portmap_probe: Option<portmapper::ProbeOutput>,
-    /// `None` for unknown
-    pub preferred_relay: Option<RelayUrl>,
-    /// keyed by relay Url
-    pub relay_latency: RelayLatencies,
-    /// ip:port of global IPv4
-    pub global_v4: Option<SocketAddrV4>,
-    /// `[ip]:port` of global IPv6
-    pub global_v6: Option<SocketAddrV6>,
-    /// CaptivePortal is set when we think there's a captive portal that is
-    /// intercepting HTTP traffic.
-    pub captive_portal: Option<bool>,
-}
-
-impl fmt::Display for Report {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Debug::fmt(&self, f)
-    }
-}
-
-impl Report {
-    /// Updates a net_report [`Report`] with a new [`ProbeReport`].
-    fn update(&mut self, probe_report: &ProbeReport) {
-        let relay_node = probe_report.probe.node();
-        if let Some(latency) = probe_report.latency {
-            self.relay_latency.update_relay(
-                relay_node.url.clone(),
-                latency,
-                probe_report.probe.proto(),
-            );
-
-            #[cfg(not(wasm_browser))]
-            if matches!(
-                probe_report.probe.proto(),
-                ProbeProto::QuicIpv4 | ProbeProto::QuicIpv6
-            ) {
-                self.udp = true;
-
-                match probe_report.addr {
-                    Some(SocketAddr::V4(ipp)) => {
-                        self.ipv4 = true;
-                        if self.global_v4.is_none() {
-                            self.global_v4 = Some(ipp);
-                        } else if self.global_v4 != Some(ipp) {
-                            self.mapping_varies_by_dest_ip = Some(true);
-                        } else if self.mapping_varies_by_dest_ip.is_none() {
-                            self.mapping_varies_by_dest_ip = Some(false);
-                        }
-                    }
-                    Some(SocketAddr::V6(ipp)) => {
-                        self.ipv6 = true;
-                        if self.global_v6.is_none() {
-                            self.global_v6 = Some(ipp);
-                        } else if self.global_v6 != Some(ipp) {
-                            self.mapping_varies_by_dest_ipv6 = Some(true);
-                            warn!("IPv6 Address detected by STUN varies by destination");
-                        } else if self.mapping_varies_by_dest_ipv6.is_none() {
-                            self.mapping_varies_by_dest_ipv6 = Some(false);
-                        }
-                    }
-                    None => {
-                        // If we are here we had a relay server latency reported from a STUN probe.
-                        // Thus we must have a reported address.
-                        debug_assert!(probe_report.addr.is_some());
-                    }
-                }
-            }
-        }
-        self.ipv4_can_send |= probe_report.ipv4_can_send;
-        self.ipv6_can_send |= probe_report.ipv6_can_send;
-    }
-}
-
-/// Latencies per relay node.
-#[derive(Debug, Default, PartialEq, Eq, Clone)]
-pub struct RelayLatencies {
-    #[cfg(not(wasm_browser))]
-    ipv4: BTreeMap<RelayUrl, Duration>,
-    #[cfg(not(wasm_browser))]
-    ipv6: BTreeMap<RelayUrl, Duration>,
-    https: BTreeMap<RelayUrl, Duration>,
-}
-
-impl RelayLatencies {
-    fn new() -> Self {
-        Default::default()
-    }
-
-    /// Updates a relay's latency, if it is faster than before.
-    fn update_relay(&mut self, url: RelayUrl, latency: Duration, probe: ProbeProto) {
-        let list = match probe {
-            ProbeProto::Https => &mut self.https,
-            #[cfg(not(wasm_browser))]
-            ProbeProto::QuicIpv4 => &mut self.ipv4,
-            #[cfg(not(wasm_browser))]
-            ProbeProto::QuicIpv6 => &mut self.ipv6,
-        };
-        let old_latency = list.entry(url).or_insert(latency);
-        if latency < *old_latency {
-            *old_latency = latency;
-        }
-    }
-
-    /// Merges another [`RelayLatencies`] into this one.
-    ///
-    /// For each relay the latency is updated using [`RelayLatencies::update_relay`].
-    fn merge(&mut self, other: &RelayLatencies) {
-        for (url, latency) in other.https.iter() {
-            self.update_relay(url.clone(), *latency, ProbeProto::Https);
-        }
-        #[cfg(not(wasm_browser))]
-        for (url, latency) in other.ipv4.iter() {
-            self.update_relay(url.clone(), *latency, ProbeProto::QuicIpv4);
-        }
-        #[cfg(not(wasm_browser))]
-        for (url, latency) in other.ipv6.iter() {
-            self.update_relay(url.clone(), *latency, ProbeProto::QuicIpv6);
-        }
-    }
-
-    /// Returns an iterator over all the relays and their latencies.
-    #[cfg(not(wasm_browser))]
-    pub fn iter(&self) -> impl Iterator<Item = (&'_ RelayUrl, Duration)> + '_ {
-        self.https
-            .iter()
-            .chain(self.ipv4.iter())
-            .chain(self.ipv6.iter())
-            .map(|(k, v)| (k, *v))
-    }
-
-    /// Returns an iterator over all the relays and their latencies.
-    #[cfg(wasm_browser)]
-    pub fn iter(&self) -> impl Iterator<Item = (&'_ RelayUrl, Duration)> + '_ {
-        self.https.iter().map(|(k, v)| (k, *v))
-    }
-
-    #[cfg(not(wasm_browser))]
-    fn is_empty(&self) -> bool {
-        self.https.is_empty() && self.ipv4.is_empty() && self.ipv6.is_empty()
-    }
-
-    #[cfg(wasm_browser)]
-    fn is_empty(&self) -> bool {
-        self.https.is_empty()
-    }
-
-    #[cfg(test)]
-    fn len(&self) -> usize {
-        self.https.len() + self.ipv4.len() + self.ipv6.len()
-    }
-
-    /// Returns the lowest latency across records.
-    fn get(&self, url: &RelayUrl) -> Option<Duration> {
-        let mut list = Vec::with_capacity(3);
-        if let Some(val) = self.https.get(url) {
-            list.push(*val);
-        }
-        #[cfg(not(wasm_browser))]
-        if let Some(val) = self.ipv4.get(url) {
-            list.push(*val);
-        }
-        #[cfg(not(wasm_browser))]
-        if let Some(val) = self.ipv6.get(url) {
-            list.push(*val);
-        }
-        list.into_iter().min()
-    }
-
-    #[cfg(not(wasm_browser))]
-    fn ipv4(&self) -> &BTreeMap<RelayUrl, Duration> {
-        &self.ipv4
-    }
-
-    #[cfg(not(wasm_browser))]
-    fn ipv6(&self) -> &BTreeMap<RelayUrl, Duration> {
-        &self.ipv6
-    }
-}
-
 /// Client to run net_reports.
 ///
 /// Creating this creates a net_report actor which runs in the background.  Most of the time
@@ -294,7 +88,7 @@ impl RelayLatencies {
 /// While running the net_report actor expects to be passed all received stun packets using
 /// `Addr::receive_stun_packet`.
 #[derive(Debug)]
-pub struct Client {
+pub(crate) struct Client {
     /// The port mapper client, if those are requested.
     ///
     /// The port mapper is responsible for talking to routers via UPnP and the like to try
@@ -340,7 +134,7 @@ impl Default for Reports {
 
 impl Client {
     /// Creates a new net_report client.
-    pub fn new(
+    pub(crate) fn new(
         #[cfg(not(wasm_browser))] port_mapper: Option<portmapper::Client>,
         #[cfg(not(wasm_browser))] dns_resolver: DnsResolver,
         #[cfg(not(wasm_browser))] ip_mapped_addrs: Option<IpMappedAddresses>,
@@ -358,34 +152,7 @@ impl Client {
         }
     }
 
-    /// Runs a net_report, returning the report.
-    ///
-    /// It may not be called concurrently with itself, `&mut self` takes care of that.
-    ///
-    ///
-    /// The *quic_config* takes a [`QuicConfig`], a combination of a QUIC endpoint and
-    /// a client configuration that can be use for verifying the relay server connection.
-    /// When available, the report will attempt to get an observed public address
-    /// using QUIC address discovery.
-    ///
-    /// When `None`, it will disable the QUIC address discovery probes.
-    ///
-    /// This will attempt to use *all* probe protocols.
-    #[cfg(test)]
-    pub async fn get_report_all(
-        &mut self,
-        relay_map: RelayMap,
-        #[cfg(not(wasm_browser))] quic_config: Option<QuicConfig>,
-    ) -> Result<Report, ReportError> {
-        #[cfg(not(wasm_browser))]
-        let opts = Options::default().quic_config(quic_config);
-        #[cfg(wasm_browser)]
-        let opts = Options::default();
-        let report = self.get_report(relay_map.clone(), opts).await?;
-        Ok(report)
-    }
-
-    /// Get a report
+    /// Generates a [`Report`].
     ///
     /// Look at [`Options`] for the different configuration options.
     pub(crate) async fn get_report(
@@ -527,7 +294,7 @@ impl Client {
         const MAX_AGE: Duration = Duration::from_secs(5 * 60);
 
         // relay ID => its best recent latency in last MAX_AGE
-        let mut best_recent = RelayLatencies::new();
+        let mut best_recent = RelayLatencies::default();
 
         // chain the current report as we are still mutating it
         let prevs_iter = self
@@ -657,13 +424,15 @@ mod test_utils {
 mod tests {
     use std::net::{Ipv4Addr, SocketAddr};
 
+    use iroh_base::RelayUrl;
     use n0_snafu::{Result, ResultExt};
     use netwatch::IpFamily;
+
     use tokio_util::sync::CancellationToken;
     use tracing_test::traced_test;
 
     use super::*;
-    use crate::net_report::dns;
+    use crate::net_report::{dns, reportgen::ProbeProto};
 
     #[tokio::test]
     #[traced_test]
@@ -687,7 +456,10 @@ mod tests {
             let cancel = CancellationToken::new();
             println!("--round {}", i);
             let r = client
-                .get_report_all(relay_map.clone(), Some(quic_addr_disc.clone()))
+                .get_report(
+                    relay_map.clone(),
+                    Options::default().quic_config(Some(quic_addr_disc.clone())),
+                )
                 .await?;
 
             assert!(r.udp, "want UDP");
@@ -725,10 +497,11 @@ mod tests {
             for (s, d) in a {
                 assert!(s.starts_with('d'), "invalid relay server key");
                 let id: u16 = s[1..].parse().unwrap();
-                report
-                    .relay_latency
-                    .ipv4
-                    .insert(relay_url(id), Duration::from_secs(d));
+                report.relay_latency.update_relay(
+                    relay_url(id),
+                    Duration::from_secs(d),
+                    ProbeProto::QuicIpv4,
+                );
             }
 
             Some(report)

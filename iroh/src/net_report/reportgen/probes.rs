@@ -706,7 +706,7 @@ mod tests {
 
         for i in 0..10 {
             println!("round {}", i);
-            let mut latencies = RelayLatencies::new();
+            let mut latencies = RelayLatencies::default();
             latencies.update_relay(
                 relay_node_1.url.clone(),
                 Duration::from_millis(2),
@@ -805,7 +805,7 @@ mod tests {
         url_2: &RelayUrl,
         latency_2: Option<Duration>,
     ) -> Report {
-        let mut latencies = RelayLatencies::new();
+        let mut latencies = RelayLatencies::default();
         if let Some(latency_1) = latency_1 {
             latencies.update_relay(url_1.clone(), latency_1, ProbeProto::QuicIpv4);
         }
