@@ -70,7 +70,6 @@ use crate::net_report::defaults::timeouts::{
 /// Dropping this will cancel the actor and stop the report generation.
 #[derive(Debug)]
 pub(super) struct Client {
-    // Addr is currently only used by child actors, so not yet exposed here.
     _drop_guard: AbortOnDropHandle<()>,
 }
 

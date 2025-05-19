@@ -46,7 +46,7 @@ use netwatch::{ip::LocalAddresses, UdpSocket};
 use quinn::{AsyncUdpSocket, ServerConfig};
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use smallvec::SmallVec;
-use snafu::{IntoError, ResultExt, Snafu};
+use snafu::{ResultExt, Snafu};
 use tokio::sync::{self, mpsc, Mutex};
 use tracing::{
     debug, error, error_span, event, info, info_span, instrument, trace, trace_span, warn,
