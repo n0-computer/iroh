@@ -127,7 +127,9 @@ impl fmt::Display for Report {
 /// Latencies per relay node.
 #[derive(Debug, Default, PartialEq, Eq, Clone)]
 pub struct RelayLatencies {
+    #[cfg(not(wasm_browser))]
     ipv4: BTreeMap<RelayUrl, Duration>,
+    #[cfg(not(wasm_browser))]
     ipv6: BTreeMap<RelayUrl, Duration>,
     https: BTreeMap<RelayUrl, Duration>,
 }
@@ -141,7 +143,9 @@ impl RelayLatencies {
     fn update_relay(&mut self, url: RelayUrl, latency: Duration, probe: ProbeProto) {
         let list = match probe {
             ProbeProto::Https => &mut self.https,
+            #[cfg(not(wasm_browser))]
             ProbeProto::QuicIpv4 => &mut self.ipv4,
+            #[cfg(not(wasm_browser))]
             ProbeProto::QuicIpv6 => &mut self.ipv6,
         };
         let old_latency = list.entry(url).or_insert(latency);
@@ -157,15 +161,18 @@ impl RelayLatencies {
         for (url, latency) in other.https.iter() {
             self.update_relay(url.clone(), *latency, ProbeProto::Https);
         }
+        #[cfg(not(wasm_browser))]
         for (url, latency) in other.ipv4.iter() {
             self.update_relay(url.clone(), *latency, ProbeProto::QuicIpv4);
         }
+        #[cfg(not(wasm_browser))]
         for (url, latency) in other.ipv6.iter() {
             self.update_relay(url.clone(), *latency, ProbeProto::QuicIpv6);
         }
     }
 
     /// Returns an iterator over all the relays and their latencies.
+    #[cfg(not(wasm_browser))]
     pub fn iter(&self) -> impl Iterator<Item = (&'_ RelayUrl, Duration)> + '_ {
         self.https
             .iter()
@@ -174,8 +181,20 @@ impl RelayLatencies {
             .map(|(k, v)| (k, *v))
     }
 
+    /// Returns an iterator over all the relays and their latencies.
+    #[cfg(wasm_browser)]
+    pub fn iter(&self) -> impl Iterator<Item = (&'_ RelayUrl, Duration)> + '_ {
+        self.https.iter().map(|(k, v)| (k, *v))
+    }
+
+    #[cfg(not(wasm_browser))]
     fn is_empty(&self) -> bool {
         self.https.is_empty() && self.ipv4.is_empty() && self.ipv6.is_empty()
+    }
+
+    #[cfg(wasm_browser)]
+    fn is_empty(&self) -> bool {
+        self.https.is_empty()
     }
 
     #[cfg(test)]
@@ -189,19 +208,23 @@ impl RelayLatencies {
         if let Some(val) = self.https.get(url) {
             list.push(*val);
         }
+        #[cfg(not(wasm_browser))]
         if let Some(val) = self.ipv4.get(url) {
             list.push(*val);
         }
+        #[cfg(not(wasm_browser))]
         if let Some(val) = self.ipv6.get(url) {
             list.push(*val);
         }
         list.into_iter().min()
     }
 
+    #[cfg(not(wasm_browser))]
     fn ipv4(&self) -> &BTreeMap<RelayUrl, Duration> {
         &self.ipv4
     }
 
+    #[cfg(not(wasm_browser))]
     fn ipv6(&self) -> &BTreeMap<RelayUrl, Duration> {
         &self.ipv6
     }
