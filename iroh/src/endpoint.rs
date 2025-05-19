@@ -1569,6 +1569,7 @@ impl Incoming {
     /// This requires the client to retry with address validation.
     ///
     /// Errors if `remote_address_validated()` is true.
+    #[allow(clippy::result_large_err)]
     pub fn retry(self) -> Result<(), RetryError> {
         self.inner.retry()
     }
@@ -1698,6 +1699,7 @@ impl Connecting {
     ///
     /// You can use [`RecvStream::is_0rtt`] to check whether a stream has been opened in 0-RTT
     /// and thus whether parts of the stream are operating under this reduced security level.
+    #[allow(clippy::result_large_err)]
     pub fn into_0rtt(self) -> Result<(Connection, ZeroRttAccepted), Self> {
         match self.inner.into_0rtt() {
             Ok((inner, zrtt_accepted)) => {
