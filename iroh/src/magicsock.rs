@@ -487,7 +487,7 @@ impl MagicSock {
             ));
         }
 
-        let mut active_paths = Vec::new();
+        let mut active_paths = SmallVec::<[_; 3]>::new();
 
         match MappedAddr::from(transmit.destination) {
             MappedAddr::None(dest) => {
@@ -564,19 +564,19 @@ impl MagicSock {
             return Ok(());
         }
 
-        let mut results = Vec::with_capacity(active_paths.len());
+        let mut results = SmallVec::<[_; 3]>::new();
 
         trace!(?active_paths, "attempting to send");
 
         for destination in active_paths {
+            let src = transmit.src_ip;
             let transmit = transports::Transmit {
                 ecn: transmit.ecn,
                 contents: transmit.contents,
                 segment_size: transmit.segment_size,
-                src_ip: transmit.src_ip.map(Into::into),
             };
 
-            let res = self.transports.poll_send(&destination, &transmit);
+            let res = self.transports.poll_send(&destination, src, &transmit);
             match res {
                 Poll::Ready(Ok(())) => {
                     trace!(dst = ?destination, "sent transmit");
@@ -729,12 +729,8 @@ impl MagicSock {
                     Url(RelayUrl, NodeId),
                 }
                 let addr = match source_addr {
-                    transports::Addr::Ipv4(ipv4, port) => AddrOrUrl::Addr(SocketAddr::V4(
-                        SocketAddrV4::new(*ipv4, port.unwrap_or_default()),
-                    )),
-                    transports::Addr::Ipv6(ipv6, port) => AddrOrUrl::Addr(SocketAddr::V6(
-                        SocketAddrV6::new(*ipv6, port.unwrap_or_default(), 0, 0),
-                    )),
+                    transports::Addr::Ipv4(ipv4) => AddrOrUrl::Addr(SocketAddr::V4(*ipv4)),
+                    transports::Addr::Ipv6(ipv6) => AddrOrUrl::Addr(SocketAddr::V6(*ipv6)),
                     transports::Addr::RelayUrl(ref url, id) => AddrOrUrl::Url(url.clone(), *id),
                 };
 
@@ -1028,8 +1024,8 @@ impl MagicSock {
         msg: disco::Message,
     ) -> io::Result<()> {
         let dst = match dst {
-            SendAddr::Udp(SocketAddr::V4(v4)) => transports::Addr::Ipv4(*v4.ip(), Some(v4.port())),
-            SendAddr::Udp(SocketAddr::V6(v6)) => transports::Addr::Ipv6(*v6.ip(), Some(v6.port())),
+            SendAddr::Udp(SocketAddr::V4(v4)) => transports::Addr::Ipv4(v4),
+            SendAddr::Udp(SocketAddr::V6(v6)) => transports::Addr::Ipv6(v6),
             SendAddr::Relay(url) => transports::Addr::RelayUrl(url, dst_key),
         };
 
@@ -1068,10 +1064,9 @@ impl MagicSock {
             contents: &pkt,
             ecn: None,
             segment_size: None,
-            src_ip: None, // TODO
         };
 
-        match self.transports.poll_send(dst, &transmit) {
+        match self.transports.poll_send(dst, None, &transmit) {
             Poll::Ready(Ok(())) => {
                 trace!(?dst, %msg, "sent disco message");
                 self.metrics.magicsock.sent_disco_udp.inc();
@@ -1111,8 +1106,8 @@ impl MagicSock {
         });
 
         let addr = match dst {
-            SendAddr::Udp(SocketAddr::V4(v4)) => transports::Addr::Ipv4(*v4.ip(), Some(v4.port())),
-            SendAddr::Udp(SocketAddr::V6(v6)) => transports::Addr::Ipv6(*v6.ip(), Some(v6.port())),
+            SendAddr::Udp(SocketAddr::V4(v4)) => transports::Addr::Ipv4(v4),
+            SendAddr::Udp(SocketAddr::V6(v6)) => transports::Addr::Ipv6(v6),
             SendAddr::Relay(ref url) => transports::Addr::RelayUrl(url.clone(), dst_node),
         };
 

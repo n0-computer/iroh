@@ -1,6 +1,6 @@
 use std::{
     io::{self, IoSliceMut},
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
@@ -22,6 +22,8 @@ pub(crate) use self::ip::IpTransport;
 pub(crate) use self::relay::{RelayActorConfig, RelayTransport};
 use super::NetInfo;
 
+/// Manages the different underlying data transports that the magicsock
+/// can support.
 #[derive(Debug)]
 pub(crate) struct Transports {
     #[cfg(not(wasm_browser))]
@@ -30,7 +32,7 @@ pub(crate) struct Transports {
 }
 
 impl Transports {
-    /// Create a new transports structure.
+    /// Creates a new transports structure.
     pub(crate) fn new(
         #[cfg(not(wasm_browser))] ip: Vec<IpTransport>,
         relay: Vec<RelayTransport>,
@@ -48,6 +50,7 @@ impl Transports {
     pub(crate) fn poll_send(
         &self,
         destination: &Addr,
+        src: Option<IpAddr>,
         transmit: &Transmit<'_>,
     ) -> Poll<io::Result<()>> {
         trace!(?destination, "sending");
@@ -58,11 +61,11 @@ impl Transports {
                 return Poll::Ready(Err(io::Error::other("IPv4 is unsupported in browser")))
             }
             #[cfg(not(wasm_browser))]
-            Addr::Ipv4(addr, port) => {
-                let addr = SocketAddr::V4(SocketAddrV4::new(*addr, port.unwrap_or_default()));
+            Addr::Ipv4(addr) => {
+                let addr = SocketAddr::V4(*addr);
                 for transport in &self.ip {
                     if transport.is_valid_send_addr(&addr) {
-                        match transport.poll_send(addr, transmit) {
+                        match transport.poll_send(addr, src, transmit) {
                             Poll::Pending => {}
                             Poll::Ready(res) => return Poll::Ready(res),
                         }
@@ -74,11 +77,11 @@ impl Transports {
                 return Poll::Ready(Err(io::Error::other("IPv6 is unsupported in browser")))
             }
             #[cfg(not(wasm_browser))]
-            Addr::Ipv6(addr, port) => {
-                let addr = SocketAddr::V6(SocketAddrV6::new(*addr, port.unwrap_or_default(), 0, 0));
+            Addr::Ipv6(addr) => {
+                let addr = SocketAddr::V6(*addr);
                 for transport in &self.ip {
                     if transport.is_valid_send_addr(&addr) {
-                        match transport.poll_send(addr, transmit) {
+                        match transport.poll_send(addr, src, transmit) {
                             Poll::Pending => {}
                             Poll::Ready(res) => return Poll::Ready(res),
                         }
@@ -316,36 +319,26 @@ pub(crate) struct Transmit<'a> {
     pub(crate) ecn: Option<quinn_udp::EcnCodepoint>,
     pub(crate) contents: &'a [u8],
     pub(crate) segment_size: Option<usize>,
-    pub(crate) src_ip: Option<Addr>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Addr {
-    Ipv4(Ipv4Addr, Option<u16>),
-    Ipv6(Ipv6Addr, Option<u16>),
+    Ipv4(SocketAddrV4),
+    Ipv6(SocketAddrV6),
     RelayUrl(RelayUrl, NodeId),
 }
 
 impl Default for Addr {
     fn default() -> Self {
-        Self::Ipv6(Ipv6Addr::UNSPECIFIED, None)
-    }
-}
-
-impl From<IpAddr> for Addr {
-    fn from(value: IpAddr) -> Self {
-        match value {
-            IpAddr::V4(addr) => Self::Ipv4(addr, None),
-            IpAddr::V6(addr) => Self::Ipv6(addr, None),
-        }
+        Self::Ipv6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0))
     }
 }
 
 impl From<SocketAddr> for Addr {
     fn from(value: SocketAddr) -> Self {
         match value {
-            SocketAddr::V4(addr) => Self::Ipv4(*addr.ip(), Some(addr.port())),
-            SocketAddr::V6(addr) => Self::Ipv6(*addr.ip(), Some(addr.port())),
+            SocketAddr::V4(addr) => Self::Ipv4(addr),
+            SocketAddr::V6(addr) => Self::Ipv6(addr),
         }
     }
 }
@@ -361,8 +354,8 @@ impl TryFrom<Addr> for SocketAddr {
 
     fn try_from(value: Addr) -> Result<Self, Self::Error> {
         match value {
-            Addr::Ipv4(addr, Some(port)) => Ok(SocketAddr::V4(SocketAddrV4::new(addr, port))),
-            Addr::Ipv6(addr, Some(port)) => Ok(SocketAddr::V6(SocketAddrV6::new(addr, port, 0, 0))),
+            Addr::Ipv4(addr) => Ok(SocketAddr::V4(addr)),
+            Addr::Ipv6(addr) => Ok(SocketAddr::V6(addr)),
             _ => Err(anyhow::anyhow!("not a valid socket addr")),
         }
     }
@@ -373,8 +366,8 @@ impl TryFrom<Addr> for IpAddr {
 
     fn try_from(value: Addr) -> Result<Self, Self::Error> {
         match value {
-            Addr::Ipv4(addr, _) => Ok(IpAddr::V4(addr)),
-            Addr::Ipv6(addr, _) => Ok(IpAddr::V6(addr)),
+            Addr::Ipv4(addr) => Ok(IpAddr::V4(*addr.ip())),
+            Addr::Ipv6(addr) => Ok(IpAddr::V6(*addr.ip())),
             _ => Err(anyhow::anyhow!("not a valid socket addr")),
         }
     }

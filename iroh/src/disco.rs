@@ -162,12 +162,8 @@ impl SendAddr {
 impl From<transports::Addr> for SendAddr {
     fn from(addr: transports::Addr) -> Self {
         match addr {
-            transports::Addr::Ipv4(ipv4, port) => {
-                SendAddr::Udp(SocketAddr::new(ipv4.into(), port.unwrap_or_default()))
-            }
-            transports::Addr::Ipv6(ipv6, port) => {
-                SendAddr::Udp(SocketAddr::new(ipv6.into(), port.unwrap_or_default()))
-            }
+            transports::Addr::Ipv4(ipv4) => SendAddr::Udp(SocketAddr::V4(ipv4)),
+            transports::Addr::Ipv6(ipv6) => SendAddr::Udp(SocketAddr::V6(ipv6)),
             transports::Addr::RelayUrl(url, _) => SendAddr::Relay(url),
         }
     }

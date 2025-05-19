@@ -1,6 +1,6 @@
 use std::{
     io,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     sync::Arc,
     task::{Context, Poll},
 };
@@ -45,6 +45,7 @@ impl IpTransport {
     pub(super) fn poll_send(
         &self,
         destination: SocketAddr,
+        src: Option<IpAddr>,
         transmit: &Transmit<'_>,
     ) -> Poll<io::Result<()>> {
         trace!("sending to {}", destination);
@@ -54,10 +55,7 @@ impl IpTransport {
             ecn: transmit.ecn,
             contents: transmit.contents,
             segment_size: transmit.segment_size,
-            src_ip: transmit
-                .src_ip
-                .clone()
-                .map(|a| a.try_into().expect("invalid src_ip")),
+            src_ip: src,
         });
 
         match res {

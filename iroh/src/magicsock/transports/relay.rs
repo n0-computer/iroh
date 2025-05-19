@@ -130,7 +130,7 @@ impl RelayTransport {
         source_addrs: &mut [Addr],
     ) -> Poll<io::Result<usize>> {
         let mut num_msgs = 0;
-        'outer: for ((buf_out, meta_out), addr) in bufs
+        for ((buf_out, meta_out), addr) in bufs
             .iter_mut()
             .zip(metas.iter_mut())
             .zip(source_addrs.iter_mut())
@@ -145,7 +145,7 @@ impl RelayTransport {
                     )));
                 }
                 Poll::Pending => {
-                    break 'outer;
+                    break;
                 }
             };
 
@@ -368,7 +368,7 @@ fn split_packets(transmit: &Transmit<'_>) -> RelayContents {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeSet, net::SocketAddr, time::Duration};
+    use std::{collections::BTreeSet, time::Duration};
 
     use iroh_base::NodeId;
     use tokio::task::JoinSet;
@@ -380,12 +380,10 @@ mod tests {
     #[test]
     fn test_split_packets() {
         fn mk_transmit(contents: &[u8], segment_size: Option<usize>) -> Transmit<'_> {
-            let src_ip = "127.0.0.1:12".parse::<SocketAddr>().unwrap().into();
             Transmit {
                 ecn: None,
                 contents,
                 segment_size,
-                src_ip: Some(src_ip),
             }
         }
         fn mk_expected(parts: impl IntoIterator<Item = &'static str>) -> RelayContents {
