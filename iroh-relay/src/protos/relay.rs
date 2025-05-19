@@ -245,7 +245,7 @@ pub(crate) async fn relay_handshake_serverside(
     // TODO: variable recv size: 256 * 1024
     let Frame::ClientInfo {
         client_public_key,
-        info: _info, // TODO
+        info,
         signature,
     } = tokio::time::timeout(
         std::time::Duration::from_secs(10),
@@ -258,7 +258,6 @@ pub(crate) async fn relay_handshake_serverside(
 
     client_public_key.verify(&message, &signature)?;
 
-    let info: ClientInfo = postcard::from_bytes(&message)?;
     Ok((client_public_key, info))
 }
 
@@ -351,13 +350,14 @@ impl Frame {
             Frame::ServerChallenge { message } => MAGIC.len() + message.len(),
             Frame::ClientInfo {
                 client_public_key: _,
-                info: _,
+                info,
                 signature: _,
             } => {
                 MAGIC.len()
                     + PublicKey::LENGTH
-                    + ClientInfo::POSTCARD_MAX_SIZE
                     + Signature::BYTE_SIZE
+                    + postcard::experimental::serialized_size(&info)
+                        .expect("serialization shouldn't fail")
             }
             Frame::SendPacket { dst_key: _, packet } => PublicKey::LENGTH + packet.len(),
             Frame::RecvPacket {
@@ -418,11 +418,7 @@ impl Frame {
                 dst.put(MAGIC.as_bytes());
                 dst.put(client_public_key.as_ref());
                 dst.put(&signature.to_bytes()[..]);
-                dst.put(
-                    postcard::to_allocvec(&info)
-                        .expect("serialization shouldn't fail")
-                        .as_ref(),
-                );
+                postcard::to_io(&info, dst.writer()).expect("serialization shouldn't fail");
             }
             Frame::SendPacket { dst_key, packet } => {
                 dst.put(dst_key.as_ref());
@@ -465,6 +461,14 @@ impl Frame {
     #[allow(clippy::result_large_err)]
     fn from_bytes(frame_type: FrameType, content: Bytes, cache: &KeyCache) -> Result<Self, Error> {
         let res = match frame_type {
+            FrameType::ServerChallenge => {
+                if content.len() < MAGIC.len() {
+                    return Err(InvalidFrameSnafu.build());
+                }
+                Self::ServerChallenge {
+                    message: content.slice(MAGIC.len()..),
+                }
+            }
             FrameType::ClientInfo => {
                 if content.len() < PublicKey::LENGTH + Signature::BYTE_SIZE + MAGIC.len() {
                     return Err(InvalidFrameSnafu.build());
@@ -480,10 +484,10 @@ impl Frame {
                 let signature =
                     Signature::from_slice(&content[start..start + Signature::BYTE_SIZE])?;
                 let start = start + Signature::BYTE_SIZE;
-                let message = content.slice(start..);
+                let info = postcard::from_bytes(&content.slice(start..))?;
                 Self::ClientInfo {
                     client_public_key,
-                    info: postcard::from_bytes(&message)?,
+                    info,
                     signature,
                 }
             }
@@ -713,7 +717,6 @@ mod tests {
         };
         write_frame(&mut writer, expected_frame.clone(), None).await?;
         writer.flush().await.e()?;
-        println!("{:?}", reader);
         let buf = recv_frame(FrameType::Health, &mut reader).await?;
         assert_eq!(expect_buf.len(), buf.len());
         assert_eq!(expected_frame, buf);
@@ -723,7 +726,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_send_recv_client_key() -> TestResult {
-        let (client, server) = tokio::io::duplex(1024);
+        let (client, server) = tokio::io::duplex(10 * 1024);
         let mut client = Framed::new(client, RelayCodec::test());
         let mut server = Framed::new(server, RelayCodec::test());
 
@@ -731,10 +734,11 @@ mod tests {
         let client_info = ClientInfo {
             version: PROTOCOL_VERSION,
         };
-        println!("client_key pub {:?}", client_key.public());
-        relay_handshake_clientside(&mut client, &client_key, &client_info).await?;
-        let (client_pub_key, got_client_info) =
-            relay_handshake_serverside(&mut server, &mut rand::thread_rng()).await?;
+        let (_, (client_pub_key, got_client_info)) = n0_future::future::try_zip(
+            relay_handshake_clientside(&mut client, &client_key, &client_info),
+            relay_handshake_serverside(&mut server, &mut rand::thread_rng()),
+        )
+        .await?;
         assert_eq!(client_key.public(), client_pub_key);
         assert_eq!(client_info, got_client_info);
         Ok(())
