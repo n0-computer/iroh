@@ -774,7 +774,7 @@ impl MagicSock {
                 .sockets
                 .v6
                 .as_ref()
-                .ok_or(io::Error::new(io::ErrorKind::Other, "no IPv6 connection"))?,
+                .ok_or(io::Error::other("no IPv6 connection"))?,
         };
         Ok(sock)
     }
@@ -1388,7 +1388,7 @@ impl MagicSock {
             }
             SendAddr::Relay(ref url) => {
                 if !self.send_disco_message_relay(url, dst_key, msg) {
-                    return Err(io::Error::new(io::ErrorKind::Other, "Relay channel full"));
+                    return Err(io::Error::other("Relay channel full"));
                 }
             }
         }

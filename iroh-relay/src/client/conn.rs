@@ -57,7 +57,7 @@ impl From<tokio_websockets::Error> for ConnSendError {
     fn from(err: tokio_websockets::Error) -> Self {
         let io_err = match err {
             tokio_websockets::Error::Io(io_err) => io_err,
-            _ => std::io::Error::new(std::io::ErrorKind::Other, err.to_string()),
+            _ => std::io::Error::other(err.to_string()),
         };
         Self::Io(io_err)
     }
