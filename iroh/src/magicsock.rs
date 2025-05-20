@@ -47,7 +47,7 @@ use quinn::{AsyncUdpSocket, ServerConfig};
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use smallvec::SmallVec;
 use snafu::{ResultExt, Snafu};
-use tokio::sync::{self, mpsc, Mutex};
+use tokio::sync::{mpsc, Mutex};
 use tracing::{
     debug, error, error_span, event, info, info_span, instrument, trace, trace_span, warn,
     Instrument, Level, Span,
@@ -222,14 +222,11 @@ pub(crate) struct MagicSock {
     direct_addrs: DiscoveredDirectAddrs,
 
     /// Our latest net-report
-    net_report: Watchable<(Option<Report>, &'static str)>,
+    net_report: Watchable<(Option<Report>, UpdateReason)>,
 
     /// List of CallMeMaybe disco messages that should be sent out after the next endpoint update
     /// completes
     pending_call_me_maybes: std::sync::Mutex<HashMap<PublicKey, RelayUrl>>,
-
-    /// Indicates the direct addr update state.
-    direct_addr_update_state: DirectAddrUpdateState,
 
     /// Broadcast channel for listening to discovery updates.
     discovery_subscribers: DiscoverySubscribers,
@@ -1081,17 +1078,19 @@ impl MagicSock {
                     ?last_refresh_ago,
                     "want call-me-maybe but direct addrs stale; queuing after restun",
                 );
-                self.re_stun("refresh-for-peering");
+                self.re_stun(UpdateReason::RefreshForPeering);
             }
         }
     }
 
     /// Triggers an address discovery. The provided why string is for debug logging only.
     #[instrument(skip_all)]
-    fn re_stun(&self, why: &'static str) {
-        debug!("re_stun: {}", why);
+    fn re_stun(&self, why: UpdateReason) {
+        debug!("re_stun: {:?}", why);
         self.metrics.magicsock.re_stun_calls.inc();
-        self.direct_addr_update_state.schedule_run(why);
+        self.actor_sender
+            .try_send(ActorMessage::ScheduleDirectAddrUpdate(why))
+            .ok();
     }
 
     /// Publishes our address to a discovery service, if configured.
@@ -1115,20 +1114,6 @@ impl MagicSock {
             let data = NodeData::new(relay_url, direct_addrs).with_user_data(user_data);
             discovery.publish(&data);
         }
-    }
-
-    /// Called when a direct addr update is done, no matter if it was successful or not.
-    fn finalize_direct_addrs_update(&self, why: &'static str) {
-        let new_why = self.direct_addr_update_state.next_update();
-        if !self.is_closed() {
-            if let Some(new_why) = new_why {
-                self.direct_addr_update_state.run(new_why);
-                return;
-            }
-        }
-
-        self.direct_addr_update_state.finish_run();
-        debug!("direct addr update done ({})", why);
     }
 }
 
@@ -1167,48 +1152,119 @@ impl From<SocketAddr> for MappedAddr {
 #[derive(Debug)]
 struct DirectAddrUpdateState {
     /// If running, set to the reason for the currently the update.
-    running: sync::watch::Sender<Option<&'static str>>,
+    running: Watchable<Option<UpdateReason>>,
     /// If set, start a new update as soon as the current one is finished.
-    want_update: std::sync::Mutex<Option<&'static str>>,
+    want_update: Mutex<Option<UpdateReason>>,
+    msock: Arc<MagicSock>,
+    /// Configuration for net report
+    net_report_config: net_report::Options,
+    #[cfg(not(wasm_browser))]
+    port_mapper: portmapper::Client,
+    /// The prober that discovers local network conditions, including the closest relay relay and NAT mappings.
+    net_reporter: Arc<Mutex<net_report::Client>>,
+}
+
+#[derive(Default, Debug, PartialEq, Eq, Copy, Clone)]
+enum UpdateReason {
+    /// Initial state
+    #[default]
+    None,
+    RefreshForPeering,
+    Periodic,
+    PortmapUpdated,
+    LinkChangeMajor,
+    LinkChangeMinor,
 }
 
 impl DirectAddrUpdateState {
-    fn new() -> Self {
-        let (running, _) = sync::watch::channel(None);
+    fn new(
+        msock: Arc<MagicSock>,
+        net_report_config: net_report::Options,
+        port_mapper: portmapper::Client,
+        net_reporter: Arc<Mutex<net_report::Client>>,
+    ) -> Self {
         DirectAddrUpdateState {
-            running,
+            running: Watchable::default(),
             want_update: Default::default(),
+            net_report_config,
+            port_mapper,
+            net_reporter,
+            msock,
         }
     }
 
     /// Schedules a new run, either starting it immediately if none is running or
     /// scheduling it for later.
-    fn schedule_run(&self, why: &'static str) {
+    async fn schedule_run(&self, why: UpdateReason) {
         if self.is_running() {
-            let _ = self.want_update.lock().expect("poisoned").insert(why);
+            let _ = self.want_update.lock().await.insert(why);
         } else {
+            self.run(why);
+        }
+    }
+
+    /// If another run is needed, triggers this run, otherwise does nothing.
+    async fn try_run(&self) {
+        if self.is_running() {
+            return;
+        }
+        if let Some(why) = self.want_update.lock().await.take() {
             self.run(why);
         }
     }
 
     /// Returns `true` if an update is currently in progress.
     fn is_running(&self) -> bool {
-        self.running.borrow().is_some()
+        self.running.get().is_some()
     }
 
     /// Trigger a new run.
-    fn run(&self, why: &'static str) {
-        self.running.send(Some(why)).ok();
-    }
+    fn run(&self, why: UpdateReason) {
+        debug_assert!(!self.is_running(), "invalid call, must not be running");
+        self.running.set(Some(why)).ok();
 
-    /// Clears the current running state.
-    fn finish_run(&self) {
-        self.running.send(None).ok();
-    }
+        debug!("starting direct addr update ({:?})", why);
+        #[cfg(not(wasm_browser))]
+        self.port_mapper.procure_mapping();
+        // Don't start a net report probe if we know
+        // we are shutting down
+        if self.msock.is_closing() || self.msock.is_closed() {
+            debug!("skipping net_report, socket is shutting down");
+            return;
+        }
+        if self.msock.relay_map.is_empty() {
+            debug!("skipping net_report, empty RelayMap");
+            self.msock.net_report.set((None, why)).ok();
+            return;
+        }
 
-    /// Returns the next update, if one is set.
-    fn next_update(&self) -> Option<&'static str> {
-        self.want_update.lock().expect("poisoned").take()
+        let relay_map = self.msock.relay_map.clone();
+        let opts = self.net_report_config.clone();
+
+        debug!("requesting net_report report");
+        let msock = self.msock.clone();
+        let net_reporter = self.net_reporter.clone();
+
+        let running = self.running.clone();
+        task::spawn(async move {
+            let mut net_reporter = net_reporter.lock().await;
+            let fut = time::timeout(NET_REPORT_TIMEOUT, net_reporter.get_report(relay_map, opts));
+            match fut.await {
+                Ok(Ok(report)) => {
+                    msock.net_report.set((Some(report), why)).ok();
+                }
+                Ok(Err(_)) => {
+                    warn!("net_report report not received");
+                }
+                Err(err) => {
+                    warn!("net_report report timeout: {:?}", err);
+                }
+            }
+
+            // mark run as finished
+            debug!("direct addr update done ({:?})", why);
+            running.set(None).ok();
+        });
     }
 }
 
@@ -1334,9 +1390,8 @@ impl Handle {
             discovery,
             discovery_user_data: RwLock::new(discovery_user_data),
             direct_addrs: Default::default(),
-            net_report: Watchable::new((None, "init")),
+            net_report: Watchable::new((None, UpdateReason::None)),
             pending_call_me_maybes: Default::default(),
-            direct_addr_update_state: DirectAddrUpdateState::new(),
             #[cfg(not(wasm_browser))]
             dns_resolver,
             discovery_subscribers: DiscoverySubscribers::new(),
@@ -1414,16 +1469,22 @@ impl Handle {
         let net_report_config =
             net_report_config.insecure_skip_relay_cert_verify(insecure_skip_relay_cert_verify);
 
+        let direct_addr_update_state = DirectAddrUpdateState::new(
+            msock.clone(),
+            net_report_config,
+            #[cfg(not(wasm_browser))]
+            port_mapper.clone(),
+            Arc::new(Mutex::new(net_reporter)),
+        );
+
         let actor = Actor {
             msg_receiver: actor_receiver,
             msock: msock.clone(),
             periodic_re_stun_timer: new_re_stun_timer(false),
+            network_monitor,
+            direct_addr_update_state,
             #[cfg(not(wasm_browser))]
             port_mapper,
-            no_v4_send: false,
-            net_reporter: Arc::new(Mutex::new(net_reporter)),
-            network_monitor,
-            net_report_config,
             network_change_sender,
         };
         actor_tasks.spawn(
@@ -1655,6 +1716,7 @@ enum ActorMessage {
     PingActions(Vec<PingAction>),
     EndpointPingExpired(usize, stun_rs::TransactionId),
     NetworkChange,
+    ScheduleDirectAddrUpdate(UpdateReason),
     #[cfg(test)]
     ForceNetworkChange(bool),
 }
@@ -1667,20 +1729,10 @@ struct Actor {
 
     #[cfg(not(wasm_browser))]
     port_mapper: portmapper::Client,
-
-    /// Configuration for net report
-    net_report_config: net_report::Options,
-
-    /// Whether IPv4 UDP is known to be unable to transmit
-    /// at all. This could happen if the socket is in an invalid state
-    /// (as can happen on darwin after a network link status change).
-    no_v4_send: bool,
-
-    /// The prober that discovers local network conditions, including the closest relay relay and NAT mappings.
-    net_reporter: Arc<Mutex<net_report::Client>>,
-
     network_monitor: netmon::Monitor,
     network_change_sender: transports::NetworkChangeSender,
+    /// Indicates the direct addr update state.
+    direct_addr_update_state: DirectAddrUpdateState,
 }
 
 #[cfg(not(wasm_browser))]
@@ -1756,8 +1808,7 @@ impl Actor {
 
         #[cfg(not(wasm_browser))]
         let mut direct_addr_heartbeat_timer = time::interval(HEARTBEAT_INTERVAL);
-        let mut direct_addr_update_receiver =
-            self.msock.direct_addr_update_state.running.subscribe();
+
         #[cfg(not(wasm_browser))]
         let mut portmap_watcher = self.port_mapper.watch_external_address();
 
@@ -1773,6 +1824,8 @@ impl Actor {
         let mut portmap_watcher_closed = false;
 
         let mut net_report_watcher = self.msock.net_report.watch();
+        let mut direct_addr_watcher = self.direct_addr_update_state.running.watch();
+
         loop {
             self.msock.metrics.magicsock.actor_tick_main.inc();
             #[cfg(not(wasm_browser))]
@@ -1804,7 +1857,7 @@ impl Actor {
                 tick = self.periodic_re_stun_timer.tick() => {
                     trace!("tick: re_stun {:?}", tick);
                     self.msock.metrics.magicsock.actor_tick_re_stun.inc();
-                    self.msock.re_stun("periodic");
+                    self.re_stun(UpdateReason::Periodic).await;
                 }
                 new_addr = watcher.updated() => {
                     match new_addr {
@@ -1833,6 +1886,20 @@ impl Actor {
                         }
                     }
                 }
+                reason = direct_addr_watcher.updated() => {
+                    match reason {
+                        Ok(Some(_reason)) => {
+                            // nothing to do for now
+                        }
+                        Ok(None) => {
+                            // check if a new run needs to be scheduled
+                            self.direct_addr_update_state.try_run().await;
+                        }
+                        Err(_) => {
+                            warn!("direct addr watcher died");
+                        }
+                    }
+                }
                 change = portmap_watcher_changed, if !portmap_watcher_closed => {
                     #[cfg(not(wasm_browser))]
                     {
@@ -1848,7 +1915,7 @@ impl Actor {
                         self.msock.metrics.magicsock.actor_tick_portmap_changed.inc();
                         let new_external_address = *portmap_watcher.borrow();
                         debug!("external address updated: {new_external_address:?}");
-                        self.msock.re_stun("portmap_updated");
+                        self.re_stun(UpdateReason::PortmapUpdated).await;
                     }
                     #[cfg(wasm_browser)]
                     let _unused_in_browsers = change;
@@ -1868,14 +1935,6 @@ impl Actor {
                         self.handle_ping_actions(&sender, msgs).await;
                     }
                 }
-                _ = direct_addr_update_receiver.changed() => {
-                    let reason = *direct_addr_update_receiver.borrow();
-                    trace!("tick: direct addr update receiver {:?}", reason);
-                    self.msock.metrics.magicsock.actor_tick_direct_addr_update_receiver.inc();
-                    if let Some(reason) = reason {
-                        self.refresh_direct_addrs(reason).await;
-                    }
-                }
                 state = netmon_watcher.updated() => {
                     let Ok(state) = state else {
                         trace!("tick: link change receiver closed");
@@ -1886,7 +1945,7 @@ impl Actor {
                     current_netmon_state = state;
                     trace!("tick: link change {}", is_major);
                     self.msock.metrics.magicsock.actor_link_change.inc();
-                    self.handle_network_change(is_major);
+                    self.handle_network_change(is_major).await;
                 }
                 // Even if `discovery_events` yields `None`, it could begin to yield
                 // `Some` again in the future, so we don't want to disable this branch
@@ -1910,7 +1969,7 @@ impl Actor {
         }
     }
 
-    fn handle_network_change(&mut self, is_major: bool) {
+    async fn handle_network_change(&mut self, is_major: bool) {
         debug!("link change detected: major? {}", is_major);
 
         if is_major {
@@ -1920,11 +1979,15 @@ impl Actor {
 
             #[cfg(not(wasm_browser))]
             self.msock.dns_resolver.clear_cache();
-            self.msock.re_stun("link-change-major");
+            self.re_stun(UpdateReason::LinkChangeMajor).await;
             self.reset_endpoint_states();
         } else {
-            self.msock.re_stun("link-change-minor");
+            self.re_stun(UpdateReason::LinkChangeMinor).await;
         }
+    }
+
+    async fn re_stun(&self, why: UpdateReason) {
+        self.direct_addr_update_state.schedule_run(why).await;
     }
 
     #[instrument(skip_all)]
@@ -1955,9 +2018,12 @@ impl Actor {
             ActorMessage::NetworkChange => {
                 self.network_monitor.network_change().await.ok();
             }
+            ActorMessage::ScheduleDirectAddrUpdate(why) => {
+                self.direct_addr_update_state.schedule_run(why).await;
+            }
             #[cfg(test)]
             ActorMessage::ForceNetworkChange(is_major) => {
-                self.handle_network_change(is_major);
+                self.handle_network_change(is_major).await;
             }
             ActorMessage::PingActions(ping_actions) => {
                 self.handle_ping_actions(sender, ping_actions).await;
@@ -1965,23 +2031,6 @@ impl Actor {
         }
 
         false
-    }
-
-    /// Refreshes knowledge about our direct addresses.
-    ///
-    /// In other words, this triggers a net_report run.
-    ///
-    /// Note that invoking this is managed by the [`DirectAddrUpdateState`] and this should
-    /// never be invoked directly.  Some day this will be refactored to not allow this easy
-    /// mistake to be made.
-    #[instrument(level = "debug", skip_all)]
-    async fn refresh_direct_addrs(&mut self, why: &'static str) {
-        self.msock.metrics.magicsock.update_direct_addrs.inc();
-
-        debug!("starting direct addr update ({})", why);
-        #[cfg(not(wasm_browser))]
-        self.port_mapper.procure_mapping();
-        self.update_net_info(why).await;
     }
 
     /// Updates the direct addresses of this magic socket.
@@ -2133,62 +2182,9 @@ impl Actor {
         );
     }
 
-    /// Calls net_report.
-    ///
-    /// Note that invoking this is managed by [`DirectAddrUpdateState`] via
-    /// [`Actor::refresh_direct_addrs`] and this should never be invoked directly.  Some day
-    /// this will be refactored to not allow this easy mistake to be made.
-    #[instrument(level = "debug", skip_all)]
-    async fn update_net_info(&mut self, why: &'static str) {
-        // Don't start a net report probe if we know
-        // we are shutting down
-        if self.msock.is_closing() || self.msock.is_closed() {
-            debug!("skipping net_report, socket is shutting down");
-            return;
-        }
-        if self.msock.relay_map.is_empty() {
-            debug!("skipping net_report, empty RelayMap");
-            self.msock.net_report.set((None, why)).ok();
-            return;
-        }
-
-        let relay_map = self.msock.relay_map.clone();
-        let opts = self.net_report_config.clone();
-
-        debug!("requesting net_report report");
-        let msock = self.msock.clone();
-        let net_reporter = self.net_reporter.clone();
-
-        task::spawn(async move {
-            let mut net_reporter = net_reporter.lock().await;
-            let fut = time::timeout(NET_REPORT_TIMEOUT, net_reporter.get_report(relay_map, opts));
-            match fut.await {
-                Ok(Ok(report)) => {
-                    msock.net_report.set((Some(report), why)).ok();
-                }
-                Ok(Err(_)) => {
-                    warn!("net_report report not received");
-                }
-                Err(err) => {
-                    warn!("net_report report timeout: {:?}", err);
-                }
-            }
-            msock.finalize_direct_addrs_update(why);
-        });
-    }
-
     fn handle_net_report_report(&mut self, mut report: Option<net_report::Report>) {
         if let Some(ref mut r) = report {
-            // only returns Err if the report hasn't changed.
             self.msock.ipv6_reported.store(r.ipv6, Ordering::Relaxed);
-
-            trace!(
-                "setting no_v4_send {} -> {}",
-                self.no_v4_send,
-                !r.ipv4_can_send
-            );
-            self.no_v4_send = !r.ipv4_can_send;
-
             if r.preferred_relay.is_none() {
                 // Perhaps UDP is blocked. Pick a deterministic but arbitrary one.
                 r.preferred_relay = self.pick_relay_fallback();
