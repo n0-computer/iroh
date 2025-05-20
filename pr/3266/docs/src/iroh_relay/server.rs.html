@@ -1242,7 +1242,51 @@
 <a href="#1241" id="1241">1241</a>
 <a href="#1242" id="1242">1242</a>
 <a href="#1243" id="1243">1243</a>
-<a href="#1244" id="1244">1244</a></pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
+<a href="#1244" id="1244">1244</a>
+<a href="#1245" id="1245">1245</a>
+<a href="#1246" id="1246">1246</a>
+<a href="#1247" id="1247">1247</a>
+<a href="#1248" id="1248">1248</a>
+<a href="#1249" id="1249">1249</a>
+<a href="#1250" id="1250">1250</a>
+<a href="#1251" id="1251">1251</a>
+<a href="#1252" id="1252">1252</a>
+<a href="#1253" id="1253">1253</a>
+<a href="#1254" id="1254">1254</a>
+<a href="#1255" id="1255">1255</a>
+<a href="#1256" id="1256">1256</a>
+<a href="#1257" id="1257">1257</a>
+<a href="#1258" id="1258">1258</a>
+<a href="#1259" id="1259">1259</a>
+<a href="#1260" id="1260">1260</a>
+<a href="#1261" id="1261">1261</a>
+<a href="#1262" id="1262">1262</a>
+<a href="#1263" id="1263">1263</a>
+<a href="#1264" id="1264">1264</a>
+<a href="#1265" id="1265">1265</a>
+<a href="#1266" id="1266">1266</a>
+<a href="#1267" id="1267">1267</a>
+<a href="#1268" id="1268">1268</a>
+<a href="#1269" id="1269">1269</a>
+<a href="#1270" id="1270">1270</a>
+<a href="#1271" id="1271">1271</a>
+<a href="#1272" id="1272">1272</a>
+<a href="#1273" id="1273">1273</a>
+<a href="#1274" id="1274">1274</a>
+<a href="#1275" id="1275">1275</a>
+<a href="#1276" id="1276">1276</a>
+<a href="#1277" id="1277">1277</a>
+<a href="#1278" id="1278">1278</a>
+<a href="#1279" id="1279">1279</a>
+<a href="#1280" id="1280">1280</a>
+<a href="#1281" id="1281">1281</a>
+<a href="#1282" id="1282">1282</a>
+<a href="#1283" id="1283">1283</a>
+<a href="#1284" id="1284">1284</a>
+<a href="#1285" id="1285">1285</a>
+<a href="#1286" id="1286">1286</a>
+<a href="#1287" id="1287">1287</a>
+<a href="#1288" id="1288">1288</a></pre></div><pre class="rust"><code><span class="doccomment">//! A fully-fledged iroh-relay server over HTTP or HTTPS.
 //!
 //! This module provides an API to run a full fledged iroh-relay server.  It is primarily
 //! used by the `iroh-relay` binary in this crate.  It can be used to run a relay server in
@@ -1271,7 +1315,6 @@
 <span class="kw">use </span>iroh_base::NodeId;
 <span class="attr">#[cfg(feature = <span class="string">"test-utils"</span>)]
 </span><span class="kw">use </span>iroh_base::RelayUrl;
-<span class="kw">use </span>iroh_metrics::inc;
 <span class="kw">use </span>n0_future::{future::Boxed, StreamExt};
 <span class="kw">use </span>tokio::{
     net::{TcpListener, UdpSocket},
@@ -1297,7 +1340,7 @@
 </span><span class="kw">pub mod </span>testing;
 
 <span class="kw">pub use </span><span class="self">self</span>::{
-    metrics::{Metrics, StunMetrics},
+    metrics::{Metrics, RelayMetrics, StunMetrics},
     resolver::{ReloadingResolver, DEFAULT_CERT_RELOAD_INTERVAL},
 };
 
@@ -1513,6 +1556,7 @@
     /// If the server has manual certificates configured the certificate chain will be
     /// available here, this can be used by a client to authenticate the server.
     </span>certificates: <span class="prelude-ty">Option</span>&lt;Vec&lt;rustls::pki_types::CertificateDer&lt;<span class="lifetime">'static</span>&gt;&gt;&gt;,
+    metrics: RelayMetrics,
 }
 
 <span class="kw">impl </span>Server {
@@ -1524,18 +1568,16 @@
     {
         <span class="kw">let </span><span class="kw-2">mut </span>tasks = JoinSet::new();
 
+        <span class="kw">let </span>metrics = RelayMetrics::default();
+
         <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
         </span><span class="kw">if let </span><span class="prelude-val">Some</span>(addr) = config.metrics_addr {
             <span class="macro">debug!</span>(<span class="string">"Starting metrics server"</span>);
-            <span class="kw">use </span>iroh_metrics::core::Metric;
-
-            iroh_metrics::core::Core::init(|reg, metrics| {
-                metrics.insert(metrics::Metrics::new(reg));
-                metrics.insert(StunMetrics::new(reg));
-            });
+            <span class="kw">let </span><span class="kw-2">mut </span>registry = iroh_metrics::Registry::default();
+            registry.register_all(<span class="kw-2">&amp;</span>metrics);
             tasks.spawn(
                 <span class="kw">async move </span>{
-                    iroh_metrics::metrics::start_metrics_server(addr).<span class="kw">await</span><span class="question-mark">?</span>;
+                    iroh_metrics::service::start_metrics_server(addr, Arc::new(registry)).<span class="kw">await</span><span class="question-mark">?</span>;
                     anyhow::Ok(())
                 }
                 .instrument(<span class="macro">info_span!</span>(<span class="string">"metrics-server"</span>)),
@@ -1551,7 +1593,8 @@
                         <span class="kw">let </span>addr = sock.local_addr()<span class="question-mark">?</span>;
                         <span class="macro">info!</span>(<span class="string">"STUN server listening on {addr}"</span>);
                         tasks.spawn(
-                            server_stun_listener(sock).instrument(<span class="macro">info_span!</span>(<span class="string">"stun-server"</span>, %addr)),
+                            server_stun_listener(sock, metrics.stun.clone())
+                                .instrument(<span class="macro">info_span!</span>(<span class="string">"stun-server"</span>, %addr)),
                         );
                         <span class="prelude-val">Some</span>(addr)
                     }
@@ -1595,6 +1638,7 @@
                     .key_cache_capacity
                     .unwrap_or(DEFAULT_KEY_CACHE_CAPACITY);
                 <span class="kw">let </span><span class="kw-2">mut </span>builder = http_server::ServerBuilder::new(relay_bind_addr)
+                    .metrics(metrics.server.clone())
                     .headers(headers)
                     .key_cache_capacity(key_cache_capacity)
                     .access(relay_config.access)
@@ -1684,6 +1728,7 @@
             quic_handle,
             supervisor: AbortOnDropHandle::new(task),
             certificates,
+            metrics,
         })
     }
 
@@ -1758,6 +1803,11 @@
                 .into()
         })
     }
+
+    <span class="doccomment">/// Returns the metrics collected in the relay server.
+    </span><span class="kw">pub fn </span>metrics(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>RelayMetrics {
+        <span class="kw-2">&amp;</span><span class="self">self</span>.metrics
+    }
 }
 
 <span class="doccomment">/// Supervisor for the relay server tasks.
@@ -1826,7 +1876,7 @@
 <span class="doccomment">/// Runs a STUN server.
 ///
 /// When the future is dropped, the server stops.
-</span><span class="kw">async fn </span>server_stun_listener(sock: UdpSocket) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+</span><span class="kw">async fn </span>server_stun_listener(sock: UdpSocket, metrics: Arc&lt;StunMetrics&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
     <span class="macro">info!</span>(addr = <span class="question-mark">?</span>sock.local_addr().ok(), <span class="string">"running STUN server"</span>);
     <span class="kw">let </span>sock = Arc::new(sock);
     <span class="kw">let </span><span class="kw-2">mut </span>buffer = <span class="macro">vec!</span>[<span class="number">0u8</span>; <span class="number">64 </span>&lt;&lt; <span class="number">10</span>];
@@ -1845,18 +1895,18 @@
             res = sock.recv_from(<span class="kw-2">&amp;mut </span>buffer) =&gt; {
                 <span class="kw">match </span>res {
                     <span class="prelude-val">Ok</span>((n, src_addr)) =&gt; {
-                        <span class="macro">inc!</span>(StunMetrics, requests);
+                        metrics.requests.inc();
                         <span class="kw">let </span>pkt = <span class="kw-2">&amp;</span>buffer[..n];
                         <span class="kw">if </span>!protos::stun::is(pkt) {
                             <span class="macro">debug!</span>(%src_addr, <span class="string">"STUN: ignoring non stun packet"</span>);
-                            <span class="macro">inc!</span>(StunMetrics, bad_requests);
+                            metrics.bad_requests.inc();
                             <span class="kw">continue</span>;
                         }
                         <span class="kw">let </span>pkt = pkt.to_vec();
-                        tasks.spawn(handle_stun_request(src_addr, pkt, sock.clone()));
+                        tasks.spawn(handle_stun_request(src_addr, pkt, sock.clone(), metrics.clone()));
                     }
                     <span class="prelude-val">Err</span>(err) =&gt; {
-                        <span class="macro">inc!</span>(StunMetrics, failures);
+                        metrics.failures.inc();
                         <span class="macro">warn!</span>(<span class="string">"failed to recv: {err:#}"</span>);
                     }
                 }
@@ -1866,14 +1916,19 @@
 }
 
 <span class="doccomment">/// Handles a single STUN request, doing all logging required.
-</span><span class="kw">async fn </span>handle_stun_request(src_addr: SocketAddr, pkt: Vec&lt;u8&gt;, sock: Arc&lt;UdpSocket&gt;) {
+</span><span class="kw">async fn </span>handle_stun_request(
+    src_addr: SocketAddr,
+    pkt: Vec&lt;u8&gt;,
+    sock: Arc&lt;UdpSocket&gt;,
+    metrics: Arc&lt;StunMetrics&gt;,
+) {
     <span class="kw">let </span>(txid, response) = <span class="kw">match </span>protos::stun::parse_binding_request(<span class="kw-2">&amp;</span>pkt) {
         <span class="prelude-val">Ok</span>(txid) =&gt; {
             <span class="macro">debug!</span>(%src_addr, %txid, <span class="string">"STUN: received binding request"</span>);
             (txid, protos::stun::response(txid, src_addr))
         }
         <span class="prelude-val">Err</span>(err) =&gt; {
-            <span class="macro">inc!</span>(StunMetrics, bad_requests);
+            metrics.bad_requests.inc();
             <span class="macro">warn!</span>(%src_addr, <span class="string">"STUN: invalid binding request: {:?}"</span>, err);
             <span class="kw">return</span>;
         }
@@ -1890,14 +1945,14 @@
                 );
             } <span class="kw">else </span>{
                 <span class="kw">match </span>src_addr {
-                    SocketAddr::V4(<span class="kw">_</span>) =&gt; <span class="macro">inc!</span>(StunMetrics, ipv4_success),
-                    SocketAddr::V6(<span class="kw">_</span>) =&gt; <span class="macro">inc!</span>(StunMetrics, ipv6_success),
-                }
+                    SocketAddr::V4(<span class="kw">_</span>) =&gt; metrics.ipv4_success.inc(),
+                    SocketAddr::V6(<span class="kw">_</span>) =&gt; metrics.ipv6_success.inc(),
+                };
             }
             <span class="macro">trace!</span>(%src_addr, %txid, <span class="string">"sent {len} bytes"</span>);
         }
         <span class="prelude-val">Err</span>(err) =&gt; {
-            <span class="macro">inc!</span>(StunMetrics, failures);
+            metrics.failures.inc();
             <span class="macro">warn!</span>(%src_addr, %txid, <span class="string">"failed to write response: {err:#}"</span>);
         }
     }
@@ -2483,6 +2538,39 @@
             <span class="macro">panic!</span>(<span class="string">"client_c received unexpected message {res:?}"</span>);
         }
 
+        <span class="prelude-val">Ok</span>(())
+    }
+
+    <span class="attr">#[tokio::test]
+    #[traced_test]
+    </span><span class="kw">async fn </span>test_relay_clients_full() -&gt; TestResult&lt;()&gt; {
+        <span class="kw">let </span>server = spawn_local_relay().<span class="kw">await</span>.unwrap();
+        <span class="kw">let </span>relay_url = <span class="macro">format!</span>(<span class="string">"http://{}"</span>, server.http_addr().unwrap());
+        <span class="kw">let </span>relay_url: RelayUrl = relay_url.parse().unwrap();
+
+        <span class="comment">// set up client a
+        </span><span class="kw">let </span>a_secret_key = SecretKey::generate(rand::thread_rng());
+        <span class="kw">let </span>resolver = dns_resolver();
+        <span class="kw">let </span><span class="kw-2">mut </span>client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver.clone())
+            .connect()
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="comment">// set up client b
+        </span><span class="kw">let </span>b_secret_key = SecretKey::generate(rand::thread_rng());
+        <span class="kw">let </span>b_key = b_secret_key.public();
+        <span class="kw">let </span>_client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver.clone())
+            .connect()
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="comment">// send messages from a to b, without b receiving anything.
+        // we should still keep succeeding to send, even if the packet won't be forwarded
+        // by the relay server because the server's send queue for b fills up.
+        </span><span class="kw">let </span>msg = Bytes::from(<span class="string">"hello, b"</span>);
+        <span class="kw">for </span>_i <span class="kw">in </span><span class="number">0</span>..<span class="number">1000 </span>{
+            client_a
+                .send(SendMessage::SendPacket(b_key, msg.clone()))
+                .<span class="kw">await</span><span class="question-mark">?</span>;
+        }
         <span class="prelude-val">Ok</span>(())
     }
 }

@@ -144,9 +144,7 @@
 <a href="#143" id="143">143</a>
 <a href="#144" id="144">144</a>
 <a href="#145" id="145">145</a>
-<a href="#146" id="146">146</a>
-<a href="#147" id="147">147</a>
-<a href="#148" id="148">148</a></pre></div><pre class="rust"><code><span class="doccomment">//! Default values used in [`iroh`][`crate`]
+<a href="#146" id="146">146</a></pre></div><pre class="rust"><code><span class="doccomment">//! Default values used in [`iroh`][`crate`]
 
 /// The default QUIC port used by the Relay server to accept QUIC connections
 /// for QUIC address discovery
@@ -184,12 +182,11 @@
 
     <span class="doccomment">/// Get the default [`RelayMap`].
     </span><span class="kw">pub fn </span>default_relay_map() -&gt; RelayMap {
-        RelayMap::from_nodes([
+        RelayMap::from_iter([
             default_na_relay_node(),
             default_eu_relay_node(),
             default_ap_relay_node(),
         ])
-        .expect(<span class="string">"default nodes invalid"</span>)
     }
 
     <span class="doccomment">/// Get the default [`RelayNode`] for NA.
@@ -252,8 +249,7 @@
 
     <span class="doccomment">/// Get the default [`RelayMap`].
     </span><span class="kw">pub fn </span>default_relay_map() -&gt; RelayMap {
-        RelayMap::from_nodes([default_na_relay_node(), default_eu_relay_node()])
-            .expect(<span class="string">"default nodes invalid"</span>)
+        RelayMap::from_iter([default_na_relay_node(), default_eu_relay_node()])
     }
 
     <span class="doccomment">/// Get the default [`RelayNode`] for NA.

@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["init_metrics"],"struct":["Metrics"]};
+window.SIDEBAR_ITEMS = {"struct":["Metrics"]};

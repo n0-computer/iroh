@@ -10,9 +10,15 @@
 <a href="#9" id="9">9</a>
 <a href="#10" id="10">10</a>
 <a href="#11" id="11">11</a>
-<a href="#12" id="12">12</a></pre></div><pre class="rust"><code><span class="doccomment">//! Shared state and store for the iroh-dns-server
+<a href="#12" id="12">12</a>
+<a href="#13" id="13">13</a>
+<a href="#14" id="14">14</a>
+<a href="#15" id="15">15</a>
+<a href="#16" id="16">16</a></pre></div><pre class="rust"><code><span class="doccomment">//! Shared state and store for the iroh-dns-server
 
-</span><span class="kw">use crate</span>::{dns::DnsHandler, store::ZoneStore};
+</span><span class="kw">use </span>std::sync::Arc;
+
+<span class="kw">use crate</span>::{dns::DnsHandler, metrics::Metrics, store::ZoneStore};
 
 <span class="doccomment">/// The shared app state.
 </span><span class="attr">#[derive(Clone)]
@@ -21,5 +27,7 @@
     </span><span class="kw">pub </span>store: ZoneStore,
     <span class="doccomment">/// Handler for DNS requests
     </span><span class="kw">pub </span>dns_handler: DnsHandler,
+    <span class="doccomment">/// Metrics collector.
+    </span><span class="kw">pub </span>metrics: Arc&lt;Metrics&gt;,
 }
 </code></pre></div></section></main></body></html>

@@ -900,7 +900,28 @@
 <a href="#899" id="899">899</a>
 <a href="#900" id="900">900</a>
 <a href="#901" id="901">901</a>
-<a href="#902" id="902">902</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#902" id="902">902</a>
+<a href="#903" id="903">903</a>
+<a href="#904" id="904">904</a>
+<a href="#905" id="905">905</a>
+<a href="#906" id="906">906</a>
+<a href="#907" id="907">907</a>
+<a href="#908" id="908">908</a>
+<a href="#909" id="909">909</a>
+<a href="#910" id="910">910</a>
+<a href="#911" id="911">911</a>
+<a href="#912" id="912">912</a>
+<a href="#913" id="913">913</a>
+<a href="#914" id="914">914</a>
+<a href="#915" id="915">915</a>
+<a href="#916" id="916">916</a>
+<a href="#917" id="917">917</a>
+<a href="#918" id="918">918</a>
+<a href="#919" id="919">919</a>
+<a href="#920" id="920">920</a>
+<a href="#921" id="921">921</a>
+<a href="#922" id="922">922</a>
+<a href="#923" id="923">923</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{hash_map::Entry, BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
@@ -908,7 +929,6 @@
 };
 
 <span class="kw">use </span>iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
-<span class="kw">use </span>iroh_metrics::inc;
 <span class="kw">use </span>n0_future::time::Instant;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>stun_rs::TransactionId;
@@ -918,14 +938,12 @@
     best_addr::ClearReason,
     node_state::{NodeState, Options, PingHandled},
 };
-<span class="kw">use super</span>::{
-    metrics::Metrics <span class="kw">as </span>MagicsockMetrics, ActorMessage, DiscoMessageSource, NodeIdMappedAddr,
-};
+<span class="kw">use super</span>::{metrics::Metrics, ActorMessage, DiscoMessageSource, NodeIdMappedAddr};
 <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
 </span><span class="kw">use </span><span class="kw">crate</span>::endpoint::PathSelection;
 <span class="kw">use crate</span>::{
     disco::{CallMeMaybe, Pong, SendAddr},
-    watchable::Watcher,
+    watcher,
 };
 
 <span class="kw">mod </span>best_addr;
@@ -957,7 +975,7 @@
 ///   These come and go as the node moves around on the internet
 ///
 /// An index of nodeInfos by node key, NodeIdMappedAddr, and discovered ip:port endpoints.
-</span><span class="attr">#[derive(Default, Debug)]
+</span><span class="attr">#[derive(Debug, Default)]
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>NodeMap {
     inner: Mutex&lt;NodeMapInner&gt;,
 }
@@ -1031,14 +1049,18 @@
 <span class="kw">impl </span>NodeMap {
     <span class="attr">#[cfg(not(any(test, feature = <span class="string">"test-utils"</span>)))]
     </span><span class="doccomment">/// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>load_from_vec(nodes: Vec&lt;NodeAddr&gt;) -&gt; <span class="self">Self </span>{
-        <span class="self">Self</span>::from_inner(NodeMapInner::load_from_vec(nodes))
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>load_from_vec(nodes: Vec&lt;NodeAddr&gt;, metrics: <span class="kw-2">&amp;</span>Metrics) -&gt; <span class="self">Self </span>{
+        <span class="self">Self</span>::from_inner(NodeMapInner::load_from_vec(nodes, metrics))
     }
 
     <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
     </span><span class="doccomment">/// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>load_from_vec(nodes: Vec&lt;NodeAddr&gt;, path_selection: PathSelection) -&gt; <span class="self">Self </span>{
-        <span class="self">Self</span>::from_inner(NodeMapInner::load_from_vec(nodes, path_selection))
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>load_from_vec(
+        nodes: Vec&lt;NodeAddr&gt;,
+        path_selection: PathSelection,
+        metrics: <span class="kw-2">&amp;</span>Metrics,
+    ) -&gt; <span class="self">Self </span>{
+        <span class="self">Self</span>::from_inner(NodeMapInner::load_from_vec(nodes, path_selection, metrics))
     }
 
     <span class="kw">fn </span>from_inner(inner: NodeMapInner) -&gt; <span class="self">Self </span>{
@@ -1048,11 +1070,11 @@
     }
 
     <span class="doccomment">/// Add the contact information for a node.
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>add_node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, node_addr: NodeAddr, source: Source) {
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>add_node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, node_addr: NodeAddr, source: Source, metrics: <span class="kw-2">&amp;</span>Metrics) {
         <span class="self">self</span>.inner
             .lock()
             .expect(<span class="string">"poisoned"</span>)
-            .add_node_addr(node_addr, source)
+            .add_node_addr(node_addr, source, metrics)
     }
 
     <span class="doccomment">/// Number of nodes currently listed.
@@ -1141,24 +1163,26 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         sender: PublicKey,
         cm: CallMeMaybe,
+        metrics: <span class="kw-2">&amp;</span>Metrics,
     ) -&gt; Vec&lt;PingAction&gt; {
         <span class="self">self</span>.inner
             .lock()
             .expect(<span class="string">"poisoned"</span>)
-            .handle_call_me_maybe(sender, cm)
+            .handle_call_me_maybe(sender, cm, metrics)
     }
 
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>addr_for_send(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         addr: NodeIdMappedAddr,
         have_ipv6: bool,
+        metrics: <span class="kw-2">&amp;</span>Metrics,
     ) -&gt; <span class="prelude-ty">Option</span>&lt;(PublicKey, <span class="prelude-ty">Option</span>&lt;SocketAddr&gt;, <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;)&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>inner = <span class="self">self</span>.inner.lock().expect(<span class="string">"poisoned"</span>);
         <span class="kw">let </span>ep = inner.get_mut(NodeStateKey::NodeIdMappedAddr(addr))<span class="question-mark">?</span>;
         <span class="kw">let </span>public_key = <span class="kw-2">*</span>ep.public_key();
         <span class="macro">trace!</span>(dest = %addr, node_id = %public_key.fmt_short(), <span class="string">"dst mapped to NodeId"</span>);
         <span class="kw">let </span>now = Instant::now();
-        <span class="kw">let </span>(udp_addr, relay_url) = ep.addr_for_send(<span class="kw-2">&amp;</span>now, have_ipv6);
+        <span class="kw">let </span>(udp_addr, relay_url) = ep.addr_for_send(<span class="kw-2">&amp;</span>now, have_ipv6, metrics);
         <span class="prelude-val">Some</span>((public_key, udp_addr, relay_url))
     }
 
@@ -1167,6 +1191,7 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         addr: NodeIdMappedAddr,
         have_ipv6: bool,
+        metrics: <span class="kw-2">&amp;</span>Metrics,
     ) -&gt; <span class="prelude-ty">Option</span>&lt;(
         PublicKey,
         <span class="prelude-ty">Option</span>&lt;SocketAddr&gt;,
@@ -1177,7 +1202,7 @@
         <span class="kw">let </span>ep = inner.get_mut(NodeStateKey::NodeIdMappedAddr(addr))<span class="question-mark">?</span>;
         <span class="kw">let </span>public_key = <span class="kw-2">*</span>ep.public_key();
         <span class="macro">trace!</span>(dest = %addr, node_id = %public_key.fmt_short(), <span class="string">"dst mapped to NodeId"</span>);
-        <span class="kw">let </span>(udp_addr, relay_url, msgs) = ep.get_send_addrs(have_ipv6);
+        <span class="kw">let </span>(udp_addr, relay_url, msgs) = ep.get_send_addrs(have_ipv6, metrics);
         <span class="prelude-val">Some</span>((public_key, udp_addr, relay_url, msgs))
     }
 
@@ -1222,7 +1247,12 @@
     ///
     /// Will return an error if there is not an entry in the [`NodeMap`] for
     /// the `node_id`
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>conn_type(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; anyhow::Result&lt;Watcher&lt;ConnectionType&gt;&gt; {
+    ///
+    /// [`Watcher`]: crate::watcher::Watcher
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>conn_type(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        node_id: NodeId,
+    ) -&gt; anyhow::Result&lt;watcher::Direct&lt;ConnectionType&gt;&gt; {
         <span class="self">self</span>.inner.lock().expect(<span class="string">"poisoned"</span>).conn_type(node_id)
     }
 
@@ -1247,30 +1277,34 @@
 <span class="kw">impl </span>NodeMapInner {
     <span class="attr">#[cfg(not(any(test, feature = <span class="string">"test-utils"</span>)))]
     </span><span class="doccomment">/// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
-    </span><span class="kw">fn </span>load_from_vec(nodes: Vec&lt;NodeAddr&gt;) -&gt; <span class="self">Self </span>{
+    </span><span class="kw">fn </span>load_from_vec(nodes: Vec&lt;NodeAddr&gt;, metrics: <span class="kw-2">&amp;</span>Metrics) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span><span class="kw-2">mut </span>me = <span class="self">Self</span>::default();
         <span class="kw">for </span>node_addr <span class="kw">in </span>nodes {
-            me.add_node_addr(node_addr, Source::Saved);
+            me.add_node_addr(node_addr, Source::Saved, metrics);
         }
         me
     }
 
     <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
     </span><span class="doccomment">/// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
-    </span><span class="kw">fn </span>load_from_vec(nodes: Vec&lt;NodeAddr&gt;, path_selection: PathSelection) -&gt; <span class="self">Self </span>{
+    </span><span class="kw">fn </span>load_from_vec(
+        nodes: Vec&lt;NodeAddr&gt;,
+        path_selection: PathSelection,
+        metrics: <span class="kw-2">&amp;</span>Metrics,
+    ) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span><span class="kw-2">mut </span>me = <span class="self">Self </span>{
             path_selection,
             ..Default::default()
         };
         <span class="kw">for </span>node_addr <span class="kw">in </span>nodes {
-            me.add_node_addr(node_addr, Source::Saved);
+            me.add_node_addr(node_addr, Source::Saved, metrics);
         }
         me
     }
 
     <span class="doccomment">/// Add the contact information for a node.
     </span><span class="attr">#[instrument(skip_all, fields(node = %node_addr.node_id.fmt_short()))]
-    </span><span class="kw">fn </span>add_node_addr(<span class="kw-2">&amp;mut </span><span class="self">self</span>, node_addr: NodeAddr, source: Source) {
+    </span><span class="kw">fn </span>add_node_addr(<span class="kw-2">&amp;mut </span><span class="self">self</span>, node_addr: NodeAddr, source: Source, metrics: <span class="kw-2">&amp;</span>Metrics) {
         <span class="kw">let </span>source0 = source.clone();
         <span class="kw">let </span>node_id = node_addr.node_id;
         <span class="kw">let </span>relay_url = node_addr.relay_url.clone();
@@ -1288,6 +1322,7 @@
             node_addr.relay_url.as_ref(),
             <span class="kw-2">&amp;</span>node_addr.direct_addresses,
             source0,
+            metrics,
         );
         <span class="kw">let </span>id = node_state.id();
         <span class="kw">for </span>addr <span class="kw">in </span>node_addr.direct_addresses() {
@@ -1413,7 +1448,7 @@
     ///
     /// Will return an error if there is not an entry in the [`NodeMap`] for
     /// the `public_key`
-    </span><span class="kw">fn </span>conn_type(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; anyhow::Result&lt;Watcher&lt;ConnectionType&gt;&gt; {
+    </span><span class="kw">fn </span>conn_type(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; anyhow::Result&lt;watcher::Direct&lt;ConnectionType&gt;&gt; {
         <span class="kw">match </span><span class="self">self</span>.get(NodeStateKey::NodeId(node_id)) {
             <span class="prelude-val">Some</span>(ep) =&gt; <span class="prelude-val">Ok</span>(ep.conn_type()),
             <span class="prelude-val">None </span>=&gt; <span class="macro">anyhow::bail!</span>(<span class="string">"No endpoint for {node_id:?} found"</span>),
@@ -1433,7 +1468,12 @@
     }
 
     <span class="attr">#[must_use = <span class="string">"actions must be handled"</span>]
-    </span><span class="kw">fn </span>handle_call_me_maybe(<span class="kw-2">&amp;mut </span><span class="self">self</span>, sender: NodeId, cm: CallMeMaybe) -&gt; Vec&lt;PingAction&gt; {
+    </span><span class="kw">fn </span>handle_call_me_maybe(
+        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+        sender: NodeId,
+        cm: CallMeMaybe,
+        metrics: <span class="kw-2">&amp;</span>Metrics,
+    ) -&gt; Vec&lt;PingAction&gt; {
         <span class="kw">let </span>ns_id = NodeStateKey::NodeId(sender);
         <span class="kw">if let </span><span class="prelude-val">Some</span>(id) = <span class="self">self</span>.get_id(ns_id.clone()) {
             <span class="kw">for </span>number <span class="kw">in </span><span class="kw-2">&amp;</span>cm.my_numbers {
@@ -1443,8 +1483,8 @@
         }
         <span class="kw">match </span><span class="self">self</span>.get_mut(ns_id) {
             <span class="prelude-val">None </span>=&gt; {
-                <span class="macro">inc!</span>(MagicsockMetrics, recv_disco_call_me_maybe_bad_disco);
                 <span class="macro">debug!</span>(<span class="string">"received call-me-maybe: ignore, node is unknown"</span>);
+                metrics.recv_disco_call_me_maybe_bad_disco.inc();
                 <span class="macro">vec!</span>[]
             }
             <span class="prelude-val">Some</span>(ns) =&gt; {
@@ -1628,6 +1668,7 @@
                 Source::NamedApp {
                     name: <span class="string">"test"</span>.into(),
                 },
+                <span class="kw-2">&amp;</span>Default::default(),
             )
         }
     }
@@ -1673,7 +1714,8 @@
                 <span class="prelude-val">Some</span>(addr)
             })
             .collect();
-        <span class="kw">let </span>loaded_node_map = NodeMap::load_from_vec(addrs.clone(), PathSelection::default());
+        <span class="kw">let </span>loaded_node_map =
+            NodeMap::load_from_vec(addrs.clone(), PathSelection::default(), <span class="kw-2">&amp;</span>Default::default());
 
         <span class="kw">let </span><span class="kw-2">mut </span>loaded: Vec&lt;NodeAddr&gt; = loaded_node_map
             .list_remote_infos(Instant::now())

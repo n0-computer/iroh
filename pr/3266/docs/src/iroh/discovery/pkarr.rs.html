@@ -402,7 +402,12 @@
 <a href="#401" id="401">401</a>
 <a href="#402" id="402">402</a>
 <a href="#403" id="403">403</a>
-<a href="#404" id="404">404</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service which publishes and resolves node information using a [pkarr] relay.
+<a href="#404" id="404">404</a>
+<a href="#405" id="405">405</a>
+<a href="#406" id="406">406</a>
+<a href="#407" id="407">407</a>
+<a href="#408" id="408">408</a>
+<a href="#409" id="409">409</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service which publishes and resolves node information using a [pkarr] relay.
 //!
 //! Public-Key Addressable Resource Records, [pkarr], is a system which allows publishing
 //! [DNS Resource Records] owned by a particular [`SecretKey`] under a name derived from its
@@ -465,7 +470,7 @@
 <span class="kw">use crate</span>::{
     discovery::{Discovery, DiscoveryItem, NodeData},
     endpoint::force_staging_infra,
-    watchable::{Disconnected, Watchable, Watcher},
+    watcher::{<span class="self">self</span>, Disconnected, Watchable, Watcher <span class="kw">as _</span>},
     Endpoint,
 };
 
@@ -621,7 +626,7 @@
     </span>secret_key: SecretKey,
     <span class="attr">#[debug(<span class="string">"PkarrClient"</span>)]
     </span>pkarr_client: PkarrRelayClient,
-    watcher: Watcher&lt;<span class="prelude-ty">Option</span>&lt;NodeInfo&gt;&gt;,
+    watcher: watcher::Direct&lt;<span class="prelude-ty">Option</span>&lt;NodeInfo&gt;&gt;,
     ttl: u32,
     republish_interval: Duration,
 }
@@ -796,10 +801,15 @@
             .send()
             .<span class="kw">await</span><span class="question-mark">?</span>;
 
-        <span class="kw">if </span>!response.status().is_success() {
+        <span class="kw">let </span>status = response.status();
+        <span class="kw">if </span>!status.is_success() {
+            <span class="kw">let </span>text = <span class="kw">if let </span><span class="prelude-val">Ok</span>(text) = response.text().<span class="kw">await </span>{
+                text
+            } <span class="kw">else </span>{
+                <span class="string">"(no details provided)"</span>.to_string()
+            };
             <span class="macro">bail!</span>(<span class="macro">format!</span>(
-                <span class="string">"Publish request failed with status {}"</span>,
-                response.status()
+                <span class="string">"Publish request failed with status {status}: {text}"</span>,
             ))
         }
 

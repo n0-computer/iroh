@@ -1754,7 +1754,13 @@
 <a href="#1753" id="1753">1753</a>
 <a href="#1754" id="1754">1754</a>
 <a href="#1755" id="1755">1755</a>
-<a href="#1756" id="1756">1756</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
+<a href="#1756" id="1756">1756</a>
+<a href="#1757" id="1757">1757</a>
+<a href="#1758" id="1758">1758</a>
+<a href="#1759" id="1759">1759</a>
+<a href="#1760" id="1760">1760</a>
+<a href="#1761" id="1761">1761</a>
+<a href="#1762" id="1762">1762</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
 //!
 //! It is implemented as an actor with [`Client`] as handle.
 //!
@@ -1783,8 +1789,6 @@
 
 <span class="kw">use </span>anyhow::{anyhow, bail, Context <span class="kw">as _</span>, <span class="prelude-ty">Result</span>};
 <span class="kw">use </span>iroh_base::RelayUrl;
-<span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
-</span><span class="kw">use </span>iroh_metrics::inc;
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">use </span>iroh_relay::dns::DnsResolver;
 <span class="kw">use </span>iroh_relay::{
@@ -1809,9 +1813,7 @@
 
 <span class="attr">#[cfg(wasm_browser)]
 </span><span class="kw">use </span><span class="kw">crate</span>::net_report::portmapper; <span class="comment">// We stub the library
-</span><span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
-</span><span class="kw">use </span><span class="kw">crate</span>::net_report::Metrics;
-<span class="kw">use </span><span class="kw">crate</span>::net_report::{<span class="self">self</span>, Report};
+</span><span class="kw">use </span><span class="kw">crate</span>::net_report::{<span class="self">self</span>, Metrics, Report};
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">use </span><span class="kw">crate</span>::net_report::{
     defaults::timeouts::DNS_TIMEOUT,
@@ -1872,6 +1874,7 @@
         last_report: <span class="prelude-ty">Option</span>&lt;Arc&lt;Report&gt;&gt;,
         relay_map: RelayMap,
         protocols: BTreeSet&lt;ProbeProto&gt;,
+        metrics: Arc&lt;Metrics&gt;,
         <span class="attr">#[cfg(not(wasm_browser))] </span>socket_state: SocketState,
     ) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>(msg_tx, msg_rx) = mpsc::channel(<span class="number">32</span>);
@@ -1891,6 +1894,7 @@
             </span>socket_state,
             <span class="attr">#[cfg(not(wasm_browser))]
             </span>hairpin_actor: hairpin::Client::new(net_report, addr),
+            metrics,
         };
         <span class="kw">let </span>task =
             task::spawn(<span class="kw">async move </span>{ actor.run().<span class="kw">await </span>}.instrument(<span class="macro">info_span!</span>(<span class="string">"reportgen.actor"</span>)));
@@ -1971,6 +1975,7 @@
     <span class="doccomment">/// The hairpin actor.
     </span><span class="attr">#[cfg(not(wasm_browser))]
     </span>hairpin_actor: hairpin::Client,
+    metrics: Arc&lt;Metrics&gt;,
 }
 
 <span class="kw">impl </span>Actor {
@@ -2371,12 +2376,14 @@
                 <span class="attr">#[cfg(not(wasm_browser))]
                 </span><span class="kw">let </span>socket_state = <span class="self">self</span>.socket_state.clone();
 
+                <span class="kw">let </span>metrics = <span class="self">self</span>.metrics.clone();
                 set.spawn(
                     run_probe(
                         reportstate,
                         relay_node,
                         probe.clone(),
                         net_report,
+                        metrics,
                         <span class="attr">#[cfg(not(wasm_browser))]
                         </span>pinger,
                         <span class="attr">#[cfg(not(wasm_browser))]
@@ -2510,6 +2517,7 @@
     relay_node: Arc&lt;RelayNode&gt;,
     probe: Probe,
     net_report: net_report::Addr,
+    metrics: Arc&lt;Metrics&gt;,
     <span class="attr">#[cfg(not(wasm_browser))] </span>pinger: Pinger,
     <span class="attr">#[cfg(not(wasm_browser))] </span>socket_state: SocketState,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;ProbeReport, ProbeError&gt; {
@@ -2562,7 +2570,7 @@
             };
             <span class="kw">match </span>maybe_sock {
                 <span class="prelude-val">Some</span>(sock) =&gt; {
-                    result = run_stun_probe(sock, relay_addr, net_report, probe).<span class="kw">await</span><span class="question-mark">?</span>;
+                    result = run_stun_probe(sock, relay_addr, net_report, probe, <span class="kw-2">&amp;</span>metrics).<span class="kw">await</span><span class="question-mark">?</span>;
                 }
                 <span class="prelude-val">None </span>=&gt; {
                     <span class="kw">return </span><span class="prelude-val">Err</span>(ProbeError::AbortSet(
@@ -2641,6 +2649,7 @@
     relay_addr: SocketAddr,
     net_report: net_report::Addr,
     probe: Probe,
+    metrics: <span class="kw-2">&amp;</span>Metrics,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;ProbeReport, ProbeError&gt; {
     <span class="kw">match </span>probe.proto() {
         ProbeProto::StunIpv4 =&gt; <span class="macro">debug_assert!</span>(relay_addr.is_ipv4()),
@@ -2676,12 +2685,10 @@
 
             <span class="kw">if </span><span class="macro">matches!</span>(probe, Probe::StunIpv4 { .. }) {
                 result.ipv4_can_send = <span class="bool-val">true</span>;
-                <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
-                </span><span class="macro">inc!</span>(Metrics, stun_packets_sent_ipv4);
+                metrics.stun_packets_sent_ipv4.inc();
             } <span class="kw">else </span>{
                 result.ipv6_can_send = <span class="bool-val">true</span>;
-                <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
-                </span><span class="macro">inc!</span>(Metrics, stun_packets_sent_ipv6);
+                metrics.stun_packets_sent_ipv6.inc();
             }
             <span class="kw">let </span>(delay, addr) = stun_rx
                 .<span class="kw">await
@@ -3210,6 +3217,8 @@
         <span class="kw">let </span>(_server_b, relay_b) = test_utils::relay().<span class="kw">await</span>;
 
         <span class="kw">let </span><span class="kw-2">mut </span>report = Report::default();
+        <span class="kw">let </span>relay_a = Arc::new(relay_a);
+        <span class="kw">let </span>relay_b = Arc::new(relay_b);
 
         <span class="comment">// A STUN IPv4 probe from the the first relay server.
         </span><span class="kw">let </span>probe_report_a = ProbeReport {
@@ -3294,6 +3303,8 @@
     </span><span class="kw">async fn </span>test_update_report_icmp() {
         <span class="kw">let </span>(_server_a, relay_a) = test_utils::relay().<span class="kw">await</span>;
         <span class="kw">let </span>(_server_b, relay_b) = test_utils::relay().<span class="kw">await</span>;
+        <span class="kw">let </span>relay_a = Arc::new(relay_a);
+        <span class="kw">let </span>relay_b = Arc::new(relay_b);
 
         <span class="kw">let </span><span class="kw-2">mut </span>report = Report::default();
 
@@ -3407,7 +3418,7 @@
         <span class="kw">let </span>addr = server.stun_addr().expect(<span class="string">"test relay serves stun"</span>);
         <span class="kw">let </span>probe = Probe::IcmpV4 {
             delay: Duration::from_secs(<span class="number">0</span>),
-            node,
+            node: Arc::new(node),
         };
 
         <span class="comment">// A single ICMP packet might get lost.  Try several and take the first.
@@ -3472,6 +3483,7 @@
     #[traced_test]
     </span><span class="kw">async fn </span>test_quic_probe() -&gt; TestResult {
         <span class="kw">let </span>(server, relay) = test_utils::relay().<span class="kw">await</span>;
+        <span class="kw">let </span>relay = Arc::new(relay);
         <span class="kw">let </span>client_config = iroh_relay::client::make_dangerous_client_config();
         <span class="kw">let </span>ep = quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), <span class="number">0</span>))<span class="question-mark">?</span>;
         <span class="kw">let </span>client_addr = ep.local_addr()<span class="question-mark">?</span>;
@@ -3485,7 +3497,7 @@
         <span class="kw">let </span>port = server.quic_addr().unwrap().port();
         <span class="kw">let </span>probe = Probe::QuicIpv4 {
             delay: Duration::from_secs(<span class="number">0</span>),
-            node: relay.clone(),
+            node: relay,
         };
         <span class="kw">let </span>probe = <span class="kw">match </span>run_quic_probe(
             quic_addr_disc,

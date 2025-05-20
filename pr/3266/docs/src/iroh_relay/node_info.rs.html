@@ -755,18 +755,7 @@
 <a href="#754" id="754">754</a>
 <a href="#755" id="755">755</a>
 <a href="#756" id="756">756</a>
-<a href="#757" id="757">757</a>
-<a href="#758" id="758">758</a>
-<a href="#759" id="759">759</a>
-<a href="#760" id="760">760</a>
-<a href="#761" id="761">761</a>
-<a href="#762" id="762">762</a>
-<a href="#763" id="763">763</a>
-<a href="#764" id="764">764</a>
-<a href="#765" id="765">765</a>
-<a href="#766" id="766">766</a>
-<a href="#767" id="767">767</a>
-<a href="#768" id="768">768</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
+<a href="#757" id="757">757</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
 //!
 //! Dialing by [`NodeId`] is supported by iroh nodes publishing [Pkarr] records to DNS
 //! servers or the Mainline DHT.  This module supports creating and parsing these records.
@@ -1296,14 +1285,15 @@
         <span class="kw">let </span>pubkey_z32 = pubkey.to_z32();
         <span class="kw">let </span>node_id = NodeId::from(<span class="kw-2">*</span>pubkey.verifying_key());
         <span class="kw">let </span>zone = dns::Name::new(<span class="kw-2">&amp;</span>pubkey_z32)<span class="question-mark">?</span>;
-        <span class="kw">let </span>inner = packet.packet();
-        <span class="kw">let </span>txt_data = inner.answers.iter().filter_map(|rr| <span class="kw">match </span><span class="kw-2">&amp;</span>rr.rdata {
-            RData::TXT(txt) =&gt; <span class="kw">match </span>rr.name.without(<span class="kw-2">&amp;</span>zone) {
-                <span class="prelude-val">Some</span>(name) <span class="kw">if </span>name.to_string() == IROH_TXT_NAME =&gt; <span class="prelude-val">Some</span>(txt),
-                <span class="prelude-val">Some</span>(<span class="kw">_</span>) | <span class="prelude-val">None </span>=&gt; <span class="prelude-val">None</span>,
-            },
-            <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
-        });
+        <span class="kw">let </span>txt_data = packet
+            .all_resource_records()
+            .filter_map(|rr| <span class="kw">match </span><span class="kw-2">&amp;</span>rr.rdata {
+                RData::TXT(txt) =&gt; <span class="kw">match </span>rr.name.without(<span class="kw-2">&amp;</span>zone) {
+                    <span class="prelude-val">Some</span>(name) <span class="kw">if </span>name.to_string() == IROH_TXT_NAME =&gt; <span class="prelude-val">Some</span>(txt),
+                    <span class="prelude-val">Some</span>(<span class="kw">_</span>) | <span class="prelude-val">None </span>=&gt; <span class="prelude-val">None</span>,
+                },
+                <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
+            });
 
         <span class="kw">let </span>txt_strs = txt_data.filter_map(|s| String::try_from(s.clone()).ok());
         <span class="self">Self</span>::from_strings(node_id, txt_strs)
@@ -1365,30 +1355,18 @@
         secret_key: <span class="kw-2">&amp;</span>SecretKey,
         ttl: u32,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;pkarr::SignedPacket&gt; {
-        <span class="kw">let </span>packet = <span class="self">self</span>.to_pkarr_dns_packet(ttl)<span class="question-mark">?</span>;
-        <span class="kw">let </span>keypair = pkarr::Keypair::from_secret_key(<span class="kw-2">&amp;</span>secret_key.to_bytes());
-        <span class="kw">let </span>signed_packet = pkarr::SignedPacket::from_packet(<span class="kw-2">&amp;</span>keypair, <span class="kw-2">&amp;</span>packet)
-            .map_err(|e| <span class="macro">anyhow::anyhow!</span>(e.to_string()))<span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(signed_packet)
-    }
-
-    <span class="kw">fn </span>to_pkarr_dns_packet(<span class="kw-2">&amp;</span><span class="self">self</span>, ttl: u32) -&gt; <span class="prelude-ty">Result</span>&lt;pkarr::dns::Packet&lt;<span class="lifetime">'static</span>&gt;&gt; {
         <span class="kw">use </span>pkarr::dns::{<span class="self">self</span>, rdata};
-        <span class="kw">let </span>name = dns::Name::new(IROH_TXT_NAME)<span class="question-mark">?</span>.into_owned();
+        <span class="kw">let </span>keypair = pkarr::Keypair::from_secret_key(<span class="kw-2">&amp;</span>secret_key.to_bytes());
+        <span class="kw">let </span>name = dns::Name::new(IROH_TXT_NAME)<span class="question-mark">?</span>;
 
-        <span class="kw">let </span><span class="kw-2">mut </span>packet = dns::Packet::new_reply(<span class="number">0</span>);
+        <span class="kw">let </span><span class="kw-2">mut </span>builder = pkarr::SignedPacket::builder();
         <span class="kw">for </span>s <span class="kw">in </span><span class="self">self</span>.to_txt_strings() {
             <span class="kw">let </span><span class="kw-2">mut </span>txt = rdata::TXT::new();
             txt.add_string(<span class="kw-2">&amp;</span>s)<span class="question-mark">?</span>;
-            <span class="kw">let </span>rdata = rdata::RData::TXT(txt.into_owned());
-            packet.answers.push(dns::ResourceRecord::new(
-                name.clone(),
-                dns::CLASS::IN,
-                ttl,
-                rdata,
-            ));
+            builder = builder.txt(name.clone(), txt.into_owned(), ttl);
         }
-        <span class="prelude-val">Ok</span>(packet)
+        <span class="kw">let </span>signed_packet = builder.build(<span class="kw-2">&amp;</span>keypair)<span class="question-mark">?</span>;
+        <span class="prelude-val">Ok</span>(signed_packet)
     }
 }
 

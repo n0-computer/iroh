@@ -542,7 +542,8 @@
 <a href="#541" id="541">541</a>
 <a href="#542" id="542">542</a>
 <a href="#543" id="543">543</a>
-<a href="#544" id="544">544</a></pre></div><pre class="rust"><code><span class="doccomment">//! Internal utilities to support testing.
+<a href="#544" id="544">544</a>
+<a href="#545" id="545">545</a></pre></div><pre class="rust"><code><span class="doccomment">//! Internal utilities to support testing.
 </span><span class="kw">use </span>std::net::Ipv4Addr;
 
 <span class="kw">use </span>anyhow::Result;
@@ -645,13 +646,14 @@
     <span class="kw">let </span>quic = server
         .quic_addr()
         .map(|addr| RelayQuicConfig { port: addr.port() });
-    <span class="kw">let </span>m = RelayMap::from_nodes([RelayNode {
+    <span class="kw">let </span>n: RelayMap = RelayNode {
         url: url.clone(),
         stun_only: <span class="bool-val">false</span>,
         stun_port: server.stun_addr().map_or(DEFAULT_STUN_PORT, |s| s.port()),
         quic,
-    }])<span class="question-mark">?</span>;
-    <span class="prelude-val">Ok</span>((m, url, server))
+    }
+    .into();
+    <span class="prelude-val">Ok</span>((n, url, server))
 }
 
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>dns_and_pkarr_servers {
@@ -854,7 +856,7 @@
     <span class="kw">pub async fn </span>run_pkarr_relay(state: AppState) -&gt; <span class="prelude-ty">Result</span>&lt;(Url, CleanupDropGuard)&gt; {
         <span class="kw">let </span>bind_addr = SocketAddr::from((Ipv4Addr::LOCALHOST, <span class="number">0</span>));
         <span class="kw">let </span>app = Router::new()
-            .route(<span class="string">"/pkarr/:key"</span>, put(pkarr_put))
+            .route(<span class="string">"/pkarr/{key}"</span>, put(pkarr_put))
             .with_state(state);
         <span class="kw">let </span>listener = tokio::net::TcpListener::bind(bind_addr).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>bound_addr = listener.local_addr()<span class="question-mark">?</span>;

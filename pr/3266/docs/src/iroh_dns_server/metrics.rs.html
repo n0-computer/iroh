@@ -39,91 +39,45 @@
 <a href="#38" id="38">38</a>
 <a href="#39" id="39">39</a>
 <a href="#40" id="40">40</a>
-<a href="#41" id="41">41</a>
-<a href="#42" id="42">42</a>
-<a href="#43" id="43">43</a>
-<a href="#44" id="44">44</a>
-<a href="#45" id="45">45</a>
-<a href="#46" id="46">46</a>
-<a href="#47" id="47">47</a>
-<a href="#48" id="48">48</a>
-<a href="#49" id="49">49</a>
-<a href="#50" id="50">50</a>
-<a href="#51" id="51">51</a>
-<a href="#52" id="52">52</a>
-<a href="#53" id="53">53</a>
-<a href="#54" id="54">54</a>
-<a href="#55" id="55">55</a>
-<a href="#56" id="56">56</a>
-<a href="#57" id="57">57</a>
-<a href="#58" id="58">58</a>
-<a href="#59" id="59">59</a>
-<a href="#60" id="60">60</a>
-<a href="#61" id="61">61</a>
-<a href="#62" id="62">62</a>
-<a href="#63" id="63">63</a>
-<a href="#64" id="64">64</a></pre></div><pre class="rust"><code><span class="doccomment">//! Metrics support for the server
+<a href="#41" id="41">41</a></pre></div><pre class="rust"><code><span class="doccomment">//! Metrics support for the server
 
-</span><span class="kw">use </span>iroh_metrics::core::{Core, Counter, Metric};
-<span class="kw">use </span>struct_iterable::Iterable;
+</span><span class="kw">use </span>iroh_metrics::{Counter, MetricsGroup};
 
 <span class="doccomment">/// Metrics for iroh-dns-server
-</span><span class="attr">#[derive(Debug, Clone, Iterable)]
-#[allow(missing_docs)]
+</span><span class="attr">#[derive(Debug, Default, MetricsGroup)]
+#[metrics(name = <span class="string">"dns_server"</span>)]
 </span><span class="kw">pub struct </span>Metrics {
-    <span class="kw">pub </span>pkarr_publish_update: Counter,
-    <span class="kw">pub </span>pkarr_publish_noop: Counter,
-    <span class="kw">pub </span>dns_requests: Counter,
-    <span class="kw">pub </span>dns_requests_udp: Counter,
-    <span class="kw">pub </span>dns_requests_https: Counter,
-    <span class="kw">pub </span>dns_lookup_success: Counter,
-    <span class="kw">pub </span>dns_lookup_notfound: Counter,
-    <span class="kw">pub </span>dns_lookup_error: Counter,
-    <span class="kw">pub </span>http_requests: Counter,
-    <span class="kw">pub </span>http_requests_success: Counter,
-    <span class="kw">pub </span>http_requests_error: Counter,
-    <span class="kw">pub </span>http_requests_duration_ms: Counter,
-    <span class="kw">pub </span>store_packets_inserted: Counter,
-    <span class="kw">pub </span>store_packets_removed: Counter,
-    <span class="kw">pub </span>store_packets_updated: Counter,
-    <span class="kw">pub </span>store_packets_expired: Counter,
-}
-
-<span class="kw">impl </span>Default <span class="kw">for </span>Metrics {
-    <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
-        <span class="self">Self </span>{
-            pkarr_publish_update: Counter::new(<span class="string">"Number of pkarr relay puts that updated the state"</span>),
-            pkarr_publish_noop: Counter::new(
-                <span class="string">"Number of pkarr relay puts that did not update the state"</span>,
-            ),
-            dns_requests: Counter::new(<span class="string">"DNS requests (total)"</span>),
-            dns_requests_udp: Counter::new(<span class="string">"DNS requests via UDP"</span>),
-            dns_requests_https: Counter::new(<span class="string">"DNS requests via HTTPS (DoH)"</span>),
-            dns_lookup_success: Counter::new(<span class="string">"DNS lookup responses with at least one answer"</span>),
-            dns_lookup_notfound: Counter::new(<span class="string">"DNS lookup responses with no answers"</span>),
-            dns_lookup_error: Counter::new(<span class="string">"DNS lookup responses which failed"</span>),
-            http_requests: Counter::new(<span class="string">"Number of HTTP requests"</span>),
-            http_requests_success: Counter::new(<span class="string">"Number of HTTP requests with a 2xx status code"</span>),
-            http_requests_error: Counter::new(<span class="string">"Number of HTTP requests with a non-2xx status code"</span>),
-            http_requests_duration_ms: Counter::new(<span class="string">"Total duration of all HTTP requests"</span>),
-            store_packets_inserted: Counter::new(<span class="string">"Signed packets inserted into the store"</span>),
-            store_packets_removed: Counter::new(<span class="string">"Signed packets removed from the store"</span>),
-            store_packets_updated: Counter::new(<span class="string">"Number of updates to existing packets"</span>),
-            store_packets_expired: Counter::new(<span class="string">"Number of expired packets"</span>),
-        }
-    }
-}
-
-<span class="kw">impl </span>Metric <span class="kw">for </span>Metrics {
-    <span class="kw">fn </span>name() -&gt; <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str {
-        <span class="string">"dns_server"
-    </span>}
-}
-
-<span class="doccomment">/// Init the metrics collection core.
-</span><span class="kw">pub fn </span>init_metrics() {
-    Core::init(|reg, metrics| {
-        metrics.insert(Metrics::new(reg));
-    });
+    <span class="doccomment">/// Number of pkarr relay puts that updated the state
+    </span><span class="kw">pub </span>pkarr_publish_update: Counter,
+    <span class="doccomment">/// Number of pkarr relay puts that did not update the state
+    </span><span class="kw">pub </span>pkarr_publish_noop: Counter,
+    <span class="doccomment">/// DNS requests (total)
+    </span><span class="kw">pub </span>dns_requests: Counter,
+    <span class="doccomment">/// DNS requests via UDP
+    </span><span class="kw">pub </span>dns_requests_udp: Counter,
+    <span class="doccomment">/// DNS requests via HTTPS (DoH)
+    </span><span class="kw">pub </span>dns_requests_https: Counter,
+    <span class="doccomment">/// DNS lookup responses with at least one answer
+    </span><span class="kw">pub </span>dns_lookup_success: Counter,
+    <span class="doccomment">/// DNS lookup responses with no answers
+    </span><span class="kw">pub </span>dns_lookup_notfound: Counter,
+    <span class="doccomment">/// DNS lookup responses which failed
+    </span><span class="kw">pub </span>dns_lookup_error: Counter,
+    <span class="doccomment">/// Number of HTTP requests
+    </span><span class="kw">pub </span>http_requests: Counter,
+    <span class="doccomment">/// Number of HTTP requests with a 2xx status code
+    </span><span class="kw">pub </span>http_requests_success: Counter,
+    <span class="doccomment">/// Number of HTTP requests with a non-2xx status code
+    </span><span class="kw">pub </span>http_requests_error: Counter,
+    <span class="doccomment">/// Total duration of all HTTP requests
+    </span><span class="kw">pub </span>http_requests_duration_ms: Counter,
+    <span class="doccomment">/// Signed packets inserted into the store
+    </span><span class="kw">pub </span>store_packets_inserted: Counter,
+    <span class="doccomment">/// Signed packets removed from the store
+    </span><span class="kw">pub </span>store_packets_removed: Counter,
+    <span class="doccomment">/// Number of updates to existing packets
+    </span><span class="kw">pub </span>store_packets_updated: Counter,
+    <span class="doccomment">/// Number of expired packets
+    </span><span class="kw">pub </span>store_packets_expired: Counter,
 }
 </code></pre></div></section></main></body></html>

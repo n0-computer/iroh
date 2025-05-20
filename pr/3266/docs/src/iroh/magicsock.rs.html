@@ -4469,7 +4469,76 @@
 <a href="#4468" id="4468">4468</a>
 <a href="#4469" id="4469">4469</a>
 <a href="#4470" id="4470">4470</a>
-<a href="#4471" id="4471">4471</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4471" id="4471">4471</a>
+<a href="#4472" id="4472">4472</a>
+<a href="#4473" id="4473">4473</a>
+<a href="#4474" id="4474">4474</a>
+<a href="#4475" id="4475">4475</a>
+<a href="#4476" id="4476">4476</a>
+<a href="#4477" id="4477">4477</a>
+<a href="#4478" id="4478">4478</a>
+<a href="#4479" id="4479">4479</a>
+<a href="#4480" id="4480">4480</a>
+<a href="#4481" id="4481">4481</a>
+<a href="#4482" id="4482">4482</a>
+<a href="#4483" id="4483">4483</a>
+<a href="#4484" id="4484">4484</a>
+<a href="#4485" id="4485">4485</a>
+<a href="#4486" id="4486">4486</a>
+<a href="#4487" id="4487">4487</a>
+<a href="#4488" id="4488">4488</a>
+<a href="#4489" id="4489">4489</a>
+<a href="#4490" id="4490">4490</a>
+<a href="#4491" id="4491">4491</a>
+<a href="#4492" id="4492">4492</a>
+<a href="#4493" id="4493">4493</a>
+<a href="#4494" id="4494">4494</a>
+<a href="#4495" id="4495">4495</a>
+<a href="#4496" id="4496">4496</a>
+<a href="#4497" id="4497">4497</a>
+<a href="#4498" id="4498">4498</a>
+<a href="#4499" id="4499">4499</a>
+<a href="#4500" id="4500">4500</a>
+<a href="#4501" id="4501">4501</a>
+<a href="#4502" id="4502">4502</a>
+<a href="#4503" id="4503">4503</a>
+<a href="#4504" id="4504">4504</a>
+<a href="#4505" id="4505">4505</a>
+<a href="#4506" id="4506">4506</a>
+<a href="#4507" id="4507">4507</a>
+<a href="#4508" id="4508">4508</a>
+<a href="#4509" id="4509">4509</a>
+<a href="#4510" id="4510">4510</a>
+<a href="#4511" id="4511">4511</a>
+<a href="#4512" id="4512">4512</a>
+<a href="#4513" id="4513">4513</a>
+<a href="#4514" id="4514">4514</a>
+<a href="#4515" id="4515">4515</a>
+<a href="#4516" id="4516">4516</a>
+<a href="#4517" id="4517">4517</a>
+<a href="#4518" id="4518">4518</a>
+<a href="#4519" id="4519">4519</a>
+<a href="#4520" id="4520">4520</a>
+<a href="#4521" id="4521">4521</a>
+<a href="#4522" id="4522">4522</a>
+<a href="#4523" id="4523">4523</a>
+<a href="#4524" id="4524">4524</a>
+<a href="#4525" id="4525">4525</a>
+<a href="#4526" id="4526">4526</a>
+<a href="#4527" id="4527">4527</a>
+<a href="#4528" id="4528">4528</a>
+<a href="#4529" id="4529">4529</a>
+<a href="#4530" id="4530">4530</a>
+<a href="#4531" id="4531">4531</a>
+<a href="#4532" id="4532">4532</a>
+<a href="#4533" id="4533">4533</a>
+<a href="#4534" id="4534">4534</a>
+<a href="#4535" id="4535">4535</a>
+<a href="#4536" id="4536">4536</a>
+<a href="#4537" id="4537">4537</a>
+<a href="#4538" id="4538">4538</a>
+<a href="#4539" id="4539">4539</a>
+<a href="#4540" id="4540">4540</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4505,7 +4574,6 @@
 <span class="kw">use </span>concurrent_queue::ConcurrentQueue;
 <span class="kw">use </span>data_encoding::HEXLOWER;
 <span class="kw">use </span>iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
-<span class="kw">use </span>iroh_metrics::{inc, inc_by};
 <span class="kw">use </span>iroh_relay::{protos::stun, RelayMap};
 <span class="kw">use </span>n0_future::{
     boxed::BoxStream,
@@ -4546,8 +4614,9 @@
     disco::{<span class="self">self</span>, CallMeMaybe, SendAddr},
     discovery::{Discovery, DiscoveryItem, DiscoverySubscribers, NodeData, UserData},
     key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
-    net_report::{<span class="self">self</span>, IpMappedAddresses},
-    watchable::{Watchable, Watcher},
+    metrics::EndpointMetrics,
+    net_report::{<span class="self">self</span>, IpMappedAddresses, Report},
+    watcher::{<span class="self">self</span>, Watchable},
 };
 
 <span class="kw">mod </span>metrics;
@@ -4621,6 +4690,8 @@
     <span class="doccomment">/// Configuration for what path selection to use
     </span><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) path_selection: PathSelection,
+
+    <span class="kw">pub</span>(<span class="kw">crate</span>) metrics: EndpointMetrics,
 }
 
 <span class="doccomment">/// Contents of a relay message. Use a SmallVec to avoid allocations for the very
@@ -4713,6 +4784,9 @@
     <span class="doccomment">/// Our discovered direct addresses.
     </span>direct_addrs: DiscoveredDirectAddrs,
 
+    <span class="doccomment">/// Our latest net-report
+    </span>net_report: Watchable&lt;<span class="prelude-ty">Option</span>&lt;Arc&lt;Report&gt;&gt;&gt;,
+
     <span class="doccomment">/// List of CallMeMaybe disco messages that should be sent out after the next endpoint update
     /// completes
     </span>pending_call_me_maybes: std::sync::Mutex&lt;HashMap&lt;PublicKey, RelayUrl&gt;&gt;,
@@ -4728,6 +4802,8 @@
 
     <span class="doccomment">/// Broadcast channel for listening to discovery updates.
     </span>discovery_subscribers: DiscoverySubscribers,
+
+    <span class="kw">pub</span>(<span class="kw">crate</span>) metrics: EndpointMetrics,
 }
 
 <span class="doccomment">/// Sockets and related state, grouped together so we can cfg them out for browsers.
@@ -4816,15 +4892,39 @@
     /// store [`Some`] set of addresses.
     ///
     /// To get the current direct addresses, use [`Watcher::initialized`].
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>direct_addresses(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Watcher&lt;<span class="prelude-ty">Option</span>&lt;BTreeSet&lt;DirectAddr&gt;&gt;&gt; {
+    ///
+    /// [`Watcher`]: crate::watcher::Watcher
+    /// [`Watcher::initialized`]: crate::watcher::Watcher::initialized
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>direct_addresses(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; watcher::Direct&lt;<span class="prelude-ty">Option</span>&lt;BTreeSet&lt;DirectAddr&gt;&gt;&gt; {
         <span class="self">self</span>.direct_addrs.addrs.watch()
+    }
+
+    <span class="doccomment">/// Returns a [`Watcher`] for this socket's net-report.
+    ///
+    /// The [`MagicSock`] continuously monitors the network conditions for changes.
+    /// Whenever changes are detected this [`Watcher`] will yield a new report.
+    ///
+    /// Upon the first creation on the [`MagicSock`] it may not yet have completed
+    /// a first net-report. In this case, the current item in this [`Watcher`] will
+    /// be [`None`].  Once the first report has been run, the [`Watcher`] will
+    /// store [`Some`] report.
+    ///
+    /// To get the current `net-report`, use [`Watcher::initialized`].
+    ///
+    /// [`Watcher`]: crate::watcher::Watcher
+    /// [`Watcher::initialized`]: crate::watcher::Watcher::initialized
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>net_report(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; watcher::Direct&lt;<span class="prelude-ty">Option</span>&lt;Arc&lt;Report&gt;&gt;&gt; {
+        <span class="self">self</span>.net_report.watch()
     }
 
     <span class="doccomment">/// Watch for changes to the home relay.
     ///
     /// Note that this can be used to wait for the initial home relay to be known using
     /// [`Watcher::initialized`].
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>home_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Watcher&lt;<span class="prelude-ty">Option</span>&lt;RelayUrl&gt;&gt; {
+    ///
+    /// [`Watcher`]: crate::watcher::Watcher
+    /// [`Watcher::initialized`]: crate::watcher::Watcher::initialized
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>home_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; watcher::Direct&lt;<span class="prelude-ty">Option</span>&lt;RelayUrl&gt;&gt; {
         <span class="self">self</span>.my_relay.watch()
     }
 
@@ -4838,7 +4938,9 @@
     ///
     /// Will return an error if there is no address information known about the
     /// given `node_id`.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>conn_type(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;Watcher&lt;ConnectionType&gt;&gt; {
+    ///
+    /// [`Watcher`]: crate::watcher::Watcher
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>conn_type(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;watcher::Direct&lt;ConnectionType&gt;&gt; {
         <span class="self">self</span>.node_map.conn_type(node_id)
     }
 
@@ -4858,7 +4960,8 @@
             }
         }
         <span class="kw">if </span>!addr.is_empty() {
-            <span class="self">self</span>.node_map.add_node_addr(addr, source);
+            <span class="self">self</span>.node_map
+                .add_node_addr(addr, source, <span class="kw-2">&amp;</span><span class="self">self</span>.metrics.magicsock);
             <span class="prelude-val">Ok</span>(())
         } <span class="kw">else if </span>pruned != <span class="number">0 </span>{
             <span class="prelude-val">Err</span>(<span class="macro">anyhow::anyhow!</span>(
@@ -4935,14 +5038,16 @@
     <span class="doccomment">/// Implementation for AsyncUdpSocket::try_send
     </span><span class="attr">#[instrument(skip_all)]
     </span><span class="kw">fn </span>try_send(<span class="kw-2">&amp;</span><span class="self">self</span>, transmit: <span class="kw-2">&amp;</span>quinn_udp::Transmit) -&gt; io::Result&lt;()&gt; {
-        <span class="macro">inc_by!</span>(MagicsockMetrics, send_data, transmit.contents.len() <span class="kw">as _</span>);
+        <span class="self">self</span>.metrics
+            .magicsock
+            .send_data
+            .inc_by(transmit.contents.len() <span class="kw">as _</span>);
 
         <span class="kw">if </span><span class="self">self</span>.is_closed() {
-            <span class="macro">inc_by!</span>(
-                MagicsockMetrics,
-                send_data_network_down,
-                transmit.contents.len() <span class="kw">as _
-            </span>);
+            <span class="self">self</span>.metrics
+                .magicsock
+                .send_data_network_down
+                .inc_by(transmit.contents.len() <span class="kw">as _</span>);
             <span class="kw">return </span><span class="prelude-val">Err</span>(io::Error::new(
                 io::ErrorKind::NotConnected,
                 <span class="string">"connection closed"</span>,
@@ -4970,10 +5075,11 @@
                 <span class="comment">// Get the node's relay address and best direct address, as well
                 // as any pings that need to be sent for hole-punching purposes.
                 </span><span class="kw">let </span><span class="kw-2">mut </span>transmit = transmit.clone();
-                <span class="kw">match </span><span class="self">self
-                    </span>.node_map
-                    .get_send_addrs(dest, <span class="self">self</span>.ipv6_reported.load(Ordering::Relaxed))
-                {
+                <span class="kw">match </span><span class="self">self</span>.node_map.get_send_addrs(
+                    dest,
+                    <span class="self">self</span>.ipv6_reported.load(Ordering::Relaxed),
+                    <span class="kw-2">&amp;</span><span class="self">self</span>.metrics.magicsock,
+                ) {
                     <span class="prelude-val">Some</span>((node_id, udp_addr, relay_url, msgs)) =&gt; {
                         <span class="kw">let </span><span class="kw-2">mut </span>pings_sent = <span class="bool-val">false</span>;
                         <span class="comment">// If we have pings to send, we *have* to send them out first.
@@ -5193,9 +5299,9 @@
         conn.try_send(transmit)<span class="question-mark">?</span>;
         <span class="kw">let </span>total_bytes: u64 = transmit.contents.len() <span class="kw">as </span>u64;
         <span class="kw">if </span>addr.is_ipv6() {
-            <span class="macro">inc_by!</span>(MagicsockMetrics, send_ipv6, total_bytes);
+            <span class="self">self</span>.metrics.magicsock.send_ipv6.inc_by(total_bytes);
         } <span class="kw">else </span>{
-            <span class="macro">inc_by!</span>(MagicsockMetrics, send_ipv4, total_bytes);
+            <span class="self">self</span>.metrics.magicsock.send_ipv4.inc_by(total_bytes);
         }
         <span class="prelude-val">Ok</span>(())
     }
@@ -5208,7 +5314,7 @@
                 </span>.sockets
                 .v6
                 .as_ref()
-                .ok_or(io::Error::new(io::ErrorKind::Other, <span class="string">"no IPv6 connection"</span>))<span class="question-mark">?</span>,
+                .ok_or(io::Error::other(<span class="string">"no IPv6 connection"</span>))<span class="question-mark">?</span>,
         };
         <span class="prelude-val">Ok</span>(sock)
     }
@@ -5340,7 +5446,7 @@
             <span class="kw">let </span><span class="kw-2">mut </span>quic_datagram_count = <span class="number">0</span>;
             <span class="kw">if </span>meta.len &gt; meta.stride {
                 <span class="macro">trace!</span>(%meta.len, %meta.stride, <span class="string">"GRO datagram received"</span>);
-                <span class="macro">inc!</span>(MagicsockMetrics, recv_gro_datagrams);
+                <span class="self">self</span>.metrics.magicsock.recv_gro_datagrams.inc();
             }
 
             <span class="comment">// Chunk through the datagrams in this GRO payload to find disco and stun
@@ -5374,9 +5480,15 @@
                 } <span class="kw">else </span>{
                     <span class="macro">trace!</span>(src = %meta.addr, len = %meta.stride, <span class="string">"UDP recv: quic packet"</span>);
                     <span class="kw">if </span>from_ipv4 {
-                        <span class="macro">inc_by!</span>(MagicsockMetrics, recv_data_ipv4, datagram.len() <span class="kw">as _</span>);
+                        <span class="self">self</span>.metrics
+                            .magicsock
+                            .recv_data_ipv4
+                            .inc_by(datagram.len() <span class="kw">as _</span>);
                     } <span class="kw">else </span>{
-                        <span class="macro">inc_by!</span>(MagicsockMetrics, recv_data_ipv6, datagram.len() <span class="kw">as _</span>);
+                        <span class="self">self</span>.metrics
+                            .magicsock
+                            .recv_data_ipv6
+                            .inc_by(datagram.len() <span class="kw">as _</span>);
                     }
                     quic_datagram_count += <span class="number">1</span>;
                     buf_contains_quic_datagrams = <span class="bool-val">true</span>;
@@ -5433,7 +5545,10 @@
         }
 
         <span class="kw">if </span>quic_packets_total &gt; <span class="number">0 </span>{
-            <span class="macro">inc_by!</span>(MagicsockMetrics, recv_datagrams, quic_packets_total <span class="kw">as _</span>);
+            <span class="self">self</span>.metrics
+                .magicsock
+                .recv_datagrams
+                .inc_by(quic_packets_total <span class="kw">as _</span>);
             <span class="macro">trace!</span>(<span class="string">"UDP recv: {} packets"</span>, quic_packets_total);
         }
     }
@@ -5473,7 +5588,10 @@
                         </span><span class="kw">continue</span>;
                     }
                     <span class="prelude-val">Some</span>((node_id, meta, buf)) =&gt; {
-                        <span class="macro">inc_by!</span>(MagicsockMetrics, recv_data_relay, buf.len() <span class="kw">as _</span>);
+                        <span class="self">self</span>.metrics
+                            .magicsock
+                            .recv_data_relay
+                            .inc_by(buf.len() <span class="kw">as _</span>);
                         <span class="macro">trace!</span>(
                             src = %meta.addr,
                             node = %node_id.fmt_short(),
@@ -5492,7 +5610,7 @@
 
         <span class="comment">// If we have any msgs to report, they are in the first `num_msgs_total` slots
         </span><span class="kw">if </span>num_msgs &gt; <span class="number">0 </span>{
-            <span class="macro">inc_by!</span>(MagicsockMetrics, recv_datagrams, num_msgs <span class="kw">as _</span>);
+            <span class="self">self</span>.metrics.magicsock.recv_datagrams.inc_by(num_msgs <span class="kw">as _</span>);
             Poll::Ready(<span class="prelude-val">Ok</span>(num_msgs))
         } <span class="kw">else </span>{
             Poll::Pending
@@ -5585,7 +5703,7 @@
             <span class="prelude-val">Ok</span>(dm) =&gt; dm,
             <span class="prelude-val">Err</span>(DiscoBoxError::Open(err)) =&gt; {
                 <span class="macro">warn!</span>(<span class="question-mark">?</span>err, <span class="string">"failed to open disco box"</span>);
-                <span class="macro">inc!</span>(MagicsockMetrics, recv_disco_bad_key);
+                <span class="self">self</span>.metrics.magicsock.recv_disco_bad_key.inc();
                 <span class="kw">return</span>;
             }
             <span class="prelude-val">Err</span>(DiscoBoxError::Parse(err)) =&gt; {
@@ -5595,16 +5713,16 @@
                 // understand. Not even worth logging about, lest it
                 // be too spammy for old clients.
 
-                </span><span class="macro">inc!</span>(MagicsockMetrics, recv_disco_bad_parse);
+                </span><span class="self">self</span>.metrics.magicsock.recv_disco_bad_parse.inc();
                 <span class="macro">debug!</span>(<span class="question-mark">?</span>err, <span class="string">"failed to parse disco message"</span>);
                 <span class="kw">return</span>;
             }
         };
 
         <span class="kw">if </span>src.is_relay() {
-            <span class="macro">inc!</span>(MagicsockMetrics, recv_disco_relay);
+            <span class="self">self</span>.metrics.magicsock.recv_disco_relay.inc();
         } <span class="kw">else </span>{
-            <span class="macro">inc!</span>(MagicsockMetrics, recv_disco_udp);
+            <span class="self">self</span>.metrics.magicsock.recv_disco_udp.inc();
         }
 
         <span class="kw">let </span>span = <span class="macro">trace_span!</span>(<span class="string">"handle_disco"</span>, <span class="question-mark">?</span>dm);
@@ -5612,15 +5730,15 @@
         <span class="macro">trace!</span>(<span class="string">"receive disco message"</span>);
         <span class="kw">match </span>dm {
             disco::Message::Ping(ping) =&gt; {
-                <span class="macro">inc!</span>(MagicsockMetrics, recv_disco_ping);
+                <span class="self">self</span>.metrics.magicsock.recv_disco_ping.inc();
                 <span class="self">self</span>.handle_ping(ping, sender, src);
             }
             disco::Message::Pong(pong) =&gt; {
-                <span class="macro">inc!</span>(MagicsockMetrics, recv_disco_pong);
+                <span class="self">self</span>.metrics.magicsock.recv_disco_pong.inc();
                 <span class="self">self</span>.node_map.handle_pong(sender, <span class="kw-2">&amp;</span>src, pong);
             }
             disco::Message::CallMeMaybe(cm) =&gt; {
-                <span class="macro">inc!</span>(MagicsockMetrics, recv_disco_call_me_maybe);
+                <span class="self">self</span>.metrics.magicsock.recv_disco_call_me_maybe.inc();
                 <span class="kw">match </span>src {
                     DiscoMessageSource::Relay { url, .. } =&gt; {
                         <span class="macro">event!</span>(
@@ -5636,7 +5754,9 @@
                         <span class="kw">return</span>;
                     }
                 }
-                <span class="kw">let </span>ping_actions = <span class="self">self</span>.node_map.handle_call_me_maybe(sender, cm);
+                <span class="kw">let </span>ping_actions =
+                    <span class="self">self</span>.node_map
+                        .handle_call_me_maybe(sender, cm, <span class="kw-2">&amp;</span><span class="self">self</span>.metrics.magicsock);
                 <span class="kw">for </span>action <span class="kw">in </span>ping_actions {
                     <span class="kw">match </span>action {
                         PingAction::SendCallMeMaybe { .. } =&gt; {
@@ -5808,7 +5928,7 @@
             }
             SendAddr::Relay(<span class="kw-2">ref </span>url) =&gt; {
                 <span class="kw">if </span>!<span class="self">self</span>.send_disco_message_relay(url, dst_key, msg) {
-                    <span class="kw">return </span><span class="prelude-val">Err</span>(io::Error::new(io::ErrorKind::Other, <span class="string">"Relay channel full"</span>));
+                    <span class="kw">return </span><span class="prelude-val">Err</span>(io::Error::other(<span class="string">"Relay channel full"</span>));
                 }
             }
         }
@@ -5818,7 +5938,7 @@
     <span class="kw">fn </span>send_disco_message_relay(<span class="kw-2">&amp;</span><span class="self">self</span>, url: <span class="kw-2">&amp;</span>RelayUrl, dst: NodeId, msg: disco::Message) -&gt; bool {
         <span class="macro">debug!</span>(node = %dst.fmt_short(), %url, %msg, <span class="string">"send disco message (relay)"</span>);
         <span class="kw">let </span>pkt = <span class="self">self</span>.encode_disco_message(dst, <span class="kw-2">&amp;</span>msg);
-        <span class="macro">inc!</span>(MagicsockMetrics, send_disco_relay);
+        <span class="self">self</span>.metrics.magicsock.send_disco_relay.inc();
         <span class="kw">match </span><span class="self">self</span>.try_send_relay(url, dst, <span class="macro">smallvec!</span>[pkt]) {
             <span class="prelude-val">Ok</span>(()) =&gt; {
                 <span class="kw">if let </span>disco::Message::CallMeMaybe(CallMeMaybe { <span class="kw-2">ref </span>my_numbers }) = msg {
@@ -5830,8 +5950,8 @@
                         addrs = <span class="question-mark">?</span>my_numbers,
                     );
                 }
-                <span class="macro">inc!</span>(MagicsockMetrics, sent_disco_relay);
-                disco_message_sent(<span class="kw-2">&amp;</span>msg);
+                <span class="self">self</span>.metrics.magicsock.sent_disco_relay.inc();
+                disco_message_sent(<span class="kw-2">&amp;</span>msg, <span class="kw-2">&amp;</span><span class="self">self</span>.metrics.magicsock);
                 <span class="bool-val">true
             </span>}
             <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="bool-val">false</span>,
@@ -5882,7 +6002,7 @@
         <span class="kw">let </span>pkt = <span class="self">self</span>.encode_disco_message(dst_node, msg);
         <span class="comment">// TODO: These metrics will be wrong with the poll impl
         // Also - do we need it? I'd say the `sent_disco_udp` below is enough.
-        </span><span class="macro">inc!</span>(MagicsockMetrics, send_disco_udp);
+        </span><span class="self">self</span>.metrics.magicsock.send_disco_udp.inc();
         <span class="kw">let </span>transmit = quinn_udp::Transmit {
             destination: dst,
             contents: <span class="kw-2">&amp;</span>pkt,
@@ -5894,8 +6014,8 @@
         <span class="kw">match </span>sent {
             <span class="prelude-val">Ok</span>(()) =&gt; {
                 <span class="macro">trace!</span>(%dst, node = %dst_node.fmt_short(), %msg, <span class="string">"sent disco message"</span>);
-                <span class="macro">inc!</span>(MagicsockMetrics, sent_disco_udp);
-                disco_message_sent(msg);
+                <span class="self">self</span>.metrics.magicsock.sent_disco_udp.inc();
+                disco_message_sent(msg, <span class="kw-2">&amp;</span><span class="self">self</span>.metrics.magicsock);
                 <span class="prelude-val">Ok</span>(())
             }
             <span class="prelude-val">Err</span>(err) =&gt; {
@@ -5987,7 +6107,7 @@
     </span><span class="attr">#[instrument(skip_all)]
     </span><span class="kw">fn </span>re_stun(<span class="kw-2">&amp;</span><span class="self">self</span>, why: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str) {
         <span class="macro">debug!</span>(<span class="string">"re_stun: {}"</span>, why);
-        <span class="macro">inc!</span>(MagicsockMetrics, re_stun_calls);
+        <span class="self">self</span>.metrics.magicsock.re_stun_calls.inc();
         <span class="self">self</span>.direct_addr_update_state.schedule_run(why);
     }
 
@@ -6156,10 +6276,11 @@
             </span>insecure_skip_relay_cert_verify,
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>path_selection,
+            metrics,
         } = opts;
 
         <span class="attr">#[cfg(not(wasm_browser))]
-        </span><span class="kw">let </span>actor_sockets = ActorSocketState::bind(addr_v4, addr_v6)<span class="question-mark">?</span>;
+        </span><span class="kw">let </span>actor_sockets = ActorSocketState::bind(addr_v4, addr_v6, metrics.portmapper.clone())<span class="question-mark">?</span>;
 
         <span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">let </span>sockets = actor_sockets.msock_socket_state()<span class="question-mark">?</span>;
@@ -6173,6 +6294,7 @@
             </span>dns_resolver.clone(),
             <span class="attr">#[cfg(not(wasm_browser))]
             </span><span class="prelude-val">Some</span>(ip_mapped_addrs.clone()),
+            metrics.net_report.clone(),
         )<span class="question-mark">?</span>;
 
         <span class="kw">let </span>(actor_sender, actor_receiver) = mpsc::channel(<span class="number">256</span>);
@@ -6184,9 +6306,9 @@
         <span class="comment">// load the node data
         </span><span class="kw">let </span>node_map = node_map.unwrap_or_default();
         <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-        </span><span class="kw">let </span>node_map = NodeMap::load_from_vec(node_map, path_selection);
+        </span><span class="kw">let </span>node_map = NodeMap::load_from_vec(node_map, path_selection, <span class="kw-2">&amp;</span>metrics.magicsock);
         <span class="attr">#[cfg(not(any(test, feature = <span class="string">"test-utils"</span>)))]
-        </span><span class="kw">let </span>node_map = NodeMap::load_from_vec(node_map);
+        </span><span class="kw">let </span>node_map = NodeMap::load_from_vec(node_map, <span class="kw-2">&amp;</span>metrics.magicsock);
 
         <span class="kw">let </span>secret_encryption_key = secret_ed_box(secret_key.secret());
 
@@ -6214,6 +6336,7 @@
             discovery,
             discovery_user_data: RwLock::new(discovery_user_data),
             direct_addrs: Default::default(),
+            net_report: Default::default(),
             pending_call_me_maybes: Default::default(),
             direct_addr_update_state: DirectAddrUpdateState::new(),
             <span class="attr">#[cfg(not(wasm_browser))]
@@ -6221,6 +6344,7 @@
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>insecure_skip_relay_cert_verify,
             discovery_subscribers: DiscoverySubscribers::new(),
+            metrics,
         });
 
         <span class="kw">let </span><span class="kw-2">mut </span>endpoint_config = quinn::EndpointConfig::default();
@@ -6623,6 +6747,7 @@
         Box::pin(IoPoller {
             mapped_addr: MappedAddr::from(remote),
             node_map: <span class="self">self</span>.node_map.clone(),
+            metrics: <span class="self">self</span>.metrics.magicsock.clone(),
             ip_mapped_addrs: <span class="self">self</span>.ip_mapped_addrs.clone(),
             ipv6_reported: <span class="self">self</span>.ipv6_reported.clone(),
             <span class="attr">#[cfg(not(wasm_browser))]
@@ -6725,6 +6850,7 @@
 </span><span class="kw">struct </span>IoPoller {
     mapped_addr: MappedAddr,
     node_map: Arc&lt;NodeMap&gt;,
+    metrics: Arc&lt;MagicsockMetrics&gt;,
     ip_mapped_addrs: IpMappedAddresses,
     ipv6_reported: Arc&lt;AtomicBool&gt;,
     <span class="attr">#[cfg(not(wasm_browser))]
@@ -6749,10 +6875,11 @@
 
                 <span class="comment">// Get the node's relay address and best direct address, as well
                 // as any pings that need to be sent for hole-punching purposes.
-                </span><span class="kw">match </span>this
-                    .node_map
-                    .addr_for_send(<span class="kw-2">*</span>dest, this.ipv6_reported.load(Ordering::Relaxed))
-                {
+                </span><span class="kw">match </span>this.node_map.addr_for_send(
+                    <span class="kw-2">*</span>dest,
+                    this.ipv6_reported.load(Ordering::Relaxed),
+                    this.metrics.as_ref(),
+                ) {
                     <span class="prelude-val">Some</span>((<span class="kw">_</span>, <span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(_relay_url))) =&gt; {
                         <span class="kw">return </span>this.relay_sender.poll_writable(cx)
                     }
@@ -6847,8 +6974,12 @@
 
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">impl </span>ActorSocketState {
-    <span class="kw">fn </span>bind(addr_v4: <span class="prelude-ty">Option</span>&lt;SocketAddrV4&gt;, addr_v6: <span class="prelude-ty">Option</span>&lt;SocketAddrV6&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="kw">let </span>port_mapper = portmapper::Client::default();
+    <span class="kw">fn </span>bind(
+        addr_v4: <span class="prelude-ty">Option</span>&lt;SocketAddrV4&gt;,
+        addr_v6: <span class="prelude-ty">Option</span>&lt;SocketAddrV6&gt;,
+        metrics: Arc&lt;portmapper::Metrics&gt;,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
+        <span class="kw">let </span>port_mapper = portmapper::Client::with_metrics(Default::default(), metrics);
         <span class="kw">let </span>(v4, v6) = <span class="self">Self</span>::bind_sockets(addr_v4, addr_v6)<span class="question-mark">?</span>;
 
         <span class="kw">let </span>this = <span class="self">Self </span>{
@@ -6950,7 +7081,7 @@
         </span><span class="kw">let </span><span class="kw-2">mut </span>portmap_watcher_closed = <span class="bool-val">false</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>link_change_closed = <span class="bool-val">false</span>;
         <span class="kw">loop </span>{
-            <span class="macro">inc!</span>(Metrics, actor_tick_main);
+            <span class="self">self</span>.msock.metrics.magicsock.actor_tick_main.inc();
             <span class="attr">#[cfg(not(wasm_browser))]
             </span><span class="kw">let </span>portmap_watcher_changed = portmap_watcher.changed();
             <span class="attr">#[cfg(wasm_browser)]
@@ -6965,21 +7096,21 @@
                 msg = <span class="self">self</span>.msg_receiver.recv(), <span class="kw">if </span>!receiver_closed =&gt; {
                     <span class="kw">let </span><span class="prelude-val">Some</span>(msg) = msg <span class="kw">else </span>{
                         <span class="macro">trace!</span>(<span class="string">"tick: magicsock receiver closed"</span>);
-                        <span class="macro">inc!</span>(Metrics, actor_tick_other);
+                        <span class="self">self</span>.msock.metrics.magicsock.actor_tick_other.inc();
 
                         receiver_closed = <span class="bool-val">true</span>;
                         <span class="kw">continue</span>;
                     };
 
                     <span class="macro">trace!</span>(<span class="question-mark">?</span>msg, <span class="string">"tick: msg"</span>);
-                    <span class="macro">inc!</span>(Metrics, actor_tick_msg);
+                    <span class="self">self</span>.msock.metrics.magicsock.actor_tick_msg.inc();
                     <span class="kw">if </span><span class="self">self</span>.handle_actor_message(msg).<span class="kw">await </span>{
                         <span class="kw">return </span><span class="prelude-val">Ok</span>(());
                     }
                 }
                 tick = <span class="self">self</span>.periodic_re_stun_timer.tick() =&gt; {
                     <span class="macro">trace!</span>(<span class="string">"tick: re_stun {:?}"</span>, tick);
-                    <span class="macro">inc!</span>(Metrics, actor_tick_re_stun);
+                    <span class="self">self</span>.msock.metrics.magicsock.actor_tick_re_stun.inc();
                     <span class="self">self</span>.msock.re_stun(<span class="string">"periodic"</span>);
                 }
                 change = portmap_watcher_changed, <span class="kw">if </span>!portmap_watcher_closed =&gt; {
@@ -6987,14 +7118,14 @@
                     </span>{
                         <span class="kw">if </span>change.is_err() {
                             <span class="macro">trace!</span>(<span class="string">"tick: portmap watcher closed"</span>);
-                            <span class="macro">inc!</span>(Metrics, actor_tick_other);
+                            <span class="self">self</span>.msock.metrics.magicsock.actor_tick_other.inc();
 
                             portmap_watcher_closed = <span class="bool-val">true</span>;
                             <span class="kw">continue</span>;
                         }
 
                         <span class="macro">trace!</span>(<span class="string">"tick: portmap changed"</span>);
-                        <span class="macro">inc!</span>(Metrics, actor_tick_portmap_changed);
+                        <span class="self">self</span>.msock.metrics.magicsock.actor_tick_portmap_changed.inc();
                         <span class="kw">let </span>new_external_address = <span class="kw-2">*</span>portmap_watcher.borrow();
                         <span class="macro">debug!</span>(<span class="string">"external address updated: {new_external_address:?}"</span>);
                         <span class="self">self</span>.msock.re_stun(<span class="string">"portmap_updated"</span>);
@@ -7009,7 +7140,7 @@
                             <span class="string">"tick: direct addr heartbeat {} direct addrs"</span>,
                             <span class="self">self</span>.msock.node_map.node_count(),
                         );
-                        <span class="macro">inc!</span>(Metrics, actor_tick_direct_addr_heartbeat);
+                        <span class="self">self</span>.msock.metrics.magicsock.actor_tick_direct_addr_heartbeat.inc();
                         <span class="comment">// TODO: this might trigger too many packets at once, pace this
 
                         </span><span class="self">self</span>.msock.node_map.prune_inactive();
@@ -7020,7 +7151,7 @@
                 <span class="kw">_ </span>= direct_addr_update_receiver.changed() =&gt; {
                     <span class="kw">let </span>reason = <span class="kw-2">*</span>direct_addr_update_receiver.borrow();
                     <span class="macro">trace!</span>(<span class="string">"tick: direct addr update receiver {:?}"</span>, reason);
-                    <span class="macro">inc!</span>(Metrics, actor_tick_direct_addr_update_receiver);
+                    <span class="self">self</span>.msock.metrics.magicsock.actor_tick_direct_addr_update_receiver.inc();
                     <span class="kw">if let </span><span class="prelude-val">Some</span>(reason) = reason {
                         <span class="self">self</span>.refresh_direct_addrs(reason).<span class="kw">await</span>;
                     }
@@ -7028,14 +7159,14 @@
                 is_major = link_change_r.recv(), <span class="kw">if </span>!link_change_closed =&gt; {
                     <span class="kw">let </span><span class="prelude-val">Some</span>(is_major) = is_major <span class="kw">else </span>{
                         <span class="macro">trace!</span>(<span class="string">"tick: link change receiver closed"</span>);
-                        <span class="macro">inc!</span>(Metrics, actor_tick_other);
+                        <span class="self">self</span>.msock.metrics.magicsock.actor_tick_other.inc();
 
                         link_change_closed = <span class="bool-val">true</span>;
                         <span class="kw">continue</span>;
                     };
 
                     <span class="macro">trace!</span>(<span class="string">"tick: link change {}"</span>, is_major);
-                    <span class="macro">inc!</span>(Metrics, actor_link_change);
+                    <span class="self">self</span>.msock.metrics.magicsock.actor_link_change.inc();
                     <span class="self">self</span>.handle_network_change(is_major).<span class="kw">await</span>;
                 }
                 <span class="comment">// Even if `discovery_events` yields `None`, it could begin to yield
@@ -7149,7 +7280,7 @@
     /// mistake to be made.
     </span><span class="attr">#[instrument(level = <span class="string">"debug"</span>, skip_all)]
     </span><span class="kw">async fn </span>refresh_direct_addrs(<span class="kw-2">&amp;mut </span><span class="self">self</span>, why: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str) {
-        <span class="macro">inc!</span>(MagicsockMetrics, update_direct_addrs);
+        <span class="self">self</span>.msock.metrics.magicsock.update_direct_addrs.inc();
 
         <span class="macro">debug!</span>(<span class="string">"starting direct addr update ({})"</span>, why);
         <span class="attr">#[cfg(not(wasm_browser))]
@@ -7389,6 +7520,8 @@
 
     <span class="kw">async fn </span>handle_net_report_report(<span class="kw-2">&amp;mut </span><span class="self">self</span>, report: <span class="prelude-ty">Option</span>&lt;Arc&lt;net_report::Report&gt;&gt;) {
         <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>report) = report {
+            <span class="comment">// only returns Err if the report hasn't changed.
+            </span><span class="self">self</span>.msock.net_report.set(<span class="prelude-val">Some</span>(report.clone())).ok();
             <span class="self">self</span>.msock
                 .ipv6_reported
                 .store(report.ipv6, Ordering::Relaxed);
@@ -7456,7 +7589,7 @@
         <span class="kw">let </span>old_relay = <span class="self">self</span>.msock.set_my_relay(relay_url.clone());
 
         <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>relay_url) = relay_url {
-            <span class="macro">inc!</span>(MagicsockMetrics, relay_home_change);
+            <span class="self">self</span>.msock.metrics.magicsock.relay_home_change.inc();
 
             <span class="comment">// On change, notify all currently connected relay servers and
             // start connecting to our home relay if we are not already.
@@ -7756,16 +7889,16 @@
     }
 }
 
-<span class="kw">fn </span>disco_message_sent(msg: <span class="kw-2">&amp;</span>disco::Message) {
+<span class="kw">fn </span>disco_message_sent(msg: <span class="kw-2">&amp;</span>disco::Message, metrics: <span class="kw-2">&amp;</span>MagicsockMetrics) {
     <span class="kw">match </span>msg {
         disco::Message::Ping(<span class="kw">_</span>) =&gt; {
-            <span class="macro">inc!</span>(MagicsockMetrics, sent_disco_ping);
+            metrics.sent_disco_ping.inc();
         }
         disco::Message::Pong(<span class="kw">_</span>) =&gt; {
-            <span class="macro">inc!</span>(MagicsockMetrics, sent_disco_pong);
+            metrics.sent_disco_pong.inc();
         }
         disco::Message::CallMeMaybe(<span class="kw">_</span>) =&gt; {
-            <span class="macro">inc!</span>(MagicsockMetrics, sent_disco_call_me_maybe);
+            metrics.sent_disco_call_me_maybe.inc();
         }
     }
 }
@@ -7913,7 +8046,9 @@
     <span class="kw">use crate</span>::{
         defaults::staging::{<span class="self">self</span>, EU_RELAY_HOSTNAME},
         dns::DnsResolver,
-        tls, Endpoint, RelayMode,
+        tls,
+        watcher::Watcher <span class="kw">as _</span>,
+        Endpoint, RelayMode,
     };
 
     <span class="kw">const </span>ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"n0/test/1"</span>;
@@ -7939,6 +8074,7 @@
                 <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
                 </span>path_selection: PathSelection::default(),
                 discovery_user_data: <span class="prelude-val">None</span>,
+                metrics: Default::default(),
             }
         }
     }
@@ -7948,9 +8084,8 @@
         secret_key: <span class="kw-2">&amp;</span>SecretKey,
         tls_auth: <span class="kw">crate</span>::tls::Authentication,
     ) -&gt; ServerConfig {
-        <span class="kw">let </span>quic_server_config = tls_auth
-            .make_server_config(secret_key, <span class="macro">vec!</span>[], <span class="bool-val">false</span>)
-            .expect(<span class="string">"should generate valid config"</span>);
+        <span class="kw">let </span>quic_server_config = <span class="kw">crate</span>::tls::TlsConfig::new(tls_auth, secret_key.clone())
+            .make_server_config(<span class="macro">vec!</span>[], <span class="bool-val">false</span>);
         <span class="kw">let </span><span class="kw-2">mut </span>server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
         server_config.transport_config(Arc::new(quinn::TransportConfig::default()));
         server_config
@@ -8292,7 +8427,7 @@
         <span class="macro">println!</span>(<span class="string">"first conn!"</span>);
         <span class="kw">let </span>conn = m1
             .endpoint
-            .connect(m2.endpoint.node_addr().<span class="kw">await</span><span class="question-mark">?</span>, ALPN)
+            .connect(m2.endpoint.node_addr().initialized().<span class="kw">await</span><span class="question-mark">?</span>, ALPN)
             .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="macro">println!</span>(<span class="string">"Closing first conn"</span>);
         conn.close(<span class="number">0u32</span>.into(), <span class="string">b"bye lolz"</span>);
@@ -8530,8 +8665,8 @@
         secret_key: SecretKey,
         tls_auth: tls::Authentication,
     ) -&gt; anyhow::Result&lt;Handle&gt; {
-        <span class="kw">let </span>quic_server_config =
-            tls_auth.make_server_config(<span class="kw-2">&amp;</span>secret_key, <span class="macro">vec!</span>[ALPN.to_vec()], <span class="bool-val">true</span>)<span class="question-mark">?</span>;
+        <span class="kw">let </span>quic_server_config = tls::TlsConfig::new(tls_auth, secret_key.clone())
+            .make_server_config(<span class="macro">vec!</span>[ALPN.to_vec()], <span class="bool-val">true</span>);
         <span class="kw">let </span><span class="kw-2">mut </span>server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
         server_config.transport_config(Arc::new(quinn::TransportConfig::default()));
 
@@ -8550,6 +8685,7 @@
             server_config,
             insecure_skip_relay_cert_verify: <span class="bool-val">true</span>,
             path_selection: PathSelection::default(),
+            metrics: Default::default(),
         };
         <span class="kw">let </span>msock = MagicSock::spawn(opts).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(msock)
@@ -8597,13 +8733,13 @@
     ) -&gt; <span class="prelude-ty">Result</span>&lt;quinn::Connection&gt; {
         <span class="kw">let </span>alpns = <span class="macro">vec!</span>[ALPN.to_vec()];
         <span class="kw">let </span>quic_client_config =
-            tls_auth.make_client_config(<span class="kw-2">&amp;</span>ep_secret_key, node_id, alpns, <span class="prelude-val">None</span>, <span class="bool-val">true</span>)<span class="question-mark">?</span>;
+            tls::TlsConfig::new(tls_auth, ep_secret_key.clone()).make_client_config(alpns, <span class="bool-val">true</span>);
         <span class="kw">let </span><span class="kw-2">mut </span>client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
         client_config.transport_config(transport_config);
         <span class="kw">let </span>connect = ep.connect_with(
             client_config,
             mapped_addr.private_socket_addr(),
-            <span class="string">"localhost"</span>,
+            <span class="kw-2">&amp;</span>tls::name::encode(node_id),
         )<span class="question-mark">?</span>;
         <span class="kw">let </span>connection = connect.<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(connection)
@@ -8755,6 +8891,7 @@
             Source::NamedApp {
                 name: <span class="string">"test"</span>.into(),
             },
+            <span class="kw-2">&amp;</span>msock_1.metrics.magicsock,
         );
         <span class="kw">let </span>addr_2 = msock_1.get_mapping_addr(node_id_2).unwrap();
 
@@ -8799,6 +8936,7 @@
             Source::NamedApp {
                 name: <span class="string">"test"</span>.into(),
             },
+            <span class="kw-2">&amp;</span>msock_1.metrics.magicsock,
         );
 
         <span class="comment">// We can now connect
