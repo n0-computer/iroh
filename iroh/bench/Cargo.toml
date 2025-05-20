@@ -1,6 +1,6 @@
 [package]
 name = "iroh-bench"
-version = "0.35.0"
+version = { workspace = true }
 edition = "2021"
 license = "MIT OR Apache-2.0"
 publish = false
