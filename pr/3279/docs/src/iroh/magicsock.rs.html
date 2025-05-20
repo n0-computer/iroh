@@ -3619,7 +3619,19 @@
 <a href="#3618" id="3618">3618</a>
 <a href="#3619" id="3619">3619</a>
 <a href="#3620" id="3620">3620</a>
-<a href="#3621" id="3621">3621</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#3621" id="3621">3621</a>
+<a href="#3622" id="3622">3622</a>
+<a href="#3623" id="3623">3623</a>
+<a href="#3624" id="3624">3624</a>
+<a href="#3625" id="3625">3625</a>
+<a href="#3626" id="3626">3626</a>
+<a href="#3627" id="3627">3627</a>
+<a href="#3628" id="3628">3628</a>
+<a href="#3629" id="3629">3629</a>
+<a href="#3630" id="3630">3630</a>
+<a href="#3631" id="3631">3631</a>
+<a href="#3632" id="3632">3632</a>
+<a href="#3633" id="3633">3633</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4087,6 +4099,17 @@
         }
 
         <span class="prelude-val">Err</span>(io::Error::other(<span class="string">"no valid socket available"</span>))
+    }
+
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>addr_for_send(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        dest: NodeIdMappedAddr,
+    ) -&gt; <span class="prelude-ty">Option</span>&lt;(PublicKey, <span class="prelude-ty">Option</span>&lt;SocketAddr&gt;, <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;)&gt; {
+        <span class="self">self</span>.node_map.addr_for_send(
+            dest,
+            <span class="self">self</span>.ipv6_reported.load(Ordering::Relaxed),
+            <span class="kw-2">&amp;</span><span class="self">self</span>.metrics.magicsock,
+        )
     }
 
     <span class="doccomment">/// Implementation for AsyncUdpSocket::try_send
@@ -5242,7 +5265,8 @@
 
 <span class="kw">impl </span>AsyncUdpSocket <span class="kw">for </span>MagicSock {
     <span class="kw">fn </span>create_io_poller(<span class="self">self</span>: Arc&lt;<span class="self">Self</span>&gt;) -&gt; Pin&lt;Box&lt;<span class="kw">dyn </span>quinn::UdpPoller&gt;&gt; {
-        <span class="self">self</span>.transports.create_io_poller()
+        <span class="self">self</span>.transports
+            .create_io_poller(<span class="self">self</span>.clone(), <span class="self">self</span>.ip_mapped_addrs.clone())
     }
 
     <span class="kw">fn </span>try_send(<span class="kw-2">&amp;</span><span class="self">self</span>, transmit: <span class="kw-2">&amp;</span>quinn_udp::Transmit) -&gt; io::Result&lt;()&gt; {

@@ -573,7 +573,25 @@
 <a href="#572" id="572">572</a>
 <a href="#573" id="573">573</a>
 <a href="#574" id="574">574</a>
-<a href="#575" id="575">575</a></pre></div><pre class="rust"><code><span class="doccomment">//! Tools for spawning an accept loop that routes incoming requests to the right protocol.
+<a href="#575" id="575">575</a>
+<a href="#576" id="576">576</a>
+<a href="#577" id="577">577</a>
+<a href="#578" id="578">578</a>
+<a href="#579" id="579">579</a>
+<a href="#580" id="580">580</a>
+<a href="#581" id="581">581</a>
+<a href="#582" id="582">582</a>
+<a href="#583" id="583">583</a>
+<a href="#584" id="584">584</a>
+<a href="#585" id="585">585</a>
+<a href="#586" id="586">586</a>
+<a href="#587" id="587">587</a>
+<a href="#588" id="588">588</a>
+<a href="#589" id="589">589</a>
+<a href="#590" id="590">590</a>
+<a href="#591" id="591">591</a>
+<a href="#592" id="592">592</a>
+<a href="#593" id="593">593</a></pre></div><pre class="rust"><code><span class="doccomment">//! Tools for spawning an accept loop that routes incoming requests to the right protocol.
 //!
 //! ## Example
 //!
@@ -1021,7 +1039,6 @@
     <span class="kw">use </span>n0_watcher::Watcher;
     <span class="kw">use </span>quinn::ApplicationClose;
     <span class="kw">use </span>testresult::TestResult;
-    <span class="kw">use </span>tracing_test::traced_test;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
     <span class="kw">use crate</span>::{endpoint::ConnectionError, RelayMode};
@@ -1065,17 +1082,24 @@
         }
     }
 
-    <span class="attr">#[tokio::test]
-    #[traced_test]
+    <span class="comment">// #[tokio::test(flavor = "multi_thread")]
+    </span><span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_limiter() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="kw">let </span>e1 = Endpoint::builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
+        tracing_subscriber::fmt::try_init().ok();
+        <span class="kw">let </span>e1 = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="comment">// deny all access
         </span><span class="kw">let </span>proto = AccessLimit::new(Echo, |_node_id| <span class="bool-val">false</span>);
         <span class="kw">let </span>r1 = Router::builder(e1.clone()).accept(ECHO_ALPN, proto).spawn();
 
         <span class="kw">let </span>addr1 = r1.endpoint().node_addr().initialized().<span class="kw">await</span><span class="question-mark">?</span>;
-
-        <span class="kw">let </span>e2 = Endpoint::builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="macro">dbg!</span>(<span class="kw-2">&amp;</span>addr1);
+        <span class="kw">let </span>e2 = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="macro">println!</span>(<span class="string">"connecting"</span>);
         <span class="kw">let </span>conn = e2.connect(addr1, ECHO_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
@@ -1090,8 +1114,10 @@
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="attr">#[tokio::test]
+    <span class="comment">// #[tokio::test(flavor = "multi_thread")]
+    </span><span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_graceful_shutdown() -&gt; TestResult {
+        tracing_subscriber::fmt::try_init().ok();
         <span class="attr">#[derive(Debug, Clone, Default)]
         </span><span class="kw">struct </span>TestProtocol {
             connections: Arc&lt;Mutex&lt;Vec&lt;Connection&gt;&gt;&gt;,
@@ -1109,17 +1135,22 @@
             }
 
             <span class="kw">fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; BoxFuture&lt;()&gt; {
+                <span class="macro">eprintln!</span>(<span class="string">"shutting down"</span>);
                 <span class="kw">let </span>this = <span class="self">self</span>.clone();
                 Box::pin(<span class="kw">async move </span>{
                     tokio::time::sleep(Duration::from_millis(<span class="number">100</span>)).<span class="kw">await</span>;
+                    <span class="macro">eprintln!</span>(<span class="string">"waiting for lock"</span>);
                     <span class="kw">let </span><span class="kw-2">mut </span>connections = this.connections.lock().expect(<span class="string">"poisoned"</span>);
+                    <span class="macro">eprintln!</span>(<span class="string">"got lock"</span>);
                     <span class="kw">for </span>conn <span class="kw">in </span>connections.drain(..) {
+                        <span class="macro">eprintln!</span>(<span class="string">"closing"</span>);
                         conn.close(<span class="number">42u32</span>.into(), <span class="string">b"shutdown"</span>);
                     }
                 })
             }
         }
 
+        <span class="macro">eprintln!</span>(<span class="string">"creating ep1"</span>);
         <span class="kw">let </span>endpoint = Endpoint::builder()
             .relay_mode(RelayMode::Disabled)
             .bind()
@@ -1127,16 +1158,21 @@
         <span class="kw">let </span>router = Router::builder(endpoint)
             .accept(TEST_ALPN, TestProtocol::default())
             .spawn();
+        <span class="macro">eprintln!</span>(<span class="string">"waiting for node addr"</span>);
         <span class="kw">let </span>addr = router.endpoint().node_addr().initialized().<span class="kw">await</span><span class="question-mark">?</span>;
 
+        <span class="macro">eprintln!</span>(<span class="string">"creating ep2"</span>);
         <span class="kw">let </span>endpoint2 = Endpoint::builder()
             .relay_mode(RelayMode::Disabled)
             .bind()
             .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="macro">eprintln!</span>(<span class="string">"connecting to {:?}"</span>, addr);
         <span class="kw">let </span>conn = endpoint2.connect(addr, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
 
+        <span class="macro">eprintln!</span>(<span class="string">"starting shutdown"</span>);
         router.shutdown().<span class="kw">await</span><span class="question-mark">?</span>;
 
+        <span class="macro">eprintln!</span>(<span class="string">"waiting for closed conn"</span>);
         <span class="kw">let </span>reason = conn.closed().<span class="kw">await</span>;
         <span class="macro">assert_eq!</span>(
             reason,

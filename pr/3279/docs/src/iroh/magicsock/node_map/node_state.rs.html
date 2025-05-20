@@ -2037,7 +2037,7 @@
     <span class="doccomment">/// Returns the address(es) that should be used for sending the next packet.
     ///
     /// This may return to send on one, both or no paths.
-    </span><span class="kw">fn </span>addr_for_send(
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>addr_for_send(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         now: <span class="kw-2">&amp;</span>Instant,
         have_ipv6: bool,
