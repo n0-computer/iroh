@@ -274,6 +274,9 @@ impl RouterBuilder {
         let run_loop_fut = async move {
             // Make sure to cancel the token, if this future ever exits.
             let _cancel_guard = cancel_token.clone().drop_guard();
+            // We create a separate cancellation token to stop any `ProtocolHandler::accept` futures
+            // that are still running after `ProtocolHandler::shutdown` was called.
+            let handler_cancel_token = CancellationToken::new();
 
             loop {
                 tokio::select! {
@@ -311,7 +314,7 @@ impl RouterBuilder {
                         };
 
                         let protocols = protocols.clone();
-                        let token = cancel_token.child_token();
+                        let token = handler_cancel_token.child_token();
                         join_set.spawn(async move {
                             token.run_until_cancelled(handle_connection(incoming, protocols)).await
                         }.instrument(info_span!("router.accept")));
@@ -319,10 +322,15 @@ impl RouterBuilder {
                 }
             }
 
-            shutdown(&endpoint, protocols).await;
-
-            // Abort remaining tasks.
-            tracing::info!("Shutting down remaining tasks");
+            // We first shutdown the protocol handlers to give them a chance to close connections gracefully.
+            protocols.shutdown().await;
+            // We now cancel the remaining `ProtocolHandler::accept` futures.
+            handler_cancel_token.cancel();
+            // Now we close the endpoint. This will force-close all connections that are not yet closed.
+            endpoint.close().await;
+            // Finally, we abort the remaining accept tasks. This should be a noop because we already cancelled
+            // the futures above.
+            tracing::debug!("Shutting down remaining tasks");
             join_set.shutdown().await;
         };
         let task = task::spawn(run_loop_fut);
@@ -334,17 +342,6 @@ impl RouterBuilder {
             cancel_token: cancel,
         }
     }
-}
-
-/// Shutdown the different parts of the router concurrently.
-async fn shutdown(endpoint: &Endpoint, protocols: Arc<ProtocolMap>) {
-    // We ignore all errors during shutdown.
-    let _ = tokio::join!(
-        // Close the endpoint.
-        endpoint.close(),
-        // Shutdown protocol handlers.
-        protocols.shutdown(),
-    );
 }
 
 async fn handle_connection(incoming: crate::endpoint::Incoming, protocols: Arc<ProtocolMap>) {
