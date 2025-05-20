@@ -122,10 +122,17 @@ pub trait ProtocolHandler: Send + Sync + std::fmt::Debug + 'static {
 
     /// Handle an incoming connection.
     ///
-    /// This runs on a freshly spawned tokio task so this can be long-running.
+    /// This runs on a freshly spawned tokio task so the returned future can be long-running.
+    ///
+    /// When [`Router::shutdown`] is called, no further connections will be accepted, and
+    /// the futures returned by [`Self::accept`] will be aborted after the future returned
+    /// from [`ProtocolHandler::shutdown`] completes.
     fn accept(&self, connection: Connection) -> BoxFuture<Result<()>>;
 
-    /// Called when the node shuts down.
+    /// Called when the router shuts down.
+    ///
+    /// This is called from [`Router::shutdown`]. The returned future is awaited before
+    /// the router closes the endpoint.
     fn shutdown(&self) -> BoxFuture<()> {
         Box::pin(async move {})
     }
