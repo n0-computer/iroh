@@ -1,6 +1,6 @@
 use std::{
     io::{self, IoSliceMut},
-    net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6},
     pin::Pin,
     sync::{atomic::AtomicUsize, Arc},
     task::{Context, Poll},
@@ -60,38 +60,21 @@ impl Transports {
 
         match destination {
             #[cfg(wasm_browser)]
-            Addr::Ipv4(..) => {
-                return Poll::Ready(Err(io::Error::other("IPv4 is unsupported in browser")))
+            Addr::Ip(..) => {
+                return Poll::Ready(Err(io::Error::other("IP is unsupported in browser")))
             }
             #[cfg(not(wasm_browser))]
-            Addr::Ipv4(addr) => {
-                let addr = SocketAddr::V4(*addr);
+            Addr::Ip(addr) => {
                 for transport in &self.ip {
-                    if transport.is_valid_send_addr(&addr) {
-                        match transport.poll_send(addr, src, transmit) {
+                    if transport.is_valid_send_addr(addr) {
+                        match transport.poll_send(*addr, src, transmit) {
                             Poll::Pending => {}
                             Poll::Ready(res) => return Poll::Ready(res),
                         }
                     }
                 }
             }
-            #[cfg(wasm_browser)]
-            Addr::Ipv6(..) => {
-                return Poll::Ready(Err(io::Error::other("IPv6 is unsupported in browser")))
-            }
-            #[cfg(not(wasm_browser))]
-            Addr::Ipv6(addr) => {
-                let addr = SocketAddr::V6(*addr);
-                for transport in &self.ip {
-                    if transport.is_valid_send_addr(&addr) {
-                        match transport.poll_send(addr, src, transmit) {
-                            Poll::Pending => {}
-                            Poll::Ready(res) => return Poll::Ready(res),
-                        }
-                    }
-                }
-            }
-            Addr::RelayUrl(url, node_id) => {
+            Addr::Relay(url, node_id) => {
                 for transport in &self.relay {
                     if transport.is_valid_send_addr(url, node_id) {
                         match transport.poll_send(url.clone(), *node_id, transmit) {
@@ -175,7 +158,7 @@ impl Transports {
                         relays
                             .into_iter()
                             .flatten()
-                            .map(|(relay_url, node_id)| Addr::RelayUrl(relay_url, node_id)),
+                            .map(|(relay_url, node_id)| Addr::Relay(relay_url, node_id)),
                     )
                     .collect()
             })
@@ -196,7 +179,7 @@ impl Transports {
         self.ip.iter().map(|t| t.bind_addr()).collect()
     }
 
-    /// Returns the bound addresses for IP based transports
+    /// Returns the local addresses for IP based transports
     #[cfg(not(wasm_browser))]
     pub(crate) fn ip_local_addrs(&self) -> Vec<SocketAddr> {
         self.ip.iter().map(|t| t.local_addr()).collect()
@@ -246,18 +229,15 @@ impl Transports {
         // TODO: what about multiple matches?
         match addr {
             #[cfg(wasm_browser)]
-            Addr::Ipv4(..) | Addr::Ipv6(..) => Poll::Ready(Err(io::Error::other(
+            Addr::Ip(..) => Poll::Ready(Err(io::Error::other(
                 "IP based addressing is not supported in the browser",
             ))),
             #[cfg(not(wasm_browser))]
-            Addr::Ipv4(..) | Addr::Ipv6(..) => {
-                let addr: SocketAddr = addr.clone().try_into().expect("known good");
-                match self.ip.iter().find(|t| t.is_valid_send_addr(&addr)) {
-                    Some(t) => t.poll_writable(cx),
-                    None => Poll::Pending,
-                }
-            }
-            Addr::RelayUrl(url, node_id) => {
+            Addr::Ip(addr) => match self.ip.iter().find(|t| t.is_valid_send_addr(addr)) {
+                Some(t) => t.poll_writable(cx),
+                None => Poll::Pending,
+            },
+            Addr::Relay(url, node_id) => {
                 match self
                     .relay
                     .iter()
@@ -327,29 +307,30 @@ pub(crate) struct Transmit<'a> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Addr {
-    Ipv4(SocketAddrV4),
-    Ipv6(SocketAddrV6),
-    RelayUrl(RelayUrl, NodeId),
+    Ip(SocketAddr),
+    Relay(RelayUrl, NodeId),
 }
 
 impl Default for Addr {
     fn default() -> Self {
-        Self::Ipv6(SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0))
+        Self::Ip(SocketAddr::V6(SocketAddrV6::new(
+            Ipv6Addr::UNSPECIFIED,
+            0,
+            0,
+            0,
+        )))
     }
 }
 
 impl From<SocketAddr> for Addr {
     fn from(value: SocketAddr) -> Self {
-        match value {
-            SocketAddr::V4(addr) => Self::Ipv4(addr),
-            SocketAddr::V6(addr) => Self::Ipv6(addr),
-        }
+        Self::Ip(value)
     }
 }
 
 impl From<(RelayUrl, NodeId)> for Addr {
     fn from(value: (RelayUrl, NodeId)) -> Self {
-        Self::RelayUrl(value.0, value.1)
+        Self::Relay(value.0, value.1)
     }
 }
 
@@ -358,8 +339,7 @@ impl TryFrom<Addr> for SocketAddr {
 
     fn try_from(value: Addr) -> Result<Self, Self::Error> {
         match value {
-            Addr::Ipv4(addr) => Ok(SocketAddr::V4(addr)),
-            Addr::Ipv6(addr) => Ok(SocketAddr::V6(addr)),
+            Addr::Ip(addr) => Ok(addr),
             _ => Err(anyhow::anyhow!("not a valid socket addr")),
         }
     }
@@ -370,8 +350,7 @@ impl TryFrom<Addr> for IpAddr {
 
     fn try_from(value: Addr) -> Result<Self, Self::Error> {
         match value {
-            Addr::Ipv4(addr) => Ok(IpAddr::V4(*addr.ip())),
-            Addr::Ipv6(addr) => Ok(IpAddr::V6(*addr.ip())),
+            Addr::Ip(addr) => Ok(addr.ip()),
             _ => Err(anyhow::anyhow!("not a valid socket addr")),
         }
     }
@@ -382,7 +361,7 @@ impl TryFrom<Addr> for (RelayUrl, NodeId) {
 
     fn try_from(value: Addr) -> Result<Self, Self::Error> {
         match value {
-            Addr::RelayUrl(url, node) => Ok((url, node)),
+            Addr::Relay(url, node) => Ok((url, node)),
             _ => Err(anyhow::anyhow!("not a valid relay url")),
         }
     }
@@ -390,11 +369,11 @@ impl TryFrom<Addr> for (RelayUrl, NodeId) {
 
 impl Addr {
     pub fn is_relay(&self) -> bool {
-        matches!(self, Self::RelayUrl(..))
+        matches!(self, Self::Relay(..))
     }
 
     pub fn is_ip(&self) -> bool {
-        matches!(self, Self::Ipv4(..) | Self::Ipv6(..))
+        matches!(self, Self::Ip(..))
     }
 }
 

@@ -251,7 +251,7 @@ impl MagicSock {
     /// If `None`, then we are not connected to any relay nodes.
     pub(crate) fn my_relay(&self) -> Option<RelayUrl> {
         self.local_addr().into_iter().find_map(|a| {
-            if let transports::Addr::RelayUrl(url, _) = a {
+            if let transports::Addr::Relay(url, _) = a {
                 Some(url)
             } else {
                 None
@@ -339,7 +339,7 @@ impl MagicSock {
             addrs
                 .into_iter()
                 .filter_map(|addr| {
-                    if let transports::Addr::RelayUrl(url, _) = addr {
+                    if let transports::Addr::Relay(url, _) = addr {
                         Some(url)
                     } else {
                         None
@@ -523,7 +523,7 @@ impl MagicSock {
                             active_paths.push(transports::Addr::from(addr));
                         }
                         if let Some(url) = relay_url {
-                            active_paths.push(transports::Addr::RelayUrl(url, node_id));
+                            active_paths.push(transports::Addr::Relay(url, node_id));
                         }
                     }
                     None => {
@@ -698,19 +698,19 @@ impl MagicSock {
                 } else {
                     trace!(src = ?source_addr, len = %quinn_meta.stride, "UDP recv: quic packet");
                     match source_addr {
-                        transports::Addr::Ipv4(..) => {
+                        transports::Addr::Ip(SocketAddr::V4(..)) => {
                             self.metrics
                                 .magicsock
                                 .recv_data_ipv4
                                 .inc_by(datagram.len() as _);
                         }
-                        transports::Addr::Ipv6(..) => {
+                        transports::Addr::Ip(SocketAddr::V6(..)) => {
                             self.metrics
                                 .magicsock
                                 .recv_data_ipv6
                                 .inc_by(datagram.len() as _);
                         }
-                        transports::Addr::RelayUrl(..) => {
+                        transports::Addr::Relay(..) => {
                             self.metrics
                                 .magicsock
                                 .recv_data_relay
@@ -729,9 +729,8 @@ impl MagicSock {
                     Url(RelayUrl, NodeId),
                 }
                 let addr = match source_addr {
-                    transports::Addr::Ipv4(ipv4) => AddrOrUrl::Addr(SocketAddr::V4(*ipv4)),
-                    transports::Addr::Ipv6(ipv6) => AddrOrUrl::Addr(SocketAddr::V6(*ipv6)),
-                    transports::Addr::RelayUrl(ref url, id) => AddrOrUrl::Url(url.clone(), *id),
+                    transports::Addr::Ip(addr) => AddrOrUrl::Addr(*addr),
+                    transports::Addr::Relay(ref url, id) => AddrOrUrl::Url(url.clone(), *id),
                 };
 
                 match addr {
@@ -815,7 +814,7 @@ impl MagicSock {
             return;
         }
 
-        if let transports::Addr::RelayUrl(_, node_id) = src {
+        if let transports::Addr::Relay(_, node_id) = src {
             if node_id != &sender {
                 // TODO: return here?
                 warn!("Received relay disco message from connection for {:?}, but with message from {}", node_id.fmt_short(), sender.fmt_short());
@@ -869,7 +868,7 @@ impl MagicSock {
             disco::Message::CallMeMaybe(cm) => {
                 self.metrics.magicsock.recv_disco_call_me_maybe.inc();
                 match src {
-                    transports::Addr::RelayUrl(url, _) => {
+                    transports::Addr::Relay(url, _) => {
                         event!(
                             target: "iroh::_events::call-me-maybe::recv",
                             Level::DEBUG,
@@ -1024,9 +1023,8 @@ impl MagicSock {
         msg: disco::Message,
     ) -> io::Result<()> {
         let dst = match dst {
-            SendAddr::Udp(SocketAddr::V4(v4)) => transports::Addr::Ipv4(v4),
-            SendAddr::Udp(SocketAddr::V6(v6)) => transports::Addr::Ipv6(v6),
-            SendAddr::Relay(url) => transports::Addr::RelayUrl(url, dst_key),
+            SendAddr::Udp(addr) => transports::Addr::Ip(addr),
+            SendAddr::Relay(url) => transports::Addr::Relay(url, dst_key),
         };
 
         n0_future::future::poll_fn(move |cx| loop {
@@ -1106,9 +1104,8 @@ impl MagicSock {
         });
 
         let addr = match dst {
-            SendAddr::Udp(SocketAddr::V4(v4)) => transports::Addr::Ipv4(v4),
-            SendAddr::Udp(SocketAddr::V6(v6)) => transports::Addr::Ipv6(v6),
-            SendAddr::Relay(ref url) => transports::Addr::RelayUrl(url.clone(), dst_node),
+            SendAddr::Udp(addr) => transports::Addr::Ip(addr),
+            SendAddr::Relay(ref url) => transports::Addr::Relay(url.clone(), dst_node),
         };
 
         self.try_send_disco_message(&addr, dst_node, &msg)?;
