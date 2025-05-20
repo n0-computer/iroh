@@ -431,8 +431,13 @@ impl<P: ProtocolHandler + Clone> ProtocolHandler for AccessLimit<P> {
 
 #[cfg(test)]
 mod tests {
+    use std::{sync::Mutex, time::Duration};
+
+    use quinn::ApplicationClose;
+    use testresult::TestResult;
+
     use super::*;
-    use crate::watcher::Watcher;
+    use crate::{endpoint::ConnectionError, watcher::Watcher};
 
     #[tokio::test]
     async fn test_shutdown() -> Result<()> {
@@ -493,6 +498,58 @@ mod tests {
         r1.shutdown().await?;
         e2.close().await;
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_graceful_shutdown() -> TestResult {
+        #[derive(Debug, Clone, Default)]
+        struct TestProtocol {
+            connections: Arc<Mutex<Vec<Connection>>>,
+        }
+
+        const TEST_ALPN: &[u8] = b"/iroh/test/1";
+
+        impl ProtocolHandler for TestProtocol {
+            fn accept(&self, connection: Connection) -> BoxFuture<Result<()>> {
+                let this = self.clone();
+                Box::pin(async move {
+                    this.connections.lock().expect("poisoned").push(connection);
+                    Ok(())
+                })
+            }
+
+            fn shutdown(&self) -> BoxFuture<()> {
+                let this = self.clone();
+                Box::pin(async move {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    let mut connections = this.connections.lock().expect("poisoned");
+                    for conn in connections.drain(..) {
+                        conn.close(42u32.into(), b"shutdown");
+                    }
+                })
+            }
+        }
+
+        let endpoint = Endpoint::builder().bind().await?;
+        let router = Router::builder(endpoint)
+            .accept(TEST_ALPN, TestProtocol::default())
+            .spawn();
+        let addr = router.endpoint().node_addr().initialized().await?;
+
+        let endpoint2 = Endpoint::builder().bind().await?;
+        let conn = endpoint2.connect(addr, TEST_ALPN).await?;
+
+        router.shutdown().await?;
+
+        let reason = conn.closed().await;
+        assert_eq!(
+            reason,
+            ConnectionError::ApplicationClosed(ApplicationClose {
+                error_code: 42u32.into(),
+                reason: b"shutdown".to_vec().into()
+            })
+        );
         Ok(())
     }
 }
