@@ -161,10 +161,17 @@ pub trait ProtocolHandler: Send + Sync + std::fmt::Debug + 'static {
 
     /// Handle an incoming connection.
     ///
-    /// This runs on a freshly spawned tokio task so this can be long-running.
+    /// This runs on a freshly spawned tokio task so the returned future can be long-running.
+    ///
+    /// When [`Router::shutdown`] is called, no further connections will be accepted, and
+    /// the futures returned by [`Self::accept`] will be aborted after the future returned
+    /// from [`ProtocolHandler::shutdown`] completes.
     fn accept(&self, connection: Connection) -> BoxFuture<Result<(), Error>>;
 
-    /// Called when the node shuts down.
+    /// Called when the router shuts down.
+    ///
+    /// This is called from [`Router::shutdown`]. The returned future is awaited before
+    /// the router closes the endpoint.
     fn shutdown(&self) -> BoxFuture<()> {
         Box::pin(async move {})
     }
@@ -313,6 +320,9 @@ impl RouterBuilder {
         let run_loop_fut = async move {
             // Make sure to cancel the token, if this future ever exits.
             let _cancel_guard = cancel_token.clone().drop_guard();
+            // We create a separate cancellation token to stop any `ProtocolHandler::accept` futures
+            // that are still running after `ProtocolHandler::shutdown` was called.
+            let handler_cancel_token = CancellationToken::new();
 
             loop {
                 tokio::select! {
@@ -350,7 +360,7 @@ impl RouterBuilder {
                         };
 
                         let protocols = protocols.clone();
-                        let token = cancel_token.child_token();
+                        let token = handler_cancel_token.child_token();
                         join_set.spawn(async move {
                             token.run_until_cancelled(handle_connection(incoming, protocols)).await
                         }.instrument(info_span!("router.accept")));
@@ -358,11 +368,22 @@ impl RouterBuilder {
                 }
             }
 
-            shutdown(&endpoint, protocols).await;
-
-            // Abort remaining tasks.
-            tracing::info!("Shutting down remaining tasks");
-            join_set.shutdown().await;
+            // We first shutdown the protocol handlers to give them a chance to close connections gracefully.
+            protocols.shutdown().await;
+            // We now cancel the remaining `ProtocolHandler::accept` futures.
+            handler_cancel_token.cancel();
+            // Now we close the endpoint. This will force-close all connections that are not yet closed.
+            endpoint.close().await;
+            // Finally, we abort the remaining accept tasks. This should be a noop because we already cancelled
+            // the futures above.
+            tracing::debug!("Shutting down remaining tasks");
+            join_set.abort_all();
+            while let Some(res) = join_set.join_next().await {
+                match res {
+                    Err(err) if err.is_panic() => error!("Task panicked: {err:?}"),
+                    _ => {}
+                }
+            }
         };
         let task = task::spawn(run_loop_fut);
         let task = AbortOnDropHandle::new(task);
@@ -373,17 +394,6 @@ impl RouterBuilder {
             cancel_token: cancel,
         }
     }
-}
-
-/// Shutdown the different parts of the router concurrently.
-async fn shutdown(endpoint: &Endpoint, protocols: Arc<ProtocolMap>) {
-    // We ignore all errors during shutdown.
-    let _ = tokio::join!(
-        // Close the endpoint.
-        endpoint.close(),
-        // Shutdown protocol handlers.
-        protocols.shutdown(),
-    );
 }
 
 async fn handle_connection(incoming: crate::endpoint::Incoming, protocols: Arc<ProtocolMap>) {
@@ -471,8 +481,12 @@ impl<P: ProtocolHandler + Clone> ProtocolHandler for AccessLimit<P> {
 #[cfg(test)]
 mod tests {
     use n0_snafu::{TestResult, TestResultExt};
+    use std::{sync::Mutex, time::Duration};
+
+    use quinn::ApplicationClose;
 
     use super::*;
+    use crate::{endpoint::ConnectionError, watcher::Watcher, RelayMode};
 
     #[tokio::test]
     async fn test_shutdown() -> TestResult {
@@ -519,7 +533,7 @@ mod tests {
         let proto = AccessLimit::new(Echo, |_node_id| false);
         let r1 = Router::builder(e1.clone()).accept(ECHO_ALPN, proto).spawn();
 
-        let addr1 = r1.endpoint().node_addr().await?;
+        let addr1 = r1.endpoint().node_addr().initialized().await?;
 
         let e2 = Endpoint::builder().bind().await?;
 
@@ -533,6 +547,64 @@ mod tests {
         r1.shutdown().await.e()?;
         e2.close().await;
 
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_graceful_shutdown() -> TestResult {
+        #[derive(Debug, Clone, Default)]
+        struct TestProtocol {
+            connections: Arc<Mutex<Vec<Connection>>>,
+        }
+
+        const TEST_ALPN: &[u8] = b"/iroh/test/1";
+
+        impl ProtocolHandler for TestProtocol {
+            fn accept(&self, connection: Connection) -> BoxFuture<Result<()>> {
+                let this = self.clone();
+                Box::pin(async move {
+                    this.connections.lock().expect("poisoned").push(connection);
+                    Ok(())
+                })
+            }
+
+            fn shutdown(&self) -> BoxFuture<()> {
+                let this = self.clone();
+                Box::pin(async move {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    let mut connections = this.connections.lock().expect("poisoned");
+                    for conn in connections.drain(..) {
+                        conn.close(42u32.into(), b"shutdown");
+                    }
+                })
+            }
+        }
+
+        let endpoint = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .await?;
+        let router = Router::builder(endpoint)
+            .accept(TEST_ALPN, TestProtocol::default())
+            .spawn();
+        let addr = router.endpoint().node_addr().initialized().await?;
+
+        let endpoint2 = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .await?;
+        let conn = endpoint2.connect(addr, TEST_ALPN).await?;
+
+        router.shutdown().await?;
+
+        let reason = conn.closed().await;
+        assert_eq!(
+            reason,
+            ConnectionError::ApplicationClosed(ApplicationClose {
+                error_code: 42u32.into(),
+                reason: b"shutdown".to_vec().into()
+            })
+        );
         Ok(())
     }
 }

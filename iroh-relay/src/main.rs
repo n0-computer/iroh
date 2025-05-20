@@ -619,7 +619,7 @@ async fn maybe_load_tls(
         CertMode::Reloading => {
             use rustls_cert_file_reader::FileReader;
             use rustls_cert_reloadable_resolver::{key_provider::Dyn, CertifiedKeyLoader};
-            use webpki::types::{CertificateDer, PrivateKeyDer};
+            use webpki_types::{CertificateDer, PrivateKeyDer};
 
             let cert_path = tls.cert_path();
             let key_path = tls.key_path();

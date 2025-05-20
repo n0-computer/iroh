@@ -349,7 +349,7 @@ mod tests {
     use tokio::time::Instant;
     use tracing::{debug, info, info_span, Instrument};
     use tracing_test::traced_test;
-    use webpki::types::PrivatePkcs8KeyDer;
+    use webpki_types::PrivatePkcs8KeyDer;
 
     use super::{
         server::{QuicConfig, QuicServer},

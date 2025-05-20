@@ -65,7 +65,7 @@ use super::DiscoveryError;
 use crate::{
     discovery::{Discovery, DiscoveryItem, NodeData},
     endpoint::force_staging_infra,
-    watchable::{Disconnected, Watchable, Watcher},
+    watcher::{self, Disconnected, Watchable, Watcher as _},
     Endpoint,
 };
 
@@ -248,7 +248,7 @@ struct PublisherService {
     secret_key: SecretKey,
     #[debug("PkarrClient")]
     pkarr_client: PkarrRelayClient,
-    watcher: Watcher<Option<NodeInfo>>,
+    watcher: watcher::Direct<Option<NodeInfo>>,
     ttl: u32,
     republish_interval: Duration,
 }

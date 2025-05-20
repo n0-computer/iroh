@@ -4,7 +4,7 @@ use ed25519_dalek::pkcs8::{spki::der::pem::LineEnding, EncodePrivateKey};
 use iroh_base::SecretKey;
 use nested_enum_utils::common_fields;
 use snafu::Snafu;
-use webpki::types::{pem::PemObject, CertificateDer, PrivatePkcs8KeyDer};
+use webpki_types::{pem::PemObject, CertificateDer, PrivatePkcs8KeyDer};
 
 use super::certificate;
 use crate::tls::Authentication;

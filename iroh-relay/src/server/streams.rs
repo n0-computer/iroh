@@ -28,7 +28,7 @@ pub(crate) enum RelayedStream {
 fn ws_to_io_err(e: tokio_websockets::Error) -> std::io::Error {
     match e {
         tokio_websockets::Error::Io(io_err) => io_err,
-        _ => std::io::Error::new(std::io::ErrorKind::Other, e.to_string()),
+        _ => std::io::Error::other(e.to_string()),
     }
 }
 
@@ -113,6 +113,7 @@ impl Stream for RelayedStream {
 ///
 /// Allows choosing whether or not the underlying [`tokio::net::TcpStream`] is served over Tls
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum MaybeTlsStream {
     /// A plain non-Tls [`tokio::net::TcpStream`]
     Plain(tokio::net::TcpStream),

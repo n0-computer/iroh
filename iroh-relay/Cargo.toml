@@ -66,10 +66,11 @@ sha1 = "0.10.6"
 tokio-util = { version = "0.7", features = ["io-util", "io", "codec", "rt"] }
 tracing = "0.1"
 url = { version = "2.5.3", features = ["serde"] }
-webpki = { package = "rustls-webpki", version = "0.102" }
+webpki = { package = "rustls-webpki", version = "0.103" }
 webpki-roots = "0.26"
+webpki_types = { package = "rustls-pki-types", version = "1.12" }
 data-encoding = "2.6.0"
-lru = "0.12"
+lru = "0.13"
 z32 = "1.0.3"
 snafu = { version = "0.8.5", features = ["rust_1_81"] }
 n0-snafu = "0.1.0"

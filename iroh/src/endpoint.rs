@@ -44,7 +44,7 @@ use crate::{
     metrics::EndpointMetrics,
     net_report::Report,
     tls,
-    watchable::{Disconnected, Watcher},
+    watcher::{self, Watcher},
     RelayProtocol,
 };
 
@@ -81,6 +81,29 @@ pub use super::magicsock::{
 const DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(500);
 
 type DiscoveryBuilder = Box<dyn FnOnce(&SecretKey) -> Option<Box<dyn Discovery>> + Send + Sync>;
+
+/// A type alias for the return value of [`Endpoint::node_addr`].
+///
+/// This type implements [`Watcher`] with `Value` being an optional [`NodeAddr`].
+///
+/// We return a named type instead of `impl Watcher<Value = NodeAddr>`, as this allows
+/// you to e.g. store the watcher in a struct.
+#[cfg(not(wasm_browser))]
+pub type NodeAddrWatcher = watcher::Map<
+    (
+        watcher::Direct<Option<BTreeSet<DirectAddr>>>,
+        watcher::Direct<Option<RelayUrl>>,
+    ),
+    Option<NodeAddr>,
+>;
+/// A type alias for the return value of [`Endpoint::node_addr`].
+///
+/// This type implements [`Watcher`] with `Value` being an optional [`NodeAddr`].
+///
+/// We return a named type instead of `impl Watcher<Value = NodeAddr>`, as this allows
+/// you to e.g. store the watcher in a struct.
+#[cfg(wasm_browser)]
+pub type NodeAddrWatcher = watcher::Map<watcher::Direct<Option<RelayUrl>>, Option<NodeAddr>>;
 
 /// Defines the mode of path selection for all traffic flowing through
 /// the endpoint.
@@ -934,35 +957,67 @@ impl Endpoint {
         self.static_config.tls_config.secret_key.public()
     }
 
-    /// Returns the current [`NodeAddr`] for this endpoint.
+    /// Returns a [`Watcher`] for the current [`NodeAddr`] for this endpoint.
     ///
-    /// The returned [`NodeAddr`] will have the current [`RelayUrl`] and direct addresses
-    /// as they would be returned by [`Endpoint::home_relay`] and
-    /// [`Endpoint::direct_addresses`].
+    /// The observed [`NodeAddr`] will have the current [`RelayUrl`] and direct addresses
+    /// as they would be returned by [`Endpoint::home_relay`] and [`Endpoint::direct_addresses`].
     ///
-    /// In browsers, because direct addresses are unavailable, this will only wait for
-    /// the home relay to be available before returning.
-    pub async fn node_addr(&self) -> Result<NodeAddr, Disconnected> {
-        #[cfg(not(wasm_browser))]
-        {
-            // Outside browsers, we preserve the "old" behavior of waiting for direct
-            // addresses and then adding the relay URL (should we have it)
-            let addrs = self.direct_addresses().initialized().await?;
-            let relay = self.home_relay().get()?;
-            Ok(NodeAddr::from_parts(
-                self.node_id(),
-                relay,
-                addrs.into_iter().map(|x| x.addr),
-            ))
-        }
-        #[cfg(wasm_browser)]
-        {
-            // In browsers, there will never be any direct addresses, so we wait
-            // for the home relay instead. This make the `NodeAddr` have *some* way
-            // of connecting to us.
-            let relay = self.home_relay().initialized().await?;
-            Ok(NodeAddr::new(self.node_id()).with_relay_url(relay))
-        }
+    /// Use [`Watcher::initialized`] to wait for a [`NodeAddr`] that is ready to be connected to:
+    ///
+    /// ```no_run
+    /// # async fn wrapper() -> testresult::TestResult {
+    /// use iroh::{watcher::Watcher, Endpoint};
+    ///
+    /// let endpoint = Endpoint::builder()
+    ///     .alpns(vec![b"my-alpn".to_vec()])
+    ///     .bind()
+    ///     .await?;
+    /// let node_addr = endpoint.node_addr().initialized().await?;
+    /// # let _ = node_addr;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[cfg(not(wasm_browser))]
+    pub fn node_addr(&self) -> NodeAddrWatcher {
+        let watch_addrs = self.direct_addresses();
+        let watch_relay = self.home_relay();
+        let node_id = self.node_id();
+
+        watch_addrs
+            .or(watch_relay)
+            .map(move |(addrs, relay)| match (addrs, relay) {
+                (Some(addrs), relay) => Some(NodeAddr::from_parts(
+                    node_id,
+                    relay,
+                    addrs.into_iter().map(|x| x.addr),
+                )),
+                (None, Some(relay)) => Some(NodeAddr::from_parts(
+                    node_id,
+                    Some(relay),
+                    std::iter::empty(),
+                )),
+                (None, None) => None,
+            })
+            .expect("watchable is alive - cannot be disconnected yet")
+    }
+
+    /// Returns a [`Watcher`] for the current [`NodeAddr`] for this endpoint.
+    ///
+    /// When compiled to Wasm, this function returns a watcher that initializes
+    /// with a [`NodeAddr`] that only contains a relay URL, but no direct addresses,
+    /// as there are no APIs for directly using sockets in browsers.
+    #[cfg(wasm_browser)]
+    pub fn node_addr(&self) -> NodeAddrWatcher {
+        // In browsers, there will never be any direct addresses, so we wait
+        // for the home relay instead. This makes the `NodeAddr` have *some* way
+        // of connecting to us.
+        let watch_relay = self.home_relay();
+        let node_id = self.node_id();
+        watch_relay
+            .map(move |relay| {
+                relay.map(|relay| NodeAddr::from_parts(node_id, Some(relay), std::iter::empty()))
+            })
+            .expect("watchable is alive - cannot be disconnected yet")
     }
 
     /// Returns a [`Watcher`] for the [`RelayUrl`] of the Relay server used as home relay.
@@ -982,7 +1037,7 @@ impl Endpoint {
     /// To wait for a home relay connection to be established, use [`Watcher::initialized`]:
     /// ```no_run
     /// use futures_lite::StreamExt;
-    /// use iroh::Endpoint;
+    /// use iroh::{watcher::Watcher, Endpoint};
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
@@ -990,7 +1045,7 @@ impl Endpoint {
     /// let _relay_url = mep.home_relay().initialized().await.unwrap();
     /// # });
     /// ```
-    pub fn home_relay(&self) -> Watcher<Option<RelayUrl>> {
+    pub fn home_relay(&self) -> watcher::Direct<Option<RelayUrl>> {
         self.msock.home_relay()
     }
 
@@ -1018,7 +1073,7 @@ impl Endpoint {
     /// To get the first set of direct addresses use [`Watcher::initialized`]:
     /// ```no_run
     /// use futures_lite::StreamExt;
-    /// use iroh::Endpoint;
+    /// use iroh::{watcher::Watcher, Endpoint};
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
@@ -1028,7 +1083,7 @@ impl Endpoint {
     /// ```
     ///
     /// [STUN]: https://en.wikipedia.org/wiki/STUN
-    pub fn direct_addresses(&self) -> Watcher<Option<BTreeSet<DirectAddr>>> {
+    pub fn direct_addresses(&self) -> watcher::Direct<Option<BTreeSet<DirectAddr>>> {
         self.msock.direct_addresses()
     }
 
@@ -1053,7 +1108,7 @@ impl Endpoint {
     /// To get the first report use [`Watcher::initialized`]:
     /// ```no_run
     /// use futures_lite::StreamExt;
-    /// use iroh::Endpoint;
+    /// use iroh::{watcher::Watcher, Endpoint};
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
@@ -1062,7 +1117,7 @@ impl Endpoint {
     /// # });
     /// ```
     #[doc(hidden)]
-    pub fn net_report(&self) -> Watcher<Option<Arc<Report>>> {
+    pub fn net_report(&self) -> watcher::Direct<Option<Arc<Report>>> {
         self.msock.net_report()
     }
 
@@ -1163,7 +1218,7 @@ impl Endpoint {
     /// # Errors
     ///
     /// Will return `None` if we do not have any address information for the given `node_id`.
-    pub fn conn_type(&self, node_id: NodeId) -> Option<Watcher<ConnectionType>> {
+    pub fn conn_type(&self, node_id: NodeId) -> Option<watcher::Direct<ConnectionType>> {
         self.msock.conn_type(node_id)
     }
 
@@ -1587,6 +1642,7 @@ impl Incoming {
     /// This requires the client to retry with address validation.
     ///
     /// Errors if `remote_address_validated()` is true.
+    #[allow(clippy::result_large_err)]
     pub fn retry(self) -> Result<(), RetryError> {
         self.inner.retry()
     }
@@ -1732,6 +1788,7 @@ impl Connecting {
     ///
     /// You can use [`RecvStream::is_0rtt`] to check whether a stream has been opened in 0-RTT
     /// and thus whether parts of the stream are operating under this reduced security level.
+    #[allow(clippy::result_large_err)]
     pub fn into_0rtt(self) -> Result<(Connection, ZeroRttAccepted), Self> {
         match self.inner.into_0rtt() {
             Ok((inner, zrtt_accepted)) => {
@@ -2286,9 +2343,7 @@ mod tests {
     use iroh_base::{NodeAddr, NodeId, SecretKey};
     use iroh_metrics::MetricsSource;
     use iroh_relay::http::Protocol;
-    use n0_future::StreamExt;
-    use n0_snafu::{TestError, TestResult, TestResultExt};
-    use quinn::ConnectionError;
+    use n0_future::{task::AbortOnDropHandle, StreamExt};
     use rand::SeedableRng;
     use tracing::{error_span, info, info_span, Instrument};
     use tracing_test::traced_test;
@@ -2309,8 +2364,8 @@ mod tests {
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
             .await
-            .e()?;
-        let my_addr = ep.node_addr().await?;
+            .unwrap();
+        let my_addr = ep.node_addr().initialized().await.unwrap();
         let res = ep.connect(my_addr.clone(), TEST_ALPN).await;
         assert!(res.is_err());
         let err = res.err().unwrap();
@@ -2582,11 +2637,13 @@ mod tests {
         let (relay_map, _relay_url, _guard) = run_relay_server().await?;
         let client = Endpoint::builder()
             .relay_conn_protocol(Protocol::Websocket)
+            .insecure_skip_relay_cert_verify(true)
             .relay_mode(RelayMode::Custom(relay_map.clone()))
             .bind()
             .await?;
         let server = Endpoint::builder()
             .relay_conn_protocol(Protocol::Websocket)
+            .insecure_skip_relay_cert_verify(true)
             .relay_mode(RelayMode::Custom(relay_map))
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
@@ -2609,7 +2666,7 @@ mod tests {
             }
         });
 
-        let addr = server.node_addr().await?;
+        let addr = server.node_addr().initialized().await?;
         let conn = client.connect(addr, TEST_ALPN).await?;
         let (mut send, mut recv) = conn.open_bi().await.e()?;
         send.write_all(b"Hello, world!").await.e()?;
@@ -2659,10 +2716,10 @@ mod tests {
         };
         let ep2 = ep2.bind().await?;
 
-        let ep1_nodeaddr = ep1.node_addr().await?;
-        let ep2_nodeaddr = ep2.node_addr().await?;
-        ep1.add_node_addr(ep2_nodeaddr.clone())?;
-        ep2.add_node_addr(ep1_nodeaddr.clone())?;
+        let ep1_nodeaddr = ep1.node_addr().initialized().await.unwrap();
+        let ep2_nodeaddr = ep2.node_addr().initialized().await.unwrap();
+        ep1.add_node_addr(ep2_nodeaddr.clone()).unwrap();
+        ep2.add_node_addr(ep1_nodeaddr.clone()).unwrap();
         let ep1_nodeid = ep1.node_id();
         let ep2_nodeid = ep2.node_id();
         eprintln!("node id 1 {ep1_nodeid}");
@@ -2740,7 +2797,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_conn_type_stream() -> TestResult {
+    async fn endpoint_conn_type_becomes_direct() -> TestResult {
         const TIMEOUT: Duration = std::time::Duration::from_secs(15);
         let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
@@ -2761,8 +2818,8 @@ mod tests {
             .bind()
             .await?;
 
-        async fn handle_direct_conn(ep: &Endpoint, node_id: NodeId) -> TestResult {
-            let mut stream = ep.conn_type(node_id).context("missing conn type")?.stream();
+        async fn wait_for_conn_type_direct(ep: &Endpoint, node_id: NodeId) -> TestResult {
+            let mut stream = ep.conn_type(node_id)?.stream();
             let src = ep.node_id().fmt_short();
             let dst = node_id.fmt_short();
             while let Some(conn_type) = stream.next().await {
@@ -2774,36 +2831,47 @@ mod tests {
             snafu::whatever!("conn_type stream ended before `ConnectionType::Direct`");
         }
 
-        async fn accept(ep: &Endpoint) -> TestResult<NodeId> {
-            let incoming = ep.accept().await.e()?;
-            let conn = incoming.await.e()?;
+        async fn accept(ep: &Endpoint) -> TestResult<Connection> {
+            let incoming = ep.accept().await.expect("ep closed");
+            let conn = incoming.await?;
             let node_id = conn.remote_node_id()?;
             tracing::info!(node_id=%node_id.fmt_short(), "accepted connection");
-            Ok(node_id)
+            Ok(conn)
         }
 
         let ep1_nodeid = ep1.node_id();
         let ep2_nodeid = ep2.node_id();
 
-        let ep1_nodeaddr = ep1.node_addr().await.unwrap();
+        let ep1_nodeaddr = ep1.node_addr().initialized().await?;
         tracing::info!(
             "node id 1 {ep1_nodeid}, relay URL {:?}",
             ep1_nodeaddr.relay_url()
         );
         tracing::info!("node id 2 {ep2_nodeid}");
 
-        let ep1_side = async move {
-            accept(&ep1).await?;
-            handle_direct_conn(&ep1, ep2_nodeid).await
-        };
+        let ep1_side = tokio::time::timeout(TIMEOUT, async move {
+            let conn = accept(&ep1).await?;
+            let mut send = conn.open_uni().await?;
+            wait_for_conn_type_direct(&ep1, ep2_nodeid).await?;
+            send.write_all(b"Conn is direct").await?;
+            send.finish()?;
+            conn.closed().await;
+            TestResult::Ok(())
+        });
 
-        let ep2_side = async move {
-            ep2.connect(ep1_nodeaddr, TEST_ALPN).await?;
-            handle_direct_conn(&ep2, ep1_nodeid).await
-        };
+        let ep2_side = tokio::time::timeout(TIMEOUT, async move {
+            let conn = ep2.connect(ep1_nodeaddr, TEST_ALPN).await?;
+            let mut recv = conn.accept_uni().await?;
+            wait_for_conn_type_direct(&ep2, ep1_nodeid).await?;
+            let read = recv.read_to_end(100).await?;
+            assert_eq!(read, b"Conn is direct".to_vec());
+            conn.close(0u32.into(), b"done");
+            conn.closed().await;
+            TestResult::Ok(())
+        });
 
-        let res_ep1 = tokio::spawn(tokio::time::timeout(TIMEOUT, ep1_side));
-        let res_ep2 = tokio::spawn(tokio::time::timeout(TIMEOUT, ep2_side));
+        let res_ep1 = AbortOnDropHandle::new(tokio::spawn(ep1_side));
+        let res_ep2 = AbortOnDropHandle::new(tokio::spawn(ep2_side));
 
         let (r1, r2) = tokio::try_join!(res_ep1, res_ep2).e()?;
         r1.e()??;
@@ -2942,9 +3010,10 @@ mod tests {
         )
         .await?;
 
-        connect_client_0rtt_expect_err(&client, server.node_addr().await?).await?;
+        connect_client_0rtt_expect_err(&client, server.node_addr().initialized().await?).await?;
         // The second 0rtt attempt should work
-        connect_client_0rtt_expect_ok(&client, server.node_addr().await?, true).await?;
+        connect_client_0rtt_expect_ok(&client, server.node_addr().initialized().await?, true)
+            .await?;
 
         client.close().await;
         server.close().await;
@@ -2968,7 +3037,7 @@ mod tests {
         )
         .await?;
 
-        connect_client_0rtt_expect_err(&client, server.node_addr().await?).await?;
+        connect_client_0rtt_expect_err(&client, server.node_addr().initialized().await?).await?;
 
         // connecting with another endpoint should not interfere with our
         // TLS session ticket cache for the first endpoint:
@@ -2977,10 +3046,11 @@ mod tests {
             info_span!("another"),
         )
         .await?;
-        connect_client_0rtt_expect_err(&client, another.node_addr().await?).await?;
+        connect_client_0rtt_expect_err(&client, another.node_addr().initialized().await?).await?;
         another.close().await;
 
-        connect_client_0rtt_expect_ok(&client, server.node_addr().await?, true).await?;
+        connect_client_0rtt_expect_ok(&client, server.node_addr().initialized().await?, true)
+            .await?;
 
         client.close().await;
         server.close().await;
@@ -2999,8 +3069,9 @@ mod tests {
         let server_key = SecretKey::generate(rand::thread_rng());
         let server = spawn_0rtt_server(server_key.clone(), info_span!("server-initial")).await?;
 
-        connect_client_0rtt_expect_err(&client, server.node_addr().await?).await?;
-        connect_client_0rtt_expect_ok(&client, server.node_addr().await?, true).await?;
+        connect_client_0rtt_expect_err(&client, server.node_addr().initialized().await?).await?;
+        connect_client_0rtt_expect_ok(&client, server.node_addr().initialized().await?, true)
+            .await?;
 
         server.close().await;
 
@@ -3009,7 +3080,8 @@ mod tests {
         // we expect the client to *believe* it can 0-RTT connect to the server (hence expect_ok),
         // but the server will reject the early data because it discarded necessary state
         // to decrypt it when restarting.
-        connect_client_0rtt_expect_ok(&client, server.node_addr().await?, false).await?;
+        connect_client_0rtt_expect_ok(&client, server.node_addr().initialized().await?, false)
+            .await?;
 
         client.close().await;
 
@@ -3024,7 +3096,7 @@ mod tests {
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
             .await?;
-        let server_addr = server.node_addr().await?;
+        let server_addr = server.node_addr().initialized().await?;
         let server_task = tokio::spawn(async move {
             let incoming = server.accept().await.e()?;
             let conn = incoming.await.e()?;
@@ -3073,7 +3145,7 @@ mod tests {
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
             .await?;
-        let server_addr = server.node_addr().await?;
+        let server_addr = server.node_addr().initialized().await?;
         let server_task = tokio::task::spawn(async move {
             let conn = server.accept().await.e()?.accept().e()?.await.e()?;
             let mut uni = conn.accept_uni().await.e()?;
@@ -3134,7 +3206,7 @@ mod tests {
             .alpns(accept_alpns)
             .bind()
             .await?;
-        let server_addr = server.node_addr().await?;
+        let server_addr = server.node_addr().initialized().await?;
         let server_task = tokio::spawn({
             let server = server.clone();
             async move {

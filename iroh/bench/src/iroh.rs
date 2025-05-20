@@ -6,6 +6,7 @@ use std::{
 use bytes::Bytes;
 use iroh::{
     endpoint::{Connection, ConnectionError, RecvStream, SendStream, TransportConfig},
+    watcher::Watcher as _,
     Endpoint, NodeAddr, RelayMode, RelayUrl,
 };
 use n0_snafu::{TestResult as Result, TestResultExt};

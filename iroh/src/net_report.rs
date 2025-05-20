@@ -374,6 +374,7 @@ pub(crate) struct Inflight {
 
 /// Messages to send to the [`Actor`].
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum Message {
     /// Run a net_report.
     ///

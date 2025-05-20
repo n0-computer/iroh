@@ -9,7 +9,8 @@
 use anyhow::Result;
 use iroh::{
     endpoint::Connection,
-    protocol::{Error as ProtocolError, ProtocolHandler, Router},
+    protocol::{ProtocolHandler, Router},
+    watcher::Watcher as _,
     Endpoint, NodeAddr,
 };
 use n0_future::boxed::BoxFuture;
@@ -23,7 +24,7 @@ const ALPN: &[u8] = b"iroh-example/echo/0";
 #[tokio::main]
 async fn main() -> Result<()> {
     let router = start_accept_side().await?;
-    let node_addr = router.endpoint().node_addr().await?;
+    let node_addr = router.endpoint().node_addr().initialized().await?;
 
     connect_side(node_addr).await?;
 

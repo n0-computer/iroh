@@ -14,6 +14,7 @@ use tokio::{
 
 use super::util;
 
+#[allow(clippy::large_enum_variant)]
 pub enum MaybeTlsStreamChained {
     Raw(util::Chain<std::io::Cursor<Bytes>, ProxyStream>),
     Tls(util::Chain<std::io::Cursor<Bytes>, tokio_rustls::client::TlsStream<ProxyStream>>),
@@ -119,6 +120,7 @@ pub fn downcast_upgrade(upgraded: Upgraded) -> Option<MaybeTlsStreamChained> {
 }
 
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum ProxyStream {
     Raw(TcpStream),
     Proxied(util::Chain<std::io::Cursor<Bytes>, MaybeTlsStream<TcpStream>>),
@@ -197,6 +199,7 @@ impl ProxyStream {
 }
 
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum MaybeTlsStream<IO> {
     Raw(IO),
     Tls(tokio_rustls::client::TlsStream<IO>),

@@ -80,7 +80,7 @@ use crate::{
     key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
     metrics::EndpointMetrics,
     net_report::{self, IpMappedAddresses, Report, ReportError},
-    watchable::{Watchable, Watcher},
+    watcher::{self, Watchable},
 };
 
 mod metrics;
@@ -373,7 +373,10 @@ impl MagicSock {
     /// store [`Some`] set of addresses.
     ///
     /// To get the current direct addresses, use [`Watcher::initialized`].
-    pub(crate) fn direct_addresses(&self) -> Watcher<Option<BTreeSet<DirectAddr>>> {
+    ///
+    /// [`Watcher`]: crate::watcher::Watcher
+    /// [`Watcher::initialized`]: crate::watcher::Watcher::initialized
+    pub(crate) fn direct_addresses(&self) -> watcher::Direct<Option<BTreeSet<DirectAddr>>> {
         self.direct_addrs.addrs.watch()
     }
 
@@ -388,7 +391,10 @@ impl MagicSock {
     /// store [`Some`] report.
     ///
     /// To get the current `net-report`, use [`Watcher::initialized`].
-    pub(crate) fn net_report(&self) -> Watcher<Option<Arc<Report>>> {
+    ///
+    /// [`Watcher`]: crate::watcher::Watcher
+    /// [`Watcher::initialized`]: crate::watcher::Watcher::initialized
+    pub(crate) fn net_report(&self) -> watcher::Direct<Option<Arc<Report>>> {
         self.net_report.watch()
     }
 
@@ -396,7 +402,10 @@ impl MagicSock {
     ///
     /// Note that this can be used to wait for the initial home relay to be known using
     /// [`Watcher::initialized`].
-    pub(crate) fn home_relay(&self) -> Watcher<Option<RelayUrl>> {
+    ///
+    /// [`Watcher`]: crate::watcher::Watcher
+    /// [`Watcher::initialized`]: crate::watcher::Watcher::initialized
+    pub(crate) fn home_relay(&self) -> watcher::Direct<Option<RelayUrl>> {
         self.my_relay.watch()
     }
 
@@ -410,7 +419,7 @@ impl MagicSock {
     ///
     /// Will return `None` if there is no address information known about the
     /// given `node_id`.
-    pub(crate) fn conn_type(&self, node_id: NodeId) -> Option<Watcher<ConnectionType>> {
+    pub(crate) fn conn_type(&self, node_id: NodeId) -> Option<watcher::Direct<ConnectionType>> {
         self.node_map.conn_type(node_id)
     }
 
@@ -786,7 +795,7 @@ impl MagicSock {
                 .sockets
                 .v6
                 .as_ref()
-                .ok_or(io::Error::new(io::ErrorKind::Other, "no IPv6 connection"))?,
+                .ok_or(io::Error::other("no IPv6 connection"))?,
         };
         Ok(sock)
     }
@@ -1400,7 +1409,7 @@ impl MagicSock {
             }
             SendAddr::Relay(ref url) => {
                 if !self.send_disco_message_relay(url, dst_key, msg) {
-                    return Err(io::Error::new(io::ErrorKind::Other, "Relay channel full"));
+                    return Err(io::Error::other("Relay channel full"));
                 }
             }
         }
@@ -3535,7 +3544,9 @@ mod tests {
         magicsock::{
             node_map, Handle, MagicSock, RelayContents, RelayDatagramRecvQueue, RelayRecvDatagram,
         },
-        tls, Endpoint, RelayMode,
+        tls,
+        watcher::Watcher as _,
+        Endpoint, RelayMode,
     };
 
     const ALPN: &[u8] = b"n0/test/1";
@@ -3910,7 +3921,7 @@ mod tests {
         println!("first conn!");
         let conn = m1
             .endpoint
-            .connect(m2.endpoint.node_addr().await?, ALPN)
+            .connect(m2.endpoint.node_addr().initialized().await?, ALPN)
             .await?;
         println!("Closing first conn");
         conn.close(0u32.into(), b"bye lolz");
