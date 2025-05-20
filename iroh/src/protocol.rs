@@ -331,7 +331,13 @@ impl RouterBuilder {
             // Finally, we abort the remaining accept tasks. This should be a noop because we already cancelled
             // the futures above.
             tracing::debug!("Shutting down remaining tasks");
-            join_set.shutdown().await;
+            join_set.abort_all();
+            while let Some(res) = join_set.join_next().await {
+                match res {
+                    Err(err) if err.is_panic() => error!("Task panicked: {err:?}"),
+                    _ => {}
+                }
+            }
         };
         let task = task::spawn(run_loop_fut);
         let task = AbortOnDropHandle::new(task);
