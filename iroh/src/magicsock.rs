@@ -2207,6 +2207,7 @@ impl AsyncUdpSocket for MagicSock {
         Box::pin(IoPoller {
             mapped_addr: MappedAddr::from(remote),
             node_map: self.node_map.clone(),
+            metrics: self.metrics.magicsock.clone(),
             ip_mapped_addrs: self.ip_mapped_addrs.clone(),
             ipv6_reported: self.ipv6_reported.clone(),
             #[cfg(not(wasm_browser))]
@@ -2309,6 +2310,7 @@ impl AsyncUdpSocket for MagicSock {
 struct IoPoller {
     mapped_addr: MappedAddr,
     node_map: Arc<NodeMap>,
+    metrics: Arc<MagicsockMetrics>,
     ip_mapped_addrs: IpMappedAddresses,
     ipv6_reported: Arc<AtomicBool>,
     #[cfg(not(wasm_browser))]
@@ -2333,10 +2335,11 @@ impl quinn::UdpPoller for IoPoller {
 
                 // Get the node's relay address and best direct address, as well
                 // as any pings that need to be sent for hole-punching purposes.
-                match this
-                    .node_map
-                    .addr_for_send(*dest, this.ipv6_reported.load(Ordering::Relaxed))
-                {
+                match this.node_map.addr_for_send(
+                    *dest,
+                    this.ipv6_reported.load(Ordering::Relaxed),
+                    this.metrics.as_ref(),
+                ) {
                     Some((_, None, Some(_relay_url))) => {
                         return this.relay_sender.poll_writable(cx)
                     }
