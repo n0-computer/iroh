@@ -1991,7 +1991,7 @@ impl Connection {
     /// [`Connecting::handshake_data()`] succeeds. See that method's documentations for
     /// details on the returned value.
     ///
-    /// [`Connection::handshake_data()`]: crate::Connecting::handshake_data
+    /// [`Connection::handshake_data()`]: crate::endpoint::Connecting::handshake_data
     #[inline]
     pub fn handshake_data(&self) -> Option<Box<dyn Any>> {
         self.inner.handshake_data()

@@ -97,18 +97,16 @@ let router = Router::builder(endpoint)
 struct Echo;
 
 impl ProtocolHandler for Echo {
-    fn accept(&self, connection: Connection) -> BoxedFuture<Result<()>> {
-        Box::pin(async move {
-            let (mut send, mut recv) = connection.accept_bi().await?;
+    async fn accept(&self, connection: Connection) -> Result<()> {
+        let (mut send, mut recv) = connection.accept_bi().await?;
 
-            // Echo any bytes received back directly.
-            let bytes_sent = tokio::io::copy(&mut recv, &mut send).await?;
+        // Echo any bytes received back directly.
+        let bytes_sent = tokio::io::copy(&mut recv, &mut send).await?;
 
-            send.finish()?;
-            connection.closed().await;
+        send.finish()?;
+        connection.closed().await;
 
-            Ok(())
-        })
+        Ok(())
     }
 }
 ```
