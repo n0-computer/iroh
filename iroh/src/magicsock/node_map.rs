@@ -2,7 +2,7 @@ use std::{
     collections::{hash_map::Entry, BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
-    sync::Mutex,
+    sync::RwLock,
 };
 
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
@@ -54,7 +54,7 @@ const MAX_INACTIVE_NODES: usize = 30;
 /// An index of nodeInfos by node key, NodeIdMappedAddr, and discovered ip:port endpoints.
 #[derive(Debug, Default)]
 pub(super) struct NodeMap {
-    inner: Mutex<NodeMapInner>,
+    inner: RwLock<NodeMapInner>,
 }
 
 #[derive(Default, Debug)]
@@ -142,21 +142,21 @@ impl NodeMap {
 
     fn from_inner(inner: NodeMapInner) -> Self {
         Self {
-            inner: Mutex::new(inner),
+            inner: RwLock::new(inner),
         }
     }
 
     /// Add the contact information for a node.
     pub(super) fn add_node_addr(&self, node_addr: NodeAddr, source: Source, metrics: &Metrics) {
         self.inner
-            .lock()
+            .write()
             .expect("poisoned")
             .add_node_addr(node_addr, source, metrics)
     }
 
     /// Number of nodes currently listed.
     pub(super) fn node_count(&self) -> usize {
-        self.inner.lock().expect("poisoned").node_count()
+        self.inner.read().expect("poisoned").node_count()
     }
 
     #[cfg(not(wasm_browser))]
@@ -164,12 +164,12 @@ impl NodeMap {
         &self,
         udp_addr: SocketAddr,
     ) -> Option<(PublicKey, NodeIdMappedAddr)> {
-        self.inner.lock().expect("poisoned").receive_udp(udp_addr)
+        self.inner.write().expect("poisoned").receive_udp(udp_addr)
     }
 
     pub(super) fn receive_relay(&self, relay_url: &RelayUrl, src: NodeId) -> NodeIdMappedAddr {
         self.inner
-            .lock()
+            .write()
             .expect("poisoned")
             .receive_relay(relay_url, src)
     }
@@ -184,7 +184,7 @@ impl NodeMap {
     ) {
         if let Some(ep) = self
             .inner
-            .lock()
+            .write()
             .expect("poisoned")
             .get_mut(NodeStateKey::Idx(id))
         {
@@ -195,7 +195,7 @@ impl NodeMap {
     pub(super) fn notify_ping_timeout(&self, id: usize, tx_id: stun_rs::TransactionId) {
         if let Some(ep) = self
             .inner
-            .lock()
+            .write()
             .expect("poisoned")
             .get_mut(NodeStateKey::Idx(id))
         {
@@ -208,7 +208,7 @@ impl NodeMap {
         node_key: NodeId,
     ) -> Option<NodeIdMappedAddr> {
         self.inner
-            .lock()
+            .read()
             .expect("poisoned")
             .get(NodeStateKey::NodeId(node_key))
             .map(|ep| *ep.quic_mapped_addr())
@@ -223,14 +223,14 @@ impl NodeMap {
         tx_id: TransactionId,
     ) -> PingHandled {
         self.inner
-            .lock()
+            .write()
             .expect("poisoned")
             .handle_ping(sender, src, tx_id)
     }
 
     pub(super) fn handle_pong(&self, sender: PublicKey, src: &DiscoMessageSource, pong: Pong) {
         self.inner
-            .lock()
+            .write()
             .expect("poisoned")
             .handle_pong(sender, src, pong)
     }
@@ -243,7 +243,7 @@ impl NodeMap {
         metrics: &Metrics,
     ) -> Vec<PingAction> {
         self.inner
-            .lock()
+            .write()
             .expect("poisoned")
             .handle_call_me_maybe(sender, cm, metrics)
     }
@@ -254,12 +254,26 @@ impl NodeMap {
         have_ipv6: bool,
         metrics: &Metrics,
     ) -> Option<(PublicKey, Option<SocketAddr>, Option<RelayUrl>)> {
-        let mut inner = self.inner.lock().expect("poisoned");
+        let mut inner = self.inner.write().expect("poisoned");
         let ep = inner.get_mut(NodeStateKey::NodeIdMappedAddr(addr))?;
         let public_key = *ep.public_key();
         trace!(dest = %addr, node_id = %public_key.fmt_short(), "dst mapped to NodeId");
         let now = Instant::now();
         let (udp_addr, relay_url) = ep.addr_for_send(&now, have_ipv6, metrics);
+        Some((public_key, udp_addr, relay_url))
+    }
+
+    pub(super) fn peek_addr(
+        &self,
+        addr: NodeIdMappedAddr,
+        have_ipv6: bool,
+    ) -> Option<(PublicKey, Option<SocketAddr>, Option<RelayUrl>)> {
+        let inner = self.inner.read().expect("poisoned");
+        let ep = inner.get(NodeStateKey::NodeIdMappedAddr(addr))?;
+        let public_key = *ep.public_key();
+        trace!(dest = %addr, node_id = %public_key.fmt_short(), "dst mapped to NodeId");
+        let now = Instant::now();
+        let (udp_addr, relay_url) = ep.peek_addr(&now, have_ipv6);
         Some((public_key, udp_addr, relay_url))
     }
 
@@ -275,7 +289,7 @@ impl NodeMap {
         Option<RelayUrl>,
         Vec<PingAction>,
     )> {
-        let mut inner = self.inner.lock().expect("poisoned");
+        let mut inner = self.inner.write().expect("poisoned");
         let ep = inner.get_mut(NodeStateKey::NodeIdMappedAddr(addr))?;
         let public_key = *ep.public_key();
         trace!(dest = %addr, node_id = %public_key.fmt_short(), "dst mapped to NodeId");
@@ -284,21 +298,21 @@ impl NodeMap {
     }
 
     pub(super) fn notify_shutdown(&self) {
-        let mut inner = self.inner.lock().expect("poisoned");
+        let mut inner = self.inner.write().expect("poisoned");
         for (_, ep) in inner.node_states_mut() {
             ep.reset();
         }
     }
 
     pub(super) fn reset_node_states(&self) {
-        let mut inner = self.inner.lock().expect("poisoned");
+        let mut inner = self.inner.write().expect("poisoned");
         for (_, ep) in inner.node_states_mut() {
             ep.note_connectivity_change();
         }
     }
 
     pub(super) fn nodes_stayin_alive(&self) -> Vec<PingAction> {
-        let mut inner = self.inner.lock().expect("poisoned");
+        let mut inner = self.inner.write().expect("poisoned");
         inner
             .node_states_mut()
             .flat_map(|(_idx, node_state)| node_state.stayin_alive())
@@ -312,7 +326,7 @@ impl NodeMap {
         // we were to find this acceptable, dealing with the lifetimes of the mutex's guard and the
         // internal iterator will be a hassle, if possible at all.
         self.inner
-            .lock()
+            .write()
             .expect("poisoned")
             .remote_infos_iter(now)
             .collect()
@@ -330,22 +344,22 @@ impl NodeMap {
         &self,
         node_id: NodeId,
     ) -> anyhow::Result<watcher::Direct<ConnectionType>> {
-        self.inner.lock().expect("poisoned").conn_type(node_id)
+        self.inner.write().expect("poisoned").conn_type(node_id)
     }
 
     /// Get the [`RemoteInfo`]s for the node identified by [`NodeId`].
     pub(super) fn remote_info(&self, node_id: NodeId) -> Option<RemoteInfo> {
-        self.inner.lock().expect("poisoned").remote_info(node_id)
+        self.inner.write().expect("poisoned").remote_info(node_id)
     }
 
     /// Prunes nodes without recent activity so that at most [`MAX_INACTIVE_NODES`] are kept.
     pub(super) fn prune_inactive(&self) {
-        self.inner.lock().expect("poisoned").prune_inactive();
+        self.inner.write().expect("poisoned").prune_inactive();
     }
 
     pub(crate) fn on_direct_addr_discovered(&self, discovered: BTreeSet<SocketAddr>) {
         self.inner
-            .lock()
+            .write()
             .expect("poisoned")
             .on_direct_addr_discovered(discovered);
     }
@@ -824,7 +838,7 @@ mod tests {
         let public_key = SecretKey::generate(rand::thread_rng()).public();
         let id = node_map
             .inner
-            .lock()
+            .write()
             .unwrap()
             .insert_node(Options {
                 node_id: public_key,
@@ -849,7 +863,7 @@ mod tests {
             // add address
             node_map.add_test_addr(node_addr);
             // make it active
-            node_map.inner.lock().unwrap().receive_udp(addr);
+            node_map.inner.write().unwrap().receive_udp(addr);
         }
 
         info!("Adding offline/inactive addresses");
@@ -859,7 +873,7 @@ mod tests {
             node_map.add_test_addr(node_addr);
         }
 
-        let mut node_map_inner = node_map.inner.lock().unwrap();
+        let mut node_map_inner = node_map.inner.write().unwrap();
         let endpoint = node_map_inner.by_id.get_mut(&id).unwrap();
 
         info!("Adding alive addresses");
@@ -900,7 +914,7 @@ mod tests {
         node_map.add_test_addr(NodeAddr::new(active_node).with_direct_addresses([addr]));
         node_map
             .inner
-            .lock()
+            .write()
             .unwrap()
             .receive_udp(addr)
             .expect("registered");
@@ -915,7 +929,7 @@ mod tests {
         assert_eq!(node_map.node_count(), MAX_INACTIVE_NODES + 1);
         node_map
             .inner
-            .lock()
+            .write()
             .unwrap()
             .get(NodeStateKey::NodeId(active_node))
             .expect("should not be pruned");

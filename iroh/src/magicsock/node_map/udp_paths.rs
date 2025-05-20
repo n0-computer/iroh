@@ -134,6 +134,42 @@ impl NodeUdpPaths {
         }
     }
 
+    pub(super) fn peek_addr(&self, now: Instant, have_ipv6: bool) -> UdpSendAddr {
+        match self.best_addr.state(now) {
+            best_addr::State::Valid(addr) => UdpSendAddr::Valid(addr.addr),
+            best_addr::State::Outdated(addr) => UdpSendAddr::Outdated(addr.addr),
+            best_addr::State::Empty => {
+                // No direct connection has been used before.  If we know of any possible
+                // candidate addresses, randomly try to use one.  This path is most
+                // effective when folks use a NodeAddr with exactly one direct address which
+                // they know to work, effectively like using a traditional socket or QUIC
+                // endpoint.
+                let addr = self
+                    .chosen_candidate
+                    .and_then(|ipp| self.paths.get(&ipp))
+                    .and_then(|path| path.udp_addr())
+                    .filter(|addr| addr.is_ipv4() || have_ipv6);
+                // .or_else(|| {
+                //     // Look for a new candidate in all the known paths.  This may look
+                //     // like a RNG use on the hot-path but this is normally invoked at
+                //     // most most once at startup.
+                //     let addr = self
+                //         .paths
+                //         .values()
+                //         .filter_map(|path| path.udp_addr())
+                //         .filter(|addr| addr.is_ipv4() || have_ipv6)
+                //         .choose(&mut rand::thread_rng());
+                //     self.chosen_candidate = addr.map(IpPort::from);
+                //     addr
+                // });
+                match addr {
+                    Some(addr) => UdpSendAddr::Unconfirmed(addr),
+                    None => UdpSendAddr::None,
+                }
+            }
+        }
+    }
+
     /// Fixup best_addr from candidates.
     ///
     /// If somehow we end up in a state where we failed to set a best_addr, while we do have

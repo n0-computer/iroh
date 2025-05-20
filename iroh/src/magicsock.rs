@@ -2335,11 +2335,10 @@ impl quinn::UdpPoller for IoPoller {
 
                 // Get the node's relay address and best direct address, as well
                 // as any pings that need to be sent for hole-punching purposes.
-                match this.node_map.addr_for_send(
-                    *dest,
-                    this.ipv6_reported.load(Ordering::Relaxed),
-                    this.metrics.as_ref(),
-                ) {
+                match this
+                    .node_map
+                    .peek_addr(*dest, this.ipv6_reported.load(Ordering::Relaxed))
+                {
                     Some((_, None, Some(_relay_url))) => {
                         return this.relay_sender.poll_writable(cx)
                     }
