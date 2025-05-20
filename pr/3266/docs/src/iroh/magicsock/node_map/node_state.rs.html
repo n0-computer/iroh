@@ -1758,7 +1758,41 @@
 <a href="#1757" id="1757">1757</a>
 <a href="#1758" id="1758">1758</a>
 <a href="#1759" id="1759">1759</a>
-<a href="#1760" id="1760">1760</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#1760" id="1760">1760</a>
+<a href="#1761" id="1761">1761</a>
+<a href="#1762" id="1762">1762</a>
+<a href="#1763" id="1763">1763</a>
+<a href="#1764" id="1764">1764</a>
+<a href="#1765" id="1765">1765</a>
+<a href="#1766" id="1766">1766</a>
+<a href="#1767" id="1767">1767</a>
+<a href="#1768" id="1768">1768</a>
+<a href="#1769" id="1769">1769</a>
+<a href="#1770" id="1770">1770</a>
+<a href="#1771" id="1771">1771</a>
+<a href="#1772" id="1772">1772</a>
+<a href="#1773" id="1773">1773</a>
+<a href="#1774" id="1774">1774</a>
+<a href="#1775" id="1775">1775</a>
+<a href="#1776" id="1776">1776</a>
+<a href="#1777" id="1777">1777</a>
+<a href="#1778" id="1778">1778</a>
+<a href="#1779" id="1779">1779</a>
+<a href="#1780" id="1780">1780</a>
+<a href="#1781" id="1781">1781</a>
+<a href="#1782" id="1782">1782</a>
+<a href="#1783" id="1783">1783</a>
+<a href="#1784" id="1784">1784</a>
+<a href="#1785" id="1785">1785</a>
+<a href="#1786" id="1786">1786</a>
+<a href="#1787" id="1787">1787</a>
+<a href="#1788" id="1788">1788</a>
+<a href="#1789" id="1789">1789</a>
+<a href="#1790" id="1790">1790</a>
+<a href="#1791" id="1791">1791</a>
+<a href="#1792" id="1792">1792</a>
+<a href="#1793" id="1793">1793</a>
+<a href="#1794" id="1794">1794</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{btree_map::Entry, BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
@@ -2120,6 +2154,40 @@
             }
         }
         (best_addr, relay_url)
+    }
+
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>peek_addr(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        now: <span class="kw-2">&amp;</span>Instant,
+        have_ipv6: bool,
+    ) -&gt; (<span class="prelude-ty">Option</span>&lt;SocketAddr&gt;, <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;) {
+        <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+        </span><span class="kw">if </span><span class="self">self</span>.path_selection == PathSelection::RelayOnly {
+            <span class="macro">debug!</span>(<span class="string">"in `RelayOnly` mode, giving the relay address as the only viable address for this endpoint"</span>);
+            <span class="kw">return </span>(<span class="prelude-val">None</span>, <span class="self">self</span>.relay_url());
+        }
+        <span class="kw">match </span><span class="self">self</span>.udp_paths.peek_addr(<span class="kw-2">*</span>now, have_ipv6) {
+            UdpSendAddr::Valid(addr) =&gt; {
+                <span class="comment">// If we have a valid address we use it.
+                </span><span class="macro">trace!</span>(%addr, <span class="string">"UdpSendAddr is valid, use it"</span>);
+                (<span class="prelude-val">Some</span>(addr), <span class="prelude-val">None</span>)
+            }
+            UdpSendAddr::Outdated(addr) =&gt; {
+                <span class="comment">// If the address is outdated we use it, but send via relay at the same time.
+                // We also send disco pings so that it will become valid again if it still
+                // works (i.e. we don't need to holepunch again).
+                </span><span class="macro">trace!</span>(%addr, <span class="string">"UdpSendAddr is outdated, use it together with relay"</span>);
+                (<span class="prelude-val">Some</span>(addr), <span class="self">self</span>.relay_url())
+            }
+            UdpSendAddr::Unconfirmed(addr) =&gt; {
+                <span class="macro">trace!</span>(%addr, <span class="string">"UdpSendAddr is unconfirmed, use it together with relay"</span>);
+                (<span class="prelude-val">Some</span>(addr), <span class="self">self</span>.relay_url())
+            }
+            UdpSendAddr::None =&gt; {
+                <span class="macro">trace!</span>(<span class="string">"No UdpSendAddr, use relay"</span>);
+                (<span class="prelude-val">None</span>, <span class="self">self</span>.relay_url())
+            }
+        }
     }
 
     <span class="doccomment">/// Removes a direct address for this node.

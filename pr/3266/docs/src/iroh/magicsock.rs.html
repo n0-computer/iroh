@@ -4537,8 +4537,7 @@
 <a href="#4536" id="4536">4536</a>
 <a href="#4537" id="4537">4537</a>
 <a href="#4538" id="4538">4538</a>
-<a href="#4539" id="4539">4539</a>
-<a href="#4540" id="4540">4540</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4539" id="4539">4539</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -6875,11 +6874,10 @@
 
                 <span class="comment">// Get the node's relay address and best direct address, as well
                 // as any pings that need to be sent for hole-punching purposes.
-                </span><span class="kw">match </span>this.node_map.addr_for_send(
-                    <span class="kw-2">*</span>dest,
-                    this.ipv6_reported.load(Ordering::Relaxed),
-                    this.metrics.as_ref(),
-                ) {
+                </span><span class="kw">match </span>this
+                    .node_map
+                    .peek_addr(<span class="kw-2">*</span>dest, this.ipv6_reported.load(Ordering::Relaxed))
+                {
                     <span class="prelude-val">Some</span>((<span class="kw">_</span>, <span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(_relay_url))) =&gt; {
                         <span class="kw">return </span>this.relay_sender.poll_writable(cx)
                     }

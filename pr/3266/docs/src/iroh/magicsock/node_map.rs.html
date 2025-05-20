@@ -921,11 +921,25 @@
 <a href="#920" id="920">920</a>
 <a href="#921" id="921">921</a>
 <a href="#922" id="922">922</a>
-<a href="#923" id="923">923</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#923" id="923">923</a>
+<a href="#924" id="924">924</a>
+<a href="#925" id="925">925</a>
+<a href="#926" id="926">926</a>
+<a href="#927" id="927">927</a>
+<a href="#928" id="928">928</a>
+<a href="#929" id="929">929</a>
+<a href="#930" id="930">930</a>
+<a href="#931" id="931">931</a>
+<a href="#932" id="932">932</a>
+<a href="#933" id="933">933</a>
+<a href="#934" id="934">934</a>
+<a href="#935" id="935">935</a>
+<a href="#936" id="936">936</a>
+<a href="#937" id="937">937</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{hash_map::Entry, BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
-    sync::Mutex,
+    sync::RwLock,
 };
 
 <span class="kw">use </span>iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
@@ -977,7 +991,7 @@
 /// An index of nodeInfos by node key, NodeIdMappedAddr, and discovered ip:port endpoints.
 </span><span class="attr">#[derive(Debug, Default)]
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>NodeMap {
-    inner: Mutex&lt;NodeMapInner&gt;,
+    inner: RwLock&lt;NodeMapInner&gt;,
 }
 
 <span class="attr">#[derive(Default, Debug)]
@@ -1065,21 +1079,21 @@
 
     <span class="kw">fn </span>from_inner(inner: NodeMapInner) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
-            inner: Mutex::new(inner),
+            inner: RwLock::new(inner),
         }
     }
 
     <span class="doccomment">/// Add the contact information for a node.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>add_node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, node_addr: NodeAddr, source: Source, metrics: <span class="kw-2">&amp;</span>Metrics) {
         <span class="self">self</span>.inner
-            .lock()
+            .write()
             .expect(<span class="string">"poisoned"</span>)
             .add_node_addr(node_addr, source, metrics)
     }
 
     <span class="doccomment">/// Number of nodes currently listed.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>node_count(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-        <span class="self">self</span>.inner.lock().expect(<span class="string">"poisoned"</span>).node_count()
+        <span class="self">self</span>.inner.read().expect(<span class="string">"poisoned"</span>).node_count()
     }
 
     <span class="attr">#[cfg(not(wasm_browser))]
@@ -1087,12 +1101,12 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         udp_addr: SocketAddr,
     ) -&gt; <span class="prelude-ty">Option</span>&lt;(PublicKey, NodeIdMappedAddr)&gt; {
-        <span class="self">self</span>.inner.lock().expect(<span class="string">"poisoned"</span>).receive_udp(udp_addr)
+        <span class="self">self</span>.inner.write().expect(<span class="string">"poisoned"</span>).receive_udp(udp_addr)
     }
 
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>receive_relay(<span class="kw-2">&amp;</span><span class="self">self</span>, relay_url: <span class="kw-2">&amp;</span>RelayUrl, src: NodeId) -&gt; NodeIdMappedAddr {
         <span class="self">self</span>.inner
-            .lock()
+            .write()
             .expect(<span class="string">"poisoned"</span>)
             .receive_relay(relay_url, src)
     }
@@ -1107,7 +1121,7 @@
     ) {
         <span class="kw">if let </span><span class="prelude-val">Some</span>(ep) = <span class="self">self
             </span>.inner
-            .lock()
+            .write()
             .expect(<span class="string">"poisoned"</span>)
             .get_mut(NodeStateKey::Idx(id))
         {
@@ -1118,7 +1132,7 @@
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>notify_ping_timeout(<span class="kw-2">&amp;</span><span class="self">self</span>, id: usize, tx_id: stun_rs::TransactionId) {
         <span class="kw">if let </span><span class="prelude-val">Some</span>(ep) = <span class="self">self
             </span>.inner
-            .lock()
+            .write()
             .expect(<span class="string">"poisoned"</span>)
             .get_mut(NodeStateKey::Idx(id))
         {
@@ -1131,7 +1145,7 @@
         node_key: NodeId,
     ) -&gt; <span class="prelude-ty">Option</span>&lt;NodeIdMappedAddr&gt; {
         <span class="self">self</span>.inner
-            .lock()
+            .read()
             .expect(<span class="string">"poisoned"</span>)
             .get(NodeStateKey::NodeId(node_key))
             .map(|ep| <span class="kw-2">*</span>ep.quic_mapped_addr())
@@ -1146,14 +1160,14 @@
         tx_id: TransactionId,
     ) -&gt; PingHandled {
         <span class="self">self</span>.inner
-            .lock()
+            .write()
             .expect(<span class="string">"poisoned"</span>)
             .handle_ping(sender, src, tx_id)
     }
 
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>handle_pong(<span class="kw-2">&amp;</span><span class="self">self</span>, sender: PublicKey, src: <span class="kw-2">&amp;</span>DiscoMessageSource, pong: Pong) {
         <span class="self">self</span>.inner
-            .lock()
+            .write()
             .expect(<span class="string">"poisoned"</span>)
             .handle_pong(sender, src, pong)
     }
@@ -1166,7 +1180,7 @@
         metrics: <span class="kw-2">&amp;</span>Metrics,
     ) -&gt; Vec&lt;PingAction&gt; {
         <span class="self">self</span>.inner
-            .lock()
+            .write()
             .expect(<span class="string">"poisoned"</span>)
             .handle_call_me_maybe(sender, cm, metrics)
     }
@@ -1177,12 +1191,26 @@
         have_ipv6: bool,
         metrics: <span class="kw-2">&amp;</span>Metrics,
     ) -&gt; <span class="prelude-ty">Option</span>&lt;(PublicKey, <span class="prelude-ty">Option</span>&lt;SocketAddr&gt;, <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;)&gt; {
-        <span class="kw">let </span><span class="kw-2">mut </span>inner = <span class="self">self</span>.inner.lock().expect(<span class="string">"poisoned"</span>);
+        <span class="kw">let </span><span class="kw-2">mut </span>inner = <span class="self">self</span>.inner.write().expect(<span class="string">"poisoned"</span>);
         <span class="kw">let </span>ep = inner.get_mut(NodeStateKey::NodeIdMappedAddr(addr))<span class="question-mark">?</span>;
         <span class="kw">let </span>public_key = <span class="kw-2">*</span>ep.public_key();
         <span class="macro">trace!</span>(dest = %addr, node_id = %public_key.fmt_short(), <span class="string">"dst mapped to NodeId"</span>);
         <span class="kw">let </span>now = Instant::now();
         <span class="kw">let </span>(udp_addr, relay_url) = ep.addr_for_send(<span class="kw-2">&amp;</span>now, have_ipv6, metrics);
+        <span class="prelude-val">Some</span>((public_key, udp_addr, relay_url))
+    }
+
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>peek_addr(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        addr: NodeIdMappedAddr,
+        have_ipv6: bool,
+    ) -&gt; <span class="prelude-ty">Option</span>&lt;(PublicKey, <span class="prelude-ty">Option</span>&lt;SocketAddr&gt;, <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;)&gt; {
+        <span class="kw">let </span>inner = <span class="self">self</span>.inner.read().expect(<span class="string">"poisoned"</span>);
+        <span class="kw">let </span>ep = inner.get(NodeStateKey::NodeIdMappedAddr(addr))<span class="question-mark">?</span>;
+        <span class="kw">let </span>public_key = <span class="kw-2">*</span>ep.public_key();
+        <span class="macro">trace!</span>(dest = %addr, node_id = %public_key.fmt_short(), <span class="string">"dst mapped to NodeId"</span>);
+        <span class="kw">let </span>now = Instant::now();
+        <span class="kw">let </span>(udp_addr, relay_url) = ep.peek_addr(<span class="kw-2">&amp;</span>now, have_ipv6);
         <span class="prelude-val">Some</span>((public_key, udp_addr, relay_url))
     }
 
@@ -1198,7 +1226,7 @@
         <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;,
         Vec&lt;PingAction&gt;,
     )&gt; {
-        <span class="kw">let </span><span class="kw-2">mut </span>inner = <span class="self">self</span>.inner.lock().expect(<span class="string">"poisoned"</span>);
+        <span class="kw">let </span><span class="kw-2">mut </span>inner = <span class="self">self</span>.inner.write().expect(<span class="string">"poisoned"</span>);
         <span class="kw">let </span>ep = inner.get_mut(NodeStateKey::NodeIdMappedAddr(addr))<span class="question-mark">?</span>;
         <span class="kw">let </span>public_key = <span class="kw-2">*</span>ep.public_key();
         <span class="macro">trace!</span>(dest = %addr, node_id = %public_key.fmt_short(), <span class="string">"dst mapped to NodeId"</span>);
@@ -1207,21 +1235,21 @@
     }
 
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>notify_shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) {
-        <span class="kw">let </span><span class="kw-2">mut </span>inner = <span class="self">self</span>.inner.lock().expect(<span class="string">"poisoned"</span>);
+        <span class="kw">let </span><span class="kw-2">mut </span>inner = <span class="self">self</span>.inner.write().expect(<span class="string">"poisoned"</span>);
         <span class="kw">for </span>(<span class="kw">_</span>, ep) <span class="kw">in </span>inner.node_states_mut() {
             ep.reset();
         }
     }
 
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>reset_node_states(<span class="kw-2">&amp;</span><span class="self">self</span>) {
-        <span class="kw">let </span><span class="kw-2">mut </span>inner = <span class="self">self</span>.inner.lock().expect(<span class="string">"poisoned"</span>);
+        <span class="kw">let </span><span class="kw-2">mut </span>inner = <span class="self">self</span>.inner.write().expect(<span class="string">"poisoned"</span>);
         <span class="kw">for </span>(<span class="kw">_</span>, ep) <span class="kw">in </span>inner.node_states_mut() {
             ep.note_connectivity_change();
         }
     }
 
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>nodes_stayin_alive(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;PingAction&gt; {
-        <span class="kw">let </span><span class="kw-2">mut </span>inner = <span class="self">self</span>.inner.lock().expect(<span class="string">"poisoned"</span>);
+        <span class="kw">let </span><span class="kw-2">mut </span>inner = <span class="self">self</span>.inner.write().expect(<span class="string">"poisoned"</span>);
         inner
             .node_states_mut()
             .flat_map(|(_idx, node_state)| node_state.stayin_alive())
@@ -1235,7 +1263,7 @@
         // we were to find this acceptable, dealing with the lifetimes of the mutex's guard and the
         // internal iterator will be a hassle, if possible at all.
         </span><span class="self">self</span>.inner
-            .lock()
+            .write()
             .expect(<span class="string">"poisoned"</span>)
             .remote_infos_iter(now)
             .collect()
@@ -1253,22 +1281,22 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         node_id: NodeId,
     ) -&gt; anyhow::Result&lt;watcher::Direct&lt;ConnectionType&gt;&gt; {
-        <span class="self">self</span>.inner.lock().expect(<span class="string">"poisoned"</span>).conn_type(node_id)
+        <span class="self">self</span>.inner.write().expect(<span class="string">"poisoned"</span>).conn_type(node_id)
     }
 
     <span class="doccomment">/// Get the [`RemoteInfo`]s for the node identified by [`NodeId`].
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>remote_info(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Option</span>&lt;RemoteInfo&gt; {
-        <span class="self">self</span>.inner.lock().expect(<span class="string">"poisoned"</span>).remote_info(node_id)
+        <span class="self">self</span>.inner.write().expect(<span class="string">"poisoned"</span>).remote_info(node_id)
     }
 
     <span class="doccomment">/// Prunes nodes without recent activity so that at most [`MAX_INACTIVE_NODES`] are kept.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>prune_inactive(<span class="kw-2">&amp;</span><span class="self">self</span>) {
-        <span class="self">self</span>.inner.lock().expect(<span class="string">"poisoned"</span>).prune_inactive();
+        <span class="self">self</span>.inner.write().expect(<span class="string">"poisoned"</span>).prune_inactive();
     }
 
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>on_direct_addr_discovered(<span class="kw-2">&amp;</span><span class="self">self</span>, discovered: BTreeSet&lt;SocketAddr&gt;) {
         <span class="self">self</span>.inner
-            .lock()
+            .write()
             .expect(<span class="string">"poisoned"</span>)
             .on_direct_addr_discovered(discovered);
     }
@@ -1747,7 +1775,7 @@
         <span class="kw">let </span>public_key = SecretKey::generate(rand::thread_rng()).public();
         <span class="kw">let </span>id = node_map
             .inner
-            .lock()
+            .write()
             .unwrap()
             .insert_node(Options {
                 node_id: public_key,
@@ -1772,7 +1800,7 @@
             <span class="comment">// add address
             </span>node_map.add_test_addr(node_addr);
             <span class="comment">// make it active
-            </span>node_map.inner.lock().unwrap().receive_udp(addr);
+            </span>node_map.inner.write().unwrap().receive_udp(addr);
         }
 
         <span class="macro">info!</span>(<span class="string">"Adding offline/inactive addresses"</span>);
@@ -1782,7 +1810,7 @@
             node_map.add_test_addr(node_addr);
         }
 
-        <span class="kw">let </span><span class="kw-2">mut </span>node_map_inner = node_map.inner.lock().unwrap();
+        <span class="kw">let </span><span class="kw-2">mut </span>node_map_inner = node_map.inner.write().unwrap();
         <span class="kw">let </span>endpoint = node_map_inner.by_id.get_mut(<span class="kw-2">&amp;</span>id).unwrap();
 
         <span class="macro">info!</span>(<span class="string">"Adding alive addresses"</span>);
@@ -1823,7 +1851,7 @@
         node_map.add_test_addr(NodeAddr::new(active_node).with_direct_addresses([addr]));
         node_map
             .inner
-            .lock()
+            .write()
             .unwrap()
             .receive_udp(addr)
             .expect(<span class="string">"registered"</span>);
@@ -1838,7 +1866,7 @@
         <span class="macro">assert_eq!</span>(node_map.node_count(), MAX_INACTIVE_NODES + <span class="number">1</span>);
         node_map
             .inner
-            .lock()
+            .write()
             .unwrap()
             .get(NodeStateKey::NodeId(active_node))
             .expect(<span class="string">"should not be pruned"</span>);
