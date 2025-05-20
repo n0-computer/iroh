@@ -5264,9 +5264,9 @@
 }
 
 <span class="kw">impl </span>AsyncUdpSocket <span class="kw">for </span>MagicSock {
-    <span class="kw">fn </span>create_io_poller(<span class="self">self</span>: Arc&lt;<span class="self">Self</span>&gt;) -&gt; Pin&lt;Box&lt;<span class="kw">dyn </span>quinn::UdpPoller&gt;&gt; {
+    <span class="kw">fn </span>create_io_poller(<span class="self">self</span>: Arc&lt;<span class="self">Self</span>&gt;, dest: SocketAddr) -&gt; Pin&lt;Box&lt;<span class="kw">dyn </span>quinn::UdpPoller&gt;&gt; {
         <span class="self">self</span>.transports
-            .create_io_poller(<span class="self">self</span>.clone(), <span class="self">self</span>.ip_mapped_addrs.clone())
+            .create_io_poller(dest, <span class="self">self</span>.clone(), <span class="self">self</span>.ip_mapped_addrs.clone())
     }
 
     <span class="kw">fn </span>try_send(<span class="kw-2">&amp;</span><span class="self">self</span>, transmit: <span class="kw-2">&amp;</span>quinn_udp::Transmit) -&gt; io::Result&lt;()&gt; {

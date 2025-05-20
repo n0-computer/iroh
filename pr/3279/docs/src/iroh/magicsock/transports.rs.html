@@ -455,10 +455,7 @@
 <a href="#454" id="454">454</a>
 <a href="#455" id="455">455</a>
 <a href="#456" id="456">456</a>
-<a href="#457" id="457">457</a>
-<a href="#458" id="458">458</a>
-<a href="#459" id="459">459</a>
-<a href="#460" id="460">460</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#457" id="457">457</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     io::{<span class="self">self</span>, IoSliceMut},
     net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6},
     pin::Pin,
@@ -713,6 +710,7 @@
 
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>create_io_poller(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
+        dest: SocketAddr,
         msock: Arc&lt;MagicSock&gt;,
         ip_mapped_addrs: IpMappedAddresses,
     ) -&gt; Pin&lt;Box&lt;<span class="kw">dyn </span>quinn::UdpPoller&gt;&gt; {
@@ -727,6 +725,7 @@
             relay_pollers,
             ip_mapped_addrs,
             msock,
+            dest: MappedAddr::from(dest),
         })
     }
 
@@ -851,20 +850,17 @@
     relay_pollers: Vec&lt;RelayDatagramSendChannelSender&gt;,
     ip_mapped_addrs: IpMappedAddresses,
     msock: Arc&lt;MagicSock&gt;, <span class="comment">// :(
-</span>}
+    </span>dest: MappedAddr,
+}
 
 <span class="kw">impl </span>quinn::UdpPoller <span class="kw">for </span>IoPoller {
-    <span class="kw">fn </span>poll_writable(
-        <span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;,
-        cx: <span class="kw-2">&amp;mut </span>Context,
-        transmit: <span class="kw-2">&amp;</span>quinn_proto::Transmit,
-    ) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
+    <span class="kw">fn </span>poll_writable(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
         <span class="kw">let </span>this = <span class="kw-2">&amp;mut *</span><span class="self">self</span>;
 
-        <span class="kw">match </span>MappedAddr::from(transmit.destination) {
-            MappedAddr::None(_dest) =&gt; {
-                <span class="comment">// return Poll::Ready(Err(io::Error::other("Cannot convert to a mapped address.")));
-            </span>}
+        <span class="kw">match </span>this.dest {
+            MappedAddr::None(dest) =&gt; {
+                <span class="macro">warn!</span>(<span class="question-mark">?</span>dest, <span class="string">"Cannot convert to a mapped address."</span>);
+            }
             MappedAddr::NodeId(dest) =&gt; {
                 <span class="comment">// Get the node's relay address and best direct address, as well
                 // as any pings that need to be sent for hole-punching purposes.
@@ -891,10 +887,8 @@
                         }
                     }
                     <span class="prelude-val">None </span>=&gt; {
-                        <span class="comment">// return Poll::Ready(Err(io::Error::other(
-                        //     "no NodeState for mapped address",
-                        // )));
-                    </span>}
+                        <span class="macro">warn!</span>(<span class="question-mark">?</span>dest, <span class="string">"no NodeState for mapped address"</span>);
+                    }
                 }
             }
             <span class="attr">#[cfg(not(wasm_browser))]
@@ -910,8 +904,8 @@
                     }
                 }
                 <span class="prelude-val">None </span>=&gt; {
-                    <span class="comment">// return Poll::Ready(Err(io::Error::other("unknown mapped address")));
-                </span>}
+                    <span class="macro">warn!</span>(<span class="question-mark">?</span>addr, <span class="string">"unknown mapped address"</span>);
+                }
             },
         }
 
