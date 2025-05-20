@@ -550,7 +550,13 @@
 <a href="#549" id="549">549</a>
 <a href="#550" id="550">550</a>
 <a href="#551" id="551">551</a>
-<a href="#552" id="552">552</a></pre></div><pre class="rust"><code><span class="doccomment">//! Tools for spawning an accept loop that routes incoming requests to the right protocol.
+<a href="#552" id="552">552</a>
+<a href="#553" id="553">553</a>
+<a href="#554" id="554">554</a>
+<a href="#555" id="555">555</a>
+<a href="#556" id="556">556</a>
+<a href="#557" id="557">557</a>
+<a href="#558" id="558">558</a></pre></div><pre class="rust"><code><span class="doccomment">//! Tools for spawning an accept loop that routes incoming requests to the right protocol.
 //!
 //! ## Example
 //!
@@ -986,7 +992,7 @@
     <span class="kw">use </span>testresult::TestResult;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
-    <span class="kw">use crate</span>::{endpoint::ConnectionError, watcher::Watcher};
+    <span class="kw">use crate</span>::{endpoint::ConnectionError, watcher::Watcher, RelayMode};
 
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_shutdown() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
@@ -1080,13 +1086,19 @@
             }
         }
 
-        <span class="kw">let </span>endpoint = Endpoint::builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>endpoint = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>router = Router::builder(endpoint)
             .accept(TEST_ALPN, TestProtocol::default())
             .spawn();
         <span class="kw">let </span>addr = router.endpoint().node_addr().initialized().<span class="kw">await</span><span class="question-mark">?</span>;
 
-        <span class="kw">let </span>endpoint2 = Endpoint::builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>endpoint2 = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>conn = endpoint2.connect(addr, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
 
         router.shutdown().<span class="kw">await</span><span class="question-mark">?</span>;
