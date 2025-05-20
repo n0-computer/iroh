@@ -468,6 +468,17 @@ impl MagicSock {
         Err(io::Error::other("no valid socket available"))
     }
 
+    pub(super) fn addr_for_send(
+        &self,
+        dest: NodeIdMappedAddr,
+    ) -> Option<(PublicKey, Option<SocketAddr>, Option<RelayUrl>)> {
+        self.node_map.addr_for_send(
+            dest,
+            self.ipv6_reported.load(Ordering::Relaxed),
+            &self.metrics.magicsock,
+        )
+    }
+
     /// Implementation for AsyncUdpSocket::try_send
     #[instrument(skip_all)]
     fn try_send(&self, transmit: &quinn_udp::Transmit) -> io::Result<()> {
@@ -1621,7 +1632,8 @@ enum DiscoBoxError {
 
 impl AsyncUdpSocket for MagicSock {
     fn create_io_poller(self: Arc<Self>) -> Pin<Box<dyn quinn::UdpPoller>> {
-        self.transports.create_io_poller()
+        self.transports
+            .create_io_poller(self.clone(), self.ip_mapped_addrs.clone())
     }
 
     fn try_send(&self, transmit: &quinn_udp::Transmit) -> io::Result<()> {

@@ -446,7 +446,6 @@ mod tests {
     use n0_watcher::Watcher;
     use quinn::ApplicationClose;
     use testresult::TestResult;
-    use tracing_test::traced_test;
 
     use super::*;
     use crate::{endpoint::ConnectionError, RelayMode};
@@ -490,17 +489,24 @@ mod tests {
         }
     }
 
+    // #[tokio::test(flavor = "multi_thread")]
     #[tokio::test]
-    #[traced_test]
     async fn test_limiter() -> Result<()> {
-        let e1 = Endpoint::builder().bind().await?;
+        tracing_subscriber::fmt::try_init().ok();
+        let e1 = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .await?;
         // deny all access
         let proto = AccessLimit::new(Echo, |_node_id| false);
         let r1 = Router::builder(e1.clone()).accept(ECHO_ALPN, proto).spawn();
 
         let addr1 = r1.endpoint().node_addr().initialized().await?;
-
-        let e2 = Endpoint::builder().bind().await?;
+        dbg!(&addr1);
+        let e2 = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .await?;
 
         println!("connecting");
         let conn = e2.connect(addr1, ECHO_ALPN).await?;
@@ -515,8 +521,10 @@ mod tests {
         Ok(())
     }
 
+    // #[tokio::test(flavor = "multi_thread")]
     #[tokio::test]
     async fn test_graceful_shutdown() -> TestResult {
+        tracing_subscriber::fmt::try_init().ok();
         #[derive(Debug, Clone, Default)]
         struct TestProtocol {
             connections: Arc<Mutex<Vec<Connection>>>,
@@ -534,17 +542,22 @@ mod tests {
             }
 
             fn shutdown(&self) -> BoxFuture<()> {
+                eprintln!("shutting down");
                 let this = self.clone();
                 Box::pin(async move {
                     tokio::time::sleep(Duration::from_millis(100)).await;
+                    eprintln!("waiting for lock");
                     let mut connections = this.connections.lock().expect("poisoned");
+                    eprintln!("got lock");
                     for conn in connections.drain(..) {
+                        eprintln!("closing");
                         conn.close(42u32.into(), b"shutdown");
                     }
                 })
             }
         }
 
+        eprintln!("creating ep1");
         let endpoint = Endpoint::builder()
             .relay_mode(RelayMode::Disabled)
             .bind()
@@ -552,16 +565,21 @@ mod tests {
         let router = Router::builder(endpoint)
             .accept(TEST_ALPN, TestProtocol::default())
             .spawn();
+        eprintln!("waiting for node addr");
         let addr = router.endpoint().node_addr().initialized().await?;
 
+        eprintln!("creating ep2");
         let endpoint2 = Endpoint::builder()
             .relay_mode(RelayMode::Disabled)
             .bind()
             .await?;
+        eprintln!("connecting to {:?}", addr);
         let conn = endpoint2.connect(addr, TEST_ALPN).await?;
 
+        eprintln!("starting shutdown");
         router.shutdown().await?;
 
+        eprintln!("waiting for closed conn");
         let reason = conn.closed().await;
         assert_eq!(
             reason,

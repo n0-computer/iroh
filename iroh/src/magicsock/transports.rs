@@ -8,8 +8,6 @@ use std::{
 
 use iroh_base::{NodeId, RelayUrl};
 use n0_watcher::Watcher;
-#[cfg(not(wasm_browser))]
-use netwatch::UdpSocket;
 use relay::RelayDatagramSendChannelSender;
 use tracing::{trace, warn};
 
@@ -18,9 +16,12 @@ mod ip;
 mod relay;
 
 #[cfg(not(wasm_browser))]
+use self::ip::IpIoPoller;
+#[cfg(not(wasm_browser))]
 pub(crate) use self::ip::IpTransport;
 pub(crate) use self::relay::{RelayActorConfig, RelayTransport};
-use super::NetInfo;
+use super::{MagicSock, MappedAddr, NetInfo};
+use crate::net_report::IpMappedAddresses;
 
 /// Manages the different underlying data transports that the magicsock
 /// can support.
@@ -250,7 +251,11 @@ impl Transports {
         }
     }
 
-    pub(crate) fn create_io_poller(&self) -> Pin<Box<dyn quinn::UdpPoller>> {
+    pub(crate) fn create_io_poller(
+        &self,
+        msock: Arc<MagicSock>,
+        ip_mapped_addrs: IpMappedAddresses,
+    ) -> Pin<Box<dyn quinn::UdpPoller>> {
         #[cfg(not(wasm_browser))]
         let ip_pollers = self.ip.iter().map(|t| t.create_io_poller()).collect();
 
@@ -260,6 +265,8 @@ impl Transports {
             #[cfg(not(wasm_browser))]
             ip_pollers,
             relay_pollers,
+            ip_mapped_addrs,
+            msock,
         })
     }
 
@@ -380,29 +387,74 @@ impl Addr {
 #[derive(Debug)]
 pub struct IoPoller {
     #[cfg(not(wasm_browser))]
-    ip_pollers: Vec<Arc<UdpSocket>>,
+    ip_pollers: Vec<IpIoPoller>,
     relay_pollers: Vec<RelayDatagramSendChannelSender>,
+    ip_mapped_addrs: IpMappedAddresses,
+    msock: Arc<MagicSock>, // :(
 }
 
 impl quinn::UdpPoller for IoPoller {
-    fn poll_writable(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
-        // This version returns Ready as soon as any of them are ready.
-
+    fn poll_writable(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context,
+        transmit: &quinn_proto::Transmit,
+    ) -> Poll<io::Result<()>> {
         let this = &mut *self;
-        #[cfg(not(wasm_browser))]
-        for poller in &mut this.ip_pollers {
-            match poller.poll_writable(cx) {
-                Poll::Ready(_) => return Poll::Ready(Ok(())),
-                Poll::Pending => (),
+
+        match MappedAddr::from(transmit.destination) {
+            MappedAddr::None(_dest) => {
+                // return Poll::Ready(Err(io::Error::other("Cannot convert to a mapped address.")));
             }
+            MappedAddr::NodeId(dest) => {
+                // Get the node's relay address and best direct address, as well
+                // as any pings that need to be sent for hole-punching purposes.
+                match this.msock.addr_for_send(dest) {
+                    Some((_node_id, udp_addr, relay_url)) => {
+                        #[cfg(not(wasm_browser))]
+                        if let Some(addr) = udp_addr {
+                            for poller in &mut this.ip_pollers {
+                                if poller.is_valid_send_addr(&addr) {
+                                    match poller.poll_writable(cx) {
+                                        Poll::Ready(_) => return Poll::Ready(Ok(())),
+                                        Poll::Pending => (),
+                                    }
+                                }
+                            }
+                        }
+                        if let Some(_url) = relay_url {
+                            for poller in &mut this.relay_pollers {
+                                match poller.poll_writable(cx) {
+                                    Poll::Ready(_) => return Poll::Ready(Ok(())),
+                                    Poll::Pending => (),
+                                }
+                            }
+                        }
+                    }
+                    None => {
+                        // return Poll::Ready(Err(io::Error::other(
+                        //     "no NodeState for mapped address",
+                        // )));
+                    }
+                }
+            }
+            #[cfg(not(wasm_browser))]
+            MappedAddr::Ip(addr) => match this.ip_mapped_addrs.get_ip_addr(&addr) {
+                Some(addr) => {
+                    for poller in &mut this.ip_pollers {
+                        if poller.is_valid_send_addr(&addr) {
+                            match poller.poll_writable(cx) {
+                                Poll::Ready(_) => return Poll::Ready(Ok(())),
+                                Poll::Pending => (),
+                            }
+                        }
+                    }
+                }
+                None => {
+                    // return Poll::Ready(Err(io::Error::other("unknown mapped address")));
+                }
+            },
         }
 
-        for poller in &mut this.relay_pollers {
-            match poller.poll_writable(cx) {
-                Poll::Ready(_) => return Poll::Ready(Ok(())),
-                Poll::Pending => (),
-            }
-        }
         Poll::Pending
     }
 }
