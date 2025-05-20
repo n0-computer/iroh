@@ -3619,10 +3619,7 @@
 <a href="#3618" id="3618">3618</a>
 <a href="#3619" id="3619">3619</a>
 <a href="#3620" id="3620">3620</a>
-<a href="#3621" id="3621">3621</a>
-<a href="#3622" id="3622">3622</a>
-<a href="#3623" id="3623">3623</a>
-<a href="#3624" id="3624">3624</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#3621" id="3621">3621</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -3875,7 +3872,7 @@
     /// If `None`, then we are not connected to any relay nodes.
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>my_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;RelayUrl&gt; {
         <span class="self">self</span>.local_addr().into_iter().find_map(|a| {
-            <span class="kw">if let </span>transports::Addr::RelayUrl(url, <span class="kw">_</span>) = a {
+            <span class="kw">if let </span>transports::Addr::Relay(url, <span class="kw">_</span>) = a {
                 <span class="prelude-val">Some</span>(url)
             } <span class="kw">else </span>{
                 <span class="prelude-val">None
@@ -3963,7 +3960,7 @@
             addrs
                 .into_iter()
                 .filter_map(|addr| {
-                    <span class="kw">if let </span>transports::Addr::RelayUrl(url, <span class="kw">_</span>) = addr {
+                    <span class="kw">if let </span>transports::Addr::Relay(url, <span class="kw">_</span>) = addr {
                         <span class="prelude-val">Some</span>(url)
                     } <span class="kw">else </span>{
                         <span class="prelude-val">None
@@ -4147,7 +4144,7 @@
                             active_paths.push(transports::Addr::from(addr));
                         }
                         <span class="kw">if let </span><span class="prelude-val">Some</span>(url) = relay_url {
-                            active_paths.push(transports::Addr::RelayUrl(url, node_id));
+                            active_paths.push(transports::Addr::Relay(url, node_id));
                         }
                     }
                     <span class="prelude-val">None </span>=&gt; {
@@ -4322,19 +4319,19 @@
                 } <span class="kw">else </span>{
                     <span class="macro">trace!</span>(src = <span class="question-mark">?</span>source_addr, len = %quinn_meta.stride, <span class="string">"UDP recv: quic packet"</span>);
                     <span class="kw">match </span>source_addr {
-                        transports::Addr::Ipv4(..) =&gt; {
+                        transports::Addr::Ip(SocketAddr::V4(..)) =&gt; {
                             <span class="self">self</span>.metrics
                                 .magicsock
                                 .recv_data_ipv4
                                 .inc_by(datagram.len() <span class="kw">as _</span>);
                         }
-                        transports::Addr::Ipv6(..) =&gt; {
+                        transports::Addr::Ip(SocketAddr::V6(..)) =&gt; {
                             <span class="self">self</span>.metrics
                                 .magicsock
                                 .recv_data_ipv6
                                 .inc_by(datagram.len() <span class="kw">as _</span>);
                         }
-                        transports::Addr::RelayUrl(..) =&gt; {
+                        transports::Addr::Relay(..) =&gt; {
                             <span class="self">self</span>.metrics
                                 .magicsock
                                 .recv_data_relay
@@ -4353,9 +4350,8 @@
                     Url(RelayUrl, NodeId),
                 }
                 <span class="kw">let </span>addr = <span class="kw">match </span>source_addr {
-                    transports::Addr::Ipv4(ipv4) =&gt; AddrOrUrl::Addr(SocketAddr::V4(<span class="kw-2">*</span>ipv4)),
-                    transports::Addr::Ipv6(ipv6) =&gt; AddrOrUrl::Addr(SocketAddr::V6(<span class="kw-2">*</span>ipv6)),
-                    transports::Addr::RelayUrl(<span class="kw-2">ref </span>url, id) =&gt; AddrOrUrl::Url(url.clone(), <span class="kw-2">*</span>id),
+                    transports::Addr::Ip(addr) =&gt; AddrOrUrl::Addr(<span class="kw-2">*</span>addr),
+                    transports::Addr::Relay(<span class="kw-2">ref </span>url, id) =&gt; AddrOrUrl::Url(url.clone(), <span class="kw-2">*</span>id),
                 };
 
                 <span class="kw">match </span>addr {
@@ -4439,7 +4435,7 @@
             <span class="kw">return</span>;
         }
 
-        <span class="kw">if let </span>transports::Addr::RelayUrl(<span class="kw">_</span>, node_id) = src {
+        <span class="kw">if let </span>transports::Addr::Relay(<span class="kw">_</span>, node_id) = src {
             <span class="kw">if </span>node_id != <span class="kw-2">&amp;</span>sender {
                 <span class="comment">// TODO: return here?
                 </span><span class="macro">warn!</span>(<span class="string">"Received relay disco message from connection for {:?}, but with message from {}"</span>, node_id.fmt_short(), sender.fmt_short());
@@ -4493,7 +4489,7 @@
             disco::Message::CallMeMaybe(cm) =&gt; {
                 <span class="self">self</span>.metrics.magicsock.recv_disco_call_me_maybe.inc();
                 <span class="kw">match </span>src {
-                    transports::Addr::RelayUrl(url, <span class="kw">_</span>) =&gt; {
+                    transports::Addr::Relay(url, <span class="kw">_</span>) =&gt; {
                         <span class="macro">event!</span>(
                             target: <span class="string">"iroh::_events::call-me-maybe::recv"</span>,
                             Level::DEBUG,
@@ -4648,9 +4644,8 @@
         msg: disco::Message,
     ) -&gt; io::Result&lt;()&gt; {
         <span class="kw">let </span>dst = <span class="kw">match </span>dst {
-            SendAddr::Udp(SocketAddr::V4(v4)) =&gt; transports::Addr::Ipv4(v4),
-            SendAddr::Udp(SocketAddr::V6(v6)) =&gt; transports::Addr::Ipv6(v6),
-            SendAddr::Relay(url) =&gt; transports::Addr::RelayUrl(url, dst_key),
+            SendAddr::Udp(addr) =&gt; transports::Addr::Ip(addr),
+            SendAddr::Relay(url) =&gt; transports::Addr::Relay(url, dst_key),
         };
 
         n0_future::future::poll_fn(<span class="kw">move </span>|cx| <span class="kw">loop </span>{
@@ -4730,9 +4725,8 @@
         });
 
         <span class="kw">let </span>addr = <span class="kw">match </span>dst {
-            SendAddr::Udp(SocketAddr::V4(v4)) =&gt; transports::Addr::Ipv4(v4),
-            SendAddr::Udp(SocketAddr::V6(v6)) =&gt; transports::Addr::Ipv6(v6),
-            SendAddr::Relay(<span class="kw-2">ref </span>url) =&gt; transports::Addr::RelayUrl(url.clone(), dst_node),
+            SendAddr::Udp(addr) =&gt; transports::Addr::Ip(addr),
+            SendAddr::Relay(<span class="kw-2">ref </span>url) =&gt; transports::Addr::Relay(url.clone(), dst_node),
         };
 
         <span class="self">self</span>.try_send_disco_message(<span class="kw-2">&amp;</span>addr, dst_node, <span class="kw-2">&amp;</span>msg)<span class="question-mark">?</span>;
