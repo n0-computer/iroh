@@ -562,7 +562,14 @@
 <a href="#561" id="561">561</a>
 <a href="#562" id="562">562</a>
 <a href="#563" id="563">563</a>
-<a href="#564" id="564">564</a></pre></div><pre class="rust"><code><span class="doccomment">//! Tools for spawning an accept loop that routes incoming requests to the right protocol.
+<a href="#564" id="564">564</a>
+<a href="#565" id="565">565</a>
+<a href="#566" id="566">566</a>
+<a href="#567" id="567">567</a>
+<a href="#568" id="568">568</a>
+<a href="#569" id="569">569</a>
+<a href="#570" id="570">570</a>
+<a href="#571" id="571">571</a></pre></div><pre class="rust"><code><span class="doccomment">//! Tools for spawning an accept loop that routes incoming requests to the right protocol.
 //!
 //! ## Example
 //!
@@ -686,10 +693,17 @@
 
     <span class="doccomment">/// Handle an incoming connection.
     ///
-    /// This runs on a freshly spawned tokio task so this can be long-running.
+    /// This runs on a freshly spawned tokio task so the returned future can be long-running.
+    ///
+    /// When [`Router::shutdown`] is called, no further connections will be accepted, and
+    /// the futures returned by [`Self::accept`] will be aborted after the future returned
+    /// from [`ProtocolHandler::shutdown`] completes.
     </span><span class="kw">fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, connection: Connection) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;;
 
-    <span class="doccomment">/// Called when the node shuts down.
+    <span class="doccomment">/// Called when the router shuts down.
+    ///
+    /// This is called from [`Router::shutdown`]. The returned future is awaited before
+    /// the router closes the endpoint.
     </span><span class="kw">fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; BoxFuture&lt;()&gt; {
         Box::pin(<span class="kw">async move </span>{})
     }
