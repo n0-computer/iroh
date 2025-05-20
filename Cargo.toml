@@ -43,6 +43,6 @@ unused-async = "warn"
 
 
 [patch.crates-io]
-iroh-quinn = { git = "https://github.com/n0-computer/quinn", branch = "iroh-fix-poll-writable" }
-iroh-quinn-udp = { git = "https://github.com/n0-computer/quinn", branch = "iroh-fix-poll-writable" }
-iroh-quinn-proto = { git = "https://github.com/n0-computer/quinn", branch = "iroh-fix-poll-writable" }
+iroh-quinn = { git = "https://github.com/n0-computer/quinn", branch = "matheus23/poll_writable_remote" }
+iroh-quinn-udp = { git = "https://github.com/n0-computer/quinn", branch = "matheus23/poll_writable_remote" }
+iroh-quinn-proto = { git = "https://github.com/n0-computer/quinn", branch = "matheus23/poll_writable_remote" }

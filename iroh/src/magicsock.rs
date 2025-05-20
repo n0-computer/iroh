@@ -1631,9 +1631,9 @@ enum DiscoBoxError {
 }
 
 impl AsyncUdpSocket for MagicSock {
-    fn create_io_poller(self: Arc<Self>) -> Pin<Box<dyn quinn::UdpPoller>> {
+    fn create_io_poller(self: Arc<Self>, dest: SocketAddr) -> Pin<Box<dyn quinn::UdpPoller>> {
         self.transports
-            .create_io_poller(self.clone(), self.ip_mapped_addrs.clone())
+            .create_io_poller(dest, self.clone(), self.ip_mapped_addrs.clone())
     }
 
     fn try_send(&self, transmit: &quinn_udp::Transmit) -> io::Result<()> {

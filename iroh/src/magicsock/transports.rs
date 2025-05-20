@@ -253,6 +253,7 @@ impl Transports {
 
     pub(crate) fn create_io_poller(
         &self,
+        dest: SocketAddr,
         msock: Arc<MagicSock>,
         ip_mapped_addrs: IpMappedAddresses,
     ) -> Pin<Box<dyn quinn::UdpPoller>> {
@@ -267,6 +268,7 @@ impl Transports {
             relay_pollers,
             ip_mapped_addrs,
             msock,
+            dest: MappedAddr::from(dest),
         })
     }
 
@@ -391,19 +393,16 @@ pub struct IoPoller {
     relay_pollers: Vec<RelayDatagramSendChannelSender>,
     ip_mapped_addrs: IpMappedAddresses,
     msock: Arc<MagicSock>, // :(
+    dest: MappedAddr,
 }
 
 impl quinn::UdpPoller for IoPoller {
-    fn poll_writable(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context,
-        transmit: &quinn_proto::Transmit,
-    ) -> Poll<io::Result<()>> {
+    fn poll_writable(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
         let this = &mut *self;
 
-        match MappedAddr::from(transmit.destination) {
-            MappedAddr::None(_dest) => {
-                // return Poll::Ready(Err(io::Error::other("Cannot convert to a mapped address.")));
+        match this.dest {
+            MappedAddr::None(dest) => {
+                warn!(?dest, "Cannot convert to a mapped address.");
             }
             MappedAddr::NodeId(dest) => {
                 // Get the node's relay address and best direct address, as well
@@ -431,9 +430,7 @@ impl quinn::UdpPoller for IoPoller {
                         }
                     }
                     None => {
-                        // return Poll::Ready(Err(io::Error::other(
-                        //     "no NodeState for mapped address",
-                        // )));
+                        warn!(?dest, "no NodeState for mapped address");
                     }
                 }
             }
@@ -450,7 +447,7 @@ impl quinn::UdpPoller for IoPoller {
                     }
                 }
                 None => {
-                    // return Poll::Ready(Err(io::Error::other("unknown mapped address")));
+                    warn!(?addr, "unknown mapped address");
                 }
             },
         }
