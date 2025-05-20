@@ -277,7 +277,7 @@ impl NodeState {
     /// Returns the address(es) that should be used for sending the next packet.
     ///
     /// This may return to send on one, both or no paths.
-    fn addr_for_send(
+    pub(super) fn addr_for_send(
         &mut self,
         now: &Instant,
         have_ipv6: bool,
@@ -360,6 +360,40 @@ impl NodeState {
             }
         }
         (best_addr, relay_url)
+    }
+
+    pub(super) fn peek_addr(
+        &self,
+        now: &Instant,
+        have_ipv6: bool,
+    ) -> (Option<SocketAddr>, Option<RelayUrl>) {
+        #[cfg(any(test, feature = "test-utils"))]
+        if self.path_selection == PathSelection::RelayOnly {
+            debug!("in `RelayOnly` mode, giving the relay address as the only viable address for this endpoint");
+            return (None, self.relay_url());
+        }
+        match self.udp_paths.peek_addr(*now, have_ipv6) {
+            UdpSendAddr::Valid(addr) => {
+                // If we have a valid address we use it.
+                trace!(%addr, "UdpSendAddr is valid, use it");
+                (Some(addr), None)
+            }
+            UdpSendAddr::Outdated(addr) => {
+                // If the address is outdated we use it, but send via relay at the same time.
+                // We also send disco pings so that it will become valid again if it still
+                // works (i.e. we don't need to holepunch again).
+                trace!(%addr, "UdpSendAddr is outdated, use it together with relay");
+                (Some(addr), self.relay_url())
+            }
+            UdpSendAddr::Unconfirmed(addr) => {
+                trace!(%addr, "UdpSendAddr is unconfirmed, use it together with relay");
+                (Some(addr), self.relay_url())
+            }
+            UdpSendAddr::None => {
+                trace!("No UdpSendAddr, use relay");
+                (None, self.relay_url())
+            }
+        }
     }
 
     /// Removes a direct address for this node.

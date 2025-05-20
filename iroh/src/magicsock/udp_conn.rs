@@ -34,7 +34,7 @@ impl UdpConn {
 }
 
 impl AsyncUdpSocket for UdpConn {
-    fn create_io_poller(self: Arc<Self>) -> Pin<Box<dyn quinn::UdpPoller>> {
+    fn create_io_poller(self: Arc<Self>, _remote: SocketAddr) -> Pin<Box<dyn quinn::UdpPoller>> {
         (*self).create_io_poller()
     }
 
