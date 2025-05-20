@@ -434,7 +434,7 @@ mod tests {
     use testresult::TestResult;
 
     use super::*;
-    use crate::{endpoint::ConnectionError, watcher::Watcher};
+    use crate::{endpoint::ConnectionError, watcher::Watcher, RelayMode};
 
     #[tokio::test]
     async fn test_shutdown() -> Result<()> {
@@ -528,13 +528,19 @@ mod tests {
             }
         }
 
-        let endpoint = Endpoint::builder().bind().await?;
+        let endpoint = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .await?;
         let router = Router::builder(endpoint)
             .accept(TEST_ALPN, TestProtocol::default())
             .spawn();
         let addr = router.endpoint().node_addr().initialized().await?;
 
-        let endpoint2 = Endpoint::builder().bind().await?;
+        let endpoint2 = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .await?;
         let conn = endpoint2.connect(addr, TEST_ALPN).await?;
 
         router.shutdown().await?;
