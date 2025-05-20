@@ -66,7 +66,6 @@ pub struct Metrics {
     pub actor_tick_re_stun: Counter,
     pub actor_tick_portmap_changed: Counter,
     pub actor_tick_direct_addr_heartbeat: Counter,
-    pub actor_tick_direct_addr_update_receiver: Counter,
     pub actor_link_change: Counter,
     pub actor_tick_other: Counter,
 
