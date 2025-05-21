@@ -145,11 +145,7 @@
 <a href="#144" id="144">144</a>
 <a href="#145" id="145">145</a>
 <a href="#146" id="146">146</a>
-<a href="#147" id="147">147</a>
-<a href="#148" id="148">148</a>
-<a href="#149" id="149">149</a>
-<a href="#150" id="150">150</a>
-<a href="#151" id="151">151</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#147" id="147">147</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     io,
     net::{IpAddr, SocketAddr},
     sync::Arc,
@@ -191,26 +187,27 @@
 
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>poll_send(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-        _cx: <span class="kw-2">&amp;mut </span>std::task::Context,
+        cx: <span class="kw-2">&amp;mut </span>std::task::Context,
         destination: SocketAddr,
         src: <span class="prelude-ty">Option</span>&lt;IpAddr&gt;,
         transmit: <span class="kw-2">&amp;</span>Transmit&lt;<span class="lifetime">'_</span>&gt;,
     ) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
-        <span class="comment">// TODO: use context
-
-        </span><span class="macro">trace!</span>(<span class="string">"sending to {}"</span>, destination);
+        <span class="macro">trace!</span>(<span class="string">"sending to {}"</span>, destination);
         <span class="kw">let </span>total_bytes = transmit.contents.len() <span class="kw">as </span>u64;
-        <span class="kw">let </span>res = <span class="self">self</span>.socket.try_send_quinn(<span class="kw-2">&amp;</span>quinn_udp::Transmit {
-            destination,
-            ecn: transmit.ecn,
-            contents: transmit.contents,
-            segment_size: transmit.segment_size,
-            src_ip: src,
-        });
+        <span class="kw">let </span>res = <span class="self">self</span>.socket.poll_send_quinn(
+            cx,
+            <span class="kw-2">&amp;</span>quinn_udp::Transmit {
+                destination,
+                ecn: transmit.ecn,
+                contents: transmit.contents,
+                segment_size: transmit.segment_size,
+                src_ip: src,
+            },
+        );
         <span class="macro">trace!</span>(<span class="string">"send res: {:?}"</span>, res);
 
         <span class="kw">match </span>res {
-            <span class="prelude-val">Ok</span>(res) =&gt; {
+            Poll::Ready(<span class="prelude-val">Ok</span>(res)) =&gt; {
                 <span class="kw">match </span>destination {
                     SocketAddr::V4(<span class="kw">_</span>) =&gt; {
                         <span class="self">self</span>.metrics.send_ipv4.inc_by(total_bytes);
@@ -221,13 +218,8 @@
                 }
                 Poll::Ready(<span class="prelude-val">Ok</span>(res))
             }
-            <span class="prelude-val">Err</span>(err) =&gt; {
-                <span class="kw">if </span>err.kind() == io::ErrorKind::WouldBlock {
-                    Poll::Pending
-                } <span class="kw">else </span>{
-                    Poll::Ready(<span class="prelude-val">Err</span>(err))
-                }
-            }
+            Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; Poll::Ready(<span class="prelude-val">Err</span>(err)),
+            Poll::Pending =&gt; Poll::Pending,
         }
     }
 
