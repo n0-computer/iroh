@@ -3526,11 +3526,7 @@
 <a href="#3525" id="3525">3525</a>
 <a href="#3526" id="3526">3526</a>
 <a href="#3527" id="3527">3527</a>
-<a href="#3528" id="3528">3528</a>
-<a href="#3529" id="3529">3529</a>
-<a href="#3530" id="3530">3530</a>
-<a href="#3531" id="3531">3531</a>
-<a href="#3532" id="3532">3532</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#3528" id="3528">3528</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4524,11 +4520,7 @@
         };
 
         <span class="kw">let </span>dst2 = dst.clone();
-        <span class="kw">match </span>n0_future::future::poll_fn(<span class="kw">move </span>|cx| {
-            sender.inner_poll_send(cx, <span class="kw-2">&amp;</span>dst2, <span class="prelude-val">None</span>, <span class="kw-2">&amp;</span>transmit)
-        })
-        .<span class="kw">await
-        </span>{
+        <span class="kw">match </span>sender.send(<span class="kw-2">&amp;</span>dst2, <span class="prelude-val">None</span>, <span class="kw-2">&amp;</span>transmit).<span class="kw">await </span>{
             <span class="prelude-val">Ok</span>(()) =&gt; {
                 <span class="macro">trace!</span>(<span class="question-mark">?</span>dst, %msg, <span class="string">"sent disco message"</span>);
                 <span class="self">self</span>.metrics.magicsock.sent_disco_udp.inc();

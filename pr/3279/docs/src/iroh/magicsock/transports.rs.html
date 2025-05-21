@@ -502,7 +502,45 @@
 <a href="#501" id="501">501</a>
 <a href="#502" id="502">502</a>
 <a href="#503" id="503">503</a>
-<a href="#504" id="504">504</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#504" id="504">504</a>
+<a href="#505" id="505">505</a>
+<a href="#506" id="506">506</a>
+<a href="#507" id="507">507</a>
+<a href="#508" id="508">508</a>
+<a href="#509" id="509">509</a>
+<a href="#510" id="510">510</a>
+<a href="#511" id="511">511</a>
+<a href="#512" id="512">512</a>
+<a href="#513" id="513">513</a>
+<a href="#514" id="514">514</a>
+<a href="#515" id="515">515</a>
+<a href="#516" id="516">516</a>
+<a href="#517" id="517">517</a>
+<a href="#518" id="518">518</a>
+<a href="#519" id="519">519</a>
+<a href="#520" id="520">520</a>
+<a href="#521" id="521">521</a>
+<a href="#522" id="522">522</a>
+<a href="#523" id="523">523</a>
+<a href="#524" id="524">524</a>
+<a href="#525" id="525">525</a>
+<a href="#526" id="526">526</a>
+<a href="#527" id="527">527</a>
+<a href="#528" id="528">528</a>
+<a href="#529" id="529">529</a>
+<a href="#530" id="530">530</a>
+<a href="#531" id="531">531</a>
+<a href="#532" id="532">532</a>
+<a href="#533" id="533">533</a>
+<a href="#534" id="534">534</a>
+<a href="#535" id="535">535</a>
+<a href="#536" id="536">536</a>
+<a href="#537" id="537">537</a>
+<a href="#538" id="538">538</a>
+<a href="#539" id="539">539</a>
+<a href="#540" id="540">540</a>
+<a href="#541" id="541">541</a>
+<a href="#542" id="542">542</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     io::{<span class="self">self</span>, IoSliceMut},
     net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6},
     pin::Pin,
@@ -824,8 +862,44 @@
 }
 
 <span class="kw">impl </span>UdpSender {
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>inner_poll_send(
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>send(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
+        destination: <span class="kw-2">&amp;</span>Addr,
+        src: <span class="prelude-ty">Option</span>&lt;IpAddr&gt;,
+        transmit: <span class="kw-2">&amp;</span>Transmit&lt;<span class="lifetime">'_</span>&gt;,
+    ) -&gt; io::Result&lt;()&gt; {
+        <span class="macro">trace!</span>(<span class="question-mark">?</span>destination, <span class="string">"sending"</span>);
+
+        <span class="kw">match </span>destination {
+            <span class="attr">#[cfg(wasm_browser)]
+            </span>Addr::Ip(..) =&gt; {
+                <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(io::Error::other(<span class="string">"IP is unsupported in browser"</span>)))
+            }
+            <span class="attr">#[cfg(not(wasm_browser))]
+            </span>Addr::Ip(addr) =&gt; {
+                <span class="kw">for </span>sender <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.ip {
+                    <span class="kw">if </span>sender.is_valid_send_addr(addr)
+                        &amp;&amp; sender.send(<span class="kw-2">*</span>addr, src, transmit).<span class="kw">await</span>.is_ok()
+                    {
+                        <span class="kw">break</span>;
+                    }
+                }
+            }
+            Addr::Relay(url, node_id) =&gt; {
+                <span class="kw">for </span>sender <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.relay {
+                    <span class="kw">if </span>sender.is_valid_send_addr(url, node_id)
+                        &amp;&amp; sender.send(url.clone(), <span class="kw-2">*</span>node_id, transmit).<span class="kw">await</span>.is_ok()
+                    {
+                        <span class="kw">break</span>;
+                    }
+                }
+            }
+        }
+        <span class="prelude-val">Err</span>(io::Error::other(<span class="string">"no transport available"</span>))
+    }
+
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>inner_poll_send(
+        <span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;,
         cx: <span class="kw-2">&amp;mut </span>std::task::Context,
         destination: <span class="kw-2">&amp;</span>Addr,
         src: <span class="prelude-ty">Option</span>&lt;IpAddr&gt;,
@@ -840,9 +914,9 @@
             }
             <span class="attr">#[cfg(not(wasm_browser))]
             </span>Addr::Ip(addr) =&gt; {
-                <span class="kw">for </span>sender <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.ip {
+                <span class="kw">for </span>sender <span class="kw">in </span><span class="kw-2">&amp;mut </span><span class="self">self</span>.ip {
                     <span class="kw">if </span>sender.is_valid_send_addr(addr) {
-                        <span class="kw">match </span>sender.poll_send(cx, <span class="kw-2">*</span>addr, src, transmit) {
+                        <span class="kw">match </span>Pin::new(sender).poll_send(cx, <span class="kw-2">*</span>addr, src, transmit) {
                             Poll::Pending =&gt; {}
                             Poll::Ready(res) =&gt; <span class="kw">return </span>Poll::Ready(res),
                         }
@@ -910,7 +984,7 @@
 
 <span class="kw">impl </span>quinn::UdpSender <span class="kw">for </span>UdpSender {
     <span class="kw">fn </span>poll_send(
-        <span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;,
+        <span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;,
         transmit: <span class="kw-2">&amp;</span>quinn_udp::Transmit,
         cx: <span class="kw-2">&amp;mut </span>Context,
     ) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
@@ -939,7 +1013,9 @@
                 segment_size: transmit.segment_size,
             };
 
-            <span class="kw">let </span>res = <span class="self">self</span>.inner_poll_send(cx, <span class="kw-2">&amp;</span>destination, src, <span class="kw-2">&amp;</span>transmit);
+            <span class="kw">let </span>res = <span class="self">self
+                </span>.as_mut()
+                .inner_poll_send(cx, <span class="kw-2">&amp;</span>destination, src, <span class="kw-2">&amp;</span>transmit);
             <span class="kw">match </span>res {
                 Poll::Ready(<span class="prelude-val">Ok</span>(())) =&gt; {
                     <span class="macro">trace!</span>(dst = <span class="question-mark">?</span>destination, <span class="string">"sent transmit"</span>);
