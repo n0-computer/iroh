@@ -469,7 +469,10 @@ impl MagicSock {
     }
 
     #[instrument(skip_all)]
-    fn poll_send(&self, cx: &mut Context, transmit: &quinn_udp::Transmit) -> Poll<io::Result<()>> {
+    fn prepare_send(
+        &self,
+        transmit: &quinn_udp::Transmit,
+    ) -> io::Result<SmallVec<[transports::Addr; 3]>> {
         self.metrics
             .magicsock
             .send_data
@@ -480,10 +483,10 @@ impl MagicSock {
                 .magicsock
                 .send_data_network_down
                 .inc_by(transmit.contents.len() as _);
-            return Poll::Ready(Err(io::Error::new(
+            return Err(io::Error::new(
                 io::ErrorKind::NotConnected,
                 "connection closed",
-            )));
+            ));
         }
 
         let mut active_paths = SmallVec::<[_; 3]>::new();
@@ -542,6 +545,13 @@ impl MagicSock {
             }
         }
 
+        Ok(active_paths)
+    }
+
+    #[instrument(skip_all)]
+    fn poll_send(&self, cx: &mut Context, transmit: &quinn_udp::Transmit) -> Poll<io::Result<()>> {
+        let active_paths = self.prepare_send(transmit)?;
+
         if active_paths.is_empty() {
             // Returning Ok here means we let QUIC timeout.
             // Returning an error would immediately fail a connection.
@@ -583,6 +593,51 @@ impl MagicSock {
             return Poll::Pending;
         }
         Poll::Ready(Ok(()))
+    }
+
+    /// Best effort sending
+    #[instrument(skip_all)]
+    fn try_send(&self, transmit: &quinn_udp::Transmit) -> io::Result<()> {
+        let active_paths = self.prepare_send(transmit)?;
+        if active_paths.is_empty() {
+            // Returning Ok here means we let QUIC timeout.
+            // Returning an error would immediately fail a connection.
+            // The philosophy of quinn-udp is that a UDP connection could
+            // come back at any time or missing should be transient so chooses to let
+            // these kind of errors time out.  See test_try_send_no_send_addr to try
+            // this out.
+            error!("no paths available for node, voiding transmit");
+            return Ok(());
+        }
+
+        let mut results = SmallVec::<[_; 3]>::new();
+
+        trace!(?active_paths, "attempting to send");
+
+        for destination in active_paths {
+            let src = transmit.src_ip;
+            let transmit = transports::Transmit {
+                ecn: transmit.ecn,
+                contents: transmit.contents,
+                segment_size: transmit.segment_size,
+            };
+
+            let res = self.transports.try_send(&destination, src, &transmit);
+            match res {
+                Ok(()) => {
+                    trace!(dst = ?destination, "sent transmit");
+                }
+                Err(ref err) => {
+                    warn!(dst = ?destination, "failed to send: {err:#}");
+                }
+            }
+            results.push(res);
+        }
+
+        if results.iter().all(|p| p.is_err()) {
+            return Err(io::Error::other("all failed"));
+        }
+        Ok(())
     }
 
     /// NOTE: Receiving on a [`Self::closed`] socket will return [`Poll::Pending`] indefinitely.

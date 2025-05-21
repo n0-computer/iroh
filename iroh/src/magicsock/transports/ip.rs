@@ -76,6 +76,39 @@ impl IpTransport {
         }
     }
 
+    pub(super) fn try_send(
+        &self,
+        destination: SocketAddr,
+        src: Option<IpAddr>,
+        transmit: &Transmit<'_>,
+    ) -> io::Result<()> {
+        trace!("sending to {}", destination);
+        let total_bytes = transmit.contents.len() as u64;
+        let res = self.socket.try_send_quinn(&quinn_udp::Transmit {
+            destination,
+            ecn: transmit.ecn,
+            contents: transmit.contents,
+            segment_size: transmit.segment_size,
+            src_ip: src,
+        });
+        trace!("send res: {:?}", res);
+
+        match res {
+            Ok(res) => {
+                match destination {
+                    SocketAddr::V4(_) => {
+                        self.metrics.send_ipv4.inc_by(total_bytes);
+                    }
+                    SocketAddr::V6(_) => {
+                        self.metrics.send_ipv6.inc_by(total_bytes);
+                    }
+                }
+                Ok(res)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
     /// NOTE: Receiving on a closed socket will return [`Poll::Pending`] indefinitely.
     pub(super) fn poll_recv(
         &self,

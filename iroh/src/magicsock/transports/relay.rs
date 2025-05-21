@@ -100,6 +100,23 @@ impl RelayTransport {
         self.relay_datagram_send_channel.poll_send(cx, msg)
     }
 
+    pub(super) fn try_send(
+        &self,
+        dest_url: RelayUrl,
+        dest_node: NodeId,
+        transmit: &Transmit<'_>,
+    ) -> io::Result<()> {
+        let contents = split_packets(transmit);
+
+        let msg = RelaySendItem {
+            remote_node: dest_node,
+            url: dest_url.clone(),
+            datagrams: contents,
+        };
+
+        self.relay_datagram_send_channel.try_send(msg)
+    }
+
     pub(super) fn poll_recv(
         &self,
         cx: &mut Context,
@@ -298,6 +315,32 @@ impl RelayDatagramSendChannelSender {
                 }
                 drop(wakers);
                 Poll::Pending
+            }
+        }
+    }
+
+    fn try_send(&self, item: RelaySendItem) -> io::Result<()> {
+        let dest_node = item.remote_node;
+        let dest_url = item.url.clone();
+
+        match self.sender.try_send(item) {
+            Ok(_) => {
+                trace!(node = %dest_node.fmt_short(), relay_url = %dest_url,
+                       "send relay: message queued");
+                Ok(())
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                error!(node = %dest_node.fmt_short(), relay_url = %dest_url,
+                    "send relay: message dropped, channel to actor is closed");
+                Err(io::Error::new(
+                    io::ErrorKind::ConnectionReset,
+                    "channel to actor is closed",
+                ))
+            }
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                warn!(node = %dest_node.fmt_short(), relay_url = %dest_url,
+                      "send relay: message dropped, channel to actor is full");
+                Err(io::Error::new(io::ErrorKind::WouldBlock, "channel full"))
             }
         }
     }

@@ -86,6 +86,50 @@ impl Transports {
         Poll::Pending
     }
 
+    /// Best effort sending
+    pub(crate) fn try_send(
+        &self,
+        destination: &Addr,
+        src: Option<IpAddr>,
+        transmit: &Transmit<'_>,
+    ) -> io::Result<()> {
+        trace!(?destination, "sending, best effort");
+
+        match destination {
+            #[cfg(wasm_browser)]
+            Addr::Ip(..) => return Err(io::Error::other("IP is unsupported in browser")),
+            #[cfg(not(wasm_browser))]
+            Addr::Ip(addr) => {
+                for transport in &self.ip {
+                    if transport.is_valid_send_addr(addr) {
+                        match transport.try_send(*addr, src, transmit) {
+                            Ok(()) => return Ok(()),
+                            Err(_err) => {
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+            Addr::Relay(url, node_id) => {
+                for transport in &self.relay {
+                    if transport.is_valid_send_addr(url, node_id) {
+                        match transport.try_send(url.clone(), *node_id, transmit) {
+                            Ok(()) => return Ok(()),
+                            Err(_err) => {
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Err(io::Error::new(
+            io::ErrorKind::WouldBlock,
+            "no transport ready",
+        ))
+    }
+
     /// Tries to recv data, on all available transports.
     pub(crate) fn poll_recv(
         &self,
@@ -361,7 +405,7 @@ impl quinn::UdpSender for UdpSender {
         self.msock.transports.max_transmit_segments()
     }
 
-    fn try_send(self: Pin<&mut Self>, _transmit: &quinn_udp::Transmit) -> io::Result<()> {
-        todo!()
+    fn try_send(self: Pin<&mut Self>, transmit: &quinn_udp::Transmit) -> io::Result<()> {
+        self.msock.try_send(transmit)
     }
 }
