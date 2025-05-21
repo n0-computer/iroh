@@ -1012,34 +1012,14 @@ impl MagicSock {
             SendAddr::Relay(url) => transports::Addr::Relay(url, dst_key),
         };
 
-        n0_future::future::poll_fn(move |cx| loop {
-            match self.poll_send_disco_message(cx, &dst, dst_key, &msg) {
-                Poll::Ready(res) => return Poll::Ready(res),
-                Poll::Pending => match self.transports.poll_writable(cx, &dst) {
-                    Poll::Ready(Ok(())) => continue,
-                    Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
-                    Poll::Pending => return Poll::Pending,
-                },
-            }
-        })
-        .await
-    }
-
-    fn poll_send_disco_message(
-        &self,
-        cx: &mut Context,
-        dst: &transports::Addr,
-        dst_key: PublicKey,
-        msg: &disco::Message,
-    ) -> Poll<io::Result<()>> {
         trace!(?dst, %msg, "send disco message (UDP)");
         if self.is_closed() {
-            return Poll::Ready(Err(io::Error::new(
+            return Err(io::Error::new(
                 io::ErrorKind::NotConnected,
                 "connection closed",
-            )));
+            ));
         }
-        let pkt = self.encode_disco_message(dst_key, msg);
+        let pkt = self.encode_disco_message(dst_key, &msg);
 
         let transmit = transports::Transmit {
             contents: &pkt,
@@ -1047,18 +1027,22 @@ impl MagicSock {
             segment_size: None,
         };
 
-        match self.transports.poll_send(cx, dst, None, &transmit) {
-            Poll::Ready(Ok(())) => {
+        let dst2 = dst.clone();
+        match n0_future::future::poll_fn(move |cx| {
+            self.transports.poll_send(cx, &dst2, None, &transmit)
+        })
+        .await
+        {
+            Ok(()) => {
                 trace!(?dst, %msg, "sent disco message");
                 self.metrics.magicsock.sent_disco_udp.inc();
-                disco_message_sent(msg, &self.metrics.magicsock);
-                Poll::Ready(Ok(()))
+                disco_message_sent(&msg, &self.metrics.magicsock);
+                Ok(())
             }
-            Poll::Ready(Err(err)) => {
+            Err(err) => {
                 warn!(?dst, ?msg, ?err, "failed to send disco message");
-                Poll::Ready(Err(err))
+                Err(err)
             }
-            Poll::Pending => Poll::Pending,
         }
     }
 

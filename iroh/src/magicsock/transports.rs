@@ -222,32 +222,6 @@ impl Transports {
         false
     }
 
-    /// Check if a transport is writable, aka sendable on, for the given `addr`.
-    pub(crate) fn poll_writable(&self, cx: &mut Context, addr: &Addr) -> Poll<io::Result<()>> {
-        // TODO: what about multiple matches?
-        match addr {
-            #[cfg(wasm_browser)]
-            Addr::Ip(..) => Poll::Ready(Err(io::Error::other(
-                "IP based addressing is not supported in the browser",
-            ))),
-            #[cfg(not(wasm_browser))]
-            Addr::Ip(addr) => match self.ip.iter().find(|t| t.is_valid_send_addr(addr)) {
-                Some(t) => t.poll_writable(cx),
-                None => Poll::Pending,
-            },
-            Addr::Relay(url, node_id) => {
-                match self
-                    .relay
-                    .iter()
-                    .find(|t| t.is_valid_send_addr(url, node_id))
-                {
-                    Some(t) => t.poll_writable(cx),
-                    None => Poll::Pending,
-                }
-            }
-        }
-    }
-
     pub(crate) fn create_sender(&self, msock: Arc<MagicSock>) -> UdpSender {
         UdpSender {
             #[cfg(not(wasm_browser))]

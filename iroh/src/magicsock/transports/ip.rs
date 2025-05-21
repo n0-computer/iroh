@@ -129,10 +129,6 @@ impl IpTransport {
         }
     }
 
-    pub(super) fn poll_writable(&self, cx: &mut Context) -> Poll<io::Result<()>> {
-        self.socket.poll_writable(cx)
-    }
-
     pub(crate) fn bind_addr(&self) -> SocketAddr {
         self.bind_addr
     }
