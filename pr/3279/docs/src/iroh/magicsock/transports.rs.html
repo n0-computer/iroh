@@ -391,71 +391,7 @@
 <a href="#390" id="390">390</a>
 <a href="#391" id="391">391</a>
 <a href="#392" id="392">392</a>
-<a href="#393" id="393">393</a>
-<a href="#394" id="394">394</a>
-<a href="#395" id="395">395</a>
-<a href="#396" id="396">396</a>
-<a href="#397" id="397">397</a>
-<a href="#398" id="398">398</a>
-<a href="#399" id="399">399</a>
-<a href="#400" id="400">400</a>
-<a href="#401" id="401">401</a>
-<a href="#402" id="402">402</a>
-<a href="#403" id="403">403</a>
-<a href="#404" id="404">404</a>
-<a href="#405" id="405">405</a>
-<a href="#406" id="406">406</a>
-<a href="#407" id="407">407</a>
-<a href="#408" id="408">408</a>
-<a href="#409" id="409">409</a>
-<a href="#410" id="410">410</a>
-<a href="#411" id="411">411</a>
-<a href="#412" id="412">412</a>
-<a href="#413" id="413">413</a>
-<a href="#414" id="414">414</a>
-<a href="#415" id="415">415</a>
-<a href="#416" id="416">416</a>
-<a href="#417" id="417">417</a>
-<a href="#418" id="418">418</a>
-<a href="#419" id="419">419</a>
-<a href="#420" id="420">420</a>
-<a href="#421" id="421">421</a>
-<a href="#422" id="422">422</a>
-<a href="#423" id="423">423</a>
-<a href="#424" id="424">424</a>
-<a href="#425" id="425">425</a>
-<a href="#426" id="426">426</a>
-<a href="#427" id="427">427</a>
-<a href="#428" id="428">428</a>
-<a href="#429" id="429">429</a>
-<a href="#430" id="430">430</a>
-<a href="#431" id="431">431</a>
-<a href="#432" id="432">432</a>
-<a href="#433" id="433">433</a>
-<a href="#434" id="434">434</a>
-<a href="#435" id="435">435</a>
-<a href="#436" id="436">436</a>
-<a href="#437" id="437">437</a>
-<a href="#438" id="438">438</a>
-<a href="#439" id="439">439</a>
-<a href="#440" id="440">440</a>
-<a href="#441" id="441">441</a>
-<a href="#442" id="442">442</a>
-<a href="#443" id="443">443</a>
-<a href="#444" id="444">444</a>
-<a href="#445" id="445">445</a>
-<a href="#446" id="446">446</a>
-<a href="#447" id="447">447</a>
-<a href="#448" id="448">448</a>
-<a href="#449" id="449">449</a>
-<a href="#450" id="450">450</a>
-<a href="#451" id="451">451</a>
-<a href="#452" id="452">452</a>
-<a href="#453" id="453">453</a>
-<a href="#454" id="454">454</a>
-<a href="#455" id="455">455</a>
-<a href="#456" id="456">456</a>
-<a href="#457" id="457">457</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#393" id="393">393</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     io::{<span class="self">self</span>, IoSliceMut},
     net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6},
     pin::Pin,
@@ -465,7 +401,6 @@
 
 <span class="kw">use </span>iroh_base::{NodeId, RelayUrl};
 <span class="kw">use </span>n0_watcher::Watcher;
-<span class="kw">use </span>relay::RelayDatagramSendChannelSender;
 <span class="kw">use </span>tracing::{trace, warn};
 
 <span class="attr">#[cfg(not(wasm_browser))]
@@ -473,12 +408,9 @@
 <span class="kw">mod </span>relay;
 
 <span class="attr">#[cfg(not(wasm_browser))]
-</span><span class="kw">use </span><span class="self">self</span>::ip::IpIoPoller;
-<span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span><span class="self">self</span>::ip::IpTransport;
 <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">use </span><span class="self">self</span>::relay::{RelayActorConfig, RelayTransport};
-<span class="kw">use super</span>::{MagicSock, MappedAddr, NetInfo};
-<span class="kw">use </span><span class="kw">crate</span>::net_report::IpMappedAddresses;
+<span class="kw">use super</span>::{MagicSock, NetInfo};
 
 <span class="doccomment">/// Manages the different underlying data transports that the magicsock
 /// can support.
@@ -510,6 +442,7 @@
     /// Sends on the first matching &amp; ready transport.
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>poll_send(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
+        cx: <span class="kw-2">&amp;mut </span>std::task::Context,
         destination: <span class="kw-2">&amp;</span>Addr,
         src: <span class="prelude-ty">Option</span>&lt;IpAddr&gt;,
         transmit: <span class="kw-2">&amp;</span>Transmit&lt;<span class="lifetime">'_</span>&gt;,
@@ -525,7 +458,7 @@
             </span>Addr::Ip(addr) =&gt; {
                 <span class="kw">for </span>transport <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.ip {
                     <span class="kw">if </span>transport.is_valid_send_addr(addr) {
-                        <span class="kw">match </span>transport.poll_send(<span class="kw-2">*</span>addr, src, transmit) {
+                        <span class="kw">match </span>transport.poll_send(cx, <span class="kw-2">*</span>addr, src, transmit) {
                             Poll::Pending =&gt; {}
                             Poll::Ready(res) =&gt; <span class="kw">return </span>Poll::Ready(res),
                         }
@@ -535,7 +468,7 @@
             Addr::Relay(url, node_id) =&gt; {
                 <span class="kw">for </span>transport <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.relay {
                     <span class="kw">if </span>transport.is_valid_send_addr(url, node_id) {
-                        <span class="kw">match </span>transport.poll_send(url.clone(), <span class="kw-2">*</span>node_id, transmit) {
+                        <span class="kw">match </span>transport.poll_send(cx, url.clone(), <span class="kw-2">*</span>node_id, transmit) {
                             Poll::Pending =&gt; {}
                             Poll::Ready(res) =&gt; <span class="kw">return </span>Poll::Ready(res),
                         }
@@ -708,25 +641,11 @@
         }
     }
 
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>create_io_poller(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        dest: SocketAddr,
-        msock: Arc&lt;MagicSock&gt;,
-        ip_mapped_addrs: IpMappedAddresses,
-    ) -&gt; Pin&lt;Box&lt;<span class="kw">dyn </span>quinn::UdpPoller&gt;&gt; {
-        <span class="attr">#[cfg(not(wasm_browser))]
-        </span><span class="kw">let </span>ip_pollers = <span class="self">self</span>.ip.iter().map(|t| t.create_io_poller()).collect();
-
-        <span class="kw">let </span>relay_pollers = <span class="self">self</span>.relay.iter().map(|t| t.create_io_poller()).collect();
-
-        Box::pin(IoPoller {
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>create_sender(<span class="kw-2">&amp;</span><span class="self">self</span>, msock: Arc&lt;MagicSock&gt;) -&gt; UdpSender {
+        UdpSender {
             <span class="attr">#[cfg(not(wasm_browser))]
-            </span>ip_pollers,
-            relay_pollers,
-            ip_mapped_addrs,
-            msock,
-            dest: MappedAddr::from(dest),
-        })
+            </span>msock,
+        }
     }
 
     <span class="doccomment">/// Rebinds underlying connections, if necessary.
@@ -844,72 +763,25 @@
 }
 
 <span class="attr">#[derive(Debug)]
-</span><span class="kw">pub struct </span>IoPoller {
-    <span class="attr">#[cfg(not(wasm_browser))]
-    </span>ip_pollers: Vec&lt;IpIoPoller&gt;,
-    relay_pollers: Vec&lt;RelayDatagramSendChannelSender&gt;,
-    ip_mapped_addrs: IpMappedAddresses,
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>UdpSender {
     msock: Arc&lt;MagicSock&gt;, <span class="comment">// :(
-    </span>dest: MappedAddr,
-}
+</span>}
 
-<span class="kw">impl </span>quinn::UdpPoller <span class="kw">for </span>IoPoller {
-    <span class="kw">fn </span>poll_writable(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
-        <span class="kw">let </span>this = <span class="kw-2">&amp;mut *</span><span class="self">self</span>;
+<span class="kw">impl </span>quinn::UdpSender <span class="kw">for </span>UdpSender {
+    <span class="kw">fn </span>poll_send(
+        <span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;,
+        transmit: <span class="kw-2">&amp;</span>quinn_udp::Transmit,
+        cx: <span class="kw-2">&amp;mut </span>Context,
+    ) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
+        <span class="self">self</span>.msock.poll_send(cx, transmit)
+    }
 
-        <span class="kw">match </span>this.dest {
-            MappedAddr::None(dest) =&gt; {
-                <span class="macro">warn!</span>(<span class="question-mark">?</span>dest, <span class="string">"Cannot convert to a mapped address."</span>);
-            }
-            MappedAddr::NodeId(dest) =&gt; {
-                <span class="comment">// Get the node's relay address and best direct address, as well
-                // as any pings that need to be sent for hole-punching purposes.
-                </span><span class="kw">match </span>this.msock.addr_for_send(dest) {
-                    <span class="prelude-val">Some</span>((_node_id, udp_addr, relay_url)) =&gt; {
-                        <span class="attr">#[cfg(not(wasm_browser))]
-                        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(addr) = udp_addr {
-                            <span class="kw">for </span>poller <span class="kw">in </span><span class="kw-2">&amp;mut </span>this.ip_pollers {
-                                <span class="kw">if </span>poller.is_valid_send_addr(<span class="kw-2">&amp;</span>addr) {
-                                    <span class="kw">match </span>poller.poll_writable(cx) {
-                                        Poll::Ready(<span class="kw">_</span>) =&gt; <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Ok</span>(())),
-                                        Poll::Pending =&gt; (),
-                                    }
-                                }
-                            }
-                        }
-                        <span class="kw">if let </span><span class="prelude-val">Some</span>(_url) = relay_url {
-                            <span class="kw">for </span>poller <span class="kw">in </span><span class="kw-2">&amp;mut </span>this.relay_pollers {
-                                <span class="kw">match </span>poller.poll_writable(cx) {
-                                    Poll::Ready(<span class="kw">_</span>) =&gt; <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Ok</span>(())),
-                                    Poll::Pending =&gt; (),
-                                }
-                            }
-                        }
-                    }
-                    <span class="prelude-val">None </span>=&gt; {
-                        <span class="macro">warn!</span>(<span class="question-mark">?</span>dest, <span class="string">"no NodeState for mapped address"</span>);
-                    }
-                }
-            }
-            <span class="attr">#[cfg(not(wasm_browser))]
-            </span>MappedAddr::Ip(addr) =&gt; <span class="kw">match </span>this.ip_mapped_addrs.get_ip_addr(<span class="kw-2">&amp;</span>addr) {
-                <span class="prelude-val">Some</span>(addr) =&gt; {
-                    <span class="kw">for </span>poller <span class="kw">in </span><span class="kw-2">&amp;mut </span>this.ip_pollers {
-                        <span class="kw">if </span>poller.is_valid_send_addr(<span class="kw-2">&amp;</span>addr) {
-                            <span class="kw">match </span>poller.poll_writable(cx) {
-                                Poll::Ready(<span class="kw">_</span>) =&gt; <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Ok</span>(())),
-                                Poll::Pending =&gt; (),
-                            }
-                        }
-                    }
-                }
-                <span class="prelude-val">None </span>=&gt; {
-                    <span class="macro">warn!</span>(<span class="question-mark">?</span>addr, <span class="string">"unknown mapped address"</span>);
-                }
-            },
-        }
+    <span class="kw">fn </span>max_transmit_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+        <span class="self">self</span>.msock.transports.max_transmit_segments()
+    }
 
-        Poll::Pending
+    <span class="kw">fn </span>try_send(<span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, _transmit: <span class="kw-2">&amp;</span>quinn_udp::Transmit) -&gt; io::Result&lt;()&gt; {
+        <span class="macro">todo!</span>()
     }
 }
 </code></pre></div></section></main></body></html>

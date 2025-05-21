@@ -1733,32 +1733,7 @@
 <a href="#1732" id="1732">1732</a>
 <a href="#1733" id="1733">1733</a>
 <a href="#1734" id="1734">1734</a>
-<a href="#1735" id="1735">1735</a>
-<a href="#1736" id="1736">1736</a>
-<a href="#1737" id="1737">1737</a>
-<a href="#1738" id="1738">1738</a>
-<a href="#1739" id="1739">1739</a>
-<a href="#1740" id="1740">1740</a>
-<a href="#1741" id="1741">1741</a>
-<a href="#1742" id="1742">1742</a>
-<a href="#1743" id="1743">1743</a>
-<a href="#1744" id="1744">1744</a>
-<a href="#1745" id="1745">1745</a>
-<a href="#1746" id="1746">1746</a>
-<a href="#1747" id="1747">1747</a>
-<a href="#1748" id="1748">1748</a>
-<a href="#1749" id="1749">1749</a>
-<a href="#1750" id="1750">1750</a>
-<a href="#1751" id="1751">1751</a>
-<a href="#1752" id="1752">1752</a>
-<a href="#1753" id="1753">1753</a>
-<a href="#1754" id="1754">1754</a>
-<a href="#1755" id="1755">1755</a>
-<a href="#1756" id="1756">1756</a>
-<a href="#1757" id="1757">1757</a>
-<a href="#1758" id="1758">1758</a>
-<a href="#1759" id="1759">1759</a>
-<a href="#1760" id="1760">1760</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#1735" id="1735">1735</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{btree_map::Entry, BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
@@ -2332,19 +2307,14 @@
     ///
     /// The caller is responsible for sending the messages.
     </span><span class="attr">#[must_use = <span class="string">"actions must be handled"</span>]
-    </span><span class="kw">fn </span>send_call_me_maybe(<span class="kw-2">&amp;mut </span><span class="self">self</span>, now: Instant, always: SendCallMeMaybe) -&gt; Vec&lt;PingAction&gt; {
-        <span class="kw">match </span>always {
-            SendCallMeMaybe::Always =&gt; (),
-            SendCallMeMaybe::IfNoRecent =&gt; {
-                <span class="kw">let </span>had_recent_call_me_maybe = <span class="self">self
-                    </span>.last_call_me_maybe
-                    .map(|when| when.elapsed() &lt; HEARTBEAT_INTERVAL)
-                    .unwrap_or(<span class="bool-val">false</span>);
-                <span class="kw">if </span>had_recent_call_me_maybe {
-                    <span class="macro">trace!</span>(<span class="string">"skipping call-me-maybe, still recent"</span>);
-                    <span class="kw">return </span>Vec::new();
-                }
-            }
+    </span><span class="kw">fn </span>send_call_me_maybe(<span class="kw-2">&amp;mut </span><span class="self">self</span>, now: Instant) -&gt; Vec&lt;PingAction&gt; {
+        <span class="kw">let </span>had_recent_call_me_maybe = <span class="self">self
+            </span>.last_call_me_maybe
+            .map(|when| when.elapsed() &lt; HEARTBEAT_INTERVAL)
+            .unwrap_or(<span class="bool-val">false</span>);
+        <span class="kw">if </span>had_recent_call_me_maybe {
+            <span class="macro">trace!</span>(<span class="string">"skipping call-me-maybe, still recent"</span>);
+            <span class="kw">return </span>Vec::new();
         }
 
         <span class="comment">// We send pings regardless of whether we have a RelayUrl.  If we were given any
@@ -2892,7 +2862,7 @@
         <span class="comment">// If we do not have an optimal addr, send pings to all known places.
         </span><span class="kw">if </span><span class="self">self</span>.want_call_me_maybe(<span class="kw-2">&amp;</span>now) {
             <span class="macro">debug!</span>(<span class="string">"sending a call-me-maybe"</span>);
-            <span class="kw">return </span><span class="self">self</span>.send_call_me_maybe(now, SendCallMeMaybe::Always);
+            <span class="kw">return </span><span class="self">self</span>.send_call_me_maybe(now);
         }
 
         <span class="comment">// Send heartbeat ping to keep the current addr going as long as we need it.
@@ -2929,7 +2899,7 @@
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         have_ipv6: bool,
         metrics: <span class="kw-2">&amp;</span>MagicsockMetrics,
-    ) -&gt; (<span class="prelude-ty">Option</span>&lt;SocketAddr&gt;, <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;, Vec&lt;PingAction&gt;) {
+    ) -&gt; (<span class="prelude-ty">Option</span>&lt;SocketAddr&gt;, <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;) {
         <span class="kw">let </span>now = Instant::now();
         <span class="kw">let </span>prev = <span class="self">self</span>.last_used.replace(now);
         <span class="kw">if </span>prev.is_none() {
@@ -2937,20 +2907,10 @@
             </span>metrics.nodes_contacted.inc();
         }
         <span class="kw">let </span>(udp_addr, relay_url) = <span class="self">self</span>.addr_for_send(<span class="kw-2">&amp;</span>now, have_ipv6, metrics);
-        <span class="kw">let </span><span class="kw-2">mut </span>ping_msgs = Vec::new();
 
-        <span class="kw">if </span><span class="self">self</span>.want_call_me_maybe(<span class="kw-2">&amp;</span>now) {
-            ping_msgs = <span class="self">self</span>.send_call_me_maybe(now, SendCallMeMaybe::IfNoRecent);
-        }
+        <span class="macro">trace!</span>(<span class="question-mark">?</span>udp_addr, <span class="question-mark">?</span>relay_url, <span class="string">"found send address"</span>,);
 
-        <span class="macro">trace!</span>(
-            <span class="question-mark">?</span>udp_addr,
-            <span class="question-mark">?</span>relay_url,
-            pings = %ping_msgs.len(),
-            <span class="string">"found send address"</span>,
-        );
-
-        (udp_addr, relay_url, ping_msgs)
+        (udp_addr, relay_url)
     }
 
     <span class="doccomment">/// Get the direct addresses for this endpoint.
@@ -2982,16 +2942,6 @@
             direct_addresses,
         }
     }
-}
-
-<span class="doccomment">/// Whether to send a call-me-maybe message after sending pings to all known paths.
-///
-/// `IfNoRecent` will only send a call-me-maybe if no previous one was sent in the last
-/// [`HEARTBEAT_INTERVAL`].
-</span><span class="attr">#[derive(Debug)]
-</span><span class="kw">enum </span>SendCallMeMaybe {
-    Always,
-    IfNoRecent,
 }
 
 <span class="attr">#[derive(Debug, Clone, PartialEq, Eq, Hash)]

@@ -3578,60 +3578,7 @@
 <a href="#3577" id="3577">3577</a>
 <a href="#3578" id="3578">3578</a>
 <a href="#3579" id="3579">3579</a>
-<a href="#3580" id="3580">3580</a>
-<a href="#3581" id="3581">3581</a>
-<a href="#3582" id="3582">3582</a>
-<a href="#3583" id="3583">3583</a>
-<a href="#3584" id="3584">3584</a>
-<a href="#3585" id="3585">3585</a>
-<a href="#3586" id="3586">3586</a>
-<a href="#3587" id="3587">3587</a>
-<a href="#3588" id="3588">3588</a>
-<a href="#3589" id="3589">3589</a>
-<a href="#3590" id="3590">3590</a>
-<a href="#3591" id="3591">3591</a>
-<a href="#3592" id="3592">3592</a>
-<a href="#3593" id="3593">3593</a>
-<a href="#3594" id="3594">3594</a>
-<a href="#3595" id="3595">3595</a>
-<a href="#3596" id="3596">3596</a>
-<a href="#3597" id="3597">3597</a>
-<a href="#3598" id="3598">3598</a>
-<a href="#3599" id="3599">3599</a>
-<a href="#3600" id="3600">3600</a>
-<a href="#3601" id="3601">3601</a>
-<a href="#3602" id="3602">3602</a>
-<a href="#3603" id="3603">3603</a>
-<a href="#3604" id="3604">3604</a>
-<a href="#3605" id="3605">3605</a>
-<a href="#3606" id="3606">3606</a>
-<a href="#3607" id="3607">3607</a>
-<a href="#3608" id="3608">3608</a>
-<a href="#3609" id="3609">3609</a>
-<a href="#3610" id="3610">3610</a>
-<a href="#3611" id="3611">3611</a>
-<a href="#3612" id="3612">3612</a>
-<a href="#3613" id="3613">3613</a>
-<a href="#3614" id="3614">3614</a>
-<a href="#3615" id="3615">3615</a>
-<a href="#3616" id="3616">3616</a>
-<a href="#3617" id="3617">3617</a>
-<a href="#3618" id="3618">3618</a>
-<a href="#3619" id="3619">3619</a>
-<a href="#3620" id="3620">3620</a>
-<a href="#3621" id="3621">3621</a>
-<a href="#3622" id="3622">3622</a>
-<a href="#3623" id="3623">3623</a>
-<a href="#3624" id="3624">3624</a>
-<a href="#3625" id="3625">3625</a>
-<a href="#3626" id="3626">3626</a>
-<a href="#3627" id="3627">3627</a>
-<a href="#3628" id="3628">3628</a>
-<a href="#3629" id="3629">3629</a>
-<a href="#3630" id="3630">3630</a>
-<a href="#3631" id="3631">3631</a>
-<a href="#3632" id="3632">3632</a>
-<a href="#3633" id="3633">3633</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#3580" id="3580">3580</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4101,20 +4048,8 @@
         <span class="prelude-val">Err</span>(io::Error::other(<span class="string">"no valid socket available"</span>))
     }
 
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>addr_for_send(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        dest: NodeIdMappedAddr,
-    ) -&gt; <span class="prelude-ty">Option</span>&lt;(PublicKey, <span class="prelude-ty">Option</span>&lt;SocketAddr&gt;, <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;)&gt; {
-        <span class="self">self</span>.node_map.addr_for_send(
-            dest,
-            <span class="self">self</span>.ipv6_reported.load(Ordering::Relaxed),
-            <span class="kw-2">&amp;</span><span class="self">self</span>.metrics.magicsock,
-        )
-    }
-
-    <span class="doccomment">/// Implementation for AsyncUdpSocket::try_send
-    </span><span class="attr">#[instrument(skip_all)]
-    </span><span class="kw">fn </span>try_send(<span class="kw-2">&amp;</span><span class="self">self</span>, transmit: <span class="kw-2">&amp;</span>quinn_udp::Transmit) -&gt; io::Result&lt;()&gt; {
+    <span class="attr">#[instrument(skip_all)]
+    </span><span class="kw">fn </span>poll_send(<span class="kw-2">&amp;</span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>Context, transmit: <span class="kw-2">&amp;</span>quinn_udp::Transmit) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
         <span class="self">self</span>.metrics
             .magicsock
             .send_data
@@ -4125,10 +4060,10 @@
                 .magicsock
                 .send_data_network_down
                 .inc_by(transmit.contents.len() <span class="kw">as _</span>);
-            <span class="kw">return </span><span class="prelude-val">Err</span>(io::Error::new(
+            <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(io::Error::new(
                 io::ErrorKind::NotConnected,
                 <span class="string">"connection closed"</span>,
-            ));
+            )));
         }
 
         <span class="kw">let </span><span class="kw-2">mut </span>active_paths = SmallVec::&lt;[<span class="kw">_</span>; <span class="number">3</span>]&gt;::new();
@@ -4152,17 +4087,7 @@
                     <span class="self">self</span>.ipv6_reported.load(Ordering::Relaxed),
                     <span class="kw-2">&amp;</span><span class="self">self</span>.metrics.magicsock,
                 ) {
-                    <span class="prelude-val">Some</span>((node_id, udp_addr, relay_url, msgs)) =&gt; {
-                        <span class="comment">// If we have pings to send, we *have* to send them out first.
-                        </span><span class="kw">if </span>!msgs.is_empty() {
-                            <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.try_send_ping_actions(msgs) {
-                                <span class="macro">warn!</span>(
-                                    node = %node_id.fmt_short(),
-                                    <span class="string">"failed to handle ping actions: {err:#}"</span>,
-                                );
-                            }
-                        }
-
+                    <span class="prelude-val">Some</span>((node_id, udp_addr, relay_url)) =&gt; {
                         <span class="kw">if let </span><span class="prelude-val">Some</span>(addr) = udp_addr {
                             active_paths.push(transports::Addr::from(addr));
                         }
@@ -4205,7 +4130,7 @@
             // these kind of errors time out.  See test_try_send_no_send_addr to try
             // this out.
             </span><span class="macro">error!</span>(<span class="string">"no paths available for node, voiding transmit"</span>);
-            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+            <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Ok</span>(()));
         }
 
         <span class="kw">let </span><span class="kw-2">mut </span>results = SmallVec::&lt;[<span class="kw">_</span>; <span class="number">3</span>]&gt;::new();
@@ -4220,7 +4145,7 @@
                 segment_size: transmit.segment_size,
             };
 
-            <span class="kw">let </span>res = <span class="self">self</span>.transports.poll_send(<span class="kw-2">&amp;</span>destination, src, <span class="kw-2">&amp;</span>transmit);
+            <span class="kw">let </span>res = <span class="self">self</span>.transports.poll_send(cx, <span class="kw-2">&amp;</span>destination, src, <span class="kw-2">&amp;</span>transmit);
             <span class="kw">match </span>res {
                 Poll::Ready(<span class="prelude-val">Ok</span>(())) =&gt; {
                     <span class="macro">trace!</span>(dst = <span class="question-mark">?</span>destination, <span class="string">"sent transmit"</span>);
@@ -4235,9 +4160,9 @@
 
         <span class="kw">if </span>results.iter().all(|p| <span class="macro">matches!</span>(p, Poll::Pending)) {
             <span class="comment">// Handle backpressure.
-            </span><span class="kw">return </span><span class="prelude-val">Err</span>(io::Error::new(io::ErrorKind::WouldBlock, <span class="string">"pending"</span>));
+            </span><span class="kw">return </span>Poll::Pending;
         }
-        <span class="prelude-val">Ok</span>(())
+        Poll::Ready(<span class="prelude-val">Ok</span>(()))
     }
 
     <span class="doccomment">/// NOTE: Receiving on a [`Self::closed`] socket will return [`Poll::Pending`] indefinitely.
@@ -4634,11 +4559,7 @@
     }
 
     <span class="doccomment">/// Tries to send the ping actions.
-    ///
-    /// Note that on failure the (remaining) ping actions are simply dropped.  That's bad!
-    /// The Endpoint will think a full ping was done and not request a new full-ping for a
-    /// while.  We should probably be buffering the pings.
-    </span><span class="kw">fn </span>try_send_ping_actions(<span class="kw-2">&amp;</span><span class="self">self</span>, msgs: Vec&lt;PingAction&gt;) -&gt; io::Result&lt;()&gt; {
+    </span><span class="kw">async fn </span>send_ping_actions(<span class="kw-2">&amp;</span><span class="self">self</span>, msgs: Vec&lt;PingAction&gt;) -&gt; io::Result&lt;()&gt; {
         <span class="kw">for </span>msg <span class="kw">in </span>msgs {
             <span class="comment">// Abort sending as soon as we know we are shutting down.
             </span><span class="kw">if </span><span class="self">self</span>.is_closing() || <span class="self">self</span>.is_closed() {
@@ -4652,7 +4573,7 @@
                     <span class="self">self</span>.send_or_queue_call_me_maybe(relay_url, dst_node);
                 }
                 PingAction::SendPing(ping) =&gt; {
-                    <span class="self">self</span>.try_send_ping(ping)<span class="question-mark">?</span>;
+                    <span class="self">self</span>.send_ping(ping).<span class="kw">await</span><span class="question-mark">?</span>;
                 }
             }
         }
@@ -4672,33 +4593,31 @@
         };
 
         n0_future::future::poll_fn(<span class="kw">move </span>|cx| <span class="kw">loop </span>{
-            <span class="kw">match </span><span class="self">self</span>.try_send_disco_message(<span class="kw-2">&amp;</span>dst, dst_key, <span class="kw-2">&amp;</span>msg) {
-                <span class="prelude-val">Ok</span>(()) =&gt; <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Ok</span>(())),
-                <span class="prelude-val">Err</span>(err) <span class="kw">if </span>err.kind() == io::ErrorKind::WouldBlock =&gt; {
-                    <span class="kw">match </span><span class="self">self</span>.transports.poll_writable(cx, <span class="kw-2">&amp;</span>dst) {
-                        Poll::Ready(<span class="prelude-val">Ok</span>(())) =&gt; <span class="kw">continue</span>,
-                        Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(err)),
-                        Poll::Pending =&gt; <span class="kw">return </span>Poll::Pending,
-                    }
-                }
-                <span class="prelude-val">Err</span>(err) =&gt; <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(err)),
+            <span class="kw">match </span><span class="self">self</span>.poll_send_disco_message(cx, <span class="kw-2">&amp;</span>dst, dst_key, <span class="kw-2">&amp;</span>msg) {
+                Poll::Ready(res) =&gt; <span class="kw">return </span>Poll::Ready(res),
+                Poll::Pending =&gt; <span class="kw">match </span><span class="self">self</span>.transports.poll_writable(cx, <span class="kw-2">&amp;</span>dst) {
+                    Poll::Ready(<span class="prelude-val">Ok</span>(())) =&gt; <span class="kw">continue</span>,
+                    Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(err)),
+                    Poll::Pending =&gt; <span class="kw">return </span>Poll::Pending,
+                },
             }
         })
         .<span class="kw">await
     </span>}
 
-    <span class="kw">fn </span>try_send_disco_message(
+    <span class="kw">fn </span>poll_send_disco_message(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
+        cx: <span class="kw-2">&amp;mut </span>Context,
         dst: <span class="kw-2">&amp;</span>transports::Addr,
         dst_key: PublicKey,
         msg: <span class="kw-2">&amp;</span>disco::Message,
-    ) -&gt; std::io::Result&lt;()&gt; {
+    ) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
         <span class="macro">trace!</span>(<span class="question-mark">?</span>dst, %msg, <span class="string">"send disco message (UDP)"</span>);
         <span class="kw">if </span><span class="self">self</span>.is_closed() {
-            <span class="kw">return </span><span class="prelude-val">Err</span>(io::Error::new(
+            <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(io::Error::new(
                 io::ErrorKind::NotConnected,
                 <span class="string">"connection closed"</span>,
-            ));
+            )));
         }
         <span class="kw">let </span>pkt = <span class="self">self</span>.encode_disco_message(dst_key, msg);
 
@@ -4708,33 +4627,22 @@
             segment_size: <span class="prelude-val">None</span>,
         };
 
-        <span class="kw">match </span><span class="self">self</span>.transports.poll_send(dst, <span class="prelude-val">None</span>, <span class="kw-2">&amp;</span>transmit) {
+        <span class="kw">match </span><span class="self">self</span>.transports.poll_send(cx, dst, <span class="prelude-val">None</span>, <span class="kw-2">&amp;</span>transmit) {
             Poll::Ready(<span class="prelude-val">Ok</span>(())) =&gt; {
                 <span class="macro">trace!</span>(<span class="question-mark">?</span>dst, %msg, <span class="string">"sent disco message"</span>);
                 <span class="self">self</span>.metrics.magicsock.sent_disco_udp.inc();
                 disco_message_sent(msg, <span class="kw-2">&amp;</span><span class="self">self</span>.metrics.magicsock);
-                <span class="prelude-val">Ok</span>(())
+                Poll::Ready(<span class="prelude-val">Ok</span>(()))
             }
             Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; {
                 <span class="macro">warn!</span>(<span class="question-mark">?</span>dst, <span class="question-mark">?</span>msg, <span class="question-mark">?</span>err, <span class="string">"failed to send disco message"</span>);
-                <span class="prelude-val">Err</span>(err)
+                Poll::Ready(<span class="prelude-val">Err</span>(err))
             }
-            Poll::Pending =&gt; <span class="prelude-val">Err</span>(io::Error::new(io::ErrorKind::WouldBlock, <span class="string">"pending"</span>)),
+            Poll::Pending =&gt; Poll::Pending,
         }
     }
 
-    <span class="attr">#[instrument(skip_all)]
-    </span><span class="kw">async fn </span>handle_ping_actions(<span class="kw-2">&amp;mut </span><span class="self">self</span>, msgs: Vec&lt;PingAction&gt;) {
-        <span class="comment">// TODO: This used to make sure that all ping actions are sent.  Though on the
-        // poll_send/try_send path we also do fire-and-forget.  try_send_ping_actions()
-        // really should store any unsent pings on the Inner and send them at the next
-        // possible time.
-        </span><span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.try_send_ping_actions(msgs) {
-            <span class="macro">warn!</span>(<span class="string">"Not all ping actions were sent: {err:#}"</span>);
-        }
-    }
-
-    <span class="kw">fn </span>try_send_ping(<span class="kw-2">&amp;</span><span class="self">self</span>, ping: SendPing) -&gt; io::Result&lt;()&gt; {
+    <span class="kw">async fn </span>send_ping(<span class="kw-2">&amp;</span><span class="self">self</span>, ping: SendPing) -&gt; io::Result&lt;()&gt; {
         <span class="kw">let </span>SendPing {
             id,
             dst,
@@ -4747,13 +4655,8 @@
             node_key: <span class="self">self</span>.public_key(),
         });
 
-        <span class="kw">let </span>addr = <span class="kw">match </span>dst {
-            SendAddr::Udp(addr) =&gt; transports::Addr::Ip(addr),
-            SendAddr::Relay(<span class="kw-2">ref </span>url) =&gt; transports::Addr::Relay(url.clone(), dst_node),
-        };
-
-        <span class="self">self</span>.try_send_disco_message(<span class="kw-2">&amp;</span>addr, dst_node, <span class="kw-2">&amp;</span>msg)<span class="question-mark">?</span>;
-        <span class="macro">debug!</span>(%dst, tx = %HEXLOWER.encode(<span class="kw-2">&amp;</span>tx_id), <span class="question-mark">?</span>purpose, <span class="string">"ping sent (polled)"</span>);
+        <span class="self">self</span>.send_disco_message(dst.clone(), dst_node, msg).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="macro">debug!</span>(%dst, tx = %HEXLOWER.encode(<span class="kw-2">&amp;</span>tx_id), <span class="question-mark">?</span>purpose, <span class="string">"ping sent"</span>);
         <span class="kw">let </span>msg_sender = <span class="self">self</span>.actor_sender.clone();
         <span class="self">self</span>.node_map
             .notify_ping_sent(id, dst.clone(), tx_id, purpose, msg_sender);
@@ -5063,7 +4966,9 @@
         <span class="kw">let </span>endpoint = quinn::Endpoint::new_with_abstract_socket(
             endpoint_config,
             <span class="prelude-val">Some</span>(server_config),
-            msock.clone(),
+            Box::new(MagicUdpSocket {
+                socket: msock.clone(),
+            }),
             <span class="attr">#[cfg(not(wasm_browser))]
             </span>Arc::new(quinn::TokioRuntime),
             <span class="attr">#[cfg(wasm_browser)]
@@ -5263,30 +5168,31 @@
     </span>Parse(anyhow::Error),
 }
 
-<span class="kw">impl </span>AsyncUdpSocket <span class="kw">for </span>MagicSock {
-    <span class="kw">fn </span>create_io_poller(<span class="self">self</span>: Arc&lt;<span class="self">Self</span>&gt;, dest: SocketAddr) -&gt; Pin&lt;Box&lt;<span class="kw">dyn </span>quinn::UdpPoller&gt;&gt; {
-        <span class="self">self</span>.transports
-            .create_io_poller(dest, <span class="self">self</span>.clone(), <span class="self">self</span>.ip_mapped_addrs.clone())
-    }
+<span class="attr">#[derive(Debug)]
+</span><span class="kw">struct </span>MagicUdpSocket {
+    socket: Arc&lt;MagicSock&gt;,
+}
 
-    <span class="kw">fn </span>try_send(<span class="kw-2">&amp;</span><span class="self">self</span>, transmit: <span class="kw-2">&amp;</span>quinn_udp::Transmit) -&gt; io::Result&lt;()&gt; {
-        <span class="self">self</span>.try_send(transmit)
+<span class="kw">impl </span>AsyncUdpSocket <span class="kw">for </span>MagicUdpSocket {
+    <span class="kw">fn </span>create_sender(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Pin&lt;Box&lt;<span class="kw">dyn </span>quinn::UdpSender&gt;&gt; {
+        Box::pin(<span class="self">self</span>.socket.transports.create_sender(<span class="self">self</span>.socket.clone()))
     }
 
     <span class="doccomment">/// NOTE: Receiving on a closed socket will return [`Poll::Pending`] indefinitely.
     </span><span class="kw">fn </span>poll_recv(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         cx: <span class="kw-2">&amp;mut </span>Context,
         bufs: <span class="kw-2">&amp;mut </span>[io::IoSliceMut&lt;<span class="lifetime">'_</span>&gt;],
         metas: <span class="kw-2">&amp;mut </span>[quinn_udp::RecvMeta],
     ) -&gt; Poll&lt;io::Result&lt;usize&gt;&gt; {
-        <span class="self">self</span>.poll_recv(cx, bufs, metas)
+        <span class="self">self</span>.socket.poll_recv(cx, bufs, metas)
     }
 
     <span class="attr">#[cfg(not(wasm_browser))]
     </span><span class="kw">fn </span>local_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; io::Result&lt;SocketAddr&gt; {
         <span class="kw">let </span>addrs: Vec&lt;<span class="kw">_</span>&gt; = <span class="self">self
-            </span>.transports
+            </span>.socket
+            .transports
             .local_addrs()
             .into_iter()
             .filter_map(|addr| {
@@ -5313,16 +5219,12 @@
         </span><span class="prelude-val">Ok</span>(SocketAddr::new(std::net::Ipv6Addr::LOCALHOST.into(), <span class="number">0</span>))
     }
 
-    <span class="kw">fn </span>max_transmit_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-        <span class="self">self</span>.transports.max_transmit_segments()
-    }
-
     <span class="kw">fn </span>max_receive_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-        <span class="self">self</span>.transports.max_receive_segments()
+        <span class="self">self</span>.socket.transports.max_receive_segments()
     }
 
     <span class="kw">fn </span>may_fragment(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-        <span class="self">self</span>.transports.may_fragment()
+        <span class="self">self</span>.socket.transports.may_fragment()
     }
 }
 
@@ -5427,12 +5329,8 @@
             })
             .<span class="kw">await</span><span class="question-mark">?</span>;
 
-        <span class="comment">// Let the the heartbeat only start a couple seconds later
-        </span><span class="attr">#[cfg(not(wasm_browser))]
-        </span><span class="kw">let </span><span class="kw-2">mut </span>direct_addr_heartbeat_timer = time::interval_at(
-            time::Instant::now() + HEARTBEAT_INTERVAL,
-            HEARTBEAT_INTERVAL,
-        );
+        <span class="attr">#[cfg(not(wasm_browser))]
+        </span><span class="kw">let </span><span class="kw-2">mut </span>direct_addr_heartbeat_timer = time::interval(HEARTBEAT_INTERVAL);
         <span class="kw">let </span><span class="kw-2">mut </span>direct_addr_update_receiver =
             <span class="self">self</span>.msock.direct_addr_update_state.running.subscribe();
         <span class="attr">#[cfg(not(wasm_browser))]
@@ -5595,12 +5493,8 @@
 
     <span class="attr">#[instrument(skip_all)]
     </span><span class="kw">async fn </span>handle_ping_actions(<span class="kw-2">&amp;mut </span><span class="self">self</span>, msgs: Vec&lt;PingAction&gt;) {
-        <span class="comment">// TODO: This used to make sure that all ping actions are sent.  Though on the
-        // poll_send/try_send path we also do fire-and-forget.  try_send_ping_actions()
-        // really should store any unsent pings on the Inner and send them at the next
-        // possible time.
-        </span><span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.msock.try_send_ping_actions(msgs) {
-            <span class="macro">warn!</span>(<span class="string">"Not all ping actions were sent: {err:#}"</span>);
+        <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.msock.send_ping_actions(msgs).<span class="kw">await </span>{
+            <span class="macro">warn!</span>(<span class="string">"Failed to send ping actions: {err:#}"</span>);
         }
     }
 
