@@ -149,7 +149,8 @@ pub(crate) async fn write_frame<S: Sink<Frame, Error = std::io::Error> + Unpin>(
 /// and the client's [`ClientInfo`], sealed using the server's [`PublicKey`].
 ///
 /// Flushes after writing.
-pub(crate) async fn send_client_key<S: Sink<Frame, Error = ConnSendError> + Unpin>(
+#[deprecated = "switch to proper handshake"]
+pub(crate) async fn legacy_send_client_key<S: Sink<Frame, Error = ConnSendError> + Unpin>(
     mut writer: S,
     client_secret_key: &SecretKey,
     client_info: &ClientInfo,
@@ -171,7 +172,8 @@ pub(crate) async fn send_client_key<S: Sink<Frame, Error = ConnSendError> + Unpi
 /// Reads the `FrameType::ClientInfo` frame from the client (its proof of identity)
 /// upon it's initial connection.
 #[cfg(any(test, feature = "server"))]
-pub(crate) async fn recv_client_key<S: Stream<Item = anyhow::Result<Frame>> + Unpin>(
+#[deprecated = "switch to proper handshake"]
+pub(crate) async fn legacy_recv_client_key<S: Stream<Item = anyhow::Result<Frame>> + Unpin>(
     stream: S,
 ) -> anyhow::Result<(PublicKey, ClientInfo)> {
     use anyhow::Context;
@@ -630,6 +632,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(deprecated)]
     async fn test_send_recv_client_key() -> anyhow::Result<()> {
         let (reader, writer) = tokio::io::duplex(1024);
         let mut reader = FramedRead::new(reader, RelayCodec::test());
@@ -641,8 +644,8 @@ mod tests {
             version: PROTOCOL_VERSION,
         };
         println!("client_key pub {:?}", client_key.public());
-        send_client_key(&mut writer, &client_key, &client_info).await?;
-        let (client_pub_key, got_client_info) = recv_client_key(&mut reader).await?;
+        legacy_send_client_key(&mut writer, &client_key, &client_info).await?;
+        let (client_pub_key, got_client_info) = legacy_recv_client_key(&mut reader).await?;
         assert_eq!(client_key.public(), client_pub_key);
         assert_eq!(client_info, got_client_info);
         Ok(())

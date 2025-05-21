@@ -20,11 +20,12 @@ use tokio_util::{codec::Framed, sync::CancellationToken, task::AbortOnDropHandle
 use tracing::{debug, debug_span, error, info, info_span, trace, warn, Instrument};
 
 use super::{clients::Clients, AccessConfig};
+#[allow(deprecated)]
 use crate::{
     defaults::{timeouts::SERVER_WRITE_TIMEOUT, DEFAULT_KEY_CACHE_CAPACITY},
     http::{Protocol, LEGACY_RELAY_PATH, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},
     protos::relay::{
-        recv_client_key, Frame, RelayCodec, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
+        legacy_recv_client_key, Frame, RelayCodec, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
     },
     server::{
         client::Config,
@@ -541,7 +542,8 @@ impl Inner {
             }
         };
         trace!("accept: recv client key");
-        let (client_key, info) = recv_client_key(&mut io)
+        #[allow(deprecated)]
+        let (client_key, info) = legacy_recv_client_key(&mut io)
             .await
             .context("unable to receive client information")?;
 

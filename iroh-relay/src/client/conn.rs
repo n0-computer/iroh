@@ -11,7 +11,7 @@ use std::{
 use anyhow::{bail, Result};
 use bytes::Bytes;
 use iroh_base::{NodeId, SecretKey};
-use n0_future::{time::Duration, Sink, Stream};
+use n0_future::{time::Duration, Sink, SinkExt, Stream};
 #[cfg(not(wasm_browser))]
 use tokio_util::codec::Framed;
 use tracing::debug;
@@ -118,14 +118,25 @@ impl Conn {
         key_cache: KeyCache,
         secret_key: &SecretKey,
     ) -> Result<Self> {
+        use n0_future::SinkExt;
+
         let conn = Framed::new(conn, RelayCodec::new(key_cache));
 
-        let mut conn = Self::Relay { conn };
+        let mut conn = conn.sink_err_into();
 
         // exchange information with the server
-        server_handshake(&mut conn, secret_key).await?;
+        debug!("server_handshake: started");
+        let client_info = ClientInfo {
+            version: PROTOCOL_VERSION,
+        };
+        debug!("server_handshake: sending client_key: {:?}", &client_info);
+        #[allow(deprecated)]
+        crate::protos::relay::legacy_send_client_key(&mut conn, secret_key, &client_info).await?;
+        debug!("server_handshake: done");
 
-        Ok(conn)
+        Ok(Self::Relay {
+            conn: conn.into_inner(),
+        })
     }
 
     #[cfg(not(wasm_browser))]
@@ -134,23 +145,86 @@ impl Conn {
         key_cache: KeyCache,
         secret_key: &SecretKey,
     ) -> Result<Self> {
-        let mut conn = Self::Ws { conn, key_cache };
+        let mut io = HandshakeIo { io: conn };
 
         // exchange information with the server
-        server_handshake(&mut conn, secret_key).await?;
+        server_handshake(&mut io, secret_key).await?;
 
-        Ok(conn)
+        Ok(Self::Ws {
+            conn: io.io,
+            key_cache,
+        })
+    }
+}
+
+#[derive(derive_more::Debug)]
+struct HandshakeIo {
+    #[cfg(not(wasm_browser))]
+    #[debug("WebSocketStream<MaybeTlsStream<ProxyStream>>")]
+    io: tokio_websockets::WebSocketStream<MaybeTlsStream<ProxyStream>>,
+    #[cfg(wasm_browser)]
+    #[debug("WebSocketStream")]
+    io: ws_stream_wasm::WsStream,
+}
+
+impl Stream for HandshakeIo {
+    type Item = Result<Bytes>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        loop {
+            match ready!(Pin::new(&mut self.io).poll_next(cx)) {
+                None => return Poll::Ready(None),
+                Some(Err(e)) => return Poll::Ready(Some(Err(e.into()))),
+                Some(Ok(msg)) => {
+                    if msg.is_close() {
+                        // Indicate the stream is done when we receive a close message.
+                        // Note: We don't have to poll the stream to completion for it to close gracefully.
+                        return Poll::Ready(None);
+                    }
+                    if msg.is_ping() || msg.is_pong() {
+                        continue; // Responding appropriately to these is done inside of tokio_websockets/browser impls
+                    }
+                    if !msg.is_binary() {
+                        tracing::warn!(
+                            ?msg,
+                            "Got websocket message of unsupported type, skipping."
+                        );
+                        continue;
+                    }
+                    return Poll::Ready(Some(Ok(msg.into_payload().into())));
+                }
+            }
+        }
+    }
+}
+
+impl Sink<Bytes> for HandshakeIo {
+    type Error = anyhow::Error;
+
+    fn start_send(mut self: Pin<&mut Self>, bytes: Bytes) -> Result<(), Self::Error> {
+        #[cfg(not(wasm_browser))]
+        let msg = tokio_websockets::Message::binary(tokio_websockets::Payload::from(bytes));
+        #[cfg(wasm_browser)]
+        let msg = ws_stream_wasm::WsMessage::Binary(bytes.to_vec());
+        Pin::new(&mut self.io).start_send(msg).map_err(Into::into)
+    }
+
+    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Pin::new(&mut self.io).poll_ready(cx).map_err(Into::into)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Pin::new(&mut self.io).poll_flush(cx).map_err(Into::into)
+    }
+
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Pin::new(&mut self.io).poll_close(cx).map_err(Into::into)
     }
 }
 
 /// Sends the server handshake message.
-async fn server_handshake(writer: &mut Conn, secret_key: &SecretKey) -> Result<()> {
+async fn server_handshake(io: &mut HandshakeIo, secret_key: &SecretKey) -> Result<()> {
     debug!("server_handshake: started");
-    let client_info = ClientInfo {
-        version: PROTOCOL_VERSION,
-    };
-    debug!("server_handshake: sending client_key: {:?}", &client_info);
-    crate::protos::relay::send_client_key(&mut *writer, secret_key, &client_info).await?;
 
     debug!("server_handshake: done");
     Ok(())
@@ -213,6 +287,7 @@ impl Stream for Conn {
     }
 }
 
+// TODO(matheus23): Remove this impl, make `new_relay` work on the `Framed` directly, make the impl not rely on `ConnSendError`.
 impl Sink<Frame> for Conn {
     type Error = ConnSendError;
 
