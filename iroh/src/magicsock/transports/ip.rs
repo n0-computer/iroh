@@ -38,19 +38,15 @@ impl IpTransport {
         }
     }
 
-    pub(super) fn create_io_poller(&self) -> IpIoPoller {
-        IpIoPoller {
-            bind_addr: self.bind_addr,
-            socket: self.socket.clone(),
-        }
-    }
-
     pub(super) fn poll_send(
         &self,
+        _cx: &mut std::task::Context,
         destination: SocketAddr,
         src: Option<IpAddr>,
         transmit: &Transmit<'_>,
     ) -> Poll<io::Result<()>> {
+        // TODO: use context
+
         trace!("sending to {}", destination);
         let total_bytes = transmit.contents.len() as u64;
         let res = self.socket.try_send_quinn(&quinn_udp::Transmit {
@@ -155,26 +151,5 @@ impl IpTransport {
 
     pub(crate) fn socket(&self) -> Arc<UdpSocket> {
         self.socket.clone()
-    }
-}
-
-#[derive(Debug)]
-pub(super) struct IpIoPoller {
-    socket: Arc<UdpSocket>,
-    bind_addr: SocketAddr,
-}
-
-impl IpIoPoller {
-    pub(super) fn is_valid_send_addr(&self, addr: &SocketAddr) -> bool {
-        #[allow(clippy::match_like_matches_macro)]
-        match (self.bind_addr, addr) {
-            (SocketAddr::V4(_), SocketAddr::V4(..)) => true,
-            (SocketAddr::V6(_), SocketAddr::V6(..)) => true,
-            _ => false,
-        }
-    }
-
-    pub(super) fn poll_writable(&self, cx: &mut std::task::Context<'_>) -> Poll<io::Result<()>> {
-        self.socket.poll_writable(cx)
     }
 }

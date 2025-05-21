@@ -8,7 +8,6 @@ use std::{
 
 use iroh_base::{NodeId, RelayUrl};
 use n0_watcher::Watcher;
-use relay::RelayDatagramSendChannelSender;
 use tracing::{trace, warn};
 
 #[cfg(not(wasm_browser))]
@@ -16,12 +15,9 @@ mod ip;
 mod relay;
 
 #[cfg(not(wasm_browser))]
-use self::ip::IpIoPoller;
-#[cfg(not(wasm_browser))]
 pub(crate) use self::ip::IpTransport;
 pub(crate) use self::relay::{RelayActorConfig, RelayTransport};
-use super::{MagicSock, MappedAddr, NetInfo};
-use crate::net_report::IpMappedAddresses;
+use super::{MagicSock, NetInfo};
 
 /// Manages the different underlying data transports that the magicsock
 /// can support.
@@ -53,6 +49,7 @@ impl Transports {
     /// Sends on the first matching & ready transport.
     pub(crate) fn poll_send(
         &self,
+        cx: &mut std::task::Context,
         destination: &Addr,
         src: Option<IpAddr>,
         transmit: &Transmit<'_>,
@@ -68,7 +65,7 @@ impl Transports {
             Addr::Ip(addr) => {
                 for transport in &self.ip {
                     if transport.is_valid_send_addr(addr) {
-                        match transport.poll_send(*addr, src, transmit) {
+                        match transport.poll_send(cx, *addr, src, transmit) {
                             Poll::Pending => {}
                             Poll::Ready(res) => return Poll::Ready(res),
                         }
@@ -78,7 +75,7 @@ impl Transports {
             Addr::Relay(url, node_id) => {
                 for transport in &self.relay {
                     if transport.is_valid_send_addr(url, node_id) {
-                        match transport.poll_send(url.clone(), *node_id, transmit) {
+                        match transport.poll_send(cx, url.clone(), *node_id, transmit) {
                             Poll::Pending => {}
                             Poll::Ready(res) => return Poll::Ready(res),
                         }
@@ -251,25 +248,11 @@ impl Transports {
         }
     }
 
-    pub(crate) fn create_io_poller(
-        &self,
-        dest: SocketAddr,
-        msock: Arc<MagicSock>,
-        ip_mapped_addrs: IpMappedAddresses,
-    ) -> Pin<Box<dyn quinn::UdpPoller>> {
-        #[cfg(not(wasm_browser))]
-        let ip_pollers = self.ip.iter().map(|t| t.create_io_poller()).collect();
-
-        let relay_pollers = self.relay.iter().map(|t| t.create_io_poller()).collect();
-
-        Box::pin(IoPoller {
+    pub(crate) fn create_sender(&self, msock: Arc<MagicSock>) -> UdpSender {
+        UdpSender {
             #[cfg(not(wasm_browser))]
-            ip_pollers,
-            relay_pollers,
-            ip_mapped_addrs,
             msock,
-            dest: MappedAddr::from(dest),
-        })
+        }
     }
 
     /// Rebinds underlying connections, if necessary.
@@ -387,71 +370,24 @@ impl Addr {
 }
 
 #[derive(Debug)]
-pub struct IoPoller {
-    #[cfg(not(wasm_browser))]
-    ip_pollers: Vec<IpIoPoller>,
-    relay_pollers: Vec<RelayDatagramSendChannelSender>,
-    ip_mapped_addrs: IpMappedAddresses,
+pub(crate) struct UdpSender {
     msock: Arc<MagicSock>, // :(
-    dest: MappedAddr,
 }
 
-impl quinn::UdpPoller for IoPoller {
-    fn poll_writable(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
-        let this = &mut *self;
+impl quinn::UdpSender for UdpSender {
+    fn poll_send(
+        self: Pin<&mut Self>,
+        transmit: &quinn_udp::Transmit,
+        cx: &mut Context,
+    ) -> Poll<io::Result<()>> {
+        self.msock.poll_send(cx, transmit)
+    }
 
-        match this.dest {
-            MappedAddr::None(dest) => {
-                warn!(?dest, "Cannot convert to a mapped address.");
-            }
-            MappedAddr::NodeId(dest) => {
-                // Get the node's relay address and best direct address, as well
-                // as any pings that need to be sent for hole-punching purposes.
-                match this.msock.addr_for_send(dest) {
-                    Some((_node_id, udp_addr, relay_url)) => {
-                        #[cfg(not(wasm_browser))]
-                        if let Some(addr) = udp_addr {
-                            for poller in &mut this.ip_pollers {
-                                if poller.is_valid_send_addr(&addr) {
-                                    match poller.poll_writable(cx) {
-                                        Poll::Ready(_) => return Poll::Ready(Ok(())),
-                                        Poll::Pending => (),
-                                    }
-                                }
-                            }
-                        }
-                        if let Some(_url) = relay_url {
-                            for poller in &mut this.relay_pollers {
-                                match poller.poll_writable(cx) {
-                                    Poll::Ready(_) => return Poll::Ready(Ok(())),
-                                    Poll::Pending => (),
-                                }
-                            }
-                        }
-                    }
-                    None => {
-                        warn!(?dest, "no NodeState for mapped address");
-                    }
-                }
-            }
-            #[cfg(not(wasm_browser))]
-            MappedAddr::Ip(addr) => match this.ip_mapped_addrs.get_ip_addr(&addr) {
-                Some(addr) => {
-                    for poller in &mut this.ip_pollers {
-                        if poller.is_valid_send_addr(&addr) {
-                            match poller.poll_writable(cx) {
-                                Poll::Ready(_) => return Poll::Ready(Ok(())),
-                                Poll::Pending => (),
-                            }
-                        }
-                    }
-                }
-                None => {
-                    warn!(?addr, "unknown mapped address");
-                }
-            },
-        }
+    fn max_transmit_segments(&self) -> usize {
+        self.msock.transports.max_transmit_segments()
+    }
 
-        Poll::Pending
+    fn try_send(self: Pin<&mut Self>, _transmit: &quinn_udp::Transmit) -> io::Result<()> {
+        todo!()
     }
 }

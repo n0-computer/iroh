@@ -2404,7 +2404,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn"
 version = "0.13.0"
-source = "git+https://github.com/n0-computer/quinn?branch=matheus23/poll_writable_remote#f8bfe993842da46d57cbb4c7e26230b4ab525a29"
+source = "git+https://github.com/n0-computer/quinn?branch=matheus23/mut-self#ed27c9818c4c30521b97ce9cfbb318c05050a1d5"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2423,7 +2423,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-proto"
 version = "0.13.0"
-source = "git+https://github.com/n0-computer/quinn?branch=matheus23/poll_writable_remote#f8bfe993842da46d57cbb4c7e26230b4ab525a29"
+source = "git+https://github.com/n0-computer/quinn?branch=matheus23/mut-self#ed27c9818c4c30521b97ce9cfbb318c05050a1d5"
 dependencies = [
  "bytes",
  "getrandom 0.2.16",
@@ -2443,14 +2443,14 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-udp"
 version = "0.5.7"
-source = "git+https://github.com/n0-computer/quinn?branch=matheus23/poll_writable_remote#f8bfe993842da46d57cbb4c7e26230b4ab525a29"
+source = "git+https://github.com/n0-computer/quinn?branch=matheus23/mut-self#ed27c9818c4c30521b97ce9cfbb318c05050a1d5"
 dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
  "socket2",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

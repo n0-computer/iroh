@@ -82,16 +82,15 @@ impl RelayTransport {
         }
     }
 
-    pub(super) fn create_io_poller(&self) -> RelayDatagramSendChannelSender {
-        self.relay_datagram_send_channel.clone()
-    }
-
     pub(super) fn poll_send(
         &self,
+        _cx: &mut Context,
         dest_url: RelayUrl,
         dest_node: NodeId,
         transmit: &Transmit<'_>,
     ) -> Poll<io::Result<()>> {
+        // TODO: use context
+
         let contents = split_packets(transmit);
 
         let msg = RelaySendItem {

@@ -468,20 +468,8 @@ impl MagicSock {
         Err(io::Error::other("no valid socket available"))
     }
 
-    pub(super) fn addr_for_send(
-        &self,
-        dest: NodeIdMappedAddr,
-    ) -> Option<(PublicKey, Option<SocketAddr>, Option<RelayUrl>)> {
-        self.node_map.addr_for_send(
-            dest,
-            self.ipv6_reported.load(Ordering::Relaxed),
-            &self.metrics.magicsock,
-        )
-    }
-
-    /// Implementation for AsyncUdpSocket::try_send
     #[instrument(skip_all)]
-    fn try_send(&self, transmit: &quinn_udp::Transmit) -> io::Result<()> {
+    fn poll_send(&self, cx: &mut Context, transmit: &quinn_udp::Transmit) -> Poll<io::Result<()>> {
         self.metrics
             .magicsock
             .send_data
@@ -492,10 +480,10 @@ impl MagicSock {
                 .magicsock
                 .send_data_network_down
                 .inc_by(transmit.contents.len() as _);
-            return Err(io::Error::new(
+            return Poll::Ready(Err(io::Error::new(
                 io::ErrorKind::NotConnected,
                 "connection closed",
-            ));
+            )));
         }
 
         let mut active_paths = SmallVec::<[_; 3]>::new();
@@ -519,17 +507,7 @@ impl MagicSock {
                     self.ipv6_reported.load(Ordering::Relaxed),
                     &self.metrics.magicsock,
                 ) {
-                    Some((node_id, udp_addr, relay_url, msgs)) => {
-                        // If we have pings to send, we *have* to send them out first.
-                        if !msgs.is_empty() {
-                            if let Err(err) = self.try_send_ping_actions(msgs) {
-                                warn!(
-                                    node = %node_id.fmt_short(),
-                                    "failed to handle ping actions: {err:#}",
-                                );
-                            }
-                        }
-
+                    Some((node_id, udp_addr, relay_url)) => {
                         if let Some(addr) = udp_addr {
                             active_paths.push(transports::Addr::from(addr));
                         }
@@ -572,7 +550,7 @@ impl MagicSock {
             // these kind of errors time out.  See test_try_send_no_send_addr to try
             // this out.
             error!("no paths available for node, voiding transmit");
-            return Ok(());
+            return Poll::Ready(Ok(()));
         }
 
         let mut results = SmallVec::<[_; 3]>::new();
@@ -587,7 +565,7 @@ impl MagicSock {
                 segment_size: transmit.segment_size,
             };
 
-            let res = self.transports.poll_send(&destination, src, &transmit);
+            let res = self.transports.poll_send(cx, &destination, src, &transmit);
             match res {
                 Poll::Ready(Ok(())) => {
                     trace!(dst = ?destination, "sent transmit");
@@ -602,9 +580,9 @@ impl MagicSock {
 
         if results.iter().all(|p| matches!(p, Poll::Pending)) {
             // Handle backpressure.
-            return Err(io::Error::new(io::ErrorKind::WouldBlock, "pending"));
+            return Poll::Pending;
         }
-        Ok(())
+        Poll::Ready(Ok(()))
     }
 
     /// NOTE: Receiving on a [`Self::closed`] socket will return [`Poll::Pending`] indefinitely.
@@ -1001,11 +979,7 @@ impl MagicSock {
     }
 
     /// Tries to send the ping actions.
-    ///
-    /// Note that on failure the (remaining) ping actions are simply dropped.  That's bad!
-    /// The Endpoint will think a full ping was done and not request a new full-ping for a
-    /// while.  We should probably be buffering the pings.
-    fn try_send_ping_actions(&self, msgs: Vec<PingAction>) -> io::Result<()> {
+    async fn send_ping_actions(&self, msgs: Vec<PingAction>) -> io::Result<()> {
         for msg in msgs {
             // Abort sending as soon as we know we are shutting down.
             if self.is_closing() || self.is_closed() {
@@ -1019,7 +993,7 @@ impl MagicSock {
                     self.send_or_queue_call_me_maybe(relay_url, dst_node);
                 }
                 PingAction::SendPing(ping) => {
-                    self.try_send_ping(ping)?;
+                    self.send_ping(ping).await?;
                 }
             }
         }
@@ -1039,33 +1013,31 @@ impl MagicSock {
         };
 
         n0_future::future::poll_fn(move |cx| loop {
-            match self.try_send_disco_message(&dst, dst_key, &msg) {
-                Ok(()) => return Poll::Ready(Ok(())),
-                Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
-                    match self.transports.poll_writable(cx, &dst) {
-                        Poll::Ready(Ok(())) => continue,
-                        Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
-                        Poll::Pending => return Poll::Pending,
-                    }
-                }
-                Err(err) => return Poll::Ready(Err(err)),
+            match self.poll_send_disco_message(cx, &dst, dst_key, &msg) {
+                Poll::Ready(res) => return Poll::Ready(res),
+                Poll::Pending => match self.transports.poll_writable(cx, &dst) {
+                    Poll::Ready(Ok(())) => continue,
+                    Poll::Ready(Err(err)) => return Poll::Ready(Err(err)),
+                    Poll::Pending => return Poll::Pending,
+                },
             }
         })
         .await
     }
 
-    fn try_send_disco_message(
+    fn poll_send_disco_message(
         &self,
+        cx: &mut Context,
         dst: &transports::Addr,
         dst_key: PublicKey,
         msg: &disco::Message,
-    ) -> std::io::Result<()> {
+    ) -> Poll<io::Result<()>> {
         trace!(?dst, %msg, "send disco message (UDP)");
         if self.is_closed() {
-            return Err(io::Error::new(
+            return Poll::Ready(Err(io::Error::new(
                 io::ErrorKind::NotConnected,
                 "connection closed",
-            ));
+            )));
         }
         let pkt = self.encode_disco_message(dst_key, msg);
 
@@ -1075,33 +1047,22 @@ impl MagicSock {
             segment_size: None,
         };
 
-        match self.transports.poll_send(dst, None, &transmit) {
+        match self.transports.poll_send(cx, dst, None, &transmit) {
             Poll::Ready(Ok(())) => {
                 trace!(?dst, %msg, "sent disco message");
                 self.metrics.magicsock.sent_disco_udp.inc();
                 disco_message_sent(msg, &self.metrics.magicsock);
-                Ok(())
+                Poll::Ready(Ok(()))
             }
             Poll::Ready(Err(err)) => {
                 warn!(?dst, ?msg, ?err, "failed to send disco message");
-                Err(err)
+                Poll::Ready(Err(err))
             }
-            Poll::Pending => Err(io::Error::new(io::ErrorKind::WouldBlock, "pending")),
+            Poll::Pending => Poll::Pending,
         }
     }
 
-    #[instrument(skip_all)]
-    async fn handle_ping_actions(&mut self, msgs: Vec<PingAction>) {
-        // TODO: This used to make sure that all ping actions are sent.  Though on the
-        // poll_send/try_send path we also do fire-and-forget.  try_send_ping_actions()
-        // really should store any unsent pings on the Inner and send them at the next
-        // possible time.
-        if let Err(err) = self.try_send_ping_actions(msgs) {
-            warn!("Not all ping actions were sent: {err:#}");
-        }
-    }
-
-    fn try_send_ping(&self, ping: SendPing) -> io::Result<()> {
+    async fn send_ping(&self, ping: SendPing) -> io::Result<()> {
         let SendPing {
             id,
             dst,
@@ -1114,13 +1075,8 @@ impl MagicSock {
             node_key: self.public_key(),
         });
 
-        let addr = match dst {
-            SendAddr::Udp(addr) => transports::Addr::Ip(addr),
-            SendAddr::Relay(ref url) => transports::Addr::Relay(url.clone(), dst_node),
-        };
-
-        self.try_send_disco_message(&addr, dst_node, &msg)?;
-        debug!(%dst, tx = %HEXLOWER.encode(&tx_id), ?purpose, "ping sent (polled)");
+        self.send_disco_message(dst.clone(), dst_node, msg).await?;
+        debug!(%dst, tx = %HEXLOWER.encode(&tx_id), ?purpose, "ping sent");
         let msg_sender = self.actor_sender.clone();
         self.node_map
             .notify_ping_sent(id, dst.clone(), tx_id, purpose, msg_sender);
@@ -1430,7 +1386,9 @@ impl Handle {
         let endpoint = quinn::Endpoint::new_with_abstract_socket(
             endpoint_config,
             Some(server_config),
-            msock.clone(),
+            Box::new(MagicUdpSocket {
+                socket: msock.clone(),
+            }),
             #[cfg(not(wasm_browser))]
             Arc::new(quinn::TokioRuntime),
             #[cfg(wasm_browser)]
@@ -1630,29 +1588,30 @@ enum DiscoBoxError {
     Parse(anyhow::Error),
 }
 
-impl AsyncUdpSocket for MagicSock {
-    fn create_io_poller(self: Arc<Self>, dest: SocketAddr) -> Pin<Box<dyn quinn::UdpPoller>> {
-        self.transports
-            .create_io_poller(dest, self.clone(), self.ip_mapped_addrs.clone())
-    }
+#[derive(Debug)]
+struct MagicUdpSocket {
+    socket: Arc<MagicSock>,
+}
 
-    fn try_send(&self, transmit: &quinn_udp::Transmit) -> io::Result<()> {
-        self.try_send(transmit)
+impl AsyncUdpSocket for MagicUdpSocket {
+    fn create_sender(&self) -> Pin<Box<dyn quinn::UdpSender>> {
+        Box::pin(self.socket.transports.create_sender(self.socket.clone()))
     }
 
     /// NOTE: Receiving on a closed socket will return [`Poll::Pending`] indefinitely.
     fn poll_recv(
-        &self,
+        &mut self,
         cx: &mut Context,
         bufs: &mut [io::IoSliceMut<'_>],
         metas: &mut [quinn_udp::RecvMeta],
     ) -> Poll<io::Result<usize>> {
-        self.poll_recv(cx, bufs, metas)
+        self.socket.poll_recv(cx, bufs, metas)
     }
 
     #[cfg(not(wasm_browser))]
     fn local_addr(&self) -> io::Result<SocketAddr> {
         let addrs: Vec<_> = self
+            .socket
             .transports
             .local_addrs()
             .into_iter()
@@ -1680,16 +1639,12 @@ impl AsyncUdpSocket for MagicSock {
         Ok(SocketAddr::new(std::net::Ipv6Addr::LOCALHOST.into(), 0))
     }
 
-    fn max_transmit_segments(&self) -> usize {
-        self.transports.max_transmit_segments()
-    }
-
     fn max_receive_segments(&self) -> usize {
-        self.transports.max_receive_segments()
+        self.socket.transports.max_receive_segments()
     }
 
     fn may_fragment(&self) -> bool {
-        self.transports.may_fragment()
+        self.socket.transports.may_fragment()
     }
 }
 
@@ -1794,12 +1749,8 @@ impl Actor {
             })
             .await?;
 
-        // Let the the heartbeat only start a couple seconds later
         #[cfg(not(wasm_browser))]
-        let mut direct_addr_heartbeat_timer = time::interval_at(
-            time::Instant::now() + HEARTBEAT_INTERVAL,
-            HEARTBEAT_INTERVAL,
-        );
+        let mut direct_addr_heartbeat_timer = time::interval(HEARTBEAT_INTERVAL);
         let mut direct_addr_update_receiver =
             self.msock.direct_addr_update_state.running.subscribe();
         #[cfg(not(wasm_browser))]
@@ -1962,12 +1913,8 @@ impl Actor {
 
     #[instrument(skip_all)]
     async fn handle_ping_actions(&mut self, msgs: Vec<PingAction>) {
-        // TODO: This used to make sure that all ping actions are sent.  Though on the
-        // poll_send/try_send path we also do fire-and-forget.  try_send_ping_actions()
-        // really should store any unsent pings on the Inner and send them at the next
-        // possible time.
-        if let Err(err) = self.msock.try_send_ping_actions(msgs) {
-            warn!("Not all ping actions were sent: {err:#}");
+        if let Err(err) = self.msock.send_ping_actions(msgs).await {
+            warn!("Failed to send ping actions: {err:#}");
         }
     }
 
