@@ -1,12 +1,14 @@
 use std::{
     io,
     net::{IpAddr, SocketAddr},
+    pin::Pin,
     sync::Arc,
     task::{Context, Poll},
 };
 
 use n0_watcher::{Watchable, Watcher};
-use netwatch::UdpSocket;
+use netwatch::{UdpSender, UdpSocket};
+use pin_project::pin_project;
 use tracing::trace;
 
 use super::{Addr, Transmit};
@@ -99,18 +101,21 @@ impl IpTransport {
     }
 
     pub(super) fn create_sender(&self) -> IpSender {
+        let sender = self.socket.clone().create_sender();
         IpSender {
             bind_addr: self.bind_addr,
-            socket: self.socket.clone(),
+            sender,
             metrics: self.metrics.clone(),
         }
     }
 }
 
 #[derive(Debug)]
+#[pin_project]
 pub(super) struct IpSender {
     bind_addr: SocketAddr,
-    socket: Arc<UdpSocket>,
+    #[pin]
+    sender: UdpSender,
     metrics: Arc<MagicsockMetrics>,
 }
 
@@ -124,8 +129,44 @@ impl IpSender {
         }
     }
 
-    pub(super) fn poll_send(
+    pub(super) async fn send(
         &self,
+        destination: SocketAddr,
+        src: Option<IpAddr>,
+        transmit: &Transmit<'_>,
+    ) -> io::Result<()> {
+        trace!("sending to {}", destination);
+        let total_bytes = transmit.contents.len() as u64;
+        let res = self
+            .sender
+            .send(&quinn_udp::Transmit {
+                destination,
+                ecn: transmit.ecn,
+                contents: transmit.contents,
+                segment_size: transmit.segment_size,
+                src_ip: src,
+            })
+            .await;
+        trace!("send res: {:?}", res);
+
+        match res {
+            Ok(res) => {
+                match destination {
+                    SocketAddr::V4(_) => {
+                        self.metrics.send_ipv4.inc_by(total_bytes);
+                    }
+                    SocketAddr::V6(_) => {
+                        self.metrics.send_ipv6.inc_by(total_bytes);
+                    }
+                }
+                Ok(res)
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    pub(super) fn poll_send(
+        mut self: Pin<&mut Self>,
         cx: &mut std::task::Context,
         destination: SocketAddr,
         src: Option<IpAddr>,
@@ -133,8 +174,7 @@ impl IpSender {
     ) -> Poll<io::Result<()>> {
         trace!("sending to {}", destination);
         let total_bytes = transmit.contents.len() as u64;
-        let res = self.socket.poll_send_quinn(
-            cx,
+        let res = Pin::new(&mut self.sender).poll_send(
             &quinn_udp::Transmit {
                 destination,
                 ecn: transmit.ecn,
@@ -142,6 +182,7 @@ impl IpSender {
                 segment_size: transmit.segment_size,
                 src_ip: src,
             },
+            cx,
         );
         trace!("send res: {:?}", res);
 
@@ -170,7 +211,7 @@ impl IpSender {
     ) -> io::Result<()> {
         trace!("sending to {}", destination);
         let total_bytes = transmit.contents.len() as u64;
-        let res = self.socket.try_send_quinn(&quinn_udp::Transmit {
+        let res = self.sender.try_send(&quinn_udp::Transmit {
             destination,
             ecn: transmit.ecn,
             contents: transmit.contents,

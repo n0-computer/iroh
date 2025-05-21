@@ -320,8 +320,44 @@ pub(crate) struct UdpSender {
 }
 
 impl UdpSender {
-    pub(crate) fn inner_poll_send(
+    pub(crate) async fn send(
         &self,
+        destination: &Addr,
+        src: Option<IpAddr>,
+        transmit: &Transmit<'_>,
+    ) -> io::Result<()> {
+        trace!(?destination, "sending");
+
+        match destination {
+            #[cfg(wasm_browser)]
+            Addr::Ip(..) => {
+                return Poll::Ready(Err(io::Error::other("IP is unsupported in browser")))
+            }
+            #[cfg(not(wasm_browser))]
+            Addr::Ip(addr) => {
+                for sender in &self.ip {
+                    if sender.is_valid_send_addr(addr)
+                        && sender.send(*addr, src, transmit).await.is_ok()
+                    {
+                        break;
+                    }
+                }
+            }
+            Addr::Relay(url, node_id) => {
+                for sender in &self.relay {
+                    if sender.is_valid_send_addr(url, node_id)
+                        && sender.send(url.clone(), *node_id, transmit).await.is_ok()
+                    {
+                        break;
+                    }
+                }
+            }
+        }
+        Err(io::Error::other("no transport available"))
+    }
+
+    pub(crate) fn inner_poll_send(
+        mut self: Pin<&mut Self>,
         cx: &mut std::task::Context,
         destination: &Addr,
         src: Option<IpAddr>,
@@ -336,9 +372,9 @@ impl UdpSender {
             }
             #[cfg(not(wasm_browser))]
             Addr::Ip(addr) => {
-                for sender in &self.ip {
+                for sender in &mut self.ip {
                     if sender.is_valid_send_addr(addr) {
-                        match sender.poll_send(cx, *addr, src, transmit) {
+                        match Pin::new(sender).poll_send(cx, *addr, src, transmit) {
                             Poll::Pending => {}
                             Poll::Ready(res) => return Poll::Ready(res),
                         }
@@ -406,7 +442,7 @@ impl UdpSender {
 
 impl quinn::UdpSender for UdpSender {
     fn poll_send(
-        self: Pin<&mut Self>,
+        mut self: Pin<&mut Self>,
         transmit: &quinn_udp::Transmit,
         cx: &mut Context,
     ) -> Poll<io::Result<()>> {
@@ -435,7 +471,9 @@ impl quinn::UdpSender for UdpSender {
                 segment_size: transmit.segment_size,
             };
 
-            let res = self.inner_poll_send(cx, &destination, src, &transmit);
+            let res = self
+                .as_mut()
+                .inner_poll_send(cx, &destination, src, &transmit);
             match res {
                 Poll::Ready(Ok(())) => {
                     trace!(dst = ?destination, "sent transmit");

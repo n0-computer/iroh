@@ -255,6 +255,40 @@ impl RelayDatagramSendChannelSender {
         true
     }
 
+    pub(super) async fn send(
+        &self,
+        dest_url: RelayUrl,
+        dest_node: NodeId,
+        transmit: &Transmit<'_>,
+    ) -> io::Result<()> {
+        let contents = split_packets(transmit);
+
+        let item = RelaySendItem {
+            remote_node: dest_node,
+            url: dest_url.clone(),
+            datagrams: contents,
+        };
+
+        let dest_node = item.remote_node;
+        let dest_url = item.url.clone();
+
+        match self.sender.send(item).await {
+            Ok(_) => {
+                trace!(node = %dest_node.fmt_short(), relay_url = %dest_url,
+                       "send relay: message queued");
+                Ok(())
+            }
+            Err(mpsc::error::SendError(_)) => {
+                error!(node = %dest_node.fmt_short(), relay_url = %dest_url,
+                      "send relay: message dropped, channel to actor is closed");
+                Err(io::Error::new(
+                    io::ErrorKind::ConnectionReset,
+                    "channel to actor is closed",
+                ))
+            }
+        }
+    }
+
     pub(super) fn poll_send(
         &self,
         cx: &mut Context,

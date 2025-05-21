@@ -992,11 +992,7 @@ impl MagicSock {
         };
 
         let dst2 = dst.clone();
-        match n0_future::future::poll_fn(move |cx| {
-            sender.inner_poll_send(cx, &dst2, None, &transmit)
-        })
-        .await
-        {
+        match sender.send(&dst2, None, &transmit).await {
             Ok(()) => {
                 trace!(?dst, %msg, "sent disco message");
                 self.metrics.magicsock.sent_disco_udp.inc();

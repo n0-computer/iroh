@@ -2922,7 +2922,7 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.5.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=feat-new-udp-api#b86c01e6ba741bff00f64f2293ea3843eb1045dc"
+source = "git+https://github.com/n0-computer/net-tools?branch=feat-new-udp-api#21aa743a599f87032e91336684b3335478e4bf43"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -2938,6 +2938,7 @@ dependencies = [
  "netlink-packet-route 0.23.0",
  "netlink-proto",
  "netlink-sys",
+ "pin-project-lite",
  "serde",
  "snafu",
  "socket2",

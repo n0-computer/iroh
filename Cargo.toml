@@ -43,7 +43,7 @@ unused-async = "warn"
 
 
 [patch.crates-io]
-#iroh-quinn = { path = "../iroh-quinn/quinn" }
+# iroh-quinn = { path = "../iroh-quinn/quinn" }
 # iroh-quinn-udp = { path = "../iroh-quinn/quinn-udp" }
 # iroh-quinn-proto = { path = "../iroh-quinn/quinn-proto" }
 # netwatch = { path = "../net-tools/netwatch" }
