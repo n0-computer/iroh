@@ -486,10 +486,7 @@
 <a href="#485" id="485">485</a>
 <a href="#486" id="486">486</a>
 <a href="#487" id="487">487</a>
-<a href="#488" id="488">488</a>
-<a href="#489" id="489">489</a>
-<a href="#490" id="490">490</a>
-<a href="#491" id="491">491</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#488" id="488">488</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     io,
     sync::Arc,
     task::{Context, Poll, Waker},
@@ -752,8 +749,7 @@
 
 <span class="doccomment">/// Creates a sender and receiver pair for sending datagrams to the [`RelayActor`].
 ///
-/// These includes the waker coordination required to support [`quinn::AsyncUdpSocket::try_send`]
-/// and [`quinn::UdpPoller::poll_writable`].
+/// These includes the waker coordination required to support [`quinn::UdpSender::poll_send`].
 </span><span class="kw">fn </span>relay_datagram_send_channel() -&gt; (
     RelayDatagramSendChannelSender,
     RelayDatagramSendChannelReceiver,
@@ -770,8 +766,7 @@
 
 <span class="doccomment">/// Sender to send datagrams to the [`RelayActor`].
 ///
-/// This includes the waker coordination required to support [`quinn::AsyncUdpSocket::try_send`]
-/// and [`quinn::UdpPoller::poll_writable`].
+/// This includes the waker coordination required to support [`quinn::UdpSender::poll_send`].
 </span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>RelayDatagramSendChannelSender {
     sender: mpsc::Sender&lt;RelaySendItem&gt;,
@@ -839,8 +834,7 @@
 
 <span class="doccomment">/// Receiver to send datagrams to the [`RelayActor`].
 ///
-/// This includes the waker coordination required to support [`quinn::AsyncUdpSocket::try_send`]
-/// and [`quinn::UdpPoller::poll_writable`].
+/// This includes the waker coordination required to support [`quinn::UdpSender::poll_send`].
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">struct </span>RelayDatagramSendChannelReceiver {
     receiver: mpsc::Receiver&lt;RelaySendItem&gt;,

@@ -1731,9 +1731,7 @@
 <a href="#1730" id="1730">1730</a>
 <a href="#1731" id="1731">1731</a>
 <a href="#1732" id="1732">1732</a>
-<a href="#1733" id="1733">1733</a>
-<a href="#1734" id="1734">1734</a>
-<a href="#1735" id="1735">1735</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#1733" id="1733">1733</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{btree_map::Entry, BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
@@ -2302,8 +2300,6 @@
     /// our call-me-maybe they will reach us and the other side establishes a direct
     /// connection upon our subsequent pong response.
     ///
-    /// For [`SendCallMeMaybe::IfNoRecent`], **no** paths will be pinged if there already
-    /// was a recent call-me-maybe sent.
     ///
     /// The caller is responsible for sending the messages.
     </span><span class="attr">#[must_use = <span class="string">"actions must be handled"</span>]

@@ -406,10 +406,7 @@
 <a href="#405" id="405">405</a>
 <a href="#406" id="406">406</a>
 <a href="#407" id="407">407</a>
-<a href="#408" id="408">408</a>
-<a href="#409" id="409">409</a>
-<a href="#410" id="410">410</a>
-<a href="#411" id="411">411</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#408" id="408">408</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     io::{<span class="self">self</span>, IoSliceMut},
     net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6},
     pin::Pin,
@@ -678,10 +675,7 @@
     </span>}
 
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>create_sender(<span class="kw-2">&amp;</span><span class="self">self</span>, msock: Arc&lt;MagicSock&gt;) -&gt; UdpSender {
-        UdpSender {
-            <span class="attr">#[cfg(not(wasm_browser))]
-            </span>msock,
-        }
+        UdpSender { msock }
     }
 
     <span class="doccomment">/// Rebinds underlying connections, if necessary.
