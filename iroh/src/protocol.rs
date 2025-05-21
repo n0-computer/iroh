@@ -560,7 +560,7 @@ mod tests {
         const TEST_ALPN: &[u8] = b"/iroh/test/1";
 
         impl ProtocolHandler for TestProtocol {
-            fn accept(&self, connection: Connection) -> BoxFuture<Result<()>> {
+            fn accept(&self, connection: Connection) -> BoxFuture<Result<(), Error>> {
                 let this = self.clone();
                 Box::pin(async move {
                     this.connections.lock().expect("poisoned").push(connection);
@@ -595,7 +595,7 @@ mod tests {
             .await?;
         let conn = endpoint2.connect(addr, TEST_ALPN).await?;
 
-        router.shutdown().await?;
+        router.shutdown().await.e()?;
 
         let reason = conn.closed().await;
         assert_eq!(

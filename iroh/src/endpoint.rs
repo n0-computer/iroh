@@ -2344,15 +2344,19 @@ mod tests {
     use iroh_metrics::MetricsSource;
     use iroh_relay::http::Protocol;
     use n0_future::{task::AbortOnDropHandle, StreamExt};
+    use n0_snafu::{TestError, TestResult, TestResultExt};
+    use quinn::ConnectionError;
     use rand::SeedableRng;
     use tracing::{error_span, info, info_span, Instrument};
     use tracing_test::traced_test;
 
     use super::Endpoint;
     use crate::{
-        endpoint::{ConnectOptions, ConnectionType, RemoteInfo},
+        endpoint::{ConnectOptions, Connection, ConnectionType, RemoteInfo},
         test_utils::{run_relay_server, run_relay_server_with},
-        tls, RelayMode,
+        tls,
+        watcher::Watcher,
+        RelayMode,
     };
 
     const TEST_ALPN: &[u8] = b"n0/iroh/test";
@@ -2716,10 +2720,10 @@ mod tests {
         };
         let ep2 = ep2.bind().await?;
 
-        let ep1_nodeaddr = ep1.node_addr().initialized().await.unwrap();
-        let ep2_nodeaddr = ep2.node_addr().initialized().await.unwrap();
-        ep1.add_node_addr(ep2_nodeaddr.clone()).unwrap();
-        ep2.add_node_addr(ep1_nodeaddr.clone()).unwrap();
+        let ep1_nodeaddr = ep1.node_addr().initialized().await?;
+        let ep2_nodeaddr = ep2.node_addr().initialized().await?;
+        ep1.add_node_addr(ep2_nodeaddr.clone())?;
+        ep2.add_node_addr(ep1_nodeaddr.clone())?;
         let ep1_nodeid = ep1.node_id();
         let ep2_nodeid = ep2.node_id();
         eprintln!("node id 1 {ep1_nodeid}");
@@ -2819,7 +2823,7 @@ mod tests {
             .await?;
 
         async fn wait_for_conn_type_direct(ep: &Endpoint, node_id: NodeId) -> TestResult {
-            let mut stream = ep.conn_type(node_id)?.stream();
+            let mut stream = ep.conn_type(node_id).expect("connection exists").stream();
             let src = ep.node_id().fmt_short();
             let dst = node_id.fmt_short();
             while let Some(conn_type) = stream.next().await {
@@ -2833,7 +2837,7 @@ mod tests {
 
         async fn accept(ep: &Endpoint) -> TestResult<Connection> {
             let incoming = ep.accept().await.expect("ep closed");
-            let conn = incoming.await?;
+            let conn = incoming.await.e()?;
             let node_id = conn.remote_node_id()?;
             tracing::info!(node_id=%node_id.fmt_short(), "accepted connection");
             Ok(conn)
@@ -2851,23 +2855,23 @@ mod tests {
 
         let ep1_side = tokio::time::timeout(TIMEOUT, async move {
             let conn = accept(&ep1).await?;
-            let mut send = conn.open_uni().await?;
+            let mut send = conn.open_uni().await.e()?;
             wait_for_conn_type_direct(&ep1, ep2_nodeid).await?;
-            send.write_all(b"Conn is direct").await?;
-            send.finish()?;
+            send.write_all(b"Conn is direct").await.e()?;
+            send.finish().e()?;
             conn.closed().await;
-            TestResult::Ok(())
+            Ok::<(), TestError>(())
         });
 
         let ep2_side = tokio::time::timeout(TIMEOUT, async move {
             let conn = ep2.connect(ep1_nodeaddr, TEST_ALPN).await?;
-            let mut recv = conn.accept_uni().await?;
+            let mut recv = conn.accept_uni().await.e()?;
             wait_for_conn_type_direct(&ep2, ep1_nodeid).await?;
-            let read = recv.read_to_end(100).await?;
+            let read = recv.read_to_end(100).await.e()?;
             assert_eq!(read, b"Conn is direct".to_vec());
             conn.close(0u32.into(), b"done");
             conn.closed().await;
-            TestResult::Ok(())
+            Ok::<(), TestError>(())
         });
 
         let res_ep1 = AbortOnDropHandle::new(tokio::spawn(ep1_side));
