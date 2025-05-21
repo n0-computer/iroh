@@ -20,6 +20,7 @@ use tokio_util::{codec::Framed, sync::CancellationToken, task::AbortOnDropHandle
 use tracing::{debug, debug_span, error, info, info_span, trace, warn, Instrument};
 
 use super::{clients::Clients, AccessConfig};
+use crate::protos::{handshake, io::HandshakeIo};
 #[allow(deprecated)]
 use crate::{
     defaults::{timeouts::SERVER_WRITE_TIMEOUT, DEFAULT_KEY_CACHE_CAPACITY},
@@ -525,10 +526,27 @@ impl Inner {
     /// [`AsyncWrite`]: tokio::io::AsyncWrite
     async fn accept(&self, protocol: Protocol, io: MaybeTlsStream) -> Result<()> {
         trace!(?protocol, "accept: start");
-        let mut io = match protocol {
+        let (client_key, mut io) = match protocol {
             Protocol::Relay => {
                 self.metrics.relay_accepts.inc();
-                RelayedStream::Relay(Framed::new(io, RelayCodec::new(self.key_cache.clone())))
+                let mut io =
+                    RelayedStream::Relay(Framed::new(io, RelayCodec::new(self.key_cache.clone())));
+
+                trace!("accept: recv client key");
+                #[allow(deprecated)]
+                let (client_key, info) = legacy_recv_client_key(&mut io)
+                    .await
+                    .context("unable to receive client information")?;
+
+                if info.version != PROTOCOL_VERSION {
+                    bail!(
+                        "unexpected client version {}, expected {}",
+                        info.version,
+                        PROTOCOL_VERSION
+                    );
+                }
+
+                (client_key, io)
             }
             Protocol::Websocket => {
                 self.metrics.websocket_accepts.inc();
@@ -538,14 +556,18 @@ impl Inner {
                 let builder = tokio_websockets::ServerBuilder::new();
                 // Serve will create a WebSocketStream on an already upgraded connection
                 let websocket = builder.serve(io);
-                RelayedStream::Ws(websocket, self.key_cache.clone())
+
+                // TODO(matheus23): Change to use `RelayedStream` or similar, so we inherit the rate limiting
+                let mut io = HandshakeIo { io: websocket };
+
+                let client_info = handshake::serverside(&mut io, rand::rngs::OsRng).await?;
+
+                (
+                    client_info.public_key,
+                    RelayedStream::Ws(io.io, self.key_cache.clone()),
+                )
             }
         };
-        trace!("accept: recv client key");
-        #[allow(deprecated)]
-        let (client_key, info) = legacy_recv_client_key(&mut io)
-            .await
-            .context("unable to receive client information")?;
 
         trace!("accept: checking access: {:?}", self.access);
         if !self.access.is_allowed(client_key).await {
@@ -555,15 +577,7 @@ impl Inner {
             .await?;
             io.flush().await?;
 
-            bail!("client is not authenticated: {}", client_key);
-        }
-
-        if info.version != PROTOCOL_VERSION {
-            bail!(
-                "unexpected client version {}, expected {}",
-                info.version,
-                PROTOCOL_VERSION
-            );
+            bail!("client is not authenticated: {client_key}");
         }
 
         trace!("accept: build client conn");

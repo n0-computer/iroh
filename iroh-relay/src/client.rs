@@ -43,8 +43,6 @@ pub struct ClientBuilder {
     /// Default is None
     #[debug("address family selector callback")]
     address_family_selector: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
-    /// Default is false
-    is_prober: bool,
     /// Server url.
     url: RelayUrl,
     /// Relay protocol
@@ -72,7 +70,6 @@ impl ClientBuilder {
     ) -> Self {
         ClientBuilder {
             address_family_selector: None,
-            is_prober: false,
             url: url.into(),
 
             // Resolves to websockets in browsers and relay otherwise
@@ -107,12 +104,6 @@ impl ClientBuilder {
         S: Fn() -> bool + Send + Sync + 'static,
     {
         self.address_family_selector = Some(Arc::new(selector));
-        self
-    }
-
-    /// Indicates this client is a prober
-    pub fn is_prober(mut self, is: bool) -> Self {
-        self.is_prober = is;
         self
     }
 
