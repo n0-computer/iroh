@@ -365,7 +365,51 @@
 <a href="#364" id="364">364</a>
 <a href="#365" id="365">365</a>
 <a href="#366" id="366">366</a>
-<a href="#367" id="367">367</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#367" id="367">367</a>
+<a href="#368" id="368">368</a>
+<a href="#369" id="369">369</a>
+<a href="#370" id="370">370</a>
+<a href="#371" id="371">371</a>
+<a href="#372" id="372">372</a>
+<a href="#373" id="373">373</a>
+<a href="#374" id="374">374</a>
+<a href="#375" id="375">375</a>
+<a href="#376" id="376">376</a>
+<a href="#377" id="377">377</a>
+<a href="#378" id="378">378</a>
+<a href="#379" id="379">379</a>
+<a href="#380" id="380">380</a>
+<a href="#381" id="381">381</a>
+<a href="#382" id="382">382</a>
+<a href="#383" id="383">383</a>
+<a href="#384" id="384">384</a>
+<a href="#385" id="385">385</a>
+<a href="#386" id="386">386</a>
+<a href="#387" id="387">387</a>
+<a href="#388" id="388">388</a>
+<a href="#389" id="389">389</a>
+<a href="#390" id="390">390</a>
+<a href="#391" id="391">391</a>
+<a href="#392" id="392">392</a>
+<a href="#393" id="393">393</a>
+<a href="#394" id="394">394</a>
+<a href="#395" id="395">395</a>
+<a href="#396" id="396">396</a>
+<a href="#397" id="397">397</a>
+<a href="#398" id="398">398</a>
+<a href="#399" id="399">399</a>
+<a href="#400" id="400">400</a>
+<a href="#401" id="401">401</a>
+<a href="#402" id="402">402</a>
+<a href="#403" id="403">403</a>
+<a href="#404" id="404">404</a>
+<a href="#405" id="405">405</a>
+<a href="#406" id="406">406</a>
+<a href="#407" id="407">407</a>
+<a href="#408" id="408">408</a>
+<a href="#409" id="409">409</a>
+<a href="#410" id="410">410</a>
+<a href="#411" id="411">411</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     io::{<span class="self">self</span>, IoSliceMut},
     net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6},
     pin::Pin,
@@ -451,6 +495,50 @@
             }
         }
         Poll::Pending
+    }
+
+    <span class="doccomment">/// Best effort sending
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>try_send(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        destination: <span class="kw-2">&amp;</span>Addr,
+        src: <span class="prelude-ty">Option</span>&lt;IpAddr&gt;,
+        transmit: <span class="kw-2">&amp;</span>Transmit&lt;<span class="lifetime">'_</span>&gt;,
+    ) -&gt; io::Result&lt;()&gt; {
+        <span class="macro">trace!</span>(<span class="question-mark">?</span>destination, <span class="string">"sending, best effort"</span>);
+
+        <span class="kw">match </span>destination {
+            <span class="attr">#[cfg(wasm_browser)]
+            </span>Addr::Ip(..) =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(io::Error::other(<span class="string">"IP is unsupported in browser"</span>)),
+            <span class="attr">#[cfg(not(wasm_browser))]
+            </span>Addr::Ip(addr) =&gt; {
+                <span class="kw">for </span>transport <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.ip {
+                    <span class="kw">if </span>transport.is_valid_send_addr(addr) {
+                        <span class="kw">match </span>transport.try_send(<span class="kw-2">*</span>addr, src, transmit) {
+                            <span class="prelude-val">Ok</span>(()) =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(()),
+                            <span class="prelude-val">Err</span>(_err) =&gt; {
+                                <span class="kw">continue</span>;
+                            }
+                        }
+                    }
+                }
+            }
+            Addr::Relay(url, node_id) =&gt; {
+                <span class="kw">for </span>transport <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.relay {
+                    <span class="kw">if </span>transport.is_valid_send_addr(url, node_id) {
+                        <span class="kw">match </span>transport.try_send(url.clone(), <span class="kw-2">*</span>node_id, transmit) {
+                            <span class="prelude-val">Ok</span>(()) =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(()),
+                            <span class="prelude-val">Err</span>(_err) =&gt; {
+                                <span class="kw">continue</span>;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        <span class="prelude-val">Err</span>(io::Error::new(
+            io::ErrorKind::WouldBlock,
+            <span class="string">"no transport ready"</span>,
+        ))
     }
 
     <span class="doccomment">/// Tries to recv data, on all available transports.
@@ -728,8 +816,8 @@
         <span class="self">self</span>.msock.transports.max_transmit_segments()
     }
 
-    <span class="kw">fn </span>try_send(<span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, _transmit: <span class="kw-2">&amp;</span>quinn_udp::Transmit) -&gt; io::Result&lt;()&gt; {
-        <span class="macro">todo!</span>()
+    <span class="kw">fn </span>try_send(<span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, transmit: <span class="kw-2">&amp;</span>quinn_udp::Transmit) -&gt; io::Result&lt;()&gt; {
+        <span class="self">self</span>.msock.try_send(transmit)
     }
 }
 </code></pre></div></section></main></body></html>

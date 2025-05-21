@@ -145,7 +145,40 @@
 <a href="#144" id="144">144</a>
 <a href="#145" id="145">145</a>
 <a href="#146" id="146">146</a>
-<a href="#147" id="147">147</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#147" id="147">147</a>
+<a href="#148" id="148">148</a>
+<a href="#149" id="149">149</a>
+<a href="#150" id="150">150</a>
+<a href="#151" id="151">151</a>
+<a href="#152" id="152">152</a>
+<a href="#153" id="153">153</a>
+<a href="#154" id="154">154</a>
+<a href="#155" id="155">155</a>
+<a href="#156" id="156">156</a>
+<a href="#157" id="157">157</a>
+<a href="#158" id="158">158</a>
+<a href="#159" id="159">159</a>
+<a href="#160" id="160">160</a>
+<a href="#161" id="161">161</a>
+<a href="#162" id="162">162</a>
+<a href="#163" id="163">163</a>
+<a href="#164" id="164">164</a>
+<a href="#165" id="165">165</a>
+<a href="#166" id="166">166</a>
+<a href="#167" id="167">167</a>
+<a href="#168" id="168">168</a>
+<a href="#169" id="169">169</a>
+<a href="#170" id="170">170</a>
+<a href="#171" id="171">171</a>
+<a href="#172" id="172">172</a>
+<a href="#173" id="173">173</a>
+<a href="#174" id="174">174</a>
+<a href="#175" id="175">175</a>
+<a href="#176" id="176">176</a>
+<a href="#177" id="177">177</a>
+<a href="#178" id="178">178</a>
+<a href="#179" id="179">179</a>
+<a href="#180" id="180">180</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     io,
     net::{IpAddr, SocketAddr},
     sync::Arc,
@@ -220,6 +253,39 @@
             }
             Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; Poll::Ready(<span class="prelude-val">Err</span>(err)),
             Poll::Pending =&gt; Poll::Pending,
+        }
+    }
+
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>try_send(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        destination: SocketAddr,
+        src: <span class="prelude-ty">Option</span>&lt;IpAddr&gt;,
+        transmit: <span class="kw-2">&amp;</span>Transmit&lt;<span class="lifetime">'_</span>&gt;,
+    ) -&gt; io::Result&lt;()&gt; {
+        <span class="macro">trace!</span>(<span class="string">"sending to {}"</span>, destination);
+        <span class="kw">let </span>total_bytes = transmit.contents.len() <span class="kw">as </span>u64;
+        <span class="kw">let </span>res = <span class="self">self</span>.socket.try_send_quinn(<span class="kw-2">&amp;</span>quinn_udp::Transmit {
+            destination,
+            ecn: transmit.ecn,
+            contents: transmit.contents,
+            segment_size: transmit.segment_size,
+            src_ip: src,
+        });
+        <span class="macro">trace!</span>(<span class="string">"send res: {:?}"</span>, res);
+
+        <span class="kw">match </span>res {
+            <span class="prelude-val">Ok</span>(res) =&gt; {
+                <span class="kw">match </span>destination {
+                    SocketAddr::V4(<span class="kw">_</span>) =&gt; {
+                        <span class="self">self</span>.metrics.send_ipv4.inc_by(total_bytes);
+                    }
+                    SocketAddr::V6(<span class="kw">_</span>) =&gt; {
+                        <span class="self">self</span>.metrics.send_ipv6.inc_by(total_bytes);
+                    }
+                }
+                <span class="prelude-val">Ok</span>(res)
+            }
+            <span class="prelude-val">Err</span>(err) =&gt; <span class="prelude-val">Err</span>(err),
         }
     }
 

@@ -3562,7 +3562,62 @@
 <a href="#3561" id="3561">3561</a>
 <a href="#3562" id="3562">3562</a>
 <a href="#3563" id="3563">3563</a>
-<a href="#3564" id="3564">3564</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#3564" id="3564">3564</a>
+<a href="#3565" id="3565">3565</a>
+<a href="#3566" id="3566">3566</a>
+<a href="#3567" id="3567">3567</a>
+<a href="#3568" id="3568">3568</a>
+<a href="#3569" id="3569">3569</a>
+<a href="#3570" id="3570">3570</a>
+<a href="#3571" id="3571">3571</a>
+<a href="#3572" id="3572">3572</a>
+<a href="#3573" id="3573">3573</a>
+<a href="#3574" id="3574">3574</a>
+<a href="#3575" id="3575">3575</a>
+<a href="#3576" id="3576">3576</a>
+<a href="#3577" id="3577">3577</a>
+<a href="#3578" id="3578">3578</a>
+<a href="#3579" id="3579">3579</a>
+<a href="#3580" id="3580">3580</a>
+<a href="#3581" id="3581">3581</a>
+<a href="#3582" id="3582">3582</a>
+<a href="#3583" id="3583">3583</a>
+<a href="#3584" id="3584">3584</a>
+<a href="#3585" id="3585">3585</a>
+<a href="#3586" id="3586">3586</a>
+<a href="#3587" id="3587">3587</a>
+<a href="#3588" id="3588">3588</a>
+<a href="#3589" id="3589">3589</a>
+<a href="#3590" id="3590">3590</a>
+<a href="#3591" id="3591">3591</a>
+<a href="#3592" id="3592">3592</a>
+<a href="#3593" id="3593">3593</a>
+<a href="#3594" id="3594">3594</a>
+<a href="#3595" id="3595">3595</a>
+<a href="#3596" id="3596">3596</a>
+<a href="#3597" id="3597">3597</a>
+<a href="#3598" id="3598">3598</a>
+<a href="#3599" id="3599">3599</a>
+<a href="#3600" id="3600">3600</a>
+<a href="#3601" id="3601">3601</a>
+<a href="#3602" id="3602">3602</a>
+<a href="#3603" id="3603">3603</a>
+<a href="#3604" id="3604">3604</a>
+<a href="#3605" id="3605">3605</a>
+<a href="#3606" id="3606">3606</a>
+<a href="#3607" id="3607">3607</a>
+<a href="#3608" id="3608">3608</a>
+<a href="#3609" id="3609">3609</a>
+<a href="#3610" id="3610">3610</a>
+<a href="#3611" id="3611">3611</a>
+<a href="#3612" id="3612">3612</a>
+<a href="#3613" id="3613">3613</a>
+<a href="#3614" id="3614">3614</a>
+<a href="#3615" id="3615">3615</a>
+<a href="#3616" id="3616">3616</a>
+<a href="#3617" id="3617">3617</a>
+<a href="#3618" id="3618">3618</a>
+<a href="#3619" id="3619">3619</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4033,7 +4088,10 @@
     }
 
     <span class="attr">#[instrument(skip_all)]
-    </span><span class="kw">fn </span>poll_send(<span class="kw-2">&amp;</span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>Context, transmit: <span class="kw-2">&amp;</span>quinn_udp::Transmit) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
+    </span><span class="kw">fn </span>prepare_send(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        transmit: <span class="kw-2">&amp;</span>quinn_udp::Transmit,
+    ) -&gt; io::Result&lt;SmallVec&lt;[transports::Addr; <span class="number">3</span>]&gt;&gt; {
         <span class="self">self</span>.metrics
             .magicsock
             .send_data
@@ -4044,10 +4102,10 @@
                 .magicsock
                 .send_data_network_down
                 .inc_by(transmit.contents.len() <span class="kw">as _</span>);
-            <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(io::Error::new(
+            <span class="kw">return </span><span class="prelude-val">Err</span>(io::Error::new(
                 io::ErrorKind::NotConnected,
                 <span class="string">"connection closed"</span>,
-            )));
+            ));
         }
 
         <span class="kw">let </span><span class="kw-2">mut </span>active_paths = SmallVec::&lt;[<span class="kw">_</span>; <span class="number">3</span>]&gt;::new();
@@ -4106,6 +4164,13 @@
             }
         }
 
+        <span class="prelude-val">Ok</span>(active_paths)
+    }
+
+    <span class="attr">#[instrument(skip_all)]
+    </span><span class="kw">fn </span>poll_send(<span class="kw-2">&amp;</span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>Context, transmit: <span class="kw-2">&amp;</span>quinn_udp::Transmit) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
+        <span class="kw">let </span>active_paths = <span class="self">self</span>.prepare_send(transmit)<span class="question-mark">?</span>;
+
         <span class="kw">if </span>active_paths.is_empty() {
             <span class="comment">// Returning Ok here means we let QUIC timeout.
             // Returning an error would immediately fail a connection.
@@ -4147,6 +4212,51 @@
             </span><span class="kw">return </span>Poll::Pending;
         }
         Poll::Ready(<span class="prelude-val">Ok</span>(()))
+    }
+
+    <span class="doccomment">/// Best effort sending
+    </span><span class="attr">#[instrument(skip_all)]
+    </span><span class="kw">fn </span>try_send(<span class="kw-2">&amp;</span><span class="self">self</span>, transmit: <span class="kw-2">&amp;</span>quinn_udp::Transmit) -&gt; io::Result&lt;()&gt; {
+        <span class="kw">let </span>active_paths = <span class="self">self</span>.prepare_send(transmit)<span class="question-mark">?</span>;
+        <span class="kw">if </span>active_paths.is_empty() {
+            <span class="comment">// Returning Ok here means we let QUIC timeout.
+            // Returning an error would immediately fail a connection.
+            // The philosophy of quinn-udp is that a UDP connection could
+            // come back at any time or missing should be transient so chooses to let
+            // these kind of errors time out.  See test_try_send_no_send_addr to try
+            // this out.
+            </span><span class="macro">error!</span>(<span class="string">"no paths available for node, voiding transmit"</span>);
+            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+        }
+
+        <span class="kw">let </span><span class="kw-2">mut </span>results = SmallVec::&lt;[<span class="kw">_</span>; <span class="number">3</span>]&gt;::new();
+
+        <span class="macro">trace!</span>(<span class="question-mark">?</span>active_paths, <span class="string">"attempting to send"</span>);
+
+        <span class="kw">for </span>destination <span class="kw">in </span>active_paths {
+            <span class="kw">let </span>src = transmit.src_ip;
+            <span class="kw">let </span>transmit = transports::Transmit {
+                ecn: transmit.ecn,
+                contents: transmit.contents,
+                segment_size: transmit.segment_size,
+            };
+
+            <span class="kw">let </span>res = <span class="self">self</span>.transports.try_send(<span class="kw-2">&amp;</span>destination, src, <span class="kw-2">&amp;</span>transmit);
+            <span class="kw">match </span>res {
+                <span class="prelude-val">Ok</span>(()) =&gt; {
+                    <span class="macro">trace!</span>(dst = <span class="question-mark">?</span>destination, <span class="string">"sent transmit"</span>);
+                }
+                <span class="prelude-val">Err</span>(<span class="kw-2">ref </span>err) =&gt; {
+                    <span class="macro">warn!</span>(dst = <span class="question-mark">?</span>destination, <span class="string">"failed to send: {err:#}"</span>);
+                }
+            }
+            results.push(res);
+        }
+
+        <span class="kw">if </span>results.iter().all(|p| p.is_err()) {
+            <span class="kw">return </span><span class="prelude-val">Err</span>(io::Error::other(<span class="string">"all failed"</span>));
+        }
+        <span class="prelude-val">Ok</span>(())
     }
 
     <span class="doccomment">/// NOTE: Receiving on a [`Self::closed`] socket will return [`Poll::Pending`] indefinitely.
