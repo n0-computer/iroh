@@ -38,6 +38,92 @@ impl IpTransport {
         }
     }
 
+    /// NOTE: Receiving on a closed socket will return [`Poll::Pending`] indefinitely.
+    pub(super) fn poll_recv(
+        &self,
+        cx: &mut Context,
+        bufs: &mut [io::IoSliceMut<'_>],
+        metas: &mut [quinn_udp::RecvMeta],
+        source_addrs: &mut [Addr],
+    ) -> Poll<io::Result<usize>> {
+        match self.socket.poll_recv_quinn(cx, bufs, metas) {
+            Poll::Pending => Poll::Pending,
+            Poll::Ready(Ok(n)) => {
+                for (addr, el) in source_addrs.iter_mut().zip(metas.iter()).take(n) {
+                    *addr = el.addr.into();
+                }
+                Poll::Ready(Ok(n))
+            }
+            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
+        }
+    }
+
+    pub(super) fn local_addr(&self) -> SocketAddr {
+        self.local_addr.get()
+    }
+
+    pub(super) fn local_addr_watch(&self) -> impl Watcher<Value = SocketAddr> + Send {
+        self.local_addr.watch()
+    }
+
+    pub(super) fn max_transmit_segments(&self) -> usize {
+        self.socket.max_gso_segments()
+    }
+
+    pub(super) fn max_receive_segments(&self) -> usize {
+        self.socket.gro_segments()
+    }
+
+    pub(super) fn may_fragment(&self) -> bool {
+        self.socket.may_fragment()
+    }
+
+    pub(crate) fn bind_addr(&self) -> SocketAddr {
+        self.bind_addr
+    }
+
+    pub(super) fn rebind(&self) -> io::Result<()> {
+        self.socket.rebind()?;
+        let addr = self.socket.local_addr()?;
+        self.local_addr.set(addr).ok();
+
+        Ok(())
+    }
+
+    pub(super) fn on_network_change(&self, _info: &crate::magicsock::NetInfo) {
+        // Nothing to do for now
+    }
+
+    pub(crate) fn socket(&self) -> Arc<UdpSocket> {
+        self.socket.clone()
+    }
+
+    pub(super) fn create_sender(&self) -> IpSender {
+        IpSender {
+            bind_addr: self.bind_addr,
+            socket: self.socket.clone(),
+            metrics: self.metrics.clone(),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(super) struct IpSender {
+    bind_addr: SocketAddr,
+    socket: Arc<UdpSocket>,
+    metrics: Arc<MagicsockMetrics>,
+}
+
+impl IpSender {
+    pub(super) fn is_valid_send_addr(&self, addr: &SocketAddr) -> bool {
+        #[allow(clippy::match_like_matches_macro)]
+        match (self.bind_addr, addr) {
+            (SocketAddr::V4(_), SocketAddr::V4(..)) => true,
+            (SocketAddr::V6(_), SocketAddr::V6(..)) => true,
+            _ => false,
+        }
+    }
+
     pub(super) fn poll_send(
         &self,
         cx: &mut std::task::Context,
@@ -107,74 +193,5 @@ impl IpTransport {
             }
             Err(err) => Err(err),
         }
-    }
-
-    /// NOTE: Receiving on a closed socket will return [`Poll::Pending`] indefinitely.
-    pub(super) fn poll_recv(
-        &self,
-        cx: &mut Context,
-        bufs: &mut [io::IoSliceMut<'_>],
-        metas: &mut [quinn_udp::RecvMeta],
-        source_addrs: &mut [Addr],
-    ) -> Poll<io::Result<usize>> {
-        match self.socket.poll_recv_quinn(cx, bufs, metas) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(Ok(n)) => {
-                for (addr, el) in source_addrs.iter_mut().zip(metas.iter()).take(n) {
-                    *addr = el.addr.into();
-                }
-                Poll::Ready(Ok(n))
-            }
-            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
-        }
-    }
-
-    pub(super) fn local_addr(&self) -> SocketAddr {
-        self.local_addr.get()
-    }
-
-    pub(super) fn local_addr_watch(&self) -> impl Watcher<Value = SocketAddr> + Send {
-        self.local_addr.watch()
-    }
-
-    pub(super) fn max_transmit_segments(&self) -> usize {
-        self.socket.max_gso_segments()
-    }
-
-    pub(super) fn max_receive_segments(&self) -> usize {
-        self.socket.gro_segments()
-    }
-
-    pub(super) fn may_fragment(&self) -> bool {
-        self.socket.may_fragment()
-    }
-
-    pub(super) fn is_valid_send_addr(&self, addr: &SocketAddr) -> bool {
-        #[allow(clippy::match_like_matches_macro)]
-        match (self.bind_addr, addr) {
-            (SocketAddr::V4(_), SocketAddr::V4(..)) => true,
-            (SocketAddr::V6(_), SocketAddr::V6(..)) => true,
-            _ => false,
-        }
-    }
-
-    pub(crate) fn bind_addr(&self) -> SocketAddr {
-        self.bind_addr
-    }
-
-    pub(super) fn rebind(&self) -> io::Result<()> {
-        self.socket.rebind()?;
-        let addr = self.socket.local_addr()?;
-        self.local_addr.set(addr).ok();
-
-        Ok(())
-    }
-
-    pub(super) fn on_network_change(&self, _info: &crate::magicsock::NetInfo) {
-        // Nothing to do for now
-    }
-
-    pub(crate) fn socket(&self) -> Arc<UdpSocket> {
-        self.socket.clone()
     }
 }

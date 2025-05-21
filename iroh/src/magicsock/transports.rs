@@ -8,12 +8,16 @@ use std::{
 
 use iroh_base::{NodeId, RelayUrl};
 use n0_watcher::Watcher;
-use tracing::{trace, warn};
+use relay::RelayDatagramSendChannelSender;
+use smallvec::SmallVec;
+use tracing::{error, trace, warn};
 
 #[cfg(not(wasm_browser))]
 mod ip;
 mod relay;
 
+#[cfg(not(wasm_browser))]
+use self::ip::IpSender;
 #[cfg(not(wasm_browser))]
 pub(crate) use self::ip::IpTransport;
 pub(crate) use self::relay::{RelayActorConfig, RelayTransport};
@@ -42,92 +46,6 @@ impl Transports {
             relay,
             poll_recv_counter: Default::default(),
         }
-    }
-
-    /// Send the given [`Transmit`] to the given [`Addr`].
-    ///
-    /// Sends on the first matching & ready transport.
-    pub(crate) fn poll_send(
-        &self,
-        cx: &mut std::task::Context,
-        destination: &Addr,
-        src: Option<IpAddr>,
-        transmit: &Transmit<'_>,
-    ) -> Poll<io::Result<()>> {
-        trace!(?destination, "sending");
-
-        match destination {
-            #[cfg(wasm_browser)]
-            Addr::Ip(..) => {
-                return Poll::Ready(Err(io::Error::other("IP is unsupported in browser")))
-            }
-            #[cfg(not(wasm_browser))]
-            Addr::Ip(addr) => {
-                for transport in &self.ip {
-                    if transport.is_valid_send_addr(addr) {
-                        match transport.poll_send(cx, *addr, src, transmit) {
-                            Poll::Pending => {}
-                            Poll::Ready(res) => return Poll::Ready(res),
-                        }
-                    }
-                }
-            }
-            Addr::Relay(url, node_id) => {
-                for transport in &self.relay {
-                    if transport.is_valid_send_addr(url, node_id) {
-                        match transport.poll_send(cx, url.clone(), *node_id, transmit) {
-                            Poll::Pending => {}
-                            Poll::Ready(res) => return Poll::Ready(res),
-                        }
-                    }
-                }
-            }
-        }
-        Poll::Pending
-    }
-
-    /// Best effort sending
-    pub(crate) fn try_send(
-        &self,
-        destination: &Addr,
-        src: Option<IpAddr>,
-        transmit: &Transmit<'_>,
-    ) -> io::Result<()> {
-        trace!(?destination, "sending, best effort");
-
-        match destination {
-            #[cfg(wasm_browser)]
-            Addr::Ip(..) => return Err(io::Error::other("IP is unsupported in browser")),
-            #[cfg(not(wasm_browser))]
-            Addr::Ip(addr) => {
-                for transport in &self.ip {
-                    if transport.is_valid_send_addr(addr) {
-                        match transport.try_send(*addr, src, transmit) {
-                            Ok(()) => return Ok(()),
-                            Err(_err) => {
-                                continue;
-                            }
-                        }
-                    }
-                }
-            }
-            Addr::Relay(url, node_id) => {
-                for transport in &self.relay {
-                    if transport.is_valid_send_addr(url, node_id) {
-                        match transport.try_send(url.clone(), *node_id, transmit) {
-                            Ok(()) => return Ok(()),
-                            Err(_err) => {
-                                continue;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        Err(io::Error::new(
-            io::ErrorKind::WouldBlock,
-            "no transport ready",
-        ))
     }
 
     /// Tries to recv data, on all available transports.
@@ -267,7 +185,16 @@ impl Transports {
     }
 
     pub(crate) fn create_sender(&self, msock: Arc<MagicSock>) -> UdpSender {
-        UdpSender { msock }
+        #[cfg(not(wasm_browser))]
+        let ip = self.ip.iter().map(|t| t.create_sender()).collect();
+        let relay = self.relay.iter().map(|t| t.create_sender()).collect();
+
+        UdpSender {
+            #[cfg(not(wasm_browser))]
+            ip,
+            msock,
+            relay,
+        }
     }
 
     /// Rebinds underlying connections, if necessary.
@@ -387,6 +314,94 @@ impl Addr {
 #[derive(Debug)]
 pub(crate) struct UdpSender {
     msock: Arc<MagicSock>, // :(
+    #[cfg(not(wasm_browser))]
+    ip: Vec<IpSender>,
+    relay: Vec<RelayDatagramSendChannelSender>,
+}
+
+impl UdpSender {
+    pub(crate) fn inner_poll_send(
+        &self,
+        cx: &mut std::task::Context,
+        destination: &Addr,
+        src: Option<IpAddr>,
+        transmit: &Transmit<'_>,
+    ) -> Poll<io::Result<()>> {
+        trace!(?destination, "sending");
+
+        match destination {
+            #[cfg(wasm_browser)]
+            Addr::Ip(..) => {
+                return Poll::Ready(Err(io::Error::other("IP is unsupported in browser")))
+            }
+            #[cfg(not(wasm_browser))]
+            Addr::Ip(addr) => {
+                for sender in &self.ip {
+                    if sender.is_valid_send_addr(addr) {
+                        match sender.poll_send(cx, *addr, src, transmit) {
+                            Poll::Pending => {}
+                            Poll::Ready(res) => return Poll::Ready(res),
+                        }
+                    }
+                }
+            }
+            Addr::Relay(url, node_id) => {
+                for sender in &self.relay {
+                    if sender.is_valid_send_addr(url, node_id) {
+                        match sender.poll_send(cx, url.clone(), *node_id, transmit) {
+                            Poll::Pending => {}
+                            Poll::Ready(res) => return Poll::Ready(res),
+                        }
+                    }
+                }
+            }
+        }
+        Poll::Pending
+    }
+
+    /// Best effort sending
+    fn inner_try_send(
+        &self,
+        destination: &Addr,
+        src: Option<IpAddr>,
+        transmit: &Transmit<'_>,
+    ) -> io::Result<()> {
+        trace!(?destination, "sending, best effort");
+
+        match destination {
+            #[cfg(wasm_browser)]
+            Addr::Ip(..) => return Err(io::Error::other("IP is unsupported in browser")),
+            #[cfg(not(wasm_browser))]
+            Addr::Ip(addr) => {
+                for transport in &self.ip {
+                    if transport.is_valid_send_addr(addr) {
+                        match transport.try_send(*addr, src, transmit) {
+                            Ok(()) => return Ok(()),
+                            Err(_err) => {
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+            Addr::Relay(url, node_id) => {
+                for transport in &self.relay {
+                    if transport.is_valid_send_addr(url, node_id) {
+                        match transport.try_send(url.clone(), *node_id, transmit) {
+                            Ok(()) => return Ok(()),
+                            Err(_err) => {
+                                continue;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Err(io::Error::new(
+            io::ErrorKind::WouldBlock,
+            "no transport ready",
+        ))
+    }
 }
 
 impl quinn::UdpSender for UdpSender {
@@ -395,7 +410,49 @@ impl quinn::UdpSender for UdpSender {
         transmit: &quinn_udp::Transmit,
         cx: &mut Context,
     ) -> Poll<io::Result<()>> {
-        self.msock.poll_send(cx, transmit)
+        let active_paths = self.msock.prepare_send(transmit)?;
+
+        if active_paths.is_empty() {
+            // Returning Ok here means we let QUIC timeout.
+            // Returning an error would immediately fail a connection.
+            // The philosophy of quinn-udp is that a UDP connection could
+            // come back at any time or missing should be transient so chooses to let
+            // these kind of errors time out.  See test_try_send_no_send_addr to try
+            // this out.
+            error!("no paths available for node, voiding transmit");
+            return Poll::Ready(Ok(()));
+        }
+
+        let mut results = SmallVec::<[_; 3]>::new();
+
+        trace!(?active_paths, "attempting to send");
+
+        for destination in active_paths {
+            let src = transmit.src_ip;
+            let transmit = Transmit {
+                ecn: transmit.ecn,
+                contents: transmit.contents,
+                segment_size: transmit.segment_size,
+            };
+
+            let res = self.inner_poll_send(cx, &destination, src, &transmit);
+            match res {
+                Poll::Ready(Ok(())) => {
+                    trace!(dst = ?destination, "sent transmit");
+                }
+                Poll::Ready(Err(ref err)) => {
+                    warn!(dst = ?destination, "failed to send: {err:#}");
+                }
+                Poll::Pending => {}
+            }
+            results.push(res);
+        }
+
+        if results.iter().all(|p| matches!(p, Poll::Pending)) {
+            // Handle backpressure.
+            return Poll::Pending;
+        }
+        Poll::Ready(Ok(()))
     }
 
     fn max_transmit_segments(&self) -> usize {
@@ -403,6 +460,45 @@ impl quinn::UdpSender for UdpSender {
     }
 
     fn try_send(self: Pin<&mut Self>, transmit: &quinn_udp::Transmit) -> io::Result<()> {
-        self.msock.try_send(transmit)
+        let active_paths = self.msock.prepare_send(transmit)?;
+        if active_paths.is_empty() {
+            // Returning Ok here means we let QUIC timeout.
+            // Returning an error would immediately fail a connection.
+            // The philosophy of quinn-udp is that a UDP connection could
+            // come back at any time or missing should be transient so chooses to let
+            // these kind of errors time out.  See test_try_send_no_send_addr to try
+            // this out.
+            error!("no paths available for node, voiding transmit");
+            return Ok(());
+        }
+
+        let mut results = SmallVec::<[_; 3]>::new();
+
+        trace!(?active_paths, "attempting to send");
+
+        for destination in active_paths {
+            let src = transmit.src_ip;
+            let transmit = Transmit {
+                ecn: transmit.ecn,
+                contents: transmit.contents,
+                segment_size: transmit.segment_size,
+            };
+
+            let res = self.inner_try_send(&destination, src, &transmit);
+            match res {
+                Ok(()) => {
+                    trace!(dst = ?destination, "sent transmit");
+                }
+                Err(ref err) => {
+                    warn!(dst = ?destination, "failed to send: {err:#}");
+                }
+            }
+            results.push(res);
+        }
+
+        if results.iter().all(|p| p.is_err()) {
+            return Err(io::Error::other("all failed"));
+        }
+        Ok(())
     }
 }

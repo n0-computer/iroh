@@ -58,7 +58,7 @@ use self::transports::IpTransport;
 use self::{
     metrics::Metrics as MagicsockMetrics,
     node_map::{NodeMap, PingAction, PingRole, SendPing},
-    transports::{RelayActorConfig, RelayTransport, Transports},
+    transports::{RelayActorConfig, RelayTransport, Transports, UdpSender},
 };
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
@@ -548,98 +548,6 @@ impl MagicSock {
         Ok(active_paths)
     }
 
-    #[instrument(skip_all)]
-    fn poll_send(&self, cx: &mut Context, transmit: &quinn_udp::Transmit) -> Poll<io::Result<()>> {
-        let active_paths = self.prepare_send(transmit)?;
-
-        if active_paths.is_empty() {
-            // Returning Ok here means we let QUIC timeout.
-            // Returning an error would immediately fail a connection.
-            // The philosophy of quinn-udp is that a UDP connection could
-            // come back at any time or missing should be transient so chooses to let
-            // these kind of errors time out.  See test_try_send_no_send_addr to try
-            // this out.
-            error!("no paths available for node, voiding transmit");
-            return Poll::Ready(Ok(()));
-        }
-
-        let mut results = SmallVec::<[_; 3]>::new();
-
-        trace!(?active_paths, "attempting to send");
-
-        for destination in active_paths {
-            let src = transmit.src_ip;
-            let transmit = transports::Transmit {
-                ecn: transmit.ecn,
-                contents: transmit.contents,
-                segment_size: transmit.segment_size,
-            };
-
-            let res = self.transports.poll_send(cx, &destination, src, &transmit);
-            match res {
-                Poll::Ready(Ok(())) => {
-                    trace!(dst = ?destination, "sent transmit");
-                }
-                Poll::Ready(Err(ref err)) => {
-                    warn!(dst = ?destination, "failed to send: {err:#}");
-                }
-                Poll::Pending => {}
-            }
-            results.push(res);
-        }
-
-        if results.iter().all(|p| matches!(p, Poll::Pending)) {
-            // Handle backpressure.
-            return Poll::Pending;
-        }
-        Poll::Ready(Ok(()))
-    }
-
-    /// Best effort sending
-    #[instrument(skip_all)]
-    fn try_send(&self, transmit: &quinn_udp::Transmit) -> io::Result<()> {
-        let active_paths = self.prepare_send(transmit)?;
-        if active_paths.is_empty() {
-            // Returning Ok here means we let QUIC timeout.
-            // Returning an error would immediately fail a connection.
-            // The philosophy of quinn-udp is that a UDP connection could
-            // come back at any time or missing should be transient so chooses to let
-            // these kind of errors time out.  See test_try_send_no_send_addr to try
-            // this out.
-            error!("no paths available for node, voiding transmit");
-            return Ok(());
-        }
-
-        let mut results = SmallVec::<[_; 3]>::new();
-
-        trace!(?active_paths, "attempting to send");
-
-        for destination in active_paths {
-            let src = transmit.src_ip;
-            let transmit = transports::Transmit {
-                ecn: transmit.ecn,
-                contents: transmit.contents,
-                segment_size: transmit.segment_size,
-            };
-
-            let res = self.transports.try_send(&destination, src, &transmit);
-            match res {
-                Ok(()) => {
-                    trace!(dst = ?destination, "sent transmit");
-                }
-                Err(ref err) => {
-                    warn!(dst = ?destination, "failed to send: {err:#}");
-                }
-            }
-            results.push(res);
-        }
-
-        if results.iter().all(|p| p.is_err()) {
-            return Err(io::Error::other("all failed"));
-        }
-        Ok(())
-    }
-
     /// NOTE: Receiving on a [`Self::closed`] socket will return [`Poll::Pending`] indefinitely.
     #[instrument(skip_all)]
     fn poll_recv(
@@ -1034,7 +942,7 @@ impl MagicSock {
     }
 
     /// Tries to send the ping actions.
-    async fn send_ping_actions(&self, msgs: Vec<PingAction>) -> io::Result<()> {
+    async fn send_ping_actions(&self, sender: &UdpSender, msgs: Vec<PingAction>) -> io::Result<()> {
         for msg in msgs {
             // Abort sending as soon as we know we are shutting down.
             if self.is_closing() || self.is_closed() {
@@ -1048,7 +956,7 @@ impl MagicSock {
                     self.send_or_queue_call_me_maybe(relay_url, dst_node);
                 }
                 PingAction::SendPing(ping) => {
-                    self.send_ping(ping).await?;
+                    self.send_ping(sender, ping).await?;
                 }
             }
         }
@@ -1058,6 +966,7 @@ impl MagicSock {
     /// Send a disco message. UDP messages will be polled to send directly on the UDP socket.
     async fn send_disco_message(
         &self,
+        sender: &UdpSender,
         dst: SendAddr,
         dst_key: PublicKey,
         msg: disco::Message,
@@ -1084,7 +993,7 @@ impl MagicSock {
 
         let dst2 = dst.clone();
         match n0_future::future::poll_fn(move |cx| {
-            self.transports.poll_send(cx, &dst2, None, &transmit)
+            sender.inner_poll_send(cx, &dst2, None, &transmit)
         })
         .await
         {
@@ -1101,7 +1010,7 @@ impl MagicSock {
         }
     }
 
-    async fn send_ping(&self, ping: SendPing) -> io::Result<()> {
+    async fn send_ping(&self, sender: &UdpSender, ping: SendPing) -> io::Result<()> {
         let SendPing {
             id,
             dst,
@@ -1114,7 +1023,8 @@ impl MagicSock {
             node_key: self.public_key(),
         });
 
-        self.send_disco_message(dst.clone(), dst_node, msg).await?;
+        self.send_disco_message(sender, dst.clone(), dst_node, msg)
+            .await?;
         debug!(%dst, tx = %HEXLOWER.encode(&tx_id), ?purpose, "ping sent");
         let msg_sender = self.actor_sender.clone();
         self.node_map
@@ -1439,9 +1349,10 @@ impl Handle {
         #[cfg(not(wasm_browser))]
         let _ = actor_tasks.spawn({
             let msock = msock.clone();
+            let sender = msock.transports.create_sender(msock.clone());
             async move {
                 while let Some((dst, dst_key, msg)) = disco_receiver.recv().await {
-                    if let Err(err) = msock.send_disco_message(dst.clone(), dst_key, msg).await {
+                    if let Err(err) = msock.send_disco_message(&sender, dst.clone(), dst_key, msg).await {
                         warn!(%dst, node = %dst_key.fmt_short(), ?err, "failed to send disco message (UDP)");
                     }
                 }
@@ -1809,6 +1720,8 @@ impl Actor {
 
         let mut watcher = self.msock.transports.local_addrs_watch();
 
+        let sender = self.msock.transports.create_sender(self.msock.clone());
+
         loop {
             self.msock.metrics.magicsock.actor_tick_main.inc();
             #[cfg(not(wasm_browser))]
@@ -1887,7 +1800,7 @@ impl Actor {
 
                         self.msock.node_map.prune_inactive();
                         let msgs = self.msock.node_map.nodes_stayin_alive();
-                        self.handle_ping_actions(msgs).await;
+                        self.handle_ping_actions(&sender, msgs).await;
                     }
                 }
                 _ = direct_addr_update_receiver.changed() => {
@@ -1951,8 +1864,8 @@ impl Actor {
     }
 
     #[instrument(skip_all)]
-    async fn handle_ping_actions(&mut self, msgs: Vec<PingAction>) {
-        if let Err(err) = self.msock.send_ping_actions(msgs).await {
+    async fn handle_ping_actions(&mut self, sender: &UdpSender, msgs: Vec<PingAction>) {
+        if let Err(err) = self.msock.send_ping_actions(sender, msgs).await {
             warn!("Failed to send ping actions: {err:#}");
         }
     }

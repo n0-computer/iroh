@@ -70,6 +70,10 @@ impl RelayTransport {
         }
     }
 
+    pub(crate) fn create_sender(&self) -> RelayDatagramSendChannelSender {
+        self.relay_datagram_send_channel.clone()
+    }
+
     fn send_relay_actor(&self, msg: RelayActorMessage) {
         match self.actor_sender.try_send(msg) {
             Ok(_) => {}
@@ -80,41 +84,6 @@ impl RelayTransport {
                 warn!("dropping message for relay actor, channel is full");
             }
         }
-    }
-
-    pub(super) fn poll_send(
-        &self,
-        cx: &mut Context,
-        dest_url: RelayUrl,
-        dest_node: NodeId,
-        transmit: &Transmit<'_>,
-    ) -> Poll<io::Result<()>> {
-        let contents = split_packets(transmit);
-
-        let msg = RelaySendItem {
-            remote_node: dest_node,
-            url: dest_url.clone(),
-            datagrams: contents,
-        };
-
-        self.relay_datagram_send_channel.poll_send(cx, msg)
-    }
-
-    pub(super) fn try_send(
-        &self,
-        dest_url: RelayUrl,
-        dest_node: NodeId,
-        transmit: &Transmit<'_>,
-    ) -> io::Result<()> {
-        let contents = split_packets(transmit);
-
-        let msg = RelaySendItem {
-            remote_node: dest_node,
-            url: dest_url.clone(),
-            datagrams: contents,
-        };
-
-        self.relay_datagram_send_channel.try_send(msg)
     }
 
     pub(super) fn poll_recv(
@@ -171,10 +140,6 @@ impl RelayTransport {
             .watch()
             .map(move |url| url.map(|url| (url, my_node_id)))
             .expect("disconnected")
-    }
-
-    pub(super) fn is_valid_send_addr(&self, _url: &RelayUrl, _node_id: &NodeId) -> bool {
-        true
     }
 
     pub(super) fn rebind(&self) -> io::Result<()> {
@@ -280,13 +245,31 @@ fn relay_datagram_send_channel() -> (
 ///
 /// This includes the waker coordination required to support [`quinn::UdpSender::poll_send`].
 #[derive(Debug, Clone)]
-pub(super) struct RelayDatagramSendChannelSender {
+pub(crate) struct RelayDatagramSendChannelSender {
     sender: mpsc::Sender<RelaySendItem>,
     wakers: Arc<std::sync::Mutex<Vec<Waker>>>,
 }
 
 impl RelayDatagramSendChannelSender {
-    fn poll_send(&self, cx: &mut Context, item: RelaySendItem) -> Poll<io::Result<()>> {
+    pub(super) fn is_valid_send_addr(&self, _url: &RelayUrl, _node_id: &NodeId) -> bool {
+        true
+    }
+
+    pub(super) fn poll_send(
+        &self,
+        cx: &mut Context,
+        dest_url: RelayUrl,
+        dest_node: NodeId,
+        transmit: &Transmit<'_>,
+    ) -> Poll<io::Result<()>> {
+        let contents = split_packets(transmit);
+
+        let item = RelaySendItem {
+            remote_node: dest_node,
+            url: dest_url.clone(),
+            datagrams: contents,
+        };
+
         let dest_node = item.remote_node;
         let dest_url = item.url.clone();
 
@@ -317,7 +300,20 @@ impl RelayDatagramSendChannelSender {
         }
     }
 
-    fn try_send(&self, item: RelaySendItem) -> io::Result<()> {
+    pub(super) fn try_send(
+        &self,
+        dest_url: RelayUrl,
+        dest_node: NodeId,
+        transmit: &Transmit<'_>,
+    ) -> io::Result<()> {
+        let contents = split_packets(transmit);
+
+        let item = RelaySendItem {
+            remote_node: dest_node,
+            url: dest_url.clone(),
+            datagrams: contents,
+        };
+
         let dest_node = item.remote_node;
         let dest_url = item.url.clone();
 
