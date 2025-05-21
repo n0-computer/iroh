@@ -3562,23 +3562,7 @@
 <a href="#3561" id="3561">3561</a>
 <a href="#3562" id="3562">3562</a>
 <a href="#3563" id="3563">3563</a>
-<a href="#3564" id="3564">3564</a>
-<a href="#3565" id="3565">3565</a>
-<a href="#3566" id="3566">3566</a>
-<a href="#3567" id="3567">3567</a>
-<a href="#3568" id="3568">3568</a>
-<a href="#3569" id="3569">3569</a>
-<a href="#3570" id="3570">3570</a>
-<a href="#3571" id="3571">3571</a>
-<a href="#3572" id="3572">3572</a>
-<a href="#3573" id="3573">3573</a>
-<a href="#3574" id="3574">3574</a>
-<a href="#3575" id="3575">3575</a>
-<a href="#3576" id="3576">3576</a>
-<a href="#3577" id="3577">3577</a>
-<a href="#3578" id="3578">3578</a>
-<a href="#3579" id="3579">3579</a>
-<a href="#3580" id="3580">3580</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#3564" id="3564">3564</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4592,34 +4576,14 @@
             SendAddr::Relay(url) =&gt; transports::Addr::Relay(url, dst_key),
         };
 
-        n0_future::future::poll_fn(<span class="kw">move </span>|cx| <span class="kw">loop </span>{
-            <span class="kw">match </span><span class="self">self</span>.poll_send_disco_message(cx, <span class="kw-2">&amp;</span>dst, dst_key, <span class="kw-2">&amp;</span>msg) {
-                Poll::Ready(res) =&gt; <span class="kw">return </span>Poll::Ready(res),
-                Poll::Pending =&gt; <span class="kw">match </span><span class="self">self</span>.transports.poll_writable(cx, <span class="kw-2">&amp;</span>dst) {
-                    Poll::Ready(<span class="prelude-val">Ok</span>(())) =&gt; <span class="kw">continue</span>,
-                    Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(err)),
-                    Poll::Pending =&gt; <span class="kw">return </span>Poll::Pending,
-                },
-            }
-        })
-        .<span class="kw">await
-    </span>}
-
-    <span class="kw">fn </span>poll_send_disco_message(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        cx: <span class="kw-2">&amp;mut </span>Context,
-        dst: <span class="kw-2">&amp;</span>transports::Addr,
-        dst_key: PublicKey,
-        msg: <span class="kw-2">&amp;</span>disco::Message,
-    ) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
         <span class="macro">trace!</span>(<span class="question-mark">?</span>dst, %msg, <span class="string">"send disco message (UDP)"</span>);
         <span class="kw">if </span><span class="self">self</span>.is_closed() {
-            <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(io::Error::new(
+            <span class="kw">return </span><span class="prelude-val">Err</span>(io::Error::new(
                 io::ErrorKind::NotConnected,
                 <span class="string">"connection closed"</span>,
-            )));
+            ));
         }
-        <span class="kw">let </span>pkt = <span class="self">self</span>.encode_disco_message(dst_key, msg);
+        <span class="kw">let </span>pkt = <span class="self">self</span>.encode_disco_message(dst_key, <span class="kw-2">&amp;</span>msg);
 
         <span class="kw">let </span>transmit = transports::Transmit {
             contents: <span class="kw-2">&amp;</span>pkt,
@@ -4627,18 +4591,22 @@
             segment_size: <span class="prelude-val">None</span>,
         };
 
-        <span class="kw">match </span><span class="self">self</span>.transports.poll_send(cx, dst, <span class="prelude-val">None</span>, <span class="kw-2">&amp;</span>transmit) {
-            Poll::Ready(<span class="prelude-val">Ok</span>(())) =&gt; {
+        <span class="kw">let </span>dst2 = dst.clone();
+        <span class="kw">match </span>n0_future::future::poll_fn(<span class="kw">move </span>|cx| {
+            <span class="self">self</span>.transports.poll_send(cx, <span class="kw-2">&amp;</span>dst2, <span class="prelude-val">None</span>, <span class="kw-2">&amp;</span>transmit)
+        })
+        .<span class="kw">await
+        </span>{
+            <span class="prelude-val">Ok</span>(()) =&gt; {
                 <span class="macro">trace!</span>(<span class="question-mark">?</span>dst, %msg, <span class="string">"sent disco message"</span>);
                 <span class="self">self</span>.metrics.magicsock.sent_disco_udp.inc();
-                disco_message_sent(msg, <span class="kw-2">&amp;</span><span class="self">self</span>.metrics.magicsock);
-                Poll::Ready(<span class="prelude-val">Ok</span>(()))
+                disco_message_sent(<span class="kw-2">&amp;</span>msg, <span class="kw-2">&amp;</span><span class="self">self</span>.metrics.magicsock);
+                <span class="prelude-val">Ok</span>(())
             }
-            Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; {
+            <span class="prelude-val">Err</span>(err) =&gt; {
                 <span class="macro">warn!</span>(<span class="question-mark">?</span>dst, <span class="question-mark">?</span>msg, <span class="question-mark">?</span>err, <span class="string">"failed to send disco message"</span>);
-                Poll::Ready(<span class="prelude-val">Err</span>(err))
+                <span class="prelude-val">Err</span>(err)
             }
-            Poll::Pending =&gt; Poll::Pending,
         }
     }
 

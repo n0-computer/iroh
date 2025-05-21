@@ -149,11 +149,7 @@
 <a href="#148" id="148">148</a>
 <a href="#149" id="149">149</a>
 <a href="#150" id="150">150</a>
-<a href="#151" id="151">151</a>
-<a href="#152" id="152">152</a>
-<a href="#153" id="153">153</a>
-<a href="#154" id="154">154</a>
-<a href="#155" id="155">155</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#151" id="151">151</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     io,
     net::{IpAddr, SocketAddr},
     sync::Arc,
@@ -282,10 +278,6 @@
             (SocketAddr::V6(<span class="kw">_</span>), SocketAddr::V6(..)) =&gt; <span class="bool-val">true</span>,
             <span class="kw">_ </span>=&gt; <span class="bool-val">false</span>,
         }
-    }
-
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>poll_writable(<span class="kw-2">&amp;</span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>Context) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
-        <span class="self">self</span>.socket.poll_writable(cx)
     }
 
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>bind_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; SocketAddr {
