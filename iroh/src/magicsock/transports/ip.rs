@@ -40,26 +40,27 @@ impl IpTransport {
 
     pub(super) fn poll_send(
         &self,
-        _cx: &mut std::task::Context,
+        cx: &mut std::task::Context,
         destination: SocketAddr,
         src: Option<IpAddr>,
         transmit: &Transmit<'_>,
     ) -> Poll<io::Result<()>> {
-        // TODO: use context
-
         trace!("sending to {}", destination);
         let total_bytes = transmit.contents.len() as u64;
-        let res = self.socket.try_send_quinn(&quinn_udp::Transmit {
-            destination,
-            ecn: transmit.ecn,
-            contents: transmit.contents,
-            segment_size: transmit.segment_size,
-            src_ip: src,
-        });
+        let res = self.socket.poll_send_quinn(
+            cx,
+            &quinn_udp::Transmit {
+                destination,
+                ecn: transmit.ecn,
+                contents: transmit.contents,
+                segment_size: transmit.segment_size,
+                src_ip: src,
+            },
+        );
         trace!("send res: {:?}", res);
 
         match res {
-            Ok(res) => {
+            Poll::Ready(Ok(res)) => {
                 match destination {
                     SocketAddr::V4(_) => {
                         self.metrics.send_ipv4.inc_by(total_bytes);
@@ -70,13 +71,8 @@ impl IpTransport {
                 }
                 Poll::Ready(Ok(res))
             }
-            Err(err) => {
-                if err.kind() == io::ErrorKind::WouldBlock {
-                    Poll::Pending
-                } else {
-                    Poll::Ready(Err(err))
-                }
-            }
+            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
+            Poll::Pending => Poll::Pending,
         }
     }
 

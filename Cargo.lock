@@ -2922,8 +2922,7 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67eeaa5f7505c93c5a9b35ba84fd21fb8aa3f24678c76acfe8716af7862fb07a"
+source = "git+https://github.com/n0-computer/net-tools?branch=feat-new-udp-api#b86c01e6ba741bff00f64f2293ea3843eb1045dc"
 dependencies = [
  "atomic-waker",
  "bytes",
