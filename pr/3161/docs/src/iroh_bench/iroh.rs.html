@@ -295,7 +295,8 @@
 <a href="#294" id="294">294</a>
 <a href="#295" id="295">295</a>
 <a href="#296" id="296">296</a>
-<a href="#297" id="297">297</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#297" id="297">297</a>
+<a href="#298" id="298">298</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::SocketAddr,
     time::{Duration, Instant},
 };
@@ -303,6 +304,7 @@
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>iroh::{
     endpoint::{Connection, ConnectionError, RecvStream, SendStream, TransportConfig},
+    watcher::Watcher <span class="kw">as _</span>,
     Endpoint, NodeAddr, RelayMode, RelayUrl,
 };
 <span class="kw">use </span>n0_snafu::{TestResult <span class="kw">as </span><span class="prelude-ty">Result</span>, TestResultExt};

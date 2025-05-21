@@ -536,7 +536,79 @@
 <a href="#535" id="535">535</a>
 <a href="#536" id="536">536</a>
 <a href="#537" id="537">537</a>
-<a href="#538" id="538">538</a></pre></div><pre class="rust"><code><span class="doccomment">//! Tools for spawning an accept loop that routes incoming requests to the right protocol.
+<a href="#538" id="538">538</a>
+<a href="#539" id="539">539</a>
+<a href="#540" id="540">540</a>
+<a href="#541" id="541">541</a>
+<a href="#542" id="542">542</a>
+<a href="#543" id="543">543</a>
+<a href="#544" id="544">544</a>
+<a href="#545" id="545">545</a>
+<a href="#546" id="546">546</a>
+<a href="#547" id="547">547</a>
+<a href="#548" id="548">548</a>
+<a href="#549" id="549">549</a>
+<a href="#550" id="550">550</a>
+<a href="#551" id="551">551</a>
+<a href="#552" id="552">552</a>
+<a href="#553" id="553">553</a>
+<a href="#554" id="554">554</a>
+<a href="#555" id="555">555</a>
+<a href="#556" id="556">556</a>
+<a href="#557" id="557">557</a>
+<a href="#558" id="558">558</a>
+<a href="#559" id="559">559</a>
+<a href="#560" id="560">560</a>
+<a href="#561" id="561">561</a>
+<a href="#562" id="562">562</a>
+<a href="#563" id="563">563</a>
+<a href="#564" id="564">564</a>
+<a href="#565" id="565">565</a>
+<a href="#566" id="566">566</a>
+<a href="#567" id="567">567</a>
+<a href="#568" id="568">568</a>
+<a href="#569" id="569">569</a>
+<a href="#570" id="570">570</a>
+<a href="#571" id="571">571</a>
+<a href="#572" id="572">572</a>
+<a href="#573" id="573">573</a>
+<a href="#574" id="574">574</a>
+<a href="#575" id="575">575</a>
+<a href="#576" id="576">576</a>
+<a href="#577" id="577">577</a>
+<a href="#578" id="578">578</a>
+<a href="#579" id="579">579</a>
+<a href="#580" id="580">580</a>
+<a href="#581" id="581">581</a>
+<a href="#582" id="582">582</a>
+<a href="#583" id="583">583</a>
+<a href="#584" id="584">584</a>
+<a href="#585" id="585">585</a>
+<a href="#586" id="586">586</a>
+<a href="#587" id="587">587</a>
+<a href="#588" id="588">588</a>
+<a href="#589" id="589">589</a>
+<a href="#590" id="590">590</a>
+<a href="#591" id="591">591</a>
+<a href="#592" id="592">592</a>
+<a href="#593" id="593">593</a>
+<a href="#594" id="594">594</a>
+<a href="#595" id="595">595</a>
+<a href="#596" id="596">596</a>
+<a href="#597" id="597">597</a>
+<a href="#598" id="598">598</a>
+<a href="#599" id="599">599</a>
+<a href="#600" id="600">600</a>
+<a href="#601" id="601">601</a>
+<a href="#602" id="602">602</a>
+<a href="#603" id="603">603</a>
+<a href="#604" id="604">604</a>
+<a href="#605" id="605">605</a>
+<a href="#606" id="606">606</a>
+<a href="#607" id="607">607</a>
+<a href="#608" id="608">608</a>
+<a href="#609" id="609">609</a>
+<a href="#610" id="610">610</a></pre></div><pre class="rust"><code><span class="doccomment">//! Tools for spawning an accept loop that routes incoming requests to the right protocol.
 //!
 //! ## Example
 //!
@@ -699,10 +771,17 @@
 
     <span class="doccomment">/// Handle an incoming connection.
     ///
-    /// This runs on a freshly spawned tokio task so this can be long-running.
+    /// This runs on a freshly spawned tokio task so the returned future can be long-running.
+    ///
+    /// When [`Router::shutdown`] is called, no further connections will be accepted, and
+    /// the futures returned by [`Self::accept`] will be aborted after the future returned
+    /// from [`ProtocolHandler::shutdown`] completes.
     </span><span class="kw">fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, connection: Connection) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;(), Error&gt;&gt;;
 
-    <span class="doccomment">/// Called when the node shuts down.
+    <span class="doccomment">/// Called when the router shuts down.
+    ///
+    /// This is called from [`Router::shutdown`]. The returned future is awaited before
+    /// the router closes the endpoint.
     </span><span class="kw">fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; BoxFuture&lt;()&gt; {
         Box::pin(<span class="kw">async move </span>{})
     }
@@ -851,6 +930,9 @@
         <span class="kw">let </span>run_loop_fut = <span class="kw">async move </span>{
             <span class="comment">// Make sure to cancel the token, if this future ever exits.
             </span><span class="kw">let </span>_cancel_guard = cancel_token.clone().drop_guard();
+            <span class="comment">// We create a separate cancellation token to stop any `ProtocolHandler::accept` futures
+            // that are still running after `ProtocolHandler::shutdown` was called.
+            </span><span class="kw">let </span>handler_cancel_token = CancellationToken::new();
 
             <span class="kw">loop </span>{
                 <span class="macro">tokio::select!</span> {
@@ -888,7 +970,7 @@
                         </span>};
 
                         <span class="kw">let </span>protocols = protocols.clone();
-                        <span class="kw">let </span>token = cancel_token.child_token();
+                        <span class="kw">let </span>token = handler_cancel_token.child_token();
                         join_set.spawn(<span class="kw">async move </span>{
                             token.run_until_cancelled(handle_connection(incoming, protocols)).<span class="kw">await
                         </span>}.instrument(<span class="macro">info_span!</span>(<span class="string">"router.accept"</span>)));
@@ -896,11 +978,22 @@
                 }
             }
 
-            shutdown(<span class="kw-2">&amp;</span>endpoint, protocols).<span class="kw">await</span>;
-
-            <span class="comment">// Abort remaining tasks.
-            </span><span class="macro">tracing::info!</span>(<span class="string">"Shutting down remaining tasks"</span>);
-            join_set.shutdown().<span class="kw">await</span>;
+            <span class="comment">// We first shutdown the protocol handlers to give them a chance to close connections gracefully.
+            </span>protocols.shutdown().<span class="kw">await</span>;
+            <span class="comment">// We now cancel the remaining `ProtocolHandler::accept` futures.
+            </span>handler_cancel_token.cancel();
+            <span class="comment">// Now we close the endpoint. This will force-close all connections that are not yet closed.
+            </span>endpoint.close().<span class="kw">await</span>;
+            <span class="comment">// Finally, we abort the remaining accept tasks. This should be a noop because we already cancelled
+            // the futures above.
+            </span><span class="macro">tracing::debug!</span>(<span class="string">"Shutting down remaining tasks"</span>);
+            join_set.abort_all();
+            <span class="kw">while let </span><span class="prelude-val">Some</span>(res) = join_set.join_next().<span class="kw">await </span>{
+                <span class="kw">match </span>res {
+                    <span class="prelude-val">Err</span>(err) <span class="kw">if </span>err.is_panic() =&gt; <span class="macro">error!</span>(<span class="string">"Task panicked: {err:?}"</span>),
+                    <span class="kw">_ </span>=&gt; {}
+                }
+            }
         };
         <span class="kw">let </span>task = task::spawn(run_loop_fut);
         <span class="kw">let </span>task = AbortOnDropHandle::new(task);
@@ -911,17 +1004,6 @@
             cancel_token: cancel,
         }
     }
-}
-
-<span class="doccomment">/// Shutdown the different parts of the router concurrently.
-</span><span class="kw">async fn </span>shutdown(endpoint: <span class="kw-2">&amp;</span>Endpoint, protocols: Arc&lt;ProtocolMap&gt;) {
-    <span class="comment">// We ignore all errors during shutdown.
-    </span><span class="kw">let _ </span>= <span class="macro">tokio::join!</span>(
-        <span class="comment">// Close the endpoint.
-        </span>endpoint.close(),
-        <span class="comment">// Shutdown protocol handlers.
-        </span>protocols.shutdown(),
-    );
 }
 
 <span class="kw">async fn </span>handle_connection(incoming: <span class="kw">crate</span>::endpoint::Incoming, protocols: Arc&lt;ProtocolMap&gt;) {
@@ -1009,8 +1091,12 @@
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>n0_snafu::{TestResult, TestResultExt};
+    <span class="kw">use </span>std::{sync::Mutex, time::Duration};
+
+    <span class="kw">use </span>quinn::ApplicationClose;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
+    <span class="kw">use crate</span>::{endpoint::ConnectionError, watcher::Watcher, RelayMode};
 
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_shutdown() -&gt; TestResult {
@@ -1057,7 +1143,7 @@
         </span><span class="kw">let </span>proto = AccessLimit::new(Echo, |_node_id| <span class="bool-val">false</span>);
         <span class="kw">let </span>r1 = Router::builder(e1.clone()).accept(ECHO_ALPN, proto).spawn();
 
-        <span class="kw">let </span>addr1 = r1.endpoint().node_addr().<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>addr1 = r1.endpoint().node_addr().initialized().<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="kw">let </span>e2 = Endpoint::builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
 
@@ -1071,6 +1157,64 @@
         r1.shutdown().<span class="kw">await</span>.e()<span class="question-mark">?</span>;
         e2.close().<span class="kw">await</span>;
 
+        <span class="prelude-val">Ok</span>(())
+    }
+
+    <span class="attr">#[tokio::test]
+    </span><span class="kw">async fn </span>test_graceful_shutdown() -&gt; TestResult {
+        <span class="attr">#[derive(Debug, Clone, Default)]
+        </span><span class="kw">struct </span>TestProtocol {
+            connections: Arc&lt;Mutex&lt;Vec&lt;Connection&gt;&gt;&gt;,
+        }
+
+        <span class="kw">const </span>TEST_ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"/iroh/test/1"</span>;
+
+        <span class="kw">impl </span>ProtocolHandler <span class="kw">for </span>TestProtocol {
+            <span class="kw">fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, connection: Connection) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;(), Error&gt;&gt; {
+                <span class="kw">let </span>this = <span class="self">self</span>.clone();
+                Box::pin(<span class="kw">async move </span>{
+                    this.connections.lock().expect(<span class="string">"poisoned"</span>).push(connection);
+                    <span class="prelude-val">Ok</span>(())
+                })
+            }
+
+            <span class="kw">fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; BoxFuture&lt;()&gt; {
+                <span class="kw">let </span>this = <span class="self">self</span>.clone();
+                Box::pin(<span class="kw">async move </span>{
+                    tokio::time::sleep(Duration::from_millis(<span class="number">100</span>)).<span class="kw">await</span>;
+                    <span class="kw">let </span><span class="kw-2">mut </span>connections = this.connections.lock().expect(<span class="string">"poisoned"</span>);
+                    <span class="kw">for </span>conn <span class="kw">in </span>connections.drain(..) {
+                        conn.close(<span class="number">42u32</span>.into(), <span class="string">b"shutdown"</span>);
+                    }
+                })
+            }
+        }
+
+        <span class="kw">let </span>endpoint = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>router = Router::builder(endpoint)
+            .accept(TEST_ALPN, TestProtocol::default())
+            .spawn();
+        <span class="kw">let </span>addr = router.endpoint().node_addr().initialized().<span class="kw">await</span><span class="question-mark">?</span>;
+
+        <span class="kw">let </span>endpoint2 = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>conn = endpoint2.connect(addr, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
+
+        router.shutdown().<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+
+        <span class="kw">let </span>reason = conn.closed().<span class="kw">await</span>;
+        <span class="macro">assert_eq!</span>(
+            reason,
+            ConnectionError::ApplicationClosed(ApplicationClose {
+                error_code: <span class="number">42u32</span>.into(),
+                reason: <span class="string">b"shutdown"</span>.to_vec().into()
+            })
+        );
         <span class="prelude-val">Ok</span>(())
     }
 }

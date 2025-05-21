@@ -921,7 +921,7 @@
 </span><span class="kw">use </span><span class="kw">crate</span>::endpoint::PathSelection;
 <span class="kw">use crate</span>::{
     disco::{CallMeMaybe, Pong, SendAddr},
-    watchable::Watcher,
+    watcher,
 };
 
 <span class="kw">mod </span>best_addr;
@@ -1210,7 +1210,7 @@
     ///
     /// Will return `None` if there is not an entry in the [`NodeMap`] for
     /// the `node_id`
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>conn_type(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Option</span>&lt;Watcher&lt;ConnectionType&gt;&gt; {
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>conn_type(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Option</span>&lt;watcher::Direct&lt;ConnectionType&gt;&gt; {
         <span class="self">self</span>.inner.lock().expect(<span class="string">"poisoned"</span>).conn_type(node_id)
     }
 
@@ -1406,7 +1406,7 @@
     ///
     /// Will return `None` if there is not an entry in the [`NodeMap`] for
     /// the `public_key`
-    </span><span class="kw">fn </span>conn_type(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Option</span>&lt;Watcher&lt;ConnectionType&gt;&gt; {
+    </span><span class="kw">fn </span>conn_type(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Option</span>&lt;watcher::Direct&lt;ConnectionType&gt;&gt; {
         <span class="self">self</span>.get(NodeStateKey::NodeId(node_id))
             .map(|ep| ep.conn_type())
     }

@@ -282,7 +282,10 @@
 <a href="#281" id="281">281</a>
 <a href="#282" id="282">282</a>
 <a href="#283" id="283">283</a>
-<a href="#284" id="284">284</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#284" id="284">284</a>
+<a href="#285" id="285">285</a>
+<a href="#286" id="286">286</a>
+<a href="#287" id="287">287</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     net::SocketAddr,
     pin::Pin,
     task::{Context, Poll},
@@ -298,7 +301,8 @@
 
 <span class="kw">use </span><span class="kw">super</span>::util;
 
-<span class="kw">pub enum </span>MaybeTlsStreamChained {
+<span class="attr">#[allow(clippy::large_enum_variant)]
+</span><span class="kw">pub enum </span>MaybeTlsStreamChained {
     Raw(util::Chain&lt;std::io::Cursor&lt;Bytes&gt;, ProxyStream&gt;),
     Tls(util::Chain&lt;std::io::Cursor&lt;Bytes&gt;, tokio_rustls::client::TlsStream&lt;ProxyStream&gt;&gt;),
     <span class="attr">#[cfg(all(test, feature = <span class="string">"server"</span>))]
@@ -403,6 +407,7 @@
 }
 
 <span class="attr">#[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 </span><span class="kw">pub enum </span>ProxyStream {
     Raw(TcpStream),
     Proxied(util::Chain&lt;std::io::Cursor&lt;Bytes&gt;, MaybeTlsStream&lt;TcpStream&gt;&gt;),
@@ -481,6 +486,7 @@
 }
 
 <span class="attr">#[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 </span><span class="kw">pub enum </span>MaybeTlsStream&lt;IO&gt; {
     Raw(IO),
     Tls(tokio_rustls::client::TlsStream&lt;IO&gt;),

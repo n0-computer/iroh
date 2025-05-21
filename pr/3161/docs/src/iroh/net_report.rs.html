@@ -1425,7 +1425,8 @@
 <a href="#1424" id="1424">1424</a>
 <a href="#1425" id="1425">1425</a>
 <a href="#1426" id="1426">1426</a>
-<a href="#1427" id="1427">1427</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
+<a href="#1427" id="1427">1427</a>
+<a href="#1428" id="1428">1428</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
 //!
 //! NetReport is responsible for finding out the network conditions of the current host, like
 //! whether it is connected to the internet via IPv4 and/or IPv6, what the NAT situation is
@@ -1801,6 +1802,7 @@
 
 <span class="doccomment">/// Messages to send to the [`Actor`].
 </span><span class="attr">#[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">enum </span>Message {
     <span class="doccomment">/// Run a net_report.
     ///

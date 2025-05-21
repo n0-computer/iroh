@@ -189,7 +189,8 @@
 <a href="#188" id="188">188</a>
 <a href="#189" id="189">189</a>
 <a href="#190" id="190">190</a>
-<a href="#191" id="191">191</a></pre></div><pre class="rust"><code><span class="doccomment">//! Streams used in the server-side implementation of iroh relays.
+<a href="#191" id="191">191</a>
+<a href="#192" id="192">192</a></pre></div><pre class="rust"><code><span class="doccomment">//! Streams used in the server-side implementation of iroh relays.
 
 </span><span class="kw">use </span>std::{
     pin::Pin,
@@ -219,7 +220,7 @@
 <span class="kw">fn </span>ws_to_io_err(e: tokio_websockets::Error) -&gt; std::io::Error {
     <span class="kw">match </span>e {
         tokio_websockets::Error::Io(io_err) =&gt; io_err,
-        <span class="kw">_ </span>=&gt; std::io::Error::new(std::io::ErrorKind::Other, e.to_string()),
+        <span class="kw">_ </span>=&gt; std::io::Error::other(e.to_string()),
     }
 }
 
@@ -304,6 +305,7 @@
 ///
 /// Allows choosing whether or not the underlying [`tokio::net::TcpStream`] is served over Tls
 </span><span class="attr">#[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 </span><span class="kw">pub enum </span>MaybeTlsStream {
     <span class="doccomment">/// A plain non-Tls [`tokio::net::TcpStream`]
     </span>Plain(tokio::net::TcpStream),

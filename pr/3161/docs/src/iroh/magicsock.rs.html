@@ -4575,7 +4575,18 @@
 <a href="#4574" id="4574">4574</a>
 <a href="#4575" id="4575">4575</a>
 <a href="#4576" id="4576">4576</a>
-<a href="#4577" id="4577">4577</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4577" id="4577">4577</a>
+<a href="#4578" id="4578">4578</a>
+<a href="#4579" id="4579">4579</a>
+<a href="#4580" id="4580">4580</a>
+<a href="#4581" id="4581">4581</a>
+<a href="#4582" id="4582">4582</a>
+<a href="#4583" id="4583">4583</a>
+<a href="#4584" id="4584">4584</a>
+<a href="#4585" id="4585">4585</a>
+<a href="#4586" id="4586">4586</a>
+<a href="#4587" id="4587">4587</a>
+<a href="#4588" id="4588">4588</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4657,7 +4668,7 @@
     key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
     metrics::EndpointMetrics,
     net_report::{<span class="self">self</span>, IpMappedAddresses, Report, ReportError},
-    watchable::{Watchable, Watcher},
+    watcher::{<span class="self">self</span>, Watchable},
 };
 
 <span class="kw">mod </span>metrics;
@@ -4950,7 +4961,10 @@
     /// store [`Some`] set of addresses.
     ///
     /// To get the current direct addresses, use [`Watcher::initialized`].
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>direct_addresses(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Watcher&lt;<span class="prelude-ty">Option</span>&lt;BTreeSet&lt;DirectAddr&gt;&gt;&gt; {
+    ///
+    /// [`Watcher`]: crate::watcher::Watcher
+    /// [`Watcher::initialized`]: crate::watcher::Watcher::initialized
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>direct_addresses(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; watcher::Direct&lt;<span class="prelude-ty">Option</span>&lt;BTreeSet&lt;DirectAddr&gt;&gt;&gt; {
         <span class="self">self</span>.direct_addrs.addrs.watch()
     }
 
@@ -4965,7 +4979,10 @@
     /// store [`Some`] report.
     ///
     /// To get the current `net-report`, use [`Watcher::initialized`].
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>net_report(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Watcher&lt;<span class="prelude-ty">Option</span>&lt;Arc&lt;Report&gt;&gt;&gt; {
+    ///
+    /// [`Watcher`]: crate::watcher::Watcher
+    /// [`Watcher::initialized`]: crate::watcher::Watcher::initialized
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>net_report(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; watcher::Direct&lt;<span class="prelude-ty">Option</span>&lt;Arc&lt;Report&gt;&gt;&gt; {
         <span class="self">self</span>.net_report.watch()
     }
 
@@ -4973,7 +4990,10 @@
     ///
     /// Note that this can be used to wait for the initial home relay to be known using
     /// [`Watcher::initialized`].
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>home_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Watcher&lt;<span class="prelude-ty">Option</span>&lt;RelayUrl&gt;&gt; {
+    ///
+    /// [`Watcher`]: crate::watcher::Watcher
+    /// [`Watcher::initialized`]: crate::watcher::Watcher::initialized
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>home_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; watcher::Direct&lt;<span class="prelude-ty">Option</span>&lt;RelayUrl&gt;&gt; {
         <span class="self">self</span>.my_relay.watch()
     }
 
@@ -4987,7 +5007,7 @@
     ///
     /// Will return `None` if there is no address information known about the
     /// given `node_id`.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>conn_type(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Option</span>&lt;Watcher&lt;ConnectionType&gt;&gt; {
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>conn_type(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Option</span>&lt;watcher::Direct&lt;ConnectionType&gt;&gt; {
         <span class="self">self</span>.node_map.conn_type(node_id)
     }
 
@@ -5363,7 +5383,7 @@
                 </span>.sockets
                 .v6
                 .as_ref()
-                .ok_or(io::Error::new(io::ErrorKind::Other, <span class="string">"no IPv6 connection"</span>))<span class="question-mark">?</span>,
+                .ok_or(io::Error::other(<span class="string">"no IPv6 connection"</span>))<span class="question-mark">?</span>,
         };
         <span class="prelude-val">Ok</span>(sock)
     }
@@ -5977,7 +5997,7 @@
             }
             SendAddr::Relay(<span class="kw-2">ref </span>url) =&gt; {
                 <span class="kw">if </span>!<span class="self">self</span>.send_disco_message_relay(url, dst_key, msg) {
-                    <span class="kw">return </span><span class="prelude-val">Err</span>(io::Error::new(io::ErrorKind::Other, <span class="string">"Relay channel full"</span>));
+                    <span class="kw">return </span><span class="prelude-val">Err</span>(io::Error::other(<span class="string">"Relay channel full"</span>));
                 }
             }
         }
@@ -8112,7 +8132,9 @@
         magicsock::{
             node_map, Handle, MagicSock, RelayContents, RelayDatagramRecvQueue, RelayRecvDatagram,
         },
-        tls, Endpoint, RelayMode,
+        tls,
+        watcher::Watcher <span class="kw">as _</span>,
+        Endpoint, RelayMode,
     };
 
     <span class="kw">const </span>ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"n0/test/1"</span>;
@@ -8487,7 +8509,7 @@
         <span class="macro">println!</span>(<span class="string">"first conn!"</span>);
         <span class="kw">let </span>conn = m1
             .endpoint
-            .connect(m2.endpoint.node_addr().<span class="kw">await</span><span class="question-mark">?</span>, ALPN)
+            .connect(m2.endpoint.node_addr().initialized().<span class="kw">await</span><span class="question-mark">?</span>, ALPN)
             .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="macro">println!</span>(<span class="string">"Closing first conn"</span>);
         conn.close(<span class="number">0u32</span>.into(), <span class="string">b"bye lolz"</span>);
