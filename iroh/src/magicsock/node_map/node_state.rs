@@ -567,8 +567,6 @@ impl NodeState {
     /// our call-me-maybe they will reach us and the other side establishes a direct
     /// connection upon our subsequent pong response.
     ///
-    /// For [`SendCallMeMaybe::IfNoRecent`], **no** paths will be pinged if there already
-    /// was a recent call-me-maybe sent.
     ///
     /// The caller is responsible for sending the messages.
     #[must_use = "actions must be handled"]

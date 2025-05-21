@@ -261,8 +261,7 @@ impl RelayDatagramRecvQueue {
 
 /// Creates a sender and receiver pair for sending datagrams to the [`RelayActor`].
 ///
-/// These includes the waker coordination required to support [`quinn::AsyncUdpSocket::try_send`]
-/// and [`quinn::UdpPoller::poll_writable`].
+/// These includes the waker coordination required to support [`quinn::UdpSender::poll_send`].
 fn relay_datagram_send_channel() -> (
     RelayDatagramSendChannelSender,
     RelayDatagramSendChannelReceiver,
@@ -279,8 +278,7 @@ fn relay_datagram_send_channel() -> (
 
 /// Sender to send datagrams to the [`RelayActor`].
 ///
-/// This includes the waker coordination required to support [`quinn::AsyncUdpSocket::try_send`]
-/// and [`quinn::UdpPoller::poll_writable`].
+/// This includes the waker coordination required to support [`quinn::UdpSender::poll_send`].
 #[derive(Debug, Clone)]
 pub(super) struct RelayDatagramSendChannelSender {
     sender: mpsc::Sender<RelaySendItem>,
@@ -348,8 +346,7 @@ impl RelayDatagramSendChannelSender {
 
 /// Receiver to send datagrams to the [`RelayActor`].
 ///
-/// This includes the waker coordination required to support [`quinn::AsyncUdpSocket::try_send`]
-/// and [`quinn::UdpPoller::poll_writable`].
+/// This includes the waker coordination required to support [`quinn::UdpSender::poll_send`].
 #[derive(Debug)]
 struct RelayDatagramSendChannelReceiver {
     receiver: mpsc::Receiver<RelaySendItem>,

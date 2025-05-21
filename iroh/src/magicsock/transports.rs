@@ -267,10 +267,7 @@ impl Transports {
     }
 
     pub(crate) fn create_sender(&self, msock: Arc<MagicSock>) -> UdpSender {
-        UdpSender {
-            #[cfg(not(wasm_browser))]
-            msock,
-        }
+        UdpSender { msock }
     }
 
     /// Rebinds underlying connections, if necessary.
