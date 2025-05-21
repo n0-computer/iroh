@@ -178,7 +178,24 @@
 <a href="#177" id="177">177</a>
 <a href="#178" id="178">178</a>
 <a href="#179" id="179">179</a>
-<a href="#180" id="180">180</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#180" id="180">180</a>
+<a href="#181" id="181">181</a>
+<a href="#182" id="182">182</a>
+<a href="#183" id="183">183</a>
+<a href="#184" id="184">184</a>
+<a href="#185" id="185">185</a>
+<a href="#186" id="186">186</a>
+<a href="#187" id="187">187</a>
+<a href="#188" id="188">188</a>
+<a href="#189" id="189">189</a>
+<a href="#190" id="190">190</a>
+<a href="#191" id="191">191</a>
+<a href="#192" id="192">192</a>
+<a href="#193" id="193">193</a>
+<a href="#194" id="194">194</a>
+<a href="#195" id="195">195</a>
+<a href="#196" id="196">196</a>
+<a href="#197" id="197">197</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     io,
     net::{IpAddr, SocketAddr},
     sync::Arc,
@@ -215,6 +232,92 @@
             socket,
             local_addr,
             metrics,
+        }
+    }
+
+    <span class="doccomment">/// NOTE: Receiving on a closed socket will return [`Poll::Pending`] indefinitely.
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>poll_recv(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        cx: <span class="kw-2">&amp;mut </span>Context,
+        bufs: <span class="kw-2">&amp;mut </span>[io::IoSliceMut&lt;<span class="lifetime">'_</span>&gt;],
+        metas: <span class="kw-2">&amp;mut </span>[quinn_udp::RecvMeta],
+        source_addrs: <span class="kw-2">&amp;mut </span>[Addr],
+    ) -&gt; Poll&lt;io::Result&lt;usize&gt;&gt; {
+        <span class="kw">match </span><span class="self">self</span>.socket.poll_recv_quinn(cx, bufs, metas) {
+            Poll::Pending =&gt; Poll::Pending,
+            Poll::Ready(<span class="prelude-val">Ok</span>(n)) =&gt; {
+                <span class="kw">for </span>(addr, el) <span class="kw">in </span>source_addrs.iter_mut().zip(metas.iter()).take(n) {
+                    <span class="kw-2">*</span>addr = el.addr.into();
+                }
+                Poll::Ready(<span class="prelude-val">Ok</span>(n))
+            }
+            Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; Poll::Ready(<span class="prelude-val">Err</span>(err)),
+        }
+    }
+
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>local_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; SocketAddr {
+        <span class="self">self</span>.local_addr.get()
+    }
+
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>local_addr_watch(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Watcher&lt;Value = SocketAddr&gt; + Send {
+        <span class="self">self</span>.local_addr.watch()
+    }
+
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>max_transmit_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+        <span class="self">self</span>.socket.max_gso_segments()
+    }
+
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>max_receive_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+        <span class="self">self</span>.socket.gro_segments()
+    }
+
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>may_fragment(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+        <span class="self">self</span>.socket.may_fragment()
+    }
+
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>bind_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; SocketAddr {
+        <span class="self">self</span>.bind_addr
+    }
+
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>rebind(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; io::Result&lt;()&gt; {
+        <span class="self">self</span>.socket.rebind()<span class="question-mark">?</span>;
+        <span class="kw">let </span>addr = <span class="self">self</span>.socket.local_addr()<span class="question-mark">?</span>;
+        <span class="self">self</span>.local_addr.set(addr).ok();
+
+        <span class="prelude-val">Ok</span>(())
+    }
+
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>on_network_change(<span class="kw-2">&amp;</span><span class="self">self</span>, _info: <span class="kw-2">&amp;</span><span class="kw">crate</span>::magicsock::NetInfo) {
+        <span class="comment">// Nothing to do for now
+    </span>}
+
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>socket(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Arc&lt;UdpSocket&gt; {
+        <span class="self">self</span>.socket.clone()
+    }
+
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>create_sender(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; IpSender {
+        IpSender {
+            bind_addr: <span class="self">self</span>.bind_addr,
+            socket: <span class="self">self</span>.socket.clone(),
+            metrics: <span class="self">self</span>.metrics.clone(),
+        }
+    }
+}
+
+<span class="attr">#[derive(Debug)]
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>IpSender {
+    bind_addr: SocketAddr,
+    socket: Arc&lt;UdpSocket&gt;,
+    metrics: Arc&lt;MagicsockMetrics&gt;,
+}
+
+<span class="kw">impl </span>IpSender {
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>is_valid_send_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, addr: <span class="kw-2">&amp;</span>SocketAddr) -&gt; bool {
+        <span class="attr">#[allow(clippy::match_like_matches_macro)]
+        </span><span class="kw">match </span>(<span class="self">self</span>.bind_addr, addr) {
+            (SocketAddr::V4(<span class="kw">_</span>), SocketAddr::V4(..)) =&gt; <span class="bool-val">true</span>,
+            (SocketAddr::V6(<span class="kw">_</span>), SocketAddr::V6(..)) =&gt; <span class="bool-val">true</span>,
+            <span class="kw">_ </span>=&gt; <span class="bool-val">false</span>,
         }
     }
 
@@ -287,75 +390,6 @@
             }
             <span class="prelude-val">Err</span>(err) =&gt; <span class="prelude-val">Err</span>(err),
         }
-    }
-
-    <span class="doccomment">/// NOTE: Receiving on a closed socket will return [`Poll::Pending`] indefinitely.
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>poll_recv(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        cx: <span class="kw-2">&amp;mut </span>Context,
-        bufs: <span class="kw-2">&amp;mut </span>[io::IoSliceMut&lt;<span class="lifetime">'_</span>&gt;],
-        metas: <span class="kw-2">&amp;mut </span>[quinn_udp::RecvMeta],
-        source_addrs: <span class="kw-2">&amp;mut </span>[Addr],
-    ) -&gt; Poll&lt;io::Result&lt;usize&gt;&gt; {
-        <span class="kw">match </span><span class="self">self</span>.socket.poll_recv_quinn(cx, bufs, metas) {
-            Poll::Pending =&gt; Poll::Pending,
-            Poll::Ready(<span class="prelude-val">Ok</span>(n)) =&gt; {
-                <span class="kw">for </span>(addr, el) <span class="kw">in </span>source_addrs.iter_mut().zip(metas.iter()).take(n) {
-                    <span class="kw-2">*</span>addr = el.addr.into();
-                }
-                Poll::Ready(<span class="prelude-val">Ok</span>(n))
-            }
-            Poll::Ready(<span class="prelude-val">Err</span>(err)) =&gt; Poll::Ready(<span class="prelude-val">Err</span>(err)),
-        }
-    }
-
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>local_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; SocketAddr {
-        <span class="self">self</span>.local_addr.get()
-    }
-
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>local_addr_watch(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Watcher&lt;Value = SocketAddr&gt; + Send {
-        <span class="self">self</span>.local_addr.watch()
-    }
-
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>max_transmit_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-        <span class="self">self</span>.socket.max_gso_segments()
-    }
-
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>max_receive_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-        <span class="self">self</span>.socket.gro_segments()
-    }
-
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>may_fragment(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-        <span class="self">self</span>.socket.may_fragment()
-    }
-
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>is_valid_send_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, addr: <span class="kw-2">&amp;</span>SocketAddr) -&gt; bool {
-        <span class="attr">#[allow(clippy::match_like_matches_macro)]
-        </span><span class="kw">match </span>(<span class="self">self</span>.bind_addr, addr) {
-            (SocketAddr::V4(<span class="kw">_</span>), SocketAddr::V4(..)) =&gt; <span class="bool-val">true</span>,
-            (SocketAddr::V6(<span class="kw">_</span>), SocketAddr::V6(..)) =&gt; <span class="bool-val">true</span>,
-            <span class="kw">_ </span>=&gt; <span class="bool-val">false</span>,
-        }
-    }
-
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>bind_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; SocketAddr {
-        <span class="self">self</span>.bind_addr
-    }
-
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>rebind(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; io::Result&lt;()&gt; {
-        <span class="self">self</span>.socket.rebind()<span class="question-mark">?</span>;
-        <span class="kw">let </span>addr = <span class="self">self</span>.socket.local_addr()<span class="question-mark">?</span>;
-        <span class="self">self</span>.local_addr.set(addr).ok();
-
-        <span class="prelude-val">Ok</span>(())
-    }
-
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>on_network_change(<span class="kw-2">&amp;</span><span class="self">self</span>, _info: <span class="kw-2">&amp;</span><span class="kw">crate</span>::magicsock::NetInfo) {
-        <span class="comment">// Nothing to do for now
-    </span>}
-
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>socket(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Arc&lt;UdpSocket&gt; {
-        <span class="self">self</span>.socket.clone()
     }
 }
 </code></pre></div></section></main></body></html>

@@ -482,11 +482,7 @@
 <a href="#481" id="481">481</a>
 <a href="#482" id="482">482</a>
 <a href="#483" id="483">483</a>
-<a href="#484" id="484">484</a>
-<a href="#485" id="485">485</a>
-<a href="#486" id="486">486</a>
-<a href="#487" id="487">487</a>
-<a href="#488" id="488">488</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#484" id="484">484</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     io,
     sync::Arc,
     task::{Context, Poll, Waker},
@@ -558,6 +554,10 @@
         }
     }
 
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>create_sender(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; RelayDatagramSendChannelSender {
+        <span class="self">self</span>.relay_datagram_send_channel.clone()
+    }
+
     <span class="kw">fn </span>send_relay_actor(<span class="kw-2">&amp;</span><span class="self">self</span>, msg: RelayActorMessage) {
         <span class="kw">match </span><span class="self">self</span>.actor_sender.try_send(msg) {
             <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; {}
@@ -568,41 +568,6 @@
                 <span class="macro">warn!</span>(<span class="string">"dropping message for relay actor, channel is full"</span>);
             }
         }
-    }
-
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>poll_send(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        cx: <span class="kw-2">&amp;mut </span>Context,
-        dest_url: RelayUrl,
-        dest_node: NodeId,
-        transmit: <span class="kw-2">&amp;</span>Transmit&lt;<span class="lifetime">'_</span>&gt;,
-    ) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
-        <span class="kw">let </span>contents = split_packets(transmit);
-
-        <span class="kw">let </span>msg = RelaySendItem {
-            remote_node: dest_node,
-            url: dest_url.clone(),
-            datagrams: contents,
-        };
-
-        <span class="self">self</span>.relay_datagram_send_channel.poll_send(cx, msg)
-    }
-
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>try_send(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        dest_url: RelayUrl,
-        dest_node: NodeId,
-        transmit: <span class="kw-2">&amp;</span>Transmit&lt;<span class="lifetime">'_</span>&gt;,
-    ) -&gt; io::Result&lt;()&gt; {
-        <span class="kw">let </span>contents = split_packets(transmit);
-
-        <span class="kw">let </span>msg = RelaySendItem {
-            remote_node: dest_node,
-            url: dest_url.clone(),
-            datagrams: contents,
-        };
-
-        <span class="self">self</span>.relay_datagram_send_channel.try_send(msg)
     }
 
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>poll_recv(
@@ -660,10 +625,6 @@
             .map(<span class="kw">move </span>|url| url.map(|url| (url, my_node_id)))
             .expect(<span class="string">"disconnected"</span>)
     }
-
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>is_valid_send_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, _url: <span class="kw-2">&amp;</span>RelayUrl, _node_id: <span class="kw-2">&amp;</span>NodeId) -&gt; bool {
-        <span class="bool-val">true
-    </span>}
 
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>rebind(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; io::Result&lt;()&gt; {
         <span class="self">self</span>.send_relay_actor(RelayActorMessage::MaybeCloseRelaysOnRebind);
@@ -768,13 +729,31 @@
 ///
 /// This includes the waker coordination required to support [`quinn::UdpSender::poll_send`].
 </span><span class="attr">#[derive(Debug, Clone)]
-</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>RelayDatagramSendChannelSender {
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>RelayDatagramSendChannelSender {
     sender: mpsc::Sender&lt;RelaySendItem&gt;,
     wakers: Arc&lt;std::sync::Mutex&lt;Vec&lt;Waker&gt;&gt;&gt;,
 }
 
 <span class="kw">impl </span>RelayDatagramSendChannelSender {
-    <span class="kw">fn </span>poll_send(<span class="kw-2">&amp;</span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>Context, item: RelaySendItem) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>is_valid_send_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, _url: <span class="kw-2">&amp;</span>RelayUrl, _node_id: <span class="kw-2">&amp;</span>NodeId) -&gt; bool {
+        <span class="bool-val">true
+    </span>}
+
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>poll_send(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        cx: <span class="kw-2">&amp;mut </span>Context,
+        dest_url: RelayUrl,
+        dest_node: NodeId,
+        transmit: <span class="kw-2">&amp;</span>Transmit&lt;<span class="lifetime">'_</span>&gt;,
+    ) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
+        <span class="kw">let </span>contents = split_packets(transmit);
+
+        <span class="kw">let </span>item = RelaySendItem {
+            remote_node: dest_node,
+            url: dest_url.clone(),
+            datagrams: contents,
+        };
+
         <span class="kw">let </span>dest_node = item.remote_node;
         <span class="kw">let </span>dest_url = item.url.clone();
 
@@ -805,7 +784,20 @@
         }
     }
 
-    <span class="kw">fn </span>try_send(<span class="kw-2">&amp;</span><span class="self">self</span>, item: RelaySendItem) -&gt; io::Result&lt;()&gt; {
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>try_send(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        dest_url: RelayUrl,
+        dest_node: NodeId,
+        transmit: <span class="kw-2">&amp;</span>Transmit&lt;<span class="lifetime">'_</span>&gt;,
+    ) -&gt; io::Result&lt;()&gt; {
+        <span class="kw">let </span>contents = split_packets(transmit);
+
+        <span class="kw">let </span>item = RelaySendItem {
+            remote_node: dest_node,
+            url: dest_url.clone(),
+            datagrams: contents,
+        };
+
         <span class="kw">let </span>dest_node = item.remote_node;
         <span class="kw">let </span>dest_url = item.url.clone();
 

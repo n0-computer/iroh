@@ -3530,94 +3530,7 @@
 <a href="#3529" id="3529">3529</a>
 <a href="#3530" id="3530">3530</a>
 <a href="#3531" id="3531">3531</a>
-<a href="#3532" id="3532">3532</a>
-<a href="#3533" id="3533">3533</a>
-<a href="#3534" id="3534">3534</a>
-<a href="#3535" id="3535">3535</a>
-<a href="#3536" id="3536">3536</a>
-<a href="#3537" id="3537">3537</a>
-<a href="#3538" id="3538">3538</a>
-<a href="#3539" id="3539">3539</a>
-<a href="#3540" id="3540">3540</a>
-<a href="#3541" id="3541">3541</a>
-<a href="#3542" id="3542">3542</a>
-<a href="#3543" id="3543">3543</a>
-<a href="#3544" id="3544">3544</a>
-<a href="#3545" id="3545">3545</a>
-<a href="#3546" id="3546">3546</a>
-<a href="#3547" id="3547">3547</a>
-<a href="#3548" id="3548">3548</a>
-<a href="#3549" id="3549">3549</a>
-<a href="#3550" id="3550">3550</a>
-<a href="#3551" id="3551">3551</a>
-<a href="#3552" id="3552">3552</a>
-<a href="#3553" id="3553">3553</a>
-<a href="#3554" id="3554">3554</a>
-<a href="#3555" id="3555">3555</a>
-<a href="#3556" id="3556">3556</a>
-<a href="#3557" id="3557">3557</a>
-<a href="#3558" id="3558">3558</a>
-<a href="#3559" id="3559">3559</a>
-<a href="#3560" id="3560">3560</a>
-<a href="#3561" id="3561">3561</a>
-<a href="#3562" id="3562">3562</a>
-<a href="#3563" id="3563">3563</a>
-<a href="#3564" id="3564">3564</a>
-<a href="#3565" id="3565">3565</a>
-<a href="#3566" id="3566">3566</a>
-<a href="#3567" id="3567">3567</a>
-<a href="#3568" id="3568">3568</a>
-<a href="#3569" id="3569">3569</a>
-<a href="#3570" id="3570">3570</a>
-<a href="#3571" id="3571">3571</a>
-<a href="#3572" id="3572">3572</a>
-<a href="#3573" id="3573">3573</a>
-<a href="#3574" id="3574">3574</a>
-<a href="#3575" id="3575">3575</a>
-<a href="#3576" id="3576">3576</a>
-<a href="#3577" id="3577">3577</a>
-<a href="#3578" id="3578">3578</a>
-<a href="#3579" id="3579">3579</a>
-<a href="#3580" id="3580">3580</a>
-<a href="#3581" id="3581">3581</a>
-<a href="#3582" id="3582">3582</a>
-<a href="#3583" id="3583">3583</a>
-<a href="#3584" id="3584">3584</a>
-<a href="#3585" id="3585">3585</a>
-<a href="#3586" id="3586">3586</a>
-<a href="#3587" id="3587">3587</a>
-<a href="#3588" id="3588">3588</a>
-<a href="#3589" id="3589">3589</a>
-<a href="#3590" id="3590">3590</a>
-<a href="#3591" id="3591">3591</a>
-<a href="#3592" id="3592">3592</a>
-<a href="#3593" id="3593">3593</a>
-<a href="#3594" id="3594">3594</a>
-<a href="#3595" id="3595">3595</a>
-<a href="#3596" id="3596">3596</a>
-<a href="#3597" id="3597">3597</a>
-<a href="#3598" id="3598">3598</a>
-<a href="#3599" id="3599">3599</a>
-<a href="#3600" id="3600">3600</a>
-<a href="#3601" id="3601">3601</a>
-<a href="#3602" id="3602">3602</a>
-<a href="#3603" id="3603">3603</a>
-<a href="#3604" id="3604">3604</a>
-<a href="#3605" id="3605">3605</a>
-<a href="#3606" id="3606">3606</a>
-<a href="#3607" id="3607">3607</a>
-<a href="#3608" id="3608">3608</a>
-<a href="#3609" id="3609">3609</a>
-<a href="#3610" id="3610">3610</a>
-<a href="#3611" id="3611">3611</a>
-<a href="#3612" id="3612">3612</a>
-<a href="#3613" id="3613">3613</a>
-<a href="#3614" id="3614">3614</a>
-<a href="#3615" id="3615">3615</a>
-<a href="#3616" id="3616">3616</a>
-<a href="#3617" id="3617">3617</a>
-<a href="#3618" id="3618">3618</a>
-<a href="#3619" id="3619">3619</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#3532" id="3532">3532</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -3677,7 +3590,7 @@
 <span class="kw">use </span><span class="self">self</span>::{
     metrics::Metrics <span class="kw">as </span>MagicsockMetrics,
     node_map::{NodeMap, PingAction, PingRole, SendPing},
-    transports::{RelayActorConfig, RelayTransport, Transports},
+    transports::{RelayActorConfig, RelayTransport, Transports, UdpSender},
 };
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">use </span><span class="kw">crate</span>::dns::DnsResolver;
@@ -4167,98 +4080,6 @@
         <span class="prelude-val">Ok</span>(active_paths)
     }
 
-    <span class="attr">#[instrument(skip_all)]
-    </span><span class="kw">fn </span>poll_send(<span class="kw-2">&amp;</span><span class="self">self</span>, cx: <span class="kw-2">&amp;mut </span>Context, transmit: <span class="kw-2">&amp;</span>quinn_udp::Transmit) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
-        <span class="kw">let </span>active_paths = <span class="self">self</span>.prepare_send(transmit)<span class="question-mark">?</span>;
-
-        <span class="kw">if </span>active_paths.is_empty() {
-            <span class="comment">// Returning Ok here means we let QUIC timeout.
-            // Returning an error would immediately fail a connection.
-            // The philosophy of quinn-udp is that a UDP connection could
-            // come back at any time or missing should be transient so chooses to let
-            // these kind of errors time out.  See test_try_send_no_send_addr to try
-            // this out.
-            </span><span class="macro">error!</span>(<span class="string">"no paths available for node, voiding transmit"</span>);
-            <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Ok</span>(()));
-        }
-
-        <span class="kw">let </span><span class="kw-2">mut </span>results = SmallVec::&lt;[<span class="kw">_</span>; <span class="number">3</span>]&gt;::new();
-
-        <span class="macro">trace!</span>(<span class="question-mark">?</span>active_paths, <span class="string">"attempting to send"</span>);
-
-        <span class="kw">for </span>destination <span class="kw">in </span>active_paths {
-            <span class="kw">let </span>src = transmit.src_ip;
-            <span class="kw">let </span>transmit = transports::Transmit {
-                ecn: transmit.ecn,
-                contents: transmit.contents,
-                segment_size: transmit.segment_size,
-            };
-
-            <span class="kw">let </span>res = <span class="self">self</span>.transports.poll_send(cx, <span class="kw-2">&amp;</span>destination, src, <span class="kw-2">&amp;</span>transmit);
-            <span class="kw">match </span>res {
-                Poll::Ready(<span class="prelude-val">Ok</span>(())) =&gt; {
-                    <span class="macro">trace!</span>(dst = <span class="question-mark">?</span>destination, <span class="string">"sent transmit"</span>);
-                }
-                Poll::Ready(<span class="prelude-val">Err</span>(<span class="kw-2">ref </span>err)) =&gt; {
-                    <span class="macro">warn!</span>(dst = <span class="question-mark">?</span>destination, <span class="string">"failed to send: {err:#}"</span>);
-                }
-                Poll::Pending =&gt; {}
-            }
-            results.push(res);
-        }
-
-        <span class="kw">if </span>results.iter().all(|p| <span class="macro">matches!</span>(p, Poll::Pending)) {
-            <span class="comment">// Handle backpressure.
-            </span><span class="kw">return </span>Poll::Pending;
-        }
-        Poll::Ready(<span class="prelude-val">Ok</span>(()))
-    }
-
-    <span class="doccomment">/// Best effort sending
-    </span><span class="attr">#[instrument(skip_all)]
-    </span><span class="kw">fn </span>try_send(<span class="kw-2">&amp;</span><span class="self">self</span>, transmit: <span class="kw-2">&amp;</span>quinn_udp::Transmit) -&gt; io::Result&lt;()&gt; {
-        <span class="kw">let </span>active_paths = <span class="self">self</span>.prepare_send(transmit)<span class="question-mark">?</span>;
-        <span class="kw">if </span>active_paths.is_empty() {
-            <span class="comment">// Returning Ok here means we let QUIC timeout.
-            // Returning an error would immediately fail a connection.
-            // The philosophy of quinn-udp is that a UDP connection could
-            // come back at any time or missing should be transient so chooses to let
-            // these kind of errors time out.  See test_try_send_no_send_addr to try
-            // this out.
-            </span><span class="macro">error!</span>(<span class="string">"no paths available for node, voiding transmit"</span>);
-            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
-        }
-
-        <span class="kw">let </span><span class="kw-2">mut </span>results = SmallVec::&lt;[<span class="kw">_</span>; <span class="number">3</span>]&gt;::new();
-
-        <span class="macro">trace!</span>(<span class="question-mark">?</span>active_paths, <span class="string">"attempting to send"</span>);
-
-        <span class="kw">for </span>destination <span class="kw">in </span>active_paths {
-            <span class="kw">let </span>src = transmit.src_ip;
-            <span class="kw">let </span>transmit = transports::Transmit {
-                ecn: transmit.ecn,
-                contents: transmit.contents,
-                segment_size: transmit.segment_size,
-            };
-
-            <span class="kw">let </span>res = <span class="self">self</span>.transports.try_send(<span class="kw-2">&amp;</span>destination, src, <span class="kw-2">&amp;</span>transmit);
-            <span class="kw">match </span>res {
-                <span class="prelude-val">Ok</span>(()) =&gt; {
-                    <span class="macro">trace!</span>(dst = <span class="question-mark">?</span>destination, <span class="string">"sent transmit"</span>);
-                }
-                <span class="prelude-val">Err</span>(<span class="kw-2">ref </span>err) =&gt; {
-                    <span class="macro">warn!</span>(dst = <span class="question-mark">?</span>destination, <span class="string">"failed to send: {err:#}"</span>);
-                }
-            }
-            results.push(res);
-        }
-
-        <span class="kw">if </span>results.iter().all(|p| p.is_err()) {
-            <span class="kw">return </span><span class="prelude-val">Err</span>(io::Error::other(<span class="string">"all failed"</span>));
-        }
-        <span class="prelude-val">Ok</span>(())
-    }
-
     <span class="doccomment">/// NOTE: Receiving on a [`Self::closed`] socket will return [`Poll::Pending`] indefinitely.
     </span><span class="attr">#[instrument(skip_all)]
     </span><span class="kw">fn </span>poll_recv(
@@ -4653,7 +4474,7 @@
     }
 
     <span class="doccomment">/// Tries to send the ping actions.
-    </span><span class="kw">async fn </span>send_ping_actions(<span class="kw-2">&amp;</span><span class="self">self</span>, msgs: Vec&lt;PingAction&gt;) -&gt; io::Result&lt;()&gt; {
+    </span><span class="kw">async fn </span>send_ping_actions(<span class="kw-2">&amp;</span><span class="self">self</span>, sender: <span class="kw-2">&amp;</span>UdpSender, msgs: Vec&lt;PingAction&gt;) -&gt; io::Result&lt;()&gt; {
         <span class="kw">for </span>msg <span class="kw">in </span>msgs {
             <span class="comment">// Abort sending as soon as we know we are shutting down.
             </span><span class="kw">if </span><span class="self">self</span>.is_closing() || <span class="self">self</span>.is_closed() {
@@ -4667,7 +4488,7 @@
                     <span class="self">self</span>.send_or_queue_call_me_maybe(relay_url, dst_node);
                 }
                 PingAction::SendPing(ping) =&gt; {
-                    <span class="self">self</span>.send_ping(ping).<span class="kw">await</span><span class="question-mark">?</span>;
+                    <span class="self">self</span>.send_ping(sender, ping).<span class="kw">await</span><span class="question-mark">?</span>;
                 }
             }
         }
@@ -4677,6 +4498,7 @@
     <span class="doccomment">/// Send a disco message. UDP messages will be polled to send directly on the UDP socket.
     </span><span class="kw">async fn </span>send_disco_message(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
+        sender: <span class="kw-2">&amp;</span>UdpSender,
         dst: SendAddr,
         dst_key: PublicKey,
         msg: disco::Message,
@@ -4703,7 +4525,7 @@
 
         <span class="kw">let </span>dst2 = dst.clone();
         <span class="kw">match </span>n0_future::future::poll_fn(<span class="kw">move </span>|cx| {
-            <span class="self">self</span>.transports.poll_send(cx, <span class="kw-2">&amp;</span>dst2, <span class="prelude-val">None</span>, <span class="kw-2">&amp;</span>transmit)
+            sender.inner_poll_send(cx, <span class="kw-2">&amp;</span>dst2, <span class="prelude-val">None</span>, <span class="kw-2">&amp;</span>transmit)
         })
         .<span class="kw">await
         </span>{
@@ -4720,7 +4542,7 @@
         }
     }
 
-    <span class="kw">async fn </span>send_ping(<span class="kw-2">&amp;</span><span class="self">self</span>, ping: SendPing) -&gt; io::Result&lt;()&gt; {
+    <span class="kw">async fn </span>send_ping(<span class="kw-2">&amp;</span><span class="self">self</span>, sender: <span class="kw-2">&amp;</span>UdpSender, ping: SendPing) -&gt; io::Result&lt;()&gt; {
         <span class="kw">let </span>SendPing {
             id,
             dst,
@@ -4733,7 +4555,8 @@
             node_key: <span class="self">self</span>.public_key(),
         });
 
-        <span class="self">self</span>.send_disco_message(dst.clone(), dst_node, msg).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="self">self</span>.send_disco_message(sender, dst.clone(), dst_node, msg)
+            .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="macro">debug!</span>(%dst, tx = %HEXLOWER.encode(<span class="kw-2">&amp;</span>tx_id), <span class="question-mark">?</span>purpose, <span class="string">"ping sent"</span>);
         <span class="kw">let </span>msg_sender = <span class="self">self</span>.actor_sender.clone();
         <span class="self">self</span>.node_map
@@ -5058,9 +4881,10 @@
         <span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">let _ </span>= actor_tasks.spawn({
             <span class="kw">let </span>msock = msock.clone();
+            <span class="kw">let </span>sender = msock.transports.create_sender(msock.clone());
             <span class="kw">async move </span>{
                 <span class="kw">while let </span><span class="prelude-val">Some</span>((dst, dst_key, msg)) = disco_receiver.recv().<span class="kw">await </span>{
-                    <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = msock.send_disco_message(dst.clone(), dst_key, msg).<span class="kw">await </span>{
+                    <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = msock.send_disco_message(<span class="kw-2">&amp;</span>sender, dst.clone(), dst_key, msg).<span class="kw">await </span>{
                         <span class="macro">warn!</span>(%dst, node = %dst_key.fmt_short(), <span class="question-mark">?</span>err, <span class="string">"failed to send disco message (UDP)"</span>);
                     }
                 }
@@ -5428,6 +5252,8 @@
 
         <span class="kw">let </span><span class="kw-2">mut </span>watcher = <span class="self">self</span>.msock.transports.local_addrs_watch();
 
+        <span class="kw">let </span>sender = <span class="self">self</span>.msock.transports.create_sender(<span class="self">self</span>.msock.clone());
+
         <span class="kw">loop </span>{
             <span class="self">self</span>.msock.metrics.magicsock.actor_tick_main.inc();
             <span class="attr">#[cfg(not(wasm_browser))]
@@ -5506,7 +5332,7 @@
 
                         </span><span class="self">self</span>.msock.node_map.prune_inactive();
                         <span class="kw">let </span>msgs = <span class="self">self</span>.msock.node_map.nodes_stayin_alive();
-                        <span class="self">self</span>.handle_ping_actions(msgs).<span class="kw">await</span>;
+                        <span class="self">self</span>.handle_ping_actions(<span class="kw-2">&amp;</span>sender, msgs).<span class="kw">await</span>;
                     }
                 }
                 <span class="kw">_ </span>= direct_addr_update_receiver.changed() =&gt; {
@@ -5570,8 +5396,8 @@
     }
 
     <span class="attr">#[instrument(skip_all)]
-    </span><span class="kw">async fn </span>handle_ping_actions(<span class="kw-2">&amp;mut </span><span class="self">self</span>, msgs: Vec&lt;PingAction&gt;) {
-        <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.msock.send_ping_actions(msgs).<span class="kw">await </span>{
+    </span><span class="kw">async fn </span>handle_ping_actions(<span class="kw-2">&amp;mut </span><span class="self">self</span>, sender: <span class="kw-2">&amp;</span>UdpSender, msgs: Vec&lt;PingAction&gt;) {
+        <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.msock.send_ping_actions(sender, msgs).<span class="kw">await </span>{
             <span class="macro">warn!</span>(<span class="string">"Failed to send ping actions: {err:#}"</span>);
         }
     }
