@@ -1151,10 +1151,8 @@ impl From<SocketAddr> for MappedAddr {
 ///   and start a new one when the current one has finished
 #[derive(Debug)]
 struct DirectAddrUpdateState {
-    /// If running, set to the reason for the currently the update.
-    running: Watchable<Option<UpdateReason>>,
     /// If set, start a new update as soon as the current one is finished.
-    want_update: Mutex<Option<UpdateReason>>,
+    want_update: Option<UpdateReason>,
     msock: Arc<MagicSock>,
     /// Configuration for net report
     net_report_config: net_report::Options,
@@ -1162,6 +1160,7 @@ struct DirectAddrUpdateState {
     port_mapper: portmapper::Client,
     /// The prober that discovers local network conditions, including the closest relay relay and NAT mappings.
     net_reporter: Arc<Mutex<net_report::Client>>,
+    run_done: mpsc::Sender<()>,
 }
 
 #[derive(Default, Debug, PartialEq, Eq, Copy, Clone)]
@@ -1182,46 +1181,46 @@ impl DirectAddrUpdateState {
         net_report_config: net_report::Options,
         port_mapper: portmapper::Client,
         net_reporter: Arc<Mutex<net_report::Client>>,
+        run_done: mpsc::Sender<()>,
     ) -> Self {
         DirectAddrUpdateState {
-            running: Watchable::default(),
             want_update: Default::default(),
             net_report_config,
             port_mapper,
             net_reporter,
             msock,
+            run_done,
         }
     }
 
     /// Schedules a new run, either starting it immediately if none is running or
     /// scheduling it for later.
-    async fn schedule_run(&self, why: UpdateReason) {
+    async fn schedule_run(&mut self, why: UpdateReason) {
         if self.is_running() {
-            let _ = self.want_update.lock().await.insert(why);
+            let _ = self.want_update.insert(why);
         } else {
-            self.run(why);
+            self.run(why).await;
         }
     }
 
     /// If another run is needed, triggers this run, otherwise does nothing.
-    async fn try_run(&self) {
+    async fn try_run(&mut self) {
         if self.is_running() {
             return;
         }
-        if let Some(why) = self.want_update.lock().await.take() {
-            self.run(why);
+        if let Some(why) = self.want_update.take() {
+            self.run(why).await;
         }
     }
 
     /// Returns `true` if an update is currently in progress.
     fn is_running(&self) -> bool {
-        self.running.get().is_some()
+        self.net_reporter.try_lock().is_err()
     }
 
     /// Trigger a new run.
-    fn run(&self, why: UpdateReason) {
-        debug_assert!(!self.is_running(), "invalid call, must not be running");
-        self.running.set(Some(why)).ok();
+    async fn run(&mut self, why: UpdateReason) {
+        let mut net_reporter = self.net_reporter.clone().lock_owned().await;
 
         debug!("starting direct addr update ({:?})", why);
         #[cfg(not(wasm_browser))]
@@ -1243,11 +1242,9 @@ impl DirectAddrUpdateState {
 
         debug!("requesting net_report report");
         let msock = self.msock.clone();
-        let net_reporter = self.net_reporter.clone();
 
-        let running = self.running.clone();
+        let run_done = self.run_done.clone();
         task::spawn(async move {
-            let mut net_reporter = net_reporter.lock().await;
             let fut = time::timeout(NET_REPORT_TIMEOUT, net_reporter.get_report(relay_map, opts));
             match fut.await {
                 Ok(Ok(report)) => {
@@ -1263,7 +1260,7 @@ impl DirectAddrUpdateState {
 
             // mark run as finished
             debug!("direct addr update done ({:?})", why);
-            running.set(None).ok();
+            run_done.send(()).await.ok();
         });
     }
 }
@@ -1469,12 +1466,14 @@ impl Handle {
         let net_report_config =
             net_report_config.insecure_skip_relay_cert_verify(insecure_skip_relay_cert_verify);
 
+        let (direct_addr_done_tx, direct_addr_done_rx) = mpsc::channel(8);
         let direct_addr_update_state = DirectAddrUpdateState::new(
             msock.clone(),
             net_report_config,
             #[cfg(not(wasm_browser))]
             port_mapper.clone(),
             Arc::new(Mutex::new(net_reporter)),
+            direct_addr_done_tx,
         );
 
         let actor = Actor {
@@ -1486,6 +1485,7 @@ impl Handle {
             #[cfg(not(wasm_browser))]
             port_mapper,
             network_change_sender,
+            direct_addr_done_rx,
         };
         actor_tasks.spawn(
             actor
@@ -1733,6 +1733,7 @@ struct Actor {
     network_change_sender: transports::NetworkChangeSender,
     /// Indicates the direct addr update state.
     direct_addr_update_state: DirectAddrUpdateState,
+    direct_addr_done_rx: mpsc::Receiver<()>,
 }
 
 #[cfg(not(wasm_browser))]
@@ -1824,7 +1825,6 @@ impl Actor {
         let mut portmap_watcher_closed = false;
 
         let mut net_report_watcher = self.msock.net_report.watch();
-        let mut direct_addr_watcher = self.direct_addr_update_state.running.watch();
 
         loop {
             self.msock.metrics.magicsock.actor_tick_main.inc();
@@ -1886,16 +1886,13 @@ impl Actor {
                         }
                     }
                 }
-                reason = direct_addr_watcher.updated() => {
+                reason = self.direct_addr_done_rx.recv() => {
                     match reason {
-                        Ok(Some(_reason)) => {
-                            // nothing to do for now
-                        }
-                        Ok(None) => {
+                        Some(()) => {
                             // check if a new run needs to be scheduled
                             self.direct_addr_update_state.try_run().await;
                         }
-                        Err(_) => {
+                        None => {
                             warn!("direct addr watcher died");
                         }
                     }
@@ -1986,7 +1983,7 @@ impl Actor {
         }
     }
 
-    async fn re_stun(&self, why: UpdateReason) {
+    async fn re_stun(&mut self, why: UpdateReason) {
         self.direct_addr_update_state.schedule_run(why).await;
     }
 
