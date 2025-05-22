@@ -516,7 +516,16 @@
 <a href="#515" id="515">515</a>
 <a href="#516" id="516">516</a>
 <a href="#517" id="517">517</a>
-<a href="#518" id="518">518</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#518" id="518">518</a>
+<a href="#519" id="519">519</a>
+<a href="#520" id="520">520</a>
+<a href="#521" id="521">521</a>
+<a href="#522" id="522">522</a>
+<a href="#523" id="523">523</a>
+<a href="#524" id="524">524</a>
+<a href="#525" id="525">525</a>
+<a href="#526" id="526">526</a>
+<a href="#527" id="527">527</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     io,
     sync::Arc,
     task::{Context, Poll, Waker},
@@ -527,10 +536,14 @@
 <span class="kw">use </span>bytes::Bytes;
 <span class="kw">use </span>concurrent_queue::ConcurrentQueue;
 <span class="kw">use </span>iroh_base::{NodeId, RelayUrl};
-<span class="kw">use </span>n0_future::task::{<span class="self">self</span>, AbortOnDropHandle};
+<span class="kw">use </span>n0_future::{
+    ready,
+    task::{<span class="self">self</span>, AbortOnDropHandle},
+};
 <span class="kw">use </span>n0_watcher::{Watchable, Watcher <span class="kw">as _</span>};
 <span class="kw">use </span>smallvec::SmallVec;
 <span class="kw">use </span>tokio::sync::mpsc;
+<span class="kw">use </span>tokio_util::sync::PollSender;
 <span class="kw">use </span>tracing::{error, info_span, trace, warn, Instrument};
 
 <span class="kw">use super</span>::{Addr, Transmit};
@@ -550,7 +563,7 @@
     /// [`quinn::AsyncUdpSocket::poll_recv`].
     </span>relay_datagram_recv_queue: Arc&lt;RelayDatagramRecvQueue&gt;,
     <span class="doccomment">/// Channel on which to send datagrams via a relay server.
-    </span>relay_datagram_send_channel: RelayDatagramSendChannelSender,
+    </span>relay_datagram_send_channel: mpsc::Sender&lt;RelaySendItem&gt;,
     actor_sender: mpsc::Sender&lt;RelayActorMessage&gt;,
     _actor_handle: AbortOnDropHandle&lt;()&gt;,
     my_relay: Watchable&lt;<span class="prelude-ty">Option</span>&lt;RelayUrl&gt;&gt;,
@@ -588,8 +601,10 @@
         }
     }
 
-    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>create_sender(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; RelayDatagramSendChannelSender {
-        <span class="self">self</span>.relay_datagram_send_channel.clone()
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>create_sender(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; RelaySender {
+        RelaySender {
+            sender: PollSender::new(<span class="self">self</span>.relay_datagram_send_channel.clone()),
+        }
     }
 
     <span class="kw">fn </span>send_relay_actor(<span class="kw-2">&amp;</span><span class="self">self</span>, msg: RelayActorMessage) {
@@ -746,15 +761,12 @@
 ///
 /// These includes the waker coordination required to support [`quinn::UdpSender::poll_send`].
 </span><span class="kw">fn </span>relay_datagram_send_channel() -&gt; (
-    RelayDatagramSendChannelSender,
+    mpsc::Sender&lt;RelaySendItem&gt;,
     RelayDatagramSendChannelReceiver,
 ) {
     <span class="kw">let </span>(sender, receiver) = mpsc::channel(<span class="number">256</span>);
     <span class="kw">let </span>wakers = Arc::new(std::sync::Mutex::new(Vec::new()));
-    <span class="kw">let </span>tx = RelayDatagramSendChannelSender {
-        sender,
-        wakers: wakers.clone(),
-    };
+    <span class="kw">let </span>tx = sender;
     <span class="kw">let </span>rx = RelayDatagramSendChannelReceiver { receiver, wakers };
     (tx, rx)
 }
@@ -763,12 +775,11 @@
 ///
 /// This includes the waker coordination required to support [`quinn::UdpSender::poll_send`].
 </span><span class="attr">#[derive(Debug, Clone)]
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>RelayDatagramSendChannelSender {
-    sender: mpsc::Sender&lt;RelaySendItem&gt;,
-    wakers: Arc&lt;std::sync::Mutex&lt;Vec&lt;Waker&gt;&gt;&gt;,
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>RelaySender {
+    sender: PollSender&lt;RelaySendItem&gt;,
 }
 
-<span class="kw">impl </span>RelayDatagramSendChannelSender {
+<span class="kw">impl </span>RelaySender {
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>is_valid_send_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, _url: <span class="kw-2">&amp;</span>RelayUrl, _node_id: <span class="kw-2">&amp;</span>NodeId) -&gt; bool {
         <span class="bool-val">true
     </span>}
@@ -789,16 +800,18 @@
 
         <span class="kw">let </span>dest_node = item.remote_node;
         <span class="kw">let </span>dest_url = item.url.clone();
-
-        <span class="kw">match </span><span class="self">self</span>.sender.send(item).<span class="kw">await </span>{
+        <span class="kw">let </span><span class="prelude-val">Some</span>(sender) = <span class="self">self</span>.sender.get_ref() <span class="kw">else </span>{
+            <span class="kw">return </span><span class="prelude-val">Err</span>(io::Error::other(<span class="string">"channel closed"</span>));
+        };
+        <span class="kw">match </span>sender.send(item).<span class="kw">await </span>{
             <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; {
                 <span class="macro">trace!</span>(node = %dest_node.fmt_short(), relay_url = %dest_url,
-                       <span class="string">"send relay: message queued"</span>);
+                        <span class="string">"send relay: message queued"</span>);
                 <span class="prelude-val">Ok</span>(())
             }
             <span class="prelude-val">Err</span>(mpsc::error::SendError(<span class="kw">_</span>)) =&gt; {
                 <span class="macro">error!</span>(node = %dest_node.fmt_short(), relay_url = %dest_url,
-                      <span class="string">"send relay: message dropped, channel to actor is closed"</span>);
+                        <span class="string">"send relay: message dropped, channel to actor is closed"</span>);
                 <span class="prelude-val">Err</span>(io::Error::new(
                     io::ErrorKind::ConnectionReset,
                     <span class="string">"channel to actor is closed"</span>,
@@ -808,7 +821,7 @@
     }
 
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>poll_send(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         cx: <span class="kw-2">&amp;mut </span>Context,
         dest_url: RelayUrl,
         dest_node: NodeId,
@@ -825,29 +838,30 @@
         <span class="kw">let </span>dest_node = item.remote_node;
         <span class="kw">let </span>dest_url = item.url.clone();
 
-        <span class="kw">match </span><span class="self">self</span>.sender.try_send(item) {
-            <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; {
+        <span class="kw">match </span><span class="macro">ready!</span>(<span class="self">self</span>.sender.poll_reserve(cx)) {
+            <span class="prelude-val">Ok</span>(()) =&gt; {
                 <span class="macro">trace!</span>(node = %dest_node.fmt_short(), relay_url = %dest_url,
-                       <span class="string">"send relay: message queued"</span>);
-                Poll::Ready(<span class="prelude-val">Ok</span>(()))
+                    <span class="string">"send relay: message queued"</span>);
+
+                <span class="kw">match </span><span class="self">self</span>.sender.send_item(item) {
+                    <span class="prelude-val">Ok</span>(()) =&gt; Poll::Ready(<span class="prelude-val">Ok</span>(())),
+                    <span class="prelude-val">Err</span>(_err) =&gt; {
+                        <span class="macro">error!</span>(node = %dest_node.fmt_short(), relay_url = %dest_url,
+                      <span class="string">"send relay: message dropped, channel to actor is closed"</span>);
+                        Poll::Ready(<span class="prelude-val">Err</span>(io::Error::new(
+                            io::ErrorKind::ConnectionReset,
+                            <span class="string">"channel to actor is closed"</span>,
+                        )))
+                    }
+                }
             }
-            <span class="prelude-val">Err</span>(mpsc::error::TrySendError::Closed(<span class="kw">_</span>)) =&gt; {
+            <span class="prelude-val">Err</span>(_err) =&gt; {
                 <span class="macro">error!</span>(node = %dest_node.fmt_short(), relay_url = %dest_url,
                       <span class="string">"send relay: message dropped, channel to actor is closed"</span>);
                 Poll::Ready(<span class="prelude-val">Err</span>(io::Error::new(
                     io::ErrorKind::ConnectionReset,
                     <span class="string">"channel to actor is closed"</span>,
                 )))
-            }
-            <span class="prelude-val">Err</span>(mpsc::error::TrySendError::Full(<span class="kw">_</span>)) =&gt; {
-                <span class="macro">warn!</span>(node = %dest_node.fmt_short(), relay_url = %dest_url,
-                      <span class="string">"send relay: message dropped, channel to actor is full"</span>);
-                <span class="kw">let </span><span class="kw-2">mut </span>wakers = <span class="self">self</span>.wakers.lock().expect(<span class="string">"poisoned"</span>);
-                <span class="kw">if </span>!wakers.iter().any(|waker| waker.will_wake(cx.waker())) {
-                    wakers.push(cx.waker().clone());
-                }
-                drop(wakers);
-                Poll::Pending
             }
         }
     }
@@ -869,7 +883,11 @@
         <span class="kw">let </span>dest_node = item.remote_node;
         <span class="kw">let </span>dest_url = item.url.clone();
 
-        <span class="kw">match </span><span class="self">self</span>.sender.try_send(item) {
+        <span class="kw">let </span><span class="prelude-val">Some</span>(sender) = <span class="self">self</span>.sender.get_ref() <span class="kw">else </span>{
+            <span class="kw">return </span><span class="prelude-val">Err</span>(io::Error::other(<span class="string">"channel closed"</span>));
+        };
+
+        <span class="kw">match </span>sender.try_send(item) {
             <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; {
                 <span class="macro">trace!</span>(node = %dest_node.fmt_short(), relay_url = %dest_url,
                        <span class="string">"send relay: message queued"</span>);

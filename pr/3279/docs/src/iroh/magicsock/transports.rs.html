@@ -565,7 +565,7 @@
 
 <span class="kw">use </span>iroh_base::{NodeId, RelayUrl};
 <span class="kw">use </span>n0_watcher::Watcher;
-<span class="kw">use </span>relay::RelayDatagramSendChannelSender;
+<span class="kw">use </span>relay::RelaySender;
 <span class="kw">use </span>smallvec::SmallVec;
 <span class="kw">use </span>tracing::{error, trace, warn};
 
@@ -873,7 +873,7 @@
     msock: Arc&lt;MagicSock&gt;, <span class="comment">// :(
     </span><span class="attr">#[cfg(not(wasm_browser))]
     </span>ip: Vec&lt;IpSender&gt;,
-    relay: Vec&lt;RelayDatagramSendChannelSender&gt;,
+    relay: Vec&lt;RelaySender&gt;,
 }
 
 <span class="kw">impl </span>UdpSender {
@@ -954,7 +954,7 @@
                 }
             }
             Addr::Relay(url, node_id) =&gt; {
-                <span class="kw">for </span>sender <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.relay {
+                <span class="kw">for </span>sender <span class="kw">in </span><span class="kw-2">&amp;mut </span><span class="self">self</span>.relay {
                     <span class="kw">if </span>sender.is_valid_send_addr(url, node_id) {
                         <span class="kw">match </span>sender.poll_send(cx, url.clone(), <span class="kw-2">*</span>node_id, transmit) {
                             Poll::Pending =&gt; {}
