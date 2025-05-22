@@ -21,14 +21,12 @@ fn main() -> Result<()> {
     match args.command {
         Command::NodeToPkarr { node_id } => {
             let node_id = NodeId::from_str(&node_id)?;
-            let public_key =
-                pkarr::PublicKey::try_from(node_id.as_bytes()).context("read pkarr public key")?;
+            let public_key = pkarr::PublicKey::try_from(node_id.as_bytes()).e()?;
             println!("{}", public_key.to_z32())
         }
         Command::PkarrToNode { z32_pubkey } => {
-            let public_key =
-                pkarr::PublicKey::try_from(z32_pubkey.as_str()).context("read pkarr public key")?;
-            let node_id = NodeId::from_bytes(public_key.as_bytes()).context("parse NodeId")?;
+            let public_key = pkarr::PublicKey::try_from(z32_pubkey.as_str()).e()?;
+            let node_id = NodeId::from_bytes(public_key.as_bytes()).e()?;
             println!("{}", node_id)
         }
     }

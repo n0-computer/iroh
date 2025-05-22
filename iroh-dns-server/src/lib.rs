@@ -100,56 +100,52 @@ mod tests {
                 30,
                 dns::rdata::RData::AAAA(Ipv6Addr::LOCALHOST.into()),
             ));
-            SignedPacket::new(&keypair, &packet.answers, Timestamp::now())
-                .context("signed packet")?
+            SignedPacket::new(&keypair, &packet.answers, Timestamp::now()).e()?
         };
         let pkarr_client = pkarr::Client::builder()
             .no_default_network()
             .relays(&[pkarr_relay_url])
-            .context("relays")?
+            .e()?
             .build()
-            .context("build pkarr client")?;
-        pkarr_client
-            .publish(&signed_packet, None)
-            .await
-            .context("publish pkarr")?;
+            .e()?;
+        pkarr_client.publish(&signed_packet, None).await.e()?;
 
         use hickory_server::proto::rr::Name;
         let pubkey = signed_packet.public_key().to_z32();
         let resolver = test_resolver(nameserver);
 
         // resolve root record
-        let name = Name::from_utf8(format!("{pubkey}.")).context("name")?;
+        let name = Name::from_utf8(format!("{pubkey}.")).e()?;
         let res = resolver.lookup_txt(name, DNS_TIMEOUT).await?;
         let records = res.into_iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert_eq!(records, vec!["hi0".to_string()]);
 
         // resolve level one record
-        let name = Name::from_utf8(format!("_hello.{pubkey}.")).context("name")?;
+        let name = Name::from_utf8(format!("_hello.{pubkey}.")).e()?;
         let res = resolver.lookup_txt(name, DNS_TIMEOUT).await?;
         let records = res.into_iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert_eq!(records, vec!["hi1".to_string()]);
 
         // resolve level two record
-        let name = Name::from_utf8(format!("_hello.world.{pubkey}.")).context("name")?;
+        let name = Name::from_utf8(format!("_hello.world.{pubkey}.")).e()?;
         let res = resolver.lookup_txt(name, DNS_TIMEOUT).await?;
         let records = res.into_iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert_eq!(records, vec!["hi2".to_string()]);
 
         // resolve multiple records for same name
-        let name = Name::from_utf8(format!("multiple.{pubkey}.")).context("name")?;
+        let name = Name::from_utf8(format!("multiple.{pubkey}.")).e()?;
         let res = resolver.lookup_txt(name, DNS_TIMEOUT).await?;
         let records = res.into_iter().map(|t| t.to_string()).collect::<Vec<_>>();
         assert_eq!(records, vec!["hi3".to_string(), "hi4".to_string()]);
 
         // resolve A record
-        let name = Name::from_utf8(format!("{pubkey}.")).context("name")?;
+        let name = Name::from_utf8(format!("{pubkey}.")).e()?;
         let res = resolver.lookup_ipv4(name, DNS_TIMEOUT).await?;
         let records = res.collect::<Vec<_>>();
         assert_eq!(records, vec![Ipv4Addr::LOCALHOST]);
 
         // resolve AAAA record
-        let name = Name::from_utf8(format!("foo.bar.baz.{pubkey}.")).context("name")?;
+        let name = Name::from_utf8(format!("foo.bar.baz.{pubkey}.")).e()?;
         let res = resolver.lookup_ipv6(name, DNS_TIMEOUT).await?;
         let records = res.collect::<Vec<_>>();
         assert_eq!(records, vec![Ipv6Addr::LOCALHOST]);
@@ -224,9 +220,7 @@ mod tests {
     #[traced_test]
     async fn integration_mainline() -> TestResult {
         // run a mainline testnet
-        let testnet = pkarr::mainline::Testnet::new_async(5)
-            .await
-            .context("new testnet")?;
+        let testnet = pkarr::mainline::Testnet::new_async(5).await.e()?;
         let bootstrap = testnet.bootstrap.clone();
 
         // spawn our server with mainline support
@@ -248,11 +242,8 @@ mod tests {
             .no_default_network()
             .dht(|builder| builder.bootstrap(&testnet.bootstrap))
             .build()
-            .context("build pkarr client")?;
-        pkarr
-            .publish(&signed_packet, None)
-            .await
-            .context("publish")?;
+            .e()?;
+        pkarr.publish(&signed_packet, None).await.e()?;
 
         // resolve via DNS from our server, which will lookup from our DHT
         let resolver = test_resolver(nameserver);

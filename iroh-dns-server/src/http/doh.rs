@@ -32,7 +32,7 @@ pub async fn get(
     DnsRequestQuery(request, accept_type): DnsRequestQuery,
 ) -> AppResult<Response> {
     let message_bytes = state.dns_handler.answer_request(request).await?;
-    let message = proto::op::Message::from_bytes(&message_bytes).context("decode")?;
+    let message = proto::op::Message::from_bytes(&message_bytes).e()?;
 
     let min_ttl = message.answers().iter().map(|rec| rec.ttl()).min();
 
@@ -49,7 +49,7 @@ pub async fn get(
         .insert(CONTENT_TYPE, accept_type.to_header_value());
 
     if let Some(min_ttl) = min_ttl {
-        let maxage = HeaderValue::from_str(&format!("s-maxage={min_ttl}")).context("header")?;
+        let maxage = HeaderValue::from_str(&format!("s-maxage={min_ttl}")).e()?;
         response.headers_mut().insert(CACHE_CONTROL, maxage);
     }
 

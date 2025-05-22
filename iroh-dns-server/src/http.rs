@@ -89,12 +89,8 @@ impl HttpServer {
                 config.port,
             );
             let app = app.clone();
-            let listener = TcpListener::bind(bind_addr)
-                .await
-                .context("TCP bind")?
-                .into_std()
-                .context("into std")?;
-            let bound_addr = listener.local_addr().context("local addr")?;
+            let listener = TcpListener::bind(bind_addr).await.e()?.into_std().e()?;
+            let bound_addr = listener.local_addr().e()?;
             let fut = axum_server::from_tcp(listener)
                 .serve(app.into_make_service_with_connect_info::<SocketAddr>());
             info!("HTTP server listening on {bind_addr}");
@@ -129,12 +125,8 @@ impl HttpServer {
                     )
                     .await?
             };
-            let listener = TcpListener::bind(bind_addr)
-                .await
-                .context("TCP bind")?
-                .into_std()
-                .context("into std")?;
-            let bound_addr = listener.local_addr().context("local addr")?;
+            let listener = TcpListener::bind(bind_addr).await.e()?.into_std().e()?;
+            let bound_addr = listener.local_addr().e()?;
             let fut = axum_server::from_tcp(listener)
                 .acceptor(acceptor)
                 .serve(app.into_make_service_with_connect_info::<SocketAddr>());

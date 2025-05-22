@@ -82,15 +82,12 @@ impl DnsServer {
             config.port,
         );
 
-        let socket = UdpSocket::bind(bind_addr).await.context("UDP bind")?;
+        let socket = UdpSocket::bind(bind_addr).await.e()?;
 
-        let socket_addr = socket.local_addr().context("local address")?;
+        let socket_addr = socket.local_addr().e()?;
 
         server.register_socket(socket);
-        server.register_listener(
-            TcpListener::bind(bind_addr).await.context("TCP bind")?,
-            TCP_TIMEOUT,
-        );
+        server.register_listener(TcpListener::bind(bind_addr).await.e()?, TCP_TIMEOUT);
         info!("DNS server listening on {}", bind_addr);
 
         Ok(Self {
@@ -106,10 +103,7 @@ impl DnsServer {
 
     /// Shutdown the server an wait for all tasks to complete.
     pub async fn shutdown(mut self) -> Result<()> {
-        self.server
-            .shutdown_gracefully()
-            .await
-            .context("graceful shutdown")?;
+        self.server.shutdown_gracefully().await.e()?;
         Ok(())
     }
 
@@ -117,10 +111,7 @@ impl DnsServer {
     ///
     /// Runs forever unless tasks fail.
     pub async fn run_until_done(mut self) -> Result<()> {
-        self.server
-            .block_until_done()
-            .await
-            .context("block until done")?;
+        self.server.block_until_done().await.e()?;
         Ok(())
     }
 }
@@ -142,7 +133,7 @@ impl DnsHandler {
             .iter()
             .map(Name::from_utf8)
             .collect::<Result<Vec<_>, _>>()
-            .context("origin names")?;
+            .e()?;
 
         let (static_authority, serial) = create_static_authority(&origins, config)?;
         let authority = Arc::new(NodeAuthority::new(
@@ -168,7 +159,7 @@ impl DnsHandler {
         let (tx, mut rx) = broadcast::channel(1);
         let response_handle = Handle(tx);
         self.handle_request(&request, response_handle).await;
-        rx.recv().await.context("recv")
+        rx.recv().await.e()
     }
 }
 
@@ -243,7 +234,7 @@ fn create_static_authority(
         config.default_soa.split_ascii_whitespace(),
         None,
     )
-    .context("rdata")?
+    .e()?
     .into_soa()
     .map_err(|_| format_err!("Couldn't parse SOA: {}", config.default_soa))?;
     let serial = soa.serial();
@@ -269,7 +260,7 @@ fn create_static_authority(
             );
         }
         if let Some(ns) = &config.rr_ns {
-            let ns = Name::parse(ns, Some(&Name::root())).context("name")?;
+            let ns = Name::parse(ns, Some(&Name::root())).e()?;
             push_record(
                 &mut records,
                 serial,
