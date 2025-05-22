@@ -155,7 +155,9 @@ struct Actor {
 #[derive(Debug)]
 pub(super) enum ProbeFinished {
     Regular(Result<ProbeReport, anyhow::Error>),
+    #[cfg(not(wasm_browser))]
     Portmap(Option<portmapper::ProbeOutput>),
+    #[cfg(not(wasm_browser))]
     CaptivePortal(Option<bool>),
 }
 
@@ -229,10 +231,13 @@ impl Actor {
 
                 // Drive the portmapper.
                 pm = &mut port_mapping, if self.outstanding_tasks.port_mapper => {
-                    debug!(report=?pm, "tick: portmapper probe report");
-                    self.msg_tx.send(ProbeFinished::Portmap(pm)).await.ok();
-                    port_mapping.as_mut().set_none();
-                    self.outstanding_tasks.port_mapper = false;
+                    #[cfg(not(wasm_browser))]
+                    {
+                        debug!(report=?pm, "tick: portmapper probe report");
+                        self.msg_tx.send(ProbeFinished::Portmap(pm)).await.ok();
+                        port_mapping.as_mut().set_none();
+                        self.outstanding_tasks.port_mapper = false;
+                    }
                 }
 
                 // Check for probes finishing.
@@ -259,10 +264,13 @@ impl Actor {
 
                 // Drive the captive task.
                 found = &mut captive_task, if self.outstanding_tasks.captive_task => {
-                    trace!("tick: captive portal task done");
-                    self.msg_tx.send(ProbeFinished::CaptivePortal(found)).await.ok();
-                    captive_task.as_mut().set_none();
-                    self.outstanding_tasks.captive_task = false;
+                    #[cfg(not(wasm_browser))]
+                    {
+                        trace!("tick: captive portal task done");
+                        self.msg_tx.send(ProbeFinished::CaptivePortal(found)).await.ok();
+                        captive_task.as_mut().set_none();
+                        self.outstanding_tasks.captive_task = false;
+                    }
                 }
             }
         }
@@ -284,8 +292,8 @@ impl Actor {
     #[cfg(wasm_browser)]
     fn prepare_portmapper_task(
         &mut self,
-    ) -> MaybeFuture<Pin<Box<impl Future<Output = Option<portmapper::ProbeOutput>>>>> {
-        MaybeFuture::default()
+    ) -> MaybeFuture<Pin<Box<Pending<Option<portmapper::ProbeOutput>>>>> {
+        MaybeFuture::none()
     }
 
     /// Creates the future which will perform the portmapper task.
@@ -317,9 +325,7 @@ impl Actor {
 
     /// Creates the future which will perform the captive portal check.
     #[cfg(wasm_browser)]
-    fn prepare_captive_portal_task(
-        &mut self,
-    ) -> MaybeFuture<Pin<Box<impl Future<Output = Option<bool>>>>> {
+    fn prepare_captive_portal_task(&mut self) -> MaybeFuture<Pin<Box<Pending<Option<bool>>>>> {
         MaybeFuture::default()
     }
 
