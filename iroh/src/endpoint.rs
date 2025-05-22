@@ -2397,7 +2397,6 @@ mod tests {
         assert_eq!(conn_addr, direct_addr);
     }
 
-    // #[tokio::test(flavor = "multi_thread")]
     #[tokio::test]
     #[traced_test]
     async fn endpoint_relay_connect_loop() {
