@@ -69,7 +69,6 @@ impl Transports {
         }
     }
 
-    /// NOTE: Receiving on a [`Self::closed`] socket will return [`Poll::Pending`] indefinitely.
     pub(crate) fn poll_recv(
         &mut self,
         cx: &mut Context,
