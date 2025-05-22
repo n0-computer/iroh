@@ -58,7 +58,10 @@ async fn connect(args: Args) -> anyhow::Result<()> {
                     continue;
                 }
             };
-            pingpong(&connection, i).await?;
+            if pingpong(&connection, i).await.is_ok() {
+                // 0-RTT worked, we don't need to wait for accept to complete
+                continue;
+            }
             if !accepted.await {
                 trace!("0-RTT not accepted, trying again without 0-RTT");
                 pingpong(&connection, i).await?;
