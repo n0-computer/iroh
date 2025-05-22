@@ -59,7 +59,10 @@ async fn pingpong_0rtt(connecting: Connecting, i: u64) -> anyhow::Result<Connect
 
 async fn connect(args: Args) -> anyhow::Result<()> {
     let node_addr = args.node.unwrap().node_addr().clone();
-    let endpoint = iroh::Endpoint::builder().bind().await?;
+    let endpoint = iroh::Endpoint::builder()
+        .relay_mode(iroh::RelayMode::Disabled)
+        .bind()
+        .await?;
     let t0 = Instant::now();
     for i in 0..args.rounds {
         let t0 = Instant::now();
@@ -90,6 +93,7 @@ async fn connect(args: Args) -> anyhow::Result<()> {
 async fn accept(_args: Args) -> anyhow::Result<()> {
     let endpoint = iroh::Endpoint::builder()
         .alpns(vec![PINGPONG_ALPN.to_vec()])
+        .relay_mode(iroh::RelayMode::Disabled)
         .bind()
         .await?;
     let mut addrs = endpoint.node_addr().stream();
@@ -108,14 +112,24 @@ async fn accept(_args: Args) -> anyhow::Result<()> {
     println!("Ticket: {}", NodeTicket::from(addr));
     while let Some(incoming) = endpoint.accept().await {
         tokio::spawn(async move {
-            let conn = incoming.accept()?.await?;
-            let (mut send, mut recv) = conn.accept_bi().await?;
+            let connecting = incoming.accept()?;
+            let connection = match connecting.into_0rtt() {
+                Ok((connection, _)) => {
+                    debug!("0rtt accepted");
+                    connection
+                }
+                Err(connecting) => {
+                    debug!("0rtt denied");
+                    connecting.await?
+                }
+            };
+            let (mut send, mut recv) = connection.accept_bi().await?;
             trace!("recv.is_0rtt: {}", recv.is_0rtt());
             let data = recv.read_to_end(8).await?;
             trace!("recv: {}", data.len());
             send.write_all(&data).await?;
             send.finish()?;
-            conn.closed().await;
+            connection.closed().await;
             anyhow::Ok(())
         });
     }
