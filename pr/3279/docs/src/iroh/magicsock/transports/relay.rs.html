@@ -492,9 +492,7 @@
 <a href="#491" id="491">491</a>
 <a href="#492" id="492">492</a>
 <a href="#493" id="493">493</a>
-<a href="#494" id="494">494</a>
-<a href="#495" id="495">495</a>
-<a href="#496" id="496">496</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#494" id="494">494</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     io,
     sync::Arc,
     task::{Context, Poll},
@@ -783,21 +781,19 @@
         dest_node: NodeId,
         transmit: <span class="kw-2">&amp;</span>Transmit&lt;<span class="lifetime">'_</span>&gt;,
     ) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
-        <span class="kw">let </span>contents = split_packets(transmit);
-
-        <span class="kw">let </span>item = RelaySendItem {
-            remote_node: dest_node,
-            url: dest_url.clone(),
-            datagrams: contents,
-        };
-
-        <span class="kw">let </span>dest_node = item.remote_node;
-        <span class="kw">let </span>dest_url = item.url.clone();
-
         <span class="kw">match </span><span class="macro">ready!</span>(<span class="self">self</span>.sender.poll_reserve(cx)) {
             <span class="prelude-val">Ok</span>(()) =&gt; {
                 <span class="macro">trace!</span>(node = %dest_node.fmt_short(), relay_url = %dest_url,
                     <span class="string">"send relay: message queued"</span>);
+
+                <span class="kw">let </span>contents = split_packets(transmit);
+                <span class="kw">let </span>item = RelaySendItem {
+                    remote_node: dest_node,
+                    url: dest_url.clone(),
+                    datagrams: contents,
+                };
+                <span class="kw">let </span>dest_node = item.remote_node;
+                <span class="kw">let </span>dest_url = item.url.clone();
 
                 <span class="kw">match </span><span class="self">self</span>.sender.send_item(item) {
                     <span class="prelude-val">Ok</span>(()) =&gt; Poll::Ready(<span class="prelude-val">Ok</span>(())),
