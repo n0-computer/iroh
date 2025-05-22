@@ -114,6 +114,7 @@ impl Client {
         protocols: BTreeSet<ProbeProto>,
         metrics: Arc<Metrics>,
         #[cfg(not(wasm_browser))] socket_state: SocketState,
+        #[cfg(any(test, feature = "test-utils"))] insecure_skip_relay_cert_verify: bool,
     ) -> Self {
         let (msg_tx, msg_rx) = mpsc::channel(32);
         let addr = Addr {
@@ -133,6 +134,8 @@ impl Client {
             #[cfg(not(wasm_browser))]
             hairpin_actor: hairpin::Client::new(net_report, addr),
             metrics,
+            #[cfg(any(test, feature = "test-utils"))]
+            insecure_skip_relay_cert_verify,
         };
         let task =
             task::spawn(async move { actor.run().await }.instrument(info_span!("reportgen.actor")));
@@ -214,6 +217,8 @@ struct Actor {
     #[cfg(not(wasm_browser))]
     hairpin_actor: hairpin::Client,
     metrics: Arc<Metrics>,
+    #[cfg(any(test, feature = "test-utils"))]
+    insecure_skip_relay_cert_verify: bool,
 }
 
 impl Actor {
@@ -626,6 +631,8 @@ impl Actor {
                         pinger,
                         #[cfg(not(wasm_browser))]
                         socket_state,
+                        #[cfg(any(test, feature = "test-utils"))]
+                        self.insecure_skip_relay_cert_verify,
                     )
                     .instrument(debug_span!("run_probe", %probe)),
                 );
@@ -751,6 +758,7 @@ pub struct QuicConfig {
 /// Executes a particular [`Probe`], including using a delayed start if needed.
 ///
 /// If *stun_sock4* and *stun_sock6* are `None` the STUN probes are disabled.
+#[allow(clippy::too_many_arguments)]
 async fn run_probe(
     reportstate: Addr,
     relay_node: Arc<RelayNode>,
@@ -759,6 +767,7 @@ async fn run_probe(
     metrics: Arc<Metrics>,
     #[cfg(not(wasm_browser))] pinger: Pinger,
     #[cfg(not(wasm_browser))] socket_state: SocketState,
+    #[cfg(any(test, feature = "test-utils"))] insecure_skip_relay_cert_verify: bool,
 ) -> Result<ProbeReport, ProbeError> {
     if !probe.delay().is_zero() {
         trace!("delaying probe");
@@ -829,7 +838,8 @@ async fn run_probe(
                 #[cfg(not(wasm_browser))]
                 &socket_state.dns_resolver,
                 node,
-                None,
+                #[cfg(any(test, feature = "test-utils"))]
+                insecure_skip_relay_cert_verify,
             )
             .await
             {
@@ -1274,7 +1284,7 @@ async fn run_icmp_probe(
 async fn measure_https_latency(
     #[cfg(not(wasm_browser))] dns_resolver: &DnsResolver,
     node: &RelayNode,
-    certs: Option<Vec<rustls::pki_types::CertificateDer<'static>>>,
+    #[cfg(any(test, feature = "test-utils"))] insecure_skip_relay_cert_verify: bool,
 ) -> Result<(Duration, IpAddr)> {
     let url = node.url.join(RELAY_PROBE_PATH)?;
 
@@ -1305,13 +1315,9 @@ async fn measure_https_latency(
         builder = builder.resolve_to_addrs(domain, &addrs);
     }
 
-    #[cfg(not(wasm_browser))]
-    if let Some(certs) = certs {
-        for cert in certs {
-            let cert = reqwest::Certificate::from_der(&cert)?;
-            builder = builder.add_root_certificate(cert);
-        }
-    }
+    #[cfg(all(not(wasm_browser), any(test, feature = "test-utils")))]
+    let builder = builder.danger_accept_invalid_certs(insecure_skip_relay_cert_verify);
+
     let client = builder.build()?;
 
     let start = Instant::now();
@@ -1701,11 +1707,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_measure_https_latency() -> TestResult {
-        let (server, relay) = test_utils::relay().await;
+        let (_server, relay) = test_utils::relay().await;
         let dns_resolver = dns::tests::resolver();
         tracing::info!(relay_url = ?relay.url , "RELAY_URL");
-        let (latency, ip) =
-            measure_https_latency(&dns_resolver, &relay, server.certificates()).await?;
+        let (latency, ip) = measure_https_latency(&dns_resolver, &relay, true).await?;
 
         assert!(latency > Duration::ZERO);
 

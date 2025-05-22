@@ -489,10 +489,9 @@ mod tests {
         }
     }
 
-    // #[tokio::test(flavor = "multi_thread")]
     #[tokio::test]
     async fn test_limiter() -> Result<()> {
-        tracing_subscriber::fmt::try_init().ok();
+        // tracing_subscriber::fmt::try_init().ok();
         let e1 = Endpoint::builder()
             .relay_mode(RelayMode::Disabled)
             .bind()
@@ -521,10 +520,8 @@ mod tests {
         Ok(())
     }
 
-    // #[tokio::test(flavor = "multi_thread")]
     #[tokio::test]
     async fn test_graceful_shutdown() -> TestResult {
-        tracing_subscriber::fmt::try_init().ok();
         #[derive(Debug, Clone, Default)]
         struct TestProtocol {
             connections: Arc<Mutex<Vec<Connection>>>,

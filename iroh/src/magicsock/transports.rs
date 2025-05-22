@@ -330,9 +330,7 @@ impl UdpSender {
 
         match destination {
             #[cfg(wasm_browser)]
-            Addr::Ip(..) => {
-                return Poll::Ready(Err(io::Error::other("IP is unsupported in browser")))
-            }
+            Addr::Ip(..) => return Err(io::Error::other("IP is unsupported in browser")),
             #[cfg(not(wasm_browser))]
             Addr::Ip(addr) => {
                 for sender in &self.ip {

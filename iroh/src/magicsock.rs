@@ -1358,19 +1358,18 @@ impl Handle {
         let network_monitor = netmon::Monitor::new().await?;
         let qad_endpoint = endpoint.clone();
 
-        // create a client config for the endpoint to use for QUIC address discovery
-        let root_store =
-            rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-        let client_config = rustls::client::ClientConfig::builder_with_provider(Arc::new(
-            rustls::crypto::ring::default_provider(),
-        ))
-        .with_safe_default_protocol_versions()
-        .expect("ring supports these")
-        .with_root_certificates(root_store)
-        .with_no_client_auth();
+        #[cfg(any(test, feature = "test-utils"))]
+        let client_config = if insecure_skip_relay_cert_verify {
+            iroh_relay::client::make_dangerous_client_config()
+        } else {
+            default_quic_client_config()
+        };
+        #[cfg(not(any(test, feature = "test-utils")))]
+        let client_config = default_quic_client_config();
 
+        let net_report_config = net_report::Options::default();
         #[cfg(not(wasm_browser))]
-        let net_report_config = net_report::Options::default()
+        let net_report_config = net_report_config
             .stun_v4(Some(v4_socket))
             .stun_v6(v6_socket)
             .quic_config(Some(QuicConfig {
@@ -1379,8 +1378,10 @@ impl Handle {
                 ipv4: true,
                 ipv6,
             }));
-        #[cfg(wasm_browser)]
-        let net_report_config = net_report::Options::default();
+
+        #[cfg(any(test, feature = "test-utils"))]
+        let net_report_config =
+            net_report_config.insecure_skip_relay_cert_verify(insecure_skip_relay_cert_verify);
 
         let actor = Actor {
             msg_receiver: actor_receiver,
@@ -1484,6 +1485,19 @@ impl Handle {
         }
         trace!("magicsock closed");
     }
+}
+
+fn default_quic_client_config() -> rustls::ClientConfig {
+    // create a client config for the endpoint to use for QUIC address discovery
+    let root_store =
+        rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    rustls::client::ClientConfig::builder_with_provider(Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .expect("ring supports these")
+    .with_root_certificates(root_store)
+    .with_no_client_auth()
 }
 
 #[derive(Debug, Default)]
@@ -3185,7 +3199,7 @@ mod tests {
             dns_resolver,
             proxy_url: None,
             server_config,
-            insecure_skip_relay_cert_verify: true,
+            insecure_skip_relay_cert_verify: false,
             path_selection: PathSelection::default(),
             metrics: Default::default(),
         };
