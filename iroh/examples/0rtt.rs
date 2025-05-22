@@ -86,13 +86,14 @@ async fn connect(args: Args) -> anyhow::Result<()> {
         } else {
             pingpong_0rtt(connecting, i).await?
         };
-        tokio::spawn(async move {
-            // wait for some time for the handshake to complete and the server
-            // to send a NewSessionTicket. This is less than ideal, but we
-            // don't have a better way to wait for the handshake to complete.
-            tokio::time::sleep(connection.rtt() * 2).await;
-            connection.close(0u8.into(), b"done");
-        });
+        // tokio::spawn(async move {
+        //     // wait for some time for the handshake to complete and the server
+        //     // to send a NewSessionTicket. This is less than ideal, but we
+        //     // don't have a better way to wait for the handshake to complete.
+        //     tokio::time::sleep(connection.rtt() * 2).await;
+        //     connection.close(0u8.into(), b"done");
+        // });
+        connection.close(0u8.into(), b"done");
         let elapsed = t0.elapsed();
         debug!("round {}: {} us", i, elapsed.as_micros());
     }
@@ -125,28 +126,38 @@ async fn accept(_args: Args) -> anyhow::Result<()> {
     println!("Listening on: {:?}", addr);
     println!("Node ID: {:?}", addr.node_id);
     println!("Ticket: {}", NodeTicket::from(addr));
-    while let Some(incoming) = endpoint.accept().await {
-        tokio::spawn(async move {
-            let connecting = incoming.accept()?;
-            let connection = match connecting.into_0rtt() {
-                Ok((connection, _)) => {
-                    debug!("0rtt accepted");
-                    connection
-                }
-                Err(connecting) => {
-                    debug!("0rtt denied");
-                    connecting.await?
-                }
-            };
-            let (mut send, mut recv) = connection.accept_bi().await?;
-            trace!("recv.is_0rtt: {}", recv.is_0rtt());
-            let data = recv.read_to_end(8).await?;
-            trace!("recv: {}", data.len());
-            send.write_all(&data).await?;
-            send.finish()?;
-            connection.closed().await;
-            anyhow::Ok(())
-        });
+    let accept = async move {
+        while let Some(incoming) = endpoint.accept().await {
+            tokio::spawn(async move {
+                let connecting = incoming.accept()?;
+                let connection = match connecting.into_0rtt() {
+                    Ok((connection, _)) => {
+                        debug!("0rtt accepted");
+                        connection
+                    }
+                    Err(connecting) => {
+                        debug!("0rtt denied");
+                        connecting.await?
+                    }
+                };
+                let (mut send, mut recv) = connection.accept_bi().await?;
+                trace!("recv.is_0rtt: {}", recv.is_0rtt());
+                let data = recv.read_to_end(8).await?;
+                trace!("recv: {}", data.len());
+                send.write_all(&data).await?;
+                send.finish()?;
+                connection.closed().await;
+                anyhow::Ok(())
+            });
+        }
+    };
+    tokio::select! {
+        _ = accept => {
+            info!("accept finished, shutting down");
+        },
+        _ = tokio::signal::ctrl_c()=> {
+            info!("Ctrl-C received, shutting down");
+        }
     }
     Ok(())
 }

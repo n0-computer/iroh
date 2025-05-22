@@ -124,7 +124,6 @@ impl TlsConfig {
         .expect("fixed config")
         .with_client_cert_verifier(self.client_verifier.clone())
         .with_cert_resolver(self.cert_resolver.clone());
-        crypto.send_tls13_tickets = 4;
         crypto.alpn_protocols = alpn_protocols;
         if keylog {
             warn!("enabling SSLKEYLOGFILE for TLS pre-master keys");
