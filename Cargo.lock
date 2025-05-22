@@ -2404,7 +2404,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn"
 version = "0.13.0"
-source = "git+https://github.com/n0-computer/quinn?branch=matheus23/mut-self#ed27c9818c4c30521b97ce9cfbb318c05050a1d5"
+source = "git+https://github.com/n0-computer/quinn?branch=matheus23/mut-self#ada30059656cdd316949394d34549d2285f878b6"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2423,7 +2423,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-proto"
 version = "0.13.0"
-source = "git+https://github.com/n0-computer/quinn?branch=matheus23/mut-self#ed27c9818c4c30521b97ce9cfbb318c05050a1d5"
+source = "git+https://github.com/n0-computer/quinn?branch=matheus23/mut-self#ada30059656cdd316949394d34549d2285f878b6"
 dependencies = [
  "bytes",
  "getrandom 0.2.16",
@@ -2443,7 +2443,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-udp"
 version = "0.5.7"
-source = "git+https://github.com/n0-computer/quinn?branch=matheus23/mut-self#ed27c9818c4c30521b97ce9cfbb318c05050a1d5"
+source = "git+https://github.com/n0-computer/quinn?branch=matheus23/mut-self#ada30059656cdd316949394d34549d2285f878b6"
 dependencies = [
  "cfg_aliases",
  "libc",
@@ -5498,7 +5498,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
