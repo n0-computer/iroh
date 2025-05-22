@@ -510,7 +510,10 @@ impl MagicSock {
                     self.ipv6_reported.load(Ordering::Relaxed),
                     &self.metrics.magicsock,
                 ) {
-                    Some((node_id, udp_addr, relay_url)) => {
+                    Some((node_id, udp_addr, relay_url, ping_actions)) => {
+                        self.actor_sender
+                            .try_send(ActorMessage::PingActions(ping_actions))
+                            .ok();
                         if let Some(addr) = udp_addr {
                             active_paths.push(transports::Addr::from(addr));
                         }
@@ -1611,6 +1614,7 @@ impl AsyncUdpSocket for MagicUdpSocket {
 #[derive(Debug)]
 enum ActorMessage {
     Shutdown,
+    PingActions(Vec<PingAction>),
     EndpointPingExpired(usize, stun_rs::TransactionId),
     NetReport(Result<Option<Arc<net_report::Report>>>, &'static str),
     NetworkChange,
@@ -1756,7 +1760,7 @@ impl Actor {
 
                     trace!(?msg, "tick: msg");
                     self.msock.metrics.magicsock.actor_tick_msg.inc();
-                    if self.handle_actor_message(msg).await {
+                    if self.handle_actor_message(msg, &sender).await {
                         return Ok(());
                     }
                 }
@@ -1883,7 +1887,7 @@ impl Actor {
     /// Processes an incoming actor message.
     ///
     /// Returns `true` if it was a shutdown.
-    async fn handle_actor_message(&mut self, msg: ActorMessage) -> bool {
+    async fn handle_actor_message(&mut self, msg: ActorMessage, sender: &UdpSender) -> bool {
         match msg {
             ActorMessage::Shutdown => {
                 debug!("shutting down");
@@ -1918,6 +1922,9 @@ impl Actor {
             #[cfg(test)]
             ActorMessage::ForceNetworkChange(is_major) => {
                 self.handle_network_change(is_major);
+            }
+            ActorMessage::PingActions(ping_actions) => {
+                self.handle_ping_actions(sender, ping_actions).await;
             }
         }
 

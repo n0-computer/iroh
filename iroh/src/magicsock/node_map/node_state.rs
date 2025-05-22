@@ -570,16 +570,20 @@ impl NodeState {
     ///
     /// The caller is responsible for sending the messages.
     #[must_use = "actions must be handled"]
-    fn send_call_me_maybe(&mut self, now: Instant) -> Vec<PingAction> {
-        let had_recent_call_me_maybe = self
-            .last_call_me_maybe
-            .map(|when| when.elapsed() < HEARTBEAT_INTERVAL)
-            .unwrap_or(false);
-        if had_recent_call_me_maybe {
-            trace!("skipping call-me-maybe, still recent");
-            return Vec::new();
+    fn send_call_me_maybe(&mut self, now: Instant, always: SendCallMeMaybe) -> Vec<PingAction> {
+        match always {
+            SendCallMeMaybe::Always => (),
+            SendCallMeMaybe::IfNoRecent => {
+                let had_recent_call_me_maybe = self
+                    .last_call_me_maybe
+                    .map(|when| when.elapsed() < HEARTBEAT_INTERVAL)
+                    .unwrap_or(false);
+                if had_recent_call_me_maybe {
+                    trace!("skipping call-me-maybe, still recent");
+                    return Vec::new();
+                }
+            }
         }
-
         // We send pings regardless of whether we have a RelayUrl.  If we were given any
         // direct address paths to contact but no RelayUrl, we still need to send a DISCO
         // ping to the direct address paths so that the other node will learn about us and
@@ -1125,7 +1129,7 @@ impl NodeState {
         // If we do not have an optimal addr, send pings to all known places.
         if self.want_call_me_maybe(&now) {
             debug!("sending a call-me-maybe");
-            return self.send_call_me_maybe(now);
+            return self.send_call_me_maybe(now, SendCallMeMaybe::Always);
         }
 
         // Send heartbeat ping to keep the current addr going as long as we need it.
@@ -1162,7 +1166,7 @@ impl NodeState {
         &mut self,
         have_ipv6: bool,
         metrics: &MagicsockMetrics,
-    ) -> (Option<SocketAddr>, Option<RelayUrl>) {
+    ) -> (Option<SocketAddr>, Option<RelayUrl>, Vec<PingAction>) {
         let now = Instant::now();
         let prev = self.last_used.replace(now);
         if prev.is_none() {
@@ -1170,10 +1174,14 @@ impl NodeState {
             metrics.nodes_contacted.inc();
         }
         let (udp_addr, relay_url) = self.addr_for_send(&now, have_ipv6, metrics);
+        trace!(?udp_addr, ?relay_url, "found send address");
 
-        trace!(?udp_addr, ?relay_url, "found send address",);
-
-        (udp_addr, relay_url)
+        let ping_actions = if self.want_call_me_maybe(&now) {
+            self.send_call_me_maybe(now, SendCallMeMaybe::IfNoRecent)
+        } else {
+            Vec::new()
+        };
+        (udp_addr, relay_url, ping_actions)
     }
 
     /// Get the direct addresses for this endpoint.
@@ -1205,6 +1213,16 @@ impl From<RemoteInfo> for NodeAddr {
             direct_addresses,
         }
     }
+}
+
+/// Whether to send a call-me-maybe message after sending pings to all known paths.
+///
+/// `IfNoRecent` will only send a call-me-maybe if no previous one was sent in the last
+/// [`HEARTBEAT_INTERVAL`].
+#[derive(Debug)]
+enum SendCallMeMaybe {
+    Always,
+    IfNoRecent,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
