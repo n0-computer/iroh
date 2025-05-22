@@ -1746,8 +1746,8 @@
 </span><span class="kw">use </span><span class="kw">crate</span>::dns::DnsResolver;
 <span class="kw">use crate</span>::{
     magicsock::{
-        transports::relay::{RelayDatagramRecvQueue, RelayDatagramSendChannelReceiver},
-        Metrics <span class="kw">as </span>MagicsockMetrics, NetInfo, RelayContents,
+        transports::relay::RelayDatagramRecvQueue, Metrics <span class="kw">as </span>MagicsockMetrics, NetInfo,
+        RelayContents,
     },
     util::MaybeFuture,
 };
@@ -2546,7 +2546,7 @@
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">async fn </span>run(
         <span class="kw-2">mut </span><span class="self">self</span>,
         <span class="kw-2">mut </span>receiver: mpsc::Receiver&lt;RelayActorMessage&gt;,
-        <span class="kw-2">mut </span>datagram_send_channel: RelayDatagramSendChannelReceiver,
+        <span class="kw-2">mut </span>datagram_send_channel: mpsc::Receiver&lt;RelaySendItem&gt;,
     ) {
         <span class="comment">// When this future is present, it is sending pending datagrams to an
         // ActiveRelayActor.  We can not process further datagrams during this time.
