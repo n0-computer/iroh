@@ -328,30 +328,47 @@ impl UdpSender {
     ) -> io::Result<()> {
         trace!(?destination, "sending");
 
+        let mut any_match = false;
         match destination {
             #[cfg(wasm_browser)]
             Addr::Ip(..) => return Err(io::Error::other("IP is unsupported in browser")),
             #[cfg(not(wasm_browser))]
             Addr::Ip(addr) => {
                 for sender in &self.ip {
-                    if sender.is_valid_send_addr(addr)
-                        && sender.send(*addr, src, transmit).await.is_ok()
-                    {
-                        break;
+                    if sender.is_valid_send_addr(addr) {
+                        any_match = true;
+                        match sender.send(*addr, src, transmit).await {
+                            Ok(()) => {
+                                return Ok(());
+                            }
+                            Err(err) => {
+                                warn!("ip failed to send: {:?}", err);
+                            }
+                        }
                     }
                 }
             }
             Addr::Relay(url, node_id) => {
                 for sender in &self.relay {
-                    if sender.is_valid_send_addr(url, node_id)
-                        && sender.send(url.clone(), *node_id, transmit).await.is_ok()
-                    {
-                        break;
+                    if sender.is_valid_send_addr(url, node_id) {
+                        any_match = true;
+                        match sender.send(url.clone(), *node_id, transmit).await {
+                            Ok(()) => {
+                                return Ok(());
+                            }
+                            Err(err) => {
+                                warn!("relay failed to send: {:?}", err);
+                            }
+                        }
                     }
                 }
             }
         }
-        Err(io::Error::other("no transport available"))
+        if any_match {
+            Err(io::Error::other("all available transports failed"))
+        } else {
+            Err(io::Error::other("no transport available"))
+        }
     }
 
     pub(crate) fn inner_poll_send(
