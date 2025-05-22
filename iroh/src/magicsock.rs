@@ -51,6 +51,7 @@ use tracing::{
     debug, error, error_span, event, info, info_span, instrument, trace, trace_span, warn,
     Instrument, Level, Span,
 };
+use transports::LocalAddrsWatch;
 use url::Url;
 
 #[cfg(not(wasm_browser))]
@@ -191,9 +192,6 @@ pub(crate) struct MagicSock {
     /// Encryption key for this node.
     secret_encryption_key: crypto_box::SecretKey,
 
-    /// Transports, IP and Relay
-    transports: Transports,
-
     /// Close is in progress (or done)
     closing: AtomicBool,
     /// Close was called.
@@ -238,6 +236,9 @@ pub(crate) struct MagicSock {
     discovery_subscribers: DiscoverySubscribers,
 
     pub(crate) metrics: EndpointMetrics,
+
+    local_addrs_watch: LocalAddrsWatch,
+    ip_bind_addrs: Vec<SocketAddr>,
 }
 
 impl MagicSock {
@@ -273,7 +274,17 @@ impl MagicSock {
 
     /// Get the cached version of addresses.
     pub(crate) fn local_addr(&self) -> Vec<transports::Addr> {
-        self.transports.local_addrs()
+        self.local_addrs_watch.get().expect("disconnected")
+    }
+
+    fn ip_bind_addrs(&self) -> &[SocketAddr] {
+        &self.ip_bind_addrs
+    }
+
+    fn ip_local_addrs(&self) -> impl Iterator<Item = SocketAddr> {
+        self.local_addr()
+            .into_iter()
+            .filter_map(|addr| SocketAddr::try_from(addr).ok())
     }
 
     /// Returns `true` if we have at least one candidate address where we can send packets to.
@@ -335,7 +346,7 @@ impl MagicSock {
     /// Note that this can be used to wait for the initial home relay to be known using
     /// [`Watcher::initialized`].
     pub(crate) fn home_relay(&self) -> impl Watcher<Value = Vec<RelayUrl>> + '_ {
-        let res = self.transports.local_addrs_watch().map(|addrs| {
+        let res = self.local_addrs_watch.clone().map(|addrs| {
             addrs
                 .into_iter()
                 .filter_map(|addr| {
@@ -452,8 +463,9 @@ impl MagicSock {
     #[cfg_attr(windows, allow(dead_code))]
     fn normalized_local_addr(&self) -> io::Result<SocketAddr> {
         let addrs: Vec<_> = self
-            .transports
-            .local_addrs()
+            .local_addrs_watch
+            .get()
+            .expect("disconnected")
             .into_iter()
             .filter_map(|addr| SocketAddr::try_from(addr).ok())
             .collect();
@@ -551,32 +563,6 @@ impl MagicSock {
         }
 
         Ok(active_paths)
-    }
-
-    /// NOTE: Receiving on a [`Self::closed`] socket will return [`Poll::Pending`] indefinitely.
-    #[instrument(skip_all)]
-    fn poll_recv(
-        &self,
-        cx: &mut Context,
-        bufs: &mut [io::IoSliceMut<'_>],
-        metas: &mut [quinn_udp::RecvMeta],
-    ) -> Poll<io::Result<usize>> {
-        debug_assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
-        if self.is_closed() {
-            return Poll::Pending;
-        }
-
-        let mut source_addrs = vec![transports::Addr::default(); metas.len()];
-        match self
-            .transports
-            .poll_recv(cx, bufs, metas, &mut source_addrs)?
-        {
-            Poll::Pending | Poll::Ready(0) => Poll::Pending,
-            Poll::Ready(n) => {
-                self.process_datagrams(&mut bufs[..n], &mut metas[..n], &source_addrs[..n]);
-                Poll::Ready(Ok(n))
-            }
-        }
     }
 
     /// Process datagrams received from UDP sockets.
@@ -1302,7 +1288,6 @@ impl Handle {
             me,
             secret_key,
             secret_encryption_key,
-            transports,
             closing: AtomicBool::new(false),
             closed: AtomicBool::new(false),
             actor_sender: actor_sender.clone(),
@@ -1323,6 +1308,8 @@ impl Handle {
             dns_resolver,
             discovery_subscribers: DiscoverySubscribers::new(),
             metrics,
+            local_addrs_watch: transports.local_addrs_watch(),
+            ip_bind_addrs: transports.ip_bind_addrs(),
         });
 
         let mut endpoint_config = quinn::EndpointConfig::default();
@@ -1333,11 +1320,17 @@ impl Handle {
         // the packet if grease_quic_bit is set to false.
         endpoint_config.grease_quic_bit(false);
 
+        let sender1 = transports.create_sender(msock.clone());
+        let sender2 = transports.create_sender(msock.clone());
+        let local_addrs_watch = transports.local_addrs_watch();
+        let network_change_sender = transports.create_network_change_sender();
+
         let endpoint = quinn::Endpoint::new_with_abstract_socket(
             endpoint_config,
             Some(server_config),
             Box::new(MagicUdpSocket {
                 socket: msock.clone(),
+                transports,
             }),
             #[cfg(not(wasm_browser))]
             Arc::new(quinn::TokioRuntime),
@@ -1350,10 +1343,9 @@ impl Handle {
         #[cfg(not(wasm_browser))]
         let _ = actor_tasks.spawn({
             let msock = msock.clone();
-            let sender = msock.transports.create_sender(msock.clone());
             async move {
                 while let Some((dst, dst_key, msg)) = disco_receiver.recv().await {
-                    if let Err(err) = msock.send_disco_message(&sender, dst.clone(), dst_key, msg).await {
+                    if let Err(err) = msock.send_disco_message(&sender1, dst.clone(), dst_key, msg).await {
                         warn!(%dst, node = %dst_key.fmt_short(), ?err, "failed to send disco message (UDP)");
                     }
                 }
@@ -1400,10 +1392,11 @@ impl Handle {
             net_reporter,
             network_monitor,
             net_report_config,
+            network_change_sender,
         };
         actor_tasks.spawn(
             async move {
-                if let Err(err) = actor.run().await {
+                if let Err(err) = actor.run(local_addrs_watch, sender2).await {
                     warn!("relay handler errored: {:?}", err);
                 }
             }
@@ -1556,11 +1549,12 @@ enum DiscoBoxError {
 #[derive(Debug)]
 struct MagicUdpSocket {
     socket: Arc<MagicSock>,
+    transports: Transports,
 }
 
 impl AsyncUdpSocket for MagicUdpSocket {
     fn create_sender(&self) -> Pin<Box<dyn quinn::UdpSender>> {
-        Box::pin(self.socket.transports.create_sender(self.socket.clone()))
+        Box::pin(self.transports.create_sender(self.socket.clone()))
     }
 
     /// NOTE: Receiving on a closed socket will return [`Poll::Pending`] indefinitely.
@@ -1570,13 +1564,12 @@ impl AsyncUdpSocket for MagicUdpSocket {
         bufs: &mut [io::IoSliceMut<'_>],
         metas: &mut [quinn_udp::RecvMeta],
     ) -> Poll<io::Result<usize>> {
-        self.socket.poll_recv(cx, bufs, metas)
+        self.transports.poll_recv(cx, bufs, metas, &self.socket)
     }
 
     #[cfg(not(wasm_browser))]
     fn local_addr(&self) -> io::Result<SocketAddr> {
         let addrs: Vec<_> = self
-            .socket
             .transports
             .local_addrs()
             .into_iter()
@@ -1605,11 +1598,11 @@ impl AsyncUdpSocket for MagicUdpSocket {
     }
 
     fn max_receive_segments(&self) -> usize {
-        self.socket.transports.max_receive_segments()
+        self.transports.max_receive_segments()
     }
 
     fn may_fragment(&self) -> bool {
-        self.socket.transports.may_fragment()
+        self.transports.may_fragment()
     }
 }
 
@@ -1648,6 +1641,7 @@ struct Actor {
     net_reporter: net_report::Client,
 
     network_monitor: netmon::Monitor,
+    network_change_sender: transports::NetworkChangeSender,
 }
 
 #[cfg(not(wasm_browser))]
@@ -1701,7 +1695,11 @@ fn bind_ip(
 }
 
 impl Actor {
-    async fn run(mut self) -> Result<()> {
+    async fn run(
+        mut self,
+        mut watcher: impl Watcher<Value = Vec<transports::Addr>> + Send + Sync,
+        sender: UdpSender,
+    ) -> Result<()> {
         // Setup network monitoring
         let (link_change_s, mut link_change_r) = mpsc::channel(8);
         let _token = self
@@ -1733,10 +1731,6 @@ impl Actor {
         #[cfg_attr(wasm_browser, allow(unused_mut))]
         let mut portmap_watcher_closed = false;
         let mut link_change_closed = false;
-
-        let mut watcher = self.msock.transports.local_addrs_watch();
-
-        let sender = self.msock.transports.create_sender(self.msock.clone());
 
         loop {
             self.msock.metrics.magicsock.actor_tick_main.inc();
@@ -1866,7 +1860,7 @@ impl Actor {
         debug!("link change detected: major? {}", is_major);
 
         if is_major {
-            if let Err(err) = self.msock.transports.rebind() {
+            if let Err(err) = self.network_change_sender.rebind() {
                 warn!("failed to rebind transports: {:?}", err);
             }
 
@@ -1987,18 +1981,13 @@ impl Actor {
                 // port locally, assume they might've added a static
                 // port mapping on their router to the same explicit
                 // port that we are running with. Worst case it's an invalid candidate mapping.
-                let port = self
-                    .msock
-                    .transports
-                    .ip_bind_addrs()
-                    .into_iter()
-                    .find_map(|addr| {
-                        if addr.port() != 0 {
-                            Some(addr.port())
-                        } else {
-                            None
-                        }
-                    });
+                let port = self.msock.ip_bind_addrs().iter().find_map(|addr| {
+                    if addr.port() != 0 {
+                        Some(addr.port())
+                    } else {
+                        None
+                    }
+                });
 
                 if let Some(port) = port {
                     if net_report_report
@@ -2020,12 +2009,12 @@ impl Actor {
             }
         }
 
-        let local_addrs: Vec<_> = self
+        let local_addrs: Vec<(SocketAddr, SocketAddr)> = self
             .msock
-            .transports
             .ip_bind_addrs()
-            .into_iter()
-            .zip(self.msock.transports.ip_local_addrs())
+            .iter()
+            .copied()
+            .zip(self.msock.ip_local_addrs())
             .collect();
 
         let msock = self.msock.clone();
@@ -2248,7 +2237,7 @@ impl Actor {
             }
 
             // Notify all transports
-            self.msock.transports.on_network_change(&ni);
+            self.network_change_sender.on_network_change(&ni);
 
             // TODO: set link type
             self.call_net_info_callback(ni).await;

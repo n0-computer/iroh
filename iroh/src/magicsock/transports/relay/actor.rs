@@ -61,10 +61,7 @@ use url::Url;
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
 use crate::{
-    magicsock::{
-        transports::relay::RelayDatagramRecvQueue, Metrics as MagicsockMetrics, NetInfo,
-        RelayContents,
-    },
+    magicsock::{Metrics as MagicsockMetrics, NetInfo, RelayContents},
     util::MaybeFuture,
 };
 
@@ -138,7 +135,7 @@ struct ActiveRelayActor {
     /// Inbox for messages which involve sending to the relay server.
     inbox: mpsc::Receiver<ActiveRelayMessage>,
     /// Queue for received relay datagrams.
-    relay_datagrams_recv: Arc<RelayDatagramRecvQueue>,
+    relay_datagrams_recv: mpsc::Sender<RelayRecvDatagram>,
     /// Channel on which we queue packets to send to the relay.
     relay_datagrams_send: mpsc::Receiver<RelaySendItem>,
 
@@ -200,7 +197,7 @@ struct ActiveRelayActorOptions {
     prio_inbox_: mpsc::Receiver<ActiveRelayPrioMessage>,
     inbox: mpsc::Receiver<ActiveRelayMessage>,
     relay_datagrams_send: mpsc::Receiver<RelaySendItem>,
-    relay_datagrams_recv: Arc<RelayDatagramRecvQueue>,
+    relay_datagrams_recv: mpsc::Sender<RelayRecvDatagram>,
     connection_opts: RelayConnectionOptions,
     stop_token: CancellationToken,
     metrics: Arc<MagicsockMetrics>,
@@ -813,11 +810,7 @@ pub(crate) struct RelaySendItem {
 pub(super) struct RelayActor {
     config: Config,
     /// Queue on which to put received datagrams.
-    ///
-    /// [`AsyncUdpSocket::poll_recv`] will read from this queue.
-    ///
-    /// [`AsyncUdpSocket::poll_recv`]: quinn::AsyncUdpSocket::poll_recv
-    relay_datagram_recv_queue: Arc<RelayDatagramRecvQueue>,
+    relay_datagram_recv_queue: mpsc::Sender<RelayRecvDatagram>,
     /// The actors managing each currently used relay server.
     ///
     /// These actors will exit when they have any inactivity.  Otherwise they will keep
@@ -847,7 +840,7 @@ pub struct Config {
 impl RelayActor {
     pub(super) fn new(
         config: Config,
-        relay_datagram_recv_queue: Arc<RelayDatagramRecvQueue>,
+        relay_datagram_recv_queue: mpsc::Sender<RelayRecvDatagram>,
     ) -> Self {
         let cancel_token = CancellationToken::new();
         Self {
@@ -1330,7 +1323,6 @@ impl Iterator for PacketSplitIter {
 mod tests {
     use anyhow::Context;
     use iroh_base::SecretKey;
-    use n0_future::future;
     use smallvec::smallvec;
     use testresult::TestResult;
     use tokio_util::task::AbortOnDropHandle;
@@ -1380,7 +1372,7 @@ mod tests {
         prio_inbox_rx: mpsc::Receiver<ActiveRelayPrioMessage>,
         inbox_rx: mpsc::Receiver<ActiveRelayMessage>,
         relay_datagrams_send: mpsc::Receiver<RelaySendItem>,
-        relay_datagrams_recv: Arc<RelayDatagramRecvQueue>,
+        relay_datagrams_recv: mpsc::Sender<RelayRecvDatagram>,
         span: tracing::Span,
     ) -> AbortOnDropHandle<anyhow::Result<()>> {
         let opts = ActiveRelayActorOptions {
@@ -1411,7 +1403,7 @@ mod tests {
     /// [`ActiveRelayNode`] under test to check connectivity works.
     fn start_echo_node(relay_url: RelayUrl) -> (NodeId, AbortOnDropHandle<()>) {
         let secret_key = SecretKey::from_bytes(&[8u8; 32]);
-        let recv_datagram_queue = Arc::new(RelayDatagramRecvQueue::new());
+        let (recv_datagram_tx, mut recv_datagram_rx) = mpsc::channel(16);
         let (send_datagram_tx, send_datagram_rx) = mpsc::channel(16);
         let (prio_inbox_tx, prio_inbox_rx) = mpsc::channel(8);
         let (inbox_tx, inbox_rx) = mpsc::channel(16);
@@ -1423,15 +1415,15 @@ mod tests {
             prio_inbox_rx,
             inbox_rx,
             send_datagram_rx,
-            recv_datagram_queue.clone(),
+            recv_datagram_tx,
             info_span!("echo-node"),
         );
         let echo_task = tokio::spawn({
             let relay_url = relay_url.clone();
             async move {
                 loop {
-                    let datagram = future::poll_fn(|cx| recv_datagram_queue.poll_recv(cx)).await;
-                    if let Ok(recv) = datagram {
+                    let datagram = recv_datagram_rx.recv().await;
+                    if let Some(recv) = datagram {
                         let RelayRecvDatagram { url: _, src, buf } = recv;
                         info!(from = src.fmt_short(), "Received datagram");
                         let send = RelaySendItem {
@@ -1469,7 +1461,7 @@ mod tests {
     async fn send_recv_echo(
         item: RelaySendItem,
         tx: &mpsc::Sender<RelaySendItem>,
-        rx: &Arc<RelayDatagramRecvQueue>,
+        rx: &mut mpsc::Receiver<RelayRecvDatagram>,
     ) -> Result<()> {
         assert!(item.datagrams.len() == 1);
         tokio::time::timeout(Duration::from_secs(10), async move {
@@ -1480,7 +1472,7 @@ mod tests {
                         url: _,
                         src: _,
                         buf,
-                    } = future::poll_fn(|cx| rx.poll_recv(cx)).await?;
+                    } = rx.recv().await.unwrap();
 
                     assert_eq!(buf.as_ref(), item.datagrams[0]);
 
@@ -1504,7 +1496,7 @@ mod tests {
         let (peer_node, _echo_node_task) = start_echo_node(relay_url.clone());
 
         let secret_key = SecretKey::from_bytes(&[1u8; 32]);
-        let datagram_recv_queue = Arc::new(RelayDatagramRecvQueue::new());
+        let (datagram_recv_tx, mut datagram_recv_rx) = mpsc::channel(16);
         let (send_datagram_tx, send_datagram_rx) = mpsc::channel(16);
         let (_prio_inbox_tx, prio_inbox_rx) = mpsc::channel(8);
         let (inbox_tx, inbox_rx) = mpsc::channel(16);
@@ -1516,7 +1508,7 @@ mod tests {
             prio_inbox_rx,
             inbox_rx,
             send_datagram_rx,
-            datagram_recv_queue.clone(),
+            datagram_recv_tx.clone(),
             info_span!("actor-under-test"),
         );
 
@@ -1530,7 +1522,7 @@ mod tests {
         send_recv_echo(
             hello_send_item.clone(),
             &send_datagram_tx,
-            &datagram_recv_queue,
+            &mut datagram_recv_rx,
         )
         .await?;
 
@@ -1554,7 +1546,7 @@ mod tests {
         send_recv_echo(
             hello_send_item.clone(),
             &send_datagram_tx,
-            &datagram_recv_queue,
+            &mut datagram_recv_rx,
         )
         .await?;
 
@@ -1573,7 +1565,7 @@ mod tests {
         send_recv_echo(
             hello_send_item.clone(),
             &send_datagram_tx,
-            &datagram_recv_queue,
+            &mut datagram_recv_rx,
         )
         .await?;
 
@@ -1590,7 +1582,7 @@ mod tests {
         let (_relay_map, relay_url, _server) = test_utils::run_relay_server().await?;
 
         let secret_key = SecretKey::from_bytes(&[1u8; 32]);
-        let datagram_recv_queue = Arc::new(RelayDatagramRecvQueue::new());
+        let (datagram_recv_tx, _datagram_recv_rx) = mpsc::channel(16);
         let (_send_datagram_tx, send_datagram_rx) = mpsc::channel(16);
         let (_prio_inbox_tx, prio_inbox_rx) = mpsc::channel(8);
         let (inbox_tx, inbox_rx) = mpsc::channel(16);
@@ -1602,7 +1594,7 @@ mod tests {
             prio_inbox_rx,
             inbox_rx,
             send_datagram_rx,
-            datagram_recv_queue.clone(),
+            datagram_recv_tx,
             info_span!("actor-under-test"),
         );
 

@@ -8,7 +8,7 @@ use std::{
 
 use iroh_base::{NodeId, RelayUrl};
 use n0_watcher::Watcher;
-use relay::RelaySender;
+use relay::{RelayNetworkChangeSender, RelaySender};
 use smallvec::SmallVec;
 use tracing::{error, trace, warn};
 
@@ -17,9 +17,9 @@ mod ip;
 mod relay;
 
 #[cfg(not(wasm_browser))]
-use self::ip::IpSender;
-#[cfg(not(wasm_browser))]
 pub(crate) use self::ip::IpTransport;
+#[cfg(not(wasm_browser))]
+use self::ip::{IpNetworkChangeSender, IpSender};
 pub(crate) use self::relay::{RelayActorConfig, RelayTransport};
 use super::{MagicSock, NetInfo};
 
@@ -33,6 +33,17 @@ pub(crate) struct Transports {
 
     poll_recv_counter: AtomicUsize,
 }
+
+pub(crate) type LocalAddrsWatch = n0_watcher::Map<
+    (
+        n0_watcher::Join<SocketAddr, n0_watcher::Direct<SocketAddr>>,
+        n0_watcher::Join<
+            Option<(RelayUrl, NodeId)>,
+            n0_watcher::Map<n0_watcher::Direct<Option<RelayUrl>>, Option<(RelayUrl, NodeId)>>,
+        >,
+    ),
+    Vec<Addr>,
+>;
 
 impl Transports {
     /// Creates a new transports structure.
@@ -48,9 +59,32 @@ impl Transports {
         }
     }
 
-    /// Tries to recv data, on all available transports.
+    /// NOTE: Receiving on a [`Self::closed`] socket will return [`Poll::Pending`] indefinitely.
     pub(crate) fn poll_recv(
-        &self,
+        &mut self,
+        cx: &mut Context,
+        bufs: &mut [io::IoSliceMut<'_>],
+        metas: &mut [quinn_udp::RecvMeta],
+        msock: &MagicSock,
+    ) -> Poll<io::Result<usize>> {
+        debug_assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
+        if msock.is_closed() {
+            return Poll::Pending;
+        }
+
+        let mut source_addrs = vec![Addr::default(); metas.len()];
+        match self.inner_poll_recv(cx, bufs, metas, &mut source_addrs)? {
+            Poll::Pending | Poll::Ready(0) => Poll::Pending,
+            Poll::Ready(n) => {
+                msock.process_datagrams(&mut bufs[..n], &mut metas[..n], &source_addrs[..n]);
+                Poll::Ready(Ok(n))
+            }
+        }
+    }
+
+    /// Tries to recv data, on all available transports.
+    fn inner_poll_recv(
+        &mut self,
         cx: &mut Context,
         bufs: &mut [IoSliceMut<'_>],
         metas: &mut [quinn_udp::RecvMeta],
@@ -77,18 +111,18 @@ impl Transports {
 
         if counter % 2 == 0 {
             #[cfg(not(wasm_browser))]
-            for transport in &self.ip {
+            for transport in &mut self.ip {
                 poll_transport!(transport);
             }
-            for transport in &self.relay {
+            for transport in &mut self.relay {
                 poll_transport!(transport);
             }
         } else {
-            for transport in self.relay.iter().rev() {
+            for transport in self.relay.iter_mut().rev() {
                 poll_transport!(transport);
             }
             #[cfg(not(wasm_browser))]
-            for transport in self.ip.iter().rev() {
+            for transport in self.ip.iter_mut().rev() {
                 poll_transport!(transport);
             }
         }
@@ -106,7 +140,7 @@ impl Transports {
 
     /// Watch for all currently known local addresses.
     #[cfg(not(wasm_browser))]
-    pub(crate) fn local_addrs_watch(&self) -> impl Watcher<Value = Vec<Addr>> + Send + Sync {
+    pub(crate) fn local_addrs_watch(&self) -> LocalAddrsWatch {
         let ips = n0_watcher::Join::new(self.ip.iter().map(|t| t.local_addr_watch()));
         let relays = n0_watcher::Join::new(self.relay.iter().map(|t| t.local_addr_watch()));
 
@@ -137,12 +171,6 @@ impl Transports {
     #[cfg(not(wasm_browser))]
     pub(crate) fn ip_bind_addrs(&self) -> Vec<SocketAddr> {
         self.ip.iter().map(|t| t.bind_addr()).collect()
-    }
-
-    /// Returns the local addresses for IP based transports
-    #[cfg(not(wasm_browser))]
-    pub(crate) fn ip_local_addrs(&self) -> Vec<SocketAddr> {
-        self.ip.iter().map(|t| t.local_addr()).collect()
     }
 
     #[cfg(not(wasm_browser))]
@@ -188,12 +216,51 @@ impl Transports {
         #[cfg(not(wasm_browser))]
         let ip = self.ip.iter().map(|t| t.create_sender()).collect();
         let relay = self.relay.iter().map(|t| t.create_sender()).collect();
+        let max_transmit_segments = self.max_transmit_segments();
 
         UdpSender {
             #[cfg(not(wasm_browser))]
             ip,
             msock,
             relay,
+            max_transmit_segments,
+        }
+    }
+
+    /// Handles potential changes to the underlying network conditions.
+    pub(crate) fn create_network_change_sender(&self) -> NetworkChangeSender {
+        NetworkChangeSender {
+            #[cfg(not(wasm_browser))]
+            ip: self
+                .ip
+                .iter()
+                .map(|t| t.create_network_change_sender())
+                .collect(),
+            relay: self
+                .relay
+                .iter()
+                .map(|t| t.create_network_change_sender())
+                .collect(),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct NetworkChangeSender {
+    #[cfg(not(wasm_browser))]
+    ip: Vec<IpNetworkChangeSender>,
+    relay: Vec<RelayNetworkChangeSender>,
+}
+
+impl NetworkChangeSender {
+    pub(crate) fn on_network_change(&self, info: &NetInfo) {
+        #[cfg(not(wasm_browser))]
+        for ip in &self.ip {
+            ip.on_network_change(info);
+        }
+
+        for relay in &self.relay {
+            relay.on_network_change(info);
         }
     }
 
@@ -216,18 +283,6 @@ impl Transports {
             }
         }
         res
-    }
-
-    /// Handles potential changes to the underlying network conditions.
-    pub(crate) fn on_network_change(&self, info: &NetInfo) {
-        #[cfg(not(wasm_browser))]
-        for transport in &self.ip {
-            transport.on_network_change(info);
-        }
-
-        for transport in &self.relay {
-            transport.on_network_change(info);
-        }
     }
 }
 
@@ -317,6 +372,7 @@ pub(crate) struct UdpSender {
     #[cfg(not(wasm_browser))]
     ip: Vec<IpSender>,
     relay: Vec<RelaySender>,
+    max_transmit_segments: usize,
 }
 
 impl UdpSender {
@@ -509,7 +565,7 @@ impl quinn::UdpSender for UdpSender {
     }
 
     fn max_transmit_segments(&self) -> usize {
-        self.msock.transports.max_transmit_segments()
+        self.max_transmit_segments
     }
 
     fn try_send(self: Pin<&mut Self>, transmit: &quinn_udp::Transmit) -> io::Result<()> {

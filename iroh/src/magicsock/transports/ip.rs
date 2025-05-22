@@ -6,7 +6,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use n0_watcher::{Watchable, Watcher};
+use n0_watcher::Watchable;
 use netwatch::{UdpSender, UdpSocket};
 use pin_project::pin_project;
 use tracing::trace;
@@ -14,7 +14,7 @@ use tracing::trace;
 use super::{Addr, Transmit};
 use crate::metrics::MagicsockMetrics;
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) struct IpTransport {
     bind_addr: SocketAddr,
     socket: Arc<UdpSocket>,
@@ -42,7 +42,7 @@ impl IpTransport {
 
     /// NOTE: Receiving on a closed socket will return [`Poll::Pending`] indefinitely.
     pub(super) fn poll_recv(
-        &self,
+        &mut self,
         cx: &mut Context,
         bufs: &mut [io::IoSliceMut<'_>],
         metas: &mut [quinn_udp::RecvMeta],
@@ -60,11 +60,7 @@ impl IpTransport {
         }
     }
 
-    pub(super) fn local_addr(&self) -> SocketAddr {
-        self.local_addr.get()
-    }
-
-    pub(super) fn local_addr_watch(&self) -> impl Watcher<Value = SocketAddr> + Send {
+    pub(super) fn local_addr_watch(&self) -> n0_watcher::Direct<SocketAddr> {
         self.local_addr.watch()
     }
 
@@ -84,16 +80,11 @@ impl IpTransport {
         self.bind_addr
     }
 
-    pub(super) fn rebind(&self) -> io::Result<()> {
-        self.socket.rebind()?;
-        let addr = self.socket.local_addr()?;
-        self.local_addr.set(addr).ok();
-
-        Ok(())
-    }
-
-    pub(super) fn on_network_change(&self, _info: &crate::magicsock::NetInfo) {
-        // Nothing to do for now
+    pub(super) fn create_network_change_sender(&self) -> IpNetworkChangeSender {
+        IpNetworkChangeSender {
+            socket: self.socket.clone(),
+            local_addr: self.local_addr.clone(),
+        }
     }
 
     pub(crate) fn socket(&self) -> Arc<UdpSocket> {
@@ -107,6 +98,26 @@ impl IpTransport {
             sender,
             metrics: self.metrics.clone(),
         }
+    }
+}
+
+#[derive(Debug)]
+pub(super) struct IpNetworkChangeSender {
+    socket: Arc<UdpSocket>,
+    local_addr: Watchable<SocketAddr>,
+}
+
+impl IpNetworkChangeSender {
+    pub(super) fn rebind(&self) -> io::Result<()> {
+        self.socket.rebind()?;
+        let addr = self.socket.local_addr()?;
+        self.local_addr.set(addr).ok();
+
+        Ok(())
+    }
+
+    pub(super) fn on_network_change(&self, _info: &crate::magicsock::NetInfo) {
+        // Nothing to do for now
     }
 }
 

@@ -1,13 +1,9 @@
 use std::{
     io,
-    sync::Arc,
     task::{Context, Poll},
 };
 
-use anyhow::{anyhow, Result};
-use atomic_waker::AtomicWaker;
 use bytes::Bytes;
-use concurrent_queue::ConcurrentQueue;
 use iroh_base::{NodeId, RelayUrl};
 use n0_future::{
     ready,
@@ -30,11 +26,7 @@ use self::actor::{RelayActor, RelayActorMessage, RelayRecvDatagram, RelaySendIte
 #[derive(Debug)]
 pub(crate) struct RelayTransport {
     /// Queue to receive datagrams from relays for [`quinn::AsyncUdpSocket::poll_recv`].
-    ///
-    /// Relay datagrams received by relays are put into this queue and consumed by
-    /// [`quinn::AsyncUdpSocket`].  This queue takes care of the wakers needed by
-    /// [`quinn::AsyncUdpSocket::poll_recv`].
-    relay_datagram_recv_queue: Arc<RelayDatagramRecvQueue>,
+    relay_datagram_recv_queue: mpsc::Receiver<RelayRecvDatagram>,
     /// Channel on which to send datagrams via a relay server.
     relay_datagram_send_channel: mpsc::Sender<RelaySendItem>,
     actor_sender: mpsc::Sender<RelayActorMessage>,
@@ -47,14 +39,14 @@ impl RelayTransport {
     pub(crate) fn new(config: RelayActorConfig) -> Self {
         let (relay_datagram_send_tx, relay_datagram_send_rx) = mpsc::channel(256);
 
-        let relay_datagram_recv_queue = Arc::new(RelayDatagramRecvQueue::new());
+        let (relay_datagram_recv_tx, relay_datagram_recv_rx) = mpsc::channel(512);
 
         let (actor_sender, actor_receiver) = mpsc::channel(256);
 
         let my_node_id = config.secret_key.public();
         let my_relay = config.my_relay.clone();
 
-        let relay_actor = RelayActor::new(config, relay_datagram_recv_queue.clone());
+        let relay_actor = RelayActor::new(config, relay_datagram_recv_tx);
 
         let actor_handle = AbortOnDropHandle::new(task::spawn(
             async move {
@@ -66,7 +58,7 @@ impl RelayTransport {
         ));
 
         Self {
-            relay_datagram_recv_queue,
+            relay_datagram_recv_queue: relay_datagram_recv_rx,
             relay_datagram_send_channel: relay_datagram_send_tx,
             actor_sender,
             _actor_handle: actor_handle,
@@ -81,20 +73,8 @@ impl RelayTransport {
         }
     }
 
-    fn send_relay_actor(&self, msg: RelayActorMessage) {
-        match self.actor_sender.try_send(msg) {
-            Ok(_) => {}
-            Err(mpsc::error::TrySendError::Closed(_)) => {
-                warn!("unable to send to relay actor, already closed");
-            }
-            Err(mpsc::error::TrySendError::Full(_)) => {
-                warn!("dropping message for relay actor, channel is full");
-            }
-        }
-    }
-
     pub(super) fn poll_recv(
-        &self,
+        &mut self,
         cx: &mut Context,
         bufs: &mut [io::IoSliceMut<'_>],
         metas: &mut [quinn_udp::RecvMeta],
@@ -107,9 +87,9 @@ impl RelayTransport {
             .zip(source_addrs.iter_mut())
         {
             let dm = match self.relay_datagram_recv_queue.poll_recv(cx) {
-                Poll::Ready(Ok(recv)) => recv,
-                Poll::Ready(Err(err)) => {
-                    error!("relay_recv_channel closed: {err:#}");
+                Poll::Ready(Some(recv)) => recv,
+                Poll::Ready(None) => {
+                    error!("relay_recv_channel closed");
                     return Poll::Ready(Err(io::Error::new(
                         io::ErrorKind::NotConnected,
                         "connection closed",
@@ -141,12 +121,29 @@ impl RelayTransport {
 
     pub(super) fn local_addr_watch(
         &self,
-    ) -> impl n0_watcher::Watcher<Value = Option<(RelayUrl, NodeId)>> + Send + Sync {
+    ) -> n0_watcher::Map<n0_watcher::Direct<Option<RelayUrl>>, Option<(RelayUrl, NodeId)>> {
         let my_node_id = self.my_node_id;
         self.my_relay
             .watch()
             .map(move |url| url.map(|url| (url, my_node_id)))
             .expect("disconnected")
+    }
+
+    pub(super) fn create_network_change_sender(&self) -> RelayNetworkChangeSender {
+        RelayNetworkChangeSender {
+            sender: self.actor_sender.clone(),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(super) struct RelayNetworkChangeSender {
+    sender: mpsc::Sender<RelayActorMessage>,
+}
+
+impl RelayNetworkChangeSender {
+    pub(super) fn on_network_change(&self, info: &crate::magicsock::NetInfo) {
+        self.send_relay_actor(RelayActorMessage::NetworkChange { info: info.clone() });
     }
 
     pub(super) fn rebind(&self) -> io::Result<()> {
@@ -155,78 +152,15 @@ impl RelayTransport {
         Ok(())
     }
 
-    pub(super) fn on_network_change(&self, info: &crate::magicsock::NetInfo) {
-        self.send_relay_actor(RelayActorMessage::NetworkChange { info: info.clone() });
-    }
-}
-
-/// A queue holding [`RelayRecvDatagram`]s that can be polled in async
-/// contexts, and wakes up tasks when something adds items using [`try_send`].
-///
-/// This is used to transfer relay datagrams between the [`RelayActor`]
-/// and [`MagicSock`].
-///
-/// [`try_send`]: Self::try_send
-/// [`MagicSock`]: crate::magicsock::MagicSock
-#[derive(Debug)]
-struct RelayDatagramRecvQueue {
-    queue: ConcurrentQueue<RelayRecvDatagram>,
-    waker: AtomicWaker,
-}
-
-impl RelayDatagramRecvQueue {
-    /// Creates a new, empty queue with a fixed size bound of 512 items.
-    fn new() -> Self {
-        Self {
-            queue: ConcurrentQueue::bounded(512),
-            waker: AtomicWaker::new(),
-        }
-    }
-
-    /// Sends an item into this queue and wakes a potential task
-    /// that's registered its waker with a [`poll_recv`] call.
-    ///
-    /// [`poll_recv`]: Self::poll_recv
-    fn try_send(
-        &self,
-        item: RelayRecvDatagram,
-    ) -> Result<(), concurrent_queue::PushError<RelayRecvDatagram>> {
-        self.queue.push(item).inspect(|_| {
-            self.waker.wake();
-        })
-    }
-
-    /// Polls for new items in the queue.
-    ///
-    /// Although this method is available from `&self`, it must not be
-    /// polled concurrently between tasks.
-    ///
-    /// Calling this will replace the current waker used. So if another task
-    /// waits for this, that task's waker will be replaced and it won't be
-    /// woken up for new items.
-    ///
-    /// The reason this method is made available as `&self` is because
-    /// the interface for quinn's [`quinn::AsyncUdpSocket::poll_recv`] requires us
-    /// to be able to poll from `&self`.
-    fn poll_recv(&self, cx: &mut Context) -> Poll<Result<RelayRecvDatagram>> {
-        match self.queue.pop() {
-            Ok(value) => Poll::Ready(Ok(value)),
-            Err(concurrent_queue::PopError::Empty) => {
-                self.waker.register(cx.waker());
-
-                match self.queue.pop() {
-                    Ok(value) => {
-                        self.waker.take();
-                        Poll::Ready(Ok(value))
-                    }
-                    Err(concurrent_queue::PopError::Empty) => Poll::Pending,
-                    Err(concurrent_queue::PopError::Closed) => {
-                        self.waker.take();
-                        Poll::Ready(Err(anyhow!("Queue closed")))
-                    }
-                }
+    fn send_relay_actor(&self, msg: RelayActorMessage) {
+        match self.sender.try_send(msg) {
+            Ok(_) => {}
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                warn!("unable to send to relay actor, already closed");
             }
-            Err(concurrent_queue::PopError::Closed) => Poll::Ready(Err(anyhow!("Queue closed"))),
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                warn!("dropping message for relay actor, channel is full");
+            }
         }
     }
 }
@@ -440,22 +374,17 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_relay_datagram_queue() {
-        let queue = Arc::new(RelayDatagramRecvQueue::new());
+        let capacity = 16;
+        let (sender, mut receiver) = mpsc::channel(capacity);
         let url = staging::default_na_relay_node().url;
-        let capacity = queue.queue.capacity().unwrap();
 
         let mut tasks = JoinSet::new();
 
         tasks.spawn({
-            let queue = queue.clone();
             async move {
                 let mut expected_msgs: BTreeSet<usize> = (0..capacity).collect();
                 while !expected_msgs.is_empty() {
-                    let datagram = n0_future::future::poll_fn(|cx| {
-                        queue.poll_recv(cx).map(|result| result.unwrap())
-                    })
-                    .await;
-
+                    let datagram: RelayRecvDatagram = receiver.recv().await.unwrap();
                     let msg_num = usize::from_le_bytes(datagram.buf.as_ref().try_into().unwrap());
                     debug!("Received {msg_num}");
 
@@ -468,11 +397,11 @@ mod tests {
 
         for i in 0..capacity {
             tasks.spawn({
-                let queue = queue.clone();
+                let sender = sender.clone();
                 let url = url.clone();
                 async move {
                     debug!("Sending {i}");
-                    queue
+                    sender
                         .try_send(RelayRecvDatagram {
                             url,
                             src: NodeId::from_bytes(&[0u8; 32]).unwrap(),
