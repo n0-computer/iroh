@@ -6,7 +6,6 @@
 //! messages from the client.  It follows roughly these steps:
 //!
 //! - Determines host IPv6 support.
-//! - Creates hairpin actor.
 //! - Creates portmapper future.
 //! - Creates captive portal detection future.
 //! - Creates Probe Set futures.
@@ -45,6 +44,7 @@ use netwatch::interfaces;
 use rand::seq::IteratorRandom;
 use snafu::{IntoError, ResultExt, Snafu};
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, debug_span, info_span, trace, warn, Instrument};
 use url::Host;
 
@@ -106,7 +106,6 @@ impl Client {
             msg_tx,
             last_report,
             relay_map,
-            outstanding_tasks: OutstandingTasks::default(),
             protocols,
             #[cfg(not(wasm_browser))]
             socket_state,
@@ -138,10 +137,6 @@ struct Actor {
     relay_map: RelayMap,
 
     // Internal state.
-    /// Which tasks the [`Actor`] is still waiting on.
-    ///
-    /// This is essentially the summary of all the work the [`Actor`] is doing.
-    outstanding_tasks: OutstandingTasks,
     /// Protocols we should attempt to create probes for, if we have the correct
     /// configuration for that protocol.
     protocols: BTreeSet<ProbeProto>,
@@ -200,7 +195,6 @@ impl Actor {
     ///
     /// This actor runs by:
     ///
-    /// - Creates a hairpin actor.
     /// - Creates a captive portal future.
     /// - Creates ProbeSet futures in a group of futures.
     /// - Runs a main loop:
@@ -215,9 +209,22 @@ impl Actor {
         let port_mapper = false;
         debug!(%port_mapper, "reportstate actor starting");
 
-        let mut port_mapping = pin!(self.prepare_portmapper_task());
-        let mut captive_task = pin!(self.prepare_captive_portal_task());
-        let mut probes = self.spawn_probes_task().await;
+        let probes_token = CancellationToken::new();
+        let captive_token = CancellationToken::new();
+        let port_token = CancellationToken::new();
+
+        let port_task = self.prepare_portmapper_task();
+        let mut port_done = !port_task.is_some();
+
+        let captive_task = self.prepare_captive_portal_task();
+        let mut captive_done = !captive_task.is_some();
+
+        let mut port_mapping = pin!(port_token.clone().run_until_cancelled_owned(port_task));
+        let mut captive_task = pin!(captive_token
+            .clone()
+            .run_until_cancelled_owned(captive_task));
+
+        let mut probes = self.spawn_probes_task(probes_token.clone()).await;
 
         let total_timer = time::sleep(OVERALL_REPORT_TIMEOUT);
         tokio::pin!(total_timer);
@@ -228,11 +235,11 @@ impl Actor {
         let mut have_udp = false;
 
         loop {
-            trace!(awaiting = ?self.outstanding_tasks, "tick; awaiting tasks");
-            if self.outstanding_tasks.all_done() {
+            if probes.is_empty() && port_done && captive_done {
                 debug!("all tasks done");
                 break;
             }
+
             tokio::select! {
                 biased;
                 _ = &mut total_timer => {
@@ -246,41 +253,44 @@ impl Actor {
                     // the abort to finish all probes normally.  PROBES_TIMEOUT is
                     // sufficiently far in the future.
                     probe_timer.as_mut().reset(Instant::now() + PROBES_TIMEOUT);
-                    probes.abort_all();
-                    self.outstanding_tasks.probes = false;
+                    probes_token.cancel();
                     if have_udp {
-                        self.outstanding_tasks.port_mapper = false;
-                        self.outstanding_tasks.captive_task = false;
+                        port_token.cancel();
+                        captive_token.cancel();
                     }
                 }
 
                 // Drive the portmapper.
-                pm = &mut port_mapping, if self.outstanding_tasks.port_mapper => {
+                pm = &mut port_mapping => {
                     #[cfg(not(wasm_browser))]
                     {
                         debug!(report=?pm, "tick: portmapper probe report");
-                        self.msg_tx.send(ProbeFinished::Portmap(pm)).await.ok();
-                        port_mapping.as_mut().set_none();
-                        self.outstanding_tasks.port_mapper = false;
+                        if let Some(pm) = pm {
+                            self.msg_tx.send(ProbeFinished::Portmap(pm)).await.ok();
+                        }
+                        port_done = true;
                     }
                 }
 
                 // Check for probes finishing.
-                set_result = probes.join_next(), if self.outstanding_tasks.probes => {
+                set_result = probes.join_next() => {
                     trace!("tick: probes done: {:?}", set_result);
                     match set_result {
-                        Some(Ok(report)) => {
+                        Some(Ok(Some(report))) => {
                             have_udp |= report.as_ref().map(|r| r.probe.is_udp()).unwrap_or_default();
                             self.msg_tx.send(ProbeFinished::Regular(report)).await.ok();
                         },
+                        Some(Ok(None)) => {
+                            debug!("probe cancelled");
+                        }
                         Some(Err(e)) => {
                             warn!("probes task join error: {:?}", e);
                         }
+
                         None => {
-                            self.outstanding_tasks.probes = false;
                             if have_udp {
-                                self.outstanding_tasks.port_mapper = false;
-                                self.outstanding_tasks.captive_task = false;
+                                port_token.cancel();
+                                captive_token.cancel();
                             }
                         }
                     }
@@ -288,24 +298,17 @@ impl Actor {
                 }
 
                 // Drive the captive task.
-                found = &mut captive_task, if self.outstanding_tasks.captive_task => {
+                found = &mut captive_task => {
                     #[cfg(not(wasm_browser))]
                     {
                         trace!("tick: captive portal task done");
-                        self.msg_tx.send(ProbeFinished::CaptivePortal(found)).await.ok();
-                        captive_task.as_mut().set_none();
-                        self.outstanding_tasks.captive_task = false;
+                        if let Some(found) = found {
+                            self.msg_tx.send(ProbeFinished::CaptivePortal(found)).await.ok();
+                        }
+                        captive_done = true;
                     }
                 }
             }
-        }
-
-        if !probes.is_empty() {
-            debug!(
-                "aborting {} probe sets, already have enough reports",
-                probes.len()
-            );
-            drop(probes);
         }
 
         Ok(())
@@ -329,7 +332,6 @@ impl Actor {
         &mut self,
     ) -> MaybeFuture<Pin<Box<impl Future<Output = Option<portmapper::ProbeOutput>>>>> {
         if let Some(port_mapper) = self.socket_state.port_mapper.clone() {
-            self.outstanding_tasks.port_mapper = true;
             MaybeFuture::Some(Box::pin(async move {
                 match port_mapper.probe().await {
                     Ok(Ok(res)) => Some(res),
@@ -359,8 +361,6 @@ impl Actor {
     fn prepare_captive_portal_task(
         &mut self,
     ) -> MaybeFuture<Pin<Box<impl Future<Output = Option<bool>>>>> {
-        self.outstanding_tasks.captive_task = false;
-
         // If we're doing a full probe, also check for a captive portal. We
         // delay by a bit to wait for UDP STUN to finish, to avoid the probe if
         // it's unnecessary.
@@ -374,7 +374,6 @@ impl Actor {
 
             let dns_resolver = self.socket_state.dns_resolver.clone();
             let dm = self.relay_map.clone();
-            self.outstanding_tasks.captive_task = true;
             MaybeFuture::Some(Box::pin(async move {
                 time::sleep(CAPTIVE_PORTAL_DELAY).await;
                 debug!("Captive portal check started after {CAPTIVE_PORTAL_DELAY:?}");
@@ -426,7 +425,10 @@ impl Actor {
     ///     failure permanent.  Probes in a probe set are essentially retries.
     ///   - Once there are [`ProbeReport`]s from enough nodes, all remaining probes are
     ///     aborted.  That is, the main actor loop stops polling them.
-    async fn spawn_probes_task(&mut self) -> JoinSet<Result<ProbeReport, ProbesError>> {
+    async fn spawn_probes_task(
+        &mut self,
+        token: CancellationToken,
+    ) -> JoinSet<Option<Result<ProbeReport, ProbesError>>> {
         #[cfg(not(wasm_browser))]
         let if_state = interfaces::State::new().await;
         #[cfg(not(wasm_browser))]
@@ -460,70 +462,58 @@ impl Actor {
                 let socket_state = self.socket_state.clone();
 
                 set.spawn(
-                    run_probe(
-                        relay_node,
-                        probe.clone(),
-                        #[cfg(not(wasm_browser))]
-                        socket_state,
-                        #[cfg(any(test, feature = "test-utils"))]
-                        self.insecure_skip_relay_cert_verify,
-                    )
-                    .instrument(debug_span!("run_probe", %probe)),
+                    token.clone().run_until_cancelled_owned(
+                        run_probe(
+                            relay_node,
+                            probe.clone(),
+                            #[cfg(not(wasm_browser))]
+                            socket_state,
+                            #[cfg(any(test, feature = "test-utils"))]
+                            self.insecure_skip_relay_cert_verify,
+                        )
+                        .instrument(debug_span!("run_probe", %probe)),
+                    ),
                 );
             }
 
             // Add the probe set to all futures of probe sets.  Handle aborting a probe set
             // if needed, only normal errors means the set continues.
             probes.spawn(
-                async move {
-                    // Hack because ProbeSet is not it's own type yet.
-                    let mut probe_proto = None;
-                    while let Some(res) = set.join_next().await {
-                        match res {
-                            Ok(Ok(report)) => return Ok(report),
-                            Ok(Err(ProbeErrorWithProbe::Error(err, probe))) => {
-                                probe_proto = Some(probe.proto());
-                                warn!(?probe, "probe failed: {:#}", err);
-                                continue;
-                            }
-                            Ok(Err(ProbeErrorWithProbe::AbortSet(err, probe))) => {
-                                debug!(?probe, "probe set aborted: {:#}", err);
-                                set.abort_all();
-                                return Err(ProbeFailureSnafu.into_error(err));
-                            }
-                            Err(err) => {
-                                warn!("fatal probe set error, aborting: {:#}", err);
-                                continue;
+                token.clone().run_until_cancelled_owned(
+                    async move {
+                        // Hack because ProbeSet is not it's own type yet.
+                        let mut probe_proto = None;
+                        while let Some(res) = set.join_next().await {
+                            match res {
+                                Ok(Some(Ok(report))) => return Ok(report),
+                                Ok(Some(Err(ProbeErrorWithProbe::Error(err, probe)))) => {
+                                    probe_proto = Some(probe.proto());
+                                    warn!(?probe, "probe failed: {:#}", err);
+                                    continue;
+                                }
+                                Ok(Some(Err(ProbeErrorWithProbe::AbortSet(err, probe)))) => {
+                                    debug!(?probe, "probe set aborted: {:#}", err);
+                                    set.abort_all();
+                                    return Err(err);
+                                }
+                                Ok(None) => {
+                                    debug!("probe cancelled");
+                                }
+                                Err(err) => {
+                                    warn!("fatal probe set error, aborting: {:#}", err);
+                                    continue;
+                                }
                             }
                         }
+                        warn!(?probe_proto, "no successful probes in ProbeSet");
+                        Err(AllProbesFailedSnafu.build())
                     }
-                    warn!(?probe_proto, "no successful probes in ProbeSet");
-                    Err(AllProbesFailedSnafu.build())
-                }
-                .instrument(info_span!("probe")),
+                    .instrument(info_span!("probe")),
+                ),
             );
         }
-        self.outstanding_tasks.probes = true;
 
         probes
-    }
-}
-
-/// Tasks on which the reportgen [`Actor`] is still waiting.
-///
-/// There is no particular progression, e.g. hairpin starts `false`, moves to `true` when a
-/// check is started and then becomes `false` again once it is finished.
-#[derive(Debug, Default)]
-struct OutstandingTasks {
-    probes: bool,
-    port_mapper: bool,
-    captive_task: bool,
-    hairpin: bool,
-}
-
-impl OutstandingTasks {
-    fn all_done(&self) -> bool {
-        !(self.probes || self.port_mapper || self.captive_task || self.hairpin)
     }
 }
 
