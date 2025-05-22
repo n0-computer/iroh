@@ -3538,7 +3538,10 @@
 <a href="#3537" id="3537">3537</a>
 <a href="#3538" id="3538">3538</a>
 <a href="#3539" id="3539">3539</a>
-<a href="#3540" id="3540">3540</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#3540" id="3540">3540</a>
+<a href="#3541" id="3541">3541</a>
+<a href="#3542" id="3542">3542</a>
+<a href="#3543" id="3543">3543</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -3778,7 +3781,8 @@
     <span class="kw">pub</span>(<span class="kw">crate</span>) metrics: EndpointMetrics,
 
     local_addrs_watch: LocalAddrsWatch,
-    ip_bind_addrs: Vec&lt;SocketAddr&gt;,
+    <span class="attr">#[cfg(not(wasm_browser))]
+    </span>ip_bind_addrs: Vec&lt;SocketAddr&gt;,
 }
 
 <span class="kw">impl </span>MagicSock {
@@ -3817,7 +3821,8 @@
         <span class="self">self</span>.local_addrs_watch.get().expect(<span class="string">"disconnected"</span>)
     }
 
-    <span class="kw">fn </span>ip_bind_addrs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[SocketAddr] {
+    <span class="attr">#[cfg(not(wasm_browser))]
+    </span><span class="kw">fn </span>ip_bind_addrs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[SocketAddr] {
         <span class="kw-2">&amp;</span><span class="self">self</span>.ip_bind_addrs
     }
 
@@ -4849,7 +4854,8 @@
             discovery_subscribers: DiscoverySubscribers::new(),
             metrics,
             local_addrs_watch: transports.local_addrs_watch(),
-            ip_bind_addrs: transports.ip_bind_addrs(),
+            <span class="attr">#[cfg(not(wasm_browser))]
+            </span>ip_bind_addrs: transports.ip_bind_addrs(),
         });
 
         <span class="kw">let </span><span class="kw-2">mut </span>endpoint_config = quinn::EndpointConfig::default();
