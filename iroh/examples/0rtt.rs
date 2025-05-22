@@ -3,7 +3,7 @@ use std::time::Instant;
 use clap::Parser;
 use iroh::{endpoint::Connection, watcher::Watcher};
 use iroh_base::ticket::NodeTicket;
-use tracing::{info, trace};
+use tracing::{debug, info, trace};
 
 const PINGPONG_ALPN: &[u8] = b"0rtt-pingpong";
 
@@ -28,7 +28,7 @@ async fn pingpong(connection: &Connection, x: u64) -> anyhow::Result<()> {
     let echo = recv.read_to_end(8).await?;
     anyhow::ensure!(echo == data);
     let elapsed = t0.elapsed();
-    info!("pingpong round {}: {}us", x, elapsed.as_micros());
+    debug!("pingpong round {}: {} us", x, elapsed.as_micros());
     Ok(())
 }
 
@@ -70,9 +70,9 @@ async fn connect(args: Args) -> anyhow::Result<()> {
         }
     }
     let elapsed = t0.elapsed();
-    info!("total time: {}us", elapsed.as_micros());
+    info!("total time: {} us", elapsed.as_micros());
     info!(
-        "time per round: {}us",
+        "time per round: {} us",
         elapsed.as_micros() / (args.rounds as u128)
     );
     Ok(())
