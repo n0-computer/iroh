@@ -191,7 +191,21 @@
 <a href="#190" id="190">190</a>
 <a href="#191" id="191">191</a>
 <a href="#192" id="192">192</a>
-<a href="#193" id="193">193</a></pre></div><pre class="rust"><code><span class="doccomment">//! Options for creating a report gen client.
+<a href="#193" id="193">193</a>
+<a href="#194" id="194">194</a>
+<a href="#195" id="195">195</a>
+<a href="#196" id="196">196</a>
+<a href="#197" id="197">197</a>
+<a href="#198" id="198">198</a>
+<a href="#199" id="199">199</a>
+<a href="#200" id="200">200</a>
+<a href="#201" id="201">201</a>
+<a href="#202" id="202">202</a>
+<a href="#203" id="203">203</a>
+<a href="#204" id="204">204</a>
+<a href="#205" id="205">205</a>
+<a href="#206" id="206">206</a>
+<a href="#207" id="207">207</a></pre></div><pre class="rust"><code><span class="doccomment">//! Options for creating a report gen client.
 
 </span><span class="kw">pub use </span>imp::Options;
 
@@ -243,6 +257,9 @@
         ///
         /// On by default
         </span><span class="kw">pub</span>(<span class="kw">crate</span>) https: bool,
+
+        <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+        </span><span class="kw">pub</span>(<span class="kw">crate</span>) insecure_skip_relay_cert_verify: bool,
     }
 
     <span class="kw">impl </span>Default <span class="kw">for </span>Options {
@@ -254,6 +271,8 @@
                 icmp_v4: <span class="bool-val">true</span>,
                 icmp_v6: <span class="bool-val">true</span>,
                 https: <span class="bool-val">true</span>,
+                <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+                </span>insecure_skip_relay_cert_verify: <span class="bool-val">false</span>,
             }
         }
     }
@@ -268,6 +287,8 @@
                 icmp_v4: <span class="bool-val">false</span>,
                 icmp_v6: <span class="bool-val">false</span>,
                 https: <span class="bool-val">false</span>,
+                <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+                </span>insecure_skip_relay_cert_verify: <span class="bool-val">false</span>,
             }
         }
 
@@ -304,6 +325,13 @@
         <span class="doccomment">/// Enable or disable https probe
         </span><span class="kw">pub fn </span>https(<span class="kw-2">mut </span><span class="self">self</span>, enable: bool) -&gt; <span class="self">Self </span>{
             <span class="self">self</span>.https = enable;
+            <span class="self">self
+        </span>}
+
+        <span class="doccomment">/// Skip cert verification
+        </span><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+        </span><span class="kw">pub fn </span>insecure_skip_relay_cert_verify(<span class="kw-2">mut </span><span class="self">self</span>, skip: bool) -&gt; <span class="self">Self </span>{
+            <span class="self">self</span>.insecure_skip_relay_cert_verify = skip;
             <span class="self">self
         </span>}
 

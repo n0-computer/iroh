@@ -588,10 +588,7 @@
 <a href="#587" id="587">587</a>
 <a href="#588" id="588">588</a>
 <a href="#589" id="589">589</a>
-<a href="#590" id="590">590</a>
-<a href="#591" id="591">591</a>
-<a href="#592" id="592">592</a>
-<a href="#593" id="593">593</a></pre></div><pre class="rust"><code><span class="doccomment">//! Tools for spawning an accept loop that routes incoming requests to the right protocol.
+<a href="#590" id="590">590</a></pre></div><pre class="rust"><code><span class="doccomment">//! Tools for spawning an accept loop that routes incoming requests to the right protocol.
 //!
 //! ## Example
 //!
@@ -1082,11 +1079,10 @@
         }
     }
 
-    <span class="comment">// #[tokio::test(flavor = "multi_thread")]
-    </span><span class="attr">#[tokio::test]
+    <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_limiter() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        tracing_subscriber::fmt::try_init().ok();
-        <span class="kw">let </span>e1 = Endpoint::builder()
+        <span class="comment">// tracing_subscriber::fmt::try_init().ok();
+        </span><span class="kw">let </span>e1 = Endpoint::builder()
             .relay_mode(RelayMode::Disabled)
             .bind()
             .<span class="kw">await</span><span class="question-mark">?</span>;
@@ -1114,10 +1110,8 @@
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="comment">// #[tokio::test(flavor = "multi_thread")]
-    </span><span class="attr">#[tokio::test]
+    <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_graceful_shutdown() -&gt; TestResult {
-        tracing_subscriber::fmt::try_init().ok();
         <span class="attr">#[derive(Debug, Clone, Default)]
         </span><span class="kw">struct </span>TestProtocol {
             connections: Arc&lt;Mutex&lt;Vec&lt;Connection&gt;&gt;&gt;,

@@ -1761,7 +1761,12 @@
 <a href="#1760" id="1760">1760</a>
 <a href="#1761" id="1761">1761</a>
 <a href="#1762" id="1762">1762</a>
-<a href="#1763" id="1763">1763</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
+<a href="#1763" id="1763">1763</a>
+<a href="#1764" id="1764">1764</a>
+<a href="#1765" id="1765">1765</a>
+<a href="#1766" id="1766">1766</a>
+<a href="#1767" id="1767">1767</a>
+<a href="#1768" id="1768">1768</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
 //!
 //! It is implemented as an actor with [`Client`] as handle.
 //!
@@ -1877,6 +1882,7 @@
         protocols: BTreeSet&lt;ProbeProto&gt;,
         metrics: Arc&lt;Metrics&gt;,
         <span class="attr">#[cfg(not(wasm_browser))] </span>socket_state: SocketState,
+        <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))] </span>insecure_skip_relay_cert_verify: bool,
     ) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>(msg_tx, msg_rx) = mpsc::channel(<span class="number">32</span>);
         <span class="kw">let </span>addr = Addr {
@@ -1896,6 +1902,8 @@
             <span class="attr">#[cfg(not(wasm_browser))]
             </span>hairpin_actor: hairpin::Client::new(net_report, addr),
             metrics,
+            <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+            </span>insecure_skip_relay_cert_verify,
         };
         <span class="kw">let </span>task =
             task::spawn(<span class="kw">async move </span>{ actor.run().<span class="kw">await </span>}.instrument(<span class="macro">info_span!</span>(<span class="string">"reportgen.actor"</span>)));
@@ -1977,6 +1985,8 @@
     </span><span class="attr">#[cfg(not(wasm_browser))]
     </span>hairpin_actor: hairpin::Client,
     metrics: Arc&lt;Metrics&gt;,
+    <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+    </span>insecure_skip_relay_cert_verify: bool,
 }
 
 <span class="kw">impl </span>Actor {
@@ -2389,6 +2399,8 @@
                         </span>pinger,
                         <span class="attr">#[cfg(not(wasm_browser))]
                         </span>socket_state,
+                        <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+                        </span><span class="self">self</span>.insecure_skip_relay_cert_verify,
                     )
                     .instrument(<span class="macro">debug_span!</span>(<span class="string">"run_probe"</span>, %probe)),
                 );
@@ -2514,6 +2526,7 @@
 <span class="doccomment">/// Executes a particular [`Probe`], including using a delayed start if needed.
 ///
 /// If *stun_sock4* and *stun_sock6* are `None` the STUN probes are disabled.
+</span><span class="attr">#[allow(clippy::too_many_arguments)]
 </span><span class="kw">async fn </span>run_probe(
     reportstate: Addr,
     relay_node: Arc&lt;RelayNode&gt;,
@@ -2522,6 +2535,7 @@
     metrics: Arc&lt;Metrics&gt;,
     <span class="attr">#[cfg(not(wasm_browser))] </span>pinger: Pinger,
     <span class="attr">#[cfg(not(wasm_browser))] </span>socket_state: SocketState,
+    <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))] </span>insecure_skip_relay_cert_verify: bool,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;ProbeReport, ProbeError&gt; {
     <span class="kw">if </span>!probe.delay().is_zero() {
         <span class="macro">trace!</span>(<span class="string">"delaying probe"</span>);
@@ -2592,7 +2606,8 @@
                 <span class="attr">#[cfg(not(wasm_browser))]
                 </span><span class="kw-2">&amp;</span>socket_state.dns_resolver,
                 node,
-                <span class="prelude-val">None</span>,
+                <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+                </span>insecure_skip_relay_cert_verify,
             )
             .<span class="kw">await
             </span>{
@@ -3037,7 +3052,7 @@
 </span><span class="kw">async fn </span>measure_https_latency(
     <span class="attr">#[cfg(not(wasm_browser))] </span>dns_resolver: <span class="kw-2">&amp;</span>DnsResolver,
     node: <span class="kw-2">&amp;</span>RelayNode,
-    certs: <span class="prelude-ty">Option</span>&lt;Vec&lt;rustls::pki_types::CertificateDer&lt;<span class="lifetime">'static</span>&gt;&gt;&gt;,
+    <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))] </span>insecure_skip_relay_cert_verify: bool,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(Duration, IpAddr)&gt; {
     <span class="kw">let </span>url = node.url.join(RELAY_PROBE_PATH)<span class="question-mark">?</span>;
 
@@ -3068,13 +3083,9 @@
         builder = builder.resolve_to_addrs(domain, <span class="kw-2">&amp;</span>addrs);
     }
 
-    <span class="attr">#[cfg(not(wasm_browser))]
-    </span><span class="kw">if let </span><span class="prelude-val">Some</span>(certs) = certs {
-        <span class="kw">for </span>cert <span class="kw">in </span>certs {
-            <span class="kw">let </span>cert = reqwest::Certificate::from_der(<span class="kw-2">&amp;</span>cert)<span class="question-mark">?</span>;
-            builder = builder.add_root_certificate(cert);
-        }
-    }
+    <span class="attr">#[cfg(all(not(wasm_browser), any(test, feature = <span class="string">"test-utils"</span>)))]
+    </span><span class="kw">let </span>builder = builder.danger_accept_invalid_certs(insecure_skip_relay_cert_verify);
+
     <span class="kw">let </span>client = builder.build()<span class="question-mark">?</span>;
 
     <span class="kw">let </span>start = Instant::now();
@@ -3464,11 +3475,10 @@
 
     <span class="attr">#[tokio::test]
     </span><span class="kw">async fn </span>test_measure_https_latency() -&gt; TestResult {
-        <span class="kw">let </span>(server, relay) = test_utils::relay().<span class="kw">await</span>;
+        <span class="kw">let </span>(_server, relay) = test_utils::relay().<span class="kw">await</span>;
         <span class="kw">let </span>dns_resolver = dns::tests::resolver();
         <span class="macro">tracing::info!</span>(relay_url = <span class="question-mark">?</span>relay.url , <span class="string">"RELAY_URL"</span>);
-        <span class="kw">let </span>(latency, ip) =
-            measure_https_latency(<span class="kw-2">&amp;</span>dns_resolver, <span class="kw-2">&amp;</span>relay, server.certificates()).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>(latency, ip) = measure_https_latency(<span class="kw-2">&amp;</span>dns_resolver, <span class="kw-2">&amp;</span>relay, <span class="bool-val">true</span>).<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="macro">assert!</span>(latency &gt; Duration::ZERO);
 

@@ -1391,7 +1391,9 @@
 <a href="#1390" id="1390">1390</a>
 <a href="#1391" id="1391">1391</a>
 <a href="#1392" id="1392">1392</a>
-<a href="#1393" id="1393">1393</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
+<a href="#1393" id="1393">1393</a>
+<a href="#1394" id="1394">1394</a>
+<a href="#1395" id="1395">1395</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
 //!
 //! NetReport is responsible for finding out the network conditions of the current host, like
 //! whether it is connected to the internet via IPv4 and/or IPv6, what the NAT situation is
@@ -2006,6 +2008,8 @@
             <span class="self">self</span>.metrics.clone(),
             <span class="attr">#[cfg(not(wasm_browser))]
             </span>socket_state,
+            <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+            </span>opts.insecure_skip_relay_cert_verify,
         );
 
         <span class="self">self</span>.current_report_run = <span class="prelude-val">Some</span>(ReportRun {

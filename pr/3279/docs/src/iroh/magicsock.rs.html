@@ -3526,7 +3526,21 @@
 <a href="#3525" id="3525">3525</a>
 <a href="#3526" id="3526">3526</a>
 <a href="#3527" id="3527">3527</a>
-<a href="#3528" id="3528">3528</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#3528" id="3528">3528</a>
+<a href="#3529" id="3529">3529</a>
+<a href="#3530" id="3530">3530</a>
+<a href="#3531" id="3531">3531</a>
+<a href="#3532" id="3532">3532</a>
+<a href="#3533" id="3533">3533</a>
+<a href="#3534" id="3534">3534</a>
+<a href="#3535" id="3535">3535</a>
+<a href="#3536" id="3536">3536</a>
+<a href="#3537" id="3537">3537</a>
+<a href="#3538" id="3538">3538</a>
+<a href="#3539" id="3539">3539</a>
+<a href="#3540" id="3540">3540</a>
+<a href="#3541" id="3541">3541</a>
+<a href="#3542" id="3542">3542</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4886,19 +4900,18 @@
         <span class="kw">let </span>network_monitor = netmon::Monitor::new().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>qad_endpoint = endpoint.clone();
 
-        <span class="comment">// create a client config for the endpoint to use for QUIC address discovery
-        </span><span class="kw">let </span>root_store =
-            rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-        <span class="kw">let </span>client_config = rustls::client::ClientConfig::builder_with_provider(Arc::new(
-            rustls::crypto::ring::default_provider(),
-        ))
-        .with_safe_default_protocol_versions()
-        .expect(<span class="string">"ring supports these"</span>)
-        .with_root_certificates(root_store)
-        .with_no_client_auth();
+        <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+        </span><span class="kw">let </span>client_config = <span class="kw">if </span>insecure_skip_relay_cert_verify {
+            iroh_relay::client::make_dangerous_client_config()
+        } <span class="kw">else </span>{
+            default_quic_client_config()
+        };
+        <span class="attr">#[cfg(not(any(test, feature = <span class="string">"test-utils"</span>)))]
+        </span><span class="kw">let </span>client_config = default_quic_client_config();
 
+        <span class="kw">let </span>net_report_config = net_report::Options::default();
         <span class="attr">#[cfg(not(wasm_browser))]
-        </span><span class="kw">let </span>net_report_config = net_report::Options::default()
+        </span><span class="kw">let </span>net_report_config = net_report_config
             .stun_v4(<span class="prelude-val">Some</span>(v4_socket))
             .stun_v6(v6_socket)
             .quic_config(<span class="prelude-val">Some</span>(QuicConfig {
@@ -4907,8 +4920,10 @@
                 ipv4: <span class="bool-val">true</span>,
                 ipv6,
             }));
-        <span class="attr">#[cfg(wasm_browser)]
-        </span><span class="kw">let </span>net_report_config = net_report::Options::default();
+
+        <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+        </span><span class="kw">let </span>net_report_config =
+            net_report_config.insecure_skip_relay_cert_verify(insecure_skip_relay_cert_verify);
 
         <span class="kw">let </span>actor = Actor {
             msg_receiver: actor_receiver,
@@ -5012,6 +5027,19 @@
         }
         <span class="macro">trace!</span>(<span class="string">"magicsock closed"</span>);
     }
+}
+
+<span class="kw">fn </span>default_quic_client_config() -&gt; rustls::ClientConfig {
+    <span class="comment">// create a client config for the endpoint to use for QUIC address discovery
+    </span><span class="kw">let </span>root_store =
+        rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    rustls::client::ClientConfig::builder_with_provider(Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .expect(<span class="string">"ring supports these"</span>)
+    .with_root_certificates(root_store)
+    .with_no_client_auth()
 }
 
 <span class="attr">#[derive(Debug, Default)]
@@ -6713,7 +6741,7 @@
             dns_resolver,
             proxy_url: <span class="prelude-val">None</span>,
             server_config,
-            insecure_skip_relay_cert_verify: <span class="bool-val">true</span>,
+            insecure_skip_relay_cert_verify: <span class="bool-val">false</span>,
             path_selection: PathSelection::default(),
             metrics: Default::default(),
         };

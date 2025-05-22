@@ -540,7 +540,22 @@
 <a href="#539" id="539">539</a>
 <a href="#540" id="540">540</a>
 <a href="#541" id="541">541</a>
-<a href="#542" id="542">542</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#542" id="542">542</a>
+<a href="#543" id="543">543</a>
+<a href="#544" id="544">544</a>
+<a href="#545" id="545">545</a>
+<a href="#546" id="546">546</a>
+<a href="#547" id="547">547</a>
+<a href="#548" id="548">548</a>
+<a href="#549" id="549">549</a>
+<a href="#550" id="550">550</a>
+<a href="#551" id="551">551</a>
+<a href="#552" id="552">552</a>
+<a href="#553" id="553">553</a>
+<a href="#554" id="554">554</a>
+<a href="#555" id="555">555</a>
+<a href="#556" id="556">556</a>
+<a href="#557" id="557">557</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     io::{<span class="self">self</span>, IoSliceMut},
     net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6},
     pin::Pin,
@@ -870,32 +885,47 @@
     ) -&gt; io::Result&lt;()&gt; {
         <span class="macro">trace!</span>(<span class="question-mark">?</span>destination, <span class="string">"sending"</span>);
 
+        <span class="kw">let </span><span class="kw-2">mut </span>any_match = <span class="bool-val">false</span>;
         <span class="kw">match </span>destination {
             <span class="attr">#[cfg(wasm_browser)]
-            </span>Addr::Ip(..) =&gt; {
-                <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(io::Error::other(<span class="string">"IP is unsupported in browser"</span>)))
-            }
+            </span>Addr::Ip(..) =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(io::Error::other(<span class="string">"IP is unsupported in browser"</span>)),
             <span class="attr">#[cfg(not(wasm_browser))]
             </span>Addr::Ip(addr) =&gt; {
                 <span class="kw">for </span>sender <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.ip {
-                    <span class="kw">if </span>sender.is_valid_send_addr(addr)
-                        &amp;&amp; sender.send(<span class="kw-2">*</span>addr, src, transmit).<span class="kw">await</span>.is_ok()
-                    {
-                        <span class="kw">break</span>;
+                    <span class="kw">if </span>sender.is_valid_send_addr(addr) {
+                        any_match = <span class="bool-val">true</span>;
+                        <span class="kw">match </span>sender.send(<span class="kw-2">*</span>addr, src, transmit).<span class="kw">await </span>{
+                            <span class="prelude-val">Ok</span>(()) =&gt; {
+                                <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+                            }
+                            <span class="prelude-val">Err</span>(err) =&gt; {
+                                <span class="macro">warn!</span>(<span class="string">"ip failed to send: {:?}"</span>, err);
+                            }
+                        }
                     }
                 }
             }
             Addr::Relay(url, node_id) =&gt; {
                 <span class="kw">for </span>sender <span class="kw">in </span><span class="kw-2">&amp;</span><span class="self">self</span>.relay {
-                    <span class="kw">if </span>sender.is_valid_send_addr(url, node_id)
-                        &amp;&amp; sender.send(url.clone(), <span class="kw-2">*</span>node_id, transmit).<span class="kw">await</span>.is_ok()
-                    {
-                        <span class="kw">break</span>;
+                    <span class="kw">if </span>sender.is_valid_send_addr(url, node_id) {
+                        any_match = <span class="bool-val">true</span>;
+                        <span class="kw">match </span>sender.send(url.clone(), <span class="kw-2">*</span>node_id, transmit).<span class="kw">await </span>{
+                            <span class="prelude-val">Ok</span>(()) =&gt; {
+                                <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+                            }
+                            <span class="prelude-val">Err</span>(err) =&gt; {
+                                <span class="macro">warn!</span>(<span class="string">"relay failed to send: {:?}"</span>, err);
+                            }
+                        }
                     }
                 }
             }
         }
-        <span class="prelude-val">Err</span>(io::Error::other(<span class="string">"no transport available"</span>))
+        <span class="kw">if </span>any_match {
+            <span class="prelude-val">Err</span>(io::Error::other(<span class="string">"all available transports failed"</span>))
+        } <span class="kw">else </span>{
+            <span class="prelude-val">Err</span>(io::Error::other(<span class="string">"no transport available"</span>))
+        }
     }
 
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>inner_poll_send(
