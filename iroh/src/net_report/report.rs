@@ -35,6 +35,7 @@ pub struct Report {
     /// detecting rather than using it.  For now.
     pub mapping_varies_by_dest_ipv6: Option<bool>,
     /// Probe indicating the presence of port mapping protocols on the LAN.
+    #[cfg(not(wasm_browser))]
     pub portmap_probe: Option<portmapper::ProbeOutput>,
     /// `None` for unknown
     pub preferred_relay: Option<RelayUrl>,

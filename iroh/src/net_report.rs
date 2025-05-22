@@ -237,9 +237,11 @@ impl Client {
                                 trace!("probe errored: {:?}", err);
                             }
                         },
+                        #[cfg(not(wasm_browser))]
                         ProbeFinished::CaptivePortal(portal) => {
                             report.captive_portal = portal;
                         }
+                        #[cfg(not(wasm_browser))]
                         ProbeFinished::Portmap(portmap) => {
                             report.portmap_probe = portmap;
                         }
