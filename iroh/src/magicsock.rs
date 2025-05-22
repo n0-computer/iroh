@@ -1179,13 +1179,14 @@ impl DirectAddrUpdateState {
     fn new(
         msock: Arc<MagicSock>,
         net_report_config: net_report::Options,
-        port_mapper: portmapper::Client,
+        #[cfg(not(wasm_browser))] port_mapper: portmapper::Client,
         net_reporter: Arc<Mutex<net_report::Client>>,
         run_done: mpsc::Sender<()>,
     ) -> Self {
         DirectAddrUpdateState {
             want_update: Default::default(),
             net_report_config,
+            #[cfg(not(wasm_browser))]
             port_mapper,
             net_reporter,
             msock,
