@@ -1,7 +1,7 @@
 use std::{
     io,
     sync::Arc,
-    task::{Context, Poll, Waker},
+    task::{Context, Poll},
 };
 
 use anyhow::{anyhow, Result};
@@ -45,7 +45,8 @@ pub(crate) struct RelayTransport {
 
 impl RelayTransport {
     pub(crate) fn new(config: RelayActorConfig) -> Self {
-        let (relay_datagram_send_tx, relay_datagram_send_rx) = relay_datagram_send_channel();
+        let (relay_datagram_send_tx, relay_datagram_send_rx) = mpsc::channel(256);
+
         let relay_datagram_recv_queue = Arc::new(RelayDatagramRecvQueue::new());
 
         let (actor_sender, actor_receiver) = mpsc::channel(256);
@@ -230,20 +231,6 @@ impl RelayDatagramRecvQueue {
     }
 }
 
-/// Creates a sender and receiver pair for sending datagrams to the [`RelayActor`].
-///
-/// These includes the waker coordination required to support [`quinn::UdpSender::poll_send`].
-fn relay_datagram_send_channel() -> (
-    mpsc::Sender<RelaySendItem>,
-    RelayDatagramSendChannelReceiver,
-) {
-    let (sender, receiver) = mpsc::channel(256);
-    let wakers = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let tx = sender;
-    let rx = RelayDatagramSendChannelReceiver { receiver, wakers };
-    (tx, rx)
-}
-
 /// Sender to send datagrams to the [`RelayActor`].
 ///
 /// This includes the waker coordination required to support [`quinn::UdpSender::poll_send`].
@@ -380,24 +367,6 @@ impl RelaySender {
                 Err(io::Error::new(io::ErrorKind::WouldBlock, "channel full"))
             }
         }
-    }
-}
-
-/// Receiver to send datagrams to the [`RelayActor`].
-///
-/// This includes the waker coordination required to support [`quinn::UdpSender::poll_send`].
-#[derive(Debug)]
-struct RelayDatagramSendChannelReceiver {
-    receiver: mpsc::Receiver<RelaySendItem>,
-    wakers: Arc<std::sync::Mutex<Vec<Waker>>>,
-}
-
-impl RelayDatagramSendChannelReceiver {
-    async fn recv(&mut self) -> Option<RelaySendItem> {
-        let item = self.receiver.recv().await;
-        let mut wakers = self.wakers.lock().expect("poisoned");
-        wakers.drain(..).for_each(Waker::wake);
-        item
     }
 }
 

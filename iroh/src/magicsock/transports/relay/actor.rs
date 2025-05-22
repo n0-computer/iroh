@@ -62,8 +62,8 @@ use url::Url;
 use crate::dns::DnsResolver;
 use crate::{
     magicsock::{
-        transports::relay::{RelayDatagramRecvQueue, RelayDatagramSendChannelReceiver},
-        Metrics as MagicsockMetrics, NetInfo, RelayContents,
+        transports::relay::RelayDatagramRecvQueue, Metrics as MagicsockMetrics, NetInfo,
+        RelayContents,
     },
     util::MaybeFuture,
 };
@@ -862,7 +862,7 @@ impl RelayActor {
     pub(super) async fn run(
         mut self,
         mut receiver: mpsc::Receiver<RelayActorMessage>,
-        mut datagram_send_channel: RelayDatagramSendChannelReceiver,
+        mut datagram_send_channel: mpsc::Receiver<RelaySendItem>,
     ) {
         // When this future is present, it is sending pending datagrams to an
         // ActiveRelayActor.  We can not process further datagrams during this time.
