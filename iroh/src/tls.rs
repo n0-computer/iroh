@@ -124,6 +124,7 @@ impl TlsConfig {
         .expect("fixed config")
         .with_client_cert_verifier(self.client_verifier.clone())
         .with_cert_resolver(self.cert_resolver.clone());
+        crypto.send_tls13_tickets = 4;
         crypto.alpn_protocols = alpn_protocols;
         if keylog {
             warn!("enabling SSLKEYLOGFILE for TLS pre-master keys");
@@ -133,7 +134,6 @@ impl TlsConfig {
         // must be u32::MAX or 0 (the default). Any other value panics with QUIC
         // This is specified in RFC 9001: https://www.rfc-editor.org/rfc/rfc9001#section-4.6.1
         crypto.max_early_data_size = u32::MAX;
-
         crypto
             .try_into()
             .expect("expected to have a TLS1.3-compatible crypto provider set (hardcoded)")

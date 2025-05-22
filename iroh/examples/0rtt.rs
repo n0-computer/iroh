@@ -1,7 +1,4 @@
-use std::{
-    future::Future,
-    time::{Duration, Instant},
-};
+use std::{future::Future, time::Instant};
 
 use clap::Parser;
 use iroh::{
@@ -89,10 +86,11 @@ async fn connect(args: Args) -> anyhow::Result<()> {
         } else {
             pingpong_0rtt(connecting, i).await?
         };
-        tokio::spawn(async move {
-            tokio::time::sleep(connection.rtt() * 2).await;
-            connection.close(0u8.into(), b"done");
-        });
+        // tokio::spawn(async move {
+        //     tokio::time::sleep(connection.rtt() * 2).await;
+        //     connection.close(0u8.into(), b"done");
+        // });
+        connection.close(0u8.into(), b"done");
         let elapsed = t0.elapsed();
         debug!("round {}: {} us", i, elapsed.as_micros());
     }
