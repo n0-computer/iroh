@@ -1674,15 +1674,7 @@
 <a href="#1673" id="1673">1673</a>
 <a href="#1674" id="1674">1674</a>
 <a href="#1675" id="1675">1675</a>
-<a href="#1676" id="1676">1676</a>
-<a href="#1677" id="1677">1677</a>
-<a href="#1678" id="1678">1678</a>
-<a href="#1679" id="1679">1679</a>
-<a href="#1680" id="1680">1680</a>
-<a href="#1681" id="1681">1681</a>
-<a href="#1682" id="1682">1682</a>
-<a href="#1683" id="1683">1683</a>
-<a href="#1684" id="1684">1684</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1676" id="1676">1676</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1745,10 +1737,7 @@
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">use </span><span class="kw">crate</span>::dns::DnsResolver;
 <span class="kw">use crate</span>::{
-    magicsock::{
-        transports::relay::RelayDatagramRecvQueue, Metrics <span class="kw">as </span>MagicsockMetrics, NetInfo,
-        RelayContents,
-    },
+    magicsock::{Metrics <span class="kw">as </span>MagicsockMetrics, NetInfo, RelayContents},
     util::MaybeFuture,
 };
 
@@ -1822,7 +1811,7 @@
     <span class="doccomment">/// Inbox for messages which involve sending to the relay server.
     </span>inbox: mpsc::Receiver&lt;ActiveRelayMessage&gt;,
     <span class="doccomment">/// Queue for received relay datagrams.
-    </span>relay_datagrams_recv: Arc&lt;RelayDatagramRecvQueue&gt;,
+    </span>relay_datagrams_recv: mpsc::Sender&lt;RelayRecvDatagram&gt;,
     <span class="doccomment">/// Channel on which we queue packets to send to the relay.
     </span>relay_datagrams_send: mpsc::Receiver&lt;RelaySendItem&gt;,
 
@@ -1884,7 +1873,7 @@
     prio_inbox_: mpsc::Receiver&lt;ActiveRelayPrioMessage&gt;,
     inbox: mpsc::Receiver&lt;ActiveRelayMessage&gt;,
     relay_datagrams_send: mpsc::Receiver&lt;RelaySendItem&gt;,
-    relay_datagrams_recv: Arc&lt;RelayDatagramRecvQueue&gt;,
+    relay_datagrams_recv: mpsc::Sender&lt;RelayRecvDatagram&gt;,
     connection_opts: RelayConnectionOptions,
     stop_token: CancellationToken,
     metrics: Arc&lt;MagicsockMetrics&gt;,
@@ -2497,11 +2486,7 @@
 <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>RelayActor {
     config: Config,
     <span class="doccomment">/// Queue on which to put received datagrams.
-    ///
-    /// [`AsyncUdpSocket::poll_recv`] will read from this queue.
-    ///
-    /// [`AsyncUdpSocket::poll_recv`]: quinn::AsyncUdpSocket::poll_recv
-    </span>relay_datagram_recv_queue: Arc&lt;RelayDatagramRecvQueue&gt;,
+    </span>relay_datagram_recv_queue: mpsc::Sender&lt;RelayRecvDatagram&gt;,
     <span class="doccomment">/// The actors managing each currently used relay server.
     ///
     /// These actors will exit when they have any inactivity.  Otherwise they will keep
@@ -2531,7 +2516,7 @@
 <span class="kw">impl </span>RelayActor {
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(
         config: Config,
-        relay_datagram_recv_queue: Arc&lt;RelayDatagramRecvQueue&gt;,
+        relay_datagram_recv_queue: mpsc::Sender&lt;RelayRecvDatagram&gt;,
     ) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>cancel_token = CancellationToken::new();
         <span class="self">Self </span>{
@@ -3014,7 +2999,6 @@
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>anyhow::Context;
     <span class="kw">use </span>iroh_base::SecretKey;
-    <span class="kw">use </span>n0_future::future;
     <span class="kw">use </span>smallvec::smallvec;
     <span class="kw">use </span>testresult::TestResult;
     <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
@@ -3064,7 +3048,7 @@
         prio_inbox_rx: mpsc::Receiver&lt;ActiveRelayPrioMessage&gt;,
         inbox_rx: mpsc::Receiver&lt;ActiveRelayMessage&gt;,
         relay_datagrams_send: mpsc::Receiver&lt;RelaySendItem&gt;,
-        relay_datagrams_recv: Arc&lt;RelayDatagramRecvQueue&gt;,
+        relay_datagrams_recv: mpsc::Sender&lt;RelayRecvDatagram&gt;,
         span: tracing::Span,
     ) -&gt; AbortOnDropHandle&lt;anyhow::Result&lt;()&gt;&gt; {
         <span class="kw">let </span>opts = ActiveRelayActorOptions {
@@ -3095,7 +3079,7 @@
     /// [`ActiveRelayNode`] under test to check connectivity works.
     </span><span class="kw">fn </span>start_echo_node(relay_url: RelayUrl) -&gt; (NodeId, AbortOnDropHandle&lt;()&gt;) {
         <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">8u8</span>; <span class="number">32</span>]);
-        <span class="kw">let </span>recv_datagram_queue = Arc::new(RelayDatagramRecvQueue::new());
+        <span class="kw">let </span>(recv_datagram_tx, <span class="kw-2">mut </span>recv_datagram_rx) = mpsc::channel(<span class="number">16</span>);
         <span class="kw">let </span>(send_datagram_tx, send_datagram_rx) = mpsc::channel(<span class="number">16</span>);
         <span class="kw">let </span>(prio_inbox_tx, prio_inbox_rx) = mpsc::channel(<span class="number">8</span>);
         <span class="kw">let </span>(inbox_tx, inbox_rx) = mpsc::channel(<span class="number">16</span>);
@@ -3107,15 +3091,15 @@
             prio_inbox_rx,
             inbox_rx,
             send_datagram_rx,
-            recv_datagram_queue.clone(),
+            recv_datagram_tx,
             <span class="macro">info_span!</span>(<span class="string">"echo-node"</span>),
         );
         <span class="kw">let </span>echo_task = tokio::spawn({
             <span class="kw">let </span>relay_url = relay_url.clone();
             <span class="kw">async move </span>{
                 <span class="kw">loop </span>{
-                    <span class="kw">let </span>datagram = future::poll_fn(|cx| recv_datagram_queue.poll_recv(cx)).<span class="kw">await</span>;
-                    <span class="kw">if let </span><span class="prelude-val">Ok</span>(recv) = datagram {
+                    <span class="kw">let </span>datagram = recv_datagram_rx.recv().<span class="kw">await</span>;
+                    <span class="kw">if let </span><span class="prelude-val">Some</span>(recv) = datagram {
                         <span class="kw">let </span>RelayRecvDatagram { url: <span class="kw">_</span>, src, buf } = recv;
                         <span class="macro">info!</span>(from = src.fmt_short(), <span class="string">"Received datagram"</span>);
                         <span class="kw">let </span>send = RelaySendItem {
@@ -3153,7 +3137,7 @@
     </span><span class="kw">async fn </span>send_recv_echo(
         item: RelaySendItem,
         tx: <span class="kw-2">&amp;</span>mpsc::Sender&lt;RelaySendItem&gt;,
-        rx: <span class="kw-2">&amp;</span>Arc&lt;RelayDatagramRecvQueue&gt;,
+        rx: <span class="kw-2">&amp;mut </span>mpsc::Receiver&lt;RelayRecvDatagram&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="macro">assert!</span>(item.datagrams.len() == <span class="number">1</span>);
         tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), <span class="kw">async move </span>{
@@ -3164,7 +3148,7 @@
                         url: <span class="kw">_</span>,
                         src: <span class="kw">_</span>,
                         buf,
-                    } = future::poll_fn(|cx| rx.poll_recv(cx)).<span class="kw">await</span><span class="question-mark">?</span>;
+                    } = rx.recv().<span class="kw">await</span>.unwrap();
 
                     <span class="macro">assert_eq!</span>(buf.as_ref(), item.datagrams[<span class="number">0</span>]);
 
@@ -3188,7 +3172,7 @@
         <span class="kw">let </span>(peer_node, _echo_node_task) = start_echo_node(relay_url.clone());
 
         <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">1u8</span>; <span class="number">32</span>]);
-        <span class="kw">let </span>datagram_recv_queue = Arc::new(RelayDatagramRecvQueue::new());
+        <span class="kw">let </span>(datagram_recv_tx, <span class="kw-2">mut </span>datagram_recv_rx) = mpsc::channel(<span class="number">16</span>);
         <span class="kw">let </span>(send_datagram_tx, send_datagram_rx) = mpsc::channel(<span class="number">16</span>);
         <span class="kw">let </span>(_prio_inbox_tx, prio_inbox_rx) = mpsc::channel(<span class="number">8</span>);
         <span class="kw">let </span>(inbox_tx, inbox_rx) = mpsc::channel(<span class="number">16</span>);
@@ -3200,7 +3184,7 @@
             prio_inbox_rx,
             inbox_rx,
             send_datagram_rx,
-            datagram_recv_queue.clone(),
+            datagram_recv_tx.clone(),
             <span class="macro">info_span!</span>(<span class="string">"actor-under-test"</span>),
         );
 
@@ -3214,7 +3198,7 @@
         send_recv_echo(
             hello_send_item.clone(),
             <span class="kw-2">&amp;</span>send_datagram_tx,
-            <span class="kw-2">&amp;</span>datagram_recv_queue,
+            <span class="kw-2">&amp;mut </span>datagram_recv_rx,
         )
         .<span class="kw">await</span><span class="question-mark">?</span>;
 
@@ -3238,7 +3222,7 @@
         send_recv_echo(
             hello_send_item.clone(),
             <span class="kw-2">&amp;</span>send_datagram_tx,
-            <span class="kw-2">&amp;</span>datagram_recv_queue,
+            <span class="kw-2">&amp;mut </span>datagram_recv_rx,
         )
         .<span class="kw">await</span><span class="question-mark">?</span>;
 
@@ -3257,7 +3241,7 @@
         send_recv_echo(
             hello_send_item.clone(),
             <span class="kw-2">&amp;</span>send_datagram_tx,
-            <span class="kw-2">&amp;</span>datagram_recv_queue,
+            <span class="kw-2">&amp;mut </span>datagram_recv_rx,
         )
         .<span class="kw">await</span><span class="question-mark">?</span>;
 
@@ -3274,7 +3258,7 @@
         <span class="kw">let </span>(_relay_map, relay_url, _server) = test_utils::run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">1u8</span>; <span class="number">32</span>]);
-        <span class="kw">let </span>datagram_recv_queue = Arc::new(RelayDatagramRecvQueue::new());
+        <span class="kw">let </span>(datagram_recv_tx, _datagram_recv_rx) = mpsc::channel(<span class="number">16</span>);
         <span class="kw">let </span>(_send_datagram_tx, send_datagram_rx) = mpsc::channel(<span class="number">16</span>);
         <span class="kw">let </span>(_prio_inbox_tx, prio_inbox_rx) = mpsc::channel(<span class="number">8</span>);
         <span class="kw">let </span>(inbox_tx, inbox_rx) = mpsc::channel(<span class="number">16</span>);
@@ -3286,7 +3270,7 @@
             prio_inbox_rx,
             inbox_rx,
             send_datagram_rx,
-            datagram_recv_queue.clone(),
+            datagram_recv_tx,
             <span class="macro">info_span!</span>(<span class="string">"actor-under-test"</span>),
         );
 

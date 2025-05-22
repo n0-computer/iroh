@@ -236,7 +236,18 @@
 <a href="#235" id="235">235</a>
 <a href="#236" id="236">236</a>
 <a href="#237" id="237">237</a>
-<a href="#238" id="238">238</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#238" id="238">238</a>
+<a href="#239" id="239">239</a>
+<a href="#240" id="240">240</a>
+<a href="#241" id="241">241</a>
+<a href="#242" id="242">242</a>
+<a href="#243" id="243">243</a>
+<a href="#244" id="244">244</a>
+<a href="#245" id="245">245</a>
+<a href="#246" id="246">246</a>
+<a href="#247" id="247">247</a>
+<a href="#248" id="248">248</a>
+<a href="#249" id="249">249</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     io,
     net::{IpAddr, SocketAddr},
     pin::Pin,
@@ -244,7 +255,7 @@
     task::{Context, Poll},
 };
 
-<span class="kw">use </span>n0_watcher::{Watchable, Watcher};
+<span class="kw">use </span>n0_watcher::Watchable;
 <span class="kw">use </span>netwatch::{UdpSender, UdpSocket};
 <span class="kw">use </span>pin_project::pin_project;
 <span class="kw">use </span>tracing::trace;
@@ -252,7 +263,7 @@
 <span class="kw">use super</span>::{Addr, Transmit};
 <span class="kw">use </span><span class="kw">crate</span>::metrics::MagicsockMetrics;
 
-<span class="attr">#[derive(Clone, Debug)]
+<span class="attr">#[derive(Debug)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>IpTransport {
     bind_addr: SocketAddr,
     socket: Arc&lt;UdpSocket&gt;,
@@ -280,7 +291,7 @@
 
     <span class="doccomment">/// NOTE: Receiving on a closed socket will return [`Poll::Pending`] indefinitely.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>poll_recv(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         cx: <span class="kw-2">&amp;mut </span>Context,
         bufs: <span class="kw-2">&amp;mut </span>[io::IoSliceMut&lt;<span class="lifetime">'_</span>&gt;],
         metas: <span class="kw-2">&amp;mut </span>[quinn_udp::RecvMeta],
@@ -298,11 +309,7 @@
         }
     }
 
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>local_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; SocketAddr {
-        <span class="self">self</span>.local_addr.get()
-    }
-
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>local_addr_watch(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Watcher&lt;Value = SocketAddr&gt; + Send {
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>local_addr_watch(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; n0_watcher::Direct&lt;SocketAddr&gt; {
         <span class="self">self</span>.local_addr.watch()
     }
 
@@ -322,17 +329,12 @@
         <span class="self">self</span>.bind_addr
     }
 
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>rebind(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; io::Result&lt;()&gt; {
-        <span class="self">self</span>.socket.rebind()<span class="question-mark">?</span>;
-        <span class="kw">let </span>addr = <span class="self">self</span>.socket.local_addr()<span class="question-mark">?</span>;
-        <span class="self">self</span>.local_addr.set(addr).ok();
-
-        <span class="prelude-val">Ok</span>(())
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>create_network_change_sender(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; IpNetworkChangeSender {
+        IpNetworkChangeSender {
+            socket: <span class="self">self</span>.socket.clone(),
+            local_addr: <span class="self">self</span>.local_addr.clone(),
+        }
     }
-
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>on_network_change(<span class="kw-2">&amp;</span><span class="self">self</span>, _info: <span class="kw-2">&amp;</span><span class="kw">crate</span>::magicsock::NetInfo) {
-        <span class="comment">// Nothing to do for now
-    </span>}
 
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>socket(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Arc&lt;UdpSocket&gt; {
         <span class="self">self</span>.socket.clone()
@@ -346,6 +348,26 @@
             metrics: <span class="self">self</span>.metrics.clone(),
         }
     }
+}
+
+<span class="attr">#[derive(Debug)]
+</span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>IpNetworkChangeSender {
+    socket: Arc&lt;UdpSocket&gt;,
+    local_addr: Watchable&lt;SocketAddr&gt;,
+}
+
+<span class="kw">impl </span>IpNetworkChangeSender {
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>rebind(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; io::Result&lt;()&gt; {
+        <span class="self">self</span>.socket.rebind()<span class="question-mark">?</span>;
+        <span class="kw">let </span>addr = <span class="self">self</span>.socket.local_addr()<span class="question-mark">?</span>;
+        <span class="self">self</span>.local_addr.set(addr).ok();
+
+        <span class="prelude-val">Ok</span>(())
+    }
+
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>on_network_change(<span class="kw-2">&amp;</span><span class="self">self</span>, _info: <span class="kw-2">&amp;</span><span class="kw">crate</span>::magicsock::NetInfo) {
+        <span class="comment">// Nothing to do for now
+    </span>}
 }
 
 <span class="attr">#[derive(Debug)]

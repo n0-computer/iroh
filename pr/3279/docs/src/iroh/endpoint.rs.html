@@ -3170,7 +3170,8 @@
 <a href="#3169" id="3169">3169</a>
 <a href="#3170" id="3170">3170</a>
 <a href="#3171" id="3171">3171</a>
-<a href="#3172" id="3172">3172</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#3172" id="3172">3172</a>
+<a href="#3173" id="3173">3173</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -3779,9 +3780,10 @@
         <span class="macro">trace!</span>(<span class="string">"created magicsock"</span>);
         <span class="macro">debug!</span>(version = <span class="macro">env!</span>(<span class="string">"CARGO_PKG_VERSION"</span>), <span class="string">"iroh Endpoint created"</span>);
 
+        <span class="kw">let </span>metrics = msock.metrics.magicsock.clone();
         <span class="kw">let </span>ep = <span class="self">Self </span>{
-            msock: msock.clone(),
-            rtt_actor: Arc::new(rtt_actor::RttHandle::new(msock.metrics.magicsock.clone())),
+            msock,
+            rtt_actor: Arc::new(rtt_actor::RttHandle::new(metrics)),
             static_config: Arc::new(static_config),
         };
         <span class="prelude-val">Ok</span>(ep)

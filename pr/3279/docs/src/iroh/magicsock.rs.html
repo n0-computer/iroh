@@ -3538,18 +3538,7 @@
 <a href="#3537" id="3537">3537</a>
 <a href="#3538" id="3538">3538</a>
 <a href="#3539" id="3539">3539</a>
-<a href="#3540" id="3540">3540</a>
-<a href="#3541" id="3541">3541</a>
-<a href="#3542" id="3542">3542</a>
-<a href="#3543" id="3543">3543</a>
-<a href="#3544" id="3544">3544</a>
-<a href="#3545" id="3545">3545</a>
-<a href="#3546" id="3546">3546</a>
-<a href="#3547" id="3547">3547</a>
-<a href="#3548" id="3548">3548</a>
-<a href="#3549" id="3549">3549</a>
-<a href="#3550" id="3550">3550</a>
-<a href="#3551" id="3551">3551</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#3540" id="3540">3540</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -3602,6 +3591,7 @@
     debug, error, error_span, event, info, info_span, instrument, trace, trace_span, warn,
     Instrument, Level, Span,
 };
+<span class="kw">use </span>transports::LocalAddrsWatch;
 <span class="kw">use </span>url::Url;
 
 <span class="attr">#[cfg(not(wasm_browser))]
@@ -3742,9 +3732,6 @@
     <span class="doccomment">/// Encryption key for this node.
     </span>secret_encryption_key: crypto_box::SecretKey,
 
-    <span class="doccomment">/// Transports, IP and Relay
-    </span>transports: Transports,
-
     <span class="doccomment">/// Close is in progress (or done)
     </span>closing: AtomicBool,
     <span class="doccomment">/// Close was called.
@@ -3789,6 +3776,9 @@
     </span>discovery_subscribers: DiscoverySubscribers,
 
     <span class="kw">pub</span>(<span class="kw">crate</span>) metrics: EndpointMetrics,
+
+    local_addrs_watch: LocalAddrsWatch,
+    ip_bind_addrs: Vec&lt;SocketAddr&gt;,
 }
 
 <span class="kw">impl </span>MagicSock {
@@ -3824,7 +3814,17 @@
 
     <span class="doccomment">/// Get the cached version of addresses.
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>local_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;transports::Addr&gt; {
-        <span class="self">self</span>.transports.local_addrs()
+        <span class="self">self</span>.local_addrs_watch.get().expect(<span class="string">"disconnected"</span>)
+    }
+
+    <span class="kw">fn </span>ip_bind_addrs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span>[SocketAddr] {
+        <span class="kw-2">&amp;</span><span class="self">self</span>.ip_bind_addrs
+    }
+
+    <span class="kw">fn </span>ip_local_addrs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = SocketAddr&gt; {
+        <span class="self">self</span>.local_addr()
+            .into_iter()
+            .filter_map(|addr| SocketAddr::try_from(addr).ok())
     }
 
     <span class="doccomment">/// Returns `true` if we have at least one candidate address where we can send packets to.
@@ -3886,7 +3886,7 @@
     /// Note that this can be used to wait for the initial home relay to be known using
     /// [`Watcher::initialized`].
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>home_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Watcher&lt;Value = Vec&lt;RelayUrl&gt;&gt; + <span class="lifetime">'_ </span>{
-        <span class="kw">let </span>res = <span class="self">self</span>.transports.local_addrs_watch().map(|addrs| {
+        <span class="kw">let </span>res = <span class="self">self</span>.local_addrs_watch.clone().map(|addrs| {
             addrs
                 .into_iter()
                 .filter_map(|addr| {
@@ -4003,8 +4003,9 @@
     <span class="attr">#[cfg_attr(windows, allow(dead_code))]
     </span><span class="kw">fn </span>normalized_local_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; io::Result&lt;SocketAddr&gt; {
         <span class="kw">let </span>addrs: Vec&lt;<span class="kw">_</span>&gt; = <span class="self">self
-            </span>.transports
-            .local_addrs()
+            </span>.local_addrs_watch
+            .get()
+            .expect(<span class="string">"disconnected"</span>)
             .into_iter()
             .filter_map(|addr| SocketAddr::try_from(addr).ok())
             .collect();
@@ -4102,32 +4103,6 @@
         }
 
         <span class="prelude-val">Ok</span>(active_paths)
-    }
-
-    <span class="doccomment">/// NOTE: Receiving on a [`Self::closed`] socket will return [`Poll::Pending`] indefinitely.
-    </span><span class="attr">#[instrument(skip_all)]
-    </span><span class="kw">fn </span>poll_recv(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        cx: <span class="kw-2">&amp;mut </span>Context,
-        bufs: <span class="kw-2">&amp;mut </span>[io::IoSliceMut&lt;<span class="lifetime">'_</span>&gt;],
-        metas: <span class="kw-2">&amp;mut </span>[quinn_udp::RecvMeta],
-    ) -&gt; Poll&lt;io::Result&lt;usize&gt;&gt; {
-        <span class="macro">debug_assert_eq!</span>(bufs.len(), metas.len(), <span class="string">"non matching bufs &amp; metas"</span>);
-        <span class="kw">if </span><span class="self">self</span>.is_closed() {
-            <span class="kw">return </span>Poll::Pending;
-        }
-
-        <span class="kw">let </span><span class="kw-2">mut </span>source_addrs = <span class="macro">vec!</span>[transports::Addr::default(); metas.len()];
-        <span class="kw">match </span><span class="self">self
-            </span>.transports
-            .poll_recv(cx, bufs, metas, <span class="kw-2">&amp;mut </span>source_addrs)<span class="question-mark">?
-        </span>{
-            Poll::Pending | Poll::Ready(<span class="number">0</span>) =&gt; Poll::Pending,
-            Poll::Ready(n) =&gt; {
-                <span class="self">self</span>.process_datagrams(<span class="kw-2">&amp;mut </span>bufs[..n], <span class="kw-2">&amp;mut </span>metas[..n], <span class="kw-2">&amp;</span>source_addrs[..n]);
-                Poll::Ready(<span class="prelude-val">Ok</span>(n))
-            }
-        }
     }
 
     <span class="doccomment">/// Process datagrams received from UDP sockets.
@@ -4853,7 +4828,6 @@
             me,
             secret_key,
             secret_encryption_key,
-            transports,
             closing: AtomicBool::new(<span class="bool-val">false</span>),
             closed: AtomicBool::new(<span class="bool-val">false</span>),
             actor_sender: actor_sender.clone(),
@@ -4874,6 +4848,8 @@
             </span>dns_resolver,
             discovery_subscribers: DiscoverySubscribers::new(),
             metrics,
+            local_addrs_watch: transports.local_addrs_watch(),
+            ip_bind_addrs: transports.ip_bind_addrs(),
         });
 
         <span class="kw">let </span><span class="kw-2">mut </span>endpoint_config = quinn::EndpointConfig::default();
@@ -4884,11 +4860,17 @@
         // the packet if grease_quic_bit is set to false.
         </span>endpoint_config.grease_quic_bit(<span class="bool-val">false</span>);
 
+        <span class="kw">let </span>sender1 = transports.create_sender(msock.clone());
+        <span class="kw">let </span>sender2 = transports.create_sender(msock.clone());
+        <span class="kw">let </span>local_addrs_watch = transports.local_addrs_watch();
+        <span class="kw">let </span>network_change_sender = transports.create_network_change_sender();
+
         <span class="kw">let </span>endpoint = quinn::Endpoint::new_with_abstract_socket(
             endpoint_config,
             <span class="prelude-val">Some</span>(server_config),
             Box::new(MagicUdpSocket {
                 socket: msock.clone(),
+                transports,
             }),
             <span class="attr">#[cfg(not(wasm_browser))]
             </span>Arc::new(quinn::TokioRuntime),
@@ -4901,10 +4883,9 @@
         <span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">let _ </span>= actor_tasks.spawn({
             <span class="kw">let </span>msock = msock.clone();
-            <span class="kw">let </span>sender = msock.transports.create_sender(msock.clone());
             <span class="kw">async move </span>{
                 <span class="kw">while let </span><span class="prelude-val">Some</span>((dst, dst_key, msg)) = disco_receiver.recv().<span class="kw">await </span>{
-                    <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = msock.send_disco_message(<span class="kw-2">&amp;</span>sender, dst.clone(), dst_key, msg).<span class="kw">await </span>{
+                    <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = msock.send_disco_message(<span class="kw-2">&amp;</span>sender1, dst.clone(), dst_key, msg).<span class="kw">await </span>{
                         <span class="macro">warn!</span>(%dst, node = %dst_key.fmt_short(), <span class="question-mark">?</span>err, <span class="string">"failed to send disco message (UDP)"</span>);
                     }
                 }
@@ -4951,10 +4932,11 @@
             net_reporter,
             network_monitor,
             net_report_config,
+            network_change_sender,
         };
         actor_tasks.spawn(
             <span class="kw">async move </span>{
-                <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = actor.run().<span class="kw">await </span>{
+                <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = actor.run(local_addrs_watch, sender2).<span class="kw">await </span>{
                     <span class="macro">warn!</span>(<span class="string">"relay handler errored: {:?}"</span>, err);
                 }
             }
@@ -5107,11 +5089,12 @@
 <span class="attr">#[derive(Debug)]
 </span><span class="kw">struct </span>MagicUdpSocket {
     socket: Arc&lt;MagicSock&gt;,
+    transports: Transports,
 }
 
 <span class="kw">impl </span>AsyncUdpSocket <span class="kw">for </span>MagicUdpSocket {
     <span class="kw">fn </span>create_sender(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Pin&lt;Box&lt;<span class="kw">dyn </span>quinn::UdpSender&gt;&gt; {
-        Box::pin(<span class="self">self</span>.socket.transports.create_sender(<span class="self">self</span>.socket.clone()))
+        Box::pin(<span class="self">self</span>.transports.create_sender(<span class="self">self</span>.socket.clone()))
     }
 
     <span class="doccomment">/// NOTE: Receiving on a closed socket will return [`Poll::Pending`] indefinitely.
@@ -5121,14 +5104,13 @@
         bufs: <span class="kw-2">&amp;mut </span>[io::IoSliceMut&lt;<span class="lifetime">'_</span>&gt;],
         metas: <span class="kw-2">&amp;mut </span>[quinn_udp::RecvMeta],
     ) -&gt; Poll&lt;io::Result&lt;usize&gt;&gt; {
-        <span class="self">self</span>.socket.poll_recv(cx, bufs, metas)
+        <span class="self">self</span>.transports.poll_recv(cx, bufs, metas, <span class="kw-2">&amp;</span><span class="self">self</span>.socket)
     }
 
     <span class="attr">#[cfg(not(wasm_browser))]
     </span><span class="kw">fn </span>local_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; io::Result&lt;SocketAddr&gt; {
         <span class="kw">let </span>addrs: Vec&lt;<span class="kw">_</span>&gt; = <span class="self">self
-            </span>.socket
-            .transports
+            </span>.transports
             .local_addrs()
             .into_iter()
             .filter_map(|addr| {
@@ -5156,11 +5138,11 @@
     }
 
     <span class="kw">fn </span>max_receive_segments(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
-        <span class="self">self</span>.socket.transports.max_receive_segments()
+        <span class="self">self</span>.transports.max_receive_segments()
     }
 
     <span class="kw">fn </span>may_fragment(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
-        <span class="self">self</span>.socket.transports.may_fragment()
+        <span class="self">self</span>.transports.may_fragment()
     }
 }
 
@@ -5199,6 +5181,7 @@
     </span>net_reporter: net_report::Client,
 
     network_monitor: netmon::Monitor,
+    network_change_sender: transports::NetworkChangeSender,
 }
 
 <span class="attr">#[cfg(not(wasm_browser))]
@@ -5252,7 +5235,11 @@
 }
 
 <span class="kw">impl </span>Actor {
-    <span class="kw">async fn </span>run(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    <span class="kw">async fn </span>run(
+        <span class="kw-2">mut </span><span class="self">self</span>,
+        <span class="kw-2">mut </span>watcher: <span class="kw">impl </span>Watcher&lt;Value = Vec&lt;transports::Addr&gt;&gt; + Send + Sync,
+        sender: UdpSender,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="comment">// Setup network monitoring
         </span><span class="kw">let </span>(link_change_s, <span class="kw-2">mut </span>link_change_r) = mpsc::channel(<span class="number">8</span>);
         <span class="kw">let </span>_token = <span class="self">self
@@ -5284,10 +5271,6 @@
         <span class="attr">#[cfg_attr(wasm_browser, allow(unused_mut))]
         </span><span class="kw">let </span><span class="kw-2">mut </span>portmap_watcher_closed = <span class="bool-val">false</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>link_change_closed = <span class="bool-val">false</span>;
-
-        <span class="kw">let </span><span class="kw-2">mut </span>watcher = <span class="self">self</span>.msock.transports.local_addrs_watch();
-
-        <span class="kw">let </span>sender = <span class="self">self</span>.msock.transports.create_sender(<span class="self">self</span>.msock.clone());
 
         <span class="kw">loop </span>{
             <span class="self">self</span>.msock.metrics.magicsock.actor_tick_main.inc();
@@ -5417,7 +5400,7 @@
         <span class="macro">debug!</span>(<span class="string">"link change detected: major? {}"</span>, is_major);
 
         <span class="kw">if </span>is_major {
-            <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.msock.transports.rebind() {
+            <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.network_change_sender.rebind() {
                 <span class="macro">warn!</span>(<span class="string">"failed to rebind transports: {:?}"</span>, err);
             }
 
@@ -5538,18 +5521,13 @@
                 // port locally, assume they might've added a static
                 // port mapping on their router to the same explicit
                 // port that we are running with. Worst case it's an invalid candidate mapping.
-                </span><span class="kw">let </span>port = <span class="self">self
-                    </span>.msock
-                    .transports
-                    .ip_bind_addrs()
-                    .into_iter()
-                    .find_map(|addr| {
-                        <span class="kw">if </span>addr.port() != <span class="number">0 </span>{
-                            <span class="prelude-val">Some</span>(addr.port())
-                        } <span class="kw">else </span>{
-                            <span class="prelude-val">None
-                        </span>}
-                    });
+                </span><span class="kw">let </span>port = <span class="self">self</span>.msock.ip_bind_addrs().iter().find_map(|addr| {
+                    <span class="kw">if </span>addr.port() != <span class="number">0 </span>{
+                        <span class="prelude-val">Some</span>(addr.port())
+                    } <span class="kw">else </span>{
+                        <span class="prelude-val">None
+                    </span>}
+                });
 
                 <span class="kw">if let </span><span class="prelude-val">Some</span>(port) = port {
                     <span class="kw">if </span>net_report_report
@@ -5571,12 +5549,12 @@
             }
         }
 
-        <span class="kw">let </span>local_addrs: Vec&lt;<span class="kw">_</span>&gt; = <span class="self">self
+        <span class="kw">let </span>local_addrs: Vec&lt;(SocketAddr, SocketAddr)&gt; = <span class="self">self
             </span>.msock
-            .transports
             .ip_bind_addrs()
-            .into_iter()
-            .zip(<span class="self">self</span>.msock.transports.ip_local_addrs())
+            .iter()
+            .copied()
+            .zip(<span class="self">self</span>.msock.ip_local_addrs())
             .collect();
 
         <span class="kw">let </span>msock = <span class="self">self</span>.msock.clone();
@@ -5799,7 +5777,7 @@
             }
 
             <span class="comment">// Notify all transports
-            </span><span class="self">self</span>.msock.transports.on_network_change(<span class="kw-2">&amp;</span>ni);
+            </span><span class="self">self</span>.network_change_sender.on_network_change(<span class="kw-2">&amp;</span>ni);
 
             <span class="comment">// TODO: set link type
             </span><span class="self">self</span>.call_net_info_callback(ni).<span class="kw">await</span>;
