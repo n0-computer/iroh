@@ -9,10 +9,14 @@ use atomic_waker::AtomicWaker;
 use bytes::Bytes;
 use concurrent_queue::ConcurrentQueue;
 use iroh_base::{NodeId, RelayUrl};
-use n0_future::task::{self, AbortOnDropHandle};
+use n0_future::{
+    ready,
+    task::{self, AbortOnDropHandle},
+};
 use n0_watcher::{Watchable, Watcher as _};
 use smallvec::SmallVec;
 use tokio::sync::mpsc;
+use tokio_util::sync::PollSender;
 use tracing::{error, info_span, trace, warn, Instrument};
 
 use super::{Addr, Transmit};
@@ -32,7 +36,7 @@ pub(crate) struct RelayTransport {
     /// [`quinn::AsyncUdpSocket::poll_recv`].
     relay_datagram_recv_queue: Arc<RelayDatagramRecvQueue>,
     /// Channel on which to send datagrams via a relay server.
-    relay_datagram_send_channel: RelayDatagramSendChannelSender,
+    relay_datagram_send_channel: mpsc::Sender<RelaySendItem>,
     actor_sender: mpsc::Sender<RelayActorMessage>,
     _actor_handle: AbortOnDropHandle<()>,
     my_relay: Watchable<Option<RelayUrl>>,
@@ -70,8 +74,10 @@ impl RelayTransport {
         }
     }
 
-    pub(crate) fn create_sender(&self) -> RelayDatagramSendChannelSender {
-        self.relay_datagram_send_channel.clone()
+    pub(crate) fn create_sender(&self) -> RelaySender {
+        RelaySender {
+            sender: PollSender::new(self.relay_datagram_send_channel.clone()),
+        }
     }
 
     fn send_relay_actor(&self, msg: RelayActorMessage) {
@@ -228,15 +234,12 @@ impl RelayDatagramRecvQueue {
 ///
 /// These includes the waker coordination required to support [`quinn::UdpSender::poll_send`].
 fn relay_datagram_send_channel() -> (
-    RelayDatagramSendChannelSender,
+    mpsc::Sender<RelaySendItem>,
     RelayDatagramSendChannelReceiver,
 ) {
     let (sender, receiver) = mpsc::channel(256);
     let wakers = Arc::new(std::sync::Mutex::new(Vec::new()));
-    let tx = RelayDatagramSendChannelSender {
-        sender,
-        wakers: wakers.clone(),
-    };
+    let tx = sender;
     let rx = RelayDatagramSendChannelReceiver { receiver, wakers };
     (tx, rx)
 }
@@ -245,12 +248,11 @@ fn relay_datagram_send_channel() -> (
 ///
 /// This includes the waker coordination required to support [`quinn::UdpSender::poll_send`].
 #[derive(Debug, Clone)]
-pub(crate) struct RelayDatagramSendChannelSender {
-    sender: mpsc::Sender<RelaySendItem>,
-    wakers: Arc<std::sync::Mutex<Vec<Waker>>>,
+pub(crate) struct RelaySender {
+    sender: PollSender<RelaySendItem>,
 }
 
-impl RelayDatagramSendChannelSender {
+impl RelaySender {
     pub(super) fn is_valid_send_addr(&self, _url: &RelayUrl, _node_id: &NodeId) -> bool {
         true
     }
@@ -271,16 +273,18 @@ impl RelayDatagramSendChannelSender {
 
         let dest_node = item.remote_node;
         let dest_url = item.url.clone();
-
-        match self.sender.send(item).await {
+        let Some(sender) = self.sender.get_ref() else {
+            return Err(io::Error::other("channel closed"));
+        };
+        match sender.send(item).await {
             Ok(_) => {
                 trace!(node = %dest_node.fmt_short(), relay_url = %dest_url,
-                       "send relay: message queued");
+                        "send relay: message queued");
                 Ok(())
             }
             Err(mpsc::error::SendError(_)) => {
                 error!(node = %dest_node.fmt_short(), relay_url = %dest_url,
-                      "send relay: message dropped, channel to actor is closed");
+                        "send relay: message dropped, channel to actor is closed");
                 Err(io::Error::new(
                     io::ErrorKind::ConnectionReset,
                     "channel to actor is closed",
@@ -290,7 +294,7 @@ impl RelayDatagramSendChannelSender {
     }
 
     pub(super) fn poll_send(
-        &self,
+        &mut self,
         cx: &mut Context,
         dest_url: RelayUrl,
         dest_node: NodeId,
@@ -307,29 +311,30 @@ impl RelayDatagramSendChannelSender {
         let dest_node = item.remote_node;
         let dest_url = item.url.clone();
 
-        match self.sender.try_send(item) {
-            Ok(_) => {
+        match ready!(self.sender.poll_reserve(cx)) {
+            Ok(()) => {
                 trace!(node = %dest_node.fmt_short(), relay_url = %dest_url,
-                       "send relay: message queued");
-                Poll::Ready(Ok(()))
+                    "send relay: message queued");
+
+                match self.sender.send_item(item) {
+                    Ok(()) => Poll::Ready(Ok(())),
+                    Err(_err) => {
+                        error!(node = %dest_node.fmt_short(), relay_url = %dest_url,
+                      "send relay: message dropped, channel to actor is closed");
+                        Poll::Ready(Err(io::Error::new(
+                            io::ErrorKind::ConnectionReset,
+                            "channel to actor is closed",
+                        )))
+                    }
+                }
             }
-            Err(mpsc::error::TrySendError::Closed(_)) => {
+            Err(_err) => {
                 error!(node = %dest_node.fmt_short(), relay_url = %dest_url,
                       "send relay: message dropped, channel to actor is closed");
                 Poll::Ready(Err(io::Error::new(
                     io::ErrorKind::ConnectionReset,
                     "channel to actor is closed",
                 )))
-            }
-            Err(mpsc::error::TrySendError::Full(_)) => {
-                warn!(node = %dest_node.fmt_short(), relay_url = %dest_url,
-                      "send relay: message dropped, channel to actor is full");
-                let mut wakers = self.wakers.lock().expect("poisoned");
-                if !wakers.iter().any(|waker| waker.will_wake(cx.waker())) {
-                    wakers.push(cx.waker().clone());
-                }
-                drop(wakers);
-                Poll::Pending
             }
         }
     }
@@ -351,7 +356,11 @@ impl RelayDatagramSendChannelSender {
         let dest_node = item.remote_node;
         let dest_url = item.url.clone();
 
-        match self.sender.try_send(item) {
+        let Some(sender) = self.sender.get_ref() else {
+            return Err(io::Error::other("channel closed"));
+        };
+
+        match sender.try_send(item) {
             Ok(_) => {
                 trace!(node = %dest_node.fmt_short(), relay_url = %dest_url,
                        "send relay: message queued");

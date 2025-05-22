@@ -8,7 +8,7 @@ use std::{
 
 use iroh_base::{NodeId, RelayUrl};
 use n0_watcher::Watcher;
-use relay::RelayDatagramSendChannelSender;
+use relay::RelaySender;
 use smallvec::SmallVec;
 use tracing::{error, trace, warn};
 
@@ -316,7 +316,7 @@ pub(crate) struct UdpSender {
     msock: Arc<MagicSock>, // :(
     #[cfg(not(wasm_browser))]
     ip: Vec<IpSender>,
-    relay: Vec<RelayDatagramSendChannelSender>,
+    relay: Vec<RelaySender>,
 }
 
 impl UdpSender {
@@ -397,7 +397,7 @@ impl UdpSender {
                 }
             }
             Addr::Relay(url, node_id) => {
-                for sender in &self.relay {
+                for sender in &mut self.relay {
                     if sender.is_valid_send_addr(url, node_id) {
                         match sender.poll_send(cx, url.clone(), *node_id, transmit) {
                             Poll::Pending => {}
