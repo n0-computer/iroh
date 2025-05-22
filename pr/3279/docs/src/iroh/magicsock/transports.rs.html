@@ -620,8 +620,7 @@
 <a href="#619" id="619">619</a>
 <a href="#620" id="620">620</a>
 <a href="#621" id="621">621</a>
-<a href="#622" id="622">622</a>
-<a href="#623" id="623">623</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#622" id="622">622</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     io::{<span class="self">self</span>, IoSliceMut},
     net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6},
     pin::Pin,
@@ -692,8 +691,7 @@
         }
     }
 
-    <span class="doccomment">/// NOTE: Receiving on a [`Self::closed`] socket will return [`Poll::Pending`] indefinitely.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>poll_recv(
+    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>poll_recv(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         cx: <span class="kw-2">&amp;mut </span>Context,
         bufs: <span class="kw-2">&amp;mut </span>[io::IoSliceMut&lt;<span class="lifetime">'_</span>&gt;],
