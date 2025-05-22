@@ -511,9 +511,11 @@ impl MagicSock {
                     &self.metrics.magicsock,
                 ) {
                     Some((node_id, udp_addr, relay_url, ping_actions)) => {
-                        self.actor_sender
-                            .try_send(ActorMessage::PingActions(ping_actions))
-                            .ok();
+                        if !ping_actions.is_empty() {
+                            self.actor_sender
+                                .try_send(ActorMessage::PingActions(ping_actions))
+                                .ok();
+                        }
                         if let Some(addr) = udp_addr {
                             active_paths.push(transports::Addr::from(addr));
                         }
