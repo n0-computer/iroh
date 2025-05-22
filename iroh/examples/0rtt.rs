@@ -86,11 +86,13 @@ async fn connect(args: Args) -> anyhow::Result<()> {
         } else {
             pingpong_0rtt(connecting, i).await?
         };
-        // tokio::spawn(async move {
-        //     tokio::time::sleep(connection.rtt() * 2).await;
-        //     connection.close(0u8.into(), b"done");
-        // });
-        connection.close(0u8.into(), b"done");
+        tokio::spawn(async move {
+            // wait for some time for the handshake to complete and the server
+            // to send a NewSessionTicket. This is less than ideal, but we
+            // don't have a better way to wait for the handshake to complete.
+            tokio::time::sleep(connection.rtt() * 2).await;
+            connection.close(0u8.into(), b"done");
+        });
         let elapsed = t0.elapsed();
         debug!("round {}: {} us", i, elapsed.as_micros());
     }
