@@ -2477,7 +2477,6 @@ mod tests {
     }
 
     #[cfg_attr(windows, ignore = "flaky")]
-    // #[tokio::test(flavor = "multi_thread")]
     #[tokio::test]
     #[traced_test]
     async fn endpoint_relay_connect_loop() -> Result {
