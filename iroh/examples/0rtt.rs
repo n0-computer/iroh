@@ -1,4 +1,4 @@
-use std::time::Instant;
+use std::{future::Future, time::Instant};
 
 use clap::Parser;
 use iroh::{
@@ -6,7 +6,7 @@ use iroh::{
     watcher::Watcher,
 };
 use iroh_base::ticket::NodeTicket;
-use n0_future::StreamExt;
+use n0_future::{future, StreamExt};
 use tracing::{debug, info, trace};
 
 const PINGPONG_ALPN: &[u8] = b"0rtt-pingpong";
@@ -23,38 +23,46 @@ struct Args {
     disable_0rtt: bool,
 }
 
-async fn pingpong(connection: &Connection, x: u64) -> anyhow::Result<()> {
+/// Do a simple ping-pong with the given connection.
+///
+/// We send the data on the connection. If `proceed` resolves to true,
+/// read the response immediately. Otherwise, the stream pair is bad and we need
+/// to open a new stream pair.
+async fn pingpong(
+    connection: &Connection,
+    proceed: impl Future<Output = bool>,
+    x: u64,
+) -> anyhow::Result<()> {
     let (mut send, mut recv) = connection.open_bi().await?;
     let data = x.to_be_bytes();
     send.write_all(&data).await?;
     send.finish()?;
-    let echo = recv.read_to_end(8).await?;
+    let echo = if proceed.await {
+        recv.read_to_end(8).await?
+    } else {
+        let (mut send, mut recv) = connection.open_bi().await?;
+        send.write_all(&data).await?;
+        recv.read_to_end(8).await?
+    };
     anyhow::ensure!(echo == data);
     Ok(())
 }
 
 async fn pingpong_0rtt(connecting: Connecting, i: u64) -> anyhow::Result<Connection> {
-    let (connection, accepted) = match connecting.into_0rtt() {
-        Ok(res) => {
+    let connection = match connecting.into_0rtt() {
+        Ok((connection, accepted)) => {
             trace!("0-RTT possible from our side");
-            res
+            pingpong(&connection, accepted, i).await?;
+            connection
         }
         Err(connecting) => {
             trace!("0-RTT not possible from our side");
             let connection = connecting.await?;
-            pingpong(&connection, i).await?;
-            return Ok(connection);
+            pingpong(&connection, future::ready(true), i).await?;
+            connection
         }
     };
-    if pingpong(&connection, i).await.is_ok() {
-        return Ok(connection);
-    }
-    if !accepted.await {
-        trace!("0-RTT not accepted, trying again without 0-RTT");
-        pingpong(&connection, i).await?;
-        return Ok(connection);
-    }
-    anyhow::bail!("0-RTT was accepted, but exchange failed");
+    Ok(connection)
 }
 
 async fn connect(args: Args) -> anyhow::Result<()> {
@@ -72,7 +80,7 @@ async fn connect(args: Args) -> anyhow::Result<()> {
         let connection = if args.disable_0rtt {
             let connection = connecting.await?;
             trace!("connecting without 0-RTT");
-            pingpong(&connection, i).await?;
+            pingpong(&connection, future::ready(true), i).await?;
             connection
         } else {
             pingpong_0rtt(connecting, i).await?
