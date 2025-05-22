@@ -1,7 +1,10 @@
 use std::time::Instant;
 
 use clap::Parser;
-use iroh::{endpoint::Connection, watcher::Watcher};
+use iroh::{
+    endpoint::{Connecting, Connection},
+    watcher::Watcher,
+};
 use iroh_base::ticket::NodeTicket;
 use n0_future::StreamExt;
 use tracing::{debug, info, trace};
@@ -21,16 +24,37 @@ struct Args {
 }
 
 async fn pingpong(connection: &Connection, x: u64) -> anyhow::Result<()> {
-    let t0 = Instant::now();
     let (mut send, mut recv) = connection.open_bi().await?;
     let data = x.to_be_bytes();
     send.write_all(&data).await?;
     send.finish()?;
     let echo = recv.read_to_end(8).await?;
     anyhow::ensure!(echo == data);
-    let elapsed = t0.elapsed();
-    debug!("pingpong round {}: {} us", x, elapsed.as_micros());
     Ok(())
+}
+
+async fn pingpong_0rtt(connecting: Connecting, i: u64) -> anyhow::Result<Connection> {
+    let (connection, accepted) = match connecting.into_0rtt() {
+        Ok(res) => {
+            trace!("0-RTT possible from our side");
+            res
+        }
+        Err(connecting) => {
+            trace!("0-RTT not possible from our side");
+            let connection = connecting.await?;
+            pingpong(&connection, i).await?;
+            return Ok(connection);
+        }
+    };
+    if pingpong(&connection, i).await.is_ok() {
+        return Ok(connection);
+    }
+    if !accepted.await {
+        trace!("0-RTT not accepted, trying again without 0-RTT");
+        pingpong(&connection, i).await?;
+        return Ok(connection);
+    }
+    anyhow::bail!("0-RTT was accepted, but exchange failed");
 }
 
 async fn connect(args: Args) -> anyhow::Result<()> {
@@ -38,37 +62,21 @@ async fn connect(args: Args) -> anyhow::Result<()> {
     let endpoint = iroh::Endpoint::builder().bind().await?;
     let t0 = Instant::now();
     for i in 0..args.rounds {
+        let t0 = Instant::now();
         let connecting = endpoint
             .connect_with_opts(node_addr.clone(), PINGPONG_ALPN, Default::default())
             .await?;
-        if args.disable_0rtt {
+        let connection = if args.disable_0rtt {
             let connection = connecting.await?;
             trace!("connecting without 0-RTT");
             pingpong(&connection, i).await?;
-            connection.close(0u32.into(), b"done");
+            connection
         } else {
-            let (connection, accepted) = match connecting.into_0rtt() {
-                Ok(res) => {
-                    trace!("0-RTT possible from our side");
-                    res
-                }
-                Err(connecting) => {
-                    trace!("0-RTT not possible from our side");
-                    let connection = connecting.await?;
-                    pingpong(&connection, i).await?;
-                    continue;
-                }
-            };
-            if pingpong(&connection, i).await.is_ok() {
-                // 0-RTT worked, we don't need to wait for accept to complete
-                continue;
-            }
-            if !accepted.await {
-                trace!("0-RTT not accepted, trying again without 0-RTT");
-                pingpong(&connection, i).await?;
-            }
-            connection.close(0u32.into(), b"done");
-        }
+            pingpong_0rtt(connecting, i).await?
+        };
+        connection.close(0u8.into(), b"done");
+        let elapsed = t0.elapsed();
+        debug!("round {}: {} us", i, elapsed.as_micros());
     }
     let elapsed = t0.elapsed();
     info!("total time: {} us", elapsed.as_micros());
