@@ -639,15 +639,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "concurrent-queue"
-version = "2.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ca0197aee26d1ae37445ee532fefce43251d24cc7c166799f4d46817f1d3973"
-dependencies = [
- "crossbeam-utils",
-]
-
-[[package]]
 name = "console"
 version = "0.15.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2209,13 +2200,11 @@ version = "0.35.0"
 dependencies = [
  "aead",
  "anyhow",
- "atomic-waker",
  "axum",
  "backon",
  "bytes",
  "cfg_aliases",
  "clap",
- "concurrent-queue",
  "crypto_box",
  "data-encoding",
  "der",

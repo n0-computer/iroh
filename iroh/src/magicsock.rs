@@ -238,6 +238,7 @@ pub(crate) struct MagicSock {
     pub(crate) metrics: EndpointMetrics,
 
     local_addrs_watch: LocalAddrsWatch,
+    #[cfg(not(wasm_browser))]
     ip_bind_addrs: Vec<SocketAddr>,
 }
 
@@ -277,6 +278,7 @@ impl MagicSock {
         self.local_addrs_watch.get().expect("disconnected")
     }
 
+    #[cfg(not(wasm_browser))]
     fn ip_bind_addrs(&self) -> &[SocketAddr] {
         &self.ip_bind_addrs
     }
@@ -1309,6 +1311,7 @@ impl Handle {
             discovery_subscribers: DiscoverySubscribers::new(),
             metrics,
             local_addrs_watch: transports.local_addrs_watch(),
+            #[cfg(not(wasm_browser))]
             ip_bind_addrs: transports.ip_bind_addrs(),
         });
 

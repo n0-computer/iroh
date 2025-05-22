@@ -34,6 +34,7 @@ pub(crate) struct Transports {
     poll_recv_counter: AtomicUsize,
 }
 
+#[cfg(not(wasm_browser))]
 pub(crate) type LocalAddrsWatch = n0_watcher::Map<
     (
         n0_watcher::Join<SocketAddr, n0_watcher::Direct<SocketAddr>>,
@@ -42,6 +43,15 @@ pub(crate) type LocalAddrsWatch = n0_watcher::Map<
             n0_watcher::Map<n0_watcher::Direct<Option<RelayUrl>>, Option<(RelayUrl, NodeId)>>,
         >,
     ),
+    Vec<Addr>,
+>;
+
+#[cfg(wasm_browser)]
+pub(crate) type LocalAddrsWatch = n0_watcher::Map<
+    n0_watcher::Join<
+        Option<(RelayUrl, NodeId)>,
+        n0_watcher::Map<n0_watcher::Direct<Option<RelayUrl>>, Option<(RelayUrl, NodeId)>>,
+    >,
     Vec<Addr>,
 >;
 
@@ -160,7 +170,7 @@ impl Transports {
     }
 
     #[cfg(wasm_browser)]
-    pub(crate) fn local_addrs_watch(&self) -> impl Watcher<Value = Vec<Addr>> + Send + Sync {
+    pub(crate) fn local_addrs_watch(&self) -> LocalAddrsWatch {
         let relays = self.relay.iter().map(|t| t.local_addr_watch());
         n0_watcher::Join::new(relays)
             .map(|relays| relays.into_iter().flatten().map(Addr::from).collect())
