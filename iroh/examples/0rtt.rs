@@ -1,4 +1,7 @@
-use std::{future::Future, time::Instant};
+use std::{
+    future::Future,
+    time::{Duration, Instant},
+};
 
 use clap::Parser;
 use iroh::{
@@ -69,6 +72,7 @@ async fn connect(args: Args) -> anyhow::Result<()> {
     let node_addr = args.node.unwrap().node_addr().clone();
     let endpoint = iroh::Endpoint::builder()
         .relay_mode(iroh::RelayMode::Disabled)
+        .keylog(true)
         .bind()
         .await?;
     let t0 = Instant::now();
@@ -85,7 +89,10 @@ async fn connect(args: Args) -> anyhow::Result<()> {
         } else {
             pingpong_0rtt(connecting, i).await?
         };
-        connection.close(0u8.into(), b"done");
+        tokio::spawn(async move {
+            tokio::time::sleep(connection.rtt() * 2).await;
+            connection.close(0u8.into(), b"done");
+        });
         let elapsed = t0.elapsed();
         debug!("round {}: {} us", i, elapsed.as_micros());
     }
