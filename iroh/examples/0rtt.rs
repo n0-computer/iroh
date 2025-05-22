@@ -3,6 +3,7 @@ use std::time::Instant;
 use clap::Parser;
 use iroh::{endpoint::Connection, watcher::Watcher};
 use iroh_base::ticket::NodeTicket;
+use n0_future::StreamExt;
 use tracing::{debug, info, trace};
 
 const PINGPONG_ALPN: &[u8] = b"0rtt-pingpong";
@@ -83,7 +84,17 @@ async fn accept(_args: Args) -> anyhow::Result<()> {
         .alpns(vec![PINGPONG_ALPN.to_vec()])
         .bind()
         .await?;
-    let addr = endpoint.node_addr().initialized().await?;
+    let mut addrs = endpoint.node_addr().stream();
+    let addr = loop {
+        let Some(addr) = addrs.next().await else {
+            anyhow::bail!("Address stream closed");
+        };
+        if let Some(addr) = addr {
+            if !addr.direct_addresses.is_empty() {
+                break addr;
+            }
+        }
+    };
     println!("Listening on: {:?}", addr);
     println!("Node ID: {:?}", addr.node_id);
     println!("Ticket: {}", NodeTicket::from(addr));
