@@ -3540,7 +3540,14 @@
 <a href="#3539" id="3539">3539</a>
 <a href="#3540" id="3540">3540</a>
 <a href="#3541" id="3541">3541</a>
-<a href="#3542" id="3542">3542</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#3542" id="3542">3542</a>
+<a href="#3543" id="3543">3543</a>
+<a href="#3544" id="3544">3544</a>
+<a href="#3545" id="3545">3545</a>
+<a href="#3546" id="3546">3546</a>
+<a href="#3547" id="3547">3547</a>
+<a href="#3548" id="3548">3548</a>
+<a href="#3549" id="3549">3549</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4052,7 +4059,10 @@
                     <span class="self">self</span>.ipv6_reported.load(Ordering::Relaxed),
                     <span class="kw-2">&amp;</span><span class="self">self</span>.metrics.magicsock,
                 ) {
-                    <span class="prelude-val">Some</span>((node_id, udp_addr, relay_url)) =&gt; {
+                    <span class="prelude-val">Some</span>((node_id, udp_addr, relay_url, ping_actions)) =&gt; {
+                        <span class="self">self</span>.actor_sender
+                            .try_send(ActorMessage::PingActions(ping_actions))
+                            .ok();
                         <span class="kw">if let </span><span class="prelude-val">Some</span>(addr) = udp_addr {
                             active_paths.push(transports::Addr::from(addr));
                         }
@@ -5153,6 +5163,7 @@
 <span class="attr">#[derive(Debug)]
 </span><span class="kw">enum </span>ActorMessage {
     Shutdown,
+    PingActions(Vec&lt;PingAction&gt;),
     EndpointPingExpired(usize, stun_rs::TransactionId),
     NetReport(<span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Arc&lt;net_report::Report&gt;&gt;&gt;, <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str),
     NetworkChange,
@@ -5298,7 +5309,7 @@
 
                     <span class="macro">trace!</span>(<span class="question-mark">?</span>msg, <span class="string">"tick: msg"</span>);
                     <span class="self">self</span>.msock.metrics.magicsock.actor_tick_msg.inc();
-                    <span class="kw">if </span><span class="self">self</span>.handle_actor_message(msg).<span class="kw">await </span>{
+                    <span class="kw">if </span><span class="self">self</span>.handle_actor_message(msg, <span class="kw-2">&amp;</span>sender).<span class="kw">await </span>{
                         <span class="kw">return </span><span class="prelude-val">Ok</span>(());
                     }
                 }
@@ -5425,7 +5436,7 @@
     <span class="doccomment">/// Processes an incoming actor message.
     ///
     /// Returns `true` if it was a shutdown.
-    </span><span class="kw">async fn </span>handle_actor_message(<span class="kw-2">&amp;mut </span><span class="self">self</span>, msg: ActorMessage) -&gt; bool {
+    </span><span class="kw">async fn </span>handle_actor_message(<span class="kw-2">&amp;mut </span><span class="self">self</span>, msg: ActorMessage, sender: <span class="kw-2">&amp;</span>UdpSender) -&gt; bool {
         <span class="kw">match </span>msg {
             ActorMessage::Shutdown =&gt; {
                 <span class="macro">debug!</span>(<span class="string">"shutting down"</span>);
@@ -5460,6 +5471,9 @@
             <span class="attr">#[cfg(test)]
             </span>ActorMessage::ForceNetworkChange(is_major) =&gt; {
                 <span class="self">self</span>.handle_network_change(is_major);
+            }
+            ActorMessage::PingActions(ping_actions) =&gt; {
+                <span class="self">self</span>.handle_ping_actions(sender, ping_actions).<span class="kw">await</span>;
             }
         }
 

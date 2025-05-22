@@ -898,7 +898,12 @@
 <a href="#897" id="897">897</a>
 <a href="#898" id="898">898</a>
 <a href="#899" id="899">899</a>
-<a href="#900" id="900">900</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#900" id="900">900</a>
+<a href="#901" id="901">901</a>
+<a href="#902" id="902">902</a>
+<a href="#903" id="903">903</a>
+<a href="#904" id="904">904</a>
+<a href="#905" id="905">905</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{hash_map::Entry, BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
@@ -1151,13 +1156,18 @@
         addr: NodeIdMappedAddr,
         have_ipv6: bool,
         metrics: <span class="kw-2">&amp;</span>Metrics,
-    ) -&gt; <span class="prelude-ty">Option</span>&lt;(PublicKey, <span class="prelude-ty">Option</span>&lt;SocketAddr&gt;, <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;)&gt; {
+    ) -&gt; <span class="prelude-ty">Option</span>&lt;(
+        PublicKey,
+        <span class="prelude-ty">Option</span>&lt;SocketAddr&gt;,
+        <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;,
+        Vec&lt;PingAction&gt;,
+    )&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>inner = <span class="self">self</span>.inner.lock().expect(<span class="string">"poisoned"</span>);
         <span class="kw">let </span>ep = inner.get_mut(NodeStateKey::NodeIdMappedAddr(addr))<span class="question-mark">?</span>;
         <span class="kw">let </span>public_key = <span class="kw-2">*</span>ep.public_key();
         <span class="macro">trace!</span>(dest = %addr, node_id = %public_key.fmt_short(), <span class="string">"dst mapped to NodeId"</span>);
-        <span class="kw">let </span>(udp_addr, relay_url) = ep.get_send_addrs(have_ipv6, metrics);
-        <span class="prelude-val">Some</span>((public_key, udp_addr, relay_url))
+        <span class="kw">let </span>(udp_addr, relay_url, ping_actions) = ep.get_send_addrs(have_ipv6, metrics);
+        <span class="prelude-val">Some</span>((public_key, udp_addr, relay_url, ping_actions))
     }
 
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>notify_shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) {
