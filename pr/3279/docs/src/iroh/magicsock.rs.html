@@ -3547,7 +3547,9 @@
 <a href="#3546" id="3546">3546</a>
 <a href="#3547" id="3547">3547</a>
 <a href="#3548" id="3548">3548</a>
-<a href="#3549" id="3549">3549</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#3549" id="3549">3549</a>
+<a href="#3550" id="3550">3550</a>
+<a href="#3551" id="3551">3551</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4060,9 +4062,11 @@
                     <span class="kw-2">&amp;</span><span class="self">self</span>.metrics.magicsock,
                 ) {
                     <span class="prelude-val">Some</span>((node_id, udp_addr, relay_url, ping_actions)) =&gt; {
-                        <span class="self">self</span>.actor_sender
-                            .try_send(ActorMessage::PingActions(ping_actions))
-                            .ok();
+                        <span class="kw">if </span>!ping_actions.is_empty() {
+                            <span class="self">self</span>.actor_sender
+                                .try_send(ActorMessage::PingActions(ping_actions))
+                                .ok();
+                        }
                         <span class="kw">if let </span><span class="prelude-val">Some</span>(addr) = udp_addr {
                             active_paths.push(transports::Addr::from(addr));
                         }
