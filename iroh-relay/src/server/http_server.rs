@@ -557,7 +557,6 @@ impl Inner {
                 // Serve will create a WebSocketStream on an already upgraded connection
                 let websocket = builder.serve(io);
 
-                // TODO(matheus23): Change to use `RelayedStream` or similar, so we inherit the rate limiting
                 let mut io = HandshakeIo { io: websocket };
 
                 let client_info = handshake::serverside(&mut io, rand::rngs::OsRng).await?;

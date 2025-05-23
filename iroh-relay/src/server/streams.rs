@@ -6,6 +6,7 @@ use std::{
 };
 
 use anyhow::Result;
+use bytes::BytesMut;
 use n0_future::{Sink, Stream};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::codec::Framed;
@@ -46,9 +47,11 @@ impl Sink<Frame> for RelayedStream {
         match *self {
             Self::Relay(ref mut framed) => Pin::new(framed).start_send(item),
             Self::Ws(ref mut ws, _) => Pin::new(ws)
-                .start_send(tokio_websockets::Message::binary(
-                    tokio_websockets::Payload::from(item.encode_for_ws_msg()),
-                ))
+                .start_send(tokio_websockets::Message::binary({
+                    let mut buf = BytesMut::new();
+                    item.encode_for_ws_msg(&mut buf);
+                    tokio_websockets::Payload::from(buf.freeze())
+                }))
                 .map_err(ws_to_io_err),
         }
     }

@@ -328,11 +328,9 @@ impl Frame {
     /// Encodes this frame for sending over websockets.
     ///
     /// Specifically meant for being put into a binary websocket message frame.
-    pub(crate) fn encode_for_ws_msg(self) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        bytes.put_u8(self.typ().into());
-        self.write_to(&mut bytes);
-        bytes
+    pub(crate) fn encode_for_ws_msg(self, dst: &mut impl BufMut) {
+        dst.put_u8(self.typ().into());
+        self.write_to(dst);
     }
 
     /// Writes it self to the given buffer.
@@ -728,7 +726,8 @@ mod tests {
         ];
 
         for (frame, expected_hex) in frames {
-            let bytes = frame.encode_for_ws_msg();
+            let mut bytes = Vec::new();
+            frame.encode_for_ws_msg(&mut bytes);
             let stripped: Vec<u8> = expected_hex
                 .chars()
                 .filter_map(|s| {
@@ -854,7 +853,8 @@ mod proptests {
 
         #[test]
         fn frame_ws_roundtrip(frame in frame()) {
-            let encoded = frame.clone().encode_for_ws_msg();
+            let mut encoded = Vec::new();
+            frame.clone().encode_for_ws_msg(&mut encoded);
             let decoded = Frame::decode_from_ws_msg(Bytes::from(encoded), &KeyCache::test()).unwrap();
             prop_assert_eq!(frame, decoded);
         }

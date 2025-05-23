@@ -9,7 +9,7 @@ use std::{
 };
 
 use anyhow::{bail, Result};
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use iroh_base::{NodeId, SecretKey};
 use n0_future::{time::Duration, Sink, Stream};
 #[cfg(not(wasm_browser))]
@@ -253,9 +253,11 @@ impl Sink<Frame> for Conn {
             Self::Relay { ref mut conn } => Pin::new(conn).start_send(frame).map_err(Into::into),
             #[cfg(not(wasm_browser))]
             Self::Ws { ref mut conn, .. } => Pin::new(conn)
-                .start_send(tokio_websockets::Message::binary(
-                    tokio_websockets::Payload::from(frame.encode_for_ws_msg()),
-                ))
+                .start_send(tokio_websockets::Message::binary({
+                    let mut buf = BytesMut::new();
+                    frame.encode_for_ws_msg(&mut buf);
+                    tokio_websockets::Payload::from(buf.freeze())
+                }))
                 .map_err(Into::into),
             #[cfg(wasm_browser)]
             Self::WsBrowser { ref mut conn, .. } => Pin::new(conn)
@@ -319,9 +321,11 @@ impl Sink<SendMessage> for Conn {
             Self::Relay { ref mut conn } => Pin::new(conn).start_send(frame).map_err(Into::into),
             #[cfg(not(wasm_browser))]
             Self::Ws { ref mut conn, .. } => Pin::new(conn)
-                .start_send(tokio_websockets::Message::binary(
-                    tokio_websockets::Payload::from(frame.encode_for_ws_msg()),
-                ))
+                .start_send(tokio_websockets::Message::binary({
+                    let mut buf = BytesMut::new();
+                    frame.encode_for_ws_msg(&mut buf);
+                    tokio_websockets::Payload::from(buf.freeze())
+                }))
                 .map_err(Into::into),
             #[cfg(wasm_browser)]
             Self::WsBrowser { ref mut conn, .. } => Pin::new(conn)
