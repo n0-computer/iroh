@@ -3319,13 +3319,7 @@
 <a href="#3318" id="3318">3318</a>
 <a href="#3319" id="3319">3319</a>
 <a href="#3320" id="3320">3320</a>
-<a href="#3321" id="3321">3321</a>
-<a href="#3322" id="3322">3322</a>
-<a href="#3323" id="3323">3323</a>
-<a href="#3324" id="3324">3324</a>
-<a href="#3325" id="3325">3325</a>
-<a href="#3326" id="3326">3326</a>
-<a href="#3327" id="3327">3327</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#3321" id="3321">3321</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4592,7 +4586,7 @@
         <span class="attr">#[cfg(wasm_browser)]
         </span><span class="kw">let </span>transports = Transports::new(relay_transports);
 
-        <span class="kw">let </span>(disco, <span class="kw-2">mut </span>disco_receiver) = DiscoState::new(secret_encryption_key);
+        <span class="kw">let </span>(disco, disco_receiver) = DiscoState::new(secret_encryption_key);
 
         <span class="kw">let </span>msock = Arc::new(MagicSock {
             public_key: secret_key.public(),
@@ -4624,8 +4618,7 @@
         // the packet if grease_quic_bit is set to false.
         </span>endpoint_config.grease_quic_bit(<span class="bool-val">false</span>);
 
-        <span class="kw">let </span>sender1 = transports.create_sender(msock.clone());
-        <span class="kw">let </span>sender2 = transports.create_sender(msock.clone());
+        <span class="kw">let </span>sender = transports.create_sender(msock.clone());
         <span class="kw">let </span>local_addrs_watch = transports.local_addrs_watch();
         <span class="kw">let </span>network_change_sender = transports.create_network_change_sender();
 
@@ -4643,18 +4636,6 @@
         )<span class="question-mark">?</span>;
 
         <span class="kw">let </span><span class="kw-2">mut </span>actor_tasks = JoinSet::default();
-
-        <span class="attr">#[cfg(not(wasm_browser))]
-        </span><span class="kw">let _ </span>= actor_tasks.spawn({
-            <span class="kw">let </span>msock = msock.clone();
-            <span class="kw">async move </span>{
-                <span class="kw">while let </span><span class="prelude-val">Some</span>((dst, dst_key, msg)) = disco_receiver.recv().<span class="kw">await </span>{
-                    <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = msock.send_disco_message(<span class="kw-2">&amp;</span>sender1, dst.clone(), dst_key, msg).<span class="kw">await </span>{
-                        <span class="macro">warn!</span>(%dst, node = %dst_key.fmt_short(), <span class="question-mark">?</span>err, <span class="string">"failed to send disco message (UDP)"</span>);
-                    }
-                }
-            }
-        });
 
         <span class="kw">let </span>network_monitor = netmon::Monitor::new().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>qad_endpoint = endpoint.clone();
@@ -4703,10 +4684,11 @@
             network_change_sender,
             direct_addr_done_rx,
             pending_call_me_maybes: Default::default(),
+            disco_receiver,
         };
         actor_tasks.spawn(
             <span class="kw">async move </span>{
-                <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = actor.run(local_addrs_watch, sender2).<span class="kw">await </span>{
+                <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = actor.run(local_addrs_watch, sender).<span class="kw">await </span>{
                     <span class="macro">warn!</span>(<span class="string">"relay handler errored: {:?}"</span>, err);
                 }
             }
@@ -4968,6 +4950,7 @@
     <span class="doccomment">/// List of CallMeMaybe disco messages that should be sent out after
     /// the next endpoint update completes
     </span>pending_call_me_maybes: HashMap&lt;PublicKey, RelayUrl&gt;,
+    disco_receiver: mpsc::Receiver&lt;(SendAddr, PublicKey, disco::Message)&gt;,
 }
 
 <span class="attr">#[cfg(not(wasm_browser))]
@@ -5186,6 +5169,11 @@
                     }
                     <span class="comment">// Send the discovery item to the subscribers of the discovery broadcast stream.
                     </span><span class="self">self</span>.msock.discovery_subscribers.send(discovery_item);
+                }
+                <span class="prelude-val">Some</span>((dst, dst_key, msg)) = <span class="self">self</span>.disco_receiver.recv() =&gt; {
+                    <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.msock.send_disco_message(<span class="kw-2">&amp;</span>sender, dst.clone(), dst_key, msg).<span class="kw">await </span>{
+                        <span class="macro">warn!</span>(%dst, node = %dst_key.fmt_short(), <span class="question-mark">?</span>err, <span class="string">"failed to send disco message (UDP)"</span>);
+                    }
                 }
             }
         }
