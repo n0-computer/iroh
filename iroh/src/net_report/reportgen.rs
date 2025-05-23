@@ -286,7 +286,6 @@ impl Actor {
                         Some(Err(e)) => {
                             warn!("probes task join error: {:?}", e);
                         }
-
                         None => {
                             if have_udp {
                                 port_token.cancel();
