@@ -197,8 +197,6 @@ pub(crate) struct MagicSock {
     net_report: Watchable<(Option<Report>, UpdateReason)>,
     /// If the last net_report report, reports IPv6 to be available.
     ipv6_reported: Arc<AtomicBool>,
-    /// Zero nodes means relay is disabled.
-    relay_map: RelayMap,
     /// Tracks the networkmap node entity for each node discovery key.
     node_map: NodeMap,
     /// Tracks the mapped IP addresses
@@ -212,7 +210,7 @@ pub(crate) struct MagicSock {
     #[cfg(not(wasm_browser))]
     dns_resolver: DnsResolver,
 
-    // - Disco
+    /// Disco
     disco: DiscoState,
 
     // - Discovery
@@ -270,10 +268,6 @@ impl MagicSock {
 
     pub(crate) fn is_closed(&self) -> bool {
         self.closed.load(Ordering::SeqCst)
-    }
-
-    fn public_key(&self) -> PublicKey {
-        self.public_key
     }
 
     /// Get the cached version of addresses.
@@ -897,7 +891,7 @@ impl MagicSock {
         } = ping;
         let msg = disco::Message::Ping(disco::Ping {
             tx_id,
-            node_key: self.public_key(),
+            node_key: self.public_key,
         });
         let sent = self.disco.try_send(dst.clone(), dst_node, msg).is_ok();
         if sent {
@@ -910,7 +904,7 @@ impl MagicSock {
         }
     }
 
-    /// Tries to send the ping actions.
+    /// Send the given ping actions out.
     async fn send_ping_actions(&self, sender: &UdpSender, msgs: Vec<PingAction>) -> io::Result<()> {
         for msg in msgs {
             // Abort sending as soon as we know we are shutting down.
@@ -932,7 +926,7 @@ impl MagicSock {
         Ok(())
     }
 
-    /// Send a disco message. UDP messages will be polled to send directly on the UDP socket.
+    /// Sends out a disco message.
     async fn send_disco_message(
         &self,
         sender: &UdpSender,
@@ -986,7 +980,7 @@ impl MagicSock {
         } = ping;
         let msg = disco::Message::Ping(disco::Ping {
             tx_id,
-            node_key: self.public_key(),
+            node_key: self.public_key,
         });
 
         self.send_disco_message(sender, dst.clone(), dst_node, msg)
@@ -1024,22 +1018,14 @@ impl MagicSock {
                     ?last_refresh_ago,
                     "want call-me-maybe but direct addrs stale; queuing after restun",
                 );
-                self.re_stun(
-                    UpdateReason::RefreshForPeering,
-                    Some((dst_node, url.clone())),
-                );
+                self.actor_sender
+                    .try_send(ActorMessage::ScheduleDirectAddrUpdate(
+                        UpdateReason::RefreshForPeering,
+                        Some((dst_node, url.clone())),
+                    ))
+                    .ok();
             }
         }
-    }
-
-    /// Triggers an address discovery. The provided why string is for debug logging only.
-    #[instrument(skip_all)]
-    fn re_stun(&self, why: UpdateReason, data: Option<(NodeId, RelayUrl)>) {
-        debug!("re_stun: {:?}", why);
-        self.metrics.magicsock.re_stun_calls.inc();
-        self.actor_sender
-            .try_send(ActorMessage::ScheduleDirectAddrUpdate(why, data))
-            .ok();
     }
 
     /// Publishes our address to a discovery service, if configured.
@@ -1109,6 +1095,7 @@ struct DirectAddrUpdateState {
     port_mapper: portmapper::Client,
     /// The prober that discovers local network conditions, including the closest relay relay and NAT mappings.
     net_reporter: Arc<Mutex<net_report::Client>>,
+    relay_map: RelayMap,
     run_done: mpsc::Sender<()>,
 }
 
@@ -1130,6 +1117,7 @@ impl DirectAddrUpdateState {
         net_report_config: net_report::Options,
         #[cfg(not(wasm_browser))] port_mapper: portmapper::Client,
         net_reporter: Arc<Mutex<net_report::Client>>,
+        relay_map: RelayMap,
         run_done: mpsc::Sender<()>,
     ) -> Self {
         DirectAddrUpdateState {
@@ -1139,6 +1127,7 @@ impl DirectAddrUpdateState {
             port_mapper,
             net_reporter,
             msock,
+            relay_map,
             run_done,
         }
     }
@@ -1185,13 +1174,13 @@ impl DirectAddrUpdateState {
             debug!("skipping net_report, socket is shutting down");
             return;
         }
-        if self.msock.relay_map.is_empty() {
+        if self.relay_map.is_empty() {
             debug!("skipping net_report, empty RelayMap");
             self.msock.net_report.set((None, why)).ok();
             return;
         }
 
-        let relay_map = self.msock.relay_map.clone();
+        let relay_map = self.relay_map.clone();
         let opts = self.net_report_config.clone();
 
         debug!("requesting net_report report");
@@ -1325,7 +1314,6 @@ impl Handle {
             disco,
             actor_sender: actor_sender.clone(),
             ipv6_reported,
-            relay_map,
             node_map,
             ip_mapped_addrs,
             discovery,
@@ -1416,6 +1404,7 @@ impl Handle {
             #[cfg(not(wasm_browser))]
             port_mapper,
             Arc::new(Mutex::new(net_reporter)),
+            relay_map,
             direct_addr_done_tx,
         );
 
@@ -2210,7 +2199,11 @@ impl Actor {
             return my_relay;
         }
 
-        let ids = self.msock.relay_map.urls().collect::<Vec<_>>();
+        let ids = self
+            .direct_addr_update_state
+            .relay_map
+            .urls()
+            .collect::<Vec<_>>();
         let mut rng = rand::rngs::StdRng::seed_from_u64(0);
         ids.choose(&mut rng).map(|c| (*c).clone())
     }
