@@ -71,16 +71,18 @@ impl FileShareServer {
 
     async fn add_path(&self, path: &Path) -> Result<Vec<FileMetadata>> {
         let mut metadata_list = Vec::new();
+        let base_path = path.parent().unwrap_or(path);
         
         if path.is_file() {
             println!("Adding file: {}", path.display());
-            let metadata = self.add_file(path).await?;
+            let metadata = self.add_file(path, base_path).await?;
             metadata_list.push(metadata);
         } else if path.is_dir() {
             println!("Adding directory: {}", path.display());
             // First add the directory itself
+            let rel_path = path.strip_prefix(base_path).unwrap_or(path);
             let dir_metadata = FileMetadata {
-                path: path.to_string_lossy().to_string(),
+                path: rel_path.to_string_lossy().to_string(),
                 size: 0,
                 hash: String::new(),
                 is_dir: true,
@@ -89,7 +91,7 @@ impl FileShareServer {
                 metadata: dir_metadata.clone(),
                 data: None,
             };
-            self.files.write().await.insert(path.to_string_lossy().to_string(), dir_share);
+            self.files.write().await.insert(rel_path.to_string_lossy().to_string(), dir_share);
             metadata_list.push(dir_metadata);
 
             // Then add all files and subdirectories
@@ -101,12 +103,13 @@ impl FileShareServer {
                 
                 if entry_path.is_file() {
                     println!("Adding file: {}", entry_path.display());
-                    let metadata = self.add_file(entry_path).await?;
+                    let metadata = self.add_file(entry_path, base_path).await?;
                     metadata_list.push(metadata);
                 } else if entry_path.is_dir() {
                     println!("Adding subdirectory: {}", entry_path.display());
+                    let rel_path = entry_path.strip_prefix(base_path).unwrap_or(entry_path);
                     let metadata = FileMetadata {
-                        path: entry_path.to_string_lossy().to_string(),
+                        path: rel_path.to_string_lossy().to_string(),
                         size: 0,
                         hash: String::new(),
                         is_dir: true,
@@ -115,7 +118,7 @@ impl FileShareServer {
                         metadata: metadata.clone(),
                         data: None,
                     };
-                    self.files.write().await.insert(entry_path.to_string_lossy().to_string(), file_share);
+                    self.files.write().await.insert(rel_path.to_string_lossy().to_string(), file_share);
                     metadata_list.push(metadata);
                 }
             }
@@ -125,8 +128,9 @@ impl FileShareServer {
         Ok(metadata_list)
     }
 
-    async fn add_file(&self, path: &Path) -> Result<FileMetadata> {
-        let path_str = path.to_string_lossy().to_string();
+    async fn add_file(&self, path: &Path, base_path: &Path) -> Result<FileMetadata> {
+        let rel_path = path.strip_prefix(base_path).unwrap_or(path);
+        let path_str = rel_path.to_string_lossy().to_string();
         println!("Reading file: {}", path_str);
         let data = tokio::fs::read(path).await?;
         let size = data.len() as u64;
@@ -144,7 +148,7 @@ impl FileShareServer {
             data: Some(Bytes::from(data)),
         };
 
-        self.files.write().await.insert(path_str, file_share);
+        self.files.write().await.insert(path_str.clone(), file_share);
         println!("Added file: {} ({} bytes)", path_str, size);
         Ok(metadata)
     }
@@ -261,6 +265,8 @@ async fn share_path(
                 return Ok::<_, anyhow::Error>(());
             }
             
+            println!("Received request: {:?}", String::from_utf8_lossy(&request));
+            
             if request == b"LIST" {
                 println!("Received LIST request");
                 // Send the file list
@@ -269,6 +275,7 @@ async fn share_path(
                     .map(|f| f.metadata.clone())
                     .collect();
                 let response = serde_json::to_vec(&files)?;
+                println!("Sending file list with {} items", files.len());
                 send.write_all(&response).await?;
                 send.finish()?;
                 println!("Sent file list ({} files)", files.len());
@@ -278,23 +285,55 @@ async fn share_path(
                 println!("Received request for file: {}", path);
                 if let Some(file) = server.get_file(&path).await {
                     if let Some(data) = file.data {
-                        send.write_all(&data).await?;
-                        send.finish()?;
+                        println!("Sending file data: {} bytes", data.len());
+                        match send.write_all(&data).await {
+                            Ok(_) => {
+                                println!("Successfully wrote file data to stream");
+                                if let Err(e) = send.finish() {
+                                    println!("Error finishing stream: {}", e);
+                                } else {
+                                    println!("Successfully finished stream");
+                                }
+                            }
+                            Err(e) => println!("Error writing file data: {}", e),
+                        }
                         println!("Sent file: {} ({} bytes)", path, data.len());
                     } else {
-                        println!("File not found: {}", path);
+                        println!("File not found (no data): {}", path);
+                        // Send an error response
+                        let error_msg = format!("File not found: {}", path);
+                        if let Err(e) = send.write_all(error_msg.as_bytes()).await {
+                            println!("Error sending error message: {}", e);
+                        }
+                        if let Err(e) = send.finish() {
+                            println!("Error finishing error stream: {}", e);
+                        }
                     }
                 } else {
                     println!("File not found: {}", path);
+                    // Send an error response
+                    let error_msg = format!("File not found: {}", path);
+                    if let Err(e) = send.write_all(error_msg.as_bytes()).await {
+                        println!("Error sending error message: {}", e);
+                    }
+                    if let Err(e) = send.finish() {
+                        println!("Error finishing error stream: {}", e);
+                    }
                 }
             }
             
             // Wait for the connection to close
-            connection.closed().await;
-            println!("Connection closed");
+            println!("Waiting for connection to close...");
+            let close_error = connection.closed().await;
+            println!("Connection closed with status: {}", close_error);
+            println!("Connection handler finished");
             Ok::<_, anyhow::Error>(())
         });
     }
 
+    println!("Server is running. Press Ctrl+C to stop.");
+    // Keep the main thread alive
+    tokio::signal::ctrl_c().await?;
+    println!("Shutting down server...");
     Ok(())
 } 

@@ -32,9 +32,9 @@ enum Commands {
         /// Path to save downloaded files
         #[clap(long)]
         output_path: PathBuf,
-        /// Optional relay URL to use
+        /// Relay URL to use (must match the one used by the share script)
         #[clap(long)]
-        relay_url: Option<String>,
+        relay_url: String,
         /// Use relay only mode
         #[clap(long, default_value = "false")]
         relay_only: bool,
@@ -71,25 +71,17 @@ async fn main() -> Result<()> {
 async fn download_files(
     node_id: String,
     output_path: PathBuf,
-    relay_url: Option<String>,
+    relay_url: String,
     relay_only: bool,
 ) -> Result<()> {
     println!("Connecting to peer: {}", node_id);
+    println!("Using relay URL: {}", relay_url);
     
     // Set up the endpoint
     let secret_key = SecretKey::generate(rand::rngs::OsRng);
-    let relay_mode = match relay_url {
-        Some(relay_url) => {
-            println!("Using relay URL: {}", relay_url);
-            let relay_url = RelayUrl::from_str(&relay_url)?;
-            let relay_map = RelayMap::from_url(relay_url);
-            RelayMode::Custom(relay_map)
-        }
-        None => {
-            println!("Using default relay mode");
-            RelayMode::Default
-        }
-    };
+    let relay_url = RelayUrl::from_str(&relay_url)?;
+    let relay_map = RelayMap::from_url(relay_url);
+    let relay_mode = RelayMode::Custom(relay_map);
 
     let endpoint = Endpoint::builder()
         .secret_key(secret_key)
@@ -109,7 +101,7 @@ async fn download_files(
             conn
         }
         Err(e) => {
-            anyhow::bail!("Failed to connect to peer: {}. Make sure the peer is online and you have the correct relay URL if needed.", e)
+            anyhow::bail!("Failed to connect to peer: {}. Make sure the peer is online and you have the correct relay URL.", e)
         }
     };
 
@@ -159,25 +151,46 @@ async fn download_files(
     for file in files {
         if file.is_dir {
             let dir_path = output_path.join(&file.path);
-            std::fs::create_dir_all(dir_path)?;
-            println!("Created directory: {}", file.path);
+            std::fs::create_dir_all(&dir_path)?;
+            println!("Created directory: {}", dir_path.display());
         } else {
             println!("Downloading: {} ({} bytes)", file.path, file.size);
             
             // Request the file
             let (mut send, mut recv) = connection.open_bi().await?;
             let path_bytes = file.path.as_bytes();
+            println!("Opening stream for file: {}", file.path);
             send.write_all(path_bytes).await?;
             send.finish()?;
             println!("Sent request for file: {}", file.path);
 
-            // Read the file data
-            let file_data = recv.read_to_end(1024 * 1024).await?;
+            // Read the file data with timeout
+            println!("Waiting for file data...");
+            let file_data = match tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                recv.read_to_end(1024 * 1024)
+            ).await {
+                Ok(result) => match result {
+                    Ok(data) => data,
+                    Err(e) => {
+                        println!("Error reading file data: {}", e);
+                        continue;
+                    }
+                },
+                Err(_) => {
+                    println!("Timeout waiting for file data");
+                    continue;
+                }
+            };
+            
+            println!("Stream read complete");
+            
             if file_data.is_empty() {
                 println!("Warning: Received empty file for {}", file.path);
                 continue;
             }
             println!("Received {} bytes for file {}", file_data.len(), file.path);
+            println!("First few bytes: {:?}", &file_data[..std::cmp::min(32, file_data.len())]);
 
             // Save the file
             let file_path = output_path.join(&file.path);
@@ -185,7 +198,7 @@ async fn download_files(
                 std::fs::create_dir_all(parent)?;
             }
             std::fs::write(&file_path, &file_data)?;
-            println!("Saved: {} ({} bytes)", file.path, file_data.len());
+            println!("Saved: {} ({} bytes)", file_path.display(), file_data.len());
 
             // Verify file size
             if file_data.len() as u64 != file.size {
@@ -196,5 +209,12 @@ async fn download_files(
     }
 
     println!("Download complete!");
+    
+    // Wait for the connection to close
+    println!("Waiting for connection to close...");
+    let close_error = connection.closed().await;
+    println!("Connection closed with status: {}", close_error);
+    println!("Connection handler finished");
+
     Ok(())
-} 
+}
