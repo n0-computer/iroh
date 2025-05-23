@@ -3331,7 +3331,9 @@
 <a href="#3330" id="3330">3330</a>
 <a href="#3331" id="3331">3331</a>
 <a href="#3332" id="3332">3332</a>
-<a href="#3333" id="3333">3333</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#3333" id="3333">3333</a>
+<a href="#3334" id="3334">3334</a>
+<a href="#3335" id="3335">3335</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -3509,57 +3511,59 @@
 /// It is usually only necessary to use a single [`MagicSock`] instance in an application, it
 /// means any QUIC endpoints on top will be sharing as much information about nodes as
 /// possible.
-</span><span class="attr">#[derive(derive_more::Debug)]
+</span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>MagicSock {
-    actor_sender: mpsc::Sender&lt;ActorMessage&gt;,
-    <span class="doccomment">/// The DNS resolver to be used in this magicsock.
-    </span><span class="attr">#[cfg(not(wasm_browser))]
-    </span>dns_resolver: DnsResolver,
+    <span class="doccomment">/// Channel to send to the internal actor.
+    </span>actor_sender: mpsc::Sender&lt;ActorMessage&gt;,
+    <span class="doccomment">/// NodeId of this node.
+    </span>public_key: PublicKey,
 
-    <span class="doccomment">/// Key for this node.
-    </span>secret_key: SecretKey,
-    <span class="doccomment">/// Encryption key for this node.
-    </span>secret_encryption_key: crypto_box::SecretKey,
-
-    <span class="doccomment">/// Close is in progress (or done)
+    <span class="comment">// - State Management
+    </span><span class="doccomment">/// Close is in progress (or done)
     </span>closing: AtomicBool,
     <span class="doccomment">/// Close was called.
     </span>closed: AtomicBool,
+
+    <span class="comment">// - Networking Info
+    </span><span class="doccomment">/// Our discovered direct addresses.
+    </span>direct_addrs: DiscoveredDirectAddrs,
+    <span class="doccomment">/// Our latest net-report
+    </span>net_report: Watchable&lt;(<span class="prelude-ty">Option</span>&lt;Report&gt;, UpdateReason)&gt;,
     <span class="doccomment">/// If the last net_report report, reports IPv6 to be available.
     </span>ipv6_reported: Arc&lt;AtomicBool&gt;,
-
     <span class="doccomment">/// Zero nodes means relay is disabled.
     </span>relay_map: RelayMap,
     <span class="doccomment">/// Tracks the networkmap node entity for each node discovery key.
     </span>node_map: NodeMap,
     <span class="doccomment">/// Tracks the mapped IP addresses
     </span>ip_mapped_addrs: IpMappedAddresses,
+    <span class="doccomment">/// Local addresses
+    </span>local_addrs_watch: LocalAddrsWatch,
+    <span class="doccomment">/// Currently bound IP addresses of all sockets
+    </span><span class="attr">#[cfg(not(wasm_browser))]
+    </span>ip_bind_addrs: Vec&lt;SocketAddr&gt;,
+    <span class="doccomment">/// The DNS resolver to be used in this magicsock.
+    </span><span class="attr">#[cfg(not(wasm_browser))]
+    </span>dns_resolver: DnsResolver,
+
+    <span class="comment">// - Disco
+    </span><span class="doccomment">/// Encryption key for this node.
+    </span>secret_encryption_key: crypto_box::SecretKey,
     <span class="doccomment">/// The state for an active DiscoKey.
     </span>disco_secrets: DiscoSecrets,
-
     <span class="doccomment">/// Disco (ping) queue
     </span>disco_sender: mpsc::Sender&lt;(SendAddr, PublicKey, disco::Message)&gt;,
 
-    <span class="doccomment">/// Optional discovery service
+    <span class="comment">// - Discovery
+    </span><span class="doccomment">/// Optional discovery service
     </span>discovery: <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Discovery&gt;&gt;,
-
     <span class="doccomment">/// Optional user-defined discover data.
     </span>discovery_user_data: RwLock&lt;<span class="prelude-ty">Option</span>&lt;UserData&gt;&gt;,
-
-    <span class="doccomment">/// Our discovered direct addresses.
-    </span>direct_addrs: DiscoveredDirectAddrs,
-
-    <span class="doccomment">/// Our latest net-report
-    </span>net_report: Watchable&lt;(<span class="prelude-ty">Option</span>&lt;Report&gt;, UpdateReason)&gt;,
-
     <span class="doccomment">/// Broadcast channel for listening to discovery updates.
     </span>discovery_subscribers: DiscoverySubscribers,
 
-    <span class="kw">pub</span>(<span class="kw">crate</span>) metrics: EndpointMetrics,
-
-    local_addrs_watch: LocalAddrsWatch,
-    <span class="attr">#[cfg(not(wasm_browser))]
-    </span>ip_bind_addrs: Vec&lt;SocketAddr&gt;,
+    <span class="doccomment">/// Metrics
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) metrics: EndpointMetrics,
 }
 
 <span class="kw">impl </span>MagicSock {
@@ -3590,7 +3594,7 @@
     }
 
     <span class="kw">fn </span>public_key(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; PublicKey {
-        <span class="self">self</span>.secret_key.public()
+        <span class="self">self</span>.public_key
     }
 
     <span class="doccomment">/// Get the cached version of addresses.
@@ -4216,7 +4220,7 @@
     <span class="kw">fn </span>encode_disco_message(<span class="kw-2">&amp;</span><span class="self">self</span>, dst_key: PublicKey, msg: <span class="kw-2">&amp;</span>disco::Message) -&gt; Bytes {
         <span class="self">self</span>.disco_secrets.encode_and_seal(
             <span class="kw-2">&amp;</span><span class="self">self</span>.secret_encryption_key,
-            <span class="self">self</span>.secret_key.public(),
+            <span class="self">self</span>.public_key,
             dst_key,
             msg,
         )
@@ -4634,7 +4638,7 @@
         </span><span class="kw">let </span>transports = Transports::new(relay_transports);
 
         <span class="kw">let </span>msock = Arc::new(MagicSock {
-            secret_key,
+            public_key: secret_key.public(),
             secret_encryption_key,
             closing: AtomicBool::new(<span class="bool-val">false</span>),
             closed: AtomicBool::new(<span class="bool-val">false</span>),
@@ -4775,7 +4779,7 @@
     /// indefinitely after this call.
     </span><span class="attr">#[instrument(skip_all)]
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>close(<span class="kw-2">&amp;</span><span class="self">self</span>) {
-        <span class="macro">trace!</span>(me = <span class="question-mark">?</span><span class="self">self</span>.secret_key.public(), <span class="string">"magicsock closing..."</span>);
+        <span class="macro">trace!</span>(me = <span class="question-mark">?</span><span class="self">self</span>.public_key, <span class="string">"magicsock closing..."</span>);
         <span class="comment">// Initiate closing all connections, and refuse future connections.
         </span><span class="self">self</span>.endpoint.close(<span class="number">0u16</span>.into(), <span class="string">b""</span>);
 
