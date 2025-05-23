@@ -1305,7 +1305,7 @@ impl Handle {
         #[cfg(wasm_browser)]
         let transports = Transports::new(relay_transports);
 
-        let (disco, mut disco_receiver) = DiscoState::new(secret_encryption_key);
+        let (disco, disco_receiver) = DiscoState::new(secret_encryption_key);
 
         let msock = Arc::new(MagicSock {
             public_key: secret_key.public(),
@@ -1337,8 +1337,7 @@ impl Handle {
         // the packet if grease_quic_bit is set to false.
         endpoint_config.grease_quic_bit(false);
 
-        let sender1 = transports.create_sender(msock.clone());
-        let sender2 = transports.create_sender(msock.clone());
+        let sender = transports.create_sender(msock.clone());
         let local_addrs_watch = transports.local_addrs_watch();
         let network_change_sender = transports.create_network_change_sender();
 
@@ -1357,18 +1356,6 @@ impl Handle {
         .context(CreateQuinnEndpointSnafu)?;
 
         let mut actor_tasks = JoinSet::default();
-
-        #[cfg(not(wasm_browser))]
-        let _ = actor_tasks.spawn({
-            let msock = msock.clone();
-            async move {
-                while let Some((dst, dst_key, msg)) = disco_receiver.recv().await {
-                    if let Err(err) = msock.send_disco_message(&sender1, dst.clone(), dst_key, msg).await {
-                        warn!(%dst, node = %dst_key.fmt_short(), ?err, "failed to send disco message (UDP)");
-                    }
-                }
-            }
-        });
 
         let network_monitor = netmon::Monitor::new()
             .await
@@ -1419,10 +1406,11 @@ impl Handle {
             network_change_sender,
             direct_addr_done_rx,
             pending_call_me_maybes: Default::default(),
+            disco_receiver,
         };
         actor_tasks.spawn(
             actor
-                .run(local_addrs_watch, sender2)
+                .run(local_addrs_watch, sender)
                 .instrument(info_span!("actor")),
         );
 
@@ -1701,6 +1689,7 @@ struct Actor {
     /// List of CallMeMaybe disco messages that should be sent out after
     /// the next endpoint update completes
     pending_call_me_maybes: HashMap<PublicKey, RelayUrl>,
+    disco_receiver: mpsc::Receiver<(SendAddr, PublicKey, disco::Message)>,
 }
 
 #[cfg(not(wasm_browser))]
@@ -1930,6 +1919,11 @@ impl Actor {
                     }
                     // Send the discovery item to the subscribers of the discovery broadcast stream.
                     self.msock.discovery_subscribers.send(discovery_item);
+                }
+                Some((dst, dst_key, msg)) = self.disco_receiver.recv() => {
+                    if let Err(err) = self.msock.send_disco_message(&sender, dst.clone(), dst_key, msg).await {
+                        warn!(%dst, node = %dst_key.fmt_short(), ?err, "failed to send disco message (UDP)");
+                    }
                 }
             }
         }
