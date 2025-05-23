@@ -3313,13 +3313,7 @@
 <a href="#3312" id="3312">3312</a>
 <a href="#3313" id="3313">3313</a>
 <a href="#3314" id="3314">3314</a>
-<a href="#3315" id="3315">3315</a>
-<a href="#3316" id="3316">3316</a>
-<a href="#3317" id="3317">3317</a>
-<a href="#3318" id="3318">3318</a>
-<a href="#3319" id="3319">3319</a>
-<a href="#3320" id="3320">3320</a>
-<a href="#3321" id="3321">3321</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#3315" id="3315">3315</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -4056,7 +4050,11 @@
         <span class="kw">if let </span>transports::Addr::Relay(<span class="kw">_</span>, node_id) = src {
             <span class="kw">if </span>node_id != <span class="kw-2">&amp;</span>sender {
                 <span class="comment">// TODO: return here?
-                </span><span class="macro">warn!</span>(<span class="string">"Received relay disco message from connection for {:?}, but with message from {}"</span>, node_id.fmt_short(), sender.fmt_short());
+                </span><span class="macro">warn!</span>(
+                    <span class="string">"Received relay disco message from connection for {}, but with message from {}"</span>,
+                    node_id.fmt_short(),
+                    sender.fmt_short()
+                );
             }
         }
 
@@ -4216,13 +4214,61 @@
             }
             <span class="kw">match </span>msg {
                 PingAction::SendCallMeMaybe {
-                    <span class="kw-2">ref </span>relay_url,
+                    relay_url,
                     dst_node,
                 } =&gt; {
-                    <span class="self">self</span>.send_or_queue_call_me_maybe(relay_url, dst_node);
+                    <span class="comment">// Sends the call-me-maybe DISCO message, queuing if addresses are too stale.
+                    //
+                    // To send the call-me-maybe message, we need to know our current direct addresses.  If
+                    // this information is too stale, the call-me-maybe is queued while a net_report run is
+                    // scheduled.  Once this run finishes, the call-me-maybe will be sent.
+                    </span><span class="kw">match </span><span class="self">self</span>.direct_addrs.fresh_enough() {
+                        <span class="prelude-val">Ok</span>(()) =&gt; {
+                            <span class="kw">let </span>msg = disco::Message::CallMeMaybe(
+                                <span class="self">self</span>.direct_addrs.to_call_me_maybe_message(),
+                            );
+                            <span class="kw">if </span><span class="self">self
+                                </span>.disco
+                                .try_send(SendAddr::Relay(relay_url.clone()), dst_node, msg.clone())
+                                .is_err()
+                            {
+                                <span class="macro">warn!</span>(dstkey = %dst_node.fmt_short(), %relay_url, <span class="string">"relay channel full, dropping call-me-maybe"</span>);
+                            } <span class="kw">else </span>{
+                                <span class="macro">debug!</span>(dstkey = %dst_node.fmt_short(), %relay_url, <span class="string">"call-me-maybe sent"</span>);
+                            }
+                        }
+                        <span class="prelude-val">Err</span>(last_refresh_ago) =&gt; {
+                            <span class="macro">debug!</span>(
+                                <span class="question-mark">?</span>last_refresh_ago,
+                                <span class="string">"want call-me-maybe but direct addrs stale; queuing after restun"</span>,
+                            );
+                            <span class="self">self</span>.actor_sender
+                                .try_send(ActorMessage::ScheduleDirectAddrUpdate(
+                                    UpdateReason::RefreshForPeering,
+                                    <span class="prelude-val">Some</span>((dst_node, relay_url)),
+                                ))
+                                .ok();
+                        }
+                    }
                 }
-                PingAction::SendPing(ping) =&gt; {
-                    <span class="self">self</span>.send_ping(sender, ping).<span class="kw">await</span><span class="question-mark">?</span>;
+                PingAction::SendPing(SendPing {
+                    id,
+                    dst,
+                    dst_node,
+                    tx_id,
+                    purpose,
+                }) =&gt; {
+                    <span class="kw">let </span>msg = disco::Message::Ping(disco::Ping {
+                        tx_id,
+                        node_key: <span class="self">self</span>.public_key,
+                    });
+
+                    <span class="self">self</span>.send_disco_message(sender, dst.clone(), dst_node, msg)
+                        .<span class="kw">await</span><span class="question-mark">?</span>;
+                    <span class="macro">debug!</span>(%dst, tx = %HEXLOWER.encode(<span class="kw-2">&amp;</span>tx_id), <span class="question-mark">?</span>purpose, <span class="string">"ping sent"</span>);
+                    <span class="kw">let </span>msg_sender = <span class="self">self</span>.actor_sender.clone();
+                    <span class="self">self</span>.node_map
+                        .notify_ping_sent(id, dst, tx_id, purpose, msg_sender);
                 }
             }
         }
@@ -4269,64 +4315,6 @@
             <span class="prelude-val">Err</span>(err) =&gt; {
                 <span class="macro">warn!</span>(<span class="question-mark">?</span>dst, <span class="question-mark">?</span>msg, <span class="question-mark">?</span>err, <span class="string">"failed to send disco message"</span>);
                 <span class="prelude-val">Err</span>(err)
-            }
-        }
-    }
-
-    <span class="kw">async fn </span>send_ping(<span class="kw-2">&amp;</span><span class="self">self</span>, sender: <span class="kw-2">&amp;</span>UdpSender, ping: SendPing) -&gt; io::Result&lt;()&gt; {
-        <span class="kw">let </span>SendPing {
-            id,
-            dst,
-            dst_node,
-            tx_id,
-            purpose,
-        } = ping;
-        <span class="kw">let </span>msg = disco::Message::Ping(disco::Ping {
-            tx_id,
-            node_key: <span class="self">self</span>.public_key,
-        });
-
-        <span class="self">self</span>.send_disco_message(sender, dst.clone(), dst_node, msg)
-            .<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="macro">debug!</span>(%dst, tx = %HEXLOWER.encode(<span class="kw-2">&amp;</span>tx_id), <span class="question-mark">?</span>purpose, <span class="string">"ping sent"</span>);
-        <span class="kw">let </span>msg_sender = <span class="self">self</span>.actor_sender.clone();
-        <span class="self">self</span>.node_map
-            .notify_ping_sent(id, dst.clone(), tx_id, purpose, msg_sender);
-        <span class="prelude-val">Ok</span>(())
-    }
-
-    <span class="doccomment">/// Sends the call-me-maybe DISCO message, queuing if addresses are too stale.
-    ///
-    /// To send the call-me-maybe message, we need to know our current direct addresses.  If
-    /// this information is too stale, the call-me-maybe is queued while a net_report run is
-    /// scheduled.  Once this run finishes, the call-me-maybe will be sent.
-    </span><span class="kw">fn </span>send_or_queue_call_me_maybe(<span class="kw-2">&amp;</span><span class="self">self</span>, url: <span class="kw-2">&amp;</span>RelayUrl, dst_node: NodeId) {
-        <span class="kw">match </span><span class="self">self</span>.direct_addrs.fresh_enough() {
-            <span class="prelude-val">Ok</span>(()) =&gt; {
-                <span class="kw">let </span>msg = <span class="self">self</span>.direct_addrs.to_call_me_maybe_message();
-                <span class="kw">let </span>msg = disco::Message::CallMeMaybe(msg);
-                <span class="kw">if </span><span class="self">self
-                    </span>.disco
-                    .try_send(SendAddr::Relay(url.clone()), dst_node, msg.clone())
-                    .is_err()
-                {
-                    <span class="macro">warn!</span>(dstkey = %dst_node.fmt_short(), relayurl = %url,
-                      <span class="string">"relay channel full, dropping call-me-maybe"</span>);
-                } <span class="kw">else </span>{
-                    <span class="macro">debug!</span>(dstkey = %dst_node.fmt_short(), relayurl = %url, <span class="string">"call-me-maybe sent"</span>);
-                }
-            }
-            <span class="prelude-val">Err</span>(last_refresh_ago) =&gt; {
-                <span class="macro">debug!</span>(
-                    <span class="question-mark">?</span>last_refresh_ago,
-                    <span class="string">"want call-me-maybe but direct addrs stale; queuing after restun"</span>,
-                );
-                <span class="self">self</span>.actor_sender
-                    .try_send(ActorMessage::ScheduleDirectAddrUpdate(
-                        UpdateReason::RefreshForPeering,
-                        <span class="prelude-val">Some</span>((dst_node, url.clone())),
-                    ))
-                    .ok();
             }
         }
     }
