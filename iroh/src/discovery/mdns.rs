@@ -43,13 +43,13 @@ use n0_future::{
     task::{self, AbortOnDropHandle, JoinSet},
     time::{self, Duration},
 };
+use n0_watcher::{Watchable, Watcher as _};
 use swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
 use tokio::sync::mpsc::{self, error::TrySendError};
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
 use crate::{
     discovery::{Discovery, DiscoveryItem, NodeData, NodeInfo},
-    watcher::{Watchable, Watcher as _},
     Endpoint,
 };
 

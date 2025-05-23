@@ -639,15 +639,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "concurrent-queue"
-version = "2.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ca0197aee26d1ae37445ee532fefce43251d24cc7c166799f4d46817f1d3973"
-dependencies = [
- "crossbeam-utils",
-]
-
-[[package]]
 name = "console"
 version = "0.15.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2209,20 +2200,17 @@ version = "0.35.0"
 dependencies = [
  "aead",
  "anyhow",
- "atomic-waker",
  "axum",
  "backon",
  "bytes",
  "cfg_aliases",
  "clap",
- "concurrent-queue",
  "crypto_box",
  "data-encoding",
  "der",
  "derive_more",
  "ed25519-dalek",
  "futures-buffered",
- "futures-lite",
  "futures-util",
  "getrandom 0.3.2",
  "hickory-resolver",
@@ -2237,6 +2225,7 @@ dependencies = [
  "iroh-quinn-udp",
  "iroh-relay",
  "n0-future",
+ "n0-watcher",
  "netdev",
  "netwatch",
  "parse-size",
@@ -2310,6 +2299,7 @@ dependencies = [
  "iroh-metrics",
  "iroh-quinn",
  "n0-future",
+ "n0-watcher",
  "rand 0.8.5",
  "rcgen",
  "rustls",
@@ -2403,8 +2393,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn"
 version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76c6245c9ed906506ab9185e8d7f64857129aee4f935e899f398a3bd3b70338d"
+source = "git+https://github.com/n0-computer/quinn?branch=matheus23/mut-self#ada30059656cdd316949394d34549d2285f878b6"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2423,8 +2412,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-proto"
 version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "929d5d8fa77d5c304d3ee7cae9aede31f13908bd049f9de8c7c0094ad6f7c535"
+source = "git+https://github.com/n0-computer/quinn?branch=matheus23/mut-self#ada30059656cdd316949394d34549d2285f878b6"
 dependencies = [
  "bytes",
  "getrandom 0.2.16",
@@ -2444,8 +2432,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-udp"
 version = "0.5.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c53afaa1049f7c83ea1331f5ebb9e6ebc5fdd69c468b7a22dd598b02c9bcc973"
+source = "git+https://github.com/n0-computer/quinn?branch=matheus23/mut-self#ada30059656cdd316949394d34549d2285f878b6"
 dependencies = [
  "cfg_aliases",
  "libc",
@@ -2803,6 +2790,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "n0-watcher"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "813443be5d70d9ed05ad04577f0db9fa1d655336911d2ac271b63eb2da363ea1"
+dependencies = [
+ "derive_more",
+ "n0-future",
+ "thiserror 2.0.12",
+]
+
+[[package]]
 name = "nested_enum_utils"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2913,8 +2911,7 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67eeaa5f7505c93c5a9b35ba84fd21fb8aa3f24678c76acfe8716af7862fb07a"
+source = "git+https://github.com/n0-computer/net-tools?branch=feat-new-udp-api#9a614e523c5c09e2c1134489df54cab8d8343631"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -2924,12 +2921,14 @@ dependencies = [
  "js-sys",
  "libc",
  "n0-future",
+ "n0-watcher",
  "nested_enum_utils",
  "netdev",
  "netlink-packet-core",
  "netlink-packet-route 0.23.0",
  "netlink-proto",
  "netlink-sys",
+ "pin-project-lite",
  "serde",
  "snafu",
  "socket2",
@@ -5489,7 +5488,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
