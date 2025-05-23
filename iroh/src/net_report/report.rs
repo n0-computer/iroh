@@ -11,8 +11,6 @@ use tracing::warn;
 use super::{reportgen::ProbeProto, ProbeReport};
 
 /// A net_report report.
-///
-/// Can be obtained by calling [`Client::get_report`].
 #[derive(Default, Debug, PartialEq, Eq, Clone)]
 pub struct Report {
     /// A UDP STUN round trip completed.
