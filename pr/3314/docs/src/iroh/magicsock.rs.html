@@ -3331,20 +3331,7 @@
 <a href="#3330" id="3330">3330</a>
 <a href="#3331" id="3331">3331</a>
 <a href="#3332" id="3332">3332</a>
-<a href="#3333" id="3333">3333</a>
-<a href="#3334" id="3334">3334</a>
-<a href="#3335" id="3335">3335</a>
-<a href="#3336" id="3336">3336</a>
-<a href="#3337" id="3337">3337</a>
-<a href="#3338" id="3338">3338</a>
-<a href="#3339" id="3339">3339</a>
-<a href="#3340" id="3340">3340</a>
-<a href="#3341" id="3341">3341</a>
-<a href="#3342" id="3342">3342</a>
-<a href="#3343" id="3343">3343</a>
-<a href="#3344" id="3344">3344</a>
-<a href="#3345" id="3345">3345</a>
-<a href="#3346" id="3346">3346</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#3333" id="3333">3333</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -3394,8 +3381,7 @@
 <span class="kw">use </span>smallvec::SmallVec;
 <span class="kw">use </span>tokio::sync::{mpsc, Mutex};
 <span class="kw">use </span>tracing::{
-    debug, error, error_span, event, info, info_span, instrument, trace, trace_span, warn,
-    Instrument, Level,
+    debug, error, event, info, info_span, instrument, trace, trace_span, warn, Instrument, Level,
 };
 <span class="kw">use </span>transports::LocalAddrsWatch;
 <span class="kw">use </span>url::Url;
@@ -3526,9 +3512,6 @@
 </span><span class="attr">#[derive(derive_more::Debug)]
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>MagicSock {
     actor_sender: mpsc::Sender&lt;ActorMessage&gt;,
-    <span class="doccomment">/// String representation of the node_id of this node.
-    </span>me: String,
-
     <span class="doccomment">/// The DNS resolver to be used in this magicsock.
     </span><span class="attr">#[cfg(not(wasm_browser))]
     </span>dns_resolver: DnsResolver,
@@ -3725,7 +3708,7 @@
     }
 
     <span class="doccomment">/// Add addresses for a node to the magic socket's addresbook.
-    </span><span class="attr">#[instrument(skip_all, fields(me = %<span class="self">self</span>.me))]
+    </span><span class="attr">#[instrument(skip_all)]
     </span><span class="kw">pub fn </span>add_node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, <span class="kw-2">mut </span>addr: NodeAddr, source: node_map::Source) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>pruned = <span class="number">0</span>;
         <span class="kw">for </span>my_addr <span class="kw">in </span><span class="self">self</span>.direct_addrs.sockaddrs() {
@@ -4577,14 +4560,6 @@
 <span class="kw">impl </span>Handle {
     <span class="doccomment">/// Creates a magic [`MagicSock`] listening on [`Options::addr_v4`] and [`Options::addr_v6`].
     </span><span class="kw">async fn </span>new(opts: Options) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="kw">let </span>me = opts.secret_key.public().fmt_short();
-
-        <span class="self">Self</span>::with_name(me, opts)
-            .instrument(<span class="macro">error_span!</span>(<span class="string">"magicsock"</span>))
-            .<span class="kw">await
-    </span>}
-
-    <span class="kw">async fn </span>with_name(me: String, opts: Options) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>Options {
             addr_v4,
             addr_v6,
@@ -4659,7 +4634,6 @@
         </span><span class="kw">let </span>transports = Transports::new(relay_transports);
 
         <span class="kw">let </span>msock = Arc::new(MagicSock {
-            me,
             secret_key,
             secret_encryption_key,
             closing: AtomicBool::new(<span class="bool-val">false</span>),
@@ -4799,9 +4773,9 @@
     /// Only the first close does anything. Any later closes return nil.
     /// Polling the socket ([`AsyncUdpSocket::poll_recv`]) will return [`Poll::Pending`]
     /// indefinitely after this call.
-    </span><span class="attr">#[instrument(skip_all, fields(me = %<span class="self">self</span>.msock.me))]
+    </span><span class="attr">#[instrument(skip_all)]
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>close(<span class="kw-2">&amp;</span><span class="self">self</span>) {
-        <span class="macro">trace!</span>(<span class="string">"magicsock closing..."</span>);
+        <span class="macro">trace!</span>(me = <span class="question-mark">?</span><span class="self">self</span>.secret_key.public(), <span class="string">"magicsock closing..."</span>);
         <span class="comment">// Initiate closing all connections, and refuse future connections.
         </span><span class="self">self</span>.endpoint.close(<span class="number">0u16</span>.into(), <span class="string">b""</span>);
 
@@ -5504,7 +5478,7 @@
 
     <span class="doccomment">/// Resets the preferred address for all nodes.
     /// This is called when connectivity changes enough that we no longer trust the old routes.
-    </span><span class="attr">#[instrument(skip_all, fields(me = %<span class="self">self</span>.msock.me))]
+    </span><span class="attr">#[instrument(skip_all)]
     </span><span class="kw">fn </span>reset_endpoint_states(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
         <span class="self">self</span>.msock.node_map.reset_node_states()
     }
