@@ -49,8 +49,7 @@ use smallvec::SmallVec;
 use snafu::{ResultExt, Snafu};
 use tokio::sync::{mpsc, Mutex};
 use tracing::{
-    debug, error, error_span, event, info, info_span, instrument, trace, trace_span, warn,
-    Instrument, Level,
+    debug, error, event, info, info_span, instrument, trace, trace_span, warn, Instrument, Level,
 };
 use transports::LocalAddrsWatch;
 use url::Url;
@@ -181,9 +180,6 @@ pub(crate) struct Handle {
 #[derive(derive_more::Debug)]
 pub(crate) struct MagicSock {
     actor_sender: mpsc::Sender<ActorMessage>,
-    /// String representation of the node_id of this node.
-    me: String,
-
     /// The DNS resolver to be used in this magicsock.
     #[cfg(not(wasm_browser))]
     dns_resolver: DnsResolver,
@@ -396,13 +392,13 @@ impl MagicSock {
     }
 
     /// Add addresses for a node to the magic socket's addresbook.
-    #[instrument(skip_all, fields(me = %self.me))]
+    #[instrument(skip_all)]
     pub fn add_node_addr(
         &self,
         mut addr: NodeAddr,
         source: node_map::Source,
     ) -> Result<(), AddNodeAddrError> {
-        let mut pruned: usize = 0;
+        let mut pruned = 0;
         for my_addr in self.direct_addrs.sockaddrs() {
             if addr.direct_addresses.remove(&my_addr) {
                 warn!( node_id=addr.node_id.fmt_short(), %my_addr, %source, "not adding our addr for node");
@@ -1270,14 +1266,6 @@ pub enum CreateHandleError {
 impl Handle {
     /// Creates a magic [`MagicSock`] listening on [`Options::addr_v4`] and [`Options::addr_v6`].
     async fn new(opts: Options) -> Result<Self, CreateHandleError> {
-        let me = opts.secret_key.public().fmt_short();
-
-        Self::with_name(me, opts)
-            .instrument(error_span!("magicsock"))
-            .await
-    }
-
-    async fn with_name(me: String, opts: Options) -> Result<Self, CreateHandleError> {
         let Options {
             addr_v4,
             addr_v6,
@@ -1353,7 +1341,6 @@ impl Handle {
         let transports = Transports::new(relay_transports);
 
         let msock = Arc::new(MagicSock {
-            me,
             secret_key,
             secret_encryption_key,
             closing: AtomicBool::new(false),
@@ -1493,9 +1480,9 @@ impl Handle {
     /// Only the first close does anything. Any later closes return nil.
     /// Polling the socket ([`AsyncUdpSocket::poll_recv`]) will return [`Poll::Pending`]
     /// indefinitely after this call.
-    #[instrument(skip_all, fields(me = %self.msock.me))]
+    #[instrument(skip_all)]
     pub(crate) async fn close(&self) {
-        trace!("magicsock closing...");
+        trace!(me = ?self.secret_key.public(), "magicsock closing...");
         // Initiate closing all connections, and refuse future connections.
         self.endpoint.close(0u16.into(), b"");
 
@@ -2223,7 +2210,7 @@ impl Actor {
 
     /// Resets the preferred address for all nodes.
     /// This is called when connectivity changes enough that we no longer trust the old routes.
-    #[instrument(skip_all, fields(me = %self.msock.me))]
+    #[instrument(skip_all)]
     fn reset_endpoint_states(&mut self) {
         self.msock.node_map.reset_node_states()
     }
