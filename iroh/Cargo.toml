@@ -97,6 +97,8 @@ tracing-subscriber = { version = "0.3", features = [
 ], optional = true }
 indicatif = { version = "0.17", features = ["tokio"], optional = true }
 parse-size = { version = "=1.0.0", optional = true } # pinned version to avoid bumping msrv to 1.81
+walkdir = "2.5.0"
+blake3 = "1.8.2"
 
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
@@ -219,4 +221,12 @@ required-features = ["examples"]
 
 [[example]]
 name = "transfer"
+required-features = ["examples"]
+
+[[example]]
+name = "file-share"
+required-features = ["examples"]
+
+[[example]]
+name = "file-download"
 required-features = ["examples"]
