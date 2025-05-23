@@ -1027,7 +1027,7 @@ impl Endpoint {
     /// # });
     /// ```
     #[doc(hidden)]
-    pub fn net_report(&self) -> n0_watcher::Direct<Option<Arc<Report>>> {
+    pub fn net_report(&self) -> impl Watcher<Value = Option<Report>> {
         self.msock.net_report()
     }
 
@@ -3166,7 +3166,7 @@ mod tests {
             .await?;
 
         // can get a first report
-        endpoint.net_report().initialized().await?;
+        endpoint.net_report().updated().await?;
 
         Ok(())
     }

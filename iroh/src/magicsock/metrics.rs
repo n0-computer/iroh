@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 #[non_exhaustive]
 #[metrics(name = "magicsock")]
 pub struct Metrics {
-    pub re_stun_calls: Counter,
     pub update_direct_addrs: Counter,
 
     // Sends (data or disco)
@@ -66,7 +65,6 @@ pub struct Metrics {
     pub actor_tick_re_stun: Counter,
     pub actor_tick_portmap_changed: Counter,
     pub actor_tick_direct_addr_heartbeat: Counter,
-    pub actor_tick_direct_addr_update_receiver: Counter,
     pub actor_link_change: Counter,
     pub actor_tick_other: Counter,
 
