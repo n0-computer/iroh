@@ -224,10 +224,6 @@ pub(crate) struct MagicSock {
     /// Our latest net-report
     net_report: Watchable<(Option<Report>, UpdateReason)>,
 
-    /// List of CallMeMaybe disco messages that should be sent out after the next endpoint update
-    /// completes
-    pending_call_me_maybes: std::sync::Mutex<HashMap<PublicKey, RelayUrl>>,
-
     /// Broadcast channel for listening to discovery updates.
     discovery_subscribers: DiscoverySubscribers,
 
@@ -1029,25 +1025,6 @@ impl MagicSock {
         Ok(())
     }
 
-    fn send_queued_call_me_maybes(&self) {
-        let msg = self.direct_addrs.to_call_me_maybe_message();
-        let msg = disco::Message::CallMeMaybe(msg);
-        for (public_key, url) in self
-            .pending_call_me_maybes
-            .lock()
-            .expect("poisoned")
-            .drain()
-        {
-            if self
-                .disco_sender
-                .try_send((SendAddr::Relay(url), public_key, msg.clone()))
-                .is_err()
-            {
-                warn!(node = %public_key.fmt_short(), "relay channel full, dropping call-me-maybe");
-            }
-        }
-    }
-
     /// Sends the call-me-maybe DISCO message, queuing if addresses are too stale.
     ///
     /// To send the call-me-maybe message, we need to know our current direct addresses.  If
@@ -1070,26 +1047,25 @@ impl MagicSock {
                 }
             }
             Err(last_refresh_ago) => {
-                self.pending_call_me_maybes
-                    .lock()
-                    .expect("poisoned")
-                    .insert(dst_node, url.clone());
                 debug!(
                     ?last_refresh_ago,
                     "want call-me-maybe but direct addrs stale; queuing after restun",
                 );
-                self.re_stun(UpdateReason::RefreshForPeering);
+                self.re_stun(
+                    UpdateReason::RefreshForPeering,
+                    Some((dst_node, url.clone())),
+                );
             }
         }
     }
 
     /// Triggers an address discovery. The provided why string is for debug logging only.
     #[instrument(skip_all)]
-    fn re_stun(&self, why: UpdateReason) {
+    fn re_stun(&self, why: UpdateReason, data: Option<(NodeId, RelayUrl)>) {
         debug!("re_stun: {:?}", why);
         self.metrics.magicsock.re_stun_calls.inc();
         self.actor_sender
-            .try_send(ActorMessage::ScheduleDirectAddrUpdate(why))
+            .try_send(ActorMessage::ScheduleDirectAddrUpdate(why, data))
             .ok();
     }
 
@@ -1163,7 +1139,7 @@ struct DirectAddrUpdateState {
     run_done: mpsc::Sender<()>,
 }
 
-#[derive(Default, Debug, PartialEq, Eq, Copy, Clone)]
+#[derive(Default, Debug, PartialEq, Eq, Clone, Copy)]
 enum UpdateReason {
     /// Initial state
     #[default]
@@ -1393,7 +1369,6 @@ impl Handle {
             discovery_user_data: RwLock::new(discovery_user_data),
             direct_addrs: Default::default(),
             net_report: Watchable::new((None, UpdateReason::None)),
-            pending_call_me_maybes: Default::default(),
             #[cfg(not(wasm_browser))]
             dns_resolver,
             discovery_subscribers: DiscoverySubscribers::new(),
@@ -1491,6 +1466,7 @@ impl Handle {
             direct_addr_update_state,
             network_change_sender,
             direct_addr_done_rx,
+            pending_call_me_maybes: Default::default(),
         };
         actor_tasks.spawn(
             actor
@@ -1721,7 +1697,7 @@ enum ActorMessage {
     PingActions(Vec<PingAction>),
     EndpointPingExpired(usize, stun_rs::TransactionId),
     NetworkChange,
-    ScheduleDirectAddrUpdate(UpdateReason),
+    ScheduleDirectAddrUpdate(UpdateReason, Option<(NodeId, RelayUrl)>),
     #[cfg(test)]
     ForceNetworkChange(bool),
 }
@@ -1738,6 +1714,10 @@ struct Actor {
     /// Indicates the direct addr update state.
     direct_addr_update_state: DirectAddrUpdateState,
     direct_addr_done_rx: mpsc::Receiver<()>,
+
+    /// List of CallMeMaybe disco messages that should be sent out after
+    /// the next endpoint update completes
+    pending_call_me_maybes: HashMap<PublicKey, RelayUrl>,
 }
 
 #[cfg(not(wasm_browser))]
@@ -2021,7 +2001,10 @@ impl Actor {
             ActorMessage::NetworkChange => {
                 self.network_monitor.network_change().await.ok();
             }
-            ActorMessage::ScheduleDirectAddrUpdate(why) => {
+            ActorMessage::ScheduleDirectAddrUpdate(why, data) => {
+                if let Some((node, url)) = data {
+                    self.pending_call_me_maybes.insert(node, url);
+                }
                 self.direct_addr_update_state.schedule_run(why);
             }
             #[cfg(test)]
@@ -2176,7 +2159,24 @@ impl Actor {
                 })
                 .collect(),
         );
-        self.msock.send_queued_call_me_maybes();
+        self.send_queued_call_me_maybes();
+    }
+
+    fn send_queued_call_me_maybes(&mut self) {
+        let msg = self.msock.direct_addrs.to_call_me_maybe_message();
+        let msg = disco::Message::CallMeMaybe(msg);
+        // allocate, to minimize locking duration
+
+        for (public_key, url) in self.pending_call_me_maybes.drain() {
+            if self
+                .msock
+                .disco_sender
+                .try_send((SendAddr::Relay(url), public_key, msg.clone()))
+                .is_err()
+            {
+                warn!(node = %public_key.fmt_short(), "relay channel full, dropping call-me-maybe");
+            }
+        }
     }
 
     fn handle_net_report_report(&mut self, mut report: Option<net_report::Report>) {
