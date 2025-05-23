@@ -1,0 +1,174 @@
+use std::{future::Future, time::Instant};
+
+use clap::Parser;
+use iroh::{
+    endpoint::{Connecting, Connection},
+    watcher::Watcher,
+};
+use iroh_base::ticket::NodeTicket;
+use n0_future::{future, StreamExt};
+use tracing::{debug, info, trace};
+
+const PINGPONG_ALPN: &[u8] = b"0rtt-pingpong";
+
+#[derive(Parser)]
+struct Args {
+    /// The node id to connect to. If not set, the program will start a server.
+    node: Option<NodeTicket>,
+    /// Number of rounds to run.
+    #[clap(long, default_value = "100")]
+    rounds: u64,
+    /// Run without 0-RTT for comparison.
+    #[clap(long)]
+    disable_0rtt: bool,
+}
+
+/// Do a simple ping-pong with the given connection.
+///
+/// We send the data on the connection. If `proceed` resolves to true,
+/// read the response immediately. Otherwise, the stream pair is bad and we need
+/// to open a new stream pair.
+async fn pingpong(
+    connection: &Connection,
+    proceed: impl Future<Output = bool>,
+    x: u64,
+) -> anyhow::Result<()> {
+    let (mut send, mut recv) = connection.open_bi().await?;
+    let data = x.to_be_bytes();
+    send.write_all(&data).await?;
+    send.finish()?;
+    let echo = if proceed.await {
+        recv.read_to_end(8).await?
+    } else {
+        let (mut send, mut recv) = connection.open_bi().await?;
+        send.write_all(&data).await?;
+        recv.read_to_end(8).await?
+    };
+    anyhow::ensure!(echo == data);
+    Ok(())
+}
+
+async fn pingpong_0rtt(connecting: Connecting, i: u64) -> anyhow::Result<Connection> {
+    let connection = match connecting.into_0rtt() {
+        Ok((connection, accepted)) => {
+            trace!("0-RTT possible from our side");
+            pingpong(&connection, accepted, i).await?;
+            connection
+        }
+        Err(connecting) => {
+            trace!("0-RTT not possible from our side");
+            let connection = connecting.await?;
+            pingpong(&connection, future::ready(true), i).await?;
+            connection
+        }
+    };
+    Ok(connection)
+}
+
+async fn connect(args: Args) -> anyhow::Result<()> {
+    let node_addr = args.node.unwrap().node_addr().clone();
+    let endpoint = iroh::Endpoint::builder()
+        .relay_mode(iroh::RelayMode::Disabled)
+        .keylog(true)
+        .bind()
+        .await?;
+    let t0 = Instant::now();
+    for i in 0..args.rounds {
+        let t0 = Instant::now();
+        let connecting = endpoint
+            .connect_with_opts(node_addr.clone(), PINGPONG_ALPN, Default::default())
+            .await?;
+        let connection = if args.disable_0rtt {
+            let connection = connecting.await?;
+            trace!("connecting without 0-RTT");
+            pingpong(&connection, future::ready(true), i).await?;
+            connection
+        } else {
+            pingpong_0rtt(connecting, i).await?
+        };
+        tokio::spawn(async move {
+            // wait for some time for the handshake to complete and the server
+            // to send a NewSessionTicket. This is less than ideal, but we
+            // don't have a better way to wait for the handshake to complete.
+            tokio::time::sleep(connection.rtt() * 2).await;
+            connection.close(0u8.into(), b"");
+        });
+        let elapsed = t0.elapsed();
+        debug!("round {}: {} us", i, elapsed.as_micros());
+    }
+    let elapsed = t0.elapsed();
+    info!("total time: {} us", elapsed.as_micros());
+    info!(
+        "time per round: {} us",
+        elapsed.as_micros() / (args.rounds as u128)
+    );
+    Ok(())
+}
+
+async fn accept(_args: Args) -> anyhow::Result<()> {
+    let endpoint = iroh::Endpoint::builder()
+        .alpns(vec![PINGPONG_ALPN.to_vec()])
+        .relay_mode(iroh::RelayMode::Disabled)
+        .bind()
+        .await?;
+    let mut addrs = endpoint.node_addr().stream();
+    let addr = loop {
+        let Some(addr) = addrs.next().await else {
+            anyhow::bail!("Address stream closed");
+        };
+        if let Some(addr) = addr {
+            if !addr.direct_addresses.is_empty() {
+                break addr;
+            }
+        }
+    };
+    println!("Listening on: {:?}", addr);
+    println!("Node ID: {:?}", addr.node_id);
+    println!("Ticket: {}", NodeTicket::from(addr));
+    let accept = async move {
+        while let Some(incoming) = endpoint.accept().await {
+            tokio::spawn(async move {
+                let connecting = incoming.accept()?;
+                let connection = match connecting.into_0rtt() {
+                    Ok((connection, _)) => {
+                        debug!("0rtt accepted");
+                        connection
+                    }
+                    Err(connecting) => {
+                        debug!("0rtt denied");
+                        connecting.await?
+                    }
+                };
+                let (mut send, mut recv) = connection.accept_bi().await?;
+                trace!("recv.is_0rtt: {}", recv.is_0rtt());
+                let data = recv.read_to_end(8).await?;
+                trace!("recv: {}", data.len());
+                send.write_all(&data).await?;
+                send.finish()?;
+                connection.closed().await;
+                anyhow::Ok(())
+            });
+        }
+    };
+    tokio::select! {
+        _ = accept => {
+            info!("accept finished, shutting down");
+        },
+        _ = tokio::signal::ctrl_c()=> {
+            info!("Ctrl-C received, shutting down");
+        }
+    }
+    Ok(())
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt::init();
+    let args = Args::parse();
+    if args.node.is_some() {
+        connect(args).await?;
+    } else {
+        accept(args).await?;
+    };
+    Ok(())
+}
