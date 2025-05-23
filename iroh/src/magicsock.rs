@@ -50,7 +50,7 @@ use snafu::{ResultExt, Snafu};
 use tokio::sync::{mpsc, Mutex};
 use tracing::{
     debug, error, error_span, event, info, info_span, instrument, trace, trace_span, warn,
-    Instrument, Level, Span,
+    Instrument, Level,
 };
 use transports::LocalAddrsWatch;
 use url::Url;
@@ -1481,11 +1481,13 @@ impl Handle {
             direct_addr_done_tx,
         );
 
+        let netmon_watcher = network_monitor.interface_state();
         let actor = Actor {
             msg_receiver: actor_receiver,
             msock: msock.clone(),
             periodic_re_stun_timer: new_re_stun_timer(false),
             network_monitor,
+            netmon_watcher,
             direct_addr_update_state,
             network_change_sender,
             direct_addr_done_rx,
@@ -1731,6 +1733,7 @@ struct Actor {
     periodic_re_stun_timer: time::Interval,
 
     network_monitor: netmon::Monitor,
+    netmon_watcher: n0_watcher::Direct<netmon::State>,
     network_change_sender: transports::NetworkChangeSender,
     /// Indicates the direct addr update state.
     direct_addr_update_state: DirectAddrUpdateState,
@@ -1805,8 +1808,7 @@ impl Actor {
         sender: UdpSender,
     ) {
         // Setup network monitoring
-        let mut netmon_watcher = self.network_monitor.interface_state();
-        let mut current_netmon_state = netmon_watcher.get().expect("missing network state");
+        let mut current_netmon_state = self.netmon_watcher.get().expect("missing network state");
 
         #[cfg(not(wasm_browser))]
         let mut direct_addr_heartbeat_timer = time::interval(HEARTBEAT_INTERVAL);
@@ -1936,7 +1938,7 @@ impl Actor {
                         self.handle_ping_actions(&sender, msgs).await;
                     }
                 }
-                state = netmon_watcher.updated() => {
+                state = self.netmon_watcher.updated() => {
                     let Ok(state) = state else {
                         trace!("tick: link change receiver closed");
                         self.msock.metrics.magicsock.actor_tick_other.inc();
@@ -2109,7 +2111,6 @@ impl Actor {
             .zip(self.msock.ip_local_addrs())
             .collect();
 
-        let msock = self.msock.clone();
         let has_ipv4_unspecified = local_addrs.iter().find_map(|(_, a)| {
             if a.is_ipv4() && a.ip().is_unspecified() {
                 Some(a.port())
@@ -2125,65 +2126,57 @@ impl Actor {
             }
         });
 
-        // The following code can be slow, we do not want to block the caller since it would
-        // block the actor loop.
-        task::spawn(
-            async move {
-                // If a socket is bound to the unspecified address, create SocketAddrs for
-                // each local IP address by pairing it with the port the socket is bound on.
-                if local_addrs
-                    .iter()
-                    .any(|(_, local)| local.ip().is_unspecified())
-                {
-                    // Depending on the OS and network interfaces attached and their state
-                    // enumerating the local interfaces can take a long time.  Especially
-                    // Windows is very slow.
-                    let LocalAddresses {
-                        regular: mut ips,
-                        loopback,
-                    } = tokio::task::spawn_blocking(LocalAddresses::new)
-                        .await
-                        .expect("spawn panicked");
-                    if ips.is_empty() && addrs.is_empty() {
-                        // Include loopback addresses only if there are no other interfaces
-                        // or public addresses, this allows testing offline.
-                        ips = loopback;
-                    }
-
-                    for ip in ips {
-                        let port_if_unspecified = match ip {
-                            IpAddr::V4(_) => has_ipv4_unspecified,
-                            IpAddr::V6(_) => has_ipv6_unspecified,
-                        };
-                        if let Some(port) = port_if_unspecified {
-                            let addr = SocketAddr::new(ip, port);
-                            addrs.entry(addr).or_insert(DirectAddrType::Local);
-                        }
-                    }
-                }
-
-                // If a socket is bound to a specific address, add it.
-                for (bound, local) in local_addrs {
-                    if !bound.ip().is_unspecified() {
-                        addrs.entry(local).or_insert(DirectAddrType::Local);
-                    }
-                }
-
-                // Finally create and store store all these direct addresses and send any
-                // queued call-me-maybe messages.
-                msock.store_direct_addresses(
-                    addrs
-                        .iter()
-                        .map(|(addr, typ)| DirectAddr {
-                            addr: *addr,
-                            typ: *typ,
-                        })
-                        .collect(),
-                );
-                msock.send_queued_call_me_maybes();
+        // If a socket is bound to the unspecified address, create SocketAddrs for
+        // each local IP address by pairing it with the port the socket is bound on.
+        if local_addrs
+            .iter()
+            .any(|(_, local)| local.ip().is_unspecified())
+        {
+            let LocalAddresses {
+                regular: mut ips,
+                loopback,
+            } = self
+                .netmon_watcher
+                .get()
+                .expect("netmon disconnected")
+                .local_addresses;
+            if ips.is_empty() && addrs.is_empty() {
+                // Include loopback addresses only if there are no other interfaces
+                // or public addresses, this allows testing offline.
+                ips = loopback;
             }
-            .instrument(Span::current()),
+
+            for ip in ips {
+                let port_if_unspecified = match ip {
+                    IpAddr::V4(_) => has_ipv4_unspecified,
+                    IpAddr::V6(_) => has_ipv6_unspecified,
+                };
+                if let Some(port) = port_if_unspecified {
+                    let addr = SocketAddr::new(ip, port);
+                    addrs.entry(addr).or_insert(DirectAddrType::Local);
+                }
+            }
+        }
+
+        // If a socket is bound to a specific address, add it.
+        for (bound, local) in local_addrs {
+            if !bound.ip().is_unspecified() {
+                addrs.entry(local).or_insert(DirectAddrType::Local);
+            }
+        }
+
+        // Finally create and store store all these direct addresses and send any
+        // queued call-me-maybe messages.
+        self.msock.store_direct_addresses(
+            addrs
+                .iter()
+                .map(|(addr, typ)| DirectAddr {
+                    addr: *addr,
+                    typ: *typ,
+                })
+                .collect(),
         );
+        self.msock.send_queued_call_me_maybes();
     }
 
     fn handle_net_report_report(&mut self, mut report: Option<net_report::Report>) {
