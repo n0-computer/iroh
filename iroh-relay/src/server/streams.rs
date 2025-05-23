@@ -14,7 +14,7 @@ use tokio_websockets::WebSocketStream;
 
 use crate::{
     protos::relay::{Frame, RelayCodec},
-    KeyCache,
+    ExportKeyingMaterial, KeyCache,
 };
 
 /// A Stream and Sink for [`Frame`]s connected to a single relay client.
@@ -117,6 +117,24 @@ pub enum MaybeTlsStream {
     /// An in-memory bidirectional pipe.
     #[cfg(test)]
     Test(tokio::io::DuplexStream),
+}
+
+impl ExportKeyingMaterial for MaybeTlsStream {
+    fn export_keying_material<T: AsMut<[u8]>>(
+        &self,
+        output: T,
+        label: &[u8],
+        context: Option<&[u8]>,
+    ) -> Option<T> {
+        let Self::Tls(ref tls) = self else {
+            return None;
+        };
+
+        tls.get_ref()
+            .1
+            .export_keying_material(output, label, context)
+            .ok()
+    }
 }
 
 impl AsyncRead for MaybeTlsStream {

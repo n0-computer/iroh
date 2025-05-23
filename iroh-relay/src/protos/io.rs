@@ -9,6 +9,8 @@ use bytes::Bytes;
 use n0_future::{ready, Sink, Stream};
 use tokio::io::{AsyncRead, AsyncWrite};
 
+use crate::ExportKeyingMaterial;
+
 #[derive(derive_more::Debug)]
 pub(crate) struct HandshakeIo<T> {
     #[cfg(not(wasm_browser))]
@@ -17,6 +19,21 @@ pub(crate) struct HandshakeIo<T> {
     #[cfg(wasm_browser)]
     #[debug("WebSocketStream")]
     pub(crate) io: ws_stream_wasm::WsStream,
+}
+
+impl<IO: ExportKeyingMaterial + AsyncRead + AsyncWrite + Unpin> ExportKeyingMaterial
+    for HandshakeIo<IO>
+{
+    fn export_keying_material<T: AsMut<[u8]>>(
+        &self,
+        output: T,
+        label: &[u8],
+        context: Option<&[u8]>,
+    ) -> Option<T> {
+        self.io
+            .get_ref()
+            .export_keying_material(output, label, context)
+    }
 }
 
 impl<T: AsyncRead + AsyncWrite + Unpin> Stream for HandshakeIo<T> {

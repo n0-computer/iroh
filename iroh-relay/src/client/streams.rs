@@ -13,6 +13,8 @@ use tokio::{
     net::TcpStream,
 };
 
+use crate::ExportKeyingMaterial;
+
 use super::util;
 
 #[allow(clippy::large_enum_variant)]
@@ -196,6 +198,23 @@ impl ProxyStream {
 pub enum MaybeTlsStream<IO> {
     Raw(IO),
     Tls(tokio_rustls::client::TlsStream<IO>),
+}
+
+impl<IO> ExportKeyingMaterial for MaybeTlsStream<IO> {
+    fn export_keying_material<T: AsMut<[u8]>>(
+        &self,
+        output: T,
+        label: &[u8],
+        context: Option<&[u8]>,
+    ) -> Option<T> {
+        let Self::Tls(ref tls) = self else {
+            return None;
+        };
+        tls.get_ref()
+            .1
+            .export_keying_material(output, label, context)
+            .ok()
+    }
 }
 
 impl<IO: AsyncRead + AsyncWrite + Unpin> AsyncRead for MaybeTlsStream<IO> {
