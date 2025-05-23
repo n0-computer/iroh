@@ -213,12 +213,7 @@ pub(crate) struct MagicSock {
     dns_resolver: DnsResolver,
 
     // - Disco
-    /// Encryption key for this node.
-    secret_encryption_key: crypto_box::SecretKey,
-    /// The state for an active DiscoKey.
-    disco_secrets: DiscoSecrets,
-    /// Disco (ping) queue
-    disco_sender: mpsc::Sender<(SendAddr, PublicKey, disco::Message)>,
+    disco: DiscoState,
 
     // - Discovery
     /// Optional discovery service
@@ -400,7 +395,7 @@ impl MagicSock {
         mut addr: NodeAddr,
         source: node_map::Source,
     ) -> Result<(), AddNodeAddrError> {
-        let mut pruned = 0;
+        let mut pruned: usize = 0;
         for my_addr in self.direct_addrs.sockaddrs() {
             if addr.direct_addresses.remove(&my_addr) {
                 warn!( node_id=addr.node_id.fmt_short(), %my_addr, %source, "not adding our addr for node");
@@ -770,11 +765,7 @@ impl MagicSock {
 
         // We're now reasonably sure we're expecting communication from
         // this node, do the heavy crypto lifting to see what they want.
-        let dm = match self.disco_secrets.unseal_and_decode(
-            &self.secret_encryption_key,
-            sender,
-            sealed_box.to_vec(),
-        ) {
+        let dm = match self.disco.unseal_and_decode(sender, sealed_box) {
             Ok(dm) => dm,
             Err(DiscoBoxError::Open { source, .. }) => {
                 warn!(?source, "failed to open disco box");
@@ -882,11 +873,7 @@ impl MagicSock {
             txn = ?dm.tx_id,
         );
 
-        if self
-            .disco_sender
-            .try_send((addr.clone(), sender, pong))
-            .is_err()
-        {
+        if self.disco.try_send(addr.clone(), sender, pong).is_err() {
             warn!(%addr, "failed to queue pong");
         }
 
@@ -898,15 +885,6 @@ impl MagicSock {
             );
             self.send_ping_queued(ping);
         }
-    }
-
-    fn encode_disco_message(&self, dst_key: PublicKey, msg: &disco::Message) -> Bytes {
-        self.disco_secrets.encode_and_seal(
-            &self.secret_encryption_key,
-            self.public_key,
-            dst_key,
-            msg,
-        )
     }
 
     fn send_ping_queued(&self, ping: SendPing) {
@@ -921,11 +899,7 @@ impl MagicSock {
             tx_id,
             node_key: self.public_key(),
         });
-        let sent = self
-            .disco_sender
-            .try_send((dst.clone(), dst_node, msg))
-            .is_ok();
-
+        let sent = self.disco.try_send(dst.clone(), dst_node, msg).is_ok();
         if sent {
             let msg_sender = self.actor_sender.clone();
             trace!(%dst, tx = %HEXLOWER.encode(&tx_id), ?purpose, "ping sent (queued)");
@@ -978,7 +952,8 @@ impl MagicSock {
                 "connection closed",
             ));
         }
-        let pkt = self.encode_disco_message(dst_key, &msg);
+
+        let pkt = self.disco.encode_and_seal(self.public_key, dst_key, &msg);
 
         let transmit = transports::Transmit {
             contents: &pkt,
@@ -1034,8 +1009,8 @@ impl MagicSock {
                 let msg = self.direct_addrs.to_call_me_maybe_message();
                 let msg = disco::Message::CallMeMaybe(msg);
                 if self
-                    .disco_sender
-                    .try_send((SendAddr::Relay(url.clone()), dst_node, msg.clone()))
+                    .disco
+                    .try_send(SendAddr::Relay(url.clone()), dst_node, msg.clone())
                     .is_err()
                 {
                     warn!(dstkey = %dst_node.fmt_short(), relayurl = %url,
@@ -1307,7 +1282,6 @@ impl Handle {
         );
 
         let (actor_sender, actor_receiver) = mpsc::channel(256);
-        let (disco_sender, mut disco_receiver) = mpsc::channel(256);
 
         // load the node data
         let node_map = node_map.unwrap_or_default();
@@ -1342,18 +1316,18 @@ impl Handle {
         #[cfg(wasm_browser)]
         let transports = Transports::new(relay_transports);
 
+        let (disco, mut disco_receiver) = DiscoState::new(secret_encryption_key);
+
         let msock = Arc::new(MagicSock {
             public_key: secret_key.public(),
-            secret_encryption_key,
             closing: AtomicBool::new(false),
             closed: AtomicBool::new(false),
+            disco,
             actor_sender: actor_sender.clone(),
             ipv6_reported,
             relay_map,
-            disco_secrets: DiscoSecrets::default(),
             node_map,
             ip_mapped_addrs,
-            disco_sender,
             discovery,
             discovery_user_data: RwLock::new(discovery_user_data),
             direct_addrs: Default::default(),
@@ -1558,44 +1532,75 @@ fn default_quic_client_config() -> rustls::ClientConfig {
     .with_no_client_auth()
 }
 
-#[derive(Debug, Default)]
-struct DiscoSecrets(std::sync::Mutex<HashMap<PublicKey, SharedSecret>>);
+#[derive(Debug)]
+struct DiscoState {
+    /// Encryption key for this node.
+    secret_encryption_key: crypto_box::SecretKey,
+    /// The state for an active DiscoKey.
+    secrets: std::sync::Mutex<HashMap<PublicKey, SharedSecret>>,
+    /// Disco (ping) queue
+    sender: mpsc::Sender<(SendAddr, PublicKey, disco::Message)>,
+}
 
-impl DiscoSecrets {
-    fn get<F, T>(&self, secret: &crypto_box::SecretKey, node_id: PublicKey, cb: F) -> T
-    where
-        F: FnOnce(&mut SharedSecret) -> T,
-    {
-        let mut inner = self.0.lock().expect("poisoned");
-        let x = inner.entry(node_id).or_insert_with(|| {
-            let public_key = public_ed_box(&node_id.public());
-            SharedSecret::new(secret, &public_key)
-        });
-        cb(x)
+impl DiscoState {
+    fn new(
+        secret_encryption_key: crypto_box::SecretKey,
+    ) -> (Self, mpsc::Receiver<(SendAddr, PublicKey, disco::Message)>) {
+        let (disco_sender, disco_receiver) = mpsc::channel(256);
+
+        (
+            Self {
+                secret_encryption_key,
+                secrets: Default::default(),
+                sender: disco_sender,
+            },
+            disco_receiver,
+        )
+    }
+
+    fn try_send(
+        &self,
+        dst: SendAddr,
+        node_id: PublicKey,
+        msg: disco::Message,
+    ) -> Result<(), anyhow::Error> {
+        self.sender
+            .try_send((dst, node_id, msg))
+            .map_err(|_| anyhow::anyhow!("channel full"))
     }
 
     fn encode_and_seal(
         &self,
-        this_secret_key: &crypto_box::SecretKey,
         this_node_id: NodeId,
         other_node_id: NodeId,
         msg: &disco::Message,
     ) -> Bytes {
         let mut seal = msg.as_bytes();
-        self.get(this_secret_key, other_node_id, |secret| {
-            secret.seal(&mut seal)
-        });
+        self.get_secret(other_node_id, |secret| secret.seal(&mut seal));
         disco::encode_message(&this_node_id, seal).into()
     }
+
     fn unseal_and_decode(
         &self,
-        secret: &crypto_box::SecretKey,
         node_id: PublicKey,
-        mut sealed_box: Vec<u8>,
+        sealed_box: &[u8],
     ) -> Result<disco::Message, DiscoBoxError> {
-        self.get(secret, node_id, |secret| secret.open(&mut sealed_box))
+        let mut sealed_box = sealed_box.to_vec();
+        self.get_secret(node_id, |secret| secret.open(&mut sealed_box))
             .context(OpenSnafu)?;
         disco::Message::from_bytes(&sealed_box).context(ParseSnafu)
+    }
+
+    fn get_secret<F, T>(&self, node_id: PublicKey, cb: F) -> T
+    where
+        F: FnOnce(&mut SharedSecret) -> T,
+    {
+        let mut inner = self.secrets.lock().expect("poisoned");
+        let x = inner.entry(node_id).or_insert_with(|| {
+            let public_key = public_ed_box(&node_id.public());
+            SharedSecret::new(&self.secret_encryption_key, &public_key)
+        });
+        cb(x)
     }
 }
 
@@ -2159,8 +2164,8 @@ impl Actor {
         for (public_key, url) in self.pending_call_me_maybes.drain() {
             if self
                 .msock
-                .disco_sender
-                .try_send((SendAddr::Relay(url), public_key, msg.clone()))
+                .disco
+                .try_send(SendAddr::Relay(url), public_key, msg.clone())
                 .is_err()
             {
                 warn!(node = %public_key.fmt_short(), "relay channel full, dropping call-me-maybe");
