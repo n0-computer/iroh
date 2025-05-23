@@ -37,7 +37,7 @@ use n0_future::{
     boxed::BoxStream,
     task::{self, JoinSet},
     time::{self, Duration, Instant},
-    FutureExt, StreamExt,
+    StreamExt,
 };
 use n0_watcher::{self, Watchable, Watcher};
 use netwatch::netmon;
@@ -1704,17 +1704,8 @@ impl Actor {
         sender: UdpSender,
     ) -> Result<()> {
         // Setup network monitoring
-        let (link_change_s, mut link_change_r) = mpsc::channel(8);
-        let _token = self
-            .network_monitor
-            .subscribe(move |is_major| {
-                let link_change_s = link_change_s.clone();
-                async move {
-                    link_change_s.send(is_major).await.ok();
-                }
-                .boxed()
-            })
-            .await?;
+        let mut netmon_watcher = self.network_monitor.interface_state();
+        let mut current_netmon_state = netmon_watcher.get()?;
 
         #[cfg(not(wasm_browser))]
         let mut direct_addr_heartbeat_timer = time::interval(HEARTBEAT_INTERVAL);
@@ -1733,7 +1724,6 @@ impl Actor {
         let mut receiver_closed = false;
         #[cfg_attr(wasm_browser, allow(unused_mut))]
         let mut portmap_watcher_closed = false;
-        let mut link_change_closed = false;
 
         loop {
             self.msock.metrics.magicsock.actor_tick_main.inc();
@@ -1824,15 +1814,14 @@ impl Actor {
                         self.refresh_direct_addrs(reason).await;
                     }
                 }
-                is_major = link_change_r.recv(), if !link_change_closed => {
-                    let Some(is_major) = is_major else {
+                state = netmon_watcher.updated() => {
+                    let Ok(state) = state else {
                         trace!("tick: link change receiver closed");
                         self.msock.metrics.magicsock.actor_tick_other.inc();
-
-                        link_change_closed = true;
                         continue;
                     };
-
+                    let is_major = state.is_major_change(&current_netmon_state);
+                    current_netmon_state = state;
                     trace!("tick: link change {}", is_major);
                     self.msock.metrics.magicsock.actor_link_change.inc();
                     self.handle_network_change(is_major);
