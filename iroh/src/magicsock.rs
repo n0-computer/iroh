@@ -753,7 +753,11 @@ impl MagicSock {
         if let transports::Addr::Relay(_, node_id) = src {
             if node_id != &sender {
                 // TODO: return here?
-                warn!("Received relay disco message from connection for {:?}, but with message from {}", node_id.fmt_short(), sender.fmt_short());
+                warn!(
+                    "Received relay disco message from connection for {}, but with message from {}",
+                    node_id.fmt_short(),
+                    sender.fmt_short()
+                );
             }
         }
 
@@ -913,13 +917,61 @@ impl MagicSock {
             }
             match msg {
                 PingAction::SendCallMeMaybe {
-                    ref relay_url,
+                    relay_url,
                     dst_node,
                 } => {
-                    self.send_or_queue_call_me_maybe(relay_url, dst_node);
+                    // Sends the call-me-maybe DISCO message, queuing if addresses are too stale.
+                    //
+                    // To send the call-me-maybe message, we need to know our current direct addresses.  If
+                    // this information is too stale, the call-me-maybe is queued while a net_report run is
+                    // scheduled.  Once this run finishes, the call-me-maybe will be sent.
+                    match self.direct_addrs.fresh_enough() {
+                        Ok(()) => {
+                            let msg = disco::Message::CallMeMaybe(
+                                self.direct_addrs.to_call_me_maybe_message(),
+                            );
+                            if self
+                                .disco
+                                .try_send(SendAddr::Relay(relay_url.clone()), dst_node, msg.clone())
+                                .is_err()
+                            {
+                                warn!(dstkey = %dst_node.fmt_short(), %relay_url, "relay channel full, dropping call-me-maybe");
+                            } else {
+                                debug!(dstkey = %dst_node.fmt_short(), %relay_url, "call-me-maybe sent");
+                            }
+                        }
+                        Err(last_refresh_ago) => {
+                            debug!(
+                                ?last_refresh_ago,
+                                "want call-me-maybe but direct addrs stale; queuing after restun",
+                            );
+                            self.actor_sender
+                                .try_send(ActorMessage::ScheduleDirectAddrUpdate(
+                                    UpdateReason::RefreshForPeering,
+                                    Some((dst_node, relay_url)),
+                                ))
+                                .ok();
+                        }
+                    }
                 }
-                PingAction::SendPing(ping) => {
-                    self.send_ping(sender, ping).await?;
+                PingAction::SendPing(SendPing {
+                    id,
+                    dst,
+                    dst_node,
+                    tx_id,
+                    purpose,
+                }) => {
+                    let msg = disco::Message::Ping(disco::Ping {
+                        tx_id,
+                        node_key: self.public_key,
+                    });
+
+                    self.send_disco_message(sender, dst.clone(), dst_node, msg)
+                        .await?;
+                    debug!(%dst, tx = %HEXLOWER.encode(&tx_id), ?purpose, "ping sent");
+                    let msg_sender = self.actor_sender.clone();
+                    self.node_map
+                        .notify_ping_sent(id, dst, tx_id, purpose, msg_sender);
                 }
             }
         }
@@ -966,64 +1018,6 @@ impl MagicSock {
             Err(err) => {
                 warn!(?dst, ?msg, ?err, "failed to send disco message");
                 Err(err)
-            }
-        }
-    }
-
-    async fn send_ping(&self, sender: &UdpSender, ping: SendPing) -> io::Result<()> {
-        let SendPing {
-            id,
-            dst,
-            dst_node,
-            tx_id,
-            purpose,
-        } = ping;
-        let msg = disco::Message::Ping(disco::Ping {
-            tx_id,
-            node_key: self.public_key,
-        });
-
-        self.send_disco_message(sender, dst.clone(), dst_node, msg)
-            .await?;
-        debug!(%dst, tx = %HEXLOWER.encode(&tx_id), ?purpose, "ping sent");
-        let msg_sender = self.actor_sender.clone();
-        self.node_map
-            .notify_ping_sent(id, dst.clone(), tx_id, purpose, msg_sender);
-        Ok(())
-    }
-
-    /// Sends the call-me-maybe DISCO message, queuing if addresses are too stale.
-    ///
-    /// To send the call-me-maybe message, we need to know our current direct addresses.  If
-    /// this information is too stale, the call-me-maybe is queued while a net_report run is
-    /// scheduled.  Once this run finishes, the call-me-maybe will be sent.
-    fn send_or_queue_call_me_maybe(&self, url: &RelayUrl, dst_node: NodeId) {
-        match self.direct_addrs.fresh_enough() {
-            Ok(()) => {
-                let msg = self.direct_addrs.to_call_me_maybe_message();
-                let msg = disco::Message::CallMeMaybe(msg);
-                if self
-                    .disco
-                    .try_send(SendAddr::Relay(url.clone()), dst_node, msg.clone())
-                    .is_err()
-                {
-                    warn!(dstkey = %dst_node.fmt_short(), relayurl = %url,
-                      "relay channel full, dropping call-me-maybe");
-                } else {
-                    debug!(dstkey = %dst_node.fmt_short(), relayurl = %url, "call-me-maybe sent");
-                }
-            }
-            Err(last_refresh_ago) => {
-                debug!(
-                    ?last_refresh_ago,
-                    "want call-me-maybe but direct addrs stale; queuing after restun",
-                );
-                self.actor_sender
-                    .try_send(ActorMessage::ScheduleDirectAddrUpdate(
-                        UpdateReason::RefreshForPeering,
-                        Some((dst_node, url.clone())),
-                    ))
-                    .ok();
             }
         }
     }
