@@ -3530,18 +3530,7 @@
 <a href="#3529" id="3529">3529</a>
 <a href="#3530" id="3530">3530</a>
 <a href="#3531" id="3531">3531</a>
-<a href="#3532" id="3532">3532</a>
-<a href="#3533" id="3533">3533</a>
-<a href="#3534" id="3534">3534</a>
-<a href="#3535" id="3535">3535</a>
-<a href="#3536" id="3536">3536</a>
-<a href="#3537" id="3537">3537</a>
-<a href="#3538" id="3538">3538</a>
-<a href="#3539" id="3539">3539</a>
-<a href="#3540" id="3540">3540</a>
-<a href="#3541" id="3541">3541</a>
-<a href="#3542" id="3542">3542</a>
-<a href="#3543" id="3543">3543</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#3532" id="3532">3532</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -3580,7 +3569,7 @@
     boxed::BoxStream,
     task::{<span class="self">self</span>, JoinSet},
     time::{<span class="self">self</span>, Duration, Instant},
-    FutureExt, StreamExt,
+    StreamExt,
 };
 <span class="kw">use </span>n0_watcher::{<span class="self">self</span>, Watchable, Watcher};
 <span class="kw">use </span>netwatch::netmon;
@@ -5247,17 +5236,8 @@
         sender: UdpSender,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="comment">// Setup network monitoring
-        </span><span class="kw">let </span>(link_change_s, <span class="kw-2">mut </span>link_change_r) = mpsc::channel(<span class="number">8</span>);
-        <span class="kw">let </span>_token = <span class="self">self
-            </span>.network_monitor
-            .subscribe(<span class="kw">move </span>|is_major| {
-                <span class="kw">let </span>link_change_s = link_change_s.clone();
-                <span class="kw">async move </span>{
-                    link_change_s.send(is_major).<span class="kw">await</span>.ok();
-                }
-                .boxed()
-            })
-            .<span class="kw">await</span><span class="question-mark">?</span>;
+        </span><span class="kw">let </span><span class="kw-2">mut </span>netmon_watcher = <span class="self">self</span>.network_monitor.interface_state();
+        <span class="kw">let </span><span class="kw-2">mut </span>current_netmon_state = netmon_watcher.get()<span class="question-mark">?</span>;
 
         <span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">let </span><span class="kw-2">mut </span>direct_addr_heartbeat_timer = time::interval(HEARTBEAT_INTERVAL);
@@ -5276,7 +5256,6 @@
         <span class="kw">let </span><span class="kw-2">mut </span>receiver_closed = <span class="bool-val">false</span>;
         <span class="attr">#[cfg_attr(wasm_browser, allow(unused_mut))]
         </span><span class="kw">let </span><span class="kw-2">mut </span>portmap_watcher_closed = <span class="bool-val">false</span>;
-        <span class="kw">let </span><span class="kw-2">mut </span>link_change_closed = <span class="bool-val">false</span>;
 
         <span class="kw">loop </span>{
             <span class="self">self</span>.msock.metrics.magicsock.actor_tick_main.inc();
@@ -5367,15 +5346,14 @@
                         <span class="self">self</span>.refresh_direct_addrs(reason).<span class="kw">await</span>;
                     }
                 }
-                is_major = link_change_r.recv(), <span class="kw">if </span>!link_change_closed =&gt; {
-                    <span class="kw">let </span><span class="prelude-val">Some</span>(is_major) = is_major <span class="kw">else </span>{
+                state = netmon_watcher.updated() =&gt; {
+                    <span class="kw">let </span><span class="prelude-val">Ok</span>(state) = state <span class="kw">else </span>{
                         <span class="macro">trace!</span>(<span class="string">"tick: link change receiver closed"</span>);
                         <span class="self">self</span>.msock.metrics.magicsock.actor_tick_other.inc();
-
-                        link_change_closed = <span class="bool-val">true</span>;
                         <span class="kw">continue</span>;
                     };
-
+                    <span class="kw">let </span>is_major = state.is_major_change(<span class="kw-2">&amp;</span>current_netmon_state);
+                    current_netmon_state = state;
                     <span class="macro">trace!</span>(<span class="string">"tick: link change {}"</span>, is_major);
                     <span class="self">self</span>.msock.metrics.magicsock.actor_link_change.inc();
                     <span class="self">self</span>.handle_network_change(is_major);
