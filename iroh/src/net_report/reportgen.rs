@@ -65,7 +65,7 @@ use crate::net_report::defaults::timeouts::{
     CAPTIVE_PORTAL_DELAY, CAPTIVE_PORTAL_TIMEOUT, OVERALL_REPORT_TIMEOUT, PROBES_TIMEOUT,
 };
 
-/// Holds the state for a single invocation of [`net_report::Client::get_report`].
+/// Holds the state for a single report generation.
 ///
 /// Dropping this will cancel the actor and stop the report generation.
 #[derive(Debug)]

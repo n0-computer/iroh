@@ -10,10 +10,9 @@ mod imp {
 
     /// Options for running probes
     ///
-    /// By default, will run icmp over IPv4, icmp over IPv6, and Https probes.
+    /// By default, will run Https probes.
     ///
-    /// Use [`Options::stun_v4`], [`Options::stun_v6`], and [`Options::quic_config`]
-    /// to enable STUN over IPv4, STUN over IPv6, and QUIC address discovery.
+    /// Use [`Options::quic_config`] to enable  QUIC address discovery.
     #[derive(Debug, Clone)]
     pub struct Options {
         /// The configuration needed to launch QUIC address discovery probes.
