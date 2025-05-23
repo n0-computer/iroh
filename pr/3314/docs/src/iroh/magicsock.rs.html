@@ -3332,8 +3332,7 @@
 <a href="#3331" id="3331">3331</a>
 <a href="#3332" id="3332">3332</a>
 <a href="#3333" id="3333">3333</a>
-<a href="#3334" id="3334">3334</a>
-<a href="#3335" id="3335">3335</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#3334" id="3334">3334</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -3547,12 +3546,7 @@
     </span>dns_resolver: DnsResolver,
 
     <span class="comment">// - Disco
-    </span><span class="doccomment">/// Encryption key for this node.
-    </span>secret_encryption_key: crypto_box::SecretKey,
-    <span class="doccomment">/// The state for an active DiscoKey.
-    </span>disco_secrets: DiscoSecrets,
-    <span class="doccomment">/// Disco (ping) queue
-    </span>disco_sender: mpsc::Sender&lt;(SendAddr, PublicKey, disco::Message)&gt;,
+    </span>disco: DiscoState,
 
     <span class="comment">// - Discovery
     </span><span class="doccomment">/// Optional discovery service
@@ -4087,11 +4081,7 @@
 
         <span class="comment">// We're now reasonably sure we're expecting communication from
         // this node, do the heavy crypto lifting to see what they want.
-        </span><span class="kw">let </span>dm = <span class="kw">match </span><span class="self">self</span>.disco_secrets.unseal_and_decode(
-            <span class="kw-2">&amp;</span><span class="self">self</span>.secret_encryption_key,
-            sender,
-            sealed_box.to_vec(),
-        ) {
+        </span><span class="kw">let </span>dm = <span class="kw">match </span><span class="self">self</span>.disco.unseal_and_decode(sender, sealed_box) {
             <span class="prelude-val">Ok</span>(dm) =&gt; dm,
             <span class="prelude-val">Err</span>(DiscoBoxError::Open(err)) =&gt; {
                 <span class="macro">warn!</span>(<span class="question-mark">?</span>err, <span class="string">"failed to open disco box"</span>);
@@ -4199,11 +4189,7 @@
             txn = <span class="question-mark">?</span>dm.tx_id,
         );
 
-        <span class="kw">if </span><span class="self">self
-            </span>.disco_sender
-            .try_send((addr.clone(), sender, pong))
-            .is_err()
-        {
+        <span class="kw">if </span><span class="self">self</span>.disco.try_send(addr.clone(), sender, pong).is_err() {
             <span class="macro">warn!</span>(%addr, <span class="string">"failed to queue pong"</span>);
         }
 
@@ -4215,15 +4201,6 @@
             );
             <span class="self">self</span>.send_ping_queued(ping);
         }
-    }
-
-    <span class="kw">fn </span>encode_disco_message(<span class="kw-2">&amp;</span><span class="self">self</span>, dst_key: PublicKey, msg: <span class="kw-2">&amp;</span>disco::Message) -&gt; Bytes {
-        <span class="self">self</span>.disco_secrets.encode_and_seal(
-            <span class="kw-2">&amp;</span><span class="self">self</span>.secret_encryption_key,
-            <span class="self">self</span>.public_key,
-            dst_key,
-            msg,
-        )
     }
 
     <span class="kw">fn </span>send_ping_queued(<span class="kw-2">&amp;</span><span class="self">self</span>, ping: SendPing) {
@@ -4238,11 +4215,7 @@
             tx_id,
             node_key: <span class="self">self</span>.public_key(),
         });
-        <span class="kw">let </span>sent = <span class="self">self
-            </span>.disco_sender
-            .try_send((dst.clone(), dst_node, msg))
-            .is_ok();
-
+        <span class="kw">let </span>sent = <span class="self">self</span>.disco.try_send(dst.clone(), dst_node, msg).is_ok();
         <span class="kw">if </span>sent {
             <span class="kw">let </span>msg_sender = <span class="self">self</span>.actor_sender.clone();
             <span class="macro">trace!</span>(%dst, tx = %HEXLOWER.encode(<span class="kw-2">&amp;</span>tx_id), <span class="question-mark">?</span>purpose, <span class="string">"ping sent (queued)"</span>);
@@ -4295,7 +4268,8 @@
                 <span class="string">"connection closed"</span>,
             ));
         }
-        <span class="kw">let </span>pkt = <span class="self">self</span>.encode_disco_message(dst_key, <span class="kw-2">&amp;</span>msg);
+
+        <span class="kw">let </span>pkt = <span class="self">self</span>.disco.encode_and_seal(<span class="self">self</span>.public_key, dst_key, <span class="kw-2">&amp;</span>msg);
 
         <span class="kw">let </span>transmit = transports::Transmit {
             contents: <span class="kw-2">&amp;</span>pkt,
@@ -4351,8 +4325,8 @@
                 <span class="kw">let </span>msg = <span class="self">self</span>.direct_addrs.to_call_me_maybe_message();
                 <span class="kw">let </span>msg = disco::Message::CallMeMaybe(msg);
                 <span class="kw">if </span><span class="self">self
-                    </span>.disco_sender
-                    .try_send((SendAddr::Relay(url.clone()), dst_node, msg.clone()))
+                    </span>.disco
+                    .try_send(SendAddr::Relay(url.clone()), dst_node, msg.clone())
                     .is_err()
                 {
                     <span class="macro">warn!</span>(dstkey = %dst_node.fmt_short(), relayurl = %url,
@@ -4602,7 +4576,6 @@
         )<span class="question-mark">?</span>;
 
         <span class="kw">let </span>(actor_sender, actor_receiver) = mpsc::channel(<span class="number">256</span>);
-        <span class="kw">let </span>(disco_sender, <span class="kw-2">mut </span>disco_receiver) = mpsc::channel(<span class="number">256</span>);
 
         <span class="comment">// load the node data
         </span><span class="kw">let </span>node_map = node_map.unwrap_or_default();
@@ -4637,18 +4610,18 @@
         <span class="attr">#[cfg(wasm_browser)]
         </span><span class="kw">let </span>transports = Transports::new(relay_transports);
 
+        <span class="kw">let </span>(disco, <span class="kw-2">mut </span>disco_receiver) = DiscoState::new(secret_encryption_key);
+
         <span class="kw">let </span>msock = Arc::new(MagicSock {
             public_key: secret_key.public(),
-            secret_encryption_key,
             closing: AtomicBool::new(<span class="bool-val">false</span>),
             closed: AtomicBool::new(<span class="bool-val">false</span>),
+            disco,
             actor_sender: actor_sender.clone(),
             ipv6_reported,
             relay_map,
-            disco_secrets: DiscoSecrets::default(),
             node_map,
             ip_mapped_addrs,
-            disco_sender,
             discovery,
             discovery_user_data: RwLock::new(discovery_user_data),
             direct_addrs: Default::default(),
@@ -4853,43 +4826,68 @@
     .with_no_client_auth()
 }
 
-<span class="attr">#[derive(Debug, Default)]
-</span><span class="kw">struct </span>DiscoSecrets(std::sync::Mutex&lt;HashMap&lt;PublicKey, SharedSecret&gt;&gt;);
+<span class="attr">#[derive(Debug)]
+</span><span class="kw">struct </span>DiscoState {
+    <span class="doccomment">/// Encryption key for this node.
+    </span>secret_encryption_key: crypto_box::SecretKey,
+    <span class="doccomment">/// The state for an active DiscoKey.
+    </span>secrets: std::sync::Mutex&lt;HashMap&lt;PublicKey, SharedSecret&gt;&gt;,
+    <span class="doccomment">/// Disco (ping) queue
+    </span>sender: mpsc::Sender&lt;(SendAddr, PublicKey, disco::Message)&gt;,
+}
 
-<span class="kw">impl </span>DiscoSecrets {
-    <span class="kw">fn </span>get&lt;F, T&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, secret: <span class="kw-2">&amp;</span>crypto_box::SecretKey, node_id: PublicKey, cb: F) -&gt; T
-    <span class="kw">where
-        </span>F: FnOnce(<span class="kw-2">&amp;mut </span>SharedSecret) -&gt; T,
-    {
-        <span class="kw">let </span><span class="kw-2">mut </span>inner = <span class="self">self</span>.<span class="number">0</span>.lock().expect(<span class="string">"poisoned"</span>);
-        <span class="kw">let </span>x = inner.entry(node_id).or_insert_with(|| {
-            <span class="kw">let </span>public_key = public_ed_box(<span class="kw-2">&amp;</span>node_id.public());
-            SharedSecret::new(secret, <span class="kw-2">&amp;</span>public_key)
-        });
-        cb(x)
+<span class="kw">impl </span>DiscoState {
+    <span class="kw">fn </span>new(
+        secret_encryption_key: crypto_box::SecretKey,
+    ) -&gt; (<span class="self">Self</span>, mpsc::Receiver&lt;(SendAddr, PublicKey, disco::Message)&gt;) {
+        <span class="kw">let </span>(disco_sender, disco_receiver) = mpsc::channel(<span class="number">256</span>);
+
+        (
+            <span class="self">Self </span>{
+                secret_encryption_key,
+                secrets: Default::default(),
+                sender: disco_sender,
+            },
+            disco_receiver,
+        )
+    }
+    <span class="kw">fn </span>try_send(<span class="kw-2">&amp;</span><span class="self">self</span>, dst: SendAddr, node_id: PublicKey, msg: disco::Message) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+        <span class="self">self</span>.sender
+            .try_send((dst, node_id, msg))
+            .map_err(|<span class="kw">_</span>| <span class="macro">anyhow::anyhow!</span>(<span class="string">"channel full"</span>))
     }
 
     <span class="kw">fn </span>encode_and_seal(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-        this_secret_key: <span class="kw-2">&amp;</span>crypto_box::SecretKey,
         this_node_id: NodeId,
         other_node_id: NodeId,
         msg: <span class="kw-2">&amp;</span>disco::Message,
     ) -&gt; Bytes {
         <span class="kw">let </span><span class="kw-2">mut </span>seal = msg.as_bytes();
-        <span class="self">self</span>.get(this_secret_key, other_node_id, |secret| {
-            secret.seal(<span class="kw-2">&amp;mut </span>seal)
-        });
+        <span class="self">self</span>.get_secret(other_node_id, |secret| secret.seal(<span class="kw-2">&amp;mut </span>seal));
         disco::encode_message(<span class="kw-2">&amp;</span>this_node_id, seal).into()
     }
+
     <span class="kw">fn </span>unseal_and_decode(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
-        secret: <span class="kw-2">&amp;</span>crypto_box::SecretKey,
         node_id: PublicKey,
-        <span class="kw-2">mut </span>sealed_box: Vec&lt;u8&gt;,
+        sealed_box: <span class="kw-2">&amp;</span>[u8],
     ) -&gt; <span class="prelude-ty">Result</span>&lt;disco::Message, DiscoBoxError&gt; {
-        <span class="self">self</span>.get(secret, node_id, |secret| secret.open(<span class="kw-2">&amp;mut </span>sealed_box))<span class="question-mark">?</span>;
+        <span class="kw">let </span><span class="kw-2">mut </span>sealed_box = sealed_box.to_vec();
+        <span class="self">self</span>.get_secret(node_id, |secret| secret.open(<span class="kw-2">&amp;mut </span>sealed_box))<span class="question-mark">?</span>;
         disco::Message::from_bytes(<span class="kw-2">&amp;</span>sealed_box).map_err(DiscoBoxError::Parse)
+    }
+
+    <span class="kw">fn </span>get_secret&lt;F, T&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: PublicKey, cb: F) -&gt; T
+    <span class="kw">where
+        </span>F: FnOnce(<span class="kw-2">&amp;mut </span>SharedSecret) -&gt; T,
+    {
+        <span class="kw">let </span><span class="kw-2">mut </span>inner = <span class="self">self</span>.secrets.lock().expect(<span class="string">"poisoned"</span>);
+        <span class="kw">let </span>x = inner.entry(node_id).or_insert_with(|| {
+            <span class="kw">let </span>public_key = public_ed_box(<span class="kw-2">&amp;</span>node_id.public());
+            SharedSecret::new(<span class="kw-2">&amp;</span><span class="self">self</span>.secret_encryption_key, <span class="kw-2">&amp;</span>public_key)
+        });
+        cb(x)
     }
 }
 
@@ -5429,8 +5427,8 @@
         </span><span class="kw">for </span>(public_key, url) <span class="kw">in </span><span class="self">self</span>.pending_call_me_maybes.drain() {
             <span class="kw">if </span><span class="self">self
                 </span>.msock
-                .disco_sender
-                .try_send((SendAddr::Relay(url), public_key, msg.clone()))
+                .disco
+                .try_send(SendAddr::Relay(url), public_key, msg.clone())
                 .is_err()
             {
                 <span class="macro">warn!</span>(node = %public_key.fmt_short(), <span class="string">"relay channel full, dropping call-me-maybe"</span>);
