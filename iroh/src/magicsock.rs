@@ -177,57 +177,59 @@ pub(crate) struct Handle {
 /// It is usually only necessary to use a single [`MagicSock`] instance in an application, it
 /// means any QUIC endpoints on top will be sharing as much information about nodes as
 /// possible.
-#[derive(derive_more::Debug)]
+#[derive(Debug)]
 pub(crate) struct MagicSock {
+    /// Channel to send to the internal actor.
     actor_sender: mpsc::Sender<ActorMessage>,
-    /// The DNS resolver to be used in this magicsock.
-    #[cfg(not(wasm_browser))]
-    dns_resolver: DnsResolver,
+    /// NodeId of this node.
+    public_key: PublicKey,
 
-    /// Key for this node.
-    secret_key: SecretKey,
-    /// Encryption key for this node.
-    secret_encryption_key: crypto_box::SecretKey,
-
+    // - State Management
     /// Close is in progress (or done)
     closing: AtomicBool,
     /// Close was called.
     closed: AtomicBool,
+
+    // - Networking Info
+    /// Our discovered direct addresses.
+    direct_addrs: DiscoveredDirectAddrs,
+    /// Our latest net-report
+    net_report: Watchable<(Option<Report>, UpdateReason)>,
     /// If the last net_report report, reports IPv6 to be available.
     ipv6_reported: Arc<AtomicBool>,
-
     /// Zero nodes means relay is disabled.
     relay_map: RelayMap,
     /// Tracks the networkmap node entity for each node discovery key.
     node_map: NodeMap,
     /// Tracks the mapped IP addresses
     ip_mapped_addrs: IpMappedAddresses,
+    /// Local addresses
+    local_addrs_watch: LocalAddrsWatch,
+    /// Currently bound IP addresses of all sockets
+    #[cfg(not(wasm_browser))]
+    ip_bind_addrs: Vec<SocketAddr>,
+    /// The DNS resolver to be used in this magicsock.
+    #[cfg(not(wasm_browser))]
+    dns_resolver: DnsResolver,
+
+    // - Disco
+    /// Encryption key for this node.
+    secret_encryption_key: crypto_box::SecretKey,
     /// The state for an active DiscoKey.
     disco_secrets: DiscoSecrets,
-
     /// Disco (ping) queue
     disco_sender: mpsc::Sender<(SendAddr, PublicKey, disco::Message)>,
 
+    // - Discovery
     /// Optional discovery service
     discovery: Option<Box<dyn Discovery>>,
-
     /// Optional user-defined discover data.
     discovery_user_data: RwLock<Option<UserData>>,
-
-    /// Our discovered direct addresses.
-    direct_addrs: DiscoveredDirectAddrs,
-
-    /// Our latest net-report
-    net_report: Watchable<(Option<Report>, UpdateReason)>,
-
     /// Broadcast channel for listening to discovery updates.
     discovery_subscribers: DiscoverySubscribers,
 
+    /// Metrics
     pub(crate) metrics: EndpointMetrics,
-
-    local_addrs_watch: LocalAddrsWatch,
-    #[cfg(not(wasm_browser))]
-    ip_bind_addrs: Vec<SocketAddr>,
 }
 
 #[allow(missing_docs)]
@@ -276,7 +278,7 @@ impl MagicSock {
     }
 
     fn public_key(&self) -> PublicKey {
-        self.secret_key.public()
+        self.public_key
     }
 
     /// Get the cached version of addresses.
@@ -901,7 +903,7 @@ impl MagicSock {
     fn encode_disco_message(&self, dst_key: PublicKey, msg: &disco::Message) -> Bytes {
         self.disco_secrets.encode_and_seal(
             &self.secret_encryption_key,
-            self.secret_key.public(),
+            self.public_key,
             dst_key,
             msg,
         )
@@ -1341,7 +1343,7 @@ impl Handle {
         let transports = Transports::new(relay_transports);
 
         let msock = Arc::new(MagicSock {
-            secret_key,
+            public_key: secret_key.public(),
             secret_encryption_key,
             closing: AtomicBool::new(false),
             closed: AtomicBool::new(false),
@@ -1482,7 +1484,7 @@ impl Handle {
     /// indefinitely after this call.
     #[instrument(skip_all)]
     pub(crate) async fn close(&self) {
-        trace!(me = ?self.secret_key.public(), "magicsock closing...");
+        trace!(me = ?self.public_key, "magicsock closing...");
         // Initiate closing all connections, and refuse future connections.
         self.endpoint.close(0u16.into(), b"");
 
