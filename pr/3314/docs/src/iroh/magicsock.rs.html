@@ -3325,14 +3325,7 @@
 <a href="#3324" id="3324">3324</a>
 <a href="#3325" id="3325">3325</a>
 <a href="#3326" id="3326">3326</a>
-<a href="#3327" id="3327">3327</a>
-<a href="#3328" id="3328">3328</a>
-<a href="#3329" id="3329">3329</a>
-<a href="#3330" id="3330">3330</a>
-<a href="#3331" id="3331">3331</a>
-<a href="#3332" id="3332">3332</a>
-<a href="#3333" id="3333">3333</a>
-<a href="#3334" id="3334">3334</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#3327" id="3327">3327</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -3530,8 +3523,6 @@
     </span>net_report: Watchable&lt;(<span class="prelude-ty">Option</span>&lt;Report&gt;, UpdateReason)&gt;,
     <span class="doccomment">/// If the last net_report report, reports IPv6 to be available.
     </span>ipv6_reported: Arc&lt;AtomicBool&gt;,
-    <span class="doccomment">/// Zero nodes means relay is disabled.
-    </span>relay_map: RelayMap,
     <span class="doccomment">/// Tracks the networkmap node entity for each node discovery key.
     </span>node_map: NodeMap,
     <span class="doccomment">/// Tracks the mapped IP addresses
@@ -3545,7 +3536,7 @@
     </span><span class="attr">#[cfg(not(wasm_browser))]
     </span>dns_resolver: DnsResolver,
 
-    <span class="comment">// - Disco
+    <span class="doccomment">/// Disco
     </span>disco: DiscoState,
 
     <span class="comment">// - Discovery
@@ -3585,10 +3576,6 @@
 
     <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>is_closed(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
         <span class="self">self</span>.closed.load(Ordering::SeqCst)
-    }
-
-    <span class="kw">fn </span>public_key(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; PublicKey {
-        <span class="self">self</span>.public_key
     }
 
     <span class="doccomment">/// Get the cached version of addresses.
@@ -4213,7 +4200,7 @@
         } = ping;
         <span class="kw">let </span>msg = disco::Message::Ping(disco::Ping {
             tx_id,
-            node_key: <span class="self">self</span>.public_key(),
+            node_key: <span class="self">self</span>.public_key,
         });
         <span class="kw">let </span>sent = <span class="self">self</span>.disco.try_send(dst.clone(), dst_node, msg).is_ok();
         <span class="kw">if </span>sent {
@@ -4226,7 +4213,7 @@
         }
     }
 
-    <span class="doccomment">/// Tries to send the ping actions.
+    <span class="doccomment">/// Send the given ping actions out.
     </span><span class="kw">async fn </span>send_ping_actions(<span class="kw-2">&amp;</span><span class="self">self</span>, sender: <span class="kw-2">&amp;</span>UdpSender, msgs: Vec&lt;PingAction&gt;) -&gt; io::Result&lt;()&gt; {
         <span class="kw">for </span>msg <span class="kw">in </span>msgs {
             <span class="comment">// Abort sending as soon as we know we are shutting down.
@@ -4248,7 +4235,7 @@
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="doccomment">/// Send a disco message. UDP messages will be polled to send directly on the UDP socket.
+    <span class="doccomment">/// Sends out a disco message.
     </span><span class="kw">async fn </span>send_disco_message(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         sender: <span class="kw-2">&amp;</span>UdpSender,
@@ -4302,7 +4289,7 @@
         } = ping;
         <span class="kw">let </span>msg = disco::Message::Ping(disco::Ping {
             tx_id,
-            node_key: <span class="self">self</span>.public_key(),
+            node_key: <span class="self">self</span>.public_key,
         });
 
         <span class="self">self</span>.send_disco_message(sender, dst.clone(), dst_node, msg)
@@ -4340,22 +4327,14 @@
                     <span class="question-mark">?</span>last_refresh_ago,
                     <span class="string">"want call-me-maybe but direct addrs stale; queuing after restun"</span>,
                 );
-                <span class="self">self</span>.re_stun(
-                    UpdateReason::RefreshForPeering,
-                    <span class="prelude-val">Some</span>((dst_node, url.clone())),
-                );
+                <span class="self">self</span>.actor_sender
+                    .try_send(ActorMessage::ScheduleDirectAddrUpdate(
+                        UpdateReason::RefreshForPeering,
+                        <span class="prelude-val">Some</span>((dst_node, url.clone())),
+                    ))
+                    .ok();
             }
         }
-    }
-
-    <span class="doccomment">/// Triggers an address discovery. The provided why string is for debug logging only.
-    </span><span class="attr">#[instrument(skip_all)]
-    </span><span class="kw">fn </span>re_stun(<span class="kw-2">&amp;</span><span class="self">self</span>, why: UpdateReason, data: <span class="prelude-ty">Option</span>&lt;(NodeId, RelayUrl)&gt;) {
-        <span class="macro">debug!</span>(<span class="string">"re_stun: {:?}"</span>, why);
-        <span class="self">self</span>.metrics.magicsock.re_stun_calls.inc();
-        <span class="self">self</span>.actor_sender
-            .try_send(ActorMessage::ScheduleDirectAddrUpdate(why, data))
-            .ok();
     }
 
     <span class="doccomment">/// Publishes our address to a discovery service, if configured.
@@ -4425,6 +4404,7 @@
     </span>port_mapper: portmapper::Client,
     <span class="doccomment">/// The prober that discovers local network conditions, including the closest relay relay and NAT mappings.
     </span>net_reporter: Arc&lt;Mutex&lt;net_report::Client&gt;&gt;,
+    relay_map: RelayMap,
     run_done: mpsc::Sender&lt;()&gt;,
 }
 
@@ -4446,6 +4426,7 @@
         net_report_config: net_report::Options,
         <span class="attr">#[cfg(not(wasm_browser))] </span>port_mapper: portmapper::Client,
         net_reporter: Arc&lt;Mutex&lt;net_report::Client&gt;&gt;,
+        relay_map: RelayMap,
         run_done: mpsc::Sender&lt;()&gt;,
     ) -&gt; <span class="self">Self </span>{
         DirectAddrUpdateState {
@@ -4455,6 +4436,7 @@
             </span>port_mapper,
             net_reporter,
             msock,
+            relay_map,
             run_done,
         }
     }
@@ -4501,13 +4483,13 @@
             <span class="macro">debug!</span>(<span class="string">"skipping net_report, socket is shutting down"</span>);
             <span class="kw">return</span>;
         }
-        <span class="kw">if </span><span class="self">self</span>.msock.relay_map.is_empty() {
+        <span class="kw">if </span><span class="self">self</span>.relay_map.is_empty() {
             <span class="macro">debug!</span>(<span class="string">"skipping net_report, empty RelayMap"</span>);
             <span class="self">self</span>.msock.net_report.set((<span class="prelude-val">None</span>, why)).ok();
             <span class="kw">return</span>;
         }
 
-        <span class="kw">let </span>relay_map = <span class="self">self</span>.msock.relay_map.clone();
+        <span class="kw">let </span>relay_map = <span class="self">self</span>.relay_map.clone();
         <span class="kw">let </span>opts = <span class="self">self</span>.net_report_config.clone();
 
         <span class="macro">debug!</span>(<span class="string">"requesting net_report report"</span>);
@@ -4619,7 +4601,6 @@
             disco,
             actor_sender: actor_sender.clone(),
             ipv6_reported,
-            relay_map,
             node_map,
             ip_mapped_addrs,
             discovery,
@@ -4707,6 +4688,7 @@
             <span class="attr">#[cfg(not(wasm_browser))]
             </span>port_mapper,
             Arc::new(Mutex::new(net_reporter)),
+            relay_map,
             direct_addr_done_tx,
         );
 
@@ -5473,7 +5455,11 @@
             <span class="kw">return </span>my_relay;
         }
 
-        <span class="kw">let </span>ids = <span class="self">self</span>.msock.relay_map.urls().collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+        <span class="kw">let </span>ids = <span class="self">self
+            </span>.direct_addr_update_state
+            .relay_map
+            .urls()
+            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
         <span class="kw">let </span><span class="kw-2">mut </span>rng = rand::rngs::StdRng::seed_from_u64(<span class="number">0</span>);
         ids.choose(<span class="kw-2">&amp;mut </span>rng).map(|c| (<span class="kw-2">*</span>c).clone())
     }
