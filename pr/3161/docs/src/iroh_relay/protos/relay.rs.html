@@ -1592,14 +1592,14 @@
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>data_encoding::HEXLOWER;
-    <span class="kw">use </span>n0_snafu::{TestResult, TestResultExt};
+    <span class="kw">use </span>n0_snafu::{<span class="prelude-ty">Result</span>, ResultExt};
     <span class="kw">use </span>tokio_util::codec::{FramedRead, FramedWrite};
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
 
     <span class="attr">#[tokio::test]
     #[cfg(feature = <span class="string">"server"</span>)]
-    </span><span class="kw">async fn </span>test_basic_read_write() -&gt; TestResult {
+    </span><span class="kw">async fn </span>test_basic_read_write() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">let </span>(reader, writer) = tokio::io::duplex(<span class="number">1024</span>);
         <span class="kw">let </span><span class="kw-2">mut </span>reader = FramedRead::new(reader, RelayCodec::test());
         <span class="kw">let </span><span class="kw-2">mut </span>writer = FramedWrite::new(writer, RelayCodec::test());
@@ -1619,7 +1619,7 @@
     }
 
     <span class="attr">#[tokio::test]
-    </span><span class="kw">async fn </span>test_send_recv_client_key() -&gt; TestResult {
+    </span><span class="kw">async fn </span>test_send_recv_client_key() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">let </span>(reader, writer) = tokio::io::duplex(<span class="number">1024</span>);
         <span class="kw">let </span><span class="kw-2">mut </span>reader = FramedRead::new(reader, RelayCodec::test());
         <span class="kw">let </span><span class="kw-2">mut </span>writer = FramedWrite::new(writer, RelayCodec::test()).sink_map_err(SendError::from);
@@ -1637,7 +1637,7 @@
     }
 
     <span class="attr">#[test]
-    </span><span class="kw">fn </span>test_frame_snapshot() -&gt; TestResult {
+    </span><span class="kw">fn </span>test_frame_snapshot() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">let </span>client_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">42u8</span>; <span class="number">32</span>]);
         <span class="kw">let </span>client_info = ClientInfo {
             version: PROTOCOL_VERSION,

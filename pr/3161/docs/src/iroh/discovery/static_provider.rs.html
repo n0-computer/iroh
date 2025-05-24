@@ -304,7 +304,7 @@
 /// use iroh_base::SecretKey;
 ///
 /// # #[tokio::main]
-/// # async fn main() -&gt; n0_snafu::TestResult&lt;()&gt; {
+/// # async fn main() -&gt; n0_snafu::Result&lt;()&gt; {
 /// // Create the discovery service and endpoint.
 /// let discovery = StaticProvider::new();
 ///
@@ -371,7 +371,7 @@
     /// #     Vec::new()
     /// # }
     /// # #[tokio::main]
-    /// # async fn main() -&gt; n0_snafu::TestResult&lt;()&gt; {
+    /// # async fn main() -&gt; n0_snafu::Result&lt;()&gt; {
     /// // get addrs from somewhere
     /// let addrs = get_addrs();
     ///
@@ -481,13 +481,13 @@
 <span class="attr">#[cfg(test)]
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>iroh_base::{NodeAddr, SecretKey};
-    <span class="kw">use </span>n0_snafu::{TestResult, TestResultExt};
+    <span class="kw">use </span>n0_snafu::{<span class="prelude-ty">Result</span>, ResultExt};
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
     <span class="kw">use </span><span class="kw">crate</span>::Endpoint;
 
     <span class="attr">#[tokio::test]
-    </span><span class="kw">async fn </span>test_basic() -&gt; TestResult {
+    </span><span class="kw">async fn </span>test_basic() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">let </span>discovery = StaticProvider::new();
 
         <span class="kw">let </span>_ep = Endpoint::builder()

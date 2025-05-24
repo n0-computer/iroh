@@ -961,14 +961,14 @@
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>std::str::FromStr;
 
-    <span class="kw">use </span>n0_snafu::TestResult;
+    <span class="kw">use </span>n0_snafu::Result;
     <span class="kw">use </span>tracing_test::traced_test;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
 
     <span class="attr">#[test]
     #[traced_test]
-    </span><span class="kw">fn </span>test_host_header_value() -&gt; TestResult {
+    </span><span class="kw">fn </span>test_host_header_value() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">let </span>cases = [
             (
                 <span class="string">"https://euw1-1.relay.iroh.network."</span>,

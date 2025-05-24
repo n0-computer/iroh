@@ -4582,11 +4582,7 @@
 <a href="#4581" id="4581">4581</a>
 <a href="#4582" id="4582">4582</a>
 <a href="#4583" id="4583">4583</a>
-<a href="#4584" id="4584">4584</a>
-<a href="#4585" id="4585">4585</a>
-<a href="#4586" id="4586">4586</a>
-<a href="#4587" id="4587">4587</a>
-<a href="#4588" id="4588">4588</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4584" id="4584">4584</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -8116,7 +8112,7 @@
     <span class="kw">use </span>iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
     <span class="kw">use </span>iroh_relay::RelayMap;
     <span class="kw">use </span>n0_future::{time, StreamExt};
-    <span class="kw">use </span>n0_snafu::{TestResult, TestResultExt};
+    <span class="kw">use </span>n0_snafu::{<span class="prelude-ty">Result</span>, ResultExt};
     <span class="kw">use </span>quinn::ServerConfig;
     <span class="kw">use </span>rand::{Rng, RngCore};
     <span class="kw">use </span>tokio::task::JoinSet;
@@ -8242,7 +8238,7 @@
     ///
     /// When the returned drop guard is dropped, the tasks doing this updating are stopped.
     </span><span class="attr">#[instrument(skip_all)]
-    </span><span class="kw">async fn </span>mesh_stacks(stacks: Vec&lt;MagicStack&gt;) -&gt; TestResult&lt;JoinSet&lt;()&gt;&gt; {
+    </span><span class="kw">async fn </span>mesh_stacks(stacks: Vec&lt;MagicStack&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;JoinSet&lt;()&gt;&gt; {
         <span class="doccomment">/// Registers endpoint addresses of a node to all other nodes.
         </span><span class="kw">fn </span>update_direct_addrs(
             stacks: <span class="kw-2">&amp;</span>[MagicStack],
@@ -8307,7 +8303,7 @@
     }
 
     <span class="attr">#[instrument(skip_all, fields(me = %ep.endpoint.node_id().fmt_short()))]
-    </span><span class="kw">async fn </span>echo_receiver(ep: MagicStack, loss: ExpectedLoss) -&gt; TestResult {
+    </span><span class="kw">async fn </span>echo_receiver(ep: MagicStack, loss: ExpectedLoss) -&gt; <span class="prelude-ty">Result</span> {
         <span class="macro">info!</span>(<span class="string">"accepting conn"</span>);
         <span class="kw">let </span>conn = ep.endpoint.accept().<span class="kw">await</span>.expect(<span class="string">"no conn"</span>);
 
@@ -8355,7 +8351,7 @@
         dest_id: PublicKey,
         msg: <span class="kw-2">&amp;</span>[u8],
         loss: ExpectedLoss,
-    ) -&gt; TestResult {
+    ) -&gt; <span class="prelude-ty">Result</span> {
         <span class="macro">info!</span>(<span class="string">"connecting to {}"</span>, dest_id.fmt_short());
         <span class="kw">let </span>dest = NodeAddr::new(dest_id);
         <span class="kw">let </span>conn = ep.endpoint.connect(dest, ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
@@ -8447,7 +8443,7 @@
 
     <span class="attr">#[tokio::test(flavor = <span class="string">"multi_thread"</span>)]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_two_devices_roundtrip_quinn_magic() -&gt; TestResult {
+    </span><span class="kw">async fn </span>test_two_devices_roundtrip_quinn_magic() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">let </span>m1 = MagicStack::new(RelayMode::Disabled).<span class="kw">await</span>;
         <span class="kw">let </span>m2 = MagicStack::new(RelayMode::Disabled).<span class="kw">await</span>;
 
@@ -8482,8 +8478,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_regression_network_change_rebind_wakes_connection_driver() -&gt; n0_snafu::TestResult
-    {
+    </span><span class="kw">async fn </span>test_regression_network_change_rebind_wakes_connection_driver() -&gt; n0_snafu::Result {
         <span class="kw">let </span>m1 = MagicStack::new(RelayMode::Disabled).<span class="kw">await</span>;
         <span class="kw">let </span>m2 = MagicStack::new(RelayMode::Disabled).<span class="kw">await</span>;
 
@@ -8502,7 +8497,7 @@
                     conn.closed().<span class="kw">await</span>;
                 }
 
-                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, n0_snafu::TestError&gt;(())
+                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, n0_snafu::Error&gt;(())
             }
         }));
 
@@ -8521,7 +8516,7 @@
 
     <span class="attr">#[tokio::test(flavor = <span class="string">"multi_thread"</span>)]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_two_devices_roundtrip_network_change() -&gt; TestResult {
+    </span><span class="kw">async fn </span>test_two_devices_roundtrip_network_change() -&gt; <span class="prelude-ty">Result</span> {
         time::timeout(
             Duration::from_secs(<span class="number">90</span>),
             test_two_devices_roundtrip_network_change_impl(),
@@ -8532,7 +8527,7 @@
 
     <span class="doccomment">/// Same structure as `test_two_devices_roundtrip_quinn_magic`, but interrupts regularly
     /// with (simulated) network changes.
-    </span><span class="kw">async fn </span>test_two_devices_roundtrip_network_change_impl() -&gt; TestResult {
+    </span><span class="kw">async fn </span>test_two_devices_roundtrip_network_change_impl() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">let </span>m1 = MagicStack::new(RelayMode::Disabled).<span class="kw">await</span>;
         <span class="kw">let </span>m2 = MagicStack::new(RelayMode::Disabled).<span class="kw">await</span>;
 
@@ -8630,7 +8625,7 @@
 
     <span class="attr">#[tokio::test(flavor = <span class="string">"multi_thread"</span>)]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_two_devices_setup_teardown() -&gt; TestResult {
+    </span><span class="kw">async fn </span>test_two_devices_setup_teardown() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..<span class="number">10 </span>{
             <span class="macro">println!</span>(<span class="string">"-- round {i}"</span>);
             <span class="macro">println!</span>(<span class="string">"setting up magic stack"</span>);
@@ -8744,10 +8739,7 @@
     ///
     /// Use [`magicsock_connect`] to establish connections.
     </span><span class="attr">#[instrument(name = <span class="string">"ep"</span>, skip_all, fields(me = secret_key.public().fmt_short()))]
-    </span><span class="kw">async fn </span>magicsock_ep(
-        secret_key: SecretKey,
-        tls_auth: tls::Authentication,
-    ) -&gt; TestResult&lt;Handle&gt; {
+    </span><span class="kw">async fn </span>magicsock_ep(secret_key: SecretKey, tls_auth: tls::Authentication) -&gt; <span class="prelude-ty">Result</span>&lt;Handle&gt; {
         <span class="kw">let </span>quic_server_config = tls::TlsConfig::new(tls_auth, secret_key.clone())
             .make_server_config(<span class="macro">vec!</span>[ALPN.to_vec()], <span class="bool-val">true</span>);
         <span class="kw">let </span><span class="kw-2">mut </span>server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
@@ -8784,7 +8776,7 @@
         addr: NodeIdMappedAddr,
         node_id: NodeId,
         tls_auth: tls::Authentication,
-    ) -&gt; TestResult&lt;quinn::Connection&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;quinn::Connection&gt; {
         <span class="comment">// Endpoint::connect sets this, do the same to have similar behaviour.
         </span><span class="kw">let </span><span class="kw-2">mut </span>transport_config = quinn::TransportConfig::default();
         transport_config.keep_alive_interval(<span class="prelude-val">Some</span>(Duration::from_secs(<span class="number">1</span>)));
@@ -8813,7 +8805,7 @@
         node_id: NodeId,
         transport_config: Arc&lt;quinn::TransportConfig&gt;,
         tls_auth: tls::Authentication,
-    ) -&gt; TestResult&lt;quinn::Connection&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;quinn::Connection&gt; {
         <span class="kw">let </span>alpns = <span class="macro">vec!</span>[ALPN.to_vec()];
         <span class="kw">let </span>quic_client_config =
             tls::TlsConfig::new(tls_auth, ep_secret_key.clone()).make_client_config(alpns, <span class="bool-val">true</span>);
@@ -8871,7 +8863,7 @@
 
         <span class="comment">// This needs an accept task
         </span><span class="kw">let </span>accept_task = tokio::spawn({
-            <span class="kw">async fn </span>accept(ep: quinn::Endpoint) -&gt; TestResult&lt;()&gt; {
+            <span class="kw">async fn </span>accept(ep: quinn::Endpoint) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
                 <span class="kw">let </span>incoming = ep.accept().<span class="kw">await</span>.context(<span class="string">"no incoming"</span>)<span class="question-mark">?</span>;
                 <span class="kw">let </span>_conn = incoming
                     .accept()
@@ -8953,7 +8945,7 @@
 
         <span class="comment">// We need a task to accept the connection.
         </span><span class="kw">let </span>accept_task = tokio::spawn({
-            <span class="kw">async fn </span>accept(ep: quinn::Endpoint) -&gt; TestResult&lt;()&gt; {
+            <span class="kw">async fn </span>accept(ep: quinn::Endpoint) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
                 <span class="kw">let </span>incoming = ep.accept().<span class="kw">await</span>.context(<span class="string">"no incoming"</span>)<span class="question-mark">?</span>;
                 <span class="kw">let </span>conn = incoming
                     .accept()
@@ -9113,7 +9105,7 @@
     }
 
     <span class="attr">#[tokio::test]
-    </span><span class="kw">async fn </span>test_add_node_addr() -&gt; TestResult {
+    </span><span class="kw">async fn </span>test_add_node_addr() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">let </span>stack = MagicStack::new(RelayMode::Default).<span class="kw">await</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>rng = rand::thread_rng();
 

@@ -94,7 +94,7 @@
     header::{CACHE_CONTROL, CONTENT_TYPE},
     HeaderValue, StatusCode,
 };
-<span class="kw">use </span>n0_snafu::TestResultExt;
+<span class="kw">use </span>n0_snafu::ResultExt;
 
 <span class="kw">use </span><span class="kw">super</span>::error::AppResult;
 <span class="kw">use </span><span class="kw">crate</span>::state::AppState;
@@ -110,7 +110,7 @@
     DnsRequestQuery(request, accept_type): DnsRequestQuery,
 ) -&gt; AppResult&lt;Response&gt; {
     <span class="kw">let </span>message_bytes = state.dns_handler.answer_request(request).<span class="kw">await</span><span class="question-mark">?</span>;
-    <span class="kw">let </span>message = proto::op::Message::from_bytes(<span class="kw-2">&amp;</span>message_bytes).context(<span class="string">"decode"</span>)<span class="question-mark">?</span>;
+    <span class="kw">let </span>message = proto::op::Message::from_bytes(<span class="kw-2">&amp;</span>message_bytes).e()<span class="question-mark">?</span>;
 
     <span class="kw">let </span>min_ttl = message.answers().iter().map(|rec| rec.ttl()).min();
 
@@ -127,7 +127,7 @@
         .insert(CONTENT_TYPE, accept_type.to_header_value());
 
     <span class="kw">if let </span><span class="prelude-val">Some</span>(min_ttl) = min_ttl {
-        <span class="kw">let </span>maxage = HeaderValue::from_str(<span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"s-maxage={min_ttl}"</span>)).context(<span class="string">"header"</span>)<span class="question-mark">?</span>;
+        <span class="kw">let </span>maxage = HeaderValue::from_str(<span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">"s-maxage={min_ttl}"</span>)).e()<span class="question-mark">?</span>;
         response.headers_mut().insert(CACHE_CONTROL, maxage);
     }
 

@@ -1190,7 +1190,7 @@
 //!     Endpoint, SecretKey,
 //! };
 //!
-//! # async fn wrapper() -&gt; n0_snafu::TestResult&lt;()&gt; {
+//! # async fn wrapper() -&gt; n0_snafu::Result&lt;()&gt; {
 //! let secret_key = SecretKey::generate(rand::rngs::OsRng);
 //! let discovery = ConcurrentDiscovery::from_services(vec![
 //!     Box::new(PkarrPublisher::n0_dns(secret_key.clone())),
@@ -1217,7 +1217,7 @@
 //! # use iroh::discovery::ConcurrentDiscovery;
 //! # use iroh::SecretKey;
 //! #
-//! # async fn wrapper() -&gt; n0_snafu::TestResult&lt;()&gt; {
+//! # async fn wrapper() -&gt; n0_snafu::Result&lt;()&gt; {
 //! # let secret_key = SecretKey::generate(rand::rngs::OsRng);
 //! let discovery = ConcurrentDiscovery::from_services(vec![
 //!     Box::new(PkarrPublisher::n0_dns(secret_key.clone())),
@@ -1743,7 +1743,7 @@
     };
 
     <span class="kw">use </span>iroh_base::{NodeAddr, SecretKey};
-    <span class="kw">use </span>n0_snafu::{TestError, TestResult, TestResultExt};
+    <span class="kw">use </span>n0_snafu::{Error, <span class="prelude-ty">Result</span>, ResultExt};
     <span class="kw">use </span>quinn::{IdleTimeout, TransportConfig};
     <span class="kw">use </span>rand::Rng;
     <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
@@ -1883,7 +1883,7 @@
     <span class="doccomment">/// This is a smoke test for our discovery mechanism.
     </span><span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>endpoint_discovery_simple_shared() -&gt; TestResult {
+    </span><span class="kw">async fn </span>endpoint_discovery_simple_shared() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">let </span>disco_shared = TestDiscoveryShared::default();
         <span class="kw">let </span>(ep1, _guard1) = {
             <span class="kw">let </span>secret = SecretKey::generate(rand::thread_rng());
@@ -1905,7 +1905,7 @@
     <span class="doccomment">/// This test adds an empty discovery which provides no addresses.
     </span><span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>endpoint_discovery_combined_with_empty() -&gt; TestResult {
+    </span><span class="kw">async fn </span>endpoint_discovery_combined_with_empty() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">let </span>disco_shared = TestDiscoveryShared::default();
         <span class="kw">let </span>(ep1, _guard1) = {
             <span class="kw">let </span>secret = SecretKey::generate(rand::thread_rng());
@@ -1939,7 +1939,7 @@
     /// will connect successfully.
     </span><span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>endpoint_discovery_combined_with_empty_and_wrong() -&gt; TestResult {
+    </span><span class="kw">async fn </span>endpoint_discovery_combined_with_empty_and_wrong() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">let </span>disco_shared = TestDiscoveryShared::default();
         <span class="kw">let </span>(ep1, _guard1) = {
             <span class="kw">let </span>secret = SecretKey::generate(rand::thread_rng());
@@ -1966,7 +1966,7 @@
     <span class="doccomment">/// This test only has the "lying" discovery. It is here to make sure that this actually fails.
     </span><span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>endpoint_discovery_combined_wrong_only() -&gt; TestResult {
+    </span><span class="kw">async fn </span>endpoint_discovery_combined_wrong_only() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">let </span>disco_shared = TestDiscoveryShared::default();
         <span class="kw">let </span>(ep1, _guard1) = {
             <span class="kw">let </span>secret = SecretKey::generate(rand::thread_rng());
@@ -2000,7 +2000,7 @@
     /// Connect should still succeed because the discovery service will be invoked (after a delay).
     </span><span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>endpoint_discovery_with_wrong_existing_addr() -&gt; TestResult {
+    </span><span class="kw">async fn </span>endpoint_discovery_with_wrong_existing_addr() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">let </span>disco_shared = TestDiscoveryShared::default();
         <span class="kw">let </span>(ep1, _guard1) = {
             <span class="kw">let </span>secret = SecretKey::generate(rand::thread_rng());
@@ -2025,7 +2025,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>endpoint_discovery_watch() -&gt; TestResult {
+    </span><span class="kw">async fn </span>endpoint_discovery_watch() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">let </span>disco_shared = TestDiscoveryShared::default();
         <span class="kw">let </span>(ep1, _guard1) = {
             <span class="kw">let </span>secret = SecretKey::generate(rand::thread_rng());
@@ -2072,7 +2072,7 @@
     <span class="kw">async fn </span>new_endpoint(
         secret: SecretKey,
         disco: <span class="kw">impl </span>Discovery + <span class="lifetime">'static</span>,
-    ) -&gt; (Endpoint, AbortOnDropHandle&lt;TestResult&lt;()&gt;&gt;) {
+    ) -&gt; (Endpoint, AbortOnDropHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;) {
         <span class="kw">let </span>ep = Endpoint::builder()
             .secret_key(secret)
             .discovery(Box::new(disco))
@@ -2094,7 +2094,7 @@
                     connections.push(conn);
                 }
 
-                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, TestError&gt;(())
+                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, Error&gt;(())
             }
         });
 
@@ -2109,7 +2109,7 @@
     }
 
     <span class="attr">#[tokio::test]
-    </span><span class="kw">async fn </span>test_arc_discovery() -&gt; TestResult {
+    </span><span class="kw">async fn </span>test_arc_discovery() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">let </span>discovery = Arc::new(EmptyDiscovery);
 
         <span class="kw">let </span>_ep = Endpoint::builder()
@@ -2133,7 +2133,7 @@
     <span class="kw">use </span>iroh_base::{NodeAddr, SecretKey};
     <span class="kw">use </span>iroh_relay::{node_info::UserData, RelayMap};
     <span class="kw">use </span>n0_future::time::Duration;
-    <span class="kw">use </span>n0_snafu::{TestError, TestResult, TestResultExt};
+    <span class="kw">use </span>n0_snafu::{Error, <span class="prelude-ty">Result</span>, ResultExt};
     <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
     <span class="kw">use </span>tracing_test::traced_test;
 
@@ -2151,7 +2151,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>dns_resolve() -&gt; TestResult&lt;()&gt; {
+    </span><span class="kw">async fn </span>dns_resolve() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">let </span>origin = <span class="string">"testdns.example"</span>.to_string();
         <span class="kw">let </span>state = State::new(origin.clone());
         <span class="kw">let </span>(nameserver, _dns_drop_guard) = run_dns_server(state.clone())
@@ -2178,7 +2178,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>pkarr_publish_dns_resolve() -&gt; TestResult&lt;()&gt; {
+    </span><span class="kw">async fn </span>pkarr_publish_dns_resolve() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">let </span>origin = <span class="string">"testdns.example"</span>.to_string();
 
         <span class="kw">let </span>dns_pkarr_server = DnsPkarrServer::run_with_origin(origin.clone())
@@ -2220,7 +2220,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>pkarr_publish_dns_discover() -&gt; TestResult&lt;()&gt; {
+    </span><span class="kw">async fn </span>pkarr_publish_dns_discover() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">let </span>dns_pkarr_server = DnsPkarrServer::run().<span class="kw">await</span>.context(<span class="string">"DnsPkarrServer run"</span>)<span class="question-mark">?</span>;
         <span class="kw">let </span>(relay_map, _relay_url, _relay_guard) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
 
@@ -2242,7 +2242,7 @@
     <span class="kw">async fn </span>ep_with_discovery(
         relay_map: <span class="kw-2">&amp;</span>RelayMap,
         dns_pkarr_server: <span class="kw-2">&amp;</span>DnsPkarrServer,
-    ) -&gt; TestResult&lt;(Endpoint, AbortOnDropHandle&lt;TestResult&lt;()&gt;&gt;)&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(Endpoint, AbortOnDropHandle&lt;<span class="prelude-ty">Result</span>&lt;()&gt;&gt;)&gt; {
         <span class="kw">let </span>secret_key = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>ep = Endpoint::builder()
             .relay_mode(RelayMode::Custom(relay_map.clone()))
@@ -2263,7 +2263,7 @@
                     <span class="comment">// Just accept incoming connections, but don't do anything with them.
                 </span>}
 
-                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, TestError&gt;(())
+                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, Error&gt;(())
             }
         });
 

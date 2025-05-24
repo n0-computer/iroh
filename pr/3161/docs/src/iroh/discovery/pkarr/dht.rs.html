@@ -698,7 +698,7 @@
     <span class="kw">use </span>std::collections::BTreeSet;
 
     <span class="kw">use </span>iroh_base::RelayUrl;
-    <span class="kw">use </span>n0_snafu::{TestResult, TestResultExt};
+    <span class="kw">use </span>n0_snafu::{<span class="prelude-ty">Result</span>, ResultExt};
     <span class="kw">use </span>tracing_test::traced_test;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
@@ -706,7 +706,7 @@
     <span class="attr">#[tokio::test]
     #[ignore = <span class="string">"flaky"</span>]
     #[traced_test]
-    </span><span class="kw">async fn </span>dht_discovery_smoke() -&gt; TestResult {
+    </span><span class="kw">async fn </span>dht_discovery_smoke() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">let </span>ep = <span class="kw">crate</span>::Endpoint::builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>secret = ep.secret_key().clone();
         <span class="kw">let </span>testnet = pkarr::mainline::Testnet::new_async(<span class="number">3</span>).<span class="kw">await</span>.e()<span class="question-mark">?</span>;

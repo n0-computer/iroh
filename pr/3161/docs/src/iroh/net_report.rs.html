@@ -2378,7 +2378,7 @@
     <span class="kw">use </span>std::net::Ipv4Addr;
 
     <span class="kw">use </span>bytes::BytesMut;
-    <span class="kw">use </span>n0_snafu::{TestResult, TestResultExt};
+    <span class="kw">use </span>n0_snafu::{<span class="prelude-ty">Result</span>, ResultExt};
     <span class="kw">use </span>netwatch::IpFamily;
     <span class="kw">use </span>tokio_util::sync::CancellationToken;
     <span class="kw">use </span>tracing::info;
@@ -2523,7 +2523,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_basic() -&gt; TestResult {
+    </span><span class="kw">async fn </span>test_basic() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">let </span>(stun_addr, stun_stats, _cleanup_guard) =
             stun_utils::serve(<span class="string">"127.0.0.1"</span>.parse().unwrap()).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
 
@@ -2566,7 +2566,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_udp_blocked() -&gt; TestResult {
+    </span><span class="kw">async fn </span>test_udp_blocked() -&gt; <span class="prelude-ty">Result</span> {
         <span class="comment">// Create a "STUN server", which will never respond to anything.  This is how UDP to
         // the STUN server being blocked will look like from the client's perspective.
         </span><span class="kw">let </span>blackhole = tokio::net::UdpSocket::bind(<span class="string">"127.0.0.1:0"</span>).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
@@ -2617,7 +2617,7 @@
     }
 
     <span class="attr">#[tokio::test(flavor = <span class="string">"current_thread"</span>, start_paused = <span class="bool-val">true</span>)]
-    </span><span class="kw">async fn </span>test_add_report_history_set_preferred_relay() -&gt; TestResult {
+    </span><span class="kw">async fn </span>test_add_report_history_set_preferred_relay() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">fn </span>relay_url(i: u16) -&gt; RelayUrl {
             <span class="macro">format!</span>(<span class="string">"http://{i}.com"</span>).parse().unwrap()
         }
@@ -2798,7 +2798,7 @@
     }
 
     <span class="attr">#[tokio::test]
-    </span><span class="kw">async fn </span>test_hairpin() -&gt; TestResult {
+    </span><span class="kw">async fn </span>test_hairpin() -&gt; <span class="prelude-ty">Result</span> {
         <span class="comment">// Hairpinning is initiated after we discover our own IPv4 socket address (IP +
         // port) via STUN, so the test needs to have a STUN server and perform STUN over
         // IPv4 first.  Hairpinning detection works by sending a STUN *request* to **our own

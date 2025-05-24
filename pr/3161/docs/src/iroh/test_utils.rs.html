@@ -1075,10 +1075,10 @@
     <span class="attr">#[cfg(test)]
     </span><span class="kw">mod </span>tests {
         <span class="kw">use </span>iroh_base::NodeId;
-        <span class="kw">use </span>n0_snafu::TestResult;
+        <span class="kw">use </span>n0_snafu::Result;
 
         <span class="attr">#[test]
-        </span><span class="kw">fn </span>test_node_id_from_domain_name() -&gt; TestResult {
+        </span><span class="kw">fn </span>test_node_id_from_domain_name() -&gt; <span class="prelude-ty">Result</span> {
             <span class="kw">let </span>name = <span class="string">"_iroh.dgjpkxyn3zyrk3zfads5duwdgbqpkwbjxfj4yt7rezidr3fijccy.dns.iroh.link."</span>;
             <span class="kw">let </span>node_id = <span class="kw">super</span>::node_id_from_domain_name(name);
             <span class="kw">let </span>expected: NodeId =

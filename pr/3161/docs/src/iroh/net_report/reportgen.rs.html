@@ -3525,7 +3525,7 @@
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>std::net::{Ipv4Addr, Ipv6Addr};
 
-    <span class="kw">use </span>n0_snafu::{TestResult, TestResultExt};
+    <span class="kw">use </span>n0_snafu::{<span class="prelude-ty">Result</span>, ResultExt};
     <span class="kw">use </span>tracing_test::traced_test;
 
     <span class="kw">use super</span>::{<span class="kw">super</span>::test_utils, <span class="kw-2">*</span>};
@@ -3782,7 +3782,7 @@
     }
 
     <span class="attr">#[tokio::test]
-    </span><span class="kw">async fn </span>test_measure_https_latency() -&gt; TestResult {
+    </span><span class="kw">async fn </span>test_measure_https_latency() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">let </span>(server, relay) = test_utils::relay().<span class="kw">await</span>;
         <span class="kw">let </span>dns_resolver = dns::tests::resolver();
         <span class="macro">tracing::info!</span>(relay_url = <span class="question-mark">?</span>relay.url , <span class="string">"RELAY_URL"</span>);
@@ -3803,7 +3803,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_quic_probe() -&gt; TestResult {
+    </span><span class="kw">async fn </span>test_quic_probe() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">let </span>(server, relay) = test_utils::relay().<span class="kw">await</span>;
         <span class="kw">let </span>relay = Arc::new(relay);
         <span class="kw">let </span>client_config = iroh_relay::client::make_dangerous_client_config();

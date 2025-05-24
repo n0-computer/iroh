@@ -3041,7 +3041,7 @@
     <span class="kw">use </span>iroh_base::{NodeId, RelayUrl, SecretKey};
     <span class="kw">use </span>iroh_relay::PingTracker;
     <span class="kw">use </span>n0_future::future;
-    <span class="kw">use </span>n0_snafu::{TestError, TestResult, TestResultExt};
+    <span class="kw">use </span>n0_snafu::{Error, <span class="prelude-ty">Result</span>, ResultExt};
     <span class="kw">use </span>smallvec::smallvec;
     <span class="kw">use </span>tokio::sync::{mpsc, oneshot};
     <span class="kw">use </span>tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
@@ -3193,7 +3193,7 @@
         item: RelaySendItem,
         tx: <span class="kw-2">&amp;</span>mpsc::Sender&lt;RelaySendItem&gt;,
         rx: <span class="kw-2">&amp;</span>Arc&lt;RelayDatagramRecvQueue&gt;,
-    ) -&gt; TestResult&lt;()&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="macro">assert!</span>(item.datagrams.len() == <span class="number">1</span>);
         tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), <span class="kw">async move </span>{
             <span class="kw">loop </span>{
@@ -3207,7 +3207,7 @@
 
                     <span class="macro">assert_eq!</span>(buf.as_ref(), item.datagrams[<span class="number">0</span>]);
 
-                    <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, TestError&gt;(())
+                    <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, Error&gt;(())
                 })
                 .<span class="kw">await</span>;
                 <span class="kw">if </span>res.is_ok() {
@@ -3222,7 +3222,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_active_relay_reconnect() -&gt; TestResult {
+    </span><span class="kw">async fn </span>test_active_relay_reconnect() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">let </span>(_relay_map, relay_url, _server) = test_utils::run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>(peer_node, _echo_node_task) = start_echo_node(relay_url.clone());
 
@@ -3321,7 +3321,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_active_relay_inactive() -&gt; TestResult {
+    </span><span class="kw">async fn </span>test_active_relay_inactive() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">let </span>(_relay_map, relay_url, _server) = test_utils::run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">1u8</span>; <span class="number">32</span>]);

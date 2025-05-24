@@ -1264,10 +1264,7 @@
 <a href="#1263" id="1263">1263</a>
 <a href="#1264" id="1264">1264</a>
 <a href="#1265" id="1265">1265</a>
-<a href="#1266" id="1266">1266</a>
-<a href="#1267" id="1267">1267</a>
-<a href="#1268" id="1268">1268</a>
-<a href="#1269" id="1269">1269</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#1266" id="1266">1266</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::HashMap, future::Future, net::SocketAddr, pin::Pin, sync::Arc, time::Duration,
 };
 
@@ -2078,7 +2075,7 @@
     <span class="kw">use </span>bytes::Bytes;
     <span class="kw">use </span>iroh_base::{PublicKey, SecretKey};
     <span class="kw">use </span>n0_future::{SinkExt, StreamExt};
-    <span class="kw">use </span>n0_snafu::{TestResult, TestResultExt};
+    <span class="kw">use </span>n0_snafu::{<span class="prelude-ty">Result</span>, ResultExt};
     <span class="kw">use </span>reqwest::Url;
     <span class="kw">use </span>snafu::whatever;
     <span class="kw">use </span>tracing::info;
@@ -2120,7 +2117,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_http_clients_and_server() -&gt; TestResult {
+    </span><span class="kw">async fn </span>test_http_clients_and_server() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">let </span>a_key = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>b_key = SecretKey::generate(rand::thread_rng());
 
@@ -2229,7 +2226,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_https_clients_and_server() -&gt; TestResult {
+    </span><span class="kw">async fn </span>test_https_clients_and_server() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">let </span>a_key = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>b_key = SecretKey::generate(rand::thread_rng());
 
@@ -2303,10 +2300,7 @@
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">async fn </span>make_test_client(
-        client: tokio::io::DuplexStream,
-        key: <span class="kw-2">&amp;</span>SecretKey,
-    ) -&gt; TestResult&lt;Conn&gt; {
+    <span class="kw">async fn </span>make_test_client(client: tokio::io::DuplexStream, key: <span class="kw-2">&amp;</span>SecretKey) -&gt; <span class="prelude-ty">Result</span>&lt;Conn&gt; {
         <span class="kw">let </span>client = MaybeTlsStreamChained::Mem(client);
         <span class="kw">let </span>client = Conn::new_relay(client, KeyCache::test(), key).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(client)
@@ -2314,7 +2308,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_server_basic() -&gt; TestResult {
+    </span><span class="kw">async fn </span>test_server_basic() -&gt; <span class="prelude-ty">Result</span> {
         <span class="macro">info!</span>(<span class="string">"Create the server."</span>);
         <span class="kw">let </span>service = RelayService::new(
             Default::default(),
@@ -2402,7 +2396,7 @@
     }
 
     <span class="attr">#[tokio::test]
-    </span><span class="kw">async fn </span>test_server_replace_client() -&gt; TestResult {
+    </span><span class="kw">async fn </span>test_server_replace_client() -&gt; <span class="prelude-ty">Result</span> {
         <span class="macro">info!</span>(<span class="string">"Create the server."</span>);
         <span class="kw">let </span>service = RelayService::new(
             Default::default(),

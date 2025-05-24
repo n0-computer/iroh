@@ -879,7 +879,7 @@
     <span class="kw">use </span>std::net::Ipv4Addr;
 
     <span class="kw">use </span>n0_future::{task::AbortOnDropHandle, time};
-    <span class="kw">use </span>n0_snafu::{TestError, TestResult, TestResultExt};
+    <span class="kw">use </span>n0_snafu::{Error, <span class="prelude-ty">Result</span>, ResultExt};
     <span class="kw">use </span>quinn::crypto::rustls::QuicServerConfig;
     <span class="kw">use </span>tokio::time::Instant;
     <span class="kw">use </span>tracing::{debug, info, info_span, Instrument};
@@ -893,7 +893,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>quic_endpoint_basic() -&gt; TestResult {
+    </span><span class="kw">async fn </span>quic_endpoint_basic() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">let </span>host: Ipv4Addr = <span class="string">"127.0.0.1"</span>.parse().unwrap();
         <span class="comment">// create a server config with self signed certificates
         </span><span class="kw">let </span>(<span class="kw">_</span>, server_config) = <span class="kw">super</span>::<span class="kw">super</span>::server::testing::self_signed_tls_certs_and_config();
@@ -928,7 +928,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_qad_client_closes_unresponsive_fast() -&gt; TestResult {
+    </span><span class="kw">async fn </span>test_qad_client_closes_unresponsive_fast() -&gt; <span class="prelude-ty">Result</span> {
         <span class="comment">// create a client-side endpoint
         </span><span class="kw">let </span>client_endpoint =
             quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), <span class="number">0</span>))
@@ -980,7 +980,7 @@
     /// all packets on the server-side for 2 seconds.
     </span><span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_qad_connect_delayed() -&gt; TestResult {
+    </span><span class="kw">async fn </span>test_qad_connect_delayed() -&gt; <span class="prelude-ty">Result</span> {
         <span class="comment">// Create a socket for our QAD server.  We need the socket separately because we
         // need to pop off messages before we attach it to the Quinn Endpoint.
         </span><span class="kw">let </span>socket = tokio::net::UdpSocket::bind(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), <span class="number">0</span>))
@@ -1032,7 +1032,7 @@
                 <span class="kw">let </span>conn = incoming.<span class="kw">await</span>.context(<span class="string">"incoming"</span>)<span class="question-mark">?</span>;
                 conn.closed().<span class="kw">await</span>;
                 server.wait_idle().<span class="kw">await</span>;
-                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, TestError&gt;(())
+                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, Error&gt;(())
             }
             .instrument(<span class="macro">info_span!</span>(<span class="string">"server"</span>)),
         );

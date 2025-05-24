@@ -1698,7 +1698,7 @@
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>bytes::Bytes;
     <span class="kw">use </span>iroh_base::SecretKey;
-    <span class="kw">use </span>n0_snafu::{TestResult, TestResultExt};
+    <span class="kw">use </span>n0_snafu::{<span class="prelude-ty">Result</span>, ResultExt};
     <span class="kw">use </span>tokio_util::codec::Framed;
     <span class="kw">use </span>tracing::info;
     <span class="kw">use </span>tracing_test::traced_test;
@@ -1711,7 +1711,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_client_actor_basic() -&gt; TestResult {
+    </span><span class="kw">async fn </span>test_client_actor_basic() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">let </span>(send_queue_s, send_queue_r) = mpsc::channel(<span class="number">10</span>);
         <span class="kw">let </span>(disco_send_queue_s, disco_send_queue_r) = mpsc::channel(<span class="number">10</span>);
         <span class="kw">let </span>(peer_gone_s, peer_gone_r) = mpsc::channel(<span class="number">10</span>);
@@ -1829,7 +1829,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_rate_limit() -&gt; TestResult {
+    </span><span class="kw">async fn </span>test_rate_limit() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">const </span>LIMIT: u32 = <span class="number">50</span>;
         <span class="kw">const </span>MAX_FRAMES: u32 = <span class="number">100</span>;
 

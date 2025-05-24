@@ -1490,7 +1490,7 @@
         Name,
     };
     <span class="kw">use </span>iroh_base::{NodeId, SecretKey};
-    <span class="kw">use </span>n0_snafu::{TestResult, TestResultExt};
+    <span class="kw">use </span>n0_snafu::{<span class="prelude-ty">Result</span>, ResultExt};
 
     <span class="kw">use super</span>::{NodeData, NodeIdExt, NodeInfo};
 
@@ -1532,7 +1532,7 @@
     /// The reason was that only the first address was parsed (e.g. 192.168.96.145 in
     /// this example), which could be a local, unreachable address.
     </span><span class="attr">#[test]
-    </span><span class="kw">fn </span>test_from_hickory_lookup() -&gt; TestResult {
+    </span><span class="kw">fn </span>test_from_hickory_lookup() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">let </span>name = Name::from_utf8(
             <span class="string">"_iroh.dgjpkxyn3zyrk3zfads5duwdgbqpkwbjxfj4yt7rezidr3fijccy.dns.iroh.link."</span>,
         )

@@ -144,15 +144,11 @@
 <a href="#143" id="143">143</a>
 <a href="#144" id="144">144</a>
 <a href="#145" id="145">145</a>
-<a href="#146" id="146">146</a>
-<a href="#147" id="147">147</a>
-<a href="#148" id="148">148</a>
-<a href="#149" id="149">149</a>
-<a href="#150" id="150">150</a></pre></div><pre class="rust"><code><span class="doccomment">//! The main server which combines the DNS and HTTP(S) servers.
+<a href="#146" id="146">146</a></pre></div><pre class="rust"><code><span class="doccomment">//! The main server which combines the DNS and HTTP(S) servers.
 </span><span class="kw">use </span>std::sync::Arc;
 
 <span class="kw">use </span>iroh_metrics::service::start_metrics_server;
-<span class="kw">use </span>n0_snafu::{TestResult <span class="kw">as </span><span class="prelude-ty">Result</span>, TestResultExt};
+<span class="kw">use </span>n0_snafu::{<span class="prelude-ty">Result</span>, ResultExt};
 <span class="kw">use </span>tracing::info;
 
 <span class="kw">use crate</span>::{
@@ -178,7 +174,7 @@
         store = store.with_mainline_fallback(bootstrap);
     };
     <span class="kw">let </span>server = Server::spawn(config, store, metrics).<span class="kw">await</span><span class="question-mark">?</span>;
-    tokio::signal::ctrl_c().<span class="kw">await</span>.context(<span class="string">"ctrl-c"</span>)<span class="question-mark">?</span>;
+    tokio::signal::ctrl_c().<span class="kw">await</span>.e()<span class="question-mark">?</span>;
     <span class="macro">info!</span>(<span class="string">"shutdown"</span>);
     server.shutdown().<span class="kw">await</span><span class="question-mark">?</span>;
     <span class="prelude-val">Ok</span>(())
@@ -212,9 +208,7 @@
             <span class="kw">if let </span><span class="prelude-val">Some</span>(addr) = metrics_addr {
                 <span class="kw">let </span><span class="kw-2">mut </span>registry = iroh_metrics::Registry::default();
                 registry.register(metrics);
-                start_metrics_server(addr, Arc::new(registry))
-                    .<span class="kw">await
-                    </span>.context(<span class="string">"metrics server"</span>)<span class="question-mark">?</span>;
+                start_metrics_server(addr, Arc::new(registry)).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
             }
             <span class="prelude-val">Ok</span>(())
         });
@@ -292,9 +286,7 @@
         <span class="kw">let </span>server = <span class="self">Self</span>::spawn(config, store, Default::default()).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>dns_addr = server.dns_server.local_addr();
         <span class="kw">let </span>http_addr = server.http_server.http_addr().expect(<span class="string">"http is set"</span>);
-        <span class="kw">let </span>http_url = <span class="macro">format!</span>(<span class="string">"http://{http_addr}"</span>)
-            .parse::&lt;url::Url&gt;()
-            .context(<span class="string">"url parse"</span>)<span class="question-mark">?</span>;
+        <span class="kw">let </span>http_url = <span class="macro">format!</span>(<span class="string">"http://{http_addr}"</span>).parse::&lt;url::Url&gt;().e()<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>((server, dns_addr, http_url))
     }
 }

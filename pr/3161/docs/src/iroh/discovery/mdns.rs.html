@@ -932,7 +932,7 @@
     </span><span class="kw">mod </span>run_in_isolation {
         <span class="kw">use </span>iroh_base::SecretKey;
         <span class="kw">use </span>n0_future::StreamExt;
-        <span class="kw">use </span>n0_snafu::{TestError, TestResult, TestResultExt};
+        <span class="kw">use </span>n0_snafu::{Error, <span class="prelude-ty">Result</span>, ResultExt};
         <span class="kw">use </span>snafu::whatever;
         <span class="kw">use </span>tracing_test::traced_test;
 
@@ -941,7 +941,7 @@
 
         <span class="attr">#[tokio::test]
         #[traced_test]
-        </span><span class="kw">async fn </span>mdns_publish_resolve() -&gt; TestResult {
+        </span><span class="kw">async fn </span>mdns_publish_resolve() -&gt; <span class="prelude-ty">Result</span> {
             <span class="kw">let </span>(<span class="kw">_</span>, discovery_a) = make_discoverer()<span class="question-mark">?</span>;
             <span class="kw">let </span>(node_id_b, discovery_b) = make_discoverer()<span class="question-mark">?</span>;
 
@@ -977,7 +977,7 @@
 
         <span class="attr">#[tokio::test]
         #[traced_test]
-        </span><span class="kw">async fn </span>mdns_subscribe() -&gt; TestResult {
+        </span><span class="kw">async fn </span>mdns_subscribe() -&gt; <span class="prelude-ty">Result</span> {
             <span class="kw">let </span>num_nodes = <span class="number">5</span>;
             <span class="kw">let </span><span class="kw-2">mut </span>node_ids = BTreeSet::new();
             <span class="kw">let </span><span class="kw-2">mut </span>discoverers = <span class="macro">vec!</span>[];
@@ -1011,14 +1011,14 @@
                     }
                 }
                 <span class="macro">assert_eq!</span>(got_ids, node_ids);
-                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, TestError&gt;(())
+                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, Error&gt;(())
             };
             tokio::time::timeout(Duration::from_secs(<span class="number">5</span>), test)
                 .<span class="kw">await
                 </span>.context(<span class="string">"timeout"</span>)<span class="question-mark">?
         </span>}
 
-        <span class="kw">fn </span>make_discoverer() -&gt; TestResult&lt;(PublicKey, MdnsDiscovery)&gt; {
+        <span class="kw">fn </span>make_discoverer() -&gt; <span class="prelude-ty">Result</span>&lt;(PublicKey, MdnsDiscovery)&gt; {
             <span class="kw">let </span>node_id = SecretKey::generate(rand::thread_rng()).public();
             <span class="prelude-val">Ok</span>((node_id, MdnsDiscovery::new(node_id)<span class="question-mark">?</span>))
         }

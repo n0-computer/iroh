@@ -2238,7 +2238,7 @@
     <span class="kw">use </span>http::{header::UPGRADE, StatusCode};
     <span class="kw">use </span>iroh_base::{NodeId, RelayUrl, SecretKey};
     <span class="kw">use </span>n0_future::{FutureExt, SinkExt, StreamExt};
-    <span class="kw">use </span>n0_snafu::{TestResult, TestResultExt};
+    <span class="kw">use </span>n0_snafu::{<span class="prelude-ty">Result</span>, ResultExt};
     <span class="kw">use </span>tokio::net::UdpSocket;
     <span class="kw">use </span>tracing::{info, instrument};
     <span class="kw">use </span>tracing_test::traced_test;
@@ -2276,7 +2276,7 @@
         client_b: <span class="kw-2">&amp;mut </span><span class="kw">crate</span>::client::Client,
         b_key: NodeId,
         msg: Bytes,
-    ) -&gt; TestResult&lt;ReceivedMessage&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;ReceivedMessage&gt; {
         <span class="comment">// try resend 10 times
         </span><span class="kw">for _ in </span><span class="number">0</span>..<span class="number">10 </span>{
             client_a
@@ -2386,7 +2386,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_relay_clients_both_relay() -&gt; TestResult&lt;()&gt; {
+    </span><span class="kw">async fn </span>test_relay_clients_both_relay() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">let </span>server = spawn_local_relay().<span class="kw">await</span>.unwrap();
         <span class="kw">let </span>relay_url = <span class="macro">format!</span>(<span class="string">"http://{}"</span>, server.http_addr().unwrap());
         <span class="kw">let </span>relay_url: RelayUrl = relay_url.parse().unwrap();
@@ -2438,7 +2438,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_relay_clients_both_websockets() -&gt; TestResult&lt;()&gt; {
+    </span><span class="kw">async fn </span>test_relay_clients_both_websockets() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">let </span>server = spawn_local_relay().<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="kw">let </span>relay_url = <span class="macro">format!</span>(<span class="string">"http://{}"</span>, server.http_addr().unwrap());
@@ -2500,7 +2500,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_relay_clients_websocket_and_relay() -&gt; TestResult&lt;()&gt; {
+    </span><span class="kw">async fn </span>test_relay_clients_websocket_and_relay() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">let </span>server = spawn_local_relay().<span class="kw">await</span>.unwrap();
 
         <span class="kw">let </span>relay_url = <span class="macro">format!</span>(<span class="string">"http://{}"</span>, server.http_addr().unwrap());
@@ -2588,7 +2588,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_relay_access_control() -&gt; TestResult&lt;()&gt; {
+    </span><span class="kw">async fn </span>test_relay_access_control() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">let </span>current_span = <span class="macro">tracing::info_span!</span>(<span class="string">"this is a test"</span>);
         <span class="kw">let </span>_guard = current_span.enter();
 
@@ -2683,7 +2683,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_relay_clients_full() -&gt; TestResult&lt;()&gt; {
+    </span><span class="kw">async fn </span>test_relay_clients_full() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">let </span>server = spawn_local_relay().<span class="kw">await</span>.unwrap();
         <span class="kw">let </span>relay_url = <span class="macro">format!</span>(<span class="string">"http://{}"</span>, server.http_addr().unwrap());
         <span class="kw">let </span>relay_url: RelayUrl = relay_url.parse().unwrap();

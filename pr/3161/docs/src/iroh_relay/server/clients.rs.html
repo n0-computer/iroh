@@ -474,7 +474,7 @@
 
     <span class="kw">use </span>bytes::Bytes;
     <span class="kw">use </span>iroh_base::SecretKey;
-    <span class="kw">use </span>n0_snafu::{TestResult, TestResultExt};
+    <span class="kw">use </span>n0_snafu::{<span class="prelude-ty">Result</span>, ResultExt};
     <span class="kw">use </span>tokio::io::DuplexStream;
     <span class="kw">use </span>tokio_util::codec::{Framed, FramedRead};
 
@@ -502,7 +502,7 @@
     }
 
     <span class="attr">#[tokio::test]
-    </span><span class="kw">async fn </span>test_clients() -&gt; TestResult {
+    </span><span class="kw">async fn </span>test_clients() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">let </span>a_key = SecretKey::generate(rand::thread_rng()).public();
         <span class="kw">let </span>b_key = SecretKey::generate(rand::thread_rng()).public();
 

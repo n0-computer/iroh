@@ -307,7 +307,7 @@
     watcher::Watcher <span class="kw">as _</span>,
     Endpoint, NodeAddr, RelayMode, RelayUrl,
 };
-<span class="kw">use </span>n0_snafu::{TestResult <span class="kw">as </span><span class="prelude-ty">Result</span>, TestResultExt};
+<span class="kw">use </span>n0_snafu::{<span class="prelude-ty">Result</span>, ResultExt};
 <span class="kw">use </span>tracing::{trace, warn};
 
 <span class="kw">use crate</span>::{
@@ -574,7 +574,7 @@
                 tokio::spawn(<span class="kw">async move </span>{
                     drain_stream(<span class="kw-2">&amp;mut </span>recv_stream, opt.read_unordered).<span class="kw">await</span><span class="question-mark">?</span>;
                     send_data_on_stream(<span class="kw-2">&amp;mut </span>send_stream, opt.download_size).<span class="kw">await</span><span class="question-mark">?</span>;
-                    <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, n0_snafu::TestError&gt;(())
+                    <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, n0_snafu::Error&gt;(())
                 });
             }
 

@@ -198,7 +198,7 @@
     tls_rustls::{RustlsAcceptor, RustlsConfig},
 };
 <span class="kw">use </span>n0_future::{future::Boxed <span class="kw">as </span>BoxFuture, FutureExt};
-<span class="kw">use </span>n0_snafu::{TestResult <span class="kw">as </span><span class="prelude-ty">Result</span>, TestResultExt};
+<span class="kw">use </span>n0_snafu::{<span class="prelude-ty">Result</span>, ResultExt};
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>snafu::whatever;
 <span class="kw">use </span>tokio::io::{AsyncRead, AsyncWrite};
@@ -264,10 +264,10 @@
 <span class="kw">impl </span>TlsAcceptor {
     <span class="kw">async fn </span>self_signed(domains: Vec&lt;String&gt;) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>rcgen::CertifiedKey { cert, key_pair } =
-            rcgen::generate_simple_self_signed(domains).context(<span class="string">"generate self signed cert"</span>)<span class="question-mark">?</span>;
+            rcgen::generate_simple_self_signed(domains).e()<span class="question-mark">?</span>;
         <span class="kw">let </span>config = RustlsConfig::from_der(<span class="macro">vec!</span>[cert.der().to_vec()], key_pair.serialize_der())
             .<span class="kw">await
-            </span>.context(<span class="string">"rustls config"</span>)<span class="question-mark">?</span>;
+            </span>.e()<span class="question-mark">?</span>;
         <span class="kw">let </span>acceptor = RustlsAcceptor::new(config);
         <span class="prelude-val">Ok</span>(<span class="self">Self</span>::Manual(acceptor))
     }
@@ -285,7 +285,7 @@
         <span class="kw">let </span>certs = load_certs(cert_path).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>secret_key = load_secret_key(key_path).<span class="kw">await</span><span class="question-mark">?</span>;
 
-        <span class="kw">let </span>config = config.with_single_cert(certs, secret_key).context(<span class="string">"cert"</span>)<span class="question-mark">?</span>;
+        <span class="kw">let </span>config = config.with_single_cert(certs, secret_key).e()<span class="question-mark">?</span>;
         <span class="kw">let </span>config = RustlsConfig::from_config(Arc::new(config));
         <span class="kw">let </span>acceptor = RustlsAcceptor::new(config);
         <span class="prelude-val">Ok</span>(<span class="self">Self</span>::Manual(acceptor))
@@ -332,7 +332,7 @@
         </span>.context(<span class="string">"cannot open certificate file"</span>)<span class="question-mark">?</span>;
     <span class="kw">let </span><span class="kw-2">mut </span>reader = std::io::Cursor::new(certfile);
     <span class="kw">let </span>certs: <span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, std::io::Error&gt; = rustls_pemfile::certs(<span class="kw-2">&amp;mut </span>reader).collect();
-    <span class="kw">let </span>certs = certs.context(<span class="string">"read certs"</span>)<span class="question-mark">?</span>;
+    <span class="kw">let </span>certs = certs.e()<span class="question-mark">?</span>;
 
     <span class="prelude-val">Ok</span>(certs)
 }

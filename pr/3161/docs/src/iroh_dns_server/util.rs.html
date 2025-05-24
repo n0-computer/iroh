@@ -155,16 +155,7 @@
 <a href="#154" id="154">154</a>
 <a href="#155" id="155">155</a>
 <a href="#156" id="156">156</a>
-<a href="#157" id="157">157</a>
-<a href="#158" id="158">158</a>
-<a href="#159" id="159">159</a>
-<a href="#160" id="160">160</a>
-<a href="#161" id="161">161</a>
-<a href="#162" id="162">162</a>
-<a href="#163" id="163">163</a>
-<a href="#164" id="164">164</a>
-<a href="#165" id="165">165</a>
-<a href="#166" id="166">166</a></pre></div><pre class="rust"><code><span class="kw">use </span>core::fmt;
+<a href="#157" id="157">157</a></pre></div><pre class="rust"><code><span class="kw">use </span>core::fmt;
 <span class="kw">use </span>std::{
     collections::{btree_map, BTreeMap},
     str::FromStr,
@@ -179,7 +170,7 @@
     },
     serialize::binary::BinDecodable,
 };
-<span class="kw">use </span>n0_snafu::{TestError, TestResult <span class="kw">as </span><span class="prelude-ty">Result</span>, TestResultExt};
+<span class="kw">use </span>n0_snafu::{Error, <span class="prelude-ty">Result</span>, ResultExt};
 <span class="kw">use </span>pkarr::SignedPacket;
 
 <span class="attr">#[derive(
@@ -193,7 +184,7 @@
     }
 
     <span class="kw">pub fn </span>from_z32(s: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
-        <span class="kw">let </span>bytes = z32::decode(s.as_bytes()).context(<span class="string">"z32"</span>)<span class="question-mark">?</span>;
+        <span class="kw">let </span>bytes = z32::decode(s.as_bytes()).e()<span class="question-mark">?</span>;
         <span class="kw">let </span>bytes = TryInto::&lt;[u8; <span class="number">32</span>]&gt;::try_into(<span class="kw-2">&amp;</span>bytes[..]).context(<span class="string">"invalid length"</span>)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(<span class="self">Self</span>(bytes))
     }
@@ -234,14 +225,14 @@
 }
 
 <span class="kw">impl </span>TryFrom&lt;PublicKeyBytes&gt; <span class="kw">for </span>pkarr::PublicKey {
-    <span class="kw">type </span>Error = TestError;
+    <span class="kw">type </span>Error = Error;
     <span class="kw">fn </span>try_from(value: PublicKeyBytes) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, <span class="self">Self</span>::Error&gt; {
-        pkarr::PublicKey::try_from(<span class="kw-2">&amp;</span>value.<span class="number">0</span>).context(<span class="string">"public key"</span>)
+        pkarr::PublicKey::try_from(<span class="kw-2">&amp;</span>value.<span class="number">0</span>).e()
     }
 }
 
 <span class="kw">impl </span>FromStr <span class="kw">for </span>PublicKeyBytes {
-    <span class="kw">type </span><span class="prelude-val">Err </span>= TestError;
+    <span class="kw">type </span><span class="prelude-val">Err </span>= Error;
     <span class="kw">fn </span>from_str(s: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, <span class="self">Self</span>::Err&gt; {
         <span class="self">Self</span>::from_z32(s)
     }
@@ -255,7 +246,7 @@
 
 <span class="kw">pub fn </span>signed_packet_to_hickory_message(signed_packet: <span class="kw-2">&amp;</span>SignedPacket) -&gt; <span class="prelude-ty">Result</span>&lt;Message&gt; {
     <span class="kw">let </span>encoded = signed_packet.encoded_packet();
-    <span class="kw">let </span>message = Message::from_bytes(<span class="kw-2">&amp;</span>encoded).context(<span class="string">"decode message"</span>)<span class="question-mark">?</span>;
+    <span class="kw">let </span>message = Message::from_bytes(<span class="kw-2">&amp;</span>encoded).e()<span class="question-mark">?</span>;
     <span class="prelude-val">Ok</span>(message)
 }
 
@@ -263,7 +254,7 @@
     signed_packet: <span class="kw-2">&amp;</span>SignedPacket,
     filter: <span class="kw">impl </span>Fn(<span class="kw-2">&amp;</span>Record) -&gt; bool,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(Label, BTreeMap&lt;RrKey, Arc&lt;RecordSet&gt;&gt;)&gt; {
-    <span class="kw">let </span>common_zone = Label::from_utf8(<span class="kw-2">&amp;</span>signed_packet.public_key().to_z32()).context(<span class="string">"utf8"</span>)<span class="question-mark">?</span>;
+    <span class="kw">let </span>common_zone = Label::from_utf8(<span class="kw-2">&amp;</span>signed_packet.public_key().to_z32()).e()<span class="question-mark">?</span>;
     <span class="kw">let </span><span class="kw-2">mut </span>message = signed_packet_to_hickory_message(signed_packet)<span class="question-mark">?</span>;
     <span class="kw">let </span>answers = message.take_answers();
     <span class="kw">let </span><span class="kw-2">mut </span>output: BTreeMap&lt;RrKey, Arc&lt;RecordSet&gt;&gt; = BTreeMap::new();
@@ -277,12 +268,7 @@
         <span class="kw">if </span>name.num_labels() &lt; <span class="number">1 </span>{
             <span class="kw">continue</span>;
         }
-        <span class="kw">let </span>zone = name
-            .iter()
-            .next_back()
-            .unwrap()
-            .into_label()
-            .context(<span class="string">"label"</span>)<span class="question-mark">?</span>;
+        <span class="kw">let </span>zone = name.iter().next_back().unwrap().into_label().e()<span class="question-mark">?</span>;
         <span class="kw">if </span>zone != common_zone {
             <span class="kw">continue</span>;
         }
@@ -290,8 +276,8 @@
             <span class="kw">continue</span>;
         }
 
-        <span class="kw">let </span>name_without_zone = Name::from_labels(name.iter().take(name.num_labels() <span class="kw">as </span>usize - <span class="number">1</span>))
-            .context(<span class="string">"labels"</span>)<span class="question-mark">?</span>;
+        <span class="kw">let </span>name_without_zone =
+            Name::from_labels(name.iter().take(name.num_labels() <span class="kw">as </span>usize - <span class="number">1</span>)).e()<span class="question-mark">?</span>;
         record.set_name(name_without_zone);
 
         <span class="kw">let </span>rrkey = RrKey::new(record.name().into(), record.record_type());
@@ -316,11 +302,7 @@
     origin: <span class="kw-2">&amp;</span>Name,
     serial: u32,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;RecordSet&gt; {
-    <span class="kw">let </span>new_name = input
-        .name()
-        .clone()
-        .append_name(origin)
-        .context(<span class="string">"append name"</span>)<span class="question-mark">?</span>;
+    <span class="kw">let </span>new_name = input.name().clone().append_name(origin).e()<span class="question-mark">?</span>;
     <span class="kw">let </span><span class="kw-2">mut </span>output = RecordSet::new(new_name.clone(), input.record_type(), serial);
     <span class="comment">// TODO: less clones
     </span><span class="kw">for </span>record <span class="kw">in </span>input.records_without_rrsigs() {

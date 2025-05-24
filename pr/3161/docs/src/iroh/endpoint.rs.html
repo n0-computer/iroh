@@ -3300,13 +3300,7 @@
 <a href="#3299" id="3299">3299</a>
 <a href="#3300" id="3300">3300</a>
 <a href="#3301" id="3301">3301</a>
-<a href="#3302" id="3302">3302</a>
-<a href="#3303" id="3303">3303</a>
-<a href="#3304" id="3304">3304</a>
-<a href="#3305" id="3305">3305</a>
-<a href="#3306" id="3306">3306</a>
-<a href="#3307" id="3307">3307</a>
-<a href="#3308" id="3308">3308</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#3302" id="3302">3302</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -4273,7 +4267,7 @@
     /// Use [`Watcher::initialized`] to wait for a [`NodeAddr`] that is ready to be connected to:
     ///
     /// ```no_run
-    /// # async fn wrapper() -&gt; testresult::TestResult {
+    /// # async fn wrapper() -&gt; n0_snafu::Result {
     /// use iroh::{watcher::Watcher, Endpoint};
     ///
     /// let endpoint = Endpoint::builder()
@@ -4554,7 +4548,7 @@
     /// ```rust
     /// # use std::collections::BTreeMap;
     /// # use iroh::endpoint::Endpoint;
-    /// # async fn wrapper() -&gt; n0_snafu::TestResult {
+    /// # async fn wrapper() -&gt; n0_snafu::Result {
     /// let endpoint = Endpoint::builder().bind().await?;
     /// assert_eq!(endpoint.metrics().magicsock.recv_datagrams.get(), 0);
     /// # Ok(())
@@ -4572,7 +4566,7 @@
     /// # use std::collections::BTreeMap;
     /// # use iroh_metrics::{Metric, MetricsGroup, MetricValue, MetricsGroupSet};
     /// # use iroh::endpoint::Endpoint;
-    /// # async fn wrapper() -&gt; n0_snafu::TestResult {
+    /// # async fn wrapper() -&gt; n0_snafu::Result {
     /// let endpoint = Endpoint::builder().bind().await?;
     /// let metrics: BTreeMap&lt;String, MetricValue&gt; = endpoint
     ///     .metrics()
@@ -4595,7 +4589,7 @@
     /// ```rust
     /// # use iroh_metrics::{Registry, MetricsSource};
     /// # use iroh::endpoint::Endpoint;
-    /// # async fn wrapper() -&gt; n0_snafu::TestResult {
+    /// # async fn wrapper() -&gt; n0_snafu::Result {
     /// let endpoint = Endpoint::builder().bind().await?;
     /// let mut registry = Registry::default();
     /// registry.register_all(endpoint.metrics());
@@ -4618,8 +4612,8 @@
     /// # use std::{sync::{Arc, RwLock}, time::Duration};
     /// # use iroh_metrics::{Registry, MetricsSource};
     /// # use iroh::endpoint::Endpoint;
-    /// # use n0_snafu::TestResultExt;
-    /// # async fn wrapper() -&gt; n0_snafu::TestResult {
+    /// # use n0_snafu::ResultExt;
+    /// # async fn wrapper() -&gt; n0_snafu::Result {
     /// // Create a registry, wrapped in a read-write lock so that we can register and serve
     /// // the metrics independently.
     /// let registry = Arc::new(RwLock::new(Registry::default()));
@@ -5652,7 +5646,7 @@
     <span class="kw">use </span>iroh_metrics::MetricsSource;
     <span class="kw">use </span>iroh_relay::http::Protocol;
     <span class="kw">use </span>n0_future::{task::AbortOnDropHandle, StreamExt};
-    <span class="kw">use </span>n0_snafu::{TestError, TestResult, TestResultExt};
+    <span class="kw">use </span>n0_snafu::{Error, <span class="prelude-ty">Result</span>, ResultExt};
     <span class="kw">use </span>quinn::ConnectionError;
     <span class="kw">use </span>rand::SeedableRng;
     <span class="kw">use </span>tracing::{error_span, info, info_span, Instrument};
@@ -5671,7 +5665,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_connect_self() -&gt; TestResult {
+    </span><span class="kw">async fn </span>test_connect_self() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">let </span>ep = Endpoint::builder()
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
             .bind()
@@ -5692,7 +5686,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>endpoint_connect_close() -&gt; TestResult {
+    </span><span class="kw">async fn </span>endpoint_connect_close() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">let </span>(relay_map, relay_url, _guard) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>server_secret_key = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>server_peer_id = server_secret_key.public();
@@ -5729,7 +5723,7 @@
                         ))
                     );
                     <span class="macro">info!</span>(<span class="string">"server test completed"</span>);
-                    <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, TestError&gt;(())
+                    <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, Error&gt;(())
                 }
                 .instrument(<span class="macro">info_span!</span>(<span class="string">"test-server"</span>)),
             )
@@ -5768,7 +5762,7 @@
                 <span class="kw">let </span>res = conn.open_uni().<span class="kw">await</span>;
                 <span class="macro">assert_eq!</span>(res.unwrap_err(), expected_err);
                 <span class="macro">info!</span>(<span class="string">"client test completed"</span>);
-                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, TestError&gt;(())
+                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, Error&gt;(())
             }
             .instrument(<span class="macro">info_span!</span>(<span class="string">"test-client"</span>)),
         );
@@ -5787,14 +5781,14 @@
     <span class="doccomment">/// Test that peers are properly restored
     </span><span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>restore_peers() -&gt; TestResult {
+    </span><span class="kw">async fn </span>restore_peers() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">let </span>secret_key = SecretKey::generate(rand::thread_rng());
 
         <span class="doccomment">/// Create an endpoint for the test.
         </span><span class="kw">async fn </span>new_endpoint(
             secret_key: SecretKey,
             nodes: <span class="prelude-ty">Option</span>&lt;Vec&lt;NodeAddr&gt;&gt;,
-        ) -&gt; TestResult&lt;Endpoint&gt; {
+        ) -&gt; <span class="prelude-ty">Result</span>&lt;Endpoint&gt; {
             <span class="kw">let </span><span class="kw-2">mut </span>transport_config = quinn::TransportConfig::default();
             transport_config.max_idle_timeout(<span class="prelude-val">Some</span>(Duration::from_secs(<span class="number">10</span>).try_into().unwrap()));
 
@@ -5840,7 +5834,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>endpoint_relay_connect_loop() -&gt; TestResult {
+    </span><span class="kw">async fn </span>endpoint_relay_connect_loop() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">let </span>start = Instant::now();
         <span class="kw">let </span>n_clients = <span class="number">5</span>;
         <span class="kw">let </span>n_chunks_per_client = <span class="number">2</span>;
@@ -5883,7 +5877,7 @@
                         <span class="macro">info!</span>(%i, peer = %node_id.fmt_short(), <span class="string">"finished"</span>);
                         <span class="macro">info!</span>(<span class="string">"[server] round {i} done in {:?}"</span>, round_start.elapsed());
                     }
-                    <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, TestError&gt;(())
+                    <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, Error&gt;(())
                 }
                 .instrument(<span class="macro">error_span!</span>(<span class="string">"server"</span>)),
             )
@@ -5924,7 +5918,7 @@
                 <span class="macro">info!</span>(<span class="string">"client finished"</span>);
                 ep.close().<span class="kw">await</span>;
                 <span class="macro">info!</span>(<span class="string">"client closed"</span>);
-                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, TestError&gt;(())
+                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, Error&gt;(())
             }
             .instrument(<span class="macro">error_span!</span>(<span class="string">"client"</span>, %i))
             .<span class="kw">await</span><span class="question-mark">?</span>;
@@ -5945,7 +5939,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>endpoint_send_relay_websockets() -&gt; TestResult {
+    </span><span class="kw">async fn </span>endpoint_send_relay_websockets() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">let </span>(relay_map, _relay_url, _guard) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>client = Endpoint::builder()
             .relay_conn_protocol(Protocol::Websocket)
@@ -5974,7 +5968,7 @@
                 send.finish().e()<span class="question-mark">?</span>;
                 conn.closed().<span class="kw">await</span>;
 
-                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, TestError&gt;(())
+                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, Error&gt;(())
             }
         });
 
@@ -5998,17 +5992,17 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>endpoint_bidi_send_recv_x509() -&gt; TestResult {
+    </span><span class="kw">async fn </span>endpoint_bidi_send_recv_x509() -&gt; <span class="prelude-ty">Result</span> {
         endpoint_bidi_send_recv(tls::Authentication::X509).<span class="kw">await
     </span>}
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>endpoint_bidi_send_recv_raw_public_key() -&gt; TestResult {
+    </span><span class="kw">async fn </span>endpoint_bidi_send_recv_raw_public_key() -&gt; <span class="prelude-ty">Result</span> {
         endpoint_bidi_send_recv(tls::Authentication::RawPublicKey).<span class="kw">await
     </span>}
 
-    <span class="kw">async fn </span>endpoint_bidi_send_recv(auth: tls::Authentication) -&gt; TestResult {
+    <span class="kw">async fn </span>endpoint_bidi_send_recv(auth: tls::Authentication) -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">let </span>ep1 = Endpoint::builder()
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Disabled);
@@ -6037,7 +6031,7 @@
         <span class="macro">eprintln!</span>(<span class="string">"node id 1 {ep1_nodeid}"</span>);
         <span class="macro">eprintln!</span>(<span class="string">"node id 2 {ep2_nodeid}"</span>);
 
-        <span class="kw">async fn </span>connect_hello(ep: Endpoint, dst: NodeAddr) -&gt; TestResult {
+        <span class="kw">async fn </span>connect_hello(ep: Endpoint, dst: NodeAddr) -&gt; <span class="prelude-ty">Result</span> {
             <span class="kw">let </span>conn = ep.connect(dst, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
             <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = conn.open_bi().<span class="kw">await</span>.e()<span class="question-mark">?</span>;
             <span class="macro">info!</span>(<span class="string">"sending hello"</span>);
@@ -6050,7 +6044,7 @@
             <span class="prelude-val">Ok</span>(())
         }
 
-        <span class="kw">async fn </span>accept_world(ep: Endpoint, src: NodeId) -&gt; TestResult {
+        <span class="kw">async fn </span>accept_world(ep: Endpoint, src: NodeId) -&gt; <span class="prelude-ty">Result</span> {
             <span class="kw">let </span>incoming = ep.accept().<span class="kw">await</span>.e()<span class="question-mark">?</span>;
             <span class="kw">let </span><span class="kw-2">mut </span>iconn = incoming.accept().e()<span class="question-mark">?</span>;
             <span class="kw">let </span>alpn = iconn.alpn().<span class="kw">await</span><span class="question-mark">?</span>;
@@ -6109,7 +6103,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>endpoint_conn_type_becomes_direct() -&gt; TestResult {
+    </span><span class="kw">async fn </span>endpoint_conn_type_becomes_direct() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">const </span>TIMEOUT: Duration = std::time::Duration::from_secs(<span class="number">15</span>);
         <span class="kw">let </span>(relay_map, _relay_url, _relay_guard) = run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>rng = rand_chacha::ChaCha8Rng::seed_from_u64(<span class="number">42</span>);
@@ -6130,7 +6124,7 @@
             .bind()
             .<span class="kw">await</span><span class="question-mark">?</span>;
 
-        <span class="kw">async fn </span>wait_for_conn_type_direct(ep: <span class="kw-2">&amp;</span>Endpoint, node_id: NodeId) -&gt; TestResult {
+        <span class="kw">async fn </span>wait_for_conn_type_direct(ep: <span class="kw-2">&amp;</span>Endpoint, node_id: NodeId) -&gt; <span class="prelude-ty">Result</span> {
             <span class="kw">let </span><span class="kw-2">mut </span>stream = ep.conn_type(node_id).expect(<span class="string">"connection exists"</span>).stream();
             <span class="kw">let </span>src = ep.node_id().fmt_short();
             <span class="kw">let </span>dst = node_id.fmt_short();
@@ -6143,7 +6137,7 @@
             <span class="macro">snafu::whatever!</span>(<span class="string">"conn_type stream ended before `ConnectionType::Direct`"</span>);
         }
 
-        <span class="kw">async fn </span>accept(ep: <span class="kw-2">&amp;</span>Endpoint) -&gt; TestResult&lt;Connection&gt; {
+        <span class="kw">async fn </span>accept(ep: <span class="kw-2">&amp;</span>Endpoint) -&gt; <span class="prelude-ty">Result</span>&lt;Connection&gt; {
             <span class="kw">let </span>incoming = ep.accept().<span class="kw">await</span>.expect(<span class="string">"ep closed"</span>);
             <span class="kw">let </span>conn = incoming.<span class="kw">await</span>.e()<span class="question-mark">?</span>;
             <span class="kw">let </span>node_id = conn.remote_node_id()<span class="question-mark">?</span>;
@@ -6168,7 +6162,7 @@
             send.write_all(<span class="string">b"Conn is direct"</span>).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
             send.finish().e()<span class="question-mark">?</span>;
             conn.closed().<span class="kw">await</span>;
-            <span class="prelude-val">Ok</span>::&lt;(), TestError&gt;(())
+            <span class="prelude-val">Ok</span>::&lt;(), Error&gt;(())
         });
 
         <span class="kw">let </span>ep2_side = tokio::time::timeout(TIMEOUT, <span class="kw">async move </span>{
@@ -6179,7 +6173,7 @@
             <span class="macro">assert_eq!</span>(read, <span class="string">b"Conn is direct"</span>.to_vec());
             conn.close(<span class="number">0u32</span>.into(), <span class="string">b"done"</span>);
             conn.closed().<span class="kw">await</span>;
-            <span class="prelude-val">Ok</span>::&lt;(), TestError&gt;(())
+            <span class="prelude-val">Ok</span>::&lt;(), Error&gt;(())
         });
 
         <span class="kw">let </span>res_ep1 = AbortOnDropHandle::new(tokio::spawn(ep1_side));
@@ -6194,7 +6188,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_direct_addresses_no_stun_relay() -&gt; TestResult {
+    </span><span class="kw">async fn </span>test_direct_addresses_no_stun_relay() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">let </span>(relay_map, <span class="kw">_</span>, _guard) = run_relay_server_with(<span class="prelude-val">None</span>, <span class="bool-val">false</span>).<span class="kw">await</span><span class="question-mark">?</span>;
 
         <span class="kw">let </span>ep = Endpoint::builder()
@@ -6210,10 +6204,7 @@
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="kw">async fn </span>spawn_0rtt_server(
-        secret_key: SecretKey,
-        log_span: tracing::Span,
-    ) -&gt; TestResult&lt;Endpoint&gt; {
+    <span class="kw">async fn </span>spawn_0rtt_server(secret_key: SecretKey, log_span: tracing::Span) -&gt; <span class="prelude-ty">Result</span>&lt;Endpoint&gt; {
         <span class="kw">let </span>server = Endpoint::builder()
             .secret_key(secret_key)
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
@@ -6246,7 +6237,7 @@
                     <span class="comment">// Stay alive until the other side closes the connection.
                     </span>conn.closed().<span class="kw">await</span>;
                 }
-                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, TestError&gt;(())
+                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, Error&gt;(())
             }
             .instrument(log_span)
         });
@@ -6254,10 +6245,7 @@
         <span class="prelude-val">Ok</span>(server)
     }
 
-    <span class="kw">async fn </span>connect_client_0rtt_expect_err(
-        client: <span class="kw-2">&amp;</span>Endpoint,
-        server_addr: NodeAddr,
-    ) -&gt; TestResult {
+    <span class="kw">async fn </span>connect_client_0rtt_expect_err(client: <span class="kw-2">&amp;</span>Endpoint, server_addr: NodeAddr) -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">let </span>conn = client
             .connect_with_opts(server_addr, TEST_ALPN, ConnectOptions::new())
             .<span class="kw">await</span><span class="question-mark">?
@@ -6279,7 +6267,7 @@
         client: <span class="kw-2">&amp;</span>Endpoint,
         server_addr: NodeAddr,
         expect_server_accepts: bool,
-    ) -&gt; TestResult {
+    ) -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">let </span>(conn, accepted_0rtt) = client
             .connect_with_opts(server_addr, TEST_ALPN, ConnectOptions::new())
             .<span class="kw">await</span><span class="question-mark">?
@@ -6311,7 +6299,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_0rtt() -&gt; TestResult {
+    </span><span class="kw">async fn </span>test_0rtt() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">let </span>client = Endpoint::builder()
             .relay_mode(RelayMode::Disabled)
             .bind()
@@ -6338,7 +6326,7 @@
     // receive into the respective "bucket" for the recipient.
     </span><span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_0rtt_non_consecutive() -&gt; TestResult {
+    </span><span class="kw">async fn </span>test_0rtt_non_consecutive() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">let </span>client = Endpoint::builder()
             .relay_mode(RelayMode::Disabled)
             .bind()
@@ -6373,7 +6361,7 @@
     <span class="comment">// Test whether 0-RTT is possible after a restart:
     </span><span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_0rtt_after_server_restart() -&gt; TestResult {
+    </span><span class="kw">async fn </span>test_0rtt_after_server_restart() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">let </span>client = Endpoint::builder()
             .relay_mode(RelayMode::Disabled)
             .bind()
@@ -6402,7 +6390,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>graceful_close() -&gt; TestResult {
+    </span><span class="kw">async fn </span>graceful_close() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">let </span>client = Endpoint::builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>server = Endpoint::builder()
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])
@@ -6417,7 +6405,7 @@
             send.write_all(<span class="kw-2">&amp;</span>msg).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
             send.finish().e()<span class="question-mark">?</span>;
             <span class="kw">let </span>close_reason = conn.closed().<span class="kw">await</span>;
-            <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, TestError&gt;(close_reason)
+            <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, Error&gt;(close_reason)
         });
 
         <span class="kw">let </span>conn = client.connect(server_addr, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
@@ -6441,7 +6429,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>metrics_smoke() -&gt; TestResult {
+    </span><span class="kw">async fn </span>metrics_smoke() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">use </span>iroh_metrics::Registry;
 
         <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">0u8</span>; <span class="number">32</span>]);
@@ -6463,7 +6451,7 @@
             <span class="kw">let </span><span class="kw-2">mut </span>uni = conn.accept_uni().<span class="kw">await</span>.e()<span class="question-mark">?</span>;
             uni.read_to_end(<span class="number">10</span>).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
             drop(conn);
-            <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, TestError&gt;(server)
+            <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, Error&gt;(server)
         });
         <span class="kw">let </span>conn = client.connect(server_addr, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span><span class="kw-2">mut </span>uni = conn.open_uni().<span class="kw">await</span>.e()<span class="question-mark">?</span>;
@@ -6508,7 +6496,7 @@
         accept_alpns: Vec&lt;Vec&lt;u8&gt;&gt;,
         primary_connect_alpn: <span class="kw-2">&amp;</span>[u8],
         secondary_connect_alpns: Vec&lt;Vec&lt;u8&gt;&gt;,
-    ) -&gt; TestResult&lt;<span class="prelude-ty">Option</span>&lt;Vec&lt;u8&gt;&gt;&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;Vec&lt;u8&gt;&gt;&gt; {
         <span class="kw">let </span>client = Endpoint::builder()
             .relay_mode(RelayMode::Disabled)
             .bind()
@@ -6525,7 +6513,7 @@
                 <span class="kw">let </span>incoming = server.accept().<span class="kw">await</span>.e()<span class="question-mark">?</span>;
                 <span class="kw">let </span>conn = incoming.<span class="kw">await</span>.e()<span class="question-mark">?</span>;
                 conn.close(<span class="number">0u32</span>.into(), <span class="string">b"bye!"</span>);
-                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, n0_snafu::TestError&gt;(conn.alpn())
+                <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, n0_snafu::Error&gt;(conn.alpn())
             }
         });
 
@@ -6551,7 +6539,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>connect_multiple_alpn_negotiated() -&gt; TestResult {
+    </span><span class="kw">async fn </span>connect_multiple_alpn_negotiated() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">const </span>ALPN_ONE: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"alpn/1"</span>;
         <span class="kw">const </span>ALPN_TWO: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"alpn/2"</span>;
 
@@ -6602,7 +6590,7 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>watch_net_report() -&gt; TestResult {
+    </span><span class="kw">async fn </span>watch_net_report() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">let </span>endpoint = Endpoint::builder()
             .relay_mode(RelayMode::Staging)
             .bind()
