@@ -35,7 +35,6 @@ use std::{
     net::{IpAddr, SocketAddr},
 };
 
-use anyhow::Result;
 use derive_more::FromStr;
 use iroh_base::{NodeId, PublicKey};
 use n0_future::{
@@ -47,6 +46,7 @@ use swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
 use tokio::sync::mpsc::{self, error::TrySendError};
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
+use super::DiscoveryError;
 use crate::{
     discovery::{Discovery, DiscoveryItem, NodeData, NodeInfo},
     watcher::{Watchable, Watcher as _},
@@ -83,7 +83,7 @@ pub struct MdnsDiscovery {
 #[derive(Debug)]
 enum Message {
     Discovery(String, Peer),
-    Resolve(NodeId, mpsc::Sender<Result<DiscoveryItem>>),
+    Resolve(NodeId, mpsc::Sender<Result<DiscoveryItem, DiscoveryError>>),
     Timeout(NodeId, usize),
     Subscribe(mpsc::Sender<DiscoveryItem>),
 }
@@ -138,7 +138,7 @@ impl MdnsDiscovery {
     ///
     /// # Panics
     /// This relies on [`tokio::runtime::Handle::current`] and will panic if called outside of the context of a tokio runtime.
-    pub fn new(node_id: NodeId) -> Result<Self> {
+    pub fn new(node_id: NodeId) -> Result<Self, DiscoveryError> {
         debug!("Creating new MdnsDiscovery service");
         let (send, mut recv) = mpsc::channel(64);
         let task_sender = send.clone();
@@ -154,7 +154,7 @@ impl MdnsDiscovery {
             let mut last_id = 0;
             let mut senders: HashMap<
                 PublicKey,
-                HashMap<usize, mpsc::Sender<Result<DiscoveryItem>>>,
+                HashMap<usize, mpsc::Sender<Result<DiscoveryItem, DiscoveryError>>>,
             > = HashMap::default();
             let mut timeouts = JoinSet::new();
             loop {
@@ -306,7 +306,7 @@ impl MdnsDiscovery {
         sender: mpsc::Sender<Message>,
         socketaddrs: BTreeSet<SocketAddr>,
         rt: &tokio::runtime::Handle,
-    ) -> Result<DropGuard> {
+    ) -> Result<DropGuard, DiscoveryError> {
         let spawn_rt = rt.clone();
         let callback = move |node_id: &str, peer: &Peer| {
             trace!(
@@ -332,7 +332,9 @@ impl MdnsDiscovery {
         for addr in addrs {
             discoverer = discoverer.with_addrs(addr.0, addr.1);
         }
-        discoverer.spawn(rt)
+        discoverer
+            .spawn(rt)
+            .map_err(|e| DiscoveryError::from_err_box("mdns", e.into_boxed_dyn_error()))
     }
 
     fn socketaddrs_to_addrs(socketaddrs: &BTreeSet<SocketAddr>) -> HashMap<u16, Vec<IpAddr>> {
@@ -373,7 +375,11 @@ fn peer_to_discovery_item(peer: &Peer, node_id: &NodeId) -> DiscoveryItem {
 }
 
 impl Discovery for MdnsDiscovery {
-    fn resolve(&self, _ep: Endpoint, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem>>> {
+    fn resolve(
+        &self,
+        _ep: Endpoint,
+        node_id: NodeId,
+    ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
         use futures_util::FutureExt;
 
         let (send, recv) = mpsc::channel(20);
@@ -413,7 +419,8 @@ mod tests {
     mod run_in_isolation {
         use iroh_base::SecretKey;
         use n0_future::StreamExt;
-        use testresult::TestResult;
+        use n0_snafu::{Error, Result, ResultExt};
+        use snafu::whatever;
         use tracing_test::traced_test;
 
         use super::super::*;
@@ -421,13 +428,13 @@ mod tests {
 
         #[tokio::test]
         #[traced_test]
-        async fn mdns_publish_resolve() -> TestResult {
+        async fn mdns_publish_resolve() -> Result {
             let (_, discovery_a) = make_discoverer()?;
             let (node_id_b, discovery_b) = make_discoverer()?;
 
             // make addr info for discoverer b
             let user_data: UserData = "foobar".parse()?;
-            let node_data = NodeData::new(None, BTreeSet::from(["0.0.0.0:11111".parse()?]))
+            let node_data = NodeData::new(None, BTreeSet::from(["0.0.0.0:11111".parse().unwrap()]))
                 .with_user_data(Some(user_data.clone()));
             println!("info {node_data:?}");
 
@@ -442,10 +449,12 @@ mod tests {
             // publish discovery_b's address
             discovery_b.publish(&node_data);
             let s1_res = tokio::time::timeout(Duration::from_secs(5), s1.next())
-                .await?
+                .await
+                .context("timeout")?
                 .unwrap()?;
             let s2_res = tokio::time::timeout(Duration::from_secs(5), s2.next())
-                .await?
+                .await
+                .context("timeout")?
                 .unwrap()?;
             assert_eq!(s1_res.node_info().data, node_data);
             assert_eq!(s2_res.node_info().data, node_data);
@@ -455,13 +464,13 @@ mod tests {
 
         #[tokio::test]
         #[traced_test]
-        async fn mdns_subscribe() -> TestResult {
+        async fn mdns_subscribe() -> Result {
             let num_nodes = 5;
             let mut node_ids = BTreeSet::new();
             let mut discoverers = vec![];
 
             let (_, discovery) = make_discoverer()?;
-            let node_data = NodeData::new(None, BTreeSet::from(["0.0.0.0:11111".parse()?]));
+            let node_data = NodeData::new(None, BTreeSet::from(["0.0.0.0:11111".parse().unwrap()]));
 
             for i in 0..num_nodes {
                 let (node_id, discovery) = make_discoverer()?;
@@ -482,17 +491,18 @@ mod tests {
                             got_ids.insert((item.node_id(), item.user_data()));
                         }
                     } else {
-                        anyhow::bail!(
+                        whatever!(
                             "no more events, only got {} ids, expected {num_nodes}\n",
                             got_ids.len()
                         );
                     }
                 }
                 assert_eq!(got_ids, node_ids);
-                anyhow::Ok(())
+                Ok::<_, Error>(())
             };
-            tokio::time::timeout(Duration::from_secs(5), test).await??;
-            Ok(())
+            tokio::time::timeout(Duration::from_secs(5), test)
+                .await
+                .context("timeout")?
         }
 
         fn make_discoverer() -> Result<(PublicKey, MdnsDiscovery)> {

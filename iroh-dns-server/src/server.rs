@@ -1,9 +1,8 @@
 //! The main server which combines the DNS and HTTP(S) servers.
-
 use std::sync::Arc;
 
-use anyhow::Result;
 use iroh_metrics::service::start_metrics_server;
+use n0_snafu::{Result, ResultExt};
 use tracing::info;
 
 use crate::{
@@ -29,7 +28,7 @@ pub async fn run_with_config_until_ctrl_c(config: Config) -> Result<()> {
         store = store.with_mainline_fallback(bootstrap);
     };
     let server = Server::spawn(config, store, metrics).await?;
-    tokio::signal::ctrl_c().await?;
+    tokio::signal::ctrl_c().await.e()?;
     info!("shutdown");
     server.shutdown().await?;
     Ok(())
@@ -39,7 +38,7 @@ pub async fn run_with_config_until_ctrl_c(config: Config) -> Result<()> {
 pub struct Server {
     http_server: HttpServer,
     dns_server: DnsServer,
-    metrics_task: tokio::task::JoinHandle<anyhow::Result<()>>,
+    metrics_task: tokio::task::JoinHandle<Result<()>>,
 }
 
 impl Server {
@@ -63,7 +62,7 @@ impl Server {
             if let Some(addr) = metrics_addr {
                 let mut registry = iroh_metrics::Registry::default();
                 registry.register(metrics);
-                start_metrics_server(addr, Arc::new(registry)).await?;
+                start_metrics_server(addr, Arc::new(registry)).await.e()?;
             }
             Ok(())
         });
@@ -141,7 +140,7 @@ impl Server {
         let server = Self::spawn(config, store, Default::default()).await?;
         let dns_addr = server.dns_server.local_addr();
         let http_addr = server.http_server.http_addr().expect("http is set");
-        let http_url = format!("http://{http_addr}").parse()?;
+        let http_url = format!("http://{http_addr}").parse::<url::Url>().e()?;
         Ok((server, dns_addr, http_url))
     }
 }

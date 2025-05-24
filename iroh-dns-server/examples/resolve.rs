@@ -1,10 +1,10 @@
-use anyhow::Context;
 use clap::{Parser, ValueEnum};
 use iroh::{
     discovery::dns::{N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING},
     dns::DnsResolver,
     NodeId,
 };
+use n0_snafu::{Result, ResultExt};
 
 const DEV_DNS_SERVER: &str = "127.0.0.1:5300";
 const DEV_DNS_ORIGIN_DOMAIN: &str = "irohdns.example";
@@ -44,11 +44,12 @@ enum Command {
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> Result<()> {
     let args = Cli::parse();
     let resolver = if let Some(host) = args.dns_server {
         let addr = tokio::net::lookup_host(host)
-            .await?
+            .await
+            .e()?
             .next()
             .context("failed to resolve DNS server address")?;
         DnsResolver::with_nameserver(addr)

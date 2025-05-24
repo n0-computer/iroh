@@ -9,7 +9,7 @@
 use anyhow::Result;
 use iroh::{
     endpoint::Connection,
-    protocol::{ProtocolHandler, Router},
+    protocol::{Error as ProtocolError, ProtocolHandler, Router},
     watcher::Watcher as _,
     Endpoint, NodeAddr,
 };
@@ -84,7 +84,7 @@ impl ProtocolHandler for Echo {
     ///
     /// The returned future runs on a newly spawned tokio task, so it can run as long as
     /// the connection lasts.
-    fn accept(&self, connection: Connection) -> BoxFuture<Result<()>> {
+    fn accept(&self, connection: Connection) -> BoxFuture<Result<(), ProtocolError>> {
         // We have to return a boxed future from the handler.
         Box::pin(async move {
             // We can get the remote's node id from the connection.

@@ -5,7 +5,6 @@ use std::{
     time::Instant,
 };
 
-use anyhow::{bail, Context, Result};
 use axum::{
     extract::{ConnectInfo, Request, State},
     handler::Handler,
@@ -15,7 +14,9 @@ use axum::{
     routing::get,
     Router,
 };
+use n0_snafu::{Result, ResultExt};
 use serde::{Deserialize, Serialize};
+use snafu::whatever;
 use tokio::{net::TcpListener, task::JoinSet};
 use tower_http::{
     cors::{self, CorsLayer},
@@ -74,7 +75,7 @@ impl HttpServer {
         state: AppState,
     ) -> Result<HttpServer> {
         if http_config.is_none() && https_config.is_none() {
-            bail!("Either http or https config is required");
+            whatever!("Either http or https config is required");
         }
 
         let app = create_app(state, &rate_limit_config);
@@ -88,8 +89,8 @@ impl HttpServer {
                 config.port,
             );
             let app = app.clone();
-            let listener = TcpListener::bind(bind_addr).await?.into_std()?;
-            let bound_addr = listener.local_addr()?;
+            let listener = TcpListener::bind(bind_addr).await.e()?.into_std().e()?;
+            let bound_addr = listener.local_addr().e()?;
             let fut = axum_server::from_tcp(listener)
                 .serve(app.into_make_service_with_connect_info::<SocketAddr>());
             info!("HTTP server listening on {bind_addr}");
@@ -124,8 +125,8 @@ impl HttpServer {
                     )
                     .await?
             };
-            let listener = TcpListener::bind(bind_addr).await?.into_std()?;
-            let bound_addr = listener.local_addr()?;
+            let listener = TcpListener::bind(bind_addr).await.e()?.into_std().e()?;
+            let bound_addr = listener.local_addr().e()?;
             let fut = axum_server::from_tcp(listener)
                 .acceptor(acceptor)
                 .serve(app.into_make_service_with_connect_info::<SocketAddr>());
@@ -165,18 +166,18 @@ impl HttpServer {
     ///
     /// Runs forever unless tasks fail.
     pub async fn run_until_done(mut self) -> Result<()> {
-        let mut final_res: anyhow::Result<()> = Ok(());
+        let mut final_res: Result<()> = Ok(());
         while let Some(res) = self.tasks.join_next().await {
             match res {
                 Ok(Ok(())) => {}
                 Err(err) if err.is_cancelled() => {}
                 Ok(Err(err)) => {
                     warn!(?err, "task failed");
-                    final_res = Err(anyhow::Error::from(err));
+                    final_res = Err(err).context("task");
                 }
                 Err(err) => {
                     warn!(?err, "task panicked");
-                    final_res = Err(err.into());
+                    final_res = Err(err).context("join");
                 }
             }
         }
