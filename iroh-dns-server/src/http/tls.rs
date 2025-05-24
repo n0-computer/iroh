@@ -10,7 +10,7 @@ use axum_server::{
     tls_rustls::{RustlsAcceptor, RustlsConfig},
 };
 use n0_future::{future::Boxed as BoxFuture, FutureExt};
-use n0_snafu::{TestResult as Result, TestResultExt};
+use n0_snafu::{Result, ResultExt};
 use serde::{Deserialize, Serialize};
 use snafu::whatever;
 use tokio::io::{AsyncRead, AsyncWrite};

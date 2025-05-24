@@ -4,7 +4,7 @@
 // https://github.com/fission-codes/fission-server/blob/394de877fad021260c69fdb1edd7bb4b2f98108c/fission-core/src/dns.rs
 
 use hickory_server::proto;
-use n0_snafu::TestResult as Result;
+use n0_snafu::Result;
 use serde::{Deserialize, Serialize};
 use snafu::ensure_whatever;
 

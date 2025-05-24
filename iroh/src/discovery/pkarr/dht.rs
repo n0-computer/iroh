@@ -322,7 +322,7 @@ mod tests {
     use std::collections::BTreeSet;
 
     use iroh_base::RelayUrl;
-    use n0_snafu::{TestResult, TestResultExt};
+    use n0_snafu::{Result, ResultExt};
     use tracing_test::traced_test;
 
     use super::*;
@@ -330,7 +330,7 @@ mod tests {
     #[tokio::test]
     #[ignore = "flaky"]
     #[traced_test]
-    async fn dht_discovery_smoke() -> TestResult {
+    async fn dht_discovery_smoke() -> Result {
         let ep = crate::Endpoint::builder().bind().await?;
         let secret = ep.secret_key().clone();
         let testnet = pkarr::mainline::Testnet::new_async(3).await.e()?;

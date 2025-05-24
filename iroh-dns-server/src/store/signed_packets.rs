@@ -6,7 +6,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use n0_snafu::{format_err, TestResult as Result, TestResultExt};
+use n0_snafu::{format_err, Result, ResultExt};
 use pkarr::{SignedPacket, Timestamp};
 use redb::{
     backends::InMemoryBackend, Database, MultimapTableDefinition, ReadableTable, TableDefinition,

@@ -467,14 +467,14 @@ fn url_port(url: &Url) -> Option<u16> {
 mod tests {
     use std::str::FromStr;
 
-    use n0_snafu::TestResult;
+    use n0_snafu::Result;
     use tracing_test::traced_test;
 
     use super::*;
 
     #[test]
     #[traced_test]
-    fn test_host_header_value() -> TestResult {
+    fn test_host_header_value() -> Result {
         let cases = [
             (
                 "https://euw1-1.relay.iroh.network.",

@@ -688,7 +688,7 @@ mod tests {
         Name,
     };
     use iroh_base::{NodeId, SecretKey};
-    use n0_snafu::{TestResult, TestResultExt};
+    use n0_snafu::{Result, ResultExt};
 
     use super::{NodeData, NodeIdExt, NodeInfo};
 
@@ -730,7 +730,7 @@ mod tests {
     /// The reason was that only the first address was parsed (e.g. 192.168.96.145 in
     /// this example), which could be a local, unreachable address.
     #[test]
-    fn test_from_hickory_lookup() -> TestResult {
+    fn test_from_hickory_lookup() -> Result {
         let name = Name::from_utf8(
             "_iroh.dgjpkxyn3zyrk3zfads5duwdgbqpkwbjxfj4yt7rezidr3fijccy.dns.iroh.link.",
         )

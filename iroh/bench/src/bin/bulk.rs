@@ -5,7 +5,7 @@ use clap::Parser;
 use iroh_bench::quinn;
 use iroh_bench::{configure_tracing_subscriber, iroh, rt, s2n, Commands, Opt};
 use iroh_metrics::{MetricValue, MetricsGroup};
-use n0_snafu::TestResult as Result;
+use n0_snafu::Result;
 
 fn main() {
     let cmd = Commands::parse();

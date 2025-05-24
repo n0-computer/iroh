@@ -41,7 +41,7 @@ use super::{Discovery, DiscoveryItem, NodeData, NodeInfo};
 /// use iroh_base::SecretKey;
 ///
 /// # #[tokio::main]
-/// # async fn main() -> n0_snafu::TestResult<()> {
+/// # async fn main() -> n0_snafu::Result<()> {
 /// // Create the discovery service and endpoint.
 /// let discovery = StaticProvider::new();
 ///
@@ -108,7 +108,7 @@ impl StaticProvider {
     /// #     Vec::new()
     /// # }
     /// # #[tokio::main]
-    /// # async fn main() -> n0_snafu::TestResult<()> {
+    /// # async fn main() -> n0_snafu::Result<()> {
     /// // get addrs from somewhere
     /// let addrs = get_addrs();
     ///
@@ -218,13 +218,13 @@ impl Discovery for StaticProvider {
 #[cfg(test)]
 mod tests {
     use iroh_base::{NodeAddr, SecretKey};
-    use n0_snafu::{TestResult, TestResultExt};
+    use n0_snafu::{Result, ResultExt};
 
     use super::*;
     use crate::Endpoint;
 
     #[tokio::test]
-    async fn test_basic() -> TestResult {
+    async fn test_basic() -> Result {
         let discovery = StaticProvider::new();
 
         let _ep = Endpoint::builder()

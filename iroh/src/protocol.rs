@@ -68,10 +68,10 @@ use crate::{
 /// ```no_run
 /// # use std::sync::Arc;
 /// # use futures_lite::future::Boxed as BoxedFuture;
-/// # use n0_snafu::TestResultExt;
+/// # use n0_snafu::ResultExt;
 /// # use iroh::{endpoint::Connecting, protocol::{ProtocolHandler, Router}, Endpoint, NodeAddr};
 /// #
-/// # async fn test_compile() -> n0_snafu::TestResult<()> {
+/// # async fn test_compile() -> n0_snafu::Result<()> {
 /// let endpoint = Endpoint::builder().discovery_n0().bind().await?;
 ///
 /// let router = Router::builder(endpoint)
@@ -480,7 +480,7 @@ impl<P: ProtocolHandler + Clone> ProtocolHandler for AccessLimit<P> {
 
 #[cfg(test)]
 mod tests {
-    use n0_snafu::{TestResult, TestResultExt};
+    use n0_snafu::{Result, ResultExt};
     use std::{sync::Mutex, time::Duration};
 
     use quinn::ApplicationClose;
@@ -489,7 +489,7 @@ mod tests {
     use crate::{endpoint::ConnectionError, watcher::Watcher, RelayMode};
 
     #[tokio::test]
-    async fn test_shutdown() -> TestResult {
+    async fn test_shutdown() -> Result {
         let endpoint = Endpoint::builder().bind().await?;
         let router = Router::builder(endpoint.clone()).spawn();
 
@@ -527,7 +527,7 @@ mod tests {
         }
     }
     #[tokio::test]
-    async fn test_limiter() -> TestResult {
+    async fn test_limiter() -> Result {
         let e1 = Endpoint::builder().bind().await?;
         // deny all access
         let proto = AccessLimit::new(Echo, |_node_id| false);
@@ -551,7 +551,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_graceful_shutdown() -> TestResult {
+    async fn test_graceful_shutdown() -> Result {
         #[derive(Debug, Clone, Default)]
         struct TestProtocol {
             connections: Arc<Mutex<Vec<Connection>>>,

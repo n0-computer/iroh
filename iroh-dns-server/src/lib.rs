@@ -25,7 +25,7 @@ mod tests {
         discovery::pkarr::PkarrRelayClient, dns::DnsResolver, node_info::NodeInfo, RelayUrl,
         SecretKey,
     };
-    use n0_snafu::{TestResult, TestResultExt};
+    use n0_snafu::{Result, ResultExt};
     use pkarr::{SignedPacket, Timestamp};
     use tracing_test::traced_test;
 
@@ -41,7 +41,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn pkarr_publish_dns_resolve() -> TestResult {
+    async fn pkarr_publish_dns_resolve() -> Result {
         let (server, nameserver, http_url) = Server::spawn_for_tests().await?;
         let pkarr_relay_url = {
             let mut url = http_url.clone();
@@ -156,7 +156,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn integration_smoke() -> TestResult {
+    async fn integration_smoke() -> Result {
         let (server, nameserver, http_url) = Server::spawn_for_tests().await?;
 
         let pkarr_relay = {
@@ -188,7 +188,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn store_eviction() -> TestResult {
+    async fn store_eviction() -> Result {
         let options = ZoneStoreOptions {
             eviction: Duration::from_millis(100),
             eviction_interval: Duration::from_millis(100),
@@ -218,7 +218,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn integration_mainline() -> TestResult {
+    async fn integration_mainline() -> Result {
         // run a mainline testnet
         let testnet = pkarr::mainline::Testnet::new_async(5).await.e()?;
         let bootstrap = testnet.bootstrap.clone();
@@ -260,7 +260,7 @@ mod tests {
         DnsResolver::with_nameserver(nameserver)
     }
 
-    fn random_signed_packet() -> TestResult<SignedPacket> {
+    fn random_signed_packet() -> Result<SignedPacket> {
         let secret_key = SecretKey::generate(rand::thread_rng());
         let node_id = secret_key.public();
         let relay_url: RelayUrl = "https://relay.example.".parse()?;

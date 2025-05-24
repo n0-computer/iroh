@@ -965,7 +965,7 @@ impl Endpoint {
     /// Use [`Watcher::initialized`] to wait for a [`NodeAddr`] that is ready to be connected to:
     ///
     /// ```no_run
-    /// # async fn wrapper() -> testresult::TestResult {
+    /// # async fn wrapper() -> n0_snafu::Result {
     /// use iroh::{watcher::Watcher, Endpoint};
     ///
     /// let endpoint = Endpoint::builder()
@@ -1246,7 +1246,7 @@ impl Endpoint {
     /// ```rust
     /// # use std::collections::BTreeMap;
     /// # use iroh::endpoint::Endpoint;
-    /// # async fn wrapper() -> n0_snafu::TestResult {
+    /// # async fn wrapper() -> n0_snafu::Result {
     /// let endpoint = Endpoint::builder().bind().await?;
     /// assert_eq!(endpoint.metrics().magicsock.recv_datagrams.get(), 0);
     /// # Ok(())
@@ -1264,7 +1264,7 @@ impl Endpoint {
     /// # use std::collections::BTreeMap;
     /// # use iroh_metrics::{Metric, MetricsGroup, MetricValue, MetricsGroupSet};
     /// # use iroh::endpoint::Endpoint;
-    /// # async fn wrapper() -> n0_snafu::TestResult {
+    /// # async fn wrapper() -> n0_snafu::Result {
     /// let endpoint = Endpoint::builder().bind().await?;
     /// let metrics: BTreeMap<String, MetricValue> = endpoint
     ///     .metrics()
@@ -1287,7 +1287,7 @@ impl Endpoint {
     /// ```rust
     /// # use iroh_metrics::{Registry, MetricsSource};
     /// # use iroh::endpoint::Endpoint;
-    /// # async fn wrapper() -> n0_snafu::TestResult {
+    /// # async fn wrapper() -> n0_snafu::Result {
     /// let endpoint = Endpoint::builder().bind().await?;
     /// let mut registry = Registry::default();
     /// registry.register_all(endpoint.metrics());
@@ -1310,8 +1310,8 @@ impl Endpoint {
     /// # use std::{sync::{Arc, RwLock}, time::Duration};
     /// # use iroh_metrics::{Registry, MetricsSource};
     /// # use iroh::endpoint::Endpoint;
-    /// # use n0_snafu::TestResultExt;
-    /// # async fn wrapper() -> n0_snafu::TestResult {
+    /// # use n0_snafu::ResultExt;
+    /// # async fn wrapper() -> n0_snafu::Result {
     /// // Create a registry, wrapped in a read-write lock so that we can register and serve
     /// // the metrics independently.
     /// let registry = Arc::new(RwLock::new(Registry::default()));
@@ -2344,7 +2344,7 @@ mod tests {
     use iroh_metrics::MetricsSource;
     use iroh_relay::http::Protocol;
     use n0_future::{task::AbortOnDropHandle, StreamExt};
-    use n0_snafu::{TestError, TestResult, TestResultExt};
+    use n0_snafu::{Error, Result, ResultExt};
     use quinn::ConnectionError;
     use rand::SeedableRng;
     use tracing::{error_span, info, info_span, Instrument};
@@ -2363,7 +2363,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_connect_self() -> TestResult {
+    async fn test_connect_self() -> Result {
         let ep = Endpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
@@ -2384,7 +2384,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_connect_close() -> TestResult {
+    async fn endpoint_connect_close() -> Result {
         let (relay_map, relay_url, _guard) = run_relay_server().await?;
         let server_secret_key = SecretKey::generate(rand::thread_rng());
         let server_peer_id = server_secret_key.public();
@@ -2421,7 +2421,7 @@ mod tests {
                         ))
                     );
                     info!("server test completed");
-                    Ok::<_, TestError>(())
+                    Ok::<_, Error>(())
                 }
                 .instrument(info_span!("test-server")),
             )
@@ -2460,7 +2460,7 @@ mod tests {
                 let res = conn.open_uni().await;
                 assert_eq!(res.unwrap_err(), expected_err);
                 info!("client test completed");
-                Ok::<_, TestError>(())
+                Ok::<_, Error>(())
             }
             .instrument(info_span!("test-client")),
         );
@@ -2479,14 +2479,14 @@ mod tests {
     /// Test that peers are properly restored
     #[tokio::test]
     #[traced_test]
-    async fn restore_peers() -> TestResult {
+    async fn restore_peers() -> Result {
         let secret_key = SecretKey::generate(rand::thread_rng());
 
         /// Create an endpoint for the test.
         async fn new_endpoint(
             secret_key: SecretKey,
             nodes: Option<Vec<NodeAddr>>,
-        ) -> TestResult<Endpoint> {
+        ) -> Result<Endpoint> {
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
 
@@ -2532,7 +2532,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_relay_connect_loop() -> TestResult {
+    async fn endpoint_relay_connect_loop() -> Result {
         let start = Instant::now();
         let n_clients = 5;
         let n_chunks_per_client = 2;
@@ -2575,7 +2575,7 @@ mod tests {
                         info!(%i, peer = %node_id.fmt_short(), "finished");
                         info!("[server] round {i} done in {:?}", round_start.elapsed());
                     }
-                    Ok::<_, TestError>(())
+                    Ok::<_, Error>(())
                 }
                 .instrument(error_span!("server")),
             )
@@ -2616,7 +2616,7 @@ mod tests {
                 info!("client finished");
                 ep.close().await;
                 info!("client closed");
-                Ok::<_, TestError>(())
+                Ok::<_, Error>(())
             }
             .instrument(error_span!("client", %i))
             .await?;
@@ -2637,7 +2637,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_send_relay_websockets() -> TestResult {
+    async fn endpoint_send_relay_websockets() -> Result {
         let (relay_map, _relay_url, _guard) = run_relay_server().await?;
         let client = Endpoint::builder()
             .relay_conn_protocol(Protocol::Websocket)
@@ -2666,7 +2666,7 @@ mod tests {
                 send.finish().e()?;
                 conn.closed().await;
 
-                Ok::<_, TestError>(())
+                Ok::<_, Error>(())
             }
         });
 
@@ -2690,17 +2690,17 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_bidi_send_recv_x509() -> TestResult {
+    async fn endpoint_bidi_send_recv_x509() -> Result {
         endpoint_bidi_send_recv(tls::Authentication::X509).await
     }
 
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_bidi_send_recv_raw_public_key() -> TestResult {
+    async fn endpoint_bidi_send_recv_raw_public_key() -> Result {
         endpoint_bidi_send_recv(tls::Authentication::RawPublicKey).await
     }
 
-    async fn endpoint_bidi_send_recv(auth: tls::Authentication) -> TestResult {
+    async fn endpoint_bidi_send_recv(auth: tls::Authentication) -> Result {
         let ep1 = Endpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Disabled);
@@ -2729,7 +2729,7 @@ mod tests {
         eprintln!("node id 1 {ep1_nodeid}");
         eprintln!("node id 2 {ep2_nodeid}");
 
-        async fn connect_hello(ep: Endpoint, dst: NodeAddr) -> TestResult {
+        async fn connect_hello(ep: Endpoint, dst: NodeAddr) -> Result {
             let conn = ep.connect(dst, TEST_ALPN).await?;
             let (mut send, mut recv) = conn.open_bi().await.e()?;
             info!("sending hello");
@@ -2742,7 +2742,7 @@ mod tests {
             Ok(())
         }
 
-        async fn accept_world(ep: Endpoint, src: NodeId) -> TestResult {
+        async fn accept_world(ep: Endpoint, src: NodeId) -> Result {
             let incoming = ep.accept().await.e()?;
             let mut iconn = incoming.accept().e()?;
             let alpn = iconn.alpn().await?;
@@ -2801,7 +2801,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_conn_type_becomes_direct() -> TestResult {
+    async fn endpoint_conn_type_becomes_direct() -> Result {
         const TIMEOUT: Duration = std::time::Duration::from_secs(15);
         let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
@@ -2822,7 +2822,7 @@ mod tests {
             .bind()
             .await?;
 
-        async fn wait_for_conn_type_direct(ep: &Endpoint, node_id: NodeId) -> TestResult {
+        async fn wait_for_conn_type_direct(ep: &Endpoint, node_id: NodeId) -> Result {
             let mut stream = ep.conn_type(node_id).expect("connection exists").stream();
             let src = ep.node_id().fmt_short();
             let dst = node_id.fmt_short();
@@ -2835,7 +2835,7 @@ mod tests {
             snafu::whatever!("conn_type stream ended before `ConnectionType::Direct`");
         }
 
-        async fn accept(ep: &Endpoint) -> TestResult<Connection> {
+        async fn accept(ep: &Endpoint) -> Result<Connection> {
             let incoming = ep.accept().await.expect("ep closed");
             let conn = incoming.await.e()?;
             let node_id = conn.remote_node_id()?;
@@ -2860,7 +2860,7 @@ mod tests {
             send.write_all(b"Conn is direct").await.e()?;
             send.finish().e()?;
             conn.closed().await;
-            Ok::<(), TestError>(())
+            Ok::<(), Error>(())
         });
 
         let ep2_side = tokio::time::timeout(TIMEOUT, async move {
@@ -2871,7 +2871,7 @@ mod tests {
             assert_eq!(read, b"Conn is direct".to_vec());
             conn.close(0u32.into(), b"done");
             conn.closed().await;
-            Ok::<(), TestError>(())
+            Ok::<(), Error>(())
         });
 
         let res_ep1 = AbortOnDropHandle::new(tokio::spawn(ep1_side));
@@ -2886,7 +2886,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_direct_addresses_no_stun_relay() -> TestResult {
+    async fn test_direct_addresses_no_stun_relay() -> Result {
         let (relay_map, _, _guard) = run_relay_server_with(None, false).await?;
 
         let ep = Endpoint::builder()
@@ -2902,10 +2902,7 @@ mod tests {
         Ok(())
     }
 
-    async fn spawn_0rtt_server(
-        secret_key: SecretKey,
-        log_span: tracing::Span,
-    ) -> TestResult<Endpoint> {
+    async fn spawn_0rtt_server(secret_key: SecretKey, log_span: tracing::Span) -> Result<Endpoint> {
         let server = Endpoint::builder()
             .secret_key(secret_key)
             .alpns(vec![TEST_ALPN.to_vec()])
@@ -2938,7 +2935,7 @@ mod tests {
                     // Stay alive until the other side closes the connection.
                     conn.closed().await;
                 }
-                Ok::<_, TestError>(())
+                Ok::<_, Error>(())
             }
             .instrument(log_span)
         });
@@ -2946,10 +2943,7 @@ mod tests {
         Ok(server)
     }
 
-    async fn connect_client_0rtt_expect_err(
-        client: &Endpoint,
-        server_addr: NodeAddr,
-    ) -> TestResult {
+    async fn connect_client_0rtt_expect_err(client: &Endpoint, server_addr: NodeAddr) -> Result {
         let conn = client
             .connect_with_opts(server_addr, TEST_ALPN, ConnectOptions::new())
             .await?
@@ -2971,7 +2965,7 @@ mod tests {
         client: &Endpoint,
         server_addr: NodeAddr,
         expect_server_accepts: bool,
-    ) -> TestResult {
+    ) -> Result {
         let (conn, accepted_0rtt) = client
             .connect_with_opts(server_addr, TEST_ALPN, ConnectOptions::new())
             .await?
@@ -3003,7 +2997,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_0rtt() -> TestResult {
+    async fn test_0rtt() -> Result {
         let client = Endpoint::builder()
             .relay_mode(RelayMode::Disabled)
             .bind()
@@ -3030,7 +3024,7 @@ mod tests {
     // receive into the respective "bucket" for the recipient.
     #[tokio::test]
     #[traced_test]
-    async fn test_0rtt_non_consecutive() -> TestResult {
+    async fn test_0rtt_non_consecutive() -> Result {
         let client = Endpoint::builder()
             .relay_mode(RelayMode::Disabled)
             .bind()
@@ -3065,7 +3059,7 @@ mod tests {
     // Test whether 0-RTT is possible after a restart:
     #[tokio::test]
     #[traced_test]
-    async fn test_0rtt_after_server_restart() -> TestResult {
+    async fn test_0rtt_after_server_restart() -> Result {
         let client = Endpoint::builder()
             .relay_mode(RelayMode::Disabled)
             .bind()
@@ -3094,7 +3088,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn graceful_close() -> TestResult {
+    async fn graceful_close() -> Result {
         let client = Endpoint::builder().bind().await?;
         let server = Endpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])
@@ -3109,7 +3103,7 @@ mod tests {
             send.write_all(&msg).await.e()?;
             send.finish().e()?;
             let close_reason = conn.closed().await;
-            Ok::<_, TestError>(close_reason)
+            Ok::<_, Error>(close_reason)
         });
 
         let conn = client.connect(server_addr, TEST_ALPN).await?;
@@ -3133,7 +3127,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn metrics_smoke() -> TestResult {
+    async fn metrics_smoke() -> Result {
         use iroh_metrics::Registry;
 
         let secret_key = SecretKey::from_bytes(&[0u8; 32]);
@@ -3155,7 +3149,7 @@ mod tests {
             let mut uni = conn.accept_uni().await.e()?;
             uni.read_to_end(10).await.e()?;
             drop(conn);
-            Ok::<_, TestError>(server)
+            Ok::<_, Error>(server)
         });
         let conn = client.connect(server_addr, TEST_ALPN).await?;
         let mut uni = conn.open_uni().await.e()?;
@@ -3200,7 +3194,7 @@ mod tests {
         accept_alpns: Vec<Vec<u8>>,
         primary_connect_alpn: &[u8],
         secondary_connect_alpns: Vec<Vec<u8>>,
-    ) -> TestResult<Option<Vec<u8>>> {
+    ) -> Result<Option<Vec<u8>>> {
         let client = Endpoint::builder()
             .relay_mode(RelayMode::Disabled)
             .bind()
@@ -3217,7 +3211,7 @@ mod tests {
                 let incoming = server.accept().await.e()?;
                 let conn = incoming.await.e()?;
                 conn.close(0u32.into(), b"bye!");
-                Ok::<_, n0_snafu::TestError>(conn.alpn())
+                Ok::<_, n0_snafu::Error>(conn.alpn())
             }
         });
 
@@ -3243,7 +3237,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn connect_multiple_alpn_negotiated() -> TestResult {
+    async fn connect_multiple_alpn_negotiated() -> Result {
         const ALPN_ONE: &[u8] = b"alpn/1";
         const ALPN_TWO: &[u8] = b"alpn/2";
 
@@ -3294,7 +3288,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn watch_net_report() -> TestResult {
+    async fn watch_net_report() -> Result {
         let endpoint = Endpoint::builder()
             .relay_mode(RelayMode::Staging)
             .bind()

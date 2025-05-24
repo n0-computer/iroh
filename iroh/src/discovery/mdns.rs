@@ -419,7 +419,7 @@ mod tests {
     mod run_in_isolation {
         use iroh_base::SecretKey;
         use n0_future::StreamExt;
-        use n0_snafu::{TestError, TestResult, TestResultExt};
+        use n0_snafu::{Error, Result, ResultExt};
         use snafu::whatever;
         use tracing_test::traced_test;
 
@@ -428,7 +428,7 @@ mod tests {
 
         #[tokio::test]
         #[traced_test]
-        async fn mdns_publish_resolve() -> TestResult {
+        async fn mdns_publish_resolve() -> Result {
             let (_, discovery_a) = make_discoverer()?;
             let (node_id_b, discovery_b) = make_discoverer()?;
 
@@ -464,7 +464,7 @@ mod tests {
 
         #[tokio::test]
         #[traced_test]
-        async fn mdns_subscribe() -> TestResult {
+        async fn mdns_subscribe() -> Result {
             let num_nodes = 5;
             let mut node_ids = BTreeSet::new();
             let mut discoverers = vec![];
@@ -498,14 +498,14 @@ mod tests {
                     }
                 }
                 assert_eq!(got_ids, node_ids);
-                Ok::<_, TestError>(())
+                Ok::<_, Error>(())
             };
             tokio::time::timeout(Duration::from_secs(5), test)
                 .await
                 .context("timeout")?
         }
 
-        fn make_discoverer() -> TestResult<(PublicKey, MdnsDiscovery)> {
+        fn make_discoverer() -> Result<(PublicKey, MdnsDiscovery)> {
             let node_id = SecretKey::generate(rand::thread_rng()).public();
             Ok((node_id, MdnsDiscovery::new(node_id)?))
         }

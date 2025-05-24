@@ -13,7 +13,7 @@ use hickory_server::{
     server::RequestInfo,
     store::in_memory::InMemoryAuthority,
 };
-use n0_snafu::{TestResult as Result, TestResultExt};
+use n0_snafu::{Result, ResultExt};
 use snafu::whatever;
 use tracing::{debug, trace};
 

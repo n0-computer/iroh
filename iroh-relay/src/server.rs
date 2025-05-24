@@ -880,7 +880,7 @@ mod tests {
     use http::{header::UPGRADE, StatusCode};
     use iroh_base::{NodeId, RelayUrl, SecretKey};
     use n0_future::{FutureExt, SinkExt, StreamExt};
-    use n0_snafu::{TestResult, TestResultExt};
+    use n0_snafu::{Result, ResultExt};
     use tokio::net::UdpSocket;
     use tracing::{info, instrument};
     use tracing_test::traced_test;
@@ -918,7 +918,7 @@ mod tests {
         client_b: &mut crate::client::Client,
         b_key: NodeId,
         msg: Bytes,
-    ) -> TestResult<ReceivedMessage> {
+    ) -> Result<ReceivedMessage> {
         // try resend 10 times
         for _ in 0..10 {
             client_a
@@ -1028,7 +1028,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_relay_clients_both_relay() -> TestResult<()> {
+    async fn test_relay_clients_both_relay() -> Result<()> {
         let server = spawn_local_relay().await.unwrap();
         let relay_url = format!("http://{}", server.http_addr().unwrap());
         let relay_url: RelayUrl = relay_url.parse().unwrap();
@@ -1080,7 +1080,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_relay_clients_both_websockets() -> TestResult<()> {
+    async fn test_relay_clients_both_websockets() -> Result<()> {
         let server = spawn_local_relay().await?;
 
         let relay_url = format!("http://{}", server.http_addr().unwrap());
@@ -1142,7 +1142,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_relay_clients_websocket_and_relay() -> TestResult<()> {
+    async fn test_relay_clients_websocket_and_relay() -> Result<()> {
         let server = spawn_local_relay().await.unwrap();
 
         let relay_url = format!("http://{}", server.http_addr().unwrap());
@@ -1230,7 +1230,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_relay_access_control() -> TestResult<()> {
+    async fn test_relay_access_control() -> Result<()> {
         let current_span = tracing::info_span!("this is a test");
         let _guard = current_span.enter();
 
@@ -1325,7 +1325,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_relay_clients_full() -> TestResult<()> {
+    async fn test_relay_clients_full() -> Result<()> {
         let server = spawn_local_relay().await.unwrap();
         let relay_url = format!("http://{}", server.http_addr().unwrap());
         let relay_url: RelayUrl = relay_url.parse().unwrap();

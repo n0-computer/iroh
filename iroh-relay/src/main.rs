@@ -21,7 +21,7 @@ use iroh_relay::{
     server::{self as relay, ClientRateLimit, QuicConfig},
 };
 use n0_future::FutureExt;
-use n0_snafu::{TestError, TestResult as Result, TestResultExt};
+use n0_snafu::{Error, Result, ResultExt};
 use serde::{Deserialize, Serialize};
 use snafu::whatever;
 use tokio_rustls_acme::{caches::DirCache, AcmeConfig};
@@ -588,7 +588,7 @@ async fn maybe_load_tls(
             let (private_key, certs) = tokio::task::spawn_blocking(move || {
                 let key = load_secret_key(key_path)?;
                 let certs = load_certs(cert_path)?;
-                Ok::<_, TestError>((key, certs))
+                Ok::<_, Error>((key, certs))
             })
             .await
             .context("join")??;
@@ -739,14 +739,14 @@ mod tests {
     use std::num::NonZeroU32;
 
     use iroh_base::SecretKey;
-    use n0_snafu::TestResult;
+    use n0_snafu::Result;
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
 
     use super::*;
 
     #[tokio::test]
-    async fn test_rate_limit_config() -> TestResult {
+    async fn test_rate_limit_config() -> Result {
         let config = "
             [limits.client.rx]
             bytes_per_second = 400
@@ -769,7 +769,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_rate_limit_default() -> TestResult {
+    async fn test_rate_limit_default() -> Result {
         let config = Config::from_str("")?;
         let relay_config = build_relay_config(config).await?;
 
@@ -780,7 +780,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_access_config() -> TestResult {
+    async fn test_access_config() -> Result {
         let config = "
             access = \"everyone\"
         ";

@@ -752,7 +752,7 @@ impl ClientCounter {
 mod tests {
     use bytes::Bytes;
     use iroh_base::SecretKey;
-    use n0_snafu::{TestResult, TestResultExt};
+    use n0_snafu::{Result, ResultExt};
     use tokio_util::codec::Framed;
     use tracing::info;
     use tracing_test::traced_test;
@@ -765,7 +765,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_client_actor_basic() -> TestResult {
+    async fn test_client_actor_basic() -> Result {
         let (send_queue_s, send_queue_r) = mpsc::channel(10);
         let (disco_send_queue_s, disco_send_queue_r) = mpsc::channel(10);
         let (peer_gone_s, peer_gone_r) = mpsc::channel(10);
@@ -883,7 +883,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_rate_limit() -> TestResult {
+    async fn test_rate_limit() -> Result {
         const LIMIT: u32 = 50;
         const MAX_FRAMES: u32 = 100;
 

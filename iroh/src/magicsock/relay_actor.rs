@@ -1331,7 +1331,7 @@ mod tests {
     use iroh_base::{NodeId, RelayUrl, SecretKey};
     use iroh_relay::PingTracker;
     use n0_future::future;
-    use n0_snafu::{TestError, TestResult, TestResultExt};
+    use n0_snafu::{Error, Result, ResultExt};
     use smallvec::smallvec;
     use tokio::sync::{mpsc, oneshot};
     use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
@@ -1483,7 +1483,7 @@ mod tests {
         item: RelaySendItem,
         tx: &mpsc::Sender<RelaySendItem>,
         rx: &Arc<RelayDatagramRecvQueue>,
-    ) -> TestResult<()> {
+    ) -> Result<()> {
         assert!(item.datagrams.len() == 1);
         tokio::time::timeout(Duration::from_secs(10), async move {
             loop {
@@ -1497,7 +1497,7 @@ mod tests {
 
                     assert_eq!(buf.as_ref(), item.datagrams[0]);
 
-                    Ok::<_, TestError>(())
+                    Ok::<_, Error>(())
                 })
                 .await;
                 if res.is_ok() {
@@ -1512,7 +1512,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_active_relay_reconnect() -> TestResult {
+    async fn test_active_relay_reconnect() -> Result {
         let (_relay_map, relay_url, _server) = test_utils::run_relay_server().await?;
         let (peer_node, _echo_node_task) = start_echo_node(relay_url.clone());
 
@@ -1611,7 +1611,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_active_relay_inactive() -> TestResult {
+    async fn test_active_relay_inactive() -> Result {
         let (_relay_map, relay_url, _server) = test_utils::run_relay_server().await?;
 
         let secret_key = SecretKey::from_bytes(&[1u8; 32]);

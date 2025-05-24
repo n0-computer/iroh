@@ -9,7 +9,7 @@ use iroh::{
     watcher::Watcher as _,
     Endpoint, NodeAddr, RelayMode, RelayUrl,
 };
-use n0_snafu::{TestResult as Result, TestResultExt};
+use n0_snafu::{Result, ResultExt};
 use tracing::{trace, warn};
 
 use crate::{
@@ -276,7 +276,7 @@ pub async fn server(endpoint: Endpoint, opt: Opt) -> Result<()> {
                 tokio::spawn(async move {
                     drain_stream(&mut recv_stream, opt.read_unordered).await?;
                     send_data_on_stream(&mut send_stream, opt.download_size).await?;
-                    Ok::<_, n0_snafu::TestError>(())
+                    Ok::<_, n0_snafu::Error>(())
                 });
             }
 

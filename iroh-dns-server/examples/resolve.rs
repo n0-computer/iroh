@@ -4,7 +4,7 @@ use iroh::{
     dns::DnsResolver,
     NodeId,
 };
-use n0_snafu::{TestResult as Result, TestResultExt};
+use n0_snafu::{Result, ResultExt};
 
 const DEV_DNS_SERVER: &str = "127.0.0.1:5300";
 const DEV_DNS_ORIGIN_DOMAIN: &str = "irohdns.example";

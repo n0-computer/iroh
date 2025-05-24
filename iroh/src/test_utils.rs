@@ -530,10 +530,10 @@ pub(crate) mod pkarr_dns_state {
     #[cfg(test)]
     mod tests {
         use iroh_base::NodeId;
-        use n0_snafu::TestResult;
+        use n0_snafu::Result;
 
         #[test]
-        fn test_node_id_from_domain_name() -> TestResult {
+        fn test_node_id_from_domain_name() -> Result {
             let name = "_iroh.dgjpkxyn3zyrk3zfads5duwdgbqpkwbjxfj4yt7rezidr3fijccy.dns.iroh.link.";
             let node_id = super::node_id_from_domain_name(name);
             let expected: NodeId =

@@ -194,7 +194,7 @@ mod tests {
 
     use bytes::Bytes;
     use iroh_base::SecretKey;
-    use n0_snafu::{TestResult, TestResultExt};
+    use n0_snafu::{Result, ResultExt};
     use tokio::io::DuplexStream;
     use tokio_util::codec::{Framed, FramedRead};
 
@@ -222,7 +222,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_clients() -> TestResult {
+    async fn test_clients() -> Result {
         let a_key = SecretKey::generate(rand::thread_rng()).public();
         let b_key = SecretKey::generate(rand::thread_rng()).public();
 

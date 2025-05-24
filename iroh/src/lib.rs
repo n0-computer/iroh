@@ -9,7 +9,7 @@
 //!
 //! ```no_run
 //! # use iroh::{Endpoint, NodeAddr};
-//! # async fn wrapper() -> n0_snafu::TestResult {
+//! # async fn wrapper() -> n0_snafu::Result {
 //! let addr: NodeAddr = todo!();
 //! let ep = Endpoint::builder().bind().await?;
 //! let conn = ep.connect(addr, b"my-alpn").await?;
@@ -23,7 +23,7 @@
 //!
 //! ```no_run
 //! # use iroh::{Endpoint, NodeAddr};
-//! # async fn wrapper() -> n0_snafu::TestResult {
+//! # async fn wrapper() -> n0_snafu::Result {
 //! let ep = Endpoint::builder()
 //!     .alpns(vec![b"my-alpn".to_vec()])
 //!     .bind()
@@ -158,7 +158,7 @@
 //!
 //! ```no_run
 //! use iroh::{Endpoint, NodeAddr};
-//! use n0_snafu::{TestResult as Result, TestResultExt};
+//! use n0_snafu::{Result as Result, ResultExt};
 //!
 //! async fn connect(addr: NodeAddr) -> Result<()> {
 //!     // The Endpoint is the central object that manages an iroh node.
@@ -184,7 +184,7 @@
 //! ```no_run
 //! use futures_lite::StreamExt;
 //! use iroh::{Endpoint, NodeAddr};
-//! use n0_snafu::{TestResult as Result, TestResultExt};
+//! use n0_snafu::{Result as Result, ResultExt};
 //!
 //! async fn accept() -> Result<()> {
 //!     // To accept connections at least one ALPN must be configured.

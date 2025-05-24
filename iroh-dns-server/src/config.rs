@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use n0_snafu::{TestResult as Result, TestResultExt};
+use n0_snafu::{Result, ResultExt};
 use serde::{Deserialize, Serialize};
 use tracing::info;
 

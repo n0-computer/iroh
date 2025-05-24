@@ -663,14 +663,14 @@ where
 #[cfg(test)]
 mod tests {
     use data_encoding::HEXLOWER;
-    use n0_snafu::{TestResult, TestResultExt};
+    use n0_snafu::{Result, ResultExt};
     use tokio_util::codec::{FramedRead, FramedWrite};
 
     use super::*;
 
     #[tokio::test]
     #[cfg(feature = "server")]
-    async fn test_basic_read_write() -> TestResult {
+    async fn test_basic_read_write() -> Result {
         let (reader, writer) = tokio::io::duplex(1024);
         let mut reader = FramedRead::new(reader, RelayCodec::test());
         let mut writer = FramedWrite::new(writer, RelayCodec::test());
@@ -690,7 +690,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_send_recv_client_key() -> TestResult {
+    async fn test_send_recv_client_key() -> Result {
         let (reader, writer) = tokio::io::duplex(1024);
         let mut reader = FramedRead::new(reader, RelayCodec::test());
         let mut writer = FramedWrite::new(writer, RelayCodec::test()).sink_map_err(SendError::from);
@@ -708,7 +708,7 @@ mod tests {
     }
 
     #[test]
-    fn test_frame_snapshot() -> TestResult {
+    fn test_frame_snapshot() -> Result {
         let client_key = SecretKey::from_bytes(&[42u8; 32]);
         let client_info = ClientInfo {
             version: PROTOCOL_VERSION,

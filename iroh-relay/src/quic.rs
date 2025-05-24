@@ -344,7 +344,7 @@ mod tests {
     use std::net::Ipv4Addr;
 
     use n0_future::{task::AbortOnDropHandle, time};
-    use n0_snafu::{TestError, TestResult, TestResultExt};
+    use n0_snafu::{Error, Result, ResultExt};
     use quinn::crypto::rustls::QuicServerConfig;
     use tokio::time::Instant;
     use tracing::{debug, info, info_span, Instrument};
@@ -358,7 +358,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn quic_endpoint_basic() -> TestResult {
+    async fn quic_endpoint_basic() -> Result {
         let host: Ipv4Addr = "127.0.0.1".parse().unwrap();
         // create a server config with self signed certificates
         let (_, server_config) = super::super::server::testing::self_signed_tls_certs_and_config();
@@ -393,7 +393,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_qad_client_closes_unresponsive_fast() -> TestResult {
+    async fn test_qad_client_closes_unresponsive_fast() -> Result {
         // create a client-side endpoint
         let client_endpoint =
             quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0))
@@ -445,7 +445,7 @@ mod tests {
     /// all packets on the server-side for 2 seconds.
     #[tokio::test]
     #[traced_test]
-    async fn test_qad_connect_delayed() -> TestResult {
+    async fn test_qad_connect_delayed() -> Result {
         // Create a socket for our QAD server.  We need the socket separately because we
         // need to pop off messages before we attach it to the Quinn Endpoint.
         let socket = tokio::net::UdpSocket::bind(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0))
@@ -497,7 +497,7 @@ mod tests {
                 let conn = incoming.await.context("incoming")?;
                 conn.closed().await;
                 server.wait_idle().await;
-                Ok::<_, TestError>(())
+                Ok::<_, Error>(())
             }
             .instrument(info_span!("server")),
         );

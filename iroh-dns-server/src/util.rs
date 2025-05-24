@@ -13,7 +13,7 @@ use hickory_server::proto::{
     },
     serialize::binary::BinDecodable,
 };
-use n0_snafu::{TestError, TestResult as Result, TestResultExt};
+use n0_snafu::{Error, Result, ResultExt};
 use pkarr::SignedPacket;
 
 #[derive(
@@ -68,14 +68,14 @@ impl From<pkarr::PublicKey> for PublicKeyBytes {
 }
 
 impl TryFrom<PublicKeyBytes> for pkarr::PublicKey {
-    type Error = TestError;
+    type Error = Error;
     fn try_from(value: PublicKeyBytes) -> Result<Self, Self::Error> {
         pkarr::PublicKey::try_from(&value.0).e()
     }
 }
 
 impl FromStr for PublicKeyBytes {
-    type Err = TestError;
+    type Err = Error;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Self::from_z32(s)
     }
@@ -89,7 +89,7 @@ impl AsRef<[u8; 32]> for PublicKeyBytes {
 
 pub fn signed_packet_to_hickory_message(signed_packet: &SignedPacket) -> Result<Message> {
     let encoded = signed_packet.encoded_packet();
-    let message = Message::from_bytes(&encoded).context("decode message")?;
+    let message = Message::from_bytes(&encoded).e()?;
     Ok(message)
 }
 

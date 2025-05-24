@@ -809,7 +809,7 @@ mod tests {
     use bytes::Bytes;
     use iroh_base::{PublicKey, SecretKey};
     use n0_future::{SinkExt, StreamExt};
-    use n0_snafu::{TestResult, TestResultExt};
+    use n0_snafu::{Result, ResultExt};
     use reqwest::Url;
     use snafu::whatever;
     use tracing::info;
@@ -851,7 +851,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_http_clients_and_server() -> TestResult {
+    async fn test_http_clients_and_server() -> Result {
         let a_key = SecretKey::generate(rand::thread_rng());
         let b_key = SecretKey::generate(rand::thread_rng());
 
@@ -960,7 +960,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_https_clients_and_server() -> TestResult {
+    async fn test_https_clients_and_server() -> Result {
         let a_key = SecretKey::generate(rand::thread_rng());
         let b_key = SecretKey::generate(rand::thread_rng());
 
@@ -1034,10 +1034,7 @@ mod tests {
         Ok(())
     }
 
-    async fn make_test_client(
-        client: tokio::io::DuplexStream,
-        key: &SecretKey,
-    ) -> TestResult<Conn> {
+    async fn make_test_client(client: tokio::io::DuplexStream, key: &SecretKey) -> Result<Conn> {
         let client = MaybeTlsStreamChained::Mem(client);
         let client = Conn::new_relay(client, KeyCache::test(), key).await?;
         Ok(client)
@@ -1045,7 +1042,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_server_basic() -> TestResult {
+    async fn test_server_basic() -> Result {
         info!("Create the server.");
         let service = RelayService::new(
             Default::default(),
@@ -1133,7 +1130,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_server_replace_client() -> TestResult {
+    async fn test_server_replace_client() -> Result {
         info!("Create the server.");
         let service = RelayService::new(
             Default::default(),

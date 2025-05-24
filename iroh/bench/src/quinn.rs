@@ -5,7 +5,7 @@ use std::{
 };
 
 use bytes::Bytes;
-use n0_snafu::{TestResult as Result, TestResultExt};
+use n0_snafu::{Result, ResultExt};
 use quinn::{
     crypto::rustls::QuicClientConfig, Connection, Endpoint, RecvStream, SendStream, TransportConfig,
 };
@@ -246,7 +246,7 @@ pub async fn server(endpoint: Endpoint, opt: Opt) -> Result<()> {
                 tokio::spawn(async move {
                     drain_stream(&mut recv_stream, opt.read_unordered).await?;
                     send_data_on_stream(&mut send_stream, opt.download_size).await?;
-                    Ok::<_, n0_snafu::TestError>(())
+                    Ok::<_, n0_snafu::Error>(())
                 });
             }
 

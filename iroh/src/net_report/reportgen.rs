@@ -1602,7 +1602,7 @@ impl<T: Future + Unpin> Future for MaybeFuture<T> {
 mod tests {
     use std::net::{Ipv4Addr, Ipv6Addr};
 
-    use n0_snafu::{TestResult, TestResultExt};
+    use n0_snafu::{Result, ResultExt};
     use tracing_test::traced_test;
 
     use super::{super::test_utils, *};
@@ -1859,7 +1859,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_measure_https_latency() -> TestResult {
+    async fn test_measure_https_latency() -> Result {
         let (server, relay) = test_utils::relay().await;
         let dns_resolver = dns::tests::resolver();
         tracing::info!(relay_url = ?relay.url , "RELAY_URL");
@@ -1880,7 +1880,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_quic_probe() -> TestResult {
+    async fn test_quic_probe() -> Result {
         let (server, relay) = test_utils::relay().await;
         let relay = Arc::new(relay);
         let client_config = iroh_relay::client::make_dangerous_client_config();

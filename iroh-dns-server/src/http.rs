@@ -14,7 +14,7 @@ use axum::{
     routing::get,
     Router,
 };
-use n0_snafu::{TestResult as Result, TestResultExt};
+use n0_snafu::{Result, ResultExt};
 use serde::{Deserialize, Serialize};
 use snafu::whatever;
 use tokio::{net::TcpListener, task::JoinSet};

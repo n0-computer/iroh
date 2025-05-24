@@ -950,7 +950,7 @@ mod tests {
     use std::net::Ipv4Addr;
 
     use bytes::BytesMut;
-    use n0_snafu::{TestResult, TestResultExt};
+    use n0_snafu::{Result, ResultExt};
     use netwatch::IpFamily;
     use tokio_util::sync::CancellationToken;
     use tracing::info;
@@ -1095,7 +1095,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_basic() -> TestResult {
+    async fn test_basic() -> Result {
         let (stun_addr, stun_stats, _cleanup_guard) =
             stun_utils::serve("127.0.0.1".parse().unwrap()).await.e()?;
 
@@ -1138,7 +1138,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_udp_blocked() -> TestResult {
+    async fn test_udp_blocked() -> Result {
         // Create a "STUN server", which will never respond to anything.  This is how UDP to
         // the STUN server being blocked will look like from the client's perspective.
         let blackhole = tokio::net::UdpSocket::bind("127.0.0.1:0").await.e()?;
@@ -1189,7 +1189,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_add_report_history_set_preferred_relay() -> TestResult {
+    async fn test_add_report_history_set_preferred_relay() -> Result {
         fn relay_url(i: u16) -> RelayUrl {
             format!("http://{i}.com").parse().unwrap()
         }
@@ -1370,7 +1370,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_hairpin() -> TestResult {
+    async fn test_hairpin() -> Result {
         // Hairpinning is initiated after we discover our own IPv4 socket address (IP +
         // port) via STUN, so the test needs to have a STUN server and perform STUN over
         // IPv4 first.  Hairpinning detection works by sending a STUN *request* to **our own

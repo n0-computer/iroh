@@ -54,7 +54,7 @@
 //!     Endpoint, SecretKey,
 //! };
 //!
-//! # async fn wrapper() -> n0_snafu::TestResult<()> {
+//! # async fn wrapper() -> n0_snafu::Result<()> {
 //! let secret_key = SecretKey::generate(rand::rngs::OsRng);
 //! let discovery = ConcurrentDiscovery::from_services(vec![
 //!     Box::new(PkarrPublisher::n0_dns(secret_key.clone())),
@@ -81,7 +81,7 @@
 //! # use iroh::discovery::ConcurrentDiscovery;
 //! # use iroh::SecretKey;
 //! #
-//! # async fn wrapper() -> n0_snafu::TestResult<()> {
+//! # async fn wrapper() -> n0_snafu::Result<()> {
 //! # let secret_key = SecretKey::generate(rand::rngs::OsRng);
 //! let discovery = ConcurrentDiscovery::from_services(vec![
 //!     Box::new(PkarrPublisher::n0_dns(secret_key.clone())),
@@ -607,7 +607,7 @@ mod tests {
     };
 
     use iroh_base::{NodeAddr, SecretKey};
-    use n0_snafu::{TestError, TestResult, TestResultExt};
+    use n0_snafu::{Error, Result, ResultExt};
     use quinn::{IdleTimeout, TransportConfig};
     use rand::Rng;
     use tokio_util::task::AbortOnDropHandle;
@@ -747,7 +747,7 @@ mod tests {
     /// This is a smoke test for our discovery mechanism.
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_discovery_simple_shared() -> TestResult {
+    async fn endpoint_discovery_simple_shared() -> Result {
         let disco_shared = TestDiscoveryShared::default();
         let (ep1, _guard1) = {
             let secret = SecretKey::generate(rand::thread_rng());
@@ -769,7 +769,7 @@ mod tests {
     /// This test adds an empty discovery which provides no addresses.
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_discovery_combined_with_empty() -> TestResult {
+    async fn endpoint_discovery_combined_with_empty() -> Result {
         let disco_shared = TestDiscoveryShared::default();
         let (ep1, _guard1) = {
             let secret = SecretKey::generate(rand::thread_rng());
@@ -803,7 +803,7 @@ mod tests {
     /// will connect successfully.
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_discovery_combined_with_empty_and_wrong() -> TestResult {
+    async fn endpoint_discovery_combined_with_empty_and_wrong() -> Result {
         let disco_shared = TestDiscoveryShared::default();
         let (ep1, _guard1) = {
             let secret = SecretKey::generate(rand::thread_rng());
@@ -830,7 +830,7 @@ mod tests {
     /// This test only has the "lying" discovery. It is here to make sure that this actually fails.
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_discovery_combined_wrong_only() -> TestResult {
+    async fn endpoint_discovery_combined_wrong_only() -> Result {
         let disco_shared = TestDiscoveryShared::default();
         let (ep1, _guard1) = {
             let secret = SecretKey::generate(rand::thread_rng());
@@ -864,7 +864,7 @@ mod tests {
     /// Connect should still succeed because the discovery service will be invoked (after a delay).
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_discovery_with_wrong_existing_addr() -> TestResult {
+    async fn endpoint_discovery_with_wrong_existing_addr() -> Result {
         let disco_shared = TestDiscoveryShared::default();
         let (ep1, _guard1) = {
             let secret = SecretKey::generate(rand::thread_rng());
@@ -889,7 +889,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_discovery_watch() -> TestResult {
+    async fn endpoint_discovery_watch() -> Result {
         let disco_shared = TestDiscoveryShared::default();
         let (ep1, _guard1) = {
             let secret = SecretKey::generate(rand::thread_rng());
@@ -936,7 +936,7 @@ mod tests {
     async fn new_endpoint(
         secret: SecretKey,
         disco: impl Discovery + 'static,
-    ) -> (Endpoint, AbortOnDropHandle<TestResult<()>>) {
+    ) -> (Endpoint, AbortOnDropHandle<Result<()>>) {
         let ep = Endpoint::builder()
             .secret_key(secret)
             .discovery(Box::new(disco))
@@ -958,7 +958,7 @@ mod tests {
                     connections.push(conn);
                 }
 
-                Ok::<_, TestError>(())
+                Ok::<_, Error>(())
             }
         });
 
@@ -973,7 +973,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_arc_discovery() -> TestResult {
+    async fn test_arc_discovery() -> Result {
         let discovery = Arc::new(EmptyDiscovery);
 
         let _ep = Endpoint::builder()
@@ -997,7 +997,7 @@ mod test_dns_pkarr {
     use iroh_base::{NodeAddr, SecretKey};
     use iroh_relay::{node_info::UserData, RelayMap};
     use n0_future::time::Duration;
-    use n0_snafu::{TestError, TestResult, TestResultExt};
+    use n0_snafu::{Error, Result, ResultExt};
     use tokio_util::task::AbortOnDropHandle;
     use tracing_test::traced_test;
 
@@ -1015,7 +1015,7 @@ mod test_dns_pkarr {
 
     #[tokio::test]
     #[traced_test]
-    async fn dns_resolve() -> TestResult<()> {
+    async fn dns_resolve() -> Result<()> {
         let origin = "testdns.example".to_string();
         let state = State::new(origin.clone());
         let (nameserver, _dns_drop_guard) = run_dns_server(state.clone())
@@ -1042,7 +1042,7 @@ mod test_dns_pkarr {
 
     #[tokio::test]
     #[traced_test]
-    async fn pkarr_publish_dns_resolve() -> TestResult<()> {
+    async fn pkarr_publish_dns_resolve() -> Result<()> {
         let origin = "testdns.example".to_string();
 
         let dns_pkarr_server = DnsPkarrServer::run_with_origin(origin.clone())
@@ -1084,7 +1084,7 @@ mod test_dns_pkarr {
 
     #[tokio::test]
     #[traced_test]
-    async fn pkarr_publish_dns_discover() -> TestResult<()> {
+    async fn pkarr_publish_dns_discover() -> Result<()> {
         let dns_pkarr_server = DnsPkarrServer::run().await.context("DnsPkarrServer run")?;
         let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
 
@@ -1106,7 +1106,7 @@ mod test_dns_pkarr {
     async fn ep_with_discovery(
         relay_map: &RelayMap,
         dns_pkarr_server: &DnsPkarrServer,
-    ) -> TestResult<(Endpoint, AbortOnDropHandle<TestResult<()>>)> {
+    ) -> Result<(Endpoint, AbortOnDropHandle<Result<()>>)> {
         let secret_key = SecretKey::generate(rand::thread_rng());
         let ep = Endpoint::builder()
             .relay_mode(RelayMode::Custom(relay_map.clone()))
@@ -1127,7 +1127,7 @@ mod test_dns_pkarr {
                     // Just accept incoming connections, but don't do anything with them.
                 }
 
-                Ok::<_, TestError>(())
+                Ok::<_, Error>(())
             }
         });
 

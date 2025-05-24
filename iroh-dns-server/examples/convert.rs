@@ -2,7 +2,7 @@ use std::str::FromStr;
 
 use clap::Parser;
 use iroh::NodeId;
-use n0_snafu::{TestResult as Result, TestResultExt};
+use n0_snafu::{Result, ResultExt};
 
 #[derive(Debug, Parser)]
 struct Cli {

@@ -6,7 +6,7 @@ use std::{
 };
 
 use clap::Parser;
-use n0_snafu::TestResult as Result;
+use n0_snafu::Result;
 use stats::Stats;
 use tokio::{
     runtime::{Builder, Runtime},

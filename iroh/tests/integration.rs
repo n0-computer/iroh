@@ -18,7 +18,7 @@ use n0_future::{
     time::{self, Duration},
     StreamExt,
 };
-use n0_snafu::{TestResult, TestResultExt};
+use n0_snafu::{Result, ResultExt};
 #[cfg(not(wasm_browser))]
 use tokio::test;
 use tracing::{info_span, Instrument};
@@ -33,7 +33,7 @@ use wasm_bindgen_test::wasm_bindgen_test as test;
 const ECHO_ALPN: &[u8] = b"echo";
 
 #[test]
-async fn simple_node_id_based_connection_transfer() -> TestResult {
+async fn simple_node_id_based_connection_transfer() -> Result {
     setup_logging();
 
     let client = Endpoint::builder().discovery_n0().bind().await?;
@@ -65,7 +65,7 @@ async fn simple_node_id_based_connection_transfer() -> TestResult {
                 tracing::info!("Closed with code: {code:?}");
             }
 
-            Ok::<_, n0_snafu::TestError>(())
+            Ok::<_, n0_snafu::Error>(())
         }
         .instrument(info_span!("server"))
     });

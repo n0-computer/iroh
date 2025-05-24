@@ -3528,7 +3528,7 @@ mod tests {
     use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
     use iroh_relay::RelayMap;
     use n0_future::{time, StreamExt};
-    use n0_snafu::{TestResult, TestResultExt};
+    use n0_snafu::{Result, ResultExt};
     use quinn::ServerConfig;
     use rand::{Rng, RngCore};
     use tokio::task::JoinSet;
@@ -3654,7 +3654,7 @@ mod tests {
     ///
     /// When the returned drop guard is dropped, the tasks doing this updating are stopped.
     #[instrument(skip_all)]
-    async fn mesh_stacks(stacks: Vec<MagicStack>) -> TestResult<JoinSet<()>> {
+    async fn mesh_stacks(stacks: Vec<MagicStack>) -> Result<JoinSet<()>> {
         /// Registers endpoint addresses of a node to all other nodes.
         fn update_direct_addrs(
             stacks: &[MagicStack],
@@ -3719,7 +3719,7 @@ mod tests {
     }
 
     #[instrument(skip_all, fields(me = %ep.endpoint.node_id().fmt_short()))]
-    async fn echo_receiver(ep: MagicStack, loss: ExpectedLoss) -> TestResult {
+    async fn echo_receiver(ep: MagicStack, loss: ExpectedLoss) -> Result {
         info!("accepting conn");
         let conn = ep.endpoint.accept().await.expect("no conn");
 
@@ -3767,7 +3767,7 @@ mod tests {
         dest_id: PublicKey,
         msg: &[u8],
         loss: ExpectedLoss,
-    ) -> TestResult {
+    ) -> Result {
         info!("connecting to {}", dest_id.fmt_short());
         let dest = NodeAddr::new(dest_id);
         let conn = ep.endpoint.connect(dest, ALPN).await?;
@@ -3859,7 +3859,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     #[traced_test]
-    async fn test_two_devices_roundtrip_quinn_magic() -> TestResult {
+    async fn test_two_devices_roundtrip_quinn_magic() -> Result {
         let m1 = MagicStack::new(RelayMode::Disabled).await;
         let m2 = MagicStack::new(RelayMode::Disabled).await;
 
@@ -3894,8 +3894,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_regression_network_change_rebind_wakes_connection_driver() -> n0_snafu::TestResult
-    {
+    async fn test_regression_network_change_rebind_wakes_connection_driver() -> n0_snafu::Result {
         let m1 = MagicStack::new(RelayMode::Disabled).await;
         let m2 = MagicStack::new(RelayMode::Disabled).await;
 
@@ -3914,7 +3913,7 @@ mod tests {
                     conn.closed().await;
                 }
 
-                Ok::<_, n0_snafu::TestError>(())
+                Ok::<_, n0_snafu::Error>(())
             }
         }));
 
@@ -3933,7 +3932,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     #[traced_test]
-    async fn test_two_devices_roundtrip_network_change() -> TestResult {
+    async fn test_two_devices_roundtrip_network_change() -> Result {
         time::timeout(
             Duration::from_secs(90),
             test_two_devices_roundtrip_network_change_impl(),
@@ -3944,7 +3943,7 @@ mod tests {
 
     /// Same structure as `test_two_devices_roundtrip_quinn_magic`, but interrupts regularly
     /// with (simulated) network changes.
-    async fn test_two_devices_roundtrip_network_change_impl() -> TestResult {
+    async fn test_two_devices_roundtrip_network_change_impl() -> Result {
         let m1 = MagicStack::new(RelayMode::Disabled).await;
         let m2 = MagicStack::new(RelayMode::Disabled).await;
 
@@ -4042,7 +4041,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     #[traced_test]
-    async fn test_two_devices_setup_teardown() -> TestResult {
+    async fn test_two_devices_setup_teardown() -> Result {
         for i in 0..10 {
             println!("-- round {i}");
             println!("setting up magic stack");
@@ -4156,10 +4155,7 @@ mod tests {
     ///
     /// Use [`magicsock_connect`] to establish connections.
     #[instrument(name = "ep", skip_all, fields(me = secret_key.public().fmt_short()))]
-    async fn magicsock_ep(
-        secret_key: SecretKey,
-        tls_auth: tls::Authentication,
-    ) -> TestResult<Handle> {
+    async fn magicsock_ep(secret_key: SecretKey, tls_auth: tls::Authentication) -> Result<Handle> {
         let quic_server_config = tls::TlsConfig::new(tls_auth, secret_key.clone())
             .make_server_config(vec![ALPN.to_vec()], true);
         let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
@@ -4196,7 +4192,7 @@ mod tests {
         addr: NodeIdMappedAddr,
         node_id: NodeId,
         tls_auth: tls::Authentication,
-    ) -> TestResult<quinn::Connection> {
+    ) -> Result<quinn::Connection> {
         // Endpoint::connect sets this, do the same to have similar behaviour.
         let mut transport_config = quinn::TransportConfig::default();
         transport_config.keep_alive_interval(Some(Duration::from_secs(1)));
@@ -4225,7 +4221,7 @@ mod tests {
         node_id: NodeId,
         transport_config: Arc<quinn::TransportConfig>,
         tls_auth: tls::Authentication,
-    ) -> TestResult<quinn::Connection> {
+    ) -> Result<quinn::Connection> {
         let alpns = vec![ALPN.to_vec()];
         let quic_client_config =
             tls::TlsConfig::new(tls_auth, ep_secret_key.clone()).make_client_config(alpns, true);
@@ -4283,7 +4279,7 @@ mod tests {
 
         // This needs an accept task
         let accept_task = tokio::spawn({
-            async fn accept(ep: quinn::Endpoint) -> TestResult<()> {
+            async fn accept(ep: quinn::Endpoint) -> Result<()> {
                 let incoming = ep.accept().await.context("no incoming")?;
                 let _conn = incoming
                     .accept()
@@ -4365,7 +4361,7 @@ mod tests {
 
         // We need a task to accept the connection.
         let accept_task = tokio::spawn({
-            async fn accept(ep: quinn::Endpoint) -> TestResult<()> {
+            async fn accept(ep: quinn::Endpoint) -> Result<()> {
                 let incoming = ep.accept().await.context("no incoming")?;
                 let conn = incoming
                     .accept()
@@ -4525,7 +4521,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_add_node_addr() -> TestResult {
+    async fn test_add_node_addr() -> Result {
         let stack = MagicStack::new(RelayMode::Default).await;
         let mut rng = rand::thread_rng();
 
