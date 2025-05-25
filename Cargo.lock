@@ -2532,6 +2532,7 @@ dependencies = [
  "rustls-pki-types",
  "rustls-webpki",
  "serde",
+ "serde_bytes",
  "serde_json",
  "sha1",
  "simdutf8",

@@ -12,24 +12,20 @@ use anyhow::{bail, Result};
 use bytes::{Bytes, BytesMut};
 use iroh_base::{NodeId, SecretKey};
 use n0_future::{time::Duration, Sink, Stream};
-use tokio::io::{AsyncRead, AsyncWrite};
 #[cfg(not(wasm_browser))]
 use tokio_util::codec::Framed;
 use tracing::debug;
 
 use super::KeyCache;
+use crate::protos::{
+    handshake,
+    relay::{ClientInfo, Frame, MAX_PACKET_SIZE, PROTOCOL_VERSION},
+};
 #[cfg(not(wasm_browser))]
 use crate::{
     client::streams::{MaybeTlsStream, MaybeTlsStreamChained, ProxyStream},
     protos::io::HandshakeIo,
     protos::relay::RelayCodec,
-};
-use crate::{
-    protos::{
-        handshake,
-        relay::{ClientInfo, Frame, MAX_PACKET_SIZE, PROTOCOL_VERSION},
-    },
-    ExportKeyingMaterial,
 };
 
 /// Error for sending messages to the relay server.

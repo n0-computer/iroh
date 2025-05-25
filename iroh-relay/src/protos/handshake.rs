@@ -30,7 +30,8 @@ pub struct ClientInfo {
     /// The client's public key, a.k.a. the `NodeId`
     pub public_key: PublicKey,
     /// A signature of the server challenge, serves as authentication.
-    pub signature: Signature,
+    #[serde(with = "serde_bytes")]
+    pub signature: [u8; 64],
     /// Part of the extracted key material, if that's what was signed.
     pub key_material_suffix: Option<[u8; 16]>,
     /// Supported versions/protocol features for version negotiation
@@ -65,6 +66,44 @@ impl<T: Stream<Item = Result<Bytes>> + Sink<Bytes, Error = anyhow::Error> + Unpi
 {
 }
 
+impl ServerChallenge {
+    /// TODO(matheus23): docs
+    pub fn new(mut rng: impl RngCore + CryptoRng) -> Self {
+        let mut challenge = [0u8; 16];
+        rng.fill_bytes(&mut challenge);
+        Self { challenge }
+    }
+
+    fn message_to_sign(&self) -> [u8; 32] {
+        blake3::derive_key(
+            "iroh-relay handshake v1 challenge signature",
+            &self.challenge,
+        )
+    }
+}
+
+impl ClientInfo {
+    /// TODO(matheus23): docs
+    pub fn new_from_challenge(secret_key: &SecretKey, challenge: &ServerChallenge) -> Self {
+        Self {
+            public_key: secret_key.public(),
+            key_material_suffix: None,
+            signature: secret_key.sign(&challenge.message_to_sign()).to_bytes(),
+            versions: vec![PROTOCOL_VERSION.to_vec()],
+        }
+    }
+
+    /// TODO(matheus23): docs
+    pub fn verify_from_challenge(&self, challenge: &ServerChallenge) -> bool {
+        self.public_key
+            .verify(
+                &challenge.message_to_sign(),
+                &Signature::from_bytes(&self.signature),
+            )
+            .is_ok()
+    }
+}
+
 /// TODO(matheus23) docs
 pub(crate) async fn clientside(
     io: &mut (impl BytesStreamSink + ExportKeyingMaterial),
@@ -80,15 +119,16 @@ pub(crate) async fn clientside(
     );
 
     if let Some(key_material) = key_material {
+        let message = blake3::derive_key(
+            "iroh-relay handshake v1 key material signature",
+            &key_material[..16],
+        );
         write_frame(
             io,
             CLIENT_INFO_TAG,
             ClientInfo {
                 public_key,
-                signature: secret_key.sign(&blake3::derive_key(
-                    "iroh-relay handshake v1 key material signature",
-                    &key_material[..16],
-                )),
+                signature: secret_key.sign(&message).to_bytes(),
                 key_material_suffix: Some(key_material[16..].try_into().expect("split right")),
                 versions: versions.clone(),
             },
@@ -110,15 +150,7 @@ pub(crate) async fn clientside(
     let (tag, frame) = if tag == SERVER_CHALLENGE_TAG {
         let challenge: ServerChallenge = postcard::from_bytes(&frame)?;
 
-        let client_info = ClientInfo {
-            public_key,
-            signature: secret_key.sign(&blake3::derive_key(
-                "iroh-relay handshake v1 challenge signature",
-                &challenge.challenge,
-            )),
-            key_material_suffix: None,
-            versions,
-        };
+        let client_info = ClientInfo::new_from_challenge(secret_key, &challenge);
         write_frame(io, CLIENT_INFO_TAG, client_info).await?;
 
         read_frame(
@@ -148,22 +180,15 @@ pub(crate) async fn clientside(
 #[cfg(feature = "server")]
 pub(crate) async fn serverside(
     io: &mut (impl BytesStreamSink + ExportKeyingMaterial),
-    mut rng: impl RngCore + CryptoRng,
+    rng: impl RngCore + CryptoRng,
 ) -> Result<ClientInfo> {
-    let mut challenge = [0u8; 16];
-    rng.fill_bytes(&mut challenge);
-
-    write_frame(io, SERVER_CHALLENGE_TAG, ServerChallenge { challenge }).await?;
+    let challenge = ServerChallenge::new(rng);
+    write_frame(io, SERVER_CHALLENGE_TAG, &challenge).await?;
 
     let (_, frame) = read_frame(io, &[CLIENT_INFO_TAG], time::Duration::from_secs(10)).await?;
     let client_info: ClientInfo = postcard::from_bytes(&frame)?;
 
-    let result = client_info.public_key.verify(
-        &blake3::derive_key("iroh-relay handshake v1 challenge signature", &challenge),
-        &client_info.signature,
-    );
-
-    if result.is_ok() {
+    if client_info.verify_from_challenge(&challenge) {
         write_frame(io, SERVER_CONFIRMS_CONNECTED_TAG, ServerConfirmsConnected).await?;
     } else {
         write_frame(io, SERVER_DENIES_CONNECTION_TAG, ServerDeniesConnection).await?;
@@ -209,7 +234,7 @@ async fn read_frame(
     Ok((tag, payload))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "server"))]
 mod tests {
     use bytes::BytesMut;
     use iroh_base::SecretKey;
@@ -218,6 +243,8 @@ mod tests {
     use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
     use crate::ExportKeyingMaterial;
+
+    use super::{ClientInfo, ServerChallenge};
 
     struct TestKeyingMaterial<IO> {
         shared_secret: Option<u64>,
@@ -297,7 +324,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg(feature = "server")]
     async fn simulate_handshake() -> TestResult {
         use anyhow::Context;
 
@@ -330,6 +356,33 @@ mod tests {
         .await?;
 
         println!("{client_info:#?}");
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_client_info_roundtrip() -> TestResult {
+        let secret_key = SecretKey::generate(rand::rngs::OsRng);
+        let challenge = ServerChallenge::new(rand::rngs::OsRng);
+        let client_info = ClientInfo::new_from_challenge(&secret_key, &challenge);
+
+        let bytes = postcard::to_allocvec(&client_info)?;
+        let decoded: ClientInfo = postcard::from_bytes(&bytes)?;
+
+        assert_eq!(client_info.public_key, decoded.public_key);
+        assert_eq!(client_info.key_material_suffix, decoded.key_material_suffix);
+        assert_eq!(client_info.signature, decoded.signature);
+        assert_eq!(client_info.versions, decoded.versions);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_challenge_verification() -> TestResult {
+        let secret_key = SecretKey::generate(rand::rngs::OsRng);
+        let challenge = ServerChallenge::new(rand::rngs::OsRng);
+        let client_info = ClientInfo::new_from_challenge(&secret_key, &challenge);
+        assert!(client_info.verify_from_challenge(&challenge));
 
         Ok(())
     }
