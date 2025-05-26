@@ -77,7 +77,6 @@ pub fn quic_config() -> QuicConfig {
 /// Creates a [`ServerConfig`] suitable for testing.
 ///
 /// - Relaying is enabled using [`relay_config`]
-/// - Stun is enabled using [`stun_config`]
 /// - QUIC addr discovery is disabled.
 /// - Metrics are not enabled.
 pub fn server_config() -> ServerConfig<()> {
