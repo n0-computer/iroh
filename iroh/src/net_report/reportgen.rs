@@ -158,6 +158,7 @@ pub enum ActorRunError {
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
+#[snafu(module)]
 pub enum ProbesError {
     #[snafu(display("Probe failed"))]
     ProbeFailure { source: ProbeError },
@@ -165,6 +166,8 @@ pub enum ProbesError {
     AllProbesFailed,
     #[snafu(display("Probe cancelled"))]
     Cancelled,
+    #[snafu(display("Probe timed out"))]
+    Timeout,
 }
 
 #[derive(Debug)]
@@ -203,9 +206,11 @@ impl Actor {
     async fn run_inner(self) -> Result<(), ActorRunError> {
         debug!("reportstate actor starting");
 
-        let probes_token = CancellationToken::new();
+        let mut probes = JoinSet::default();
 
-        let (mut probes, mut num_probes) = self.spawn_probes_task(probes_token.clone()).await;
+        let _probes_token = self.spawn_probes_task(&mut probes).await;
+        let mut num_probes = probes.len();
+
         let port_token = self.prepare_portmapper_task(&mut probes);
         let captive_token = self.prepare_captive_portal_task(&mut probes);
 
@@ -364,7 +369,7 @@ impl Actor {
     ///     failure permanent.  Probes in a probe set are essentially retries.
     ///   - Once there are [`ProbeReport`]s from enough nodes, all remaining probes are
     ///     aborted.  That is, the main actor loop stops polling them.
-    async fn spawn_probes_task(&self, token: CancellationToken) -> (JoinSet<ProbeFinished>, usize) {
+    async fn spawn_probes_task(&self, probes: &mut JoinSet<ProbeFinished>) -> CancellationToken {
         #[cfg(not(wasm_browser))]
         let if_state = interfaces::State::new().await;
         #[cfg(not(wasm_browser))]
@@ -386,94 +391,54 @@ impl Actor {
         };
         trace!(%plan, "probe plan");
 
-        // A collection of futures running probe sets.
-        let mut probes = JoinSet::default();
-        let mut num_probes = 0;
+        let token = CancellationToken::new();
+
         for probe_set in plan.iter() {
-            let mut set = JoinSet::default();
+            let set_token = token.child_token();
             for probe in probe_set {
                 let relay_node = probe.node().clone();
                 let probe = probe.clone();
+                let probe_token = set_token.child_token();
+                let set_token = set_token.clone();
 
-                #[cfg(not(wasm_browser))]
-                let socket_state = self.socket_state.clone();
-                let token = token.clone();
-                set.spawn(
-                    token
-                        .run_until_cancelled_owned(tokio::time::timeout(
-                            PROBES_TIMEOUT,
-                            run_probe(
-                                relay_node,
-                                probe.clone(),
-                                #[cfg(not(wasm_browser))]
-                                socket_state,
-                                #[cfg(any(test, feature = "test-utils"))]
-                                self.insecure_skip_relay_cert_verify,
-                            ),
-                        ))
-                        .instrument(debug_span!("run_probe", %probe)),
+                let fut = probe_token.run_until_cancelled_owned(tokio::time::timeout(
+                    PROBES_TIMEOUT,
+                    run_probe(
+                        relay_node,
+                        probe.clone(),
+                        #[cfg(not(wasm_browser))]
+                        self.socket_state.clone(),
+                        #[cfg(any(test, feature = "test-utils"))]
+                        self.insecure_skip_relay_cert_verify,
+                    ),
+                ));
+                probes.spawn(
+                    async move {
+                        let res = fut.await;
+                        let res = match res {
+                            Some(Ok(Ok(report))) => Ok(report),
+                            Some(Ok(Err(ProbeErrorWithProbe::Error(err, probe)))) => {
+                                warn!(?probe, "probe failed: {:#}", err);
+                                Err(probes_error::ProbeFailureSnafu {}.into_error(err))
+                            }
+                            Some(Ok(Err(ProbeErrorWithProbe::AbortSet(err, probe)))) => {
+                                debug!(?probe, "probe set aborted: {:#}", err);
+                                set_token.cancel();
+                                Err(probes_error::ProbeFailureSnafu {}.into_error(err))
+                            }
+                            Some(Err(tokio::time::error::Elapsed { .. })) => {
+                                Err(probes_error::TimeoutSnafu.build())
+                            }
+                            None => Err(probes_error::CancelledSnafu.build()),
+                        };
+                        ProbeFinished::Regular(res)
+                    }
+                    .instrument(debug_span!("run_probe", %probe)),
                 );
             }
-
-            // Add the probe set to all futures of probe sets.  Handle aborting a probe set
-            // if needed, only normal errors means the set continues.
-            num_probes += 1;
-            let token = token.clone();
-            probes.spawn(
-                async move {
-                    let res = token
-                        .run_until_cancelled_owned(async move {
-                            // Hack because ProbeSet is not it's own type yet.
-                            let mut probe_proto = None;
-                            while let Some(res) = set.join_next().await {
-                                match res {
-                                    Ok(Some(Ok(Ok(report)))) => {
-                                        return ProbeFinished::Regular(Ok(report));
-                                    }
-                                    Ok(Some(Ok(Err(ProbeErrorWithProbe::Error(err, probe))))) => {
-                                        probe_proto = Some(probe.proto());
-                                        warn!(?probe, "probe failed: {:#}", err);
-                                        continue;
-                                    }
-                                    Ok(Some(Ok(Err(ProbeErrorWithProbe::AbortSet(
-                                        err,
-                                        probe,
-                                    ))))) => {
-                                        debug!(?probe, "probe set aborted: {:#}", err);
-                                        set.abort_all();
-                                        return ProbeFinished::Regular(Err(
-                                            ProbeFailureSnafu {}.into_error(err)
-                                        ));
-                                    }
-                                    Ok(Some(Err(tokio::time::error::Elapsed { .. }))) => {
-                                        warn!("probe timed out");
-                                    }
-                                    Ok(None) => {
-                                        debug!("probe cancelled");
-                                    }
-                                    Err(err) => {
-                                        warn!("fatal probe set error, aborting: {:#}", err);
-                                    }
-                                }
-                            }
-                            warn!(?probe_proto, "no successful probes in ProbeSet");
-                            ProbeFinished::Regular(Err(AllProbesFailedSnafu.build()))
-                        })
-                        .await;
-
-                    match res {
-                        Some(res) => res,
-                        None => {
-                            debug!("probe cancelled");
-                            ProbeFinished::Regular(Err(CancelledSnafu.build()))
-                        }
-                    }
-                }
-                .instrument(info_span!("probe")),
-            );
         }
 
-        (probes, num_probes)
+        token
     }
 }
 

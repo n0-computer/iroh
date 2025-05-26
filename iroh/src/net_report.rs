@@ -229,8 +229,10 @@ impl Client {
                         ProbeFinished::Regular(probe) => match probe {
                             Ok(probe) => {
                                 report.update(&probe);
-                                if let Some(timeout) = self.have_enough_reports(enough_relays, &report) {
-                                    timeout_fut.as_mut().set_future(tokio::time::sleep(timeout));
+                                if timeout_fut.is_none() {
+                                    if let Some(timeout) = self.have_enough_reports(enough_relays, &report) {
+                                        timeout_fut.as_mut().set_future(tokio::time::sleep(timeout));
+                                    }
                                 }
                             }
                             Err(err) => {
