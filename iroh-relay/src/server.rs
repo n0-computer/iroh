@@ -869,7 +869,7 @@ mod tests {
     }
 
     fn dns_resolver() -> DnsResolver {
-        DnsResolver::new()
+        DnsResolver::default()
     }
 
     #[tokio::test]

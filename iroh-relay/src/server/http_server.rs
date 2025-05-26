@@ -840,8 +840,8 @@ mod tests {
 
     async fn create_test_client(key: SecretKey, server_url: Url) -> Result<(PublicKey, Client)> {
         let public_key = key.public();
-        let client =
-            ClientBuilder::new(server_url, key, DnsResolver::new()).insecure_skip_cert_verify(true);
+        let client = ClientBuilder::new(server_url, key, DnsResolver::default())
+            .insecure_skip_cert_verify(true);
         let client = client.connect().await?;
 
         Ok((public_key, client))

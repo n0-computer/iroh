@@ -54,7 +54,7 @@ async fn main() -> anyhow::Result<()> {
         DnsResolver::with_nameserver(addr)
     } else {
         match args.env {
-            Env::Staging | Env::Prod => DnsResolver::new(),
+            Env::Staging | Env::Prod => DnsResolver::default(),
             Env::Dev => {
                 DnsResolver::with_nameserver(DEV_DNS_SERVER.parse().expect("valid address"))
             }

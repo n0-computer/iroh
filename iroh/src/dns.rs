@@ -7,7 +7,9 @@
 //! See the [`node_info`](crate::node_info) module documentation for details on how
 //! iroh node records are structured.
 
-pub use iroh_relay::dns::{DnsResolver, N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING};
+pub use iroh_relay::dns::{
+    DnsResolver, Resolver, N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING,
+};
 
 #[cfg(test)]
 pub(crate) mod tests {
@@ -24,7 +26,7 @@ pub(crate) mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_dns_lookup_ipv4_ipv6() {
-        let resolver = DnsResolver::new();
+        let resolver = DnsResolver::default();
         let res: Vec<_> = resolver
             .lookup_ipv4_ipv6_staggered(NA_RELAY_HOSTNAME, TIMEOUT, STAGGERING_DELAYS)
             .await

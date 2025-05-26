@@ -3455,7 +3455,6 @@ mod tests {
     use super::*;
     use crate::{
         defaults::staging::{self, EU_RELAY_HOSTNAME},
-        dns::DnsResolver,
         tls,
         watcher::Watcher as _,
         Endpoint, RelayMode,
@@ -3477,7 +3476,7 @@ mod tests {
                 node_map: None,
                 discovery: None,
                 proxy_url: None,
-                dns_resolver: DnsResolver::new(),
+                dns_resolver: DnsResolver::default(),
                 server_config,
                 #[cfg(any(test, feature = "test-utils"))]
                 insecure_skip_relay_cert_verify: false,
@@ -4080,7 +4079,7 @@ mod tests {
         let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
         server_config.transport_config(Arc::new(quinn::TransportConfig::default()));
 
-        let dns_resolver = DnsResolver::new();
+        let dns_resolver = DnsResolver::default();
         let opts = Options {
             addr_v4: None,
             addr_v6: None,

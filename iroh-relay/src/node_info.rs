@@ -42,14 +42,11 @@ use std::{
 
 use anyhow::{anyhow, Result};
 #[cfg(not(wasm_browser))]
-use hickory_resolver::{proto::ProtoError, Name};
 use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
 #[cfg(not(wasm_browser))]
-use tracing::warn;
 use url::Url;
 
 #[cfg(not(wasm_browser))]
-use crate::{defaults::timeouts::DNS_TIMEOUT, dns::DnsResolver};
 
 /// The DNS name for the iroh TXT record.
 pub const IROH_TXT_NAME: &str = "_iroh";
@@ -349,8 +346,11 @@ impl NodeInfo {
 
     #[cfg(not(wasm_browser))]
     /// Parses a [`NodeInfo`] from a TXT records lookup.
-    pub fn from_txt_lookup(lookup: crate::dns::TxtLookup) -> Result<Self> {
-        let attrs = TxtAttrs::from_txt_lookup(lookup)?;
+    pub fn from_txt_lookup(
+        name: String,
+        lookup: impl Iterator<Item = crate::dns::TxtRecord>,
+    ) -> Result<Self> {
+        let attrs = TxtAttrs::from_txt_lookup(name, lookup)?;
         Ok(attrs.into())
     }
 
@@ -396,16 +396,13 @@ impl std::ops::DerefMut for NodeInfo {
 /// [`IROH_TXT_NAME`] and the second label to be a z32 encoded [`NodeId`]. Ignores
 /// subsequent labels.
 #[cfg(not(wasm_browser))]
-fn node_id_from_hickory_name(name: &hickory_resolver::proto::rr::Name) -> Option<NodeId> {
-    if name.num_labels() < 2 {
-        return None;
-    }
-    let mut labels = name.iter();
-    let label = std::str::from_utf8(labels.next().expect("num_labels checked")).ok()?;
+fn node_id_from_txt_name(name: &str) -> Option<NodeId> {
+    let mut labels = name.split(".");
+    let label = labels.next()?;
     if label != IROH_TXT_NAME {
         return None;
     }
-    let label = std::str::from_utf8(labels.next().expect("num_labels checked")).ok()?;
+    let label = labels.next()?;
     let node_id = NodeId::from_z32(label).ok()?;
     Some(node_id)
 }
@@ -482,32 +479,6 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         Ok(Self { attrs, node_id })
     }
 
-    #[cfg(not(wasm_browser))]
-    async fn lookup(resolver: &DnsResolver, name: Name) -> Result<Self> {
-        let name = ensure_iroh_txt_label(name)?;
-        let lookup = resolver.lookup_txt(name, DNS_TIMEOUT).await?;
-        let attrs = Self::from_txt_lookup(lookup)?;
-        Ok(attrs)
-    }
-
-    /// Looks up attributes by [`NodeId`] and origin domain.
-    #[cfg(not(wasm_browser))]
-    pub(crate) async fn lookup_by_id(
-        resolver: &DnsResolver,
-        node_id: &NodeId,
-        origin: &str,
-    ) -> Result<Self> {
-        let name = node_domain(node_id, origin)?;
-        TxtAttrs::lookup(resolver, name).await
-    }
-
-    /// Looks up attributes by DNS name.
-    #[cfg(not(wasm_browser))]
-    pub(crate) async fn lookup_by_name(resolver: &DnsResolver, name: &str) -> Result<Self> {
-        let name = Name::from_str(name)?;
-        TxtAttrs::lookup(resolver, name).await
-    }
-
     /// Returns the parsed attributes.
     pub(crate) fn attrs(&self) -> &BTreeMap<T, Vec<String>> {
         &self.attrs
@@ -544,43 +515,13 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
 
     /// Parses a TXT records lookup.
     #[cfg(not(wasm_browser))]
-    pub(crate) fn from_txt_lookup(lookup: crate::dns::TxtLookup) -> Result<Self> {
-        let queried_node_id = node_id_from_hickory_name(lookup.0.query().name())
+    pub(crate) fn from_txt_lookup(
+        name: String,
+        lookup: impl Iterator<Item = crate::dns::TxtRecord>,
+    ) -> Result<Self> {
+        let queried_node_id = node_id_from_txt_name(&name)
             .ok_or_else(|| anyhow!("invalid DNS answer: not a query for _iroh.z32encodedpubkey"))?;
-
-        let strings = lookup.0.as_lookup().record_iter().filter_map(|record| {
-            match node_id_from_hickory_name(record.name()) {
-                // Filter out only TXT record answers that match the node_id we searched for.
-                Some(n) if n == queried_node_id => match record.data().as_txt() {
-                    Some(txt) => Some(txt.to_string()),
-                    None => {
-                        warn!(
-                            ?queried_node_id,
-                            data = ?record.data(),
-                            "unexpected record type for DNS discovery query"
-                        );
-                        None
-                    }
-                },
-                Some(answered_node_id) => {
-                    warn!(
-                        ?queried_node_id,
-                        ?answered_node_id,
-                        "unexpected node ID answered for DNS query"
-                    );
-                    None
-                }
-                None => {
-                    warn!(
-                        ?queried_node_id,
-                        name = ?record.name(),
-                        "unexpected answer record name for DNS query"
-                    );
-                    None
-                }
-            }
-        });
-
+        let strings = lookup.map(|record| record.to_string());
         Self::from_strings(queried_node_id, strings)
     }
 
@@ -614,19 +555,18 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
 }
 
 #[cfg(not(wasm_browser))]
-fn ensure_iroh_txt_label(name: Name) -> Result<Name, ProtoError> {
-    if name.iter().next() == Some(IROH_TXT_NAME.as_bytes()) {
-        Ok(name)
+pub(crate) fn ensure_iroh_txt_label(name: String) -> String {
+    let mut parts = name.split(".");
+    if parts.next() == Some(IROH_TXT_NAME) {
+        name
     } else {
-        Name::parse(IROH_TXT_NAME, Some(&name))
+        [IROH_TXT_NAME, ".", &name].join(".")
     }
 }
 
 #[cfg(not(wasm_browser))]
-fn node_domain(node_id: &NodeId, origin: &str) -> Result<Name> {
-    let domain = format!("{}.{}", NodeId::to_z32(node_id), origin);
-    let domain = Name::from_str(&domain)?;
-    Ok(domain)
+pub(crate) fn node_domain(node_id: &NodeId, origin: &str) -> String {
+    format!("{}.{}", NodeId::to_z32(node_id), origin)
 }
 
 #[cfg(test)]
@@ -648,6 +588,7 @@ mod tests {
     use testresult::TestResult;
 
     use super::{NodeData, NodeIdExt, NodeInfo};
+    use crate::dns::TxtRecord;
 
     #[test]
     fn txt_attr_roundtrip() {
@@ -738,8 +679,11 @@ mod tests {
         ];
         let lookup = Lookup::new_with_max_ttl(query, Arc::new(records));
         let lookup = hickory_resolver::lookup::TxtLookup::from(lookup);
+        let lookup = lookup
+            .into_iter()
+            .map(|txt| TxtRecord::from_iter(txt.iter().cloned()));
 
-        let node_info = NodeInfo::from_txt_lookup(lookup.into())?;
+        let node_info = NodeInfo::from_txt_lookup(name.to_string(), lookup)?;
 
         let expected_node_info = NodeInfo::new(NodeId::from_str(
             "1992d53c02cdc04566e5c0edb1ce83305cd550297953a047a445ea3264b54b18",
