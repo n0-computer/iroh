@@ -179,10 +179,13 @@ pub(super) enum ProbeFinished {
 
 impl Actor {
     async fn run(&mut self) {
-        match self.run_inner().await {
-            Ok(()) => debug!("reportgen actor finished"),
-            Err(err) => {
-                warn!("reportgen failed: {:?}", err);
+        match tokio::time::timeout(OVERALL_REPORT_TIMEOUT, self.run_inner()).await {
+            Ok(Ok(())) => debug!("reportgen actor finished"),
+            Ok(Err(err)) => {
+                warn!("reportgen faile: {:?}", err);
+            }
+            Err(tokio::time::error::Elapsed { .. }) => {
+                warn!("reportgen timed out");
             }
         }
     }
@@ -203,63 +206,46 @@ impl Actor {
 
         let probes_token = CancellationToken::new();
 
-        let (mut probes, mut num_probes) = self
-            .spawn_probes_task(probes_token.clone(), PROBES_TIMEOUT)
-            .await;
-
+        let (mut probes, mut num_probes) = self.spawn_probes_task(probes_token.clone()).await;
         let port_token = self.prepare_portmapper_task(&mut probes);
         let captive_token = self.prepare_captive_portal_task(&mut probes);
-
-        let total_timer = time::sleep(OVERALL_REPORT_TIMEOUT);
-        tokio::pin!(total_timer);
 
         // any reports of working UDP/QUIC?
         let mut have_udp = false;
 
-        loop {
-            tokio::select! {
-                biased;
-                _ = &mut total_timer => {
-                    trace!("tick: total_timer expired");
-                    return Err(TimeoutSnafu.build());
-                }
+        // Check for probes finishing.
+        while let Some(set_result) = probes.join_next().await {
+            trace!("tick: probes done: {:?}", set_result);
+            match set_result {
+                Ok(report) => {
+                    #[cfg_attr(wasm_browser, allow(irrefutable_let_patterns))]
+                    if let ProbeFinished::Regular(report) = &report {
+                        have_udp |= report
+                            .as_ref()
+                            .map(|r| r.probe.is_udp())
+                            .unwrap_or_default();
+                        num_probes -= 1;
+                    }
+                    self.msg_tx.send(report).await.ok();
 
-                // Check for probes finishing.
-                set_result = probes.join_next() => {
-                    trace!("tick: probes done: {:?}", set_result);
-                    match set_result {
-                        Some(Ok(report)) => {
-                            #[cfg_attr(wasm_browser, allow(irrefutable_let_patterns))]
-                            if let ProbeFinished::Regular(report) = &report {
-                                have_udp |= report.as_ref().map(|r| r.probe.is_udp()).unwrap_or_default();
-                                num_probes -= 1;
-                            }
-                            self.msg_tx.send(report).await.ok();
+                    // TODO: check if we have enough probes and cancel them
 
+                    // If all probes are done & we have_udp cancel portmapper and captive
+                    if num_probes == 0 {
+                        debug!("all probes done");
+                        debug_assert!(probes.len() <= 2, "{} probes", probes.len());
 
-                            // TODO: check if we have enough probes and cancel them
-
-                            // If all probes are done & we have_udp cancel portmapper and captive
-                            if num_probes == 0 {
-                                debug!("all probes done");
-                                debug_assert!(probes.len() <= 2, "{} probes", probes.len());
-
-                                if have_udp {
-                                    port_token.cancel();
-                                    captive_token.cancel();
-                                }
-                            }
-                        }
-                        Some(Err(e)) => {
-                            warn!("probes task join error: {:?}", e);
-                        }
-                        None => {
-                            break;
+                        if have_udp {
+                            port_token.cancel();
+                            captive_token.cancel();
                         }
                     }
-                    trace!("tick: probes handled");
+                }
+                Err(e) => {
+                    warn!("probes task join error: {:?}", e);
                 }
             }
+            trace!("tick: probes handled");
         }
 
         Ok(())
@@ -383,7 +369,6 @@ impl Actor {
     async fn spawn_probes_task(
         &mut self,
         token: CancellationToken,
-        timeout: Duration,
     ) -> (JoinSet<ProbeFinished>, usize) {
         #[cfg(not(wasm_browser))]
         let if_state = interfaces::State::new().await;
@@ -421,7 +406,7 @@ impl Actor {
                 set.spawn(
                     token
                         .run_until_cancelled_owned(tokio::time::timeout(
-                            timeout,
+                            PROBES_TIMEOUT,
                             run_probe(
                                 relay_node,
                                 probe.clone(),
