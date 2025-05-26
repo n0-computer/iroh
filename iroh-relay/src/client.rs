@@ -24,9 +24,10 @@ use url::Url;
 
 pub use self::conn::{ReceivedMessage, RecvError, SendError, SendMessage};
 #[cfg(not(wasm_browser))]
-use crate::dns::{DnsResolver, Error as DnsError};
+use crate::dns::{DnsError, DnsResolver};
 use crate::{
     http::{Protocol, RELAY_PATH},
+    protos::relay::RelayProtoError,
     KeyCache,
 };
 
@@ -60,7 +61,7 @@ pub enum ConnectError {
         source: ws_stream_wasm::WsErr,
     },
     #[snafu(transparent)]
-    Handshake { source: crate::protos::relay::Error },
+    Handshake { source: RelayProtoError },
     #[snafu(transparent)]
     Dial { source: DialError },
     #[snafu(display("Unexpected status during upgrade: {code}"))]

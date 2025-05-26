@@ -37,7 +37,7 @@ pub trait Ticket: Sized {
     fn to_bytes(&self) -> Vec<u8>;
 
     /// Deserialize from the base32 string representation bytes.
-    fn from_bytes(bytes: &[u8]) -> Result<Self, Error>;
+    fn from_bytes(bytes: &[u8]) -> Result<Self, ParseError>;
 
     /// Serialize to string.
     fn serialize(&self) -> String {
@@ -47,7 +47,7 @@ pub trait Ticket: Sized {
     }
 
     /// Deserialize from a string.
-    fn deserialize(str: &str) -> Result<Self, Error> {
+    fn deserialize(str: &str) -> Result<Self, ParseError> {
         let expected = Self::KIND;
         let Some(rest) = str.strip_prefix(expected) else {
             return Err(KindSnafu { expected }.build());
@@ -67,7 +67,7 @@ pub trait Ticket: Sized {
 #[derive(Debug, Snafu)]
 #[allow(missing_docs)]
 #[snafu(visibility(pub(crate)))]
-pub enum Error {
+pub enum ParseError {
     /// Found a ticket of with the wrong prefix, indicating the wrong kind.
     #[snafu(display("wrong prefix, expected {expected}"))]
     Kind {

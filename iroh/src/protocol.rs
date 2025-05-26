@@ -101,7 +101,7 @@ pub struct RouterBuilder {
 
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
-pub enum Error {
+pub enum ProtocolError {
     #[snafu(transparent)]
     Connect {
         source: crate::endpoint::ConnectionError,
@@ -112,7 +112,7 @@ pub enum Error {
     },
 }
 
-impl Error {
+impl ProtocolError {
     /// Creates a new user error from an arbitrary error type.
     pub fn from_err<T: std::error::Error + Send + Sync + 'static>(value: T) -> Self {
         Self::User {
@@ -121,19 +121,19 @@ impl Error {
     }
 }
 
-impl From<std::io::Error> for Error {
+impl From<std::io::Error> for ProtocolError {
     fn from(err: std::io::Error) -> Self {
         Self::from_err(err)
     }
 }
 
-impl From<RemoteNodeIdError> for Error {
+impl From<RemoteNodeIdError> for ProtocolError {
     fn from(err: RemoteNodeIdError) -> Self {
         Self::from_err(err)
     }
 }
 
-impl From<quinn::ClosedStream> for Error {
+impl From<quinn::ClosedStream> for ProtocolError {
     fn from(err: quinn::ClosedStream) -> Self {
         Self::from_err(err)
     }
@@ -152,7 +152,10 @@ pub trait ProtocolHandler: Send + Sync + std::fmt::Debug + 'static {
     /// Optional interception point to handle the `Connecting` state.
     ///
     /// This enables accepting 0-RTT data from clients, among other things.
-    fn on_connecting(&self, connecting: Connecting) -> BoxFuture<Result<Connection, Error>> {
+    fn on_connecting(
+        &self,
+        connecting: Connecting,
+    ) -> BoxFuture<Result<Connection, ProtocolError>> {
         Box::pin(async move {
             let conn = connecting.await?;
             Ok(conn)
@@ -166,7 +169,7 @@ pub trait ProtocolHandler: Send + Sync + std::fmt::Debug + 'static {
     /// When [`Router::shutdown`] is called, no further connections will be accepted, and
     /// the futures returned by [`Self::accept`] will be aborted after the future returned
     /// from [`ProtocolHandler::shutdown`] completes.
-    fn accept(&self, connection: Connection) -> BoxFuture<Result<(), Error>>;
+    fn accept(&self, connection: Connection) -> BoxFuture<Result<(), ProtocolError>>;
 
     /// Called when the router shuts down.
     ///
@@ -178,11 +181,11 @@ pub trait ProtocolHandler: Send + Sync + std::fmt::Debug + 'static {
 }
 
 impl<T: ProtocolHandler> ProtocolHandler for Arc<T> {
-    fn on_connecting(&self, conn: Connecting) -> BoxFuture<Result<Connection, Error>> {
+    fn on_connecting(&self, conn: Connecting) -> BoxFuture<Result<Connection, ProtocolError>> {
         self.as_ref().on_connecting(conn)
     }
 
-    fn accept(&self, conn: Connection) -> BoxFuture<Result<(), Error>> {
+    fn accept(&self, conn: Connection) -> BoxFuture<Result<(), ProtocolError>> {
         self.as_ref().accept(conn)
     }
 
@@ -192,11 +195,11 @@ impl<T: ProtocolHandler> ProtocolHandler for Arc<T> {
 }
 
 impl<T: ProtocolHandler> ProtocolHandler for Box<T> {
-    fn on_connecting(&self, conn: Connecting) -> BoxFuture<Result<Connection, Error>> {
+    fn on_connecting(&self, conn: Connecting) -> BoxFuture<Result<Connection, ProtocolError>> {
         self.as_ref().on_connecting(conn)
     }
 
-    fn accept(&self, conn: Connection) -> BoxFuture<Result<(), Error>> {
+    fn accept(&self, conn: Connection) -> BoxFuture<Result<(), ProtocolError>> {
         self.as_ref().accept(conn)
     }
 
@@ -455,11 +458,11 @@ impl<P: ProtocolHandler + Clone> AccessLimit<P> {
 }
 
 impl<P: ProtocolHandler + Clone> ProtocolHandler for AccessLimit<P> {
-    fn on_connecting(&self, conn: Connecting) -> BoxFuture<Result<Connection, Error>> {
+    fn on_connecting(&self, conn: Connecting) -> BoxFuture<Result<Connection, ProtocolError>> {
         self.proto.on_connecting(conn)
     }
 
-    fn accept(&self, conn: Connection) -> BoxFuture<Result<(), Error>> {
+    fn accept(&self, conn: Connection) -> BoxFuture<Result<(), ProtocolError>> {
         let this = self.clone();
         Box::pin(async move {
             let remote = conn.remote_node_id()?;
@@ -469,7 +472,7 @@ impl<P: ProtocolHandler + Clone> ProtocolHandler for AccessLimit<P> {
                 return Err(std::io::Error::other("not allowed").into());
             }
             this.proto.accept(conn).await?;
-            Ok::<_, Error>(())
+            Ok::<_, ProtocolError>(())
         })
     }
 
@@ -511,7 +514,7 @@ mod tests {
     const ECHO_ALPN: &[u8] = b"/iroh/echo/1";
 
     impl ProtocolHandler for Echo {
-        fn accept(&self, connection: Connection) -> BoxFuture<Result<(), Error>> {
+        fn accept(&self, connection: Connection) -> BoxFuture<Result<(), ProtocolError>> {
             println!("accepting echo");
             Box::pin(async move {
                 let (mut send, mut recv) = connection.accept_bi().await?;
@@ -560,7 +563,7 @@ mod tests {
         const TEST_ALPN: &[u8] = b"/iroh/test/1";
 
         impl ProtocolHandler for TestProtocol {
-            fn accept(&self, connection: Connection) -> BoxFuture<Result<(), Error>> {
+            fn accept(&self, connection: Connection) -> BoxFuture<Result<(), ProtocolError>> {
                 let this = self.clone();
                 Box::pin(async move {
                     this.connections.lock().expect("poisoned").push(connection);

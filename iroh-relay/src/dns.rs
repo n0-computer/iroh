@@ -33,13 +33,16 @@ pub const N0_DNS_NODE_ORIGIN_STAGING: &str = "staging-dns.iroh.link";
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
 #[snafu(visibility(pub(crate)))]
-pub enum Error {
+pub enum DnsError {
     #[snafu(transparent)]
     Timeout { source: tokio::time::error::Elapsed },
     #[snafu(display("No response"))]
     NoResponse {},
     #[snafu(display("Resolve failed ipv4: {ipv4}, ipv6 {ipv6}"))]
-    ResolveBoth { ipv4: Box<Error>, ipv6: Box<Error> },
+    ResolveBoth {
+        ipv4: Box<DnsError>,
+        ipv6: Box<DnsError>,
+    },
     #[snafu(display("missing host"))]
     MissingHost {},
     #[snafu(transparent)]
@@ -49,7 +52,7 @@ pub enum Error {
     #[snafu(display("invalid DNS response: not a query for _iroh.z32encodedpubkey"))]
     InvalidResponse {},
     #[snafu(display("no calls succeeded: [{}]", errors.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("")))]
-    Staggered { errors: Vec<Error> },
+    Staggered { errors: Vec<DnsError> },
 }
 
 /// The DNS resolver used throughout `iroh`.
@@ -114,7 +117,7 @@ impl DnsResolver {
         &self,
         host: impl ToString,
         timeout: Duration,
-    ) -> Result<TxtLookup, Error> {
+    ) -> Result<TxtLookup, DnsError> {
         let host = host.to_string();
         let res = time::timeout(timeout, self.0.txt_lookup(host)).await??;
         Ok(TxtLookup(res))
@@ -125,7 +128,7 @@ impl DnsResolver {
         &self,
         host: impl ToString,
         timeout: Duration,
-    ) -> Result<impl Iterator<Item = IpAddr>, Error> {
+    ) -> Result<impl Iterator<Item = IpAddr>, DnsError> {
         let host = host.to_string();
         let addrs = time::timeout(timeout, self.0.ipv4_lookup(host)).await??;
         Ok(addrs.into_iter().map(|ip| IpAddr::V4(ip.0)))
@@ -136,7 +139,7 @@ impl DnsResolver {
         &self,
         host: impl ToString,
         timeout: Duration,
-    ) -> Result<impl Iterator<Item = IpAddr>, Error> {
+    ) -> Result<impl Iterator<Item = IpAddr>, DnsError> {
         let host = host.to_string();
         let addrs = time::timeout(timeout, self.0.ipv6_lookup(host)).await??;
         Ok(addrs.into_iter().map(|ip| IpAddr::V6(ip.0)))
@@ -151,7 +154,7 @@ impl DnsResolver {
         &self,
         host: impl ToString,
         timeout: Duration,
-    ) -> Result<impl Iterator<Item = IpAddr>, Error> {
+    ) -> Result<impl Iterator<Item = IpAddr>, DnsError> {
         let host = host.to_string();
         let res = tokio::join!(
             self.lookup_ipv4(host.clone(), timeout),
@@ -176,7 +179,7 @@ impl DnsResolver {
         url: &Url,
         prefer_ipv6: bool,
         timeout: Duration,
-    ) -> Result<IpAddr, Error> {
+    ) -> Result<IpAddr, DnsError> {
         let host = url.host().context(MissingHostSnafu)?;
         match host {
             url::Host::Domain(domain) => {
@@ -219,7 +222,7 @@ impl DnsResolver {
         host: impl ToString,
         timeout: Duration,
         delays_ms: &[u64],
-    ) -> Result<impl Iterator<Item = IpAddr>, Error> {
+    ) -> Result<impl Iterator<Item = IpAddr>, DnsError> {
         let host = host.to_string();
         let f = || self.lookup_ipv4(host.clone(), timeout);
         stagger_call(f, delays_ms)
@@ -238,7 +241,7 @@ impl DnsResolver {
         host: impl ToString,
         timeout: Duration,
         delays_ms: &[u64],
-    ) -> Result<impl Iterator<Item = IpAddr>, Error> {
+    ) -> Result<impl Iterator<Item = IpAddr>, DnsError> {
         let host = host.to_string();
         let f = || self.lookup_ipv6(host.clone(), timeout);
         stagger_call(f, delays_ms)
@@ -258,7 +261,7 @@ impl DnsResolver {
         host: impl ToString,
         timeout: Duration,
         delays_ms: &[u64],
-    ) -> Result<impl Iterator<Item = IpAddr>, Error> {
+    ) -> Result<impl Iterator<Item = IpAddr>, DnsError> {
         let host = host.to_string();
         let f = || self.lookup_ipv4_ipv6(host.clone(), timeout);
         stagger_call(f, delays_ms)

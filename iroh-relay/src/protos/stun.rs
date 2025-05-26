@@ -22,7 +22,7 @@ pub use stun_rs::{
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
-pub enum Error {
+pub enum StunError {
     /// The STUN message could not be parsed or is otherwise invalid.
     #[snafu(display("invalid message"))]
     InvalidMessage {},
@@ -84,7 +84,7 @@ pub fn is(b: &[u8]) -> bool {
 }
 
 /// Parses a STUN binding request.
-pub fn parse_binding_request(b: &[u8]) -> Result<TransactionId, Error> {
+pub fn parse_binding_request(b: &[u8]) -> Result<TransactionId, StunError> {
     let ctx = DecoderContextBuilder::default()
         .with_validation() // ensure fingerprint is validated
         .build();
@@ -112,7 +112,7 @@ pub fn parse_binding_request(b: &[u8]) -> Result<TransactionId, Error> {
 
 /// Parses a successful binding response STUN packet.
 /// The IP address is extracted from the XOR-MAPPED-ADDRESS attribute.
-pub fn parse_response(b: &[u8]) -> Result<(TransactionId, SocketAddr), Error> {
+pub fn parse_response(b: &[u8]) -> Result<(TransactionId, SocketAddr), StunError> {
     let decoder = MessageDecoder::default();
     let (msg, _) = decoder.decode(b).map_err(|_| InvalidMessageSnafu.build())?;
 

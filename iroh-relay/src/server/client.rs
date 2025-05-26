@@ -22,9 +22,14 @@ use tracing::{debug, error, instrument, trace, warn, Instrument};
 use crate::{
     protos::{
         disco,
-        relay::{write_frame, Frame, PING_INTERVAL},
+        relay::{write_frame, Frame, RelayProtoError, PING_INTERVAL},
     },
-    server::{clients::Clients, metrics::Metrics, streams::RelayedStream, ClientRateLimit},
+    server::{
+        clients::Clients,
+        metrics::Metrics,
+        streams::{RelayedStream, StreamError},
+        ClientRateLimit,
+    },
     PingTracker,
 };
 
@@ -192,14 +197,14 @@ pub enum HandleFrameError {
     #[snafu(transparent)]
     ForwardPacket { source: ForwardPacketError },
     #[snafu(transparent)]
-    Streams { source: super::streams::Error },
+    Streams { source: StreamError },
     #[snafu(display("Stream terminated"))]
     StreamTerminated {
         #[snafu(implicit)]
         span_trace: n0_snafu::SpanTrace,
     },
     #[snafu(transparent)]
-    Relay { source: super::protos::relay::Error },
+    Relay { source: RelayProtoError },
     #[snafu(display("Server issue: {problem:?}"))]
     Health {
         problem: Bytes,
@@ -232,7 +237,7 @@ pub enum RunError {
     },
     #[snafu(display("Failed to send disco packet"))]
     DiscoPacketSend {
-        source: crate::protos::relay::Error,
+        source: RelayProtoError,
         #[snafu(implicit)]
         span_trace: n0_snafu::SpanTrace,
     },
@@ -243,7 +248,7 @@ pub enum RunError {
     },
     #[snafu(display("Failed to send packet"))]
     PacketSend {
-        source: crate::protos::relay::Error,
+        source: RelayProtoError,
         #[snafu(implicit)]
         span_trace: n0_snafu::SpanTrace,
     },
@@ -254,13 +259,13 @@ pub enum RunError {
     },
     #[snafu(display("NodeGone write frame failed"))]
     NodeGoneWriteFrame {
-        source: crate::protos::relay::Error,
+        source: RelayProtoError,
         #[snafu(implicit)]
         span_trace: n0_snafu::SpanTrace,
     },
     #[snafu(display("Keep alive write frame failed"))]
     KeepAliveWriteFrame {
-        source: crate::protos::relay::Error,
+        source: RelayProtoError,
         #[snafu(implicit)]
         span_trace: n0_snafu::SpanTrace,
     },
@@ -403,7 +408,7 @@ impl Actor {
     /// Writes the given frame to the connection.
     ///
     /// Errors if the send does not happen within the `timeout` duration
-    async fn write_frame(&mut self, frame: Frame) -> Result<(), crate::protos::relay::Error> {
+    async fn write_frame(&mut self, frame: Frame) -> Result<(), RelayProtoError> {
         write_frame(&mut self.stream, frame, Some(self.timeout)).await
     }
 
@@ -411,7 +416,7 @@ impl Actor {
     ///
     /// Errors if the send does not happen within the `timeout` duration
     /// Does not flush.
-    async fn send_raw(&mut self, packet: Packet) -> Result<(), crate::protos::relay::Error> {
+    async fn send_raw(&mut self, packet: Packet) -> Result<(), RelayProtoError> {
         let src_key = packet.src;
         let content = packet.data;
 
@@ -422,7 +427,7 @@ impl Actor {
             .await
     }
 
-    async fn send_packet(&mut self, packet: Packet) -> Result<(), crate::protos::relay::Error> {
+    async fn send_packet(&mut self, packet: Packet) -> Result<(), RelayProtoError> {
         trace!("send packet");
         match self.send_raw(packet).await {
             Ok(()) => {
@@ -436,10 +441,7 @@ impl Actor {
         }
     }
 
-    async fn send_disco_packet(
-        &mut self,
-        packet: Packet,
-    ) -> Result<(), crate::protos::relay::Error> {
+    async fn send_disco_packet(&mut self, packet: Packet) -> Result<(), RelayProtoError> {
         trace!("send disco packet");
         match self.send_raw(packet).await {
             Ok(()) => {
@@ -456,7 +458,7 @@ impl Actor {
     /// Handles frame read results.
     async fn handle_frame(
         &mut self,
-        maybe_frame: Option<Result<Frame, super::streams::Error>>,
+        maybe_frame: Option<Result<Frame, StreamError>>,
     ) -> Result<(), HandleFrameError> {
         trace!(?maybe_frame, "handle incoming frame");
         let frame = match maybe_frame {
@@ -558,7 +560,7 @@ enum State {
         /// Future which will complete when the item can be yielded.
         delay: Pin<Box<dyn Future<Output = ()> + Send + Sync>>,
         /// Item to yield when the `delay` future completes.
-        item: Result<Frame, super::streams::Error>,
+        item: Result<Frame, StreamError>,
     },
     Ready,
 }
@@ -602,7 +604,7 @@ impl RateLimitedRelayedStream {
 }
 
 impl Stream for RateLimitedRelayedStream {
-    type Item = Result<Frame, super::streams::Error>;
+    type Item = Result<Frame, StreamError>;
 
     #[instrument(name = "rate_limited_relayed_stream", skip_all)]
     fn poll_next(

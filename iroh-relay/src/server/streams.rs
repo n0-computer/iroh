@@ -12,7 +12,7 @@ use tokio_util::codec::Framed;
 use tokio_websockets::WebSocketStream;
 
 use crate::{
-    protos::relay::{Frame, RelayCodec},
+    protos::relay::{Frame, RelayCodec, RelayProtoError},
     KeyCache,
 };
 
@@ -70,15 +70,15 @@ impl Sink<Frame> for RelayedStream {
 
 /// Relay stream errors
 #[derive(Debug, Snafu)]
-pub enum Error {
+pub enum StreamError {
     #[snafu(transparent)]
-    Proto { source: crate::protos::relay::Error },
+    Proto { source: RelayProtoError },
     #[snafu(transparent)]
     Ws { source: tokio_websockets::Error },
 }
 
 impl Stream for RelayedStream {
-    type Item = Result<Frame, Error>;
+    type Item = Result<Frame, StreamError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match *self {

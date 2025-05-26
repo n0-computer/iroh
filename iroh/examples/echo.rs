@@ -9,7 +9,7 @@
 use anyhow::Result;
 use iroh::{
     endpoint::Connection,
-    protocol::{Error as ProtocolError, ProtocolHandler, Router},
+    protocol::{ProtocolError, ProtocolHandler, Router},
     watcher::Watcher as _,
     Endpoint, NodeAddr,
 };

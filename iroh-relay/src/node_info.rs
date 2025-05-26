@@ -52,7 +52,7 @@ use url::Url;
 #[cfg(not(wasm_browser))]
 use crate::{
     defaults::timeouts::DNS_TIMEOUT,
-    dns::{DnsResolver, Error as DnsError},
+    dns::{DnsError, DnsResolver},
 };
 
 /// The DNS name for the iroh TXT record.

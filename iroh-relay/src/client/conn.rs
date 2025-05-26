@@ -23,7 +23,7 @@ use crate::protos::relay::{ClientInfo, Frame, MAX_PACKET_SIZE, PROTOCOL_VERSION}
 #[cfg(not(wasm_browser))]
 use crate::{
     client::streams::{MaybeTlsStream, MaybeTlsStreamChained, ProxyStream},
-    protos::relay::RelayCodec,
+    protos::relay::{RelayCodec, RelayProtoError},
 };
 
 /// Error for sending messages to the relay server.
@@ -63,7 +63,7 @@ pub enum RecvError {
     #[snafu(transparent)]
     Io { source: io::Error },
     #[snafu(transparent)]
-    Protocol { source: crate::protos::relay::Error },
+    Protocol { source: RelayProtoError },
     #[snafu(transparent)]
     Websocket {
         #[cfg(not(wasm_browser))]
@@ -133,7 +133,7 @@ impl Conn {
         conn: MaybeTlsStreamChained,
         key_cache: KeyCache,
         secret_key: &SecretKey,
-    ) -> Result<Self, crate::protos::relay::Error> {
+    ) -> Result<Self, RelayProtoError> {
         let conn = Framed::new(conn, RelayCodec::new(key_cache));
 
         let mut conn = Self::Relay { conn };
@@ -149,7 +149,7 @@ impl Conn {
         conn: tokio_websockets::WebSocketStream<MaybeTlsStream<ProxyStream>>,
         key_cache: KeyCache,
         secret_key: &SecretKey,
-    ) -> Result<Self, crate::protos::relay::Error> {
+    ) -> Result<Self, RelayProtoError> {
         let mut conn = Self::Ws { conn, key_cache };
 
         // exchange information with the server
@@ -163,7 +163,7 @@ impl Conn {
 async fn server_handshake(
     writer: &mut Conn,
     secret_key: &SecretKey,
-) -> Result<(), crate::protos::relay::Error> {
+) -> Result<(), RelayProtoError> {
     debug!("server_handshake: started");
     let client_info = ClientInfo {
         version: PROTOCOL_VERSION,
@@ -212,21 +212,6 @@ impl Stream for Conn {
                     Poll::Ready(Some(message))
                 }
                 Some(Err(e)) => Poll::Ready(Some(Err(e.into()))),
-                None => Poll::Ready(None),
-            },
-            #[cfg(wasm_browser)]
-            Self::WsBrowser {
-                ref mut conn,
-                ref key_cache,
-            } => match ready!(Pin::new(conn).poll_next(cx)) {
-                Some(ws_stream_wasm::WsMessage::Binary(vec)) => {
-                    let frame = Frame::decode_from_ws_msg(Bytes::from(vec), key_cache)?;
-                    Poll::Ready(Some(ReceivedMessage::try_from(frame)))
-                }
-                Some(msg) => {
-                    tracing::warn!(?msg, "Got websocket message of unsupported type, skipping.");
-                    Poll::Pending
-                }
                 None => Poll::Ready(None),
             },
         }

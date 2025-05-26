@@ -15,13 +15,13 @@ use hyper::{
 use iroh_base::PublicKey;
 use n0_future::{time::Elapsed, FutureExt, SinkExt};
 use nested_enum_utils::common_fields;
-use snafu::{Backtrace, Snafu};
+use snafu::{Backtrace, ResultExt, Snafu};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls_acme::AcmeAcceptor;
 use tokio_util::{codec::Framed, sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, debug_span, error, info, info_span, trace, warn, Instrument};
 
-use super::{clients::Clients, streams, AccessConfig, SpawnError};
+use super::{clients::Clients, streams::StreamError, AccessConfig, SpawnError};
 use crate::{
     defaults::{timeouts::SERVER_WRITE_TIMEOUT, DEFAULT_KEY_CACHE_CAPACITY},
     http::{Protocol, LEGACY_RELAY_PATH, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},
@@ -72,7 +72,7 @@ fn body_full(content: impl Into<hyper::body::Bytes>) -> BytesBody {
 }
 
 #[allow(clippy::result_large_err)]
-fn downcast_upgrade(upgraded: Upgraded) -> Result<(MaybeTlsStream, Bytes), Error> {
+fn downcast_upgrade(upgraded: Upgraded) -> Result<(MaybeTlsStream, Bytes), ConnectionHandlerError> {
     match upgraded.downcast::<hyper_util::rt::TokioIo<MaybeTlsStream>>() {
         Ok(parts) => Ok((parts.io.into_inner(), parts.read_buf)),
         Err(_) => Err(DowncastUpgradeSnafu.build()),
@@ -148,28 +148,14 @@ pub(super) struct TlsConfig {
     pub(super) acceptor: TlsAcceptor,
 }
 
-/// Server accept errors
+/// Errors when attempting to upgrade and
 #[common_fields({
     backtrace: Option<Backtrace>,
 })]
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
-pub enum Error {
-    #[snafu(display("Unable to receive client information"))]
-    RecvClientKey {
-        #[allow(clippy::result_large_err)]
-        source: streams::Error,
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
-    },
-    #[snafu(display("Could not downcast the upgraded connection to MaybeTlsStream"))]
-    DowncastUpgrade {
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
-    },
-    #[snafu(transparent)]
-    Io { source: std::io::Error },
+pub enum ServeConnectionError {
     #[snafu(display("TLS[acme] handshake"))]
     Handshake {
         source: std::io::Error,
@@ -189,20 +175,43 @@ pub enum Error {
         span_trace: n0_snafu::SpanTrace,
     },
     #[snafu(display("TLS[manual] accept"))]
-    Accept {
+    ManualAccept {
         source: std::io::Error,
         #[snafu(implicit)]
         span_trace: n0_snafu::SpanTrace,
     },
-    #[snafu(display("Cannot deal with buffered data yet: {buf:?}"))]
-    BufferNotEmpty {
-        buf: Bytes,
+    #[snafu(display("TLS[acme] accept"))]
+    LetsEncryptAccept {
+        source: std::io::Error,
         #[snafu(implicit)]
         span_trace: n0_snafu::SpanTrace,
     },
-    #[snafu(display("Client not authenticated: {key:?}"))]
-    ClientNotAuthenticated {
-        key: PublicKey,
+    #[snafu(display("HTTPS connection"))]
+    Https {
+        source: hyper::Error,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
+    #[snafu(display("HTTP connection"))]
+    Http {
+        source: hyper::Error,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
+}
+
+///
+#[common_fields({
+    backtrace: Option<Backtrace>,
+})]
+#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+pub enum AcceptError {
+    #[snafu(display("Unable to receive client information"))]
+    RecvClientKey {
+        #[allow(clippy::result_large_err)]
+        source: StreamError,
         #[snafu(implicit)]
         span_trace: n0_snafu::SpanTrace,
     },
@@ -210,6 +219,37 @@ pub enum Error {
     UnexpectedClientVersion {
         version: usize,
         expected_version: usize,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
+    #[snafu(transparent)]
+    Io { source: std::io::Error },
+    #[snafu(display("Client not authenticated: {key:?}"))]
+    ClientNotAuthenticated {
+        key: PublicKey,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
+}
+
+/// Server accept errors
+#[common_fields({
+    backtrace: Option<Backtrace>,
+})]
+#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+pub enum ConnectionHandlerError {
+    #[snafu(transparent)]
+    Accept { source: AcceptError },
+    #[snafu(display("Could not downcast the upgraded connection to MaybeTlsStream"))]
+    DowncastUpgrade {
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
+    #[snafu(display("Cannot deal with buffered data yet: {buf:?}"))]
+    BufferNotEmpty {
+        buf: Bytes,
         #[snafu(implicit)]
         span_trace: n0_snafu::SpanTrace,
     },
@@ -574,14 +614,15 @@ impl Inner {
         &self,
         protocol: Protocol,
         upgraded: Upgraded,
-    ) -> Result<(), Error> {
+    ) -> Result<(), ConnectionHandlerError> {
         debug!(?protocol, "relay_connection upgraded");
         let (io, read_buf) = downcast_upgrade(upgraded)?;
         if !read_buf.is_empty() {
             return Err(BufferNotEmptySnafu { buf: read_buf }.build());
         }
 
-        self.accept(protocol, io).await
+        self.accept(protocol, io).await?;
+        Ok(())
     }
 
     /// Adds a new connection to the server and serves it.
@@ -594,7 +635,7 @@ impl Inner {
     ///
     /// [`AsyncRead`]: tokio::io::AsyncRead
     /// [`AsyncWrite`]: tokio::io::AsyncWrite
-    async fn accept(&self, protocol: Protocol, io: MaybeTlsStream) -> Result<(), Error> {
+    async fn accept(&self, protocol: Protocol, io: MaybeTlsStream) -> Result<(), AcceptError> {
         use snafu::ResultExt;
 
         trace!(?protocol, "accept: start");
@@ -696,8 +737,6 @@ impl RelayService {
     ///
     /// If a `tls_config` is given, will serve the connection using HTTPS.
     async fn handle_connection(self, stream: TcpStream, tls_config: Option<TlsConfig>) {
-        use snafu::ResultExt;
-
         let res = match tls_config {
             Some(tls_config) => {
                 debug!("HTTPS: serve connection");
@@ -707,13 +746,24 @@ impl RelayService {
                 debug!("HTTP: serve connection");
                 self.serve_connection(MaybeTlsStream::Plain(stream))
                     .await
-                    .context(ServeConnectionSnafu)
+                    .context(HttpSnafu)
             }
         };
         match res {
             Ok(()) => {}
             Err(error) => match error {
-                Error::Io { source, .. } if source.kind() == std::io::ErrorKind::UnexpectedEof => {
+                ServeConnectionError::ManualAccept { source, .. }
+                | ServeConnectionError::LetsEncryptAccept { source, .. }
+                    if source.kind() == std::io::ErrorKind::UnexpectedEof =>
+                {
+                    debug!(reason=?source, "peer disconnected");
+                }
+                // From hyper: <https://github.com/hyperium/hyper/commit/271bba16672ff54a44e043c5cc1ae6b9345bb172>
+                // `hyper::Error::IncompleteMessage` is hyper's equivalent of UnexpectedEof
+                ServeConnectionError::Https { source, .. }
+                | ServeConnectionError::Http { source, .. }
+                    if source.is_incomplete_message() =>
+                {
                     debug!(reason=?source, "peer disconnected");
                 }
                 _ => {
@@ -728,32 +778,32 @@ impl RelayService {
         self,
         stream: TcpStream,
         tls_config: TlsConfig,
-    ) -> Result<(), Error> {
-        use snafu::ResultExt;
-
+    ) -> Result<(), ServeConnectionError> {
         let TlsConfig { acceptor, config } = tls_config;
         match acceptor {
-            TlsAcceptor::LetsEncrypt(a) => match a.accept(stream).await? {
-                None => {
-                    info!("TLS[acme]: received TLS-ALPN-01 validation request");
+            TlsAcceptor::LetsEncrypt(a) => {
+                match a.accept(stream).await.context(LetsEncryptAcceptSnafu)? {
+                    None => {
+                        info!("TLS[acme]: received TLS-ALPN-01 validation request");
+                    }
+                    Some(start_handshake) => {
+                        debug!("TLS[acme]: start handshake");
+                        let tls_stream = start_handshake
+                            .into_stream(config)
+                            .await
+                            .context(HandshakeSnafu)?;
+                        self.serve_connection(MaybeTlsStream::Tls(tls_stream))
+                            .await
+                            .context(HttpsSnafu)?;
+                    }
                 }
-                Some(start_handshake) => {
-                    debug!("TLS[acme]: start handshake");
-                    let tls_stream = start_handshake
-                        .into_stream(config)
-                        .await
-                        .context(HandshakeSnafu)?;
-                    self.serve_connection(MaybeTlsStream::Tls(tls_stream))
-                        .await
-                        .context(ServeConnectionSnafu)?;
-                }
-            },
+            }
             TlsAcceptor::Manual(a) => {
                 debug!("TLS[manual]: accept");
                 let tls_stream = tokio::time::timeout(Duration::from_secs(30), a.accept(stream))
                     .await
                     .context(TimeoutSnafu)?
-                    .context(AcceptSnafu)?;
+                    .context(ManualAcceptSnafu)?;
 
                 self.serve_connection(MaybeTlsStream::Tls(tls_stream))
                     .await

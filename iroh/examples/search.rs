@@ -35,7 +35,7 @@ use anyhow::Result;
 use clap::Parser;
 use iroh::{
     endpoint::Connection,
-    protocol::{Error as ProtocolError, ProtocolHandler, Router},
+    protocol::{ProtocolError, ProtocolHandler, Router},
     Endpoint, NodeId,
 };
 use n0_future::boxed::BoxFuture;
