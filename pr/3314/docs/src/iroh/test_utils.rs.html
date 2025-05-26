@@ -519,53 +519,17 @@
 <a href="#518" id="518">518</a>
 <a href="#519" id="519">519</a>
 <a href="#520" id="520">520</a>
-<a href="#521" id="521">521</a>
-<a href="#522" id="522">522</a>
-<a href="#523" id="523">523</a>
-<a href="#524" id="524">524</a>
-<a href="#525" id="525">525</a>
-<a href="#526" id="526">526</a>
-<a href="#527" id="527">527</a>
-<a href="#528" id="528">528</a>
-<a href="#529" id="529">529</a>
-<a href="#530" id="530">530</a>
-<a href="#531" id="531">531</a>
-<a href="#532" id="532">532</a>
-<a href="#533" id="533">533</a>
-<a href="#534" id="534">534</a>
-<a href="#535" id="535">535</a>
-<a href="#536" id="536">536</a>
-<a href="#537" id="537">537</a>
-<a href="#538" id="538">538</a>
-<a href="#539" id="539">539</a>
-<a href="#540" id="540">540</a>
-<a href="#541" id="541">541</a>
-<a href="#542" id="542">542</a>
-<a href="#543" id="543">543</a>
-<a href="#544" id="544">544</a>
-<a href="#545" id="545">545</a>
-<a href="#546" id="546">546</a>
-<a href="#547" id="547">547</a>
-<a href="#548" id="548">548</a>
-<a href="#549" id="549">549</a>
-<a href="#550" id="550">550</a>
-<a href="#551" id="551">551</a>
-<a href="#552" id="552">552</a></pre></div><pre class="rust"><code><span class="doccomment">//! Internal utilities to support testing.
+<a href="#521" id="521">521</a></pre></div><pre class="rust"><code><span class="doccomment">//! Internal utilities to support testing.
 </span><span class="kw">use </span>std::net::Ipv4Addr;
 
 <span class="kw">use </span>anyhow::Result;
 <span class="kw">pub use </span>dns_and_pkarr_servers::DnsPkarrServer;
 <span class="kw">use </span>iroh_base::RelayUrl;
 <span class="kw">use </span>iroh_relay::{
-    server::{
-        AccessConfig, CertConfig, QuicConfig, RelayConfig, Server, ServerConfig, StunConfig,
-        TlsConfig,
-    },
+    server::{AccessConfig, CertConfig, QuicConfig, RelayConfig, Server, ServerConfig, TlsConfig},
     RelayMap, RelayNode, RelayQuicConfig,
 };
 <span class="kw">use </span>tokio::sync::oneshot;
-
-<span class="kw">use </span><span class="kw">crate</span>::defaults::DEFAULT_STUN_PORT;
 
 <span class="doccomment">/// A drop guard to clean up test infrastructure.
 ///
@@ -577,32 +541,12 @@
 #[allow(dead_code)]
 </span><span class="kw">pub struct </span>CleanupDropGuard(<span class="kw">pub</span>(<span class="kw">crate</span>) oneshot::Sender&lt;()&gt;);
 
-<span class="doccomment">/// Runs a relay server with STUN and QUIC enabled suitable for tests.
+<span class="doccomment">/// Runs a relay server with QUIC enabled suitable for tests.
 ///
 /// The returned `Url` is the url of the relay server in the returned [`RelayMap`].
 /// When dropped, the returned [`Server`] does will stop running.
 </span><span class="kw">pub async fn </span>run_relay_server() -&gt; <span class="prelude-ty">Result</span>&lt;(RelayMap, RelayUrl, Server)&gt; {
-    run_relay_server_with(
-        <span class="prelude-val">Some</span>(StunConfig {
-            bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">0</span>).into(),
-        }),
-        <span class="bool-val">true</span>,
-    )
-    .<span class="kw">await
-</span>}
-
-<span class="doccomment">/// Runs a relay server with STUN enabled suitable for tests.
-///
-/// The returned `Url` is the url of the relay server in the returned [`RelayMap`].
-/// When dropped, the returned [`Server`] does will stop running.
-</span><span class="kw">pub async fn </span>run_relay_server_with_stun() -&gt; <span class="prelude-ty">Result</span>&lt;(RelayMap, RelayUrl, Server)&gt; {
-    run_relay_server_with(
-        <span class="prelude-val">Some</span>(StunConfig {
-            bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">0</span>).into(),
-        }),
-        <span class="bool-val">false</span>,
-    )
-    .<span class="kw">await
+    run_relay_server_with(<span class="bool-val">true</span>).<span class="kw">await
 </span>}
 
 <span class="doccomment">/// Runs a relay server.
@@ -614,10 +558,7 @@
 ///
 ///
 /// The return value is similar to [`run_relay_server`].
-</span><span class="kw">pub async fn </span>run_relay_server_with(
-    stun: <span class="prelude-ty">Option</span>&lt;StunConfig&gt;,
-    quic: bool,
-) -&gt; <span class="prelude-ty">Result</span>&lt;(RelayMap, RelayUrl, Server)&gt; {
+</span><span class="kw">pub async fn </span>run_relay_server_with(quic: bool) -&gt; <span class="prelude-ty">Result</span>&lt;(RelayMap, RelayUrl, Server)&gt; {
     <span class="kw">let </span>(certs, server_config) = iroh_relay::server::testing::self_signed_tls_certs_and_config();
 
     <span class="kw">let </span>tls = TlsConfig {
@@ -643,7 +584,6 @@
             access: AccessConfig::Everyone,
         }),
         quic,
-        stun,
         <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
         </span>metrics_addr: <span class="prelude-val">None</span>,
     };
@@ -655,8 +595,6 @@
         .map(|addr| RelayQuicConfig { port: addr.port() });
     <span class="kw">let </span>n: RelayMap = RelayNode {
         url: url.clone(),
-        stun_only: <span class="bool-val">false</span>,
-        stun_port: server.stun_addr().map_or(DEFAULT_STUN_PORT, |s| s.port()),
         quic,
     }
     .into();

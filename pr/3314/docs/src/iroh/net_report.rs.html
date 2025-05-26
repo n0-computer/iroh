@@ -644,9 +644,7 @@
 <a href="#643" id="643">643</a>
 <a href="#644" id="644">644</a>
 <a href="#645" id="645">645</a>
-<a href="#646" id="646">646</a>
-<a href="#647" id="647">647</a>
-<a href="#648" id="648">648</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
+<a href="#646" id="646">646</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
 //!
 //! NetReport is responsible for finding out the network conditions of the current host, like
 //! whether it is connected to the internet via IPv4 and/or IPv6, what the NAT situation is
@@ -1027,8 +1025,6 @@
         });
         <span class="kw">let </span>node_desc = RelayNode {
             url: server.https_url().expect(<span class="string">"should work as relay"</span>),
-            stun_only: <span class="bool-val">false</span>, <span class="comment">// the checks above and below guarantee both stun and relay
-            </span>stun_port: server.stun_addr().expect(<span class="string">"server should serve stun"</span>).port(),
             quic,
         };
 

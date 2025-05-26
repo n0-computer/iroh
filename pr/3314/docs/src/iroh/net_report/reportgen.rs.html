@@ -1011,22 +1011,7 @@
 <a href="#1010" id="1010">1010</a>
 <a href="#1011" id="1011">1011</a>
 <a href="#1012" id="1012">1012</a>
-<a href="#1013" id="1013">1013</a>
-<a href="#1014" id="1014">1014</a>
-<a href="#1015" id="1015">1015</a>
-<a href="#1016" id="1016">1016</a>
-<a href="#1017" id="1017">1017</a>
-<a href="#1018" id="1018">1018</a>
-<a href="#1019" id="1019">1019</a>
-<a href="#1020" id="1020">1020</a>
-<a href="#1021" id="1021">1021</a>
-<a href="#1022" id="1022">1022</a>
-<a href="#1023" id="1023">1023</a>
-<a href="#1024" id="1024">1024</a>
-<a href="#1025" id="1025">1025</a>
-<a href="#1026" id="1026">1026</a>
-<a href="#1027" id="1027">1027</a>
-<a href="#1028" id="1028">1028</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
+<a href="#1013" id="1013">1013</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
 //!
 //! It is implemented as an actor with [`Client`] as handle.
 //!
@@ -1055,11 +1040,7 @@
 <span class="kw">use </span>iroh_base::RelayUrl;
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">use </span>iroh_relay::dns::DnsResolver;
-<span class="kw">use </span>iroh_relay::{
-    defaults::{DEFAULT_RELAY_QUIC_PORT, DEFAULT_STUN_PORT},
-    http::RELAY_PROBE_PATH,
-    RelayMap, RelayNode,
-};
+<span class="kw">use </span>iroh_relay::{defaults::DEFAULT_RELAY_QUIC_PORT, http::RELAY_PROBE_PATH, RelayMap, RelayNode};
 <span class="attr">#[cfg(wasm_browser)]
 </span><span class="kw">use </span>n0_future::future::Pending;
 <span class="kw">use </span>n0_future::{
@@ -1217,10 +1198,10 @@
         <span class="kw">let </span>port_token = CancellationToken::new();
 
         <span class="kw">let </span>port_task = <span class="self">self</span>.prepare_portmapper_task();
-        <span class="kw">let </span><span class="kw-2">mut </span>port_done = !port_task.is_some();
+        <span class="kw">let </span><span class="kw-2">mut </span>port_done = port_task.is_none();
 
         <span class="kw">let </span>captive_task = <span class="self">self</span>.prepare_captive_portal_task();
-        <span class="kw">let </span><span class="kw-2">mut </span>captive_done = !captive_task.is_some();
+        <span class="kw">let </span><span class="kw-2">mut </span>captive_done = captive_task.is_none();
 
         <span class="kw">let </span><span class="kw-2">mut </span>port_mapping = <span class="macro">pin!</span>(port_token.clone().run_until_cancelled_owned(port_task));
         <span class="kw">let </span><span class="kw-2">mut </span>captive_task = <span class="macro">pin!</span>(captive_token
@@ -1241,6 +1222,13 @@
             <span class="kw">if </span>probes.is_empty() &amp;&amp; port_done &amp;&amp; captive_done {
                 <span class="macro">debug!</span>(<span class="string">"all tasks done"</span>);
                 <span class="kw">break</span>;
+            }
+
+            <span class="kw">if </span>probes.is_empty() {
+                <span class="macro">debug!</span>(
+                    <span class="string">"probes done, waiting for portmapper?: {}, captive: {}"</span>,
+                    port_done, captive_done
+                );
             }
 
             <span class="macro">tokio::select!</span> {
@@ -1276,7 +1264,7 @@
                 }
 
                 <span class="comment">// Check for probes finishing.
-                </span>set_result = probes.join_next() =&gt; {
+                </span>set_result = probes.join_next(), <span class="kw">if </span>!probes.is_empty() =&gt; {
                     <span class="macro">trace!</span>(<span class="string">"tick: probes done: {:?}"</span>, set_result);
                     <span class="kw">match </span>set_result {
                         <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(report))) =&gt; {
@@ -1625,14 +1613,21 @@
         <span class="attr">#[cfg(not(wasm_browser))]
         </span>Probe::QadIpv4 { <span class="kw-2">ref </span>node, .. } | Probe::QadIpv6 { <span class="kw-2">ref </span>node, .. } =&gt; {
             <span class="macro">debug!</span>(<span class="string">"sending QUIC address discovery probe"</span>);
-            <span class="kw">let </span>relay_addr = get_relay_addr(<span class="kw-2">&amp;</span>socket_state.dns_resolver, <span class="kw-2">&amp;</span>relay_node, probe.proto())
-                .<span class="kw">await
-                </span>.context(<span class="string">"no relay node addr"</span>)
-                .map_err(|e| ProbeError::AbortSet(e, probe.clone()))<span class="question-mark">?</span>;
-
-            <span class="kw">let </span>url = node.url.clone();
             <span class="kw">match </span>socket_state.quic_config {
                 <span class="prelude-val">Some</span>(quic_config) =&gt; {
+                    <span class="kw">let </span>relay_addr = <span class="kw">match </span>probe.proto() {
+                        ProbeProto::QadIpv4 =&gt; {
+                            get_relay_addr_ipv4(<span class="kw-2">&amp;</span>socket_state.dns_resolver, <span class="kw-2">&amp;</span>relay_node).<span class="kw">await
+                        </span>}
+                        ProbeProto::QadIpv6 =&gt; {
+                            get_relay_addr_ipv6(<span class="kw-2">&amp;</span>socket_state.dns_resolver, <span class="kw-2">&amp;</span>relay_node).<span class="kw">await
+                        </span>}
+                        <span class="kw">_ </span>=&gt; <span class="macro">unreachable!</span>(),
+                    }
+                    .context(<span class="string">"no relay node addr"</span>)
+                    .map_err(|e| ProbeError::AbortSet(e, probe.clone()))<span class="question-mark">?</span>;
+
+                    <span class="kw">let </span>url = node.url.clone();
                     result = run_quic_probe(
                         quic_config,
                         url,
@@ -1721,19 +1716,12 @@
 ) -&gt; <span class="prelude-ty">Result</span>&lt;bool&gt; {
     <span class="comment">// If we have a preferred relay node and we can use it for non-STUN requests, try that;
     // otherwise, pick a random one suitable for non-STUN requests.
-    </span><span class="kw">let </span>preferred_relay = preferred_relay.and_then(|url| <span class="kw">match </span>dm.get_node(<span class="kw-2">&amp;</span>url) {
-        <span class="prelude-val">Some</span>(node) <span class="kw">if </span>node.stun_only =&gt; <span class="prelude-val">Some</span>(url),
-        <span class="kw">_ </span>=&gt; <span class="prelude-val">None</span>,
-    });
+    </span><span class="kw">let </span>preferred_relay = preferred_relay.and_then(|url| dm.get_node(<span class="kw-2">&amp;</span>url).map(|<span class="kw">_</span>| url));
 
     <span class="kw">let </span>url = <span class="kw">match </span>preferred_relay {
         <span class="prelude-val">Some</span>(url) =&gt; url,
         <span class="prelude-val">None </span>=&gt; {
-            <span class="kw">let </span>urls: Vec&lt;<span class="kw">_</span>&gt; = dm
-                .nodes()
-                .filter(|n| !n.stun_only)
-                .map(|n| n.url.clone())
-                .collect();
+            <span class="kw">let </span>urls: Vec&lt;<span class="kw">_</span>&gt; = dm.nodes().map(|n| n.url.clone()).collect();
             <span class="kw">if </span>urls.is_empty() {
                 <span class="macro">debug!</span>(<span class="string">"No suitable relay node for captive portal check"</span>);
                 <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="bool-val">false</span>);
@@ -1796,54 +1784,36 @@
 }
 
 <span class="doccomment">/// Returns the proper port based on the protocol of the probe.
-</span><span class="kw">fn </span>get_port(relay_node: <span class="kw-2">&amp;</span>RelayNode, proto: <span class="kw-2">&amp;</span>ProbeProto) -&gt; <span class="prelude-ty">Result</span>&lt;u16&gt; {
-    <span class="kw">match </span>proto {
-        <span class="attr">#[cfg(not(wasm_browser))]
-        </span>ProbeProto::QadIpv4 | ProbeProto::QadIpv6 =&gt; {
-            <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>quic) = relay_node.quic {
-                <span class="kw">if </span>quic.port == <span class="number">0 </span>{
-                    <span class="prelude-val">Ok</span>(DEFAULT_RELAY_QUIC_PORT)
-                } <span class="kw">else </span>{
-                    <span class="prelude-val">Ok</span>(quic.port)
-                }
-            } <span class="kw">else </span>{
-                <span class="macro">bail!</span>(<span class="string">"Relay node not suitable for QUIC address discovery probes"</span>);
-            }
+</span><span class="kw">fn </span>get_quic_port(relay_node: <span class="kw-2">&amp;</span>RelayNode) -&gt; <span class="prelude-ty">Result</span>&lt;u16&gt; {
+    <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>quic) = relay_node.quic {
+        <span class="kw">if </span>quic.port == <span class="number">0 </span>{
+            <span class="prelude-val">Ok</span>(DEFAULT_RELAY_QUIC_PORT)
+        } <span class="kw">else </span>{
+            <span class="prelude-val">Ok</span>(quic.port)
         }
-        <span class="kw">_ </span>=&gt; {
-            <span class="kw">if </span>relay_node.stun_port == <span class="number">0 </span>{
-                <span class="prelude-val">Ok</span>(DEFAULT_STUN_PORT)
-            } <span class="kw">else </span>{
-                <span class="prelude-val">Ok</span>(relay_node.stun_port)
-            }
-        }
+    } <span class="kw">else </span>{
+        <span class="macro">bail!</span>(<span class="string">"Relay node not suitable for QUIC address discovery probes"</span>);
     }
 }
 
-<span class="doccomment">/// Returns the IP address to use to communicate to this relay node.
-///
-/// *proto* specifies the protocol of the probe.  Depending on the protocol we may return
-/// different results.  Obviously IPv4 vs IPv6 but a [`RelayNode`] may also have disabled
-/// some protocols.
-///
-/// If the protocol is `QuicIpv4` or `QuicIpv6`, and `IpMappedAddresses` is not `None`, we
-/// assume that we are running this net report with `iroh`, and need to provide mapped
-/// addresses to the probe in order for it to function in the specialize iroh-quinn
-/// endpoint that expects mapped addresses.
+<span class="doccomment">/// Returns the IP address to use to communicate to this relay node for quic.
 </span><span class="attr">#[cfg(not(wasm_browser))]
-</span><span class="kw">async fn </span>get_relay_addr(
+</span><span class="kw">async fn </span>get_relay_addr_ipv4(
     dns_resolver: <span class="kw-2">&amp;</span>DnsResolver,
     relay_node: <span class="kw-2">&amp;</span>RelayNode,
-    proto: ProbeProto,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;SocketAddr&gt; {
-    <span class="kw">let </span>port = get_port(relay_node, <span class="kw-2">&amp;</span>proto)<span class="question-mark">?</span>;
+    <span class="kw">let </span>port = get_quic_port(relay_node)<span class="question-mark">?</span>;
+    relay_lookup_ipv4_staggered(dns_resolver, relay_node, port).<span class="kw">await
+</span>}
 
-    <span class="kw">match </span>proto {
-        ProbeProto::QadIpv4 =&gt; relay_lookup_ipv4_staggered(dns_resolver, relay_node, port).<span class="kw">await</span>,
-        ProbeProto::QadIpv6 =&gt; relay_lookup_ipv6_staggered(dns_resolver, relay_node, port).<span class="kw">await</span>,
-        ProbeProto::Https =&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"Not implemented"</span>)),
-    }
-}
+<span class="attr">#[cfg(not(wasm_browser))]
+</span><span class="kw">async fn </span>get_relay_addr_ipv6(
+    dns_resolver: <span class="kw-2">&amp;</span>DnsResolver,
+    relay_node: <span class="kw-2">&amp;</span>RelayNode,
+) -&gt; <span class="prelude-ty">Result</span>&lt;SocketAddr&gt; {
+    <span class="kw">let </span>port = get_quic_port(relay_node)<span class="question-mark">?</span>;
+    relay_lookup_ipv6_staggered(dns_resolver, relay_node, port).<span class="kw">await
+</span>}
 
 <span class="doccomment">/// Do a staggared ipv4 DNS lookup based on [`RelayNode`]
 ///

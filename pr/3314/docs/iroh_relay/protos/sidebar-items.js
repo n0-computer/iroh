@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["disco","relay","stun"]};
+window.SIDEBAR_ITEMS = {"mod":["disco","relay"]};

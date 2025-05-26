@@ -5922,8 +5922,8 @@
 
     <span class="attr">#[tokio::test]
     #[traced_test]
-    </span><span class="kw">async fn </span>test_direct_addresses_no_stun_relay() {
-        <span class="kw">let </span>(relay_map, <span class="kw">_</span>, _guard) = run_relay_server_with(<span class="prelude-val">None</span>, <span class="bool-val">false</span>).<span class="kw">await</span>.unwrap();
+    </span><span class="kw">async fn </span>test_direct_addresses_no_qad_relay() {
+        <span class="kw">let </span>(relay_map, <span class="kw">_</span>, _guard) = run_relay_server_with(<span class="bool-val">false</span>).<span class="kw">await</span>.unwrap();
 
         <span class="kw">let </span>ep = Endpoint::builder()
             .alpns(<span class="macro">vec!</span>[TEST_ALPN.to_vec()])

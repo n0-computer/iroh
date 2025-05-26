@@ -1748,8 +1748,7 @@
 <a href="#1747" id="1747">1747</a>
 <a href="#1748" id="1748">1748</a>
 <a href="#1749" id="1749">1749</a>
-<a href="#1750" id="1750">1750</a>
-<a href="#1751" id="1751">1751</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#1750" id="1750">1750</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{btree_map::Entry, BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
@@ -1757,7 +1756,6 @@
 
 <span class="kw">use </span>data_encoding::HEXLOWER;
 <span class="kw">use </span>iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
-<span class="kw">use </span>iroh_relay::protos::stun;
 <span class="kw">use </span>n0_future::{
     task::{<span class="self">self</span>, AbortOnDropHandle},
     time::{<span class="self">self</span>, Duration, Instant},
@@ -1818,7 +1816,7 @@
     <span class="kw">pub </span>id: usize,
     <span class="kw">pub </span>dst: SendAddr,
     <span class="kw">pub </span>dst_node: NodeId,
-    <span class="kw">pub </span>tx_id: stun::TransactionId,
+    <span class="kw">pub </span>tx_id: stun_rs::TransactionId,
     <span class="kw">pub </span>purpose: DiscoPingPurpose,
 }
 
@@ -1865,7 +1863,7 @@
     /// The fallback/bootstrap path, if non-zero (non-zero for well-behaved clients).
     </span>relay_url: <span class="prelude-ty">Option</span>&lt;(RelayUrl, PathState)&gt;,
     udp_paths: NodeUdpPaths,
-    sent_pings: HashMap&lt;stun::TransactionId, SentPing&gt;,
+    sent_pings: HashMap&lt;stun_rs::TransactionId, SentPing&gt;,
     <span class="doccomment">/// Last time this node was used.
     ///
     /// A node is marked as in use when sending datagrams to them, or when having received
@@ -2180,7 +2178,7 @@
 
     <span class="doccomment">/// Cleanup the expired ping for the passed in txid.
     </span><span class="attr">#[instrument(<span class="string">"disco"</span>, skip_all, fields(node = %<span class="self">self</span>.node_id.fmt_short()))]
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>ping_timeout(<span class="kw-2">&amp;mut </span><span class="self">self</span>, txid: stun::TransactionId) {
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>ping_timeout(<span class="kw-2">&amp;mut </span><span class="self">self</span>, txid: stun_rs::TransactionId) {
         <span class="kw">if let </span><span class="prelude-val">Some</span>(sp) = <span class="self">self</span>.sent_pings.remove(<span class="kw-2">&amp;</span>txid) {
             <span class="macro">debug!</span>(tx = %HEXLOWER.encode(<span class="kw-2">&amp;</span>txid), addr = %sp.to, <span class="string">"pong not received in timeout"</span>);
             <span class="kw">match </span>sp.to {
@@ -2238,7 +2236,7 @@
             <span class="kw">return </span><span class="prelude-val">None</span>; <span class="comment">// Similar to `RelayOnly` mode, we don't send UDP pings for hole-punching.
         </span>}
 
-        <span class="kw">let </span>tx_id = stun::TransactionId::default();
+        <span class="kw">let </span>tx_id = stun_rs::TransactionId::default();
         <span class="macro">trace!</span>(tx = %HEXLOWER.encode(<span class="kw-2">&amp;</span>tx_id), %dst, <span class="question-mark">?</span>purpose,
                dst = %<span class="self">self</span>.node_id.fmt_short(), <span class="string">"start ping"</span>);
         <span class="macro">event!</span>(
@@ -2262,7 +2260,7 @@
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>ping_sent(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         to: SendAddr,
-        tx_id: stun::TransactionId,
+        tx_id: stun_rs::TransactionId,
         purpose: DiscoPingPurpose,
         sender: mpsc::Sender&lt;ActorMessage&gt;,
     ) {
@@ -2482,7 +2480,7 @@
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>handle_ping(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         path: SendAddr,
-        tx_id: stun::TransactionId,
+        tx_id: stun_rs::TransactionId,
     ) -&gt; PingHandled {
         <span class="kw">let </span>now = Instant::now();
 

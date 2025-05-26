@@ -87,34 +87,10 @@
 <a href="#86" id="86">86</a>
 <a href="#87" id="87">87</a>
 <a href="#88" id="88">88</a>
-<a href="#89" id="89">89</a>
-<a href="#90" id="90">90</a>
-<a href="#91" id="91">91</a>
-<a href="#92" id="92">92</a>
-<a href="#93" id="93">93</a>
-<a href="#94" id="94">94</a>
-<a href="#95" id="95">95</a>
-<a href="#96" id="96">96</a>
-<a href="#97" id="97">97</a>
-<a href="#98" id="98">98</a>
-<a href="#99" id="99">99</a>
-<a href="#100" id="100">100</a>
-<a href="#101" id="101">101</a>
-<a href="#102" id="102">102</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes functions to quickly configure a server suitable for testing.
+<a href="#89" id="89">89</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes functions to quickly configure a server suitable for testing.
 </span><span class="kw">use </span>std::net::Ipv4Addr;
 
-<span class="kw">use super</span>::{
-    AccessConfig, CertConfig, QuicConfig, RelayConfig, ServerConfig, StunConfig, TlsConfig,
-};
-
-<span class="doccomment">/// Creates a [`StunConfig`] suitable for testing.
-///
-/// To ensure port availability for testing, the port is configured to be assigned by the OS.
-</span><span class="kw">pub fn </span>stun_config() -&gt; StunConfig {
-    StunConfig {
-        bind_addr: (Ipv4Addr::LOCALHOST, <span class="number">0</span>).into(),
-    }
-}
+<span class="kw">use super</span>::{AccessConfig, CertConfig, QuicConfig, RelayConfig, ServerConfig, TlsConfig};
 
 <span class="doccomment">/// Creates a [`rustls::ServerConfig`] and certificates suitable for testing.
 ///
@@ -190,13 +166,11 @@
 <span class="doccomment">/// Creates a [`ServerConfig`] suitable for testing.
 ///
 /// - Relaying is enabled using [`relay_config`]
-/// - Stun is enabled using [`stun_config`]
 /// - QUIC addr discovery is disabled.
 /// - Metrics are not enabled.
 </span><span class="kw">pub fn </span>server_config() -&gt; ServerConfig&lt;()&gt; {
     ServerConfig {
         relay: <span class="prelude-val">Some</span>(relay_config()),
-        stun: <span class="prelude-val">Some</span>(stun_config()),
         quic: <span class="prelude-val">Some</span>(quic_config()),
         <span class="attr">#[cfg(feature = <span class="string">"metrics"</span>)]
         </span>metrics_addr: <span class="prelude-val">None</span>,

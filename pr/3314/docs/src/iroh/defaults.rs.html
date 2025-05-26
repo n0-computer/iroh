@@ -133,18 +133,7 @@
 <a href="#132" id="132">132</a>
 <a href="#133" id="133">133</a>
 <a href="#134" id="134">134</a>
-<a href="#135" id="135">135</a>
-<a href="#136" id="136">136</a>
-<a href="#137" id="137">137</a>
-<a href="#138" id="138">138</a>
-<a href="#139" id="139">139</a>
-<a href="#140" id="140">140</a>
-<a href="#141" id="141">141</a>
-<a href="#142" id="142">142</a>
-<a href="#143" id="143">143</a>
-<a href="#144" id="144">144</a>
-<a href="#145" id="145">145</a>
-<a href="#146" id="146">146</a></pre></div><pre class="rust"><code><span class="doccomment">//! Default values used in [`iroh`][`crate`]
+<a href="#135" id="135">135</a></pre></div><pre class="rust"><code><span class="doccomment">//! Default values used in [`iroh`][`crate`]
 
 /// The default QUIC port used by the Relay server to accept QUIC connections
 /// for QUIC address discovery
@@ -155,8 +144,7 @@
 ///
 /// The STUN port as defined by [RFC
 /// 8489](&lt;https://www.rfc-editor.org/rfc/rfc8489#section-18.6&gt;)
-</span><span class="kw">pub use </span>iroh_relay::defaults::DEFAULT_STUN_PORT;
-<span class="kw">use </span>url::Url;
+</span><span class="kw">use </span>url::Url;
 
 <span class="doccomment">/// The default HTTP port used by the Relay server.
 </span><span class="kw">pub const </span>DEFAULT_HTTP_PORT: u16 = <span class="number">80</span>;
@@ -197,8 +185,6 @@
             .expect(<span class="string">"default url"</span>);
         RelayNode {
             url: url.into(),
-            stun_only: <span class="bool-val">false</span>,
-            stun_port: DEFAULT_STUN_PORT,
             quic: <span class="prelude-val">Some</span>(RelayQuicConfig::default()),
         }
     }
@@ -211,8 +197,6 @@
             .expect(<span class="string">"default_url"</span>);
         RelayNode {
             url: url.into(),
-            stun_only: <span class="bool-val">false</span>,
-            stun_port: DEFAULT_STUN_PORT,
             quic: <span class="prelude-val">Some</span>(RelayQuicConfig::default()),
         }
     }
@@ -225,8 +209,6 @@
             .expect(<span class="string">"default_url"</span>);
         RelayNode {
             url: url.into(),
-            stun_only: <span class="bool-val">false</span>,
-            stun_port: DEFAULT_STUN_PORT,
             quic: <span class="prelude-val">Some</span>(RelayQuicConfig::default()),
         }
     }
@@ -260,8 +242,6 @@
             .expect(<span class="string">"default url"</span>);
         RelayNode {
             url: url.into(),
-            stun_only: <span class="bool-val">false</span>,
-            stun_port: DEFAULT_STUN_PORT,
             quic: <span class="prelude-val">Some</span>(RelayQuicConfig::default()),
         }
     }
@@ -274,8 +254,6 @@
             .expect(<span class="string">"default_url"</span>);
         RelayNode {
             url: url.into(),
-            stun_only: <span class="bool-val">false</span>,
-            stun_port: DEFAULT_STUN_PORT,
             quic: <span class="prelude-val">Some</span>(RelayQuicConfig::default()),
         }
     }

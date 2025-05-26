@@ -324,8 +324,7 @@
 <a href="#323" id="323">323</a>
 <a href="#324" id="324">324</a>
 <a href="#325" id="325">325</a>
-<a href="#326" id="326">326</a>
-<a href="#327" id="327">327</a></pre></div><pre class="rust"><code><span class="doccomment">//! The state kept for each network path to a remote node.
+<a href="#326" id="326">326</a></pre></div><pre class="rust"><code><span class="doccomment">//! The state kept for each network path to a remote node.
 
 </span><span class="kw">use </span>std::{
     collections::{BTreeMap, HashMap},
@@ -333,7 +332,6 @@
 };
 
 <span class="kw">use </span>iroh_base::NodeId;
-<span class="kw">use </span>iroh_relay::protos::stun;
 <span class="kw">use </span>n0_future::time::{Duration, Instant};
 <span class="kw">use </span>tracing::{debug, event, Level};
 
@@ -366,7 +364,7 @@
     <span class="doccomment">/// If non-zero, means that this was an endpoint that we learned about at runtime (from an
     /// incoming ping). If so, we keep the time updated and use it to discard old candidates.
     </span><span class="comment">// NOTE: tx_id Originally added in tailscale due to &lt;https://github.com/tailscale/tailscale/issues/7078&gt;.
-    </span>last_got_ping: <span class="prelude-ty">Option</span>&lt;(Instant, stun::TransactionId)&gt;,
+    </span>last_got_ping: <span class="prelude-ty">Option</span>&lt;(Instant, stun_rs::TransactionId)&gt;,
 
     <span class="doccomment">/// The time this endpoint was last advertised via a call-me-maybe DISCO message.
     </span><span class="kw">pub</span>(<span class="kw">super</span>) call_me_maybe_time: <span class="prelude-ty">Option</span>&lt;Instant&gt;,
@@ -434,7 +432,7 @@
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>with_ping(
         node_id: NodeId,
         path: SendAddr,
-        tx_id: stun::TransactionId,
+        tx_id: stun_rs::TransactionId,
         source: Source,
         now: Instant,
     ) -&gt; <span class="self">Self </span>{
@@ -566,7 +564,7 @@
         }
     }
 
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>handle_ping(<span class="kw-2">&amp;mut </span><span class="self">self</span>, tx_id: stun::TransactionId, now: Instant) -&gt; PingRole {
+    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>handle_ping(<span class="kw-2">&amp;mut </span><span class="self">self</span>, tx_id: stun_rs::TransactionId, now: Instant) -&gt; PingRole {
         <span class="kw">if </span><span class="prelude-val">Some</span>(<span class="kw-2">&amp;</span>tx_id) == <span class="self">self</span>.last_got_ping.as_ref().map(|(_t, tx_id)| tx_id) {
             PingRole::Duplicate
         } <span class="kw">else </span>{

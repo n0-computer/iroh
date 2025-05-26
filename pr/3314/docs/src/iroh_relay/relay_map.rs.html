@@ -158,25 +158,14 @@
 <a href="#157" id="157">157</a>
 <a href="#158" id="158">158</a>
 <a href="#159" id="159">159</a>
-<a href="#160" id="160">160</a>
-<a href="#161" id="161">161</a>
-<a href="#162" id="162">162</a>
-<a href="#163" id="163">163</a>
-<a href="#164" id="164">164</a>
-<a href="#165" id="165">165</a>
-<a href="#166" id="166">166</a>
-<a href="#167" id="167">167</a>
-<a href="#168" id="168">168</a>
-<a href="#169" id="169">169</a>
-<a href="#170" id="170">170</a>
-<a href="#171" id="171">171</a></pre></div><pre class="rust"><code><span class="doccomment">//! based on tailscale/tailcfg/derpmap.go
+<a href="#160" id="160">160</a></pre></div><pre class="rust"><code><span class="doccomment">//! based on tailscale/tailcfg/derpmap.go
 
 </span><span class="kw">use </span>std::{collections::BTreeMap, fmt, sync::Arc};
 
 <span class="kw">use </span>iroh_base::RelayUrl;
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 
-<span class="kw">use </span><span class="kw">crate</span>::defaults::{DEFAULT_RELAY_QUIC_PORT, DEFAULT_STUN_PORT};
+<span class="kw">use </span><span class="kw">crate</span>::defaults::DEFAULT_RELAY_QUIC_PORT;
 
 <span class="doccomment">/// Configuration of all the relay servers that can be used.
 </span><span class="attr">#[derive(Debug, Clone, PartialEq, Eq)]
@@ -287,15 +276,6 @@
 </span><span class="kw">pub struct </span>RelayNode {
     <span class="doccomment">/// The [`RelayUrl`] where this relay server can be dialed.
     </span><span class="kw">pub </span>url: RelayUrl,
-    <span class="doccomment">/// Whether this relay server should only be used for STUN requests.
-    ///
-    /// This essentially allows you to use a normal STUN server as a relay node, no relay
-    /// functionality is used.
-    </span><span class="kw">pub </span>stun_only: bool,
-    <span class="doccomment">/// The stun port of the relay server.
-    ///
-    /// Setting this to `0` means the default STUN port is used.
-    </span><span class="kw">pub </span>stun_port: u16,
     <span class="doccomment">/// Configuration to speak to the QUIC endpoint on the relay server.
     ///
     /// When `None`, we will not attempt to do QUIC address discovery
@@ -308,8 +288,6 @@
     <span class="kw">fn </span>from(value: RelayUrl) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{
             url: value,
-            stun_only: <span class="bool-val">false</span>,
-            stun_port: DEFAULT_STUN_PORT,
             quic: quic_config(),
         }
     }
