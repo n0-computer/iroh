@@ -33,17 +33,22 @@ async fn pingpong(
     proceed: impl Future<Output = bool>,
     x: u64,
 ) -> anyhow::Result<()> {
-    let (mut send, mut recv) = connection.open_bi().await?;
+    let (mut send, recv) = connection.open_bi().await?;
     let data = x.to_be_bytes();
     send.write_all(&data).await?;
     send.finish()?;
-    let echo = if proceed.await {
-        recv.read_to_end(8).await?
+    let mut recv = if proceed.await {
+        // use recv directly if we can proceed
+        recv
     } else {
-        let (mut send, mut recv) = connection.open_bi().await?;
+        // proceed returned false, so we have learned that the 0-RTT send was rejected.
+        // at this point we have a fully handshaked connection, so we try again.
+        let (mut send, recv) = connection.open_bi().await?;
         send.write_all(&data).await?;
-        recv.read_to_end(8).await?
+        send.finish()?;
+        recv
     };
+    let echo = recv.read_to_end(8).await?;
     anyhow::ensure!(echo == data);
     Ok(())
 }
@@ -129,16 +134,9 @@ async fn accept(_args: Args) -> anyhow::Result<()> {
         while let Some(incoming) = endpoint.accept().await {
             tokio::spawn(async move {
                 let connecting = incoming.accept()?;
-                let connection = match connecting.into_0rtt() {
-                    Ok((connection, _)) => {
-                        debug!("0rtt accepted");
-                        connection
-                    }
-                    Err(connecting) => {
-                        debug!("0rtt denied");
-                        connecting.await?
-                    }
-                };
+                let (connection, _zero_rtt_accepted) = connecting
+                    .into_0rtt()
+                    .expect("accept into 0.5 RTT always succeeds");
                 let (mut send, mut recv) = connection.accept_bi().await?;
                 trace!("recv.is_0rtt: {}", recv.is_0rtt());
                 let data = recv.read_to_end(8).await?;
