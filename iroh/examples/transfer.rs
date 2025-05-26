@@ -249,13 +249,17 @@ impl EndpointArgs {
         for local_endpoint in endpoint.direct_addresses().initialized().await? {
             println!("\t{} (type: {:?})", local_endpoint.addr, local_endpoint.typ)
         }
+
         if !self.no_relay {
-            let relay_url = endpoint
-                .home_relay()
-                .get()?
-                .pop()
-                .context("Failed to resolve our home relay")?;
-            println!("Our home relay server:\n\t{relay_url}");
+            let urls = endpoint.home_relay().get()?;
+            if urls.is_empty() {
+                println!("Unable to connect to a home relay");
+            } else {
+                println!("Our home relay server:");
+                for relay_url in urls {
+                    println!("\t- {relay_url}");
+                }
+            }
         }
 
         println!();
