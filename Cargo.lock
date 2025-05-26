@@ -2910,7 +2910,7 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.5.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=feat-interfaces#70c3df1d3f5e51d0622e636aabea54d1bd15d21a"
+source = "git+https://github.com/n0-computer/net-tools?branch=feat-interfaces#733e2e0d058ddaea2d5d94b278c689b432083e27"
 dependencies = [
  "atomic-waker",
  "bytes",
