@@ -965,11 +965,7 @@
 <a href="#964" id="964">964</a>
 <a href="#965" id="965">965</a>
 <a href="#966" id="966">966</a>
-<a href="#967" id="967">967</a>
-<a href="#968" id="968">968</a>
-<a href="#969" id="969">969</a>
-<a href="#970" id="970">970</a>
-<a href="#971" id="971">971</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
+<a href="#967" id="967">967</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
 //!
 //! It is implemented as an actor with [`Client`] as handle.
 //!
@@ -1066,7 +1062,7 @@
         <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))] </span>insecure_skip_relay_cert_verify: bool,
     ) -&gt; (<span class="self">Self</span>, mpsc::Receiver&lt;ProbeFinished&gt;) {
         <span class="kw">let </span>(msg_tx, msg_rx) = mpsc::channel(<span class="number">32</span>);
-        <span class="kw">let </span><span class="kw-2">mut </span>actor = Actor {
+        <span class="kw">let </span>actor = Actor {
             msg_tx,
             last_report,
             relay_map,
@@ -1076,8 +1072,7 @@
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>insecure_skip_relay_cert_verify,
         };
-        <span class="kw">let </span>task =
-            task::spawn(<span class="kw">async move </span>{ actor.run().<span class="kw">await </span>}.instrument(<span class="macro">info_span!</span>(<span class="string">"reportgen.actor"</span>)));
+        <span class="kw">let </span>task = task::spawn(actor.run().instrument(<span class="macro">info_span!</span>(<span class="string">"reportgen.actor"</span>)));
         (
             <span class="self">Self </span>{
                 _drop_guard: AbortOnDropHandle::new(task),
@@ -1122,11 +1117,11 @@
 }
 
 <span class="kw">impl </span>Actor {
-    <span class="kw">async fn </span>run(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+    <span class="kw">async fn </span>run(<span class="self">self</span>) {
         <span class="kw">match </span>tokio::time::timeout(OVERALL_REPORT_TIMEOUT, <span class="self">self</span>.run_inner()).<span class="kw">await </span>{
             <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(())) =&gt; <span class="macro">debug!</span>(<span class="string">"reportgen actor finished"</span>),
             <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err)) =&gt; {
-                <span class="macro">warn!</span>(<span class="string">"reportgen faile: {:?}"</span>, err);
+                <span class="macro">warn!</span>(<span class="string">"reportgen failed: {:?}"</span>, err);
             }
             <span class="prelude-val">Err</span>(tokio::time::error::Elapsed { .. }) =&gt; {
                 <span class="macro">warn!</span>(<span class="string">"reportgen timed out"</span>);
@@ -1145,7 +1140,7 @@
     ///   - Receives actor messages (sent by those futures).
     ///   - Updates the report, cancels unneeded futures.
     /// - Sends the report to the net_report actor.
-    </span><span class="kw">async fn </span>run_inner(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+    </span><span class="kw">async fn </span>run_inner(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="macro">debug!</span>(<span class="string">"reportstate actor starting"</span>);
 
         <span class="kw">let </span>probes_token = CancellationToken::new();
@@ -1200,7 +1195,7 @@
     <span class="doccomment">/// Creates the future which will perform the portmapper task.
     ///
     /// The returned future will run the portmapper, if enabled, resolving to it's result.
-    </span><span class="kw">fn </span>prepare_portmapper_task(<span class="kw-2">&amp;mut </span><span class="self">self</span>, tasks: <span class="kw-2">&amp;mut </span>JoinSet&lt;ProbeFinished&gt;) -&gt; CancellationToken {
+    </span><span class="kw">fn </span>prepare_portmapper_task(<span class="kw-2">&amp;</span><span class="self">self</span>, tasks: <span class="kw-2">&amp;mut </span>JoinSet&lt;ProbeFinished&gt;) -&gt; CancellationToken {
         <span class="kw">let </span>token = CancellationToken::new();
         <span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">if let </span><span class="prelude-val">Some</span>(port_mapper) = <span class="self">self</span>.socket_state.port_mapper.clone() {
@@ -1229,10 +1224,7 @@
     }
 
     <span class="doccomment">/// Creates the future which will perform the captive portal check.
-    </span><span class="kw">fn </span>prepare_captive_portal_task(
-        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-        tasks: <span class="kw-2">&amp;mut </span>JoinSet&lt;ProbeFinished&gt;,
-    ) -&gt; CancellationToken {
+    </span><span class="kw">fn </span>prepare_captive_portal_task(<span class="kw-2">&amp;</span><span class="self">self</span>, tasks: <span class="kw-2">&amp;mut </span>JoinSet&lt;ProbeFinished&gt;) -&gt; CancellationToken {
         <span class="kw">let </span>token = CancellationToken::new();
 
         <span class="comment">// If we're doing a full probe, also check for a captive portal. We
@@ -1312,7 +1304,7 @@
     ///   - Once there are [`ProbeReport`]s from enough nodes, all remaining probes are
     ///     aborted.  That is, the main actor loop stops polling them.
     </span><span class="kw">async fn </span>spawn_probes_task(
-        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
         token: CancellationToken,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(JoinSet&lt;ProbeFinished&gt;, usize)&gt; {
         <span class="attr">#[cfg(not(wasm_browser))]
