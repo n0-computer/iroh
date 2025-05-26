@@ -44,7 +44,7 @@ use netwatch::netmon;
 #[cfg(not(wasm_browser))]
 use netwatch::{ip::LocalAddresses, UdpSocket};
 use quinn::{AsyncUdpSocket, ServerConfig};
-use rand::{seq::SliceRandom, Rng, SeedableRng};
+use rand::Rng;
 use smallvec::SmallVec;
 use snafu::{ResultExt, Snafu};
 use tokio::sync::{mpsc, Mutex};
@@ -2154,8 +2154,9 @@ impl Actor {
         if let Some(ref mut r) = report {
             self.msock.ipv6_reported.store(r.ipv6, Ordering::Relaxed);
             if r.preferred_relay.is_none() {
-                // Perhaps UDP is blocked. Pick a deterministic but arbitrary one.
-                r.preferred_relay = self.pick_relay_fallback();
+                if let Some(my_relay) = self.msock.my_relay() {
+                    r.preferred_relay.replace(my_relay);
+                }
             }
 
             // Notify all transports
@@ -2164,36 +2165,6 @@ impl Actor {
 
         #[cfg(not(wasm_browser))]
         self.update_direct_addresses(report.as_ref());
-    }
-
-    /// Returns a deterministic relay node to connect to. This is only used if net_report
-    /// couldn't find the nearest one, for instance, if UDP is blocked and thus STUN
-    /// latency checks aren't working.
-    ///
-    /// If no the [`RelayMap`] is empty, returns `0`.
-    fn pick_relay_fallback(&self) -> Option<RelayUrl> {
-        // TODO: figure out which relay node most of our nodes are using,
-        // and use that region as our fallback.
-        //
-        // If we already had selected something in the past and it has any
-        // nodes, we want to stay on it. If there are no nodes at all,
-        // stay on whatever relay we previously picked. If we need to pick
-        // one and have no node info, pick a node randomly.
-        //
-        // We used to do the above for legacy clients, but never updated it for disco.
-
-        let my_relay = self.msock.my_relay();
-        if my_relay.is_some() {
-            return my_relay;
-        }
-
-        let ids = self
-            .direct_addr_update_state
-            .relay_map
-            .urls()
-            .collect::<Vec<_>>();
-        let mut rng = rand::rngs::StdRng::seed_from_u64(0);
-        ids.choose(&mut rng).map(|c| (*c).clone())
     }
 
     /// Resets the preferred address for all nodes.
