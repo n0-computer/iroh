@@ -2817,8 +2817,8 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_direct_addresses_no_stun_relay() -> Result {
-        let (relay_map, _, _guard) = run_relay_server_with(None, false).await?;
+    async fn test_direct_addresses_no_qad_relay() -> Result {
+        let (relay_map, _, _guard) = run_relay_server_with(false).await.unwrap();
 
         let ep = Endpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])

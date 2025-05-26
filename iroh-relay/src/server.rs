@@ -14,7 +14,6 @@
 //! - HTTPS `/relay`: The main URL endpoint to which clients connect and sends traffic over.
 //! - HTTPS `/ping`: Used for net_report probes.
 //! - HTTPS `/generate_204`: Used for net_report probes.
-//! - STUN: UDP port for STUN requests/responses.
 
 use std::{fmt, future::Future, net::SocketAddr, num::NonZeroU32, pin::Pin, sync::Arc};
 
@@ -31,16 +30,15 @@ use n0_future::{future::Boxed, StreamExt};
 use nested_enum_utils::common_fields;
 use snafu::{Backtrace, ResultExt, Snafu};
 use tokio::{
-    net::{TcpListener, UdpSocket},
+    net::TcpListener,
     task::{JoinError, JoinSet},
 };
 use tokio_util::task::AbortOnDropHandle;
-use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
+use tracing::{debug, error, info, info_span, instrument, Instrument};
 
 use crate::{
     defaults::DEFAULT_KEY_CACHE_CAPACITY,
     http::RELAY_PROBE_PATH,
-    protos,
     quic::server::{QuicServer, QuicSpawnError, ServerHandle as QuicServerHandle},
 };
 
@@ -82,7 +80,7 @@ fn body_empty() -> BytesBody {
     http_body_util::Full::new(hyper::body::Bytes::new())
 }
 
-/// Configuration for the full Relay & STUN server.
+/// Configuration for the full Relay.
 ///
 /// Be aware the generic parameters are for when using the Let's Encrypt TLS configuration.
 /// If not used dummy ones need to be provided, e.g. `ServerConfig::<(), ()>::default()`.
@@ -90,8 +88,6 @@ fn body_empty() -> BytesBody {
 pub struct ServerConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
     /// Configuration for the Relay server, disabled if `None`.
     pub relay: Option<RelayConfig<EC, EA>>,
-    /// Configuration for the STUN server, disabled if `None`.
-    pub stun: Option<StunConfig>,
     /// Configuration for the QUIC server, disabled if `None`.
     pub quic: Option<QuicConfig>,
     /// Socket to serve metrics on.
@@ -156,15 +152,6 @@ pub enum Access {
     Allow,
     /// Access is denied.
     Deny,
-}
-
-/// Configuration for the STUN server.
-#[derive(Debug)]
-pub struct StunConfig {
-    /// The socket address on which the STUN server should bind.
-    ///
-    /// Normally you'd chose port `3478`, see [`crate::defaults::DEFAULT_STUN_PORT`].
-    pub bind_addr: SocketAddr,
 }
 
 /// Configuration for the QUIC server.
@@ -250,8 +237,6 @@ pub enum CertConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
 pub struct Server {
     /// The address of the HTTP server, if configured.
     http_addr: Option<SocketAddr>,
-    /// The address of the STUN server, if configured.
-    stun_addr: Option<SocketAddr>,
     /// The address of the HTTPS server, if the relay server is using TLS.
     ///
     /// If the Relay server is not using TLS then it is served from the
@@ -346,30 +331,6 @@ impl Server {
                 .instrument(info_span!("metrics-server")),
             );
         }
-
-        // Start the STUN server.
-        let stun_addr = match config.stun {
-            Some(stun) => {
-                debug!("Starting STUN server");
-                match UdpSocket::bind(stun.bind_addr).await {
-                    Ok(sock) => {
-                        let addr = sock.local_addr().context(LocalAddrSnafu)?;
-                        info!("STUN server listening on {addr}");
-                        let stun_metrics = metrics.stun.clone();
-                        tasks.spawn(
-                            async move {
-                                server_stun_listener(sock, stun_metrics).await;
-                                Ok(())
-                            }
-                            .instrument(info_span!("stun-server", %addr)),
-                        );
-                        Some(addr)
-                    }
-                    Err(err) => return Err(err).context(UdpSocketBindSnafu),
-                }
-            }
-            None => None,
-        };
 
         // Start the Relay server, but first clone the certs out.
         let certificates = config.relay.as_ref().and_then(|relay| {
@@ -491,7 +452,6 @@ impl Server {
 
         Ok(Self {
             http_addr: http_addr.or(relay_addr),
-            stun_addr,
             https_addr: http_addr.and(relay_addr),
             quic_addr,
             relay_handle,
@@ -538,11 +498,6 @@ impl Server {
     /// The socket address the QUIC server is listening on.
     pub fn quic_addr(&self) -> Option<SocketAddr> {
         self.quic_addr
-    }
-
-    /// The socket address the STUN server is listening on.
-    pub fn stun_addr(&self) -> Option<SocketAddr> {
-        self.stun_addr
     }
 
     /// The certificates chain if configured with manual TLS certificates.
@@ -641,91 +596,6 @@ async fn relay_supervisor(
     tasks.shutdown().await;
 
     ret
-}
-
-/// Runs a STUN server.
-///
-/// When the future is dropped, the server stops.
-async fn server_stun_listener(sock: UdpSocket, metrics: Arc<StunMetrics>) {
-    info!(addr = ?sock.local_addr().ok(), "running STUN server");
-    let sock = Arc::new(sock);
-    let mut buffer = vec![0u8; 64 << 10];
-    let mut tasks = JoinSet::new();
-    loop {
-        tokio::select! {
-            biased;
-
-            Some(res) = tasks.join_next() => {
-                if let Err(err) = res {
-                    if err.is_panic() {
-                        panic!("task panicked: {:#?}", err);
-                    }
-                }
-            }
-            res = sock.recv_from(&mut buffer) => {
-                match res {
-                    Ok((n, src_addr)) => {
-                        metrics.requests.inc();
-                        let pkt = &buffer[..n];
-                        if !protos::stun::is(pkt) {
-                            debug!(%src_addr, "STUN: ignoring non stun packet");
-                            metrics.bad_requests.inc();
-                            continue;
-                        }
-                        let pkt = pkt.to_vec();
-                        tasks.spawn(handle_stun_request(src_addr, pkt, sock.clone(), metrics.clone()));
-                    }
-                    Err(err) => {
-                        metrics.failures.inc();
-                        warn!("failed to recv: {err:#}");
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// Handles a single STUN request, doing all logging required.
-async fn handle_stun_request(
-    src_addr: SocketAddr,
-    pkt: Vec<u8>,
-    sock: Arc<UdpSocket>,
-    metrics: Arc<StunMetrics>,
-) {
-    let (txid, response) = match protos::stun::parse_binding_request(&pkt) {
-        Ok(txid) => {
-            debug!(%src_addr, %txid, "STUN: received binding request");
-            (txid, protos::stun::response(txid, src_addr))
-        }
-        Err(err) => {
-            metrics.bad_requests.inc();
-            warn!(%src_addr, "STUN: invalid binding request: {:?}", err);
-            return;
-        }
-    };
-
-    match sock.send_to(&response, src_addr).await {
-        Ok(len) => {
-            if len != response.len() {
-                warn!(
-                    %src_addr,
-                    %txid,
-                    "failed to write response, {len}/{} bytes sent",
-                    response.len()
-                );
-            } else {
-                match src_addr {
-                    SocketAddr::V4(_) => metrics.ipv4_success.inc(),
-                    SocketAddr::V6(_) => metrics.ipv6_success.inc(),
-                };
-            }
-            trace!(%src_addr, %txid, "sent {len} bytes");
-        }
-        Err(err) => {
-            metrics.failures.inc();
-            warn!(%src_addr, %txid, "failed to write response: {err:#}");
-        }
-    }
 }
 
 fn root_handler(
@@ -906,7 +776,6 @@ mod tests {
                 access: AccessConfig::Everyone,
             }),
             quic: None,
-            stun: None,
             metrics_addr: None,
         })
         .await
@@ -962,7 +831,6 @@ mod tests {
                 key_cache_capacity: Some(1024),
                 access: AccessConfig::Everyone,
             }),
-            stun: None,
             quic: None,
             metrics_addr: Some((Ipv4Addr::LOCALHOST, 1234).into()),
         })
@@ -1198,38 +1066,6 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_stun() {
-        let server = Server::spawn(ServerConfig::<(), ()> {
-            relay: None,
-            stun: Some(StunConfig {
-                bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
-            }),
-            quic: None,
-            metrics_addr: None,
-        })
-        .await
-        .unwrap();
-
-        let txid = protos::stun::TransactionId::default();
-        let req = protos::stun::request(txid);
-        let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-        socket
-            .send_to(&req, server.stun_addr().unwrap())
-            .await
-            .unwrap();
-
-        // get response
-        let mut buf = vec![0u8; 64000];
-        let (len, addr) = socket.recv_from(&mut buf).await.unwrap();
-        assert_eq!(addr, server.stun_addr().unwrap());
-        buf.truncate(len);
-        let (txid_back, response_addr) = protos::stun::parse_response(&buf).unwrap();
-        assert_eq!(txid, txid_back);
-        assert_eq!(response_addr, socket.local_addr().unwrap());
-    }
-
-    #[tokio::test]
-    #[traced_test]
     async fn test_relay_access_control() -> Result<()> {
         let current_span = tracing::info_span!("this is a test");
         let _guard = current_span.enter();
@@ -1257,7 +1093,6 @@ mod tests {
                 })),
             }),
             quic: None,
-            stun: None,
             metrics_addr: None,
         })
         .await?;

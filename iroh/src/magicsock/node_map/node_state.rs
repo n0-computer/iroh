@@ -6,7 +6,6 @@ use std::{
 
 use data_encoding::HEXLOWER;
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
-use iroh_relay::protos::stun;
 use n0_future::{
     task::{self, AbortOnDropHandle},
     time::{self, Duration, Instant},
@@ -67,7 +66,7 @@ pub(in crate::magicsock) struct SendPing {
     pub id: usize,
     pub dst: SendAddr,
     pub dst_node: NodeId,
-    pub tx_id: stun::TransactionId,
+    pub tx_id: stun_rs::TransactionId,
     pub purpose: DiscoPingPurpose,
 }
 
@@ -114,7 +113,7 @@ pub(super) struct NodeState {
     /// The fallback/bootstrap path, if non-zero (non-zero for well-behaved clients).
     relay_url: Option<(RelayUrl, PathState)>,
     udp_paths: NodeUdpPaths,
-    sent_pings: HashMap<stun::TransactionId, SentPing>,
+    sent_pings: HashMap<stun_rs::TransactionId, SentPing>,
     /// Last time this node was used.
     ///
     /// A node is marked as in use when sending datagrams to them, or when having received
@@ -429,7 +428,7 @@ impl NodeState {
 
     /// Cleanup the expired ping for the passed in txid.
     #[instrument("disco", skip_all, fields(node = %self.node_id.fmt_short()))]
-    pub(super) fn ping_timeout(&mut self, txid: stun::TransactionId) {
+    pub(super) fn ping_timeout(&mut self, txid: stun_rs::TransactionId) {
         if let Some(sp) = self.sent_pings.remove(&txid) {
             debug!(tx = %HEXLOWER.encode(&txid), addr = %sp.to, "pong not received in timeout");
             match sp.to {
@@ -487,7 +486,7 @@ impl NodeState {
             return None; // Similar to `RelayOnly` mode, we don't send UDP pings for hole-punching.
         }
 
-        let tx_id = stun::TransactionId::default();
+        let tx_id = stun_rs::TransactionId::default();
         trace!(tx = %HEXLOWER.encode(&tx_id), %dst, ?purpose,
                dst = %self.node_id.fmt_short(), "start ping");
         event!(
@@ -511,7 +510,7 @@ impl NodeState {
     pub(super) fn ping_sent(
         &mut self,
         to: SendAddr,
-        tx_id: stun::TransactionId,
+        tx_id: stun_rs::TransactionId,
         purpose: DiscoPingPurpose,
         sender: mpsc::Sender<ActorMessage>,
     ) {
@@ -733,7 +732,7 @@ impl NodeState {
     pub(super) fn handle_ping(
         &mut self,
         path: SendAddr,
-        tx_id: stun::TransactionId,
+        tx_id: stun_rs::TransactionId,
     ) -> PingHandled {
         let now = Instant::now();
 
