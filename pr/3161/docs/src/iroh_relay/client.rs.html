@@ -477,7 +477,7 @@
 </span><span class="kw">use </span><span class="kw">crate</span>::dns::{DnsError, DnsResolver};
 <span class="kw">use crate</span>::{
     http::{Protocol, RELAY_PATH},
-    protos::relay::RelayError,
+    protos::relay::RelayProtoError,
     KeyCache,
 };
 
@@ -511,7 +511,7 @@
         </span>source: ws_stream_wasm::WsErr,
     },
     <span class="attr">#[snafu(transparent)]
-    </span>Handshake { source: RelayError },
+    </span>Handshake { source: RelayProtoError },
     <span class="attr">#[snafu(transparent)]
     </span>Dial { source: DialError },
     <span class="attr">#[snafu(display(<span class="string">"Unexpected status during upgrade: {code}"</span>))]

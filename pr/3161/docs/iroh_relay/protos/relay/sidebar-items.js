@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["MAX_PACKET_SIZE"],"enum":["FrameType","RelayError"]};
+window.SIDEBAR_ITEMS = {"constant":["MAX_PACKET_SIZE"],"enum":["FrameType","RelayProtoError"]};

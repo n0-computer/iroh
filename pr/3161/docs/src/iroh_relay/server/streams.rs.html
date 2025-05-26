@@ -204,7 +204,7 @@
 <span class="kw">use </span>tokio_websockets::WebSocketStream;
 
 <span class="kw">use crate</span>::{
-    protos::relay::{Frame, RelayCodec, RelayError},
+    protos::relay::{Frame, RelayCodec, RelayProtoError},
     KeyCache,
 };
 
@@ -264,7 +264,7 @@
 </span><span class="attr">#[derive(Debug, Snafu)]
 </span><span class="kw">pub enum </span>StreamError {
     <span class="attr">#[snafu(transparent)]
-    </span>Proto { source: RelayError },
+    </span>Proto { source: RelayProtoError },
     <span class="attr">#[snafu(transparent)]
     </span>Ws { source: tokio_websockets::Error },
 }
