@@ -39,7 +39,7 @@ use rand::seq::IteratorRandom;
 use snafu::{IntoError, OptionExt, ResultExt, Snafu};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, debug_span, info_span, trace, warn, Instrument};
+use tracing::{debug, debug_span, error, info_span, trace, warn, Instrument};
 use url::Host;
 
 #[cfg(wasm_browser)]
@@ -225,23 +225,25 @@ impl Actor {
                             .map(|r| r.probe.is_udp())
                             .unwrap_or_default();
                         num_probes -= 1;
-                    }
-                    self.msg_tx.send(report).await.ok();
 
-                    // TODO: check if we have enough probes and cancel them
+                        // If all probes are done & we have_udp cancel portmapper and captive
+                        if num_probes == 0 {
+                            debug!("all probes done");
+                            debug_assert!(probes.len() <= 2, "{} probes", probes.len());
 
-                    // If all probes are done & we have_udp cancel portmapper and captive
-                    if num_probes == 0 {
-                        debug!("all probes done");
-                        debug_assert!(probes.len() <= 2, "{} probes", probes.len());
-
-                        if have_udp {
-                            port_token.cancel();
-                            captive_token.cancel();
+                            if have_udp {
+                                port_token.cancel();
+                                captive_token.cancel();
+                            }
                         }
                     }
+                    self.msg_tx.send(report).await.ok();
                 }
                 Err(e) => {
+                    if e.is_panic() {
+                        error!("Task panicked {:?}", e);
+                        break;
+                    }
                     warn!("probes task join error: {:?}", e);
                 }
             }
