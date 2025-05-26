@@ -2,16 +2,16 @@
 
 use anyhow::Result;
 use iroh_base::NodeId;
+use iroh_relay::dns::DnsResolver;
 pub use iroh_relay::dns::{N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING};
 use n0_future::boxed::BoxStream;
 
+use super::IntoDiscovery;
 use crate::{
     discovery::{Discovery, DiscoveryItem},
     endpoint::force_staging_infra,
     Endpoint,
 };
-
-use super::IntoDiscovery;
 
 const DNS_STAGGERING_MS: &[u64] = &[200, 300];
 
@@ -38,12 +38,26 @@ const DNS_STAGGERING_MS: &[u64] = &[200, 300];
 #[derive(Debug)]
 pub struct DnsDiscovery {
     origin_domain: String,
+    dns_resolver: DnsResolver,
+}
+
+/// Builder for [`DnsDiscovery`].
+#[derive(Debug)]
+pub struct DnsDiscoveryBuilder {
+    origin_domain: String,
+}
+
+impl DnsDiscoveryBuilder {
+    /// Builds a [`DnsDiscovery`] with the passed [`DnsResolver`].
+    pub fn build(self, dns_resolver: DnsResolver) -> DnsDiscovery {
+        DnsDiscovery::new(dns_resolver, self.origin_domain)
+    }
 }
 
 impl DnsDiscovery {
-    /// Creates a new DNS discovery.
-    pub fn new(origin_domain: String) -> Self {
-        Self { origin_domain }
+    /// Creates a [`DnsDiscoveryBuilder`] that implements [`IntoDiscovery`].
+    pub fn builder(origin_domain: String) -> DnsDiscoveryBuilder {
+        DnsDiscoveryBuilder { origin_domain }
     }
 
     /// Creates a new DNS discovery using the `iroh.link` domain.
@@ -55,24 +69,35 @@ impl DnsDiscovery {
     /// For testing it is possible to use the [`N0_DNS_NODE_ORIGIN_STAGING`] domain
     /// with [`DnsDiscovery::new`].  This would then use a hosted staging discovery
     /// service for testing purposes.
-    pub fn n0_dns() -> Self {
+    pub fn n0_dns() -> DnsDiscoveryBuilder {
         if force_staging_infra() {
-            Self::new(N0_DNS_NODE_ORIGIN_STAGING.to_string())
+            Self::builder(N0_DNS_NODE_ORIGIN_STAGING.to_string())
         } else {
-            Self::new(N0_DNS_NODE_ORIGIN_PROD.to_string())
+            Self::builder(N0_DNS_NODE_ORIGIN_PROD.to_string())
+        }
+    }
+
+    /// Creates a new DNS discovery.
+    fn new(dns_resolver: DnsResolver, origin_domain: String) -> Self {
+        Self {
+            dns_resolver,
+            origin_domain,
         }
     }
 }
 
-impl IntoDiscovery for DnsDiscovery {
-    fn into_discovery(self: Box<Self>, _: &crate::Endpoint) -> anyhow::Result<Box<dyn Discovery>> {
-        Ok(self)
+impl IntoDiscovery for DnsDiscoveryBuilder {
+    fn into_discovery(self: Box<Self>, endpoint: &Endpoint) -> Result<Box<dyn Discovery>> {
+        Ok(Box::new(DnsDiscovery::new(
+            endpoint.dns_resolver().clone(),
+            self.origin_domain,
+        )))
     }
 }
 
 impl Discovery for DnsDiscovery {
-    fn resolve(&self, ep: Endpoint, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem>>> {
-        let resolver = ep.dns_resolver().clone();
+    fn resolve(&self, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem>>> {
+        let resolver = self.dns_resolver.clone();
         let origin_domain = self.origin_domain.clone();
         let fut = async move {
             let node_info = resolver

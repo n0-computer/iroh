@@ -78,9 +78,6 @@ pub use super::magicsock::{
 /// is still no connection the configured [`Discovery`] will be used however.
 const DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(500);
 
-// type DiscoveryBuilder = Box<dyn FnOnce(&SecretKey) -> Option<Box<dyn Discovery>> + Send + Sync>;
-type DiscoveryBuilder = Box<dyn IntoDiscovery>;
-
 /// A type alias for the return value of [`Endpoint::node_addr`].
 ///
 /// This type implements [`Watcher`] with `Value` being an optional [`NodeAddr`].
@@ -131,7 +128,7 @@ pub struct Builder {
     transport_config: quinn::TransportConfig,
     keylog: bool,
     #[debug(skip)]
-    discovery: Vec<DiscoveryBuilder>,
+    discovery: Vec<Box<dyn IntoDiscovery>>,
     discovery_user_data: Option<UserData>,
     proxy_url: Option<Url>,
     /// List of known nodes. See [`Builder::known_nodes`].
@@ -235,7 +232,10 @@ impl Builder {
             _ => Some(Box::new(ConcurrentDiscovery::from_services(discovery))),
         };
         if let Some(discovery) = discovery {
-            endpoint.msock.set_discovery(discovery);
+            endpoint
+                .msock
+                .set_discovery(discovery)
+                .expect("set_discovery is called the first time");
         }
         Ok(endpoint)
     }
@@ -361,13 +361,7 @@ impl Builder {
     /// To clear all discovery services, use [`Builder::clear_discovery`].
     ///
     /// See the documentation of the [`Discovery`] trait for details.
-    pub fn add_discovery(mut self, discovery: impl IntoDiscovery) -> Self
-// where
-    //     F: FnOnce(&SecretKey) -> Option<D> + Send + Sync + 'static,
-    //     D: Discovery + 'static,
-    {
-        // let discovery: DiscoveryBuilder =
-        //     Box::new(move |secret_key| discovery(secret_key).map(|x| Box::new(x) as _));
+    pub fn add_discovery(mut self, discovery: impl IntoDiscovery) -> Self {
         self.discovery.push(Box::new(discovery));
         self
     }

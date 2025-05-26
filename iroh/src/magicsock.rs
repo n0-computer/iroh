@@ -453,15 +453,14 @@ impl MagicSock {
         self.discovery.get().map(Box::as_ref)
     }
 
-    /// Sets the discovery service.
+    /// Sets the discovery service. May only be called once.
     ///
-    /// ## Panics
-    ///
-    /// Panics if called more than once.
-    pub(crate) fn set_discovery(&self, discovery: Box<dyn Discovery>) {
-        self.discovery
-            .set(discovery)
-            .expect("MagicSock::set_discovery may only be called once");
+    /// Returns an error if previously called.
+    pub(crate) fn set_discovery(
+        &self,
+        discovery: Box<dyn Discovery>,
+    ) -> Result<(), Box<dyn Discovery>> {
+        self.discovery.set(discovery)
     }
 
     /// Updates the user-defined discovery data for this node.

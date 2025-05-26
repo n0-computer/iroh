@@ -210,7 +210,7 @@ impl EndpointArgs {
             let domain = self
                 .dns_origin_domain
                 .unwrap_or_else(|| self.env.dns_origin_domain());
-            builder = builder.add_discovery(DnsDiscovery::new(domain));
+            builder = builder.add_discovery(DnsDiscovery::builder(domain));
         }
 
         #[cfg(feature = "discovery-local-network")]

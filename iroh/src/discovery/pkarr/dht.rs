@@ -243,7 +243,7 @@ impl Builder {
 }
 
 impl IntoDiscovery for Builder {
-    fn into_discovery(self: Box<Self>, endpoint: &Endpoint) -> anyhow::Result<Box<dyn Discovery>> {
+    fn into_discovery(self: Box<Self>, endpoint: &Endpoint) -> Result<Box<dyn Discovery>> {
         let disco = self.secret_key(endpoint.secret_key().clone()).build()?;
         Ok(Box::new(disco))
     }
@@ -307,11 +307,7 @@ impl Discovery for DhtDiscovery {
         *task = Some(AbortOnDropHandle::new(curr));
     }
 
-    fn resolve(
-        &self,
-        _endpoint: Endpoint,
-        node_id: NodeId,
-    ) -> Option<BoxStream<anyhow::Result<DiscoveryItem>>> {
+    fn resolve(&self, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem>>> {
         let pkarr_public_key =
             pkarr::PublicKey::try_from(node_id.as_bytes()).expect("valid public key");
         tracing::info!("resolving {} as {}", node_id, pkarr_public_key.to_z32());
@@ -339,7 +335,7 @@ mod tests {
     #[ignore = "flaky"]
     #[traced_test]
     async fn dht_discovery_smoke() -> TestResult {
-        let ep = crate::Endpoint::builder().bind().await?;
+        let ep = Endpoint::builder().bind().await?;
         let secret = ep.secret_key().clone();
         let testnet = pkarr::mainline::Testnet::new_async(3).await?;
         let client = pkarr::Client::builder()
@@ -362,7 +358,7 @@ mod tests {
                 tokio::time::sleep(Duration::from_millis(200)).await;
                 let mut found_relay_urls = BTreeSet::new();
                 let items = discovery
-                    .resolve(ep.clone(), secret.public())
+                    .resolve(secret.public())
                     .unwrap()
                     .collect::<Vec<_>>()
                     .await;

@@ -15,6 +15,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 
+use anyhow::Result;
 use iroh_base::NodeId;
 use n0_future::{
     boxed::BoxStream,
@@ -23,6 +24,7 @@ use n0_future::{
 };
 
 use super::{Discovery, DiscoveryItem, IntoDiscovery, NodeData, NodeInfo};
+use crate::Endpoint;
 
 /// A static node discovery to manually add node addressing information.
 ///
@@ -86,8 +88,6 @@ impl StaticProvider {
     ///
     /// This is mostly used for debugging information and allows understanding the origin of
     /// addressing information used by an iroh [`Endpoint`].
-    ///
-    /// [`Endpoint`]: crate::Endpoint
     pub const PROVENANCE: &'static str = "static_discovery";
 
     /// Creates a new static discovery instance.
@@ -187,7 +187,7 @@ impl StaticProvider {
 }
 
 impl IntoDiscovery for StaticProvider {
-    fn into_discovery(self: Box<Self>, _: &crate::Endpoint) -> anyhow::Result<Box<dyn Discovery>> {
+    fn into_discovery(self: Box<Self>, _: &Endpoint) -> Result<Box<dyn Discovery>> {
         Ok(self)
     }
 }
@@ -195,11 +195,7 @@ impl IntoDiscovery for StaticProvider {
 impl Discovery for StaticProvider {
     fn publish(&self, _data: &NodeData) {}
 
-    fn resolve(
-        &self,
-        _endpoint: crate::Endpoint,
-        node_id: NodeId,
-    ) -> Option<BoxStream<anyhow::Result<super::DiscoveryItem>>> {
+    fn resolve(&self, node_id: NodeId) -> Option<BoxStream<Result<super::DiscoveryItem>>> {
         let guard = self.nodes.read().expect("poisoned");
         let info = guard.get(&node_id);
         match info {
@@ -228,7 +224,6 @@ mod tests {
     use testresult::TestResult;
 
     use super::*;
-    use crate::Endpoint;
 
     #[tokio::test]
     async fn test_basic() -> TestResult {
