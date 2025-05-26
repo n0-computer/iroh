@@ -3284,36 +3284,7 @@
 <a href="#3283" id="3283">3283</a>
 <a href="#3284" id="3284">3284</a>
 <a href="#3285" id="3285">3285</a>
-<a href="#3286" id="3286">3286</a>
-<a href="#3287" id="3287">3287</a>
-<a href="#3288" id="3288">3288</a>
-<a href="#3289" id="3289">3289</a>
-<a href="#3290" id="3290">3290</a>
-<a href="#3291" id="3291">3291</a>
-<a href="#3292" id="3292">3292</a>
-<a href="#3293" id="3293">3293</a>
-<a href="#3294" id="3294">3294</a>
-<a href="#3295" id="3295">3295</a>
-<a href="#3296" id="3296">3296</a>
-<a href="#3297" id="3297">3297</a>
-<a href="#3298" id="3298">3298</a>
-<a href="#3299" id="3299">3299</a>
-<a href="#3300" id="3300">3300</a>
-<a href="#3301" id="3301">3301</a>
-<a href="#3302" id="3302">3302</a>
-<a href="#3303" id="3303">3303</a>
-<a href="#3304" id="3304">3304</a>
-<a href="#3305" id="3305">3305</a>
-<a href="#3306" id="3306">3306</a>
-<a href="#3307" id="3307">3307</a>
-<a href="#3308" id="3308">3308</a>
-<a href="#3309" id="3309">3309</a>
-<a href="#3310" id="3310">3310</a>
-<a href="#3311" id="3311">3311</a>
-<a href="#3312" id="3312">3312</a>
-<a href="#3313" id="3313">3313</a>
-<a href="#3314" id="3314">3314</a>
-<a href="#3315" id="3315">3315</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#3286" id="3286">3286</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -3359,7 +3330,7 @@
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">use </span>netwatch::{ip::LocalAddresses, UdpSocket};
 <span class="kw">use </span>quinn::{AsyncUdpSocket, ServerConfig};
-<span class="kw">use </span>rand::{seq::SliceRandom, Rng, SeedableRng};
+<span class="kw">use </span>rand::Rng;
 <span class="kw">use </span>smallvec::SmallVec;
 <span class="kw">use </span>tokio::sync::{mpsc, Mutex};
 <span class="kw">use </span>tracing::{
@@ -5398,8 +5369,9 @@
         <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref mut </span>r) = report {
             <span class="self">self</span>.msock.ipv6_reported.store(r.ipv6, Ordering::Relaxed);
             <span class="kw">if </span>r.preferred_relay.is_none() {
-                <span class="comment">// Perhaps UDP is blocked. Pick a deterministic but arbitrary one.
-                </span>r.preferred_relay = <span class="self">self</span>.pick_relay_fallback();
+                <span class="kw">if let </span><span class="prelude-val">Some</span>(my_relay) = <span class="self">self</span>.msock.my_relay() {
+                    r.preferred_relay.replace(my_relay);
+                }
             }
 
             <span class="comment">// Notify all transports
@@ -5408,36 +5380,6 @@
 
         <span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="self">self</span>.update_direct_addresses(report.as_ref());
-    }
-
-    <span class="doccomment">/// Returns a deterministic relay node to connect to. This is only used if net_report
-    /// couldn't find the nearest one, for instance, if UDP is blocked and thus STUN
-    /// latency checks aren't working.
-    ///
-    /// If no the [`RelayMap`] is empty, returns `0`.
-    </span><span class="kw">fn </span>pick_relay_fallback(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;RelayUrl&gt; {
-        <span class="comment">// TODO: figure out which relay node most of our nodes are using,
-        // and use that region as our fallback.
-        //
-        // If we already had selected something in the past and it has any
-        // nodes, we want to stay on it. If there are no nodes at all,
-        // stay on whatever relay we previously picked. If we need to pick
-        // one and have no node info, pick a node randomly.
-        //
-        // We used to do the above for legacy clients, but never updated it for disco.
-
-        </span><span class="kw">let </span>my_relay = <span class="self">self</span>.msock.my_relay();
-        <span class="kw">if </span>my_relay.is_some() {
-            <span class="kw">return </span>my_relay;
-        }
-
-        <span class="kw">let </span>ids = <span class="self">self
-            </span>.direct_addr_update_state
-            .relay_map
-            .urls()
-            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-        <span class="kw">let </span><span class="kw-2">mut </span>rng = rand::rngs::StdRng::seed_from_u64(<span class="number">0</span>);
-        ids.choose(<span class="kw-2">&amp;mut </span>rng).map(|c| (<span class="kw-2">*</span>c).clone())
     }
 
     <span class="doccomment">/// Resets the preferred address for all nodes.
