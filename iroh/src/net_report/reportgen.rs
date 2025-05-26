@@ -210,10 +210,10 @@ impl Actor {
         let port_token = CancellationToken::new();
 
         let port_task = self.prepare_portmapper_task();
-        let mut port_done = !port_task.is_some();
+        let mut port_done = port_task.is_none();
 
         let captive_task = self.prepare_captive_portal_task();
-        let mut captive_done = !captive_task.is_some();
+        let mut captive_done = captive_task.is_none();
 
         let mut port_mapping = pin!(port_token.clone().run_until_cancelled_owned(port_task));
         let mut captive_task = pin!(captive_token
@@ -234,6 +234,13 @@ impl Actor {
             if probes.is_empty() && port_done && captive_done {
                 debug!("all tasks done");
                 break;
+            }
+
+            if probes.is_empty() {
+                debug!(
+                    "probes done, waiting for portmapper?: {}, captive: {}",
+                    port_done, captive_done
+                );
             }
 
             tokio::select! {
@@ -269,7 +276,7 @@ impl Actor {
                 }
 
                 // Check for probes finishing.
-                set_result = probes.join_next() => {
+                set_result = probes.join_next(), if !probes.is_empty() => {
                     trace!("tick: probes done: {:?}", set_result);
                     match set_result {
                         Some(Ok(Some(report))) => {
