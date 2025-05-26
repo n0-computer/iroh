@@ -953,65 +953,7 @@
 <a href="#952" id="952">952</a>
 <a href="#953" id="953">953</a>
 <a href="#954" id="954">954</a>
-<a href="#955" id="955">955</a>
-<a href="#956" id="956">956</a>
-<a href="#957" id="957">957</a>
-<a href="#958" id="958">958</a>
-<a href="#959" id="959">959</a>
-<a href="#960" id="960">960</a>
-<a href="#961" id="961">961</a>
-<a href="#962" id="962">962</a>
-<a href="#963" id="963">963</a>
-<a href="#964" id="964">964</a>
-<a href="#965" id="965">965</a>
-<a href="#966" id="966">966</a>
-<a href="#967" id="967">967</a>
-<a href="#968" id="968">968</a>
-<a href="#969" id="969">969</a>
-<a href="#970" id="970">970</a>
-<a href="#971" id="971">971</a>
-<a href="#972" id="972">972</a>
-<a href="#973" id="973">973</a>
-<a href="#974" id="974">974</a>
-<a href="#975" id="975">975</a>
-<a href="#976" id="976">976</a>
-<a href="#977" id="977">977</a>
-<a href="#978" id="978">978</a>
-<a href="#979" id="979">979</a>
-<a href="#980" id="980">980</a>
-<a href="#981" id="981">981</a>
-<a href="#982" id="982">982</a>
-<a href="#983" id="983">983</a>
-<a href="#984" id="984">984</a>
-<a href="#985" id="985">985</a>
-<a href="#986" id="986">986</a>
-<a href="#987" id="987">987</a>
-<a href="#988" id="988">988</a>
-<a href="#989" id="989">989</a>
-<a href="#990" id="990">990</a>
-<a href="#991" id="991">991</a>
-<a href="#992" id="992">992</a>
-<a href="#993" id="993">993</a>
-<a href="#994" id="994">994</a>
-<a href="#995" id="995">995</a>
-<a href="#996" id="996">996</a>
-<a href="#997" id="997">997</a>
-<a href="#998" id="998">998</a>
-<a href="#999" id="999">999</a>
-<a href="#1000" id="1000">1000</a>
-<a href="#1001" id="1001">1001</a>
-<a href="#1002" id="1002">1002</a>
-<a href="#1003" id="1003">1003</a>
-<a href="#1004" id="1004">1004</a>
-<a href="#1005" id="1005">1005</a>
-<a href="#1006" id="1006">1006</a>
-<a href="#1007" id="1007">1007</a>
-<a href="#1008" id="1008">1008</a>
-<a href="#1009" id="1009">1009</a>
-<a href="#1010" id="1010">1010</a>
-<a href="#1011" id="1011">1011</a>
-<a href="#1012" id="1012">1012</a>
-<a href="#1013" id="1013">1013</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
+<a href="#955" id="955">955</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
 //!
 //! It is implemented as an actor with [`Client`] as handle.
 //!
@@ -1030,9 +972,7 @@
 
 </span><span class="kw">use </span>std::{
     collections::BTreeSet,
-    future::Future,
     net::{IpAddr, SocketAddr},
-    pin::{pin, Pin},
     sync::Arc,
 };
 
@@ -1058,11 +998,11 @@
 
 <span class="attr">#[cfg(wasm_browser)]
 </span><span class="kw">use </span><span class="kw">crate</span>::net_report::portmapper; <span class="comment">// We stub the library
-</span><span class="attr">#[cfg(not(wasm_browser))]
+</span><span class="kw">use </span><span class="kw">crate</span>::net_report::Report;
+<span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">use </span><span class="kw">crate</span>::net_report::{
     defaults::timeouts::DNS_TIMEOUT, dns::DNS_STAGGERING_MS, ip_mapped_addrs::IpMappedAddresses,
 };
-<span class="kw">use crate</span>::{net_report::Report, util::MaybeFuture};
 
 <span class="kw">mod </span>probes;
 
@@ -1187,28 +1127,13 @@
     ///   - Updates the report, cancels unneeded futures.
     /// - Sends the report to the net_report actor.
     </span><span class="kw">async fn </span>run_inner(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-        <span class="attr">#[cfg(not(wasm_browser))]
-        </span><span class="kw">let </span>port_mapper = <span class="self">self</span>.socket_state.port_mapper.is_some();
-        <span class="attr">#[cfg(wasm_browser)]
-        </span><span class="kw">let </span>port_mapper = <span class="bool-val">false</span>;
-        <span class="macro">debug!</span>(%port_mapper, <span class="string">"reportstate actor starting"</span>);
+        <span class="macro">debug!</span>(<span class="string">"reportstate actor starting"</span>);
 
         <span class="kw">let </span>probes_token = CancellationToken::new();
-        <span class="kw">let </span>captive_token = CancellationToken::new();
-        <span class="kw">let </span>port_token = CancellationToken::new();
-
-        <span class="kw">let </span>port_task = <span class="self">self</span>.prepare_portmapper_task();
-        <span class="kw">let </span><span class="kw-2">mut </span>port_done = port_task.is_none();
-
-        <span class="kw">let </span>captive_task = <span class="self">self</span>.prepare_captive_portal_task();
-        <span class="kw">let </span><span class="kw-2">mut </span>captive_done = captive_task.is_none();
-
-        <span class="kw">let </span><span class="kw-2">mut </span>port_mapping = <span class="macro">pin!</span>(port_token.clone().run_until_cancelled_owned(port_task));
-        <span class="kw">let </span><span class="kw-2">mut </span>captive_task = <span class="macro">pin!</span>(captive_token
-            .clone()
-            .run_until_cancelled_owned(captive_task));
 
         <span class="kw">let </span><span class="kw-2">mut </span>probes = <span class="self">self</span>.spawn_probes_task(probes_token.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>port_token = <span class="self">self</span>.prepare_portmapper_task(<span class="kw-2">&amp;mut </span>probes);
+        <span class="kw">let </span>captive_token = <span class="self">self</span>.prepare_captive_portal_task(<span class="kw-2">&amp;mut </span>probes);
 
         <span class="kw">let </span>total_timer = time::sleep(OVERALL_REPORT_TIMEOUT);
         <span class="macro">tokio::pin!</span>(total_timer);
@@ -1219,18 +1144,6 @@
         </span><span class="kw">let </span><span class="kw-2">mut </span>have_udp = <span class="bool-val">false</span>;
 
         <span class="kw">loop </span>{
-            <span class="kw">if </span>probes.is_empty() &amp;&amp; port_done &amp;&amp; captive_done {
-                <span class="macro">debug!</span>(<span class="string">"all tasks done"</span>);
-                <span class="kw">break</span>;
-            }
-
-            <span class="kw">if </span>probes.is_empty() {
-                <span class="macro">debug!</span>(
-                    <span class="string">"probes done, waiting for portmapper?: {}, captive: {}"</span>,
-                    port_done, captive_done
-                );
-            }
-
             <span class="macro">tokio::select!</span> {
                 biased;
                 <span class="kw">_ </span>= <span class="kw-2">&amp;mut </span>total_timer =&gt; {
@@ -1251,52 +1164,34 @@
                     }
                 }
 
-                <span class="comment">// Drive the portmapper.
-                </span>pm = <span class="kw-2">&amp;mut </span>port_mapping =&gt; {
-                    <span class="attr">#[cfg(not(wasm_browser))]
-                    </span>{
-                        <span class="macro">debug!</span>(report=<span class="question-mark">?</span>pm, <span class="string">"tick: portmapper probe report"</span>);
-                        <span class="kw">if let </span><span class="prelude-val">Some</span>(pm) = pm {
-                            <span class="self">self</span>.msg_tx.send(ProbeFinished::Portmap(pm)).<span class="kw">await</span>.ok();
-                        }
-                        port_done = <span class="bool-val">true</span>;
-                    }
-                }
-
                 <span class="comment">// Check for probes finishing.
-                </span>set_result = probes.join_next(), <span class="kw">if </span>!probes.is_empty() =&gt; {
+                </span>set_result = probes.join_next() =&gt; {
                     <span class="macro">trace!</span>(<span class="string">"tick: probes done: {:?}"</span>, set_result);
                     <span class="kw">match </span>set_result {
-                        <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(report))) =&gt; {
-                            have_udp |= report.as_ref().map(|r| r.probe.is_udp()).unwrap_or_default();
-                            <span class="self">self</span>.msg_tx.send(ProbeFinished::Regular(report)).<span class="kw">await</span>.ok();
-                        },
-                        <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>)) =&gt; {
-                            <span class="macro">debug!</span>(<span class="string">"probe cancelled"</span>);
-                        }
+                        <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(maybe_report)) =&gt; {
+                            <span class="kw">match </span>maybe_report {
+                                <span class="prelude-val">Some</span>(report) =&gt; {
+                                    <span class="attr">#[cfg_attr(wasm_browser, allow(irrefutable_let_patterns))]
+                                    </span><span class="kw">if let </span>ProbeFinished::Regular(report) = <span class="kw-2">&amp;</span>report {
+                                        have_udp |= report.as_ref().map(|r| r.probe.is_udp()).unwrap_or_default();
+                                    }
+                                    <span class="self">self</span>.msg_tx.send(report).<span class="kw">await</span>.ok();
+                                }
+                                <span class="prelude-val">None </span>=&gt; {
+                                    <span class="macro">debug!</span>(<span class="string">"probe cancelled"</span>);
+                                }
+                            }
+                            <span class="comment">// TODO: check if we have enough probes an cancel them
+                            // TODO: if all probes are done &amp; we have_udp cancel portmapper and captive
+                        </span>}
                         <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(e)) =&gt; {
                             <span class="macro">warn!</span>(<span class="string">"probes task join error: {:?}"</span>, e);
                         }
                         <span class="prelude-val">None </span>=&gt; {
-                            <span class="kw">if </span>have_udp {
-                                port_token.cancel();
-                                captive_token.cancel();
-                            }
+                            <span class="kw">break</span>;
                         }
                     }
                     <span class="macro">trace!</span>(<span class="string">"tick: probes handled"</span>);
-                }
-
-                <span class="comment">// Drive the captive task.
-                </span>found = <span class="kw-2">&amp;mut </span>captive_task =&gt; {
-                    <span class="attr">#[cfg(not(wasm_browser))]
-                    </span>{
-                        <span class="macro">trace!</span>(<span class="string">"tick: captive portal task done"</span>);
-                        <span class="kw">if let </span><span class="prelude-val">Some</span>(found) = found {
-                            <span class="self">self</span>.msg_tx.send(ProbeFinished::CaptivePortal(found)).<span class="kw">await</span>.ok();
-                        }
-                        captive_done = <span class="bool-val">true</span>;
-                    }
                 }
             }
         }
@@ -1307,23 +1202,15 @@
     <span class="doccomment">/// Creates the future which will perform the portmapper task.
     ///
     /// The returned future will run the portmapper, if enabled, resolving to it's result.
-    </span><span class="attr">#[cfg(wasm_browser)]
     </span><span class="kw">fn </span>prepare_portmapper_task(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-    ) -&gt; MaybeFuture&lt;Pin&lt;Box&lt;Pending&lt;<span class="prelude-ty">Option</span>&lt;portmapper::ProbeOutput&gt;&gt;&gt;&gt;&gt; {
-        MaybeFuture::none()
-    }
-
-    <span class="doccomment">/// Creates the future which will perform the portmapper task.
-    ///
-    /// The returned future will run the portmapper, if enabled, resolving to it's result.
-    </span><span class="attr">#[cfg(not(wasm_browser))]
-    </span><span class="kw">fn </span>prepare_portmapper_task(
-        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-    ) -&gt; MaybeFuture&lt;Pin&lt;Box&lt;<span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Option</span>&lt;portmapper::ProbeOutput&gt;&gt;&gt;&gt;&gt; {
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(port_mapper) = <span class="self">self</span>.socket_state.port_mapper.clone() {
-            MaybeFuture::Some(Box::pin(<span class="kw">async move </span>{
-                <span class="kw">match </span>port_mapper.probe().<span class="kw">await </span>{
+        tasks: <span class="kw-2">&amp;mut </span>JoinSet&lt;<span class="prelude-ty">Option</span>&lt;ProbeFinished&gt;&gt;,
+    ) -&gt; CancellationToken {
+        <span class="kw">let </span>token = CancellationToken::new();
+        <span class="attr">#[cfg(not(wasm_browser))]
+        </span><span class="kw">if let </span><span class="prelude-val">Some</span>(port_mapper) = <span class="self">self</span>.socket_state.port_mapper.clone() {
+            tasks.spawn(token.clone().run_until_cancelled_owned(<span class="kw">async move </span>{
+                <span class="kw">let </span>res = <span class="kw">match </span>port_mapper.probe().<span class="kw">await </span>{
                     <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(res)) =&gt; <span class="prelude-val">Some</span>(res),
                     <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err)) =&gt; {
                         <span class="macro">debug!</span>(<span class="string">"skipping port mapping: {err:?}"</span>);
@@ -1333,27 +1220,24 @@
                         <span class="macro">warn!</span>(<span class="string">"skipping port mapping: {recv_err:?}"</span>);
                         <span class="prelude-val">None
                     </span>}
-                }
-            }))
-        } <span class="kw">else </span>{
-            MaybeFuture::None
+                };
+                ProbeFinished::Portmap(res)
+            }));
         }
+        token
     }
 
     <span class="doccomment">/// Creates the future which will perform the captive portal check.
-    </span><span class="attr">#[cfg(wasm_browser)]
-    </span><span class="kw">fn </span>prepare_captive_portal_task(<span class="kw-2">&amp;mut </span><span class="self">self</span>) -&gt; MaybeFuture&lt;Pin&lt;Box&lt;Pending&lt;<span class="prelude-ty">Option</span>&lt;bool&gt;&gt;&gt;&gt;&gt; {
-        MaybeFuture::default()
-    }
-
-    <span class="doccomment">/// Creates the future which will perform the captive portal check.
-    </span><span class="attr">#[cfg(not(wasm_browser))]
     </span><span class="kw">fn </span>prepare_captive_portal_task(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-    ) -&gt; MaybeFuture&lt;Pin&lt;Box&lt;<span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Option</span>&lt;bool&gt;&gt;&gt;&gt;&gt; {
+        tasks: <span class="kw-2">&amp;mut </span>JoinSet&lt;<span class="prelude-ty">Option</span>&lt;ProbeFinished&gt;&gt;,
+    ) -&gt; CancellationToken {
+        <span class="kw">let </span>token = CancellationToken::new();
+
         <span class="comment">// If we're doing a full probe, also check for a captive portal. We
         // delay by a bit to wait for UDP STUN to finish, to avoid the probe if
         // it's unnecessary.
+        </span><span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">if </span><span class="self">self</span>.last_report.is_none() {
             <span class="comment">// Even if we're doing a non-incremental update, we may want to try our
             // preferred relay for captive portal detection.
@@ -1364,7 +1248,7 @@
 
             <span class="kw">let </span>dns_resolver = <span class="self">self</span>.socket_state.dns_resolver.clone();
             <span class="kw">let </span>dm = <span class="self">self</span>.relay_map.clone();
-            MaybeFuture::Some(Box::pin(<span class="kw">async move </span>{
+            tasks.spawn(token.clone().run_until_cancelled_owned(<span class="kw">async move </span>{
                 time::sleep(CAPTIVE_PORTAL_DELAY).<span class="kw">await</span>;
                 <span class="macro">debug!</span>(<span class="string">"Captive portal check started after {CAPTIVE_PORTAL_DELAY:?}"</span>);
                 <span class="kw">let </span>captive_portal_check = time::timeout(
@@ -1372,7 +1256,7 @@
                     check_captive_portal(<span class="kw-2">&amp;</span>dns_resolver, <span class="kw-2">&amp;</span>dm, preferred_relay)
                         .instrument(<span class="macro">debug_span!</span>(<span class="string">"captive-portal"</span>)),
                 );
-                <span class="kw">match </span>captive_portal_check.<span class="kw">await </span>{
+                <span class="kw">let </span>res = <span class="kw">match </span>captive_portal_check.<span class="kw">await </span>{
                     <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(found)) =&gt; <span class="prelude-val">Some</span>(found),
                     <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err)) =&gt; {
                         <span class="kw">let </span>err: <span class="prelude-ty">Result</span>&lt;reqwest::Error, <span class="kw">_</span>&gt; = err.downcast();
@@ -1389,11 +1273,11 @@
                         <span class="macro">warn!</span>(<span class="string">"check_captive_portal timed out"</span>);
                         <span class="prelude-val">None
                     </span>}
-                }
-            }))
-        } <span class="kw">else </span>{
-            MaybeFuture::None
+                };
+                ProbeFinished::CaptivePortal(res)
+            }));
         }
+        token
     }
 
     <span class="doccomment">/// Prepares the future which will run all the probes as per generated ProbePlan.
@@ -1417,7 +1301,7 @@
     </span><span class="kw">async fn </span>spawn_probes_task(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         token: CancellationToken,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;JoinSet&lt;<span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Result</span>&lt;ProbeReport&gt;&gt;&gt;&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;JoinSet&lt;<span class="prelude-ty">Option</span>&lt;ProbeFinished&gt;&gt;&gt; {
         <span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">let </span>if_state = interfaces::State::new().<span class="kw">await</span>;
         <span class="attr">#[cfg(not(wasm_browser))]
@@ -1474,7 +1358,7 @@
                         </span><span class="kw">let </span><span class="kw-2">mut </span>probe_proto = <span class="prelude-val">None</span>;
                         <span class="kw">while let </span><span class="prelude-val">Some</span>(res) = set.join_next().<span class="kw">await </span>{
                             <span class="kw">match </span>res {
-                                <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(report))) =&gt; <span class="kw">return </span><span class="prelude-val">Ok</span>(report),
+                                <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(report))) =&gt; <span class="kw">return </span>ProbeFinished::Regular(<span class="prelude-val">Ok</span>(report)),
                                 <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(ProbeError::Error(err, probe)))) =&gt; {
                                     probe_proto = <span class="prelude-val">Some</span>(probe.proto());
                                     <span class="macro">warn!</span>(<span class="question-mark">?</span>probe, <span class="string">"probe failed: {:#}"</span>, err);
@@ -1483,7 +1367,7 @@
                                 <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(ProbeError::AbortSet(err, probe)))) =&gt; {
                                     <span class="macro">debug!</span>(<span class="question-mark">?</span>probe, <span class="string">"probe set aborted: {:#}"</span>, err);
                                     set.abort_all();
-                                    <span class="kw">return </span><span class="prelude-val">Err</span>(err);
+                                    <span class="kw">return </span>ProbeFinished::Regular(<span class="prelude-val">Err</span>(err));
                                 }
                                 <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>) =&gt; {
                                     <span class="macro">debug!</span>(<span class="string">"probe cancelled"</span>);
@@ -1495,7 +1379,7 @@
                             }
                         }
                         <span class="macro">warn!</span>(<span class="question-mark">?</span>probe_proto, <span class="string">"no successful probes in ProbeSet"</span>);
-                        <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"All probes in ProbeSet failed"</span>))
+                        ProbeFinished::Regular(<span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"All probes in ProbeSet failed"</span>)))
                     }
                     .instrument(<span class="macro">info_span!</span>(<span class="string">"probe"</span>)),
                 ),
