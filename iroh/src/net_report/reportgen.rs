@@ -27,11 +27,7 @@ use http::StatusCode;
 use iroh_base::RelayUrl;
 #[cfg(not(wasm_browser))]
 use iroh_relay::dns::{DnsError, DnsResolver, StaggeredError};
-use iroh_relay::{
-    defaults::{DEFAULT_RELAY_QUIC_PORT, DEFAULT_STUN_PORT},
-    http::RELAY_PROBE_PATH,
-    RelayMap, RelayNode,
-};
+use iroh_relay::{defaults::DEFAULT_RELAY_QUIC_PORT, http::RELAY_PROBE_PATH, RelayMap, RelayNode};
 #[cfg(wasm_browser)]
 use n0_future::future::Pending;
 use n0_future::{
@@ -42,7 +38,7 @@ use n0_future::{
 #[cfg(not(wasm_browser))]
 use netwatch::interfaces;
 use rand::seq::IteratorRandom;
-use snafu::{IntoError, ResultExt, Snafu};
+use snafu::{IntoError, OptionExt, ResultExt, Snafu};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, debug_span, info_span, trace, warn, Instrument};
@@ -671,18 +667,25 @@ async fn run_probe(
         #[cfg(not(wasm_browser))]
         Probe::QadIpv4 { ref node, .. } | Probe::QadIpv6 { ref node, .. } => {
             debug!("sending QUIC address discovery probe");
-            let relay_addr = get_relay_addr(&socket_state.dns_resolver, &relay_node, probe.proto())
-                .await
-                .map_err(|e| {
-                    ProbeErrorWithProbe::AbortSet(
-                        probe_error::GetRelayAddrSnafu.into_error(e),
-                        probe.clone(),
-                    )
-                })?;
-
-            let url = node.url.clone();
             match socket_state.quic_config {
                 Some(quic_config) => {
+                    let relay_addr = match probe.proto() {
+                        ProbeProto::QadIpv4 => {
+                            get_relay_addr_ipv4(&socket_state.dns_resolver, &relay_node).await
+                        }
+                        ProbeProto::QadIpv6 => {
+                            get_relay_addr_ipv6(&socket_state.dns_resolver, &relay_node).await
+                        }
+                        _ => unreachable!(),
+                    }
+                    .map_err(|e| {
+                        ProbeErrorWithProbe::AbortSet(
+                            probe_error::GetRelayAddrSnafu.into_error(e),
+                            probe.clone(),
+                        )
+                    })?;
+
+                    let url = node.url.clone();
                     result = run_quic_probe(
                         quic_config,
                         url,
@@ -794,19 +797,12 @@ async fn check_captive_portal(
 ) -> Result<bool, CaptivePortalError> {
     // If we have a preferred relay node and we can use it for non-STUN requests, try that;
     // otherwise, pick a random one suitable for non-STUN requests.
-    let preferred_relay = preferred_relay.and_then(|url| match dm.get_node(&url) {
-        Some(node) if node.stun_only => Some(url),
-        _ => None,
-    });
+    let preferred_relay = preferred_relay.and_then(|url| dm.get_node(&url).map(|_| url));
 
     let url = match preferred_relay {
         Some(url) => url,
         None => {
-            let urls: Vec<_> = dm
-                .nodes()
-                .filter(|n| !n.stun_only)
-                .map(|n| n.url.clone())
-                .collect();
+            let urls: Vec<_> = dm.nodes().map(|n| n.url.clone()).collect();
             if urls.is_empty() {
                 debug!("No suitable relay node for captive portal check");
                 return Ok(false);
@@ -872,27 +868,15 @@ async fn check_captive_portal(
 }
 
 /// Returns the proper port based on the protocol of the probe.
-fn get_port(relay_node: &RelayNode, proto: &ProbeProto) -> Option<u16> {
-    match proto {
-        #[cfg(not(wasm_browser))]
-        ProbeProto::QadIpv4 | ProbeProto::QadIpv6 => {
-            if let Some(ref quic) = relay_node.quic {
-                if quic.port == 0 {
-                    Some(DEFAULT_RELAY_QUIC_PORT)
-                } else {
-                    Some(quic.port)
-                }
-            } else {
-                None
-            }
+fn get_quic_port(relay_node: &RelayNode) -> Option<u16> {
+    if let Some(ref quic) = relay_node.quic {
+        if quic.port == 0 {
+            Some(DEFAULT_RELAY_QUIC_PORT)
+        } else {
+            Some(quic.port)
         }
-        _ => {
-            if relay_node.stun_port == 0 {
-                Some(DEFAULT_STUN_PORT)
-            } else {
-                Some(relay_node.stun_port)
-            }
-        }
+    } else {
+        None
     }
 }
 
@@ -915,31 +899,23 @@ pub enum GetRelayAddrError {
     MissingPort,
 }
 
-/// Returns the IP address to use to communicate to this relay node.
-///
-/// *proto* specifies the protocol of the probe.  Depending on the protocol we may return
-/// different results.  Obviously IPv4 vs IPv6 but a [`RelayNode`] may also have disabled
-/// some protocols.
-///
-/// If the protocol is `QuicIpv4` or `QuicIpv6`, and `IpMappedAddresses` is not `None`, we
-/// assume that we are running this net report with `iroh`, and need to provide mapped
-/// addresses to the probe in order for it to function in the specialize iroh-quinn
-/// endpoint that expects mapped addresses.
+/// Returns the IP address to use to communicate to this relay node for quic.
 #[cfg(not(wasm_browser))]
-async fn get_relay_addr(
+async fn get_relay_addr_ipv4(
     dns_resolver: &DnsResolver,
     relay_node: &RelayNode,
-    proto: ProbeProto,
 ) -> Result<SocketAddr, GetRelayAddrError> {
-    use snafu::OptionExt;
+    let port = get_quic_port(relay_node).context(get_relay_addr_error::MissingPortSnafu)?;
+    relay_lookup_ipv4_staggered(dns_resolver, relay_node, port).await
+}
 
-    let port = get_port(relay_node, &proto).context(get_relay_addr_error::MissingPortSnafu)?;
-
-    match proto {
-        ProbeProto::QadIpv4 => relay_lookup_ipv4_staggered(dns_resolver, relay_node, port).await,
-        ProbeProto::QadIpv6 => relay_lookup_ipv6_staggered(dns_resolver, relay_node, port).await,
-        ProbeProto::Https => Err(get_relay_addr_error::UnsupportedHttpsSnafu.build()),
-    }
+#[cfg(not(wasm_browser))]
+async fn get_relay_addr_ipv6(
+    dns_resolver: &DnsResolver,
+    relay_node: &RelayNode,
+) -> Result<SocketAddr, GetRelayAddrError> {
+    let port = get_quic_port(relay_node).context(get_relay_addr_error::MissingPortSnafu)?;
+    relay_lookup_ipv6_staggered(dns_resolver, relay_node, port).await
 }
 
 /// Do a staggared ipv4 DNS lookup based on [`RelayNode`]
