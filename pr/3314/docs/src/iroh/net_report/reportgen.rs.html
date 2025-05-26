@@ -929,43 +929,7 @@
 <a href="#928" id="928">928</a>
 <a href="#929" id="929">929</a>
 <a href="#930" id="930">930</a>
-<a href="#931" id="931">931</a>
-<a href="#932" id="932">932</a>
-<a href="#933" id="933">933</a>
-<a href="#934" id="934">934</a>
-<a href="#935" id="935">935</a>
-<a href="#936" id="936">936</a>
-<a href="#937" id="937">937</a>
-<a href="#938" id="938">938</a>
-<a href="#939" id="939">939</a>
-<a href="#940" id="940">940</a>
-<a href="#941" id="941">941</a>
-<a href="#942" id="942">942</a>
-<a href="#943" id="943">943</a>
-<a href="#944" id="944">944</a>
-<a href="#945" id="945">945</a>
-<a href="#946" id="946">946</a>
-<a href="#947" id="947">947</a>
-<a href="#948" id="948">948</a>
-<a href="#949" id="949">949</a>
-<a href="#950" id="950">950</a>
-<a href="#951" id="951">951</a>
-<a href="#952" id="952">952</a>
-<a href="#953" id="953">953</a>
-<a href="#954" id="954">954</a>
-<a href="#955" id="955">955</a>
-<a href="#956" id="956">956</a>
-<a href="#957" id="957">957</a>
-<a href="#958" id="958">958</a>
-<a href="#959" id="959">959</a>
-<a href="#960" id="960">960</a>
-<a href="#961" id="961">961</a>
-<a href="#962" id="962">962</a>
-<a href="#963" id="963">963</a>
-<a href="#964" id="964">964</a>
-<a href="#965" id="965">965</a>
-<a href="#966" id="966">966</a>
-<a href="#967" id="967">967</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
+<a href="#931" id="931">931</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
 //!
 //! It is implemented as an actor with [`Client`] as handle.
 //!
@@ -1143,9 +1107,11 @@
     </span><span class="kw">async fn </span>run_inner(<span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="macro">debug!</span>(<span class="string">"reportstate actor starting"</span>);
 
-        <span class="kw">let </span>probes_token = CancellationToken::new();
+        <span class="kw">let </span><span class="kw-2">mut </span>probes = JoinSet::default();
 
-        <span class="kw">let </span>(<span class="kw-2">mut </span>probes, <span class="kw-2">mut </span>num_probes) = <span class="self">self</span>.spawn_probes_task(probes_token.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>_probes_token = <span class="self">self</span>.spawn_probes_task(<span class="kw-2">&amp;mut </span>probes).<span class="kw">await</span>;
+        <span class="kw">let </span><span class="kw-2">mut </span>num_probes = probes.len();
+
         <span class="kw">let </span>port_token = <span class="self">self</span>.prepare_portmapper_task(<span class="kw-2">&amp;mut </span>probes);
         <span class="kw">let </span>captive_token = <span class="self">self</span>.prepare_captive_portal_task(<span class="kw-2">&amp;mut </span>probes);
 
@@ -1303,10 +1269,7 @@
     ///     failure permanent.  Probes in a probe set are essentially retries.
     ///   - Once there are [`ProbeReport`]s from enough nodes, all remaining probes are
     ///     aborted.  That is, the main actor loop stops polling them.
-    </span><span class="kw">async fn </span>spawn_probes_task(
-        <span class="kw-2">&amp;</span><span class="self">self</span>,
-        token: CancellationToken,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;(JoinSet&lt;ProbeFinished&gt;, usize)&gt; {
+    </span><span class="kw">async fn </span>spawn_probes_task(<span class="kw-2">&amp;</span><span class="self">self</span>, probes: <span class="kw-2">&amp;mut </span>JoinSet&lt;ProbeFinished&gt;) -&gt; CancellationToken {
         <span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">let </span>if_state = interfaces::State::new().<span class="kw">await</span>;
         <span class="attr">#[cfg(not(wasm_browser))]
@@ -1328,89 +1291,54 @@
         };
         <span class="macro">trace!</span>(%plan, <span class="string">"probe plan"</span>);
 
-        <span class="comment">// A collection of futures running probe sets.
-        </span><span class="kw">let </span><span class="kw-2">mut </span>probes = JoinSet::default();
-        <span class="kw">let </span><span class="kw-2">mut </span>num_probes = <span class="number">0</span>;
+        <span class="kw">let </span>token = CancellationToken::new();
+
         <span class="kw">for </span>probe_set <span class="kw">in </span>plan.iter() {
-            <span class="kw">let </span><span class="kw-2">mut </span>set = JoinSet::default();
+            <span class="kw">let </span>set_token = token.child_token();
             <span class="kw">for </span>probe <span class="kw">in </span>probe_set {
                 <span class="kw">let </span>relay_node = probe.node().clone();
                 <span class="kw">let </span>probe = probe.clone();
+                <span class="kw">let </span>probe_token = set_token.child_token();
+                <span class="kw">let </span>set_token = set_token.clone();
 
-                <span class="attr">#[cfg(not(wasm_browser))]
-                </span><span class="kw">let </span>socket_state = <span class="self">self</span>.socket_state.clone();
-                <span class="kw">let </span>token = token.clone();
-                set.spawn(
-                    token
-                        .run_until_cancelled_owned(tokio::time::timeout(
-                            PROBES_TIMEOUT,
-                            run_probe(
-                                relay_node,
-                                probe.clone(),
-                                <span class="attr">#[cfg(not(wasm_browser))]
-                                </span>socket_state,
-                                <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-                                </span><span class="self">self</span>.insecure_skip_relay_cert_verify,
-                            ),
-                        ))
-                        .instrument(<span class="macro">debug_span!</span>(<span class="string">"run_probe"</span>, %probe)),
+                <span class="kw">let </span>fut = probe_token.run_until_cancelled_owned(tokio::time::timeout(
+                    PROBES_TIMEOUT,
+                    run_probe(
+                        relay_node,
+                        probe.clone(),
+                        <span class="attr">#[cfg(not(wasm_browser))]
+                        </span><span class="self">self</span>.socket_state.clone(),
+                        <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+                        </span><span class="self">self</span>.insecure_skip_relay_cert_verify,
+                    ),
+                ));
+                probes.spawn(
+                    <span class="kw">async move </span>{
+                        <span class="kw">let </span>res = fut.<span class="kw">await</span>;
+                        <span class="kw">let </span>res = <span class="kw">match </span>res {
+                            <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(report))) =&gt; <span class="prelude-val">Ok</span>(report),
+                            <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(ProbeError::Error(err, probe)))) =&gt; {
+                                <span class="macro">warn!</span>(<span class="question-mark">?</span>probe, <span class="string">"probe failed: {:#}"</span>, err);
+                                <span class="prelude-val">Err</span>(err)
+                            }
+                            <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(ProbeError::AbortSet(err, probe)))) =&gt; {
+                                <span class="macro">debug!</span>(<span class="question-mark">?</span>probe, <span class="string">"probe set aborted: {:#}"</span>, err);
+                                set_token.cancel();
+                                <span class="prelude-val">Err</span>(err)
+                            }
+                            <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(tokio::time::error::Elapsed { .. })) =&gt; {
+                                <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"probe timed out"</span>))
+                            }
+                            <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"probe cancelled"</span>)),
+                        };
+                        ProbeFinished::Regular(res)
+                    }
+                    .instrument(<span class="macro">debug_span!</span>(<span class="string">"run_probe"</span>, %probe)),
                 );
             }
-
-            <span class="comment">// Add the probe set to all futures of probe sets.  Handle aborting a probe set
-            // if needed, only normal errors means the set continues.
-            </span>num_probes += <span class="number">1</span>;
-            <span class="kw">let </span>token = token.clone();
-            probes.spawn(
-                <span class="kw">async move </span>{
-                    <span class="kw">let </span>res = token
-                        .run_until_cancelled_owned(<span class="kw">async move </span>{
-                            <span class="comment">// Hack because ProbeSet is not it's own type yet.
-                            </span><span class="kw">let </span><span class="kw-2">mut </span>probe_proto = <span class="prelude-val">None</span>;
-                            <span class="kw">while let </span><span class="prelude-val">Some</span>(res) = set.join_next().<span class="kw">await </span>{
-                                <span class="kw">match </span>res {
-                                    <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(report)))) =&gt; {
-                                        <span class="kw">return </span>ProbeFinished::Regular(<span class="prelude-val">Ok</span>(report));
-                                    }
-                                    <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(ProbeError::Error(err, probe))))) =&gt; {
-                                        probe_proto = <span class="prelude-val">Some</span>(probe.proto());
-                                        <span class="macro">warn!</span>(<span class="question-mark">?</span>probe, <span class="string">"probe failed: {:#}"</span>, err);
-                                        <span class="kw">continue</span>;
-                                    }
-                                    <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(ProbeError::AbortSet(err, probe))))) =&gt; {
-                                        <span class="macro">debug!</span>(<span class="question-mark">?</span>probe, <span class="string">"probe set aborted: {:#}"</span>, err);
-                                        set.abort_all();
-                                        <span class="kw">return </span>ProbeFinished::Regular(<span class="prelude-val">Err</span>(err));
-                                    }
-                                    <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(tokio::time::error::Elapsed { .. }))) =&gt; {
-                                        <span class="macro">warn!</span>(<span class="string">"probe timed out"</span>);
-                                    }
-                                    <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>) =&gt; {
-                                        <span class="macro">debug!</span>(<span class="string">"probe cancelled"</span>);
-                                    }
-                                    <span class="prelude-val">Err</span>(err) =&gt; {
-                                        <span class="macro">warn!</span>(<span class="string">"fatal probe set error, aborting: {:#}"</span>, err);
-                                    }
-                                }
-                            }
-                            <span class="macro">warn!</span>(<span class="question-mark">?</span>probe_proto, <span class="string">"no successful probes in ProbeSet"</span>);
-                            ProbeFinished::Regular(<span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"All probes in ProbeSet failed"</span>)))
-                        })
-                        .<span class="kw">await</span>;
-
-                    <span class="kw">match </span>res {
-                        <span class="prelude-val">Some</span>(res) =&gt; res,
-                        <span class="prelude-val">None </span>=&gt; {
-                            <span class="macro">debug!</span>(<span class="string">"probe cancelled"</span>);
-                            ProbeFinished::Regular(<span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"probe cancelled"</span>)))
-                        }
-                    }
-                }
-                .instrument(<span class="macro">info_span!</span>(<span class="string">"probe"</span>)),
-            );
         }
 
-        <span class="prelude-val">Ok</span>((probes, num_probes))
+        token
     }
 }
 
