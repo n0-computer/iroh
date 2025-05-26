@@ -96,7 +96,7 @@ impl Client {
         #[cfg(any(test, feature = "test-utils"))] insecure_skip_relay_cert_verify: bool,
     ) -> (Self, mpsc::Receiver<ProbeFinished>) {
         let (msg_tx, msg_rx) = mpsc::channel(32);
-        let mut actor = Actor {
+        let actor = Actor {
             msg_tx,
             last_report,
             relay_map,
@@ -106,8 +106,7 @@ impl Client {
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify,
         };
-        let task =
-            task::spawn(async move { actor.run().await }.instrument(info_span!("reportgen.actor")));
+        let task = task::spawn(actor.run().instrument(info_span!("reportgen.actor")));
         (
             Self {
                 _drop_guard: AbortOnDropHandle::new(task),
@@ -178,11 +177,11 @@ pub(super) enum ProbeFinished {
 }
 
 impl Actor {
-    async fn run(&mut self) {
+    async fn run(self) {
         match tokio::time::timeout(OVERALL_REPORT_TIMEOUT, self.run_inner()).await {
             Ok(Ok(())) => debug!("reportgen actor finished"),
             Ok(Err(err)) => {
-                warn!("reportgen faile: {:?}", err);
+                warn!("reportgen failed: {:?}", err);
             }
             Err(tokio::time::error::Elapsed { .. }) => {
                 warn!("reportgen timed out");
@@ -201,7 +200,7 @@ impl Actor {
     ///   - Receives actor messages (sent by those futures).
     ///   - Updates the report, cancels unneeded futures.
     /// - Sends the report to the net_report actor.
-    async fn run_inner(&mut self) -> Result<(), ActorRunError> {
+    async fn run_inner(self) -> Result<(), ActorRunError> {
         debug!("reportstate actor starting");
 
         let probes_token = CancellationToken::new();
@@ -256,7 +255,7 @@ impl Actor {
     /// Creates the future which will perform the portmapper task.
     ///
     /// The returned future will run the portmapper, if enabled, resolving to it's result.
-    fn prepare_portmapper_task(&mut self, tasks: &mut JoinSet<ProbeFinished>) -> CancellationToken {
+    fn prepare_portmapper_task(&self, tasks: &mut JoinSet<ProbeFinished>) -> CancellationToken {
         let token = CancellationToken::new();
         #[cfg(not(wasm_browser))]
         if let Some(port_mapper) = self.socket_state.port_mapper.clone() {
@@ -285,10 +284,7 @@ impl Actor {
     }
 
     /// Creates the future which will perform the captive portal check.
-    fn prepare_captive_portal_task(
-        &mut self,
-        tasks: &mut JoinSet<ProbeFinished>,
-    ) -> CancellationToken {
+    fn prepare_captive_portal_task(&self, tasks: &mut JoinSet<ProbeFinished>) -> CancellationToken {
         let token = CancellationToken::new();
 
         // If we're doing a full probe, also check for a captive portal. We
@@ -368,10 +364,7 @@ impl Actor {
     ///     failure permanent.  Probes in a probe set are essentially retries.
     ///   - Once there are [`ProbeReport`]s from enough nodes, all remaining probes are
     ///     aborted.  That is, the main actor loop stops polling them.
-    async fn spawn_probes_task(
-        &mut self,
-        token: CancellationToken,
-    ) -> (JoinSet<ProbeFinished>, usize) {
+    async fn spawn_probes_task(&self, token: CancellationToken) -> (JoinSet<ProbeFinished>, usize) {
         #[cfg(not(wasm_browser))]
         let if_state = interfaces::State::new().await;
         #[cfg(not(wasm_browser))]
