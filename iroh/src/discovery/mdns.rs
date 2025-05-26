@@ -53,6 +53,8 @@ use crate::{
     Endpoint,
 };
 
+use super::IntoDiscovery;
+
 /// The n0 local swarm node discovery name
 const N0_LOCAL_SWARM: &str = "iroh.local.swarm";
 
@@ -128,7 +130,23 @@ impl Subscribers {
     }
 }
 
+///
+#[derive(Debug)]
+pub struct MdnsDiscoveryBuilder;
+
+impl IntoDiscovery for MdnsDiscoveryBuilder {
+    fn into_discovery(self: Box<Self>, endpoint: &Endpoint) -> anyhow::Result<Box<dyn Discovery>> {
+        let disco = MdnsDiscovery::new(endpoint.node_id())?;
+        Ok(Box::new(disco))
+    }
+}
+
 impl MdnsDiscovery {
+    ///
+    pub fn builder() -> MdnsDiscoveryBuilder {
+        MdnsDiscoveryBuilder
+    }
+
     /// Create a new [`MdnsDiscovery`] Service.
     ///
     /// This starts a [`Discoverer`] that broadcasts your addresses and receives addresses from other nodes in your local network.

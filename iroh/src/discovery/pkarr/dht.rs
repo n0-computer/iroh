@@ -21,7 +21,7 @@ use url::Url;
 use crate::{
     discovery::{
         pkarr::{DEFAULT_PKARR_TTL, N0_DNS_PKARR_RELAY_PROD},
-        Discovery, DiscoveryItem, NodeData,
+        Discovery, DiscoveryItem, IntoDiscovery, NodeData,
     },
     node_info::NodeInfo,
     Endpoint,
@@ -121,6 +121,7 @@ pub struct Builder {
     include_direct_addresses: bool,
     initial_publish_delay: Duration,
     republish_delay: Duration,
+    enable_publish: bool,
 }
 
 impl Default for Builder {
@@ -134,6 +135,7 @@ impl Default for Builder {
             include_direct_addresses: false,
             initial_publish_delay: INITIAL_PUBLISH_DELAY,
             republish_delay: REPUBLISH_DELAY,
+            enable_publish: true,
         }
     }
 }
@@ -197,6 +199,12 @@ impl Builder {
         self
     }
 
+    /// Disables publishing even if a secret key is set.
+    pub fn no_publish(mut self) -> Self {
+        self.enable_publish = false;
+        self
+    }
+
     /// Builds the discovery mechanism.
     pub fn build(self) -> Result<DhtDiscovery> {
         anyhow::ensure!(
@@ -219,17 +227,25 @@ impl Builder {
         };
         let ttl = self.ttl.unwrap_or(DEFAULT_PKARR_TTL);
         let include_direct_addresses = self.include_direct_addresses;
+        let secret_key = self.secret_key.filter(|_| self.enable_publish);
 
         Ok(DhtDiscovery(Arc::new(Inner {
             pkarr,
             ttl,
             relay_url: self.pkarr_relay,
             include_direct_addresses,
-            secret_key: self.secret_key,
+            secret_key,
             initial_publish_delay: self.initial_publish_delay,
             republish_delay: self.republish_delay,
             task: Default::default(),
         })))
+    }
+}
+
+impl IntoDiscovery for Builder {
+    fn into_discovery(self: Box<Self>, endpoint: &Endpoint) -> anyhow::Result<Box<dyn Discovery>> {
+        let disco = self.secret_key(endpoint.secret_key().clone()).build()?;
+        Ok(Box::new(disco))
     }
 }
 

@@ -37,7 +37,7 @@ use crate::{discovery::dns::DnsDiscovery, dns::DnsResolver};
 use crate::{
     discovery::{
         pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryItem, DiscoverySubscribers,
-        DiscoveryTask, Lagged, UserData,
+        DiscoveryTask, IntoDiscovery, Lagged, UserData,
     },
     magicsock::{self, Handle, NodeIdMappedAddr},
     metrics::EndpointMetrics,
@@ -78,7 +78,8 @@ pub use super::magicsock::{
 /// is still no connection the configured [`Discovery`] will be used however.
 const DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(500);
 
-type DiscoveryBuilder = Box<dyn FnOnce(&SecretKey) -> Option<Box<dyn Discovery>> + Send + Sync>;
+// type DiscoveryBuilder = Box<dyn FnOnce(&SecretKey) -> Option<Box<dyn Discovery>> + Send + Sync>;
+type DiscoveryBuilder = Box<dyn IntoDiscovery>;
 
 /// A type alias for the return value of [`Endpoint::node_addr`].
 ///
@@ -193,16 +194,6 @@ impl Builder {
         };
         #[cfg(not(wasm_browser))]
         let dns_resolver = self.dns_resolver.unwrap_or_default();
-        let discovery = self
-            .discovery
-            .into_iter()
-            .filter_map(|f| f(&secret_key))
-            .collect::<Vec<_>>();
-        let discovery: Option<Box<dyn Discovery>> = match discovery.len() {
-            0 => None,
-            1 => Some(discovery.into_iter().next().expect("checked length")),
-            _ => Some(Box::new(ConcurrentDiscovery::from_services(discovery))),
-        };
         let server_config = static_config.create_server_config(self.alpn_protocols);
 
         let metrics = EndpointMetrics::default();
@@ -214,7 +205,7 @@ impl Builder {
             relay_map,
             relay_protocol: self.relay_protocol,
             node_map: self.node_map,
-            discovery,
+            discovery: None,
             discovery_user_data: self.discovery_user_data,
             proxy_url: self.proxy_url,
             #[cfg(not(wasm_browser))]
@@ -226,7 +217,19 @@ impl Builder {
             path_selection: self.path_selection,
             metrics,
         };
-        Endpoint::bind(static_config, msock_opts).await
+        let endpoint = Endpoint::bind(static_config, msock_opts).await?;
+
+        let discovery = self
+            .discovery
+            .into_iter()
+            .filter_map(|builder| builder.into_discovery(&endpoint).ok())
+            .collect::<Vec<_>>();
+        let discovery: Option<Box<dyn Discovery>> = match discovery.len() {
+            0 => None,
+            1 => Some(discovery.into_iter().next().expect("checked length")),
+            _ => Some(Box::new(ConcurrentDiscovery::from_services(discovery))),
+        };
+        Ok(endpoint)
     }
 
     // # The very common methods everyone basically needs.
@@ -328,9 +331,9 @@ impl Builder {
     /// direct addresses or relay URLs will fail.
     ///
     /// See the documentation of the [`Discovery`] trait for details.
-    pub fn discovery(mut self, discovery: Box<dyn Discovery>) -> Self {
+    pub fn discovery(mut self, discovery: impl IntoDiscovery) -> Self {
         self.discovery.clear();
-        self.discovery.push(Box::new(move |_| Some(discovery)));
+        self.discovery.push(Box::new(discovery));
         self
     }
 
@@ -350,14 +353,14 @@ impl Builder {
     /// To clear all discovery services, use [`Builder::clear_discovery`].
     ///
     /// See the documentation of the [`Discovery`] trait for details.
-    pub fn add_discovery<F, D>(mut self, discovery: F) -> Self
-    where
-        F: FnOnce(&SecretKey) -> Option<D> + Send + Sync + 'static,
-        D: Discovery + 'static,
+    pub fn add_discovery(mut self, discovery: impl IntoDiscovery) -> Self
+// where
+    //     F: FnOnce(&SecretKey) -> Option<D> + Send + Sync + 'static,
+    //     D: Discovery + 'static,
     {
-        let discovery: DiscoveryBuilder =
-            Box::new(move |secret_key| discovery(secret_key).map(|x| Box::new(x) as _));
-        self.discovery.push(discovery);
+        // let discovery: DiscoveryBuilder =
+        //     Box::new(move |secret_key| discovery(secret_key).map(|x| Box::new(x) as _));
+        self.discovery.push(Box::new(discovery));
         self
     }
 
@@ -377,20 +380,16 @@ impl Builder {
     /// [`N0_DNS_PKARR_RELAY_PROD`]: crate::discovery::pkarr::N0_DNS_PKARR_RELAY_PROD
     /// [`N0_DNS_PKARR_RELAY_STAGING`]: crate::discovery::pkarr::N0_DNS_PKARR_RELAY_STAGING
     pub fn discovery_n0(mut self) -> Self {
-        self.discovery.push(Box::new(|secret_key| {
-            Some(Box::new(PkarrPublisher::n0_dns(secret_key.clone())))
-        }));
+        self = self.add_discovery(PkarrPublisher::n0_dns());
         // Resolve using HTTPS requests to our DNS server's /pkarr path in browsers
         #[cfg(wasm_browser)]
         {
-            self.discovery
-                .push(Box::new(|_| Some(Box::new(PkarrResolver::n0_dns()))));
+            self = self.add_discovery(PkarrResolver::n0_dns());
         }
         // Resolve using DNS queries outside browsers.
         #[cfg(not(wasm_browser))]
         {
-            self.discovery
-                .push(Box::new(|_| Some(Box::new(DnsDiscovery::n0_dns()))));
+            self = self.add_discovery(DnsDiscovery::n0_dns());
         }
         self
     }
@@ -422,18 +421,7 @@ impl Builder {
     /// create a DhtDiscovery and add it with [`Builder::add_discovery`].
     pub fn discovery_dht(mut self) -> Self {
         use crate::discovery::pkarr::dht::DhtDiscovery;
-        self.discovery.push(Box::new(|secret_key| {
-            match DhtDiscovery::builder()
-                .secret_key(secret_key.clone())
-                .build()
-            {
-                Ok(discovery) => Some(Box::new(discovery)),
-                Err(err) => {
-                    tracing::error!("failed to build discovery: {:?}", err);
-                    None
-                }
-            }
-        }));
+        self = self.add_discovery(DhtDiscovery::builder());
         self
     }
 
@@ -445,12 +433,7 @@ impl Builder {
     /// configuration options. If you need any of those, you should manually
     /// create a MdnsDiscovery and add it with [`Builder::add_discovery`].
     pub fn discovery_local_network(mut self) -> Self {
-        use crate::discovery::mdns::MdnsDiscovery;
-        self.discovery.push(Box::new(|secret_key| {
-            MdnsDiscovery::new(secret_key.public())
-                .map(|x| Box::new(x) as _)
-                .ok()
-        }));
+        self = self.add_discovery(crate::discovery::mdns::MdnsDiscovery::builder());
         self
     }
 

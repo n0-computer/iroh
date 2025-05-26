@@ -72,7 +72,9 @@ use crate::net_report::{IpMappedAddr, QuicConfig};
 use crate::{
     defaults::timeouts::NET_REPORT_TIMEOUT,
     disco::{self, CallMeMaybe, SendAddr},
-    discovery::{Discovery, DiscoveryItem, DiscoverySubscribers, NodeData, UserData},
+    discovery::{
+        ConcurrentDiscovery, Discovery, DiscoveryItem, DiscoverySubscribers, NodeData, UserData,
+    },
     key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
     metrics::EndpointMetrics,
     net_report::{self, IpMappedAddresses, Report},
@@ -236,7 +238,7 @@ pub(crate) struct MagicSock {
     udp_disco_sender: mpsc::Sender<(SocketAddr, PublicKey, disco::Message)>,
 
     /// Optional discovery service
-    discovery: Option<Box<dyn Discovery>>,
+    discovery: Option<ConcurrentDiscovery>,
 
     /// Optional user-defined discover data.
     discovery_user_data: RwLock<Option<UserData>>,
@@ -452,8 +454,8 @@ impl MagicSock {
     }
 
     /// Reference to optional discovery service
-    pub(crate) fn discovery(&self) -> Option<&dyn Discovery> {
-        self.discovery.as_ref().map(Box::as_ref)
+    pub(crate) fn discovery(&self) -> Option<&ConcurrentDiscovery> {
+        self.discovery.as_ref()
     }
 
     /// Updates the user-defined discovery data for this node.

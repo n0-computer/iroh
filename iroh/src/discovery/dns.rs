@@ -11,6 +11,8 @@ use crate::{
     Endpoint,
 };
 
+use super::IntoDiscovery;
+
 const DNS_STAGGERING_MS: &[u64] = &[200, 300];
 
 /// DNS node discovery
@@ -59,6 +61,12 @@ impl DnsDiscovery {
         } else {
             Self::new(N0_DNS_NODE_ORIGIN_PROD.to_string())
         }
+    }
+}
+
+impl IntoDiscovery for DnsDiscovery {
+    fn into_discovery(self: Box<Self>, _: &crate::Endpoint) -> anyhow::Result<Box<dyn Discovery>> {
+        Ok(self)
     }
 }
 

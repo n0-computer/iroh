@@ -22,7 +22,7 @@ use n0_future::{
     time::SystemTime,
 };
 
-use super::{Discovery, DiscoveryItem, NodeData, NodeInfo};
+use super::{Discovery, DiscoveryItem, IntoDiscovery, NodeData, NodeInfo};
 
 /// A static node discovery to manually add node addressing information.
 ///
@@ -186,6 +186,12 @@ impl StaticProvider {
     }
 }
 
+impl IntoDiscovery for StaticProvider {
+    fn into_discovery(self: Box<Self>, _: &crate::Endpoint) -> anyhow::Result<Box<dyn Discovery>> {
+        Ok(self)
+    }
+}
+
 impl Discovery for StaticProvider {
     fn publish(&self, _data: &NodeData) {}
 
@@ -229,10 +235,7 @@ mod tests {
         let discovery = StaticProvider::new();
 
         let _ep = Endpoint::builder()
-            .add_discovery({
-                let discovery = discovery.clone();
-                move |_| Some(discovery)
-            })
+            .add_discovery(discovery.clone())
             .bind()
             .await?;
 

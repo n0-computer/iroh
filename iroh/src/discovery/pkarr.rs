@@ -65,6 +65,8 @@ use crate::{
     Endpoint,
 };
 
+use super::IntoDiscovery;
+
 #[cfg(feature = "discovery-pkarr-dht")]
 pub mod dht;
 
@@ -97,6 +99,57 @@ pub const DEFAULT_PKARR_TTL: u32 = 30;
 /// Interval in which to republish the node info even if unchanged: 5 minutes.
 pub const DEFAULT_REPUBLISH_INTERVAL: Duration = Duration::from_secs(60 * 5);
 
+/// Builder for [`PkarrPublisher`]
+#[derive(Debug)]
+pub struct PkarrPublisherBuilder {
+    pkarr_relay: Url,
+    ttl: u32,
+    republish_interval: Duration,
+}
+
+impl PkarrPublisherBuilder {
+    ///
+    pub fn new(pkarr_relay: Url) -> Self {
+        Self::with_options(pkarr_relay, DEFAULT_PKARR_TTL, DEFAULT_REPUBLISH_INTERVAL)
+    }
+
+    ///
+    pub fn with_options(pkarr_relay: Url, ttl: u32, republish_interval: Duration) -> Self {
+        Self {
+            pkarr_relay,
+            ttl,
+            republish_interval,
+        }
+    }
+
+    ///
+    pub fn n0_dns() -> Self {
+        let pkarr_relay = match force_staging_infra() {
+            true => N0_DNS_PKARR_RELAY_STAGING,
+            false => N0_DNS_PKARR_RELAY_PROD,
+        };
+
+        let pkarr_relay: Url = pkarr_relay.parse().expect("url is valid");
+        Self::new(pkarr_relay)
+    }
+
+    ///
+    pub fn build(self, secret_key: SecretKey) -> PkarrPublisher {
+        PkarrPublisher::with_options(
+            secret_key,
+            self.pkarr_relay,
+            self.ttl,
+            self.republish_interval,
+        )
+    }
+}
+
+impl IntoDiscovery for PkarrPublisherBuilder {
+    fn into_discovery(self: Box<Self>, endpoint: &Endpoint) -> anyhow::Result<Box<dyn Discovery>> {
+        Ok(Box::new(self.build(endpoint.secret_key().clone())))
+    }
+}
+
 /// Publisher of node discovery information to a [pkarr] relay.
 ///
 /// This publisher uses HTTP to publish node discovery information to a pkarr relay
@@ -120,6 +173,11 @@ pub struct PkarrPublisher {
 }
 
 impl PkarrPublisher {
+    ///
+    pub fn builder(pkarr_relay: Url) -> PkarrPublisherBuilder {
+        PkarrPublisherBuilder::new(pkarr_relay)
+    }
+
     /// Creates a new publisher for the [`SecretKey`].
     ///
     /// This publisher will be able to publish [pkarr] records for [`SecretKey`].  It will
@@ -180,14 +238,8 @@ impl PkarrPublisher {
     /// server is used instead.
     ///
     /// [number 0]: https://n0.computer
-    pub fn n0_dns(secret_key: SecretKey) -> Self {
-        let pkarr_relay = match force_staging_infra() {
-            true => N0_DNS_PKARR_RELAY_STAGING,
-            false => N0_DNS_PKARR_RELAY_PROD,
-        };
-
-        let pkarr_relay: Url = pkarr_relay.parse().expect("url is valid");
-        Self::new(secret_key, pkarr_relay)
+    pub fn n0_dns() -> PkarrPublisherBuilder {
+        PkarrPublisherBuilder::n0_dns()
     }
 
     /// Publishes the addressing information about this node to a pkarr relay.

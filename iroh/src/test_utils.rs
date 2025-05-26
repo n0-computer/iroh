@@ -167,13 +167,13 @@ pub(crate) mod dns_and_pkarr_servers {
 
         /// Create a [`ConcurrentDiscovery`] with [`DnsDiscovery`] and [`PkarrPublisher`]
         /// configured to use the test servers.
-        pub fn discovery(&self, secret_key: SecretKey) -> Box<ConcurrentDiscovery> {
-            Box::new(ConcurrentDiscovery::from_services(vec![
+        pub fn discovery(&self, secret_key: SecretKey) -> ConcurrentDiscovery {
+            ConcurrentDiscovery::from_services(vec![
                 // Enable DNS discovery by default
                 Box::new(DnsDiscovery::new(self.node_origin.clone())),
                 // Enable pkarr publishing by default
                 Box::new(PkarrPublisher::new(secret_key, self.pkarr_url.clone())),
-            ]))
+            ])
         }
 
         /// Create a [`DnsResolver`] configured to use the test DNS server.
