@@ -953,7 +953,35 @@
 <a href="#952" id="952">952</a>
 <a href="#953" id="953">953</a>
 <a href="#954" id="954">954</a>
-<a href="#955" id="955">955</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
+<a href="#955" id="955">955</a>
+<a href="#956" id="956">956</a>
+<a href="#957" id="957">957</a>
+<a href="#958" id="958">958</a>
+<a href="#959" id="959">959</a>
+<a href="#960" id="960">960</a>
+<a href="#961" id="961">961</a>
+<a href="#962" id="962">962</a>
+<a href="#963" id="963">963</a>
+<a href="#964" id="964">964</a>
+<a href="#965" id="965">965</a>
+<a href="#966" id="966">966</a>
+<a href="#967" id="967">967</a>
+<a href="#968" id="968">968</a>
+<a href="#969" id="969">969</a>
+<a href="#970" id="970">970</a>
+<a href="#971" id="971">971</a>
+<a href="#972" id="972">972</a>
+<a href="#973" id="973">973</a>
+<a href="#974" id="974">974</a>
+<a href="#975" id="975">975</a>
+<a href="#976" id="976">976</a>
+<a href="#977" id="977">977</a>
+<a href="#978" id="978">978</a>
+<a href="#979" id="979">979</a>
+<a href="#980" id="980">980</a>
+<a href="#981" id="981">981</a>
+<a href="#982" id="982">982</a>
+<a href="#983" id="983">983</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
 //!
 //! It is implemented as an actor with [`Client`] as handle.
 //!
@@ -1131,14 +1159,14 @@
 
         <span class="kw">let </span>probes_token = CancellationToken::new();
 
-        <span class="kw">let </span><span class="kw-2">mut </span>probes = <span class="self">self</span>.spawn_probes_task(probes_token.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="kw">let </span>(<span class="kw-2">mut </span>probes, <span class="kw-2">mut </span>num_probes) = <span class="self">self
+            </span>.spawn_probes_task(probes_token.clone(), PROBES_TIMEOUT)
+            .<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>port_token = <span class="self">self</span>.prepare_portmapper_task(<span class="kw-2">&amp;mut </span>probes);
         <span class="kw">let </span>captive_token = <span class="self">self</span>.prepare_captive_portal_task(<span class="kw-2">&amp;mut </span>probes);
 
         <span class="kw">let </span>total_timer = time::sleep(OVERALL_REPORT_TIMEOUT);
         <span class="macro">tokio::pin!</span>(total_timer);
-        <span class="kw">let </span>probe_timer = time::sleep(PROBES_TIMEOUT);
-        <span class="macro">tokio::pin!</span>(probe_timer);
 
         <span class="comment">// any reports of working UDP/QUIC?
         </span><span class="kw">let </span><span class="kw-2">mut </span>have_udp = <span class="bool-val">false</span>;
@@ -1151,39 +1179,32 @@
                     <span class="macro">bail!</span>(<span class="string">"report timed out"</span>);
                 }
 
-                <span class="kw">_ </span>= <span class="kw-2">&amp;mut </span>probe_timer =&gt; {
-                    <span class="macro">warn!</span>(<span class="string">"tick: probes timed out"</span>);
-                    <span class="comment">// Set new timeout to not go into this branch multiple times.  We need
-                    // the abort to finish all probes normally.  PROBES_TIMEOUT is
-                    // sufficiently far in the future.
-                    </span>probe_timer.as_mut().reset(Instant::now() + PROBES_TIMEOUT);
-                    probes_token.cancel();
-                    <span class="kw">if </span>have_udp {
-                        port_token.cancel();
-                        captive_token.cancel();
-                    }
-                }
-
                 <span class="comment">// Check for probes finishing.
                 </span>set_result = probes.join_next() =&gt; {
                     <span class="macro">trace!</span>(<span class="string">"tick: probes done: {:?}"</span>, set_result);
                     <span class="kw">match </span>set_result {
-                        <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(maybe_report)) =&gt; {
-                            <span class="kw">match </span>maybe_report {
-                                <span class="prelude-val">Some</span>(report) =&gt; {
-                                    <span class="attr">#[cfg_attr(wasm_browser, allow(irrefutable_let_patterns))]
-                                    </span><span class="kw">if let </span>ProbeFinished::Regular(report) = <span class="kw-2">&amp;</span>report {
-                                        have_udp |= report.as_ref().map(|r| r.probe.is_udp()).unwrap_or_default();
-                                    }
-                                    <span class="self">self</span>.msg_tx.send(report).<span class="kw">await</span>.ok();
-                                }
-                                <span class="prelude-val">None </span>=&gt; {
-                                    <span class="macro">debug!</span>(<span class="string">"probe cancelled"</span>);
+                        <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(report)) =&gt; {
+                            <span class="attr">#[cfg_attr(wasm_browser, allow(irrefutable_let_patterns))]
+                            </span><span class="kw">if let </span>ProbeFinished::Regular(report) = <span class="kw-2">&amp;</span>report {
+                                have_udp |= report.as_ref().map(|r| r.probe.is_udp()).unwrap_or_default();
+                                num_probes -= <span class="number">1</span>;
+                            }
+                            <span class="self">self</span>.msg_tx.send(report).<span class="kw">await</span>.ok();
+
+
+                            <span class="comment">// TODO: check if we have enough probes and cancel them
+
+                            // If all probes are done &amp; we have_udp cancel portmapper and captive
+                            </span><span class="kw">if </span>num_probes == <span class="number">0 </span>{
+                                <span class="macro">debug!</span>(<span class="string">"all probes done"</span>);
+                                <span class="macro">debug_assert!</span>(probes.len() &lt;= <span class="number">2</span>, <span class="string">"{} probes"</span>, probes.len());
+
+                                <span class="kw">if </span>have_udp {
+                                    port_token.cancel();
+                                    captive_token.cancel();
                                 }
                             }
-                            <span class="comment">// TODO: check if we have enough probes an cancel them
-                            // TODO: if all probes are done &amp; we have_udp cancel portmapper and captive
-                        </span>}
+                        }
                         <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(e)) =&gt; {
                             <span class="macro">warn!</span>(<span class="string">"probes task join error: {:?}"</span>, e);
                         }
@@ -1202,27 +1223,30 @@
     <span class="doccomment">/// Creates the future which will perform the portmapper task.
     ///
     /// The returned future will run the portmapper, if enabled, resolving to it's result.
-    </span><span class="kw">fn </span>prepare_portmapper_task(
-        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-        tasks: <span class="kw-2">&amp;mut </span>JoinSet&lt;<span class="prelude-ty">Option</span>&lt;ProbeFinished&gt;&gt;,
-    ) -&gt; CancellationToken {
+    </span><span class="kw">fn </span>prepare_portmapper_task(<span class="kw-2">&amp;mut </span><span class="self">self</span>, tasks: <span class="kw-2">&amp;mut </span>JoinSet&lt;ProbeFinished&gt;) -&gt; CancellationToken {
         <span class="kw">let </span>token = CancellationToken::new();
         <span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">if let </span><span class="prelude-val">Some</span>(port_mapper) = <span class="self">self</span>.socket_state.port_mapper.clone() {
-            tasks.spawn(token.clone().run_until_cancelled_owned(<span class="kw">async move </span>{
-                <span class="kw">let </span>res = <span class="kw">match </span>port_mapper.probe().<span class="kw">await </span>{
-                    <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(res)) =&gt; <span class="prelude-val">Some</span>(res),
-                    <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err)) =&gt; {
+            <span class="kw">let </span>token = token.clone();
+            tasks.spawn(<span class="kw">async move </span>{
+                <span class="kw">let </span>res = token.run_until_cancelled_owned(port_mapper.probe()).<span class="kw">await</span>;
+                <span class="kw">let </span>res = <span class="kw">match </span>res {
+                    <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(res))) =&gt; <span class="prelude-val">Some</span>(res),
+                    <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err))) =&gt; {
                         <span class="macro">debug!</span>(<span class="string">"skipping port mapping: {err:?}"</span>);
                         <span class="prelude-val">None
                     </span>}
-                    <span class="prelude-val">Err</span>(recv_err) =&gt; {
+                    <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(recv_err)) =&gt; {
                         <span class="macro">warn!</span>(<span class="string">"skipping port mapping: {recv_err:?}"</span>);
+                        <span class="prelude-val">None
+                    </span>}
+                    <span class="prelude-val">None </span>=&gt; {
+                        <span class="macro">debug!</span>(<span class="string">"probe cancelled"</span>);
                         <span class="prelude-val">None
                     </span>}
                 };
                 ProbeFinished::Portmap(res)
-            }));
+            });
         }
         token
     }
@@ -1230,7 +1254,7 @@
     <span class="doccomment">/// Creates the future which will perform the captive portal check.
     </span><span class="kw">fn </span>prepare_captive_portal_task(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-        tasks: <span class="kw-2">&amp;mut </span>JoinSet&lt;<span class="prelude-ty">Option</span>&lt;ProbeFinished&gt;&gt;,
+        tasks: <span class="kw-2">&amp;mut </span>JoinSet&lt;ProbeFinished&gt;,
     ) -&gt; CancellationToken {
         <span class="kw">let </span>token = CancellationToken::new();
 
@@ -1248,34 +1272,46 @@
 
             <span class="kw">let </span>dns_resolver = <span class="self">self</span>.socket_state.dns_resolver.clone();
             <span class="kw">let </span>dm = <span class="self">self</span>.relay_map.clone();
-            tasks.spawn(token.clone().run_until_cancelled_owned(<span class="kw">async move </span>{
-                time::sleep(CAPTIVE_PORTAL_DELAY).<span class="kw">await</span>;
-                <span class="macro">debug!</span>(<span class="string">"Captive portal check started after {CAPTIVE_PORTAL_DELAY:?}"</span>);
-                <span class="kw">let </span>captive_portal_check = time::timeout(
-                    CAPTIVE_PORTAL_TIMEOUT,
-                    check_captive_portal(<span class="kw-2">&amp;</span>dns_resolver, <span class="kw-2">&amp;</span>dm, preferred_relay)
-                        .instrument(<span class="macro">debug_span!</span>(<span class="string">"captive-portal"</span>)),
-                );
-                <span class="kw">let </span>res = <span class="kw">match </span>captive_portal_check.<span class="kw">await </span>{
-                    <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(found)) =&gt; <span class="prelude-val">Some</span>(found),
-                    <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err)) =&gt; {
-                        <span class="kw">let </span>err: <span class="prelude-ty">Result</span>&lt;reqwest::Error, <span class="kw">_</span>&gt; = err.downcast();
-                        <span class="kw">match </span>err {
-                            <span class="prelude-val">Ok</span>(req_err) <span class="kw">if </span>req_err.is_connect() =&gt; {
-                                <span class="macro">debug!</span>(<span class="string">"check_captive_portal failed: {req_err:#}"</span>);
+            <span class="kw">let </span>token = token.clone();
+            tasks.spawn(
+                <span class="kw">async move </span>{
+                    <span class="kw">let </span>res = token
+                        .run_until_cancelled_owned(<span class="kw">async move </span>{
+                            time::sleep(CAPTIVE_PORTAL_DELAY).<span class="kw">await</span>;
+                            <span class="macro">debug!</span>(<span class="string">"Captive portal check started after {CAPTIVE_PORTAL_DELAY:?}"</span>);
+                            time::timeout(
+                                CAPTIVE_PORTAL_TIMEOUT,
+                                check_captive_portal(<span class="kw-2">&amp;</span>dns_resolver, <span class="kw-2">&amp;</span>dm, preferred_relay),
+                            )
+                            .<span class="kw">await
+                        </span>})
+                        .<span class="kw">await</span>;
+                    <span class="kw">let </span>res = <span class="kw">match </span>res {
+                        <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(found))) =&gt; <span class="prelude-val">Some</span>(found),
+                        <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err))) =&gt; {
+                            <span class="kw">let </span>err: <span class="prelude-ty">Result</span>&lt;reqwest::Error, <span class="kw">_</span>&gt; = err.downcast();
+                            <span class="kw">match </span>err {
+                                <span class="prelude-val">Ok</span>(req_err) <span class="kw">if </span>req_err.is_connect() =&gt; {
+                                    <span class="macro">debug!</span>(<span class="string">"check_captive_portal failed: {req_err:#}"</span>);
+                                }
+                                <span class="prelude-val">Ok</span>(req_err) =&gt; <span class="macro">warn!</span>(<span class="string">"check_captive_portal error: {req_err:#}"</span>),
+                                <span class="prelude-val">Err</span>(any_err) =&gt; <span class="macro">warn!</span>(<span class="string">"check_captive_portal error: {any_err:#}"</span>),
                             }
-                            <span class="prelude-val">Ok</span>(req_err) =&gt; <span class="macro">warn!</span>(<span class="string">"check_captive_portal error: {req_err:#}"</span>),
-                            <span class="prelude-val">Err</span>(any_err) =&gt; <span class="macro">warn!</span>(<span class="string">"check_captive_portal error: {any_err:#}"</span>),
-                        }
-                        <span class="prelude-val">None
-                    </span>}
-                    <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; {
-                        <span class="macro">warn!</span>(<span class="string">"check_captive_portal timed out"</span>);
-                        <span class="prelude-val">None
-                    </span>}
-                };
-                ProbeFinished::CaptivePortal(res)
-            }));
+                            <span class="prelude-val">None
+                        </span>}
+                        <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(<span class="kw">_</span>)) =&gt; {
+                            <span class="macro">warn!</span>(<span class="string">"check_captive_portal timed out"</span>);
+                            <span class="prelude-val">None
+                        </span>}
+                        <span class="prelude-val">None </span>=&gt; {
+                            <span class="macro">debug!</span>(<span class="string">"check_captive_portal cancelled"</span>);
+                            <span class="prelude-val">None
+                        </span>}
+                    };
+                    ProbeFinished::CaptivePortal(res)
+                }
+                .instrument(<span class="macro">debug_span!</span>(<span class="string">"captive-portal"</span>)),
+            );
         }
         token
     }
@@ -1301,7 +1337,8 @@
     </span><span class="kw">async fn </span>spawn_probes_task(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         token: CancellationToken,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;JoinSet&lt;<span class="prelude-ty">Option</span>&lt;ProbeFinished&gt;&gt;&gt; {
+        timeout: Duration,
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(JoinSet&lt;ProbeFinished&gt;, usize)&gt; {
         <span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">let </span>if_state = interfaces::State::new().<span class="kw">await</span>;
         <span class="attr">#[cfg(not(wasm_browser))]
@@ -1325,6 +1362,7 @@
 
         <span class="comment">// A collection of futures running probe sets.
         </span><span class="kw">let </span><span class="kw-2">mut </span>probes = JoinSet::default();
+        <span class="kw">let </span><span class="kw-2">mut </span>num_probes = <span class="number">0</span>;
         <span class="kw">for </span>probe_set <span class="kw">in </span>plan.iter() {
             <span class="kw">let </span><span class="kw-2">mut </span>set = JoinSet::default();
             <span class="kw">for </span>probe <span class="kw">in </span>probe_set {
@@ -1333,60 +1371,78 @@
 
                 <span class="attr">#[cfg(not(wasm_browser))]
                 </span><span class="kw">let </span>socket_state = <span class="self">self</span>.socket_state.clone();
-
+                <span class="kw">let </span>token = token.clone();
                 set.spawn(
-                    token.clone().run_until_cancelled_owned(
-                        run_probe(
-                            relay_node,
-                            probe.clone(),
-                            <span class="attr">#[cfg(not(wasm_browser))]
-                            </span>socket_state,
-                            <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-                            </span><span class="self">self</span>.insecure_skip_relay_cert_verify,
-                        )
+                    token
+                        .run_until_cancelled_owned(tokio::time::timeout(
+                            timeout,
+                            run_probe(
+                                relay_node,
+                                probe.clone(),
+                                <span class="attr">#[cfg(not(wasm_browser))]
+                                </span>socket_state,
+                                <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+                                </span><span class="self">self</span>.insecure_skip_relay_cert_verify,
+                            ),
+                        ))
                         .instrument(<span class="macro">debug_span!</span>(<span class="string">"run_probe"</span>, %probe)),
-                    ),
                 );
             }
 
             <span class="comment">// Add the probe set to all futures of probe sets.  Handle aborting a probe set
             // if needed, only normal errors means the set continues.
-            </span>probes.spawn(
-                token.clone().run_until_cancelled_owned(
-                    <span class="kw">async move </span>{
-                        <span class="comment">// Hack because ProbeSet is not it's own type yet.
-                        </span><span class="kw">let </span><span class="kw-2">mut </span>probe_proto = <span class="prelude-val">None</span>;
-                        <span class="kw">while let </span><span class="prelude-val">Some</span>(res) = set.join_next().<span class="kw">await </span>{
-                            <span class="kw">match </span>res {
-                                <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(report))) =&gt; <span class="kw">return </span>ProbeFinished::Regular(<span class="prelude-val">Ok</span>(report)),
-                                <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(ProbeError::Error(err, probe)))) =&gt; {
-                                    probe_proto = <span class="prelude-val">Some</span>(probe.proto());
-                                    <span class="macro">warn!</span>(<span class="question-mark">?</span>probe, <span class="string">"probe failed: {:#}"</span>, err);
-                                    <span class="kw">continue</span>;
-                                }
-                                <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(ProbeError::AbortSet(err, probe)))) =&gt; {
-                                    <span class="macro">debug!</span>(<span class="question-mark">?</span>probe, <span class="string">"probe set aborted: {:#}"</span>, err);
-                                    set.abort_all();
-                                    <span class="kw">return </span>ProbeFinished::Regular(<span class="prelude-val">Err</span>(err));
-                                }
-                                <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>) =&gt; {
-                                    <span class="macro">debug!</span>(<span class="string">"probe cancelled"</span>);
-                                }
-                                <span class="prelude-val">Err</span>(err) =&gt; {
-                                    <span class="macro">warn!</span>(<span class="string">"fatal probe set error, aborting: {:#}"</span>, err);
-                                    <span class="kw">continue</span>;
+            </span>num_probes += <span class="number">1</span>;
+            <span class="kw">let </span>token = token.clone();
+            probes.spawn(
+                <span class="kw">async move </span>{
+                    <span class="kw">let </span>res = token
+                        .run_until_cancelled_owned(<span class="kw">async move </span>{
+                            <span class="comment">// Hack because ProbeSet is not it's own type yet.
+                            </span><span class="kw">let </span><span class="kw-2">mut </span>probe_proto = <span class="prelude-val">None</span>;
+                            <span class="kw">while let </span><span class="prelude-val">Some</span>(res) = set.join_next().<span class="kw">await </span>{
+                                <span class="kw">match </span>res {
+                                    <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(report)))) =&gt; {
+                                        <span class="kw">return </span>ProbeFinished::Regular(<span class="prelude-val">Ok</span>(report));
+                                    }
+                                    <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(ProbeError::Error(err, probe))))) =&gt; {
+                                        probe_proto = <span class="prelude-val">Some</span>(probe.proto());
+                                        <span class="macro">warn!</span>(<span class="question-mark">?</span>probe, <span class="string">"probe failed: {:#}"</span>, err);
+                                        <span class="kw">continue</span>;
+                                    }
+                                    <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(ProbeError::AbortSet(err, probe))))) =&gt; {
+                                        <span class="macro">debug!</span>(<span class="question-mark">?</span>probe, <span class="string">"probe set aborted: {:#}"</span>, err);
+                                        set.abort_all();
+                                        <span class="kw">return </span>ProbeFinished::Regular(<span class="prelude-val">Err</span>(err));
+                                    }
+                                    <span class="prelude-val">Ok</span>(<span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(tokio::time::error::Elapsed { .. }))) =&gt; {
+                                        <span class="macro">warn!</span>(<span class="string">"probe timed out"</span>);
+                                    }
+                                    <span class="prelude-val">Ok</span>(<span class="prelude-val">None</span>) =&gt; {
+                                        <span class="macro">debug!</span>(<span class="string">"probe cancelled"</span>);
+                                    }
+                                    <span class="prelude-val">Err</span>(err) =&gt; {
+                                        <span class="macro">warn!</span>(<span class="string">"fatal probe set error, aborting: {:#}"</span>, err);
+                                    }
                                 }
                             }
+                            <span class="macro">warn!</span>(<span class="question-mark">?</span>probe_proto, <span class="string">"no successful probes in ProbeSet"</span>);
+                            ProbeFinished::Regular(<span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"All probes in ProbeSet failed"</span>)))
+                        })
+                        .<span class="kw">await</span>;
+
+                    <span class="kw">match </span>res {
+                        <span class="prelude-val">Some</span>(res) =&gt; res,
+                        <span class="prelude-val">None </span>=&gt; {
+                            <span class="macro">debug!</span>(<span class="string">"probe cancelled"</span>);
+                            ProbeFinished::Regular(<span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"probe cancelled"</span>)))
                         }
-                        <span class="macro">warn!</span>(<span class="question-mark">?</span>probe_proto, <span class="string">"no successful probes in ProbeSet"</span>);
-                        ProbeFinished::Regular(<span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"All probes in ProbeSet failed"</span>)))
                     }
-                    .instrument(<span class="macro">info_span!</span>(<span class="string">"probe"</span>)),
-                ),
+                }
+                .instrument(<span class="macro">info_span!</span>(<span class="string">"probe"</span>)),
             );
         }
 
-        <span class="prelude-val">Ok</span>(probes)
+        <span class="prelude-val">Ok</span>((probes, num_probes))
     }
 }
 
