@@ -1264,7 +1264,57 @@
 <a href="#1263" id="1263">1263</a>
 <a href="#1264" id="1264">1264</a>
 <a href="#1265" id="1265">1265</a>
-<a href="#1266" id="1266">1266</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#1266" id="1266">1266</a>
+<a href="#1267" id="1267">1267</a>
+<a href="#1268" id="1268">1268</a>
+<a href="#1269" id="1269">1269</a>
+<a href="#1270" id="1270">1270</a>
+<a href="#1271" id="1271">1271</a>
+<a href="#1272" id="1272">1272</a>
+<a href="#1273" id="1273">1273</a>
+<a href="#1274" id="1274">1274</a>
+<a href="#1275" id="1275">1275</a>
+<a href="#1276" id="1276">1276</a>
+<a href="#1277" id="1277">1277</a>
+<a href="#1278" id="1278">1278</a>
+<a href="#1279" id="1279">1279</a>
+<a href="#1280" id="1280">1280</a>
+<a href="#1281" id="1281">1281</a>
+<a href="#1282" id="1282">1282</a>
+<a href="#1283" id="1283">1283</a>
+<a href="#1284" id="1284">1284</a>
+<a href="#1285" id="1285">1285</a>
+<a href="#1286" id="1286">1286</a>
+<a href="#1287" id="1287">1287</a>
+<a href="#1288" id="1288">1288</a>
+<a href="#1289" id="1289">1289</a>
+<a href="#1290" id="1290">1290</a>
+<a href="#1291" id="1291">1291</a>
+<a href="#1292" id="1292">1292</a>
+<a href="#1293" id="1293">1293</a>
+<a href="#1294" id="1294">1294</a>
+<a href="#1295" id="1295">1295</a>
+<a href="#1296" id="1296">1296</a>
+<a href="#1297" id="1297">1297</a>
+<a href="#1298" id="1298">1298</a>
+<a href="#1299" id="1299">1299</a>
+<a href="#1300" id="1300">1300</a>
+<a href="#1301" id="1301">1301</a>
+<a href="#1302" id="1302">1302</a>
+<a href="#1303" id="1303">1303</a>
+<a href="#1304" id="1304">1304</a>
+<a href="#1305" id="1305">1305</a>
+<a href="#1306" id="1306">1306</a>
+<a href="#1307" id="1307">1307</a>
+<a href="#1308" id="1308">1308</a>
+<a href="#1309" id="1309">1309</a>
+<a href="#1310" id="1310">1310</a>
+<a href="#1311" id="1311">1311</a>
+<a href="#1312" id="1312">1312</a>
+<a href="#1313" id="1313">1313</a>
+<a href="#1314" id="1314">1314</a>
+<a href="#1315" id="1315">1315</a>
+<a href="#1316" id="1316">1316</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::HashMap, future::Future, net::SocketAddr, pin::Pin, sync::Arc, time::Duration,
 };
 
@@ -1281,13 +1331,13 @@
 <span class="kw">use </span>iroh_base::PublicKey;
 <span class="kw">use </span>n0_future::{time::Elapsed, FutureExt, SinkExt};
 <span class="kw">use </span>nested_enum_utils::common_fields;
-<span class="kw">use </span>snafu::{Backtrace, Snafu};
+<span class="kw">use </span>snafu::{Backtrace, ResultExt, Snafu};
 <span class="kw">use </span>tokio::net::{TcpListener, TcpStream};
 <span class="kw">use </span>tokio_rustls_acme::AcmeAcceptor;
 <span class="kw">use </span>tokio_util::{codec::Framed, sync::CancellationToken, task::AbortOnDropHandle};
 <span class="kw">use </span>tracing::{debug, debug_span, error, info, info_span, trace, warn, Instrument};
 
-<span class="kw">use super</span>::{clients::Clients, streams, AccessConfig, SpawnError};
+<span class="kw">use super</span>::{clients::Clients, streams::StreamError, AccessConfig, SpawnError};
 <span class="kw">use crate</span>::{
     defaults::{timeouts::SERVER_WRITE_TIMEOUT, DEFAULT_KEY_CACHE_CAPACITY},
     http::{Protocol, LEGACY_RELAY_PATH, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},
@@ -1338,7 +1388,7 @@
 }
 
 <span class="attr">#[allow(clippy::result_large_err)]
-</span><span class="kw">fn </span>downcast_upgrade(upgraded: Upgraded) -&gt; <span class="prelude-ty">Result</span>&lt;(MaybeTlsStream, Bytes), Error&gt; {
+</span><span class="kw">fn </span>downcast_upgrade(upgraded: Upgraded) -&gt; <span class="prelude-ty">Result</span>&lt;(MaybeTlsStream, Bytes), ConnectionHandlerError&gt; {
     <span class="kw">match </span>upgraded.downcast::&lt;hyper_util::rt::TokioIo&lt;MaybeTlsStream&gt;&gt;() {
         <span class="prelude-val">Ok</span>(parts) =&gt; <span class="prelude-val">Ok</span>((parts.io.into_inner(), parts.read_buf)),
         <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; <span class="prelude-val">Err</span>(DowncastUpgradeSnafu.build()),
@@ -1414,28 +1464,14 @@
     </span><span class="kw">pub</span>(<span class="kw">super</span>) acceptor: TlsAcceptor,
 }
 
-<span class="doccomment">/// Server accept errors
+<span class="doccomment">/// Errors when attempting to upgrade and
 </span><span class="attr">#[common_fields({
     backtrace: <span class="prelude-ty">Option</span>&lt;Backtrace&gt;,
 })]
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
-</span><span class="kw">pub enum </span>Error {
-    <span class="attr">#[snafu(display(<span class="string">"Unable to receive client information"</span>))]
-    </span>RecvClientKey {
-        <span class="attr">#[allow(clippy::result_large_err)]
-        </span>source: streams::Error,
-        <span class="attr">#[snafu(implicit)]
-        </span>span_trace: n0_snafu::SpanTrace,
-    },
-    <span class="attr">#[snafu(display(<span class="string">"Could not downcast the upgraded connection to MaybeTlsStream"</span>))]
-    </span>DowncastUpgrade {
-        <span class="attr">#[snafu(implicit)]
-        </span>span_trace: n0_snafu::SpanTrace,
-    },
-    <span class="attr">#[snafu(transparent)]
-    </span>Io { source: std::io::Error },
+</span><span class="kw">pub enum </span>ServeConnectionError {
     <span class="attr">#[snafu(display(<span class="string">"TLS[acme] handshake"</span>))]
     </span>Handshake {
         source: std::io::Error,
@@ -1455,20 +1491,43 @@
         </span>span_trace: n0_snafu::SpanTrace,
     },
     <span class="attr">#[snafu(display(<span class="string">"TLS[manual] accept"</span>))]
-    </span>Accept {
+    </span>ManualAccept {
         source: std::io::Error,
         <span class="attr">#[snafu(implicit)]
         </span>span_trace: n0_snafu::SpanTrace,
     },
-    <span class="attr">#[snafu(display(<span class="string">"Cannot deal with buffered data yet: {buf:?}"</span>))]
-    </span>BufferNotEmpty {
-        buf: Bytes,
+    <span class="attr">#[snafu(display(<span class="string">"TLS[acme] accept"</span>))]
+    </span>LetsEncryptAccept {
+        source: std::io::Error,
         <span class="attr">#[snafu(implicit)]
         </span>span_trace: n0_snafu::SpanTrace,
     },
-    <span class="attr">#[snafu(display(<span class="string">"Client not authenticated: {key:?}"</span>))]
-    </span>ClientNotAuthenticated {
-        key: PublicKey,
+    <span class="attr">#[snafu(display(<span class="string">"HTTPS connection"</span>))]
+    </span>Https {
+        source: hyper::Error,
+        <span class="attr">#[snafu(implicit)]
+        </span>span_trace: n0_snafu::SpanTrace,
+    },
+    <span class="attr">#[snafu(display(<span class="string">"HTTP connection"</span>))]
+    </span>Http {
+        source: hyper::Error,
+        <span class="attr">#[snafu(implicit)]
+        </span>span_trace: n0_snafu::SpanTrace,
+    },
+}
+
+<span class="doccomment">///
+</span><span class="attr">#[common_fields({
+    backtrace: <span class="prelude-ty">Option</span>&lt;Backtrace&gt;,
+})]
+#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+</span><span class="kw">pub enum </span>AcceptError {
+    <span class="attr">#[snafu(display(<span class="string">"Unable to receive client information"</span>))]
+    </span>RecvClientKey {
+        <span class="attr">#[allow(clippy::result_large_err)]
+        </span>source: StreamError,
         <span class="attr">#[snafu(implicit)]
         </span>span_trace: n0_snafu::SpanTrace,
     },
@@ -1476,6 +1535,37 @@
     </span>UnexpectedClientVersion {
         version: usize,
         expected_version: usize,
+        <span class="attr">#[snafu(implicit)]
+        </span>span_trace: n0_snafu::SpanTrace,
+    },
+    <span class="attr">#[snafu(transparent)]
+    </span>Io { source: std::io::Error },
+    <span class="attr">#[snafu(display(<span class="string">"Client not authenticated: {key:?}"</span>))]
+    </span>ClientNotAuthenticated {
+        key: PublicKey,
+        <span class="attr">#[snafu(implicit)]
+        </span>span_trace: n0_snafu::SpanTrace,
+    },
+}
+
+<span class="doccomment">/// Server accept errors
+</span><span class="attr">#[common_fields({
+    backtrace: <span class="prelude-ty">Option</span>&lt;Backtrace&gt;,
+})]
+#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+</span><span class="kw">pub enum </span>ConnectionHandlerError {
+    <span class="attr">#[snafu(transparent)]
+    </span>Accept { source: AcceptError },
+    <span class="attr">#[snafu(display(<span class="string">"Could not downcast the upgraded connection to MaybeTlsStream"</span>))]
+    </span>DowncastUpgrade {
+        <span class="attr">#[snafu(implicit)]
+        </span>span_trace: n0_snafu::SpanTrace,
+    },
+    <span class="attr">#[snafu(display(<span class="string">"Cannot deal with buffered data yet: {buf:?}"</span>))]
+    </span>BufferNotEmpty {
+        buf: Bytes,
         <span class="attr">#[snafu(implicit)]
         </span>span_trace: n0_snafu::SpanTrace,
     },
@@ -1840,15 +1930,16 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         protocol: Protocol,
         upgraded: Upgraded,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), ConnectionHandlerError&gt; {
         <span class="macro">debug!</span>(<span class="question-mark">?</span>protocol, <span class="string">"relay_connection upgraded"</span>);
         <span class="kw">let </span>(io, read_buf) = downcast_upgrade(upgraded)<span class="question-mark">?</span>;
         <span class="kw">if </span>!read_buf.is_empty() {
             <span class="kw">return </span><span class="prelude-val">Err</span>(BufferNotEmptySnafu { buf: read_buf }.build());
         }
 
-        <span class="self">self</span>.accept(protocol, io).<span class="kw">await
-    </span>}
+        <span class="self">self</span>.accept(protocol, io).<span class="kw">await</span><span class="question-mark">?</span>;
+        <span class="prelude-val">Ok</span>(())
+    }
 
     <span class="doccomment">/// Adds a new connection to the server and serves it.
     ///
@@ -1860,7 +1951,7 @@
     ///
     /// [`AsyncRead`]: tokio::io::AsyncRead
     /// [`AsyncWrite`]: tokio::io::AsyncWrite
-    </span><span class="kw">async fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, protocol: Protocol, io: MaybeTlsStream) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
+    </span><span class="kw">async fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, protocol: Protocol, io: MaybeTlsStream) -&gt; <span class="prelude-ty">Result</span>&lt;(), AcceptError&gt; {
         <span class="kw">use </span>snafu::ResultExt;
 
         <span class="macro">trace!</span>(<span class="question-mark">?</span>protocol, <span class="string">"accept: start"</span>);
@@ -1962,8 +2053,6 @@
     ///
     /// If a `tls_config` is given, will serve the connection using HTTPS.
     </span><span class="kw">async fn </span>handle_connection(<span class="self">self</span>, stream: TcpStream, tls_config: <span class="prelude-ty">Option</span>&lt;TlsConfig&gt;) {
-        <span class="kw">use </span>snafu::ResultExt;
-
         <span class="kw">let </span>res = <span class="kw">match </span>tls_config {
             <span class="prelude-val">Some</span>(tls_config) =&gt; {
                 <span class="macro">debug!</span>(<span class="string">"HTTPS: serve connection"</span>);
@@ -1973,13 +2062,24 @@
                 <span class="macro">debug!</span>(<span class="string">"HTTP: serve connection"</span>);
                 <span class="self">self</span>.serve_connection(MaybeTlsStream::Plain(stream))
                     .<span class="kw">await
-                    </span>.context(ServeConnectionSnafu)
+                    </span>.context(HttpSnafu)
             }
         };
         <span class="kw">match </span>res {
             <span class="prelude-val">Ok</span>(()) =&gt; {}
             <span class="prelude-val">Err</span>(error) =&gt; <span class="kw">match </span>error {
-                Error::Io { source, .. } <span class="kw">if </span>source.kind() == std::io::ErrorKind::UnexpectedEof =&gt; {
+                ServeConnectionError::ManualAccept { source, .. }
+                | ServeConnectionError::LetsEncryptAccept { source, .. }
+                    <span class="kw">if </span>source.kind() == std::io::ErrorKind::UnexpectedEof =&gt;
+                {
+                    <span class="macro">debug!</span>(reason=<span class="question-mark">?</span>source, <span class="string">"peer disconnected"</span>);
+                }
+                <span class="comment">// From hyper: &lt;https://github.com/hyperium/hyper/commit/271bba16672ff54a44e043c5cc1ae6b9345bb172&gt;
+                // `hyper::Error::IncompleteMessage` is hyper's equivalent of UnexpectedEof
+                </span>ServeConnectionError::Https { source, .. }
+                | ServeConnectionError::Http { source, .. }
+                    <span class="kw">if </span>source.is_incomplete_message() =&gt;
+                {
                     <span class="macro">debug!</span>(reason=<span class="question-mark">?</span>source, <span class="string">"peer disconnected"</span>);
                 }
                 <span class="kw">_ </span>=&gt; {
@@ -1994,32 +2094,32 @@
         <span class="self">self</span>,
         stream: TcpStream,
         tls_config: TlsConfig,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Error&gt; {
-        <span class="kw">use </span>snafu::ResultExt;
-
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), ServeConnectionError&gt; {
         <span class="kw">let </span>TlsConfig { acceptor, config } = tls_config;
         <span class="kw">match </span>acceptor {
-            TlsAcceptor::LetsEncrypt(a) =&gt; <span class="kw">match </span>a.accept(stream).<span class="kw">await</span><span class="question-mark">? </span>{
-                <span class="prelude-val">None </span>=&gt; {
-                    <span class="macro">info!</span>(<span class="string">"TLS[acme]: received TLS-ALPN-01 validation request"</span>);
+            TlsAcceptor::LetsEncrypt(a) =&gt; {
+                <span class="kw">match </span>a.accept(stream).<span class="kw">await</span>.context(LetsEncryptAcceptSnafu)<span class="question-mark">? </span>{
+                    <span class="prelude-val">None </span>=&gt; {
+                        <span class="macro">info!</span>(<span class="string">"TLS[acme]: received TLS-ALPN-01 validation request"</span>);
+                    }
+                    <span class="prelude-val">Some</span>(start_handshake) =&gt; {
+                        <span class="macro">debug!</span>(<span class="string">"TLS[acme]: start handshake"</span>);
+                        <span class="kw">let </span>tls_stream = start_handshake
+                            .into_stream(config)
+                            .<span class="kw">await
+                            </span>.context(HandshakeSnafu)<span class="question-mark">?</span>;
+                        <span class="self">self</span>.serve_connection(MaybeTlsStream::Tls(tls_stream))
+                            .<span class="kw">await
+                            </span>.context(HttpsSnafu)<span class="question-mark">?</span>;
+                    }
                 }
-                <span class="prelude-val">Some</span>(start_handshake) =&gt; {
-                    <span class="macro">debug!</span>(<span class="string">"TLS[acme]: start handshake"</span>);
-                    <span class="kw">let </span>tls_stream = start_handshake
-                        .into_stream(config)
-                        .<span class="kw">await
-                        </span>.context(HandshakeSnafu)<span class="question-mark">?</span>;
-                    <span class="self">self</span>.serve_connection(MaybeTlsStream::Tls(tls_stream))
-                        .<span class="kw">await
-                        </span>.context(ServeConnectionSnafu)<span class="question-mark">?</span>;
-                }
-            },
+            }
             TlsAcceptor::Manual(a) =&gt; {
                 <span class="macro">debug!</span>(<span class="string">"TLS[manual]: accept"</span>);
                 <span class="kw">let </span>tls_stream = tokio::time::timeout(Duration::from_secs(<span class="number">30</span>), a.accept(stream))
                     .<span class="kw">await
                     </span>.context(TimeoutSnafu)<span class="question-mark">?
-                    </span>.context(AcceptSnafu)<span class="question-mark">?</span>;
+                    </span>.context(ManualAcceptSnafu)<span class="question-mark">?</span>;
 
                 <span class="self">self</span>.serve_connection(MaybeTlsStream::Tls(tls_stream))
                     .<span class="kw">await

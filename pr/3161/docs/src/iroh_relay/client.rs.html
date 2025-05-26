@@ -447,7 +447,8 @@
 <a href="#446" id="446">446</a>
 <a href="#447" id="447">447</a>
 <a href="#448" id="448">448</a>
-<a href="#449" id="449">449</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
+<a href="#449" id="449">449</a>
+<a href="#450" id="450">450</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
 //!
 //! Based on tailscale/derp/derphttp/derphttp_client.go
 
@@ -473,9 +474,10 @@
 
 <span class="kw">pub use </span><span class="self">self</span>::conn::{ReceivedMessage, RecvError, SendError, SendMessage};
 <span class="attr">#[cfg(not(wasm_browser))]
-</span><span class="kw">use </span><span class="kw">crate</span>::dns::{DnsResolver, Error <span class="kw">as </span>DnsError};
+</span><span class="kw">use </span><span class="kw">crate</span>::dns::{DnsError, DnsResolver};
 <span class="kw">use crate</span>::{
     http::{Protocol, RELAY_PATH},
+    protos::relay::RelayError,
     KeyCache,
 };
 
@@ -509,7 +511,7 @@
         </span>source: ws_stream_wasm::WsErr,
     },
     <span class="attr">#[snafu(transparent)]
-    </span>Handshake { source: <span class="kw">crate</span>::protos::relay::Error },
+    </span>Handshake { source: RelayError },
     <span class="attr">#[snafu(transparent)]
     </span>Dial { source: DialError },
     <span class="attr">#[snafu(display(<span class="string">"Unexpected status during upgrade: {code}"</span>))]

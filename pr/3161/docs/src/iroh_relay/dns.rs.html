@@ -468,7 +468,10 @@
 <a href="#467" id="467">467</a>
 <a href="#468" id="468">468</a>
 <a href="#469" id="469">469</a>
-<a href="#470" id="470">470</a></pre></div><pre class="rust"><code><span class="doccomment">//! DNS resolver
+<a href="#470" id="470">470</a>
+<a href="#471" id="471">471</a>
+<a href="#472" id="472">472</a>
+<a href="#473" id="473">473</a></pre></div><pre class="rust"><code><span class="doccomment">//! DNS resolver
 
 </span><span class="kw">use </span>std::{
     fmt,
@@ -503,13 +506,16 @@
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
 #[snafu(visibility(<span class="kw">pub</span>(<span class="kw">crate</span>)))]
-</span><span class="kw">pub enum </span>Error {
+</span><span class="kw">pub enum </span>DnsError {
     <span class="attr">#[snafu(transparent)]
     </span>Timeout { source: tokio::time::error::Elapsed },
     <span class="attr">#[snafu(display(<span class="string">"No response"</span>))]
     </span>NoResponse {},
     <span class="attr">#[snafu(display(<span class="string">"Resolve failed ipv4: {ipv4}, ipv6 {ipv6}"</span>))]
-    </span>ResolveBoth { ipv4: Box&lt;Error&gt;, ipv6: Box&lt;Error&gt; },
+    </span>ResolveBoth {
+        ipv4: Box&lt;DnsError&gt;,
+        ipv6: Box&lt;DnsError&gt;,
+    },
     <span class="attr">#[snafu(display(<span class="string">"missing host"</span>))]
     </span>MissingHost {},
     <span class="attr">#[snafu(transparent)]
@@ -519,7 +525,7 @@
     <span class="attr">#[snafu(display(<span class="string">"invalid DNS response: not a query for _iroh.z32encodedpubkey"</span>))]
     </span>InvalidResponse {},
     <span class="attr">#[snafu(display(<span class="string">"no calls succeeded: [{}]"</span>, errors.iter().map(|e| e.to_string()).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;().join(<span class="string">""</span>)))]
-    </span>Staggered { errors: Vec&lt;Error&gt; },
+    </span>Staggered { errors: Vec&lt;DnsError&gt; },
 }
 
 <span class="doccomment">/// The DNS resolver used throughout `iroh`.
@@ -584,7 +590,7 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         host: <span class="kw">impl </span>ToString,
         timeout: Duration,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;TxtLookup, Error&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;TxtLookup, DnsError&gt; {
         <span class="kw">let </span>host = host.to_string();
         <span class="kw">let </span>res = time::timeout(timeout, <span class="self">self</span>.<span class="number">0</span>.txt_lookup(host)).<span class="kw">await</span><span class="question-mark">??</span>;
         <span class="prelude-val">Ok</span>(TxtLookup(res))
@@ -595,7 +601,7 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         host: <span class="kw">impl </span>ToString,
         timeout: Duration,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = IpAddr&gt;, Error&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = IpAddr&gt;, DnsError&gt; {
         <span class="kw">let </span>host = host.to_string();
         <span class="kw">let </span>addrs = time::timeout(timeout, <span class="self">self</span>.<span class="number">0</span>.ipv4_lookup(host)).<span class="kw">await</span><span class="question-mark">??</span>;
         <span class="prelude-val">Ok</span>(addrs.into_iter().map(|ip| IpAddr::V4(ip.<span class="number">0</span>)))
@@ -606,7 +612,7 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         host: <span class="kw">impl </span>ToString,
         timeout: Duration,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = IpAddr&gt;, Error&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = IpAddr&gt;, DnsError&gt; {
         <span class="kw">let </span>host = host.to_string();
         <span class="kw">let </span>addrs = time::timeout(timeout, <span class="self">self</span>.<span class="number">0</span>.ipv6_lookup(host)).<span class="kw">await</span><span class="question-mark">??</span>;
         <span class="prelude-val">Ok</span>(addrs.into_iter().map(|ip| IpAddr::V6(ip.<span class="number">0</span>)))
@@ -621,7 +627,7 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         host: <span class="kw">impl </span>ToString,
         timeout: Duration,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = IpAddr&gt;, Error&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = IpAddr&gt;, DnsError&gt; {
         <span class="kw">let </span>host = host.to_string();
         <span class="kw">let </span>res = <span class="macro">tokio::join!</span>(
             <span class="self">self</span>.lookup_ipv4(host.clone(), timeout),
@@ -646,7 +652,7 @@
         url: <span class="kw-2">&amp;</span>Url,
         prefer_ipv6: bool,
         timeout: Duration,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;IpAddr, Error&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;IpAddr, DnsError&gt; {
         <span class="kw">let </span>host = url.host().context(MissingHostSnafu)<span class="question-mark">?</span>;
         <span class="kw">match </span>host {
             url::Host::Domain(domain) =&gt; {
@@ -689,7 +695,7 @@
         host: <span class="kw">impl </span>ToString,
         timeout: Duration,
         delays_ms: <span class="kw-2">&amp;</span>[u64],
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = IpAddr&gt;, Error&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = IpAddr&gt;, DnsError&gt; {
         <span class="kw">let </span>host = host.to_string();
         <span class="kw">let </span>f = || <span class="self">self</span>.lookup_ipv4(host.clone(), timeout);
         stagger_call(f, delays_ms)
@@ -708,7 +714,7 @@
         host: <span class="kw">impl </span>ToString,
         timeout: Duration,
         delays_ms: <span class="kw-2">&amp;</span>[u64],
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = IpAddr&gt;, Error&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = IpAddr&gt;, DnsError&gt; {
         <span class="kw">let </span>host = host.to_string();
         <span class="kw">let </span>f = || <span class="self">self</span>.lookup_ipv6(host.clone(), timeout);
         stagger_call(f, delays_ms)
@@ -728,7 +734,7 @@
         host: <span class="kw">impl </span>ToString,
         timeout: Duration,
         delays_ms: <span class="kw-2">&amp;</span>[u64],
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = IpAddr&gt;, Error&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = IpAddr&gt;, DnsError&gt; {
         <span class="kw">let </span>host = host.to_string();
         <span class="kw">let </span>f = || <span class="self">self</span>.lookup_ipv4_ipv6(host.clone(), timeout);
         stagger_call(f, delays_ms)

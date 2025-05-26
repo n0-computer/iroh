@@ -944,7 +944,9 @@
 <a href="#943" id="943">943</a>
 <a href="#944" id="944">944</a>
 <a href="#945" id="945">945</a>
-<a href="#946" id="946">946</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
+<a href="#946" id="946">946</a>
+<a href="#947" id="947">947</a>
+<a href="#948" id="948">948</a></pre></div><pre class="rust"><code><span class="doccomment">//! The server-side representation of an ongoing client relaying connection.
 
 </span><span class="kw">use </span>std::{
     collections::HashSet, future::Future, num::NonZeroU32, pin::Pin, sync::Arc, task::Poll,
@@ -968,9 +970,14 @@
 <span class="kw">use crate</span>::{
     protos::{
         disco,
-        relay::{write_frame, Frame, PING_INTERVAL},
+        relay::{write_frame, Frame, RelayError, PING_INTERVAL},
     },
-    server::{clients::Clients, metrics::Metrics, streams::RelayedStream, ClientRateLimit},
+    server::{
+        clients::Clients,
+        metrics::Metrics,
+        streams::{RelayedStream, StreamError},
+        ClientRateLimit,
+    },
     PingTracker,
 };
 
@@ -1138,14 +1145,14 @@
     <span class="attr">#[snafu(transparent)]
     </span>ForwardPacket { source: ForwardPacketError },
     <span class="attr">#[snafu(transparent)]
-    </span>Streams { source: <span class="kw">super</span>::streams::Error },
+    </span>Streams { source: StreamError },
     <span class="attr">#[snafu(display(<span class="string">"Stream terminated"</span>))]
     </span>StreamTerminated {
         <span class="attr">#[snafu(implicit)]
         </span>span_trace: n0_snafu::SpanTrace,
     },
     <span class="attr">#[snafu(transparent)]
-    </span>Relay { source: <span class="kw">super</span>::protos::relay::Error },
+    </span>Relay { source: RelayError },
     <span class="attr">#[snafu(display(<span class="string">"Server issue: {problem:?}"</span>))]
     </span>Health {
         problem: Bytes,
@@ -1178,7 +1185,7 @@
     },
     <span class="attr">#[snafu(display(<span class="string">"Failed to send disco packet"</span>))]
     </span>DiscoPacketSend {
-        source: <span class="kw">crate</span>::protos::relay::Error,
+        source: RelayError,
         <span class="attr">#[snafu(implicit)]
         </span>span_trace: n0_snafu::SpanTrace,
     },
@@ -1189,7 +1196,7 @@
     },
     <span class="attr">#[snafu(display(<span class="string">"Failed to send packet"</span>))]
     </span>PacketSend {
-        source: <span class="kw">crate</span>::protos::relay::Error,
+        source: RelayError,
         <span class="attr">#[snafu(implicit)]
         </span>span_trace: n0_snafu::SpanTrace,
     },
@@ -1200,13 +1207,13 @@
     },
     <span class="attr">#[snafu(display(<span class="string">"NodeGone write frame failed"</span>))]
     </span>NodeGoneWriteFrame {
-        source: <span class="kw">crate</span>::protos::relay::Error,
+        source: RelayError,
         <span class="attr">#[snafu(implicit)]
         </span>span_trace: n0_snafu::SpanTrace,
     },
     <span class="attr">#[snafu(display(<span class="string">"Keep alive write frame failed"</span>))]
     </span>KeepAliveWriteFrame {
-        source: <span class="kw">crate</span>::protos::relay::Error,
+        source: RelayError,
         <span class="attr">#[snafu(implicit)]
         </span>span_trace: n0_snafu::SpanTrace,
     },
@@ -1349,7 +1356,7 @@
     <span class="doccomment">/// Writes the given frame to the connection.
     ///
     /// Errors if the send does not happen within the `timeout` duration
-    </span><span class="kw">async fn </span>write_frame(<span class="kw-2">&amp;mut </span><span class="self">self</span>, frame: Frame) -&gt; <span class="prelude-ty">Result</span>&lt;(), <span class="kw">crate</span>::protos::relay::Error&gt; {
+    </span><span class="kw">async fn </span>write_frame(<span class="kw-2">&amp;mut </span><span class="self">self</span>, frame: Frame) -&gt; <span class="prelude-ty">Result</span>&lt;(), RelayError&gt; {
         write_frame(<span class="kw-2">&amp;mut </span><span class="self">self</span>.stream, frame, <span class="prelude-val">Some</span>(<span class="self">self</span>.timeout)).<span class="kw">await
     </span>}
 
@@ -1357,7 +1364,7 @@
     ///
     /// Errors if the send does not happen within the `timeout` duration
     /// Does not flush.
-    </span><span class="kw">async fn </span>send_raw(<span class="kw-2">&amp;mut </span><span class="self">self</span>, packet: Packet) -&gt; <span class="prelude-ty">Result</span>&lt;(), <span class="kw">crate</span>::protos::relay::Error&gt; {
+    </span><span class="kw">async fn </span>send_raw(<span class="kw-2">&amp;mut </span><span class="self">self</span>, packet: Packet) -&gt; <span class="prelude-ty">Result</span>&lt;(), RelayError&gt; {
         <span class="kw">let </span>src_key = packet.src;
         <span class="kw">let </span>content = packet.data;
 
@@ -1368,7 +1375,7 @@
             .<span class="kw">await
     </span>}
 
-    <span class="kw">async fn </span>send_packet(<span class="kw-2">&amp;mut </span><span class="self">self</span>, packet: Packet) -&gt; <span class="prelude-ty">Result</span>&lt;(), <span class="kw">crate</span>::protos::relay::Error&gt; {
+    <span class="kw">async fn </span>send_packet(<span class="kw-2">&amp;mut </span><span class="self">self</span>, packet: Packet) -&gt; <span class="prelude-ty">Result</span>&lt;(), RelayError&gt; {
         <span class="macro">trace!</span>(<span class="string">"send packet"</span>);
         <span class="kw">match </span><span class="self">self</span>.send_raw(packet).<span class="kw">await </span>{
             <span class="prelude-val">Ok</span>(()) =&gt; {
@@ -1382,10 +1389,7 @@
         }
     }
 
-    <span class="kw">async fn </span>send_disco_packet(
-        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-        packet: Packet,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), <span class="kw">crate</span>::protos::relay::Error&gt; {
+    <span class="kw">async fn </span>send_disco_packet(<span class="kw-2">&amp;mut </span><span class="self">self</span>, packet: Packet) -&gt; <span class="prelude-ty">Result</span>&lt;(), RelayError&gt; {
         <span class="macro">trace!</span>(<span class="string">"send disco packet"</span>);
         <span class="kw">match </span><span class="self">self</span>.send_raw(packet).<span class="kw">await </span>{
             <span class="prelude-val">Ok</span>(()) =&gt; {
@@ -1402,7 +1406,7 @@
     <span class="doccomment">/// Handles frame read results.
     </span><span class="kw">async fn </span>handle_frame(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-        maybe_frame: <span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Result</span>&lt;Frame, <span class="kw">super</span>::streams::Error&gt;&gt;,
+        maybe_frame: <span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Result</span>&lt;Frame, StreamError&gt;&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), HandleFrameError&gt; {
         <span class="macro">trace!</span>(<span class="question-mark">?</span>maybe_frame, <span class="string">"handle incoming frame"</span>);
         <span class="kw">let </span>frame = <span class="kw">match </span>maybe_frame {
@@ -1504,7 +1508,7 @@
         <span class="doccomment">/// Future which will complete when the item can be yielded.
         </span>delay: Pin&lt;Box&lt;<span class="kw">dyn </span>Future&lt;Output = ()&gt; + Send + Sync&gt;&gt;,
         <span class="doccomment">/// Item to yield when the `delay` future completes.
-        </span>item: <span class="prelude-ty">Result</span>&lt;Frame, <span class="kw">super</span>::streams::Error&gt;,
+        </span>item: <span class="prelude-ty">Result</span>&lt;Frame, StreamError&gt;,
     },
     Ready,
 }
@@ -1548,7 +1552,7 @@
 }
 
 <span class="kw">impl </span>Stream <span class="kw">for </span>RateLimitedRelayedStream {
-    <span class="kw">type </span>Item = <span class="prelude-ty">Result</span>&lt;Frame, <span class="kw">super</span>::streams::Error&gt;;
+    <span class="kw">type </span>Item = <span class="prelude-ty">Result</span>&lt;Frame, StreamError&gt;;
 
     <span class="attr">#[instrument(name = <span class="string">"rate_limited_relayed_stream"</span>, skip_all)]
     </span><span class="kw">fn </span>poll_next(

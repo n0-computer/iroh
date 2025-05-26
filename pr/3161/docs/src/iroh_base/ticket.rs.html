@@ -135,7 +135,7 @@
     </span><span class="kw">fn </span>to_bytes(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Vec&lt;u8&gt;;
 
     <span class="doccomment">/// Deserialize from the base32 string representation bytes.
-    </span><span class="kw">fn </span>from_bytes(bytes: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, Error&gt;;
+    </span><span class="kw">fn </span>from_bytes(bytes: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ParseError&gt;;
 
     <span class="doccomment">/// Serialize to string.
     </span><span class="kw">fn </span>serialize(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; String {
@@ -145,7 +145,7 @@
     }
 
     <span class="doccomment">/// Deserialize from a string.
-    </span><span class="kw">fn </span>deserialize(str: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, Error&gt; {
+    </span><span class="kw">fn </span>deserialize(str: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, ParseError&gt; {
         <span class="kw">let </span>expected = <span class="self">Self</span>::KIND;
         <span class="kw">let </span><span class="prelude-val">Some</span>(rest) = str.strip_prefix(expected) <span class="kw">else </span>{
             <span class="kw">return </span><span class="prelude-val">Err</span>(KindSnafu { expected }.build());
@@ -165,7 +165,7 @@
 <span class="attr">#[derive(Debug, Snafu)]
 #[allow(missing_docs)]
 #[snafu(visibility(<span class="kw">pub</span>(<span class="kw">crate</span>)))]
-</span><span class="kw">pub enum </span>Error {
+</span><span class="kw">pub enum </span>ParseError {
     <span class="doccomment">/// Found a ticket of with the wrong prefix, indicating the wrong kind.
     </span><span class="attr">#[snafu(display(<span class="string">"wrong prefix, expected {expected}"</span>))]
     </span>Kind {

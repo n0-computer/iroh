@@ -608,7 +608,10 @@
 <a href="#607" id="607">607</a>
 <a href="#608" id="608">608</a>
 <a href="#609" id="609">609</a>
-<a href="#610" id="610">610</a></pre></div><pre class="rust"><code><span class="doccomment">//! Tools for spawning an accept loop that routes incoming requests to the right protocol.
+<a href="#610" id="610">610</a>
+<a href="#611" id="611">611</a>
+<a href="#612" id="612">612</a>
+<a href="#613" id="613">613</a></pre></div><pre class="rust"><code><span class="doccomment">//! Tools for spawning an accept loop that routes incoming requests to the right protocol.
 //!
 //! ## Example
 //!
@@ -711,7 +714,7 @@
 
 <span class="attr">#[allow(missing_docs)]
 #[derive(Debug, Snafu)]
-</span><span class="kw">pub enum </span>Error {
+</span><span class="kw">pub enum </span>ProtocolError {
     <span class="attr">#[snafu(transparent)]
     </span>Connect {
         source: <span class="kw">crate</span>::endpoint::ConnectionError,
@@ -722,7 +725,7 @@
     },
 }
 
-<span class="kw">impl </span>Error {
+<span class="kw">impl </span>ProtocolError {
     <span class="doccomment">/// Creates a new user error from an arbitrary error type.
     </span><span class="kw">pub fn </span>from_err&lt;T: std::error::Error + Send + Sync + <span class="lifetime">'static</span>&gt;(value: T) -&gt; <span class="self">Self </span>{
         <span class="self">Self</span>::User {
@@ -731,19 +734,19 @@
     }
 }
 
-<span class="kw">impl </span>From&lt;std::io::Error&gt; <span class="kw">for </span>Error {
+<span class="kw">impl </span>From&lt;std::io::Error&gt; <span class="kw">for </span>ProtocolError {
     <span class="kw">fn </span>from(err: std::io::Error) -&gt; <span class="self">Self </span>{
         <span class="self">Self</span>::from_err(err)
     }
 }
 
-<span class="kw">impl </span>From&lt;RemoteNodeIdError&gt; <span class="kw">for </span>Error {
+<span class="kw">impl </span>From&lt;RemoteNodeIdError&gt; <span class="kw">for </span>ProtocolError {
     <span class="kw">fn </span>from(err: RemoteNodeIdError) -&gt; <span class="self">Self </span>{
         <span class="self">Self</span>::from_err(err)
     }
 }
 
-<span class="kw">impl </span>From&lt;quinn::ClosedStream&gt; <span class="kw">for </span>Error {
+<span class="kw">impl </span>From&lt;quinn::ClosedStream&gt; <span class="kw">for </span>ProtocolError {
     <span class="kw">fn </span>from(err: quinn::ClosedStream) -&gt; <span class="self">Self </span>{
         <span class="self">Self</span>::from_err(err)
     }
@@ -762,7 +765,10 @@
     <span class="doccomment">/// Optional interception point to handle the `Connecting` state.
     ///
     /// This enables accepting 0-RTT data from clients, among other things.
-    </span><span class="kw">fn </span>on_connecting(<span class="kw-2">&amp;</span><span class="self">self</span>, connecting: Connecting) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;Connection, Error&gt;&gt; {
+    </span><span class="kw">fn </span>on_connecting(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        connecting: Connecting,
+    ) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;Connection, ProtocolError&gt;&gt; {
         Box::pin(<span class="kw">async move </span>{
             <span class="kw">let </span>conn = connecting.<span class="kw">await</span><span class="question-mark">?</span>;
             <span class="prelude-val">Ok</span>(conn)
@@ -776,7 +782,7 @@
     /// When [`Router::shutdown`] is called, no further connections will be accepted, and
     /// the futures returned by [`Self::accept`] will be aborted after the future returned
     /// from [`ProtocolHandler::shutdown`] completes.
-    </span><span class="kw">fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, connection: Connection) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;(), Error&gt;&gt;;
+    </span><span class="kw">fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, connection: Connection) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;(), ProtocolError&gt;&gt;;
 
     <span class="doccomment">/// Called when the router shuts down.
     ///
@@ -788,11 +794,11 @@
 }
 
 <span class="kw">impl</span>&lt;T: ProtocolHandler&gt; ProtocolHandler <span class="kw">for </span>Arc&lt;T&gt; {
-    <span class="kw">fn </span>on_connecting(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connecting) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;Connection, Error&gt;&gt; {
+    <span class="kw">fn </span>on_connecting(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connecting) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;Connection, ProtocolError&gt;&gt; {
         <span class="self">self</span>.as_ref().on_connecting(conn)
     }
 
-    <span class="kw">fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connection) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;(), Error&gt;&gt; {
+    <span class="kw">fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connection) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;(), ProtocolError&gt;&gt; {
         <span class="self">self</span>.as_ref().accept(conn)
     }
 
@@ -802,11 +808,11 @@
 }
 
 <span class="kw">impl</span>&lt;T: ProtocolHandler&gt; ProtocolHandler <span class="kw">for </span>Box&lt;T&gt; {
-    <span class="kw">fn </span>on_connecting(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connecting) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;Connection, Error&gt;&gt; {
+    <span class="kw">fn </span>on_connecting(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connecting) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;Connection, ProtocolError&gt;&gt; {
         <span class="self">self</span>.as_ref().on_connecting(conn)
     }
 
-    <span class="kw">fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connection) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;(), Error&gt;&gt; {
+    <span class="kw">fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connection) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;(), ProtocolError&gt;&gt; {
         <span class="self">self</span>.as_ref().accept(conn)
     }
 
@@ -1065,11 +1071,11 @@
 }
 
 <span class="kw">impl</span>&lt;P: ProtocolHandler + Clone&gt; ProtocolHandler <span class="kw">for </span>AccessLimit&lt;P&gt; {
-    <span class="kw">fn </span>on_connecting(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connecting) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;Connection, Error&gt;&gt; {
+    <span class="kw">fn </span>on_connecting(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connecting) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;Connection, ProtocolError&gt;&gt; {
         <span class="self">self</span>.proto.on_connecting(conn)
     }
 
-    <span class="kw">fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connection) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;(), Error&gt;&gt; {
+    <span class="kw">fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connection) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;(), ProtocolError&gt;&gt; {
         <span class="kw">let </span>this = <span class="self">self</span>.clone();
         Box::pin(<span class="kw">async move </span>{
             <span class="kw">let </span>remote = conn.remote_node_id()<span class="question-mark">?</span>;
@@ -1079,7 +1085,7 @@
                 <span class="kw">return </span><span class="prelude-val">Err</span>(std::io::Error::other(<span class="string">"not allowed"</span>).into());
             }
             this.proto.accept(conn).<span class="kw">await</span><span class="question-mark">?</span>;
-            <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, Error&gt;(())
+            <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, ProtocolError&gt;(())
         })
     }
 
@@ -1121,7 +1127,7 @@
     <span class="kw">const </span>ECHO_ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"/iroh/echo/1"</span>;
 
     <span class="kw">impl </span>ProtocolHandler <span class="kw">for </span>Echo {
-        <span class="kw">fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, connection: Connection) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;(), Error&gt;&gt; {
+        <span class="kw">fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, connection: Connection) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;(), ProtocolError&gt;&gt; {
             <span class="macro">println!</span>(<span class="string">"accepting echo"</span>);
             Box::pin(<span class="kw">async move </span>{
                 <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = connection.accept_bi().<span class="kw">await</span><span class="question-mark">?</span>;
@@ -1170,7 +1176,7 @@
         <span class="kw">const </span>TEST_ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"/iroh/test/1"</span>;
 
         <span class="kw">impl </span>ProtocolHandler <span class="kw">for </span>TestProtocol {
-            <span class="kw">fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, connection: Connection) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;(), Error&gt;&gt; {
+            <span class="kw">fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, connection: Connection) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;(), ProtocolError&gt;&gt; {
                 <span class="kw">let </span>this = <span class="self">self</span>.clone();
                 Box::pin(<span class="kw">async move </span>{
                     this.connections.lock().expect(<span class="string">"poisoned"</span>).push(connection);

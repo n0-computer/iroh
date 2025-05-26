@@ -1951,7 +1951,7 @@
 <span class="kw">use </span>http::StatusCode;
 <span class="kw">use </span>iroh_base::RelayUrl;
 <span class="attr">#[cfg(not(wasm_browser))]
-</span><span class="kw">use </span>iroh_relay::dns::DnsResolver;
+</span><span class="kw">use </span>iroh_relay::dns::{DnsError, DnsResolver};
 <span class="kw">use </span>iroh_relay::{
     defaults::{DEFAULT_RELAY_QUIC_PORT, DEFAULT_STUN_PORT},
     http::RELAY_PROBE_PATH,
@@ -3042,7 +3042,7 @@
 #[snafu(module)]
 </span><span class="kw">enum </span>CaptivePortalError {
     <span class="attr">#[snafu(transparent)]
-    </span>DnsLookup { source: iroh_relay::dns::Error },
+    </span>DnsLookup { source: DnsError },
     <span class="attr">#[snafu(display(<span class="string">"Creating HTTP client failed"</span>))]
     </span>CreateReqwestClient { source: reqwest::Error },
     <span class="attr">#[snafu(display(<span class="string">"HTTP request failed"</span>))]
@@ -3173,7 +3173,7 @@
     <span class="attr">#[snafu(display(<span class="string">"No suitable relay address found"</span>))]
     </span>NoAddrFound,
     <span class="attr">#[snafu(display(<span class="string">"DNS lookup failed"</span>))]
-    </span>DnsLookup { source: iroh_relay::dns::Error },
+    </span>DnsLookup { source: DnsError },
     <span class="attr">#[snafu(display(<span class="string">"Relay node is not suitable for non-STUN probes"</span>))]
     </span>UnsupportedRelayNode,
     <span class="attr">#[snafu(display(<span class="string">"HTTPS probes are not implemented"</span>))]
@@ -3329,7 +3329,7 @@
     <span class="attr">#[snafu(transparent)]
     </span>InvalidUrl { source: url::ParseError },
     <span class="attr">#[snafu(transparent)]
-    </span>DnsLookup { source: iroh_relay::dns::Error },
+    </span>DnsLookup { source: DnsError },
     <span class="attr">#[cfg(not(wasm_browser))]
     #[snafu(display(<span class="string">"Invalid certificate"</span>))]
     </span>InvalidCertificate { source: reqwest::Error },

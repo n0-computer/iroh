@@ -419,7 +419,7 @@
 <span class="attr">#[allow(missing_docs)]
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
-</span><span class="kw">pub enum </span>Error {
+</span><span class="kw">pub enum </span>StunError {
     <span class="doccomment">/// The STUN message could not be parsed or is otherwise invalid.
     </span><span class="attr">#[snafu(display(<span class="string">"invalid message"</span>))]
     </span>InvalidMessage {},
@@ -481,7 +481,7 @@
 }
 
 <span class="doccomment">/// Parses a STUN binding request.
-</span><span class="kw">pub fn </span>parse_binding_request(b: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;TransactionId, Error&gt; {
+</span><span class="kw">pub fn </span>parse_binding_request(b: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;TransactionId, StunError&gt; {
     <span class="kw">let </span>ctx = DecoderContextBuilder::default()
         .with_validation() <span class="comment">// ensure fingerprint is validated
         </span>.build();
@@ -509,7 +509,7 @@
 
 <span class="doccomment">/// Parses a successful binding response STUN packet.
 /// The IP address is extracted from the XOR-MAPPED-ADDRESS attribute.
-</span><span class="kw">pub fn </span>parse_response(b: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;(TransactionId, SocketAddr), Error&gt; {
+</span><span class="kw">pub fn </span>parse_response(b: <span class="kw-2">&amp;</span>[u8]) -&gt; <span class="prelude-ty">Result</span>&lt;(TransactionId, SocketAddr), StunError&gt; {
     <span class="kw">let </span>decoder = MessageDecoder::default();
     <span class="kw">let </span>(msg, <span class="kw">_</span>) = decoder.decode(b).map_err(|<span class="kw">_</span>| InvalidMessageSnafu.build())<span class="question-mark">?</span>;
 
