@@ -967,7 +967,9 @@
 <a href="#966" id="966">966</a>
 <a href="#967" id="967">967</a>
 <a href="#968" id="968">968</a>
-<a href="#969" id="969">969</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
+<a href="#969" id="969">969</a>
+<a href="#970" id="970">970</a>
+<a href="#971" id="971">971</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
 //!
 //! It is implemented as an actor with [`Client`] as handle.
 //!
@@ -1007,7 +1009,7 @@
 <span class="kw">use </span>rand::seq::IteratorRandom;
 <span class="kw">use </span>tokio::sync::mpsc;
 <span class="kw">use </span>tokio_util::sync::CancellationToken;
-<span class="kw">use </span>tracing::{debug, debug_span, info_span, trace, warn, Instrument};
+<span class="kw">use </span>tracing::{debug, debug_span, error, info_span, trace, warn, Instrument};
 <span class="kw">use </span>url::Host;
 
 <span class="attr">#[cfg(wasm_browser)]
@@ -1167,23 +1169,25 @@
                             .map(|r| r.probe.is_udp())
                             .unwrap_or_default();
                         num_probes -= <span class="number">1</span>;
-                    }
-                    <span class="self">self</span>.msg_tx.send(report).<span class="kw">await</span>.ok();
 
-                    <span class="comment">// TODO: check if we have enough probes and cancel them
+                        <span class="comment">// If all probes are done &amp; we have_udp cancel portmapper and captive
+                        </span><span class="kw">if </span>num_probes == <span class="number">0 </span>{
+                            <span class="macro">debug!</span>(<span class="string">"all probes done"</span>);
+                            <span class="macro">debug_assert!</span>(probes.len() &lt;= <span class="number">2</span>, <span class="string">"{} probes"</span>, probes.len());
 
-                    // If all probes are done &amp; we have_udp cancel portmapper and captive
-                    </span><span class="kw">if </span>num_probes == <span class="number">0 </span>{
-                        <span class="macro">debug!</span>(<span class="string">"all probes done"</span>);
-                        <span class="macro">debug_assert!</span>(probes.len() &lt;= <span class="number">2</span>, <span class="string">"{} probes"</span>, probes.len());
-
-                        <span class="kw">if </span>have_udp {
-                            port_token.cancel();
-                            captive_token.cancel();
+                            <span class="kw">if </span>have_udp {
+                                port_token.cancel();
+                                captive_token.cancel();
+                            }
                         }
                     }
+                    <span class="self">self</span>.msg_tx.send(report).<span class="kw">await</span>.ok();
                 }
                 <span class="prelude-val">Err</span>(e) =&gt; {
+                    <span class="kw">if </span>e.is_panic() {
+                        <span class="macro">error!</span>(<span class="string">"Task panicked {:?}"</span>, e);
+                        <span class="kw">break</span>;
+                    }
                     <span class="macro">warn!</span>(<span class="string">"probes task join error: {:?}"</span>, e);
                 }
             }
