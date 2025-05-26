@@ -164,6 +164,8 @@ pub enum ProbesError {
     ProbeFailure { source: ProbeError },
     #[snafu(display("All probes failed"))]
     AllProbesFailed,
+    #[snafu(display("Probe cancelled"))]
+    Cancelled,
 }
 
 #[derive(Debug)]
@@ -201,14 +203,15 @@ impl Actor {
 
         let probes_token = CancellationToken::new();
 
-        let mut probes = self.spawn_probes_task(probes_token.clone()).await;
+        let (mut probes, mut num_probes) = self
+            .spawn_probes_task(probes_token.clone(), PROBES_TIMEOUT)
+            .await;
+
         let port_token = self.prepare_portmapper_task(&mut probes);
         let captive_token = self.prepare_captive_portal_task(&mut probes);
 
         let total_timer = time::sleep(OVERALL_REPORT_TIMEOUT);
         tokio::pin!(total_timer);
-        let probe_timer = time::sleep(PROBES_TIMEOUT);
-        tokio::pin!(probe_timer);
 
         // any reports of working UDP/QUIC?
         let mut have_udp = false;
@@ -221,38 +224,31 @@ impl Actor {
                     return Err(TimeoutSnafu.build());
                 }
 
-                _ = &mut probe_timer => {
-                    warn!("tick: probes timed out");
-                    // Set new timeout to not go into this branch multiple times.  We need
-                    // the abort to finish all probes normally.  PROBES_TIMEOUT is
-                    // sufficiently far in the future.
-                    probe_timer.as_mut().reset(Instant::now() + PROBES_TIMEOUT);
-                    probes_token.cancel();
-                    if have_udp {
-                        port_token.cancel();
-                        captive_token.cancel();
-                    }
-                }
-
                 // Check for probes finishing.
                 set_result = probes.join_next() => {
                     trace!("tick: probes done: {:?}", set_result);
                     match set_result {
-                        Some(Ok(maybe_report)) => {
-                            match maybe_report {
-                                Some(report) => {
-                                    #[cfg_attr(wasm_browser, allow(irrefutable_let_patterns))]
-                                    if let ProbeFinished::Regular(report) = &report {
-                                        have_udp |= report.as_ref().map(|r| r.probe.is_udp()).unwrap_or_default();
-                                    }
-                                    self.msg_tx.send(report).await.ok();
-                                }
-                                None => {
-                                    debug!("probe cancelled");
+                        Some(Ok(report)) => {
+                            #[cfg_attr(wasm_browser, allow(irrefutable_let_patterns))]
+                            if let ProbeFinished::Regular(report) = &report {
+                                have_udp |= report.as_ref().map(|r| r.probe.is_udp()).unwrap_or_default();
+                                num_probes -= 1;
+                            }
+                            self.msg_tx.send(report).await.ok();
+
+
+                            // TODO: check if we have enough probes and cancel them
+
+                            // If all probes are done & we have_udp cancel portmapper and captive
+                            if num_probes == 0 {
+                                debug!("all probes done");
+                                debug_assert!(probes.len() <= 2, "{} probes", probes.len());
+
+                                if have_udp {
+                                    port_token.cancel();
+                                    captive_token.cancel();
                                 }
                             }
-                            // TODO: check if we have enough probes an cancel them
-                            // TODO: if all probes are done & we have_udp cancel portmapper and captive
                         }
                         Some(Err(e)) => {
                             warn!("probes task join error: {:?}", e);
@@ -272,27 +268,30 @@ impl Actor {
     /// Creates the future which will perform the portmapper task.
     ///
     /// The returned future will run the portmapper, if enabled, resolving to it's result.
-    fn prepare_portmapper_task(
-        &mut self,
-        tasks: &mut JoinSet<Option<ProbeFinished>>,
-    ) -> CancellationToken {
+    fn prepare_portmapper_task(&mut self, tasks: &mut JoinSet<ProbeFinished>) -> CancellationToken {
         let token = CancellationToken::new();
         #[cfg(not(wasm_browser))]
         if let Some(port_mapper) = self.socket_state.port_mapper.clone() {
-            tasks.spawn(token.clone().run_until_cancelled_owned(async move {
-                let res = match port_mapper.probe().await {
-                    Ok(Ok(res)) => Some(res),
-                    Ok(Err(err)) => {
+            let token = token.clone();
+            tasks.spawn(async move {
+                let res = token.run_until_cancelled_owned(port_mapper.probe()).await;
+                let res = match res {
+                    Some(Ok(Ok(res))) => Some(res),
+                    Some(Ok(Err(err))) => {
                         debug!("skipping port mapping: {err:?}");
                         None
                     }
-                    Err(recv_err) => {
+                    Some(Err(recv_err)) => {
                         warn!("skipping port mapping: {recv_err:?}");
+                        None
+                    }
+                    None => {
+                        debug!("probe cancelled");
                         None
                     }
                 };
                 ProbeFinished::Portmap(res)
-            }));
+            });
         }
         token
     }
@@ -300,7 +299,7 @@ impl Actor {
     /// Creates the future which will perform the captive portal check.
     fn prepare_captive_portal_task(
         &mut self,
-        tasks: &mut JoinSet<Option<ProbeFinished>>,
+        tasks: &mut JoinSet<ProbeFinished>,
     ) -> CancellationToken {
         let token = CancellationToken::new();
 
@@ -318,35 +317,47 @@ impl Actor {
 
             let dns_resolver = self.socket_state.dns_resolver.clone();
             let dm = self.relay_map.clone();
-            tasks.spawn(token.clone().run_until_cancelled_owned(async move {
-                time::sleep(CAPTIVE_PORTAL_DELAY).await;
-                debug!("Captive portal check started after {CAPTIVE_PORTAL_DELAY:?}");
-                let captive_portal_check = time::timeout(
-                    CAPTIVE_PORTAL_TIMEOUT,
-                    check_captive_portal(&dns_resolver, &dm, preferred_relay)
-                        .instrument(debug_span!("captive-portal")),
-                );
-                let res = match captive_portal_check.await {
-                    Ok(Ok(found)) => Some(found),
-                    Ok(Err(err)) => {
-                        match err {
-                            CaptivePortalError::CreateReqwestClient { ref source }
-                            | CaptivePortalError::HttpRequest { ref source } => {
-                                if source.is_connect() {
-                                    debug!("check_captive_portal failed: {err:#}");
+            let token = token.clone();
+            tasks.spawn(
+                async move {
+                    let res = token
+                        .run_until_cancelled_owned(async move {
+                            time::sleep(CAPTIVE_PORTAL_DELAY).await;
+                            debug!("Captive portal check started after {CAPTIVE_PORTAL_DELAY:?}");
+                            time::timeout(
+                                CAPTIVE_PORTAL_TIMEOUT,
+                                check_captive_portal(&dns_resolver, &dm, preferred_relay),
+                            )
+                            .await
+                        })
+                        .await;
+                    let res = match res {
+                        Some(Ok(Ok(found))) => Some(found),
+                        Some(Ok(Err(err))) => {
+                            match err {
+                                CaptivePortalError::CreateReqwestClient { source }
+                                | CaptivePortalError::HttpRequest { source }
+                                    if source.is_connect() =>
+                                {
+                                    debug!("check_captive_portal failed: {source:#}");
                                 }
+                                err => warn!("check_captive_portal error: {err:#}"),
                             }
-                            _ => warn!("check_captive_portal error: {err:#}"),
+                            None
                         }
-                        None
-                    }
-                    Err(_) => {
-                        warn!("check_captive_portal timed out");
-                        None
-                    }
-                };
-                ProbeFinished::CaptivePortal(res)
-            }));
+                        Some(Err(_)) => {
+                            warn!("check_captive_portal timed out");
+                            None
+                        }
+                        None => {
+                            debug!("check_captive_portal cancelled");
+                            None
+                        }
+                    };
+                    ProbeFinished::CaptivePortal(res)
+                }
+                .instrument(debug_span!("captive-portal")),
+            );
         }
         token
     }
@@ -372,7 +383,8 @@ impl Actor {
     async fn spawn_probes_task(
         &mut self,
         token: CancellationToken,
-    ) -> JoinSet<Option<ProbeFinished>> {
+        timeout: Duration,
+    ) -> (JoinSet<ProbeFinished>, usize) {
         #[cfg(not(wasm_browser))]
         let if_state = interfaces::State::new().await;
         #[cfg(not(wasm_browser))]
@@ -396,6 +408,7 @@ impl Actor {
 
         // A collection of futures running probe sets.
         let mut probes = JoinSet::default();
+        let mut num_probes = 0;
         for probe_set in plan.iter() {
             let mut set = JoinSet::default();
             for probe in probe_set {
@@ -404,62 +417,83 @@ impl Actor {
 
                 #[cfg(not(wasm_browser))]
                 let socket_state = self.socket_state.clone();
-
+                let token = token.clone();
                 set.spawn(
-                    token.clone().run_until_cancelled_owned(
-                        run_probe(
-                            relay_node,
-                            probe.clone(),
-                            #[cfg(not(wasm_browser))]
-                            socket_state,
-                            #[cfg(any(test, feature = "test-utils"))]
-                            self.insecure_skip_relay_cert_verify,
-                        )
+                    token
+                        .run_until_cancelled_owned(tokio::time::timeout(
+                            timeout,
+                            run_probe(
+                                relay_node,
+                                probe.clone(),
+                                #[cfg(not(wasm_browser))]
+                                socket_state,
+                                #[cfg(any(test, feature = "test-utils"))]
+                                self.insecure_skip_relay_cert_verify,
+                            ),
+                        ))
                         .instrument(debug_span!("run_probe", %probe)),
-                    ),
                 );
             }
 
             // Add the probe set to all futures of probe sets.  Handle aborting a probe set
             // if needed, only normal errors means the set continues.
+            num_probes += 1;
+            let token = token.clone();
             probes.spawn(
-                token.clone().run_until_cancelled_owned(
-                    async move {
-                        // Hack because ProbeSet is not it's own type yet.
-                        let mut probe_proto = None;
-                        while let Some(res) = set.join_next().await {
-                            match res {
-                                Ok(Some(Ok(report))) => return ProbeFinished::Regular(Ok(report)),
-                                Ok(Some(Err(ProbeErrorWithProbe::Error(err, probe)))) => {
-                                    probe_proto = Some(probe.proto());
-                                    warn!(?probe, "probe failed: {:#}", err);
-                                    continue;
-                                }
-                                Ok(Some(Err(ProbeErrorWithProbe::AbortSet(err, probe)))) => {
-                                    debug!(?probe, "probe set aborted: {:#}", err);
-                                    set.abort_all();
-                                    return ProbeFinished::Regular(Err(
-                                        ProbeFailureSnafu {}.into_error(err)
-                                    ));
-                                }
-                                Ok(None) => {
-                                    debug!("probe cancelled");
-                                }
-                                Err(err) => {
-                                    warn!("fatal probe set error, aborting: {:#}", err);
-                                    continue;
+                async move {
+                    let res = token
+                        .run_until_cancelled_owned(async move {
+                            // Hack because ProbeSet is not it's own type yet.
+                            let mut probe_proto = None;
+                            while let Some(res) = set.join_next().await {
+                                match res {
+                                    Ok(Some(Ok(Ok(report)))) => {
+                                        return ProbeFinished::Regular(Ok(report));
+                                    }
+                                    Ok(Some(Ok(Err(ProbeErrorWithProbe::Error(err, probe))))) => {
+                                        probe_proto = Some(probe.proto());
+                                        warn!(?probe, "probe failed: {:#}", err);
+                                        continue;
+                                    }
+                                    Ok(Some(Ok(Err(ProbeErrorWithProbe::AbortSet(
+                                        err,
+                                        probe,
+                                    ))))) => {
+                                        debug!(?probe, "probe set aborted: {:#}", err);
+                                        set.abort_all();
+                                        return ProbeFinished::Regular(Err(
+                                            ProbeFailureSnafu {}.into_error(err)
+                                        ));
+                                    }
+                                    Ok(Some(Err(tokio::time::error::Elapsed { .. }))) => {
+                                        warn!("probe timed out");
+                                    }
+                                    Ok(None) => {
+                                        debug!("probe cancelled");
+                                    }
+                                    Err(err) => {
+                                        warn!("fatal probe set error, aborting: {:#}", err);
+                                    }
                                 }
                             }
+                            warn!(?probe_proto, "no successful probes in ProbeSet");
+                            ProbeFinished::Regular(Err(AllProbesFailedSnafu.build()))
+                        })
+                        .await;
+
+                    match res {
+                        Some(res) => res,
+                        None => {
+                            debug!("probe cancelled");
+                            ProbeFinished::Regular(Err(CancelledSnafu.build()))
                         }
-                        warn!(?probe_proto, "no successful probes in ProbeSet");
-                        ProbeFinished::Regular(Err(AllProbesFailedSnafu.build()))
                     }
-                    .instrument(info_span!("probe")),
-                ),
+                }
+                .instrument(info_span!("probe")),
             );
         }
 
-        probes
+        (probes, num_probes)
     }
 }
 
