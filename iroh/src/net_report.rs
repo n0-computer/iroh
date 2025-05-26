@@ -426,8 +426,6 @@ mod tests {
 
     use iroh_base::RelayUrl;
     use n0_snafu::{Result, ResultExt};
-    use netwatch::IpFamily;
-
     use tokio_util::sync::CancellationToken;
     use tracing_test::traced_test;
 

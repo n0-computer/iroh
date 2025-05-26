@@ -17,9 +17,7 @@
 
 use std::{
     collections::BTreeSet,
-    future::Future,
     net::{IpAddr, SocketAddr},
-    pin::{pin, Pin},
     sync::Arc,
 };
 
@@ -46,11 +44,11 @@ use url::Host;
 
 #[cfg(wasm_browser)]
 use crate::net_report::portmapper; // We stub the library
+use crate::net_report::Report;
 #[cfg(not(wasm_browser))]
 use crate::net_report::{
     defaults::timeouts::DNS_TIMEOUT, dns::DNS_STAGGERING_MS, ip_mapped_addrs::IpMappedAddresses,
 };
-use crate::{net_report::Report, util::MaybeFuture};
 
 mod probes;
 
@@ -199,28 +197,13 @@ impl Actor {
     ///   - Updates the report, cancels unneeded futures.
     /// - Sends the report to the net_report actor.
     async fn run_inner(&mut self) -> Result<(), ActorRunError> {
-        #[cfg(not(wasm_browser))]
-        let port_mapper = self.socket_state.port_mapper.is_some();
-        #[cfg(wasm_browser)]
-        let port_mapper = false;
-        debug!(%port_mapper, "reportstate actor starting");
+        debug!("reportstate actor starting");
 
         let probes_token = CancellationToken::new();
-        let captive_token = CancellationToken::new();
-        let port_token = CancellationToken::new();
-
-        let port_task = self.prepare_portmapper_task();
-        let mut port_done = port_task.is_none();
-
-        let captive_task = self.prepare_captive_portal_task();
-        let mut captive_done = captive_task.is_none();
-
-        let mut port_mapping = pin!(port_token.clone().run_until_cancelled_owned(port_task));
-        let mut captive_task = pin!(captive_token
-            .clone()
-            .run_until_cancelled_owned(captive_task));
 
         let mut probes = self.spawn_probes_task(probes_token.clone()).await;
+        let port_token = self.prepare_portmapper_task(&mut probes);
+        let captive_token = self.prepare_captive_portal_task(&mut probes);
 
         let total_timer = time::sleep(OVERALL_REPORT_TIMEOUT);
         tokio::pin!(total_timer);
@@ -231,18 +214,6 @@ impl Actor {
         let mut have_udp = false;
 
         loop {
-            if probes.is_empty() && port_done && captive_done {
-                debug!("all tasks done");
-                break;
-            }
-
-            if probes.is_empty() {
-                debug!(
-                    "probes done, waiting for portmapper?: {}, captive: {}",
-                    port_done, captive_done
-                );
-            }
-
             tokio::select! {
                 biased;
                 _ = &mut total_timer => {
@@ -263,52 +234,34 @@ impl Actor {
                     }
                 }
 
-                // Drive the portmapper.
-                pm = &mut port_mapping => {
-                    #[cfg(not(wasm_browser))]
-                    {
-                        debug!(report=?pm, "tick: portmapper probe report");
-                        if let Some(pm) = pm {
-                            self.msg_tx.send(ProbeFinished::Portmap(pm)).await.ok();
-                        }
-                        port_done = true;
-                    }
-                }
-
                 // Check for probes finishing.
-                set_result = probes.join_next(), if !probes.is_empty() => {
+                set_result = probes.join_next() => {
                     trace!("tick: probes done: {:?}", set_result);
                     match set_result {
-                        Some(Ok(Some(report))) => {
-                            have_udp |= report.as_ref().map(|r| r.probe.is_udp()).unwrap_or_default();
-                            self.msg_tx.send(ProbeFinished::Regular(report)).await.ok();
-                        },
-                        Some(Ok(None)) => {
-                            debug!("probe cancelled");
+                        Some(Ok(maybe_report)) => {
+                            match maybe_report {
+                                Some(report) => {
+                                    #[cfg_attr(wasm_browser, allow(irrefutable_let_patterns))]
+                                    if let ProbeFinished::Regular(report) = &report {
+                                        have_udp |= report.as_ref().map(|r| r.probe.is_udp()).unwrap_or_default();
+                                    }
+                                    self.msg_tx.send(report).await.ok();
+                                }
+                                None => {
+                                    debug!("probe cancelled");
+                                }
+                            }
+                            // TODO: check if we have enough probes an cancel them
+                            // TODO: if all probes are done & we have_udp cancel portmapper and captive
                         }
                         Some(Err(e)) => {
                             warn!("probes task join error: {:?}", e);
                         }
                         None => {
-                            if have_udp {
-                                port_token.cancel();
-                                captive_token.cancel();
-                            }
+                            break;
                         }
                     }
                     trace!("tick: probes handled");
-                }
-
-                // Drive the captive task.
-                found = &mut captive_task => {
-                    #[cfg(not(wasm_browser))]
-                    {
-                        trace!("tick: captive portal task done");
-                        if let Some(found) = found {
-                            self.msg_tx.send(ProbeFinished::CaptivePortal(found)).await.ok();
-                        }
-                        captive_done = true;
-                    }
                 }
             }
         }
@@ -319,23 +272,15 @@ impl Actor {
     /// Creates the future which will perform the portmapper task.
     ///
     /// The returned future will run the portmapper, if enabled, resolving to it's result.
-    #[cfg(wasm_browser)]
     fn prepare_portmapper_task(
         &mut self,
-    ) -> MaybeFuture<Pin<Box<Pending<Option<portmapper::ProbeOutput>>>>> {
-        MaybeFuture::none()
-    }
-
-    /// Creates the future which will perform the portmapper task.
-    ///
-    /// The returned future will run the portmapper, if enabled, resolving to it's result.
-    #[cfg(not(wasm_browser))]
-    fn prepare_portmapper_task(
-        &mut self,
-    ) -> MaybeFuture<Pin<Box<impl Future<Output = Option<portmapper::ProbeOutput>>>>> {
+        tasks: &mut JoinSet<Option<ProbeFinished>>,
+    ) -> CancellationToken {
+        let token = CancellationToken::new();
+        #[cfg(not(wasm_browser))]
         if let Some(port_mapper) = self.socket_state.port_mapper.clone() {
-            MaybeFuture::Some(Box::pin(async move {
-                match port_mapper.probe().await {
+            tasks.spawn(token.clone().run_until_cancelled_owned(async move {
+                let res = match port_mapper.probe().await {
                     Ok(Ok(res)) => Some(res),
                     Ok(Err(err)) => {
                         debug!("skipping port mapping: {err:?}");
@@ -345,27 +290,24 @@ impl Actor {
                         warn!("skipping port mapping: {recv_err:?}");
                         None
                     }
-                }
-            }))
-        } else {
-            MaybeFuture::None
+                };
+                ProbeFinished::Portmap(res)
+            }));
         }
+        token
     }
 
     /// Creates the future which will perform the captive portal check.
-    #[cfg(wasm_browser)]
-    fn prepare_captive_portal_task(&mut self) -> MaybeFuture<Pin<Box<Pending<Option<bool>>>>> {
-        MaybeFuture::default()
-    }
-
-    /// Creates the future which will perform the captive portal check.
-    #[cfg(not(wasm_browser))]
     fn prepare_captive_portal_task(
         &mut self,
-    ) -> MaybeFuture<Pin<Box<impl Future<Output = Option<bool>>>>> {
+        tasks: &mut JoinSet<Option<ProbeFinished>>,
+    ) -> CancellationToken {
+        let token = CancellationToken::new();
+
         // If we're doing a full probe, also check for a captive portal. We
         // delay by a bit to wait for UDP STUN to finish, to avoid the probe if
         // it's unnecessary.
+        #[cfg(not(wasm_browser))]
         if self.last_report.is_none() {
             // Even if we're doing a non-incremental update, we may want to try our
             // preferred relay for captive portal detection.
@@ -376,7 +318,7 @@ impl Actor {
 
             let dns_resolver = self.socket_state.dns_resolver.clone();
             let dm = self.relay_map.clone();
-            MaybeFuture::Some(Box::pin(async move {
+            tasks.spawn(token.clone().run_until_cancelled_owned(async move {
                 time::sleep(CAPTIVE_PORTAL_DELAY).await;
                 debug!("Captive portal check started after {CAPTIVE_PORTAL_DELAY:?}");
                 let captive_portal_check = time::timeout(
@@ -384,7 +326,7 @@ impl Actor {
                     check_captive_portal(&dns_resolver, &dm, preferred_relay)
                         .instrument(debug_span!("captive-portal")),
                 );
-                match captive_portal_check.await {
+                let res = match captive_portal_check.await {
                     Ok(Ok(found)) => Some(found),
                     Ok(Err(err)) => {
                         match err {
@@ -402,11 +344,11 @@ impl Actor {
                         warn!("check_captive_portal timed out");
                         None
                     }
-                }
-            }))
-        } else {
-            MaybeFuture::None
+                };
+                ProbeFinished::CaptivePortal(res)
+            }));
         }
+        token
     }
 
     /// Prepares the future which will run all the probes as per generated ProbePlan.
@@ -430,7 +372,7 @@ impl Actor {
     async fn spawn_probes_task(
         &mut self,
         token: CancellationToken,
-    ) -> JoinSet<Option<Result<ProbeReport, ProbesError>>> {
+    ) -> JoinSet<Option<ProbeFinished>> {
         #[cfg(not(wasm_browser))]
         let if_state = interfaces::State::new().await;
         #[cfg(not(wasm_browser))]
@@ -487,7 +429,7 @@ impl Actor {
                         let mut probe_proto = None;
                         while let Some(res) = set.join_next().await {
                             match res {
-                                Ok(Some(Ok(report))) => return Ok(report),
+                                Ok(Some(Ok(report))) => return ProbeFinished::Regular(Ok(report)),
                                 Ok(Some(Err(ProbeErrorWithProbe::Error(err, probe)))) => {
                                     probe_proto = Some(probe.proto());
                                     warn!(?probe, "probe failed: {:#}", err);
@@ -496,7 +438,9 @@ impl Actor {
                                 Ok(Some(Err(ProbeErrorWithProbe::AbortSet(err, probe)))) => {
                                     debug!(?probe, "probe set aborted: {:#}", err);
                                     set.abort_all();
-                                    return Err(err);
+                                    return ProbeFinished::Regular(Err(
+                                        ProbeFailureSnafu {}.into_error(err)
+                                    ));
                                 }
                                 Ok(None) => {
                                     debug!("probe cancelled");
@@ -508,7 +452,7 @@ impl Actor {
                             }
                         }
                         warn!(?probe_proto, "no successful probes in ProbeSet");
-                        Err(AllProbesFailedSnafu.build())
+                        ProbeFinished::Regular(Err(AllProbesFailedSnafu.build()))
                     }
                     .instrument(info_span!("probe")),
                 ),
