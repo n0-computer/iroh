@@ -105,7 +105,7 @@
 //! [`MdnsDiscovery`]: mdns::MdnsDiscovery
 //! [`StaticProvider`]: static_provider::StaticProvider
 
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use anyhow::{anyhow, ensure, Result};
 use iroh_base::{NodeAddr, NodeId, SecretKey};
@@ -295,7 +295,7 @@ impl From<DiscoveryItem> for NodeInfo {
 /// The discovery services will resolve concurrently.
 #[derive(Debug, Default)]
 pub struct ConcurrentDiscovery {
-    services: RwLock<Vec<Box<dyn Discovery>>>,
+    services: Vec<Box<dyn Discovery>>,
 }
 
 impl ConcurrentDiscovery {
@@ -306,14 +306,12 @@ impl ConcurrentDiscovery {
 
     /// Creates a new [`ConcurrentDiscovery`].
     pub fn from_services(services: Vec<Box<dyn Discovery>>) -> Self {
-        Self {
-            services: RwLock::new(services),
-        }
+        Self { services }
     }
 
     /// Adds a [`Discovery`] service.
-    pub fn add(&mut self, service: Box<dyn Discovery>) {
-        self.services.write().expect("poisoned").push(service)
+    pub fn add(&mut self, service: impl Discovery + 'static) {
+        self.services.push(Box::new(service));
     }
 }
 
@@ -323,7 +321,7 @@ where
 {
     fn from(iter: T) -> Self {
         let services = iter.into_iter().collect::<Vec<_>>();
-        Self::from_services(services)
+        Self { services }
     }
 }
 
@@ -338,8 +336,7 @@ impl IntoDiscovery for ConcurrentDiscovery {
 
 impl Discovery for ConcurrentDiscovery {
     fn publish(&self, data: &NodeData) {
-        let services = self.services.read().expect("poisoned");
-        for service in services.iter() {
+        for service in &self.services {
             service.publish(data);
         }
     }
@@ -349,8 +346,8 @@ impl Discovery for ConcurrentDiscovery {
         endpoint: Endpoint,
         node_id: NodeId,
     ) -> Option<BoxStream<Result<DiscoveryItem>>> {
-        let services = self.services.read().expect("poisoned");
-        let streams = services
+        let streams = self
+            .services
             .iter()
             .filter_map(|service| service.resolve(endpoint.clone(), node_id));
 
@@ -359,9 +356,8 @@ impl Discovery for ConcurrentDiscovery {
     }
 
     fn subscribe(&self) -> Option<BoxStream<DiscoveryItem>> {
-        let services = self.services.read().expect("poisoned");
         let mut streams = vec![];
-        for service in services.iter() {
+        for service in self.services.iter() {
             if let Some(stream) = service.subscribe() {
                 streams.push(stream)
             }
@@ -584,11 +580,7 @@ mod tests {
     use tracing_test::traced_test;
 
     use super::*;
-    use crate::{
-        endpoint::{self, ConnectOptions},
-        watcher::Watcher as _,
-        RelayMode,
-    };
+    use crate::{endpoint::ConnectOptions, watcher::Watcher as _, RelayMode};
 
     type InfoStore = HashMap<NodeId, (NodeData, u64)>;
 
@@ -711,10 +703,10 @@ mod tests {
         }
     }
 
-    #[derive(Debug, Clone, Copy)]
+    #[derive(Debug)]
     struct EmptyDiscovery;
 
-    impl IntoDiscovery for EmptyDiscovery {
+    impl IntoDiscovery for Arc<EmptyDiscovery> {
         fn into_discovery(
             self: Box<Self>,
             _endpoint: &crate::Endpoint,
@@ -745,12 +737,12 @@ mod tests {
         let (ep1, _guard1) = {
             let secret = SecretKey::generate(rand::thread_rng());
             let disco = disco_shared.create_discovery(secret.public());
-            new_endpoint(secret, |ep| ep.add_discovery(disco)).await
+            new_endpoint(secret, disco).await
         };
         let (ep2, _guard2) = {
             let secret = SecretKey::generate(rand::thread_rng());
             let disco = disco_shared.create_discovery(secret.public());
-            new_endpoint(secret, |ep| ep.add_discovery(disco)).await
+            new_endpoint(secret, disco).await
         };
         let ep1_addr = NodeAddr::new(ep1.node_id());
         // wait for our address to be updated and thus published at least once
@@ -767,13 +759,16 @@ mod tests {
         let (ep1, _guard1) = {
             let secret = SecretKey::generate(rand::thread_rng());
             let disco = disco_shared.create_discovery(secret.public());
-            new_endpoint(secret, |ep| ep.add_discovery(disco)).await
+            new_endpoint(secret, disco).await
         };
         let (ep2, _guard2) = {
             let secret = SecretKey::generate(rand::thread_rng());
             let disco1 = EmptyDiscovery;
             let disco2 = disco_shared.create_discovery(secret.public());
-            new_endpoint(secret, |ep| ep.add_discovery(disco1).add_discovery(disco2)).await
+            let mut disco = ConcurrentDiscovery::empty();
+            disco.add(disco1);
+            disco.add(disco2);
+            new_endpoint(secret, disco).await
         };
         let ep1_addr = NodeAddr::new(ep1.node_id());
         // wait for out address to be updated and thus published at least once
@@ -798,19 +793,18 @@ mod tests {
         let (ep1, _guard1) = {
             let secret = SecretKey::generate(rand::thread_rng());
             let disco = disco_shared.create_discovery(secret.public());
-            new_endpoint(secret, |ep| ep.add_discovery(disco)).await
+            new_endpoint(secret, disco).await
         };
         let (ep2, _guard2) = {
             let secret = SecretKey::generate(rand::thread_rng());
             let disco1 = EmptyDiscovery;
             let disco2 = disco_shared.create_lying_discovery(secret.public());
             let disco3 = disco_shared.create_discovery(secret.public());
-            new_endpoint(secret, |ep| {
-                ep.add_discovery(disco1)
-                    .add_discovery(disco2)
-                    .add_discovery(disco3)
-            })
-            .await
+            let mut disco = ConcurrentDiscovery::empty();
+            disco.add(disco1);
+            disco.add(disco2);
+            disco.add(disco3);
+            new_endpoint(secret, disco).await
         };
         // wait for out address to be updated and thus published at least once
         ep1.node_addr().initialized().await?;
@@ -826,12 +820,13 @@ mod tests {
         let (ep1, _guard1) = {
             let secret = SecretKey::generate(rand::thread_rng());
             let disco = disco_shared.create_discovery(secret.public());
-            new_endpoint(secret, |ep| ep.add_discovery(disco)).await
+            new_endpoint(secret, disco).await
         };
         let (ep2, _guard2) = {
             let secret = SecretKey::generate(rand::thread_rng());
             let disco1 = disco_shared.create_lying_discovery(secret.public());
-            new_endpoint(secret, |ep| ep.add_discovery(disco1)).await
+            let disco = ConcurrentDiscovery::from_services(vec![Box::new(disco1)]);
+            new_endpoint(secret, disco).await
         };
         // wait for out address to be updated and thus published at least once
         ep1.node_addr().initialized().await?;
@@ -859,12 +854,12 @@ mod tests {
         let (ep1, _guard1) = {
             let secret = SecretKey::generate(rand::thread_rng());
             let disco = disco_shared.create_discovery(secret.public());
-            new_endpoint(secret, |ep| ep.add_discovery(disco)).await
+            new_endpoint(secret, disco).await
         };
         let (ep2, _guard2) = {
             let secret = SecretKey::generate(rand::thread_rng());
             let disco = disco_shared.create_discovery(secret.public());
-            new_endpoint(secret, |ep| ep.add_discovery(disco)).await
+            new_endpoint(secret, disco).await
         };
         // wait for out address to be updated and thus published at least once
         ep1.node_addr().initialized().await?;
@@ -884,12 +879,12 @@ mod tests {
         let (ep1, _guard1) = {
             let secret = SecretKey::generate(rand::thread_rng());
             let disco = disco_shared.create_discovery(secret.public());
-            new_endpoint(secret, |ep| ep.add_discovery(disco)).await
+            new_endpoint(secret, disco).await
         };
         let (ep2, _guard2) = {
             let secret = SecretKey::generate(rand::thread_rng());
             let disco = disco_shared.create_discovery(secret.public());
-            new_endpoint(secret, |ep| ep.add_discovery(disco)).await
+            new_endpoint(secret, disco).await
         };
 
         let mut stream = ep1.discovery_stream();
@@ -925,14 +920,16 @@ mod tests {
 
     async fn new_endpoint(
         secret: SecretKey,
-        build: impl FnOnce(endpoint::Builder) -> endpoint::Builder,
+        disco: impl IntoDiscovery + 'static,
     ) -> (Endpoint, AbortOnDropHandle<anyhow::Result<()>>) {
         let ep = Endpoint::builder()
             .secret_key(secret)
+            .discovery(disco)
             .relay_mode(RelayMode::Disabled)
-            .alpns(vec![TEST_ALPN.to_vec()]);
-        let ep = (build)(ep);
-        let ep = ep.bind().await.unwrap();
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .bind()
+            .await
+            .unwrap();
 
         let handle = tokio::spawn({
             let ep = ep.clone();
@@ -960,18 +957,17 @@ mod tests {
             .as_micros() as u64
     }
 
-    // TODO(Frando): Not exactly sure what the motivation for this test is?
-    // #[tokio::test]
-    // async fn test_arc_discovery() -> TestResult {
-    //     let discovery = Arc::new(EmptyDiscovery);
+    #[tokio::test]
+    async fn test_arc_discovery() -> TestResult {
+        let discovery = Arc::new(EmptyDiscovery);
 
-    //     let _ep = Endpoint::builder()
-    //         .add_discovery(discovery.clone())
-    //         .bind()
-    //         .await?;
+        let _ep = Endpoint::builder()
+            .add_discovery(discovery.clone())
+            .bind()
+            .await?;
 
-    //     Ok(())
-    // }
+        Ok(())
+    }
 }
 
 /// This module contains end-to-end tests for DNS node discovery.
