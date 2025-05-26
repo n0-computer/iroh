@@ -2517,7 +2517,6 @@ dependencies = [
  "simdutf8",
  "snafu",
  "strum",
- "stun-rs",
  "time",
  "tokio",
  "tokio-rustls",
@@ -2815,9 +2814,9 @@ dependencies = [
 
 [[package]]
 name = "n0-snafu"
-version = "0.2.1"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c4fed465ff57041f29db78a9adc8864296ef93c6c16029f9e192dc303404ebd0"
+checksum = "6726cb23c307232453032bca1c4fba5a5c60dc36775211e134ab304ab510b548"
 dependencies = [
  "anyhow",
  "btparse",

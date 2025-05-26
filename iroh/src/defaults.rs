@@ -9,7 +9,6 @@ pub use iroh_relay::defaults::DEFAULT_RELAY_QUIC_PORT;
 ///
 /// The STUN port as defined by [RFC
 /// 8489](<https://www.rfc-editor.org/rfc/rfc8489#section-18.6>)
-pub use iroh_relay::defaults::DEFAULT_STUN_PORT;
 use url::Url;
 
 /// The default HTTP port used by the Relay server.
@@ -51,8 +50,6 @@ pub mod prod {
             .expect("default url");
         RelayNode {
             url: url.into(),
-            stun_only: false,
-            stun_port: DEFAULT_STUN_PORT,
             quic: Some(RelayQuicConfig::default()),
         }
     }
@@ -65,8 +62,6 @@ pub mod prod {
             .expect("default_url");
         RelayNode {
             url: url.into(),
-            stun_only: false,
-            stun_port: DEFAULT_STUN_PORT,
             quic: Some(RelayQuicConfig::default()),
         }
     }
@@ -79,8 +74,6 @@ pub mod prod {
             .expect("default_url");
         RelayNode {
             url: url.into(),
-            stun_only: false,
-            stun_port: DEFAULT_STUN_PORT,
             quic: Some(RelayQuicConfig::default()),
         }
     }
@@ -114,8 +107,6 @@ pub mod staging {
             .expect("default url");
         RelayNode {
             url: url.into(),
-            stun_only: false,
-            stun_port: DEFAULT_STUN_PORT,
             quic: Some(RelayQuicConfig::default()),
         }
     }
@@ -128,8 +119,6 @@ pub mod staging {
             .expect("default_url");
         RelayNode {
             url: url.into(),
-            stun_only: false,
-            stun_port: DEFAULT_STUN_PORT,
             quic: Some(RelayQuicConfig::default()),
         }
     }
