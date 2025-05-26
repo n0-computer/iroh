@@ -205,7 +205,6 @@ impl Builder {
             relay_map,
             relay_protocol: self.relay_protocol,
             node_map: self.node_map,
-            discovery: None,
             discovery_user_data: self.discovery_user_data,
             proxy_url: self.proxy_url,
             #[cfg(not(wasm_browser))]
@@ -222,13 +221,22 @@ impl Builder {
         let discovery = self
             .discovery
             .into_iter()
-            .filter_map(|builder| builder.into_discovery(&endpoint).ok())
+            .filter_map(|builder| match builder.into_discovery(&endpoint) {
+                Ok(disco) => Some(disco),
+                Err(err) => {
+                    warn!("Failed to init discovery service: {err:#}");
+                    None
+                }
+            })
             .collect::<Vec<_>>();
         let discovery: Option<Box<dyn Discovery>> = match discovery.len() {
             0 => None,
             1 => Some(discovery.into_iter().next().expect("checked length")),
             _ => Some(Box::new(ConcurrentDiscovery::from_services(discovery))),
         };
+        if let Some(discovery) = discovery {
+            endpoint.msock.set_discovery(discovery);
+        }
         Ok(endpoint)
     }
 

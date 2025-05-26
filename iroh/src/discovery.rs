@@ -108,7 +108,7 @@
 use std::sync::Arc;
 
 use anyhow::{anyhow, ensure, Result};
-use iroh_base::{NodeAddr, NodeId, SecretKey};
+use iroh_base::{NodeAddr, NodeId};
 use n0_future::{
     boxed::BoxStream,
     stream::StreamExt,
