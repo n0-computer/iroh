@@ -16,7 +16,7 @@ use anyhow::Result;
 #[cfg(not(wasm_browser))]
 use iroh_relay::dns::DnsResolver;
 use iroh_relay::RelayMap;
-use n0_future::time::{Duration, Instant};
+use n0_future::time::{self, Duration, Instant};
 #[cfg(not(wasm_browser))]
 use netwatch::UdpSocket;
 use reportgen::{ProbeFinished, ProbeReport};
@@ -229,7 +229,7 @@ impl Client {
                                 report.update(&probe);
                                 if timeout_fut.is_none() {
                                     if let Some(timeout) = self.have_enough_reports(enough_relays, &report) {
-                                        timeout_fut.as_mut().set_future(tokio::time::sleep(timeout));
+                                        timeout_fut.as_mut().set_future(time::sleep(timeout));
                                     }
                                 }
                             }
