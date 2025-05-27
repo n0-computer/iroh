@@ -460,7 +460,9 @@
 <a href="#459" id="459">459</a>
 <a href="#460" id="460">460</a>
 <a href="#461" id="461">461</a>
-<a href="#462" id="462">462</a></pre></div><pre class="rust"><code><span class="doccomment">//! Create a QUIC server that accepts connections
+<a href="#462" id="462">462</a>
+<a href="#463" id="463">463</a>
+<a href="#464" id="464">464</a></pre></div><pre class="rust"><code><span class="doccomment">//! Create a QUIC server that accepts connections
 //! for QUIC address discovery.
 </span><span class="kw">use </span>std::{net::SocketAddr, sync::Arc};
 
@@ -747,9 +749,11 @@
     <span class="kw">use </span>std::net::Ipv4Addr;
 
     <span class="kw">use </span>anyhow::Context;
-    <span class="kw">use </span>n0_future::{task::AbortOnDropHandle, time};
+    <span class="kw">use </span>n0_future::{
+        task::AbortOnDropHandle,
+        time::{<span class="self">self</span>, Instant},
+    };
     <span class="kw">use </span>quinn::crypto::rustls::QuicServerConfig;
-    <span class="kw">use </span>tokio::time::Instant;
     <span class="kw">use </span>tracing::{debug, info, info_span, Instrument};
     <span class="kw">use </span>tracing_test::traced_test;
     <span class="kw">use </span>webpki_types::PrivatePkcs8KeyDer;
