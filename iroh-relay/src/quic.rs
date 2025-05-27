@@ -343,10 +343,12 @@ impl QuicClient {
 mod tests {
     use std::net::Ipv4Addr;
 
-    use n0_future::{task::AbortOnDropHandle, time};
+    use n0_future::{
+        task::AbortOnDropHandle,
+        time::{self, Instant},
+    };
     use n0_snafu::{Error, Result, ResultExt};
     use quinn::crypto::rustls::QuicServerConfig;
-    use tokio::time::Instant;
     use tracing::{debug, info, info_span, Instrument};
     use tracing_test::traced_test;
     use webpki_types::PrivatePkcs8KeyDer;
