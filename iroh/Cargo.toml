@@ -134,6 +134,7 @@ getrandom = { version = "0.3.2", features = ["wasm_js"] }
 
 # target-common test/dev dependencies
 [dev-dependencies]
+console_error_panic_hook = "0.1"
 postcard = { version = "1.1.1", features = ["use-std"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
