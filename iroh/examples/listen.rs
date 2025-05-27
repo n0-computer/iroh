@@ -38,20 +38,19 @@ async fn main() -> anyhow::Result<()> {
     println!("node id: {me}");
     println!("node listening addresses:");
 
-    let node_addr = endpoint.node_addr().initialized().await?;
-    let local_addrs = node_addr
-        .direct_addresses
+    let local_addrs = endpoint
+        .direct_addresses()
+        .initialized()
+        .await?
         .into_iter()
         .map(|addr| {
-            let addr = addr.to_string();
+            let addr = addr.addr.to_string();
             println!("\t{addr}");
             addr
         })
         .collect::<Vec<_>>()
         .join(" ");
-    let relay_url = node_addr
-        .relay_url
-        .expect("Should have a relay URL, assuming a default endpoint setup.");
+    let relay_url = endpoint.home_relay().initialized().await?;
     println!("node relay server url: {relay_url}");
     println!("\nin a separate terminal run:");
 
