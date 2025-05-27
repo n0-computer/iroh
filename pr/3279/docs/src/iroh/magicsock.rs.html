@@ -3878,7 +3878,7 @@
     ///
     /// Note that this can be used to wait for the initial home relay to be known using
     /// [`Watcher::initialized`].
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>home_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Watcher&lt;Value = Vec&lt;RelayUrl&gt;&gt; + <span class="lifetime">'_ </span>{
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>home_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Watcher&lt;Value = Vec&lt;RelayUrl&gt;&gt; {
         <span class="kw">let </span>res = <span class="self">self</span>.local_addrs_watch.clone().map(|addrs| {
             addrs
                 .into_iter()
