@@ -1041,7 +1041,7 @@
     </span><span class="attr">#[cfg(not(wasm_browser))]
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>from_txt_lookup(
         name: String,
-        lookup: <span class="kw">impl </span>Iterator&lt;Item = <span class="kw">crate</span>::dns::TxtRecord&gt;,
+        lookup: <span class="kw">impl </span>Iterator&lt;Item = <span class="kw">crate</span>::dns::TxtRecordData&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>attrs = TxtAttrs::from_txt_lookup(name, lookup)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>(<span class="self">Self</span>::from(attrs))
@@ -1210,7 +1210,7 @@
     </span><span class="attr">#[cfg(not(wasm_browser))]
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>from_txt_lookup(
         name: String,
-        lookup: <span class="kw">impl </span>Iterator&lt;Item = <span class="kw">crate</span>::dns::TxtRecord&gt;,
+        lookup: <span class="kw">impl </span>Iterator&lt;Item = <span class="kw">crate</span>::dns::TxtRecordData&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>queried_node_id = node_id_from_txt_name(<span class="kw-2">&amp;</span>name)
             .ok_or_else(|| <span class="macro">anyhow!</span>(<span class="string">"invalid DNS answer: not a query for _iroh.z32encodedpubkey"</span>))<span class="question-mark">?</span>;
@@ -1281,7 +1281,7 @@
     <span class="kw">use </span>testresult::TestResult;
 
     <span class="kw">use super</span>::{NodeData, NodeIdExt, NodeInfo};
-    <span class="kw">use </span><span class="kw">crate</span>::dns::TxtRecord;
+    <span class="kw">use </span><span class="kw">crate</span>::dns::TxtRecordData;
 
     <span class="attr">#[test]
     </span><span class="kw">fn </span>txt_attr_roundtrip() {
@@ -1374,7 +1374,7 @@
         <span class="kw">let </span>lookup = hickory_resolver::lookup::TxtLookup::from(lookup);
         <span class="kw">let </span>lookup = lookup
             .into_iter()
-            .map(|txt| TxtRecord::from_iter(txt.iter().cloned()));
+            .map(|txt| TxtRecordData::from_iter(txt.iter().cloned()));
 
         <span class="kw">let </span>node_info = NodeInfo::from_txt_lookup(name.to_string(), lookup)<span class="question-mark">?</span>;
 

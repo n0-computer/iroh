@@ -525,7 +525,7 @@
     </span><span class="kw">fn </span>lookup_ipv6(<span class="kw-2">&amp;</span><span class="self">self</span>, host: String) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;BoxIter&lt;Ipv6Addr&gt;&gt;&gt;;
 
     <span class="doccomment">/// Looks up TXT records.
-    </span><span class="kw">fn </span>lookup_txt(<span class="kw-2">&amp;</span><span class="self">self</span>, host: String) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;BoxIter&lt;TxtRecord&gt;&gt;&gt;;
+    </span><span class="kw">fn </span>lookup_txt(<span class="kw-2">&amp;</span><span class="self">self</span>, host: String) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;BoxIter&lt;TxtRecordData&gt;&gt;&gt;;
 
     <span class="doccomment">/// Clears the internal cache.
     </span><span class="kw">fn </span>clear_cache(<span class="kw-2">&amp;</span><span class="self">self</span>);
@@ -605,7 +605,7 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         host: <span class="kw">impl </span>ToString,
         timeout: Duration,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = TxtRecord&gt;&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = TxtRecordData&gt;&gt; {
         <span class="kw">let </span>res = time::timeout(timeout, <span class="self">self</span>.<span class="number">0</span>.lookup_txt(host.to_string())).<span class="kw">await</span><span class="question-mark">??</span>;
         <span class="prelude-val">Ok</span>(res)
     }
@@ -819,14 +819,14 @@
         })
     }
 
-    <span class="kw">fn </span>lookup_txt(<span class="kw-2">&amp;</span><span class="self">self</span>, host: String) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;BoxIter&lt;TxtRecord&gt;&gt;&gt; {
+    <span class="kw">fn </span>lookup_txt(<span class="kw-2">&amp;</span><span class="self">self</span>, host: String) -&gt; BoxFuture&lt;<span class="prelude-ty">Result</span>&lt;BoxIter&lt;TxtRecordData&gt;&gt;&gt; {
         <span class="kw">let </span>this = <span class="self">self</span>.clone();
         Box::pin(<span class="kw">async move </span>{
             <span class="kw">let </span>lookup = this.txt_lookup(host).<span class="kw">await</span><span class="question-mark">?</span>;
-            <span class="kw">let </span>iter: BoxIter&lt;TxtRecord&gt; = Box::new(
+            <span class="kw">let </span>iter: BoxIter&lt;TxtRecordData&gt; = Box::new(
                 lookup
                     .into_iter()
-                    .map(|txt| TxtRecord::from_iter(txt.iter().cloned())),
+                    .map(|txt| TxtRecordData::from_iter(txt.iter().cloned())),
             );
             <span class="prelude-val">Ok</span>(iter)
         })
@@ -841,7 +841,7 @@
 ///
 /// This contains a list of character strings, as defined in [RFC 1035 Section 3.3.14].
 ///
-/// [`TxtRecord`] implements [`fmt::Display`], so you can call [`ToString::to_string`] to
+/// [`TxtRecordData`] implements [`fmt::Display`], so you can call [`ToString::to_string`] to
 /// convert the record data into a string. This will parse each character string with
 /// [`String::from_utf8_lossy`] and then concatenate all strings without a separator.
 ///
@@ -849,16 +849,16 @@
 ///
 /// [RFC 1035 Section 3.3.14]: https://datatracker.ietf.org/doc/html/rfc1035#section-3.3.14
 </span><span class="attr">#[derive(Debug, Clone)]
-</span><span class="kw">pub struct </span>TxtRecord(Box&lt;[Box&lt;[u8]&gt;]&gt;);
+</span><span class="kw">pub struct </span>TxtRecordData(Box&lt;[Box&lt;[u8]&gt;]&gt;);
 
-<span class="kw">impl </span>TxtRecord {
+<span class="kw">impl </span>TxtRecordData {
     <span class="doccomment">/// Returns an iterator over the character strings contained in this TXT record.
     </span><span class="kw">pub fn </span>iter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="kw-2">&amp;</span>[u8]&gt; {
         <span class="self">self</span>.<span class="number">0</span>.iter().map(|x| x.as_ref())
     }
 }
 
-<span class="kw">impl </span>fmt::Display <span class="kw">for </span>TxtRecord {
+<span class="kw">impl </span>fmt::Display <span class="kw">for </span>TxtRecordData {
     <span class="kw">fn </span>fmt(<span class="kw-2">&amp;</span><span class="self">self</span>, f: <span class="kw-2">&amp;mut </span>fmt::Formatter&lt;<span class="lifetime">'_</span>&gt;) -&gt; fmt::Result {
         <span class="kw">for </span>s <span class="kw">in </span><span class="self">self</span>.iter() {
             <span class="macro">write!</span>(f, <span class="string">"{}"</span>, <span class="kw-2">&amp;</span>String::from_utf8_lossy(s))<span class="question-mark">?
@@ -867,13 +867,13 @@
     }
 }
 
-<span class="kw">impl </span>FromIterator&lt;Box&lt;[u8]&gt;&gt; <span class="kw">for </span>TxtRecord {
+<span class="kw">impl </span>FromIterator&lt;Box&lt;[u8]&gt;&gt; <span class="kw">for </span>TxtRecordData {
     <span class="kw">fn </span>from_iter&lt;T: IntoIterator&lt;Item = Box&lt;[u8]&gt;&gt;&gt;(iter: T) -&gt; <span class="self">Self </span>{
         <span class="self">Self</span>(iter.into_iter().collect())
     }
 }
 
-<span class="kw">impl </span>From&lt;Vec&lt;Box&lt;[u8]&gt;&gt;&gt; <span class="kw">for </span>TxtRecord {
+<span class="kw">impl </span>From&lt;Vec&lt;Box&lt;[u8]&gt;&gt;&gt; <span class="kw">for </span>TxtRecordData {
     <span class="kw">fn </span>from(value: Vec&lt;Box&lt;[u8]&gt;&gt;) -&gt; <span class="self">Self </span>{
         <span class="self">Self</span>(value.into_boxed_slice())
     }
