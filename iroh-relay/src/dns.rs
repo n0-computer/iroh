@@ -36,7 +36,7 @@ pub trait Resolver: fmt::Debug + Send + Sync + 'static {
     fn lookup_ipv6(&self, host: String) -> BoxFuture<Result<BoxIter<Ipv6Addr>>>;
 
     /// Looks up TXT records.
-    fn lookup_txt(&self, host: String) -> BoxFuture<Result<BoxIter<TxtRecord>>>;
+    fn lookup_txt(&self, host: String) -> BoxFuture<Result<BoxIter<TxtRecordData>>>;
 
     /// Clears the internal cache.
     fn clear_cache(&self);
@@ -116,7 +116,7 @@ impl DnsResolver {
         &self,
         host: impl ToString,
         timeout: Duration,
-    ) -> Result<impl Iterator<Item = TxtRecord>> {
+    ) -> Result<impl Iterator<Item = TxtRecordData>> {
         let res = time::timeout(timeout, self.0.lookup_txt(host.to_string())).await??;
         Ok(res)
     }
@@ -330,14 +330,14 @@ impl Resolver for TokioResolver {
         })
     }
 
-    fn lookup_txt(&self, host: String) -> BoxFuture<Result<BoxIter<TxtRecord>>> {
+    fn lookup_txt(&self, host: String) -> BoxFuture<Result<BoxIter<TxtRecordData>>> {
         let this = self.clone();
         Box::pin(async move {
             let lookup = this.txt_lookup(host).await?;
-            let iter: BoxIter<TxtRecord> = Box::new(
+            let iter: BoxIter<TxtRecordData> = Box::new(
                 lookup
                     .into_iter()
-                    .map(|txt| TxtRecord::from_iter(txt.iter().cloned())),
+                    .map(|txt| TxtRecordData::from_iter(txt.iter().cloned())),
             );
             Ok(iter)
         })
@@ -352,7 +352,7 @@ impl Resolver for TokioResolver {
 ///
 /// This contains a list of character strings, as defined in [RFC 1035 Section 3.3.14].
 ///
-/// [`TxtRecord`] implements [`fmt::Display`], so you can call [`ToString::to_string`] to
+/// [`TxtRecordData`] implements [`fmt::Display`], so you can call [`ToString::to_string`] to
 /// convert the record data into a string. This will parse each character string with
 /// [`String::from_utf8_lossy`] and then concatenate all strings without a separator.
 ///
@@ -360,16 +360,16 @@ impl Resolver for TokioResolver {
 ///
 /// [RFC 1035 Section 3.3.14]: https://datatracker.ietf.org/doc/html/rfc1035#section-3.3.14
 #[derive(Debug, Clone)]
-pub struct TxtRecord(Box<[Box<[u8]>]>);
+pub struct TxtRecordData(Box<[Box<[u8]>]>);
 
-impl TxtRecord {
+impl TxtRecordData {
     /// Returns an iterator over the character strings contained in this TXT record.
     pub fn iter(&self) -> impl Iterator<Item = &[u8]> {
         self.0.iter().map(|x| x.as_ref())
     }
 }
 
-impl fmt::Display for TxtRecord {
+impl fmt::Display for TxtRecordData {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for s in self.iter() {
             write!(f, "{}", &String::from_utf8_lossy(s))?
@@ -378,13 +378,13 @@ impl fmt::Display for TxtRecord {
     }
 }
 
-impl FromIterator<Box<[u8]>> for TxtRecord {
+impl FromIterator<Box<[u8]>> for TxtRecordData {
     fn from_iter<T: IntoIterator<Item = Box<[u8]>>>(iter: T) -> Self {
         Self(iter.into_iter().collect())
     }
 }
 
-impl From<Vec<Box<[u8]>>> for TxtRecord {
+impl From<Vec<Box<[u8]>>> for TxtRecordData {
     fn from(value: Vec<Box<[u8]>>) -> Self {
         Self(value.into_boxed_slice())
     }

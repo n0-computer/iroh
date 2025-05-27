@@ -344,7 +344,7 @@ impl NodeInfo {
     #[cfg(not(wasm_browser))]
     pub(crate) fn from_txt_lookup(
         name: String,
-        lookup: impl Iterator<Item = crate::dns::TxtRecord>,
+        lookup: impl Iterator<Item = crate::dns::TxtRecordData>,
     ) -> Result<Self> {
         let attrs = TxtAttrs::from_txt_lookup(name, lookup)?;
         Ok(Self::from(attrs))
@@ -513,7 +513,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     #[cfg(not(wasm_browser))]
     pub(crate) fn from_txt_lookup(
         name: String,
-        lookup: impl Iterator<Item = crate::dns::TxtRecord>,
+        lookup: impl Iterator<Item = crate::dns::TxtRecordData>,
     ) -> Result<Self> {
         let queried_node_id = node_id_from_txt_name(&name)
             .ok_or_else(|| anyhow!("invalid DNS answer: not a query for _iroh.z32encodedpubkey"))?;
@@ -584,7 +584,7 @@ mod tests {
     use testresult::TestResult;
 
     use super::{NodeData, NodeIdExt, NodeInfo};
-    use crate::dns::TxtRecord;
+    use crate::dns::TxtRecordData;
 
     #[test]
     fn txt_attr_roundtrip() {
@@ -677,7 +677,7 @@ mod tests {
         let lookup = hickory_resolver::lookup::TxtLookup::from(lookup);
         let lookup = lookup
             .into_iter()
-            .map(|txt| TxtRecord::from_iter(txt.iter().cloned()));
+            .map(|txt| TxtRecordData::from_iter(txt.iter().cloned()));
 
         let node_info = NodeInfo::from_txt_lookup(name.to_string(), lookup)?;
 
