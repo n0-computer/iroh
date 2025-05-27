@@ -265,13 +265,6 @@ impl NodeMap {
         Some((public_key, udp_addr, relay_url, ping_actions))
     }
 
-    pub(super) fn notify_shutdown(&self) {
-        let mut inner = self.inner.lock().expect("poisoned");
-        for (_, ep) in inner.node_states_mut() {
-            ep.reset();
-        }
-    }
-
     pub(super) fn reset_node_states(&self) {
         let mut inner = self.inner.lock().expect("poisoned");
         for (_, ep) in inner.node_states_mut() {
