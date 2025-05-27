@@ -418,12 +418,12 @@ impl Actor {
                         let res = fut.await;
                         let res = match res {
                             Some(Ok(Ok(report))) => Ok(report),
-                            Some(Ok(Err(ProbeError::Error(err, _probe)))) => {
+                            Some(Ok(Err(ProbeError::Error(err)))) => {
                                 warn!("probe failed: {:#}", err);
                                 Err(err)
                             }
-                            Some(Ok(Err(ProbeError::AbortSet(err, probe)))) => {
-                                debug!(?probe, "probe set aborted: {:#}", err);
+                            Some(Ok(Err(ProbeError::AbortSet(err)))) => {
+                                debug!("probe set aborted: {:#}", err);
                                 set_token.cancel();
                                 Err(err)
                             }
@@ -478,9 +478,9 @@ impl ProbeReport {
 #[derive(Debug)]
 enum ProbeError {
     /// Abort the current set.
-    AbortSet(anyhow::Error, Probe),
+    AbortSet(anyhow::Error),
     /// Continue the other probes in the set.
-    Error(anyhow::Error, Probe),
+    Error(anyhow::Error),
 }
 
 /// Pieces needed to do QUIC address discovery.
@@ -532,7 +532,7 @@ async fn run_probe(
                     }
                     Ok(report)
                 }
-                Err(err) => Err(ProbeError::Error(err, probe)),
+                Err(err) => Err(ProbeError::Error(err)),
             }
         }
 
@@ -550,7 +550,7 @@ async fn run_probe(
                         _ => unreachable!(),
                     }
                     .context("no relay node addr")
-                    .map_err(|e| ProbeError::AbortSet(e, probe.clone()))?;
+                    .map_err(ProbeError::AbortSet)?;
 
                     let url = node.url.clone();
                     let report = run_quic_probe(
@@ -563,10 +563,10 @@ async fn run_probe(
                     .await?;
                     Ok(report)
                 }
-                None => Err(ProbeError::AbortSet(
-                    anyhow!("No QUIC endpoint for {}", probe.proto()),
-                    probe,
-                )),
+                None => Err(ProbeError::AbortSet(anyhow!(
+                    "No QUIC endpoint for {}",
+                    probe.proto()
+                ))),
             }
         }
     }
@@ -602,18 +602,17 @@ async fn run_quic_probe(
     let host = match url.host_str() {
         Some(host) => host,
         None => {
-            return Err(ProbeError::Error(
-                anyhow!("URL must have 'host' to use QUIC address discovery probes"),
-                probe.clone(),
-            ));
+            return Err(ProbeError::Error(anyhow!(
+                "URL must have 'host' to use QUIC address discovery probes"
+            )));
         }
     };
     let quic_client = iroh_relay::quic::QuicClient::new(quic_config.ep, quic_config.client_config)
-        .map_err(|e| ProbeError::Error(e, probe.clone()))?;
+        .map_err(ProbeError::Error)?;
     let (addr, latency) = quic_client
         .get_addr_and_latency(relay_addr, host)
         .await
-        .map_err(|e| ProbeError::Error(e, probe.clone()))?;
+        .map_err(ProbeError::Error)?;
     let mut result = ProbeReport::new(probe.clone());
     if matches!(probe, Probe::QadIpv4 { .. }) {
         result.ipv4_can_send = true;
@@ -935,7 +934,7 @@ mod tests {
         {
             Ok(probe) => probe,
             Err(e) => match e {
-                ProbeError::AbortSet(err, _) | ProbeError::Error(err, _) => {
+                ProbeError::AbortSet(err) | ProbeError::Error(err) => {
                     return Err(err.into());
                 }
             },
