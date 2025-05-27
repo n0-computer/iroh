@@ -464,24 +464,27 @@ impl MagicSock {
 
     #[cfg_attr(windows, allow(dead_code))]
     fn normalized_local_addr(&self) -> io::Result<SocketAddr> {
-        let addrs: Vec<_> = self
-            .local_addrs_watch
-            .get()
-            .expect("disconnected")
-            .into_iter()
-            .filter_map(|addr| SocketAddr::try_from(addr).ok())
-            .collect();
+        let addrs = self.local_addrs_watch.get().expect("disconnected");
 
-        if let Some(addr) = addrs.iter().find(|a| a.is_ipv6()) {
-            return Ok(*addr);
+        let mut ipv4_addr = None;
+        for addr in addrs {
+            let Ok(addr) = SocketAddr::try_from(addr) else {
+                continue;
+            };
+            if addr.is_ipv6() {
+                return Ok(addr);
+            }
+            if addr.is_ipv4() && ipv4_addr.is_none() {
+                ipv4_addr.replace(addr);
+            }
         }
-        if let Some(addr) = addrs.first() {
-            return Ok(*addr);
+        match ipv4_addr {
+            Some(addr) => Ok(addr),
+            None => Err(io::Error::other("no valid socket available")),
         }
-
-        Err(io::Error::other("no valid socket available"))
     }
 
+    /// Searches the `node_map` to determine the current transports to be used.
     #[instrument(skip_all)]
     fn prepare_send(
         &self,
@@ -580,6 +583,11 @@ impl MagicSock {
         source_addrs: &[transports::Addr],
     ) {
         debug_assert_eq!(bufs.len(), metas.len(), "non matching bufs & metas");
+        debug_assert_eq!(
+            bufs.len(),
+            source_addrs.len(),
+            "non matching bufs & source_addrs"
+        );
 
         // Adding the IP address we received something on results in Quinn using this
         // address on the send path to send from.  However we let Quinn use a
@@ -669,30 +677,21 @@ impl MagicSock {
             }
 
             if buf_contains_quic_datagrams {
-                enum AddrOrUrl {
-                    Addr(SocketAddr),
-                    Url(RelayUrl, NodeId),
-                }
-                let addr = match source_addr {
-                    transports::Addr::Ip(addr) => AddrOrUrl::Addr(*addr),
-                    transports::Addr::Relay(ref url, id) => AddrOrUrl::Url(url.clone(), *id),
-                };
-
-                match addr {
+                match source_addr {
                     #[cfg(wasm_browser)]
-                    AddrOrUrl::Addr(addr) => {
+                    transports::Addr::Ip(_addr) => {
                         panic!("cannot use IP based addressing in the browser");
                     }
                     #[cfg(not(wasm_browser))]
-                    AddrOrUrl::Addr(addr) => {
+                    transports::Addr::Ip(addr) => {
                         // UDP
 
                         // Update the NodeMap and remap RecvMeta to the NodeIdMappedAddr.
-                        match self.node_map.receive_udp(addr) {
+                        match self.node_map.receive_udp(*addr) {
                             None => {
                                 // Check if this address is mapped to an IpMappedAddr
                                 if let Some(ip_mapped_addr) =
-                                    self.ip_mapped_addrs.get_mapped_addr(&addr)
+                                    self.ip_mapped_addrs.get_mapped_addr(addr)
                                 {
                                     trace!(
                                         src = %addr,
@@ -727,9 +726,9 @@ impl MagicSock {
                             }
                         }
                     }
-                    AddrOrUrl::Url(src_url, src_node) => {
+                    transports::Addr::Relay(src_url, src_node) => {
                         // Relay
-                        let quic_mapped_addr = self.node_map.receive_relay(&src_url, src_node);
+                        let quic_mapped_addr = self.node_map.receive_relay(src_url, *src_node);
                         quinn_meta.addr = quic_mapped_addr.private_socket_addr();
                     }
                 }
