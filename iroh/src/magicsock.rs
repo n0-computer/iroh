@@ -35,7 +35,7 @@ use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_relay::RelayMap;
 use n0_future::{
     boxed::BoxStream,
-    task::{self, JoinSet},
+    task::{self, AbortOnDropHandle},
     time::{self, Duration, Instant},
     StreamExt,
 };
@@ -47,6 +47,7 @@ use quinn::{AsyncUdpSocket, ServerConfig};
 use rand::Rng;
 use smallvec::SmallVec;
 use tokio::sync::{mpsc, Mutex};
+use tokio_util::sync::CancellationToken;
 use tracing::{
     debug, error, event, info, info_span, instrument, trace, trace_span, warn, Instrument, Level,
 };
@@ -160,8 +161,10 @@ type RelayContents = SmallVec<[Bytes; 1]>;
 pub(crate) struct Handle {
     #[deref(forward)]
     msock: Arc<MagicSock>,
-    // Empty when closed
-    actor_tasks: Arc<Mutex<JoinSet<()>>>,
+    // empty when shutdown
+    actor_task: Arc<Mutex<Option<AbortOnDropHandle<()>>>>,
+    /// Token to cancel the actor task.
+    actor_token: CancellationToken,
     // quinn endpoint
     endpoint: quinn::Endpoint,
 }
@@ -1311,8 +1314,6 @@ impl Handle {
             Arc::new(crate::web_runtime::WebRuntime),
         )?;
 
-        let mut actor_tasks = JoinSet::default();
-
         let network_monitor = netmon::Monitor::new().await?;
         let qad_endpoint = endpoint.clone();
 
@@ -1362,21 +1363,24 @@ impl Handle {
             pending_call_me_maybes: Default::default(),
             disco_receiver,
         };
-        actor_tasks.spawn(
+        let actor_token = CancellationToken::new();
+        let token = actor_token.clone();
+        let actor_task = task::spawn(
             async move {
-                if let Err(err) = actor.run(local_addrs_watch, sender).await {
+                if let Err(err) = actor.run(token, local_addrs_watch, sender).await {
                     warn!("relay handler errored: {:?}", err);
                 }
             }
             .instrument(info_span!("actor")),
         );
 
-        let actor_tasks = Arc::new(Mutex::new(actor_tasks));
+        let actor_task = Arc::new(Mutex::new(Some(AbortOnDropHandle::new(actor_task))));
 
         Ok(Handle {
             msock,
-            actor_tasks,
+            actor_task,
             endpoint,
+            actor_token,
         })
     }
 
@@ -1417,38 +1421,27 @@ impl Handle {
             return;
         }
         self.msock.closing.store(true, Ordering::Relaxed);
-        // If this fails, then there's no receiver listening for shutdown messages,
-        // so nothing to shut down anyways.
-        self.msock
-            .actor_sender
-            .send(ActorMessage::Shutdown)
-            .await
-            .ok();
-        self.msock.closed.store(true, Ordering::SeqCst);
+        self.actor_token.cancel();
 
-        let mut tasks = self.actor_tasks.lock().await;
-
-        // give the tasks a moment to shutdown cleanly
-        let tasks_ref = &mut tasks;
-        let shutdown_done = time::timeout(Duration::from_millis(100), async move {
-            while let Some(task) = tasks_ref.join_next().await {
-                if let Err(err) = task {
+        if let Some(task) = self.actor_task.lock().await.take() {
+            // give the tasks a moment to shutdown cleanly
+            let shutdown_done = time::timeout(Duration::from_millis(100), async move {
+                if let Err(err) = task.await {
                     warn!("unexpected error in task shutdown: {:?}", err);
                 }
-            }
-        })
-        .await;
-        match shutdown_done {
-            Ok(_) => trace!("tasks finished in time, shutdown complete"),
-            Err(_elapsed) => {
-                // shutdown all tasks
-                warn!(
-                    "tasks didn't finish in time, aborting remaining {}/3 tasks",
-                    tasks.len()
-                );
-                tasks.shutdown().await;
+            })
+            .await;
+            match shutdown_done {
+                Ok(_) => trace!("tasks finished in time, shutdown complete"),
+                Err(time::Elapsed { .. }) => {
+                    // Dropping the task will abort itt
+                    warn!("tasks didn't finish in time, aborting");
+                }
             }
         }
+
+        self.msock.closed.store(true, Ordering::SeqCst);
+
         trace!("magicsock closed");
     }
 }
@@ -1601,7 +1594,6 @@ impl AsyncUdpSocket for MagicUdpSocket {
 
 #[derive(Debug)]
 enum ActorMessage {
-    Shutdown,
     PingActions(Vec<PingAction>),
     EndpointPingExpired(usize, stun_rs::TransactionId),
     NetworkChange,
@@ -1682,6 +1674,7 @@ fn bind_ip(
 impl Actor {
     async fn run(
         mut self,
+        shutdown_token: CancellationToken,
         mut watcher: impl Watcher<Value = Vec<transports::Addr>> + Send + Sync,
         sender: UdpSender,
     ) -> Result<()> {
@@ -1723,6 +1716,10 @@ impl Actor {
             let direct_addr_heartbeat_timer_tick = n0_future::future::pending();
 
             tokio::select! {
+                _ = shutdown_token.cancelled() => {
+                    debug!("shutting down");
+                    return Ok(());
+                }
                 msg = self.msg_receiver.recv(), if !receiver_closed => {
                     let Some(msg) = msg else {
                         trace!("tick: magicsock receiver closed");
@@ -1734,9 +1731,7 @@ impl Actor {
 
                     trace!(?msg, "tick: msg");
                     self.msock.metrics.magicsock.actor_tick_msg.inc();
-                    if self.handle_actor_message(msg, &sender).await {
-                        return Ok(());
-                    }
+                    self.handle_actor_message(msg, &sender).await;
                 }
                 tick = self.periodic_re_stun_timer.tick() => {
                     trace!("tick: re_stun {:?}", tick);
@@ -1889,18 +1884,8 @@ impl Actor {
     /// Processes an incoming actor message.
     ///
     /// Returns `true` if it was a shutdown.
-    async fn handle_actor_message(&mut self, msg: ActorMessage, sender: &UdpSender) -> bool {
+    async fn handle_actor_message(&mut self, msg: ActorMessage, sender: &UdpSender) {
         match msg {
-            ActorMessage::Shutdown => {
-                debug!("shutting down");
-
-                self.msock.node_map.notify_shutdown();
-                #[cfg(not(wasm_browser))]
-                self.direct_addr_update_state.port_mapper.deactivate();
-
-                debug!("shutdown complete");
-                return true;
-            }
             ActorMessage::EndpointPingExpired(id, txid) => {
                 self.msock.node_map.notify_ping_timeout(id, txid);
             }
@@ -1923,8 +1908,6 @@ impl Actor {
                 self.handle_ping_actions(sender, ping_actions).await;
             }
         }
-
-        false
     }
 
     /// Updates the direct addresses of this magic socket.
@@ -2383,6 +2366,7 @@ impl Display for DirectAddrType {
 mod tests {
     use anyhow::{anyhow, Context};
     use rand::RngCore;
+    use tokio::task::JoinSet;
     use tokio_util::task::AbortOnDropHandle;
     use tracing_test::traced_test;
 
