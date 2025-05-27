@@ -250,7 +250,10 @@ impl EndpointArgs {
             println!("\t{} (type: {:?})", local_endpoint.addr, local_endpoint.typ)
         }
 
-        if !self.no_relay {
+        if self.relay_only {
+            let relay_url = endpoint.home_relay().initialized().await?;
+            println!("Our home relay server:\t{relay_url}");
+        } else if !self.no_relay {
             let urls = endpoint.home_relay().get()?;
             if urls.is_empty() {
                 println!("Unable to connect to a home relay");
