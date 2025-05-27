@@ -1140,7 +1140,7 @@
             plan.add_if_enabled(quic_ipv4_probes);
             plan.add_if_enabled(quic_ipv6_probes);
 
-            <span class="comment">// The HTTP and ICMP probes only start after the STUN probes have had a chance.
+            <span class="comment">// The HTTP probes only start after the QUAD probes have had a chance.
             </span><span class="kw">let </span><span class="kw-2">mut </span>https_probes = ProbeSet::new(ProbeProto::Https);
 
             <span class="kw">for </span>attempt <span class="kw">in </span><span class="number">0</span>..<span class="number">3 </span>{
