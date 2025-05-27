@@ -2911,7 +2911,7 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.5.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=feat-new-udp-api#9a614e523c5c09e2c1134489df54cab8d8343631"
+source = "git+https://github.com/n0-computer/net-tools?branch=feat-new-udp-api#5a6959176ca61fb4286458a4cdb30b61f07abd03"
 dependencies = [
  "atomic-waker",
  "bytes",
