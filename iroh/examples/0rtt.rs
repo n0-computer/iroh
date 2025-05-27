@@ -10,7 +10,7 @@ use iroh::{
 use iroh_base::ticket::NodeTicket;
 use n0_future::{future, StreamExt};
 use rand::thread_rng;
-use tracing::{debug, info, trace};
+use tracing::{info, trace};
 
 const PINGPONG_ALPN: &[u8] = b"0rtt-pingpong";
 
@@ -117,11 +117,11 @@ async fn connect(args: Args) -> anyhow::Result<()> {
             connection.close(0u8.into(), b"");
         });
         let elapsed = t0.elapsed();
-        debug!("round {}: {} us", i, elapsed.as_micros());
+        println!("round {}: {} us", i, elapsed.as_micros());
     }
     let elapsed = t0.elapsed();
-    info!("total time: {} us", elapsed.as_micros());
-    info!(
+    println!("total time: {} us", elapsed.as_micros());
+    println!(
         "time per round: {} us",
         elapsed.as_micros() / (args.rounds as u128)
     );
