@@ -60,7 +60,7 @@ pub use self::{
     metrics::Metrics,
     options::Options,
     report::{RelayLatencies, Report},
-    reportgen::QuicConfig,
+    reportgen::{IfStateDetails, QuicConfig},
 };
 use crate::util::MaybeFuture;
 
@@ -158,6 +158,7 @@ impl Client {
     pub(crate) async fn get_report(
         &mut self,
         relay_map: RelayMap,
+        if_state: IfStateDetails,
         opts: Options,
     ) -> Result<Report, ReportError> {
         debug!("net_report starting");
@@ -194,10 +195,19 @@ impl Client {
         self.metrics.reports.inc();
 
         let enough_relays = std::cmp::min(relay_map.len(), ENOUGH_NODES);
+        #[cfg(wasm_browser)]
+        let if_state = IfStateDetails::default();
+        #[cfg(not(wasm_browser))]
+        let if_state = IfStateDetails {
+            have_v4: if_state.have_v4,
+            have_v6: if_state.have_v6,
+        };
+
         let (actor, mut probe_rx) = reportgen::Client::new(
             self.reports.last.clone(),
             relay_map,
             protocols,
+            if_state,
             #[cfg(not(wasm_browser))]
             socket_state,
             #[cfg(any(test, feature = "test-utils"))]
@@ -450,6 +460,7 @@ mod tests {
 
         let resolver = dns::tests::resolver();
         let mut client = Client::new(None, resolver.clone(), None, Default::default());
+        let if_state = IfStateDetails::fake();
 
         // Note that the ProbePlan will change with each iteration.
         for i in 0..5 {
@@ -458,6 +469,7 @@ mod tests {
             let r = client
                 .get_report(
                     relay_map.clone(),
+                    if_state.clone(),
                     Options::default().quic_config(Some(quic_addr_disc.clone())),
                 )
                 .await?;

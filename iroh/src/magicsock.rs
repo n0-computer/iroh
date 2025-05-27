@@ -73,7 +73,7 @@ use crate::{
     discovery::{Discovery, DiscoveryItem, DiscoverySubscribers, NodeData, UserData},
     key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
     metrics::EndpointMetrics,
-    net_report::{self, IpMappedAddresses, Report, ReportError},
+    net_report::{self, IfStateDetails, IpMappedAddresses, Report, ReportError},
 };
 
 mod metrics;
@@ -1128,10 +1128,10 @@ impl DirectAddrUpdateState {
 
     /// Schedules a new run, either starting it immediately if none is running or
     /// scheduling it for later.
-    fn schedule_run(&mut self, why: UpdateReason) {
+    fn schedule_run(&mut self, why: UpdateReason, if_state: IfStateDetails) {
         match self.net_reporter.clone().try_lock_owned() {
             Ok(net_reporter) => {
-                self.run(why, net_reporter);
+                self.run(why, if_state, net_reporter);
             }
             Err(_) => {
                 let _ = self.want_update.insert(why);
@@ -1140,11 +1140,11 @@ impl DirectAddrUpdateState {
     }
 
     /// If another run is needed, triggers this run, otherwise does nothing.
-    fn try_run(&mut self) {
+    fn try_run(&mut self, if_state: IfStateDetails) {
         match self.net_reporter.clone().try_lock_owned() {
             Ok(net_reporter) => {
                 if let Some(why) = self.want_update.take() {
-                    self.run(why, net_reporter);
+                    self.run(why, if_state, net_reporter);
                 }
             }
             Err(_) => {
@@ -1157,6 +1157,7 @@ impl DirectAddrUpdateState {
     fn run(
         &mut self,
         why: UpdateReason,
+        if_state: IfStateDetails,
         mut net_reporter: tokio::sync::OwnedMutexGuard<net_report::Client>,
     ) {
         debug!("starting direct addr update ({:?})", why);
@@ -1182,7 +1183,10 @@ impl DirectAddrUpdateState {
 
         let run_done = self.run_done.clone();
         task::spawn(async move {
-            let fut = time::timeout(NET_REPORT_TIMEOUT, net_reporter.get_report(relay_map, opts));
+            let fut = time::timeout(
+                NET_REPORT_TIMEOUT,
+                net_reporter.get_report(relay_map, if_state, opts),
+            );
             match fut.await {
                 Ok(Ok(report)) => {
                     msock.net_report.set((Some(report), why)).ok();
@@ -1842,7 +1846,8 @@ impl Actor {
                     match reason {
                         Some(()) => {
                             // check if a new run needs to be scheduled
-                            self.direct_addr_update_state.try_run();
+                            let state = self.netmon_watcher.get().expect("disconnected");
+                            self.direct_addr_update_state.try_run(state.into());
                         }
                         None => {
                             warn!("direct addr watcher died");
@@ -1941,7 +1946,9 @@ impl Actor {
     }
 
     fn re_stun(&mut self, why: UpdateReason) {
-        self.direct_addr_update_state.schedule_run(why);
+        let state = self.netmon_watcher.get().expect("disconnected");
+        self.direct_addr_update_state
+            .schedule_run(why, state.into());
     }
 
     #[instrument(skip_all)]
@@ -1976,7 +1983,9 @@ impl Actor {
                 if let Some((node, url)) = data {
                     self.pending_call_me_maybes.insert(node, url);
                 }
-                self.direct_addr_update_state.schedule_run(why);
+                let state = self.netmon_watcher.get().expect("disconnected");
+                self.direct_addr_update_state
+                    .schedule_run(why, state.into());
             }
             #[cfg(test)]
             ActorMessage::ForceNetworkChange(is_major) => {
