@@ -15,7 +15,7 @@ use std::{collections::BTreeMap, fmt::Debug, sync::Arc};
 #[cfg(not(wasm_browser))]
 use iroh_relay::dns::DnsResolver;
 use iroh_relay::RelayMap;
-use n0_future::time::{Duration, Instant};
+use n0_future::time::{self, Duration, Instant};
 use nested_enum_utils::common_fields;
 #[cfg(not(wasm_browser))]
 use netwatch::UdpSocket;
@@ -231,7 +231,7 @@ impl Client {
                                 report.update(&probe);
                                 if timeout_fut.is_none() {
                                     if let Some(timeout) = self.have_enough_reports(enough_relays, &report) {
-                                        timeout_fut.as_mut().set_future(tokio::time::sleep(timeout));
+                                        timeout_fut.as_mut().set_future(time::sleep(timeout));
                                     }
                                 }
                             }
