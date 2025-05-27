@@ -441,6 +441,7 @@ impl PkarrResolver {
     pub fn builder(pkarr_relay: Url) -> PkarrResolverBuilder {
         PkarrResolverBuilder {
             pkarr_relay,
+            #[cfg(not(wasm_browser))]
             dns_resolver: None,
         }
     }

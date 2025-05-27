@@ -48,10 +48,7 @@ use crate::Endpoint;
 /// let discovery = StaticProvider::new();
 ///
 /// let _ep = Endpoint::builder()
-///     .add_discovery({
-///         let discovery = discovery.clone();
-///         move |_| Some(discovery)
-///     })
+///     .add_discovery(discovery.clone())
 ///     .bind()
 ///     .await?;
 ///
@@ -116,7 +113,7 @@ impl StaticProvider {
     /// let discovery = StaticProvider::from_node_info(addrs);
     /// // create an endpoint with the discovery
     /// let endpoint = Endpoint::builder()
-    ///     .add_discovery(|_| Some(discovery))
+    ///     .add_discovery(discovery)
     ///     .bind()
     ///     .await?;
     /// # Ok(())

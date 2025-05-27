@@ -61,7 +61,6 @@
 //! let ep = Endpoint::builder()
 //!     .add_discovery(PkarrPublisher::n0_dns())
 //!     .add_discovery(DnsDiscovery::n0_dns())
-//!     .discovery(Box::new(discovery))
 //!     .bind()
 //!     .await?;
 //! # Ok(())
@@ -71,11 +70,13 @@
 //! To also enable [`MdnsDiscovery`] it can be added as another service.
 //!
 //! ```no_run
-//! use iroh::{
-//!     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, mdns::MdnsDiscovery},
-//!     Endpoint, SecretKey,
-//! };
-//!
+//! #[cfg(feature = "discovery-local-network")]
+//! # {
+//! # use iroh::{
+//! #    discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, mdns::MdnsDiscovery},
+//! #    Endpoint, SecretKey,
+//! # };
+//! #
 //! # async fn wrapper() -> anyhow::Result<()> {
 //! let ep = Endpoint::builder()
 //!     .add_discovery(PkarrPublisher::n0_dns())
@@ -84,6 +85,7 @@
 //!     .bind()
 //!     .await?;
 //! # Ok(())
+//! # }
 //! # }
 //! ```
 //!
