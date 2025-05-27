@@ -1,12 +1,15 @@
-use std::{future::Future, time::Instant};
+use std::{env, future::Future, str::FromStr, time::Instant};
 
+use anyhow::Context;
 use clap::Parser;
 use iroh::{
     endpoint::{Connecting, Connection},
     watcher::Watcher,
+    SecretKey,
 };
 use iroh_base::ticket::NodeTicket;
 use n0_future::{future, StreamExt};
+use rand::thread_rng;
 use tracing::{debug, info, trace};
 
 const PINGPONG_ALPN: &[u8] = b"0rtt-pingpong";
@@ -21,6 +24,21 @@ struct Args {
     /// Run without 0-RTT for comparison.
     #[clap(long)]
     disable_0rtt: bool,
+}
+
+/// Gets a secret key from the IROH_SECRET environment variable or generates a new random one.
+/// If the environment variable is set, it must be a valid string representation of a secret key.
+pub fn get_or_generate_secret_key() -> anyhow::Result<SecretKey> {
+    if let Ok(secret) = env::var("IROH_SECRET") {
+        // Parse the secret key from string
+        SecretKey::from_str(&secret).context("Invalid secret key format")
+    } else {
+        // Generate a new random key
+        let secret_key = SecretKey::generate(&mut thread_rng());
+        println!("Generated new secret key: {}", secret_key);
+        println!("To reuse this key, set the IROH_SECRET environment variable to this value");
+        Ok(secret_key)
+    }
 }
 
 /// Do a simple ping-pong with the given connection.
@@ -111,8 +129,10 @@ async fn connect(args: Args) -> anyhow::Result<()> {
 }
 
 async fn accept(_args: Args) -> anyhow::Result<()> {
+    let secret_key = get_or_generate_secret_key()?;
     let endpoint = iroh::Endpoint::builder()
         .alpns(vec![PINGPONG_ALPN.to_vec()])
+        .secret_key(secret_key)
         .relay_mode(iroh::RelayMode::Disabled)
         .bind()
         .await?;
