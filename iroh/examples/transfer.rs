@@ -189,6 +189,9 @@ impl EndpointArgs {
             }
         };
         builder = builder.secret_key(secret_key);
+        if Env::Dev == self.env {
+            builder = builder.insecure_skip_relay_cert_verify(true);
+        }
 
         let relay_mode = if self.no_relay {
             RelayMode::Disabled
