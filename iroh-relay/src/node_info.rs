@@ -340,14 +340,14 @@ impl NodeInfo {
         self.into()
     }
 
-    #[cfg(not(wasm_browser))]
     /// Parses a [`NodeInfo`] from a TXT records lookup.
-    pub fn from_txt_lookup(
+    #[cfg(not(wasm_browser))]
+    pub(crate) fn from_txt_lookup(
         name: String,
         lookup: impl Iterator<Item = crate::dns::TxtRecord>,
     ) -> Result<Self> {
         let attrs = TxtAttrs::from_txt_lookup(name, lookup)?;
-        Ok(attrs.into())
+        Ok(Self::from(attrs))
     }
 
     /// Parses a [`NodeInfo`] from a [`pkarr::SignedPacket`].

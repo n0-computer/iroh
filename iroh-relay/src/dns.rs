@@ -52,19 +52,6 @@ pub type BoxIter<T> = Box<dyn Iterator<Item = T> + Send + 'static>;
 #[derive(Debug, Clone)]
 pub struct DnsResolver(Arc<dyn Resolver>);
 
-impl std::ops::Deref for DnsResolver {
-    type Target = dyn Resolver;
-    fn deref(&self) -> &Self::Target {
-        &*self.0
-    }
-}
-
-impl Default for DnsResolver {
-    fn default() -> Self {
-        Self::new_with_system_defaults()
-    }
-}
-
 impl DnsResolver {
     /// Creates a new [`DnsResolver`] from a struct that implements [`Resolver`].
     ///
@@ -270,16 +257,14 @@ impl DnsResolver {
         let name = node_info::node_domain(node_id, origin);
         let name = node_info::ensure_iroh_txt_label(name);
         let lookup = self.lookup_txt(name.clone(), DNS_TIMEOUT).await?;
-        let attrs = node_info::TxtAttrs::from_txt_lookup(name, lookup)?;
-        Ok(attrs.into())
+        NodeInfo::from_txt_lookup(name, lookup)
     }
 
     /// Looks up node info by DNS name.
     pub async fn lookup_node_by_domain_name(&self, name: &str) -> Result<NodeInfo> {
         let name = node_info::ensure_iroh_txt_label(name.to_string());
         let lookup = self.lookup_txt(name.clone(), DNS_TIMEOUT).await?;
-        let attrs = node_info::TxtAttrs::from_txt_lookup(name, lookup)?;
-        Ok(attrs.into())
+        NodeInfo::from_txt_lookup(name, lookup)
     }
 
     /// Looks up node info by DNS name in a staggered fashion.
@@ -311,6 +296,17 @@ impl DnsResolver {
     ) -> Result<NodeInfo> {
         let f = || self.lookup_node_by_id(node_id, origin);
         stagger_call(f, delays_ms).await
+    }
+
+    /// Removes all entries from the cache.
+    pub fn clear_cache(&self) {
+        self.0.clear_cache();
+    }
+}
+
+impl Default for DnsResolver {
+    fn default() -> Self {
+        Self::new_with_system_defaults()
     }
 }
 
