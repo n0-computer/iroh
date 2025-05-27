@@ -449,12 +449,12 @@ impl Actor {
                         let res = fut.await;
                         let res = match res {
                             Some(Ok(Ok(report))) => Ok(report),
-                            Some(Ok(Err(ProbeErrorWithProbe::Error(err, probe)))) => {
-                                warn!(?probe, "probe failed: {:#}", err);
+                            Some(Ok(Err(ProbeErrorWithProbe::Error(err)))) => {
+                                warn!("probe failed: {:#}", err);
                                 Err(probes_error::ProbeFailureSnafu {}.into_error(err))
                             }
-                            Some(Ok(Err(ProbeErrorWithProbe::AbortSet(err, probe)))) => {
-                                debug!(?probe, "probe set aborted: {:#}", err);
+                            Some(Ok(Err(ProbeErrorWithProbe::AbortSet(err)))) => {
+                                debug!("probe set aborted: {:#}", err);
                                 set_token.cancel();
                                 Err(probes_error::ProbeFailureSnafu {}.into_error(err))
                             }
@@ -511,9 +511,9 @@ impl ProbeReport {
 #[derive(Debug)]
 enum ProbeErrorWithProbe {
     /// Abort the current set.
-    AbortSet(ProbeError, Probe),
+    AbortSet(ProbeError),
     /// Continue the other probes in the set.
-    Error(ProbeError, Probe),
+    Error(ProbeError),
 }
 
 #[allow(missing_docs)]
@@ -617,7 +617,6 @@ async fn run_probe(
                 }
                 Err(err) => Err(ProbeErrorWithProbe::Error(
                     probe_error::HttpsSnafu {}.into_error(err),
-                    probe,
                 )),
             }
         }
@@ -636,10 +635,7 @@ async fn run_probe(
                         _ => unreachable!(),
                     }
                     .map_err(|e| {
-                        ProbeErrorWithProbe::AbortSet(
-                            probe_error::GetRelayAddrSnafu.into_error(e),
-                            probe.clone(),
-                        )
+                        ProbeErrorWithProbe::AbortSet(probe_error::GetRelayAddrSnafu.into_error(e))
                     })?;
 
                     let url = node.url.clone();
@@ -653,12 +649,9 @@ async fn run_probe(
                     .await?;
                     Ok(report)
                 }
-                None => {
-                    return Err(ProbeErrorWithProbe::AbortSet(
-                        probe_error::QuicSnafu.into_error(quic_error::NoEndpointSnafu.build()),
-                        probe,
-                    ));
-                }
+                None => Err(ProbeErrorWithProbe::AbortSet(
+                    probe_error::QuicSnafu.into_error(quic_error::NoEndpointSnafu.build()),
+                )),
             }
         }
     }
@@ -696,7 +689,6 @@ async fn run_quic_probe(
         None => {
             return Err(ProbeErrorWithProbe::Error(
                 probe_error::QuicSnafu.into_error(quic_error::InvalidUrlSnafu.build()),
-                probe.clone(),
             ));
         }
     };
@@ -704,7 +696,6 @@ async fn run_quic_probe(
         .map_err(|e| {
             ProbeErrorWithProbe::Error(
                 probe_error::QuicSnafu.into_error(quic_error::CreateClientSnafu.into_error(e)),
-                probe.clone(),
             )
         })?;
     let (addr, latency) = quic_client
@@ -713,9 +704,9 @@ async fn run_quic_probe(
         .map_err(|e| {
             ProbeErrorWithProbe::Error(
                 probe_error::QuicSnafu.into_error(quic_error::GetAddrSnafu.into_error(e)),
-                probe.clone(),
             )
         })?;
+
     let mut result = ProbeReport::new(probe.clone());
     if matches!(probe, Probe::QadIpv4 { .. }) {
         result.ipv4_can_send = true;
@@ -1101,7 +1092,7 @@ mod tests {
         {
             Ok(probe) => probe,
             Err(e) => match e {
-                ProbeErrorWithProbe::AbortSet(err, _) | ProbeErrorWithProbe::Error(err, _) => {
+                ProbeErrorWithProbe::AbortSet(err) | ProbeErrorWithProbe::Error(err) => {
                     return Err(err.into());
                 }
             },
