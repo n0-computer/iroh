@@ -138,8 +138,7 @@
 <a href="#137" id="137">137</a>
 <a href="#138" id="138">138</a>
 <a href="#139" id="139">139</a>
-<a href="#140" id="140">140</a>
-<a href="#141" id="141">141</a></pre></div><pre class="rust"><code><span class="doccomment">//! TLS configuration for iroh.
+<a href="#140" id="140">140</a></pre></div><pre class="rust"><code><span class="doccomment">//! TLS configuration for iroh.
 //!
 //! Currently there are two mechanisms available
 //! - Raw Public Keys, using the TLS extension described in [RFC 7250]
@@ -274,7 +273,6 @@
         <span class="comment">// must be u32::MAX or 0 (the default). Any other value panics with QUIC
         // This is specified in RFC 9001: https://www.rfc-editor.org/rfc/rfc9001#section-4.6.1
         </span>crypto.max_early_data_size = u32::MAX;
-
         crypto
             .try_into()
             .expect(<span class="string">"expected to have a TLS1.3-compatible crypto provider set (hardcoded)"</span>)

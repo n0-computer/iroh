@@ -3292,8 +3292,7 @@
 <a href="#3291" id="3291">3291</a>
 <a href="#3292" id="3292">3292</a>
 <a href="#3293" id="3293">3293</a>
-<a href="#3294" id="3294">3294</a>
-<a href="#3295" id="3295">3295</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#3294" id="3294">3294</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -3623,7 +3622,7 @@
     ///
     /// Note that this can be used to wait for the initial home relay to be known using
     /// [`Watcher::initialized`].
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>home_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Watcher&lt;Value = Vec&lt;RelayUrl&gt;&gt; + <span class="lifetime">'_ </span>{
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>home_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Watcher&lt;Value = Vec&lt;RelayUrl&gt;&gt; {
         <span class="kw">let </span>res = <span class="self">self</span>.local_addrs_watch.clone().map(|addrs| {
             addrs
                 .into_iter()
@@ -3740,25 +3739,28 @@
 
     <span class="attr">#[cfg_attr(windows, allow(dead_code))]
     </span><span class="kw">fn </span>normalized_local_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; io::Result&lt;SocketAddr&gt; {
-        <span class="kw">let </span>addrs: Vec&lt;<span class="kw">_</span>&gt; = <span class="self">self
-            </span>.local_addrs_watch
-            .get()
-            .expect(<span class="string">"disconnected"</span>)
-            .into_iter()
-            .filter_map(|addr| SocketAddr::try_from(addr).ok())
-            .collect();
+        <span class="kw">let </span>addrs = <span class="self">self</span>.local_addrs_watch.get().expect(<span class="string">"disconnected"</span>);
 
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(addr) = addrs.iter().find(|a| a.is_ipv6()) {
-            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="kw-2">*</span>addr);
+        <span class="kw">let </span><span class="kw-2">mut </span>ipv4_addr = <span class="prelude-val">None</span>;
+        <span class="kw">for </span>addr <span class="kw">in </span>addrs {
+            <span class="kw">let </span><span class="prelude-val">Ok</span>(addr) = SocketAddr::try_from(addr) <span class="kw">else </span>{
+                <span class="kw">continue</span>;
+            };
+            <span class="kw">if </span>addr.is_ipv6() {
+                <span class="kw">return </span><span class="prelude-val">Ok</span>(addr);
+            }
+            <span class="kw">if </span>addr.is_ipv4() &amp;&amp; ipv4_addr.is_none() {
+                ipv4_addr.replace(addr);
+            }
         }
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(addr) = addrs.first() {
-            <span class="kw">return </span><span class="prelude-val">Ok</span>(<span class="kw-2">*</span>addr);
+        <span class="kw">match </span>ipv4_addr {
+            <span class="prelude-val">Some</span>(addr) =&gt; <span class="prelude-val">Ok</span>(addr),
+            <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Err</span>(io::Error::other(<span class="string">"no valid socket available"</span>)),
         }
-
-        <span class="prelude-val">Err</span>(io::Error::other(<span class="string">"no valid socket available"</span>))
     }
 
-    <span class="attr">#[instrument(skip_all)]
+    <span class="doccomment">/// Searches the `node_map` to determine the current transports to be used.
+    </span><span class="attr">#[instrument(skip_all)]
     </span><span class="kw">fn </span>prepare_send(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         transmit: <span class="kw-2">&amp;</span>quinn_udp::Transmit,
@@ -3856,6 +3858,11 @@
         source_addrs: <span class="kw-2">&amp;</span>[transports::Addr],
     ) {
         <span class="macro">debug_assert_eq!</span>(bufs.len(), metas.len(), <span class="string">"non matching bufs &amp; metas"</span>);
+        <span class="macro">debug_assert_eq!</span>(
+            bufs.len(),
+            source_addrs.len(),
+            <span class="string">"non matching bufs &amp; source_addrs"
+        </span>);
 
         <span class="comment">// Adding the IP address we received something on results in Quinn using this
         // address on the send path to send from.  However we let Quinn use a
@@ -3937,30 +3944,21 @@
             }
 
             <span class="kw">if </span>buf_contains_quic_datagrams {
-                <span class="kw">enum </span>AddrOrUrl {
-                    Addr(SocketAddr),
-                    Url(RelayUrl, NodeId),
-                }
-                <span class="kw">let </span>addr = <span class="kw">match </span>source_addr {
-                    transports::Addr::Ip(addr) =&gt; AddrOrUrl::Addr(<span class="kw-2">*</span>addr),
-                    transports::Addr::Relay(<span class="kw-2">ref </span>url, id) =&gt; AddrOrUrl::Url(url.clone(), <span class="kw-2">*</span>id),
-                };
-
-                <span class="kw">match </span>addr {
+                <span class="kw">match </span>source_addr {
                     <span class="attr">#[cfg(wasm_browser)]
-                    </span>AddrOrUrl::Addr(addr) =&gt; {
+                    </span>transports::Addr::Ip(_addr) =&gt; {
                         <span class="macro">panic!</span>(<span class="string">"cannot use IP based addressing in the browser"</span>);
                     }
                     <span class="attr">#[cfg(not(wasm_browser))]
-                    </span>AddrOrUrl::Addr(addr) =&gt; {
+                    </span>transports::Addr::Ip(addr) =&gt; {
                         <span class="comment">// UDP
 
                         // Update the NodeMap and remap RecvMeta to the NodeIdMappedAddr.
-                        </span><span class="kw">match </span><span class="self">self</span>.node_map.receive_udp(addr) {
+                        </span><span class="kw">match </span><span class="self">self</span>.node_map.receive_udp(<span class="kw-2">*</span>addr) {
                             <span class="prelude-val">None </span>=&gt; {
                                 <span class="comment">// Check if this address is mapped to an IpMappedAddr
                                 </span><span class="kw">if let </span><span class="prelude-val">Some</span>(ip_mapped_addr) =
-                                    <span class="self">self</span>.ip_mapped_addrs.get_mapped_addr(<span class="kw-2">&amp;</span>addr)
+                                    <span class="self">self</span>.ip_mapped_addrs.get_mapped_addr(addr)
                                 {
                                     <span class="macro">trace!</span>(
                                         src = %addr,
@@ -3995,9 +3993,9 @@
                             }
                         }
                     }
-                    AddrOrUrl::Url(src_url, src_node) =&gt; {
+                    transports::Addr::Relay(src_url, src_node) =&gt; {
                         <span class="comment">// Relay
-                        </span><span class="kw">let </span>quic_mapped_addr = <span class="self">self</span>.node_map.receive_relay(<span class="kw-2">&amp;</span>src_url, src_node);
+                        </span><span class="kw">let </span>quic_mapped_addr = <span class="self">self</span>.node_map.receive_relay(src_url, <span class="kw-2">*</span>src_node);
                         quinn_meta.addr = quic_mapped_addr.private_socket_addr();
                     }
                 }

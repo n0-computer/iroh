@@ -4056,7 +4056,7 @@
     /// # }
     /// ```
     </span><span class="attr">#[cfg(not(wasm_browser))]
-    </span><span class="kw">pub fn </span>node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>n0_watcher::Watcher&lt;Value = <span class="prelude-ty">Option</span>&lt;NodeAddr&gt;&gt; + <span class="lifetime">'_ </span>{
+    </span><span class="kw">pub fn </span>node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>n0_watcher::Watcher&lt;Value = <span class="prelude-ty">Option</span>&lt;NodeAddr&gt;&gt; {
         <span class="kw">let </span>watch_addrs = <span class="self">self</span>.direct_addresses();
         <span class="kw">let </span>watch_relay = <span class="self">self</span>.home_relay();
         <span class="kw">let </span>node_id = <span class="self">self</span>.node_id();
@@ -4123,7 +4123,7 @@
     /// let _relay_url = mep.home_relay().initialized().await.unwrap();
     /// # });
     /// ```
-    </span><span class="kw">pub fn </span>home_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>n0_watcher::Watcher&lt;Value = Vec&lt;RelayUrl&gt;&gt; + <span class="lifetime">'_ </span>{
+    </span><span class="kw">pub fn </span>home_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>n0_watcher::Watcher&lt;Value = Vec&lt;RelayUrl&gt;&gt; {
         <span class="self">self</span>.msock.home_relay()
     }
 
