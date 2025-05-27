@@ -257,14 +257,19 @@ impl EndpointArgs {
             let relay_url = endpoint.home_relay().initialized().await?;
             println!("Our home relay server:\t{relay_url}");
         } else if !self.no_relay {
-            let urls = endpoint.home_relay().get()?;
-            if urls.is_empty() {
-                println!("Unable to connect to a home relay");
+            let relay_url = tokio::time::timeout(Duration::from_secs(5), async {
+                endpoint
+                    .home_relay()
+                    .initialized()
+                    .await
+                    .expect("disconnected")
+            })
+            .await
+            .ok();
+            if let Some(url) = relay_url {
+                println!("Our home relay server:\t{url}");
             } else {
-                println!("Our home relay server:");
-                for relay_url in urls {
-                    println!("\t- {relay_url}");
-                }
+                println!("No home relay server found");
             }
         }
 
