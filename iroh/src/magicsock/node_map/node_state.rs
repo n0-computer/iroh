@@ -707,19 +707,6 @@ impl NodeState {
         debug!(new = ?new_addrs , %paths, "added new direct paths for endpoint");
     }
 
-    /// Clears all the endpoint's p2p state, reverting it to a relay-only endpoint.
-    #[instrument(skip_all, fields(node = %self.node_id.fmt_short()))]
-    pub(super) fn reset(&mut self) {
-        self.last_full_ping = None;
-        self.udp_paths
-            .best_addr
-            .clear(ClearReason::Reset, self.relay_url.is_some());
-
-        for es in self.udp_paths.paths.values_mut() {
-            es.last_ping = None;
-        }
-    }
-
     /// Handle a received Disco Ping.
     ///
     /// - Ensures the paths the ping was received on is a known path for this endpoint.
