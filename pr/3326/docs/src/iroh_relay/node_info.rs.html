@@ -1037,14 +1037,14 @@
         <span class="self">self</span>.into()
     }
 
-    <span class="attr">#[cfg(not(wasm_browser))]
-    </span><span class="doccomment">/// Parses a [`NodeInfo`] from a TXT records lookup.
-    </span><span class="kw">pub fn </span>from_txt_lookup(
+    <span class="doccomment">/// Parses a [`NodeInfo`] from a TXT records lookup.
+    </span><span class="attr">#[cfg(not(wasm_browser))]
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>from_txt_lookup(
         name: String,
         lookup: <span class="kw">impl </span>Iterator&lt;Item = <span class="kw">crate</span>::dns::TxtRecord&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>&gt; {
         <span class="kw">let </span>attrs = TxtAttrs::from_txt_lookup(name, lookup)<span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(attrs.into())
+        <span class="prelude-val">Ok</span>(<span class="self">Self</span>::from(attrs))
     }
 
     <span class="doccomment">/// Parses a [`NodeInfo`] from a [`pkarr::SignedPacket`].

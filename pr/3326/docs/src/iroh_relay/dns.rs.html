@@ -487,11 +487,7 @@
 <a href="#486" id="486">486</a>
 <a href="#487" id="487">487</a>
 <a href="#488" id="488">488</a>
-<a href="#489" id="489">489</a>
-<a href="#490" id="490">490</a>
-<a href="#491" id="491">491</a>
-<a href="#492" id="492">492</a>
-<a href="#493" id="493">493</a></pre></div><pre class="rust"><code><span class="doccomment">//! DNS resolver
+<a href="#489" id="489">489</a></pre></div><pre class="rust"><code><span class="doccomment">//! DNS resolver
 
 </span><span class="kw">use </span>std::{
     fmt::{<span class="self">self</span>, Write},
@@ -544,19 +540,6 @@
 /// a [`DnsResolver`] with sensible defaults or with a custom resolver.
 </span><span class="attr">#[derive(Debug, Clone)]
 </span><span class="kw">pub struct </span>DnsResolver(Arc&lt;<span class="kw">dyn </span>Resolver&gt;);
-
-<span class="kw">impl </span>std::ops::Deref <span class="kw">for </span>DnsResolver {
-    <span class="kw">type </span>Target = <span class="kw">dyn </span>Resolver;
-    <span class="kw">fn </span>deref(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw-2">&amp;</span><span class="self">Self</span>::Target {
-        <span class="kw-2">&amp;*</span><span class="self">self</span>.<span class="number">0
-    </span>}
-}
-
-<span class="kw">impl </span>Default <span class="kw">for </span>DnsResolver {
-    <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
-        <span class="self">Self</span>::new_with_system_defaults()
-    }
-}
 
 <span class="kw">impl </span>DnsResolver {
     <span class="doccomment">/// Creates a new [`DnsResolver`] from a struct that implements [`Resolver`].
@@ -763,16 +746,14 @@
         <span class="kw">let </span>name = node_info::node_domain(node_id, origin);
         <span class="kw">let </span>name = node_info::ensure_iroh_txt_label(name);
         <span class="kw">let </span>lookup = <span class="self">self</span>.lookup_txt(name.clone(), DNS_TIMEOUT).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>attrs = node_info::TxtAttrs::from_txt_lookup(name, lookup)<span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(attrs.into())
+        NodeInfo::from_txt_lookup(name, lookup)
     }
 
     <span class="doccomment">/// Looks up node info by DNS name.
     </span><span class="kw">pub async fn </span>lookup_node_by_domain_name(<span class="kw-2">&amp;</span><span class="self">self</span>, name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;NodeInfo&gt; {
         <span class="kw">let </span>name = node_info::ensure_iroh_txt_label(name.to_string());
         <span class="kw">let </span>lookup = <span class="self">self</span>.lookup_txt(name.clone(), DNS_TIMEOUT).<span class="kw">await</span><span class="question-mark">?</span>;
-        <span class="kw">let </span>attrs = node_info::TxtAttrs::from_txt_lookup(name, lookup)<span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(attrs.into())
+        NodeInfo::from_txt_lookup(name, lookup)
     }
 
     <span class="doccomment">/// Looks up node info by DNS name in a staggered fashion.
@@ -805,6 +786,17 @@
         <span class="kw">let </span>f = || <span class="self">self</span>.lookup_node_by_id(node_id, origin);
         stagger_call(f, delays_ms).<span class="kw">await
     </span>}
+
+    <span class="doccomment">/// Removes all entries from the cache.
+    </span><span class="kw">pub fn </span>clear_cache(<span class="kw-2">&amp;</span><span class="self">self</span>) {
+        <span class="self">self</span>.<span class="number">0</span>.clear_cache();
+    }
+}
+
+<span class="kw">impl </span>Default <span class="kw">for </span>DnsResolver {
+    <span class="kw">fn </span>default() -&gt; <span class="self">Self </span>{
+        <span class="self">Self</span>::new_with_system_defaults()
+    }
 }
 
 <span class="doccomment">/// Implementation of [`Resolver`] for [`hickory_resolver::TokioResolver`].
