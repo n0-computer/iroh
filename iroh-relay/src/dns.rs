@@ -358,7 +358,7 @@ impl Resolver for TokioResolver {
 ///
 /// [`TxtRecord`] implements [`fmt::Display`], so you can call [`ToString::to_string`] to
 /// convert the record data into a string. This will parse each character string with
-/// [`String::from_utf8_lossy`] and then concatenate all strings without a seperator.
+/// [`String::from_utf8_lossy`] and then concatenate all strings without a separator.
 ///
 /// If you want to process each character string individually, use [`Self::iter`].
 ///

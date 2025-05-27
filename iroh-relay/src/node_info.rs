@@ -41,12 +41,8 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
-#[cfg(not(wasm_browser))]
 use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
-#[cfg(not(wasm_browser))]
 use url::Url;
-
-#[cfg(not(wasm_browser))]
 
 /// The DNS name for the iroh TXT record.
 pub const IROH_TXT_NAME: &str = "_iroh";
@@ -560,7 +556,7 @@ pub(crate) fn ensure_iroh_txt_label(name: String) -> String {
     if parts.next() == Some(IROH_TXT_NAME) {
         name
     } else {
-        [IROH_TXT_NAME, ".", &name].join(".")
+        format!("{}.{}", IROH_TXT_NAME, name)
     }
 }
 
