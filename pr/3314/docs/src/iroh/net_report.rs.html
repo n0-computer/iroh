@@ -664,7 +664,7 @@
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">use </span>iroh_relay::dns::DnsResolver;
 <span class="kw">use </span>iroh_relay::RelayMap;
-<span class="kw">use </span>n0_future::time::{Duration, Instant};
+<span class="kw">use </span>n0_future::time::{<span class="self">self</span>, Duration, Instant};
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">use </span>netwatch::UdpSocket;
 <span class="kw">use </span>reportgen::{ProbeFinished, ProbeReport};
@@ -877,7 +877,7 @@
                                 report.update(<span class="kw-2">&amp;</span>probe);
                                 <span class="kw">if </span>timeout_fut.is_none() {
                                     <span class="kw">if let </span><span class="prelude-val">Some</span>(timeout) = <span class="self">self</span>.have_enough_reports(enough_relays, <span class="kw-2">&amp;</span>report) {
-                                        timeout_fut.as_mut().set_future(tokio::time::sleep(timeout));
+                                        timeout_fut.as_mut().set_future(time::sleep(timeout));
                                     }
                                 }
                             }

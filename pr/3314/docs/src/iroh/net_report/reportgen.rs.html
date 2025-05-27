@@ -918,9 +918,7 @@
 <a href="#917" id="917">917</a>
 <a href="#918" id="918">918</a>
 <a href="#919" id="919">919</a>
-<a href="#920" id="920">920</a>
-<a href="#921" id="921">921</a>
-<a href="#922" id="922">922</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
+<a href="#920" id="920">920</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
 //!
 //! It is implemented as an actor with [`Client`] as handle.
 //!
@@ -1073,12 +1071,12 @@
 
 <span class="kw">impl </span>Actor {
     <span class="kw">async fn </span>run(<span class="self">self</span>) {
-        <span class="kw">match </span>tokio::time::timeout(OVERALL_REPORT_TIMEOUT, <span class="self">self</span>.run_inner()).<span class="kw">await </span>{
+        <span class="kw">match </span>time::timeout(OVERALL_REPORT_TIMEOUT, <span class="self">self</span>.run_inner()).<span class="kw">await </span>{
             <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(())) =&gt; <span class="macro">debug!</span>(<span class="string">"reportgen actor finished"</span>),
             <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err)) =&gt; {
                 <span class="macro">warn!</span>(<span class="string">"reportgen failed: {:?}"</span>, err);
             }
-            <span class="prelude-val">Err</span>(tokio::time::error::Elapsed { .. }) =&gt; {
+            <span class="prelude-val">Err</span>(time::Elapsed { .. }) =&gt; {
                 <span class="macro">warn!</span>(<span class="string">"reportgen timed out"</span>);
             }
         }
@@ -1292,7 +1290,7 @@
                 <span class="kw">let </span>probe_token = set_token.child_token();
                 <span class="kw">let </span>set_token = set_token.clone();
 
-                <span class="kw">let </span>fut = probe_token.run_until_cancelled_owned(tokio::time::timeout(
+                <span class="kw">let </span>fut = probe_token.run_until_cancelled_owned(time::timeout(
                     PROBES_TIMEOUT,
                     run_probe(
                         relay_node,
@@ -1317,9 +1315,7 @@
                                 set_token.cancel();
                                 <span class="prelude-val">Err</span>(err)
                             }
-                            <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(tokio::time::error::Elapsed { .. })) =&gt; {
-                                <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"probe timed out"</span>))
-                            }
+                            <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(time::Elapsed { .. })) =&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"probe timed out"</span>)),
                             <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Err</span>(<span class="macro">anyhow!</span>(<span class="string">"probe cancelled"</span>)),
                         };
                         ProbeFinished::Regular(res)
