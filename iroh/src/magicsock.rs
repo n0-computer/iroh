@@ -347,7 +347,7 @@ impl MagicSock {
     ///
     /// Note that this can be used to wait for the initial home relay to be known using
     /// [`Watcher::initialized`].
-    pub(crate) fn home_relay(&self) -> impl Watcher<Value = Vec<RelayUrl>> + '_ {
+    pub(crate) fn home_relay(&self) -> impl Watcher<Value = Vec<RelayUrl>> {
         let res = self.local_addrs_watch.clone().map(|addrs| {
             addrs
                 .into_iter()

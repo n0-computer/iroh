@@ -886,7 +886,7 @@ impl Endpoint {
     /// # }
     /// ```
     #[cfg(not(wasm_browser))]
-    pub fn node_addr(&self) -> impl n0_watcher::Watcher<Value = Option<NodeAddr>> + '_ {
+    pub fn node_addr(&self) -> impl n0_watcher::Watcher<Value = Option<NodeAddr>> {
         let watch_addrs = self.direct_addresses();
         let watch_relay = self.home_relay();
         let node_id = self.node_id();
@@ -953,7 +953,7 @@ impl Endpoint {
     /// let _relay_url = mep.home_relay().initialized().await.unwrap();
     /// # });
     /// ```
-    pub fn home_relay(&self) -> impl n0_watcher::Watcher<Value = Vec<RelayUrl>> + '_ {
+    pub fn home_relay(&self) -> impl n0_watcher::Watcher<Value = Vec<RelayUrl>> {
         self.msock.home_relay()
     }
 
