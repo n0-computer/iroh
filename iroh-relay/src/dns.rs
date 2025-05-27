@@ -27,17 +27,62 @@ pub const N0_DNS_NODE_ORIGIN_PROD: &str = "dns.iroh.link";
 /// The n0 testing DNS node origin, for testing.
 pub const N0_DNS_NODE_ORIGIN_STAGING: &str = "staging-dns.iroh.link";
 
-/// The default DNS resolver used throughout `iroh`.
-#[derive(Debug, Clone)]
-struct HickoryResolver(TokioResolver);
+/// Trait for DNS resolvers used in iroh.
+pub trait Resolver: fmt::Debug + Send + Sync + 'static {
+    /// Looks up an IPv4 address.
+    fn lookup_ipv4(&self, host: String) -> BoxFuture<Result<BoxIter<Ipv4Addr>>>;
 
-impl HickoryResolver {
-    /// Create a new DNS resolver with sensible cross-platform defaults.
+    /// Looks up an IPv6 address.
+    fn lookup_ipv6(&self, host: String) -> BoxFuture<Result<BoxIter<Ipv6Addr>>>;
+
+    /// Looks up TXT records.
+    fn lookup_txt(&self, host: String) -> BoxFuture<Result<BoxIter<TxtRecord>>>;
+
+    /// Clears the internal cache.
+    fn clear_cache(&self);
+}
+
+/// Boxed iterator alias.
+pub type BoxIter<T> = Box<dyn Iterator<Item = T> + Send + 'static>;
+
+/// DNS resolver for use in iroh.
+///
+/// This internally contains a [`dyn Resolver`]. See the public methods for how to construct
+/// a [`DnsResolver`] with sensible defaults or with a custom resolver.
+#[derive(Debug, Clone)]
+pub struct DnsResolver(Arc<dyn Resolver>);
+
+impl std::ops::Deref for DnsResolver {
+    type Target = dyn Resolver;
+    fn deref(&self) -> &Self::Target {
+        &*self.0
+    }
+}
+
+impl Default for DnsResolver {
+    fn default() -> Self {
+        Self::new_with_system_defaults()
+    }
+}
+
+impl DnsResolver {
+    /// Creates a new [`DnsResolver`] from a struct that implements [`Resolver`].
+    ///
+    /// [`Resolver`] is implemented for [`hickory_resolver::TokioResolver`], so you can construct
+    /// a [`TokioResolver`] and pass that to this function.
+    ///
+    /// To use a different DNS resolver, you need to implement [`Resolver`] for your custom resolver
+    /// and then pass to this function.
+    pub fn new(resolver: impl Resolver) -> Self {
+        Self(Arc::new(resolver))
+    }
+
+    /// Creates a new DNS resolver with sensible cross-platform defaults.
     ///
     /// We first try to read the system's resolver from `/etc/resolv.conf`.
     /// This does not work at least on some Androids, therefore we fallback
-    /// to the default `ResolverConfig` which uses eg. to google's `8.8.8.8` or `8.8.4.4`.
-    fn new() -> Self {
+    /// to the default `ResolverConfig` which uses Google's `8.8.8.8` or `8.8.4.4`.
+    pub fn new_with_system_defaults() -> Self {
         let (system_config, mut options) =
             hickory_resolver::system_conf::read_system_conf().unwrap_or_default();
 
@@ -62,11 +107,11 @@ impl HickoryResolver {
         let mut builder =
             TokioResolver::builder_with_config(config, TokioConnectionProvider::default());
         *builder.options_mut() = options;
-        HickoryResolver(builder.build())
+        Self::new(builder.build())
     }
 
-    /// Create a new DNS resolver configured with a single UDP DNS nameserver.
-    fn with_nameserver(nameserver: SocketAddr) -> Self {
+    /// Creates a new DNS resolver configured with a single UDP DNS nameserver.
+    pub fn with_nameserver(nameserver: SocketAddr) -> Self {
         let mut config = hickory_resolver::config::ResolverConfig::new();
         let nameserver_config = hickory_resolver::config::NameServerConfig::new(
             nameserver,
@@ -76,108 +121,10 @@ impl HickoryResolver {
 
         let builder =
             TokioResolver::builder_with_config(config, TokioConnectionProvider::default());
-        HickoryResolver(builder.build())
-    }
-}
-
-impl Default for HickoryResolver {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-/// Trait for DNS resolvers used in iroh.
-pub trait Resolver: std::fmt::Debug + Send + Sync + 'static {
-    /// Lookup an IPv4 address.
-    fn lookup_ipv4(&self, host: String) -> BoxFuture<Result<BoxIter<Ipv4Addr>>>;
-    /// Lookup an IPv6 address.
-    fn lookup_ipv6(&self, host: String) -> BoxFuture<Result<BoxIter<Ipv6Addr>>>;
-    /// Lookup TXT records.
-    fn lookup_txt(&self, host: String) -> BoxFuture<Result<BoxIter<TxtRecord>>>;
-    /// Clear the internal cache.
-    fn clear_cache(&self);
-}
-
-/// Boxed iterator alias.
-pub type BoxIter<T> = Box<dyn Iterator<Item = T> + Send + 'static>;
-
-impl Resolver for HickoryResolver {
-    fn lookup_ipv4(&self, host: String) -> BoxFuture<Result<BoxIter<Ipv4Addr>>> {
-        let this = self.0.clone();
-        Box::pin(async move {
-            let addrs = this.ipv4_lookup(host).await?;
-            let iter: BoxIter<Ipv4Addr> = Box::new(addrs.into_iter().map(Ipv4Addr::from));
-            Ok(iter)
-        })
+        Self::new(builder.build())
     }
 
-    fn lookup_ipv6(&self, host: String) -> BoxFuture<Result<BoxIter<Ipv6Addr>>> {
-        let this = self.0.clone();
-        Box::pin(async move {
-            let addrs = this.ipv6_lookup(host).await?;
-            let iter: BoxIter<Ipv6Addr> = Box::new(addrs.into_iter().map(Ipv6Addr::from));
-            Ok(iter)
-        })
-    }
-
-    fn lookup_txt(&self, host: String) -> BoxFuture<Result<BoxIter<TxtRecord>>> {
-        let this = self.0.clone();
-        Box::pin(async move {
-            let lookup = this.txt_lookup(host).await?;
-            let iter: BoxIter<TxtRecord> = Box::new(
-                lookup
-                    .into_iter()
-                    .map(|txt| TxtRecord::from_iter(txt.iter().cloned())),
-            );
-            Ok(iter)
-        })
-    }
-
-    fn clear_cache(&self) {
-        self.0.clear_cache();
-    }
-}
-
-impl From<TokioResolver> for HickoryResolver {
-    fn from(resolver: TokioResolver) -> Self {
-        HickoryResolver(resolver)
-    }
-}
-
-///
-#[derive(Debug, Clone)]
-pub struct DnsResolver(Arc<dyn Resolver>);
-
-impl std::ops::Deref for DnsResolver {
-    type Target = dyn Resolver;
-    fn deref(&self) -> &Self::Target {
-        &*self.0
-    }
-}
-
-impl Default for DnsResolver {
-    fn default() -> Self {
-        Self::new_with_system_defaults()
-    }
-}
-
-impl DnsResolver {
-    ///
-    pub fn new(resolver: impl Resolver) -> Self {
-        Self(Arc::new(resolver))
-    }
-
-    ///
-    pub fn new_with_system_defaults() -> Self {
-        Self::new(HickoryResolver::new())
-    }
-
-    ///
-    pub fn with_nameserver(nameserver: SocketAddr) -> Self {
-        Self::new(HickoryResolver::with_nameserver(nameserver))
-    }
-
-    /// Lookup a TXT record.
+    /// Performs a TXT lookup with a timeout.
     pub async fn lookup_txt(
         &self,
         host: impl ToString,
@@ -187,7 +134,7 @@ impl DnsResolver {
         Ok(res)
     }
 
-    /// Perform an ipv4 lookup with a timeout.
+    /// Performs an IPv4 lookup with a timeout.
     pub async fn lookup_ipv4(
         &self,
         host: impl ToString,
@@ -197,7 +144,7 @@ impl DnsResolver {
         Ok(addrs.map(|ip| IpAddr::V4(ip)))
     }
 
-    /// Perform an ipv6 lookup with a timeout.
+    /// Performs an IPv6 lookup with a timeout.
     pub async fn lookup_ipv6(
         &self,
         host: impl ToString,
@@ -207,7 +154,7 @@ impl DnsResolver {
         Ok(addrs.map(|ip| IpAddr::V6(ip)))
     }
 
-    /// Resolve IPv4 and IPv6 in parallel with a timeout.
+    /// Resolves IPv4 and IPv6 in parallel with a timeout.
     ///
     /// `LookupIpStrategy::Ipv4AndIpv6` will wait for ipv6 resolution timeout, even if it is
     /// not usable on the stack, so we manually query both lookups concurrently and time them out
@@ -233,7 +180,7 @@ impl DnsResolver {
         }
     }
 
-    /// Resolve a hostname from a URL to an IP address.
+    /// Resolves a hostname from a URL to an IP address.
     pub async fn resolve_host(
         &self,
         url: &Url,
@@ -263,7 +210,7 @@ impl DnsResolver {
         }
     }
 
-    /// Perform an ipv4 lookup with a timeout in a staggered fashion.
+    /// Performs an IPv4 lookup with a timeout in a staggered fashion.
     ///
     /// From the moment this function is called, each lookup is scheduled after the delays in
     /// `delays_ms` with the first call being done immediately. `[200ms, 300ms]` results in calls
@@ -280,7 +227,7 @@ impl DnsResolver {
         stagger_call(f, delays_ms).await
     }
 
-    /// Perform an ipv6 lookup with a timeout in a staggered fashion.
+    /// Performs an IPv6 lookup with a timeout in a staggered fashion.
     ///
     /// From the moment this function is called, each lookup is scheduled after the delays in
     /// `delays_ms` with the first call being done immediately. `[200ms, 300ms]` results in calls
@@ -297,7 +244,7 @@ impl DnsResolver {
         stagger_call(f, delays_ms).await
     }
 
-    /// Race an ipv4 and ipv6 lookup with a timeout in a staggered fashion.
+    /// Races an IPv4 and IPv6 lookup with a timeout in a staggered fashion.
     ///
     /// From the moment this function is called, each lookup is scheduled after the delays in
     /// `delays_ms` with the first call being done immediately. `[200ms, 300ms]` results in calls
@@ -367,24 +314,66 @@ impl DnsResolver {
     }
 }
 
-/// Record data for a TXT record.
-#[derive(Debug, Clone)]
-pub struct TxtRecord(Vec<Box<[u8]>>);
-
-impl TxtRecord {
-    ///
-    pub fn iter(&self) -> impl Iterator<Item = &[u8]> {
-        self.0.iter().map(|x| x.as_ref())
+/// Implementation of [`Resolver`] for [`hickory_resolver::TokioResolver`].
+impl Resolver for TokioResolver {
+    fn lookup_ipv4(&self, host: String) -> BoxFuture<Result<BoxIter<Ipv4Addr>>> {
+        let this = self.clone();
+        Box::pin(async move {
+            let addrs = this.ipv4_lookup(host).await?;
+            let iter: BoxIter<Ipv4Addr> = Box::new(addrs.into_iter().map(Ipv4Addr::from));
+            Ok(iter)
+        })
     }
 
-    ///
-    pub fn to_strings(&self) -> impl Iterator<Item = String> + '_ {
-        self.iter()
-            .map(|cstr| String::from_utf8_lossy(&cstr).to_string())
+    fn lookup_ipv6(&self, host: String) -> BoxFuture<Result<BoxIter<Ipv6Addr>>> {
+        let this = self.clone();
+        Box::pin(async move {
+            let addrs = this.ipv6_lookup(host).await?;
+            let iter: BoxIter<Ipv6Addr> = Box::new(addrs.into_iter().map(Ipv6Addr::from));
+            Ok(iter)
+        })
+    }
+
+    fn lookup_txt(&self, host: String) -> BoxFuture<Result<BoxIter<TxtRecord>>> {
+        let this = self.clone();
+        Box::pin(async move {
+            let lookup = this.txt_lookup(host).await?;
+            let iter: BoxIter<TxtRecord> = Box::new(
+                lookup
+                    .into_iter()
+                    .map(|txt| TxtRecord::from_iter(txt.iter().cloned())),
+            );
+            Ok(iter)
+        })
+    }
+
+    fn clear_cache(&self) {
+        self.clear_cache();
     }
 }
 
-impl std::fmt::Display for TxtRecord {
+/// Record data for a TXT record.
+///
+/// This contains a list of character strings, as defined in [RFC 1035 Section 3.3.14].
+///
+/// [`TxtRecord`] implements [`fmt::Display`], so you can call [`ToString::to_string`] to
+/// convert the record data into a string. This will parse each character string with
+/// [`String::from_utf8_lossy`] and then concatenate all strings without a seperator.
+///
+/// If you want to process each character string individually, use [`Self::iter`].
+///
+/// [RFC 1035 Section 3.3.14]: https://datatracker.ietf.org/doc/html/rfc1035#section-3.3.14
+#[derive(Debug, Clone)]
+pub struct TxtRecord(Box<[Box<[u8]>]>);
+
+impl TxtRecord {
+    /// Returns an iterator over the character strings contained in this TXT record.
+    pub fn iter(&self) -> impl Iterator<Item = &[u8]> {
+        self.0.iter().map(|x| x.as_ref())
+    }
+}
+
+impl fmt::Display for TxtRecord {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for s in self.iter() {
             write!(f, "{}", &String::from_utf8_lossy(s))?
@@ -396,6 +385,12 @@ impl std::fmt::Display for TxtRecord {
 impl FromIterator<Box<[u8]>> for TxtRecord {
     fn from_iter<T: IntoIterator<Item = Box<[u8]>>>(iter: T) -> Self {
         Self(iter.into_iter().collect())
+    }
+}
+
+impl From<Vec<Box<[u8]>>> for TxtRecord {
+    fn from(value: Vec<Box<[u8]>>) -> Self {
+        Self(value.into_boxed_slice())
     }
 }
 

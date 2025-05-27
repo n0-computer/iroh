@@ -7,9 +7,7 @@
 //! See the [`node_info`](crate::node_info) module documentation for details on how
 //! iroh node records are structured.
 
-pub use iroh_relay::dns::{
-    DnsResolver, Resolver, N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING,
-};
+pub use iroh_relay::dns::*;
 
 #[cfg(test)]
 pub(crate) mod tests {
