@@ -2214,12 +2214,9 @@ fn is_cgi() -> bool {
 // https://github.com/n0-computer/iroh/issues/1183
 #[cfg(test)]
 mod tests {
-
-    use std::time::Instant;
-
     use iroh_metrics::MetricsSource;
     use iroh_relay::http::Protocol;
-    use n0_future::{task::AbortOnDropHandle, StreamExt};
+    use n0_future::{task::AbortOnDropHandle, time::Instant, StreamExt};
     use rand::SeedableRng;
     use testresult::TestResult;
     use tracing::{error_span, info, info_span, Instrument};
