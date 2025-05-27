@@ -695,11 +695,7 @@
 <a href="#694" id="694">694</a>
 <a href="#695" id="695">695</a>
 <a href="#696" id="696">696</a>
-<a href="#697" id="697">697</a>
-<a href="#698" id="698">698</a>
-<a href="#699" id="699">699</a>
-<a href="#700" id="700">700</a>
-<a href="#701" id="701">701</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
+<a href="#697" id="697">697</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
 //!
 //! Dialing by [`NodeId`] is supported by iroh nodes publishing [Pkarr] records to DNS
 //! servers or the Mainline DHT.  This module supports creating and parsing these records.
@@ -742,14 +738,10 @@
 };
 
 <span class="kw">use </span>anyhow::{anyhow, <span class="prelude-ty">Result</span>};
-<span class="attr">#[cfg(not(wasm_browser))]
-</span><span class="kw">use </span>iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
-<span class="attr">#[cfg(not(wasm_browser))]
-</span><span class="kw">use </span>url::Url;
+<span class="kw">use </span>iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
+<span class="kw">use </span>url::Url;
 
-<span class="attr">#[cfg(not(wasm_browser))]
-
-</span><span class="doccomment">/// The DNS name for the iroh TXT record.
+<span class="doccomment">/// The DNS name for the iroh TXT record.
 </span><span class="kw">pub const </span>IROH_TXT_NAME: <span class="kw-2">&amp;</span>str = <span class="string">"_iroh"</span>;
 
 <span class="doccomment">/// Extension methods for [`NodeId`] to encode to and decode from [`z32`],
@@ -1261,7 +1253,7 @@
     <span class="kw">if </span>parts.next() == <span class="prelude-val">Some</span>(IROH_TXT_NAME) {
         name
     } <span class="kw">else </span>{
-        [IROH_TXT_NAME, <span class="string">"."</span>, <span class="kw-2">&amp;</span>name].join(<span class="string">"."</span>)
+        <span class="macro">format!</span>(<span class="string">"{}.{}"</span>, IROH_TXT_NAME, name)
     }
 }
 

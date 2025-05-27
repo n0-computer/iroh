@@ -634,7 +634,7 @@
         timeout: Duration,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = IpAddr&gt;&gt; {
         <span class="kw">let </span>addrs = time::timeout(timeout, <span class="self">self</span>.<span class="number">0</span>.lookup_ipv4(host.to_string())).<span class="kw">await</span><span class="question-mark">??</span>;
-        <span class="prelude-val">Ok</span>(addrs.map(|ip| IpAddr::V4(ip)))
+        <span class="prelude-val">Ok</span>(addrs.map(IpAddr::V4))
     }
 
     <span class="doccomment">/// Performs an IPv6 lookup with a timeout.
@@ -644,7 +644,7 @@
         timeout: Duration,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = IpAddr&gt;&gt; {
         <span class="kw">let </span>addrs = time::timeout(timeout, <span class="self">self</span>.<span class="number">0</span>.lookup_ipv6(host.to_string())).<span class="kw">await</span><span class="question-mark">??</span>;
-        <span class="prelude-val">Ok</span>(addrs.map(|ip| IpAddr::V6(ip)))
+        <span class="prelude-val">Ok</span>(addrs.map(IpAddr::V6))
     }
 
     <span class="doccomment">/// Resolves IPv4 and IPv6 in parallel with a timeout.
