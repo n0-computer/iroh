@@ -468,8 +468,6 @@ pub struct QuicConfig {
 }
 
 /// Executes a particular [`Probe`], including using a delayed start if needed.
-///
-/// If *stun_sock4* and *stun_sock6* are `None` the STUN probes are disabled.
 #[allow(clippy::too_many_arguments)]
 async fn run_probe(
     relay_node: Arc<RelayNode>,
@@ -483,7 +481,6 @@ async fn run_probe(
     }
     debug!("starting probe");
 
-    let mut result = ProbeReport::new(probe.clone());
     match probe {
         Probe::Https { ref node, .. } => {
             debug!("sending probe HTTPS");
@@ -498,19 +495,17 @@ async fn run_probe(
             {
                 Ok((latency, ip)) => {
                     debug!(?latency, "latency");
-                    result.latency = Some(latency);
-                    // We set these IPv4 and IPv6 but they're not really used
-                    // and we don't necessarily set them both. If UDP is blocked
-                    // and both IPv4 and IPv6 are available over TCP, it's basically
-                    // random which fields end up getting set here.
-                    // Since they're not needed, that's fine for now.
+                    let mut report = ProbeReport::new(probe);
+                    report.latency = Some(latency);
                     match ip {
-                        IpAddr::V4(_) => result.ipv4_can_send = true,
-                        IpAddr::V6(_) => result.ipv6_can_send = true,
+                        IpAddr::V4(_) => report.ipv4_can_send = true,
+                        IpAddr::V6(_) => report.ipv6_can_send = true,
                     }
+                    Ok(report)
                 }
                 Err(err) => {
                     warn!("https latency measurement failed: {:?}", err);
+                    Err(ProbeError::Error(err, probe))
                 }
             }
         }
@@ -533,7 +528,7 @@ async fn run_probe(
                     .map_err(|e| ProbeError::AbortSet(e, probe.clone()))?;
 
                     let url = node.url.clone();
-                    result = run_quic_probe(
+                    let report = run_quic_probe(
                         quic_config,
                         url,
                         relay_addr,
@@ -541,19 +536,15 @@ async fn run_probe(
                         socket_state.ip_mapped_addrs,
                     )
                     .await?;
+                    Ok(report)
                 }
-                None => {
-                    return Err(ProbeError::AbortSet(
-                        anyhow!("No QUIC endpoint for {}", probe.proto()),
-                        probe.clone(),
-                    ));
-                }
+                None => Err(ProbeError::AbortSet(
+                    anyhow!("No QUIC endpoint for {}", probe.proto()),
+                    probe,
+                )),
             }
         }
     }
-
-    trace!("probe successful");
-    Ok(result)
 }
 
 #[cfg(not(wasm_browser))]
