@@ -33,8 +33,6 @@ use n0_future::{
     time::{self, Duration, Instant},
     StreamExt as _,
 };
-#[cfg(not(wasm_browser))]
-use netwatch::interfaces;
 use rand::seq::IteratorRandom;
 use snafu::{IntoError, OptionExt, ResultExt, Snafu};
 use tokio::sync::mpsc;
@@ -67,6 +65,34 @@ pub(super) struct Client {
     _drop_guard: AbortOnDropHandle<()>,
 }
 
+/// Some details required from the interface state of the device.
+#[derive(Debug, Clone, Default)]
+pub struct IfStateDetails {
+    /// Do we have IPv4 capbilities
+    pub have_v4: bool,
+    /// Do we have IPv6 capbilities
+    pub have_v6: bool,
+}
+
+impl IfStateDetails {
+    #[cfg(test)]
+    pub(super) fn fake() -> Self {
+        IfStateDetails {
+            have_v4: true,
+            have_v6: true,
+        }
+    }
+}
+
+impl From<netwatch::netmon::State> for IfStateDetails {
+    fn from(value: netwatch::netmon::State) -> Self {
+        IfStateDetails {
+            have_v4: value.have_v4,
+            have_v6: value.have_v6,
+        }
+    }
+}
+
 /// Any state that depends on sockets being available in the current environment.
 ///
 /// Factored out so it can be disabled easily in browsers.
@@ -92,6 +118,7 @@ impl Client {
         last_report: Option<Report>,
         relay_map: RelayMap,
         protocols: BTreeSet<ProbeProto>,
+        if_state: IfStateDetails,
         #[cfg(not(wasm_browser))] socket_state: SocketState,
         #[cfg(any(test, feature = "test-utils"))] insecure_skip_relay_cert_verify: bool,
     ) -> (Self, mpsc::Receiver<ProbeFinished>) {
@@ -105,6 +132,7 @@ impl Client {
             socket_state,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify,
+            if_state,
         };
         let task = task::spawn(actor.run().instrument(info_span!("reportgen.actor")));
         (
@@ -139,6 +167,7 @@ struct Actor {
     socket_state: SocketState,
     #[cfg(any(test, feature = "test-utils"))]
     insecure_skip_relay_cert_verify: bool,
+    if_state: IfStateDetails,
 }
 
 #[allow(missing_docs)]
@@ -208,7 +237,7 @@ impl Actor {
 
         let mut probes = JoinSet::default();
 
-        let _probes_token = self.spawn_probes_task(&mut probes).await;
+        let _probes_token = self.spawn_probes_task(self.if_state.clone(), &mut probes);
         let mut num_probes = probes.len();
 
         let port_token = self.prepare_portmapper_task(&mut probes);
@@ -218,9 +247,9 @@ impl Actor {
         let mut have_udp = false;
 
         // Check for probes finishing.
-        while let Some(set_result) = probes.join_next().await {
-            trace!("tick: probes done: {:?}", set_result);
-            match set_result {
+        while let Some(probe_result) = probes.join_next().await {
+            trace!(?probe_result, num_probes, "processing finished probe");
+            match probe_result {
                 Ok(report) => {
                     #[cfg_attr(wasm_browser, allow(irrefutable_let_patterns))]
                     if let ProbeFinished::Regular(report) = &report {
@@ -232,7 +261,7 @@ impl Actor {
 
                         // If all probes are done & we have_udp cancel portmapper and captive
                         if num_probes == 0 {
-                            debug!("all probes done");
+                            debug!("all regular probes done");
                             debug_assert!(probes.len() <= 2, "{} probes", probes.len());
 
                             if have_udp {
@@ -251,7 +280,6 @@ impl Actor {
                     warn!("probes task join error: {:?}", e);
                 }
             }
-            trace!("tick: probes handled");
         }
 
         Ok(())
@@ -265,25 +293,28 @@ impl Actor {
         #[cfg(not(wasm_browser))]
         if let Some(port_mapper) = self.socket_state.port_mapper.clone() {
             let token = token.clone();
-            tasks.spawn(async move {
-                let res = token.run_until_cancelled_owned(port_mapper.probe()).await;
-                let res = match res {
-                    Some(Ok(Ok(res))) => Some(res),
-                    Some(Ok(Err(err))) => {
-                        debug!("skipping port mapping: {err:?}");
-                        None
-                    }
-                    Some(Err(recv_err)) => {
-                        warn!("skipping port mapping: {recv_err:?}");
-                        None
-                    }
-                    None => {
-                        debug!("probe cancelled");
-                        None
-                    }
-                };
-                ProbeFinished::Portmap(res)
-            });
+            tasks.spawn(
+                async move {
+                    let res = token.run_until_cancelled_owned(port_mapper.probe()).await;
+                    let res = match res {
+                        Some(Ok(Ok(res))) => Some(res),
+                        Some(Ok(Err(err))) => {
+                            debug!("skipping port mapping: {err:?}");
+                            None
+                        }
+                        Some(Err(recv_err)) => {
+                            warn!("probe failed: {recv_err:?}");
+                            None
+                        }
+                        None => {
+                            trace!("probe cancelled");
+                            None
+                        }
+                    };
+                    ProbeFinished::Portmap(res)
+                }
+                .instrument(debug_span!("port-mapper")),
+            );
         }
         token
     }
@@ -312,7 +343,7 @@ impl Actor {
                     let res = token
                         .run_until_cancelled_owned(async move {
                             time::sleep(CAPTIVE_PORTAL_DELAY).await;
-                            debug!("Captive portal check started after {CAPTIVE_PORTAL_DELAY:?}");
+                            trace!("check started after {CAPTIVE_PORTAL_DELAY:?}");
                             time::timeout(
                                 CAPTIVE_PORTAL_TIMEOUT,
                                 check_captive_portal(&dns_resolver, &dm, preferred_relay),
@@ -334,12 +365,12 @@ impl Actor {
                             }
                             None
                         }
-                        Some(Err(_)) => {
-                            warn!("check_captive_portal timed out");
+                        Some(Err(time::Elapsed { .. })) => {
+                            warn!("probe timed out");
                             None
                         }
                         None => {
-                            debug!("check_captive_portal cancelled");
+                            trace!("probe cancelled");
                             None
                         }
                     };
@@ -369,11 +400,12 @@ impl Actor {
     ///     failure permanent.  Probes in a probe set are essentially retries.
     ///   - Once there are [`ProbeReport`]s from enough nodes, all remaining probes are
     ///     aborted.  That is, the main actor loop stops polling them.
-    async fn spawn_probes_task(&self, probes: &mut JoinSet<ProbeFinished>) -> CancellationToken {
-        #[cfg(not(wasm_browser))]
-        let if_state = interfaces::State::new().await;
-        #[cfg(not(wasm_browser))]
-        debug!(%if_state, "Local interfaces");
+    fn spawn_probes_task(
+        &self,
+        if_state: IfStateDetails,
+        probes: &mut JoinSet<ProbeFinished>,
+    ) -> CancellationToken {
+        debug!(?if_state, "local interface details");
         let plan = match self.last_report {
             Some(ref report) => ProbePlan::with_last_report(
                 &self.relay_map,
@@ -433,7 +465,7 @@ impl Actor {
                         };
                         ProbeFinished::Regular(res)
                     }
-                    .instrument(debug_span!("run_probe", %probe)),
+                    .instrument(debug_span!("run-probe", %probe)),
                 );
             }
         }
@@ -564,7 +596,6 @@ async fn run_probe(
 
     match probe {
         Probe::Https { ref node, .. } => {
-            debug!("sending probe HTTPS");
             match measure_https_latency(
                 #[cfg(not(wasm_browser))]
                 &socket_state.dns_resolver,
@@ -575,7 +606,7 @@ async fn run_probe(
             .await
             {
                 Ok((latency, ip)) => {
-                    debug!(?latency, "latency");
+                    debug!(?latency, "https latency");
                     let mut report = ProbeReport::new(probe);
                     report.latency = Some(latency);
                     match ip {
@@ -584,19 +615,15 @@ async fn run_probe(
                     }
                     Ok(report)
                 }
-                Err(err) => {
-                    warn!("https latency measurement failed: {:?}", err);
-                    Err(ProbeErrorWithProbe::Error(
-                        probe_error::HttpsSnafu {}.into_error(err),
-                        probe,
-                    ))
-                }
+                Err(err) => Err(ProbeErrorWithProbe::Error(
+                    probe_error::HttpsSnafu {}.into_error(err),
+                    probe,
+                )),
             }
         }
 
         #[cfg(not(wasm_browser))]
         Probe::QadIpv4 { ref node, .. } | Probe::QadIpv6 { ref node, .. } => {
-            debug!("sending QUIC address discovery probe");
             match socket_state.quic_config {
                 Some(quic_config) => {
                     let relay_addr = match probe.proto() {
@@ -657,6 +684,7 @@ async fn run_quic_probe(
     probe: Probe,
     ip_mapped_addrs: Option<IpMappedAddresses>,
 ) -> Result<ProbeReport, ProbeErrorWithProbe> {
+    trace!("QAD probe start");
     match probe.proto() {
         ProbeProto::QadIpv4 => debug_assert!(relay_addr.is_ipv4()),
         ProbeProto::QadIpv6 => debug_assert!(relay_addr.is_ipv6()),
@@ -857,7 +885,7 @@ async fn relay_lookup_ipv4_staggered(
 ) -> Result<SocketAddr, GetRelayAddrError> {
     match relay.url.host() {
         Some(url::Host::Domain(hostname)) => {
-            debug!(%hostname, "Performing DNS A lookup for relay addr");
+            trace!(%hostname, "Performing DNS A lookup for relay addr");
             match dns_resolver
                 .lookup_ipv4_staggered(hostname, DNS_TIMEOUT, DNS_STAGGERING_MS)
                 .await
@@ -890,7 +918,7 @@ async fn relay_lookup_ipv6_staggered(
 ) -> Result<SocketAddr, GetRelayAddrError> {
     match relay.url.host() {
         Some(url::Host::Domain(hostname)) => {
-            debug!(%hostname, "Performing DNS AAAA lookup for relay addr");
+            trace!(%hostname, "Performing DNS AAAA lookup for relay addr");
             match dns_resolver
                 .lookup_ipv6_staggered(hostname, DNS_TIMEOUT, DNS_STAGGERING_MS)
                 .await
@@ -938,6 +966,7 @@ async fn measure_https_latency(
     node: &RelayNode,
     #[cfg(any(test, feature = "test-utils"))] insecure_skip_relay_cert_verify: bool,
 ) -> Result<(Duration, IpAddr), MeasureHttpsLatencyError> {
+    debug!(%node, "measure https latency");
     let url = node.url.join(RELAY_PROBE_PATH)?;
 
     // This should also use same connection establishment as relay client itself, which

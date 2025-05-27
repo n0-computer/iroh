@@ -9,8 +9,6 @@ use std::{collections::BTreeSet, fmt, sync::Arc};
 use iroh_base::RelayUrl;
 use iroh_relay::{RelayMap, RelayNode};
 use n0_future::time::Duration;
-#[cfg(not(wasm_browser))]
-use netwatch::interfaces;
 use snafu::Snafu;
 
 use crate::net_report::Report;
@@ -209,7 +207,7 @@ impl ProbePlan {
     pub(super) fn initial(
         relay_map: &RelayMap,
         protocols: &BTreeSet<ProbeProto>,
-        if_state: &interfaces::State,
+        if_state: &super::IfStateDetails,
     ) -> Self {
         let mut plan = Self {
             set: BTreeSet::new(),
@@ -308,7 +306,7 @@ impl ProbePlan {
         relay_map: &RelayMap,
         last_report: &Report,
         protocols: &BTreeSet<ProbeProto>,
-        if_state: &interfaces::State,
+        if_state: &super::IfStateDetails,
     ) -> Self {
         if last_report.relay_latency.is_empty() {
             return Self::initial(relay_map, protocols, if_state);
@@ -562,7 +560,7 @@ mod tests {
     use tracing_test::traced_test;
 
     use super::*;
-    use crate::net_report::{test_utils, RelayLatencies};
+    use crate::net_report::{reportgen::IfStateDetails, test_utils, RelayLatencies};
 
     /// Shorthand which declares a new ProbeSet.
     ///
@@ -593,7 +591,7 @@ mod tests {
         let (_servers, relay_map) = test_utils::relay_map(2).await;
         let relay_node_1 = relay_map.nodes().next().unwrap();
         let relay_node_2 = relay_map.nodes().nth(1).unwrap();
-        let if_state = interfaces::State::fake();
+        let if_state = IfStateDetails::fake();
         let plan = ProbePlan::initial(&relay_map, &default_protocols(), &if_state);
 
         let mut expected_plan: ProbePlan = [
@@ -659,7 +657,7 @@ mod tests {
         let (_servers, relay_map) = test_utils::relay_map(2).await;
         let relay_node_1 = relay_map.nodes().next().unwrap();
         let relay_node_2 = relay_map.nodes().nth(1).unwrap();
-        let if_state = interfaces::State::fake();
+        let if_state = IfStateDetails::fake();
         let plan = ProbePlan::initial(&relay_map, &BTreeSet::from([ProbeProto::Https]), &if_state);
 
         let mut expected_plan: ProbePlan = [
@@ -698,7 +696,7 @@ mod tests {
         let (_servers, relay_map) = test_utils::relay_map(2).await;
         let relay_node_1 = relay_map.nodes().next().unwrap().clone();
         let relay_node_2 = relay_map.nodes().nth(1).unwrap().clone();
-        let if_state = interfaces::State::fake();
+        let if_state = IfStateDetails::fake();
 
         for i in 0..10 {
             println!("round {}", i);
