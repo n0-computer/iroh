@@ -1735,20 +1735,7 @@
 <a href="#1734" id="1734">1734</a>
 <a href="#1735" id="1735">1735</a>
 <a href="#1736" id="1736">1736</a>
-<a href="#1737" id="1737">1737</a>
-<a href="#1738" id="1738">1738</a>
-<a href="#1739" id="1739">1739</a>
-<a href="#1740" id="1740">1740</a>
-<a href="#1741" id="1741">1741</a>
-<a href="#1742" id="1742">1742</a>
-<a href="#1743" id="1743">1743</a>
-<a href="#1744" id="1744">1744</a>
-<a href="#1745" id="1745">1745</a>
-<a href="#1746" id="1746">1746</a>
-<a href="#1747" id="1747">1747</a>
-<a href="#1748" id="1748">1748</a>
-<a href="#1749" id="1749">1749</a>
-<a href="#1750" id="1750">1750</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#1737" id="1737">1737</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{btree_map::Entry, BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
@@ -2453,19 +2440,6 @@
         }
         <span class="kw">let </span>paths = summarize_node_paths(<span class="kw-2">&amp;</span><span class="self">self</span>.udp_paths.paths);
         <span class="macro">debug!</span>(new = <span class="question-mark">?</span>new_addrs , %paths, <span class="string">"added new direct paths for endpoint"</span>);
-    }
-
-    <span class="doccomment">/// Clears all the endpoint's p2p state, reverting it to a relay-only endpoint.
-    </span><span class="attr">#[instrument(skip_all, fields(node = %<span class="self">self</span>.node_id.fmt_short()))]
-    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>reset(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
-        <span class="self">self</span>.last_full_ping = <span class="prelude-val">None</span>;
-        <span class="self">self</span>.udp_paths
-            .best_addr
-            .clear(ClearReason::Reset, <span class="self">self</span>.relay_url.is_some());
-
-        <span class="kw">for </span>es <span class="kw">in </span><span class="self">self</span>.udp_paths.paths.values_mut() {
-            es.last_ping = <span class="prelude-val">None</span>;
-        }
     }
 
     <span class="doccomment">/// Handle a received Disco Ping.

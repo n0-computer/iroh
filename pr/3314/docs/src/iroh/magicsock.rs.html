@@ -3276,23 +3276,7 @@
 <a href="#3275" id="3275">3275</a>
 <a href="#3276" id="3276">3276</a>
 <a href="#3277" id="3277">3277</a>
-<a href="#3278" id="3278">3278</a>
-<a href="#3279" id="3279">3279</a>
-<a href="#3280" id="3280">3280</a>
-<a href="#3281" id="3281">3281</a>
-<a href="#3282" id="3282">3282</a>
-<a href="#3283" id="3283">3283</a>
-<a href="#3284" id="3284">3284</a>
-<a href="#3285" id="3285">3285</a>
-<a href="#3286" id="3286">3286</a>
-<a href="#3287" id="3287">3287</a>
-<a href="#3288" id="3288">3288</a>
-<a href="#3289" id="3289">3289</a>
-<a href="#3290" id="3290">3290</a>
-<a href="#3291" id="3291">3291</a>
-<a href="#3292" id="3292">3292</a>
-<a href="#3293" id="3293">3293</a>
-<a href="#3294" id="3294">3294</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#3278" id="3278">3278</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -3329,7 +3313,7 @@
 <span class="kw">use </span>iroh_relay::RelayMap;
 <span class="kw">use </span>n0_future::{
     boxed::BoxStream,
-    task::{<span class="self">self</span>, JoinSet},
+    task::{<span class="self">self</span>, AbortOnDropHandle},
     time::{<span class="self">self</span>, Duration, Instant},
     StreamExt,
 };
@@ -3341,6 +3325,7 @@
 <span class="kw">use </span>rand::Rng;
 <span class="kw">use </span>smallvec::SmallVec;
 <span class="kw">use </span>tokio::sync::{mpsc, Mutex};
+<span class="kw">use </span>tokio_util::sync::CancellationToken;
 <span class="kw">use </span>tracing::{
     debug, error, event, info, info_span, instrument, trace, trace_span, warn, Instrument, Level,
 };
@@ -3454,8 +3439,10 @@
 </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>Handle {
     <span class="attr">#[deref(forward)]
     </span>msock: Arc&lt;MagicSock&gt;,
-    <span class="comment">// Empty when closed
-    </span>actor_tasks: Arc&lt;Mutex&lt;JoinSet&lt;()&gt;&gt;&gt;,
+    <span class="comment">// empty when shutdown
+    </span>actor_task: Arc&lt;Mutex&lt;<span class="prelude-ty">Option</span>&lt;AbortOnDropHandle&lt;()&gt;&gt;&gt;&gt;,
+    <span class="doccomment">/// Token to cancel the actor task.
+    </span>actor_token: CancellationToken,
     <span class="comment">// quinn endpoint
     </span>endpoint: quinn::Endpoint,
 }
@@ -4605,8 +4592,6 @@
             </span>Arc::new(<span class="kw">crate</span>::web_runtime::WebRuntime),
         )<span class="question-mark">?</span>;
 
-        <span class="kw">let </span><span class="kw-2">mut </span>actor_tasks = JoinSet::default();
-
         <span class="kw">let </span>network_monitor = netmon::Monitor::new().<span class="kw">await</span><span class="question-mark">?</span>;
         <span class="kw">let </span>qad_endpoint = endpoint.clone();
 
@@ -4656,21 +4641,24 @@
             pending_call_me_maybes: Default::default(),
             disco_receiver,
         };
-        actor_tasks.spawn(
+        <span class="kw">let </span>actor_token = CancellationToken::new();
+        <span class="kw">let </span>token = actor_token.clone();
+        <span class="kw">let </span>actor_task = task::spawn(
             <span class="kw">async move </span>{
-                <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = actor.run(local_addrs_watch, sender).<span class="kw">await </span>{
+                <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = actor.run(token, local_addrs_watch, sender).<span class="kw">await </span>{
                     <span class="macro">warn!</span>(<span class="string">"relay handler errored: {:?}"</span>, err);
                 }
             }
             .instrument(<span class="macro">info_span!</span>(<span class="string">"actor"</span>)),
         );
 
-        <span class="kw">let </span>actor_tasks = Arc::new(Mutex::new(actor_tasks));
+        <span class="kw">let </span>actor_task = Arc::new(Mutex::new(<span class="prelude-val">Some</span>(AbortOnDropHandle::new(actor_task))));
 
         <span class="prelude-val">Ok</span>(Handle {
             msock,
-            actor_tasks,
+            actor_task,
             endpoint,
+            actor_token,
         })
     }
 
@@ -4711,38 +4699,27 @@
             <span class="kw">return</span>;
         }
         <span class="self">self</span>.msock.closing.store(<span class="bool-val">true</span>, Ordering::Relaxed);
-        <span class="comment">// If this fails, then there's no receiver listening for shutdown messages,
-        // so nothing to shut down anyways.
-        </span><span class="self">self</span>.msock
-            .actor_sender
-            .send(ActorMessage::Shutdown)
-            .<span class="kw">await
-            </span>.ok();
-        <span class="self">self</span>.msock.closed.store(<span class="bool-val">true</span>, Ordering::SeqCst);
+        <span class="self">self</span>.actor_token.cancel();
 
-        <span class="kw">let </span><span class="kw-2">mut </span>tasks = <span class="self">self</span>.actor_tasks.lock().<span class="kw">await</span>;
-
-        <span class="comment">// give the tasks a moment to shutdown cleanly
-        </span><span class="kw">let </span>tasks_ref = <span class="kw-2">&amp;mut </span>tasks;
-        <span class="kw">let </span>shutdown_done = time::timeout(Duration::from_millis(<span class="number">100</span>), <span class="kw">async move </span>{
-            <span class="kw">while let </span><span class="prelude-val">Some</span>(task) = tasks_ref.join_next().<span class="kw">await </span>{
-                <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = task {
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(task) = <span class="self">self</span>.actor_task.lock().<span class="kw">await</span>.take() {
+            <span class="comment">// give the tasks a moment to shutdown cleanly
+            </span><span class="kw">let </span>shutdown_done = time::timeout(Duration::from_millis(<span class="number">100</span>), <span class="kw">async move </span>{
+                <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = task.<span class="kw">await </span>{
                     <span class="macro">warn!</span>(<span class="string">"unexpected error in task shutdown: {:?}"</span>, err);
                 }
-            }
-        })
-        .<span class="kw">await</span>;
-        <span class="kw">match </span>shutdown_done {
-            <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; <span class="macro">trace!</span>(<span class="string">"tasks finished in time, shutdown complete"</span>),
-            <span class="prelude-val">Err</span>(_elapsed) =&gt; {
-                <span class="comment">// shutdown all tasks
-                </span><span class="macro">warn!</span>(
-                    <span class="string">"tasks didn't finish in time, aborting remaining {}/3 tasks"</span>,
-                    tasks.len()
-                );
-                tasks.shutdown().<span class="kw">await</span>;
+            })
+            .<span class="kw">await</span>;
+            <span class="kw">match </span>shutdown_done {
+                <span class="prelude-val">Ok</span>(<span class="kw">_</span>) =&gt; <span class="macro">trace!</span>(<span class="string">"tasks finished in time, shutdown complete"</span>),
+                <span class="prelude-val">Err</span>(time::Elapsed { .. }) =&gt; {
+                    <span class="comment">// Dropping the task will abort itt
+                    </span><span class="macro">warn!</span>(<span class="string">"tasks didn't finish in time, aborting"</span>);
+                }
             }
         }
+
+        <span class="self">self</span>.msock.closed.store(<span class="bool-val">true</span>, Ordering::SeqCst);
+
         <span class="macro">trace!</span>(<span class="string">"magicsock closed"</span>);
     }
 }
@@ -4895,7 +4872,6 @@
 
 <span class="attr">#[derive(Debug)]
 </span><span class="kw">enum </span>ActorMessage {
-    Shutdown,
     PingActions(Vec&lt;PingAction&gt;),
     EndpointPingExpired(usize, stun_rs::TransactionId),
     NetworkChange,
@@ -4976,6 +4952,7 @@
 <span class="kw">impl </span>Actor {
     <span class="kw">async fn </span>run(
         <span class="kw-2">mut </span><span class="self">self</span>,
+        shutdown_token: CancellationToken,
         <span class="kw-2">mut </span>watcher: <span class="kw">impl </span>Watcher&lt;Value = Vec&lt;transports::Addr&gt;&gt; + Send + Sync,
         sender: UdpSender,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
@@ -5017,6 +4994,10 @@
             </span><span class="kw">let </span>direct_addr_heartbeat_timer_tick = n0_future::future::pending();
 
             <span class="macro">tokio::select!</span> {
+                <span class="kw">_ </span>= shutdown_token.cancelled() =&gt; {
+                    <span class="macro">debug!</span>(<span class="string">"shutting down"</span>);
+                    <span class="kw">return </span><span class="prelude-val">Ok</span>(());
+                }
                 msg = <span class="self">self</span>.msg_receiver.recv(), <span class="kw">if </span>!receiver_closed =&gt; {
                     <span class="kw">let </span><span class="prelude-val">Some</span>(msg) = msg <span class="kw">else </span>{
                         <span class="macro">trace!</span>(<span class="string">"tick: magicsock receiver closed"</span>);
@@ -5028,9 +5009,7 @@
 
                     <span class="macro">trace!</span>(<span class="question-mark">?</span>msg, <span class="string">"tick: msg"</span>);
                     <span class="self">self</span>.msock.metrics.magicsock.actor_tick_msg.inc();
-                    <span class="kw">if </span><span class="self">self</span>.handle_actor_message(msg, <span class="kw-2">&amp;</span>sender).<span class="kw">await </span>{
-                        <span class="kw">return </span><span class="prelude-val">Ok</span>(());
-                    }
+                    <span class="self">self</span>.handle_actor_message(msg, <span class="kw-2">&amp;</span>sender).<span class="kw">await</span>;
                 }
                 tick = <span class="self">self</span>.periodic_re_stun_timer.tick() =&gt; {
                     <span class="macro">trace!</span>(<span class="string">"tick: re_stun {:?}"</span>, tick);
@@ -5183,18 +5162,8 @@
     <span class="doccomment">/// Processes an incoming actor message.
     ///
     /// Returns `true` if it was a shutdown.
-    </span><span class="kw">async fn </span>handle_actor_message(<span class="kw-2">&amp;mut </span><span class="self">self</span>, msg: ActorMessage, sender: <span class="kw-2">&amp;</span>UdpSender) -&gt; bool {
+    </span><span class="kw">async fn </span>handle_actor_message(<span class="kw-2">&amp;mut </span><span class="self">self</span>, msg: ActorMessage, sender: <span class="kw-2">&amp;</span>UdpSender) {
         <span class="kw">match </span>msg {
-            ActorMessage::Shutdown =&gt; {
-                <span class="macro">debug!</span>(<span class="string">"shutting down"</span>);
-
-                <span class="self">self</span>.msock.node_map.notify_shutdown();
-                <span class="attr">#[cfg(not(wasm_browser))]
-                </span><span class="self">self</span>.direct_addr_update_state.port_mapper.deactivate();
-
-                <span class="macro">debug!</span>(<span class="string">"shutdown complete"</span>);
-                <span class="kw">return </span><span class="bool-val">true</span>;
-            }
             ActorMessage::EndpointPingExpired(id, txid) =&gt; {
                 <span class="self">self</span>.msock.node_map.notify_ping_timeout(id, txid);
             }
@@ -5217,9 +5186,7 @@
                 <span class="self">self</span>.handle_ping_actions(sender, ping_actions).<span class="kw">await</span>;
             }
         }
-
-        <span class="bool-val">false
-    </span>}
+    }
 
     <span class="doccomment">/// Updates the direct addresses of this magic socket.
     ///
@@ -5677,6 +5644,7 @@
 </span><span class="kw">mod </span>tests {
     <span class="kw">use </span>anyhow::{anyhow, Context};
     <span class="kw">use </span>rand::RngCore;
+    <span class="kw">use </span>tokio::task::JoinSet;
     <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
     <span class="kw">use </span>tracing_test::traced_test;
 
