@@ -247,7 +247,7 @@ impl ProbePlan {
             plan.add_if_enabled(quic_ipv4_probes);
             plan.add_if_enabled(quic_ipv6_probes);
 
-            // The HTTP and ICMP probes only start after the STUN probes have had a chance.
+            // The HTTP probes only start after the QUAD probes have had a chance.
             let mut https_probes = ProbeSet::new(ProbeProto::Https);
 
             for attempt in 0..3 {
