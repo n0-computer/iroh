@@ -3284,7 +3284,16 @@
 <a href="#3283" id="3283">3283</a>
 <a href="#3284" id="3284">3284</a>
 <a href="#3285" id="3285">3285</a>
-<a href="#3286" id="3286">3286</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#3286" id="3286">3286</a>
+<a href="#3287" id="3287">3287</a>
+<a href="#3288" id="3288">3288</a>
+<a href="#3289" id="3289">3289</a>
+<a href="#3290" id="3290">3290</a>
+<a href="#3291" id="3291">3291</a>
+<a href="#3292" id="3292">3292</a>
+<a href="#3293" id="3293">3293</a>
+<a href="#3294" id="3294">3294</a>
+<a href="#3295" id="3295">3295</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -3358,7 +3367,7 @@
     discovery::{Discovery, DiscoveryItem, DiscoverySubscribers, NodeData, UserData},
     key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
     metrics::EndpointMetrics,
-    net_report::{<span class="self">self</span>, IpMappedAddresses, Report},
+    net_report::{<span class="self">self</span>, IfStateDetails, IpMappedAddresses, Report},
 };
 
 <span class="kw">mod </span>metrics;
@@ -4396,10 +4405,10 @@
 
     <span class="doccomment">/// Schedules a new run, either starting it immediately if none is running or
     /// scheduling it for later.
-    </span><span class="kw">fn </span>schedule_run(<span class="kw-2">&amp;mut </span><span class="self">self</span>, why: UpdateReason) {
+    </span><span class="kw">fn </span>schedule_run(<span class="kw-2">&amp;mut </span><span class="self">self</span>, why: UpdateReason, if_state: IfStateDetails) {
         <span class="kw">match </span><span class="self">self</span>.net_reporter.clone().try_lock_owned() {
             <span class="prelude-val">Ok</span>(net_reporter) =&gt; {
-                <span class="self">self</span>.run(why, net_reporter);
+                <span class="self">self</span>.run(why, if_state, net_reporter);
             }
             <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; {
                 <span class="kw">let _ </span>= <span class="self">self</span>.want_update.insert(why);
@@ -4408,11 +4417,11 @@
     }
 
     <span class="doccomment">/// If another run is needed, triggers this run, otherwise does nothing.
-    </span><span class="kw">fn </span>try_run(<span class="kw-2">&amp;mut </span><span class="self">self</span>) {
+    </span><span class="kw">fn </span>try_run(<span class="kw-2">&amp;mut </span><span class="self">self</span>, if_state: IfStateDetails) {
         <span class="kw">match </span><span class="self">self</span>.net_reporter.clone().try_lock_owned() {
             <span class="prelude-val">Ok</span>(net_reporter) =&gt; {
                 <span class="kw">if let </span><span class="prelude-val">Some</span>(why) = <span class="self">self</span>.want_update.take() {
-                    <span class="self">self</span>.run(why, net_reporter);
+                    <span class="self">self</span>.run(why, if_state, net_reporter);
                 }
             }
             <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; {
@@ -4425,6 +4434,7 @@
     </span><span class="kw">fn </span>run(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         why: UpdateReason,
+        if_state: IfStateDetails,
         <span class="kw-2">mut </span>net_reporter: tokio::sync::OwnedMutexGuard&lt;net_report::Client&gt;,
     ) {
         <span class="macro">debug!</span>(<span class="string">"starting direct addr update ({:?})"</span>, why);
@@ -4450,7 +4460,10 @@
 
         <span class="kw">let </span>run_done = <span class="self">self</span>.run_done.clone();
         task::spawn(<span class="kw">async move </span>{
-            <span class="kw">let </span>fut = time::timeout(NET_REPORT_TIMEOUT, net_reporter.get_report(relay_map, opts));
+            <span class="kw">let </span>fut = time::timeout(
+                NET_REPORT_TIMEOUT,
+                net_reporter.get_report(relay_map, if_state, opts),
+            );
             <span class="kw">match </span>fut.<span class="kw">await </span>{
                 <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(report)) =&gt; {
                     msock.net_report.set((<span class="prelude-val">Some</span>(report), why)).ok();
@@ -5057,7 +5070,8 @@
                     <span class="kw">match </span>reason {
                         <span class="prelude-val">Some</span>(()) =&gt; {
                             <span class="comment">// check if a new run needs to be scheduled
-                            </span><span class="self">self</span>.direct_addr_update_state.try_run();
+                            </span><span class="kw">let </span>state = <span class="self">self</span>.netmon_watcher.get().expect(<span class="string">"disconnected"</span>);
+                            <span class="self">self</span>.direct_addr_update_state.try_run(state.into());
                         }
                         <span class="prelude-val">None </span>=&gt; {
                             <span class="macro">warn!</span>(<span class="string">"direct addr watcher died"</span>);
@@ -5156,7 +5170,9 @@
     }
 
     <span class="kw">fn </span>re_stun(<span class="kw-2">&amp;mut </span><span class="self">self</span>, why: UpdateReason) {
-        <span class="self">self</span>.direct_addr_update_state.schedule_run(why);
+        <span class="kw">let </span>state = <span class="self">self</span>.netmon_watcher.get().expect(<span class="string">"disconnected"</span>);
+        <span class="self">self</span>.direct_addr_update_state
+            .schedule_run(why, state.into());
     }
 
     <span class="attr">#[instrument(skip_all)]
@@ -5191,7 +5207,9 @@
                 <span class="kw">if let </span><span class="prelude-val">Some</span>((node, url)) = data {
                     <span class="self">self</span>.pending_call_me_maybes.insert(node, url);
                 }
-                <span class="self">self</span>.direct_addr_update_state.schedule_run(why);
+                <span class="kw">let </span>state = <span class="self">self</span>.netmon_watcher.get().expect(<span class="string">"disconnected"</span>);
+                <span class="self">self</span>.direct_addr_update_state
+                    .schedule_run(why, state.into());
             }
             <span class="attr">#[cfg(test)]
             </span>ActorMessage::ForceNetworkChange(is_major) =&gt; {

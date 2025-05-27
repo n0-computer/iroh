@@ -918,7 +918,36 @@
 <a href="#917" id="917">917</a>
 <a href="#918" id="918">918</a>
 <a href="#919" id="919">919</a>
-<a href="#920" id="920">920</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
+<a href="#920" id="920">920</a>
+<a href="#921" id="921">921</a>
+<a href="#922" id="922">922</a>
+<a href="#923" id="923">923</a>
+<a href="#924" id="924">924</a>
+<a href="#925" id="925">925</a>
+<a href="#926" id="926">926</a>
+<a href="#927" id="927">927</a>
+<a href="#928" id="928">928</a>
+<a href="#929" id="929">929</a>
+<a href="#930" id="930">930</a>
+<a href="#931" id="931">931</a>
+<a href="#932" id="932">932</a>
+<a href="#933" id="933">933</a>
+<a href="#934" id="934">934</a>
+<a href="#935" id="935">935</a>
+<a href="#936" id="936">936</a>
+<a href="#937" id="937">937</a>
+<a href="#938" id="938">938</a>
+<a href="#939" id="939">939</a>
+<a href="#940" id="940">940</a>
+<a href="#941" id="941">941</a>
+<a href="#942" id="942">942</a>
+<a href="#943" id="943">943</a>
+<a href="#944" id="944">944</a>
+<a href="#945" id="945">945</a>
+<a href="#946" id="946">946</a>
+<a href="#947" id="947">947</a>
+<a href="#948" id="948">948</a>
+<a href="#949" id="949">949</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
 //!
 //! It is implemented as an actor with [`Client`] as handle.
 //!
@@ -953,8 +982,6 @@
     time::{<span class="self">self</span>, Duration, Instant},
     StreamExt <span class="kw">as _</span>,
 };
-<span class="attr">#[cfg(not(wasm_browser))]
-</span><span class="kw">use </span>netwatch::interfaces;
 <span class="kw">use </span>rand::seq::IteratorRandom;
 <span class="kw">use </span>tokio::sync::mpsc;
 <span class="kw">use </span>tokio_util::sync::CancellationToken;
@@ -986,6 +1013,34 @@
     _drop_guard: AbortOnDropHandle&lt;()&gt;,
 }
 
+<span class="doccomment">/// Some details required from the interface state of the device.
+</span><span class="attr">#[derive(Debug, Clone, Default)]
+</span><span class="kw">pub struct </span>IfStateDetails {
+    <span class="doccomment">/// Do we have IPv4 capbilities
+    </span><span class="kw">pub </span>have_v4: bool,
+    <span class="doccomment">/// Do we have IPv6 capbilities
+    </span><span class="kw">pub </span>have_v6: bool,
+}
+
+<span class="kw">impl </span>IfStateDetails {
+    <span class="attr">#[cfg(test)]
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>fake() -&gt; <span class="self">Self </span>{
+        IfStateDetails {
+            have_v4: <span class="bool-val">true</span>,
+            have_v6: <span class="bool-val">true</span>,
+        }
+    }
+}
+
+<span class="kw">impl </span>From&lt;netwatch::netmon::State&gt; <span class="kw">for </span>IfStateDetails {
+    <span class="kw">fn </span>from(value: netwatch::netmon::State) -&gt; <span class="self">Self </span>{
+        IfStateDetails {
+            have_v4: value.have_v4,
+            have_v6: value.have_v6,
+        }
+    }
+}
+
 <span class="doccomment">/// Any state that depends on sockets being available in the current environment.
 ///
 /// Factored out so it can be disabled easily in browsers.
@@ -1011,6 +1066,7 @@
         last_report: <span class="prelude-ty">Option</span>&lt;Report&gt;,
         relay_map: RelayMap,
         protocols: BTreeSet&lt;ProbeProto&gt;,
+        if_state: IfStateDetails,
         <span class="attr">#[cfg(not(wasm_browser))] </span>socket_state: SocketState,
         <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))] </span>insecure_skip_relay_cert_verify: bool,
     ) -&gt; (<span class="self">Self</span>, mpsc::Receiver&lt;ProbeFinished&gt;) {
@@ -1024,6 +1080,7 @@
             </span>socket_state,
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
             </span>insecure_skip_relay_cert_verify,
+            if_state,
         };
         <span class="kw">let </span>task = task::spawn(actor.run().instrument(<span class="macro">info_span!</span>(<span class="string">"reportgen.actor"</span>)));
         (
@@ -1058,6 +1115,7 @@
     </span>socket_state: SocketState,
     <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
     </span>insecure_skip_relay_cert_verify: bool,
+    if_state: IfStateDetails,
 }
 
 <span class="attr">#[derive(Debug)]
@@ -1098,7 +1156,7 @@
 
         <span class="kw">let </span><span class="kw-2">mut </span>probes = JoinSet::default();
 
-        <span class="kw">let </span>_probes_token = <span class="self">self</span>.spawn_probes_task(<span class="kw-2">&amp;mut </span>probes).<span class="kw">await</span>;
+        <span class="kw">let </span>_probes_token = <span class="self">self</span>.spawn_probes_task(<span class="self">self</span>.if_state.clone(), <span class="kw-2">&amp;mut </span>probes);
         <span class="kw">let </span><span class="kw-2">mut </span>num_probes = probes.len();
 
         <span class="kw">let </span>port_token = <span class="self">self</span>.prepare_portmapper_task(<span class="kw-2">&amp;mut </span>probes);
@@ -1108,9 +1166,9 @@
         </span><span class="kw">let </span><span class="kw-2">mut </span>have_udp = <span class="bool-val">false</span>;
 
         <span class="comment">// Check for probes finishing.
-        </span><span class="kw">while let </span><span class="prelude-val">Some</span>(set_result) = probes.join_next().<span class="kw">await </span>{
-            <span class="macro">trace!</span>(<span class="string">"tick: probes done: {:?}"</span>, set_result);
-            <span class="kw">match </span>set_result {
+        </span><span class="kw">while let </span><span class="prelude-val">Some</span>(probe_result) = probes.join_next().<span class="kw">await </span>{
+            <span class="macro">trace!</span>(<span class="question-mark">?</span>probe_result, num_probes, <span class="string">"processing finished probe"</span>);
+            <span class="kw">match </span>probe_result {
                 <span class="prelude-val">Ok</span>(report) =&gt; {
                     <span class="attr">#[cfg_attr(wasm_browser, allow(irrefutable_let_patterns))]
                     </span><span class="kw">if let </span>ProbeFinished::Regular(report) = <span class="kw-2">&amp;</span>report {
@@ -1122,7 +1180,7 @@
 
                         <span class="comment">// If all probes are done &amp; we have_udp cancel portmapper and captive
                         </span><span class="kw">if </span>num_probes == <span class="number">0 </span>{
-                            <span class="macro">debug!</span>(<span class="string">"all probes done"</span>);
+                            <span class="macro">debug!</span>(<span class="string">"all regular probes done"</span>);
                             <span class="macro">debug_assert!</span>(probes.len() &lt;= <span class="number">2</span>, <span class="string">"{} probes"</span>, probes.len());
 
                             <span class="kw">if </span>have_udp {
@@ -1141,7 +1199,6 @@
                     <span class="macro">warn!</span>(<span class="string">"probes task join error: {:?}"</span>, e);
                 }
             }
-            <span class="macro">trace!</span>(<span class="string">"tick: probes handled"</span>);
         }
 
         <span class="prelude-val">Ok</span>(())
@@ -1155,25 +1212,28 @@
         <span class="attr">#[cfg(not(wasm_browser))]
         </span><span class="kw">if let </span><span class="prelude-val">Some</span>(port_mapper) = <span class="self">self</span>.socket_state.port_mapper.clone() {
             <span class="kw">let </span>token = token.clone();
-            tasks.spawn(<span class="kw">async move </span>{
-                <span class="kw">let </span>res = token.run_until_cancelled_owned(port_mapper.probe()).<span class="kw">await</span>;
-                <span class="kw">let </span>res = <span class="kw">match </span>res {
-                    <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(res))) =&gt; <span class="prelude-val">Some</span>(res),
-                    <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err))) =&gt; {
-                        <span class="macro">debug!</span>(<span class="string">"skipping port mapping: {err:?}"</span>);
-                        <span class="prelude-val">None
-                    </span>}
-                    <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(recv_err)) =&gt; {
-                        <span class="macro">warn!</span>(<span class="string">"skipping port mapping: {recv_err:?}"</span>);
-                        <span class="prelude-val">None
-                    </span>}
-                    <span class="prelude-val">None </span>=&gt; {
-                        <span class="macro">debug!</span>(<span class="string">"probe cancelled"</span>);
-                        <span class="prelude-val">None
-                    </span>}
-                };
-                ProbeFinished::Portmap(res)
-            });
+            tasks.spawn(
+                <span class="kw">async move </span>{
+                    <span class="kw">let </span>res = token.run_until_cancelled_owned(port_mapper.probe()).<span class="kw">await</span>;
+                    <span class="kw">let </span>res = <span class="kw">match </span>res {
+                        <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(res))) =&gt; <span class="prelude-val">Some</span>(res),
+                        <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err))) =&gt; {
+                            <span class="macro">debug!</span>(<span class="string">"skipping port mapping: {err:?}"</span>);
+                            <span class="prelude-val">None
+                        </span>}
+                        <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(recv_err)) =&gt; {
+                            <span class="macro">warn!</span>(<span class="string">"probe failed: {recv_err:?}"</span>);
+                            <span class="prelude-val">None
+                        </span>}
+                        <span class="prelude-val">None </span>=&gt; {
+                            <span class="macro">trace!</span>(<span class="string">"probe cancelled"</span>);
+                            <span class="prelude-val">None
+                        </span>}
+                    };
+                    ProbeFinished::Portmap(res)
+                }
+                .instrument(<span class="macro">debug_span!</span>(<span class="string">"port-mapper"</span>)),
+            );
         }
         token
     }
@@ -1202,7 +1262,7 @@
                     <span class="kw">let </span>res = token
                         .run_until_cancelled_owned(<span class="kw">async move </span>{
                             time::sleep(CAPTIVE_PORTAL_DELAY).<span class="kw">await</span>;
-                            <span class="macro">debug!</span>(<span class="string">"Captive portal check started after {CAPTIVE_PORTAL_DELAY:?}"</span>);
+                            <span class="macro">trace!</span>(<span class="string">"check started after {CAPTIVE_PORTAL_DELAY:?}"</span>);
                             time::timeout(
                                 CAPTIVE_PORTAL_TIMEOUT,
                                 check_captive_portal(<span class="kw-2">&amp;</span>dns_resolver, <span class="kw-2">&amp;</span>dm, preferred_relay),
@@ -1216,19 +1276,19 @@
                             <span class="kw">let </span>err: <span class="prelude-ty">Result</span>&lt;reqwest::Error, <span class="kw">_</span>&gt; = err.downcast();
                             <span class="kw">match </span>err {
                                 <span class="prelude-val">Ok</span>(req_err) <span class="kw">if </span>req_err.is_connect() =&gt; {
-                                    <span class="macro">debug!</span>(<span class="string">"check_captive_portal failed: {req_err:#}"</span>);
+                                    <span class="macro">debug!</span>(<span class="string">"check failed: {req_err:#}"</span>);
                                 }
-                                <span class="prelude-val">Ok</span>(req_err) =&gt; <span class="macro">warn!</span>(<span class="string">"check_captive_portal error: {req_err:#}"</span>),
-                                <span class="prelude-val">Err</span>(any_err) =&gt; <span class="macro">warn!</span>(<span class="string">"check_captive_portal error: {any_err:#}"</span>),
+                                <span class="prelude-val">Ok</span>(req_err) =&gt; <span class="macro">warn!</span>(<span class="string">"error: {req_err:#}"</span>),
+                                <span class="prelude-val">Err</span>(any_err) =&gt; <span class="macro">warn!</span>(<span class="string">"error: {any_err:#}"</span>),
                             }
                             <span class="prelude-val">None
                         </span>}
-                        <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(<span class="kw">_</span>)) =&gt; {
-                            <span class="macro">warn!</span>(<span class="string">"check_captive_portal timed out"</span>);
+                        <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(time::Elapsed { .. })) =&gt; {
+                            <span class="macro">warn!</span>(<span class="string">"probe timed out"</span>);
                             <span class="prelude-val">None
                         </span>}
                         <span class="prelude-val">None </span>=&gt; {
-                            <span class="macro">debug!</span>(<span class="string">"check_captive_portal cancelled"</span>);
+                            <span class="macro">trace!</span>(<span class="string">"probe cancelled"</span>);
                             <span class="prelude-val">None
                         </span>}
                     };
@@ -1258,11 +1318,12 @@
     ///     failure permanent.  Probes in a probe set are essentially retries.
     ///   - Once there are [`ProbeReport`]s from enough nodes, all remaining probes are
     ///     aborted.  That is, the main actor loop stops polling them.
-    </span><span class="kw">async fn </span>spawn_probes_task(<span class="kw-2">&amp;</span><span class="self">self</span>, probes: <span class="kw-2">&amp;mut </span>JoinSet&lt;ProbeFinished&gt;) -&gt; CancellationToken {
-        <span class="attr">#[cfg(not(wasm_browser))]
-        </span><span class="kw">let </span>if_state = interfaces::State::new().<span class="kw">await</span>;
-        <span class="attr">#[cfg(not(wasm_browser))]
-        </span><span class="macro">debug!</span>(%if_state, <span class="string">"Local interfaces"</span>);
+    </span><span class="kw">fn </span>spawn_probes_task(
+        <span class="kw-2">&amp;</span><span class="self">self</span>,
+        if_state: IfStateDetails,
+        probes: <span class="kw-2">&amp;mut </span>JoinSet&lt;ProbeFinished&gt;,
+    ) -&gt; CancellationToken {
+        <span class="macro">debug!</span>(<span class="question-mark">?</span>if_state, <span class="string">"local interface details"</span>);
         <span class="kw">let </span>plan = <span class="kw">match </span><span class="self">self</span>.last_report {
             <span class="prelude-val">Some</span>(<span class="kw-2">ref </span>report) =&gt; ProbePlan::with_last_report(
                 <span class="kw-2">&amp;</span><span class="self">self</span>.relay_map,
@@ -1306,8 +1367,8 @@
                         <span class="kw">let </span>res = fut.<span class="kw">await</span>;
                         <span class="kw">let </span>res = <span class="kw">match </span>res {
                             <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(report))) =&gt; <span class="prelude-val">Ok</span>(report),
-                            <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(ProbeError::Error(err, probe)))) =&gt; {
-                                <span class="macro">warn!</span>(<span class="question-mark">?</span>probe, <span class="string">"probe failed: {:#}"</span>, err);
+                            <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(ProbeError::Error(err, _probe)))) =&gt; {
+                                <span class="macro">warn!</span>(<span class="string">"probe failed: {:#}"</span>, err);
                                 <span class="prelude-val">Err</span>(err)
                             }
                             <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(ProbeError::AbortSet(err, probe)))) =&gt; {
@@ -1320,7 +1381,7 @@
                         };
                         ProbeFinished::Regular(res)
                     }
-                    .instrument(<span class="macro">debug_span!</span>(<span class="string">"run_probe"</span>, %probe)),
+                    .instrument(<span class="macro">debug_span!</span>(<span class="string">"run-probe"</span>, %probe)),
                 );
             }
         }
@@ -1401,7 +1462,6 @@
 
     <span class="kw">match </span>probe {
         Probe::Https { <span class="kw-2">ref </span>node, .. } =&gt; {
-            <span class="macro">debug!</span>(<span class="string">"sending probe HTTPS"</span>);
             <span class="kw">match </span>measure_https_latency(
                 <span class="attr">#[cfg(not(wasm_browser))]
                 </span><span class="kw-2">&amp;</span>socket_state.dns_resolver,
@@ -1412,7 +1472,7 @@
             .<span class="kw">await
             </span>{
                 <span class="prelude-val">Ok</span>((latency, ip)) =&gt; {
-                    <span class="macro">debug!</span>(<span class="question-mark">?</span>latency, <span class="string">"latency"</span>);
+                    <span class="macro">debug!</span>(<span class="question-mark">?</span>latency, <span class="string">"https latency"</span>);
                     <span class="kw">let </span><span class="kw-2">mut </span>report = ProbeReport::new(probe);
                     report.latency = <span class="prelude-val">Some</span>(latency);
                     <span class="kw">match </span>ip {
@@ -1421,16 +1481,12 @@
                     }
                     <span class="prelude-val">Ok</span>(report)
                 }
-                <span class="prelude-val">Err</span>(err) =&gt; {
-                    <span class="macro">warn!</span>(<span class="string">"https latency measurement failed: {:?}"</span>, err);
-                    <span class="prelude-val">Err</span>(ProbeError::Error(err, probe))
-                }
+                <span class="prelude-val">Err</span>(err) =&gt; <span class="prelude-val">Err</span>(ProbeError::Error(err, probe)),
             }
         }
 
         <span class="attr">#[cfg(not(wasm_browser))]
         </span>Probe::QadIpv4 { <span class="kw-2">ref </span>node, .. } | Probe::QadIpv6 { <span class="kw-2">ref </span>node, .. } =&gt; {
-            <span class="macro">debug!</span>(<span class="string">"sending QUIC address discovery probe"</span>);
             <span class="kw">match </span>socket_state.quic_config {
                 <span class="prelude-val">Some</span>(quic_config) =&gt; {
                     <span class="kw">let </span>relay_addr = <span class="kw">match </span>probe.proto() {
@@ -1485,6 +1541,7 @@
     probe: Probe,
     ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddresses&gt;,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;ProbeReport, ProbeError&gt; {
+    <span class="macro">trace!</span>(<span class="string">"QAD probe start"</span>);
     <span class="kw">match </span>probe.proto() {
         ProbeProto::QadIpv4 =&gt; <span class="macro">debug_assert!</span>(relay_addr.is_ipv4()),
         ProbeProto::QadIpv6 =&gt; <span class="macro">debug_assert!</span>(relay_addr.is_ipv6()),
@@ -1640,7 +1697,7 @@
 ) -&gt; <span class="prelude-ty">Result</span>&lt;SocketAddr&gt; {
     <span class="kw">match </span>relay.url.host() {
         <span class="prelude-val">Some</span>(url::Host::Domain(hostname)) =&gt; {
-            <span class="macro">debug!</span>(%hostname, <span class="string">"Performing DNS A lookup for relay addr"</span>);
+            <span class="macro">trace!</span>(%hostname, <span class="string">"Performing DNS A lookup for relay addr"</span>);
             <span class="kw">match </span>dns_resolver
                 .lookup_ipv4_staggered(hostname, DNS_TIMEOUT, DNS_STAGGERING_MS)
                 .<span class="kw">await
@@ -1670,7 +1727,7 @@
 ) -&gt; <span class="prelude-ty">Result</span>&lt;SocketAddr&gt; {
     <span class="kw">match </span>relay.url.host() {
         <span class="prelude-val">Some</span>(url::Host::Domain(hostname)) =&gt; {
-            <span class="macro">debug!</span>(%hostname, <span class="string">"Performing DNS AAAA lookup for relay addr"</span>);
+            <span class="macro">trace!</span>(%hostname, <span class="string">"Performing DNS AAAA lookup for relay addr"</span>);
             <span class="kw">match </span>dns_resolver
                 .lookup_ipv6_staggered(hostname, DNS_TIMEOUT, DNS_STAGGERING_MS)
                 .<span class="kw">await
@@ -1699,6 +1756,7 @@
     node: <span class="kw-2">&amp;</span>RelayNode,
     <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))] </span>insecure_skip_relay_cert_verify: bool,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(Duration, IpAddr)&gt; {
+    <span class="macro">debug!</span>(%node, <span class="string">"measure https latency"</span>);
     <span class="kw">let </span>url = node.url.join(RELAY_PROBE_PATH)<span class="question-mark">?</span>;
 
     <span class="comment">// This should also use same connection establishment as relay client itself, which

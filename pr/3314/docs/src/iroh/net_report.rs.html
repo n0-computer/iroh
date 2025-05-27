@@ -646,7 +646,19 @@
 <a href="#645" id="645">645</a>
 <a href="#646" id="646">646</a>
 <a href="#647" id="647">647</a>
-<a href="#648" id="648">648</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
+<a href="#648" id="648">648</a>
+<a href="#649" id="649">649</a>
+<a href="#650" id="650">650</a>
+<a href="#651" id="651">651</a>
+<a href="#652" id="652">652</a>
+<a href="#653" id="653">653</a>
+<a href="#654" id="654">654</a>
+<a href="#655" id="655">655</a>
+<a href="#656" id="656">656</a>
+<a href="#657" id="657">657</a>
+<a href="#658" id="658">658</a>
+<a href="#659" id="659">659</a>
+<a href="#660" id="660">660</a></pre></div><pre class="rust"><code><span class="doccomment">//! Checks the network conditions from the current host.
 //!
 //! NetReport is responsible for finding out the network conditions of the current host, like
 //! whether it is connected to the internet via IPv4 and/or IPv6, what the NAT situation is
@@ -707,7 +719,7 @@
     metrics::Metrics,
     options::Options,
     report::{RelayLatencies, Report},
-    reportgen::QuicConfig,
+    reportgen::{IfStateDetails, QuicConfig},
 };
 <span class="kw">use </span><span class="kw">crate</span>::util::MaybeFuture;
 
@@ -805,6 +817,7 @@
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>get_report(
         <span class="kw-2">&amp;mut </span><span class="self">self</span>,
         relay_map: RelayMap,
+        if_state: IfStateDetails,
         opts: Options,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;Report&gt; {
         <span class="macro">debug!</span>(<span class="string">"net_report starting"</span>);
@@ -840,10 +853,19 @@
         <span class="self">self</span>.metrics.reports.inc();
 
         <span class="kw">let </span>enough_relays = std::cmp::min(relay_map.len(), ENOUGH_NODES);
+        <span class="attr">#[cfg(wasm_browser)]
+        </span><span class="kw">let </span>if_state = IfStateDetails::default();
+        <span class="attr">#[cfg(not(wasm_browser))]
+        </span><span class="kw">let </span>if_state = IfStateDetails {
+            have_v4: if_state.have_v4,
+            have_v6: if_state.have_v6,
+        };
+
         <span class="kw">let </span>(actor, <span class="kw-2">mut </span>probe_rx) = reportgen::Client::new(
             <span class="self">self</span>.reports.last.clone(),
             relay_map,
             protocols,
+            if_state,
             <span class="attr">#[cfg(not(wasm_browser))]
             </span>socket_state,
             <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
@@ -1078,6 +1100,7 @@
 
         <span class="kw">let </span>resolver = dns::tests::resolver();
         <span class="kw">let </span><span class="kw-2">mut </span>client = Client::new(<span class="prelude-val">None</span>, resolver.clone(), <span class="prelude-val">None</span>, Default::default())<span class="question-mark">?</span>;
+        <span class="kw">let </span>if_state = IfStateDetails::fake();
 
         <span class="comment">// Note that the ProbePlan will change with each iteration.
         </span><span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..<span class="number">5 </span>{
@@ -1086,6 +1109,7 @@
             <span class="kw">let </span>r = client
                 .get_report(
                     relay_map.clone(),
+                    if_state.clone(),
                     Options::default().quic_config(<span class="prelude-val">Some</span>(quic_addr_disc.clone())),
                 )
                 .<span class="kw">await</span><span class="question-mark">?</span>;

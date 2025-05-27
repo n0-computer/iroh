@@ -895,9 +895,7 @@
 <a href="#894" id="894">894</a>
 <a href="#895" id="895">895</a>
 <a href="#896" id="896">896</a>
-<a href="#897" id="897">897</a>
-<a href="#898" id="898">898</a>
-<a href="#899" id="899">899</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay probes.
+<a href="#897" id="897">897</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay probes.
 //!
 //! All the probes try and establish the latency to the relay servers.  Preferably the STUN
 //! probes work and we also learn about our public IP addresses and ports.  But fallback
@@ -909,8 +907,6 @@
 <span class="kw">use </span>iroh_base::RelayUrl;
 <span class="kw">use </span>iroh_relay::{RelayMap, RelayNode};
 <span class="kw">use </span>n0_future::time::Duration;
-<span class="attr">#[cfg(not(wasm_browser))]
-</span><span class="kw">use </span>netwatch::interfaces;
 
 <span class="kw">use </span><span class="kw">crate</span>::net_report::Report;
 
@@ -1102,7 +1098,7 @@
     </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>initial(
         relay_map: <span class="kw-2">&amp;</span>RelayMap,
         protocols: <span class="kw-2">&amp;</span>BTreeSet&lt;ProbeProto&gt;,
-        if_state: <span class="kw-2">&amp;</span>interfaces::State,
+        if_state: <span class="kw-2">&amp;</span><span class="kw">super</span>::IfStateDetails,
     ) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span><span class="kw-2">mut </span>plan = <span class="self">Self </span>{
             set: BTreeSet::new(),
@@ -1201,7 +1197,7 @@
         relay_map: <span class="kw-2">&amp;</span>RelayMap,
         last_report: <span class="kw-2">&amp;</span>Report,
         protocols: <span class="kw-2">&amp;</span>BTreeSet&lt;ProbeProto&gt;,
-        if_state: <span class="kw-2">&amp;</span>interfaces::State,
+        if_state: <span class="kw-2">&amp;</span><span class="kw">super</span>::IfStateDetails,
     ) -&gt; <span class="self">Self </span>{
         <span class="kw">if </span>last_report.relay_latency.is_empty() {
             <span class="kw">return </span><span class="self">Self</span>::initial(relay_map, protocols, if_state);
@@ -1455,7 +1451,7 @@
     <span class="kw">use </span>tracing_test::traced_test;
 
     <span class="kw">use super</span>::<span class="kw-2">*</span>;
-    <span class="kw">use </span><span class="kw">crate</span>::net_report::{test_utils, RelayLatencies};
+    <span class="kw">use </span><span class="kw">crate</span>::net_report::{reportgen::IfStateDetails, test_utils, RelayLatencies};
 
     <span class="doccomment">/// Shorthand which declares a new ProbeSet.
     ///
@@ -1486,7 +1482,7 @@
         <span class="kw">let </span>(_servers, relay_map) = test_utils::relay_map(<span class="number">2</span>).<span class="kw">await</span>;
         <span class="kw">let </span>relay_node_1 = relay_map.nodes().next().unwrap();
         <span class="kw">let </span>relay_node_2 = relay_map.nodes().nth(<span class="number">1</span>).unwrap();
-        <span class="kw">let </span>if_state = interfaces::State::fake();
+        <span class="kw">let </span>if_state = IfStateDetails::fake();
         <span class="kw">let </span>plan = ProbePlan::initial(<span class="kw-2">&amp;</span>relay_map, <span class="kw-2">&amp;</span>default_protocols(), <span class="kw-2">&amp;</span>if_state);
 
         <span class="kw">let </span><span class="kw-2">mut </span>expected_plan: ProbePlan = [
@@ -1552,7 +1548,7 @@
         <span class="kw">let </span>(_servers, relay_map) = test_utils::relay_map(<span class="number">2</span>).<span class="kw">await</span>;
         <span class="kw">let </span>relay_node_1 = relay_map.nodes().next().unwrap();
         <span class="kw">let </span>relay_node_2 = relay_map.nodes().nth(<span class="number">1</span>).unwrap();
-        <span class="kw">let </span>if_state = interfaces::State::fake();
+        <span class="kw">let </span>if_state = IfStateDetails::fake();
         <span class="kw">let </span>plan = ProbePlan::initial(<span class="kw-2">&amp;</span>relay_map, <span class="kw-2">&amp;</span>BTreeSet::from([ProbeProto::Https]), <span class="kw-2">&amp;</span>if_state);
 
         <span class="kw">let </span><span class="kw-2">mut </span>expected_plan: ProbePlan = [
@@ -1591,7 +1587,7 @@
         <span class="kw">let </span>(_servers, relay_map) = test_utils::relay_map(<span class="number">2</span>).<span class="kw">await</span>;
         <span class="kw">let </span>relay_node_1 = relay_map.nodes().next().unwrap().clone();
         <span class="kw">let </span>relay_node_2 = relay_map.nodes().nth(<span class="number">1</span>).unwrap().clone();
-        <span class="kw">let </span>if_state = interfaces::State::fake();
+        <span class="kw">let </span>if_state = IfStateDetails::fake();
 
         <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..<span class="number">10 </span>{
             <span class="macro">println!</span>(<span class="string">"round {}"</span>, i);
