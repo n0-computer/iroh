@@ -141,7 +141,7 @@ impl DnsResolver {
         timeout: Duration,
     ) -> Result<impl Iterator<Item = IpAddr>> {
         let addrs = time::timeout(timeout, self.0.lookup_ipv4(host.to_string())).await??;
-        Ok(addrs.map(|ip| IpAddr::V4(ip)))
+        Ok(addrs.map(IpAddr::V4))
     }
 
     /// Performs an IPv6 lookup with a timeout.
@@ -151,7 +151,7 @@ impl DnsResolver {
         timeout: Duration,
     ) -> Result<impl Iterator<Item = IpAddr>> {
         let addrs = time::timeout(timeout, self.0.lookup_ipv6(host.to_string())).await??;
-        Ok(addrs.map(|ip| IpAddr::V6(ip)))
+        Ok(addrs.map(IpAddr::V6))
     }
 
     /// Resolves IPv4 and IPv6 in parallel with a timeout.
