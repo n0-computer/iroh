@@ -181,12 +181,12 @@ pub(super) enum ProbeFinished {
 
 impl Actor {
     async fn run(self) {
-        match tokio::time::timeout(OVERALL_REPORT_TIMEOUT, self.run_inner()).await {
+        match time::timeout(OVERALL_REPORT_TIMEOUT, self.run_inner()).await {
             Ok(Ok(())) => debug!("reportgen actor finished"),
             Ok(Err(err)) => {
                 warn!("reportgen failed: {:?}", err);
             }
-            Err(tokio::time::error::Elapsed { .. }) => {
+            Err(time::Elapsed { .. }) => {
                 warn!("reportgen timed out");
             }
         }
@@ -401,7 +401,7 @@ impl Actor {
                 let probe_token = set_token.child_token();
                 let set_token = set_token.clone();
 
-                let fut = probe_token.run_until_cancelled_owned(tokio::time::timeout(
+                let fut = probe_token.run_until_cancelled_owned(time::timeout(
                     PROBES_TIMEOUT,
                     run_probe(
                         relay_node,
@@ -426,7 +426,7 @@ impl Actor {
                                 set_token.cancel();
                                 Err(probes_error::ProbeFailureSnafu {}.into_error(err))
                             }
-                            Some(Err(tokio::time::error::Elapsed { .. })) => {
+                            Some(Err(time::Elapsed { .. })) => {
                                 Err(probes_error::TimeoutSnafu.build())
                             }
                             None => Err(probes_error::CancelledSnafu.build()),
