@@ -946,8 +946,7 @@
 <a href="#945" id="945">945</a>
 <a href="#946" id="946">946</a>
 <a href="#947" id="947">947</a>
-<a href="#948" id="948">948</a>
-<a href="#949" id="949">949</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
+<a href="#948" id="948">948</a></pre></div><pre class="rust"><code><span class="doccomment">//! The reportgen actor is responsible for generating a single net_report report.
 //!
 //! It is implemented as an actor with [`Client`] as handle.
 //!
@@ -1367,12 +1366,12 @@
                         <span class="kw">let </span>res = fut.<span class="kw">await</span>;
                         <span class="kw">let </span>res = <span class="kw">match </span>res {
                             <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(report))) =&gt; <span class="prelude-val">Ok</span>(report),
-                            <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(ProbeError::Error(err, _probe)))) =&gt; {
+                            <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(ProbeError::Error(err)))) =&gt; {
                                 <span class="macro">warn!</span>(<span class="string">"probe failed: {:#}"</span>, err);
                                 <span class="prelude-val">Err</span>(err)
                             }
-                            <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(ProbeError::AbortSet(err, probe)))) =&gt; {
-                                <span class="macro">debug!</span>(<span class="question-mark">?</span>probe, <span class="string">"probe set aborted: {:#}"</span>, err);
+                            <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(ProbeError::AbortSet(err)))) =&gt; {
+                                <span class="macro">debug!</span>(<span class="string">"probe set aborted: {:#}"</span>, err);
                                 set_token.cancel();
                                 <span class="prelude-val">Err</span>(err)
                             }
@@ -1427,9 +1426,9 @@
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">enum </span>ProbeError {
     <span class="doccomment">/// Abort the current set.
-    </span>AbortSet(anyhow::Error, Probe),
+    </span>AbortSet(anyhow::Error),
     <span class="doccomment">/// Continue the other probes in the set.
-    </span>Error(anyhow::Error, Probe),
+    </span>Error(anyhow::Error),
 }
 
 <span class="doccomment">/// Pieces needed to do QUIC address discovery.
@@ -1481,7 +1480,7 @@
                     }
                     <span class="prelude-val">Ok</span>(report)
                 }
-                <span class="prelude-val">Err</span>(err) =&gt; <span class="prelude-val">Err</span>(ProbeError::Error(err, probe)),
+                <span class="prelude-val">Err</span>(err) =&gt; <span class="prelude-val">Err</span>(ProbeError::Error(err)),
             }
         }
 
@@ -1499,7 +1498,7 @@
                         <span class="kw">_ </span>=&gt; <span class="macro">unreachable!</span>(),
                     }
                     .context(<span class="string">"no relay node addr"</span>)
-                    .map_err(|e| ProbeError::AbortSet(e, probe.clone()))<span class="question-mark">?</span>;
+                    .map_err(ProbeError::AbortSet)<span class="question-mark">?</span>;
 
                     <span class="kw">let </span>url = node.url.clone();
                     <span class="kw">let </span>report = run_quic_probe(
@@ -1512,10 +1511,10 @@
                     .<span class="kw">await</span><span class="question-mark">?</span>;
                     <span class="prelude-val">Ok</span>(report)
                 }
-                <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Err</span>(ProbeError::AbortSet(
-                    <span class="macro">anyhow!</span>(<span class="string">"No QUIC endpoint for {}"</span>, probe.proto()),
-                    probe,
-                )),
+                <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Err</span>(ProbeError::AbortSet(<span class="macro">anyhow!</span>(
+                    <span class="string">"No QUIC endpoint for {}"</span>,
+                    probe.proto()
+                ))),
             }
         }
     }
@@ -1551,18 +1550,17 @@
     <span class="kw">let </span>host = <span class="kw">match </span>url.host_str() {
         <span class="prelude-val">Some</span>(host) =&gt; host,
         <span class="prelude-val">None </span>=&gt; {
-            <span class="kw">return </span><span class="prelude-val">Err</span>(ProbeError::Error(
-                <span class="macro">anyhow!</span>(<span class="string">"URL must have 'host' to use QUIC address discovery probes"</span>),
-                probe.clone(),
-            ));
+            <span class="kw">return </span><span class="prelude-val">Err</span>(ProbeError::Error(<span class="macro">anyhow!</span>(
+                <span class="string">"URL must have 'host' to use QUIC address discovery probes"
+            </span>)));
         }
     };
     <span class="kw">let </span>quic_client = iroh_relay::quic::QuicClient::new(quic_config.ep, quic_config.client_config)
-        .map_err(|e| ProbeError::Error(e, probe.clone()))<span class="question-mark">?</span>;
+        .map_err(ProbeError::Error)<span class="question-mark">?</span>;
     <span class="kw">let </span>(addr, latency) = quic_client
         .get_addr_and_latency(relay_addr, host)
         .<span class="kw">await
-        </span>.map_err(|e| ProbeError::Error(e, probe.clone()))<span class="question-mark">?</span>;
+        </span>.map_err(ProbeError::Error)<span class="question-mark">?</span>;
     <span class="kw">let </span><span class="kw-2">mut </span>result = ProbeReport::new(probe.clone());
     <span class="kw">if </span><span class="macro">matches!</span>(probe, Probe::QadIpv4 { .. }) {
         result.ipv4_can_send = <span class="bool-val">true</span>;
@@ -1884,7 +1882,7 @@
         </span>{
             <span class="prelude-val">Ok</span>(probe) =&gt; probe,
             <span class="prelude-val">Err</span>(e) =&gt; <span class="kw">match </span>e {
-                ProbeError::AbortSet(err, <span class="kw">_</span>) | ProbeError::Error(err, <span class="kw">_</span>) =&gt; {
+                ProbeError::AbortSet(err) | ProbeError::Error(err) =&gt; {
                     <span class="kw">return </span><span class="prelude-val">Err</span>(err.into());
                 }
             },
