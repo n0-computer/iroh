@@ -751,19 +751,17 @@ mod tests {
     use iroh_base::{NodeId, RelayUrl, SecretKey};
     use n0_future::{FutureExt, SinkExt, StreamExt};
     use n0_snafu::{Result, ResultExt};
-    use tokio::net::UdpSocket;
     use tracing::{info, instrument};
     use tracing_test::traced_test;
 
     use super::{
-        Access, AccessConfig, RelayConfig, Server, ServerConfig, SpawnError, StunConfig,
+        Access, AccessConfig, RelayConfig, Server, ServerConfig, SpawnError,
         NO_CONTENT_CHALLENGE_HEADER, NO_CONTENT_RESPONSE_HEADER,
     };
     use crate::{
         client::{conn::ReceivedMessage, ClientBuilder, SendMessage},
         dns::DnsResolver,
         http::{Protocol, HTTP_UPGRADE_PROTOCOL},
-        protos,
     };
 
     async fn spawn_local_relay() -> std::result::Result<Server, SpawnError> {
