@@ -1222,7 +1222,7 @@
 /// Any type that implements [`Discovery`] also implements [`IntoDiscovery`].
 ///
 /// [`Builder::add_discovery`]: crate::endpoint::Builder::add_discovery
-</span><span class="kw">pub trait </span>IntoDiscovery: Send + <span class="lifetime">'static </span>{
+</span><span class="kw">pub trait </span>IntoDiscovery: Send + Sync + <span class="lifetime">'static </span>{
     <span class="doccomment">/// Turns this struct into a boxed [`Discovery`].
     ///
     /// The discovery service will be used by passed [`Endpoint`]. If a discovery service needs
@@ -1239,7 +1239,7 @@
 }
 
 <span class="doccomment">/// Non-public dyn-compatible version of [`IntoDiscovery`], used in [`crate::endpoint::Builder`].
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">trait </span>DynIntoDiscovery: Send + <span class="lifetime">'static </span>{
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">trait </span>DynIntoDiscovery: Send + Sync + <span class="lifetime">'static </span>{
     <span class="doccomment">/// See [`IntoDiscovery::into_discovery`]
     </span><span class="kw">fn </span>into_discovery(<span class="self">self</span>: Box&lt;<span class="self">Self</span>&gt;, endpoint: <span class="kw-2">&amp;</span>Endpoint) -&gt; <span class="prelude-ty">Result</span>&lt;Box&lt;<span class="kw">dyn </span>Discovery&gt;&gt;;
 }
