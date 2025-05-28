@@ -218,14 +218,12 @@ impl Builder {
         let discovery = self
             .discovery
             .into_iter()
-            .filter_map(|builder| match builder.into_discovery(&endpoint) {
-                Ok(disco) => Some(disco),
-                Err(err) => {
-                    warn!("Failed to init discovery service: {err:#}");
-                    None
-                }
+            .map(|builder| {
+                builder
+                    .into_discovery(&endpoint)
+                    .context("Failed to init discovery service")
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>>>()?;
         let discovery: Option<Box<dyn Discovery>> = match discovery.len() {
             0 => None,
             1 => Some(discovery.into_iter().next().expect("checked length")),

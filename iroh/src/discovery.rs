@@ -146,6 +146,8 @@ pub trait IntoDiscovery: Send + Sync + 'static {
     /// The discovery service will be used by passed [`Endpoint`]. If a discovery service needs
     /// an endpoint or information from it like its secret key, it can access or clone the endpoint
     /// from here.
+    ///
+    /// If an error is returned, building the endpoint will fail with this error.
     fn into_discovery(self, endpoint: &Endpoint) -> Result<impl Discovery>;
 }
 
