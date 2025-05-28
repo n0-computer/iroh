@@ -42,10 +42,7 @@ use bytes::{Bytes, BytesMut};
 use iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_relay::{
     self as relay,
-    client::{
-        Client, ConnectError, ReceivedMessage, RecvError as ClientRecvError,
-        SendError as ClientSendError, SendMessage,
-    },
+    client::{Client, ConnectError, ReceivedMessage, RecvError, SendError, SendMessage},
     PingTracker, MAX_PACKET_SIZE,
 };
 use n0_future::{
@@ -255,9 +252,9 @@ enum RunError {
     #[snafu(display("Stream closed by server."))]
     StreamClosedServer {},
     #[snafu(display("Client stream read failed"))]
-    ClientStreamRead { source: ClientRecvError },
+    ClientStreamRead { source: RecvError },
     #[snafu(display("Client stream write failed"))]
-    ClientStreamWrite { source: ClientSendError },
+    ClientStreamWrite { source: SendError },
 }
 
 #[allow(missing_docs)]
@@ -531,6 +528,27 @@ impl ActiveRelayActor {
         let (mut client_stream, client_sink) = client.split();
         let mut client_sink = client_sink.sink_map_err(|e| ClientStreamWriteSnafu.into_error(e));
 
+        let mut state = ConnectedRelayState {
+            ping_tracker: PingTracker::default(),
+            nodes_present: BTreeSet::new(),
+            last_packet_src: None,
+            pong_pending: None,
+            established: false,
+            #[cfg(test)]
+            test_pong: None,
+        };
+
+        // A buffer to pass through multiple datagrams at once as an optimisation.
+        let mut send_datagrams_buf = Vec::with_capacity(SEND_DATAGRAM_BATCH_SIZE);
+
+        // Regularly send pings so we know the connection is healthy.
+        // The first ping will be sent immediately.
+        let mut ping_interval = time::interval(PING_INTERVAL);
+        ping_interval.set_missed_tick_behavior(MissedTickBehavior::Delay);
+
+        let res = loop {
+            if let Some(data) = state.pong_pending.take() {
+                let fut = client_sink.send(SendMessage::Pong(data));
                 self.run_sending(fut, &mut state, &mut client_stream)
                     .await?;
             }

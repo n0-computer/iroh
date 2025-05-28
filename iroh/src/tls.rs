@@ -133,7 +133,6 @@ impl TlsConfig {
         // must be u32::MAX or 0 (the default). Any other value panics with QUIC
         // This is specified in RFC 9001: https://www.rfc-editor.org/rfc/rfc9001#section-4.6.1
         crypto.max_early_data_size = u32::MAX;
-
         crypto
             .try_into()
             .expect("expected to have a TLS1.3-compatible crypto provider set (hardcoded)")

@@ -3,8 +3,7 @@
 //! ## Example
 //!
 //! ```no_run
-//! # use futures_lite::future::Boxed as BoxedFuture;
-//! # use iroh::{endpoint::{Connection, BindError}, protocol::{ProtocolHandler, Router, Error}, Endpoint, NodeAddr};
+//! # use iroh::{endpoint::{Connection, BindError}, protocol::{ProtocolHandler, Router, ProtocolError}, Endpoint, NodeAddr};
 //! #
 //! # async fn test_compile() -> Result<(), BindError> {
 //! let endpoint = Endpoint::builder().discovery_n0().bind().await?;
@@ -20,26 +19,23 @@
 //! struct Echo;
 //!
 //! impl ProtocolHandler for Echo {
-//!     fn accept(&self, connection: Connection) -> BoxedFuture<Result<(), Error>> {
-//!         Box::pin(async move {
-//!             let (mut send, mut recv) = connection.accept_bi().await?;
+//!     async fn accept(&self, connection: Connection) -> Result<(), ProtocolError> {
+//!         let (mut send, mut recv) = connection.accept_bi().await?;
 //!
-//!             // Echo any bytes received back directly.
-//!             let bytes_sent = tokio::io::copy(&mut recv, &mut send).await?;
+//!         // Echo any bytes received back directly.
+//!         let bytes_sent = tokio::io::copy(&mut recv, &mut send).await?;
 //!
-//!             send.finish()?;
-//!             connection.closed().await;
+//!         send.finish()?;
+//!         connection.closed().await;
 //!
-//!             Ok(())
-//!         })
+//!         Ok(())
 //!     }
 //! }
 //! ```
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeMap, future::Future, pin::Pin, sync::Arc};
 
 use iroh_base::NodeId;
 use n0_future::{
-    boxed::BoxFuture,
     join_all,
     task::{self, AbortOnDropHandle, JoinSet},
 };
@@ -111,6 +107,9 @@ pub enum ProtocolError {
     },
     #[snafu(transparent)]
     RemoteNodeId { source: RemoteNodeIdError },
+    #[snafu(display("Not allowed."))]
+    NotAllowed {},
+
     #[snafu(transparent)]
     User {
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
@@ -147,78 +146,138 @@ impl From<quinn::ClosedStream> for ProtocolError {
 /// Implement this trait on a struct that should handle incoming connections.
 /// The protocol handler must then be registered on the node for an ALPN protocol with
 /// [`crate::protocol::RouterBuilder::accept`].
+///
+/// See the [module documentation](crate::protocol) for an example.
 pub trait ProtocolHandler: Send + Sync + std::fmt::Debug + 'static {
     /// Optional interception point to handle the `Connecting` state.
+    ///
+    /// Can be implemented as `async fn on_connecting(&self, connecting: Connecting) -> Result<Connection>`.
     ///
     /// This enables accepting 0-RTT data from clients, among other things.
     fn on_connecting(
         &self,
         connecting: Connecting,
-    ) -> BoxFuture<Result<Connection, ProtocolError>> {
+    ) -> impl Future<Output = Result<Connection, ProtocolError>> + Send {
+        async move {
+            let conn = connecting.await?;
+            Ok(conn)
+        }
+    }
+
+    /// Handle an incoming connection.
+    ///
+    /// Can be implemented as `async fn accept(&self, connection: Connection) -> Result<Connection>`.
+    ///
+    /// The returned future runs on a freshly spawned tokio task so it can be long-running.
+    ///
+    /// When [`Router::shutdown`] is called, no further connections will be accepted, and
+    /// the futures returned by [`Self::accept`] will be aborted after the future returned
+    /// from [`ProtocolHandler::shutdown`] completes.
+    fn accept(
+        &self,
+        connection: Connection,
+    ) -> impl Future<Output = Result<(), ProtocolError>> + Send;
+
+    /// Called when the router shuts down.
+    ///
+    /// Can be implemented as `async fn shutdown(&self)`.
+    ///
+    /// This is called from [`Router::shutdown`]. The returned future is awaited before
+    /// the router closes the endpoint.
+    fn shutdown(&self) -> impl Future<Output = ()> + Send {
+        async move {}
+    }
+}
+
+impl<T: ProtocolHandler> ProtocolHandler for Arc<T> {
+    async fn on_connecting(&self, conn: Connecting) -> Result<Connection, ProtocolError> {
+        self.as_ref().on_connecting(conn).await
+    }
+
+    async fn accept(&self, conn: Connection) -> Result<(), ProtocolError> {
+        self.as_ref().accept(conn).await
+    }
+
+    async fn shutdown(&self) {
+        self.as_ref().shutdown().await
+    }
+}
+
+impl<T: ProtocolHandler> ProtocolHandler for Box<T> {
+    async fn on_connecting(&self, conn: Connecting) -> Result<Connection, ProtocolError> {
+        self.as_ref().on_connecting(conn).await
+    }
+
+    async fn accept(&self, conn: Connection) -> Result<(), ProtocolError> {
+        self.as_ref().accept(conn).await
+    }
+
+    async fn shutdown(&self) {
+        self.as_ref().shutdown().await
+    }
+}
+
+/// A dyn-compatible version of [`ProtocolHandler`] that returns boxed futures.
+///
+/// We are not using [`n0_future::boxed::BoxFuture] because we don't need a `'static` bound
+/// on these futures.
+pub(crate) trait DynProtocolHandler: Send + Sync + std::fmt::Debug + 'static {
+    /// See [`ProtocolHandler::on_connecting`].
+    fn on_connecting(
+        &self,
+        connecting: Connecting,
+    ) -> Pin<Box<dyn Future<Output = Result<Connection, ProtocolError>> + Send + '_>> {
         Box::pin(async move {
             let conn = connecting.await?;
             Ok(conn)
         })
     }
 
-    /// Handle an incoming connection.
-    ///
-    /// This runs on a freshly spawned tokio task so the returned future can be long-running.
-    ///
-    /// When [`Router::shutdown`] is called, no further connections will be accepted, and
-    /// the futures returned by [`Self::accept`] will be aborted after the future returned
-    /// from [`ProtocolHandler::shutdown`] completes.
-    fn accept(&self, connection: Connection) -> BoxFuture<Result<(), ProtocolError>>;
+    /// See [`ProtocolHandler::accept`].
+    fn accept(
+        &self,
+        connection: Connection,
+    ) -> Pin<Box<dyn Future<Output = Result<(), ProtocolError>> + Send + '_>>;
 
-    /// Called when the router shuts down.
-    ///
-    /// This is called from [`Router::shutdown`]. The returned future is awaited before
-    /// the router closes the endpoint.
-    fn shutdown(&self) -> BoxFuture<()> {
+    /// See [`ProtocolHandler::shutdown`].
+    fn shutdown(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
         Box::pin(async move {})
     }
 }
 
-impl<T: ProtocolHandler> ProtocolHandler for Arc<T> {
-    fn on_connecting(&self, conn: Connecting) -> BoxFuture<Result<Connection, ProtocolError>> {
-        self.as_ref().on_connecting(conn)
+impl<P: ProtocolHandler> DynProtocolHandler for P {
+    fn accept(
+        &self,
+        connection: Connection,
+    ) -> Pin<Box<dyn Future<Output = Result<(), ProtocolError>> + Send + '_>> {
+        Box::pin(<Self as ProtocolHandler>::accept(self, connection))
     }
 
-    fn accept(&self, conn: Connection) -> BoxFuture<Result<(), ProtocolError>> {
-        self.as_ref().accept(conn)
+    fn on_connecting(
+        &self,
+        connecting: Connecting,
+    ) -> Pin<Box<dyn Future<Output = Result<Connection, ProtocolError>> + Send + '_>> {
+        Box::pin(<Self as ProtocolHandler>::on_connecting(self, connecting))
     }
 
-    fn shutdown(&self) -> BoxFuture<()> {
-        self.as_ref().shutdown()
-    }
-}
-
-impl<T: ProtocolHandler> ProtocolHandler for Box<T> {
-    fn on_connecting(&self, conn: Connecting) -> BoxFuture<Result<Connection, ProtocolError>> {
-        self.as_ref().on_connecting(conn)
-    }
-
-    fn accept(&self, conn: Connection) -> BoxFuture<Result<(), ProtocolError>> {
-        self.as_ref().accept(conn)
-    }
-
-    fn shutdown(&self) -> BoxFuture<()> {
-        self.as_ref().shutdown()
+    fn shutdown(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
+        Box::pin(<Self as ProtocolHandler>::shutdown(self))
     }
 }
 
 /// A typed map of protocol handlers, mapping them from ALPNs.
 #[derive(Debug, Default)]
-pub(crate) struct ProtocolMap(BTreeMap<Vec<u8>, Box<dyn ProtocolHandler>>);
+pub(crate) struct ProtocolMap(BTreeMap<Vec<u8>, Box<dyn DynProtocolHandler>>);
 
 impl ProtocolMap {
     /// Returns the registered protocol handler for an ALPN as a [`Arc<dyn ProtocolHandler>`].
-    pub(crate) fn get(&self, alpn: &[u8]) -> Option<&dyn ProtocolHandler> {
+    pub(crate) fn get(&self, alpn: &[u8]) -> Option<&dyn DynProtocolHandler> {
         self.0.get(alpn).map(|p| &**p)
     }
 
     /// Inserts a protocol handler.
-    pub(crate) fn insert(&mut self, alpn: Vec<u8>, handler: Box<dyn ProtocolHandler>) {
+    pub(crate) fn insert(&mut self, alpn: Vec<u8>, handler: impl ProtocolHandler) {
+        let handler = Box::new(handler);
         self.0.insert(alpn, handler);
     }
 
@@ -289,8 +348,7 @@ impl RouterBuilder {
 
     /// Configures the router to accept the [`ProtocolHandler`] when receiving a connection
     /// with this `alpn`.
-    pub fn accept<T: ProtocolHandler>(mut self, alpn: impl AsRef<[u8]>, handler: T) -> Self {
-        let handler = Box::new(handler);
+    pub fn accept(mut self, alpn: impl AsRef<[u8]>, handler: impl ProtocolHandler) -> Self {
         self.protocols.insert(alpn.as_ref().to_vec(), handler);
         self
     }
@@ -457,25 +515,25 @@ impl<P: ProtocolHandler + Clone> AccessLimit<P> {
 }
 
 impl<P: ProtocolHandler + Clone> ProtocolHandler for AccessLimit<P> {
-    fn on_connecting(&self, conn: Connecting) -> BoxFuture<Result<Connection, ProtocolError>> {
+    fn on_connecting(
+        &self,
+        conn: Connecting,
+    ) -> impl Future<Output = Result<Connection, ProtocolError>> + Send {
         self.proto.on_connecting(conn)
     }
 
-    fn accept(&self, conn: Connection) -> BoxFuture<Result<(), ProtocolError>> {
-        let this = self.clone();
-        Box::pin(async move {
-            let remote = conn.remote_node_id()?;
-            let is_allowed = (this.limiter)(remote);
-            if !is_allowed {
-                conn.close(0u32.into(), b"not allowed");
-                return Err(std::io::Error::other("not allowed").into());
-            }
-            this.proto.accept(conn).await?;
-            Ok::<_, ProtocolError>(())
-        })
+    async fn accept(&self, conn: Connection) -> Result<(), ProtocolError> {
+        let remote = conn.remote_node_id()?;
+        let is_allowed = (self.limiter)(remote);
+        if !is_allowed {
+            conn.close(0u32.into(), b"not allowed");
+            return Err(NotAllowedSnafu.build());
+        }
+        self.proto.accept(conn).await?;
+        Ok(())
     }
 
-    fn shutdown(&self) -> BoxFuture<()> {
+    fn shutdown(&self) -> impl Future<Output = ()> + Send {
         self.proto.shutdown()
     }
 }
@@ -513,19 +571,17 @@ mod tests {
     const ECHO_ALPN: &[u8] = b"/iroh/echo/1";
 
     impl ProtocolHandler for Echo {
-        fn accept(&self, connection: Connection) -> BoxFuture<Result<(), ProtocolError>> {
+        async fn accept(&self, connection: Connection) -> Result<(), ProtocolError> {
             println!("accepting echo");
-            Box::pin(async move {
-                let (mut send, mut recv) = connection.accept_bi().await?;
+            let (mut send, mut recv) = connection.accept_bi().await?;
 
-                // Echo any bytes received back directly.
-                let _bytes_sent = tokio::io::copy(&mut recv, &mut send).await?;
+            // Echo any bytes received back directly.
+            let _bytes_sent = tokio::io::copy(&mut recv, &mut send).await?;
 
-                send.finish()?;
-                connection.closed().await;
+            send.finish()?;
+            connection.closed().await;
 
-                Ok(())
-            })
+            Ok(())
         }
     }
     #[tokio::test]
@@ -562,23 +618,17 @@ mod tests {
         const TEST_ALPN: &[u8] = b"/iroh/test/1";
 
         impl ProtocolHandler for TestProtocol {
-            fn accept(&self, connection: Connection) -> BoxFuture<Result<(), ProtocolError>> {
-                let this = self.clone();
-                Box::pin(async move {
-                    this.connections.lock().expect("poisoned").push(connection);
-                    Ok(())
-                })
+            async fn accept(&self, connection: Connection) -> Result<(), ProtocolError> {
+                self.connections.lock().expect("poisoned").push(connection);
+                Ok(())
             }
 
-            fn shutdown(&self) -> BoxFuture<()> {
-                let this = self.clone();
-                Box::pin(async move {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                    let mut connections = this.connections.lock().expect("poisoned");
-                    for conn in connections.drain(..) {
-                        conn.close(42u32.into(), b"shutdown");
-                    }
-                })
+            async fn shutdown(&self) {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                let mut connections = self.connections.lock().expect("poisoned");
+                for conn in connections.drain(..) {
+                    conn.close(42u32.into(), b"shutdown");
+                }
             }
         }
 
