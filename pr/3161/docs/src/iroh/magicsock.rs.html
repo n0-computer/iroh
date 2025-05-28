@@ -4582,7 +4582,13 @@
 <a href="#4581" id="4581">4581</a>
 <a href="#4582" id="4582">4582</a>
 <a href="#4583" id="4583">4583</a>
-<a href="#4584" id="4584">4584</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
+<a href="#4584" id="4584">4584</a>
+<a href="#4585" id="4585">4585</a>
+<a href="#4586" id="4586">4586</a>
+<a href="#4587" id="4587">4587</a>
+<a href="#4588" id="4588">4588</a>
+<a href="#4589" id="4589">4589</a>
+<a href="#4590" id="4590">4590</a></pre></div><pre class="rust"><code><span class="doccomment">//! Implements a socket that can change its communication path while in use, actively searching for the best way to communicate.
 //!
 //! Based on tailscale/wgengine/magicsock
 //!
@@ -6665,8 +6671,8 @@
         <span class="kw-2">mut </span>sealed_box: Vec&lt;u8&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;disco::Message, DiscoBoxError&gt; {
         <span class="self">self</span>.get(secret, node_id, |secret| secret.open(<span class="kw-2">&amp;mut </span>sealed_box))
-            .map_err(|err| OpenSnafu.into_error(Box::new(err)))<span class="question-mark">?</span>;
-        disco::Message::from_bytes(<span class="kw-2">&amp;</span>sealed_box).map_err(|err| ParseSnafu.into_error(Box::new(err)))
+            .context(OpenSnafu)<span class="question-mark">?</span>;
+        disco::Message::from_bytes(<span class="kw-2">&amp;</span>sealed_box).context(ParseSnafu)
     }
 }
 
@@ -6679,9 +6685,15 @@
 <span class="attr">#[derive(Debug, Snafu)]
 </span><span class="kw">enum </span>DiscoBoxError {
     <span class="attr">#[snafu(display(<span class="string">"Failed to open crypto box"</span>))]
-    </span>Open { source: Box&lt;DecryptionError&gt; },
+    </span>Open {
+        <span class="attr">#[snafu(source(from(DecryptionError, Box::new)))]
+        </span>source: Box&lt;DecryptionError&gt;,
+    },
     <span class="attr">#[snafu(display(<span class="string">"Failed to parse disco message"</span>))]
-    </span>Parse { source: Box&lt;disco::ParseError&gt; },
+    </span>Parse {
+        <span class="attr">#[snafu(source(from(disco::ParseError, Box::new)))]
+        </span>source: Box&lt;disco::ParseError&gt;,
+    },
 }
 
 <span class="doccomment">/// Creates a sender and receiver pair for sending datagrams to the [`RelayActor`].

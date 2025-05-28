@@ -489,7 +489,7 @@
 <span class="kw">use </span>snafu::{Backtrace, OptionExt, Snafu};
 <span class="kw">use </span>url::Url;
 
-<span class="kw">use </span><span class="kw">crate</span>::node_info::{<span class="self">self</span>, Error <span class="kw">as </span>NodeError, NodeInfo};
+<span class="kw">use </span><span class="kw">crate</span>::node_info::{LookupError, NodeInfo, StaggeredError};
 
 <span class="doccomment">/// The n0 testing DNS node origin, for production.
 </span><span class="kw">pub const </span>N0_DNS_NODE_ORIGIN_PROD: <span class="kw-2">&amp;</span>str = <span class="string">"dns.iroh.link"</span>;
@@ -750,7 +750,7 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         node_id: <span class="kw-2">&amp;</span>NodeId,
         origin: <span class="kw-2">&amp;</span>str,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;NodeInfo, NodeError&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;NodeInfo, LookupError&gt; {
         <span class="kw">let </span>attrs = <span class="kw">crate</span>::node_info::TxtAttrs::&lt;<span class="kw">crate</span>::node_info::IrohAttr&gt;::lookup_by_id(
             <span class="self">self</span>, node_id, origin,
         )
@@ -760,7 +760,7 @@
     }
 
     <span class="doccomment">/// Looks up node info by DNS name.
-    </span><span class="kw">pub async fn </span>lookup_node_by_domain_name(<span class="kw-2">&amp;</span><span class="self">self</span>, name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;NodeInfo, NodeError&gt; {
+    </span><span class="kw">pub async fn </span>lookup_node_by_domain_name(<span class="kw-2">&amp;</span><span class="self">self</span>, name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;NodeInfo, LookupError&gt; {
         <span class="kw">let </span>attrs =
             <span class="kw">crate</span>::node_info::TxtAttrs::&lt;<span class="kw">crate</span>::node_info::IrohAttr&gt;::lookup_by_name(<span class="self">self</span>, name)
                 .<span class="kw">await</span><span class="question-mark">?</span>;
@@ -778,11 +778,11 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         name: <span class="kw-2">&amp;</span>str,
         delays_ms: <span class="kw-2">&amp;</span>[u64],
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;NodeInfo, NodeError&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;NodeInfo, StaggeredError&gt; {
         <span class="kw">let </span>f = || <span class="self">self</span>.lookup_node_by_domain_name(name);
         stagger_call(f, delays_ms)
             .<span class="kw">await
-            </span>.map_err(|errors| node_info::StaggeredSnafu { errors }.build())
+            </span>.map_err(StaggeredError::new)
     }
 
     <span class="doccomment">/// Looks up node info by [`NodeId`] and origin domain name.
@@ -796,11 +796,11 @@
         node_id: <span class="kw-2">&amp;</span>NodeId,
         origin: <span class="kw-2">&amp;</span>str,
         delays_ms: <span class="kw-2">&amp;</span>[u64],
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;NodeInfo, NodeError&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;NodeInfo, StaggeredError&gt; {
         <span class="kw">let </span>f = || <span class="self">self</span>.lookup_node_by_id(node_id, origin);
         stagger_call(f, delays_ms)
             .<span class="kw">await
-            </span>.map_err(|errors| node_info::StaggeredSnafu { errors }.build())
+            </span>.map_err(StaggeredError::new)
     }
 }
 

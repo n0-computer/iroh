@@ -1134,7 +1134,17 @@
 <a href="#1133" id="1133">1133</a>
 <a href="#1134" id="1134">1134</a>
 <a href="#1135" id="1135">1135</a>
-<a href="#1136" id="1136">1136</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
+<a href="#1136" id="1136">1136</a>
+<a href="#1137" id="1137">1137</a>
+<a href="#1138" id="1138">1138</a>
+<a href="#1139" id="1139">1139</a>
+<a href="#1140" id="1140">1140</a>
+<a href="#1141" id="1141">1141</a>
+<a href="#1142" id="1142">1142</a>
+<a href="#1143" id="1143">1143</a>
+<a href="#1144" id="1144">1144</a>
+<a href="#1145" id="1145">1145</a>
+<a href="#1146" id="1146">1146</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
 //! To connect to an iroh node a [`NodeAddr`] is needed, which may contain a
 //! [`RelayUrl`] or one or more *direct addresses* in addition to the [`NodeId`].
@@ -1244,6 +1254,7 @@
 </span><span class="kw">use </span>std::sync::Arc;
 
 <span class="kw">use </span>iroh_base::{NodeAddr, NodeId, PublicKey};
+<span class="kw">use </span>iroh_relay::node_info::EncodingError;
 <span class="kw">use </span>n0_future::{
     boxed::BoxStream,
     stream::StreamExt,
@@ -1256,7 +1267,7 @@
 <span class="kw">use </span>tokio::sync::oneshot;
 <span class="kw">use </span>tracing::{debug, error_span, warn, Instrument};
 
-<span class="kw">pub use </span><span class="kw">crate</span>::node_info::{NodeData, NodeInfo, UserData};
+<span class="kw">pub use </span><span class="kw">crate</span>::node_info::{NodeData, NodeInfo, ParseError, UserData};
 <span class="kw">use </span><span class="kw">crate</span>::Endpoint;
 
 <span class="attr">#[cfg(not(wasm_browser))]
@@ -1283,7 +1294,16 @@
     </span>NodeId { node_id: PublicKey },
     <span class="attr">#[snafu(display(<span class="string">"Discovery produced no results"</span>))]
     </span>NoResults { node_id: PublicKey },
-
+    <span class="attr">#[snafu(display(<span class="string">"Error encoding the signed packet"</span>))]
+    </span>SignedPacket {
+        <span class="attr">#[snafu(source(from(EncodingError, Box::new)))]
+        </span>source: Box&lt;EncodingError&gt;,
+    },
+    <span class="attr">#[snafu(display(<span class="string">"Error parsing the signed packet"</span>))]
+    </span>ParsePacket {
+        <span class="attr">#[snafu(source(from(ParseError, Box::new)))]
+        </span>source: Box&lt;ParseError&gt;,
+    },
     <span class="attr">#[snafu(display(<span class="string">"Service '{provenance}' error"</span>))]
     </span>User {
         provenance: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
