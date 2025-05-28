@@ -151,7 +151,7 @@ impl PkarrPublisherBuilder {
         self
     }
 
-    /// Set the DNS resolver to use for resolving the pkarr relay URL.
+    /// Sets the DNS resolver to use for resolving the pkarr relay URL.
     #[cfg(not(wasm_browser))]
     pub fn dns_resolver(mut self, dns_resolver: DnsResolver) -> Self {
         self.dns_resolver = Some(dns_resolver);
@@ -376,7 +376,7 @@ pub struct PkarrResolverBuilder {
 }
 
 impl PkarrResolverBuilder {
-    /// Set the DNS resolver to use for resolving the pkarr relay URL.
+    /// Sets the DNS resolver to use for resolving the pkarr relay URL.
     #[cfg(not(wasm_browser))]
     pub fn dns_resolver(mut self, dns_resolver: DnsResolver) -> Self {
         self.dns_resolver = Some(dns_resolver);

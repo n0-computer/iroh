@@ -171,7 +171,9 @@ pub(crate) mod dns_and_pkarr_servers {
             ConcurrentDiscovery::from_services(vec![
                 // Enable DNS discovery by default
                 Box::new(
-                    DnsDiscovery::builder(self.node_origin.clone()).build(self.dns_resolver()),
+                    DnsDiscovery::builder(self.node_origin.clone())
+                        .dns_resolver(self.dns_resolver())
+                        .build(),
                 ),
                 // Enable pkarr publishing by default
                 Box::new(PkarrPublisher::builder(self.pkarr_url.clone()).build(secret_key)),

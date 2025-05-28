@@ -42,22 +42,37 @@ pub struct DnsDiscovery {
 }
 
 /// Builder for [`DnsDiscovery`].
+///
+/// See [`DnsDiscovery::builder`].
 #[derive(Debug)]
 pub struct DnsDiscoveryBuilder {
     origin_domain: String,
+    dns_resolver: Option<DnsResolver>,
 }
 
 impl DnsDiscoveryBuilder {
+    /// Sets the DNS resolver to use.
+    pub fn dns_resolver(mut self, dns_resolver: DnsResolver) -> Self {
+        self.dns_resolver = Some(dns_resolver);
+        self
+    }
+
     /// Builds a [`DnsDiscovery`] with the passed [`DnsResolver`].
-    pub fn build(self, dns_resolver: DnsResolver) -> DnsDiscovery {
-        DnsDiscovery::new(dns_resolver, self.origin_domain)
+    pub fn build(self) -> DnsDiscovery {
+        DnsDiscovery {
+            dns_resolver: self.dns_resolver.unwrap_or_default(),
+            origin_domain: self.origin_domain,
+        }
     }
 }
 
 impl DnsDiscovery {
     /// Creates a [`DnsDiscoveryBuilder`] that implements [`IntoDiscovery`].
     pub fn builder(origin_domain: String) -> DnsDiscoveryBuilder {
-        DnsDiscoveryBuilder { origin_domain }
+        DnsDiscoveryBuilder {
+            origin_domain,
+            dns_resolver: None,
+        }
     }
 
     /// Creates a new DNS discovery using the `iroh.link` domain.
@@ -76,22 +91,14 @@ impl DnsDiscovery {
             Self::builder(N0_DNS_NODE_ORIGIN_PROD.to_string())
         }
     }
-
-    /// Creates a new DNS discovery.
-    fn new(dns_resolver: DnsResolver, origin_domain: String) -> Self {
-        Self {
-            dns_resolver,
-            origin_domain,
-        }
-    }
 }
 
 impl IntoDiscovery for DnsDiscoveryBuilder {
-    fn into_discovery(self, endpoint: &Endpoint) -> Result<impl Discovery> {
-        Ok(DnsDiscovery::new(
-            endpoint.dns_resolver().clone(),
-            self.origin_domain,
-        ))
+    fn into_discovery(mut self, endpoint: &Endpoint) -> Result<impl Discovery> {
+        if self.dns_resolver.is_none() {
+            self.dns_resolver = Some(endpoint.dns_resolver().clone());
+        }
+        Ok(self.build())
     }
 }
 
