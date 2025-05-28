@@ -1080,7 +1080,9 @@
 <a href="#1079" id="1079">1079</a>
 <a href="#1080" id="1080">1080</a>
 <a href="#1081" id="1081">1081</a>
-<a href="#1082" id="1082">1082</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
+<a href="#1082" id="1082">1082</a>
+<a href="#1083" id="1083">1083</a>
+<a href="#1084" id="1084">1084</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
 //! To connect to an iroh node a [`NodeAddr`] is needed, which may contain a
 //! [`RelayUrl`] or one or more *direct addresses* in addition to the [`NodeId`].
@@ -1228,6 +1230,8 @@
     /// The discovery service will be used by passed [`Endpoint`]. If a discovery service needs
     /// an endpoint or information from it like its secret key, it can access or clone the endpoint
     /// from here.
+    ///
+    /// If an error is returned, building the endpoint will fail with this error.
     </span><span class="kw">fn </span>into_discovery(<span class="self">self</span>, endpoint: <span class="kw-2">&amp;</span>Endpoint) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Discovery&gt;;
 }
 

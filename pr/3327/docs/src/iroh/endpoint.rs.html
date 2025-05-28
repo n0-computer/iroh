@@ -3169,9 +3169,7 @@
 <a href="#3168" id="3168">3168</a>
 <a href="#3169" id="3169">3169</a>
 <a href="#3170" id="3170">3170</a>
-<a href="#3171" id="3171">3171</a>
-<a href="#3172" id="3172">3172</a>
-<a href="#3173" id="3173">3173</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#3171" id="3171">3171</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -3391,14 +3389,12 @@
         <span class="kw">let </span>discovery = <span class="self">self
             </span>.discovery
             .into_iter()
-            .filter_map(|builder| <span class="kw">match </span>builder.into_discovery(<span class="kw-2">&amp;</span>endpoint) {
-                <span class="prelude-val">Ok</span>(disco) =&gt; <span class="prelude-val">Some</span>(disco),
-                <span class="prelude-val">Err</span>(err) =&gt; {
-                    <span class="macro">warn!</span>(<span class="string">"Failed to init discovery service: {err:#}"</span>);
-                    <span class="prelude-val">None
-                </span>}
+            .map(|builder| {
+                builder
+                    .into_discovery(<span class="kw-2">&amp;</span>endpoint)
+                    .context(<span class="string">"Failed to init discovery service"</span>)
             })
-            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+            .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;&gt;()<span class="question-mark">?</span>;
         <span class="kw">let </span>discovery: <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Discovery&gt;&gt; = <span class="kw">match </span>discovery.len() {
             <span class="number">0 </span>=&gt; <span class="prelude-val">None</span>,
             <span class="number">1 </span>=&gt; <span class="prelude-val">Some</span>(discovery.into_iter().next().expect(<span class="string">"checked length"</span>)),
