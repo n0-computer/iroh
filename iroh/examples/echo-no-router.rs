@@ -8,7 +8,8 @@
 //!     cargo run --example echo-no-router --features=examples
 
 use anyhow::Result;
-use iroh::{watcher::Watcher as _, Endpoint, NodeAddr};
+use iroh::{Endpoint, NodeAddr};
+use n0_watcher::Watcher as _;
 
 /// Each protocol is identified by its ALPN string.
 ///

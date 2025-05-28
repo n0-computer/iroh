@@ -11,6 +11,7 @@ use n0_future::{
     task::{self, AbortOnDropHandle},
     time::{self, Duration, Instant},
 };
+use n0_watcher::Watchable;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tracing::{debug, event, info, instrument, trace, warn, Level};
@@ -26,7 +27,6 @@ use crate::endpoint::PathSelection;
 use crate::{
     disco::{self, SendAddr},
     magicsock::{ActorMessage, MagicsockMetrics, NodeIdMappedAddr, HEARTBEAT_INTERVAL},
-    watcher::{self, Watchable},
 };
 
 /// Number of addresses that are not active that we keep around per node.
@@ -202,7 +202,7 @@ impl NodeState {
         self.id
     }
 
-    pub(super) fn conn_type(&self) -> watcher::Direct<ConnectionType> {
+    pub(super) fn conn_type(&self) -> n0_watcher::Direct<ConnectionType> {
         self.conn_type.watch()
     }
 
@@ -277,7 +277,7 @@ impl NodeState {
     /// Returns the address(es) that should be used for sending the next packet.
     ///
     /// This may return to send on one, both or no paths.
-    fn addr_for_send(
+    pub(super) fn addr_for_send(
         &mut self,
         now: &Instant,
         have_ipv6: bool,
@@ -567,8 +567,6 @@ impl NodeState {
     /// our call-me-maybe they will reach us and the other side establishes a direct
     /// connection upon our subsequent pong response.
     ///
-    /// For [`SendCallMeMaybe::IfNoRecent`], **no** paths will be pinged if there already
-    /// was a recent call-me-maybe sent.
     ///
     /// The caller is responsible for sending the messages.
     #[must_use = "actions must be handled"]
@@ -586,7 +584,6 @@ impl NodeState {
                 }
             }
         }
-
         // We send pings regardless of whether we have a RelayUrl.  If we were given any
         // direct address paths to contact but no RelayUrl, we still need to send a DISCO
         // ping to the direct address paths so that the other node will learn about us and
@@ -1177,20 +1174,14 @@ impl NodeState {
             metrics.nodes_contacted.inc();
         }
         let (udp_addr, relay_url) = self.addr_for_send(&now, have_ipv6, metrics);
-        let mut ping_msgs = Vec::new();
+        trace!(?udp_addr, ?relay_url, "found send address");
 
-        if self.want_call_me_maybe(&now) {
-            ping_msgs = self.send_call_me_maybe(now, SendCallMeMaybe::IfNoRecent);
-        }
-
-        trace!(
-            ?udp_addr,
-            ?relay_url,
-            pings = %ping_msgs.len(),
-            "found send address",
-        );
-
-        (udp_addr, relay_url, ping_msgs)
+        let ping_actions = if self.want_call_me_maybe(&now) {
+            self.send_call_me_maybe(now, SendCallMeMaybe::IfNoRecent)
+        } else {
+            Vec::new()
+        };
+        (udp_addr, relay_url, ping_actions)
     }
 
     /// Get the direct addresses for this endpoint.

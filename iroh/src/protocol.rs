@@ -65,7 +65,6 @@ use crate::{
 /// ```no_run
 /// # use std::sync::Arc;
 /// # use anyhow::Result;
-/// # use futures_lite::future::Boxed as BoxedFuture;
 /// # use iroh::{endpoint::Connecting, protocol::{ProtocolHandler, Router}, Endpoint, NodeAddr};
 /// #
 /// # async fn test_compile() -> Result<()> {
@@ -495,11 +494,12 @@ impl<P: ProtocolHandler + Clone> ProtocolHandler for AccessLimit<P> {
 mod tests {
     use std::{sync::Mutex, time::Duration};
 
+    use n0_watcher::Watcher;
     use quinn::ApplicationClose;
     use testresult::TestResult;
 
     use super::*;
-    use crate::{endpoint::ConnectionError, watcher::Watcher, RelayMode};
+    use crate::{endpoint::ConnectionError, RelayMode};
 
     #[tokio::test]
     async fn test_shutdown() -> Result<()> {
@@ -537,16 +537,24 @@ mod tests {
             Ok(())
         }
     }
+
     #[tokio::test]
     async fn test_limiter() -> Result<()> {
-        let e1 = Endpoint::builder().bind().await?;
+        // tracing_subscriber::fmt::try_init().ok();
+        let e1 = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .await?;
         // deny all access
         let proto = AccessLimit::new(Echo, |_node_id| false);
         let r1 = Router::builder(e1.clone()).accept(ECHO_ALPN, proto).spawn();
 
         let addr1 = r1.endpoint().node_addr().initialized().await?;
-
-        let e2 = Endpoint::builder().bind().await?;
+        dbg!(&addr1);
+        let e2 = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .await?;
 
         println!("connecting");
         let conn = e2.connect(addr1, ECHO_ALPN).await?;
@@ -585,6 +593,7 @@ mod tests {
             }
         }
 
+        eprintln!("creating ep1");
         let endpoint = Endpoint::builder()
             .relay_mode(RelayMode::Disabled)
             .bind()
@@ -592,16 +601,21 @@ mod tests {
         let router = Router::builder(endpoint)
             .accept(TEST_ALPN, TestProtocol::default())
             .spawn();
+        eprintln!("waiting for node addr");
         let addr = router.endpoint().node_addr().initialized().await?;
 
+        eprintln!("creating ep2");
         let endpoint2 = Endpoint::builder()
             .relay_mode(RelayMode::Disabled)
             .bind()
             .await?;
+        eprintln!("connecting to {:?}", addr);
         let conn = endpoint2.connect(addr, TEST_ALPN).await?;
 
+        eprintln!("starting shutdown");
         router.shutdown().await?;
 
+        eprintln!("waiting for closed conn");
         let reason = conn.closed().await;
         assert_eq!(
             reason,

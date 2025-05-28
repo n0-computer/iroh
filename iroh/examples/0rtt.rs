@@ -4,11 +4,11 @@ use anyhow::Context;
 use clap::Parser;
 use iroh::{
     endpoint::{Connecting, Connection},
-    watcher::Watcher,
     SecretKey,
 };
 use iroh_base::ticket::NodeTicket;
 use n0_future::{future, StreamExt};
+use n0_watcher::Watcher;
 use rand::thread_rng;
 use tracing::{info, trace};
 
@@ -150,6 +150,7 @@ async fn accept(_args: Args) -> anyhow::Result<()> {
     println!("Listening on: {:?}", addr);
     println!("Node ID: {:?}", addr.node_id);
     println!("Ticket: {}", NodeTicket::from(addr));
+
     let accept = async move {
         while let Some(incoming) = endpoint.accept().await {
             tokio::spawn(async move {
