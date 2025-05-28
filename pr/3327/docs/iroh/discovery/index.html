@@ -48,7 +48,8 @@ implement that trait on a builder struct if your discovery service needs access 
 endpoint it is mounted on. During endpoint construction, your discovery service will
 be built by calling <a href="trait.IntoDiscovery.html#tymethod.into_discovery" title="method iroh::discovery::IntoDiscovery::into_discovery"><code>IntoDiscovery::into_discovery</code></a>, passing the endpoint to your
 builder. If your discovery service does not need access to its endpoint, you can
-pass the discovery service directly to [<code>Builder::add_discovery]: All types that implement [</code>Discovery<code>] also have a blanket implementation of [</code>IntoDiscovery`].</p>
+pass the discovery service directly to <a href="../endpoint/struct.Builder.html#method.add_discovery" title="method iroh::endpoint::Builder::add_discovery"><code>Builder::add_discovery</code></a>: All types that
+implement <a href="trait.Discovery.html" title="trait iroh::discovery::Discovery"><code>Discovery</code></a> also have a blanket implementation of <a href="trait.IntoDiscovery.html" title="trait iroh::discovery::IntoDiscovery"><code>IntoDiscovery</code></a>.</p>
 <h2 id="examples"><a class="doc-anchor" href="#examples">§</a>Examples</h2>
 <p>A very common setup is to enable DNS discovery, which needs to be done in two parts as a
 <a href="pkarr/struct.PkarrPublisher.html" title="struct iroh::discovery::pkarr::PkarrPublisher"><code>PkarrPublisher</code></a> and <a href="dns/struct.DnsDiscovery.html" title="struct iroh::discovery::dns::DnsDiscovery"><code>DnsDiscovery</code></a>:</p>
