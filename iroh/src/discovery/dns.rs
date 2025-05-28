@@ -24,7 +24,7 @@ const DNS_STAGGERING_MS: &[u64] = &[200, 300];
 ///
 /// * `_iroh`: is the record name
 /// * `<z32-node-id>` is the [`NodeId`] encoded in [`z-base-32`] format
-/// * `<origin-domain>` is the node origin domain as set in [`DnsDiscovery::new`].
+/// * `<origin-domain>` is the node origin domain as set in [`DnsDiscovery::builder`].
 ///
 /// Each TXT record returned from the query is expected to contain a string in the format `<name>=<value>`.
 /// If a TXT record contains multiple character strings, they are concatenated first.

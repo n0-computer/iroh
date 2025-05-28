@@ -1582,7 +1582,7 @@ impl MagicSock {
     ///
     /// Called whenever our addresses or home relay node changes.
     fn publish_my_addr(&self) {
-        if let Some(ref discovery) = self.discovery.get() {
+        if let Some(discovery) = self.discovery.get() {
             let relay_url = self.my_relay();
             let direct_addrs = self.direct_addrs.sockaddrs();
             let user_data = self

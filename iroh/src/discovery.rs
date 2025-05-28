@@ -18,7 +18,7 @@
 //! The [`Discovery`] trait is used to define node discovery.  This allows multiple
 //! implementations to co-exist because there are many possible ways to implement this.
 //! Each [`Endpoint`] can use the discovery mechanisms most suitable to the application.
-//! The [`Builder::discovery`] method is used to add a discovery mechanism to an
+//! The [`Builder::add_discovery`] method is used to add a discovery mechanism to an
 //! [`Endpoint`].
 //!
 //! Some generally useful discovery implementations are provided:
@@ -97,7 +97,7 @@
 //!
 //! [`NodeAddr`]: iroh_base::NodeAddr
 //! [`RelayUrl`]: crate::RelayUrl
-//! [`Builder::discovery`]: crate::endpoint::Builder::discovery
+//! [`Builder::add_discovery`]: crate::endpoint::Builder::add_discovery
 //! [`DnsDiscovery`]: dns::DnsDiscovery
 //! [Number 0]: https://n0.computer
 //! [`PkarrResolver`]: pkarr::PkarrResolver
@@ -135,7 +135,7 @@ pub mod static_provider;
 /// Trait for structs that can be converted into [`Discovery`].
 ///
 /// This trait is implemented on builders for discovery services. Any type that implements this
-/// trait can be added as a discovery serivce in [`Builder::add_discovery`].
+/// trait can be added as a discovery service in [`Builder::add_discovery`].
 ///
 /// Any type that implements [`Discovery`] also implements [`IntoDiscovery`].
 ///

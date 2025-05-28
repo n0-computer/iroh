@@ -386,7 +386,7 @@ impl PkarrResolverBuilder {
     /// Creates a [`PkarrResolver`] from this builder.
     pub fn build(self) -> PkarrResolver {
         #[cfg(wasm_browser)]
-        let pkarr_client = PkarrRelayClient::new(pkarr_relay);
+        let pkarr_client = PkarrRelayClient::new(self.pkarr_relay);
 
         #[cfg(not(wasm_browser))]
         let pkarr_client = if let Some(dns_resolver) = self.dns_resolver {

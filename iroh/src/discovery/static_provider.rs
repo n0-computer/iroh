@@ -84,6 +84,8 @@ impl StaticProvider {
     ///
     /// This is mostly used for debugging information and allows understanding the origin of
     /// addressing information used by an iroh [`Endpoint`].
+    ///
+    /// [`Endpoint`]: crate::Endpoint
     pub const PROVENANCE: &'static str = "static_discovery";
 
     /// Creates a new static discovery instance.
@@ -111,10 +113,7 @@ impl StaticProvider {
     /// // create a StaticProvider from the list of addrs.
     /// let discovery = StaticProvider::from_node_info(addrs);
     /// // create an endpoint with the discovery
-    /// let endpoint = Endpoint::builder()
-    ///     .add_discovery(discovery)
-    ///     .bind()
-    ///     .await?;
+    /// let endpoint = Endpoint::builder().add_discovery(discovery).bind().await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -213,9 +212,8 @@ mod tests {
     use iroh_base::{NodeAddr, SecretKey};
     use testresult::TestResult;
 
-    use crate::Endpoint;
-
     use super::*;
+    use crate::Endpoint;
 
     #[tokio::test]
     async fn test_basic() -> TestResult {
