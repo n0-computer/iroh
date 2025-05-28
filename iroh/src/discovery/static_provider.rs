@@ -15,6 +15,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 
+use anyhow::Result;
 use iroh_base::NodeId;
 use n0_future::{
     boxed::BoxStream,
@@ -46,10 +47,7 @@ use super::{Discovery, DiscoveryItem, NodeData, NodeInfo};
 /// let discovery = StaticProvider::new();
 ///
 /// let _ep = Endpoint::builder()
-///     .add_discovery({
-///         let discovery = discovery.clone();
-///         move |_| Some(discovery)
-///     })
+///     .add_discovery(discovery.clone())
 ///     .bind()
 ///     .await?;
 ///
@@ -115,10 +113,7 @@ impl StaticProvider {
     /// // create a StaticProvider from the list of addrs.
     /// let discovery = StaticProvider::from_node_info(addrs);
     /// // create an endpoint with the discovery
-    /// let endpoint = Endpoint::builder()
-    ///     .add_discovery(|_| Some(discovery))
-    ///     .bind()
-    ///     .await?;
+    /// let endpoint = Endpoint::builder().add_discovery(discovery).bind().await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -189,11 +184,7 @@ impl StaticProvider {
 impl Discovery for StaticProvider {
     fn publish(&self, _data: &NodeData) {}
 
-    fn resolve(
-        &self,
-        _endpoint: crate::Endpoint,
-        node_id: NodeId,
-    ) -> Option<BoxStream<anyhow::Result<super::DiscoveryItem>>> {
+    fn resolve(&self, node_id: NodeId) -> Option<BoxStream<Result<super::DiscoveryItem>>> {
         let guard = self.nodes.read().expect("poisoned");
         let info = guard.get(&node_id);
         match info {
@@ -229,10 +220,7 @@ mod tests {
         let discovery = StaticProvider::new();
 
         let _ep = Endpoint::builder()
-            .add_discovery({
-                let discovery = discovery.clone();
-                move |_| Some(discovery)
-            })
+            .add_discovery(discovery.clone())
             .bind()
             .await?;
 

@@ -21,7 +21,7 @@ use url::Url;
 use crate::{
     discovery::{
         pkarr::{DEFAULT_PKARR_TTL, N0_DNS_PKARR_RELAY_PROD},
-        Discovery, DiscoveryItem, NodeData,
+        Discovery, DiscoveryItem, IntoDiscovery, NodeData,
     },
     node_info::NodeInfo,
     Endpoint,
@@ -121,6 +121,7 @@ pub struct Builder {
     include_direct_addresses: bool,
     initial_publish_delay: Duration,
     republish_delay: Duration,
+    enable_publish: bool,
 }
 
 impl Default for Builder {
@@ -134,6 +135,7 @@ impl Default for Builder {
             include_direct_addresses: false,
             initial_publish_delay: INITIAL_PUBLISH_DELAY,
             republish_delay: REPUBLISH_DELAY,
+            enable_publish: true,
         }
     }
 }
@@ -197,6 +199,12 @@ impl Builder {
         self
     }
 
+    /// Disables publishing even if a secret key is set.
+    pub fn no_publish(mut self) -> Self {
+        self.enable_publish = false;
+        self
+    }
+
     /// Builds the discovery mechanism.
     pub fn build(self) -> Result<DhtDiscovery> {
         anyhow::ensure!(
@@ -219,17 +227,24 @@ impl Builder {
         };
         let ttl = self.ttl.unwrap_or(DEFAULT_PKARR_TTL);
         let include_direct_addresses = self.include_direct_addresses;
+        let secret_key = self.secret_key.filter(|_| self.enable_publish);
 
         Ok(DhtDiscovery(Arc::new(Inner {
             pkarr,
             ttl,
             relay_url: self.pkarr_relay,
             include_direct_addresses,
-            secret_key: self.secret_key,
+            secret_key,
             initial_publish_delay: self.initial_publish_delay,
             republish_delay: self.republish_delay,
             task: Default::default(),
         })))
+    }
+}
+
+impl IntoDiscovery for Builder {
+    fn into_discovery(self, endpoint: &Endpoint) -> Result<impl Discovery> {
+        self.secret_key(endpoint.secret_key().clone()).build()
     }
 }
 
@@ -291,11 +306,7 @@ impl Discovery for DhtDiscovery {
         *task = Some(AbortOnDropHandle::new(curr));
     }
 
-    fn resolve(
-        &self,
-        _endpoint: Endpoint,
-        node_id: NodeId,
-    ) -> Option<BoxStream<anyhow::Result<DiscoveryItem>>> {
+    fn resolve(&self, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem>>> {
         let pkarr_public_key =
             pkarr::PublicKey::try_from(node_id.as_bytes()).expect("valid public key");
         tracing::info!("resolving {} as {}", node_id, pkarr_public_key.to_z32());
@@ -323,7 +334,7 @@ mod tests {
     #[ignore = "flaky"]
     #[traced_test]
     async fn dht_discovery_smoke() -> TestResult {
-        let ep = crate::Endpoint::builder().bind().await?;
+        let ep = Endpoint::builder().bind().await?;
         let secret = ep.secret_key().clone();
         let testnet = pkarr::mainline::Testnet::new_async(3).await?;
         let client = pkarr::Client::builder()
@@ -346,7 +357,7 @@ mod tests {
                 tokio::time::sleep(Duration::from_millis(200)).await;
                 let mut found_relay_urls = BTreeSet::new();
                 let items = discovery
-                    .resolve(ep.clone(), secret.public())
+                    .resolve(secret.public())
                     .unwrap()
                     .collect::<Vec<_>>()
                     .await;

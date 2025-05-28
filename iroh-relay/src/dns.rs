@@ -15,7 +15,7 @@ use n0_future::{
 };
 use url::Url;
 
-use crate::node_info::NodeInfo;
+use crate::{defaults::timeouts::DNS_TIMEOUT, node_info::NodeInfo};
 
 /// The n0 testing DNS node origin, for production.
 pub const N0_DNS_NODE_ORIGIN_PROD: &str = "dns.iroh.link";
@@ -279,6 +279,24 @@ impl Default for DnsResolver {
 impl From<TokioResolver> for DnsResolver {
     fn from(resolver: TokioResolver) -> Self {
         DnsResolver(resolver)
+    }
+}
+
+impl reqwest::dns::Resolve for DnsResolver {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        let this = self.clone();
+        let name = name.as_str().to_string();
+        Box::pin(async move {
+            let res = this.lookup_ipv4_ipv6(name, DNS_TIMEOUT).await;
+            match res {
+                Ok(addrs) => {
+                    let addrs: reqwest::dns::Addrs =
+                        Box::new(addrs.map(|addr| SocketAddr::new(addr, 0)));
+                    Ok(addrs)
+                }
+                Err(err) => Err(err.into_boxed_dyn_error()),
+            }
+        })
     }
 }
 

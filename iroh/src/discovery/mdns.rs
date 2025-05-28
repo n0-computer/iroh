@@ -47,6 +47,7 @@ use swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
 use tokio::sync::mpsc::{self, error::TrySendError};
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
+use super::IntoDiscovery;
 use crate::{
     discovery::{Discovery, DiscoveryItem, NodeData, NodeInfo},
     watcher::{Watchable, Watcher as _},
@@ -128,7 +129,22 @@ impl Subscribers {
     }
 }
 
+/// Builder for [`MdnsDiscovery`].
+#[derive(Debug)]
+pub struct MdnsDiscoveryBuilder;
+
+impl IntoDiscovery for MdnsDiscoveryBuilder {
+    fn into_discovery(self, endpoint: &Endpoint) -> Result<impl Discovery> {
+        MdnsDiscovery::new(endpoint.node_id())
+    }
+}
+
 impl MdnsDiscovery {
+    /// Returns a [`MdnsDiscoveryBuilder`] that implements [`IntoDiscovery`].
+    pub fn builder() -> MdnsDiscoveryBuilder {
+        MdnsDiscoveryBuilder
+    }
+
     /// Create a new [`MdnsDiscovery`] Service.
     ///
     /// This starts a [`Discoverer`] that broadcasts your addresses and receives addresses from other nodes in your local network.
@@ -373,7 +389,7 @@ fn peer_to_discovery_item(peer: &Peer, node_id: &NodeId) -> DiscoveryItem {
 }
 
 impl Discovery for MdnsDiscovery {
-    fn resolve(&self, _ep: Endpoint, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem>>> {
+    fn resolve(&self, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem>>> {
         use futures_util::FutureExt;
 
         let (send, recv) = mpsc::channel(20);
@@ -431,12 +447,9 @@ mod tests {
                 .with_user_data(Some(user_data.clone()));
             println!("info {node_data:?}");
 
-            // pass in endpoint, this is never used
-            let ep = crate::endpoint::Builder::default().bind().await?;
-
             // resolve twice to ensure we can create separate streams for the same node_id
-            let mut s1 = discovery_a.resolve(ep.clone(), node_id_b).unwrap();
-            let mut s2 = discovery_a.resolve(ep, node_id_b).unwrap();
+            let mut s1 = discovery_a.resolve(node_id_b).unwrap();
+            let mut s2 = discovery_a.resolve(node_id_b).unwrap();
 
             tracing::debug!(?node_id_b, "Discovering node id b");
             // publish discovery_b's address
