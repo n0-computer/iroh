@@ -82,7 +82,7 @@ impl DnsDiscovery {
     /// # Usage during tests
     ///
     /// For testing it is possible to use the [`N0_DNS_NODE_ORIGIN_STAGING`] domain
-    /// with [`DnsDiscovery::new`].  This would then use a hosted staging discovery
+    /// with [`DnsDiscovery::builder`].  This would then use a hosted staging discovery
     /// service for testing purposes.
     pub fn n0_dns() -> DnsDiscoveryBuilder {
         if force_staging_infra() {
