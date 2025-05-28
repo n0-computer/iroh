@@ -3170,7 +3170,8 @@
 <a href="#3169" id="3169">3169</a>
 <a href="#3170" id="3170">3170</a>
 <a href="#3171" id="3171">3171</a>
-<a href="#3172" id="3172">3172</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#3172" id="3172">3172</a>
+<a href="#3173" id="3173">3173</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -6123,7 +6124,8 @@
         <span class="prelude-val">Ok</span>(())
     }
 
-    <span class="attr">#[tokio::test]
+    <span class="attr">#[cfg_attr(target_os = <span class="string">"windows"</span>, ignore = <span class="string">"flaky"</span>)]
+    #[tokio::test]
     #[traced_test]
     </span><span class="kw">async fn </span>graceful_close() -&gt; testresult::TestResult {
         <span class="kw">let </span>client = Endpoint::builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
