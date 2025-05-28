@@ -6076,7 +6076,7 @@
     ///
     /// Called whenever our addresses or home relay node changes.
     </span><span class="kw">fn </span>publish_my_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) {
-        <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>discovery) = <span class="self">self</span>.discovery.get() {
+        <span class="kw">if let </span><span class="prelude-val">Some</span>(discovery) = <span class="self">self</span>.discovery.get() {
             <span class="kw">let </span>relay_url = <span class="self">self</span>.my_relay();
             <span class="kw">let </span>direct_addrs = <span class="self">self</span>.direct_addrs.sockaddrs();
             <span class="kw">let </span>user_data = <span class="self">self

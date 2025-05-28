@@ -514,9 +514,7 @@
 <a href="#513" id="513">513</a>
 <a href="#514" id="514">514</a>
 <a href="#515" id="515">515</a>
-<a href="#516" id="516">516</a>
-<a href="#517" id="517">517</a>
-<a href="#518" id="518">518</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service that uses an mdns-like service to discover local nodes.
+<a href="#516" id="516">516</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service that uses an mdns-like service to discover local nodes.
 //!
 //! This allows you to use an mdns-like swarm discovery service to find address information about nodes that are on your local network, no relay or outside internet needed.
 //! See the [`swarm-discovery`](https://crates.io/crates/swarm-discovery) crate for more details.
@@ -565,13 +563,12 @@
 <span class="kw">use </span>tokio::sync::mpsc::{<span class="self">self</span>, error::TrySendError};
 <span class="kw">use </span>tracing::{debug, error, info_span, trace, warn, Instrument};
 
+<span class="kw">use </span><span class="kw">super</span>::IntoDiscovery;
 <span class="kw">use crate</span>::{
     discovery::{Discovery, DiscoveryItem, NodeData, NodeInfo},
     watcher::{Watchable, Watcher <span class="kw">as _</span>},
     Endpoint,
 };
-
-<span class="kw">use </span><span class="kw">super</span>::IntoDiscovery;
 
 <span class="doccomment">/// The n0 local swarm node discovery name
 </span><span class="kw">const </span>N0_LOCAL_SWARM: <span class="kw-2">&amp;</span>str = <span class="string">"iroh.local.swarm"</span>;
@@ -648,19 +645,18 @@
     }
 }
 
-<span class="doccomment">///
+<span class="doccomment">/// Builder for [`MdnsDiscovery`].
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub struct </span>MdnsDiscoveryBuilder;
 
 <span class="kw">impl </span>IntoDiscovery <span class="kw">for </span>MdnsDiscoveryBuilder {
-    <span class="kw">fn </span>into_discovery(<span class="self">self</span>: Box&lt;<span class="self">Self</span>&gt;, endpoint: <span class="kw-2">&amp;</span>Endpoint) -&gt; anyhow::Result&lt;Box&lt;<span class="kw">dyn </span>Discovery&gt;&gt; {
-        <span class="kw">let </span>disco = MdnsDiscovery::new(endpoint.node_id())<span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(Box::new(disco))
+    <span class="kw">fn </span>into_discovery(<span class="self">self</span>, endpoint: <span class="kw-2">&amp;</span>Endpoint) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Discovery&gt; {
+        MdnsDiscovery::new(endpoint.node_id())
     }
 }
 
 <span class="kw">impl </span>MdnsDiscovery {
-    <span class="doccomment">///
+    <span class="doccomment">/// Returns a [`MdnsDiscoveryBuilder`] that implements [`IntoDiscovery`].
     </span><span class="kw">pub fn </span>builder() -&gt; MdnsDiscoveryBuilder {
         MdnsDiscoveryBuilder
     }

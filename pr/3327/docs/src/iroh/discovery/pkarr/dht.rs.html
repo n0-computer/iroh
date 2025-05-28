@@ -376,8 +376,7 @@
 <a href="#375" id="375">375</a>
 <a href="#376" id="376">376</a>
 <a href="#377" id="377">377</a>
-<a href="#378" id="378">378</a>
-<a href="#379" id="379">379</a></pre></div><pre class="rust"><code><span class="doccomment">//! Pkarr based node discovery for iroh, supporting both relay servers and the DHT.
+<a href="#378" id="378">378</a></pre></div><pre class="rust"><code><span class="doccomment">//! Pkarr based node discovery for iroh, supporting both relay servers and the DHT.
 //!
 //! This module contains pkarr-based node discovery for iroh which can use both pkarr
 //! relay servers as well as the Mainline DHT directly.  See the [pkarr module] for an
@@ -622,9 +621,8 @@
 }
 
 <span class="kw">impl </span>IntoDiscovery <span class="kw">for </span>Builder {
-    <span class="kw">fn </span>into_discovery(<span class="self">self</span>: Box&lt;<span class="self">Self</span>&gt;, endpoint: <span class="kw-2">&amp;</span>Endpoint) -&gt; <span class="prelude-ty">Result</span>&lt;Box&lt;<span class="kw">dyn </span>Discovery&gt;&gt; {
-        <span class="kw">let </span>disco = <span class="self">self</span>.secret_key(endpoint.secret_key().clone()).build()<span class="question-mark">?</span>;
-        <span class="prelude-val">Ok</span>(Box::new(disco))
+    <span class="kw">fn </span>into_discovery(<span class="self">self</span>, endpoint: <span class="kw-2">&amp;</span>Endpoint) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Discovery&gt; {
+        <span class="self">self</span>.secret_key(endpoint.secret_key().clone()).build()
     }
 }
 

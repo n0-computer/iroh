@@ -1080,8 +1080,7 @@
 <a href="#1079" id="1079">1079</a>
 <a href="#1080" id="1080">1080</a>
 <a href="#1081" id="1081">1081</a>
-<a href="#1082" id="1082">1082</a>
-<a href="#1083" id="1083">1083</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
+<a href="#1082" id="1082">1082</a></pre></div><pre class="rust"><code><span class="doccomment">//! Node address discovery.
 //!
 //! To connect to an iroh node a [`NodeAddr`] is needed, which may contain a
 //! [`RelayUrl`] or one or more *direct addresses* in addition to the [`NodeId`].
@@ -1101,7 +1100,7 @@
 //! The [`Discovery`] trait is used to define node discovery.  This allows multiple
 //! implementations to co-exist because there are many possible ways to implement this.
 //! Each [`Endpoint`] can use the discovery mechanisms most suitable to the application.
-//! The [`Builder::discovery`] method is used to add a discovery mechanism to an
+//! The [`Builder::add_discovery`] method is used to add a discovery mechanism to an
 //! [`Endpoint`].
 //!
 //! Some generally useful discovery implementations are provided:
@@ -1123,8 +1122,17 @@
 //! - The [`DhtDiscovery`] also uses the [`pkarr`] system but can also publish and lookup
 //!   records to/from the Mainline DHT.
 //!
-//! To use multiple discovery systems simultaneously use [`ConcurrentDiscovery`] which will
-//! perform lookups to all discovery systems at the same time.
+//! To use multiple discovery systems simultaneously you can call [`Builder::add_discovery`].
+//! This will use [`ConcurrentDiscovery`] under the hood, which performs lookups to all
+//! discovery systems at the same time.
+//!
+//! [`Builder::add_discovery`] takes any type that implements [`IntoDiscovery`]. You can
+//! implement that trait on a builder struct if your discovery service needs access to the
+//! endpoint it is mounted on. During endpoint construction, your discovery service will
+//! be built by calling [`IntoDiscovery::into_discovery`], passing the endpoint to your
+//! builder. If your discovery service does not need access to its endpoint, you can
+//! pass the discovery service directly to [`Builder::add_discovery]: All types that
+//! implement [`Discovery`] also have a blanket implementation of [`IntoDiscovery`].
 //!
 //! # Examples
 //!
@@ -1133,44 +1141,37 @@
 //!
 //! ```no_run
 //! use iroh::{
-//!     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery},
+//!     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher},
 //!     Endpoint, SecretKey,
 //! };
 //!
 //! # async fn wrapper() -&gt; anyhow::Result&lt;()&gt; {
-//! let secret_key = SecretKey::generate(rand::rngs::OsRng);
-//! let discovery = ConcurrentDiscovery::from_services(vec![
-//!     Box::new(PkarrPublisher::n0_dns(secret_key.clone())),
-//!     Box::new(DnsDiscovery::n0_dns()),
-//! ]);
 //! let ep = Endpoint::builder()
-//!     .secret_key(secret_key)
-//!     .discovery(Box::new(discovery))
+//!     .add_discovery(PkarrPublisher::n0_dns())
+//!     .add_discovery(DnsDiscovery::n0_dns())
 //!     .bind()
 //!     .await?;
 //! # Ok(())
 //! # }
 //! ```
 //!
-//! To also enable [`MdnsDiscovery`] it can be added as another service in the
-//! [`ConcurrentDiscovery`]:
+//! To also enable [`MdnsDiscovery`] it can be added as another service.
 //!
 //! ```no_run
-//! # #[cfg(feature = "discovery-local-network")]
+//! #[cfg(feature = "discovery-local-network")]
 //! # {
-//! # use iroh::discovery::dns::DnsDiscovery;
-//! # use iroh::discovery::mdns::MdnsDiscovery;
-//! # use iroh::discovery::pkarr::PkarrPublisher;
-//! # use iroh::discovery::ConcurrentDiscovery;
-//! # use iroh::SecretKey;
+//! # use iroh::{
+//! #    discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, mdns::MdnsDiscovery},
+//! #    Endpoint, SecretKey,
+//! # };
 //! #
 //! # async fn wrapper() -&gt; anyhow::Result&lt;()&gt; {
-//! # let secret_key = SecretKey::generate(rand::rngs::OsRng);
-//! let discovery = ConcurrentDiscovery::from_services(vec![
-//!     Box::new(PkarrPublisher::n0_dns(secret_key.clone())),
-//!     Box::new(DnsDiscovery::n0_dns()),
-//!     Box::new(MdnsDiscovery::new(secret_key.public())?),
-//! ]);
+//! let ep = Endpoint::builder()
+//!     .add_discovery(PkarrPublisher::n0_dns())
+//!     .add_discovery(DnsDiscovery::n0_dns())
+//!     .add_discovery(MdnsDiscovery::builder())
+//!     .bind()
+//!     .await?;
 //! # Ok(())
 //! # }
 //! # }
@@ -1178,7 +1179,7 @@
 //!
 //! [`NodeAddr`]: iroh_base::NodeAddr
 //! [`RelayUrl`]: crate::RelayUrl
-//! [`Builder::discovery`]: crate::endpoint::Builder::discovery
+//! [`Builder::add_discovery`]: crate::endpoint::Builder::add_discovery
 //! [`DnsDiscovery`]: dns::DnsDiscovery
 //! [Number 0]: https://n0.computer
 //! [`PkarrResolver`]: pkarr::PkarrResolver
@@ -1214,13 +1215,40 @@
 <span class="kw">pub mod </span>static_provider;
 
 <span class="doccomment">/// Trait for structs that can be converted into [`Discovery`].
+///
+/// This trait is implemented on builders for discovery services. Any type that implements this
+/// trait can be added as a discovery service in [`Builder::add_discovery`].
+///
+/// Any type that implements [`Discovery`] also implements [`IntoDiscovery`].
+///
+/// [`Builder::add_discovery`]: crate::endpoint::Builder::add_discovery
 </span><span class="kw">pub trait </span>IntoDiscovery: Send + <span class="lifetime">'static </span>{
     <span class="doccomment">/// Turns this struct into a boxed [`Discovery`].
     ///
     /// The discovery service will be used by passed [`Endpoint`]. If a discovery service needs
     /// an endpoint or information from it like its secret key, it can access or clone the endpoint
     /// from here.
+    </span><span class="kw">fn </span>into_discovery(<span class="self">self</span>, endpoint: <span class="kw-2">&amp;</span>Endpoint) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Discovery&gt;;
+}
+
+<span class="doccomment">/// Blanket no-op impl of `IntoDiscovery` for `T: Discovery`.
+</span><span class="kw">impl</span>&lt;T: Discovery&gt; IntoDiscovery <span class="kw">for </span>T {
+    <span class="kw">fn </span>into_discovery(<span class="self">self</span>, _endpoint: <span class="kw-2">&amp;</span>Endpoint) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Discovery&gt; {
+        <span class="prelude-val">Ok</span>(<span class="self">self</span>)
+    }
+}
+
+<span class="doccomment">/// Non-public dyn-compatible version of [`IntoDiscovery`], used in [`crate::endpoint::Builder`].
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">trait </span>DynIntoDiscovery: Send + <span class="lifetime">'static </span>{
+    <span class="doccomment">/// See [`IntoDiscovery::into_discovery`]
     </span><span class="kw">fn </span>into_discovery(<span class="self">self</span>: Box&lt;<span class="self">Self</span>&gt;, endpoint: <span class="kw-2">&amp;</span>Endpoint) -&gt; <span class="prelude-ty">Result</span>&lt;Box&lt;<span class="kw">dyn </span>Discovery&gt;&gt;;
+}
+
+<span class="kw">impl</span>&lt;T: IntoDiscovery&gt; DynIntoDiscovery <span class="kw">for </span>T {
+    <span class="kw">fn </span>into_discovery(<span class="self">self</span>: Box&lt;<span class="self">Self</span>&gt;, endpoint: <span class="kw-2">&amp;</span>Endpoint) -&gt; <span class="prelude-ty">Result</span>&lt;Box&lt;<span class="kw">dyn </span>Discovery&gt;&gt; {
+        <span class="kw">let </span>disco: Box&lt;<span class="kw">dyn </span>Discovery&gt; = Box::new(IntoDiscovery::into_discovery(<span class="kw-2">*</span><span class="self">self</span>, endpoint)<span class="question-mark">?</span>);
+        <span class="prelude-val">Ok</span>(disco)
+    }
 }
 
 <span class="doccomment">/// Node discovery for [`super::Endpoint`].
@@ -1239,7 +1267,7 @@
 /// refresh, it should start its own task.
 ///
 /// [`RelayUrl`]: crate::RelayUrl
-</span><span class="kw">pub trait </span>Discovery: std::fmt::Debug + Send + Sync {
+</span><span class="kw">pub trait </span>Discovery: std::fmt::Debug + Send + Sync + <span class="lifetime">'static </span>{
     <span class="doccomment">/// Publishes the given [`NodeData`] to the discovery mechanism.
     ///
     /// This is fire and forget, since the [`Endpoint`] can not wait for successful
@@ -1405,12 +1433,6 @@
     <span class="kw">fn </span>from(iter: T) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>services = iter.into_iter().collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
         <span class="self">Self </span>{ services }
-    }
-}
-
-<span class="kw">impl </span>IntoDiscovery <span class="kw">for </span>ConcurrentDiscovery {
-    <span class="kw">fn </span>into_discovery(<span class="self">self</span>: Box&lt;<span class="self">Self</span>&gt;, _endpoint: <span class="kw-2">&amp;</span>Endpoint) -&gt; <span class="prelude-ty">Result</span>&lt;Box&lt;<span class="kw">dyn </span>Discovery&gt;&gt; {
-        <span class="prelude-val">Ok</span>(<span class="self">self</span>)
     }
 }
 
@@ -1651,7 +1673,6 @@
     <span class="kw">use </span>iroh_base::{NodeAddr, SecretKey};
     <span class="kw">use </span>quinn::{IdleTimeout, TransportConfig};
     <span class="kw">use </span>rand::Rng;
-    <span class="kw">use </span>testresult::TestResult;
     <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
     <span class="kw">use </span>tracing_test::traced_test;
 
@@ -1710,12 +1731,6 @@
         delay: Duration,
     }
 
-    <span class="kw">impl </span>IntoDiscovery <span class="kw">for </span>TestDiscovery {
-        <span class="kw">fn </span>into_discovery(<span class="self">self</span>: Box&lt;<span class="self">Self</span>&gt;, _endpoint: <span class="kw-2">&amp;</span>Endpoint) -&gt; <span class="prelude-ty">Result</span>&lt;Box&lt;<span class="kw">dyn </span>Discovery&gt;&gt; {
-            <span class="prelude-val">Ok</span>(<span class="self">self</span>)
-        }
-    }
-
     <span class="kw">impl </span>Discovery <span class="kw">for </span>TestDiscovery {
         <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, data: <span class="kw-2">&amp;</span>NodeData) {
             <span class="kw">if </span>!<span class="self">self</span>.publish {
@@ -1768,14 +1783,8 @@
         }
     }
 
-    <span class="attr">#[derive(Debug)]
+    <span class="attr">#[derive(Debug, Clone)]
     </span><span class="kw">struct </span>EmptyDiscovery;
-
-    <span class="kw">impl </span>IntoDiscovery <span class="kw">for </span>Arc&lt;EmptyDiscovery&gt; {
-        <span class="kw">fn </span>into_discovery(<span class="self">self</span>: Box&lt;<span class="self">Self</span>&gt;, _endpoint: <span class="kw-2">&amp;</span>Endpoint) -&gt; <span class="prelude-ty">Result</span>&lt;Box&lt;<span class="kw">dyn </span>Discovery&gt;&gt; {
-            <span class="prelude-val">Ok</span>(<span class="self">self</span>)
-        }
-    }
 
     <span class="kw">impl </span>Discovery <span class="kw">for </span>EmptyDiscovery {
         <span class="kw">fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, _data: <span class="kw-2">&amp;</span>NodeData) {}
@@ -2014,18 +2023,6 @@
             .expect(<span class="string">"time drift"</span>)
             .as_micros() <span class="kw">as </span>u64
     }
-
-    <span class="attr">#[tokio::test]
-    </span><span class="kw">async fn </span>test_arc_discovery() -&gt; TestResult {
-        <span class="kw">let </span>discovery = Arc::new(EmptyDiscovery);
-
-        <span class="kw">let </span>_ep = Endpoint::builder()
-            .add_discovery(discovery.clone())
-            .bind()
-            .<span class="kw">await</span><span class="question-mark">?</span>;
-
-        <span class="prelude-val">Ok</span>(())
-    }
 }
 
 <span class="doccomment">/// This module contains end-to-end tests for DNS node discovery.
@@ -2089,7 +2086,8 @@
         <span class="kw">let </span>relay_url = <span class="prelude-val">Some</span>(<span class="string">"https://relay.example"</span>.parse().unwrap());
 
         <span class="kw">let </span>resolver = DnsResolver::with_nameserver(dns_pkarr_server.nameserver);
-        <span class="kw">let </span>publisher = PkarrPublisher::new(secret_key, dns_pkarr_server.pkarr_url.clone());
+        <span class="kw">let </span>publisher =
+            PkarrPublisher::builder(dns_pkarr_server.pkarr_url.clone()).build(secret_key);
         <span class="kw">let </span>user_data: UserData = <span class="string">"foobar"</span>.parse().unwrap();
         <span class="kw">let </span>data = NodeData::new(relay_url.clone(), Default::default())
             .with_user_data(<span class="prelude-val">Some</span>(user_data.clone()));

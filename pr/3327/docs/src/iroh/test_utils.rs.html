@@ -545,7 +545,9 @@
 <a href="#544" id="544">544</a>
 <a href="#545" id="545">545</a>
 <a href="#546" id="546">546</a>
-<a href="#547" id="547">547</a></pre></div><pre class="rust"><code><span class="doccomment">//! Internal utilities to support testing.
+<a href="#547" id="547">547</a>
+<a href="#548" id="548">548</a>
+<a href="#549" id="549">549</a></pre></div><pre class="rust"><code><span class="doccomment">//! Internal utilities to support testing.
 </span><span class="kw">use </span>std::net::Ipv4Addr;
 
 <span class="kw">use </span>anyhow::Result;
@@ -718,10 +720,12 @@
             ConcurrentDiscovery::from_services(<span class="macro">vec!</span>[
                 <span class="comment">// Enable DNS discovery by default
                 </span>Box::new(
-                    DnsDiscovery::builder(<span class="self">self</span>.node_origin.clone()).build(<span class="self">self</span>.dns_resolver()),
+                    DnsDiscovery::builder(<span class="self">self</span>.node_origin.clone())
+                        .dns_resolver(<span class="self">self</span>.dns_resolver())
+                        .build(),
                 ),
                 <span class="comment">// Enable pkarr publishing by default
-                </span>Box::new(PkarrPublisher::new(secret_key, <span class="self">self</span>.pkarr_url.clone())),
+                </span>Box::new(PkarrPublisher::builder(<span class="self">self</span>.pkarr_url.clone()).build(secret_key)),
             ])
         }
 

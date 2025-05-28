@@ -3210,7 +3210,7 @@
 <span class="kw">use crate</span>::{
     discovery::{
         pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryItem, DiscoverySubscribers,
-        DiscoveryTask, IntoDiscovery, Lagged, UserData,
+        DiscoveryTask, DynIntoDiscovery, IntoDiscovery, Lagged, UserData,
     },
     magicsock::{<span class="self">self</span>, Handle, NodeIdMappedAddr},
     metrics::EndpointMetrics,
@@ -3301,7 +3301,7 @@
     transport_config: quinn::TransportConfig,
     keylog: bool,
     <span class="attr">#[debug(skip)]
-    </span>discovery: Vec&lt;Box&lt;<span class="kw">dyn </span>IntoDiscovery&gt;&gt;,
+    </span>discovery: Vec&lt;Box&lt;<span class="kw">dyn </span>DynIntoDiscovery&gt;&gt;,
     discovery_user_data: <span class="prelude-ty">Option</span>&lt;UserData&gt;,
     proxy_url: <span class="prelude-ty">Option</span>&lt;Url&gt;,
     <span class="doccomment">/// List of known nodes. See [`Builder::known_nodes`].

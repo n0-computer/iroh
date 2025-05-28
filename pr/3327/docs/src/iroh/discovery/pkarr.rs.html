@@ -519,7 +519,47 @@
 <a href="#518" id="518">518</a>
 <a href="#519" id="519">519</a>
 <a href="#520" id="520">520</a>
-<a href="#521" id="521">521</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service which publishes and resolves node information using a [pkarr] relay.
+<a href="#521" id="521">521</a>
+<a href="#522" id="522">522</a>
+<a href="#523" id="523">523</a>
+<a href="#524" id="524">524</a>
+<a href="#525" id="525">525</a>
+<a href="#526" id="526">526</a>
+<a href="#527" id="527">527</a>
+<a href="#528" id="528">528</a>
+<a href="#529" id="529">529</a>
+<a href="#530" id="530">530</a>
+<a href="#531" id="531">531</a>
+<a href="#532" id="532">532</a>
+<a href="#533" id="533">533</a>
+<a href="#534" id="534">534</a>
+<a href="#535" id="535">535</a>
+<a href="#536" id="536">536</a>
+<a href="#537" id="537">537</a>
+<a href="#538" id="538">538</a>
+<a href="#539" id="539">539</a>
+<a href="#540" id="540">540</a>
+<a href="#541" id="541">541</a>
+<a href="#542" id="542">542</a>
+<a href="#543" id="543">543</a>
+<a href="#544" id="544">544</a>
+<a href="#545" id="545">545</a>
+<a href="#546" id="546">546</a>
+<a href="#547" id="547">547</a>
+<a href="#548" id="548">548</a>
+<a href="#549" id="549">549</a>
+<a href="#550" id="550">550</a>
+<a href="#551" id="551">551</a>
+<a href="#552" id="552">552</a>
+<a href="#553" id="553">553</a>
+<a href="#554" id="554">554</a>
+<a href="#555" id="555">555</a>
+<a href="#556" id="556">556</a>
+<a href="#557" id="557">557</a>
+<a href="#558" id="558">558</a>
+<a href="#559" id="559">559</a>
+<a href="#560" id="560">560</a>
+<a href="#561" id="561">561</a></pre></div><pre class="rust"><code><span class="doccomment">//! A discovery service which publishes and resolves node information using a [pkarr] relay.
 //!
 //! Public-Key Addressable Resource Records, [pkarr], is a system which allows publishing
 //! [DNS Resource Records] owned by a particular [`SecretKey`] under a name derived from its
@@ -579,17 +619,15 @@
 <span class="kw">use </span>tracing::{debug, error_span, warn, Instrument};
 <span class="kw">use </span>url::Url;
 
+<span class="kw">use </span><span class="kw">super</span>::IntoDiscovery;
+<span class="attr">#[cfg(not(wasm_browser))]
+</span><span class="kw">use </span><span class="kw">crate</span>::dns::DnsResolver;
 <span class="kw">use crate</span>::{
     discovery::{Discovery, DiscoveryItem, NodeData},
     endpoint::force_staging_infra,
     watcher::{<span class="self">self</span>, Disconnected, Watchable, Watcher <span class="kw">as _</span>},
     Endpoint,
 };
-
-<span class="attr">#[cfg(not(wasm_browser))]
-</span><span class="kw">use </span><span class="kw">crate</span>::dns::DnsResolver;
-
-<span class="kw">use </span><span class="kw">super</span>::IntoDiscovery;
 
 <span class="attr">#[cfg(feature = <span class="string">"discovery-pkarr-dht"</span>)]
 </span><span class="kw">pub mod </span>dht;
@@ -623,7 +661,9 @@
 <span class="doccomment">/// Interval in which to republish the node info even if unchanged: 5 minutes.
 </span><span class="kw">pub const </span>DEFAULT_REPUBLISH_INTERVAL: Duration = Duration::from_secs(<span class="number">60 </span>* <span class="number">5</span>);
 
-<span class="doccomment">/// Builder for [`PkarrPublisher`]
+<span class="doccomment">/// Builder for [`PkarrPublisher`].
+///
+/// See [`PkarrPublisher::builder`].
 </span><span class="attr">#[derive(Debug)]
 </span><span class="kw">pub struct </span>PkarrPublisherBuilder {
     pkarr_relay: Url,
@@ -640,7 +680,8 @@
             pkarr_relay,
             ttl: DEFAULT_PKARR_TTL,
             republish_interval: DEFAULT_REPUBLISH_INTERVAL,
-            dns_resolver: <span class="prelude-val">None</span>,
+            <span class="attr">#[cfg(not(wasm_browser))]
+            </span>dns_resolver: <span class="prelude-val">None</span>,
         }
     }
 
@@ -671,7 +712,7 @@
         <span class="self">self
     </span>}
 
-    <span class="doccomment">/// Set the DNS resolver to use for resolving the pkarr relay URL.
+    <span class="doccomment">/// Sets the DNS resolver to use for resolving the pkarr relay URL.
     </span><span class="attr">#[cfg(not(wasm_browser))]
     </span><span class="kw">pub fn </span>dns_resolver(<span class="kw-2">mut </span><span class="self">self</span>, dns_resolver: DnsResolver) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.dns_resolver = <span class="prelude-val">Some</span>(dns_resolver);
@@ -679,8 +720,10 @@
     </span>}
 
     <span class="doccomment">/// Builds the [`PkarrPublisher`] with the passed secret key for signing packets.
+    ///
+    /// This publisher will be able to publish [pkarr] records for [`SecretKey`].
     </span><span class="kw">pub fn </span>build(<span class="self">self</span>, secret_key: SecretKey) -&gt; PkarrPublisher {
-        PkarrPublisher::with_options(
+        PkarrPublisher::new(
             secret_key,
             <span class="self">self</span>.pkarr_relay,
             <span class="self">self</span>.ttl,
@@ -692,13 +735,13 @@
 }
 
 <span class="kw">impl </span>IntoDiscovery <span class="kw">for </span>PkarrPublisherBuilder {
-    <span class="kw">fn </span>into_discovery(<span class="self">self</span>: Box&lt;<span class="self">Self</span>&gt;, endpoint: <span class="kw-2">&amp;</span>Endpoint) -&gt; anyhow::Result&lt;Box&lt;<span class="kw">dyn </span>Discovery&gt;&gt; {
+    <span class="kw">fn </span>into_discovery(<span class="kw-2">mut </span><span class="self">self</span>, endpoint: <span class="kw-2">&amp;</span>Endpoint) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Discovery&gt; {
         <span class="attr">#[cfg(not(wasm_browser))]
-        </span><span class="kw">let </span>builder = <span class="self">self</span>.dns_resolver(endpoint.dns_resolver().clone());
-        <span class="attr">#[cfg(wasm_browser)]
-        </span><span class="kw">let </span>builder = <span class="self">self</span>;
+        </span><span class="kw">if </span><span class="self">self</span>.dns_resolver.is_none() {
+            <span class="self">self</span>.dns_resolver = <span class="prelude-val">Some</span>(endpoint.dns_resolver().clone());
+        }
 
-        <span class="prelude-val">Ok</span>(Box::new(builder.build(endpoint.secret_key().clone())))
+        <span class="prelude-val">Ok</span>(<span class="self">self</span>.build(endpoint.secret_key().clone()))
     }
 }
 
@@ -725,39 +768,26 @@
 }
 
 <span class="kw">impl </span>PkarrPublisher {
-    <span class="doccomment">/// Returns a [`PkarrPublisherBuilder`] that can be used to set options for the pkarr publisher.
+    <span class="doccomment">/// Returns a [`PkarrPublisherBuilder`] that publishes node info to a [pkarr] relay at `pkarr_relay`.
     ///
-    /// [`PkarrPublisherBuilder`] implements [`IntoDiscovery`], so it can be passed to [`crate::endpoint::Builder::add_discovery`].
+    /// If no further options are set, the pkarr publisher  will use [`DEFAULT_PKARR_TTL`] as the
+    /// time-to-live value for the published packets, and it will republish discovery information
+    /// every [`DEFAULT_REPUBLISH_INTERVAL`], even if the information is unchanged.
+    ///
+    /// [`PkarrPublisherBuilder`] implements [`IntoDiscovery`], so it can be passed to [`add_discovery`].
+    /// It will then use the endpoint's secret key to sign published packets.
+    ///
+    /// [`add_discovery`]:  crate::endpoint::Builder::add_discovery
+    /// [pkarr]: https://pkarr.org
     </span><span class="kw">pub fn </span>builder(pkarr_relay: Url) -&gt; PkarrPublisherBuilder {
         PkarrPublisherBuilder::new(pkarr_relay)
-    }
-
-    <span class="doccomment">/// Creates a new publisher for the [`SecretKey`] with the default options.
-    ///
-    /// To specify options, use [`Self::builder`].
-    ///
-    /// This publisher will be able to publish [pkarr] records for [`SecretKey`].  It will
-    /// use [`DEFAULT_PKARR_TTL`] as the time-to-live value for the published packets.  Will
-    /// republish discovery information every [`DEFAULT_REPUBLISH_INTERVAL`], even if the
-    /// information is unchanged.
-    ///
-    /// [pkarr]: https://pkarr.org
-    </span><span class="kw">pub fn </span>new(secret_key: SecretKey, pkarr_relay: Url) -&gt; <span class="self">Self </span>{
-        <span class="self">Self</span>::with_options(
-            secret_key,
-            pkarr_relay,
-            DEFAULT_PKARR_TTL,
-            DEFAULT_REPUBLISH_INTERVAL,
-            <span class="attr">#[cfg(not(wasm_browser))]
-            </span><span class="prelude-val">None</span>,
-        )
     }
 
     <span class="doccomment">/// Creates a new [`PkarrPublisher`] with a custom TTL and republish intervals.
     ///
     /// This allows creating the publisher with custom time-to-live values of the
     /// [`pkarr::SignedPacket`]s and well as a custom republish interval.
-    </span><span class="kw">fn </span>with_options(
+    </span><span class="kw">fn </span>new(
         secret_key: SecretKey,
         pkarr_relay: Url,
         ttl: u32,
@@ -896,6 +926,51 @@
     }
 }
 
+<span class="doccomment">/// Builder for [`PkarrResolver`].
+///
+/// See [`PkarrResolver::builder`].
+</span><span class="attr">#[derive(Debug)]
+</span><span class="kw">pub struct </span>PkarrResolverBuilder {
+    pkarr_relay: Url,
+    <span class="attr">#[cfg(not(wasm_browser))]
+    </span>dns_resolver: <span class="prelude-ty">Option</span>&lt;DnsResolver&gt;,
+}
+
+<span class="kw">impl </span>PkarrResolverBuilder {
+    <span class="doccomment">/// Sets the DNS resolver to use for resolving the pkarr relay URL.
+    </span><span class="attr">#[cfg(not(wasm_browser))]
+    </span><span class="kw">pub fn </span>dns_resolver(<span class="kw-2">mut </span><span class="self">self</span>, dns_resolver: DnsResolver) -&gt; <span class="self">Self </span>{
+        <span class="self">self</span>.dns_resolver = <span class="prelude-val">Some</span>(dns_resolver);
+        <span class="self">self
+    </span>}
+
+    <span class="doccomment">/// Creates a [`PkarrResolver`] from this builder.
+    </span><span class="kw">pub fn </span>build(<span class="self">self</span>) -&gt; PkarrResolver {
+        <span class="attr">#[cfg(wasm_browser)]
+        </span><span class="kw">let </span>pkarr_client = PkarrRelayClient::new(<span class="self">self</span>.pkarr_relay);
+
+        <span class="attr">#[cfg(not(wasm_browser))]
+        </span><span class="kw">let </span>pkarr_client = <span class="kw">if let </span><span class="prelude-val">Some</span>(dns_resolver) = <span class="self">self</span>.dns_resolver {
+            PkarrRelayClient::with_dns_resolver(<span class="self">self</span>.pkarr_relay, dns_resolver)
+        } <span class="kw">else </span>{
+            PkarrRelayClient::new(<span class="self">self</span>.pkarr_relay)
+        };
+
+        PkarrResolver { pkarr_client }
+    }
+}
+
+<span class="kw">impl </span>IntoDiscovery <span class="kw">for </span>PkarrResolverBuilder {
+    <span class="kw">fn </span>into_discovery(<span class="kw-2">mut </span><span class="self">self</span>, endpoint: <span class="kw-2">&amp;</span>Endpoint) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Discovery&gt; {
+        <span class="attr">#[cfg(not(wasm_browser))]
+        </span><span class="kw">if </span><span class="self">self</span>.dns_resolver.is_none() {
+            <span class="self">self</span>.dns_resolver = <span class="prelude-val">Some</span>(endpoint.dns_resolver().clone());
+        }
+
+        <span class="prelude-val">Ok</span>(<span class="self">self</span>.build())
+    }
+}
+
 <span class="doccomment">/// Resolver of node discovery information from a [pkarr] relay.
 ///
 /// The resolver uses HTTP to query node discovery information from a pkarr relay server,
@@ -914,14 +989,18 @@
 }
 
 <span class="kw">impl </span>PkarrResolver {
-    <span class="doccomment">/// Creates a new publisher using the pkarr relay server at the URL.
-    </span><span class="kw">pub fn </span>new(pkarr_relay: Url) -&gt; <span class="self">Self </span>{
-        <span class="self">Self </span>{
-            pkarr_client: PkarrRelayClient::new(pkarr_relay),
+    <span class="doccomment">/// Creates a new resolver builder using the pkarr relay server at the URL.
+    ///
+    /// The builder implements [`IntoDiscovery`].
+    </span><span class="kw">pub fn </span>builder(pkarr_relay: Url) -&gt; PkarrResolverBuilder {
+        PkarrResolverBuilder {
+            pkarr_relay,
+            <span class="attr">#[cfg(not(wasm_browser))]
+            </span>dns_resolver: <span class="prelude-val">None</span>,
         }
     }
 
-    <span class="doccomment">/// Creates a pkarr resolver which uses the [number 0] pkarr relay server.
+    <span class="doccomment">/// Creates a pkarr resolver builder which uses the [number 0] pkarr relay server.
     ///
     /// This uses the pkarr relay server operated by [number 0] at
     /// [`N0_DNS_PKARR_RELAY_PROD`].
@@ -931,14 +1010,14 @@
     /// server is used instead.
     ///
     /// [number 0]: https://n0.computer
-    </span><span class="kw">pub fn </span>n0_dns() -&gt; <span class="self">Self </span>{
+    </span><span class="kw">pub fn </span>n0_dns() -&gt; PkarrResolverBuilder {
         <span class="kw">let </span>pkarr_relay = <span class="kw">match </span>force_staging_infra() {
             <span class="bool-val">true </span>=&gt; N0_DNS_PKARR_RELAY_STAGING,
             <span class="bool-val">false </span>=&gt; N0_DNS_PKARR_RELAY_PROD,
         };
 
         <span class="kw">let </span>pkarr_relay: Url = pkarr_relay.parse().expect(<span class="string">"url is valid"</span>);
-        <span class="self">Self</span>::new(pkarr_relay)
+        <span class="self">Self</span>::builder(pkarr_relay)
     }
 }
 
@@ -975,7 +1054,8 @@
     }
 
     <span class="doccomment">/// Creates a new client while passing a DNS resolver to use.
-    </span><span class="kw">pub fn </span>with_dns_resolver(pkarr_relay_url: Url, dns_resolver: DnsResolver) -&gt; <span class="self">Self </span>{
+    </span><span class="attr">#[cfg(not(wasm_browser))]
+    </span><span class="kw">pub fn </span>with_dns_resolver(pkarr_relay_url: Url, dns_resolver: <span class="kw">crate</span>::dns::DnsResolver) -&gt; <span class="self">Self </span>{
         <span class="kw">let </span>http_client = reqwest::Client::builder()
             .dns_resolver(Arc::new(dns_resolver))
             .build()
@@ -987,7 +1067,7 @@
     }
 
     <span class="doccomment">/// Resolves a [`SignedPacket`] for the given [`NodeId`].
-    </span><span class="kw">pub async fn </span>resolve(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; anyhow::Result&lt;SignedPacket&gt; {
+    </span><span class="kw">pub async fn </span>resolve(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Result</span>&lt;SignedPacket&gt; {
         <span class="comment">// We map the error to string, as in browsers the error is !Send
         </span><span class="kw">let </span>public_key = pkarr::PublicKey::try_from(node_id.as_bytes())
             .map_err(|e| <span class="macro">anyhow::anyhow!</span>(e.to_string()))<span class="question-mark">?</span>;
@@ -1012,7 +1092,7 @@
     }
 
     <span class="doccomment">/// Publishes a [`SignedPacket`].
-    </span><span class="kw">pub async fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, signed_packet: <span class="kw-2">&amp;</span>SignedPacket) -&gt; anyhow::Result&lt;()&gt; {
+    </span><span class="kw">pub async fn </span>publish(<span class="kw-2">&amp;</span><span class="self">self</span>, signed_packet: <span class="kw-2">&amp;</span>SignedPacket) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>url = <span class="self">self</span>.pkarr_relay_url.clone();
         url.path_segments_mut()
             .map_err(|<span class="kw">_</span>| <span class="macro">anyhow!</span>(<span class="string">"Failed to publish: Invalid relay URL"</span>))<span class="question-mark">?
