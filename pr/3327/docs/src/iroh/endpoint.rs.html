@@ -3170,8 +3170,7 @@
 <a href="#3169" id="3169">3169</a>
 <a href="#3170" id="3170">3170</a>
 <a href="#3171" id="3171">3171</a>
-<a href="#3172" id="3172">3172</a>
-<a href="#3173" id="3173">3173</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
+<a href="#3172" id="3172">3172</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`Endpoint`] allows establishing connections to other iroh nodes.
 //!
 //! The [`Endpoint`] is the main API interface to manage a local iroh node.  It allows
 //! connecting to and accepting connections from other nodes.  See the [module docs] for
@@ -3407,7 +3406,7 @@
         <span class="kw">if let </span><span class="prelude-val">Some</span>(discovery) = discovery {
             endpoint
                 .msock
-                .set_discovery(discovery)
+                .init_discovery(discovery)
                 .expect(<span class="string">"set_discovery is called the first time"</span>);
         }
         <span class="prelude-val">Ok</span>(endpoint)
@@ -3595,8 +3594,7 @@
     /// configuration options. If you need any of those, you should manually
     /// create a DhtDiscovery and add it with [`Builder::add_discovery`].
     </span><span class="kw">pub fn </span>discovery_dht(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
-        <span class="kw">use </span><span class="kw">crate</span>::discovery::pkarr::dht::DhtDiscovery;
-        <span class="self">self </span>= <span class="self">self</span>.add_discovery(DhtDiscovery::builder());
+        <span class="self">self </span>= <span class="self">self</span>.add_discovery(<span class="kw">crate</span>::discovery::pkarr::dht::DhtDiscovery::builder());
         <span class="self">self
     </span>}
 

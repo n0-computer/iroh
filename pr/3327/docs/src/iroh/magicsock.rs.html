@@ -4947,10 +4947,10 @@
         <span class="self">self</span>.discovery.get().map(Box::as_ref)
     }
 
-    <span class="doccomment">/// Sets the discovery service. May only be called once.
+    <span class="doccomment">/// Sets the discovery service. Only has an effect the first time this is called.
     ///
-    /// Returns an error if previously called.
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>set_discovery(
+    /// Returns an error if not called for the first time, returning back the passed value.
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>init_discovery(
         <span class="kw-2">&amp;</span><span class="self">self</span>,
         discovery: Box&lt;<span class="kw">dyn </span>Discovery&gt;,
     ) -&gt; <span class="prelude-ty">Result</span>&lt;(), Box&lt;<span class="kw">dyn </span>Discovery&gt;&gt; {
