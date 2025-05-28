@@ -234,7 +234,7 @@ impl Builder {
         if let Some(discovery) = discovery {
             endpoint
                 .msock
-                .set_discovery(discovery)
+                .init_discovery(discovery)
                 .expect("set_discovery is called the first time");
         }
         Ok(endpoint)
@@ -422,8 +422,7 @@ impl Builder {
     /// configuration options. If you need any of those, you should manually
     /// create a DhtDiscovery and add it with [`Builder::add_discovery`].
     pub fn discovery_dht(mut self) -> Self {
-        use crate::discovery::pkarr::dht::DhtDiscovery;
-        self = self.add_discovery(DhtDiscovery::builder());
+        self = self.add_discovery(crate::discovery::pkarr::dht::DhtDiscovery::builder());
         self
     }
 
