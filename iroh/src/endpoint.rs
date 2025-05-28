@@ -1027,7 +1027,7 @@ impl Endpoint {
     /// # });
     /// ```
     #[doc(hidden)]
-    pub fn net_report(&self) -> n0_watcher::Direct<Option<Arc<Report>>> {
+    pub fn net_report(&self) -> impl Watcher<Value = Option<Report>> {
         self.msock.net_report()
     }
 
@@ -2214,12 +2214,9 @@ fn is_cgi() -> bool {
 // https://github.com/n0-computer/iroh/issues/1183
 #[cfg(test)]
 mod tests {
-
-    use std::time::Instant;
-
     use iroh_metrics::MetricsSource;
     use iroh_relay::http::Protocol;
-    use n0_future::{task::AbortOnDropHandle, StreamExt};
+    use n0_future::{task::AbortOnDropHandle, time::Instant, StreamExt};
     use rand::SeedableRng;
     use testresult::TestResult;
     use tracing::{error_span, info, info_span, Instrument};
@@ -2749,8 +2746,8 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_direct_addresses_no_stun_relay() {
-        let (relay_map, _, _guard) = run_relay_server_with(None, false).await.unwrap();
+    async fn test_direct_addresses_no_qad_relay() {
+        let (relay_map, _, _guard) = run_relay_server_with(false).await.unwrap();
 
         let ep = Endpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])
@@ -3166,7 +3163,7 @@ mod tests {
             .await?;
 
         // can get a first report
-        endpoint.net_report().initialized().await?;
+        endpoint.net_report().updated().await?;
 
         Ok(())
     }

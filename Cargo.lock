@@ -652,6 +652,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "console_error_panic_hook"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a06aeb73f470f66dcdbf7223caeebb85984942f22f1adb2a088cf9668146bbbc"
+dependencies = [
+ "cfg-if",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "const-oid"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2205,6 +2215,7 @@ dependencies = [
  "bytes",
  "cfg_aliases",
  "clap",
+ "console_error_panic_hook",
  "crypto_box",
  "data-encoding",
  "der",
@@ -2491,7 +2502,6 @@ dependencies = [
  "sha1",
  "simdutf8",
  "strum",
- "stun-rs",
  "testresult",
  "thiserror 2.0.12",
  "time",
@@ -2911,7 +2921,7 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.5.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=feat-new-udp-api#5a6959176ca61fb4286458a4cdb30b61f07abd03"
+source = "git+https://github.com/n0-computer/net-tools?branch=feat-interfaces#733e2e0d058ddaea2d5d94b278c689b432083e27"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -5488,7 +5498,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

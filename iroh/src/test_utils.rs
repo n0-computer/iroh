@@ -5,15 +5,10 @@ use anyhow::Result;
 pub use dns_and_pkarr_servers::DnsPkarrServer;
 use iroh_base::RelayUrl;
 use iroh_relay::{
-    server::{
-        AccessConfig, CertConfig, QuicConfig, RelayConfig, Server, ServerConfig, StunConfig,
-        TlsConfig,
-    },
+    server::{AccessConfig, CertConfig, QuicConfig, RelayConfig, Server, ServerConfig, TlsConfig},
     RelayMap, RelayNode, RelayQuicConfig,
 };
 use tokio::sync::oneshot;
-
-use crate::defaults::DEFAULT_STUN_PORT;
 
 /// A drop guard to clean up test infrastructure.
 ///
@@ -25,32 +20,12 @@ use crate::defaults::DEFAULT_STUN_PORT;
 #[allow(dead_code)]
 pub struct CleanupDropGuard(pub(crate) oneshot::Sender<()>);
 
-/// Runs a relay server with STUN and QUIC enabled suitable for tests.
+/// Runs a relay server with QUIC enabled suitable for tests.
 ///
 /// The returned `Url` is the url of the relay server in the returned [`RelayMap`].
 /// When dropped, the returned [`Server`] does will stop running.
 pub async fn run_relay_server() -> Result<(RelayMap, RelayUrl, Server)> {
-    run_relay_server_with(
-        Some(StunConfig {
-            bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
-        }),
-        true,
-    )
-    .await
-}
-
-/// Runs a relay server with STUN enabled suitable for tests.
-///
-/// The returned `Url` is the url of the relay server in the returned [`RelayMap`].
-/// When dropped, the returned [`Server`] does will stop running.
-pub async fn run_relay_server_with_stun() -> Result<(RelayMap, RelayUrl, Server)> {
-    run_relay_server_with(
-        Some(StunConfig {
-            bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
-        }),
-        false,
-    )
-    .await
+    run_relay_server_with(true).await
 }
 
 /// Runs a relay server.
@@ -62,10 +37,7 @@ pub async fn run_relay_server_with_stun() -> Result<(RelayMap, RelayUrl, Server)
 ///
 ///
 /// The return value is similar to [`run_relay_server`].
-pub async fn run_relay_server_with(
-    stun: Option<StunConfig>,
-    quic: bool,
-) -> Result<(RelayMap, RelayUrl, Server)> {
+pub async fn run_relay_server_with(quic: bool) -> Result<(RelayMap, RelayUrl, Server)> {
     let (certs, server_config) = iroh_relay::server::testing::self_signed_tls_certs_and_config();
 
     let tls = TlsConfig {
@@ -91,7 +63,6 @@ pub async fn run_relay_server_with(
             access: AccessConfig::Everyone,
         }),
         quic,
-        stun,
         #[cfg(feature = "metrics")]
         metrics_addr: None,
     };
@@ -103,8 +74,6 @@ pub async fn run_relay_server_with(
         .map(|addr| RelayQuicConfig { port: addr.port() });
     let n: RelayMap = RelayNode {
         url: url.clone(),
-        stun_only: false,
-        stun_port: server.stun_addr().map_or(DEFAULT_STUN_PORT, |s| s.port()),
         quic,
     }
     .into();
