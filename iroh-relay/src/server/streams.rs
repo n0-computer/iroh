@@ -12,7 +12,7 @@ use tokio_util::codec::Framed;
 use tokio_websockets::WebSocketStream;
 
 use crate::{
-    protos::relay::{Frame, RelayCodec, RelayProtoError},
+    protos::relay::{Frame, RecvError, RelayCodec},
     KeyCache,
 };
 
@@ -72,7 +72,7 @@ impl Sink<Frame> for RelayedStream {
 #[derive(Debug, Snafu)]
 pub enum StreamError {
     #[snafu(transparent)]
-    Proto { source: RelayProtoError },
+    Proto { source: RecvError },
     #[snafu(transparent)]
     Ws { source: tokio_websockets::Error },
 }

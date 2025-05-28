@@ -23,7 +23,7 @@ use crate::protos::relay::{ClientInfo, Frame, MAX_PACKET_SIZE, PROTOCOL_VERSION}
 #[cfg(not(wasm_browser))]
 use crate::{
     client::streams::{MaybeTlsStream, MaybeTlsStreamChained, ProxyStream},
-    protos::relay::{RelayCodec, RelayProtoError},
+    protos::relay::{RecvError as RecvRelayError, RelayCodec, SendError as SendRelayError},
 };
 
 /// Error for sending messages to the relay server.
@@ -63,7 +63,9 @@ pub enum RecvError {
     #[snafu(transparent)]
     Io { source: io::Error },
     #[snafu(transparent)]
-    Protocol { source: RelayProtoError },
+    ProtocolSend { source: SendRelayError },
+    #[snafu(transparent)]
+    ProtocolRecv { source: RecvRelayError },
     #[snafu(transparent)]
     Websocket {
         #[cfg(not(wasm_browser))]
@@ -133,7 +135,7 @@ impl Conn {
         conn: MaybeTlsStreamChained,
         key_cache: KeyCache,
         secret_key: &SecretKey,
-    ) -> Result<Self, RelayProtoError> {
+    ) -> Result<Self, SendRelayError> {
         let conn = Framed::new(conn, RelayCodec::new(key_cache));
 
         let mut conn = Self::Relay { conn };
@@ -149,7 +151,7 @@ impl Conn {
         conn: tokio_websockets::WebSocketStream<MaybeTlsStream<ProxyStream>>,
         key_cache: KeyCache,
         secret_key: &SecretKey,
-    ) -> Result<Self, RelayProtoError> {
+    ) -> Result<Self, SendRelayError> {
         let mut conn = Self::Ws { conn, key_cache };
 
         // exchange information with the server
@@ -160,10 +162,7 @@ impl Conn {
 }
 
 /// Sends the server handshake message.
-async fn server_handshake(
-    writer: &mut Conn,
-    secret_key: &SecretKey,
-) -> Result<(), RelayProtoError> {
+async fn server_handshake(writer: &mut Conn, secret_key: &SecretKey) -> Result<(), SendRelayError> {
     debug!("server_handshake: started");
     let client_info = ClientInfo {
         version: PROTOCOL_VERSION,

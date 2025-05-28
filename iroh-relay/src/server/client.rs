@@ -22,7 +22,7 @@ use tracing::{debug, error, instrument, trace, warn, Instrument};
 use crate::{
     protos::{
         disco,
-        relay::{write_frame, Frame, RelayProtoError, PING_INTERVAL},
+        relay::{write_frame, Frame, SendError as SendRelayError, PING_INTERVAL},
     },
     server::{
         clients::Clients,
@@ -204,7 +204,7 @@ pub enum HandleFrameError {
         span_trace: n0_snafu::SpanTrace,
     },
     #[snafu(transparent)]
-    Relay { source: RelayProtoError },
+    Relay { source: SendRelayError },
     #[snafu(display("Server issue: {problem:?}"))]
     Health {
         problem: Bytes,
@@ -237,7 +237,7 @@ pub enum RunError {
     },
     #[snafu(display("Failed to send disco packet"))]
     DiscoPacketSend {
-        source: RelayProtoError,
+        source: SendRelayError,
         #[snafu(implicit)]
         span_trace: n0_snafu::SpanTrace,
     },
@@ -248,7 +248,7 @@ pub enum RunError {
     },
     #[snafu(display("Failed to send packet"))]
     PacketSend {
-        source: RelayProtoError,
+        source: SendRelayError,
         #[snafu(implicit)]
         span_trace: n0_snafu::SpanTrace,
     },
@@ -259,13 +259,13 @@ pub enum RunError {
     },
     #[snafu(display("NodeGone write frame failed"))]
     NodeGoneWriteFrame {
-        source: RelayProtoError,
+        source: SendRelayError,
         #[snafu(implicit)]
         span_trace: n0_snafu::SpanTrace,
     },
     #[snafu(display("Keep alive write frame failed"))]
     KeepAliveWriteFrame {
-        source: RelayProtoError,
+        source: SendRelayError,
         #[snafu(implicit)]
         span_trace: n0_snafu::SpanTrace,
     },
@@ -408,7 +408,7 @@ impl Actor {
     /// Writes the given frame to the connection.
     ///
     /// Errors if the send does not happen within the `timeout` duration
-    async fn write_frame(&mut self, frame: Frame) -> Result<(), RelayProtoError> {
+    async fn write_frame(&mut self, frame: Frame) -> Result<(), SendRelayError> {
         write_frame(&mut self.stream, frame, Some(self.timeout)).await
     }
 
@@ -416,7 +416,7 @@ impl Actor {
     ///
     /// Errors if the send does not happen within the `timeout` duration
     /// Does not flush.
-    async fn send_raw(&mut self, packet: Packet) -> Result<(), RelayProtoError> {
+    async fn send_raw(&mut self, packet: Packet) -> Result<(), SendRelayError> {
         let src_key = packet.src;
         let content = packet.data;
 
@@ -427,7 +427,7 @@ impl Actor {
             .await
     }
 
-    async fn send_packet(&mut self, packet: Packet) -> Result<(), RelayProtoError> {
+    async fn send_packet(&mut self, packet: Packet) -> Result<(), SendRelayError> {
         trace!("send packet");
         match self.send_raw(packet).await {
             Ok(()) => {
@@ -441,7 +441,7 @@ impl Actor {
         }
     }
 
-    async fn send_disco_packet(&mut self, packet: Packet) -> Result<(), RelayProtoError> {
+    async fn send_disco_packet(&mut self, packet: Packet) -> Result<(), SendRelayError> {
         trace!("send disco packet");
         match self.send_raw(packet).await {
             Ok(()) => {

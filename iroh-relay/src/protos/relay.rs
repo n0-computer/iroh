@@ -24,7 +24,7 @@ use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 use snafu::{Backtrace, Snafu};
 
-use crate::{client::conn::SendError, KeyCache};
+use crate::{client::conn::SendError as ConnSendError, KeyCache};
 
 /// The maximum size of a packet sent over relay.
 /// (This only includes the data bytes visible to magicsock, not
@@ -128,7 +128,7 @@ pub(crate) struct ClientInfo {
     pub(crate) version: usize,
 }
 
-/// Protocol related errors.
+/// Protocol send errors.
 #[common_fields({
     backtrace: Option<Backtrace>,
     #[snafu(implicit)]
@@ -137,27 +137,45 @@ pub(crate) struct ClientInfo {
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
-pub enum RelayProtoError {
+pub enum SendError {
+    #[snafu(transparent)]
+    Io { source: std::io::Error },
+    #[snafu(transparent)]
+    Timeout { source: time::Elapsed },
+    #[snafu(transparent)]
+    ConnSend { source: ConnSendError },
+    #[snafu(transparent)]
+    SerDe { source: postcard::Error },
+}
+
+/// Protocol send errors.
+#[common_fields({
+    backtrace: Option<Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+pub enum RecvError {
     #[snafu(transparent)]
     Io { source: std::io::Error },
     #[snafu(display("unexpected frame: got {got}, expected {expected}"))]
     UnexpectedFrame { got: FrameType, expected: FrameType },
-    #[snafu(transparent)]
-    SerDe { source: postcard::Error },
+    #[snafu(display("Frame is too large, has {frame_len} bytes"))]
+    FrameTooLarge { frame_len: usize },
     #[snafu(transparent)]
     Timeout { source: time::Elapsed },
     #[snafu(transparent)]
-    InvalidSignature { source: SignatureError },
+    SerDe { source: postcard::Error },
     #[snafu(transparent)]
-    ConnSend { source: SendError },
-    #[snafu(display("Too few bytes"))]
-    TooSmall {},
-    #[snafu(display("Frame is too large, has {frame_len} bytes"))]
-    FrameTooLarge { frame_len: usize },
+    InvalidSignature { source: SignatureError },
     #[snafu(display("Invalid frame encoding"))]
     InvalidFrame {},
     #[snafu(display("Invalid frame type: {frame_type}"))]
     InvalidFrameType { frame_type: FrameType },
+    #[snafu(display("Too few bytes"))]
+    TooSmall {},
 }
 
 /// Writes complete frame, errors if it is unable to write within the given `timeout`.
@@ -169,7 +187,7 @@ pub(crate) async fn write_frame<S: Sink<Frame, Error = std::io::Error> + Unpin>(
     mut writer: S,
     frame: Frame,
     timeout: Option<Duration>,
-) -> Result<(), RelayProtoError> {
+) -> Result<(), SendError> {
     if let Some(duration) = timeout {
         tokio::time::timeout(duration, writer.send(frame)).await??;
     } else {
@@ -183,11 +201,11 @@ pub(crate) async fn write_frame<S: Sink<Frame, Error = std::io::Error> + Unpin>(
 /// and the client's [`ClientInfo`], sealed using the server's [`PublicKey`].
 ///
 /// Flushes after writing.
-pub(crate) async fn send_client_key<S: Sink<Frame, Error = SendError> + Unpin>(
+pub(crate) async fn send_client_key<S: Sink<Frame, Error = ConnSendError> + Unpin>(
     mut writer: S,
     client_secret_key: &SecretKey,
     client_info: &ClientInfo,
-) -> Result<(), RelayProtoError> {
+) -> Result<(), SendError> {
     let msg = postcard::to_stdvec(client_info)?;
     let signature = client_secret_key.sign(&msg);
 
@@ -209,7 +227,7 @@ pub(crate) async fn recv_client_key<E, S: Stream<Item = Result<Frame, E>> + Unpi
     stream: S,
 ) -> Result<(PublicKey, ClientInfo), E>
 where
-    E: From<RelayProtoError>,
+    E: From<RecvError>,
 {
     // the client is untrusted at this point, limit the input size even smaller than our usual
     // maximum frame size, and give a timeout
@@ -220,7 +238,7 @@ where
         recv_frame(FrameType::ClientInfo, stream),
     )
     .await
-    .map_err(RelayProtoError::from)??;
+    .map_err(RecvError::from)??;
 
     if let Frame::ClientInfo {
         client_public_key,
@@ -230,9 +248,9 @@ where
     {
         client_public_key
             .verify(&message, &signature)
-            .map_err(RelayProtoError::from)?;
+            .map_err(RecvError::from)?;
 
-        let info: ClientInfo = postcard::from_bytes(&message).map_err(RelayProtoError::from)?;
+        let info: ClientInfo = postcard::from_bytes(&message).map_err(RecvError::from)?;
         Ok((client_public_key, info))
     } else {
         Err(UnexpectedFrameSnafu {
@@ -356,10 +374,7 @@ impl Frame {
     ///
     /// Specifically, bytes received from a binary websocket message frame.
     #[allow(clippy::result_large_err)]
-    pub(crate) fn decode_from_ws_msg(
-        bytes: Bytes,
-        cache: &KeyCache,
-    ) -> Result<Self, RelayProtoError> {
+    pub(crate) fn decode_from_ws_msg(bytes: Bytes, cache: &KeyCache) -> Result<Self, RecvError> {
         if bytes.is_empty() {
             return Err(TooSmallSnafu.build());
         }
@@ -434,7 +449,7 @@ impl Frame {
         frame_type: FrameType,
         content: Bytes,
         cache: &KeyCache,
-    ) -> Result<Self, RelayProtoError> {
+    ) -> Result<Self, RecvError> {
         let res = match frame_type {
             FrameType::ClientInfo => {
                 if content.len() < PublicKey::LENGTH + Signature::BYTE_SIZE + MAGIC.len() {
@@ -570,7 +585,7 @@ mod framing {
 
     impl Decoder for RelayCodec {
         type Item = Frame;
-        type Error = RelayProtoError;
+        type Error = RecvError;
 
         fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
             // Need at least 5 bytes
@@ -644,7 +659,7 @@ pub(crate) async fn recv_frame<E, S: Stream<Item = Result<Frame, E>> + Unpin>(
     mut stream: S,
 ) -> Result<Frame, E>
 where
-    RelayProtoError: Into<E>,
+    RecvError: Into<E>,
 {
     match stream.next().await {
         Some(Ok(frame)) => {
@@ -659,7 +674,7 @@ where
             Ok(frame)
         }
         Some(Err(err)) => Err(err),
-        None => Err(RelayProtoError::from(std::io::Error::new(
+        None => Err(RecvError::from(std::io::Error::new(
             std::io::ErrorKind::UnexpectedEof,
             "expected frame".to_string(),
         ))
@@ -700,7 +715,8 @@ mod tests {
     async fn test_send_recv_client_key() -> Result {
         let (reader, writer) = tokio::io::duplex(1024);
         let mut reader = FramedRead::new(reader, RelayCodec::test());
-        let mut writer = FramedWrite::new(writer, RelayCodec::test()).sink_map_err(SendError::from);
+        let mut writer =
+            FramedWrite::new(writer, RelayCodec::test()).sink_map_err(ConnSendError::from);
 
         let client_key = SecretKey::generate(rand::thread_rng());
         let client_info = ClientInfo {

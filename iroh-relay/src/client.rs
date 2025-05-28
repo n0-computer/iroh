@@ -27,7 +27,7 @@ pub use self::conn::{ReceivedMessage, RecvError, SendError, SendMessage};
 use crate::dns::{DnsError, DnsResolver};
 use crate::{
     http::{Protocol, RELAY_PATH},
-    protos::relay::RelayProtoError,
+    protos::relay::SendError as SendRelayError,
     KeyCache,
 };
 
@@ -39,7 +39,10 @@ mod tls;
 #[cfg(not(wasm_browser))]
 mod util;
 
-/// Connection errors
+/// Connection errors.
+///
+/// `ConnectError` contains `DialError`, errors that can occur while dialing the
+/// relay, as well as errors that occur while creating or maintaining a connection.
 #[common_fields({
     backtrace: Option<Backtrace>,
     #[snafu(implicit)]
@@ -61,7 +64,7 @@ pub enum ConnectError {
         source: ws_stream_wasm::WsErr,
     },
     #[snafu(transparent)]
-    Handshake { source: RelayProtoError },
+    Handshake { source: SendRelayError },
     #[snafu(transparent)]
     Dial { source: DialError },
     #[snafu(display("Unexpected status during upgrade: {code}"))]
@@ -79,7 +82,7 @@ pub enum ConnectError {
     RelayProtoNotAvailable {},
 }
 
-/// Dialing errors
+/// Errors that can occur while dialing the relay server.
 #[common_fields({
     backtrace: Option<Backtrace>,
     #[snafu(implicit)]
