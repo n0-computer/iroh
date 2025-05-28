@@ -149,9 +149,15 @@ pub enum DiscoveryError {
     #[snafu(display("Discovery produced no results"))]
     NoResults { node_id: PublicKey },
     #[snafu(display("Error encoding the signed packet"))]
-    SignedPacket { source: Box<EncodingError> },
+    SignedPacket {
+        #[snafu(source(from(EncodingError, Box::new)))]
+        source: Box<EncodingError>,
+    },
     #[snafu(display("Error parsing the signed packet"))]
-    ParsePacket { source: Box<ParseError> },
+    ParsePacket {
+        #[snafu(source(from(ParseError, Box::new)))]
+        source: Box<ParseError>,
+    },
     #[snafu(display("Service '{provenance}' error"))]
     User {
         provenance: &'static str,

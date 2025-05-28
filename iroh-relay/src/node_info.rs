@@ -450,7 +450,10 @@ impl NodeInfo {
 #[snafu(visibility(pub(crate)))]
 pub enum LookupError {
     #[snafu(display("Malformed txt from lookup"))]
-    ParseError { source: Box<ParseError> },
+    ParseError {
+        #[snafu(source(from(ParseError, Box::new)))]
+        source: Box<ParseError>,
+    },
     #[snafu(display("Failed to resolve TXT record"))]
     LookupFailed { source: DnsError },
     #[cfg(not(wasm_browser))]
@@ -479,7 +482,10 @@ pub enum ParseError {
     #[snafu(display("Record is not an `iroh` record, expected `_iroh`, got `{label}`"))]
     NotAnIrohRecord { label: String },
     #[snafu(transparent)]
-    DecodingError { source: Box<DecodingError> },
+    DecodingError {
+        #[snafu(source(from(DecodingError, Box::new)))]
+        source: Box<DecodingError>,
+    },
 }
 
 impl std::ops::Deref for NodeInfo {
@@ -518,7 +524,7 @@ fn node_id_from_hickory_name(
     }
     let label =
         std::str::from_utf8(labels.next().expect("num_labels checked")).context(Utf8Snafu)?;
-    let node_id = NodeId::from_z32(label).map_err(Box::new)?;
+    let node_id = NodeId::from_z32(label)?;
     Ok(node_id)
 }
 
@@ -599,9 +605,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
             .lookup_txt(name, DNS_TIMEOUT)
             .await
             .context(LookupFailedSnafu)?;
-        let attrs = Self::from_txt_lookup(lookup)
-            .map_err(Box::new)
-            .context(ParseSnafu)?;
+        let attrs = Self::from_txt_lookup(lookup).context(ParseSnafu)?;
         Ok(attrs)
     }
 

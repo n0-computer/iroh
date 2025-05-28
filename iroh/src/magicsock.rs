@@ -2081,8 +2081,8 @@ impl DiscoSecrets {
         mut sealed_box: Vec<u8>,
     ) -> Result<disco::Message, DiscoBoxError> {
         self.get(secret, node_id, |secret| secret.open(&mut sealed_box))
-            .map_err(|err| OpenSnafu.into_error(Box::new(err)))?;
-        disco::Message::from_bytes(&sealed_box).map_err(|err| ParseSnafu.into_error(Box::new(err)))
+            .context(OpenSnafu)?;
+        disco::Message::from_bytes(&sealed_box).context(ParseSnafu)
     }
 }
 
@@ -2095,9 +2095,15 @@ impl DiscoSecrets {
 #[derive(Debug, Snafu)]
 enum DiscoBoxError {
     #[snafu(display("Failed to open crypto box"))]
-    Open { source: Box<DecryptionError> },
+    Open {
+        #[snafu(source(from(DecryptionError, Box::new)))]
+        source: Box<DecryptionError>,
+    },
     #[snafu(display("Failed to parse disco message"))]
-    Parse { source: Box<disco::ParseError> },
+    Parse {
+        #[snafu(source(from(disco::ParseError, Box::new)))]
+        source: Box<disco::ParseError>,
+    },
 }
 
 /// Creates a sender and receiver pair for sending datagrams to the [`RelayActor`].
