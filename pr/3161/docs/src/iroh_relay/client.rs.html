@@ -448,7 +448,10 @@
 <a href="#447" id="447">447</a>
 <a href="#448" id="448">448</a>
 <a href="#449" id="449">449</a>
-<a href="#450" id="450">450</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
+<a href="#450" id="450">450</a>
+<a href="#451" id="451">451</a>
+<a href="#452" id="452">452</a>
+<a href="#453" id="453">453</a></pre></div><pre class="rust"><code><span class="doccomment">//! Exposes [`Client`], which allows to establish connections to a relay server.
 //!
 //! Based on tailscale/derp/derphttp/derphttp_client.go
 
@@ -477,7 +480,7 @@
 </span><span class="kw">use </span><span class="kw">crate</span>::dns::{DnsError, DnsResolver};
 <span class="kw">use crate</span>::{
     http::{Protocol, RELAY_PATH},
-    protos::relay::RelayProtoError,
+    protos::relay::SendError <span class="kw">as </span>SendRelayError,
     KeyCache,
 };
 
@@ -489,7 +492,10 @@
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">mod </span>util;
 
-<span class="doccomment">/// Connection errors
+<span class="doccomment">/// Connection errors.
+///
+/// `ConnectError` contains `DialError`, errors that can occur while dialing the
+/// relay, as well as errors that occur while creating or maintaining a connection.
 </span><span class="attr">#[common_fields({
     backtrace: <span class="prelude-ty">Option</span>&lt;Backtrace&gt;,
     <span class="attr">#[snafu(implicit)]
@@ -511,7 +517,7 @@
         </span>source: ws_stream_wasm::WsErr,
     },
     <span class="attr">#[snafu(transparent)]
-    </span>Handshake { source: RelayProtoError },
+    </span>Handshake { source: SendRelayError },
     <span class="attr">#[snafu(transparent)]
     </span>Dial { source: DialError },
     <span class="attr">#[snafu(display(<span class="string">"Unexpected status during upgrade: {code}"</span>))]
@@ -529,7 +535,7 @@
     </span>RelayProtoNotAvailable {},
 }
 
-<span class="doccomment">/// Dialing errors
+<span class="doccomment">/// Errors that can occur while dialing the relay server.
 </span><span class="attr">#[common_fields({
     backtrace: <span class="prelude-ty">Option</span>&lt;Backtrace&gt;,
     <span class="attr">#[snafu(implicit)]

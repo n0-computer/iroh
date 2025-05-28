@@ -934,7 +934,23 @@
 <a href="#933" id="933">933</a>
 <a href="#934" id="934">934</a>
 <a href="#935" id="935">935</a>
-<a href="#936" id="936">936</a></pre></div><pre class="rust"><code><span class="doccomment">//! This module implements the relaying protocol used by the `server` and `client`.
+<a href="#936" id="936">936</a>
+<a href="#937" id="937">937</a>
+<a href="#938" id="938">938</a>
+<a href="#939" id="939">939</a>
+<a href="#940" id="940">940</a>
+<a href="#941" id="941">941</a>
+<a href="#942" id="942">942</a>
+<a href="#943" id="943">943</a>
+<a href="#944" id="944">944</a>
+<a href="#945" id="945">945</a>
+<a href="#946" id="946">946</a>
+<a href="#947" id="947">947</a>
+<a href="#948" id="948">948</a>
+<a href="#949" id="949">949</a>
+<a href="#950" id="950">950</a>
+<a href="#951" id="951">951</a>
+<a href="#952" id="952">952</a></pre></div><pre class="rust"><code><span class="doccomment">//! This module implements the relaying protocol used by the `server` and `client`.
 //!
 //! Protocol flow:
 //!
@@ -960,7 +976,7 @@
 <span class="kw">use </span>serde::{Deserialize, Serialize};
 <span class="kw">use </span>snafu::{Backtrace, Snafu};
 
-<span class="kw">use crate</span>::{client::conn::SendError, KeyCache};
+<span class="kw">use crate</span>::{client::conn::SendError <span class="kw">as </span>ConnSendError, KeyCache};
 
 <span class="doccomment">/// The maximum size of a packet sent over relay.
 /// (This only includes the data bytes visible to magicsock, not
@@ -1064,7 +1080,7 @@
     </span><span class="kw">pub</span>(<span class="kw">crate</span>) version: usize,
 }
 
-<span class="doccomment">/// Protocol related errors.
+<span class="doccomment">/// Protocol send errors.
 </span><span class="attr">#[common_fields({
     backtrace: <span class="prelude-ty">Option</span>&lt;Backtrace&gt;,
     <span class="attr">#[snafu(implicit)]
@@ -1073,27 +1089,45 @@
 <span class="attr">#[allow(missing_docs)]
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
-</span><span class="kw">pub enum </span>RelayProtoError {
+</span><span class="kw">pub enum </span>SendError {
+    <span class="attr">#[snafu(transparent)]
+    </span>Io { source: std::io::Error },
+    <span class="attr">#[snafu(transparent)]
+    </span>Timeout { source: time::Elapsed },
+    <span class="attr">#[snafu(transparent)]
+    </span>ConnSend { source: ConnSendError },
+    <span class="attr">#[snafu(transparent)]
+    </span>SerDe { source: postcard::Error },
+}
+
+<span class="doccomment">/// Protocol send errors.
+</span><span class="attr">#[common_fields({
+    backtrace: <span class="prelude-ty">Option</span>&lt;Backtrace&gt;,
+    <span class="attr">#[snafu(implicit)]
+    </span>span_trace: n0_snafu::SpanTrace,
+})]
+<span class="attr">#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+</span><span class="kw">pub enum </span>RecvError {
     <span class="attr">#[snafu(transparent)]
     </span>Io { source: std::io::Error },
     <span class="attr">#[snafu(display(<span class="string">"unexpected frame: got {got}, expected {expected}"</span>))]
     </span>UnexpectedFrame { got: FrameType, expected: FrameType },
-    <span class="attr">#[snafu(transparent)]
-    </span>SerDe { source: postcard::Error },
+    <span class="attr">#[snafu(display(<span class="string">"Frame is too large, has {frame_len} bytes"</span>))]
+    </span>FrameTooLarge { frame_len: usize },
     <span class="attr">#[snafu(transparent)]
     </span>Timeout { source: time::Elapsed },
     <span class="attr">#[snafu(transparent)]
-    </span>InvalidSignature { source: SignatureError },
+    </span>SerDe { source: postcard::Error },
     <span class="attr">#[snafu(transparent)]
-    </span>ConnSend { source: SendError },
-    <span class="attr">#[snafu(display(<span class="string">"Too few bytes"</span>))]
-    </span>TooSmall {},
-    <span class="attr">#[snafu(display(<span class="string">"Frame is too large, has {frame_len} bytes"</span>))]
-    </span>FrameTooLarge { frame_len: usize },
+    </span>InvalidSignature { source: SignatureError },
     <span class="attr">#[snafu(display(<span class="string">"Invalid frame encoding"</span>))]
     </span>InvalidFrame {},
     <span class="attr">#[snafu(display(<span class="string">"Invalid frame type: {frame_type}"</span>))]
     </span>InvalidFrameType { frame_type: FrameType },
+    <span class="attr">#[snafu(display(<span class="string">"Too few bytes"</span>))]
+    </span>TooSmall {},
 }
 
 <span class="doccomment">/// Writes complete frame, errors if it is unable to write within the given `timeout`.
@@ -1105,7 +1139,7 @@
     <span class="kw-2">mut </span>writer: S,
     frame: Frame,
     timeout: <span class="prelude-ty">Option</span>&lt;Duration&gt;,
-) -&gt; <span class="prelude-ty">Result</span>&lt;(), RelayProtoError&gt; {
+) -&gt; <span class="prelude-ty">Result</span>&lt;(), SendError&gt; {
     <span class="kw">if let </span><span class="prelude-val">Some</span>(duration) = timeout {
         tokio::time::timeout(duration, writer.send(frame)).<span class="kw">await</span><span class="question-mark">??</span>;
     } <span class="kw">else </span>{
@@ -1119,11 +1153,11 @@
 /// and the client's [`ClientInfo`], sealed using the server's [`PublicKey`].
 ///
 /// Flushes after writing.
-</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>send_client_key&lt;S: Sink&lt;Frame, Error = SendError&gt; + Unpin&gt;(
+</span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>send_client_key&lt;S: Sink&lt;Frame, Error = ConnSendError&gt; + Unpin&gt;(
     <span class="kw-2">mut </span>writer: S,
     client_secret_key: <span class="kw-2">&amp;</span>SecretKey,
     client_info: <span class="kw-2">&amp;</span>ClientInfo,
-) -&gt; <span class="prelude-ty">Result</span>&lt;(), RelayProtoError&gt; {
+) -&gt; <span class="prelude-ty">Result</span>&lt;(), SendError&gt; {
     <span class="kw">let </span>msg = postcard::to_stdvec(client_info)<span class="question-mark">?</span>;
     <span class="kw">let </span>signature = client_secret_key.sign(<span class="kw-2">&amp;</span>msg);
 
@@ -1145,7 +1179,7 @@
     stream: S,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;(PublicKey, ClientInfo), E&gt;
 <span class="kw">where
-    </span>E: From&lt;RelayProtoError&gt;,
+    </span>E: From&lt;RecvError&gt;,
 {
     <span class="comment">// the client is untrusted at this point, limit the input size even smaller than our usual
     // maximum frame size, and give a timeout
@@ -1156,7 +1190,7 @@
         recv_frame(FrameType::ClientInfo, stream),
     )
     .<span class="kw">await
-    </span>.map_err(RelayProtoError::from)<span class="question-mark">??</span>;
+    </span>.map_err(RecvError::from)<span class="question-mark">??</span>;
 
     <span class="kw">if let </span>Frame::ClientInfo {
         client_public_key,
@@ -1166,9 +1200,9 @@
     {
         client_public_key
             .verify(<span class="kw-2">&amp;</span>message, <span class="kw-2">&amp;</span>signature)
-            .map_err(RelayProtoError::from)<span class="question-mark">?</span>;
+            .map_err(RecvError::from)<span class="question-mark">?</span>;
 
-        <span class="kw">let </span>info: ClientInfo = postcard::from_bytes(<span class="kw-2">&amp;</span>message).map_err(RelayProtoError::from)<span class="question-mark">?</span>;
+        <span class="kw">let </span>info: ClientInfo = postcard::from_bytes(<span class="kw-2">&amp;</span>message).map_err(RecvError::from)<span class="question-mark">?</span>;
         <span class="prelude-val">Ok</span>((client_public_key, info))
     } <span class="kw">else </span>{
         <span class="prelude-val">Err</span>(UnexpectedFrameSnafu {
@@ -1292,10 +1326,7 @@
     ///
     /// Specifically, bytes received from a binary websocket message frame.
     </span><span class="attr">#[allow(clippy::result_large_err)]
-    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>decode_from_ws_msg(
-        bytes: Bytes,
-        cache: <span class="kw-2">&amp;</span>KeyCache,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, RelayProtoError&gt; {
+    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>decode_from_ws_msg(bytes: Bytes, cache: <span class="kw-2">&amp;</span>KeyCache) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, RecvError&gt; {
         <span class="kw">if </span>bytes.is_empty() {
             <span class="kw">return </span><span class="prelude-val">Err</span>(TooSmallSnafu.build());
         }
@@ -1370,7 +1401,7 @@
         frame_type: FrameType,
         content: Bytes,
         cache: <span class="kw-2">&amp;</span>KeyCache,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, RelayProtoError&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, RecvError&gt; {
         <span class="kw">let </span>res = <span class="kw">match </span>frame_type {
             FrameType::ClientInfo =&gt; {
                 <span class="kw">if </span>content.len() &lt; PublicKey::LENGTH + Signature::BYTE_SIZE + MAGIC.len() {
@@ -1506,7 +1537,7 @@
 
     <span class="kw">impl </span>Decoder <span class="kw">for </span>RelayCodec {
         <span class="kw">type </span>Item = Frame;
-        <span class="kw">type </span>Error = RelayProtoError;
+        <span class="kw">type </span>Error = RecvError;
 
         <span class="kw">fn </span>decode(<span class="kw-2">&amp;mut </span><span class="self">self</span>, src: <span class="kw-2">&amp;mut </span>BytesMut) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt;, <span class="self">Self</span>::Error&gt; {
             <span class="comment">// Need at least 5 bytes
@@ -1580,7 +1611,7 @@
     <span class="kw-2">mut </span>stream: S,
 ) -&gt; <span class="prelude-ty">Result</span>&lt;Frame, E&gt;
 <span class="kw">where
-    </span>RelayProtoError: Into&lt;E&gt;,
+    </span>RecvError: Into&lt;E&gt;,
 {
     <span class="kw">match </span>stream.next().<span class="kw">await </span>{
         <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(frame)) =&gt; {
@@ -1595,7 +1626,7 @@
             <span class="prelude-val">Ok</span>(frame)
         }
         <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(err)) =&gt; <span class="prelude-val">Err</span>(err),
-        <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Err</span>(RelayProtoError::from(std::io::Error::new(
+        <span class="prelude-val">None </span>=&gt; <span class="prelude-val">Err</span>(RecvError::from(std::io::Error::new(
             std::io::ErrorKind::UnexpectedEof,
             <span class="string">"expected frame"</span>.to_string(),
         ))
@@ -1636,7 +1667,8 @@
     </span><span class="kw">async fn </span>test_send_recv_client_key() -&gt; <span class="prelude-ty">Result</span> {
         <span class="kw">let </span>(reader, writer) = tokio::io::duplex(<span class="number">1024</span>);
         <span class="kw">let </span><span class="kw-2">mut </span>reader = FramedRead::new(reader, RelayCodec::test());
-        <span class="kw">let </span><span class="kw-2">mut </span>writer = FramedWrite::new(writer, RelayCodec::test()).sink_map_err(SendError::from);
+        <span class="kw">let </span><span class="kw-2">mut </span>writer =
+            FramedWrite::new(writer, RelayCodec::test()).sink_map_err(ConnSendError::from);
 
         <span class="kw">let </span>client_key = SecretKey::generate(rand::thread_rng());
         <span class="kw">let </span>client_info = ClientInfo {

@@ -970,7 +970,7 @@
 <span class="kw">use crate</span>::{
     protos::{
         disco,
-        relay::{write_frame, Frame, RelayProtoError, PING_INTERVAL},
+        relay::{write_frame, Frame, SendError <span class="kw">as </span>SendRelayError, PING_INTERVAL},
     },
     server::{
         clients::Clients,
@@ -1152,7 +1152,7 @@
         </span>span_trace: n0_snafu::SpanTrace,
     },
     <span class="attr">#[snafu(transparent)]
-    </span>Relay { source: RelayProtoError },
+    </span>Relay { source: SendRelayError },
     <span class="attr">#[snafu(display(<span class="string">"Server issue: {problem:?}"</span>))]
     </span>Health {
         problem: Bytes,
@@ -1185,7 +1185,7 @@
     },
     <span class="attr">#[snafu(display(<span class="string">"Failed to send disco packet"</span>))]
     </span>DiscoPacketSend {
-        source: RelayProtoError,
+        source: SendRelayError,
         <span class="attr">#[snafu(implicit)]
         </span>span_trace: n0_snafu::SpanTrace,
     },
@@ -1196,7 +1196,7 @@
     },
     <span class="attr">#[snafu(display(<span class="string">"Failed to send packet"</span>))]
     </span>PacketSend {
-        source: RelayProtoError,
+        source: SendRelayError,
         <span class="attr">#[snafu(implicit)]
         </span>span_trace: n0_snafu::SpanTrace,
     },
@@ -1207,13 +1207,13 @@
     },
     <span class="attr">#[snafu(display(<span class="string">"NodeGone write frame failed"</span>))]
     </span>NodeGoneWriteFrame {
-        source: RelayProtoError,
+        source: SendRelayError,
         <span class="attr">#[snafu(implicit)]
         </span>span_trace: n0_snafu::SpanTrace,
     },
     <span class="attr">#[snafu(display(<span class="string">"Keep alive write frame failed"</span>))]
     </span>KeepAliveWriteFrame {
-        source: RelayProtoError,
+        source: SendRelayError,
         <span class="attr">#[snafu(implicit)]
         </span>span_trace: n0_snafu::SpanTrace,
     },
@@ -1356,7 +1356,7 @@
     <span class="doccomment">/// Writes the given frame to the connection.
     ///
     /// Errors if the send does not happen within the `timeout` duration
-    </span><span class="kw">async fn </span>write_frame(<span class="kw-2">&amp;mut </span><span class="self">self</span>, frame: Frame) -&gt; <span class="prelude-ty">Result</span>&lt;(), RelayProtoError&gt; {
+    </span><span class="kw">async fn </span>write_frame(<span class="kw-2">&amp;mut </span><span class="self">self</span>, frame: Frame) -&gt; <span class="prelude-ty">Result</span>&lt;(), SendRelayError&gt; {
         write_frame(<span class="kw-2">&amp;mut </span><span class="self">self</span>.stream, frame, <span class="prelude-val">Some</span>(<span class="self">self</span>.timeout)).<span class="kw">await
     </span>}
 
@@ -1364,7 +1364,7 @@
     ///
     /// Errors if the send does not happen within the `timeout` duration
     /// Does not flush.
-    </span><span class="kw">async fn </span>send_raw(<span class="kw-2">&amp;mut </span><span class="self">self</span>, packet: Packet) -&gt; <span class="prelude-ty">Result</span>&lt;(), RelayProtoError&gt; {
+    </span><span class="kw">async fn </span>send_raw(<span class="kw-2">&amp;mut </span><span class="self">self</span>, packet: Packet) -&gt; <span class="prelude-ty">Result</span>&lt;(), SendRelayError&gt; {
         <span class="kw">let </span>src_key = packet.src;
         <span class="kw">let </span>content = packet.data;
 
@@ -1375,7 +1375,7 @@
             .<span class="kw">await
     </span>}
 
-    <span class="kw">async fn </span>send_packet(<span class="kw-2">&amp;mut </span><span class="self">self</span>, packet: Packet) -&gt; <span class="prelude-ty">Result</span>&lt;(), RelayProtoError&gt; {
+    <span class="kw">async fn </span>send_packet(<span class="kw-2">&amp;mut </span><span class="self">self</span>, packet: Packet) -&gt; <span class="prelude-ty">Result</span>&lt;(), SendRelayError&gt; {
         <span class="macro">trace!</span>(<span class="string">"send packet"</span>);
         <span class="kw">match </span><span class="self">self</span>.send_raw(packet).<span class="kw">await </span>{
             <span class="prelude-val">Ok</span>(()) =&gt; {
@@ -1389,7 +1389,7 @@
         }
     }
 
-    <span class="kw">async fn </span>send_disco_packet(<span class="kw-2">&amp;mut </span><span class="self">self</span>, packet: Packet) -&gt; <span class="prelude-ty">Result</span>&lt;(), RelayProtoError&gt; {
+    <span class="kw">async fn </span>send_disco_packet(<span class="kw-2">&amp;mut </span><span class="self">self</span>, packet: Packet) -&gt; <span class="prelude-ty">Result</span>&lt;(), SendRelayError&gt; {
         <span class="macro">trace!</span>(<span class="string">"send disco packet"</span>);
         <span class="kw">match </span><span class="self">self</span>.send_raw(packet).<span class="kw">await </span>{
             <span class="prelude-val">Ok</span>(()) =&gt; {

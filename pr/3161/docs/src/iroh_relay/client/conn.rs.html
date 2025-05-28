@@ -462,8 +462,7 @@
 <a href="#461" id="461">461</a>
 <a href="#462" id="462">462</a>
 <a href="#463" id="463">463</a>
-<a href="#464" id="464">464</a>
-<a href="#465" id="465">465</a></pre></div><pre class="rust"><code><span class="doccomment">//! Manages client-side connections to the relay server.
+<a href="#464" id="464">464</a></pre></div><pre class="rust"><code><span class="doccomment">//! Manages client-side connections to the relay server.
 //!
 //! based on tailscale/derp/derp_client.go
 
@@ -488,7 +487,7 @@
 <span class="attr">#[cfg(not(wasm_browser))]
 </span><span class="kw">use crate</span>::{
     client::streams::{MaybeTlsStream, MaybeTlsStreamChained, ProxyStream},
-    protos::relay::{RelayCodec, RelayProtoError},
+    protos::relay::{RecvError <span class="kw">as </span>RecvRelayError, RelayCodec, SendError <span class="kw">as </span>SendRelayError},
 };
 
 <span class="doccomment">/// Error for sending messages to the relay server.
@@ -528,7 +527,9 @@
     <span class="attr">#[snafu(transparent)]
     </span>Io { source: io::Error },
     <span class="attr">#[snafu(transparent)]
-    </span>Protocol { source: RelayProtoError },
+    </span>ProtocolSend { source: SendRelayError },
+    <span class="attr">#[snafu(transparent)]
+    </span>ProtocolRecv { source: RecvRelayError },
     <span class="attr">#[snafu(transparent)]
     </span>Websocket {
         <span class="attr">#[cfg(not(wasm_browser))]
@@ -598,7 +599,7 @@
         conn: MaybeTlsStreamChained,
         key_cache: KeyCache,
         secret_key: <span class="kw-2">&amp;</span>SecretKey,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, RelayProtoError&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, SendRelayError&gt; {
         <span class="kw">let </span>conn = Framed::new(conn, RelayCodec::new(key_cache));
 
         <span class="kw">let </span><span class="kw-2">mut </span>conn = <span class="self">Self</span>::Relay { conn };
@@ -614,7 +615,7 @@
         conn: tokio_websockets::WebSocketStream&lt;MaybeTlsStream&lt;ProxyStream&gt;&gt;,
         key_cache: KeyCache,
         secret_key: <span class="kw-2">&amp;</span>SecretKey,
-    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, RelayProtoError&gt; {
+    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="self">Self</span>, SendRelayError&gt; {
         <span class="kw">let </span><span class="kw-2">mut </span>conn = <span class="self">Self</span>::Ws { conn, key_cache };
 
         <span class="comment">// exchange information with the server
@@ -625,10 +626,7 @@
 }
 
 <span class="doccomment">/// Sends the server handshake message.
-</span><span class="kw">async fn </span>server_handshake(
-    writer: <span class="kw-2">&amp;mut </span>Conn,
-    secret_key: <span class="kw-2">&amp;</span>SecretKey,
-) -&gt; <span class="prelude-ty">Result</span>&lt;(), RelayProtoError&gt; {
+</span><span class="kw">async fn </span>server_handshake(writer: <span class="kw-2">&amp;mut </span>Conn, secret_key: <span class="kw-2">&amp;</span>SecretKey) -&gt; <span class="prelude-ty">Result</span>&lt;(), SendRelayError&gt; {
     <span class="macro">debug!</span>(<span class="string">"server_handshake: started"</span>);
     <span class="kw">let </span>client_info = ClientInfo {
         version: PROTOCOL_VERSION,
