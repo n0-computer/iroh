@@ -140,7 +140,7 @@ pub mod static_provider;
 /// Any type that implements [`Discovery`] also implements [`IntoDiscovery`].
 ///
 /// [`Builder::add_discovery`]: crate::endpoint::Builder::add_discovery
-pub trait IntoDiscovery: Send + 'static {
+pub trait IntoDiscovery: Send + Sync + 'static {
     /// Turns this struct into a boxed [`Discovery`].
     ///
     /// The discovery service will be used by passed [`Endpoint`]. If a discovery service needs
@@ -157,7 +157,7 @@ impl<T: Discovery> IntoDiscovery for T {
 }
 
 /// Non-public dyn-compatible version of [`IntoDiscovery`], used in [`crate::endpoint::Builder`].
-pub(crate) trait DynIntoDiscovery: Send + 'static {
+pub(crate) trait DynIntoDiscovery: Send + Sync + 'static {
     /// See [`IntoDiscovery::into_discovery`]
     fn into_discovery(self: Box<Self>, endpoint: &Endpoint) -> Result<Box<dyn Discovery>>;
 }
