@@ -108,6 +108,7 @@
 use std::sync::Arc;
 
 use iroh_base::{NodeAddr, NodeId, PublicKey};
+use iroh_relay::node_info::EncodingError;
 use n0_future::{
     boxed::BoxStream,
     stream::StreamExt,
@@ -120,7 +121,7 @@ use snafu::{ensure, IntoError, Snafu};
 use tokio::sync::oneshot;
 use tracing::{debug, error_span, warn, Instrument};
 
-pub use crate::node_info::{NodeData, NodeInfo, UserData};
+pub use crate::node_info::{NodeData, NodeInfo, ParseError, UserData};
 use crate::Endpoint;
 
 #[cfg(not(wasm_browser))]
@@ -147,7 +148,10 @@ pub enum DiscoveryError {
     NodeId { node_id: PublicKey },
     #[snafu(display("Discovery produced no results"))]
     NoResults { node_id: PublicKey },
-
+    #[snafu(display("Error encoding the signed packet"))]
+    SignedPacket { source: Box<EncodingError> },
+    #[snafu(display("Error parsing the signed packet"))]
+    ParsePacket { source: Box<ParseError> },
     #[snafu(display("Service '{provenance}' error"))]
     User {
         provenance: &'static str,

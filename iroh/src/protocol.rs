@@ -43,7 +43,7 @@ use n0_future::{
     join_all,
     task::{self, AbortOnDropHandle, JoinSet},
 };
-use snafu::Snafu;
+use snafu::{Backtrace, Snafu};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info_span, trace, warn, Instrument};
@@ -105,7 +105,12 @@ pub enum ProtocolError {
     #[snafu(transparent)]
     Connect {
         source: crate::endpoint::ConnectionError,
+        backtrace: Option<Backtrace>,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
     },
+    #[snafu(transparent)]
+    RemoteNodeId { source: RemoteNodeIdError },
     #[snafu(transparent)]
     User {
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
@@ -123,12 +128,6 @@ impl ProtocolError {
 
 impl From<std::io::Error> for ProtocolError {
     fn from(err: std::io::Error) -> Self {
-        Self::from_err(err)
-    }
-}
-
-impl From<RemoteNodeIdError> for ProtocolError {
-    fn from(err: RemoteNodeIdError) -> Self {
         Self::from_err(err)
     }
 }

@@ -16,7 +16,7 @@ use nested_enum_utils::common_fields;
 use snafu::{Backtrace, OptionExt, Snafu};
 use url::Url;
 
-use crate::node_info::{self, Error as NodeError, NodeInfo};
+use crate::node_info::{LookupError, NodeInfo, StaggeredError};
 
 /// The n0 testing DNS node origin, for production.
 pub const N0_DNS_NODE_ORIGIN_PROD: &str = "dns.iroh.link";
@@ -277,7 +277,7 @@ impl DnsResolver {
         &self,
         node_id: &NodeId,
         origin: &str,
-    ) -> Result<NodeInfo, NodeError> {
+    ) -> Result<NodeInfo, LookupError> {
         let attrs = crate::node_info::TxtAttrs::<crate::node_info::IrohAttr>::lookup_by_id(
             self, node_id, origin,
         )
@@ -287,7 +287,7 @@ impl DnsResolver {
     }
 
     /// Looks up node info by DNS name.
-    pub async fn lookup_node_by_domain_name(&self, name: &str) -> Result<NodeInfo, NodeError> {
+    pub async fn lookup_node_by_domain_name(&self, name: &str) -> Result<NodeInfo, LookupError> {
         let attrs =
             crate::node_info::TxtAttrs::<crate::node_info::IrohAttr>::lookup_by_name(self, name)
                 .await?;
@@ -305,11 +305,11 @@ impl DnsResolver {
         &self,
         name: &str,
         delays_ms: &[u64],
-    ) -> Result<NodeInfo, NodeError> {
+    ) -> Result<NodeInfo, StaggeredError> {
         let f = || self.lookup_node_by_domain_name(name);
         stagger_call(f, delays_ms)
             .await
-            .map_err(|errors| node_info::StaggeredSnafu { errors }.build())
+            .map_err(StaggeredError::new)
     }
 
     /// Looks up node info by [`NodeId`] and origin domain name.
@@ -323,11 +323,11 @@ impl DnsResolver {
         node_id: &NodeId,
         origin: &str,
         delays_ms: &[u64],
-    ) -> Result<NodeInfo, NodeError> {
+    ) -> Result<NodeInfo, StaggeredError> {
         let f = || self.lookup_node_by_id(node_id, origin);
         stagger_call(f, delays_ms)
             .await
-            .map_err(|errors| node_info::StaggeredSnafu { errors }.build())
+            .map_err(StaggeredError::new)
     }
 }
 

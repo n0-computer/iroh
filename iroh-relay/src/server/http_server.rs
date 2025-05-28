@@ -200,7 +200,7 @@ pub enum ServeConnectionError {
     },
 }
 
-///
+/// Server accept errors.
 #[common_fields({
     backtrace: Option<Backtrace>,
 })]
@@ -232,7 +232,7 @@ pub enum AcceptError {
     },
 }
 
-/// Server accept errors
+/// Server connection errors, includes errors that can happen on `accept`.
 #[common_fields({
     backtrace: Option<Backtrace>,
 })]

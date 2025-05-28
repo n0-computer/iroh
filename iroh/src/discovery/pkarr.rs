@@ -63,7 +63,7 @@ use url::Url;
 
 use super::DiscoveryError;
 use crate::{
-    discovery::{Discovery, DiscoveryItem, NodeData},
+    discovery::{Discovery, DiscoveryItem, NodeData, ParsePacketSnafu, SignedPacketSnafu},
     endpoint::force_staging_infra,
     watcher::{self, Disconnected, Watchable, Watcher as _},
     Endpoint,
@@ -87,10 +87,6 @@ pub enum PkarrError {
     HttpRequest { status: reqwest::StatusCode },
     #[snafu(display("Http payload error"))]
     HttpPayload { source: reqwest::Error },
-    #[snafu(display("NodeInfo error"))]
-    NodeInfo {
-        source: iroh_relay::node_info::Error,
-    },
 }
 
 impl From<PkarrError> for DiscoveryError {
@@ -302,7 +298,8 @@ impl PublisherService {
         );
         let signed_packet = info
             .to_pkarr_signed_packet(&self.secret_key, self.ttl)
-            .context(NodeInfoSnafu)?;
+            .map_err(Box::new)
+            .context(SignedPacketSnafu)?;
         self.pkarr_client.publish(&signed_packet).await?;
         Ok(())
     }
@@ -363,7 +360,9 @@ impl Discovery for PkarrResolver {
         let pkarr_client = self.pkarr_client.clone();
         let fut = async move {
             let signed_packet = pkarr_client.resolve(node_id).await?;
-            let info = NodeInfo::from_pkarr_signed_packet(&signed_packet).context(NodeInfoSnafu)?;
+            let info = NodeInfo::from_pkarr_signed_packet(&signed_packet)
+                .map_err(Box::new)
+                .context(ParsePacketSnafu)?;
             let item = DiscoveryItem::new(info, "pkarr", None);
             Ok(item)
         };
