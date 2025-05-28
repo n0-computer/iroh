@@ -134,9 +134,8 @@ impl Subscribers {
 pub struct MdnsDiscoveryBuilder;
 
 impl IntoDiscovery for MdnsDiscoveryBuilder {
-    fn into_discovery(self: Box<Self>, endpoint: &Endpoint) -> anyhow::Result<Box<dyn Discovery>> {
-        let disco = MdnsDiscovery::new(endpoint.node_id())?;
-        Ok(Box::new(disco))
+    fn into_discovery(self, endpoint: &Endpoint) -> Result<impl Discovery> {
+        MdnsDiscovery::new(endpoint.node_id())
     }
 }
 

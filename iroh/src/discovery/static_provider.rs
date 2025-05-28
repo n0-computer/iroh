@@ -23,8 +23,7 @@ use n0_future::{
     time::SystemTime,
 };
 
-use super::{Discovery, DiscoveryItem, IntoDiscovery, NodeData, NodeInfo};
-use crate::Endpoint;
+use super::{Discovery, DiscoveryItem, NodeData, NodeInfo};
 
 /// A static node discovery to manually add node addressing information.
 ///
@@ -183,12 +182,6 @@ impl StaticProvider {
     }
 }
 
-impl IntoDiscovery for StaticProvider {
-    fn into_discovery(self: Box<Self>, _: &Endpoint) -> Result<Box<dyn Discovery>> {
-        Ok(self)
-    }
-}
-
 impl Discovery for StaticProvider {
     fn publish(&self, _data: &NodeData) {}
 
@@ -219,6 +212,8 @@ mod tests {
     use anyhow::Context;
     use iroh_base::{NodeAddr, SecretKey};
     use testresult::TestResult;
+
+    use crate::Endpoint;
 
     use super::*;
 

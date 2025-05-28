@@ -100,7 +100,9 @@ pub const DEFAULT_PKARR_TTL: u32 = 30;
 /// Interval in which to republish the node info even if unchanged: 5 minutes.
 pub const DEFAULT_REPUBLISH_INTERVAL: Duration = Duration::from_secs(60 * 5);
 
-/// Builder for [`PkarrPublisher`]
+/// Builder for [`PkarrPublisher`].
+///
+/// See [`PkarrPublisher::builder`].
 #[derive(Debug)]
 pub struct PkarrPublisherBuilder {
     pkarr_relay: Url,
@@ -157,8 +159,10 @@ impl PkarrPublisherBuilder {
     }
 
     /// Builds the [`PkarrPublisher`] with the passed secret key for signing packets.
+    ///
+    /// This publisher will be able to publish [pkarr] records for [`SecretKey`].
     pub fn build(self, secret_key: SecretKey) -> PkarrPublisher {
-        PkarrPublisher::with_options(
+        PkarrPublisher::new(
             secret_key,
             self.pkarr_relay,
             self.ttl,
@@ -170,13 +174,13 @@ impl PkarrPublisherBuilder {
 }
 
 impl IntoDiscovery for PkarrPublisherBuilder {
-    fn into_discovery(self: Box<Self>, endpoint: &Endpoint) -> anyhow::Result<Box<dyn Discovery>> {
+    fn into_discovery(mut self, endpoint: &Endpoint) -> Result<impl Discovery> {
         #[cfg(not(wasm_browser))]
-        let builder = self.dns_resolver(endpoint.dns_resolver().clone());
-        #[cfg(wasm_browser)]
-        let builder = self;
+        if self.dns_resolver.is_none() {
+            self.dns_resolver = Some(endpoint.dns_resolver().clone());
+        }
 
-        Ok(Box::new(builder.build(endpoint.secret_key().clone())))
+        Ok(self.build(endpoint.secret_key().clone()))
     }
 }
 
@@ -203,39 +207,26 @@ pub struct PkarrPublisher {
 }
 
 impl PkarrPublisher {
-    /// Returns a [`PkarrPublisherBuilder`] that can be used to set options for the pkarr publisher.
+    /// Returns a [`PkarrPublisherBuilder`] that publishes node info to a [pkarr] relay at `pkarr_relay`.
     ///
-    /// [`PkarrPublisherBuilder`] implements [`IntoDiscovery`], so it can be passed to [`crate::endpoint::Builder::add_discovery`].
+    /// If no further options are set, the pkarr publisher  will use [`DEFAULT_PKARR_TTL`] as the
+    /// time-to-live value for the published packets, and it will republish discovery information
+    /// every [`DEFAULT_REPUBLISH_INTERVAL`], even if the information is unchanged.
+    ///
+    /// [`PkarrPublisherBuilder`] implements [`IntoDiscovery`], so it can be passed to [`add_discovery`].
+    /// It will then use the endpoint's secret key to sign published packets.
+    ///
+    /// [`add_discovery`]:  crate::endpoint::Builder::add_discovery
+    /// [pkarr]: https://pkarr.org
     pub fn builder(pkarr_relay: Url) -> PkarrPublisherBuilder {
         PkarrPublisherBuilder::new(pkarr_relay)
-    }
-
-    /// Creates a new publisher for the [`SecretKey`] with the default options.
-    ///
-    /// To specify options, use [`Self::builder`].
-    ///
-    /// This publisher will be able to publish [pkarr] records for [`SecretKey`].  It will
-    /// use [`DEFAULT_PKARR_TTL`] as the time-to-live value for the published packets.  Will
-    /// republish discovery information every [`DEFAULT_REPUBLISH_INTERVAL`], even if the
-    /// information is unchanged.
-    ///
-    /// [pkarr]: https://pkarr.org
-    pub fn new(secret_key: SecretKey, pkarr_relay: Url) -> Self {
-        Self::with_options(
-            secret_key,
-            pkarr_relay,
-            DEFAULT_PKARR_TTL,
-            DEFAULT_REPUBLISH_INTERVAL,
-            #[cfg(not(wasm_browser))]
-            None,
-        )
     }
 
     /// Creates a new [`PkarrPublisher`] with a custom TTL and republish intervals.
     ///
     /// This allows creating the publisher with custom time-to-live values of the
     /// [`pkarr::SignedPacket`]s and well as a custom republish interval.
-    fn with_options(
+    fn new(
         secret_key: SecretKey,
         pkarr_relay: Url,
         ttl: u32,
@@ -374,7 +365,9 @@ impl PublisherService {
     }
 }
 
-/// Builder for [`PkarrResolverj`]
+/// Builder for [`PkarrResolver`].
+///
+/// See [`PkarrResolver::builder`].
 #[derive(Debug)]
 pub struct PkarrResolverBuilder {
     pkarr_relay: Url,
@@ -393,27 +386,27 @@ impl PkarrResolverBuilder {
     /// Creates a [`PkarrResolver`] from this builder.
     pub fn build(self) -> PkarrResolver {
         #[cfg(wasm_browser)]
-        let disco = PkarrResolver::new(self.pkarr_relay);
+        let pkarr_client = PkarrRelayClient::new(pkarr_relay);
 
         #[cfg(not(wasm_browser))]
-        let disco = if let Some(dns_resolver) = self.dns_resolver {
-            PkarrResolver::with_dns_resolver(self.pkarr_relay, dns_resolver)
+        let pkarr_client = if let Some(dns_resolver) = self.dns_resolver {
+            PkarrRelayClient::with_dns_resolver(self.pkarr_relay, dns_resolver)
         } else {
-            PkarrResolver::new(self.pkarr_relay)
+            PkarrRelayClient::new(self.pkarr_relay)
         };
 
-        disco
+        PkarrResolver { pkarr_client }
     }
 }
 
 impl IntoDiscovery for PkarrResolverBuilder {
-    fn into_discovery(self: Box<Self>, endpoint: &Endpoint) -> Result<Box<dyn Discovery>> {
-        #[cfg(wasm_browser)]
-        let builder = self;
+    fn into_discovery(mut self, endpoint: &Endpoint) -> Result<impl Discovery> {
         #[cfg(not(wasm_browser))]
-        let builder = self.dns_resolver(endpoint.dns_resolver().clone());
+        if self.dns_resolver.is_none() {
+            self.dns_resolver = Some(endpoint.dns_resolver().clone());
+        }
 
-        Ok(Box::new(builder.build()))
+        Ok(self.build())
     }
 }
 
@@ -465,21 +458,6 @@ impl PkarrResolver {
         let pkarr_relay: Url = pkarr_relay.parse().expect("url is valid");
         Self::builder(pkarr_relay)
     }
-
-    /// Creates a new resolver using the pkarr relay server at the URL.
-    fn new(pkarr_relay: Url) -> Self {
-        Self {
-            pkarr_client: PkarrRelayClient::new(pkarr_relay),
-        }
-    }
-
-    #[cfg(not(wasm_browser))]
-    /// Creates a new resolver using the pkarr relay server at the URL and DNS resolver to resolve that URL.
-    fn with_dns_resolver(pkarr_relay: Url, dns_resolver: DnsResolver) -> Self {
-        Self {
-            pkarr_client: PkarrRelayClient::with_dns_resolver(pkarr_relay, dns_resolver),
-        }
-    }
 }
 
 impl Discovery for PkarrResolver {
@@ -528,7 +506,7 @@ impl PkarrRelayClient {
     }
 
     /// Resolves a [`SignedPacket`] for the given [`NodeId`].
-    pub async fn resolve(&self, node_id: NodeId) -> anyhow::Result<SignedPacket> {
+    pub async fn resolve(&self, node_id: NodeId) -> Result<SignedPacket> {
         // We map the error to string, as in browsers the error is !Send
         let public_key = pkarr::PublicKey::try_from(node_id.as_bytes())
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
@@ -553,7 +531,7 @@ impl PkarrRelayClient {
     }
 
     /// Publishes a [`SignedPacket`].
-    pub async fn publish(&self, signed_packet: &SignedPacket) -> anyhow::Result<()> {
+    pub async fn publish(&self, signed_packet: &SignedPacket) -> Result<()> {
         let mut url = self.pkarr_relay_url.clone();
         url.path_segments_mut()
             .map_err(|_| anyhow!("Failed to publish: Invalid relay URL"))?

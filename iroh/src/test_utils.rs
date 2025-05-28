@@ -174,7 +174,7 @@ pub(crate) mod dns_and_pkarr_servers {
                     DnsDiscovery::builder(self.node_origin.clone()).build(self.dns_resolver()),
                 ),
                 // Enable pkarr publishing by default
-                Box::new(PkarrPublisher::new(secret_key, self.pkarr_url.clone())),
+                Box::new(PkarrPublisher::builder(self.pkarr_url.clone()).build(secret_key)),
             ])
         }
 

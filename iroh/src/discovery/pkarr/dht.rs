@@ -243,9 +243,8 @@ impl Builder {
 }
 
 impl IntoDiscovery for Builder {
-    fn into_discovery(self: Box<Self>, endpoint: &Endpoint) -> Result<Box<dyn Discovery>> {
-        let disco = self.secret_key(endpoint.secret_key().clone()).build()?;
-        Ok(Box::new(disco))
+    fn into_discovery(self, endpoint: &Endpoint) -> Result<impl Discovery> {
+        self.secret_key(endpoint.secret_key().clone()).build()
     }
 }
 

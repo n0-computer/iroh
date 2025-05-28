@@ -15,8 +15,6 @@
 //! information.  Usually this means publishing which [`RelayUrl`] to use for their
 //! [`NodeId`], but they could also publish their direct addresses.
 //!
-//! TODO(Frando): Add docs about [`IntoDiscovery`] here.
-//!
 //! The [`Discovery`] trait is used to define node discovery.  This allows multiple
 //! implementations to co-exist because there are many possible ways to implement this.
 //! Each [`Endpoint`] can use the discovery mechanisms most suitable to the application.
@@ -45,6 +43,14 @@
 //! To use multiple discovery systems simultaneously you can call [`Builder::add_discovery`].
 //! This will use [`ConcurrentDiscovery`] under the hood, which performs lookups to all
 //! discovery systems at the same time.
+//!
+//! [`Builder::add_discovery`] takes any type that implements [`IntoDiscovery`]. You can
+//! implement that trait on a builder struct if your discovery service needs access to the
+//! endpoint it is mounted on. During endpoint construction, your discovery service will
+//! be built by calling [`IntoDiscovery::into_discovery`], passing the endpoint to your
+//! builder. If your discovery service does not need access to its endpoint, you can
+//! pass the discovery service directly to [`Builder::add_discovery]: All types that
+//! implement [`Discovery`] also have a blanket implementation of [`IntoDiscovery`].
 //!
 //! # Examples
 //!
@@ -127,13 +133,40 @@ pub mod pkarr;
 pub mod static_provider;
 
 /// Trait for structs that can be converted into [`Discovery`].
+///
+/// This trait is implemented on builders for discovery services. Any type that implements this
+/// trait can be added as a discovery serivce in [`Builder::add_discovery`].
+///
+/// Any type that implements [`Discovery`] also implements [`IntoDiscovery`].
+///
+/// [`Builder::add_discovery`]: crate::endpoint::Builder::add_discovery
 pub trait IntoDiscovery: Send + 'static {
     /// Turns this struct into a boxed [`Discovery`].
     ///
     /// The discovery service will be used by passed [`Endpoint`]. If a discovery service needs
     /// an endpoint or information from it like its secret key, it can access or clone the endpoint
     /// from here.
+    fn into_discovery(self, endpoint: &Endpoint) -> Result<impl Discovery>;
+}
+
+/// Blanket no-op impl of `IntoDiscovery` for `T: Discovery`.
+impl<T: Discovery> IntoDiscovery for T {
+    fn into_discovery(self, _endpoint: &Endpoint) -> Result<impl Discovery> {
+        Ok(self)
+    }
+}
+
+/// Non-public dyn-compatible version of [`IntoDiscovery`], used in [`crate::endpoint::Builder`].
+pub(crate) trait DynIntoDiscovery: Send + 'static {
+    /// See [`IntoDiscovery::into_discovery`]
     fn into_discovery(self: Box<Self>, endpoint: &Endpoint) -> Result<Box<dyn Discovery>>;
+}
+
+impl<T: IntoDiscovery> DynIntoDiscovery for T {
+    fn into_discovery(self: Box<Self>, endpoint: &Endpoint) -> Result<Box<dyn Discovery>> {
+        let disco: Box<dyn Discovery> = Box::new(IntoDiscovery::into_discovery(*self, endpoint)?);
+        Ok(disco)
+    }
 }
 
 /// Node discovery for [`super::Endpoint`].
@@ -152,7 +185,7 @@ pub trait IntoDiscovery: Send + 'static {
 /// refresh, it should start its own task.
 ///
 /// [`RelayUrl`]: crate::RelayUrl
-pub trait Discovery: std::fmt::Debug + Send + Sync {
+pub trait Discovery: std::fmt::Debug + Send + Sync + 'static {
     /// Publishes the given [`NodeData`] to the discovery mechanism.
     ///
     /// This is fire and forget, since the [`Endpoint`] can not wait for successful
@@ -318,12 +351,6 @@ where
     fn from(iter: T) -> Self {
         let services = iter.into_iter().collect::<Vec<_>>();
         Self { services }
-    }
-}
-
-impl IntoDiscovery for ConcurrentDiscovery {
-    fn into_discovery(self: Box<Self>, _endpoint: &Endpoint) -> Result<Box<dyn Discovery>> {
-        Ok(self)
     }
 }
 
@@ -564,7 +591,6 @@ mod tests {
     use iroh_base::{NodeAddr, SecretKey};
     use quinn::{IdleTimeout, TransportConfig};
     use rand::Rng;
-    use testresult::TestResult;
     use tokio_util::task::AbortOnDropHandle;
     use tracing_test::traced_test;
 
@@ -623,12 +649,6 @@ mod tests {
         delay: Duration,
     }
 
-    impl IntoDiscovery for TestDiscovery {
-        fn into_discovery(self: Box<Self>, _endpoint: &Endpoint) -> Result<Box<dyn Discovery>> {
-            Ok(self)
-        }
-    }
-
     impl Discovery for TestDiscovery {
         fn publish(&self, data: &NodeData) {
             if !self.publish {
@@ -681,14 +701,8 @@ mod tests {
         }
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     struct EmptyDiscovery;
-
-    impl IntoDiscovery for Arc<EmptyDiscovery> {
-        fn into_discovery(self: Box<Self>, _endpoint: &Endpoint) -> Result<Box<dyn Discovery>> {
-            Ok(self)
-        }
-    }
 
     impl Discovery for EmptyDiscovery {
         fn publish(&self, _data: &NodeData) {}
@@ -927,18 +941,6 @@ mod tests {
             .expect("time drift")
             .as_micros() as u64
     }
-
-    #[tokio::test]
-    async fn test_arc_discovery() -> TestResult {
-        let discovery = Arc::new(EmptyDiscovery);
-
-        let _ep = Endpoint::builder()
-            .add_discovery(discovery.clone())
-            .bind()
-            .await?;
-
-        Ok(())
-    }
 }
 
 /// This module contains end-to-end tests for DNS node discovery.
@@ -1002,7 +1004,8 @@ mod test_dns_pkarr {
         let relay_url = Some("https://relay.example".parse().unwrap());
 
         let resolver = DnsResolver::with_nameserver(dns_pkarr_server.nameserver);
-        let publisher = PkarrPublisher::new(secret_key, dns_pkarr_server.pkarr_url.clone());
+        let publisher =
+            PkarrPublisher::builder(dns_pkarr_server.pkarr_url.clone()).build(secret_key);
         let user_data: UserData = "foobar".parse().unwrap();
         let data = NodeData::new(relay_url.clone(), Default::default())
             .with_user_data(Some(user_data.clone()));

@@ -37,7 +37,7 @@ use crate::{discovery::dns::DnsDiscovery, dns::DnsResolver};
 use crate::{
     discovery::{
         pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryItem, DiscoverySubscribers,
-        DiscoveryTask, IntoDiscovery, Lagged, UserData,
+        DiscoveryTask, DynIntoDiscovery, IntoDiscovery, Lagged, UserData,
     },
     magicsock::{self, Handle, NodeIdMappedAddr},
     metrics::EndpointMetrics,
@@ -128,7 +128,7 @@ pub struct Builder {
     transport_config: quinn::TransportConfig,
     keylog: bool,
     #[debug(skip)]
-    discovery: Vec<Box<dyn IntoDiscovery>>,
+    discovery: Vec<Box<dyn DynIntoDiscovery>>,
     discovery_user_data: Option<UserData>,
     proxy_url: Option<Url>,
     /// List of known nodes. See [`Builder::known_nodes`].

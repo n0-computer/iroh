@@ -87,11 +87,11 @@ impl DnsDiscovery {
 }
 
 impl IntoDiscovery for DnsDiscoveryBuilder {
-    fn into_discovery(self: Box<Self>, endpoint: &Endpoint) -> Result<Box<dyn Discovery>> {
-        Ok(Box::new(DnsDiscovery::new(
+    fn into_discovery(self, endpoint: &Endpoint) -> Result<impl Discovery> {
+        Ok(DnsDiscovery::new(
             endpoint.dns_resolver().clone(),
             self.origin_domain,
-        )))
+        ))
     }
 }
 
