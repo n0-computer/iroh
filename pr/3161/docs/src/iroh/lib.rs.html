@@ -266,7 +266,9 @@
 <a href="#265" id="265">265</a>
 <a href="#266" id="266">266</a>
 <a href="#267" id="267">267</a>
-<a href="#268" id="268">268</a></pre></div><pre class="rust"><code><span class="doccomment">//! Peer-to-peer QUIC connections.
+<a href="#268" id="268">268</a>
+<a href="#269" id="269">269</a>
+<a href="#270" id="270">270</a></pre></div><pre class="rust"><code><span class="doccomment">//! Peer-to-peer QUIC connections.
 //!
 //! iroh is a library to establish direct connectivity between peers.  It exposes an
 //! interface to [QUIC] connections and streams to the user, while implementing direct
@@ -277,12 +279,13 @@
 //!
 //! ```no_run
 //! # use iroh::{Endpoint, NodeAddr};
+//! # use n0_snafu::ResultExt;
 //! # async fn wrapper() -&gt; n0_snafu::Result {
 //! let addr: NodeAddr = todo!();
 //! let ep = Endpoint::builder().bind().await?;
 //! let conn = ep.connect(addr, b"my-alpn").await?;
-//! let mut send_stream = conn.open_uni().await?;
-//! send_stream.write_all(b"msg").await?;
+//! let mut send_stream = conn.open_uni().await.context("unable to open uni")?;
+//! send_stream.write_all(b"msg").await.context("unable to write all")()?;
 //! # Ok(())
 //! # }
 //! ```
@@ -291,15 +294,16 @@
 //!
 //! ```no_run
 //! # use iroh::{Endpoint, NodeAddr};
+//! # use n0_snafu::ResultExt;
 //! # async fn wrapper() -&gt; n0_snafu::Result {
 //! let ep = Endpoint::builder()
 //!     .alpns(vec![b"my-alpn".to_vec()])
 //!     .bind()
 //!     .await?;
-//! let conn = ep.accept().await.ok_or("err")?.await?;
-//! let mut recv_stream = conn.accept_uni().await?;
+//! let conn = ep.accept().await.context("accept error")?.await.context("connecting error")?;
+//! let mut recv_stream = conn.accept_uni().await.context("unable to open uni")?;
 //! let mut buf = [0u8; 3];
-//! recv_stream.read_exact(&amp;mut buf).await?;
+//! recv_stream.read_exact(&amp;mut buf).await.context("unable to read")?;
 //! # Ok(())
 //! # }
 //! ```
