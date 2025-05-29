@@ -9,12 +9,13 @@
 //!
 //! ```no_run
 //! # use iroh::{Endpoint, NodeAddr};
+//! # use n0_snafu::ResultExt;
 //! # async fn wrapper() -> n0_snafu::Result {
 //! let addr: NodeAddr = todo!();
 //! let ep = Endpoint::builder().bind().await?;
 //! let conn = ep.connect(addr, b"my-alpn").await?;
-//! let mut send_stream = conn.open_uni().await?;
-//! send_stream.write_all(b"msg").await?;
+//! let mut send_stream = conn.open_uni().await.context("unable to open uni")?;
+//! send_stream.write_all(b"msg").await.context("unable to write all")?;
 //! # Ok(())
 //! # }
 //! ```
@@ -23,15 +24,16 @@
 //!
 //! ```no_run
 //! # use iroh::{Endpoint, NodeAddr};
+//! # use n0_snafu::ResultExt;
 //! # async fn wrapper() -> n0_snafu::Result {
 //! let ep = Endpoint::builder()
 //!     .alpns(vec![b"my-alpn".to_vec()])
 //!     .bind()
 //!     .await?;
-//! let conn = ep.accept().await.ok_or("err")?.await?;
-//! let mut recv_stream = conn.accept_uni().await?;
+//! let conn = ep.accept().await.context("accept error")?.await.context("connecting error")?;
+//! let mut recv_stream = conn.accept_uni().await.context("unable to open uni")?;
 //! let mut buf = [0u8; 3];
-//! recv_stream.read_exact(&mut buf).await?;
+//! recv_stream.read_exact(&mut buf).await.context("unable to read")?;
 //! # Ok(())
 //! # }
 //! ```
