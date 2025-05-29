@@ -285,7 +285,7 @@
 //! let ep = Endpoint::builder().bind().await?;
 //! let conn = ep.connect(addr, b"my-alpn").await?;
 //! let mut send_stream = conn.open_uni().await.context("unable to open uni")?;
-//! send_stream.write_all(b"msg").await.context("unable to write all")()?;
+//! send_stream.write_all(b"msg").await.context("unable to write all")?;
 //! # Ok(())
 //! # }
 //! ```

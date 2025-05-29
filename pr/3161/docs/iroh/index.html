@@ -9,7 +9,7 @@ another node:</p>
 <span class="kw">let </span>ep = Endpoint::builder().bind().<span class="kw">await</span><span class="question-mark">?</span>;
 <span class="kw">let </span>conn = ep.connect(addr, <span class="string">b"my-alpn"</span>).<span class="kw">await</span><span class="question-mark">?</span>;
 <span class="kw">let </span><span class="kw-2">mut </span>send_stream = conn.open_uni().<span class="kw">await</span>.context(<span class="string">"unable to open uni"</span>)<span class="question-mark">?</span>;
-send_stream.write_all(<span class="string">b"msg"</span>).<span class="kw">await</span>.context(<span class="string">"unable to write all"</span>)()<span class="question-mark">?</span>;</code></pre></div>
+send_stream.write_all(<span class="string">b"msg"</span>).<span class="kw">await</span>.context(<span class="string">"unable to write all"</span>)<span class="question-mark">?</span>;</code></pre></div>
 <p>The other node can accept incoming connections using the <a href="endpoint/struct.Endpoint.html" title="struct iroh::endpoint::Endpoint"><code>Endpoint</code></a> as well:</p>
 
 <div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">let </span>ep = Endpoint::builder()
