@@ -268,7 +268,10 @@ enum DialError {
     #[snafu(display("timeout trying to establish a connection"))]
     Timeout {},
     #[snafu(display("unable to connect"))]
-    Connect { source: ConnectError },
+    Connect {
+        #[snafu(source(from(ConnectError, Box::new)))]
+        source: Box<ConnectError>,
+    },
 }
 
 impl ActiveRelayActor {
