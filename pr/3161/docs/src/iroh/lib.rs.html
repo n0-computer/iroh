@@ -268,7 +268,18 @@
 <a href="#267" id="267">267</a>
 <a href="#268" id="268">268</a>
 <a href="#269" id="269">269</a>
-<a href="#270" id="270">270</a></pre></div><pre class="rust"><code><span class="doccomment">//! Peer-to-peer QUIC connections.
+<a href="#270" id="270">270</a>
+<a href="#271" id="271">271</a>
+<a href="#272" id="272">272</a>
+<a href="#273" id="273">273</a>
+<a href="#274" id="274">274</a>
+<a href="#275" id="275">275</a>
+<a href="#276" id="276">276</a>
+<a href="#277" id="277">277</a>
+<a href="#278" id="278">278</a>
+<a href="#279" id="279">279</a>
+<a href="#280" id="280">280</a>
+<a href="#281" id="281">281</a></pre></div><pre class="rust"><code><span class="doccomment">//! Peer-to-peer QUIC connections.
 //!
 //! iroh is a library to establish direct connectivity between peers.  It exposes an
 //! interface to [QUIC] connections and streams to the user, while implementing direct
@@ -285,7 +296,10 @@
 //! let ep = Endpoint::builder().bind().await?;
 //! let conn = ep.connect(addr, b"my-alpn").await?;
 //! let mut send_stream = conn.open_uni().await.context("unable to open uni")?;
-//! send_stream.write_all(b"msg").await.context("unable to write all")?;
+//! send_stream
+//!     .write_all(b"msg")
+//!     .await
+//!     .context("unable to write all")?;
 //! # Ok(())
 //! # }
 //! ```
@@ -300,10 +314,18 @@
 //!     .alpns(vec![b"my-alpn".to_vec()])
 //!     .bind()
 //!     .await?;
-//! let conn = ep.accept().await.context("accept error")?.await.context("connecting error")?;
+//! let conn = ep
+//!     .accept()
+//!     .await
+//!     .context("accept error")?
+//!     .await
+//!     .context("connecting error")?;
 //! let mut recv_stream = conn.accept_uni().await.context("unable to open uni")?;
 //! let mut buf = [0u8; 3];
-//! recv_stream.read_exact(&amp;mut buf).await.context("unable to read")?;
+//! recv_stream
+//!     .read_exact(&amp;mut buf)
+//!     .await
+//!     .context("unable to read")?;
 //! # Ok(())
 //! # }
 //! ```
@@ -430,7 +452,7 @@
 //!
 //! ```no_run
 //! use iroh::{Endpoint, NodeAddr};
-//! use n0_snafu::{Result as Result, ResultExt};
+//! use n0_snafu::{Result, ResultExt};
 //!
 //! async fn connect(addr: NodeAddr) -&gt; Result&lt;()&gt; {
 //!     // The Endpoint is the central object that manages an iroh node.
@@ -456,7 +478,7 @@
 //! ```no_run
 //! use futures_lite::StreamExt;
 //! use iroh::{Endpoint, NodeAddr};
-//! use n0_snafu::{Result as Result, ResultExt};
+//! use n0_snafu::{Result, ResultExt};
 //!
 //! async fn accept() -&gt; Result&lt;()&gt; {
 //!     // To accept connections at least one ALPN must be configured.

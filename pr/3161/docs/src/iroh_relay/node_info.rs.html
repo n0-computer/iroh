@@ -881,7 +881,10 @@
 <a href="#880" id="880">880</a>
 <a href="#881" id="881">881</a>
 <a href="#882" id="882">882</a>
-<a href="#883" id="883">883</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
+<a href="#883" id="883">883</a>
+<a href="#884" id="884">884</a>
+<a href="#885" id="885">885</a>
+<a href="#886" id="886">886</a></pre></div><pre class="rust"><code><span class="doccomment">//! Support for handling DNS resource records for dialing by [`NodeId`].
 //!
 //! Dialing by [`NodeId`] is supported by iroh nodes publishing [Pkarr] records to DNS
 //! servers or the Mainline DHT.  This module supports creating and parsing these records.
@@ -1338,7 +1341,10 @@
         </span>source: Box&lt;ParseError&gt;,
     },
     <span class="attr">#[snafu(display(<span class="string">"Failed to resolve TXT record"</span>))]
-    </span>LookupFailed { source: DnsError },
+    </span>LookupFailed {
+        <span class="attr">#[snafu(source(from(DnsError, Box::new)))]
+        </span>source: Box&lt;DnsError&gt;,
+    },
     <span class="attr">#[cfg(not(wasm_browser))]
     #[snafu(display(<span class="string">"Name is not a valid TXT label"</span>))]
     </span>InvalidLabel { source: ProtoError },
