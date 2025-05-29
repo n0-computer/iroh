@@ -455,7 +455,10 @@ pub enum LookupError {
         source: Box<ParseError>,
     },
     #[snafu(display("Failed to resolve TXT record"))]
-    LookupFailed { source: DnsError },
+    LookupFailed {
+        #[snafu(source(from(DnsError, Box::new)))]
+        source: Box<DnsError>,
+    },
     #[cfg(not(wasm_browser))]
     #[snafu(display("Name is not a valid TXT label"))]
     InvalidLabel { source: ProtoError },

@@ -540,9 +540,9 @@ impl<P: ProtocolHandler + Clone> ProtocolHandler for AccessLimit<P> {
 
 #[cfg(test)]
 mod tests {
-    use n0_snafu::{Result, ResultExt};
     use std::{sync::Mutex, time::Duration};
 
+    use n0_snafu::{Result, ResultExt};
     use quinn::ApplicationClose;
 
     use super::*;

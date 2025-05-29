@@ -15,7 +15,10 @@
 //! let ep = Endpoint::builder().bind().await?;
 //! let conn = ep.connect(addr, b"my-alpn").await?;
 //! let mut send_stream = conn.open_uni().await.context("unable to open uni")?;
-//! send_stream.write_all(b"msg").await.context("unable to write all")?;
+//! send_stream
+//!     .write_all(b"msg")
+//!     .await
+//!     .context("unable to write all")?;
 //! # Ok(())
 //! # }
 //! ```
@@ -30,10 +33,18 @@
 //!     .alpns(vec![b"my-alpn".to_vec()])
 //!     .bind()
 //!     .await?;
-//! let conn = ep.accept().await.context("accept error")?.await.context("connecting error")?;
+//! let conn = ep
+//!     .accept()
+//!     .await
+//!     .context("accept error")?
+//!     .await
+//!     .context("connecting error")?;
 //! let mut recv_stream = conn.accept_uni().await.context("unable to open uni")?;
 //! let mut buf = [0u8; 3];
-//! recv_stream.read_exact(&mut buf).await.context("unable to read")?;
+//! recv_stream
+//!     .read_exact(&mut buf)
+//!     .await
+//!     .context("unable to read")?;
 //! # Ok(())
 //! # }
 //! ```
@@ -160,7 +171,7 @@
 //!
 //! ```no_run
 //! use iroh::{Endpoint, NodeAddr};
-//! use n0_snafu::{Result as Result, ResultExt};
+//! use n0_snafu::{Result, ResultExt};
 //!
 //! async fn connect(addr: NodeAddr) -> Result<()> {
 //!     // The Endpoint is the central object that manages an iroh node.
@@ -186,7 +197,7 @@
 //! ```no_run
 //! use futures_lite::StreamExt;
 //! use iroh::{Endpoint, NodeAddr};
-//! use n0_snafu::{Result as Result, ResultExt};
+//! use n0_snafu::{Result, ResultExt};
 //!
 //! async fn accept() -> Result<()> {
 //!     // To accept connections at least one ALPN must be configured.

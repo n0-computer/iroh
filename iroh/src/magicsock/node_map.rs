@@ -303,7 +303,7 @@ impl NodeMap {
             .collect()
     }
 
-    /// Returns a [`Watcher`] for given node's [`ConnectionType`].
+    /// Returns a [`watcher::Direct`] for given node's [`ConnectionType`].
     ///
     /// # Errors
     ///

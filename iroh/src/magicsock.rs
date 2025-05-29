@@ -409,10 +409,10 @@ impl MagicSock {
         self.my_relay.watch()
     }
 
-    /// Returns a [`Watcher`] that reports the [`ConnectionType`] we have to the
+    /// Returns a [`watcher::Direct`] that reports the [`ConnectionType`] we have to the
     /// given `node_id`.
     ///
-    /// This gets us a copy of the [`Watcher`] for the [`Watchable`] with a [`ConnectionType`]
+    /// This gets us a copy of the [`watcher::Direct`] for the [`Watchable`] with a [`ConnectionType`]
     /// that the `NodeMap` stores for each `node_id`'s endpoint.
     ///
     /// # Errors
