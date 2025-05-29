@@ -24,7 +24,7 @@ postcard = { version = "1", default-features = false, features = ["alloc", "use-
 rand_core = { version = "0.6.4", optional = true }
 serde = { version = "1", features = ["derive", "rc"] }
 snafu = { version = "0.8.5", features = ["rust_1_81"], optional = true }
-n0-snafu = "0.1.0"
+n0-snafu = "0.2.0"
 nested_enum_utils = "0.2.0"
 
 [dev-dependencies]

@@ -40,6 +40,3 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(iroh_docsrs)", "cfg(iroh_l
 
 [workspace.lints.clippy]
 unused-async = "warn"
-
-[patch.crates-io]
-n0-snafu = { git = "https://github.com/n0-computer/n0-snafu", branch = "expand-test-error" }
