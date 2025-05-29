@@ -1708,7 +1708,10 @@
 <a href="#1707" id="1707">1707</a>
 <a href="#1708" id="1708">1708</a>
 <a href="#1709" id="1709">1709</a>
-<a href="#1710" id="1710">1710</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
+<a href="#1710" id="1710">1710</a>
+<a href="#1711" id="1711">1711</a>
+<a href="#1712" id="1712">1712</a>
+<a href="#1713" id="1713">1713</a></pre></div><pre class="rust"><code><span class="doccomment">//! The relay actor.
 //!
 //! The [`RelayActor`] handles all the relay connections.  It is helped by the
 //! [`ActiveRelayActor`] which handles a single relay connection.
@@ -1978,7 +1981,10 @@
     <span class="attr">#[snafu(display(<span class="string">"timeout trying to establish a connection"</span>))]
     </span>Timeout {},
     <span class="attr">#[snafu(display(<span class="string">"unable to connect"</span>))]
-    </span>Connect { source: ConnectError },
+    </span>Connect {
+        <span class="attr">#[snafu(source(from(ConnectError, Box::new)))]
+        </span>source: Box&lt;ConnectError&gt;,
+    },
 }
 
 <span class="kw">impl </span>ActiveRelayActor {
