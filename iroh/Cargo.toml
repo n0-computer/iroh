@@ -98,13 +98,12 @@ futures-util = "0.3"
 axum = { version = "0.8", optional = true }
 
 # Examples
-anyhow = { version = "1", optional = true }
 clap = { version = "4", features = ["derive"], optional = true }
 tracing-subscriber = { version = "0.3", features = [
     "env-filter",
 ], optional = true }
 indicatif = { version = "0.17", features = ["tokio"], optional = true }
-parse-size = { version = "=1.0.0", optional = true } # pinned version to avoid bumping msrv to 1.81
+parse-size = { version = "=1.0.0", optional = true, features = ['std'] } # pinned version to avoid bumping msrv to 1.81
 
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
@@ -175,7 +174,6 @@ test-utils = ["iroh-relay/test-utils", "iroh-relay/server", "dep:axum"]
 discovery-local-network = ["dep:swarm-discovery"]
 discovery-pkarr-dht = ["pkarr/dht"]
 examples = [
-  "dep:anyhow",
   "dep:clap",
   "dep:tracing-subscriber",
   "dep:indicatif",

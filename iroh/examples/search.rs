@@ -31,13 +31,13 @@
 
 use std::{collections::BTreeSet, sync::Arc};
 
-use anyhow::Result;
 use clap::Parser;
 use iroh::{
     endpoint::Connection,
     protocol::{ProtocolError, ProtocolHandler, Router},
     Endpoint, NodeId,
 };
+use n0_snafu::{Result, ResultExt};
 use tokio::sync::Mutex;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
@@ -97,7 +97,7 @@ async fn main() -> Result<()> {
             }
 
             // Wait for Ctrl-C to be pressed.
-            tokio::signal::ctrl_c().await?;
+            tokio::signal::ctrl_c().await.e()?;
         }
         Command::Query { node_id, query } => {
             // Query the remote node.
@@ -110,7 +110,7 @@ async fn main() -> Result<()> {
         }
     }
 
-    router.shutdown().await?;
+    router.shutdown().await.e()?;
 
     Ok(())
 }
@@ -181,21 +181,21 @@ impl BlobSearch {
         let conn = self.endpoint.connect(node_id, ALPN).await?;
 
         // Open a bi-directional in our connection.
-        let (mut send, mut recv) = conn.open_bi().await?;
+        let (mut send, mut recv) = conn.open_bi().await.e()?;
 
         // Send our query.
-        send.write_all(query.as_bytes()).await?;
+        send.write_all(query.as_bytes()).await.e()?;
 
         // Finish the send stream, signalling that no further data will be sent.
         // This makes the `read_to_end` call on the accepting side terminate.
-        send.finish()?;
+        send.finish().e()?;
 
         // The response is a 64 bit integer
         // We simply read it into a byte buffer.
         let mut num_matches = [0u8; 8];
 
         // Read 8 bytes from the stream.
-        recv.read_exact(&mut num_matches).await?;
+        recv.read_exact(&mut num_matches).await.e()?;
 
         let num_matches = u64::from_le_bytes(num_matches);
 
