@@ -24,6 +24,17 @@ pub(crate) struct HandshakeIo<T> {
 impl<IO: ExportKeyingMaterial + AsyncRead + AsyncWrite + Unpin> ExportKeyingMaterial
     for HandshakeIo<IO>
 {
+    #[cfg(wasm_browser)]
+    fn export_keying_material<T: AsMut<[u8]>>(
+        &self,
+        output: T,
+        label: &[u8],
+        context: Option<&[u8]>,
+    ) -> Option<T> {
+        None
+    }
+
+    #[cfg(not(wasm_browser))]
     fn export_keying_material<T: AsMut<[u8]>>(
         &self,
         output: T,

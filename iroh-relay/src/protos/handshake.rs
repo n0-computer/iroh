@@ -10,53 +10,63 @@ use rand::{CryptoRng, RngCore};
 use crate::ExportKeyingMaterial;
 
 /// TODO(matheus23) docs
-pub const PROTOCOL_VERSION: &[u8] = b"1";
+pub(crate) const PROTOCOL_VERSION: &[u8] = b"1";
+
+/// Message that tells the server the client needs a challenge to authenticate.
+#[derive(derive_more::Debug, serde::Serialize)]
+#[cfg_attr(feature = "server", derive(serde::Deserialize))]
+pub(crate) struct ClientRequestChallenge;
+
+const TAG_CLIENT_REQUEST_CHALLENGE: VarInt = VarInt::from_u32(5);
 
 /// A challenge for the client to sign with their secret key for NodeId authentication.
 #[derive(derive_more::Debug, serde::Deserialize)]
 #[cfg_attr(feature = "server", derive(serde::Serialize))]
-pub struct ServerChallenge {
+pub(crate) struct ServerChallenge {
     /// The challenge to sign.
     /// Must be randomly generated with an RNG that is safe to use for crypto.
-    pub challenge: [u8; 16],
+    pub(crate) challenge: [u8; 16],
 }
 
-const SERVER_CHALLENGE_TAG: VarInt = VarInt::from_u32(1);
+const TAG_SERVER_CHALLENGE: VarInt = VarInt::from_u32(1);
 
-/// Info about the client. Also serves as authentication.
+/// Authentintiation message from the client.
+///
+/// Also serves to inform the server about the client's send message version,
+/// which will be passed on to other connecting clients.
 #[derive(derive_more::Debug, serde::Serialize)]
 #[cfg_attr(feature = "server", derive(serde::Deserialize))]
-pub struct ClientInfo {
+pub(crate) struct ClientAuth {
     /// The client's public key, a.k.a. the `NodeId`
-    pub public_key: PublicKey,
+    pub(crate) public_key: PublicKey,
     /// A signature of the server challenge, serves as authentication.
     #[serde(with = "serde_bytes")]
-    pub signature: [u8; 64],
+    pub(crate) signature: [u8; 64],
     /// Part of the extracted key material, if that's what was signed.
-    pub key_material_suffix: Option<[u8; 16]>,
+    pub(crate) key_material_suffix: Option<[u8; 16]>,
     /// Supported versions/protocol features for version negotiation
     /// with other connected relay clients
-    pub versions: Vec<Vec<u8>>,
+    pub(crate) versions: Vec<Vec<u8>>,
 }
 
-const CLIENT_INFO_TAG: VarInt = VarInt::from_u32(2);
+const TAG_CLIENT_AUTH: VarInt = VarInt::from_u32(2);
 
 /// Confirmation of successful connection.
 #[derive(derive_more::Debug, serde::Deserialize)]
 #[cfg_attr(feature = "server", derive(serde::Serialize))]
-pub struct ServerConfirmsConnected;
+pub(crate) struct ServerConfirmsAuth;
 
-const SERVER_CONFIRMS_CONNECTED_TAG: VarInt = VarInt::from_u32(3);
+const TAG_SERVER_CONFIRMS_AUTH: VarInt = VarInt::from_u32(3);
 
 /// Denial of connection. The client couldn't be verified as authentic.
 #[derive(derive_more::Debug, serde::Deserialize)]
 #[cfg_attr(feature = "server", derive(serde::Serialize))]
-pub struct ServerDeniesConnection;
+pub(crate) struct ServerDeniesAuth;
 
-const SERVER_DENIES_CONNECTION_TAG: VarInt = VarInt::from_u32(4);
+const TAG_SERVER_DENIES_AUTH: VarInt = VarInt::from_u32(4);
 
 /// TODO(matheus23) docs
-pub trait BytesStreamSink:
+pub(crate) trait BytesStreamSink:
     Stream<Item = Result<Bytes>> + Sink<Bytes, Error = anyhow::Error> + Unpin
 {
 }
@@ -68,7 +78,7 @@ impl<T: Stream<Item = Result<Bytes>> + Sink<Bytes, Error = anyhow::Error> + Unpi
 
 impl ServerChallenge {
     /// TODO(matheus23): docs
-    pub fn new(mut rng: impl RngCore + CryptoRng) -> Self {
+    pub(crate) fn new(mut rng: impl RngCore + CryptoRng) -> Self {
         let mut challenge = [0u8; 16];
         rng.fill_bytes(&mut challenge);
         Self { challenge }
@@ -82,9 +92,9 @@ impl ServerChallenge {
     }
 }
 
-impl ClientInfo {
+impl ClientAuth {
     /// TODO(matheus23): docs
-    pub fn new_from_challenge(secret_key: &SecretKey, challenge: &ServerChallenge) -> Self {
+    pub(crate) fn new_from_challenge(secret_key: &SecretKey, challenge: &ServerChallenge) -> Self {
         Self {
             public_key: secret_key.public(),
             key_material_suffix: None,
@@ -94,12 +104,53 @@ impl ClientInfo {
     }
 
     /// TODO(matheus23): docs
-    pub fn verify_from_challenge(&self, challenge: &ServerChallenge) -> bool {
+    pub(crate) fn verify_from_challenge(&self, challenge: &ServerChallenge) -> bool {
         self.public_key
             .verify(
                 &challenge.message_to_sign(),
                 &Signature::from_bytes(&self.signature),
             )
+            .is_ok()
+    }
+
+    pub(crate) fn new_from_key_export(
+        secret_key: &SecretKey,
+        io: &mut impl ExportKeyingMaterial,
+    ) -> Option<Self> {
+        let public_key = secret_key.public();
+        let key_material = io.export_keying_material(
+            [0u8; 32],
+            b"iroh-relay handshake v1",
+            Some(secret_key.public().as_bytes()),
+        )?;
+
+        let message = blake3::derive_key(
+            "iroh-relay handshake v1 key material signature",
+            &key_material[..16],
+        );
+        Some(ClientAuth {
+            public_key,
+            signature: secret_key.sign(&message).to_bytes(),
+            key_material_suffix: Some(key_material[16..].try_into().expect("split right")),
+            versions: vec![PROTOCOL_VERSION.to_vec()],
+        })
+    }
+
+    pub(crate) fn verify_from_key_export(&self, io: &mut impl ExportKeyingMaterial) -> bool {
+        let Some(key_material) = io.export_keying_material(
+            [0u8; 32],
+            b"iroh-relay handshake v1",
+            Some(self.public_key.as_bytes()),
+        ) else {
+            return false;
+        };
+
+        let message = blake3::derive_key(
+            "iroh-relay handshake v1 key material signature",
+            &key_material[..16],
+        );
+        self.public_key
+            .verify(&message, &Signature::from_bytes(&self.signature))
             .is_ok()
     }
 }
@@ -108,54 +159,34 @@ impl ClientInfo {
 pub(crate) async fn clientside(
     io: &mut (impl BytesStreamSink + ExportKeyingMaterial),
     secret_key: &SecretKey,
-) -> Result<ServerConfirmsConnected> {
-    let public_key = secret_key.public();
-    let versions = vec![PROTOCOL_VERSION.to_vec()];
-
-    let key_material = io.export_keying_material(
-        [0u8; 32],
-        b"iroh-relay handshake v1",
-        Some(secret_key.public().as_bytes()),
-    );
-
-    if let Some(key_material) = key_material {
-        let message = blake3::derive_key(
-            "iroh-relay handshake v1 key material signature",
-            &key_material[..16],
-        );
-        write_frame(
-            io,
-            CLIENT_INFO_TAG,
-            ClientInfo {
-                public_key,
-                signature: secret_key.sign(&message).to_bytes(),
-                key_material_suffix: Some(key_material[16..].try_into().expect("split right")),
-                versions: versions.clone(),
-            },
-        )
-        .await?;
+) -> Result<ServerConfirmsAuth> {
+    if let Some(client_auth) = ClientAuth::new_from_key_export(secret_key, io) {
+        write_frame(io, TAG_CLIENT_AUTH, client_auth).await?;
+    } else {
+        // we can't use key exporting, so request a challenge.
+        write_frame(io, TAG_CLIENT_REQUEST_CHALLENGE, ClientRequestChallenge).await?;
     }
 
     let (tag, frame) = read_frame(
         io,
         &[
-            SERVER_CHALLENGE_TAG,
-            SERVER_CONFIRMS_CONNECTED_TAG,
-            SERVER_DENIES_CONNECTION_TAG,
+            TAG_SERVER_CHALLENGE,
+            TAG_SERVER_CONFIRMS_AUTH,
+            TAG_SERVER_DENIES_AUTH,
         ],
         time::Duration::from_secs(30),
     )
     .await?;
 
-    let (tag, frame) = if tag == SERVER_CHALLENGE_TAG {
+    let (tag, frame) = if tag == TAG_SERVER_CHALLENGE {
         let challenge: ServerChallenge = postcard::from_bytes(&frame)?;
 
-        let client_info = ClientInfo::new_from_challenge(secret_key, &challenge);
-        write_frame(io, CLIENT_INFO_TAG, client_info).await?;
+        let client_info = ClientAuth::new_from_challenge(secret_key, &challenge);
+        write_frame(io, TAG_CLIENT_AUTH, client_info).await?;
 
         read_frame(
             io,
-            &[SERVER_CONFIRMS_CONNECTED_TAG, SERVER_DENIES_CONNECTION_TAG],
+            &[TAG_SERVER_CONFIRMS_AUTH, TAG_SERVER_DENIES_AUTH],
             time::Duration::from_secs(30),
         )
         .await?
@@ -164,12 +195,12 @@ pub(crate) async fn clientside(
     };
 
     match tag {
-        SERVER_CONFIRMS_CONNECTED_TAG => {
-            let confirmation: ServerConfirmsConnected = postcard::from_bytes(&frame)?;
+        TAG_SERVER_CONFIRMS_AUTH => {
+            let confirmation: ServerConfirmsAuth = postcard::from_bytes(&frame)?;
             Ok(confirmation)
         }
-        SERVER_DENIES_CONNECTION_TAG => {
-            let denial: ServerDeniesConnection = postcard::from_bytes(&frame)?;
+        TAG_SERVER_DENIES_AUTH => {
+            let denial: ServerDeniesAuth = postcard::from_bytes(&frame)?;
             anyhow::bail!("server denied connection: {denial:?}");
         }
         _ => unreachable!(),
@@ -181,20 +212,38 @@ pub(crate) async fn clientside(
 pub(crate) async fn serverside(
     io: &mut (impl BytesStreamSink + ExportKeyingMaterial),
     rng: impl RngCore + CryptoRng,
-) -> Result<ClientInfo> {
-    let challenge = ServerChallenge::new(rng);
-    write_frame(io, SERVER_CHALLENGE_TAG, &challenge).await?;
+) -> Result<ClientAuth> {
+    let (tag, frame) = read_frame(
+        io,
+        &[TAG_CLIENT_REQUEST_CHALLENGE, TAG_CLIENT_AUTH],
+        time::Duration::from_secs(10),
+    )
+    .await?;
 
-    let (_, frame) = read_frame(io, &[CLIENT_INFO_TAG], time::Duration::from_secs(10)).await?;
-    let client_info: ClientInfo = postcard::from_bytes(&frame)?;
-
-    if client_info.verify_from_challenge(&challenge) {
-        write_frame(io, SERVER_CONFIRMS_CONNECTED_TAG, ServerConfirmsConnected).await?;
+    // it might be fast-path authentication using TLS exported key material
+    if tag == TAG_CLIENT_AUTH {
+        let client_auth: ClientAuth = postcard::from_bytes(&frame)?;
+        if client_auth.verify_from_key_export(io) {
+            write_frame(io, TAG_SERVER_CONFIRMS_AUTH, ServerConfirmsAuth).await?;
+            return Ok(client_auth);
+        }
     } else {
-        write_frame(io, SERVER_DENIES_CONNECTION_TAG, ServerDeniesConnection).await?;
+        let _frame: ClientRequestChallenge = postcard::from_bytes(&frame)?;
     }
 
-    Ok(client_info)
+    let challenge = ServerChallenge::new(rng);
+    write_frame(io, TAG_SERVER_CHALLENGE, &challenge).await?;
+
+    let (_, frame) = read_frame(io, &[TAG_CLIENT_AUTH], time::Duration::from_secs(10)).await?;
+    let client_auth: ClientAuth = postcard::from_bytes(&frame)?;
+
+    if client_auth.verify_from_challenge(&challenge) {
+        write_frame(io, TAG_SERVER_CONFIRMS_AUTH, ServerConfirmsAuth).await?;
+    } else {
+        write_frame(io, TAG_SERVER_DENIES_AUTH, ServerDeniesAuth).await?;
+    }
+
+    Ok(client_auth)
 }
 
 async fn write_frame(
@@ -236,6 +285,7 @@ async fn read_frame(
 
 #[cfg(all(test, feature = "server"))]
 mod tests {
+    use anyhow::Context;
     use bytes::BytesMut;
     use iroh_base::SecretKey;
     use n0_future::{Sink, SinkExt, Stream, TryStreamExt};
@@ -244,7 +294,7 @@ mod tests {
 
     use crate::ExportKeyingMaterial;
 
-    use super::{ClientInfo, ServerChallenge};
+    use super::{ClientAuth, ServerChallenge};
 
     struct TestKeyingMaterial<IO> {
         shared_secret: Option<u64>,
@@ -323,25 +373,25 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn simulate_handshake() -> TestResult {
-        use anyhow::Context;
-
+    async fn simulate_handshake(
+        secret_key: &SecretKey,
+        client_shared_secret: Option<u64>,
+        server_shared_secret: Option<u64>,
+    ) -> TestResult<ClientAuth> {
         let (client, server) = tokio::io::duplex(1024);
-        let secret_key = SecretKey::generate(rand::rngs::OsRng);
 
         let mut client_io = Framed::new(client, LengthDelimitedCodec::new())
             .map_ok(BytesMut::freeze)
             .map_err(anyhow::Error::from)
             .sink_err_into()
-            .with_shared_secret(Some(42));
+            .with_shared_secret(client_shared_secret);
         let mut server_io = Framed::new(server, LengthDelimitedCodec::new())
             .map_ok(BytesMut::freeze)
             .map_err(anyhow::Error::from)
             .sink_err_into()
-            .with_shared_secret(Some(42));
+            .with_shared_secret(server_shared_secret);
 
-        let (_, client_info) = n0_future::future::try_zip(
+        let (_, client_auth) = n0_future::future::try_zip(
             async {
                 super::clientside(&mut client_io, &secret_key)
                     .await
@@ -355,24 +405,60 @@ mod tests {
         )
         .await?;
 
-        println!("{client_info:#?}");
+        Ok(client_auth)
+    }
 
+    #[tokio::test]
+    async fn test_handshake_via_shared_secrets() -> TestResult {
+        let secret_key = SecretKey::generate(rand::rngs::OsRng);
+        let auth = simulate_handshake(&secret_key, Some(42), Some(42)).await?;
+        assert_eq!(auth.public_key, secret_key.public());
+        assert!(auth.key_material_suffix.is_some()); // it got verified via shared key material
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_handshake_via_challenge() -> TestResult {
+        let secret_key = SecretKey::generate(rand::rngs::OsRng);
+        let auth = simulate_handshake(&secret_key, None, None).await?;
+        assert_eq!(auth.public_key, secret_key.public());
+        assert!(auth.key_material_suffix.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_handshake_mismatching_shared_secrets() -> TestResult {
+        let secret_key = SecretKey::generate(rand::rngs::OsRng);
+        // mismatching shared secrets *might* happen with HTTPS proxies that don't also middle-man the shared secret
+        let auth = simulate_handshake(&secret_key, Some(10), Some(99)).await?;
+        assert_eq!(auth.public_key, secret_key.public());
+        assert!(auth.key_material_suffix.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_handshake_challenge_fallback() -> TestResult {
+        let secret_key = SecretKey::generate(rand::rngs::OsRng);
+        // clients might not have access to shared secrets
+        let auth = simulate_handshake(&secret_key, None, Some(99)).await?;
+        assert_eq!(auth.public_key, secret_key.public());
+        assert!(auth.key_material_suffix.is_none());
         Ok(())
     }
 
     #[test]
-    fn test_client_info_roundtrip() -> TestResult {
+    fn test_client_auth_roundtrip() -> TestResult {
         let secret_key = SecretKey::generate(rand::rngs::OsRng);
         let challenge = ServerChallenge::new(rand::rngs::OsRng);
-        let client_info = ClientInfo::new_from_challenge(&secret_key, &challenge);
+        let client_auth = ClientAuth::new_from_challenge(&secret_key, &challenge);
 
-        let bytes = postcard::to_allocvec(&client_info)?;
-        let decoded: ClientInfo = postcard::from_bytes(&bytes)?;
+        let bytes = postcard::to_allocvec(&client_auth)?;
+        let decoded: ClientAuth = postcard::from_bytes(&bytes)?;
 
-        assert_eq!(client_info.public_key, decoded.public_key);
-        assert_eq!(client_info.key_material_suffix, decoded.key_material_suffix);
-        assert_eq!(client_info.signature, decoded.signature);
-        assert_eq!(client_info.versions, decoded.versions);
+        assert_eq!(client_auth.public_key, decoded.public_key);
+        assert_eq!(client_auth.key_material_suffix, decoded.key_material_suffix);
+        assert_eq!(client_auth.signature, decoded.signature);
+        assert_eq!(client_auth.versions, decoded.versions);
 
         Ok(())
     }
@@ -381,8 +467,8 @@ mod tests {
     fn test_challenge_verification() -> TestResult {
         let secret_key = SecretKey::generate(rand::rngs::OsRng);
         let challenge = ServerChallenge::new(rand::rngs::OsRng);
-        let client_info = ClientInfo::new_from_challenge(&secret_key, &challenge);
-        assert!(client_info.verify_from_challenge(&challenge));
+        let client_auth = ClientAuth::new_from_challenge(&secret_key, &challenge);
+        assert!(client_auth.verify_from_challenge(&challenge));
 
         Ok(())
     }
