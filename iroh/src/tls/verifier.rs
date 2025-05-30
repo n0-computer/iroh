@@ -321,9 +321,9 @@ fn verify_tls13_signature(
 }
 
 impl From<certificate::ParseError> for rustls::Error {
-    fn from(certificate::ParseError(e): certificate::ParseError) -> Self {
+    fn from(certificate::ParseError { source }: certificate::ParseError) -> Self {
         use webpki::Error::*;
-        match e {
+        match source {
             BadDer => rustls::Error::InvalidCertificate(CertificateError::BadEncoding),
             e => {
                 rustls::Error::InvalidCertificate(CertificateError::Other(OtherError(Arc::new(e))))
@@ -332,9 +332,9 @@ impl From<certificate::ParseError> for rustls::Error {
     }
 }
 impl From<certificate::VerificationError> for rustls::Error {
-    fn from(certificate::VerificationError(e): certificate::VerificationError) -> Self {
+    fn from(certificate::VerificationError { source }: certificate::VerificationError) -> Self {
         use webpki::Error::*;
-        match e {
+        match source {
             InvalidSignatureForPublicKey => {
                 rustls::Error::InvalidCertificate(CertificateError::BadSignature)
             }

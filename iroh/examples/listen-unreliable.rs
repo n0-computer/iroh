@@ -4,13 +4,14 @@
 //! run this example from the project root:
 //!     $ cargo run --example listen-unreliable
 use iroh::{watcher::Watcher as _, Endpoint, RelayMode, SecretKey};
+use n0_snafu::{Error, Result, ResultExt};
 use tracing::{info, warn};
 
 // An example ALPN that we are using to communicate over the `Endpoint`
 const EXAMPLE_ALPN: &[u8] = b"n0/iroh/examples/magic/0";
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     println!("\nlisten (unreliable) example!\n");
     let secret_key = SecretKey::generate(rand::rngs::OsRng);
@@ -68,7 +69,7 @@ async fn main() -> anyhow::Result<()> {
             }
         };
         let alpn = connecting.alpn().await?;
-        let conn = connecting.await?;
+        let conn = connecting.await.e()?;
         let node_id = conn.remote_node_id()?;
         info!(
             "new (unreliable) connection from {node_id} with ALPN {}",
@@ -78,14 +79,14 @@ async fn main() -> anyhow::Result<()> {
         tokio::spawn(async move {
             // use the `quinn` API to read a datagram off the connection, and send a datagra, in return
             while let Ok(message) = conn.read_datagram().await {
-                let message = String::from_utf8(message.into())?;
+                let message = String::from_utf8(message.into()).e()?;
                 println!("received: {message}");
 
                 let message = format!("hi! you connected to {me}. bye bye");
-                conn.send_datagram(message.as_bytes().to_vec().into())?;
+                conn.send_datagram(message.as_bytes().to_vec().into()).e()?;
             }
 
-            Ok::<_, anyhow::Error>(())
+            Ok::<_, Error>(())
         });
     }
     // stop with SIGINT (ctrl-c)

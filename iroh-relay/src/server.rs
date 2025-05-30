@@ -18,19 +18,21 @@
 
 use std::{fmt, future::Future, net::SocketAddr, num::NonZeroU32, pin::Pin, sync::Arc};
 
-use anyhow::{anyhow, bail, Context, Result};
 use derive_more::Debug;
 use http::{
-    response::Builder as ResponseBuilder, HeaderMap, Method, Request, Response, StatusCode,
+    header::InvalidHeaderValue, response::Builder as ResponseBuilder, HeaderMap, Method, Request,
+    Response, StatusCode,
 };
 use hyper::body::Incoming;
 use iroh_base::NodeId;
 #[cfg(feature = "test-utils")]
 use iroh_base::RelayUrl;
 use n0_future::{future::Boxed, StreamExt};
+use nested_enum_utils::common_fields;
+use snafu::{Backtrace, ResultExt, Snafu};
 use tokio::{
     net::{TcpListener, UdpSocket},
-    task::JoinSet,
+    task::{JoinError, JoinSet},
 };
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{debug, error, info, info_span, instrument, trace, warn, Instrument};
@@ -39,7 +41,7 @@ use crate::{
     defaults::DEFAULT_KEY_CACHE_CAPACITY,
     http::RELAY_PROBE_PATH,
     protos,
-    quic::server::{QuicServer, ServerHandle as QuicServerHandle},
+    quic::server::{QuicServer, QuicSpawnError, ServerHandle as QuicServerHandle},
 };
 
 mod client;
@@ -262,7 +264,7 @@ pub struct Server {
     /// Handle to the quic server.
     quic_handle: Option<QuicServerHandle>,
     /// The main task running the server.
-    supervisor: AbortOnDropHandle<Result<()>>,
+    supervisor: AbortOnDropHandle<Result<(), SupervisorError>>,
     /// The certificate for the server.
     ///
     /// If the server has manual certificates configured the certificate chain will be
@@ -271,9 +273,57 @@ pub struct Server {
     metrics: RelayMetrics,
 }
 
+/// Server spawn errors
+#[common_fields({
+    backtrace: Option<Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+pub enum SpawnError {
+    #[snafu(display("Unable to get local address"))]
+    LocalAddr { source: std::io::Error },
+    #[snafu(display("Failed to bind STUN listener"))]
+    UdpSocketBind { source: std::io::Error },
+    #[snafu(display("Failed to bind STUN listener"))]
+    QuicSpawn { source: QuicSpawnError },
+    #[snafu(display("Failed to parse TLS header"))]
+    TlsHeaderParse { source: InvalidHeaderValue },
+    #[snafu(display("Failed to bind TcpListener"))]
+    BindTlsListener { source: std::io::Error },
+    #[snafu(display("No local address"))]
+    NoLocalAddr { source: std::io::Error },
+    #[snafu(display("Failed to bind server socket to {addr}"))]
+    BindTcpListener { addr: SocketAddr },
+}
+
+/// Server task errors
+#[common_fields({
+    backtrace: Option<snafu::Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+pub enum SupervisorError {
+    #[snafu(display("Error starting metrics server"))]
+    Metrics { source: std::io::Error },
+    #[snafu(display("Acme event stream finished"))]
+    AcmeEventStreamFinished {},
+    #[snafu(transparent)]
+    JoinError { source: JoinError },
+    #[snafu(display("No relay services are enabled"))]
+    NoRelayServicesEnabled {},
+    #[snafu(display("Task cancelled"))]
+    TaskCancelled {},
+}
+
 impl Server {
     /// Starts the server.
-    pub async fn spawn<EC, EA>(config: ServerConfig<EC, EA>) -> Result<Self>
+    pub async fn spawn<EC, EA>(config: ServerConfig<EC, EA>) -> Result<Self, SpawnError>
     where
         EC: fmt::Debug + 'static,
         EA: fmt::Debug + 'static,
@@ -289,8 +339,9 @@ impl Server {
             registry.register_all(&metrics);
             tasks.spawn(
                 async move {
-                    iroh_metrics::service::start_metrics_server(addr, Arc::new(registry)).await?;
-                    anyhow::Ok(())
+                    iroh_metrics::service::start_metrics_server(addr, Arc::new(registry))
+                        .await
+                        .context(MetricsSnafu)
                 }
                 .instrument(info_span!("metrics-server")),
             );
@@ -302,15 +353,19 @@ impl Server {
                 debug!("Starting STUN server");
                 match UdpSocket::bind(stun.bind_addr).await {
                     Ok(sock) => {
-                        let addr = sock.local_addr()?;
+                        let addr = sock.local_addr().context(LocalAddrSnafu)?;
                         info!("STUN server listening on {addr}");
+                        let stun_metrics = metrics.stun.clone();
                         tasks.spawn(
-                            server_stun_listener(sock, metrics.stun.clone())
-                                .instrument(info_span!("stun-server", %addr)),
+                            async move {
+                                server_stun_listener(sock, stun_metrics).await;
+                                Ok(())
+                            }
+                            .instrument(info_span!("stun-server", %addr)),
                         );
                         Some(addr)
                     }
-                    Err(err) => bail!("failed to bind STUN listener: {err:#?}"),
+                    Err(err) => return Err(err).context(UdpSocketBindSnafu),
                 }
             }
             None => None,
@@ -328,7 +383,7 @@ impl Server {
         let quic_server = match config.quic {
             Some(quic_config) => {
                 debug!("Starting QUIC server {}", quic_config.bind_addr);
-                Some(QuicServer::spawn(quic_config)?)
+                Some(QuicServer::spawn(quic_config).context(QuicSpawnSnafu)?)
             }
             None => None,
         };
@@ -340,7 +395,7 @@ impl Server {
                 debug!("Starting Relay server");
                 let mut headers = HeaderMap::new();
                 for (name, value) in TLS_HEADERS.iter() {
-                    headers.insert(*name, value.parse()?);
+                    headers.insert(*name, value.parse().context(TlsHeaderParseSnafu)?);
                 }
                 let relay_bind_addr = match relay_config.tls {
                     Some(ref tls) => tls.https_bind_addr,
@@ -375,7 +430,7 @@ impl Server {
                                                 Err(err) => error!("error: {err:?}"),
                                             }
                                         }
-                                        Err(anyhow!("acme event stream finished"))
+                                        Err(AcmeEventStreamFinishedSnafu.build())
                                     }
                                     .instrument(info_span!("acme")),
                                 );
@@ -401,11 +456,14 @@ impl Server {
                         // these standalone.
                         let http_listener = TcpListener::bind(&relay_config.http_bind_addr)
                             .await
-                            .context("failed to bind http")?;
-                        let http_addr = http_listener.local_addr()?;
+                            .context(BindTlsListenerSnafu)?;
+                        let http_addr = http_listener.local_addr().context(NoLocalAddrSnafu)?;
                         tasks.spawn(
-                            run_captive_portal_service(http_listener)
-                                .instrument(info_span!("http-service", addr = %http_addr)),
+                            async move {
+                                run_captive_portal_service(http_listener).await;
+                                Ok(())
+                            }
+                            .instrument(info_span!("http-service", addr = %http_addr)),
                         );
                         Some(http_addr)
                     }
@@ -447,7 +505,7 @@ impl Server {
     /// Requests graceful shutdown.
     ///
     /// Returns once all server tasks have stopped.
-    pub async fn shutdown(self) -> Result<()> {
+    pub async fn shutdown(self) -> Result<(), SupervisorError> {
         // Only the Relay server and QUIC server need shutting down, the supervisor will abort the tasks in
         // the JoinSet when the server terminates.
         if let Some(handle) = self.relay_handle {
@@ -463,7 +521,7 @@ impl Server {
     ///
     /// This allows waiting for the server's supervisor task to finish.  Can be useful in
     /// case there is an error in the server before it is shut down.
-    pub fn task_handle(&mut self) -> &mut AbortOnDropHandle<Result<()>> {
+    pub fn task_handle(&mut self) -> &mut AbortOnDropHandle<Result<(), SupervisorError>> {
         &mut self.supervisor
     }
 
@@ -528,10 +586,10 @@ impl Server {
 /// The supervisor finishes once all tasks are finished.
 #[instrument(skip_all)]
 async fn relay_supervisor(
-    mut tasks: JoinSet<Result<()>>,
+    mut tasks: JoinSet<Result<(), SupervisorError>>,
     mut relay_http_server: Option<http_server::Server>,
     mut quic_server: Option<QuicServer>,
-) -> Result<()> {
+) -> Result<(), SupervisorError> {
     let quic_enabled = quic_server.is_some();
     let mut quic_fut = match quic_server {
         Some(ref mut server) => n0_future::Either::Left(server.task_handle()),
@@ -545,9 +603,9 @@ async fn relay_supervisor(
     let res = tokio::select! {
         biased;
         Some(ret) = tasks.join_next() => ret,
-        ret = &mut quic_fut, if quic_enabled => ret.map(anyhow::Ok),
-        ret = &mut relay_fut, if relay_enabled => ret.map(anyhow::Ok),
-        else => Ok(Err(anyhow!("No relay services are enabled."))),
+        ret = &mut quic_fut, if quic_enabled => ret.map(Ok),
+        ret = &mut relay_fut, if relay_enabled => ret.map(Ok),
+        else => Ok(Err(NoRelayServicesEnabledSnafu.build())),
     };
     let ret = match res {
         Ok(Ok(())) => {
@@ -556,7 +614,7 @@ async fn relay_supervisor(
         }
         Ok(Err(err)) => {
             error!(%err, "Task failed");
-            Err(err.context("task failed"))
+            Err(err)
         }
         Err(err) => {
             if let Ok(panic) = err.try_into_panic() {
@@ -564,7 +622,7 @@ async fn relay_supervisor(
                 std::panic::resume_unwind(panic);
             }
             debug!("Task cancelled");
-            Err(anyhow!("task cancelled"))
+            Err(TaskCancelledSnafu.build())
         }
     };
 
@@ -576,7 +634,7 @@ async fn relay_supervisor(
 
     // Ensure the QUIC server is closed
     if let Some(server) = quic_server {
-        server.shutdown().await?;
+        server.shutdown().await;
     }
 
     // Stop all remaining tasks
@@ -588,7 +646,7 @@ async fn relay_supervisor(
 /// Runs a STUN server.
 ///
 /// When the future is dropped, the server stops.
-async fn server_stun_listener(sock: UdpSocket, metrics: Arc<StunMetrics>) -> Result<()> {
+async fn server_stun_listener(sock: UdpSocket, metrics: Arc<StunMetrics>) {
     info!(addr = ?sock.local_addr().ok(), "running STUN server");
     let sock = Arc::new(sock);
     let mut buffer = vec![0u8; 64 << 10];
@@ -740,7 +798,7 @@ fn is_challenge_char(c: char) -> bool {
 }
 
 /// This is a future that never returns, drop it to cancel/abort.
-async fn run_captive_portal_service(http_listener: TcpListener) -> Result<()> {
+async fn run_captive_portal_service(http_listener: TcpListener) {
     info!("serving");
 
     // If this future is cancelled, this is dropped and all tasks are aborted.
@@ -819,20 +877,26 @@ mod tests {
     use std::{net::Ipv4Addr, time::Duration};
 
     use bytes::Bytes;
-    use http::header::UPGRADE;
+    use http::{header::UPGRADE, StatusCode};
     use iroh_base::{NodeId, RelayUrl, SecretKey};
-    use n0_future::{FutureExt, SinkExt};
-    use testresult::TestResult;
+    use n0_future::{FutureExt, SinkExt, StreamExt};
+    use n0_snafu::{Result, ResultExt};
+    use tokio::net::UdpSocket;
+    use tracing::{info, instrument};
     use tracing_test::traced_test;
 
-    use super::*;
+    use super::{
+        Access, AccessConfig, RelayConfig, Server, ServerConfig, SpawnError, StunConfig,
+        NO_CONTENT_CHALLENGE_HEADER, NO_CONTENT_RESPONSE_HEADER,
+    };
     use crate::{
         client::{conn::ReceivedMessage, ClientBuilder, SendMessage},
         dns::DnsResolver,
         http::{Protocol, HTTP_UPGRADE_PROTOCOL},
+        protos,
     };
 
-    async fn spawn_local_relay() -> Result<Server> {
+    async fn spawn_local_relay() -> std::result::Result<Server, SpawnError> {
         Server::spawn(ServerConfig::<(), ()> {
             relay: Some(RelayConfig::<(), ()> {
                 http_bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
@@ -848,6 +912,7 @@ mod tests {
         .await
     }
 
+    #[instrument]
     async fn try_send_recv(
         client_a: &mut crate::client::Client,
         client_b: &mut crate::client::Client,
@@ -863,7 +928,8 @@ mod tests {
             else {
                 continue;
             };
-            return res.context("stream finished")?;
+            let res = res.expect("stream finished")?;
+            return Ok(res);
         }
         panic!("failed to send and recv message");
     }
@@ -962,7 +1028,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_relay_clients_both_relay() -> TestResult<()> {
+    async fn test_relay_clients_both_relay() -> Result<()> {
         let server = spawn_local_relay().await.unwrap();
         let relay_url = format!("http://{}", server.http_addr().unwrap());
         let relay_url: RelayUrl = relay_url.parse().unwrap();
@@ -1014,7 +1080,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_relay_clients_both_websockets() -> TestResult<()> {
+    async fn test_relay_clients_both_websockets() -> Result<()> {
         let server = spawn_local_relay().await?;
 
         let relay_url = format!("http://{}", server.http_addr().unwrap());
@@ -1076,7 +1142,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_relay_clients_websocket_and_relay() -> TestResult<()> {
+    async fn test_relay_clients_websocket_and_relay() -> Result<()> {
         let server = spawn_local_relay().await.unwrap();
 
         let relay_url = format!("http://{}", server.http_addr().unwrap());
@@ -1165,6 +1231,9 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn test_relay_access_control() -> Result<()> {
+        let current_span = tracing::info_span!("this is a test");
+        let _guard = current_span.enter();
+
         let a_secret_key = SecretKey::generate(rand::thread_rng());
         let a_key = a_secret_key.public();
 
@@ -1191,8 +1260,8 @@ mod tests {
             stun: None,
             metrics_addr: None,
         })
-        .await
-        .unwrap();
+        .await?;
+
         let relay_url = format!("http://{}", server.http_addr().unwrap());
         let relay_url: RelayUrl = relay_url.parse()?;
 
@@ -1213,7 +1282,8 @@ mod tests {
                 }
             }
         })
-        .await?;
+        .await
+        .context("timeout")?;
 
         // test that another client has access
 
@@ -1255,7 +1325,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_relay_clients_full() -> TestResult<()> {
+    async fn test_relay_clients_full() -> Result<()> {
         let server = spawn_local_relay().await.unwrap();
         let relay_url = format!("http://{}", server.http_addr().unwrap());
         let relay_url: RelayUrl = relay_url.parse().unwrap();

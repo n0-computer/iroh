@@ -2,9 +2,9 @@
 
 use std::{collections::BTreeMap, num::NonZeroUsize, path::Path, sync::Arc, time::Duration};
 
-use anyhow::Result;
 use hickory_server::proto::rr::{Name, RecordSet, RecordType, RrKey};
 use lru::LruCache;
+use n0_snafu::Result;
 use pkarr::{Client as PkarrClient, SignedPacket};
 use tokio::sync::Mutex;
 use tracing::{debug, trace, warn};

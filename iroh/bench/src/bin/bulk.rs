@@ -1,11 +1,11 @@
 use std::collections::BTreeMap;
 
-use anyhow::Result;
 use clap::Parser;
 #[cfg(not(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
 use iroh_bench::quinn;
 use iroh_bench::{configure_tracing_subscriber, iroh, rt, s2n, Commands, Opt};
 use iroh_metrics::{MetricValue, MetricsGroup};
+use n0_snafu::Result;
 
 fn main() {
     let cmd = Commands::parse();
