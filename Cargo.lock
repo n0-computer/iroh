@@ -2228,7 +2228,6 @@ name = "iroh"
 version = "0.35.0"
 dependencies = [
  "aead",
- "anyhow",
  "atomic-waker",
  "axum",
  "backon",
@@ -4623,13 +4622,12 @@ dependencies = [
 [[package]]
 name = "swarm-discovery"
 version = "0.3.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d3a95032b94c1dc318f55e0b130e3d2176cda022310a65c3df0092764ea69562"
+source = "git+https://github.com/ramfox/swarm-discovery.git?branch=concrete-errors#d54c49dd1f48ca6cdc79fa33be2a1406b6f1795e"
 dependencies = [
  "acto",
- "anyhow",
  "hickory-proto",
  "rand 0.8.5",
+ "snafu",
  "socket2",
  "tokio",
  "tracing",
