@@ -1113,7 +1113,7 @@
 <a href=#1113 id=1113 data-nosnippet>1113</a>        <span class="self">self</span>.msock
 <a href=#1114 id=1114 data-nosnippet>1114</a>            .local_addr()
 <a href=#1115 id=1115 data-nosnippet>1115</a>            .into_iter()
-<a href=#1116 id=1116 data-nosnippet>1116</a>            .filter_map(|addr| addr.try_into().ok())
+<a href=#1116 id=1116 data-nosnippet>1116</a>            .filter_map(|addr| addr.into_socket_addr())
 <a href=#1117 id=1117 data-nosnippet>1117</a>            .collect()
 <a href=#1118 id=1118 data-nosnippet>1118</a>    }
 <a href=#1119 id=1119 data-nosnippet>1119</a>

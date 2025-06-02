@@ -305,7 +305,7 @@
 <a href=#305 id=305 data-nosnippet>305</a>    <span class="kw">fn </span>ip_local_addrs(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = SocketAddr&gt; {
 <a href=#306 id=306 data-nosnippet>306</a>        <span class="self">self</span>.local_addr()
 <a href=#307 id=307 data-nosnippet>307</a>            .into_iter()
-<a href=#308 id=308 data-nosnippet>308</a>            .filter_map(|addr| SocketAddr::try_from(addr).ok())
+<a href=#308 id=308 data-nosnippet>308</a>            .filter_map(|addr| addr.into_socket_addr())
 <a href=#309 id=309 data-nosnippet>309</a>    }
 <a href=#310 id=310 data-nosnippet>310</a>
 <a href=#311 id=311 data-nosnippet>311</a>    <span class="doccomment">/// Returns `true` if we have at least one candidate address where we can send packets to.
@@ -487,7 +487,7 @@
 <a href=#487 id=487 data-nosnippet>487</a>
 <a href=#488 id=488 data-nosnippet>488</a>        <span class="kw">let </span><span class="kw-2">mut </span>ipv4_addr = <span class="prelude-val">None</span>;
 <a href=#489 id=489 data-nosnippet>489</a>        <span class="kw">for </span>addr <span class="kw">in </span>addrs {
-<a href=#490 id=490 data-nosnippet>490</a>            <span class="kw">let </span><span class="prelude-val">Ok</span>(addr) = SocketAddr::try_from(addr) <span class="kw">else </span>{
+<a href=#490 id=490 data-nosnippet>490</a>            <span class="kw">let </span><span class="prelude-val">Some</span>(addr) = addr.into_socket_addr() <span class="kw">else </span>{
 <a href=#491 id=491 data-nosnippet>491</a>                <span class="kw">continue</span>;
 <a href=#492 id=492 data-nosnippet>492</a>            };
 <a href=#493 id=493 data-nosnippet>493</a>            <span class="kw">if </span>addr.is_ipv6() {
@@ -660,7 +660,7 @@
 <a href=#660 id=660 data-nosnippet>660</a>                    <span class="kw">let </span>packet2 = Bytes::copy_from_slice(datagram);
 <a href=#661 id=661 data-nosnippet>661</a>                    <span class="self">self</span>.net_reporter.receive_stun_packet(
 <a href=#662 id=662 data-nosnippet>662</a>                        packet2,
-<a href=#663 id=663 data-nosnippet>663</a>                        source_addr.clone().try_into().expect(<span class="string">"checked"</span>),
+<a href=#663 id=663 data-nosnippet>663</a>                        source_addr.clone().into_socket_addr().expect(<span class="string">"checked"</span>),
 <a href=#664 id=664 data-nosnippet>664</a>                    );
 <a href=#665 id=665 data-nosnippet>665</a>                    datagram[<span class="number">0</span>] = <span class="number">0u8</span>;
 <a href=#666 id=666 data-nosnippet>666</a>                } <span class="kw">else if let </span><span class="prelude-val">Some</span>((sender, sealed_box)) = disco::source_and_box(datagram) {
@@ -1631,7 +1631,7 @@
 <a href=#1631 id=1631 data-nosnippet>1631</a>            .local_addrs()
 <a href=#1632 id=1632 data-nosnippet>1632</a>            .into_iter()
 <a href=#1633 id=1633 data-nosnippet>1633</a>            .filter_map(|addr| {
-<a href=#1634 id=1634 data-nosnippet>1634</a>                <span class="kw">let </span>addr: SocketAddr = addr.try_into().ok()<span class="question-mark">?</span>;
+<a href=#1634 id=1634 data-nosnippet>1634</a>                <span class="kw">let </span>addr: SocketAddr = addr.into_socket_addr()<span class="question-mark">?</span>;
 <a href=#1635 id=1635 data-nosnippet>1635</a>                <span class="prelude-val">Some</span>(addr)
 <a href=#1636 id=1636 data-nosnippet>1636</a>            })
 <a href=#1637 id=1637 data-nosnippet>1637</a>            .collect();
