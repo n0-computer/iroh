@@ -2341,7 +2341,6 @@ mod tests {
     };
 
     use iroh_base::{NodeAddr, NodeId, SecretKey};
-    use iroh_metrics::MetricsSource;
     use iroh_relay::http::Protocol;
     use n0_future::{task::AbortOnDropHandle, StreamExt};
     use n0_snafu::{Error, Result, ResultExt};
@@ -3125,10 +3124,11 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "metrics")]
     #[tokio::test]
     #[traced_test]
     async fn metrics_smoke() -> Result {
-        use iroh_metrics::Registry;
+        use iroh_metrics::{MetricsSource, Registry};
 
         let secret_key = SecretKey::from_bytes(&[0u8; 32]);
         let client = Endpoint::builder()

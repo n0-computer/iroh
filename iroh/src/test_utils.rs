@@ -91,8 +91,7 @@ pub async fn run_relay_server_with(
         }),
         quic,
         stun,
-        #[cfg(feature = "metrics")]
-        metrics_addr: None,
+        ..Default::default()
     };
     let server = Server::spawn(config).await?;
     let url: RelayUrl = format!("https://{}", server.https_addr().expect("configured"))
