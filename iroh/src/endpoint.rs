@@ -1113,7 +1113,7 @@ impl Endpoint {
         self.msock
             .local_addr()
             .into_iter()
-            .filter_map(|addr| addr.try_into().ok())
+            .filter_map(|addr| addr.into_socket_addr())
             .collect()
     }
 

@@ -305,7 +305,7 @@ impl MagicSock {
     fn ip_local_addrs(&self) -> impl Iterator<Item = SocketAddr> {
         self.local_addr()
             .into_iter()
-            .filter_map(|addr| SocketAddr::try_from(addr).ok())
+            .filter_map(|addr| addr.into_socket_addr())
     }
 
     /// Returns `true` if we have at least one candidate address where we can send packets to.
@@ -487,7 +487,7 @@ impl MagicSock {
 
         let mut ipv4_addr = None;
         for addr in addrs {
-            let Ok(addr) = SocketAddr::try_from(addr) else {
+            let Some(addr) = addr.into_socket_addr() else {
                 continue;
             };
             if addr.is_ipv6() {
@@ -660,7 +660,7 @@ impl MagicSock {
                     let packet2 = Bytes::copy_from_slice(datagram);
                     self.net_reporter.receive_stun_packet(
                         packet2,
-                        source_addr.clone().try_into().expect("checked"),
+                        source_addr.clone().into_socket_addr().expect("checked"),
                     );
                     datagram[0] = 0u8;
                 } else if let Some((sender, sealed_box)) = disco::source_and_box(datagram) {
@@ -1631,7 +1631,7 @@ impl AsyncUdpSocket for MagicUdpSocket {
             .local_addrs()
             .into_iter()
             .filter_map(|addr| {
-                let addr: SocketAddr = addr.try_into().ok()?;
+                let addr: SocketAddr = addr.into_socket_addr()?;
                 Some(addr)
             })
             .collect();

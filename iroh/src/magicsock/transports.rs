@@ -332,46 +332,21 @@ impl From<(RelayUrl, NodeId)> for Addr {
     }
 }
 
-impl TryFrom<Addr> for SocketAddr {
-    type Error = anyhow::Error;
-
-    fn try_from(value: Addr) -> Result<Self, Self::Error> {
-        match value {
-            Addr::Ip(addr) => Ok(addr),
-            _ => Err(anyhow::anyhow!("not a valid socket addr")),
-        }
-    }
-}
-
-impl TryFrom<Addr> for IpAddr {
-    type Error = anyhow::Error;
-
-    fn try_from(value: Addr) -> Result<Self, Self::Error> {
-        match value {
-            Addr::Ip(addr) => Ok(addr.ip()),
-            _ => Err(anyhow::anyhow!("not a valid socket addr")),
-        }
-    }
-}
-
-impl TryFrom<Addr> for (RelayUrl, NodeId) {
-    type Error = anyhow::Error;
-
-    fn try_from(value: Addr) -> Result<Self, Self::Error> {
-        match value {
-            Addr::Relay(url, node) => Ok((url, node)),
-            _ => Err(anyhow::anyhow!("not a valid relay url")),
-        }
-    }
-}
-
 impl Addr {
-    pub fn is_relay(&self) -> bool {
+    pub(crate) fn is_relay(&self) -> bool {
         matches!(self, Self::Relay(..))
     }
 
-    pub fn is_ip(&self) -> bool {
+    pub(crate) fn is_ip(&self) -> bool {
         matches!(self, Self::Ip(..))
+    }
+
+    /// Returns `None` if not an `Ip`.
+    pub(crate) fn into_socket_addr(self) -> Option<SocketAddr> {
+        match self {
+            Self::Ip(ip) => Some(ip),
+            Self::Relay(..) => None,
+        }
     }
 }
 
