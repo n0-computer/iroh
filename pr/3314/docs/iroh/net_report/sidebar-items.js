@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"struct":["IfStateDetails","Metrics","Options","QuicConfig","RelayLatencies","Report"]};
+window.SIDEBAR_ITEMS = {"enum":["ReportError"],"struct":["IfStateDetails","Metrics","Options","QuicConfig","RelayLatencies","Report"]};
