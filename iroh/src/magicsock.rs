@@ -874,7 +874,7 @@ impl MagicSock {
             txn = ?dm.tx_id,
         );
 
-        if self.disco.try_send(addr.clone(), sender, pong).is_err() {
+        if !self.disco.try_send(addr.clone(), sender, pong) {
             warn!(%addr, "failed to queue pong");
         }
 
@@ -900,7 +900,7 @@ impl MagicSock {
             tx_id,
             node_key: self.public_key,
         });
-        let sent = self.disco.try_send(dst.clone(), dst_node, msg).is_ok();
+        let sent = self.disco.try_send(dst.clone(), dst_node, msg);
         if sent {
             let msg_sender = self.actor_sender.clone();
             trace!(%dst, tx = %HEXLOWER.encode(&tx_id), ?purpose, "ping sent (queued)");
@@ -933,11 +933,11 @@ impl MagicSock {
                             let msg = disco::Message::CallMeMaybe(
                                 self.direct_addrs.to_call_me_maybe_message(),
                             );
-                            if self
-                                .disco
-                                .try_send(SendAddr::Relay(relay_url.clone()), dst_node, msg.clone())
-                                .is_err()
-                            {
+                            if !self.disco.try_send(
+                                SendAddr::Relay(relay_url.clone()),
+                                dst_node,
+                                msg.clone(),
+                            ) {
                                 warn!(dstkey = %dst_node.fmt_short(), %relay_url, "relay channel full, dropping call-me-maybe");
                             } else {
                                 debug!(dstkey = %dst_node.fmt_short(), %relay_url, "call-me-maybe sent");
@@ -1528,15 +1528,8 @@ impl DiscoState {
         )
     }
 
-    fn try_send(
-        &self,
-        dst: SendAddr,
-        node_id: PublicKey,
-        msg: disco::Message,
-    ) -> Result<(), anyhow::Error> {
-        self.sender
-            .try_send((dst, node_id, msg))
-            .map_err(|_| anyhow::anyhow!("channel full"))
+    fn try_send(&self, dst: SendAddr, node_id: PublicKey, msg: disco::Message) -> bool {
+        self.sender.try_send((dst, node_id, msg)).is_ok()
     }
 
     fn encode_and_seal(
@@ -2122,11 +2115,10 @@ impl Actor {
         // allocate, to minimize locking duration
 
         for (public_key, url) in self.pending_call_me_maybes.drain() {
-            if self
+            if !self
                 .msock
                 .disco
                 .try_send(SendAddr::Relay(url), public_key, msg.clone())
-                .is_err()
             {
                 warn!(node = %public_key.fmt_short(), "relay channel full, dropping call-me-maybe");
             }
