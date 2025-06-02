@@ -54,48 +54,48 @@ mod tests {
             let mut packet = dns::Packet::new_reply(0);
             // record at root
             packet.answers.push(dns::ResourceRecord::new(
-                dns::Name::new("").unwrap(),
+                dns::Name::new("").e()?,
                 dns::CLASS::IN,
                 30,
                 dns::rdata::RData::TXT("hi0".try_into().unwrap()),
             ));
             // record at level one
             packet.answers.push(dns::ResourceRecord::new(
-                dns::Name::new("_hello").unwrap(),
+                dns::Name::new("_hello").e()?,
                 dns::CLASS::IN,
                 30,
                 dns::rdata::RData::TXT("hi1".try_into().unwrap()),
             ));
             // record at level two
             packet.answers.push(dns::ResourceRecord::new(
-                dns::Name::new("_hello.world").unwrap(),
+                dns::Name::new("_hello.world").e()?,
                 dns::CLASS::IN,
                 30,
                 dns::rdata::RData::TXT("hi2".try_into().unwrap()),
             ));
             // multiple records for same name
             packet.answers.push(dns::ResourceRecord::new(
-                dns::Name::new("multiple").unwrap(),
+                dns::Name::new("multiple").e()?,
                 dns::CLASS::IN,
                 30,
                 dns::rdata::RData::TXT("hi3".try_into().unwrap()),
             ));
             packet.answers.push(dns::ResourceRecord::new(
-                dns::Name::new("multiple").unwrap(),
+                dns::Name::new("multiple").e()?,
                 dns::CLASS::IN,
                 30,
                 dns::rdata::RData::TXT("hi4".try_into().unwrap()),
             ));
             // record of type A
             packet.answers.push(dns::ResourceRecord::new(
-                dns::Name::new("").unwrap(),
+                dns::Name::new("").e()?,
                 dns::CLASS::IN,
                 30,
                 dns::rdata::RData::A(Ipv4Addr::LOCALHOST.into()),
             ));
             // record of type AAAA
             packet.answers.push(dns::ResourceRecord::new(
-                dns::Name::new("foo.bar.baz").unwrap(),
+                dns::Name::new("foo.bar.baz").e()?,
                 dns::CLASS::IN,
                 30,
                 dns::rdata::RData::AAAA(Ipv6Addr::LOCALHOST.into()),
