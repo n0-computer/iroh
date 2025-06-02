@@ -679,8 +679,20 @@ async fn run_quic_probe(
 ) -> Result<ProbeReport, ProbeErrorWithProbe> {
     trace!("QAD probe start");
     match probe.proto() {
-        ProbeProto::QadIpv4 => debug_assert!(relay_addr.is_ipv4()),
-        ProbeProto::QadIpv6 => debug_assert!(relay_addr.is_ipv6()),
+        ProbeProto::QadIpv4 => {
+            if !relay_addr.is_ipv4() {
+                return Err(ProbeErrorWithProbe::Error(
+                    probe_error::QuicSnafu {}.into_error(quic_error::InvalidUrlSnafu.build()),
+                ));
+            }
+        }
+        ProbeProto::QadIpv6 => {
+            if !relay_addr.is_ipv6() {
+                return Err(ProbeErrorWithProbe::Error(
+                    probe_error::QuicSnafu {}.into_error(quic_error::InvalidUrlSnafu.build()),
+                ));
+            }
+        }
         _ => debug_assert!(false, "wrong probe"),
     }
     let relay_addr = maybe_to_mapped_addr(ip_mapped_addrs, relay_addr);

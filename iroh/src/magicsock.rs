@@ -74,7 +74,7 @@ use crate::{
     discovery::{Discovery, DiscoveryItem, DiscoverySubscribers, NodeData, UserData},
     key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
     metrics::EndpointMetrics,
-    net_report::{self, IfStateDetails, IpMappedAddresses, Report, ReportError},
+    net_report::{self, IfStateDetails, IpMappedAddresses, Report},
 };
 
 mod metrics;
@@ -1732,17 +1732,6 @@ fn bind_ip(
     }
 
     Ok((ip, port_mapper))
-}
-
-#[derive(Debug, Snafu)]
-#[non_exhaustive]
-enum NetReportError {
-    #[snafu(display("Net report not received"))]
-    NotReceived,
-    #[snafu(display("Net report timed out"))]
-    Timeout,
-    #[snafu(display("Net report encountered an error"))]
-    NetReport { source: ReportError },
 }
 
 impl Actor {
