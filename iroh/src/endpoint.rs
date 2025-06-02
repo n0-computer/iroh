@@ -145,7 +145,6 @@ pub struct Builder {
     addr_v6: Option<SocketAddrV6>,
     #[cfg(any(test, feature = "test-utils"))]
     path_selection: PathSelection,
-    tls_auth: tls::Authentication,
 }
 
 impl Default for Builder {
@@ -171,7 +170,6 @@ impl Default for Builder {
             addr_v6: None,
             #[cfg(any(test, feature = "test-utils"))]
             path_selection: PathSelection::default(),
-            tls_auth: tls::Authentication::RawPublicKey,
         }
     }
 }
@@ -190,7 +188,7 @@ impl Builder {
             .unwrap_or_else(|| SecretKey::generate(rand::rngs::OsRng));
         let static_config = StaticConfig {
             transport_config: Arc::new(self.transport_config),
-            tls_config: tls::TlsConfig::new(self.tls_auth, secret_key.clone()),
+            tls_config: tls::TlsConfig::new(secret_key.clone()),
             keylog: self.keylog,
         };
         #[cfg(not(wasm_browser))]
@@ -394,14 +392,6 @@ impl Builder {
             self.discovery
                 .push(Box::new(|_| Some(Box::new(DnsDiscovery::n0_dns()))));
         }
-        self
-    }
-
-    /// Use TLS Raw Public Keys
-    ///
-    /// This is the default, and currently the only available option.
-    pub fn tls_raw_public_keys(mut self) -> Self {
-        self.tls_auth = tls::Authentication::RawPublicKey;
         self
     }
 
@@ -1696,10 +1686,7 @@ impl Future for IncomingFuture {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
             Poll::Ready(Ok(inner)) => {
-                let conn = Connection {
-                    inner,
-                    tls_auth: this.ep.static_config.tls_config.auth,
-                };
+                let conn = Connection { inner };
                 try_send_rtt_msg(&conn, this.ep, None);
                 Poll::Ready(Ok(conn))
             }
@@ -1787,10 +1774,7 @@ impl Connecting {
     pub fn into_0rtt(self) -> Result<(Connection, ZeroRttAccepted), Self> {
         match self.inner.into_0rtt() {
             Ok((inner, zrtt_accepted)) => {
-                let conn = Connection {
-                    inner,
-                    tls_auth: self.ep.static_config.tls_config.auth,
-                };
+                let conn = Connection { inner };
                 let zrtt_accepted = ZeroRttAccepted {
                     inner: zrtt_accepted,
                     _discovery_drop_guard: self._discovery_drop_guard,
@@ -1840,10 +1824,7 @@ impl Future for Connecting {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
             Poll::Ready(Ok(inner)) => {
-                let conn = Connection {
-                    inner,
-                    tls_auth: this.ep.static_config.tls_config.auth,
-                };
+                let conn = Connection { inner };
                 try_send_rtt_msg(&conn, this.ep, *this.remote_node_id);
                 Poll::Ready(Ok(conn))
             }
@@ -1892,7 +1873,6 @@ impl Future for ZeroRttAccepted {
 #[derive(Debug, Clone)]
 pub struct Connection {
     inner: quinn::Connection,
-    tls_auth: tls::Authentication,
 }
 
 #[allow(missing_docs)]
@@ -2134,14 +2114,10 @@ impl Connection {
                         return Err(RemoteNodeIdSnafu.build());
                     }
 
-                    match self.tls_auth {
-                        tls::Authentication::RawPublicKey => {
-                            let peer_id = VerifyingKey::from_public_key_der(&certs[0])
-                                .map_err(|_| RemoteNodeIdSnafu.build())?
-                                .into();
-                            Ok(peer_id)
-                        }
-                    }
+                    let peer_id = VerifyingKey::from_public_key_der(&certs[0])
+                        .map_err(|_| RemoteNodeIdSnafu.build())?
+                        .into();
+                    Ok(peer_id)
                 }
                 Err(err) => {
                     warn!("invalid peer certificate: {:?}", err);
@@ -2343,7 +2319,6 @@ mod tests {
     use crate::{
         endpoint::{ConnectOptions, Connection, ConnectionType, RemoteInfo},
         test_utils::{run_relay_server, run_relay_server_with},
-        tls,
         watcher::Watcher,
         RelayMode,
     };
@@ -2679,26 +2654,16 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_bidi_send_recv_raw_public_key() -> Result {
-        endpoint_bidi_send_recv(tls::Authentication::RawPublicKey).await
-    }
-
-    async fn endpoint_bidi_send_recv(auth: tls::Authentication) -> Result {
+    async fn endpoint_bidi_send_recv() -> Result {
         let ep1 = Endpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Disabled);
 
-        let ep1 = match auth {
-            tls::Authentication::RawPublicKey => ep1.tls_raw_public_keys(),
-        };
         let ep1 = ep1.bind().await?;
         let ep2 = Endpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Disabled);
 
-        let ep2 = match auth {
-            tls::Authentication::RawPublicKey => ep2.tls_raw_public_keys(),
-        };
         let ep2 = ep2.bind().await?;
 
         let ep1_nodeaddr = ep1.node_addr().initialized().await?;
