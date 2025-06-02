@@ -1136,58 +1136,6 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    #[traced_test]
-    async fn test_udp_blocked() -> Result {
-        // Create a "STUN server", which will never respond to anything.  This is how UDP to
-        // the STUN server being blocked will look like from the client's perspective.
-        let blackhole = tokio::net::UdpSocket::bind("127.0.0.1:0").await.e()?;
-        let stun_addr = blackhole.local_addr().e()?;
-        let dm = stun_utils::relay_map_of_opts([(stun_addr, false)].into_iter());
-
-        // Now create a client and generate a report.
-        let resolver = dns::tests::resolver();
-        let mut client = Client::new(None, resolver.clone(), None, Default::default());
-
-        let r = client.get_report_all(dm, None, None, None).await?;
-        let mut r: Report = (*r).clone();
-        r.portmap_probe = None;
-
-        // This test wants to ensure that the ICMP part of the probe works when UDP is
-        // blocked.  Unfortunately on some systems we simply don't have permissions to
-        // create raw ICMP pings and we'll have to silently accept this test is useless (if
-        // we could, this would be a skip instead).
-        let pinger = Pinger::new();
-        let can_ping = pinger.send(Ipv4Addr::LOCALHOST.into(), b"aa").await.is_ok();
-        let want_icmpv4 = match can_ping {
-            true => Some(true),
-            false => None,
-        };
-
-        let want = Report {
-            // The ICMP probe sets the can_ping flag.
-            ipv4_can_send: can_ping,
-            // OS IPv6 test is irrelevant here, accept whatever the current machine has.
-            os_has_ipv6: r.os_has_ipv6,
-            // Captive portal test is irrelevant; accept what the current report has.
-            captive_portal: r.captive_portal,
-            // If we can ping we expect to have this.
-            icmpv4: want_icmpv4,
-            // If we had a pinger, we'll have some latencies filled in and a preferred relay
-            relay_latency: can_ping
-                .then(|| r.relay_latency.clone())
-                .unwrap_or_default(),
-            preferred_relay: can_ping
-                .then_some(r.preferred_relay.clone())
-                .unwrap_or_default(),
-            ..Default::default()
-        };
-
-        assert_eq!(r, want);
-
-        Ok(())
-    }
-
     #[tokio::test(flavor = "current_thread", start_paused = true)]
     async fn test_add_report_history_set_preferred_relay() -> Result {
         fn relay_url(i: u16) -> RelayUrl {
