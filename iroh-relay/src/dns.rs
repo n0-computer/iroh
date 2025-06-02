@@ -61,7 +61,7 @@ mod staggered {
 
     use super::LookupError;
 
-    /// Error returned when an input value is too long for [`UserData`].
+    /// Error returned when an input value is too long for [`crate::node_info::UserData`].
     #[allow(missing_docs)]
     #[derive(Debug, Snafu)]
     #[snafu(display("no calls succeeded: [{}]", errors.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("")))]
