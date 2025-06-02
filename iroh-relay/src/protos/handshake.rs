@@ -44,7 +44,7 @@ pub(crate) struct ServerChallenge {
     pub(crate) challenge: [u8; 16],
 }
 
-/// Authentintiation message from the client.
+/// Authentication message from the client.
 ///
 /// Also serves to inform the server about the client's send message version,
 /// which will be passed on to other connecting clients.
