@@ -320,7 +320,7 @@ impl Router {
     ///
     /// If some [`ProtocolHandler`] panicked in the accept loop, this will propagate
     /// that panic into the result here.
-    pub async fn shutdown(&self) -> Result<(), tokio::task::JoinError> {
+    pub async fn shutdown(&self) -> Result<(), n0_future::task::JoinError> {
         if self.is_shutdown() {
             return Ok(());
         }

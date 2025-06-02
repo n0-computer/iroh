@@ -19,11 +19,14 @@ use tokio_util::codec::Framed;
 use tracing::debug;
 
 use super::KeyCache;
-use crate::protos::relay::{ClientInfo, Frame, MAX_PACKET_SIZE, PROTOCOL_VERSION};
+use crate::protos::relay::{
+    ClientInfo, Frame, RecvError as RecvRelayError, SendError as SendRelayError, MAX_PACKET_SIZE,
+    PROTOCOL_VERSION,
+};
 #[cfg(not(wasm_browser))]
 use crate::{
     client::streams::{MaybeTlsStream, MaybeTlsStreamChained, ProxyStream},
-    protos::relay::{RecvError as RecvRelayError, RelayCodec, SendError as SendRelayError},
+    protos::relay::RelayCodec,
 };
 
 /// Error for sending messages to the relay server.
@@ -120,7 +123,7 @@ impl Conn {
         conn: ws_stream_wasm::WsStream,
         key_cache: KeyCache,
         secret_key: &SecretKey,
-    ) -> Result<Self, crate::protos::relay::Error> {
+    ) -> Result<Self, SendRelayError> {
         let mut conn = Self::WsBrowser { conn, key_cache };
 
         // exchange information with the server
@@ -211,6 +214,21 @@ impl Stream for Conn {
                     Poll::Ready(Some(message))
                 }
                 Some(Err(e)) => Poll::Ready(Some(Err(e.into()))),
+                None => Poll::Ready(None),
+            },
+            #[cfg(wasm_browser)]
+            Self::WsBrowser {
+                ref mut conn,
+                ref key_cache,
+            } => match ready!(Pin::new(conn).poll_next(cx)) {
+                Some(ws_stream_wasm::WsMessage::Binary(vec)) => {
+                    let frame = Frame::decode_from_ws_msg(Bytes::from(vec), key_cache)?;
+                    Poll::Ready(Some(ReceivedMessage::try_from(frame)))
+                }
+                Some(msg) => {
+                    tracing::warn!(?msg, "Got websocket message of unsupported type, skipping.");
+                    Poll::Pending
+                }
                 None => Poll::Ready(None),
             },
         }

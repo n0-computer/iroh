@@ -16,7 +16,7 @@ use nested_enum_utils::common_fields;
 use snafu::{Backtrace, OptionExt, Snafu};
 use url::Url;
 
-use crate::node_info::{LookupError, NodeInfo, StaggeredError};
+use crate::node_info::{LookupError, NodeInfo};
 
 /// The n0 testing DNS node origin, for production.
 pub const N0_DNS_NODE_ORIGIN_PROD: &str = "dns.iroh.link";
@@ -54,6 +54,36 @@ pub enum DnsError {
     #[snafu(display("no calls succeeded: [{}]", errors.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("")))]
     Staggered { errors: Vec<DnsError> },
 }
+
+// TODO(matheus23): Remove this, or remove DnsError::Staggered, but don't keep both.
+mod staggered {
+    use snafu::{Backtrace, GenerateImplicitData, Snafu};
+
+    use super::LookupError;
+
+    /// Error returned when an input value is too long for [`UserData`].
+    #[allow(missing_docs)]
+    #[derive(Debug, Snafu)]
+    #[snafu(display("no calls succeeded: [{}]", errors.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("")))]
+    pub struct Error {
+        backtrace: Option<Backtrace>,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+        errors: Vec<LookupError>,
+    }
+
+    impl Error {
+        pub(crate) fn new(errors: Vec<LookupError>) -> Self {
+            Self {
+                errors,
+                backtrace: GenerateImplicitData::generate(),
+                span_trace: n0_snafu::SpanTrace::generate(),
+            }
+        }
+    }
+}
+
+pub use staggered::*;
 
 /// The DNS resolver used throughout `iroh`.
 #[derive(Debug, Clone)]
@@ -305,11 +335,11 @@ impl DnsResolver {
         &self,
         name: &str,
         delays_ms: &[u64],
-    ) -> Result<NodeInfo, StaggeredError> {
+    ) -> Result<NodeInfo, staggered::Error> {
         let f = || self.lookup_node_by_domain_name(name);
         stagger_call(f, delays_ms)
             .await
-            .map_err(StaggeredError::new)
+            .map_err(staggered::Error::new)
     }
 
     /// Looks up node info by [`NodeId`] and origin domain name.
@@ -323,11 +353,11 @@ impl DnsResolver {
         node_id: &NodeId,
         origin: &str,
         delays_ms: &[u64],
-    ) -> Result<NodeInfo, StaggeredError> {
+    ) -> Result<NodeInfo, staggered::Error> {
         let f = || self.lookup_node_by_id(node_id, origin);
         stagger_call(f, delays_ms)
             .await
-            .map_err(StaggeredError::new)
+            .map_err(staggered::Error::new)
     }
 }
 

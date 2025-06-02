@@ -44,7 +44,7 @@ use std::{
 use hickory_resolver::{proto::ProtoError, Name};
 use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey, SignatureError};
 use nested_enum_utils::common_fields;
-use snafu::{Backtrace, GenerateImplicitData, ResultExt, Snafu};
+use snafu::{Backtrace, ResultExt, Snafu};
 #[cfg(not(wasm_browser))]
 use tracing::warn;
 use url::Url;
@@ -68,34 +68,12 @@ pub const IROH_TXT_NAME: &str = "_iroh";
 #[non_exhaustive]
 #[snafu(visibility(pub(crate)))]
 pub enum EncodingError {
-    #[cfg(not(wasm_browser))]
     #[snafu(transparent)]
     FailedBuildingPacket {
         source: pkarr::errors::SignedPacketBuildError,
     },
     #[snafu(display("invalid TXT entry"))]
     InvalidTxtEntry { source: pkarr::dns::SimpleDnsError },
-}
-
-/// Error returned when an input value is too long for [`UserData`].
-#[allow(missing_docs)]
-#[derive(Debug, Snafu)]
-#[snafu(display("no calls succeeded: [{}]", errors.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("")))]
-pub struct StaggeredError {
-    backtrace: Option<Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-    errors: Vec<LookupError>,
-}
-
-impl StaggeredError {
-    pub(crate) fn new(errors: Vec<LookupError>) -> Self {
-        Self {
-            errors,
-            backtrace: GenerateImplicitData::generate(),
-            span_trace: n0_snafu::SpanTrace::generate(),
-        }
-    }
 }
 
 #[common_fields({
@@ -439,6 +417,7 @@ impl NodeInfo {
     }
 }
 
+#[cfg(not(wasm_browser))]
 #[common_fields({
     backtrace: Option<Backtrace>,
     #[snafu(implicit)]

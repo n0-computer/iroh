@@ -769,12 +769,14 @@ pub enum ProbeError {
     ClientGone,
     #[snafu(display("Probe is no longer useful"))]
     NotUseful,
+    #[cfg(not(wasm_browser))]
     #[snafu(display("Failed to retrieve the relay address"))]
     GetRelayAddr { source: GetRelayAddrError },
     #[snafu(display("Failed to run stun probe"))]
     Stun { source: StunError },
     #[snafu(display("Failed to run QUIC probe"))]
     Quic { source: QuicError },
+    #[cfg(not(wasm_browser))]
     #[snafu(display("Failed to run ICMP probe"))]
     Icmp { source: PingError },
 }
@@ -1115,6 +1117,7 @@ async fn run_quic_probe(
     Ok(result)
 }
 
+#[cfg(not(wasm_browser))]
 #[derive(Debug, Snafu)]
 #[snafu(module)]
 enum CaptivePortalError {
@@ -1405,6 +1408,7 @@ async fn run_icmp_probe(
 enum MeasureHttpsLatencyError {
     #[snafu(transparent)]
     InvalidUrl { source: url::ParseError },
+    #[cfg(not(wasm_browser))]
     #[snafu(transparent)]
     DnsLookup { source: DnsError },
     #[cfg(not(wasm_browser))]
