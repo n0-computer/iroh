@@ -3563,7 +3563,7 @@
 
     <span class="doccomment">/// Use TLS Raw Public Keys
     ///
-    /// This is the default, but is not compatible with older versions of iroh.
+    /// This is the default, and currently the only available option.
     </span><span class="kw">pub fn </span>tls_raw_public_keys(<span class="kw-2">mut </span><span class="self">self</span>) -&gt; <span class="self">Self </span>{
         <span class="self">self</span>.tls_auth = tls::Authentication::RawPublicKey;
         <span class="self">self

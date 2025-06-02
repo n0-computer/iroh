@@ -62,7 +62,7 @@ n0.computer dns server.</p>
 When in tests, or when the <code>test-utils</code> feature is enabled, this will use the
 <a href="../discovery/pkarr/constant.N0_DNS_PKARR_RELAY_STAGING.html" title="constant iroh::discovery::pkarr::N0_DNS_PKARR_RELAY_STAGING"><code>N0_DNS_PKARR_RELAY_STAGING</code></a>.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.tls_raw_public_keys" class="method"><a class="src rightside" href="../../src/iroh/endpoint.rs.html#401-404">Source</a><h4 class="code-header">pub fn <a href="#method.tls_raw_public_keys" class="fn">tls_raw_public_keys</a>(self) -&gt; Self</h4></section></summary><div class="docblock"><p>Use TLS Raw Public Keys</p>
-<p>This is the default, but is not compatible with older versions of iroh.</p>
+<p>This is the default, and currently the only available option.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.discovery_dht" class="method"><a class="src rightside" href="../../src/iroh/endpoint.rs.html#413-428">Source</a><h4 class="code-header">pub fn <a href="#method.discovery_dht" class="fn">discovery_dht</a>(self) -&gt; Self</h4></section><span class="item-info"><div class="stab portability">Available on <strong>crate feature <code>discovery-pkarr-dht</code></strong> only.</div></span></summary><div class="docblock"><p>Configures the endpoint to also use the mainline DHT with default settings.</p>
 <p>This is equivalent to adding a <a href="../discovery/pkarr/dht/struct.DhtDiscovery.html" title="struct iroh::discovery::pkarr::dht::DhtDiscovery"><code>crate::discovery::pkarr::dht::DhtDiscovery</code></a>
 with default settings. Note that DhtDiscovery has various more advanced

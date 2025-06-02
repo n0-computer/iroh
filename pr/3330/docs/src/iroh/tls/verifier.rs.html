@@ -236,38 +236,10 @@
 <a href="#235" id="235">235</a>
 <a href="#236" id="236">236</a>
 <a href="#237" id="237">237</a>
-<a href="#238" id="238">238</a>
-<a href="#239" id="239">239</a>
-<a href="#240" id="240">240</a>
-<a href="#241" id="241">241</a>
-<a href="#242" id="242">242</a>
-<a href="#243" id="243">243</a>
-<a href="#244" id="244">244</a>
-<a href="#245" id="245">245</a>
-<a href="#246" id="246">246</a>
-<a href="#247" id="247">247</a>
-<a href="#248" id="248">248</a>
-<a href="#249" id="249">249</a>
-<a href="#250" id="250">250</a>
-<a href="#251" id="251">251</a>
-<a href="#252" id="252">252</a>
-<a href="#253" id="253">253</a>
-<a href="#254" id="254">254</a>
-<a href="#255" id="255">255</a>
-<a href="#256" id="256">256</a>
-<a href="#257" id="257">257</a>
-<a href="#258" id="258">258</a>
-<a href="#259" id="259">259</a>
-<a href="#260" id="260">260</a>
-<a href="#261" id="261">261</a>
-<a href="#262" id="262">262</a></pre></div><pre class="rust"><code><span class="doccomment">//! TLS 1.3 certificates and handshakes handling.
+<a href="#238" id="238">238</a></pre></div><pre class="rust"><code><span class="doccomment">//! TLS 1.3 certificates and handshakes handling.
 //!
 //! This module handles a verification of a client/server certificate chain
 //! and signatures allegedly by the given certificates, or using raw public keys.
-//!
-//!
-//! libp2p-tls certificate part is based on rust-libp2p/transports/tls/src/verifier.rs originally
-//! licensed under MIT by Parity Technologies (UK) Ltd.
 
 </span><span class="kw">use </span>ed25519_dalek::pkcs8::EncodePublicKey;
 <span class="kw">use </span>iroh_base::PublicKey;
@@ -324,14 +296,7 @@
     </span>auth: Authentication,
 }
 
-<span class="doccomment">/// We require the following
-/// Either X.509 server certificate chains:
-///
-/// - Exactly one certificate must be presented.
-/// - The certificate must be self-signed.
-/// - The certificate must have a valid libp2p extension that includes a signature of its public key.
-///
-/// or a raw public key.
+<span class="doccomment">/// We require a raw public key.
 </span><span class="kw">impl </span>ServerCertificateVerifier {
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(auth: Authentication) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{ auth }
@@ -436,14 +401,7 @@
     </span>auth: Authentication,
 }
 
-<span class="doccomment">/// We require the following
-/// Either X.509 server certificate chains:
-///
-/// - Exactly one certificate must be presented.
-/// - The certificate must be self-signed.
-/// - The certificate must have a valid libp2p extension that includes a signature of its public key.
-///
-/// or a raw public key.
+<span class="doccomment">/// We require a raw public key.
 </span><span class="kw">impl </span>ClientCertificateVerifier {
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>new(auth: Authentication) -&gt; <span class="self">Self </span>{
         <span class="self">Self </span>{ auth }
@@ -452,13 +410,7 @@
 
 <span class="doccomment">/// We requires either following of X.509 client certificate chains:
 ///
-/// - Exactly one certificate must be presented. In particular, client
-///   authentication is mandatory in libp2p.
-/// - The certificate must be self-signed.
-/// - The certificate must have a valid libp2p extension that includes a
-///   signature of its public key.
-///
-/// or a valid raw public key configuration
+/// - a valid raw public key configuration
 </span><span class="kw">impl </span>ClientCertVerifier <span class="kw">for </span>ClientCertificateVerifier {
     <span class="kw">fn </span>offer_client_auth(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
         <span class="bool-val">true
