@@ -105,7 +105,7 @@ it to be able to connect to this node.</p>
 as they would be returned by <a href="struct.Endpoint.html#method.home_relay" title="method iroh::endpoint::Endpoint::home_relay"><code>Endpoint::home_relay</code></a> and <a href="struct.Endpoint.html#method.direct_addresses" title="method iroh::endpoint::Endpoint::direct_addresses"><code>Endpoint::direct_addresses</code></a>.</p>
 <p>Use [<code>Watcher::initialized</code>] to wait for a <a href="../struct.NodeAddr.html" title="struct iroh::NodeAddr"><code>NodeAddr</code></a> that is ready to be connected to:</p>
 
-<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>iroh::{watcher::Watcher, Endpoint};
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>iroh::Endpoint;
 <span class="kw">use </span>n0_watcher::Watcher;
 
 <span class="kw">let </span>endpoint = Endpoint::builder()
