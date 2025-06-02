@@ -67,6 +67,7 @@ pub trait Ticket: Sized {
 #[derive(Debug, Snafu)]
 #[allow(missing_docs)]
 #[snafu(visibility(pub(crate)))]
+#[non_exhaustive]
 pub enum ParseError {
     /// Found a ticket of with the wrong prefix, indicating the wrong kind.
     #[snafu(display("wrong prefix, expected {expected}"))]

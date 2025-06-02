@@ -70,6 +70,7 @@ impl Sink<Frame> for RelayedStream {
 
 /// Relay stream errors
 #[derive(Debug, Snafu)]
+#[non_exhaustive]
 pub enum StreamError {
     #[snafu(transparent)]
     Proto { source: RecvError },

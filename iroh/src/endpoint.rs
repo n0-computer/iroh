@@ -618,6 +618,7 @@ pub struct Endpoint {
     span_trace: n0_snafu::SpanTrace,
 })]
 #[derive(Debug, Snafu)]
+#[non_exhaustive]
 pub enum ConnectWithOptsError {
     #[snafu(transparent)]
     AddNodeAddr { source: AddNodeAddrError },
@@ -636,6 +637,7 @@ pub enum ConnectWithOptsError {
     span_trace: n0_snafu::SpanTrace,
 })]
 #[derive(Debug, Snafu)]
+#[non_exhaustive]
 pub enum ConnectError {
     #[snafu(transparent)]
     Connect {
@@ -656,6 +658,7 @@ pub enum ConnectError {
     span_trace: n0_snafu::SpanTrace,
 })]
 #[derive(Debug, Snafu)]
+#[non_exhaustive]
 pub enum BindError {
     #[snafu(transparent)]
     MagicSpawn {
@@ -671,6 +674,7 @@ pub enum BindError {
 })]
 #[derive(Debug, Snafu)]
 #[snafu(module)]
+#[non_exhaustive]
 pub enum GetMappingAddressError {
     #[snafu(display("Discovery service required due to missing addressing information"))]
     DiscoveryStart { source: DiscoveryError },
@@ -1733,6 +1737,7 @@ pub struct Connecting {
     span_trace: n0_snafu::SpanTrace,
 })]
 #[derive(Debug, Snafu)]
+#[non_exhaustive]
 pub enum AlpnError {
     #[snafu(transparent)]
     ConnectionError { source: ConnectionError },

@@ -233,6 +233,7 @@ impl Ping {
     span_trace: n0_snafu::SpanTrace,
 })]
 #[derive(Debug, Snafu)]
+#[non_exhaustive]
 pub enum ParseError {
     #[snafu(display("message is too short"))]
     TooShort {},

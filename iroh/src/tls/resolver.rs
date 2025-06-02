@@ -22,6 +22,7 @@ pub(super) struct AlwaysResolvesCert {
     span_trace: n0_snafu::SpanTrace,
 })]
 #[derive(Debug, Snafu)]
+#[non_exhaustive]
 pub(super) enum CreateConfigError {
     /// Error generating the certificate.
     #[snafu(display("Error generating the certificate"), context(false))]

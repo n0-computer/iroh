@@ -97,6 +97,7 @@ pub struct RouterBuilder {
 
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
+#[non_exhaustive]
 pub enum ProtocolError {
     #[snafu(transparent)]
     Connect {

@@ -22,6 +22,7 @@ use crate::net_report::defaults::timeouts::DEFAULT_PINGER_TIMEOUT as DEFAULT_TIM
     span_trace: n0_snafu::SpanTrace,
 })]
 #[derive(Debug, Snafu)]
+#[non_exhaustive]
 pub enum PingError {
     #[snafu(display("failed to create IPv4 ping client"))]
     CreateClientIpv4 { source: std::io::Error },

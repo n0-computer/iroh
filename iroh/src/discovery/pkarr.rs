@@ -74,6 +74,7 @@ pub mod dht;
 
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
+#[non_exhaustive]
 pub enum PkarrError {
     #[snafu(display("Invalid public key"))]
     PublicKey { source: PublicKeyError },

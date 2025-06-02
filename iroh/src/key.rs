@@ -26,6 +26,7 @@ pub struct SharedSecret(crypto_box::ChaChaBox);
     span_trace: n0_snafu::SpanTrace,
 })]
 #[derive(Debug, Snafu)]
+#[non_exhaustive]
 pub enum DecryptionError {
     /// The nonce had the wrong size.
     #[snafu(display("Invalid nonce"))]

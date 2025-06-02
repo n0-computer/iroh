@@ -219,6 +219,7 @@ struct Actor {
 
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
+#[non_exhaustive]
 pub enum ActorRunError {
     #[snafu(display("Report generation timed out"))]
     Timeout,
@@ -232,6 +233,7 @@ pub enum ActorRunError {
 
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
+#[non_exhaustive]
 pub enum ProbesError {
     #[snafu(display("Probe failed"))]
     ProbeFailure { source: ProbeError },
@@ -764,6 +766,7 @@ enum ProbeErrorWithProbe {
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
 #[snafu(module)]
+#[non_exhaustive]
 pub enum ProbeError {
     #[snafu(display("Client is gone"))]
     ClientGone,
@@ -784,6 +787,7 @@ pub enum ProbeError {
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
 #[snafu(module)]
+#[non_exhaustive]
 pub enum StunError {
     #[snafu(display("No UDP socket available"))]
     NoSocket,
@@ -798,6 +802,7 @@ pub enum StunError {
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
 #[snafu(module)]
+#[non_exhaustive]
 pub enum QuicError {
     #[snafu(display("No QUIC endpoint available"))]
     NoEndpoint,
@@ -1120,6 +1125,7 @@ async fn run_quic_probe(
 #[cfg(not(wasm_browser))]
 #[derive(Debug, Snafu)]
 #[snafu(module)]
+#[non_exhaustive]
 enum CaptivePortalError {
     #[snafu(transparent)]
     DnsLookup { source: DnsError },
@@ -1247,6 +1253,7 @@ fn get_port(relay_node: &RelayNode, proto: &ProbeProto) -> Option<u16> {
 #[cfg(not(wasm_browser))]
 #[derive(Debug, Snafu)]
 #[snafu(module)]
+#[non_exhaustive]
 pub enum GetRelayAddrError {
     #[snafu(display("No valid hostname in the relay URL"))]
     InvalidHostname,
@@ -1405,6 +1412,7 @@ async fn run_icmp_probe(
 
 #[derive(Debug, Snafu)]
 #[snafu(module)]
+#[non_exhaustive]
 enum MeasureHttpsLatencyError {
     #[snafu(transparent)]
     InvalidUrl { source: url::ParseError },

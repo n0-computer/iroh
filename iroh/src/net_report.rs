@@ -798,6 +798,7 @@ struct ReportRun {
     span_trace: n0_snafu::SpanTrace,
 })]
 #[derive(Debug, Snafu)]
+#[non_exhaustive]
 pub enum ReportError {
     #[snafu(display("Report aborted early"))]
     Abort { reason: ActorRunError },

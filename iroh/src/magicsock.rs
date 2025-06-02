@@ -292,6 +292,7 @@ pub(crate) struct SocketState {
 })]
 #[derive(Debug, Snafu)]
 #[snafu(visibility(pub(crate)))]
+#[non_exhaustive]
 pub enum AddNodeAddrError {
     #[snafu(display("Empty addressing info"))]
     Empty {},
@@ -1736,6 +1737,7 @@ impl DirectAddrUpdateState {
     span_trace: n0_snafu::SpanTrace,
 })]
 #[derive(Debug, Snafu)]
+#[non_exhaustive]
 pub enum CreateHandleError {
     #[snafu(display("Failed to create bind sockets"))]
     BindSockets { source: io::Error },
@@ -2093,6 +2095,7 @@ impl DiscoSecrets {
     span_trace: n0_snafu::SpanTrace,
 })]
 #[derive(Debug, Snafu)]
+#[non_exhaustive]
 enum DiscoBoxError {
     #[snafu(display("Failed to open crypto box"))]
     Open {
@@ -2198,6 +2201,7 @@ struct RelayDatagramRecvQueue {
 }
 
 #[derive(Debug, Snafu)]
+#[non_exhaustive]
 enum RelayRecvDatagramError {
     #[snafu(display("Queue is closed"))]
     Closed,
@@ -2537,6 +2541,7 @@ impl ActorSocketState {
 }
 
 #[derive(Debug, Snafu)]
+#[non_exhaustive]
 enum NetReportError {
     #[snafu(display("Net report not received"))]
     NotReceived,
