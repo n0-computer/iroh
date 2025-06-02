@@ -325,48 +325,48 @@
             <span class="kw">let </span><span class="kw-2">mut </span>packet = dns::Packet::new_reply(<span class="number">0</span>);
             <span class="comment">// record at root
             </span>packet.answers.push(dns::ResourceRecord::new(
-                dns::Name::new(<span class="string">""</span>).unwrap(),
+                dns::Name::new(<span class="string">""</span>).e()<span class="question-mark">?</span>,
                 dns::CLASS::IN,
                 <span class="number">30</span>,
                 dns::rdata::RData::TXT(<span class="string">"hi0"</span>.try_into().unwrap()),
             ));
             <span class="comment">// record at level one
             </span>packet.answers.push(dns::ResourceRecord::new(
-                dns::Name::new(<span class="string">"_hello"</span>).unwrap(),
+                dns::Name::new(<span class="string">"_hello"</span>).e()<span class="question-mark">?</span>,
                 dns::CLASS::IN,
                 <span class="number">30</span>,
                 dns::rdata::RData::TXT(<span class="string">"hi1"</span>.try_into().unwrap()),
             ));
             <span class="comment">// record at level two
             </span>packet.answers.push(dns::ResourceRecord::new(
-                dns::Name::new(<span class="string">"_hello.world"</span>).unwrap(),
+                dns::Name::new(<span class="string">"_hello.world"</span>).e()<span class="question-mark">?</span>,
                 dns::CLASS::IN,
                 <span class="number">30</span>,
                 dns::rdata::RData::TXT(<span class="string">"hi2"</span>.try_into().unwrap()),
             ));
             <span class="comment">// multiple records for same name
             </span>packet.answers.push(dns::ResourceRecord::new(
-                dns::Name::new(<span class="string">"multiple"</span>).unwrap(),
+                dns::Name::new(<span class="string">"multiple"</span>).e()<span class="question-mark">?</span>,
                 dns::CLASS::IN,
                 <span class="number">30</span>,
                 dns::rdata::RData::TXT(<span class="string">"hi3"</span>.try_into().unwrap()),
             ));
             packet.answers.push(dns::ResourceRecord::new(
-                dns::Name::new(<span class="string">"multiple"</span>).unwrap(),
+                dns::Name::new(<span class="string">"multiple"</span>).e()<span class="question-mark">?</span>,
                 dns::CLASS::IN,
                 <span class="number">30</span>,
                 dns::rdata::RData::TXT(<span class="string">"hi4"</span>.try_into().unwrap()),
             ));
             <span class="comment">// record of type A
             </span>packet.answers.push(dns::ResourceRecord::new(
-                dns::Name::new(<span class="string">""</span>).unwrap(),
+                dns::Name::new(<span class="string">""</span>).e()<span class="question-mark">?</span>,
                 dns::CLASS::IN,
                 <span class="number">30</span>,
                 dns::rdata::RData::A(Ipv4Addr::LOCALHOST.into()),
             ));
             <span class="comment">// record of type AAAA
             </span>packet.answers.push(dns::ResourceRecord::new(
-                dns::Name::new(<span class="string">"foo.bar.baz"</span>).unwrap(),
+                dns::Name::new(<span class="string">"foo.bar.baz"</span>).e()<span class="question-mark">?</span>,
                 dns::CLASS::IN,
                 <span class="number">30</span>,
                 dns::rdata::RData::AAAA(Ipv6Addr::LOCALHOST.into()),
