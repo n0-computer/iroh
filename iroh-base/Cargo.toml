@@ -9,7 +9,7 @@ authors = ["n0 team"]
 repository = "https://github.com/n0-computer/iroh"
 
 # Sadly this also needs to be updated in .github/workflows/ci.yml
-rust-version = "1.81"
+rust-version = "1.85"
 
 [lints]
 workspace = true
@@ -23,7 +23,9 @@ url = { version = "2.5.3", features = ["serde"], optional = true }
 postcard = { version = "1", default-features = false, features = ["alloc", "use-std", "experimental-derive"], optional = true }
 rand_core = { version = "0.6.4", optional = true }
 serde = { version = "1", features = ["derive", "rc"] }
-thiserror = { version = "2", optional = true }
+snafu = { version = "0.8.5", features = ["rust_1_81"], optional = true }
+n0-snafu = "0.2.0"
+nested_enum_utils = "0.2.0"
 
 [dev-dependencies]
 postcard = { version = "1", features = ["use-std"] }
@@ -41,7 +43,7 @@ key = [
   "dep:ed25519-dalek",
   "dep:url",
   "dep:derive_more",
-  "dep:thiserror",
+  "dep:snafu",
   "dep:data-encoding",
   "dep:rand_core",
   "relay",
@@ -49,7 +51,7 @@ key = [
 relay = [
   "dep:url",
   "dep:derive_more",
-  "dep:thiserror",
+  "dep:snafu",
 ]
 
 [package.metadata.docs.rs]

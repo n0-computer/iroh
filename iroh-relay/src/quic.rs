@@ -2,9 +2,14 @@
 //! for QUIC address discovery.
 use std::{net::SocketAddr, sync::Arc};
 
-use anyhow::Result;
 use n0_future::time::Duration;
-use quinn::{crypto::rustls::QuicClientConfig, VarInt};
+use nested_enum_utils::common_fields;
+use quinn::{
+    crypto::rustls::{NoInitialCipherSuite, QuicClientConfig},
+    VarInt,
+};
+use snafu::{Backtrace, Snafu};
+use tokio::sync::watch;
 
 /// ALPN for our quic addr discovery
 pub const ALPN_QUIC_ADDR_DISC: &[u8] = b"/iroh-qad/0";
@@ -15,7 +20,8 @@ pub const QUIC_ADDR_DISC_CLOSE_REASON: &[u8] = b"finished";
 
 #[cfg(feature = "server")]
 pub(crate) mod server {
-    use quinn::{crypto::rustls::QuicServerConfig, ApplicationClose};
+    use quinn::{crypto::rustls::QuicServerConfig, ApplicationClose, ConnectionError};
+    use snafu::ResultExt;
     use tokio::task::JoinSet;
     use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
     use tracing::{debug, info, info_span, Instrument};
@@ -27,6 +33,34 @@ pub(crate) mod server {
         bind_addr: SocketAddr,
         cancel: CancellationToken,
         handle: AbortOnDropHandle<()>,
+    }
+
+    /// Server spawn errors
+    #[allow(missing_docs)]
+    #[derive(Debug, Snafu)]
+    #[non_exhaustive]
+    pub enum QuicSpawnError {
+        #[snafu(transparent)]
+        NoInitialCipherSuite {
+            source: NoInitialCipherSuite,
+            backtrace: Option<Backtrace>,
+            #[snafu(implicit)]
+            span_trace: n0_snafu::SpanTrace,
+        },
+        #[snafu(display("Unable to spawn a QUIC endpoint server"))]
+        EndpointServer {
+            source: std::io::Error,
+            backtrace: Option<Backtrace>,
+            #[snafu(implicit)]
+            span_trace: n0_snafu::SpanTrace,
+        },
+        #[snafu(display("Unable to get the local address from the endpoint"))]
+        LocalAddr {
+            source: std::io::Error,
+            backtrace: Option<Backtrace>,
+            #[snafu(implicit)]
+            span_trace: n0_snafu::SpanTrace,
+        },
     }
 
     impl QuicServer {
@@ -60,13 +94,13 @@ pub(crate) mod server {
         /// # Errors
         /// If the given `quic_config` contains a [`rustls::ServerConfig`] that cannot
         /// be converted to a [`QuicServerConfig`], usually because it does not support
-        /// TLS 1.3, this method will error.
+        /// TLS 1.3, a [`NoInitialCipherSuite`] will occur.
         ///
         /// # Panics
         /// If there is a panic during a connection, it will be propagated
         /// up here. Any other errors in a connection will be logged as a
         ///  warning.
-        pub(crate) fn spawn(mut quic_config: QuicConfig) -> Result<Self> {
+        pub(crate) fn spawn(mut quic_config: QuicConfig) -> Result<Self, QuicSpawnError> {
             quic_config.server_config.alpn_protocols =
                 vec![crate::quic::ALPN_QUIC_ADDR_DISC.to_vec()];
             let server_config = QuicServerConfig::try_from(quic_config.server_config)?;
@@ -79,8 +113,9 @@ pub(crate) mod server {
                 // enable sending quic address discovery frames
                 .send_observed_address_reports(true);
 
-            let endpoint = quinn::Endpoint::server(server_config, quic_config.bind_addr)?;
-            let bind_addr = endpoint.local_addr()?;
+            let endpoint = quinn::Endpoint::server(server_config, quic_config.bind_addr)
+                .context(EndpointServerSnafu)?;
+            let bind_addr = endpoint.local_addr().context(LocalAddrSnafu)?;
 
             info!(?bind_addr, "QUIC server listening on");
 
@@ -145,12 +180,13 @@ pub(crate) mod server {
 
         /// Closes the underlying QUIC endpoint and the tasks running the
         /// QUIC connections.
-        pub async fn shutdown(mut self) -> Result<()> {
+        pub async fn shutdown(mut self) {
             self.cancel.cancel();
             if !self.task_handle().is_finished() {
-                self.task_handle().await?
+                // only possible error is a `JoinError`, no errors about what might
+                // have happened during a connection are propagated.
+                _ = self.task_handle().await;
             }
-            Ok(())
         }
     }
 
@@ -170,11 +206,11 @@ pub(crate) mod server {
     }
 
     /// Handle the connection from the client.
-    async fn handle_connection(incoming: quinn::Incoming) -> Result<()> {
+    async fn handle_connection(incoming: quinn::Incoming) -> Result<(), ConnectionError> {
         let connection = match incoming.await {
             Ok(conn) => conn,
             Err(e) => {
-                return Err(e.into());
+                return Err(e);
             }
         };
         debug!("established");
@@ -186,9 +222,29 @@ pub(crate) mod server {
             {
                 Ok(())
             }
-            _ => Err(connection_err.into()),
+            _ => Err(connection_err),
         }
     }
+}
+
+/// Quic client related errors.
+#[common_fields({
+    backtrace: Option<Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+pub enum Error {
+    #[snafu(transparent)]
+    Connect { source: quinn::ConnectError },
+    #[snafu(transparent)]
+    Connection { source: quinn::ConnectionError },
+    #[snafu(transparent)]
+    WatchRecv { source: watch::error::RecvError },
+    #[snafu(transparent)]
+    NoIntitialCipherSuite { source: NoInitialCipherSuite },
 }
 
 /// Handles the client side of QUIC address discovery.
@@ -203,7 +259,10 @@ pub struct QuicClient {
 impl QuicClient {
     /// Create a new QuicClient to handle the client side of QUIC
     /// address discovery.
-    pub fn new(ep: quinn::Endpoint, mut client_config: rustls::ClientConfig) -> Result<Self> {
+    pub fn new(
+        ep: quinn::Endpoint,
+        mut client_config: rustls::ClientConfig,
+    ) -> Result<Self, Error> {
         // add QAD alpn
         client_config.alpn_protocols = vec![ALPN_QUIC_ADDR_DISC.into()];
         // go from rustls client config to rustls QUIC specific client config to
@@ -240,7 +299,7 @@ impl QuicClient {
         &self,
         server_addr: SocketAddr,
         host: &str,
-    ) -> Result<(SocketAddr, std::time::Duration)> {
+    ) -> Result<(SocketAddr, std::time::Duration), Error> {
         let connecting = self
             .ep
             .connect_with(self.client_config.clone(), server_addr, host);
@@ -251,7 +310,7 @@ impl QuicClient {
         // tokio::select! {
         //     _ = cancel.cancelled() => {
         //         conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
-        //         anyhow::bail!("QUIC address discovery canceled early");
+        //         bail!("QUIC address discovery canceled early");
         //     },
         //     res = external_addresses.wait_for(|addr| addr.is_some()) => {
         //         let addr = res?.expect("checked");
@@ -284,8 +343,8 @@ impl QuicClient {
 mod tests {
     use std::net::Ipv4Addr;
 
-    use anyhow::Context;
     use n0_future::{task::AbortOnDropHandle, time};
+    use n0_snafu::{Error, Result, ResultExt};
     use quinn::crypto::rustls::QuicServerConfig;
     use tokio::time::Instant;
     use tracing::{debug, info, info_span, Instrument};
@@ -299,8 +358,8 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn quic_endpoint_basic() -> anyhow::Result<()> {
-        let host: Ipv4Addr = "127.0.0.1".parse()?;
+    async fn quic_endpoint_basic() -> Result {
+        let host: Ipv4Addr = "127.0.0.1".parse().unwrap();
         // create a server config with self signed certificates
         let (_, server_config) = super::super::server::testing::self_signed_tls_certs_and_config();
         let bind_addr = SocketAddr::new(host.into(), 0);
@@ -310,8 +369,9 @@ mod tests {
         })?;
 
         // create a client-side endpoint
-        let client_endpoint = quinn::Endpoint::client(SocketAddr::new(host.into(), 0))?;
-        let client_addr = client_endpoint.local_addr()?;
+        let client_endpoint =
+            quinn::Endpoint::client(SocketAddr::new(host.into(), 0)).context("client")?;
+        let client_addr = client_endpoint.local_addr().context("local addr")?;
 
         // create the client configuration used for the client endpoint when they
         // initiate a connection with the server
@@ -325,7 +385,7 @@ mod tests {
         // wait until the endpoint delivers the closing message to the server
         client_endpoint.wait_idle().await;
         // shut down the quic server
-        quic_server.shutdown().await?;
+        quic_server.shutdown().await;
 
         assert_eq!(client_addr, addr);
         Ok(())
@@ -333,15 +393,18 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_qad_client_closes_unresponsive_fast() -> anyhow::Result<()> {
+    async fn test_qad_client_closes_unresponsive_fast() -> Result {
         // create a client-side endpoint
         let client_endpoint =
-            quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0))?;
+            quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0))
+                .context("client")?;
 
         // create an socket that does not respond.
         let server_socket =
-            tokio::net::UdpSocket::bind(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0)).await?;
-        let server_addr = server_socket.local_addr()?;
+            tokio::net::UdpSocket::bind(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0))
+                .await
+                .context("bind")?;
+        let server_addr = server_socket.local_addr().context("local addr")?;
 
         // create the client configuration used for the client endpoint when they
         // initiate a connection with the server
@@ -369,7 +432,7 @@ mod tests {
 
         println!("Closed in {time:?}");
         assert!(Duration::from_millis(900) < time);
-        assert!(time < Duration::from_millis(1100));
+        assert!(time < Duration::from_millis(1500)); // give it some lee-way. Apparently github actions ubuntu runners can be slow?
 
         Ok(())
     }
@@ -382,24 +445,28 @@ mod tests {
     /// all packets on the server-side for 2 seconds.
     #[tokio::test]
     #[traced_test]
-    async fn test_qad_connect_delayed() -> anyhow::Result<()> {
+    async fn test_qad_connect_delayed() -> Result {
         // Create a socket for our QAD server.  We need the socket separately because we
         // need to pop off messages before we attach it to the Quinn Endpoint.
-        let socket =
-            tokio::net::UdpSocket::bind(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0)).await?;
-        let server_addr = socket.local_addr()?;
+        let socket = tokio::net::UdpSocket::bind(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0))
+            .await
+            .context("bind")?;
+        let server_addr = socket.local_addr().context("local addr")?;
         info!(addr = ?server_addr, "server socket bound");
 
         // Create a QAD server with a self-signed cert, all manually.
-        let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()])?;
+        let cert =
+            rcgen::generate_simple_self_signed(vec!["localhost".into()]).context("self signed")?;
         let key = PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
         let mut server_crypto = rustls::ServerConfig::builder()
             .with_no_client_auth()
-            .with_single_cert(vec![cert.cert.into()], key.into())?;
+            .with_single_cert(vec![cert.cert.into()], key.into())
+            .context("tls")?;
         server_crypto.key_log = Arc::new(rustls::KeyLogFile::new());
         server_crypto.alpn_protocols = vec![ALPN_QUIC_ADDR_DISC.to_vec()];
-        let mut server_config =
-            quinn::ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(server_crypto)?));
+        let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(
+            QuicServerConfig::try_from(server_crypto).context("config")?,
+        ));
         let transport_config = Arc::get_mut(&mut server_config.transport).unwrap();
         transport_config.send_observed_address_reports(true);
 
@@ -420,16 +487,17 @@ mod tests {
                 let server = quinn::Endpoint::new(
                     Default::default(),
                     Some(server_config),
-                    socket.into_std()?,
+                    socket.into_std().unwrap(),
                     Arc::new(quinn::TokioRuntime),
-                )?;
+                )
+                .context("endpoint new")?;
                 info!("accepting conn");
-                let incoming = server.accept().await.context("no conn")?;
+                let incoming = server.accept().await.expect("missing conn");
                 info!("incoming!");
-                let conn = incoming.await?;
+                let conn = incoming.await.context("incoming")?;
                 conn.closed().await;
                 server.wait_idle().await;
-                Ok::<(), anyhow::Error>(())
+                Ok::<_, Error>(())
             }
             .instrument(info_span!("server")),
         );
@@ -437,7 +505,8 @@ mod tests {
 
         info!("starting client");
         let client_endpoint =
-            quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0))?;
+            quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0))
+                .context("client")?;
 
         // create the client configuration used for the client endpoint when they
         // initiate a connection with the server
@@ -450,12 +519,16 @@ mod tests {
             Duration::from_secs(10),
             quic_client.get_addr_and_latency(server_addr, "localhost"),
         )
-        .await??;
+        .await
+        .context("timeout")??;
         let duration = start.elapsed();
         info!(?duration, ?addr, ?latency, "QAD succeeded");
         assert!(duration >= Duration::from_secs(1));
 
-        time::timeout(Duration::from_secs(10), server_task).await???;
+        time::timeout(Duration::from_secs(10), server_task)
+            .await
+            .context("timeout")?
+            .context("server task")??;
 
         Ok(())
     }

@@ -7,8 +7,8 @@
 //!
 //!     cargo run --example echo-no-router --features=examples
 
-use anyhow::Result;
 use iroh::{Endpoint, NodeAddr};
+use n0_snafu::{Error, Result, ResultExt};
 use n0_watcher::Watcher as _;
 
 /// Each protocol is identified by its ALPN string.
@@ -38,16 +38,16 @@ async fn connect_side(addr: NodeAddr) -> Result<()> {
     let conn = endpoint.connect(addr, ALPN).await?;
 
     // Open a bidirectional QUIC stream
-    let (mut send, mut recv) = conn.open_bi().await?;
+    let (mut send, mut recv) = conn.open_bi().await.e()?;
 
     // Send some data to be echoed
-    send.write_all(b"Hello, world!").await?;
+    send.write_all(b"Hello, world!").await.e()?;
 
     // Signal the end of data for this particular stream
-    send.finish()?;
+    send.finish().e()?;
 
     // Receive the echo, but limit reading up to maximum 1000 bytes
-    let response = recv.read_to_end(1000).await?;
+    let response = recv.read_to_end(1000).await.e()?;
     assert_eq!(&response, b"Hello, world!");
 
     // Explicitly close the whole connection.
@@ -86,7 +86,7 @@ async fn start_accept_side() -> Result<Endpoint> {
             while let Some(incoming) = endpoint.accept().await {
                 // spawn a task for each incoming connection, so we can serve multiple connections asynchronously
                 tokio::spawn(async move {
-                    let connection = incoming.await?;
+                    let connection = incoming.await.e()?;
 
                     // We can get the remote's node id from the connection.
                     let node_id = connection.remote_node_id()?;
@@ -94,26 +94,26 @@ async fn start_accept_side() -> Result<Endpoint> {
 
                     // Our protocol is a simple request-response protocol, so we expect the
                     // connecting peer to open a single bi-directional stream.
-                    let (mut send, mut recv) = connection.accept_bi().await?;
+                    let (mut send, mut recv) = connection.accept_bi().await.e()?;
 
                     // Echo any bytes received back directly.
                     // This will keep copying until the sender signals the end of data on the stream.
-                    let bytes_sent = tokio::io::copy(&mut recv, &mut send).await?;
+                    let bytes_sent = tokio::io::copy(&mut recv, &mut send).await.e()?;
                     println!("Copied over {bytes_sent} byte(s)");
 
                     // By calling `finish` on the send stream we signal that we will not send anything
                     // further, which makes the receive stream on the other end terminate.
-                    send.finish()?;
+                    send.finish().e()?;
 
                     // Wait until the remote closes the connection, which it does once it
                     // received the response.
                     connection.closed().await;
 
-                    anyhow::Ok(())
+                    Ok::<_, Error>(())
                 });
             }
 
-            anyhow::Ok(())
+            Ok::<_, Error>(())
         }
     });
 

@@ -31,13 +31,13 @@
 
 use std::{collections::BTreeSet, sync::Arc};
 
-use anyhow::Result;
 use clap::Parser;
 use iroh::{
     endpoint::Connection,
-    protocol::{ProtocolHandler, Router},
+    protocol::{ProtocolError, ProtocolHandler, Router},
     Endpoint, NodeId,
 };
+use n0_snafu::{Result, ResultExt};
 use tokio::sync::Mutex;
 use tracing_subscriber::{prelude::*, EnvFilter};
 
@@ -97,7 +97,7 @@ async fn main() -> Result<()> {
             }
 
             // Wait for Ctrl-C to be pressed.
-            tokio::signal::ctrl_c().await?;
+            tokio::signal::ctrl_c().await.e()?;
         }
         Command::Query { node_id, query } => {
             // Query the remote node.
@@ -110,7 +110,7 @@ async fn main() -> Result<()> {
         }
     }
 
-    router.shutdown().await?;
+    router.shutdown().await.e()?;
 
     Ok(())
 }
@@ -126,7 +126,7 @@ impl ProtocolHandler for BlobSearch {
     ///
     /// The returned future runs on a newly spawned tokio task, so it can run as long as
     /// the connection lasts.
-    async fn accept(&self, connection: Connection) -> Result<()> {
+    async fn accept(&self, connection: Connection) -> Result<(), ProtocolError> {
         // We can get the remote's node id from the connection.
         let node_id = connection.remote_node_id()?;
         println!("accepted connection from {node_id}");
@@ -136,16 +136,21 @@ impl ProtocolHandler for BlobSearch {
         let (mut send, mut recv) = connection.accept_bi().await?;
 
         // We read the query from the receive stream, while enforcing a max query length.
-        let query_bytes = recv.read_to_end(64).await?;
+        let query_bytes = recv
+            .read_to_end(64)
+            .await
+            .map_err(ProtocolError::from_err)?;
 
         // Now, we can perform the actual query on our local database.
-        let query = String::from_utf8(query_bytes)?;
+        let query = String::from_utf8(query_bytes).map_err(ProtocolError::from_err)?;
         let num_matches = self.query_local(&query).await;
 
         // We want to return a list of hashes. We do the simplest thing possible, and just send
         // one hash after the other. Because the hashes have a fixed size of 32 bytes, this is
         // very easy to parse on the other end.
-        send.write_all(&num_matches.to_le_bytes()).await?;
+        send.write_all(&num_matches.to_le_bytes())
+            .await
+            .map_err(ProtocolError::from_err)?;
 
         // By calling `finish` on the send stream we signal that we will not send anything
         // further, which makes the receive stream on the other end terminate.
@@ -176,21 +181,21 @@ impl BlobSearch {
         let conn = self.endpoint.connect(node_id, ALPN).await?;
 
         // Open a bi-directional in our connection.
-        let (mut send, mut recv) = conn.open_bi().await?;
+        let (mut send, mut recv) = conn.open_bi().await.e()?;
 
         // Send our query.
-        send.write_all(query.as_bytes()).await?;
+        send.write_all(query.as_bytes()).await.e()?;
 
         // Finish the send stream, signalling that no further data will be sent.
         // This makes the `read_to_end` call on the accepting side terminate.
-        send.finish()?;
+        send.finish().e()?;
 
         // The response is a 64 bit integer
         // We simply read it into a byte buffer.
         let mut num_matches = [0u8; 8];
 
         // Read 8 bytes from the stream.
-        recv.read_exact(&mut num_matches).await?;
+        recv.read_exact(&mut num_matches).await.e()?;
 
         let num_matches = u64::from_le_bytes(num_matches);
 

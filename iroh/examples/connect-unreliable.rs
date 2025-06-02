@@ -9,6 +9,7 @@ use std::net::SocketAddr;
 
 use clap::Parser;
 use iroh::{Endpoint, NodeAddr, RelayMode, RelayUrl, SecretKey};
+use n0_snafu::ResultExt;
 use n0_watcher::Watcher as _;
 use tracing::info;
 
@@ -29,7 +30,7 @@ struct Cli {
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> n0_snafu::Result<()> {
     tracing_subscriber::fmt::init();
     println!("\nconnect (unreliable) example!\n");
     let args = Cli::parse();
@@ -73,11 +74,11 @@ async fn main() -> anyhow::Result<()> {
 
     // Send a datagram over the connection.
     let message = format!("{me} is saying 'hello!'");
-    conn.send_datagram(message.as_bytes().to_vec().into())?;
+    conn.send_datagram(message.as_bytes().to_vec().into()).e()?;
 
     // Read a datagram over the connection.
-    let message = conn.read_datagram().await?;
-    let message = String::from_utf8(message.into())?;
+    let message = conn.read_datagram().await.e()?;
+    let message = String::from_utf8(message.into()).e()?;
     println!("received: {message}");
 
     Ok(())

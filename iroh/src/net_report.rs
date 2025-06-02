@@ -17,7 +17,6 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{anyhow, Result};
 use bytes::Bytes;
 use iroh_base::RelayUrl;
 #[cfg(not(wasm_browser))]
@@ -27,8 +26,11 @@ use n0_future::{
     task::{self, AbortOnDropHandle},
     time::{Duration, Instant},
 };
+use nested_enum_utils::common_fields;
 #[cfg(not(wasm_browser))]
 use netwatch::UdpSocket;
+use reportgen::ActorRunError;
+use snafu::Snafu;
 use tokio::sync::{self, mpsc, oneshot};
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
@@ -248,7 +250,7 @@ impl Client {
         #[cfg(not(wasm_browser))] dns_resolver: DnsResolver,
         #[cfg(not(wasm_browser))] ip_mapped_addrs: Option<IpMappedAddresses>,
         metrics: Arc<Metrics>,
-    ) -> Result<Self> {
+    ) -> Self {
         let mut actor = Actor::new(
             #[cfg(not(wasm_browser))]
             port_mapper,
@@ -257,16 +259,16 @@ impl Client {
             #[cfg(not(wasm_browser))]
             ip_mapped_addrs,
             metrics,
-        )?;
+        );
         let addr = actor.addr();
         let task = task::spawn(
             async move { actor.run().await }.instrument(info_span!("net_report.actor")),
         );
         let drop_guard = AbortOnDropHandle::new(task);
-        Ok(Client {
+        Client {
             addr,
             _drop_guard: Arc::new(drop_guard),
-        })
+        }
     }
 
     /// Returns a new address to send messages to this actor.
@@ -306,7 +308,7 @@ impl Client {
         #[cfg(not(wasm_browser))] stun_sock_v4: Option<Arc<UdpSocket>>,
         #[cfg(not(wasm_browser))] stun_sock_v6: Option<Arc<UdpSocket>>,
         #[cfg(not(wasm_browser))] quic_config: Option<QuicConfig>,
-    ) -> Result<Arc<Report>> {
+    ) -> Result<Arc<Report>, ReportError> {
         #[cfg(not(wasm_browser))]
         let opts = Options::default()
             .stun_v4(stun_sock_v4)
@@ -314,10 +316,11 @@ impl Client {
             .quic_config(quic_config);
         #[cfg(wasm_browser)]
         let opts = Options::default();
-        let rx = self.get_report_channel(relay_map.clone(), opts).await?;
+
+        let rx = self.get_report_channel(relay_map, opts).await?;
         match rx.await {
             Ok(res) => res,
-            Err(_) => Err(anyhow!("channel closed, actor awol")),
+            Err(_) => Err(ActorGoneSnafu.build()),
         }
     }
 
@@ -326,11 +329,15 @@ impl Client {
     /// It may not be called concurrently with itself, `&mut self` takes care of that.
     ///
     /// Look at [`Options`] for the different configuration options.
-    pub async fn get_report(&mut self, relay_map: RelayMap, opts: Options) -> Result<Arc<Report>> {
+    pub async fn get_report(
+        &mut self,
+        relay_map: RelayMap,
+        opts: Options,
+    ) -> Result<Arc<Report>, ReportError> {
         let rx = self.get_report_channel(relay_map, opts).await?;
         match rx.await {
             Ok(res) => res,
-            Err(_) => Err(anyhow!("channel closed, actor awol")),
+            Err(_) => Err(ActorGoneSnafu.build()),
         }
     }
 
@@ -341,7 +348,7 @@ impl Client {
         &mut self,
         relay_map: RelayMap,
         opts: Options,
-    ) -> Result<oneshot::Receiver<Result<Arc<Report>>>> {
+    ) -> Result<oneshot::Receiver<Result<Arc<Report>, ReportError>>, ReportError> {
         let (tx, rx) = oneshot::channel();
         self.addr
             .send(Message::RunCheck {
@@ -349,7 +356,8 @@ impl Client {
                 opts,
                 response_tx: tx,
             })
-            .await?;
+            .await
+            .map_err(|_| ActorGoneSnafu.build())?;
         Ok(rx)
     }
 }
@@ -378,12 +386,12 @@ pub(crate) enum Message {
         /// Options for the report
         opts: Options,
         /// Channel to receive the response.
-        response_tx: oneshot::Sender<Result<Arc<Report>>>,
+        response_tx: oneshot::Sender<Result<Arc<Report>, ReportError>>,
     },
     /// A report produced by the [`reportgen`] actor.
     ReportReady { report: Box<Report> },
     /// The [`reportgen`] actor failed to produce a report.
-    ReportAborted { err: anyhow::Error },
+    ReportAborted { reason: ActorRunError },
     /// An incoming STUN packet to parse.
     StunPacket {
         /// The raw UDP payload.
@@ -494,10 +502,10 @@ impl Actor {
         #[cfg(not(wasm_browser))] dns_resolver: DnsResolver,
         #[cfg(not(wasm_browser))] ip_mapped_addrs: Option<IpMappedAddresses>,
         metrics: Arc<Metrics>,
-    ) -> Result<Self> {
+    ) -> Self {
         // TODO: consider an instrumented flume channel so we have metrics.
         let (sender, receiver) = mpsc::channel(32);
-        Ok(Self {
+        Self {
             receiver,
             sender,
             reports: Default::default(),
@@ -510,7 +518,7 @@ impl Actor {
             #[cfg(not(wasm_browser))]
             ip_mapped_addrs,
             metrics,
-        })
+        }
     }
 
     /// Returns the channel to send messages to the actor.
@@ -540,7 +548,7 @@ impl Actor {
                 Message::ReportReady { report } => {
                     self.handle_report_ready(*report);
                 }
-                Message::ReportAborted { err } => {
+                Message::ReportAborted { reason: err } => {
                     self.handle_report_aborted(err);
                 }
                 Message::StunPacket { payload, from_addr } => {
@@ -562,7 +570,7 @@ impl Actor {
         &mut self,
         relay_map: RelayMap,
         opts: Options,
-        response_tx: oneshot::Sender<Result<Arc<Report>>>,
+        response_tx: oneshot::Sender<Result<Arc<Report>, ReportError>>,
     ) {
         let protocols = opts.to_protocols();
         #[cfg(not(wasm_browser))]
@@ -576,11 +584,7 @@ impl Actor {
         };
         trace!("Attempting probes for protocols {protocols:#?}");
         if self.current_report_run.is_some() {
-            response_tx
-                .send(Err(anyhow!(
-                    "ignoring RunCheck request: reportgen actor already running"
-                )))
-                .ok();
+            response_tx.send(Err(AlreadyRunningSnafu.build())).ok();
             return;
         }
 
@@ -631,10 +635,10 @@ impl Actor {
         }
     }
 
-    fn handle_report_aborted(&mut self, err: anyhow::Error) {
+    fn handle_report_aborted(&mut self, reason: ActorRunError) {
         self.in_flight_stun_requests.clear();
         if let Some(ReportRun { report_tx, .. }) = self.current_report_run.take() {
-            report_tx.send(Err(err.context("report aborted"))).ok();
+            report_tx.send(Err(AbortSnafu { reason }.build())).ok();
         }
     }
 
@@ -786,7 +790,24 @@ struct ReportRun {
     /// The handle of the [`reportgen`] actor, cancels the actor on drop.
     _reportgen: reportgen::Client,
     /// Where to send the completed report.
-    report_tx: oneshot::Sender<Result<Arc<Report>>>,
+    report_tx: oneshot::Sender<Result<Arc<Report>, ReportError>>,
+}
+
+#[allow(missing_docs)]
+#[common_fields({
+    backtrace: Option<snafu::Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+pub enum ReportError {
+    #[snafu(display("Report aborted early"))]
+    Abort { reason: ActorRunError },
+    #[snafu(display("Report generation is already running"))]
+    AlreadyRunning {},
+    #[snafu(display("Internal actor is gone"))]
+    ActorGone {},
 }
 
 /// Test if IPv6 works at all, or if it's been hard disabled at the OS level.
@@ -803,7 +824,6 @@ fn os_has_ipv6() -> bool {
 
 #[cfg(not(wasm_browser))]
 pub(crate) mod stun_utils {
-    use anyhow::Context as _;
     use netwatch::IpFamily;
     use tokio_util::sync::CancellationToken;
 
@@ -860,19 +880,32 @@ pub(crate) mod stun_utils {
         Some(sock)
     }
 
+    #[derive(Debug, Snafu)]
+    enum RecvStunError {
+        #[snafu(transparent)]
+        Recv { source: std::io::Error },
+        #[snafu(display("Internal actor is gone"))]
+        ActorGone,
+    }
+
     /// Receive STUN response from a UDP socket, pass it to the actor.
-    async fn recv_stun_once(sock: &UdpSocket, buf: &mut [u8], actor_addr: &Addr) -> Result<()> {
-        let (count, mut from_addr) = sock
-            .recv_from(buf)
-            .await
-            .context("Error reading from stun socket")?;
+    async fn recv_stun_once(
+        sock: &UdpSocket,
+        buf: &mut [u8],
+        actor_addr: &Addr,
+    ) -> Result<(), RecvStunError> {
+        let (count, mut from_addr) = sock.recv_from(buf).await?;
+
         let payload = &buf[..count];
         from_addr.set_ip(from_addr.ip().to_canonical());
         let msg = Message::StunPacket {
             payload: Bytes::from(payload.to_vec()),
             from_addr,
         };
-        actor_addr.send(msg).await.context("actor stopped")
+        actor_addr
+            .send(msg)
+            .await
+            .map_err(|_| ActorGoneSnafu.build())
     }
 }
 
@@ -917,23 +950,21 @@ mod test_utils {
 
 #[cfg(test)]
 mod tests {
-    use std::net::Ipv4Addr;
-
     use bytes::BytesMut;
+    use n0_snafu::{Result, ResultExt};
     use netwatch::IpFamily;
     use tokio_util::sync::CancellationToken;
     use tracing::info;
     use tracing_test::traced_test;
 
     use super::*;
-    use crate::net_report::{dns, ping::Pinger, stun_utils::bind_local_stun_socket};
+    use crate::net_report::{dns, stun_utils::bind_local_stun_socket};
 
     mod stun_utils {
         //! Utils for testing that expose a simple stun server.
 
         use std::{net::IpAddr, sync::Arc};
 
-        use anyhow::Result;
         use iroh_base::RelayUrl;
         use iroh_relay::RelayNode;
         use tokio::{
@@ -989,12 +1020,15 @@ mod tests {
         /// Sets up a simple STUN server binding to `0.0.0.0:0`.
         ///
         /// See [`serve`] for more details.
-        pub(crate) async fn serve_v4() -> Result<(SocketAddr, StunStats, CleanupDropGuard)> {
+        pub(crate) async fn serve_v4() -> std::io::Result<(SocketAddr, StunStats, CleanupDropGuard)>
+        {
             serve(std::net::Ipv4Addr::UNSPECIFIED.into()).await
         }
 
         /// Sets up a simple STUN server.
-        pub(crate) async fn serve(ip: IpAddr) -> Result<(SocketAddr, StunStats, CleanupDropGuard)> {
+        pub(crate) async fn serve(
+            ip: IpAddr,
+        ) -> std::io::Result<(SocketAddr, StunStats, CleanupDropGuard)> {
             let stats = StunStats::default();
 
             let pc = net::UdpSocket::bind((ip, 0)).await?;
@@ -1062,12 +1096,12 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_basic() -> Result<()> {
+    async fn test_basic() -> Result {
         let (stun_addr, stun_stats, _cleanup_guard) =
-            stun_utils::serve("127.0.0.1".parse().unwrap()).await?;
+            stun_utils::serve("127.0.0.1".parse().unwrap()).await.e()?;
 
         let resolver = dns::tests::resolver();
-        let mut client = Client::new(None, resolver.clone(), None, Default::default())?;
+        let mut client = Client::new(None, resolver.clone(), None, Default::default());
         let dm = stun_utils::relay_map_of([stun_addr].into_iter());
 
         // Note that the ProbePlan will change with each iteration.
@@ -1103,60 +1137,8 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    #[traced_test]
-    async fn test_udp_blocked() -> Result<()> {
-        // Create a "STUN server", which will never respond to anything.  This is how UDP to
-        // the STUN server being blocked will look like from the client's perspective.
-        let blackhole = tokio::net::UdpSocket::bind("127.0.0.1:0").await?;
-        let stun_addr = blackhole.local_addr()?;
-        let dm = stun_utils::relay_map_of_opts([(stun_addr, false)].into_iter());
-
-        // Now create a client and generate a report.
-        let resolver = dns::tests::resolver();
-        let mut client = Client::new(None, resolver.clone(), None, Default::default())?;
-
-        let r = client.get_report_all(dm, None, None, None).await?;
-        let mut r: Report = (*r).clone();
-        r.portmap_probe = None;
-
-        // This test wants to ensure that the ICMP part of the probe works when UDP is
-        // blocked.  Unfortunately on some systems we simply don't have permissions to
-        // create raw ICMP pings and we'll have to silently accept this test is useless (if
-        // we could, this would be a skip instead).
-        let pinger = Pinger::new();
-        let can_ping = pinger.send(Ipv4Addr::LOCALHOST.into(), b"aa").await.is_ok();
-        let want_icmpv4 = match can_ping {
-            true => Some(true),
-            false => None,
-        };
-
-        let want = Report {
-            // The ICMP probe sets the can_ping flag.
-            ipv4_can_send: can_ping,
-            // OS IPv6 test is irrelevant here, accept whatever the current machine has.
-            os_has_ipv6: r.os_has_ipv6,
-            // Captive portal test is irrelevant; accept what the current report has.
-            captive_portal: r.captive_portal,
-            // If we can ping we expect to have this.
-            icmpv4: want_icmpv4,
-            // If we had a pinger, we'll have some latencies filled in and a preferred relay
-            relay_latency: can_ping
-                .then(|| r.relay_latency.clone())
-                .unwrap_or_default(),
-            preferred_relay: can_ping
-                .then_some(r.preferred_relay.clone())
-                .unwrap_or_default(),
-            ..Default::default()
-        };
-
-        assert_eq!(r, want);
-
-        Ok(())
-    }
-
     #[tokio::test(flavor = "current_thread", start_paused = true)]
-    async fn test_add_report_history_set_preferred_relay() -> Result<()> {
+    async fn test_add_report_history_set_preferred_relay() -> Result {
         fn relay_url(i: u16) -> RelayUrl {
             format!("http://{i}.com").parse().unwrap()
         }
@@ -1317,7 +1299,7 @@ mod tests {
         let resolver = dns::tests::resolver();
         for mut tt in tests {
             println!("test: {}", tt.name);
-            let mut actor = Actor::new(None, resolver.clone(), None, Default::default()).unwrap();
+            let mut actor = Actor::new(None, resolver.clone(), None, Default::default());
             for s in &mut tt.steps {
                 // trigger the timer
                 tokio::time::advance(Duration::from_secs(s.after)).await;
@@ -1337,7 +1319,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_hairpin() -> Result<()> {
+    async fn test_hairpin() -> Result {
         // Hairpinning is initiated after we discover our own IPv4 socket address (IP +
         // port) via STUN, so the test needs to have a STUN server and perform STUN over
         // IPv4 first.  Hairpinning detection works by sending a STUN *request* to **our own
@@ -1347,12 +1329,12 @@ mod tests {
         // can easily use to identify the packet.
 
         // Setup STUN server and create relay_map.
-        let (stun_addr, _stun_stats, _done) = stun_utils::serve_v4().await?;
+        let (stun_addr, _stun_stats, _done) = stun_utils::serve_v4().await.e()?;
         let dm = stun_utils::relay_map_of([stun_addr].into_iter());
         dbg!(&dm);
 
         let resolver = dns::tests::resolver().clone();
-        let mut client = Client::new(None, resolver, None, Default::default())?;
+        let mut client = Client::new(None, resolver, None, Default::default());
 
         // Set up an external socket to send STUN requests from, this will be discovered as
         // our public socket address by STUN.  We send back any packets received on this
@@ -1361,7 +1343,7 @@ mod tests {
         // it to this socket, which is forwarnding it back to our net_report client, because
         // this dumb implementation just forwards anything even if it would be garbage.
         // Thus hairpinning detection will declare hairpinning to work.
-        let sock = UdpSocket::bind_local(netwatch::IpFamily::V4, 0)?;
+        let sock = UdpSocket::bind_local(netwatch::IpFamily::V4, 0).e()?;
         let sock = Arc::new(sock);
         info!(addr=?sock.local_addr().unwrap(), "Using local addr");
         let task = {

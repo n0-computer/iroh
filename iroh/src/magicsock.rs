@@ -28,7 +28,6 @@ use std::{
     task::{Context, Poll},
 };
 
-use anyhow::{anyhow, Context as _, Result};
 use bytes::Bytes;
 use data_encoding::HEXLOWER;
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
@@ -40,12 +39,14 @@ use n0_future::{
     StreamExt,
 };
 use n0_watcher::{self, Watchable, Watcher};
+use nested_enum_utils::common_fields;
 use netwatch::netmon;
 #[cfg(not(wasm_browser))]
 use netwatch::{ip::LocalAddresses, UdpSocket};
 use quinn::{AsyncUdpSocket, ServerConfig};
 use rand::{seq::SliceRandom, Rng, SeedableRng};
 use smallvec::SmallVec;
+use snafu::{IntoError, ResultExt, Snafu};
 use tokio::sync::{self, mpsc, Mutex};
 use tracing::{
     debug, error, error_span, event, info, info_span, instrument, trace, trace_span, warn,
@@ -73,7 +74,7 @@ use crate::{
     discovery::{Discovery, DiscoveryItem, DiscoverySubscribers, NodeData, UserData},
     key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
     metrics::EndpointMetrics,
-    net_report::{self, IpMappedAddresses, Report},
+    net_report::{self, IpMappedAddresses, Report, ReportError},
 };
 
 mod metrics;
@@ -242,9 +243,27 @@ pub(crate) struct MagicSock {
     ip_bind_addrs: Vec<SocketAddr>,
 }
 
+#[allow(missing_docs)]
+#[common_fields({
+    backtrace: Option<snafu::Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[derive(Debug, Snafu)]
+#[snafu(visibility(pub(crate)))]
+#[non_exhaustive]
+pub enum AddNodeAddrError {
+    #[snafu(display("Empty addressing info"))]
+    Empty {},
+    #[snafu(display("Empty addressing info, {pruned} direct address have been pruned"))]
+    EmptyPruned { pruned: usize },
+    #[snafu(display("Adding our own address is not supported"))]
+    OwnAddress {},
+}
+
 impl MagicSock {
     /// Creates a magic [`MagicSock`] listening on [`Options::addr_v4`] and [`Options::addr_v6`].
-    pub(crate) async fn spawn(opts: Options) -> Result<Handle> {
+    pub(crate) async fn spawn(opts: Options) -> Result<Handle, CreateHandleError> {
         Handle::new(opts).await
     }
 
@@ -363,19 +382,19 @@ impl MagicSock {
         res.expect("disconnected")
     }
 
-    /// Returns a [`Watcher`] that reports the [`ConnectionType`] we have to the
+    /// Returns a [`watcher::Direct`] that reports the [`ConnectionType`] we have to the
     /// given `node_id`.
     ///
-    /// This gets us a copy of the [`Watcher`] for the [`Watchable`] with a [`ConnectionType`]
+    /// This gets us a copy of the [`watcher::Direct`] for the [`Watchable`] with a [`ConnectionType`]
     /// that the `NodeMap` stores for each `node_id`'s endpoint.
     ///
     /// # Errors
     ///
-    /// Will return an error if there is no address information known about the
+    /// Will return `None` if there is no address information known about the
     /// given `node_id`.
     ///
     /// [`Watcher`]: n0_watcher::Watcher
-    pub(crate) fn conn_type(&self, node_id: NodeId) -> Result<n0_watcher::Direct<ConnectionType>> {
+    pub(crate) fn conn_type(&self, node_id: NodeId) -> Option<n0_watcher::Direct<ConnectionType>> {
         self.node_map.conn_type(node_id)
     }
 
@@ -386,8 +405,12 @@ impl MagicSock {
 
     /// Add addresses for a node to the magic socket's addresbook.
     #[instrument(skip_all, fields(me = %self.me))]
-    pub fn add_node_addr(&self, mut addr: NodeAddr, source: node_map::Source) -> Result<()> {
-        let mut pruned = 0;
+    pub fn add_node_addr(
+        &self,
+        mut addr: NodeAddr,
+        source: node_map::Source,
+    ) -> Result<(), AddNodeAddrError> {
+        let mut pruned: usize = 0;
         for my_addr in self.direct_addrs.sockaddrs() {
             if addr.direct_addresses.remove(&my_addr) {
                 warn!( node_id=addr.node_id.fmt_short(), %my_addr, %source, "not adding our addr for node");
@@ -399,11 +422,9 @@ impl MagicSock {
                 .add_node_addr(addr, source, &self.metrics.magicsock);
             Ok(())
         } else if pruned != 0 {
-            Err(anyhow::anyhow!(
-                "empty addressing info, {pruned} direct addresses have been pruned"
-            ))
+            Err(EmptyPrunedSnafu { pruned }.build())
         } else {
-            Err(anyhow::anyhow!("empty addressing info"))
+            Err(EmptySnafu.build())
         }
     }
 
@@ -773,12 +794,12 @@ impl MagicSock {
             sealed_box.to_vec(),
         ) {
             Ok(dm) => dm,
-            Err(DiscoBoxError::Open(err)) => {
-                warn!(?err, "failed to open disco box");
+            Err(DiscoBoxError::Open { source, .. }) => {
+                warn!(?source, "failed to open disco box");
                 self.metrics.magicsock.recv_disco_bad_key.inc();
                 return;
             }
-            Err(DiscoBoxError::Parse(err)) => {
+            Err(DiscoBoxError::Parse { source, .. }) => {
                 // Couldn't parse it, but it was inside a correctly
                 // signed box, so just ignore it, assuming it's from a
                 // newer version of Tailscale that we don't
@@ -786,7 +807,7 @@ impl MagicSock {
                 // be too spammy for old clients.
 
                 self.metrics.magicsock.recv_disco_bad_parse.inc();
-                debug!(?err, "failed to parse disco message");
+                debug!(?source, "failed to parse disco message");
                 return;
             }
         };
@@ -1186,9 +1207,30 @@ impl DirectAddrUpdateState {
     }
 }
 
+#[allow(missing_docs)]
+#[common_fields({
+    backtrace: Option<snafu::Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+pub enum CreateHandleError {
+    #[snafu(display("Failed to create bind sockets"))]
+    BindSockets { source: io::Error },
+    #[snafu(display("Failed to create internal quinn endpoint"))]
+    CreateQuinnEndpoint { source: io::Error },
+    #[snafu(display("Failed to create socket state"))]
+    CreateSocketState { source: io::Error },
+    #[snafu(display("Failed to create netmon monitor"))]
+    CreateNetmonMonitor { source: netmon::Error },
+    #[snafu(display("Failed to subscribe netmon monitor"))]
+    SubscribeNetmonMonitor { source: netmon::Error },
+}
+
 impl Handle {
     /// Creates a magic [`MagicSock`] listening on [`Options::addr_v4`] and [`Options::addr_v6`].
-    async fn new(opts: Options) -> Result<Self> {
+    async fn new(opts: Options) -> Result<Self, CreateHandleError> {
         let me = opts.secret_key.public().fmt_short();
 
         Self::with_name(me, opts)
@@ -1196,7 +1238,7 @@ impl Handle {
             .await
     }
 
-    async fn with_name(me: String, opts: Options) -> Result<Self> {
+    async fn with_name(me: String, opts: Options) -> Result<Self, CreateHandleError> {
         let Options {
             addr_v4,
             addr_v6,
@@ -1220,7 +1262,8 @@ impl Handle {
         let addr_v4 = addr_v4.unwrap_or_else(|| SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0));
 
         #[cfg(not(wasm_browser))]
-        let (ip_transports, port_mapper) = bind_ip(addr_v4, addr_v6, &metrics)?;
+        let (ip_transports, port_mapper) =
+            bind_ip(addr_v4, addr_v6, &metrics).context(BindSocketsSnafu)?;
 
         #[cfg(not(wasm_browser))]
         let v4_socket = ip_transports
@@ -1247,7 +1290,7 @@ impl Handle {
             #[cfg(not(wasm_browser))]
             Some(ip_mapped_addrs.clone()),
             metrics.net_report.clone(),
-        )?;
+        );
 
         let (actor_sender, actor_receiver) = mpsc::channel(256);
         let (disco_sender, mut disco_receiver) = mpsc::channel(256);
@@ -1338,7 +1381,8 @@ impl Handle {
             Arc::new(quinn::TokioRuntime),
             #[cfg(wasm_browser)]
             Arc::new(crate::web_runtime::WebRuntime),
-        )?;
+        )
+        .context(CreateQuinnEndpointSnafu)?;
 
         let mut actor_tasks = JoinSet::default();
 
@@ -1354,7 +1398,9 @@ impl Handle {
             }
         });
 
-        let network_monitor = netmon::Monitor::new().await?;
+        let network_monitor = netmon::Monitor::new()
+            .await
+            .context(CreateNetmonMonitorSnafu)?;
         let qad_endpoint = endpoint.clone();
 
         #[cfg(any(test, feature = "test-utils"))]
@@ -1397,12 +1443,9 @@ impl Handle {
             network_change_sender,
         };
         actor_tasks.spawn(
-            async move {
-                if let Err(err) = actor.run(local_addrs_watch, sender2).await {
-                    warn!("relay handler errored: {:?}", err);
-                }
-            }
-            .instrument(info_span!("actor")),
+            actor
+                .run(local_addrs_watch, sender2)
+                .instrument(info_span!("actor")),
         );
 
         let actor_tasks = Arc::new(Mutex::new(actor_tasks));
@@ -1535,17 +1578,31 @@ impl DiscoSecrets {
         node_id: PublicKey,
         mut sealed_box: Vec<u8>,
     ) -> Result<disco::Message, DiscoBoxError> {
-        self.get(secret, node_id, |secret| secret.open(&mut sealed_box))?;
-        disco::Message::from_bytes(&sealed_box).map_err(DiscoBoxError::Parse)
+        self.get(secret, node_id, |secret| secret.open(&mut sealed_box))
+            .context(OpenSnafu)?;
+        disco::Message::from_bytes(&sealed_box).context(ParseSnafu)
     }
 }
 
-#[derive(Debug, thiserror::Error)]
+#[allow(missing_docs)]
+#[common_fields({
+    backtrace: Option<snafu::Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
 enum DiscoBoxError {
-    #[error("Failed to open crypto box")]
-    Open(#[from] DecryptionError),
-    #[error("Failed to parse disco message")]
-    Parse(anyhow::Error),
+    #[snafu(display("Failed to open crypto box"))]
+    Open {
+        #[snafu(source(from(DecryptionError, Box::new)))]
+        source: Box<DecryptionError>,
+    },
+    #[snafu(display("Failed to parse disco message"))]
+    Parse {
+        #[snafu(source(from(disco::ParseError, Box::new)))]
+        source: Box<disco::ParseError>,
+    },
 }
 
 #[derive(Debug)]
@@ -1613,7 +1670,10 @@ enum ActorMessage {
     Shutdown,
     PingActions(Vec<PingAction>),
     EndpointPingExpired(usize, stun_rs::TransactionId),
-    NetReport(Result<Option<Arc<net_report::Report>>>, &'static str),
+    NetReport(
+        Result<Option<Arc<net_report::Report>>, NetReportError>,
+        &'static str,
+    ),
     NetworkChange,
     #[cfg(test)]
     ForceNetworkChange(bool),
@@ -1651,11 +1711,11 @@ fn bind_ip(
     addr_v4: SocketAddrV4,
     addr_v6: Option<SocketAddrV6>,
     metrics: &EndpointMetrics,
-) -> Result<(Vec<IpTransport>, portmapper::Client)> {
+) -> io::Result<(Vec<IpTransport>, portmapper::Client)> {
     let port_mapper =
         portmapper::Client::with_metrics(Default::default(), metrics.portmapper.clone());
 
-    let v4 = Arc::new(bind_with_fallback(SocketAddr::V4(addr_v4)).context("bind IPv4 failed")?);
+    let v4 = Arc::new(bind_with_fallback(SocketAddr::V4(addr_v4))?);
     let ip4_port = v4.local_addr()?.port();
     let ip6_port = ip4_port.checked_add(1).unwrap_or(ip4_port - 1);
 
@@ -1696,15 +1756,26 @@ fn bind_ip(
     Ok((ip, port_mapper))
 }
 
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+enum NetReportError {
+    #[snafu(display("Net report not received"))]
+    NotReceived,
+    #[snafu(display("Net report timed out"))]
+    Timeout,
+    #[snafu(display("Net report encountered an error"))]
+    NetReport { source: ReportError },
+}
+
 impl Actor {
     async fn run(
         mut self,
         mut watcher: impl Watcher<Value = Vec<transports::Addr>> + Send + Sync,
         sender: UdpSender,
-    ) -> Result<()> {
+    ) {
         // Setup network monitoring
         let mut netmon_watcher = self.network_monitor.interface_state();
-        let mut current_netmon_state = netmon_watcher.get()?;
+        let mut current_netmon_state = netmon_watcher.get().expect("missing network state");
 
         #[cfg(not(wasm_browser))]
         let mut direct_addr_heartbeat_timer = time::interval(HEARTBEAT_INTERVAL);
@@ -1749,7 +1820,7 @@ impl Actor {
                     trace!(?msg, "tick: msg");
                     self.msock.metrics.magicsock.actor_tick_msg.inc();
                     if self.handle_actor_message(msg, &sender).await {
-                        return Ok(());
+                        return;
                     }
                 }
                 tick = self.periodic_re_stun_timer.tick() => {
@@ -2158,11 +2229,11 @@ impl Actor {
                 let msg_sender = self.msg_sender.clone();
                 task::spawn(async move {
                     let report = time::timeout(NET_REPORT_TIMEOUT, rx).await;
-                    let report: anyhow::Result<_> = match report {
+                    let report = match report {
                         Ok(Ok(Ok(report))) => Ok(Some(report)),
-                        Ok(Ok(Err(err))) => Err(err),
-                        Ok(Err(_)) => Err(anyhow!("net_report report not received")),
-                        Err(err) => Err(anyhow!("net_report report timeout: {:?}", err)),
+                        Ok(Ok(Err(err))) => Err(NetReportSnafu.into_error(err)),
+                        Ok(Err(_)) => Err(NotReceivedSnafu.build()),
+                        Err(_) => Err(TimeoutSnafu.build()),
                     };
                     msg_sender
                         .send(ActorMessage::NetReport(report, why))
@@ -2289,13 +2360,13 @@ fn new_re_stun_timer(initial_delay: bool) -> time::Interval {
 }
 
 #[cfg(not(wasm_browser))]
-fn bind_with_fallback(mut addr: SocketAddr) -> anyhow::Result<UdpSocket> {
+fn bind_with_fallback(mut addr: SocketAddr) -> io::Result<UdpSocket> {
     debug!(%addr, "binding");
 
     // First try binding a preferred port, if specified
     match UdpSocket::bind_full(addr) {
         Ok(socket) => {
-            let local_addr = socket.local_addr().context("UDP socket not bound")?;
+            let local_addr = socket.local_addr()?;
             debug!(%addr, %local_addr, "successfully bound");
             return Ok(socket);
         }
@@ -2303,14 +2374,14 @@ fn bind_with_fallback(mut addr: SocketAddr) -> anyhow::Result<UdpSocket> {
             debug!(%addr, "failed to bind: {err:#}");
             // If that was already the fallback port, then error out
             if addr.port() == 0 {
-                return Err(err.into());
+                return Err(err);
             }
         }
     }
 
     // Otherwise, try binding with port 0
     addr.set_port(0);
-    UdpSocket::bind_full(addr).context("failed to bind on fallback port")
+    UdpSocket::bind_full(addr)
 }
 
 /// The discovered direct addresses of this [`MagicSock`].
@@ -2404,8 +2475,8 @@ impl DiscoveredDirectAddrs {
 pub(crate) struct NodeIdMappedAddr(Ipv6Addr);
 
 /// Can occur when converting a [`SocketAddr`] to an [`NodeIdMappedAddr`]
-#[derive(Debug, thiserror::Error)]
-#[error("Failed to convert")]
+#[derive(Debug, Snafu)]
+#[snafu(display("Failed to convert"))]
 pub struct NodeIdMappedAddrError;
 
 /// Counter to always generate unique addresses for [`NodeIdMappedAddr`].
@@ -2452,7 +2523,7 @@ impl NodeIdMappedAddr {
 impl TryFrom<Ipv6Addr> for NodeIdMappedAddr {
     type Error = NodeIdMappedAddrError;
 
-    fn try_from(value: Ipv6Addr) -> std::result::Result<Self, Self::Error> {
+    fn try_from(value: Ipv6Addr) -> Result<Self, Self::Error> {
         let octets = value.octets();
         if octets[0] == Self::ADDR_PREFIXL
             && octets[1..6] == Self::ADDR_GLOBAL_ID
@@ -2618,13 +2689,28 @@ impl NetInfo {
 
 #[cfg(test)]
 mod tests {
-    use anyhow::Context;
-    use rand::RngCore;
+    use std::{collections::BTreeSet, sync::Arc, time::Duration};
+
+    use data_encoding::HEXLOWER;
+    use iroh_base::{NodeAddr, NodeId, PublicKey, SecretKey};
+    use iroh_relay::RelayMap;
+    use n0_future::{time, StreamExt};
+    use n0_snafu::{Result, ResultExt};
+    use n0_watcher::Watcher;
+    use quinn::ServerConfig;
+    use rand::{Rng, RngCore};
+    use tokio::task::JoinSet;
     use tokio_util::task::AbortOnDropHandle;
+    use tracing::{error, info, info_span, instrument, Instrument};
     use tracing_test::traced_test;
 
-    use super::*;
-    use crate::{dns::DnsResolver, tls, Endpoint, RelayMode};
+    use super::{NodeIdMappedAddr, Options};
+    use crate::{
+        dns::DnsResolver,
+        endpoint::{DirectAddr, PathSelection, Source},
+        magicsock::{node_map, Handle, MagicSock},
+        tls, Endpoint, RelayMode,
+    };
 
     const ALPN: &[u8] = b"n0/test/1";
 
@@ -2687,7 +2773,7 @@ mod tests {
     }
 
     impl MagicStack {
-        async fn new(relay_mode: RelayMode) -> Result<Self> {
+        async fn new(relay_mode: RelayMode) -> Self {
             let secret_key = SecretKey::generate(rand::thread_rng());
 
             let mut transport_config = quinn::TransportConfig::default();
@@ -2699,12 +2785,13 @@ mod tests {
                 .relay_mode(relay_mode)
                 .alpns(vec![ALPN.to_vec()])
                 .bind()
-                .await?;
+                .await
+                .unwrap();
 
-            Ok(Self {
+            Self {
                 secret_key,
                 endpoint,
-            })
+            }
         }
 
         fn tracked_endpoints(&self) -> Vec<PublicKey> {
@@ -2789,39 +2876,35 @@ mod tests {
             }
         })
         .await
-        .context("failed to connect nodes")?;
+        .context("timeout")?;
         info!("all nodes meshed");
         Ok(tasks)
     }
 
     #[instrument(skip_all, fields(me = %ep.endpoint.node_id().fmt_short()))]
-    async fn echo_receiver(ep: MagicStack, loss: ExpectedLoss) -> Result<()> {
+    async fn echo_receiver(ep: MagicStack, loss: ExpectedLoss) -> Result {
         info!("accepting conn");
         let conn = ep.endpoint.accept().await.expect("no conn");
 
         info!("connecting");
-        let conn = conn.await.context("[receiver] connecting")?;
+        let conn = conn.await.context("connecting")?;
         info!("accepting bi");
-        let (mut send_bi, mut recv_bi) =
-            conn.accept_bi().await.context("[receiver] accepting bi")?;
+        let (mut send_bi, mut recv_bi) = conn.accept_bi().await.context("accept bi")?;
 
         info!("reading");
         let val = recv_bi
             .read_to_end(usize::MAX)
             .await
-            .context("[receiver] reading to end")?;
+            .context("read to end")?;
 
         info!("replying");
         for chunk in val.chunks(12) {
-            send_bi
-                .write_all(chunk)
-                .await
-                .context("[receiver] sending chunk")?;
+            send_bi.write_all(chunk).await.context("write all")?;
         }
 
         info!("finishing");
-        send_bi.finish().context("[receiver] finishing")?;
-        send_bi.stopped().await.context("[receiver] stopped")?;
+        send_bi.finish().context("finish")?;
+        send_bi.stopped().await.context("stopped")?;
 
         let stats = conn.stats();
         info!("stats: {:#?}", stats);
@@ -2847,27 +2930,26 @@ mod tests {
         dest_id: PublicKey,
         msg: &[u8],
         loss: ExpectedLoss,
-    ) -> Result<()> {
+    ) -> Result {
         info!("connecting to {}", dest_id.fmt_short());
         let dest = NodeAddr::new(dest_id);
-        let conn = ep
-            .endpoint
-            .connect(dest, ALPN)
-            .await
-            .context("[sender] connect")?;
+        let conn = ep.endpoint.connect(dest, ALPN).await?;
 
         info!("opening bi");
-        let (mut send_bi, mut recv_bi) = conn.open_bi().await.context("[sender] open bi")?;
+        let (mut send_bi, mut recv_bi) = conn.open_bi().await.context("open bi")?;
 
         info!("writing message");
-        send_bi.write_all(msg).await.context("[sender] write all")?;
+        send_bi.write_all(msg).await.context("write all")?;
 
         info!("finishing");
-        send_bi.finish().context("[sender] finish")?;
-        send_bi.stopped().await.context("[sender] stopped")?;
+        send_bi.finish().context("finish")?;
+        send_bi.stopped().await.context("stopped")?;
 
         info!("reading_to_end");
-        let val = recv_bi.read_to_end(usize::MAX).await.context("[sender]")?;
+        let val = recv_bi
+            .read_to_end(usize::MAX)
+            .await
+            .context("read to end")?;
         assert_eq!(
             val,
             msg,
@@ -2940,9 +3022,9 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     #[traced_test]
-    async fn test_two_devices_roundtrip_quinn_magic() -> Result<()> {
-        let m1 = MagicStack::new(RelayMode::Disabled).await?;
-        let m2 = MagicStack::new(RelayMode::Disabled).await?;
+    async fn test_two_devices_roundtrip_quinn_magic() -> Result {
+        let m1 = MagicStack::new(RelayMode::Disabled).await;
+        let m2 = MagicStack::new(RelayMode::Disabled).await;
 
         let _guard = mesh_stacks(vec![m1.clone(), m2.clone()]).await?;
 
@@ -2975,10 +3057,9 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_regression_network_change_rebind_wakes_connection_driver(
-    ) -> testresult::TestResult {
-        let m1 = MagicStack::new(RelayMode::Disabled).await?;
-        let m2 = MagicStack::new(RelayMode::Disabled).await?;
+    async fn test_regression_network_change_rebind_wakes_connection_driver() -> n0_snafu::Result {
+        let m1 = MagicStack::new(RelayMode::Disabled).await;
+        let m2 = MagicStack::new(RelayMode::Disabled).await;
 
         println!("Net change");
         m1.endpoint.magic_sock().force_network_change(true).await;
@@ -2991,11 +3072,11 @@ mod tests {
             async move {
                 while let Some(incoming) = endpoint.accept().await {
                     println!("Incoming first conn!");
-                    let conn = incoming.await?;
+                    let conn = incoming.await.e()?;
                     conn.closed().await;
                 }
 
-                testresult::TestResult::Ok(())
+                Ok::<_, n0_snafu::Error>(())
             }
         }));
 
@@ -3014,19 +3095,20 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     #[traced_test]
-    async fn test_two_devices_roundtrip_network_change() -> Result<()> {
+    async fn test_two_devices_roundtrip_network_change() -> Result {
         time::timeout(
             Duration::from_secs(90),
             test_two_devices_roundtrip_network_change_impl(),
         )
-        .await?
+        .await
+        .context("timeout")?
     }
 
     /// Same structure as `test_two_devices_roundtrip_quinn_magic`, but interrupts regularly
     /// with (simulated) network changes.
-    async fn test_two_devices_roundtrip_network_change_impl() -> Result<()> {
-        let m1 = MagicStack::new(RelayMode::Disabled).await?;
-        let m2 = MagicStack::new(RelayMode::Disabled).await?;
+    async fn test_two_devices_roundtrip_network_change_impl() -> Result {
+        let m1 = MagicStack::new(RelayMode::Disabled).await;
+        let m2 = MagicStack::new(RelayMode::Disabled).await;
 
         let _guard = mesh_stacks(vec![m1.clone(), m2.clone()]).await?;
 
@@ -3122,12 +3204,12 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     #[traced_test]
-    async fn test_two_devices_setup_teardown() -> Result<()> {
+    async fn test_two_devices_setup_teardown() -> Result {
         for i in 0..10 {
             println!("-- round {i}");
             println!("setting up magic stack");
-            let m1 = MagicStack::new(RelayMode::Disabled).await?;
-            let m2 = MagicStack::new(RelayMode::Disabled).await?;
+            let m1 = MagicStack::new(RelayMode::Disabled).await;
+            let m2 = MagicStack::new(RelayMode::Disabled).await;
 
             let _guard = mesh_stacks(vec![m1.clone(), m2.clone()]).await?;
 
@@ -3166,10 +3248,7 @@ mod tests {
     ///
     /// Use [`magicsock_connect`] to establish connections.
     #[instrument(name = "ep", skip_all, fields(me = secret_key.public().fmt_short()))]
-    async fn magicsock_ep(
-        secret_key: SecretKey,
-        tls_auth: tls::Authentication,
-    ) -> anyhow::Result<Handle> {
+    async fn magicsock_ep(secret_key: SecretKey, tls_auth: tls::Authentication) -> Result<Handle> {
         let quic_server_config = tls::TlsConfig::new(tls_auth, secret_key.clone())
             .make_server_config(vec![ALPN.to_vec()], true);
         let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
@@ -3241,12 +3320,14 @@ mod tests {
             tls::TlsConfig::new(tls_auth, ep_secret_key.clone()).make_client_config(alpns, true);
         let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
         client_config.transport_config(transport_config);
-        let connect = ep.connect_with(
-            client_config,
-            mapped_addr.private_socket_addr(),
-            &tls::name::encode(node_id),
-        )?;
-        let connection = connect.await?;
+        let connect = ep
+            .connect_with(
+                client_config,
+                mapped_addr.private_socket_addr(),
+                &tls::name::encode(node_id),
+            )
+            .context("connect")?;
+        let connection = connect.await.e()?;
         Ok(connection)
     }
 
@@ -3292,8 +3373,12 @@ mod tests {
         // This needs an accept task
         let accept_task = tokio::spawn({
             async fn accept(ep: quinn::Endpoint) -> Result<()> {
-                let incoming = ep.accept().await.ok_or(anyhow!("no incoming"))?;
-                let _conn = incoming.accept()?.await?;
+                let incoming = ep.accept().await.context("no incoming")?;
+                let _conn = incoming
+                    .accept()
+                    .context("accept")?
+                    .await
+                    .context("connecting")?;
 
                 // Keep this connection alive for a while
                 tokio::time::sleep(Duration::from_secs(10)).await;
@@ -3370,10 +3455,14 @@ mod tests {
         // We need a task to accept the connection.
         let accept_task = tokio::spawn({
             async fn accept(ep: quinn::Endpoint) -> Result<()> {
-                let incoming = ep.accept().await.ok_or(anyhow!("no incoming"))?;
-                let conn = incoming.accept()?.await?;
-                let mut stream = conn.accept_uni().await?;
-                stream.read_to_end(1 << 16).await?;
+                let incoming = ep.accept().await.context("no incoming")?;
+                let conn = incoming
+                    .accept()
+                    .context("accept")?
+                    .await
+                    .context("connecting")?;
+                let mut stream = conn.accept_uni().await.context("accept uni")?;
+                stream.read_to_end(1 << 16).await.context("read to end")?;
                 info!("accept finished");
                 Ok(())
             }
@@ -3471,8 +3560,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_add_node_addr() -> Result<()> {
-        let stack = MagicStack::new(RelayMode::Default).await?;
+    async fn test_add_node_addr() -> Result {
+        let stack = MagicStack::new(RelayMode::Default).await;
         let mut rng = rand::thread_rng();
 
         assert_eq!(stack.endpoint.magic_sock().node_map.node_count(), 0);
@@ -3488,12 +3577,15 @@ mod tests {
             .magic_sock()
             .add_node_addr(empty_addr, node_map::Source::App)
             .unwrap_err();
-        assert!(err.to_string().contains("empty addressing info"));
+        assert!(err
+            .to_string()
+            .to_lowercase()
+            .contains("empty addressing info"));
 
         // relay url only
         let addr = NodeAddr {
             node_id: SecretKey::generate(&mut rng).public(),
-            relay_url: Some("http://my-relay.com".parse()?),
+            relay_url: Some("http://my-relay.com".parse().unwrap()),
             direct_addresses: Default::default(),
         };
         stack
@@ -3506,7 +3598,7 @@ mod tests {
         let addr = NodeAddr {
             node_id: SecretKey::generate(&mut rng).public(),
             relay_url: None,
-            direct_addresses: ["127.0.0.1:1234".parse()?].into_iter().collect(),
+            direct_addresses: ["127.0.0.1:1234".parse().unwrap()].into_iter().collect(),
         };
         stack
             .endpoint
@@ -3517,8 +3609,8 @@ mod tests {
         // both
         let addr = NodeAddr {
             node_id: SecretKey::generate(&mut rng).public(),
-            relay_url: Some("http://my-relay.com".parse()?),
-            direct_addresses: ["127.0.0.1:1234".parse()?].into_iter().collect(),
+            relay_url: Some("http://my-relay.com".parse().unwrap()),
+            direct_addresses: ["127.0.0.1:1234".parse().unwrap()].into_iter().collect(),
         };
         stack
             .endpoint

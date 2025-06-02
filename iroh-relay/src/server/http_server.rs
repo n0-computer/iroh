@@ -2,7 +2,6 @@ use std::{
     collections::HashMap, future::Future, net::SocketAddr, pin::Pin, sync::Arc, time::Duration,
 };
 
-use anyhow::{bail, ensure, Context as _, Result};
 use bytes::Bytes;
 use derive_more::Debug;
 use http::{header::CONNECTION, response::Builder as ResponseBuilder};
@@ -13,13 +12,16 @@ use hyper::{
     upgrade::Upgraded,
     HeaderMap, Method, Request, Response, StatusCode,
 };
-use n0_future::{FutureExt, SinkExt};
+use iroh_base::PublicKey;
+use n0_future::{time::Elapsed, FutureExt, SinkExt};
+use nested_enum_utils::common_fields;
+use snafu::{Backtrace, ResultExt, Snafu};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls_acme::AcmeAcceptor;
 use tokio_util::{codec::Framed, sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, debug_span, error, info, info_span, trace, warn, Instrument};
 
-use super::{clients::Clients, AccessConfig};
+use super::{clients::Clients, streams::StreamError, AccessConfig, SpawnError};
 use crate::{
     defaults::{timeouts::SERVER_WRITE_TIMEOUT, DEFAULT_KEY_CACHE_CAPACITY},
     http::{Protocol, LEGACY_RELAY_PATH, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},
@@ -30,7 +32,7 @@ use crate::{
         client::Config,
         metrics::Metrics,
         streams::{MaybeTlsStream, RelayedStream},
-        ClientRateLimit,
+        BindTcpListenerSnafu, ClientRateLimit, NoLocalAddrSnafu,
     },
     KeyCache,
 };
@@ -69,12 +71,11 @@ fn body_full(content: impl Into<hyper::body::Bytes>) -> BytesBody {
     http_body_util::Full::new(content.into())
 }
 
-fn downcast_upgrade(upgraded: Upgraded) -> Result<(MaybeTlsStream, Bytes)> {
+#[allow(clippy::result_large_err)]
+fn downcast_upgrade(upgraded: Upgraded) -> Result<(MaybeTlsStream, Bytes), ConnectionHandlerError> {
     match upgraded.downcast::<hyper_util::rt::TokioIo<MaybeTlsStream>>() {
         Ok(parts) => Ok((parts.io.into_inner(), parts.read_buf)),
-        Err(_) => {
-            bail!("could not downcast the upgraded connection to MaybeTlsStream")
-        }
+        Err(_) => Err(DowncastUpgradeSnafu.build()),
     }
 }
 
@@ -145,6 +146,113 @@ pub(super) struct TlsConfig {
     pub(super) config: Arc<rustls::ServerConfig>,
     /// The kind
     pub(super) acceptor: TlsAcceptor,
+}
+
+/// Errors when attempting to upgrade and
+#[common_fields({
+    backtrace: Option<Backtrace>,
+})]
+#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+pub enum ServeConnectionError {
+    #[snafu(display("TLS[acme] handshake"))]
+    Handshake {
+        source: std::io::Error,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
+    #[snafu(display("TLS[acme] serve connection"))]
+    ServeConnection {
+        source: hyper::Error,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
+    #[snafu(display("TLS[manual] timeout"))]
+    Timeout {
+        source: Elapsed,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
+    #[snafu(display("TLS[manual] accept"))]
+    ManualAccept {
+        source: std::io::Error,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
+    #[snafu(display("TLS[acme] accept"))]
+    LetsEncryptAccept {
+        source: std::io::Error,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
+    #[snafu(display("HTTPS connection"))]
+    Https {
+        source: hyper::Error,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
+    #[snafu(display("HTTP connection"))]
+    Http {
+        source: hyper::Error,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
+}
+
+/// Server accept errors.
+#[common_fields({
+    backtrace: Option<Backtrace>,
+})]
+#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+pub enum AcceptError {
+    #[snafu(display("Unable to receive client information"))]
+    RecvClientKey {
+        #[allow(clippy::result_large_err)]
+        source: StreamError,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
+    #[snafu(display("Unexpected client version {version}, expected {expected_version}"))]
+    UnexpectedClientVersion {
+        version: usize,
+        expected_version: usize,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
+    #[snafu(transparent)]
+    Io { source: std::io::Error },
+    #[snafu(display("Client not authenticated: {key:?}"))]
+    ClientNotAuthenticated {
+        key: PublicKey,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
+}
+
+/// Server connection errors, includes errors that can happen on `accept`.
+#[common_fields({
+    backtrace: Option<Backtrace>,
+})]
+#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+pub enum ConnectionHandlerError {
+    #[snafu(transparent)]
+    Accept { source: AcceptError },
+    #[snafu(display("Could not downcast the upgraded connection to MaybeTlsStream"))]
+    DowncastUpgrade {
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
+    #[snafu(display("Cannot deal with buffered data yet: {buf:?}"))]
+    BufferNotEmpty {
+        buf: Bytes,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
 }
 
 /// Builder for the Relay HTTP Server.
@@ -246,7 +354,9 @@ impl ServerBuilder {
     }
 
     /// Builds and spawns an HTTP(S) Relay Server.
-    pub(super) async fn spawn(self) -> Result<Server> {
+    pub(super) async fn spawn(self) -> Result<Server, SpawnError> {
+        use snafu::ResultExt;
+
         let cancel_token = CancellationToken::new();
 
         let service = RelayService::new(
@@ -265,9 +375,9 @@ impl ServerBuilder {
 
         let listener = TcpListener::bind(&addr)
             .await
-            .with_context(|| format!("failed to bind server socket to {addr}"))?;
+            .map_err(|_| BindTcpListenerSnafu { addr }.build())?;
 
-        let addr = listener.local_addr()?;
+        let addr = listener.local_addr().context(NoLocalAddrSnafu)?;
         let http_str = tls_config.as_ref().map_or("HTTP/WS", |_| "HTTPS/WSS");
         info!("[{http_str}] relay: serving on {addr}");
 
@@ -500,16 +610,19 @@ impl Inner {
     /// This handler runs while doing the connection upgrade handshake.  Once the connection
     /// is upgraded it sends the stream to the relay server which takes it over.  After
     /// having sent off the connection this handler returns.
-    async fn relay_connection_handler(&self, protocol: Protocol, upgraded: Upgraded) -> Result<()> {
+    async fn relay_connection_handler(
+        &self,
+        protocol: Protocol,
+        upgraded: Upgraded,
+    ) -> Result<(), ConnectionHandlerError> {
         debug!(?protocol, "relay_connection upgraded");
         let (io, read_buf) = downcast_upgrade(upgraded)?;
-        ensure!(
-            read_buf.is_empty(),
-            "can not deal with buffered data yet: {:?}",
-            read_buf
-        );
+        if !read_buf.is_empty() {
+            return Err(BufferNotEmptySnafu { buf: read_buf }.build());
+        }
 
-        self.accept(protocol, io).await
+        self.accept(protocol, io).await?;
+        Ok(())
     }
 
     /// Adds a new connection to the server and serves it.
@@ -522,7 +635,9 @@ impl Inner {
     ///
     /// [`AsyncRead`]: tokio::io::AsyncRead
     /// [`AsyncWrite`]: tokio::io::AsyncWrite
-    async fn accept(&self, protocol: Protocol, io: MaybeTlsStream) -> Result<()> {
+    async fn accept(&self, protocol: Protocol, io: MaybeTlsStream) -> Result<(), AcceptError> {
+        use snafu::ResultExt;
+
         trace!(?protocol, "accept: start");
         let mut io = match protocol {
             Protocol::Relay => {
@@ -541,9 +656,7 @@ impl Inner {
             }
         };
         trace!("accept: recv client key");
-        let (client_key, info) = recv_client_key(&mut io)
-            .await
-            .context("unable to receive client information")?;
+        let (client_key, info) = recv_client_key(&mut io).await.context(RecvClientKeySnafu)?;
 
         trace!("accept: checking access: {:?}", self.access);
         if !self.access.is_allowed(client_key).await {
@@ -553,15 +666,15 @@ impl Inner {
             .await?;
             io.flush().await?;
 
-            bail!("client is not authenticated: {}", client_key);
+            return Err(ClientNotAuthenticatedSnafu { key: client_key }.build());
         }
 
         if info.version != PROTOCOL_VERSION {
-            bail!(
-                "unexpected client version {}, expected {}",
-                info.version,
-                PROTOCOL_VERSION
-            );
+            return Err(UnexpectedClientVersionSnafu {
+                version: info.version,
+                expected_version: PROTOCOL_VERSION,
+            }
+            .build());
         }
 
         trace!("accept: build client conn");
@@ -631,14 +744,27 @@ impl RelayService {
             }
             None => {
                 debug!("HTTP: serve connection");
-                self.serve_connection(MaybeTlsStream::Plain(stream)).await
+                self.serve_connection(MaybeTlsStream::Plain(stream))
+                    .await
+                    .context(HttpSnafu)
             }
         };
         match res {
             Ok(()) => {}
-            Err(error) => match error.downcast_ref::<std::io::Error>() {
-                Some(io_error) if io_error.kind() == std::io::ErrorKind::UnexpectedEof => {
-                    debug!(reason=?error, "peer disconnected");
+            Err(error) => match error {
+                ServeConnectionError::ManualAccept { source, .. }
+                | ServeConnectionError::LetsEncryptAccept { source, .. }
+                    if source.kind() == std::io::ErrorKind::UnexpectedEof =>
+                {
+                    debug!(reason=?source, "peer disconnected");
+                }
+                // From hyper: <https://github.com/hyperium/hyper/commit/271bba16672ff54a44e043c5cc1ae6b9345bb172>
+                // `hyper::Error::IncompleteMessage` is hyper's equivalent of UnexpectedEof
+                ServeConnectionError::Https { source, .. }
+                | ServeConnectionError::Http { source, .. }
+                    if source.is_incomplete_message() =>
+                {
+                    debug!(reason=?source, "peer disconnected");
                 }
                 _ => {
                     error!(?error, "failed to handle connection");
@@ -648,49 +774,54 @@ impl RelayService {
     }
 
     /// Serve the tls connection
-    async fn tls_serve_connection(self, stream: TcpStream, tls_config: TlsConfig) -> Result<()> {
+    async fn tls_serve_connection(
+        self,
+        stream: TcpStream,
+        tls_config: TlsConfig,
+    ) -> Result<(), ServeConnectionError> {
         let TlsConfig { acceptor, config } = tls_config;
         match acceptor {
-            TlsAcceptor::LetsEncrypt(a) => match a.accept(stream).await? {
-                None => {
-                    info!("TLS[acme]: received TLS-ALPN-01 validation request");
+            TlsAcceptor::LetsEncrypt(a) => {
+                match a.accept(stream).await.context(LetsEncryptAcceptSnafu)? {
+                    None => {
+                        info!("TLS[acme]: received TLS-ALPN-01 validation request");
+                    }
+                    Some(start_handshake) => {
+                        debug!("TLS[acme]: start handshake");
+                        let tls_stream = start_handshake
+                            .into_stream(config)
+                            .await
+                            .context(HandshakeSnafu)?;
+                        self.serve_connection(MaybeTlsStream::Tls(tls_stream))
+                            .await
+                            .context(HttpsSnafu)?;
+                    }
                 }
-                Some(start_handshake) => {
-                    debug!("TLS[acme]: start handshake");
-                    let tls_stream = start_handshake
-                        .into_stream(config)
-                        .await
-                        .context("TLS[acme] handshake")?;
-                    self.serve_connection(MaybeTlsStream::Tls(tls_stream))
-                        .await
-                        .context("TLS[acme] serve connection")?;
-                }
-            },
+            }
             TlsAcceptor::Manual(a) => {
                 debug!("TLS[manual]: accept");
                 let tls_stream = tokio::time::timeout(Duration::from_secs(30), a.accept(stream))
                     .await
-                    .context("TLS[manual] timeout")?
-                    .context("TLS[manual] accept")?;
+                    .context(TimeoutSnafu)?
+                    .context(ManualAcceptSnafu)?;
 
                 self.serve_connection(MaybeTlsStream::Tls(tls_stream))
                     .await
-                    .context("TLS[manual] serve connection")?;
+                    .context(ServeConnectionSnafu)?;
             }
         }
         Ok(())
     }
 
     /// Wrapper for the actual http connection (with upgrades)
-    async fn serve_connection<I>(self, io: I) -> Result<()>
+    async fn serve_connection<I>(self, io: I) -> Result<(), hyper::Error>
     where
         I: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + Sync + 'static,
     {
         hyper::server::conn::http1::Builder::new()
             .serve_connection(hyper_util::rt::TokioIo::new(io), self)
             .with_upgrades()
-            .await?;
-        Ok(())
+            .await
     }
 }
 
@@ -725,11 +856,12 @@ impl std::ops::DerefMut for Handlers {
 mod tests {
     use std::sync::Arc;
 
-    use anyhow::Result;
     use bytes::Bytes;
     use iroh_base::{PublicKey, SecretKey};
     use n0_future::{SinkExt, StreamExt};
+    use n0_snafu::{Result, ResultExt};
     use reqwest::Url;
+    use snafu::whatever;
     use tracing::info;
     use tracing_test::traced_test;
 
@@ -738,7 +870,7 @@ mod tests {
         client::{
             conn::{Conn, ReceivedMessage, SendMessage},
             streams::MaybeTlsStreamChained,
-            Client, ClientBuilder,
+            Client, ClientBuilder, ConnectError,
         },
         dns::DnsResolver,
     };
@@ -769,7 +901,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_http_clients_and_server() -> Result<()> {
+    async fn test_http_clients_and_server() -> Result {
         let a_key = SecretKey::generate(rand::thread_rng());
         let b_key = SecretKey::generate(rand::thread_rng());
 
@@ -782,13 +914,12 @@ mod tests {
 
         // get dial info
         let port = addr.port();
-        let addr = {
-            if let std::net::IpAddr::V4(ipv4_addr) = addr.ip() {
-                ipv4_addr
-            } else {
-                anyhow::bail!("cannot get ipv4 addr from socket addr {addr:?}");
-            }
+        let addr = if let std::net::IpAddr::V4(ipv4_addr) = addr.ip() {
+            ipv4_addr
+        } else {
+            whatever!("cannot get ipv4 addr from socket addr {addr:?}");
         };
+
         info!("addr: {addr}:{port}");
         let relay_addr: Url = format!("http://{addr}:{port}").parse().unwrap();
 
@@ -800,12 +931,12 @@ mod tests {
 
         info!("ping a");
         client_a.send(SendMessage::Ping([1u8; 8])).await?;
-        let pong = client_a.next().await.context("eos")??;
+        let pong = client_a.next().await.expect("eos")?;
         assert!(matches!(pong, ReceivedMessage::Pong(_)));
 
         info!("ping b");
         client_b.send(SendMessage::Ping([2u8; 8])).await?;
-        let pong = client_b.next().await.context("eos")??;
+        let pong = client_b.next().await.expect("eos")?;
         assert!(matches!(pong, ReceivedMessage::Pong(_)));
 
         info!("sending message from a to b");
@@ -838,7 +969,10 @@ mod tests {
         Ok(())
     }
 
-    async fn create_test_client(key: SecretKey, server_url: Url) -> Result<(PublicKey, Client)> {
+    async fn create_test_client(
+        key: SecretKey,
+        server_url: Url,
+    ) -> Result<(PublicKey, Client), ConnectError> {
         let public_key = key.public();
         let client =
             ClientBuilder::new(server_url, key, DnsResolver::new()).insecure_skip_cert_verify(true);
@@ -847,7 +981,9 @@ mod tests {
         Ok((public_key, client))
     }
 
-    fn process_msg(msg: Option<Result<ReceivedMessage>>) -> Option<(PublicKey, Bytes)> {
+    fn process_msg(
+        msg: Option<Result<ReceivedMessage, crate::client::RecvError>>,
+    ) -> Option<(PublicKey, Bytes)> {
         match msg {
             Some(Err(e)) => {
                 info!("client `recv` error {e}");
@@ -874,7 +1010,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_https_clients_and_server() -> Result<()> {
+    async fn test_https_clients_and_server() -> Result {
         let a_key = SecretKey::generate(rand::thread_rng());
         let b_key = SecretKey::generate(rand::thread_rng());
 
@@ -891,13 +1027,12 @@ mod tests {
 
         // get dial info
         let port = addr.port();
-        let addr = {
-            if let std::net::IpAddr::V4(ipv4_addr) = addr.ip() {
-                ipv4_addr
-            } else {
-                anyhow::bail!("cannot get ipv4 addr from socket addr {addr:?}");
-            }
+        let addr = if let std::net::IpAddr::V4(ipv4_addr) = addr.ip() {
+            ipv4_addr
+        } else {
+            whatever!("cannot get ipv4 addr from socket addr {addr:?}");
         };
+
         info!("Relay listening on: {addr}:{port}");
 
         let url: Url = format!("https://localhost:{port}").parse().unwrap();
@@ -910,12 +1045,12 @@ mod tests {
 
         info!("ping a");
         client_a.send(SendMessage::Ping([1u8; 8])).await?;
-        let pong = client_a.next().await.context("eos")??;
+        let pong = client_a.next().await.expect("eos")?;
         assert!(matches!(pong, ReceivedMessage::Pong(_)));
 
         info!("ping b");
         client_b.send(SendMessage::Ping([2u8; 8])).await?;
-        let pong = client_b.next().await.context("eos")??;
+        let pong = client_b.next().await.expect("eos")?;
         assert!(matches!(pong, ReceivedMessage::Pong(_)));
 
         info!("sending message from a to b");
@@ -944,7 +1079,7 @@ mod tests {
         client_a.close().await?;
         client_b.close().await?;
         server.shutdown();
-        server.task_handle().await?;
+        server.task_handle().await.context("join")?;
 
         Ok(())
     }
@@ -957,7 +1092,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_server_basic() -> Result<()> {
+    async fn test_server_basic() -> Result {
         info!("Create the server.");
         let service = RelayService::new(
             Default::default(),
@@ -978,7 +1113,7 @@ mod tests {
                 .await
         });
         let mut client_a = make_test_client(client_a, &key_a).await?;
-        handler_task.await??;
+        handler_task.await.context("join")??;
 
         info!("Create client B and connect it to the server.");
         let key_b = SecretKey::generate(rand::thread_rng());
@@ -990,14 +1125,14 @@ mod tests {
                 .await
         });
         let mut client_b = make_test_client(client_b, &key_b).await?;
-        handler_task.await??;
+        handler_task.await.context("join")??;
 
         info!("Send message from A to B.");
         let msg = Bytes::from_static(b"hello client b!!");
         client_a
             .send(SendMessage::SendPacket(public_key_b, msg.clone()))
             .await?;
-        match client_b.next().await.context("eos")?? {
+        match client_b.next().await.unwrap()? {
             ReceivedMessage::ReceivedPacket {
                 remote_node_id,
                 data,
@@ -1006,7 +1141,7 @@ mod tests {
                 assert_eq!(&msg[..], data);
             }
             msg => {
-                anyhow::bail!("expected ReceivedPacket msg, got {msg:?}");
+                whatever!("expected ReceivedPacket msg, got {msg:?}");
             }
         }
 
@@ -1015,7 +1150,7 @@ mod tests {
         client_b
             .send(SendMessage::SendPacket(public_key_a, msg.clone()))
             .await?;
-        match client_a.next().await.context("eos")?? {
+        match client_a.next().await.unwrap()? {
             ReceivedMessage::ReceivedPacket {
                 remote_node_id,
                 data,
@@ -1024,7 +1159,7 @@ mod tests {
                 assert_eq!(&msg[..], data);
             }
             msg => {
-                anyhow::bail!("expected ReceivedPacket msg, got {msg:?}");
+                whatever!("expected ReceivedPacket msg, got {msg:?}");
             }
         }
 
@@ -1045,7 +1180,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_server_replace_client() -> Result<()> {
+    async fn test_server_replace_client() -> Result {
         info!("Create the server.");
         let service = RelayService::new(
             Default::default(),
@@ -1066,7 +1201,7 @@ mod tests {
                 .await
         });
         let mut client_a = make_test_client(client_a, &key_a).await?;
-        handler_task.await??;
+        handler_task.await.context("join")??;
 
         info!("Create client B and connect it to the server.");
         let key_b = SecretKey::generate(rand::thread_rng());
@@ -1078,14 +1213,14 @@ mod tests {
                 .await
         });
         let mut client_b = make_test_client(client_b, &key_b).await?;
-        handler_task.await??;
+        handler_task.await.context("join")??;
 
         info!("Send message from A to B.");
         let msg = Bytes::from_static(b"hello client b!!");
         client_a
             .send(SendMessage::SendPacket(public_key_b, msg.clone()))
             .await?;
-        match client_b.next().await.context("eos")?? {
+        match client_b.next().await.expect("eos")? {
             ReceivedMessage::ReceivedPacket {
                 remote_node_id,
                 data,
@@ -1094,7 +1229,7 @@ mod tests {
                 assert_eq!(&msg[..], data);
             }
             msg => {
-                anyhow::bail!("expected ReceivedPacket msg, got {msg:?}");
+                whatever!("expected ReceivedPacket msg, got {msg:?}");
             }
         }
 
@@ -1103,7 +1238,7 @@ mod tests {
         client_b
             .send(SendMessage::SendPacket(public_key_a, msg.clone()))
             .await?;
-        match client_a.next().await.context("eos")?? {
+        match client_a.next().await.expect("eos")? {
             ReceivedMessage::ReceivedPacket {
                 remote_node_id,
                 data,
@@ -1112,7 +1247,7 @@ mod tests {
                 assert_eq!(&msg[..], data);
             }
             msg => {
-                anyhow::bail!("expected ReceivedPacket msg, got {msg:?}");
+                whatever!("expected ReceivedPacket msg, got {msg:?}");
             }
         }
 
@@ -1124,7 +1259,7 @@ mod tests {
                 .await
         });
         let mut new_client_b = make_test_client(new_client_b, &key_b).await?;
-        handler_task.await??;
+        handler_task.await.context("join")??;
 
         // assert!(client_b.recv().await.is_err());
 
@@ -1133,7 +1268,7 @@ mod tests {
         client_a
             .send(SendMessage::SendPacket(public_key_b, msg.clone()))
             .await?;
-        match new_client_b.next().await.context("eos")?? {
+        match new_client_b.next().await.expect("eos")? {
             ReceivedMessage::ReceivedPacket {
                 remote_node_id,
                 data,
@@ -1142,7 +1277,7 @@ mod tests {
                 assert_eq!(&msg[..], data);
             }
             msg => {
-                anyhow::bail!("expected ReceivedPacket msg, got {msg:?}");
+                whatever!("expected ReceivedPacket msg, got {msg:?}");
             }
         }
 
@@ -1151,7 +1286,7 @@ mod tests {
         new_client_b
             .send(SendMessage::SendPacket(public_key_a, msg.clone()))
             .await?;
-        match client_a.next().await.context("eos")?? {
+        match client_a.next().await.expect("eos")? {
             ReceivedMessage::ReceivedPacket {
                 remote_node_id,
                 data,
@@ -1160,7 +1295,7 @@ mod tests {
                 assert_eq!(&msg[..], data);
             }
             msg => {
-                anyhow::bail!("expected ReceivedPacket msg, got {msg:?}");
+                whatever!("expected ReceivedPacket msg, got {msg:?}");
             }
         }
 

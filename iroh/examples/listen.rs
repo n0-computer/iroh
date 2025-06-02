@@ -6,6 +6,7 @@
 use std::time::Duration;
 
 use iroh::{endpoint::ConnectionError, Endpoint, RelayMode, SecretKey};
+use n0_snafu::ResultExt;
 use n0_watcher::Watcher as _;
 use tracing::{debug, info, warn};
 
@@ -13,7 +14,7 @@ use tracing::{debug, info, warn};
 const EXAMPLE_ALPN: &[u8] = b"n0/iroh/examples/magic/0";
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> n0_snafu::Result<()> {
     tracing_subscriber::fmt::init();
     println!("\nlisten example!\n");
     let secret_key = SecretKey::generate(rand::rngs::OsRng);
@@ -69,7 +70,7 @@ async fn main() -> anyhow::Result<()> {
             }
         };
         let alpn = connecting.alpn().await?;
-        let conn = connecting.await?;
+        let conn = connecting.await.e()?;
         let node_id = conn.remote_node_id()?;
         info!(
             "new connection from {node_id} with ALPN {}",
@@ -80,16 +81,16 @@ async fn main() -> anyhow::Result<()> {
         tokio::spawn(async move {
             // accept a bi-directional QUIC connection
             // use the `quinn` APIs to send and recv content
-            let (mut send, mut recv) = conn.accept_bi().await?;
+            let (mut send, mut recv) = conn.accept_bi().await.e()?;
             debug!("accepted bi stream, waiting for data...");
-            let message = recv.read_to_end(100).await?;
-            let message = String::from_utf8(message)?;
+            let message = recv.read_to_end(100).await.e()?;
+            let message = String::from_utf8(message).e()?;
             println!("received: {message}");
 
             let message = format!("hi! you connected to {me}. bye bye");
-            send.write_all(message.as_bytes()).await?;
+            send.write_all(message.as_bytes()).await.e()?;
             // call `finish` to close the connection gracefully
-            send.finish()?;
+            send.finish().e()?;
 
             // We sent the last message, so wait for the client to close the connection once
             // it received this message.
@@ -103,7 +104,7 @@ async fn main() -> anyhow::Result<()> {
             if res.is_err() {
                 println!("node {node_id} did not disconnect within 3 seconds");
             }
-            Ok::<_, anyhow::Error>(())
+            Ok::<_, n0_snafu::Error>(())
         });
     }
     // stop with SIGINT (ctrl-c)

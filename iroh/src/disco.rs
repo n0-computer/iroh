@@ -23,10 +23,11 @@ use std::{
     net::{IpAddr, SocketAddr},
 };
 
-use anyhow::{anyhow, bail, ensure, Context, Result};
 use data_encoding::HEXLOWER;
 use iroh_base::{PublicKey, RelayUrl};
+use nested_enum_utils::common_fields;
 use serde::{Deserialize, Serialize};
+use snafu::{ensure, Snafu};
 use url::Url;
 
 use crate::magicsock::transports;
@@ -213,13 +214,12 @@ pub struct CallMeMaybe {
 }
 
 impl Ping {
-    fn from_bytes(ver: u8, p: &[u8]) -> Result<Self> {
-        ensure!(ver == V0, "invalid version");
+    fn from_bytes(p: &[u8]) -> Result<Self, ParseError> {
         // Deliberately lax on longer-than-expected messages, for future compatibility.
-        ensure!(p.len() >= PING_LEN, "message too short");
+        ensure!(p.len() >= PING_LEN, TooShortSnafu);
         let tx_id: [u8; TX_LEN] = p[..TX_LEN].try_into().expect("length checked");
         let raw_key = &p[TX_LEN..TX_LEN + iroh_base::PublicKey::LENGTH];
-        let node_key = PublicKey::try_from(raw_key)?;
+        let node_key = PublicKey::try_from(raw_key).map_err(|_| InvalidEncodingSnafu.build())?;
         let tx_id = stun_rs::TransactionId::from(tx_id);
 
         Ok(Ping { tx_id, node_key })
@@ -237,22 +237,37 @@ impl Ping {
     }
 }
 
-fn send_addr_from_bytes(p: &[u8]) -> Result<SendAddr> {
-    ensure!(p.len() > 2, "too short");
+#[allow(missing_docs)]
+#[common_fields({
+    backtrace: Option<snafu::Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+pub enum ParseError {
+    #[snafu(display("message is too short"))]
+    TooShort {},
+    #[snafu(display("invalid encoding"))]
+    InvalidEncoding {},
+    #[snafu(display("unknown format"))]
+    UnknownFormat {},
+}
+
+fn send_addr_from_bytes(p: &[u8]) -> Result<SendAddr, ParseError> {
+    ensure!(p.len() > 2, TooShortSnafu);
     match p[0] {
         0u8 => {
-            let bytes: [u8; EP_LENGTH] = p[1..].try_into().context("invalid length")?;
+            let bytes: [u8; EP_LENGTH] = p[1..].try_into().map_err(|_| TooShortSnafu.build())?;
             let addr = socket_addr_from_bytes(bytes);
             Ok(SendAddr::Udp(addr))
         }
         1u8 => {
-            let s = std::str::from_utf8(&p[1..])?;
-            let u: Url = s.parse()?;
+            let s = std::str::from_utf8(&p[1..]).map_err(|_| InvalidEncodingSnafu.build())?;
+            let u: Url = s.parse().map_err(|_| InvalidEncodingSnafu.build())?;
             Ok(SendAddr::Relay(u.into()))
         }
-        _ => {
-            bail!("invalid addr type {}", p[0]);
-        }
+        _ => Err(UnknownFormatSnafu.build()),
     }
 }
 
@@ -297,9 +312,9 @@ fn socket_addr_as_bytes(addr: &SocketAddr) -> [u8; EP_LENGTH] {
 }
 
 impl Pong {
-    fn from_bytes(ver: u8, p: &[u8]) -> Result<Self> {
-        ensure!(ver == V0, "invalid version");
-        let tx_id: [u8; TX_LEN] = p[..TX_LEN].try_into().context("message too short")?;
+    fn from_bytes(p: &[u8]) -> Result<Self, ParseError> {
+        let tx_id: [u8; TX_LEN] = p[..TX_LEN].try_into().map_err(|_| TooShortSnafu.build())?;
+
         let tx_id = stun_rs::TransactionId::from(tx_id);
         let src = send_addr_from_bytes(&p[TX_LEN..])?;
 
@@ -321,9 +336,8 @@ impl Pong {
 }
 
 impl CallMeMaybe {
-    fn from_bytes(ver: u8, p: &[u8]) -> Result<Self> {
-        ensure!(ver == V0, "invalid version");
-        ensure!(p.len() % EP_LENGTH == 0, "invalid entries");
+    fn from_bytes(p: &[u8]) -> Result<Self, ParseError> {
+        ensure!(p.len() % EP_LENGTH == 0, InvalidEncodingSnafu);
 
         let num_entries = p.len() / EP_LENGTH;
         let mut m = CallMeMaybe {
@@ -331,7 +345,8 @@ impl CallMeMaybe {
         };
 
         for chunk in p.chunks_exact(EP_LENGTH) {
-            let bytes: [u8; EP_LENGTH] = chunk.try_into().context("chunk must match")?;
+            let bytes: [u8; EP_LENGTH] =
+                chunk.try_into().map_err(|_| InvalidEncodingSnafu.build())?;
             let src = socket_addr_from_bytes(bytes);
             m.my_numbers.push(src);
         }
@@ -359,23 +374,25 @@ impl CallMeMaybe {
 
 impl Message {
     /// Parses the encrypted part of the message from inside the nacl secretbox.
-    pub fn from_bytes(p: &[u8]) -> Result<Self> {
-        ensure!(p.len() >= 2, "message too short");
+    pub fn from_bytes(p: &[u8]) -> Result<Self, ParseError> {
+        ensure!(p.len() >= 2, TooShortSnafu);
 
-        let t = MessageType::try_from(p[0]).map_err(|v| anyhow!("unknown message type: {}", v))?;
-        let ver = p[1];
+        let t = MessageType::try_from(p[0]).map_err(|_| UnknownFormatSnafu.build())?;
+        let version = p[1];
+        ensure!(version == V0, UnknownFormatSnafu);
+
         let p = &p[2..];
         match t {
             MessageType::Ping => {
-                let ping = Ping::from_bytes(ver, p)?;
+                let ping = Ping::from_bytes(p)?;
                 Ok(Message::Ping(ping))
             }
             MessageType::Pong => {
-                let pong = Pong::from_bytes(ver, p)?;
+                let pong = Pong::from_bytes(p)?;
                 Ok(Message::Pong(pong))
             }
             MessageType::CallMeMaybe => {
-                let cm = CallMeMaybe::from_bytes(ver, p)?;
+                let cm = CallMeMaybe::from_bytes(p)?;
                 Ok(Message::CallMeMaybe(cm))
             }
         }

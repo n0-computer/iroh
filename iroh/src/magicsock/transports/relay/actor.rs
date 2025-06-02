@@ -37,13 +37,12 @@ use std::{
     },
 };
 
-use anyhow::{anyhow, Context, Result};
 use backon::{Backoff, BackoffBuilder, ExponentialBuilder};
 use bytes::{Bytes, BytesMut};
 use iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_relay::{
     self as relay,
-    client::{Client, ReceivedMessage, SendMessage},
+    client::{Client, ConnectError, ReceivedMessage, RecvError, SendError, SendMessage},
     PingTracker, MAX_PACKET_SIZE,
 };
 use n0_future::{
@@ -52,7 +51,9 @@ use n0_future::{
     FuturesUnorderedBounded, SinkExt, StreamExt,
 };
 use n0_watcher::Watchable;
+use nested_enum_utils::common_fields;
 use netwatch::interfaces;
+use snafu::{IntoError, ResultExt, Snafu};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, event, info, info_span, instrument, trace, warn, Instrument, Level};
@@ -217,14 +218,61 @@ struct RelayConnectionOptions {
 }
 
 /// Possible reasons for a failed relay connection.
-#[derive(Debug, thiserror::Error)]
+#[allow(missing_docs)]
+#[common_fields({
+    backtrace: Option<snafu::Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[derive(Debug, Snafu)]
 enum RelayConnectionError {
-    #[error("Failed to connect to relay server: {0:#}")]
-    Connecting(#[source] anyhow::Error),
-    #[error("Failed to handshake with relay server: {0:#}")]
-    Handshake(#[source] anyhow::Error),
-    #[error("Lost connection to relay server: {0:#}")]
-    Established(#[source] anyhow::Error),
+    #[snafu(display("Failed to connect to relay server"))]
+    Dial { source: DialError },
+    #[snafu(display("Failed to handshake with relay server"))]
+    Handshake { source: RunError },
+    #[snafu(display("Lost connection to relay server"))]
+    Established { source: RunError },
+}
+
+#[allow(missing_docs)]
+#[common_fields({
+    backtrace: Option<snafu::Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[derive(Debug, Snafu)]
+enum RunError {
+    #[snafu(display("Send timeout"))]
+    SendTimeout {},
+    #[snafu(display("Ping timeout"))]
+    PingTimeout {},
+    #[snafu(display("Local IP no longer valid"))]
+    LocalIpInvalid {},
+    #[snafu(display("No local address"))]
+    LocalAddrMissing {},
+    #[snafu(display("Stream closed by server."))]
+    StreamClosedServer {},
+    #[snafu(display("Client stream read failed"))]
+    ClientStreamRead { source: RecvError },
+    #[snafu(display("Client stream write failed"))]
+    ClientStreamWrite { source: SendError },
+}
+
+#[allow(missing_docs)]
+#[common_fields({
+    backtrace: Option<snafu::Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[derive(Debug, Snafu)]
+enum DialError {
+    #[snafu(display("timeout trying to establish a connection"))]
+    Timeout {},
+    #[snafu(display("unable to connect"))]
+    Connect {
+        #[snafu(source(from(ConnectError, Box::new)))]
+        source: Box<ConnectError>,
+    },
 }
 
 impl ActiveRelayActor {
@@ -288,7 +336,7 @@ impl ActiveRelayActor {
     /// The main actor run loop.
     ///
     /// Primarily switches between the dialing and connected states.
-    async fn run(mut self) -> Result<()> {
+    async fn run(mut self) {
         // TODO(frando): decide what this metric means, it's either wrong here or in node_state.rs.
         // From the existing description, it is wrong here.
         // self.metrics.num_relay_conns_added.inc();
@@ -298,14 +346,17 @@ impl ActiveRelayActor {
         while let Err(err) = self.run_once().await {
             warn!("{err}");
             match err {
-                RelayConnectionError::Connecting(_) | RelayConnectionError::Handshake(_) => {
+                RelayConnectionError::Dial { .. } | RelayConnectionError::Handshake { .. } => {
                     // If dialing failed, or if the relay connection failed before we received a pong,
                     // we wait an exponentially increasing time until we attempt to reconnect again.
-                    let delay = backoff.next().context("Retries exceeded")?;
-                    debug!("Retry in {delay:?}");
+                    let Some(delay) = backoff.next() else {
+                        warn!("retries exceeded");
+                        break;
+                    };
+                    debug!("retry in {delay:?}");
                     time::sleep(delay).await;
                 }
-                RelayConnectionError::Established(_) => {
+                RelayConnectionError::Established { .. } => {
                     // If the relay connection remained established long enough so that we received a pong
                     // from the relay server, we reset the backoff and attempt to reconnect immediately.
                     backoff = Self::build_backoff();
@@ -316,7 +367,6 @@ impl ActiveRelayActor {
         // TODO(frando): decide what this metric means, it's either wrong here or in node_state.rs.
         // From the existing description, it is wrong here.
         // self.metrics.num_relay_conns_removed.inc();
-        Ok(())
     }
 
     fn build_backoff() -> impl Backoff {
@@ -335,8 +385,7 @@ impl ActiveRelayActor {
     /// be retried with a backoff.
     async fn run_once(&mut self) -> Result<(), RelayConnectionError> {
         let client = match self.run_dialing().instrument(info_span!("dialing")).await {
-            Some(Ok(client)) => client,
-            Some(Err(err)) => return Err(RelayConnectionError::Connecting(err)),
+            Some(client_res) => client_res.context(DialSnafu)?,
             None => return Ok(()),
         };
         self.run_connected(client)
@@ -366,7 +415,7 @@ impl ActiveRelayActor {
     ///
     /// Returns `None` if the actor needs to shut down.  Returns `Some(Ok(client))` when the
     /// connection is established, and `Some(Err(err))` if dialing the relay failed.
-    async fn run_dialing(&mut self) -> Option<Result<iroh_relay::client::Client>> {
+    async fn run_dialing(&mut self) -> Option<Result<iroh_relay::client::Client, DialError>> {
         debug!("Actor loop: connecting to relay.");
 
         // We regularly flush the relay_datagrams_send queue so it is not full of stale
@@ -453,13 +502,13 @@ impl ActiveRelayActor {
     /// connections.  It currently does not ever return `Err` as the retries continue
     /// forever.
     // This is using `impl Future` to return a future without a reference to self.
-    fn dial_relay(&self) -> impl Future<Output = Result<Client>> {
+    fn dial_relay(&self) -> impl Future<Output = Result<Client, DialError>> {
         let client_builder = self.relay_client_builder.clone();
         async move {
             match time::timeout(CONNECT_TIMEOUT, client_builder.connect()).await {
                 Ok(Ok(client)) => Ok(client),
-                Ok(Err(err)) => Err(err),
-                Err(_) => Err(anyhow!("Connecting timed out after {CONNECT_TIMEOUT:?}")),
+                Ok(Err(err)) => Err(ConnectSnafu.into_error(err)),
+                Err(_) => Err(TimeoutSnafu.build()),
             }
         }
     }
@@ -480,7 +529,8 @@ impl ActiveRelayActor {
             home_relay = self.is_home_relay,
         );
 
-        let (mut client_stream, mut client_sink) = client.split();
+        let (mut client_stream, client_sink) = client.split();
+        let mut client_sink = client_sink.sink_map_err(|e| ClientStreamWriteSnafu.into_error(e));
 
         let mut state = ConnectedRelayState {
             ping_tracker: PingTracker::default(),
@@ -525,7 +575,7 @@ impl ActiveRelayActor {
                     }
                 }
                 _ = state.ping_tracker.timeout() => {
-                    break Err(anyhow!("Ping timeout"));
+                    break Err(PingTimeoutSnafu.build());
                 }
                 _ = ping_interval.tick() => {
                     let data = state.ping_tracker.new_ping();
@@ -548,8 +598,8 @@ impl ActiveRelayActor {
                                     let fut = client_sink.send(SendMessage::Ping(data));
                                     self.run_sending(fut, &mut state, &mut client_stream).await?;
                                 }
-                                Some(_) => break Err(anyhow!("Local IP no longer valid")),
-                                None => break Err(anyhow!("No local addr, reconnecting")),
+                                Some(_) => break Err(LocalIpInvalidSnafu.build()),
+                                None => break Err(LocalAddrMissingSnafu.build()),
                             }
                         }
                         #[cfg(test)]
@@ -602,7 +652,7 @@ impl ActiveRelayActor {
                 }
                 msg = client_stream.next() => {
                     let Some(msg) = msg else {
-                        break Err(anyhow!("Stream closed by server."));
+                        break Err(StreamClosedServerSnafu.build());
                     };
                     match msg {
                         Ok(msg) => {
@@ -610,7 +660,7 @@ impl ActiveRelayActor {
                             // reset the ping timer, we have just received a message
                             ping_interval.reset();
                         },
-                        Err(err) => break Err(anyhow!("Client stream read error: {err:#}")),
+                        Err(err) => break Err(ClientStreamReadSnafu.into_error(err)),
                     }
                 }
                 _ = &mut self.inactive_timeout, if !self.is_home_relay => {
@@ -696,9 +746,9 @@ impl ActiveRelayActor {
     /// the actor should shut down, consult the [`ActiveRelayActor::stop_token`] and
     /// [`ActiveRelayActor::inactive_timeout`] for this, or the send was successful.
     #[instrument(name = "tx", skip_all)]
-    async fn run_sending<T, E: Into<anyhow::Error>>(
+    async fn run_sending<T>(
         &mut self,
-        sending_fut: impl Future<Output = Result<T, E>>,
+        sending_fut: impl Future<Output = Result<T, RunError>>,
         state: &mut ConnectedRelayState,
         client_stream: &mut iroh_relay::client::ClientStream,
     ) -> Result<(), RelayConnectionError> {
@@ -714,7 +764,7 @@ impl ActiveRelayActor {
                     break Ok(());
                 }
                 _ = &mut timeout => {
-                    break Err(anyhow!("Send timeout"));
+                    break Err(SendTimeoutSnafu.build());
                 }
                 msg = self.prio_inbox.recv() => {
                     let Some(msg) = msg else {
@@ -731,20 +781,20 @@ impl ActiveRelayActor {
                 res = &mut sending_fut => {
                     match res {
                         Ok(_) => break Ok(()),
-                        Err(err) => break Err(err.into()),
+                        Err(err) => break Err(err),
                     }
                 }
                 _ = state.ping_tracker.timeout() => {
-                    break Err(anyhow!("Ping timeout"));
+                    break Err(PingTimeoutSnafu.build());
                 }
                 // No need to read the inbox or datagrams to send.
                 msg = client_stream.next() => {
                     let Some(msg) = msg else {
-                        break Err(anyhow!("Stream closed by server."));
+                        break Err(StreamClosedServerSnafu.build());
                     };
                     match msg {
                         Ok(msg) => self.handle_relay_msg(msg, state),
-                        Err(err) => break Err(anyhow!("Client stream read error: {err:#}")),
+                        Err(err) => break Err(ClientStreamReadSnafu.into_error(err)),
                     }
                 }
                 _ = &mut self.inactive_timeout, if !self.is_home_relay => {
@@ -783,11 +833,11 @@ struct ConnectedRelayState {
 }
 
 impl ConnectedRelayState {
-    fn map_err(&self, error: anyhow::Error) -> RelayConnectionError {
+    fn map_err(&self, error: RunError) -> RelayConnectionError {
         if self.established {
-            RelayConnectionError::Established(error)
+            EstablishedSnafu.into_error(error)
         } else {
-            RelayConnectionError::Handshake(error)
+            HandshakeSnafu.into_error(error)
         }
     }
 }
@@ -1091,10 +1141,7 @@ impl RelayActor {
         let actor = ActiveRelayActor::new(opts);
         self.active_relay_tasks.spawn(
             async move {
-                // TODO: Make the actor itself infallible.
-                if let Err(err) = actor.run().await {
-                    warn!("actor error: {err:#}");
-                }
+                actor.run().await;
             }
             .instrument(span),
         );
@@ -1321,15 +1368,26 @@ impl Iterator for PacketSplitIter {
 
 #[cfg(test)]
 mod tests {
-    use anyhow::Context;
-    use iroh_base::SecretKey;
+    use std::{
+        sync::{atomic::AtomicBool, Arc},
+        time::Duration,
+    };
+
+    use bytes::Bytes;
+    use iroh_base::{NodeId, RelayUrl, SecretKey};
+    use iroh_relay::PingTracker;
+    use n0_snafu::{Error, Result, ResultExt};
     use smallvec::smallvec;
-    use testresult::TestResult;
-    use tokio_util::task::AbortOnDropHandle;
-    use tracing::info;
+    use tokio::sync::{mpsc, oneshot};
+    use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
+    use tracing::{info, info_span, Instrument};
     use tracing_test::traced_test;
 
-    use super::*;
+    use super::{
+        ActiveRelayActor, ActiveRelayActorOptions, ActiveRelayMessage, ActiveRelayPrioMessage,
+        PacketizeIter, RelayConnectionOptions, RelayRecvDatagram, RelaySendItem, MAX_PACKET_SIZE,
+        RELAY_INACTIVE_CLEANUP_TIME, UNDELIVERABLE_DATAGRAM_TIMEOUT,
+    };
     use crate::{dns::DnsResolver, test_utils};
 
     #[test]
@@ -1374,7 +1432,7 @@ mod tests {
         relay_datagrams_send: mpsc::Receiver<RelaySendItem>,
         relay_datagrams_recv: mpsc::Sender<RelayRecvDatagram>,
         span: tracing::Span,
-    ) -> AbortOnDropHandle<anyhow::Result<()>> {
+    ) -> AbortOnDropHandle<()> {
         let opts = ActiveRelayActorOptions {
             url,
             prio_inbox_: prio_inbox_rx,
@@ -1467,7 +1525,7 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(10), async move {
             loop {
                 let res = tokio::time::timeout(UNDELIVERABLE_DATAGRAM_TIMEOUT, async {
-                    tx.send(item.clone()).await?;
+                    tx.send(item.clone()).await.context("send item")?;
                     let RelayRecvDatagram {
                         url: _,
                         src: _,
@@ -1476,7 +1534,7 @@ mod tests {
 
                     assert_eq!(buf.as_ref(), item.datagrams[0]);
 
-                    Ok::<_, anyhow::Error>(())
+                    Ok::<_, Error>(())
                 })
                 .await;
                 if res.is_ok() {
@@ -1491,7 +1549,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_active_relay_reconnect() -> TestResult {
+    async fn test_active_relay_reconnect() -> Result {
         let (_relay_map, relay_url, _server) = test_utils::run_relay_server().await?;
         let (peer_node, _echo_node_task) = start_echo_node(relay_url.clone());
 
@@ -1528,18 +1586,29 @@ mod tests {
 
         // Now ask to check the connection, triggering a ping but no reconnect.
         let (tx, rx) = oneshot::channel();
-        inbox_tx.send(ActiveRelayMessage::GetLocalAddr(tx)).await?;
-        let local_addr = rx.await?.context("no local addr")?;
+        inbox_tx
+            .send(ActiveRelayMessage::GetLocalAddr(tx))
+            .await
+            .context("send get local addr msg")?;
+
+        let local_addr = rx
+            .await
+            .context("wait for local addr msg")?
+            .context("no local addr")?;
         info!(?local_addr, "check connection with addr");
         inbox_tx
             .send(ActiveRelayMessage::CheckConnection(vec![local_addr.ip()]))
-            .await?;
+            .await
+            .context("send check connection message")?;
 
         // Sync the ActiveRelayActor. Ping blocks it and we want to be sure it has handled
         // another inbox message before continuing.
         let (tx, rx) = oneshot::channel();
-        inbox_tx.send(ActiveRelayMessage::GetLocalAddr(tx)).await?;
-        rx.await?;
+        inbox_tx
+            .send(ActiveRelayMessage::GetLocalAddr(tx))
+            .await
+            .context("send get local addr msg")?;
+        rx.await.context("recv send local addr msg")?;
 
         // Echo should still work.
         info!("second echo");
@@ -1555,7 +1624,8 @@ mod tests {
         info!("check connection");
         inbox_tx
             .send(ActiveRelayMessage::CheckConnection(Vec::new()))
-            .await?;
+            .await
+            .context("send check connection msg")?;
 
         // Give some time to reconnect, mostly to sort logs rather than functional.
         tokio::time::sleep(Duration::from_millis(10)).await;
@@ -1571,14 +1641,14 @@ mod tests {
 
         // Shut down the actor.
         cancel_token.cancel();
-        task.await??;
+        task.await.context("wait for task to finish")?;
 
         Ok(())
     }
 
     #[tokio::test]
     #[traced_test]
-    async fn test_active_relay_inactive() -> TestResult {
+    async fn test_active_relay_inactive() -> Result {
         let (_relay_map, relay_url, _server) = test_utils::run_relay_server().await?;
 
         let secret_key = SecretKey::from_bytes(&[1u8; 32]);
@@ -1612,7 +1682,8 @@ mod tests {
                 }
             }
         })
-        .await?;
+        .await
+        .context("timeout")?;
 
         // We now have an idling ActiveRelayActor.  If we advance time just a little it
         // should stay alive.
