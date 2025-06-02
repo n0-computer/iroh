@@ -67,32 +67,33 @@
 <a href=#67 id=67 data-nosnippet>67</a><span class="attr">#[derive(Debug, Snafu)]
 <a href=#68 id=68 data-nosnippet>68</a>#[allow(missing_docs)]
 <a href=#69 id=69 data-nosnippet>69</a>#[snafu(visibility(<span class="kw">pub</span>(<span class="kw">crate</span>)))]
-<a href=#70 id=70 data-nosnippet>70</a></span><span class="kw">pub enum </span>ParseError {
-<a href=#71 id=71 data-nosnippet>71</a>    <span class="doccomment">/// Found a ticket of with the wrong prefix, indicating the wrong kind.
-<a href=#72 id=72 data-nosnippet>72</a>    </span><span class="attr">#[snafu(display(<span class="string">"wrong prefix, expected {expected}"</span>))]
-<a href=#73 id=73 data-nosnippet>73</a>    </span>Kind {
-<a href=#74 id=74 data-nosnippet>74</a>        <span class="doccomment">/// The expected prefix.
-<a href=#75 id=75 data-nosnippet>75</a>        </span>expected: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
-<a href=#76 id=76 data-nosnippet>76</a>    },
-<a href=#77 id=77 data-nosnippet>77</a>    <span class="doccomment">/// This looks like a ticket, but postcard deserialization failed.
-<a href=#78 id=78 data-nosnippet>78</a>    </span><span class="attr">#[snafu(display(<span class="string">"deserialization failed"</span>))]
-<a href=#79 id=79 data-nosnippet>79</a>    </span>Postcard { source: postcard::Error },
-<a href=#80 id=80 data-nosnippet>80</a>    <span class="doccomment">/// This looks like a ticket, but base32 decoding failed.
-<a href=#81 id=81 data-nosnippet>81</a>    </span><span class="attr">#[snafu(transparent)]
-<a href=#82 id=82 data-nosnippet>82</a>    </span>Encoding { source: data_encoding::DecodeError },
-<a href=#83 id=83 data-nosnippet>83</a>    <span class="doccomment">/// Verification of the deserialized bytes failed.
-<a href=#84 id=84 data-nosnippet>84</a>    </span><span class="attr">#[snafu(display(<span class="string">"verification failed: {message}"</span>))]
-<a href=#85 id=85 data-nosnippet>85</a>    </span>Verify { message: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str },
-<a href=#86 id=86 data-nosnippet>86</a>}
-<a href=#87 id=87 data-nosnippet>87</a>
-<a href=#88 id=88 data-nosnippet>88</a><span class="attr">#[derive(Serialize, Deserialize)]
-<a href=#89 id=89 data-nosnippet>89</a></span><span class="kw">struct </span>Variant0NodeAddr {
-<a href=#90 id=90 data-nosnippet>90</a>    node_id: NodeId,
-<a href=#91 id=91 data-nosnippet>91</a>    info: Variant0AddrInfo,
-<a href=#92 id=92 data-nosnippet>92</a>}
-<a href=#93 id=93 data-nosnippet>93</a>
-<a href=#94 id=94 data-nosnippet>94</a><span class="attr">#[derive(Serialize, Deserialize)]
-<a href=#95 id=95 data-nosnippet>95</a></span><span class="kw">struct </span>Variant0AddrInfo {
-<a href=#96 id=96 data-nosnippet>96</a>    relay_url: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;,
-<a href=#97 id=97 data-nosnippet>97</a>    direct_addresses: BTreeSet&lt;SocketAddr&gt;,
-<a href=#98 id=98 data-nosnippet>98</a>}</code></pre></div></section></main></body></html>
+<a href=#70 id=70 data-nosnippet>70</a>#[non_exhaustive]
+<a href=#71 id=71 data-nosnippet>71</a></span><span class="kw">pub enum </span>ParseError {
+<a href=#72 id=72 data-nosnippet>72</a>    <span class="doccomment">/// Found a ticket of with the wrong prefix, indicating the wrong kind.
+<a href=#73 id=73 data-nosnippet>73</a>    </span><span class="attr">#[snafu(display(<span class="string">"wrong prefix, expected {expected}"</span>))]
+<a href=#74 id=74 data-nosnippet>74</a>    </span>Kind {
+<a href=#75 id=75 data-nosnippet>75</a>        <span class="doccomment">/// The expected prefix.
+<a href=#76 id=76 data-nosnippet>76</a>        </span>expected: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
+<a href=#77 id=77 data-nosnippet>77</a>    },
+<a href=#78 id=78 data-nosnippet>78</a>    <span class="doccomment">/// This looks like a ticket, but postcard deserialization failed.
+<a href=#79 id=79 data-nosnippet>79</a>    </span><span class="attr">#[snafu(display(<span class="string">"deserialization failed"</span>))]
+<a href=#80 id=80 data-nosnippet>80</a>    </span>Postcard { source: postcard::Error },
+<a href=#81 id=81 data-nosnippet>81</a>    <span class="doccomment">/// This looks like a ticket, but base32 decoding failed.
+<a href=#82 id=82 data-nosnippet>82</a>    </span><span class="attr">#[snafu(transparent)]
+<a href=#83 id=83 data-nosnippet>83</a>    </span>Encoding { source: data_encoding::DecodeError },
+<a href=#84 id=84 data-nosnippet>84</a>    <span class="doccomment">/// Verification of the deserialized bytes failed.
+<a href=#85 id=85 data-nosnippet>85</a>    </span><span class="attr">#[snafu(display(<span class="string">"verification failed: {message}"</span>))]
+<a href=#86 id=86 data-nosnippet>86</a>    </span>Verify { message: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str },
+<a href=#87 id=87 data-nosnippet>87</a>}
+<a href=#88 id=88 data-nosnippet>88</a>
+<a href=#89 id=89 data-nosnippet>89</a><span class="attr">#[derive(Serialize, Deserialize)]
+<a href=#90 id=90 data-nosnippet>90</a></span><span class="kw">struct </span>Variant0NodeAddr {
+<a href=#91 id=91 data-nosnippet>91</a>    node_id: NodeId,
+<a href=#92 id=92 data-nosnippet>92</a>    info: Variant0AddrInfo,
+<a href=#93 id=93 data-nosnippet>93</a>}
+<a href=#94 id=94 data-nosnippet>94</a>
+<a href=#95 id=95 data-nosnippet>95</a><span class="attr">#[derive(Serialize, Deserialize)]
+<a href=#96 id=96 data-nosnippet>96</a></span><span class="kw">struct </span>Variant0AddrInfo {
+<a href=#97 id=97 data-nosnippet>97</a>    relay_url: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;,
+<a href=#98 id=98 data-nosnippet>98</a>    direct_addresses: BTreeSet&lt;SocketAddr&gt;,
+<a href=#99 id=99 data-nosnippet>99</a>}</code></pre></div></section></main></body></html>

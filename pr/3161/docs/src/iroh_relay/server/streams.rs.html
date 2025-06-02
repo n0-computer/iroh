@@ -70,123 +70,124 @@
 <a href=#70 id=70 data-nosnippet>70</a>
 <a href=#71 id=71 data-nosnippet>71</a><span class="doccomment">/// Relay stream errors
 <a href=#72 id=72 data-nosnippet>72</a></span><span class="attr">#[derive(Debug, Snafu)]
-<a href=#73 id=73 data-nosnippet>73</a></span><span class="kw">pub enum </span>StreamError {
-<a href=#74 id=74 data-nosnippet>74</a>    <span class="attr">#[snafu(transparent)]
-<a href=#75 id=75 data-nosnippet>75</a>    </span>Proto { source: RecvError },
-<a href=#76 id=76 data-nosnippet>76</a>    <span class="attr">#[snafu(transparent)]
-<a href=#77 id=77 data-nosnippet>77</a>    </span>Ws { source: tokio_websockets::Error },
-<a href=#78 id=78 data-nosnippet>78</a>}
-<a href=#79 id=79 data-nosnippet>79</a>
-<a href=#80 id=80 data-nosnippet>80</a><span class="kw">impl </span>Stream <span class="kw">for </span>RelayedStream {
-<a href=#81 id=81 data-nosnippet>81</a>    <span class="kw">type </span>Item = <span class="prelude-ty">Result</span>&lt;Frame, StreamError&gt;;
-<a href=#82 id=82 data-nosnippet>82</a>
-<a href=#83 id=83 data-nosnippet>83</a>    <span class="kw">fn </span>poll_next(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt;&gt; {
-<a href=#84 id=84 data-nosnippet>84</a>        <span class="kw">match </span><span class="kw-2">*</span><span class="self">self </span>{
-<a href=#85 id=85 data-nosnippet>85</a>            <span class="self">Self</span>::Relay(<span class="kw-2">ref mut </span>framed) =&gt; Pin::new(framed).poll_next(cx).map_err(Into::into),
-<a href=#86 id=86 data-nosnippet>86</a>            <span class="self">Self</span>::Ws(<span class="kw-2">ref mut </span>ws, <span class="kw-2">ref </span>cache) =&gt; <span class="kw">match </span>Pin::new(ws).poll_next(cx) {
-<a href=#87 id=87 data-nosnippet>87</a>                Poll::Ready(<span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(msg))) =&gt; {
-<a href=#88 id=88 data-nosnippet>88</a>                    <span class="kw">if </span>msg.is_close() {
-<a href=#89 id=89 data-nosnippet>89</a>                        <span class="comment">// Indicate the stream is done when we receive a close message.
-<a href=#90 id=90 data-nosnippet>90</a>                        // Note: We don't have to poll the stream to completion for it to close gracefully.
-<a href=#91 id=91 data-nosnippet>91</a>                        </span><span class="kw">return </span>Poll::Ready(<span class="prelude-val">None</span>);
-<a href=#92 id=92 data-nosnippet>92</a>                    }
-<a href=#93 id=93 data-nosnippet>93</a>                    <span class="kw">if </span>!msg.is_binary() {
-<a href=#94 id=94 data-nosnippet>94</a>                        <span class="macro">tracing::warn!</span>(
-<a href=#95 id=95 data-nosnippet>95</a>                            <span class="question-mark">?</span>msg,
-<a href=#96 id=96 data-nosnippet>96</a>                            <span class="string">"Got websocket message of unsupported type, skipping."
-<a href=#97 id=97 data-nosnippet>97</a>                        </span>);
-<a href=#98 id=98 data-nosnippet>98</a>                        <span class="kw">return </span>Poll::Pending;
-<a href=#99 id=99 data-nosnippet>99</a>                    }
-<a href=#100 id=100 data-nosnippet>100</a>                    <span class="kw">let </span>frame = Frame::decode_from_ws_msg(msg.into_payload().into(), cache)
-<a href=#101 id=101 data-nosnippet>101</a>                        .map_err(Into::into);
-<a href=#102 id=102 data-nosnippet>102</a>                    Poll::Ready(<span class="prelude-val">Some</span>(frame))
-<a href=#103 id=103 data-nosnippet>103</a>                }
-<a href=#104 id=104 data-nosnippet>104</a>                Poll::Ready(<span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(e))) =&gt; Poll::Ready(<span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(e.into()))),
-<a href=#105 id=105 data-nosnippet>105</a>                Poll::Ready(<span class="prelude-val">None</span>) =&gt; Poll::Ready(<span class="prelude-val">None</span>),
-<a href=#106 id=106 data-nosnippet>106</a>                Poll::Pending =&gt; Poll::Pending,
-<a href=#107 id=107 data-nosnippet>107</a>            },
-<a href=#108 id=108 data-nosnippet>108</a>        }
-<a href=#109 id=109 data-nosnippet>109</a>    }
-<a href=#110 id=110 data-nosnippet>110</a>}
-<a href=#111 id=111 data-nosnippet>111</a>
-<a href=#112 id=112 data-nosnippet>112</a><span class="doccomment">/// The main underlying IO stream type used for the relay server.
-<a href=#113 id=113 data-nosnippet>113</a>///
-<a href=#114 id=114 data-nosnippet>114</a>/// Allows choosing whether or not the underlying [`tokio::net::TcpStream`] is served over Tls
-<a href=#115 id=115 data-nosnippet>115</a></span><span class="attr">#[derive(Debug)]
-<a href=#116 id=116 data-nosnippet>116</a>#[allow(clippy::large_enum_variant)]
-<a href=#117 id=117 data-nosnippet>117</a></span><span class="kw">pub enum </span>MaybeTlsStream {
-<a href=#118 id=118 data-nosnippet>118</a>    <span class="doccomment">/// A plain non-Tls [`tokio::net::TcpStream`]
-<a href=#119 id=119 data-nosnippet>119</a>    </span>Plain(tokio::net::TcpStream),
-<a href=#120 id=120 data-nosnippet>120</a>    <span class="doccomment">/// A Tls wrapped [`tokio::net::TcpStream`]
-<a href=#121 id=121 data-nosnippet>121</a>    </span>Tls(tokio_rustls::server::TlsStream&lt;tokio::net::TcpStream&gt;),
-<a href=#122 id=122 data-nosnippet>122</a>    <span class="doccomment">/// An in-memory bidirectional pipe.
-<a href=#123 id=123 data-nosnippet>123</a>    </span><span class="attr">#[cfg(test)]
-<a href=#124 id=124 data-nosnippet>124</a>    </span>Test(tokio::io::DuplexStream),
-<a href=#125 id=125 data-nosnippet>125</a>}
-<a href=#126 id=126 data-nosnippet>126</a>
-<a href=#127 id=127 data-nosnippet>127</a><span class="kw">impl </span>AsyncRead <span class="kw">for </span>MaybeTlsStream {
-<a href=#128 id=128 data-nosnippet>128</a>    <span class="kw">fn </span>poll_read(
-<a href=#129 id=129 data-nosnippet>129</a>        <span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;,
-<a href=#130 id=130 data-nosnippet>130</a>        cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#131 id=131 data-nosnippet>131</a>        buf: <span class="kw-2">&amp;mut </span>tokio::io::ReadBuf&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#132 id=132 data-nosnippet>132</a>    ) -&gt; Poll&lt;std::io::Result&lt;()&gt;&gt; {
-<a href=#133 id=133 data-nosnippet>133</a>        <span class="kw">match </span><span class="kw-2">&amp;mut *</span><span class="self">self </span>{
-<a href=#134 id=134 data-nosnippet>134</a>            MaybeTlsStream::Plain(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_read(cx, buf),
-<a href=#135 id=135 data-nosnippet>135</a>            MaybeTlsStream::Tls(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_read(cx, buf),
-<a href=#136 id=136 data-nosnippet>136</a>            <span class="attr">#[cfg(test)]
-<a href=#137 id=137 data-nosnippet>137</a>            </span>MaybeTlsStream::Test(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_read(cx, buf),
-<a href=#138 id=138 data-nosnippet>138</a>        }
-<a href=#139 id=139 data-nosnippet>139</a>    }
-<a href=#140 id=140 data-nosnippet>140</a>}
-<a href=#141 id=141 data-nosnippet>141</a>
-<a href=#142 id=142 data-nosnippet>142</a><span class="kw">impl </span>AsyncWrite <span class="kw">for </span>MaybeTlsStream {
-<a href=#143 id=143 data-nosnippet>143</a>    <span class="kw">fn </span>poll_flush(
-<a href=#144 id=144 data-nosnippet>144</a>        <span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;,
-<a href=#145 id=145 data-nosnippet>145</a>        cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#146 id=146 data-nosnippet>146</a>    ) -&gt; Poll&lt;std::result::Result&lt;(), std::io::Error&gt;&gt; {
-<a href=#147 id=147 data-nosnippet>147</a>        <span class="kw">match </span><span class="kw-2">&amp;mut *</span><span class="self">self </span>{
-<a href=#148 id=148 data-nosnippet>148</a>            MaybeTlsStream::Plain(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_flush(cx),
-<a href=#149 id=149 data-nosnippet>149</a>            MaybeTlsStream::Tls(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_flush(cx),
-<a href=#150 id=150 data-nosnippet>150</a>            <span class="attr">#[cfg(test)]
-<a href=#151 id=151 data-nosnippet>151</a>            </span>MaybeTlsStream::Test(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_flush(cx),
-<a href=#152 id=152 data-nosnippet>152</a>        }
-<a href=#153 id=153 data-nosnippet>153</a>    }
-<a href=#154 id=154 data-nosnippet>154</a>
-<a href=#155 id=155 data-nosnippet>155</a>    <span class="kw">fn </span>poll_shutdown(
-<a href=#156 id=156 data-nosnippet>156</a>        <span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;,
-<a href=#157 id=157 data-nosnippet>157</a>        cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#158 id=158 data-nosnippet>158</a>    ) -&gt; Poll&lt;std::result::Result&lt;(), std::io::Error&gt;&gt; {
-<a href=#159 id=159 data-nosnippet>159</a>        <span class="kw">match </span><span class="kw-2">&amp;mut *</span><span class="self">self </span>{
-<a href=#160 id=160 data-nosnippet>160</a>            MaybeTlsStream::Plain(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_shutdown(cx),
-<a href=#161 id=161 data-nosnippet>161</a>            MaybeTlsStream::Tls(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_shutdown(cx),
-<a href=#162 id=162 data-nosnippet>162</a>            <span class="attr">#[cfg(test)]
-<a href=#163 id=163 data-nosnippet>163</a>            </span>MaybeTlsStream::Test(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_shutdown(cx),
-<a href=#164 id=164 data-nosnippet>164</a>        }
-<a href=#165 id=165 data-nosnippet>165</a>    }
-<a href=#166 id=166 data-nosnippet>166</a>
-<a href=#167 id=167 data-nosnippet>167</a>    <span class="kw">fn </span>poll_write(
-<a href=#168 id=168 data-nosnippet>168</a>        <span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;,
-<a href=#169 id=169 data-nosnippet>169</a>        cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#170 id=170 data-nosnippet>170</a>        buf: <span class="kw-2">&amp;</span>[u8],
-<a href=#171 id=171 data-nosnippet>171</a>    ) -&gt; Poll&lt;std::result::Result&lt;usize, std::io::Error&gt;&gt; {
-<a href=#172 id=172 data-nosnippet>172</a>        <span class="kw">match </span><span class="kw-2">&amp;mut *</span><span class="self">self </span>{
-<a href=#173 id=173 data-nosnippet>173</a>            MaybeTlsStream::Plain(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_write(cx, buf),
-<a href=#174 id=174 data-nosnippet>174</a>            MaybeTlsStream::Tls(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_write(cx, buf),
-<a href=#175 id=175 data-nosnippet>175</a>            <span class="attr">#[cfg(test)]
-<a href=#176 id=176 data-nosnippet>176</a>            </span>MaybeTlsStream::Test(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_write(cx, buf),
-<a href=#177 id=177 data-nosnippet>177</a>        }
-<a href=#178 id=178 data-nosnippet>178</a>    }
-<a href=#179 id=179 data-nosnippet>179</a>
-<a href=#180 id=180 data-nosnippet>180</a>    <span class="kw">fn </span>poll_write_vectored(
-<a href=#181 id=181 data-nosnippet>181</a>        <span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;,
-<a href=#182 id=182 data-nosnippet>182</a>        cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;,
-<a href=#183 id=183 data-nosnippet>183</a>        bufs: <span class="kw-2">&amp;</span>[std::io::IoSlice&lt;<span class="lifetime">'_</span>&gt;],
-<a href=#184 id=184 data-nosnippet>184</a>    ) -&gt; Poll&lt;std::result::Result&lt;usize, std::io::Error&gt;&gt; {
-<a href=#185 id=185 data-nosnippet>185</a>        <span class="kw">match </span><span class="kw-2">&amp;mut *</span><span class="self">self </span>{
-<a href=#186 id=186 data-nosnippet>186</a>            MaybeTlsStream::Plain(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_write_vectored(cx, bufs),
-<a href=#187 id=187 data-nosnippet>187</a>            MaybeTlsStream::Tls(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_write_vectored(cx, bufs),
-<a href=#188 id=188 data-nosnippet>188</a>            <span class="attr">#[cfg(test)]
-<a href=#189 id=189 data-nosnippet>189</a>            </span>MaybeTlsStream::Test(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_write_vectored(cx, bufs),
-<a href=#190 id=190 data-nosnippet>190</a>        }
-<a href=#191 id=191 data-nosnippet>191</a>    }
-<a href=#192 id=192 data-nosnippet>192</a>}</code></pre></div></section></main></body></html>
+<a href=#73 id=73 data-nosnippet>73</a>#[non_exhaustive]
+<a href=#74 id=74 data-nosnippet>74</a></span><span class="kw">pub enum </span>StreamError {
+<a href=#75 id=75 data-nosnippet>75</a>    <span class="attr">#[snafu(transparent)]
+<a href=#76 id=76 data-nosnippet>76</a>    </span>Proto { source: RecvError },
+<a href=#77 id=77 data-nosnippet>77</a>    <span class="attr">#[snafu(transparent)]
+<a href=#78 id=78 data-nosnippet>78</a>    </span>Ws { source: tokio_websockets::Error },
+<a href=#79 id=79 data-nosnippet>79</a>}
+<a href=#80 id=80 data-nosnippet>80</a>
+<a href=#81 id=81 data-nosnippet>81</a><span class="kw">impl </span>Stream <span class="kw">for </span>RelayedStream {
+<a href=#82 id=82 data-nosnippet>82</a>    <span class="kw">type </span>Item = <span class="prelude-ty">Result</span>&lt;Frame, StreamError&gt;;
+<a href=#83 id=83 data-nosnippet>83</a>
+<a href=#84 id=84 data-nosnippet>84</a>    <span class="kw">fn </span>poll_next(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt;&gt; {
+<a href=#85 id=85 data-nosnippet>85</a>        <span class="kw">match </span><span class="kw-2">*</span><span class="self">self </span>{
+<a href=#86 id=86 data-nosnippet>86</a>            <span class="self">Self</span>::Relay(<span class="kw-2">ref mut </span>framed) =&gt; Pin::new(framed).poll_next(cx).map_err(Into::into),
+<a href=#87 id=87 data-nosnippet>87</a>            <span class="self">Self</span>::Ws(<span class="kw-2">ref mut </span>ws, <span class="kw-2">ref </span>cache) =&gt; <span class="kw">match </span>Pin::new(ws).poll_next(cx) {
+<a href=#88 id=88 data-nosnippet>88</a>                Poll::Ready(<span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(msg))) =&gt; {
+<a href=#89 id=89 data-nosnippet>89</a>                    <span class="kw">if </span>msg.is_close() {
+<a href=#90 id=90 data-nosnippet>90</a>                        <span class="comment">// Indicate the stream is done when we receive a close message.
+<a href=#91 id=91 data-nosnippet>91</a>                        // Note: We don't have to poll the stream to completion for it to close gracefully.
+<a href=#92 id=92 data-nosnippet>92</a>                        </span><span class="kw">return </span>Poll::Ready(<span class="prelude-val">None</span>);
+<a href=#93 id=93 data-nosnippet>93</a>                    }
+<a href=#94 id=94 data-nosnippet>94</a>                    <span class="kw">if </span>!msg.is_binary() {
+<a href=#95 id=95 data-nosnippet>95</a>                        <span class="macro">tracing::warn!</span>(
+<a href=#96 id=96 data-nosnippet>96</a>                            <span class="question-mark">?</span>msg,
+<a href=#97 id=97 data-nosnippet>97</a>                            <span class="string">"Got websocket message of unsupported type, skipping."
+<a href=#98 id=98 data-nosnippet>98</a>                        </span>);
+<a href=#99 id=99 data-nosnippet>99</a>                        <span class="kw">return </span>Poll::Pending;
+<a href=#100 id=100 data-nosnippet>100</a>                    }
+<a href=#101 id=101 data-nosnippet>101</a>                    <span class="kw">let </span>frame = Frame::decode_from_ws_msg(msg.into_payload().into(), cache)
+<a href=#102 id=102 data-nosnippet>102</a>                        .map_err(Into::into);
+<a href=#103 id=103 data-nosnippet>103</a>                    Poll::Ready(<span class="prelude-val">Some</span>(frame))
+<a href=#104 id=104 data-nosnippet>104</a>                }
+<a href=#105 id=105 data-nosnippet>105</a>                Poll::Ready(<span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(e))) =&gt; Poll::Ready(<span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(e.into()))),
+<a href=#106 id=106 data-nosnippet>106</a>                Poll::Ready(<span class="prelude-val">None</span>) =&gt; Poll::Ready(<span class="prelude-val">None</span>),
+<a href=#107 id=107 data-nosnippet>107</a>                Poll::Pending =&gt; Poll::Pending,
+<a href=#108 id=108 data-nosnippet>108</a>            },
+<a href=#109 id=109 data-nosnippet>109</a>        }
+<a href=#110 id=110 data-nosnippet>110</a>    }
+<a href=#111 id=111 data-nosnippet>111</a>}
+<a href=#112 id=112 data-nosnippet>112</a>
+<a href=#113 id=113 data-nosnippet>113</a><span class="doccomment">/// The main underlying IO stream type used for the relay server.
+<a href=#114 id=114 data-nosnippet>114</a>///
+<a href=#115 id=115 data-nosnippet>115</a>/// Allows choosing whether or not the underlying [`tokio::net::TcpStream`] is served over Tls
+<a href=#116 id=116 data-nosnippet>116</a></span><span class="attr">#[derive(Debug)]
+<a href=#117 id=117 data-nosnippet>117</a>#[allow(clippy::large_enum_variant)]
+<a href=#118 id=118 data-nosnippet>118</a></span><span class="kw">pub enum </span>MaybeTlsStream {
+<a href=#119 id=119 data-nosnippet>119</a>    <span class="doccomment">/// A plain non-Tls [`tokio::net::TcpStream`]
+<a href=#120 id=120 data-nosnippet>120</a>    </span>Plain(tokio::net::TcpStream),
+<a href=#121 id=121 data-nosnippet>121</a>    <span class="doccomment">/// A Tls wrapped [`tokio::net::TcpStream`]
+<a href=#122 id=122 data-nosnippet>122</a>    </span>Tls(tokio_rustls::server::TlsStream&lt;tokio::net::TcpStream&gt;),
+<a href=#123 id=123 data-nosnippet>123</a>    <span class="doccomment">/// An in-memory bidirectional pipe.
+<a href=#124 id=124 data-nosnippet>124</a>    </span><span class="attr">#[cfg(test)]
+<a href=#125 id=125 data-nosnippet>125</a>    </span>Test(tokio::io::DuplexStream),
+<a href=#126 id=126 data-nosnippet>126</a>}
+<a href=#127 id=127 data-nosnippet>127</a>
+<a href=#128 id=128 data-nosnippet>128</a><span class="kw">impl </span>AsyncRead <span class="kw">for </span>MaybeTlsStream {
+<a href=#129 id=129 data-nosnippet>129</a>    <span class="kw">fn </span>poll_read(
+<a href=#130 id=130 data-nosnippet>130</a>        <span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;,
+<a href=#131 id=131 data-nosnippet>131</a>        cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#132 id=132 data-nosnippet>132</a>        buf: <span class="kw-2">&amp;mut </span>tokio::io::ReadBuf&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#133 id=133 data-nosnippet>133</a>    ) -&gt; Poll&lt;std::io::Result&lt;()&gt;&gt; {
+<a href=#134 id=134 data-nosnippet>134</a>        <span class="kw">match </span><span class="kw-2">&amp;mut *</span><span class="self">self </span>{
+<a href=#135 id=135 data-nosnippet>135</a>            MaybeTlsStream::Plain(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_read(cx, buf),
+<a href=#136 id=136 data-nosnippet>136</a>            MaybeTlsStream::Tls(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_read(cx, buf),
+<a href=#137 id=137 data-nosnippet>137</a>            <span class="attr">#[cfg(test)]
+<a href=#138 id=138 data-nosnippet>138</a>            </span>MaybeTlsStream::Test(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_read(cx, buf),
+<a href=#139 id=139 data-nosnippet>139</a>        }
+<a href=#140 id=140 data-nosnippet>140</a>    }
+<a href=#141 id=141 data-nosnippet>141</a>}
+<a href=#142 id=142 data-nosnippet>142</a>
+<a href=#143 id=143 data-nosnippet>143</a><span class="kw">impl </span>AsyncWrite <span class="kw">for </span>MaybeTlsStream {
+<a href=#144 id=144 data-nosnippet>144</a>    <span class="kw">fn </span>poll_flush(
+<a href=#145 id=145 data-nosnippet>145</a>        <span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;,
+<a href=#146 id=146 data-nosnippet>146</a>        cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#147 id=147 data-nosnippet>147</a>    ) -&gt; Poll&lt;std::result::Result&lt;(), std::io::Error&gt;&gt; {
+<a href=#148 id=148 data-nosnippet>148</a>        <span class="kw">match </span><span class="kw-2">&amp;mut *</span><span class="self">self </span>{
+<a href=#149 id=149 data-nosnippet>149</a>            MaybeTlsStream::Plain(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_flush(cx),
+<a href=#150 id=150 data-nosnippet>150</a>            MaybeTlsStream::Tls(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_flush(cx),
+<a href=#151 id=151 data-nosnippet>151</a>            <span class="attr">#[cfg(test)]
+<a href=#152 id=152 data-nosnippet>152</a>            </span>MaybeTlsStream::Test(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_flush(cx),
+<a href=#153 id=153 data-nosnippet>153</a>        }
+<a href=#154 id=154 data-nosnippet>154</a>    }
+<a href=#155 id=155 data-nosnippet>155</a>
+<a href=#156 id=156 data-nosnippet>156</a>    <span class="kw">fn </span>poll_shutdown(
+<a href=#157 id=157 data-nosnippet>157</a>        <span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;,
+<a href=#158 id=158 data-nosnippet>158</a>        cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#159 id=159 data-nosnippet>159</a>    ) -&gt; Poll&lt;std::result::Result&lt;(), std::io::Error&gt;&gt; {
+<a href=#160 id=160 data-nosnippet>160</a>        <span class="kw">match </span><span class="kw-2">&amp;mut *</span><span class="self">self </span>{
+<a href=#161 id=161 data-nosnippet>161</a>            MaybeTlsStream::Plain(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_shutdown(cx),
+<a href=#162 id=162 data-nosnippet>162</a>            MaybeTlsStream::Tls(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_shutdown(cx),
+<a href=#163 id=163 data-nosnippet>163</a>            <span class="attr">#[cfg(test)]
+<a href=#164 id=164 data-nosnippet>164</a>            </span>MaybeTlsStream::Test(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_shutdown(cx),
+<a href=#165 id=165 data-nosnippet>165</a>        }
+<a href=#166 id=166 data-nosnippet>166</a>    }
+<a href=#167 id=167 data-nosnippet>167</a>
+<a href=#168 id=168 data-nosnippet>168</a>    <span class="kw">fn </span>poll_write(
+<a href=#169 id=169 data-nosnippet>169</a>        <span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;,
+<a href=#170 id=170 data-nosnippet>170</a>        cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#171 id=171 data-nosnippet>171</a>        buf: <span class="kw-2">&amp;</span>[u8],
+<a href=#172 id=172 data-nosnippet>172</a>    ) -&gt; Poll&lt;std::result::Result&lt;usize, std::io::Error&gt;&gt; {
+<a href=#173 id=173 data-nosnippet>173</a>        <span class="kw">match </span><span class="kw-2">&amp;mut *</span><span class="self">self </span>{
+<a href=#174 id=174 data-nosnippet>174</a>            MaybeTlsStream::Plain(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_write(cx, buf),
+<a href=#175 id=175 data-nosnippet>175</a>            MaybeTlsStream::Tls(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_write(cx, buf),
+<a href=#176 id=176 data-nosnippet>176</a>            <span class="attr">#[cfg(test)]
+<a href=#177 id=177 data-nosnippet>177</a>            </span>MaybeTlsStream::Test(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_write(cx, buf),
+<a href=#178 id=178 data-nosnippet>178</a>        }
+<a href=#179 id=179 data-nosnippet>179</a>    }
+<a href=#180 id=180 data-nosnippet>180</a>
+<a href=#181 id=181 data-nosnippet>181</a>    <span class="kw">fn </span>poll_write_vectored(
+<a href=#182 id=182 data-nosnippet>182</a>        <span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;,
+<a href=#183 id=183 data-nosnippet>183</a>        cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;,
+<a href=#184 id=184 data-nosnippet>184</a>        bufs: <span class="kw-2">&amp;</span>[std::io::IoSlice&lt;<span class="lifetime">'_</span>&gt;],
+<a href=#185 id=185 data-nosnippet>185</a>    ) -&gt; Poll&lt;std::result::Result&lt;usize, std::io::Error&gt;&gt; {
+<a href=#186 id=186 data-nosnippet>186</a>        <span class="kw">match </span><span class="kw-2">&amp;mut *</span><span class="self">self </span>{
+<a href=#187 id=187 data-nosnippet>187</a>            MaybeTlsStream::Plain(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_write_vectored(cx, bufs),
+<a href=#188 id=188 data-nosnippet>188</a>            MaybeTlsStream::Tls(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_write_vectored(cx, bufs),
+<a href=#189 id=189 data-nosnippet>189</a>            <span class="attr">#[cfg(test)]
+<a href=#190 id=190 data-nosnippet>190</a>            </span>MaybeTlsStream::Test(<span class="kw-2">ref mut </span>s) =&gt; Pin::new(s).poll_write_vectored(cx, bufs),
+<a href=#191 id=191 data-nosnippet>191</a>        }
+<a href=#192 id=192 data-nosnippet>192</a>    }
+<a href=#193 id=193 data-nosnippet>193</a>}</code></pre></div></section></main></body></html>
