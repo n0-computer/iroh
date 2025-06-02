@@ -2,10 +2,6 @@
 //!
 //! This module handles a verification of a client/server certificate chain
 //! and signatures allegedly by the given certificates, or using raw public keys.
-//!
-//!
-//! libp2p-tls certificate part is based on rust-libp2p/transports/tls/src/verifier.rs originally
-//! licensed under MIT by Parity Technologies (UK) Ltd.
 
 use ed25519_dalek::pkcs8::EncodePublicKey;
 use iroh_base::PublicKey;
@@ -62,14 +58,7 @@ pub(super) struct ServerCertificateVerifier {
     auth: Authentication,
 }
 
-/// We require the following
-/// Either X.509 server certificate chains:
-///
-/// - Exactly one certificate must be presented.
-/// - The certificate must be self-signed.
-/// - The certificate must have a valid libp2p extension that includes a signature of its public key.
-///
-/// or a raw public key.
+/// We require a raw public key.
 impl ServerCertificateVerifier {
     pub(super) fn new(auth: Authentication) -> Self {
         Self { auth }
@@ -174,14 +163,7 @@ pub(super) struct ClientCertificateVerifier {
     auth: Authentication,
 }
 
-/// We require the following
-/// Either X.509 server certificate chains:
-///
-/// - Exactly one certificate must be presented.
-/// - The certificate must be self-signed.
-/// - The certificate must have a valid libp2p extension that includes a signature of its public key.
-///
-/// or a raw public key.
+/// We require a raw public key.
 impl ClientCertificateVerifier {
     pub(super) fn new(auth: Authentication) -> Self {
         Self { auth }
@@ -190,13 +172,7 @@ impl ClientCertificateVerifier {
 
 /// We requires either following of X.509 client certificate chains:
 ///
-/// - Exactly one certificate must be presented. In particular, client
-///   authentication is mandatory in libp2p.
-/// - The certificate must be self-signed.
-/// - The certificate must have a valid libp2p extension that includes a
-///   signature of its public key.
-///
-/// or a valid raw public key configuration
+/// - a valid raw public key configuration
 impl ClientCertVerifier for ClientCertificateVerifier {
     fn offer_client_auth(&self) -> bool {
         true

@@ -399,7 +399,7 @@ impl Builder {
 
     /// Use TLS Raw Public Keys
     ///
-    /// This is the default, but is not compatible with older versions of iroh.
+    /// This is the default, and currently the only available option.
     pub fn tls_raw_public_keys(mut self) -> Self {
         self.tls_auth = tls::Authentication::RawPublicKey;
         self
