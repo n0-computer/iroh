@@ -12,12 +12,28 @@ use crate::ExportKeyingMaterial;
 /// TODO(matheus23) docs
 pub(crate) const PROTOCOL_VERSION: &[u8] = b"1";
 
+#[repr(u32)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug, num_enum::IntoPrimitive, num_enum::FromPrimitive)]
+pub(crate) enum FrameType {
+    ClientRequestChallenge = 0,
+    ServerChallenge = 1,
+    ClientAuth = 2,
+    ServerConfirmsAuth = 3,
+    ServerDeniesAuth = 4,
+    #[num_enum(default)]
+    Unknown,
+}
+
+impl From<FrameType> for VarInt {
+    fn from(value: FrameType) -> Self {
+        (value as u32).into()
+    }
+}
+
 /// Message that tells the server the client needs a challenge to authenticate.
 #[derive(derive_more::Debug, serde::Serialize)]
 #[cfg_attr(feature = "server", derive(serde::Deserialize))]
 pub(crate) struct ClientRequestChallenge;
-
-const TAG_CLIENT_REQUEST_CHALLENGE: VarInt = VarInt::from_u32(5);
 
 /// A challenge for the client to sign with their secret key for NodeId authentication.
 #[derive(derive_more::Debug, serde::Deserialize)]
@@ -27,8 +43,6 @@ pub(crate) struct ServerChallenge {
     /// Must be randomly generated with an RNG that is safe to use for crypto.
     pub(crate) challenge: [u8; 16],
 }
-
-const TAG_SERVER_CHALLENGE: VarInt = VarInt::from_u32(1);
 
 /// Authentintiation message from the client.
 ///
@@ -49,21 +63,15 @@ pub(crate) struct ClientAuth {
     pub(crate) versions: Vec<Vec<u8>>,
 }
 
-const TAG_CLIENT_AUTH: VarInt = VarInt::from_u32(2);
-
 /// Confirmation of successful connection.
 #[derive(derive_more::Debug, serde::Deserialize)]
 #[cfg_attr(feature = "server", derive(serde::Serialize))]
 pub(crate) struct ServerConfirmsAuth;
 
-const TAG_SERVER_CONFIRMS_AUTH: VarInt = VarInt::from_u32(3);
-
 /// Denial of connection. The client couldn't be verified as authentic.
 #[derive(derive_more::Debug, serde::Deserialize)]
 #[cfg_attr(feature = "server", derive(serde::Serialize))]
 pub(crate) struct ServerDeniesAuth;
-
-const TAG_SERVER_DENIES_AUTH: VarInt = VarInt::from_u32(4);
 
 /// TODO(matheus23) docs
 pub(crate) trait BytesStreamSink:
@@ -74,6 +82,34 @@ pub(crate) trait BytesStreamSink:
 impl<T: Stream<Item = Result<Bytes>> + Sink<Bytes, Error = anyhow::Error> + Unpin> BytesStreamSink
     for T
 {
+}
+
+trait Frame {
+    const TAG: FrameType;
+}
+
+impl<T: Frame> Frame for &T {
+    const TAG: FrameType = T::TAG;
+}
+
+impl Frame for ClientRequestChallenge {
+    const TAG: FrameType = FrameType::ClientRequestChallenge;
+}
+
+impl Frame for ServerChallenge {
+    const TAG: FrameType = FrameType::ServerChallenge;
+}
+
+impl Frame for ClientAuth {
+    const TAG: FrameType = FrameType::ClientAuth;
+}
+
+impl Frame for ServerConfirmsAuth {
+    const TAG: FrameType = FrameType::ServerConfirmsAuth;
+}
+
+impl Frame for ServerDeniesAuth {
+    const TAG: FrameType = FrameType::ServerDeniesAuth;
 }
 
 impl ServerChallenge {
@@ -161,32 +197,32 @@ pub(crate) async fn clientside(
     secret_key: &SecretKey,
 ) -> Result<ServerConfirmsAuth> {
     if let Some(client_auth) = ClientAuth::new_from_key_export(secret_key, io) {
-        write_frame(io, TAG_CLIENT_AUTH, client_auth).await?;
+        write_frame(io, client_auth).await?;
     } else {
         // we can't use key exporting, so request a challenge.
-        write_frame(io, TAG_CLIENT_REQUEST_CHALLENGE, ClientRequestChallenge).await?;
+        write_frame(io, ClientRequestChallenge).await?;
     }
 
-    let (tag, frame) = read_frame(
+    let (tag, frame) = read_handshake_frame(
         io,
         &[
-            TAG_SERVER_CHALLENGE,
-            TAG_SERVER_CONFIRMS_AUTH,
-            TAG_SERVER_DENIES_AUTH,
+            ServerChallenge::TAG,
+            ServerConfirmsAuth::TAG,
+            ServerDeniesAuth::TAG,
         ],
         time::Duration::from_secs(30),
     )
     .await?;
 
-    let (tag, frame) = if tag == TAG_SERVER_CHALLENGE {
+    let (tag, frame) = if tag == ServerChallenge::TAG {
         let challenge: ServerChallenge = postcard::from_bytes(&frame)?;
 
         let client_info = ClientAuth::new_from_challenge(secret_key, &challenge);
-        write_frame(io, TAG_CLIENT_AUTH, client_info).await?;
+        write_frame(io, client_info).await?;
 
-        read_frame(
+        read_handshake_frame(
             io,
-            &[TAG_SERVER_CONFIRMS_AUTH, TAG_SERVER_DENIES_AUTH],
+            &[ServerConfirmsAuth::TAG, ServerDeniesAuth::TAG],
             time::Duration::from_secs(30),
         )
         .await?
@@ -195,11 +231,11 @@ pub(crate) async fn clientside(
     };
 
     match tag {
-        TAG_SERVER_CONFIRMS_AUTH => {
+        FrameType::ServerConfirmsAuth => {
             let confirmation: ServerConfirmsAuth = postcard::from_bytes(&frame)?;
             Ok(confirmation)
         }
-        TAG_SERVER_DENIES_AUTH => {
+        FrameType::ServerDeniesAuth => {
             let denial: ServerDeniesAuth = postcard::from_bytes(&frame)?;
             anyhow::bail!("server denied connection: {denial:?}");
         }
@@ -213,18 +249,18 @@ pub(crate) async fn serverside(
     io: &mut (impl BytesStreamSink + ExportKeyingMaterial),
     rng: impl RngCore + CryptoRng,
 ) -> Result<ClientAuth> {
-    let (tag, frame) = read_frame(
+    let (tag, frame) = read_handshake_frame(
         io,
-        &[TAG_CLIENT_REQUEST_CHALLENGE, TAG_CLIENT_AUTH],
+        &[ClientRequestChallenge::TAG, ClientAuth::TAG],
         time::Duration::from_secs(10),
     )
     .await?;
 
     // it might be fast-path authentication using TLS exported key material
-    if tag == TAG_CLIENT_AUTH {
+    if tag == ClientAuth::TAG {
         let client_auth: ClientAuth = postcard::from_bytes(&frame)?;
         if client_auth.verify_from_key_export(io) {
-            write_frame(io, TAG_SERVER_CONFIRMS_AUTH, ServerConfirmsAuth).await?;
+            write_frame(io, ServerConfirmsAuth).await?;
             return Ok(client_auth);
         }
     } else {
@@ -232,25 +268,26 @@ pub(crate) async fn serverside(
     }
 
     let challenge = ServerChallenge::new(rng);
-    write_frame(io, TAG_SERVER_CHALLENGE, &challenge).await?;
+    write_frame(io, &challenge).await?;
 
-    let (_, frame) = read_frame(io, &[TAG_CLIENT_AUTH], time::Duration::from_secs(10)).await?;
+    let (_, frame) =
+        read_handshake_frame(io, &[ClientAuth::TAG], time::Duration::from_secs(10)).await?;
     let client_auth: ClientAuth = postcard::from_bytes(&frame)?;
 
     if client_auth.verify_from_challenge(&challenge) {
-        write_frame(io, TAG_SERVER_CONFIRMS_AUTH, ServerConfirmsAuth).await?;
+        write_frame(io, ServerConfirmsAuth).await?;
     } else {
-        write_frame(io, TAG_SERVER_DENIES_AUTH, ServerDeniesAuth).await?;
+        write_frame(io, ServerDeniesAuth).await?;
     }
 
     Ok(client_auth)
 }
 
-async fn write_frame(
+async fn write_frame<F: serde::Serialize + Frame>(
     io: &mut impl BytesStreamSink,
-    tag: VarInt,
-    frame: impl serde::Serialize,
+    frame: F,
 ) -> Result<()> {
+    let tag: VarInt = F::TAG.into();
     let mut bytes = BytesMut::new();
     tag.encode(&mut bytes);
     let bytes = postcard::to_io(&frame, bytes.writer())?
@@ -281,6 +318,20 @@ async fn read_frame(
     let payload = cursor.into_inner().slice(start..);
 
     Ok((tag, payload))
+}
+
+async fn read_handshake_frame(
+    io: &mut impl BytesStreamSink,
+    expected_types: &[FrameType],
+    timeout: time::Duration,
+) -> Result<(FrameType, Bytes)> {
+    let expected_tags = expected_types
+        .into_iter()
+        .map(|frame_type| VarInt::from(*frame_type))
+        .collect::<Vec<_>>();
+    let (tag, frame) = read_frame(io, &expected_tags, timeout).await?;
+    let frame_type = u32::try_from(tag.into_inner()).map_or(FrameType::Unknown, FrameType::from);
+    Ok((frame_type, frame))
 }
 
 #[cfg(all(test, feature = "server"))]
