@@ -3,11 +3,12 @@
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
+use snafu::ResultExt;
 
 use super::{Variant0AddrInfo, Variant0NodeAddr};
 use crate::{
     node_addr::NodeAddr,
-    ticket::{self, Ticket},
+    ticket::{self, ParseError, Ticket},
 };
 
 /// A token containing information for establishing a connection to a node.
@@ -61,8 +62,8 @@ impl Ticket for NodeTicket {
         postcard::to_stdvec(&data).expect("postcard serialization failed")
     }
 
-    fn from_bytes(bytes: &[u8]) -> Result<Self, ticket::Error> {
-        let res: TicketWireFormat = postcard::from_bytes(bytes).map_err(ticket::Error::Postcard)?;
+    fn from_bytes(bytes: &[u8]) -> Result<Self, ParseError> {
+        let res: TicketWireFormat = postcard::from_bytes(bytes).context(ticket::PostcardSnafu)?;
         let TicketWireFormat::Variant0(Variant0NodeTicket { node }) = res;
         Ok(Self {
             node: NodeAddr {
@@ -75,7 +76,7 @@ impl Ticket for NodeTicket {
 }
 
 impl FromStr for NodeTicket {
-    type Err = ticket::Error;
+    type Err = ParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         ticket::Ticket::deserialize(s)

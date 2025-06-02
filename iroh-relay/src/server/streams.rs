@@ -5,14 +5,14 @@ use std::{
     task::{Context, Poll},
 };
 
-use anyhow::Result;
 use n0_future::{Sink, Stream};
+use snafu::Snafu;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_util::codec::Framed;
 use tokio_websockets::WebSocketStream;
 
 use crate::{
-    protos::relay::{Frame, RelayCodec},
+    protos::relay::{Frame, RecvError, RelayCodec},
     KeyCache,
 };
 
@@ -68,12 +68,22 @@ impl Sink<Frame> for RelayedStream {
     }
 }
 
+/// Relay stream errors
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+pub enum StreamError {
+    #[snafu(transparent)]
+    Proto { source: RecvError },
+    #[snafu(transparent)]
+    Ws { source: tokio_websockets::Error },
+}
+
 impl Stream for RelayedStream {
-    type Item = anyhow::Result<Frame>;
+    type Item = Result<Frame, StreamError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match *self {
-            Self::Relay(ref mut framed) => Pin::new(framed).poll_next(cx),
+            Self::Relay(ref mut framed) => Pin::new(framed).poll_next(cx).map_err(Into::into),
             Self::Ws(ref mut ws, ref cache) => match Pin::new(ws).poll_next(cx) {
                 Poll::Ready(Some(Ok(msg))) => {
                     if msg.is_close() {
@@ -88,10 +98,9 @@ impl Stream for RelayedStream {
                         );
                         return Poll::Pending;
                     }
-                    Poll::Ready(Some(Frame::decode_from_ws_msg(
-                        msg.into_payload().into(),
-                        cache,
-                    )))
+                    let frame = Frame::decode_from_ws_msg(msg.into_payload().into(), cache)
+                        .map_err(Into::into);
+                    Poll::Ready(Some(frame))
                 }
                 Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e.into()))),
                 Poll::Ready(None) => Poll::Ready(None),

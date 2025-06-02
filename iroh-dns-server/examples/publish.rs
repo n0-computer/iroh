@@ -1,6 +1,5 @@
 use std::{net::SocketAddr, str::FromStr};
 
-use anyhow::{Context, Result};
 use clap::{Parser, ValueEnum};
 use iroh::{
     discovery::{
@@ -11,6 +10,7 @@ use iroh::{
     node_info::{NodeIdExt, NodeInfo, IROH_TXT_NAME},
     NodeId, SecretKey,
 };
+use n0_snafu::{Result, ResultExt};
 use url::Url;
 
 const DEV_PKARR_RELAY_URL: &str = "http://localhost:8080/pkarr";

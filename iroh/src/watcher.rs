@@ -25,6 +25,7 @@ use std::{
 
 #[cfg(iroh_loom)]
 use loom::sync;
+use snafu::Snafu;
 use sync::{Mutex, RwLock};
 
 /// A wrapper around a value that notifies [`Watcher`]s when the value is modified.
@@ -173,7 +174,7 @@ pub trait Watcher: Clone {
             initial: match self.get() {
                 Ok(Some(value)) => Some(Ok(value)),
                 Ok(None) => None,
-                Err(Disconnected) => Some(Err(Disconnected)),
+                Err(val) => Some(Err(val)),
             },
             watcher: self,
         }
@@ -261,7 +262,7 @@ impl<T: Clone + Eq> Watcher for Direct<T> {
     type Value = T;
 
     fn get(&self) -> Result<Self::Value, Disconnected> {
-        let shared = self.shared.upgrade().ok_or(Disconnected)?;
+        let shared = self.shared.upgrade().ok_or(DisconnectedSnafu.build())?;
         Ok(shared.get())
     }
 
@@ -270,7 +271,7 @@ impl<T: Clone + Eq> Watcher for Direct<T> {
         cx: &mut task::Context<'_>,
     ) -> Poll<Result<Self::Value, Disconnected>> {
         let Some(shared) = self.shared.upgrade() else {
-            return Poll::Ready(Err(Disconnected));
+            return Poll::Ready(Err(DisconnectedSnafu.build()));
         };
         match shared.poll_updated(cx, self.epoch) {
             Poll::Pending => Poll::Pending,
@@ -415,7 +416,7 @@ where
         }
         match self.as_mut().watcher.poll_updated(cx) {
             Poll::Ready(Ok(value)) => Poll::Ready(Some(value)),
-            Poll::Ready(Err(Disconnected)) => Poll::Ready(None),
+            Poll::Ready(Err(_)) => Poll::Ready(None),
             Poll::Pending => Poll::Pending,
         }
     }
@@ -423,9 +424,13 @@ where
 
 /// The error for when a [`Watcher`] is disconnected from its underlying
 /// [`Watchable`] value, because of that watchable having been dropped.
-#[derive(thiserror::Error, Debug)]
-#[error("Watcher lost connection to underlying Watchable, it was dropped")]
-pub struct Disconnected;
+#[derive(Debug, Snafu)]
+#[snafu(display("Watch lost connection to underlying Watchable, it was dropped"))]
+pub struct Disconnected {
+    backtrace: Option<snafu::Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+}
 
 // Private:
 
