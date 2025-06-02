@@ -947,8 +947,6 @@ mod test_utils {
 
 #[cfg(test)]
 mod tests {
-    use std::net::Ipv4Addr;
-
     use bytes::BytesMut;
     use n0_snafu::{Result, ResultExt};
     use netwatch::IpFamily;
@@ -957,7 +955,7 @@ mod tests {
     use tracing_test::traced_test;
 
     use super::*;
-    use crate::net_report::{dns, ping::Pinger, stun_utils::bind_local_stun_socket};
+    use crate::net_report::{dns, stun_utils::bind_local_stun_socket};
 
     mod stun_utils {
         //! Utils for testing that expose a simple stun server.
