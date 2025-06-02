@@ -6,7 +6,6 @@ use nested_enum_utils::common_fields;
 use snafu::Snafu;
 use webpki_types::{pem::PemObject, CertificateDer, PrivatePkcs8KeyDer};
 
-use super::certificate;
 use crate::tls::Authentication;
 
 #[derive(Debug)]
@@ -24,9 +23,6 @@ pub(super) struct AlwaysResolvesCert {
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
 pub(super) enum CreateConfigError {
-    /// Error generating the certificate.
-    #[snafu(display("Error generating the certificate"), context(false))]
-    CertError { source: certificate::GenError },
     /// Rustls configuration error
     #[snafu(display("rustls error"), context(false))]
     Rustls { source: rustls::Error },
@@ -38,14 +34,6 @@ impl AlwaysResolvesCert {
         secret_key: &SecretKey,
     ) -> Result<Self, CreateConfigError> {
         let key = match auth {
-            Authentication::X509 => {
-                let (cert, key) = certificate::generate(secret_key)?;
-                let certified_key = rustls::sign::CertifiedKey::new(
-                    vec![cert],
-                    rustls::crypto::ring::sign::any_ecdsa_type(&key)?,
-                );
-                Arc::new(certified_key)
-            }
             Authentication::RawPublicKey => {
                 // Directly use the key
                 let client_private_key = secret_key

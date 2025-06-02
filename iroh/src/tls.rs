@@ -14,7 +14,6 @@ use tracing::warn;
 
 use self::resolver::AlwaysResolvesCert;
 
-pub(crate) mod certificate;
 pub(crate) mod name;
 mod resolver;
 mod verifier;
@@ -32,8 +31,6 @@ const MAX_TLS_TICKETS: usize = 8 * 32;
 /// TLS Authentication mechanism
 #[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Authentication {
-    /// Self signed certificates, based on libp2p-tls
-    X509,
     /// RFC 7250 TLS extension: Raw Public Keys.
     #[default]
     RawPublicKey,

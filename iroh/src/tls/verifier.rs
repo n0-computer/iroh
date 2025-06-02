@@ -7,8 +7,6 @@
 //! libp2p-tls certificate part is based on rust-libp2p/transports/tls/src/verifier.rs originally
 //! licensed under MIT by Parity Technologies (UK) Ltd.
 
-use std::sync::Arc;
-
 use ed25519_dalek::pkcs8::EncodePublicKey;
 use iroh_base::PublicKey;
 use rustls::{
@@ -16,13 +14,13 @@ use rustls::{
     crypto::{verify_tls13_signature_with_raw_key, WebPkiSupportedAlgorithms},
     pki_types::CertificateDer as Certificate,
     server::danger::{ClientCertVerified, ClientCertVerifier},
-    CertificateError, DigitallySignedStruct, DistinguishedName, OtherError, PeerMisbehaved,
-    SignatureScheme, SupportedProtocolVersion,
+    CertificateError, DigitallySignedStruct, DistinguishedName, SignatureScheme,
+    SupportedProtocolVersion,
 };
 use webpki::ring as webpki_algs;
 use webpki_types::SubjectPublicKeyInfoDer;
 
-use super::{certificate, Authentication};
+use super::Authentication;
 
 /// The only TLS version we support is 1.3
 pub(super) static PROTOCOL_VERSIONS: &[&SupportedProtocolVersion] = &[&rustls::version::TLS13];
@@ -105,21 +103,6 @@ impl ServerCertVerifier for ServerCertificateVerifier {
         };
 
         match self.auth {
-            Authentication::X509 => {
-                let peer_id = verify_presented_certs(end_entity, intermediates)?;
-
-                // The public host key allows the peer to calculate the peer ID of the peer
-                // it is connecting to. Clients MUST verify that the peer ID derived from
-                // the certificate matches the peer ID they intended to connect to,
-                // and MUST abort the connection if there is a mismatch.
-                if remote_peer_id != peer_id {
-                    return Err(rustls::Error::PeerMisbehaved(
-                        PeerMisbehaved::BadCertChainExtensions,
-                    ));
-                }
-
-                Ok(ServerCertVerified::assertion())
-            }
             Authentication::RawPublicKey => {
                 if !intermediates.is_empty() {
                     return Err(rustls::Error::InvalidCertificate(
@@ -164,9 +147,6 @@ impl ServerCertVerifier for ServerCertificateVerifier {
         dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, rustls::Error> {
         match self.auth {
-            Authentication::X509 => {
-                verify_tls13_signature(cert, dss.scheme, message, dss.signature())
-            }
             Authentication::RawPublicKey => verify_tls13_signature_with_raw_key(
                 message,
                 &SubjectPublicKeyInfoDer::from(cert.as_ref()),
@@ -224,15 +204,11 @@ impl ClientCertVerifier for ClientCertificateVerifier {
 
     fn verify_client_cert(
         &self,
-        end_entity: &Certificate,
+        _end_entity: &Certificate,
         intermediates: &[Certificate],
         _now: rustls::pki_types::UnixTime,
     ) -> Result<ClientCertVerified, rustls::Error> {
         match self.auth {
-            Authentication::X509 => {
-                verify_presented_certs(end_entity, intermediates)?;
-                Ok(ClientCertVerified::assertion())
-            }
             Authentication::RawPublicKey => {
                 if !intermediates.is_empty() {
                     return Err(rustls::Error::InvalidCertificate(
@@ -263,9 +239,6 @@ impl ClientCertVerifier for ClientCertificateVerifier {
         dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, rustls::Error> {
         match self.auth {
-            Authentication::X509 => {
-                verify_tls13_signature(cert, dss.scheme, message, dss.signature())
-            }
             Authentication::RawPublicKey => verify_tls13_signature_with_raw_key(
                 message,
                 &SubjectPublicKeyInfoDer::from(cert.as_ref()),
@@ -285,65 +258,5 @@ impl ClientCertVerifier for ClientCertificateVerifier {
 
     fn requires_raw_public_keys(&self) -> bool {
         matches!(self.auth, Authentication::RawPublicKey)
-    }
-}
-
-/// When receiving the certificate chain, an endpoint
-/// MUST check these conditions and abort the connection attempt if
-/// (a) the presented certificate is not yet valid, OR
-/// (b) if it is expired.
-/// Endpoints MUST abort the connection attempt if more than one certificate is received,
-/// or if the certificate’s self-signature is not valid.
-fn verify_presented_certs(
-    end_entity: &Certificate,
-    intermediates: &[Certificate],
-) -> Result<PublicKey, rustls::Error> {
-    if !intermediates.is_empty() {
-        return Err(rustls::Error::General(
-            "libp2p-tls requires exactly one certificate".into(),
-        ));
-    }
-
-    let cert = certificate::parse(end_entity)?;
-
-    Ok(cert.peer_id())
-}
-
-fn verify_tls13_signature(
-    cert: &Certificate,
-    signature_scheme: SignatureScheme,
-    message: &[u8],
-    signature: &[u8],
-) -> Result<HandshakeSignatureValid, rustls::Error> {
-    certificate::parse(cert)?.verify_signature(signature_scheme, message, signature)?;
-
-    Ok(HandshakeSignatureValid::assertion())
-}
-
-impl From<certificate::ParseError> for rustls::Error {
-    fn from(certificate::ParseError { source }: certificate::ParseError) -> Self {
-        use webpki::Error::*;
-        match source {
-            BadDer => rustls::Error::InvalidCertificate(CertificateError::BadEncoding),
-            e => {
-                rustls::Error::InvalidCertificate(CertificateError::Other(OtherError(Arc::new(e))))
-            }
-        }
-    }
-}
-impl From<certificate::VerificationError> for rustls::Error {
-    fn from(certificate::VerificationError { source }: certificate::VerificationError) -> Self {
-        use webpki::Error::*;
-        match source {
-            InvalidSignatureForPublicKey => {
-                rustls::Error::InvalidCertificate(CertificateError::BadSignature)
-            }
-            UnsupportedSignatureAlgorithm | UnsupportedSignatureAlgorithmForPublicKey => {
-                rustls::Error::InvalidCertificate(CertificateError::BadSignature)
-            }
-            e => {
-                rustls::Error::InvalidCertificate(CertificateError::Other(OtherError(Arc::new(e))))
-            }
-        }
     }
 }

@@ -397,16 +397,6 @@ impl Builder {
         self
     }
 
-    /// Use libp2p based self signed certificates for TLS.
-    ///
-    /// For details see the libp2p spec at <https://github.com/libp2p/specs/blob/master/tls/tls.md>
-    ///
-    /// This is the only mechanism available in `iroh@0.33.0` and earlier.
-    pub fn tls_x509(mut self) -> Self {
-        self.tls_auth = tls::Authentication::X509;
-        self
-    }
-
     /// Use TLS Raw Public Keys
     ///
     /// This is the default, but is not compatible with older versions of iroh.
@@ -2145,11 +2135,6 @@ impl Connection {
                     }
 
                     match self.tls_auth {
-                        tls::Authentication::X509 => {
-                            let cert = tls::certificate::parse(&certs[0])
-                                .map_err(|_| RemoteNodeIdSnafu.build())?;
-                            Ok(cert.peer_id())
-                        }
                         tls::Authentication::RawPublicKey => {
                             let peer_id = VerifyingKey::from_public_key_der(&certs[0])
                                 .map_err(|_| RemoteNodeIdSnafu.build())?
@@ -2694,12 +2679,6 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_bidi_send_recv_x509() -> Result {
-        endpoint_bidi_send_recv(tls::Authentication::X509).await
-    }
-
-    #[tokio::test]
-    #[traced_test]
     async fn endpoint_bidi_send_recv_raw_public_key() -> Result {
         endpoint_bidi_send_recv(tls::Authentication::RawPublicKey).await
     }
@@ -2710,7 +2689,6 @@ mod tests {
             .relay_mode(RelayMode::Disabled);
 
         let ep1 = match auth {
-            tls::Authentication::X509 => ep1.tls_x509(),
             tls::Authentication::RawPublicKey => ep1.tls_raw_public_keys(),
         };
         let ep1 = ep1.bind().await?;
@@ -2719,7 +2697,6 @@ mod tests {
             .relay_mode(RelayMode::Disabled);
 
         let ep2 = match auth {
-            tls::Authentication::X509 => ep2.tls_x509(),
             tls::Authentication::RawPublicKey => ep2.tls_raw_public_keys(),
         };
         let ep2 = ep2.bind().await?;
