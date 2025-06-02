@@ -21,6 +21,7 @@ crate-type = ["lib", "cdylib"]
 workspace = true
 
 [dependencies]
+anyhow = "1.0.98"
 aead = { version = "0.5.2", features = ["bytes", "std"] }
 atomic-waker = "1.1.2"
 concurrent-queue = "2.5"
