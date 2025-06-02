@@ -382,18 +382,16 @@ impl MagicSock {
         res.expect("disconnected")
     }
 
-    /// Returns a [`watcher::Direct`] that reports the [`ConnectionType`] we have to the
+    /// Returns a [`n0_watcher::Direct`] that reports the [`ConnectionType`] we have to the
     /// given `node_id`.
     ///
-    /// This gets us a copy of the [`watcher::Direct`] for the [`Watchable`] with a [`ConnectionType`]
+    /// This gets us a copy of the [`n0_watcher::Direct`] for the [`Watchable`] with a [`ConnectionType`]
     /// that the `NodeMap` stores for each `node_id`'s endpoint.
     ///
     /// # Errors
     ///
     /// Will return `None` if there is no address information known about the
     /// given `node_id`.
-    ///
-    /// [`Watcher`]: n0_watcher::Watcher
     pub(crate) fn conn_type(&self, node_id: NodeId) -> Option<n0_watcher::Direct<ConnectionType>> {
         self.node_map.conn_type(node_id)
     }

@@ -300,14 +300,12 @@ impl NodeMap {
             .collect()
     }
 
-    /// Returns a [`watcher::Direct`] for given node's [`ConnectionType`].
+    /// Returns a [`n0_watcher::Direct`] for given node's [`ConnectionType`].
     ///
     /// # Errors
     ///
     /// Will return `None` if there is not an entry in the [`NodeMap`] for
     /// the `node_id`
-    ///
-    /// [`Watcher`]: n0_watcher::Watcher
     pub(super) fn conn_type(&self, node_id: NodeId) -> Option<n0_watcher::Direct<ConnectionType>> {
         self.inner.lock().expect("poisoned").conn_type(node_id)
     }

@@ -947,7 +947,7 @@ impl Endpoint {
     ///
     /// ```no_run
     /// # async fn wrapper() -> n0_snafu::Result {
-    /// use iroh::{watcher::Watcher, Endpoint};
+    /// use iroh::Endpoint;
     /// use n0_watcher::Watcher;
     ///
     /// let endpoint = Endpoint::builder()

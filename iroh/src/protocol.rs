@@ -63,7 +63,6 @@ use crate::{
 ///
 /// ```no_run
 /// # use std::sync::Arc;
-/// # use futures_lite::future::Boxed as BoxedFuture;
 /// # use n0_snafu::ResultExt;
 /// # use iroh::{endpoint::Connecting, protocol::{ProtocolHandler, Router}, Endpoint, NodeAddr};
 /// #
