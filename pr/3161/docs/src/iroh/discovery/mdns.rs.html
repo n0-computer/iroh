@@ -334,7 +334,7 @@
 <a href=#334 id=334 data-nosnippet>334</a>        }
 <a href=#335 id=335 data-nosnippet>335</a>        discoverer
 <a href=#336 id=336 data-nosnippet>336</a>            .spawn(rt)
-<a href=#337 id=337 data-nosnippet>337</a>            .map_err(|e| DiscoveryError::from_err(<span class="string">"mdns"</span>, e))
+<a href=#337 id=337 data-nosnippet>337</a>            .map_err(|e| DiscoveryError::from_err_box(<span class="string">"mdns"</span>, e.into_boxed_dyn_error()))
 <a href=#338 id=338 data-nosnippet>338</a>    }
 <a href=#339 id=339 data-nosnippet>339</a>
 <a href=#340 id=340 data-nosnippet>340</a>    <span class="kw">fn </span>socketaddrs_to_addrs(socketaddrs: <span class="kw-2">&amp;</span>BTreeSet&lt;SocketAddr&gt;) -&gt; HashMap&lt;u16, Vec&lt;IpAddr&gt;&gt; {

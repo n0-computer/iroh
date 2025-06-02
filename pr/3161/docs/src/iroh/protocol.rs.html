@@ -320,7 +320,7 @@
 <a href=#320 id=320 data-nosnippet>320</a>    ///
 <a href=#321 id=321 data-nosnippet>321</a>    /// If some [`ProtocolHandler`] panicked in the accept loop, this will propagate
 <a href=#322 id=322 data-nosnippet>322</a>    /// that panic into the result here.
-<a href=#323 id=323 data-nosnippet>323</a>    </span><span class="kw">pub async fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(), tokio::task::JoinError&gt; {
+<a href=#323 id=323 data-nosnippet>323</a>    </span><span class="kw">pub async fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;(), n0_future::task::JoinError&gt; {
 <a href=#324 id=324 data-nosnippet>324</a>        <span class="kw">if </span><span class="self">self</span>.is_shutdown() {
 <a href=#325 id=325 data-nosnippet>325</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(());
 <a href=#326 id=326 data-nosnippet>326</a>        }
