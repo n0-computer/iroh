@@ -140,13 +140,17 @@ pub mod static_provider;
 ///
 /// Any type that implements [`Discovery`] also implements [`IntoDiscovery`].
 ///
+/// Iroh uses this trait to allow configuring the set of discovery services on the endpoint
+/// builder, while providing the discovery services access to information about the endpoint
+/// creation via the [`DiscoveryContext`] parameter to [`IntoDiscovery::into_discovery`].
+///
 /// [`Builder::add_discovery`]: crate::endpoint::Builder::add_discovery
 pub trait IntoDiscovery: Send + Sync + 'static {
-    /// Turns this struct into a boxed [`Discovery`].
+    /// Turns this discovery builder into a ready-to-use discovery service.
     ///
-    /// The discovery service will be used by passed [`Endpoint`]. If a discovery service needs
-    /// an endpoint or information from it like its secret key, it can access or clone the endpoint
-    /// from here.
+    /// The [`DiscoveryContext`] contains information about the [`Endpoint`] onto which this
+    /// discovery service is being added. It can be used by discovery services that need
+    /// a DNS resolver, or the endpoint's secret key to sign messages.
     ///
     /// If an error is returned, building the endpoint will fail with this error.
     fn into_discovery(
@@ -184,7 +188,7 @@ impl<T: IntoDiscovery> DynIntoDiscovery for T {
     }
 }
 
-/// Context for discovery services.
+/// Context about the [`Endpoint`] for discovery services.
 #[derive(Debug)]
 pub struct DiscoveryContext<'a> {
     dns_resolver: &'a DnsResolver,
