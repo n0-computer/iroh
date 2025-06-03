@@ -34,7 +34,7 @@ use std::{collections::BTreeSet, sync::Arc};
 use clap::Parser;
 use iroh::{
     endpoint::Connection,
-    protocol::{ProtocolError, ProtocolHandler, Router},
+    protocol::{AcceptError, ProtocolHandler, Router},
     Endpoint, NodeId,
 };
 use n0_snafu::{Result, ResultExt};
@@ -126,7 +126,7 @@ impl ProtocolHandler for BlobSearch {
     ///
     /// The returned future runs on a newly spawned tokio task, so it can run as long as
     /// the connection lasts.
-    async fn accept(&self, connection: Connection) -> Result<(), ProtocolError> {
+    async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
         // We can get the remote's node id from the connection.
         let node_id = connection.remote_node_id()?;
         println!("accepted connection from {node_id}");
@@ -136,13 +136,10 @@ impl ProtocolHandler for BlobSearch {
         let (mut send, mut recv) = connection.accept_bi().await?;
 
         // We read the query from the receive stream, while enforcing a max query length.
-        let query_bytes = recv
-            .read_to_end(64)
-            .await
-            .map_err(ProtocolError::from_err)?;
+        let query_bytes = recv.read_to_end(64).await.map_err(AcceptError::from_err)?;
 
         // Now, we can perform the actual query on our local database.
-        let query = String::from_utf8(query_bytes).map_err(ProtocolError::from_err)?;
+        let query = String::from_utf8(query_bytes).map_err(AcceptError::from_err)?;
         let num_matches = self.query_local(&query).await;
 
         // We want to return a list of hashes. We do the simplest thing possible, and just send
@@ -150,7 +147,7 @@ impl ProtocolHandler for BlobSearch {
         // very easy to parse on the other end.
         send.write_all(&num_matches.to_le_bytes())
             .await
-            .map_err(ProtocolError::from_err)?;
+            .map_err(AcceptError::from_err)?;
 
         // By calling `finish` on the send stream we signal that we will not send anything
         // further, which makes the receive stream on the other end terminate.
