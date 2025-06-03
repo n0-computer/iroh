@@ -28,7 +28,7 @@
 <a href=#28 id=28 data-nosnippet>28</a><span class="kw">use </span>iroh_relay::{defaults::DEFAULT_RELAY_QUIC_PORT, http::RELAY_PROBE_PATH, RelayMap, RelayNode};
 <a href=#29 id=29 data-nosnippet>29</a><span class="attr">#[cfg(not(wasm_browser))]
 <a href=#30 id=30 data-nosnippet>30</a></span><span class="kw">use </span>iroh_relay::{
-<a href=#31 id=31 data-nosnippet>31</a>    dns::{DnsError, DnsResolver},
+<a href=#31 id=31 data-nosnippet>31</a>    dns::{DnsError, DnsResolver, StaggeredError},
 <a href=#32 id=32 data-nosnippet>32</a>    quic::QuicClient,
 <a href=#33 id=33 data-nosnippet>33</a>};
 <a href=#34 id=34 data-nosnippet>34</a><span class="attr">#[cfg(wasm_browser)]
@@ -702,7 +702,7 @@
 <a href=#702 id=702 data-nosnippet>702</a>#[non_exhaustive]
 <a href=#703 id=703 data-nosnippet>703</a></span><span class="kw">enum </span>CaptivePortalError {
 <a href=#704 id=704 data-nosnippet>704</a>    <span class="attr">#[snafu(transparent)]
-<a href=#705 id=705 data-nosnippet>705</a>    </span>DnsLookup { source: DnsError },
+<a href=#705 id=705 data-nosnippet>705</a>    </span>DnsLookup { source: StaggeredError&lt;DnsError&gt; },
 <a href=#706 id=706 data-nosnippet>706</a>    <span class="attr">#[snafu(display(<span class="string">"Creating HTTP client failed"</span>))]
 <a href=#707 id=707 data-nosnippet>707</a>    </span>CreateReqwestClient { source: reqwest::Error },
 <a href=#708 id=708 data-nosnippet>708</a>    <span class="attr">#[snafu(display(<span class="string">"HTTP request failed"</span>))]
@@ -817,7 +817,7 @@
 <a href=#817 id=817 data-nosnippet>817</a>    <span class="attr">#[snafu(display(<span class="string">"No suitable relay address found"</span>))]
 <a href=#818 id=818 data-nosnippet>818</a>    </span>NoAddrFound,
 <a href=#819 id=819 data-nosnippet>819</a>    <span class="attr">#[snafu(display(<span class="string">"DNS lookup failed"</span>))]
-<a href=#820 id=820 data-nosnippet>820</a>    </span>DnsLookup { source: DnsError },
+<a href=#820 id=820 data-nosnippet>820</a>    </span>DnsLookup { source: StaggeredError&lt;DnsError&gt; },
 <a href=#821 id=821 data-nosnippet>821</a>    <span class="attr">#[snafu(display(<span class="string">"Relay node is not suitable for non-STUN probes"</span>))]
 <a href=#822 id=822 data-nosnippet>822</a>    </span>UnsupportedRelayNode,
 <a href=#823 id=823 data-nosnippet>823</a>    <span class="attr">#[snafu(display(<span class="string">"HTTPS probes are not implemented"</span>))]
@@ -918,7 +918,7 @@
 <a href=#918 id=918 data-nosnippet>918</a>    </span>InvalidUrl { source: url::ParseError },
 <a href=#919 id=919 data-nosnippet>919</a>    <span class="attr">#[cfg(not(wasm_browser))]
 <a href=#920 id=920 data-nosnippet>920</a>    #[snafu(transparent)]
-<a href=#921 id=921 data-nosnippet>921</a>    </span>DnsLookup { source: DnsError },
+<a href=#921 id=921 data-nosnippet>921</a>    </span>DnsLookup { source: StaggeredError&lt;DnsError&gt; },
 <a href=#922 id=922 data-nosnippet>922</a>    <span class="attr">#[snafu(display(<span class="string">"Creating HTTP client failed"</span>))]
 <a href=#923 id=923 data-nosnippet>923</a>    </span>CreateReqwestClient { source: reqwest::Error },
 <a href=#924 id=924 data-nosnippet>924</a>    <span class="attr">#[snafu(display(<span class="string">"HTTP request failed"</span>))]
