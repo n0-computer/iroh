@@ -2258,7 +2258,6 @@ dependencies = [
  "pretty_assertions",
  "rand 0.8.5",
  "rand_chacha 0.3.1",
- "rcgen",
  "reqwest",
  "ring",
  "rustls",
@@ -2285,7 +2284,6 @@ dependencies = [
  "wasm-bindgen-futures",
  "wasm-bindgen-test",
  "webpki-roots 0.26.11",
- "x509-parser",
  "z32",
 ]
 
