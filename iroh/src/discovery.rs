@@ -92,6 +92,7 @@
 //!     .await?;
 //! # Ok(())
 //! # }
+//! # }
 //! ```
 //!
 //! [`NodeAddr`]: iroh_base::NodeAddr
