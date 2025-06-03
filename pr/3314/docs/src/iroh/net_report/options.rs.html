@@ -6,7 +6,7 @@
 <a href=#6 id=6 data-nosnippet>6</a></span><span class="kw">mod </span>imp {
 <a href=#7 id=7 data-nosnippet>7</a>    <span class="kw">use </span>std::collections::BTreeSet;
 <a href=#8 id=8 data-nosnippet>8</a>
-<a href=#9 id=9 data-nosnippet>9</a>    <span class="kw">use </span><span class="kw">crate</span>::net_report::{reportgen::ProbeProto, QuicConfig};
+<a href=#9 id=9 data-nosnippet>9</a>    <span class="kw">use </span><span class="kw">crate</span>::net_report::{probes::ProbeProto, QuicConfig};
 <a href=#10 id=10 data-nosnippet>10</a>
 <a href=#11 id=11 data-nosnippet>11</a>    <span class="doccomment">/// Options for running probes
 <a href=#12 id=12 data-nosnippet>12</a>    ///
@@ -70,7 +70,7 @@
 <a href=#70 id=70 data-nosnippet>70</a>        </span>}
 <a href=#71 id=71 data-nosnippet>71</a>
 <a href=#72 id=72 data-nosnippet>72</a>        <span class="doccomment">/// Turn the options into set of valid protocols
-<a href=#73 id=73 data-nosnippet>73</a>        </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>to_protocols(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; BTreeSet&lt;ProbeProto&gt; {
+<a href=#73 id=73 data-nosnippet>73</a>        </span><span class="kw">pub fn </span>to_protocols(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; BTreeSet&lt;ProbeProto&gt; {
 <a href=#74 id=74 data-nosnippet>74</a>            <span class="kw">let </span><span class="kw-2">mut </span>protocols = BTreeSet::new();
 <a href=#75 id=75 data-nosnippet>75</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>quic) = <span class="self">self</span>.quic_config {
 <a href=#76 id=76 data-nosnippet>76</a>                <span class="kw">if </span>quic.ipv4 {
