@@ -46,18 +46,16 @@ use tracing::{debug, debug_span, error, info_span, trace, warn, Instrument};
 use url::Host;
 
 #[cfg(wasm_browser)]
-use crate::net_report::portmapper; // We stub the library
-use crate::net_report::Report;
+use super::portmapper; // We stub the library
+use super::Report;
 #[cfg(not(wasm_browser))]
-use crate::net_report::{
-    defaults::timeouts::DNS_TIMEOUT, dns::DNS_STAGGERING_MS, ip_mapped_addrs::IpMappedAddresses,
+use super::{
+    defaults::timeouts::DNS_TIMEOUT,
+    ip_mapped_addrs::IpMappedAddresses,
+    probes::{Probe, ProbePlan, ProbeProto},
 };
-
-mod probes;
-
-pub(crate) use probes::ProbeProto;
-use probes::{Probe, ProbePlan};
-
+#[cfg(not(wasm_browser))]
+use crate::discovery::dns::DNS_STAGGERING_MS;
 use crate::net_report::defaults::timeouts::{
     CAPTIVE_PORTAL_DELAY, CAPTIVE_PORTAL_TIMEOUT, OVERALL_REPORT_TIMEOUT, PROBES_TIMEOUT,
 };
@@ -548,7 +546,6 @@ pub struct QuicConfig {
 }
 
 /// Executes a particular [`Probe`], including using a delayed start if needed.
-#[allow(clippy::too_many_arguments)]
 async fn run_probe(
     relay_node: Arc<RelayNode>,
     probe: Probe,
@@ -597,10 +594,9 @@ async fn run_probe(
                         RunProbeError::AbortSet(probe_error::GetRelayAddrSnafu.into_error(e))
                     })?;
 
-                let url = node.url.clone();
                 let (addr, latency) = run_quic_probe(
                     &quic_client,
-                    url,
+                    node.url.clone(),
                     relay_addr.into(),
                     socket_state.ip_mapped_addrs,
                 )
@@ -625,10 +621,9 @@ async fn run_probe(
                         RunProbeError::AbortSet(probe_error::GetRelayAddrSnafu.into_error(e))
                     })?;
 
-                let url = node.url.clone();
                 let (addr, latency) = run_quic_probe(
                     &quic_client,
-                    url,
+                    node.url.clone(),
                     relay_addr.into(),
                     socket_state.ip_mapped_addrs,
                 )
@@ -715,6 +710,7 @@ async fn check_captive_portal(
 ) -> Result<bool, CaptivePortalError> {
     // If we have a preferred relay node and we can use it for non-STUN requests, try that;
     // otherwise, pick a random one suitable for non-STUN requests.
+
     let preferred_relay = preferred_relay.and_then(|url| dm.get_node(&url).map(|_| url));
 
     let url = match preferred_relay {
@@ -786,6 +782,7 @@ async fn check_captive_portal(
 }
 
 /// Returns the proper port based on the protocol of the probe.
+#[cfg(not(wasm_browser))]
 fn get_quic_port(relay_node: &RelayNode) -> Option<u16> {
     if let Some(ref quic) = relay_node.quic {
         if quic.port == 0 {
@@ -1007,16 +1004,16 @@ async fn measure_https_latency(
 mod tests {
     use std::net::Ipv4Addr;
 
+    use iroh_relay::dns::DnsResolver;
     use n0_snafu::{Result, ResultExt};
     use tracing_test::traced_test;
 
     use super::{super::test_utils, *};
-    use crate::net_report::dns;
 
     #[tokio::test]
     async fn test_measure_https_latency() -> Result {
         let (_server, relay) = test_utils::relay().await;
-        let dns_resolver = dns::tests::resolver();
+        let dns_resolver = DnsResolver::new();
         tracing::info!(relay_url = ?relay.url , "RELAY_URL");
         let (latency, ip) = measure_https_latency(&dns_resolver, &relay, true).await?;
 

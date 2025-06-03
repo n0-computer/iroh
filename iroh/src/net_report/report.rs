@@ -8,7 +8,7 @@ use std::{
 use iroh_base::RelayUrl;
 use tracing::warn;
 
-use super::{reportgen::ProbeProto, ProbeReport};
+use super::{probes::ProbeProto, ProbeReport};
 
 /// A net_report report.
 #[derive(Default, Debug, PartialEq, Eq, Clone)]
