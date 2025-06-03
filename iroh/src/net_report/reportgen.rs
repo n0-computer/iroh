@@ -1129,9 +1129,7 @@ async fn run_quic_probe(
 #[non_exhaustive]
 enum CaptivePortalError {
     #[snafu(transparent)]
-    DnsLookup { source: DnsError },
-    #[snafu(transparent)]
-    StaggeredDnsLookup { source: StaggeredError<DnsError> },
+    DnsLookup { source: StaggeredError<DnsError> },
     #[snafu(display("Creating HTTP client failed"))]
     CreateReqwestClient { source: reqwest::Error },
     #[snafu(display("HTTP request failed"))]
