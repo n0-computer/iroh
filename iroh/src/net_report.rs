@@ -22,10 +22,9 @@ use reportgen::{ProbeFinished, ProbeReport};
 use tracing::{debug, trace};
 
 mod defaults;
-#[cfg(not(wasm_browser))]
-mod dns;
 mod ip_mapped_addrs;
 mod metrics;
+mod probes;
 mod report;
 mod reportgen;
 
@@ -58,6 +57,7 @@ use self::reportgen::SocketState;
 pub use self::{
     metrics::Metrics,
     options::Options,
+    probes::ProbeProto,
     report::{RelayLatencies, Report},
     reportgen::QuicConfig,
 };
@@ -425,12 +425,13 @@ mod tests {
     use std::net::{Ipv4Addr, SocketAddr};
 
     use iroh_base::RelayUrl;
+    use iroh_relay::dns::DnsResolver;
     use n0_snafu::{Result, ResultExt};
     use tokio_util::sync::CancellationToken;
     use tracing_test::traced_test;
 
     use super::*;
-    use crate::net_report::{dns, reportgen::ProbeProto};
+    use crate::net_report::probes::ProbeProto;
 
     #[tokio::test]
     #[traced_test]
@@ -446,7 +447,7 @@ mod tests {
         };
         let relay_map = RelayMap::from(relay);
 
-        let resolver = dns::tests::resolver();
+        let resolver = DnsResolver::new();
         let mut client = Client::new(None, resolver.clone(), None, Default::default());
         let if_state = IfStateDetails::fake();
 
@@ -645,7 +646,7 @@ mod tests {
                 want_relay: Some(relay_url(2)), // 2 got fast enough
             },
         ];
-        let resolver = dns::tests::resolver();
+        let resolver = DnsResolver::new();
         for mut tt in tests {
             println!("test: {}", tt.name);
             let mut client = Client::new(None, resolver.clone(), None, Default::default());

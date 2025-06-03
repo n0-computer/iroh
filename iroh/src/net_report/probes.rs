@@ -56,7 +56,7 @@ pub enum ProbeProto {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, derive_more::Display)]
-pub(crate) enum Probe {
+pub(super) enum Probe {
     #[display("HTTPS after {delay:?} to {node}")]
     Https {
         delay: Duration,

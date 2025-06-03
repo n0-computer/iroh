@@ -11,7 +11,7 @@ use crate::{
     Endpoint,
 };
 
-const DNS_STAGGERING_MS: &[u64] = &[200, 300];
+pub(crate) const DNS_STAGGERING_MS: &[u64] = &[200, 300];
 
 /// DNS node discovery
 ///
