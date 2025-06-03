@@ -123,11 +123,10 @@ use snafu::{ensure, IntoError, Snafu};
 use tokio::sync::oneshot;
 use tracing::{debug, error_span, warn, Instrument};
 
-pub use crate::node_info::{NodeData, NodeInfo, ParseError, UserData};
-use crate::{Endpoint, SecretKey};
-
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
+pub use crate::node_info::{NodeData, NodeInfo, ParseError, UserData};
+use crate::{Endpoint, SecretKey};
 
 #[cfg(not(wasm_browser))]
 pub mod dns;
