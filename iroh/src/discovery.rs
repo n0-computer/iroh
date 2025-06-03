@@ -124,7 +124,10 @@ use tokio::sync::oneshot;
 use tracing::{debug, error_span, warn, Instrument};
 
 pub use crate::node_info::{NodeData, NodeInfo, ParseError, UserData};
-use crate::{dns::DnsResolver, Endpoint, SecretKey};
+use crate::{Endpoint, SecretKey};
+
+#[cfg(not(wasm_browser))]
+use crate::dns::DnsResolver;
 
 #[cfg(not(wasm_browser))]
 pub mod dns;
@@ -192,6 +195,7 @@ impl<T: IntoDiscovery> DynIntoDiscovery for T {
 /// Context about the [`Endpoint`] for discovery services.
 #[derive(Debug)]
 pub struct DiscoveryContext<'a> {
+    #[cfg(not(wasm_browser))]
     dns_resolver: &'a DnsResolver,
     secret_key: &'a SecretKey,
 }
@@ -199,6 +203,7 @@ pub struct DiscoveryContext<'a> {
 impl<'a> DiscoveryContext<'a> {
     pub(crate) fn from_endpoint(endpoint: &'a Endpoint) -> Self {
         Self {
+            #[cfg(not(wasm_browser))]
             dns_resolver: endpoint.dns_resolver(),
             secret_key: endpoint.secret_key(),
         }
@@ -215,6 +220,7 @@ impl<'a> DiscoveryContext<'a> {
     }
 
     /// Returns the [`DnsResolver`] used by the endpoint.
+    #[cfg(not(wasm_browser))]
     pub fn dns_resolver(&self) -> &DnsResolver {
         self.dns_resolver
     }
