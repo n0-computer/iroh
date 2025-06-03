@@ -107,8 +107,7 @@
 
 use std::sync::Arc;
 
-use iroh_base::{NodeAddr, NodeId, PublicKey};
-use iroh_relay::node_info::EncodingError;
+use iroh_base::{NodeAddr, NodeId};
 use n0_future::{
     boxed::BoxStream,
     stream::StreamExt,
@@ -144,20 +143,8 @@ pub mod static_provider;
 pub enum DiscoveryError {
     #[snafu(display("No discovery service configured"))]
     NoServiceConfigured {},
-    #[snafu(display("Cannot resolve node id"))]
-    NodeId { node_id: PublicKey },
     #[snafu(display("Discovery produced no results"))]
-    NoResults { node_id: PublicKey },
-    #[snafu(display("Error encoding the signed packet"))]
-    SignedPacket {
-        #[snafu(source(from(EncodingError, Box::new)))]
-        source: Box<EncodingError>,
-    },
-    #[snafu(display("Error parsing the signed packet"))]
-    ParsePacket {
-        #[snafu(source(from(ParseError, Box::new)))]
-        source: Box<ParseError>,
-    },
+    NoResults {},
     #[snafu(display("Service '{provenance}' error"))]
     User {
         provenance: &'static str,
@@ -491,7 +478,7 @@ impl DiscoveryTask {
         let discovery = ep.discovery().ok_or(NoServiceConfiguredSnafu.build())?;
         let stream = discovery
             .resolve(ep.clone(), node_id)
-            .ok_or(NodeIdSnafu { node_id }.build())?;
+            .ok_or(NoResultsSnafu {}.build())?;
         Ok(stream)
     }
 
@@ -558,7 +545,7 @@ impl DiscoveryTask {
             }
         }
         if let Some(tx) = on_first_tx.take() {
-            tx.send(Err(NoResultsSnafu { node_id }.build())).ok();
+            tx.send(Err(NoResultsSnafu {}.build())).ok();
         }
     }
 }
