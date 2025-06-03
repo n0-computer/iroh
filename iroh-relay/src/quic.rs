@@ -4,10 +4,7 @@ use std::{net::SocketAddr, sync::Arc};
 
 use n0_future::time::Duration;
 use nested_enum_utils::common_fields;
-use quinn::{
-    crypto::rustls::{NoInitialCipherSuite, QuicClientConfig},
-    VarInt,
-};
+use quinn::{crypto::rustls::QuicClientConfig, VarInt};
 use snafu::{Backtrace, Snafu};
 use tokio::sync::watch;
 
@@ -20,7 +17,10 @@ pub const QUIC_ADDR_DISC_CLOSE_REASON: &[u8] = b"finished";
 
 #[cfg(feature = "server")]
 pub(crate) mod server {
-    use quinn::{crypto::rustls::QuicServerConfig, ApplicationClose, ConnectionError};
+    use quinn::{
+        crypto::rustls::{NoInitialCipherSuite, QuicServerConfig},
+        ApplicationClose, ConnectionError,
+    };
     use snafu::ResultExt;
     use tokio::task::JoinSet;
     use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};

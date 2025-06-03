@@ -47,12 +47,11 @@ use url::Host;
 
 #[cfg(wasm_browser)]
 use super::portmapper; // We stub the library
-use super::Report;
 #[cfg(not(wasm_browser))]
+use super::{defaults::timeouts::DNS_TIMEOUT, ip_mapped_addrs::IpMappedAddresses};
 use super::{
-    defaults::timeouts::DNS_TIMEOUT,
-    ip_mapped_addrs::IpMappedAddresses,
-    probes::{Probe, ProbePlan, ProbeProto},
+    probes::{Probe, ProbePlan},
+    Report,
 };
 #[cfg(not(wasm_browser))]
 use crate::discovery::dns::DNS_STAGGERING_MS;
@@ -120,7 +119,7 @@ impl Client {
     pub(super) fn new(
         last_report: Option<Report>,
         relay_map: RelayMap,
-        protocols: BTreeSet<ProbeProto>,
+        protocols: BTreeSet<Probe>,
         if_state: IfStateDetails,
         #[cfg(not(wasm_browser))] socket_state: SocketState,
         #[cfg(any(test, feature = "test-utils"))] insecure_skip_relay_cert_verify: bool,
@@ -163,7 +162,7 @@ struct Actor {
     // Internal state.
     /// Protocols we should attempt to create probes for, if we have the correct
     /// configuration for that protocol.
-    protocols: BTreeSet<ProbeProto>,
+    protocols: BTreeSet<Probe>,
 
     /// Any socket-related state that doesn't exist/work in browsers
     #[cfg(not(wasm_browser))]
@@ -411,17 +410,17 @@ impl Actor {
 
         for probe_set in plan.iter() {
             let set_token = token.child_token();
-            for probe in probe_set {
-                let relay_node = probe.node().clone();
-                let probe = probe.clone();
+            let proto = probe_set.proto();
+            for (delay, relay_node) in probe_set.params() {
                 let probe_token = set_token.child_token();
                 let set_token = set_token.clone();
 
                 let fut = probe_token.run_until_cancelled_owned(time::timeout(
                     PROBES_TIMEOUT,
                     run_probe(
-                        relay_node,
-                        probe.clone(),
+                        proto,
+                        *delay,
+                        relay_node.clone(),
                         #[cfg(not(wasm_browser))]
                         self.socket_state.clone(),
                         #[cfg(any(test, feature = "test-utils"))]
@@ -449,7 +448,12 @@ impl Actor {
                         };
                         ProbeFinished::Regular(res)
                     }
-                    .instrument(debug_span!("run-probe", %probe)),
+                    .instrument(debug_span!(
+                        "run-probe",
+                        ?proto,
+                        ?delay,
+                        ?relay_node
+                    )),
                 );
             }
         }
@@ -461,22 +465,29 @@ impl Actor {
 /// The success result of [`run_probe`].
 #[derive(Debug, Clone)]
 pub(super) struct ProbeReport {
+    /// The probe that generated this report.
+    pub(super) probe: Probe,
+    /// Probe delay
+    #[allow(dead_code)]
+    pub(super) delay: Duration,
+    /// The relay node that was probed
+    pub(super) node: Arc<RelayNode>,
     /// Whether we can send IPv4 UDP packets.
     pub(super) ipv4_can_send: bool,
     /// Whether we can send IPv6 UDP packets.
     pub(super) ipv6_can_send: bool,
     /// The latency to the relay node.
     pub(super) latency: Option<Duration>,
-    /// The probe that generated this report.
-    pub(super) probe: Probe,
     /// The discovered public address.
     pub(super) addr: Option<SocketAddr>,
 }
 
 impl ProbeReport {
-    fn new(probe: Probe) -> Self {
+    fn new(probe: Probe, delay: Duration, node: Arc<RelayNode>) -> Self {
         ProbeReport {
             probe,
+            delay,
+            node,
             ipv4_can_send: false,
             ipv6_can_send: false,
             latency: None,
@@ -547,23 +558,24 @@ pub struct QuicConfig {
 
 /// Executes a particular [`Probe`], including using a delayed start if needed.
 async fn run_probe(
-    relay_node: Arc<RelayNode>,
     probe: Probe,
+    delay: Duration,
+    relay_node: Arc<RelayNode>,
     #[cfg(not(wasm_browser))] socket_state: SocketState,
     #[cfg(any(test, feature = "test-utils"))] insecure_skip_relay_cert_verify: bool,
 ) -> Result<ProbeReport, RunProbeError> {
-    if !probe.delay().is_zero() {
+    if !delay.is_zero() {
         trace!("delaying probe");
-        time::sleep(probe.delay()).await;
+        time::sleep(delay).await;
     }
     debug!("starting probe");
 
     match probe {
-        Probe::Https { ref node, .. } => {
+        Probe::Https => {
             match measure_https_latency(
                 #[cfg(not(wasm_browser))]
                 &socket_state.dns_resolver,
-                node,
+                &relay_node,
                 #[cfg(any(test, feature = "test-utils"))]
                 insecure_skip_relay_cert_verify,
             )
@@ -571,7 +583,7 @@ async fn run_probe(
             {
                 Ok((latency, ip)) => {
                     debug!(?latency, "https latency");
-                    let mut report = ProbeReport::new(probe);
+                    let mut report = ProbeReport::new(probe, delay, relay_node);
                     report.latency = Some(latency);
                     match ip {
                         IpAddr::V4(_) => report.ipv4_can_send = true,
@@ -586,7 +598,7 @@ async fn run_probe(
         }
 
         #[cfg(not(wasm_browser))]
-        Probe::QadIpv4 { ref node, .. } => match socket_state.quic_client {
+        Probe::QadIpv4 => match socket_state.quic_client {
             Some(quic_client) => {
                 let relay_addr = get_relay_addr_ipv4(&socket_state.dns_resolver, &relay_node)
                     .await
@@ -596,12 +608,12 @@ async fn run_probe(
 
                 let (addr, latency) = run_quic_probe(
                     &quic_client,
-                    node.url.clone(),
+                    relay_node.url.clone(),
                     relay_addr.into(),
                     socket_state.ip_mapped_addrs,
                 )
                 .await?;
-                let mut report = ProbeReport::new(probe);
+                let mut report = ProbeReport::new(probe, delay, relay_node);
                 report.ipv4_can_send = true;
                 report.addr = Some(addr);
                 report.latency = Some(latency);
@@ -613,7 +625,7 @@ async fn run_probe(
             )),
         },
         #[cfg(not(wasm_browser))]
-        Probe::QadIpv6 { ref node, .. } => match socket_state.quic_client {
+        Probe::QadIpv6 => match socket_state.quic_client {
             Some(quic_client) => {
                 let relay_addr = get_relay_addr_ipv6(&socket_state.dns_resolver, &relay_node)
                     .await
@@ -623,12 +635,12 @@ async fn run_probe(
 
                 let (addr, latency) = run_quic_probe(
                     &quic_client,
-                    node.url.clone(),
+                    relay_node.url.clone(),
                     relay_addr.into(),
                     socket_state.ip_mapped_addrs,
                 )
                 .await?;
-                let mut report = ProbeReport::new(probe);
+                let mut report = ProbeReport::new(probe, delay, relay_node);
                 report.ipv6_can_send = true;
                 report.addr = Some(addr);
                 report.latency = Some(latency);
