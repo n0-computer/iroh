@@ -6,7 +6,7 @@ pub use imp::Options;
 mod imp {
     use std::collections::BTreeSet;
 
-    use crate::net_report::{reportgen::ProbeProto, QuicConfig};
+    use crate::net_report::{probes::ProbeProto, QuicConfig};
 
     /// Options for running probes
     ///
@@ -70,7 +70,7 @@ mod imp {
         }
 
         /// Turn the options into set of valid protocols
-        pub(crate) fn to_protocols(&self) -> BTreeSet<ProbeProto> {
+        pub fn to_protocols(&self) -> BTreeSet<ProbeProto> {
             let mut protocols = BTreeSet::new();
             if let Some(ref quic) = self.quic_config {
                 if quic.ipv4 {
