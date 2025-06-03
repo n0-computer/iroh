@@ -28,10 +28,9 @@ use std::{
 use http::StatusCode;
 use iroh_base::RelayUrl;
 #[cfg(not(wasm_browser))]
-use iroh_relay::dns::{DnsError, DnsResolver};
+use iroh_relay::dns::{DnsError, DnsResolver, StaggeredError};
 use iroh_relay::{
     defaults::{DEFAULT_RELAY_QUIC_PORT, DEFAULT_STUN_PORT},
-    dns::StaggeredError,
     http::RELAY_PROBE_PATH,
     protos::stun,
     RelayMap, RelayNode,
