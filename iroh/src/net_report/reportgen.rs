@@ -15,6 +15,8 @@
 //!   - Stop if there are no outstanding tasks/futures, or on timeout.
 //! - Sends the completed report to the net_report actor.
 
+#[cfg(not(wasm_browser))]
+use std::net::{SocketAddrV4, SocketAddrV6};
 use std::{
     collections::BTreeSet,
     net::{IpAddr, SocketAddr},
@@ -23,9 +25,12 @@ use std::{
 
 use http::StatusCode;
 use iroh_base::RelayUrl;
-#[cfg(not(wasm_browser))]
-use iroh_relay::dns::{DnsError, DnsResolver, StaggeredError};
 use iroh_relay::{defaults::DEFAULT_RELAY_QUIC_PORT, http::RELAY_PROBE_PATH, RelayMap, RelayNode};
+#[cfg(not(wasm_browser))]
+use iroh_relay::{
+    dns::{DnsError, DnsResolver, StaggeredError},
+    quic::QuicClient,
+};
 #[cfg(wasm_browser)]
 use n0_future::future::Pending;
 use n0_future::{
@@ -101,8 +106,8 @@ impl From<netwatch::netmon::State> for IfStateDetails {
 pub(crate) struct SocketState {
     /// The portmapper client, if there is one.
     pub(crate) port_mapper: Option<portmapper::Client>,
-    /// QUIC configuration to do QUIC address Discovery
-    pub(crate) quic_config: Option<QuicConfig>,
+    /// QUIC client to do QUIC address Discovery
+    pub(crate) quic_client: Option<QuicClient>,
     /// The DNS resolver to use for probes that need to resolve DNS records.
     pub(crate) dns_resolver: DnsResolver,
     /// Optional [`IpMappedAddresses`] used to enable QAD in iroh
@@ -524,8 +529,6 @@ pub(super) enum QuicError {
     NoEndpoint,
     #[snafu(display("URL must have 'host' to use QUIC address discovery probes"))]
     InvalidUrl,
-    #[snafu(display("Failed to create QUIC endpoint"))]
-    CreateClient { source: iroh_relay::quic::Error },
     #[snafu(display("Failed to get address and latency"))]
     GetAddr { source: iroh_relay::quic::Error },
 }
@@ -586,38 +589,61 @@ async fn run_probe(
         }
 
         #[cfg(not(wasm_browser))]
-        Probe::QadIpv4 { ref node, .. } | Probe::QadIpv6 { ref node, .. } => {
-            match socket_state.quic_config {
-                Some(quic_config) => {
-                    let relay_addr = match probe.proto() {
-                        ProbeProto::QadIpv4 => {
-                            get_relay_addr_ipv4(&socket_state.dns_resolver, &relay_node).await
-                        }
-                        ProbeProto::QadIpv6 => {
-                            get_relay_addr_ipv6(&socket_state.dns_resolver, &relay_node).await
-                        }
-                        _ => unreachable!(),
-                    }
+        Probe::QadIpv4 { ref node, .. } => match socket_state.quic_client {
+            Some(quic_client) => {
+                let relay_addr = get_relay_addr_ipv4(&socket_state.dns_resolver, &relay_node)
+                    .await
                     .map_err(|e| {
                         RunProbeError::AbortSet(probe_error::GetRelayAddrSnafu.into_error(e))
                     })?;
 
-                    let url = node.url.clone();
-                    let report = run_quic_probe(
-                        quic_config,
-                        url,
-                        relay_addr,
-                        probe,
-                        socket_state.ip_mapped_addrs,
-                    )
-                    .await?;
-                    Ok(report)
-                }
-                None => Err(RunProbeError::AbortSet(
-                    probe_error::QuicSnafu.into_error(quic_error::NoEndpointSnafu.build()),
-                )),
+                let url = node.url.clone();
+                let (addr, latency) = run_quic_probe(
+                    &quic_client,
+                    url,
+                    relay_addr.into(),
+                    socket_state.ip_mapped_addrs,
+                )
+                .await?;
+                let mut report = ProbeReport::new(probe);
+                report.ipv4_can_send = true;
+                report.addr = Some(addr);
+                report.latency = Some(latency);
+
+                Ok(report)
             }
-        }
+            None => Err(RunProbeError::AbortSet(
+                probe_error::QuicSnafu.into_error(quic_error::NoEndpointSnafu.build()),
+            )),
+        },
+        #[cfg(not(wasm_browser))]
+        Probe::QadIpv6 { ref node, .. } => match socket_state.quic_client {
+            Some(quic_client) => {
+                let relay_addr = get_relay_addr_ipv6(&socket_state.dns_resolver, &relay_node)
+                    .await
+                    .map_err(|e| {
+                        RunProbeError::AbortSet(probe_error::GetRelayAddrSnafu.into_error(e))
+                    })?;
+
+                let url = node.url.clone();
+                let (addr, latency) = run_quic_probe(
+                    &quic_client,
+                    url,
+                    relay_addr.into(),
+                    socket_state.ip_mapped_addrs,
+                )
+                .await?;
+                let mut report = ProbeReport::new(probe);
+                report.ipv6_can_send = true;
+                report.addr = Some(addr);
+                report.latency = Some(latency);
+
+                Ok(report)
+            }
+            None => Err(RunProbeError::AbortSet(
+                probe_error::QuicSnafu.into_error(quic_error::NoEndpointSnafu.build()),
+            )),
+        },
     }
 }
 
@@ -635,30 +661,13 @@ fn maybe_to_mapped_addr(
 /// Run a QUIC address discovery probe.
 #[cfg(not(wasm_browser))]
 async fn run_quic_probe(
-    quic_config: QuicConfig,
+    quic_client: &iroh_relay::quic::QuicClient,
     url: RelayUrl,
     relay_addr: SocketAddr,
-    probe: Probe,
     ip_mapped_addrs: Option<IpMappedAddresses>,
-) -> Result<ProbeReport, RunProbeError> {
+) -> Result<(SocketAddr, Duration), RunProbeError> {
     trace!("QAD probe start");
-    match probe.proto() {
-        ProbeProto::QadIpv4 => {
-            if !relay_addr.is_ipv4() {
-                return Err(RunProbeError::Error(
-                    probe_error::QuicSnafu {}.into_error(quic_error::InvalidUrlSnafu.build()),
-                ));
-            }
-        }
-        ProbeProto::QadIpv6 => {
-            if !relay_addr.is_ipv6() {
-                return Err(RunProbeError::Error(
-                    probe_error::QuicSnafu {}.into_error(quic_error::InvalidUrlSnafu.build()),
-                ));
-            }
-        }
-        _ => debug_assert!(false, "wrong probe"),
-    }
+
     let relay_addr = maybe_to_mapped_addr(ip_mapped_addrs, relay_addr);
     let host = match url.host_str() {
         Some(host) => host,
@@ -668,12 +677,6 @@ async fn run_quic_probe(
             ));
         }
     };
-    let quic_client = iroh_relay::quic::QuicClient::new(quic_config.ep, quic_config.client_config)
-        .map_err(|e| {
-            RunProbeError::Error(
-                probe_error::QuicSnafu.into_error(quic_error::CreateClientSnafu.into_error(e)),
-            )
-        })?;
     let (addr, latency) = quic_client
         .get_addr_and_latency(relay_addr, host)
         .await
@@ -683,15 +686,7 @@ async fn run_quic_probe(
             )
         })?;
 
-    let mut result = ProbeReport::new(probe.clone());
-    if matches!(probe, Probe::QadIpv4 { .. }) {
-        result.ipv4_can_send = true;
-    } else {
-        result.ipv6_can_send = true;
-    }
-    result.addr = Some(addr);
-    result.latency = Some(latency);
-    Ok(result)
+    Ok((addr, latency))
 }
 
 #[cfg(not(wasm_browser))]
@@ -827,7 +822,7 @@ pub enum GetRelayAddrError {
 async fn get_relay_addr_ipv4(
     dns_resolver: &DnsResolver,
     relay_node: &RelayNode,
-) -> Result<SocketAddr, GetRelayAddrError> {
+) -> Result<SocketAddrV4, GetRelayAddrError> {
     let port = get_quic_port(relay_node).context(get_relay_addr_error::MissingPortSnafu)?;
     relay_lookup_ipv4_staggered(dns_resolver, relay_node, port).await
 }
@@ -836,7 +831,7 @@ async fn get_relay_addr_ipv4(
 async fn get_relay_addr_ipv6(
     dns_resolver: &DnsResolver,
     relay_node: &RelayNode,
-) -> Result<SocketAddr, GetRelayAddrError> {
+) -> Result<SocketAddrV6, GetRelayAddrError> {
     let port = get_quic_port(relay_node).context(get_relay_addr_error::MissingPortSnafu)?;
     relay_lookup_ipv6_staggered(dns_resolver, relay_node, port).await
 }
@@ -849,7 +844,7 @@ async fn relay_lookup_ipv4_staggered(
     dns_resolver: &DnsResolver,
     relay: &RelayNode,
     port: u16,
-) -> Result<SocketAddr, GetRelayAddrError> {
+) -> Result<SocketAddrV4, GetRelayAddrError> {
     match relay.url.host() {
         Some(url::Host::Domain(hostname)) => {
             trace!(%hostname, "Performing DNS A lookup for relay addr");
@@ -860,15 +855,15 @@ async fn relay_lookup_ipv4_staggered(
                 Ok(mut addrs) => addrs
                     .next()
                     .map(|ip| ip.to_canonical())
-                    .map(|addr| {
-                        debug_assert!(addr.is_ipv4(), "bad DNS lookup: {:?}", addr);
-                        SocketAddr::new(addr, port)
+                    .map(|addr| match addr {
+                        IpAddr::V4(ip) => SocketAddrV4::new(ip, port),
+                        IpAddr::V6(_) => unreachable!("bad DNS lookup: {:?}", addr),
                     })
                     .ok_or(get_relay_addr_error::NoAddrFoundSnafu.build()),
                 Err(err) => Err(get_relay_addr_error::DnsLookupSnafu.into_error(err)),
             }
         }
-        Some(url::Host::Ipv4(addr)) => Ok(SocketAddr::new(addr.into(), port)),
+        Some(url::Host::Ipv4(addr)) => Ok(SocketAddrV4::new(addr, port)),
         Some(url::Host::Ipv6(_addr)) => Err(get_relay_addr_error::NoAddrFoundSnafu.build()),
         None => Err(get_relay_addr_error::InvalidHostnameSnafu.build()),
     }
@@ -882,7 +877,7 @@ async fn relay_lookup_ipv6_staggered(
     dns_resolver: &DnsResolver,
     relay: &RelayNode,
     port: u16,
-) -> Result<SocketAddr, GetRelayAddrError> {
+) -> Result<SocketAddrV6, GetRelayAddrError> {
     match relay.url.host() {
         Some(url::Host::Domain(hostname)) => {
             trace!(%hostname, "Performing DNS AAAA lookup for relay addr");
@@ -892,16 +887,16 @@ async fn relay_lookup_ipv6_staggered(
             {
                 Ok(mut addrs) => addrs
                     .next()
-                    .map(|addr| {
-                        debug_assert!(addr.is_ipv6(), "bad DNS lookup: {:?}", addr);
-                        SocketAddr::new(addr, port)
+                    .map(|addr| match addr {
+                        IpAddr::V4(_) => unreachable!("bad DNS lookup: {:?}", addr),
+                        IpAddr::V6(ip) => SocketAddrV6::new(ip, port, 0, 0),
                     })
                     .ok_or(get_relay_addr_error::NoAddrFoundSnafu.build()),
                 Err(err) => Err(get_relay_addr_error::DnsLookupSnafu.into_error(err)),
             }
         }
         Some(url::Host::Ipv4(_addr)) => Err(get_relay_addr_error::NoAddrFoundSnafu.build()),
-        Some(url::Host::Ipv6(addr)) => Ok(SocketAddr::new(addr.into(), port)),
+        Some(url::Host::Ipv6(addr)) => Ok(SocketAddrV6::new(addr, port, 0, 0)),
         None => Err(get_relay_addr_error::InvalidHostnameSnafu.build()),
     }
 }
@@ -1045,36 +1040,21 @@ mod tests {
         let client_config = iroh_relay::client::make_dangerous_client_config();
         let ep = quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0)).e()?;
         let client_addr = ep.local_addr().e()?;
-        let quic_addr_disc = QuicConfig {
-            ep: ep.clone(),
-            client_config,
-            ipv4: true,
-            ipv6: true,
-        };
         let url = relay.url.clone();
         let port = server.quic_addr().unwrap().port();
-        let probe = Probe::QadIpv4 {
-            delay: Duration::from_secs(0),
-            node: relay,
-        };
-        let probe = match run_quic_probe(
-            quic_addr_disc,
-            url,
-            (Ipv4Addr::LOCALHOST, port).into(),
-            probe,
-            None,
-        )
-        .await
-        {
-            Ok(probe) => probe,
-            Err(e) => match e {
-                RunProbeError::AbortSet(err) | RunProbeError::Error(err) => {
-                    return Err(err.into());
-                }
-            },
-        };
-        assert!(probe.ipv4_can_send);
-        assert_eq!(probe.addr.unwrap(), client_addr);
+
+        let quic_client = iroh_relay::quic::QuicClient::new(ep.clone(), client_config);
+        let (addr, _latency) =
+            match run_quic_probe(&quic_client, url, (Ipv4Addr::LOCALHOST, port).into(), None).await
+            {
+                Ok(probe) => probe,
+                Err(e) => match e {
+                    RunProbeError::AbortSet(err) | RunProbeError::Error(err) => {
+                        return Err(err.into());
+                    }
+                },
+            };
+        assert_eq!(addr, client_addr);
         ep.wait_idle().await;
         server.shutdown().await?;
         Ok(())

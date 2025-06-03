@@ -163,10 +163,16 @@ impl Client {
         debug!("net_report starting");
 
         let protocols = opts.to_protocols();
+
+        #[cfg(not(wasm_browser))]
+        let quic_client = opts
+            .quic_config
+            .map(|c| iroh_relay::quic::QuicClient::new(c.ep, c.client_config));
+
         #[cfg(not(wasm_browser))]
         let socket_state = SocketState {
             port_mapper: self.port_mapper.clone(),
-            quic_config: opts.quic_config,
+            quic_client,
             dns_resolver: self.dns_resolver.clone(),
             ip_mapped_addrs: self.ip_mapped_addrs.clone(),
         };
