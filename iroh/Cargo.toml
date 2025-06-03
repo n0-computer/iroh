@@ -10,7 +10,7 @@ repository = "https://github.com/n0-computer/iroh"
 keywords = ["quic", "networking", "holepunching", "p2p"]
 
 # Sadly this also needs to be updated in .github/workflows/ci.yml
-rust-version = "1.81"
+rust-version = "1.85"
 
 [lib]
 # We need "cdylib" to actually generate .wasm files when we run with --target=wasm32-unknown-unknown.
@@ -21,8 +21,8 @@ crate-type = ["lib", "cdylib"]
 workspace = true
 
 [dependencies]
-aead = { version = "0.5.2", features = ["bytes"] }
-anyhow = { version = "1" }
+anyhow = "1.0.98"
+aead = { version = "0.5.2", features = ["bytes", "std"] }
 atomic-waker = "1.1.2"
 concurrent-queue = "2.5"
 backon = { version = "1.4" }
@@ -43,6 +43,8 @@ http = "1"
 iroh-base = { version = "0.35.0", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
 iroh-relay = { version = "0.35", path = "../iroh-relay", default-features = false }
 n0-future = "0.1.2"
+n0-snafu = "0.2.0"
+nested_enum_utils = "0.2.1"
 netwatch = { version = "0.5" }
 pin-project = "1"
 pkarr = { version = "3.7", default-features = false, features = [
@@ -52,7 +54,6 @@ quinn = { package = "iroh-quinn", version = "0.13.0", default-features = false, 
 quinn-proto = { package = "iroh-quinn-proto", version = "0.13.0" }
 quinn-udp = { package = "iroh-quinn-udp", version = "0.5.7" }
 rand = "0.8"
-rcgen = "0.13"
 reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls",
     "stream",
@@ -61,9 +62,9 @@ ring = "0.17"
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 serde = { version = "1.0.219", features = ["derive", "rc"] }
 smallvec = "1.11.1"
+snafu = { version = "0.8.5", features = ["rust_1_81"] }
 strum = { version = "0.26", features = ["derive"] }
 stun-rs = "0.1.11"
-thiserror = "2"
 tokio = { version = "1.44.1", features = [
     "io-util",
     "macros",
@@ -77,7 +78,6 @@ url = { version = "2.5", features = ["serde"] }
 webpki = { package = "rustls-webpki", version = "0.103", features = ["ring"] }
 webpki_types = { package = "rustls-pki-types", version = "1.12" }
 webpki-roots = "0.26"
-x509-parser = "0.16"
 z32 = "1.0.3"
 
 # fix minimal versions
@@ -102,7 +102,7 @@ tracing-subscriber = { version = "0.3", features = [
     "env-filter",
 ], optional = true }
 indicatif = { version = "0.17", features = ["tokio"], optional = true }
-parse-size = { version = "=1.0.0", optional = true } # pinned version to avoid bumping msrv to 1.81
+parse-size = { version = "=1.0.0", optional = true, features = ['std'] } # pinned version to avoid bumping msrv to 1.81
 
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
@@ -135,7 +135,6 @@ getrandom = { version = "0.3.2", features = ["wasm_js"] }
 # target-common test/dev dependencies
 [dev-dependencies]
 postcard = { version = "1.1.1", features = ["use-std"] }
-testresult = "0.4.0"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # *non*-wasm-in-browser test/dev dependencies
@@ -191,15 +190,19 @@ path = "tests/integration.rs"
 
 [[example]]
 name = "listen"
+required-features = ["examples"]
 
 [[example]]
 name = "connect"
+required-features = ["examples"]
 
 [[example]]
 name = "listen-unreliable"
+required-features = ["examples"]
 
 [[example]]
 name = "connect-unreliable"
+required-features = ["examples"]
 
 [[example]]
 name = "dht_discovery"

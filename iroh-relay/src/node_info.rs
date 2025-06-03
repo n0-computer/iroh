@@ -37,22 +37,62 @@ use std::{
     fmt::{self, Display},
     hash::Hash,
     net::SocketAddr,
-    str::FromStr,
+    str::{FromStr, Utf8Error},
 };
 
-use anyhow::{anyhow, Result};
 #[cfg(not(wasm_browser))]
 use hickory_resolver::{proto::ProtoError, Name};
-use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
+use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey, SignatureError};
+use nested_enum_utils::common_fields;
+use snafu::{Backtrace, ResultExt, Snafu};
 #[cfg(not(wasm_browser))]
 use tracing::warn;
 use url::Url;
 
 #[cfg(not(wasm_browser))]
-use crate::{defaults::timeouts::DNS_TIMEOUT, dns::DnsResolver};
+use crate::{
+    defaults::timeouts::DNS_TIMEOUT,
+    dns::{DnsError, DnsResolver},
+};
 
 /// The DNS name for the iroh TXT record.
 pub const IROH_TXT_NAME: &str = "_iroh";
+
+#[common_fields({
+    backtrace: Option<Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+#[snafu(visibility(pub(crate)))]
+pub enum EncodingError {
+    #[snafu(transparent)]
+    FailedBuildingPacket {
+        source: pkarr::errors::SignedPacketBuildError,
+    },
+    #[snafu(display("invalid TXT entry"))]
+    InvalidTxtEntry { source: pkarr::dns::SimpleDnsError },
+}
+
+#[common_fields({
+    backtrace: Option<Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+#[snafu(visibility(pub(crate)))]
+pub enum DecodingError {
+    #[snafu(display("node id was not encoded in valid z32"))]
+    InvalidEncodingZ32 { source: z32::Z32Error },
+    #[snafu(display("length must be 32 bytes, but got {len} byte(s)"))]
+    InvalidLength { len: usize },
+    #[snafu(display("node id is not a valid public key"))]
+    InvalidSignature { source: SignatureError },
+}
 
 /// Extension methods for [`NodeId`] to encode to and decode from [`z32`],
 /// which is the encoding used in [`pkarr`] domain names.
@@ -65,7 +105,7 @@ pub trait NodeIdExt {
     /// Parses a [`NodeId`] from [`z-base-32`] encoding.
     ///
     /// [z-base-32]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
-    fn from_z32(s: &str) -> Result<NodeId>;
+    fn from_z32(s: &str) -> Result<NodeId, DecodingError>;
 }
 
 impl NodeIdExt for NodeId {
@@ -73,10 +113,12 @@ impl NodeIdExt for NodeId {
         z32::encode(self.as_bytes())
     }
 
-    fn from_z32(s: &str) -> Result<NodeId> {
-        let bytes = z32::decode(s.as_bytes()).map_err(|_| anyhow!("invalid z32"))?;
-        let bytes: &[u8; 32] = &bytes.try_into().map_err(|_| anyhow!("not 32 bytes long"))?;
-        let node_id = NodeId::from_bytes(bytes)?;
+    fn from_z32(s: &str) -> Result<NodeId, DecodingError> {
+        let bytes = z32::decode(s.as_bytes()).context(InvalidEncodingZ32Snafu)?;
+        let bytes: &[u8; 32] = &bytes
+            .try_into()
+            .map_err(|_| InvalidLengthSnafu { len: s.len() }.build())?;
+        let node_id = NodeId::from_bytes(bytes).context(InvalidSignatureSnafu)?;
         Ok(node_id)
     }
 }
@@ -194,19 +236,20 @@ impl UserData {
 }
 
 /// Error returned when an input value is too long for [`UserData`].
-#[derive(Debug, thiserror::Error)]
-#[error("User-defined data exceeds max length")]
-pub struct MaxLengthExceededError;
+#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+pub struct MaxLengthExceededError {
+    backtrace: Option<Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+}
 
 impl TryFrom<String> for UserData {
     type Error = MaxLengthExceededError;
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
-        if value.len() > Self::MAX_LENGTH {
-            Err(MaxLengthExceededError)
-        } else {
-            Ok(Self(value))
-        }
+        snafu::ensure!(value.len() <= Self::MAX_LENGTH, MaxLengthExceededSnafu);
+        Ok(Self(value))
     }
 }
 
@@ -214,11 +257,8 @@ impl FromStr for UserData {
     type Err = MaxLengthExceededError;
 
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
-        if s.len() > Self::MAX_LENGTH {
-            Err(MaxLengthExceededError)
-        } else {
-            Ok(Self(s.to_string()))
-        }
+        snafu::ensure!(s.len() <= Self::MAX_LENGTH, MaxLengthExceededSnafu);
+        Ok(Self(s.to_string()))
     }
 }
 
@@ -349,13 +389,13 @@ impl NodeInfo {
 
     #[cfg(not(wasm_browser))]
     /// Parses a [`NodeInfo`] from a TXT records lookup.
-    pub fn from_txt_lookup(lookup: crate::dns::TxtLookup) -> Result<Self> {
+    pub fn from_txt_lookup(lookup: crate::dns::TxtLookup) -> Result<Self, ParseError> {
         let attrs = TxtAttrs::from_txt_lookup(lookup)?;
         Ok(attrs.into())
     }
 
     /// Parses a [`NodeInfo`] from a [`pkarr::SignedPacket`].
-    pub fn from_pkarr_signed_packet(packet: &pkarr::SignedPacket) -> Result<Self> {
+    pub fn from_pkarr_signed_packet(packet: &pkarr::SignedPacket) -> Result<Self, ParseError> {
         let attrs = TxtAttrs::from_pkarr_signed_packet(packet)?;
         Ok(attrs.into())
     }
@@ -367,7 +407,7 @@ impl NodeInfo {
         &self,
         secret_key: &SecretKey,
         ttl: u32,
-    ) -> Result<pkarr::SignedPacket> {
+    ) -> Result<pkarr::SignedPacket, EncodingError> {
         self.to_attrs().to_pkarr_signed_packet(secret_key, ttl)
     }
 
@@ -375,6 +415,59 @@ impl NodeInfo {
     pub fn to_txt_strings(&self) -> Vec<String> {
         self.to_attrs().to_txt_strings().collect()
     }
+}
+
+#[cfg(not(wasm_browser))]
+#[common_fields({
+    backtrace: Option<Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+#[snafu(visibility(pub(crate)))]
+pub enum LookupError {
+    #[snafu(display("Malformed txt from lookup"))]
+    ParseError {
+        #[snafu(source(from(ParseError, Box::new)))]
+        source: Box<ParseError>,
+    },
+    #[snafu(display("Failed to resolve TXT record"))]
+    LookupFailed {
+        #[snafu(source(from(DnsError, Box::new)))]
+        source: Box<DnsError>,
+    },
+    #[cfg(not(wasm_browser))]
+    #[snafu(display("Name is not a valid TXT label"))]
+    InvalidLabel { source: ProtoError },
+}
+
+#[common_fields({
+    backtrace: Option<Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+#[snafu(visibility(pub(crate)))]
+pub enum ParseError {
+    #[snafu(display("Expected format `key=value`, received `{s}`"))]
+    UnexpectedFormat { s: String },
+    #[snafu(display("Could not convert key to Attr"))]
+    AttrFromString { key: String },
+    #[snafu(display("Expected 2 labels, received {num_labels}"))]
+    NumLabels { num_labels: usize },
+    #[snafu(display("Could not parse labels"))]
+    Utf8 { source: Utf8Error },
+    #[snafu(display("Record is not an `iroh` record, expected `_iroh`, got `{label}`"))]
+    NotAnIrohRecord { label: String },
+    #[snafu(transparent)]
+    DecodingError {
+        #[snafu(source(from(DecodingError, Box::new)))]
+        source: Box<DecodingError>,
+    },
 }
 
 impl std::ops::Deref for NodeInfo {
@@ -396,18 +489,25 @@ impl std::ops::DerefMut for NodeInfo {
 /// [`IROH_TXT_NAME`] and the second label to be a z32 encoded [`NodeId`]. Ignores
 /// subsequent labels.
 #[cfg(not(wasm_browser))]
-fn node_id_from_hickory_name(name: &hickory_resolver::proto::rr::Name) -> Option<NodeId> {
+fn node_id_from_hickory_name(
+    name: &hickory_resolver::proto::rr::Name,
+) -> Result<NodeId, ParseError> {
     if name.num_labels() < 2 {
-        return None;
+        return Err(NumLabelsSnafu {
+            num_labels: name.num_labels(),
+        }
+        .build());
     }
     let mut labels = name.iter();
-    let label = std::str::from_utf8(labels.next().expect("num_labels checked")).ok()?;
+    let label =
+        std::str::from_utf8(labels.next().expect("num_labels checked")).context(Utf8Snafu)?;
     if label != IROH_TXT_NAME {
-        return None;
+        return Err(NotAnIrohRecordSnafu { label }.build());
     }
-    let label = std::str::from_utf8(labels.next().expect("num_labels checked")).ok()?;
-    let node_id = NodeId::from_z32(label).ok()?;
-    Some(node_id)
+    let label =
+        std::str::from_utf8(labels.next().expect("num_labels checked")).context(Utf8Snafu)?;
+    let node_id = NodeId::from_z32(label)?;
+    Ok(node_id)
 }
 
 /// The attributes supported by iroh for [`IROH_TXT_NAME`] DNS resource records.
@@ -467,26 +567,27 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     pub(crate) fn from_strings(
         node_id: NodeId,
         strings: impl Iterator<Item = String>,
-    ) -> Result<Self> {
+    ) -> Result<Self, ParseError> {
         let mut attrs: BTreeMap<T, Vec<String>> = BTreeMap::new();
         for s in strings {
             let mut parts = s.split('=');
             let (Some(key), Some(value)) = (parts.next(), parts.next()) else {
-                continue;
+                return Err(UnexpectedFormatSnafu { s }.build());
             };
-            let Ok(attr) = T::from_str(key) else {
-                continue;
-            };
+            let attr = T::from_str(key).map_err(|_| AttrFromStringSnafu { key }.build())?;
             attrs.entry(attr).or_default().push(value.to_string());
         }
         Ok(Self { attrs, node_id })
     }
 
     #[cfg(not(wasm_browser))]
-    async fn lookup(resolver: &DnsResolver, name: Name) -> Result<Self> {
+    async fn lookup(resolver: &DnsResolver, name: Name) -> Result<Self, LookupError> {
         let name = ensure_iroh_txt_label(name)?;
-        let lookup = resolver.lookup_txt(name, DNS_TIMEOUT).await?;
-        let attrs = Self::from_txt_lookup(lookup)?;
+        let lookup = resolver
+            .lookup_txt(name, DNS_TIMEOUT)
+            .await
+            .context(LookupFailedSnafu)?;
+        let attrs = Self::from_txt_lookup(lookup).context(ParseSnafu)?;
         Ok(attrs)
     }
 
@@ -496,15 +597,18 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         resolver: &DnsResolver,
         node_id: &NodeId,
         origin: &str,
-    ) -> Result<Self> {
+    ) -> Result<Self, LookupError> {
         let name = node_domain(node_id, origin)?;
         TxtAttrs::lookup(resolver, name).await
     }
 
     /// Looks up attributes by DNS name.
     #[cfg(not(wasm_browser))]
-    pub(crate) async fn lookup_by_name(resolver: &DnsResolver, name: &str) -> Result<Self> {
-        let name = Name::from_str(name)?;
+    pub(crate) async fn lookup_by_name(
+        resolver: &DnsResolver,
+        name: &str,
+    ) -> Result<Self, LookupError> {
+        let name = Name::from_str(name).context(InvalidLabelSnafu)?;
         TxtAttrs::lookup(resolver, name).await
     }
 
@@ -519,7 +623,9 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
     }
 
     /// Parses a [`pkarr::SignedPacket`].
-    pub(crate) fn from_pkarr_signed_packet(packet: &pkarr::SignedPacket) -> Result<Self> {
+    pub(crate) fn from_pkarr_signed_packet(
+        packet: &pkarr::SignedPacket,
+    ) -> Result<Self, ParseError> {
         use pkarr::dns::{
             rdata::RData,
             {self},
@@ -527,7 +633,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         let pubkey = packet.public_key();
         let pubkey_z32 = pubkey.to_z32();
         let node_id = NodeId::from(*pubkey.verifying_key());
-        let zone = dns::Name::new(&pubkey_z32)?;
+        let zone = dns::Name::new(&pubkey_z32).expect("z32 encoding is valid");
         let txt_data = packet
             .all_resource_records()
             .filter_map(|rr| match &rr.rdata {
@@ -544,14 +650,13 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
 
     /// Parses a TXT records lookup.
     #[cfg(not(wasm_browser))]
-    pub(crate) fn from_txt_lookup(lookup: crate::dns::TxtLookup) -> Result<Self> {
-        let queried_node_id = node_id_from_hickory_name(lookup.0.query().name())
-            .ok_or_else(|| anyhow!("invalid DNS answer: not a query for _iroh.z32encodedpubkey"))?;
+    pub(crate) fn from_txt_lookup(lookup: crate::dns::TxtLookup) -> Result<Self, ParseError> {
+        let queried_node_id = node_id_from_hickory_name(lookup.0.query().name())?;
 
         let strings = lookup.0.as_lookup().record_iter().filter_map(|record| {
             match node_id_from_hickory_name(record.name()) {
                 // Filter out only TXT record answers that match the node_id we searched for.
-                Some(n) if n == queried_node_id => match record.data().as_txt() {
+                Ok(n) if n == queried_node_id => match record.data().as_txt() {
                     Some(txt) => Some(txt.to_string()),
                     None => {
                         warn!(
@@ -562,7 +667,7 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
                         None
                     }
                 },
-                Some(answered_node_id) => {
+                Ok(answered_node_id) => {
                     warn!(
                         ?queried_node_id,
                         ?answered_node_id,
@@ -570,10 +675,11 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
                     );
                     None
                 }
-                None => {
+                Err(e) => {
                     warn!(
                         ?queried_node_id,
                         name = ?record.name(),
+                        err = ?e,
                         "unexpected answer record name for DNS query"
                     );
                     None
@@ -597,15 +703,15 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
         &self,
         secret_key: &SecretKey,
         ttl: u32,
-    ) -> Result<pkarr::SignedPacket> {
+    ) -> Result<pkarr::SignedPacket, EncodingError> {
         use pkarr::dns::{self, rdata};
         let keypair = pkarr::Keypair::from_secret_key(&secret_key.to_bytes());
-        let name = dns::Name::new(IROH_TXT_NAME)?;
+        let name = dns::Name::new(IROH_TXT_NAME).expect("constant");
 
         let mut builder = pkarr::SignedPacket::builder();
         for s in self.to_txt_strings() {
             let mut txt = rdata::TXT::new();
-            txt.add_string(&s)?;
+            txt.add_string(&s).context(InvalidTxtEntrySnafu)?;
             builder = builder.txt(name.clone(), txt.into_owned(), ttl);
         }
         let signed_packet = builder.build(&keypair)?;
@@ -614,18 +720,18 @@ impl<T: FromStr + Display + Hash + Ord> TxtAttrs<T> {
 }
 
 #[cfg(not(wasm_browser))]
-fn ensure_iroh_txt_label(name: Name) -> Result<Name, ProtoError> {
+fn ensure_iroh_txt_label(name: Name) -> Result<Name, LookupError> {
     if name.iter().next() == Some(IROH_TXT_NAME.as_bytes()) {
         Ok(name)
     } else {
-        Name::parse(IROH_TXT_NAME, Some(&name))
+        Name::parse(IROH_TXT_NAME, Some(&name)).context(InvalidLabelSnafu)
     }
 }
 
 #[cfg(not(wasm_browser))]
-fn node_domain(node_id: &NodeId, origin: &str) -> Result<Name> {
+fn node_domain(node_id: &NodeId, origin: &str) -> Result<Name, LookupError> {
     let domain = format!("{}.{}", NodeId::to_z32(node_id), origin);
-    let domain = Name::from_str(&domain)?;
+    let domain = Name::from_str(&domain).context(InvalidLabelSnafu)?;
     Ok(domain)
 }
 
@@ -645,7 +751,7 @@ mod tests {
         Name,
     };
     use iroh_base::{NodeId, SecretKey};
-    use testresult::TestResult;
+    use n0_snafu::{Result, ResultExt};
 
     use super::{NodeData, NodeIdExt, NodeInfo};
 
@@ -687,10 +793,11 @@ mod tests {
     /// The reason was that only the first address was parsed (e.g. 192.168.96.145 in
     /// this example), which could be a local, unreachable address.
     #[test]
-    fn test_from_hickory_lookup() -> TestResult {
+    fn test_from_hickory_lookup() -> Result {
         let name = Name::from_utf8(
             "_iroh.dgjpkxyn3zyrk3zfads5duwdgbqpkwbjxfj4yt7rezidr3fijccy.dns.iroh.link.",
-        )?;
+        )
+        .context("dns name")?;
         let query = Query::query(name.clone(), RecordType::TXT);
         let records = [
             Record::from_rdata(
@@ -714,7 +821,8 @@ mod tests {
                         "a55f26132e5e43de834d534332f66a20d480c3e50a13a312a071adea6569981e"
                     )?
                     .to_z32()
-                ))?,
+                ))
+                .context("name")?,
                 30,
                 RData::TXT(TXT::new(vec![
                     "relay=https://euw1-1.relay.iroh.network./".to_string()
@@ -722,7 +830,7 @@ mod tests {
             ),
             // Test a record with a completely different name
             Record::from_rdata(
-                Name::from_utf8("dns.iroh.link.")?,
+                Name::from_utf8("dns.iroh.link.").context("name")?,
                 30,
                 RData::TXT(TXT::new(vec![
                     "relay=https://euw1-1.relay.iroh.network./".to_string()
@@ -746,8 +854,8 @@ mod tests {
         )?)
         .with_relay_url(Some("https://euw1-1.relay.iroh.network./".parse()?))
         .with_direct_addresses(BTreeSet::from([
-            "192.168.96.145:60165".parse()?,
-            "213.208.157.87:60165".parse()?,
+            "192.168.96.145:60165".parse().unwrap(),
+            "213.208.157.87:60165".parse().unwrap(),
         ]));
 
         assert_eq!(node_info, expected_node_info);

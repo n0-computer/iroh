@@ -16,7 +16,7 @@ env:
   RUST_BACKTRACE: 1
   RUSTFLAGS: -Dwarnings
   RUSTDOCFLAGS: -Dwarnings
-  MSRV: "1.81"
+  MSRV: "1.85"
   SCCACHE_CACHE_SIZE: "10G"
   IROH_FORCE_STAGING_RELAYS: "1"
 
@@ -256,7 +256,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: nightly-2024-11-30
+          toolchain: nightly-2025-02-20
       - name: Install sccache
         uses: mozilla-actions/sccache-action@v0.0.9
 

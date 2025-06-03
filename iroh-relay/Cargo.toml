@@ -8,7 +8,7 @@ license = "MIT OR Apache-2.0"
 authors = ["n0 team"]
 repository = "https://github.com/n0-computer/iroh"
 keywords = ["networking", "holepunching", "p2p"]
-rust-version = "1.81"
+rust-version = "1.85"
 
 [lib]
 # We need "cdylib" to actually generate .wasm files when we run with --target=wasm32-unknown-unknown.
@@ -19,7 +19,6 @@ crate-type = ["lib", "cdylib"]
 workspace = true
 
 [dependencies]
-anyhow = { version = "1.0.98" }
 bytes = "1.7"
 derive_more = { version = "1.0.0", features = [
     "debug",
@@ -53,7 +52,6 @@ rustls = { version = "0.23", default-features = false, features = ["ring"] }
 serde = { version = "1", features = ["derive", "rc"] }
 strum = { version = "0.26", features = ["derive"] }
 stun-rs = "0.1.11"
-thiserror = "2"
 tokio = { version = "1", features = [
     "io-util",
     "macros",
@@ -74,6 +72,9 @@ webpki_types = { package = "rustls-pki-types", version = "1.12" }
 data-encoding = "2.6.0"
 lru = "0.13"
 z32 = "1.0.3"
+snafu = { version = "0.8.5", features = ["rust_1_81"] }
+n0-snafu = "0.2.0"
+nested_enum_utils = "0.2.0"
 
 # server feature
 clap = { version = "4", features = ["derive"], optional = true }
@@ -122,7 +123,6 @@ clap = { version = "4", features = ["derive"] }
 crypto_box = { version = "0.9.1", features = ["serde", "chacha20"] }
 proptest = "1.2.0"
 rand_chacha = "0.3.1"
-testresult = "0.4.0"
 tokio = { version = "1", features = [
     "io-util",
     "sync",

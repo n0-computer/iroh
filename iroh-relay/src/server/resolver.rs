@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
 use n0_future::{
     task::{self, AbortOnDropHandle},
     time::{self, Duration},
@@ -31,10 +30,8 @@ where
     Loader: Send + reloadable_state::core::Loader<Value = CertifiedKey> + 'static,
 {
     /// Perform the initial load and construct the [`ReloadingResolver`].
-    pub async fn init(loader: Loader, interval: Duration) -> Result<Self> {
-        let (reloadable, _) = Reloadable::init_load(loader)
-            .await
-            .map_err(|_| anyhow!("Failed to load the certificate"))?;
+    pub async fn init(loader: Loader, interval: Duration) -> Result<Self, Loader::Error> {
+        let (reloadable, _) = Reloadable::init_load(loader).await?;
         let reloadable = Arc::new(reloadable);
 
         let cancel_token = CancellationToken::new();

@@ -6,22 +6,31 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use anyhow::{Context, Result};
 use n0_future::time::Duration;
+use nested_enum_utils::common_fields;
+use snafu::{ResultExt, Snafu};
 use surge_ping::{Client, Config, IcmpPacket, PingIdentifier, PingSequence, ICMP};
 use tracing::debug;
 
 use crate::net_report::defaults::timeouts::DEFAULT_PINGER_TIMEOUT as DEFAULT_TIMEOUT;
 
 /// Whether this error was because we couldn't create a client or a send error.
-#[derive(Debug, thiserror::Error)]
+#[allow(missing_docs)]
+#[common_fields({
+    backtrace: Option<snafu::Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
 pub enum PingError {
-    /// Could not create client, probably bind error.
-    #[error("Error creating ping client")]
-    Client(#[from] anyhow::Error),
+    #[snafu(display("failed to create IPv4 ping client"))]
+    CreateClientIpv4 { source: std::io::Error },
+    #[snafu(display("failed to create IPv6 ping client"))]
+    CreateClientIpv6 { source: std::io::Error },
     /// Could not send ping.
-    #[error("Error sending ping")]
-    Ping(#[from] surge_ping::SurgeError),
+    #[snafu(display("failed to send ping"))]
+    Ping { source: surge_ping::SurgeError },
 }
 
 /// Allows sending ICMP echo requests to a host in order to determine network latency.
@@ -51,7 +60,7 @@ impl Pinger {
     ///
     /// We do this because it means we do not bind a socket until we really try to send a
     /// ping.  It makes it more transparent to use the pinger.
-    fn get_client(&self, kind: ICMP) -> Result<Client> {
+    fn get_client(&self, kind: ICMP) -> Result<Client, PingError> {
         let client = match kind {
             ICMP::V4 => {
                 let mut opt_client = self.0.client_v4.lock().expect("poisoned");
@@ -59,7 +68,7 @@ impl Pinger {
                     Some(ref client) => client.clone(),
                     None => {
                         let cfg = Config::builder().kind(kind).build();
-                        let client = Client::new(&cfg).context("failed to create IPv4 pinger")?;
+                        let client = Client::new(&cfg).context(CreateClientIpv4Snafu)?;
                         *opt_client = Some(client.clone());
                         client
                     }
@@ -71,7 +80,7 @@ impl Pinger {
                     Some(ref client) => client.clone(),
                     None => {
                         let cfg = Config::builder().kind(kind).build();
-                        let client = Client::new(&cfg).context("failed to create IPv6 pinger")?;
+                        let client = Client::new(&cfg).context(CreateClientIpv6Snafu)?;
                         *opt_client = Some(client.clone());
                         client
                     }
@@ -84,14 +93,18 @@ impl Pinger {
     /// Send a ping request with associated data, returning the perceived latency.
     pub async fn send(&self, addr: IpAddr, data: &[u8]) -> Result<Duration, PingError> {
         let client = match addr {
-            IpAddr::V4(_) => self.get_client(ICMP::V4).map_err(PingError::Client)?,
-            IpAddr::V6(_) => self.get_client(ICMP::V6).map_err(PingError::Client)?,
+            IpAddr::V4(_) => self.get_client(ICMP::V4)?,
+            IpAddr::V6(_) => self.get_client(ICMP::V6)?,
         };
         let ident = PingIdentifier(rand::random());
         debug!(%addr, %ident, "Creating pinger");
         let mut pinger = client.pinger(addr, ident).await;
         pinger.timeout(DEFAULT_TIMEOUT); // todo: timeout too large for net_report
-        match pinger.ping(PingSequence(0), data).await? {
+        match pinger
+            .ping(PingSequence(0), data)
+            .await
+            .context(PingSnafu)?
+        {
             (IcmpPacket::V4(packet), dur) => {
                 debug!(
                     "{} bytes from {}: icmp_seq={} ttl={:?} time={:0.2?}",
@@ -138,12 +151,15 @@ mod tests {
             Ok(duration) => {
                 assert!(!duration.is_zero());
             }
-            Err(PingError::Client(err)) => {
+            Err(
+                PingError::CreateClientIpv4 { source, .. }
+                | PingError::CreateClientIpv6 { source, .. },
+            ) => {
                 // We don't have permission, too bad.
-                error!("no ping permissions: {err:#}");
+                error!("no ping permissions: {source:#}");
             }
-            Err(PingError::Ping(err)) => {
-                panic!("ping failed: {err:#}");
+            Err(PingError::Ping { source, .. }) => {
+                panic!("ping failed: {source:#}");
             }
         }
 
@@ -151,12 +167,15 @@ mod tests {
             Ok(duration) => {
                 assert!(!duration.is_zero());
             }
-            Err(PingError::Client(err)) => {
+            Err(
+                PingError::CreateClientIpv4 { source, .. }
+                | PingError::CreateClientIpv6 { source, .. },
+            ) => {
                 // We don't have permission, too bad.
-                error!("no ping permissions: {err:#}");
+                error!("no ping permissions: {source:#}");
             }
-            Err(PingError::Ping(err)) => {
-                error!("ping failed, probably no IPv6 stack: {err:#}");
+            Err(PingError::Ping { source, .. }) => {
+                error!("ping failed, probably no IPv6 stack: {source:#}");
             }
         }
     }

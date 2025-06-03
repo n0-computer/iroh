@@ -12,6 +12,7 @@ use std::str::FromStr;
 
 use clap::Parser;
 use iroh::{Endpoint, NodeId};
+use n0_snafu::ResultExt;
 use tracing::warn;
 use url::Url;
 
@@ -40,7 +41,7 @@ enum PkarrRelay {
 }
 
 impl FromStr for PkarrRelay {
-    type Err = anyhow::Error;
+    type Err = url::ParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
@@ -60,7 +61,7 @@ fn build_discovery(args: Args) -> iroh::discovery::pkarr::dht::Builder {
     }
 }
 
-async fn chat_server(args: Args) -> anyhow::Result<()> {
+async fn chat_server(args: Args) -> n0_snafu::Result<()> {
     let secret_key = iroh::SecretKey::generate(rand::rngs::OsRng);
     let node_id = secret_key.public();
     let discovery = build_discovery(args);
@@ -70,7 +71,7 @@ async fn chat_server(args: Args) -> anyhow::Result<()> {
         .discovery(discovery)
         .bind()
         .await?;
-    let zid = pkarr::PublicKey::try_from(node_id.as_bytes())?.to_z32();
+    let zid = pkarr::PublicKey::try_from(node_id.as_bytes()).e()?.to_z32();
     println!("Listening on {}", node_id);
     println!("pkarr z32: {}", zid);
     println!("see https://app.pkarr.org/?pk={}", zid);
@@ -85,11 +86,11 @@ async fn chat_server(args: Args) -> anyhow::Result<()> {
             }
         };
         tokio::spawn(async move {
-            let connection = connecting.await?;
+            let connection = connecting.await.e()?;
             let remote_node_id = connection.remote_node_id()?;
             println!("got connection from {}", remote_node_id);
             // just leave the tasks hanging. this is just an example.
-            let (mut writer, mut reader) = connection.accept_bi().await?;
+            let (mut writer, mut reader) = connection.accept_bi().await.e()?;
             let _copy_to_stdout = tokio::spawn(async move {
                 tokio::io::copy(&mut reader, &mut tokio::io::stdout()).await
             });
@@ -97,13 +98,13 @@ async fn chat_server(args: Args) -> anyhow::Result<()> {
                 tokio::spawn(
                     async move { tokio::io::copy(&mut tokio::io::stdin(), &mut writer).await },
                 );
-            anyhow::Ok(())
+            Ok::<_, n0_snafu::Error>(())
         });
     }
     Ok(())
 }
 
-async fn chat_client(args: Args) -> anyhow::Result<()> {
+async fn chat_client(args: Args) -> n0_snafu::Result<()> {
     let remote_node_id = args.node_id.unwrap();
     let secret_key = iroh::SecretKey::generate(rand::rngs::OsRng);
     let node_id = secret_key.public();
@@ -118,18 +119,18 @@ async fn chat_client(args: Args) -> anyhow::Result<()> {
     println!("We are {} and connecting to {}", node_id, remote_node_id);
     let connection = endpoint.connect(remote_node_id, CHAT_ALPN).await?;
     println!("connected to {}", remote_node_id);
-    let (mut writer, mut reader) = connection.open_bi().await?;
+    let (mut writer, mut reader) = connection.open_bi().await.e()?;
     let _copy_to_stdout =
         tokio::spawn(async move { tokio::io::copy(&mut reader, &mut tokio::io::stdout()).await });
     let _copy_from_stdin =
         tokio::spawn(async move { tokio::io::copy(&mut tokio::io::stdin(), &mut writer).await });
-    _copy_to_stdout.await??;
-    _copy_from_stdin.await??;
+    _copy_to_stdout.await.e()?.e()?;
+    _copy_from_stdin.await.e()?.e()?;
     Ok(())
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> n0_snafu::Result<()> {
     tracing_subscriber::fmt::init();
     let args = Args::parse();
     if args.node_id.is_some() {

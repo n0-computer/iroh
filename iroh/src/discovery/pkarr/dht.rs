@@ -7,7 +7,6 @@
 //! [pkarr module]: super
 use std::sync::{Arc, Mutex};
 
-use anyhow::Result;
 use iroh_base::{NodeId, SecretKey};
 use n0_future::{
     boxed::BoxStream,
@@ -21,7 +20,7 @@ use url::Url;
 use crate::{
     discovery::{
         pkarr::{DEFAULT_PKARR_TTL, N0_DNS_PKARR_RELAY_PROD},
-        Discovery, DiscoveryItem, IntoDiscovery, NodeData,
+        Discovery, DiscoveryError, DiscoveryItem, IntoDiscovery, IntoDiscoveryError, NodeData,
     },
     node_info::NodeInfo,
     Endpoint,
@@ -81,7 +80,10 @@ struct Inner {
 }
 
 impl Inner {
-    async fn resolve_pkarr(&self, key: pkarr::PublicKey) -> Option<Result<DiscoveryItem>> {
+    async fn resolve_pkarr(
+        &self,
+        key: pkarr::PublicKey,
+    ) -> Option<Result<DiscoveryItem, DiscoveryError>> {
         tracing::info!(
             "resolving {} from relay and DHT {:?}",
             key.to_z32(),
@@ -206,11 +208,13 @@ impl Builder {
     }
 
     /// Builds the discovery mechanism.
-    pub fn build(self) -> Result<DhtDiscovery> {
-        anyhow::ensure!(
-            self.dht || self.pkarr_relay.is_some(),
-            "at least one of DHT or relay must be enabled"
-        );
+    pub fn build(self) -> Result<DhtDiscovery, IntoDiscoveryError> {
+        if !(self.dht || self.pkarr_relay.is_some()) {
+            return Err(IntoDiscoveryError::from_err(
+                "pkarr",
+                std::io::Error::other("at least one of DHT or relay must be enabled"),
+            ));
+        }
         let pkarr = match self.client {
             Some(client) => client,
             None => {
@@ -220,9 +224,13 @@ impl Builder {
                     builder.dht(|x| x);
                 }
                 if let Some(url) = &self.pkarr_relay {
-                    builder.relays(&[url.clone()])?;
+                    builder
+                        .relays(&[url.clone()])
+                        .map_err(|e| IntoDiscoveryError::from_err("pkarr", e))?;
                 }
-                builder.build()?
+                builder
+                    .build()
+                    .map_err(|e| IntoDiscoveryError::from_err("pkarr", e))?
             }
         };
         let ttl = self.ttl.unwrap_or(DEFAULT_PKARR_TTL);
@@ -243,7 +251,7 @@ impl Builder {
 }
 
 impl IntoDiscovery for Builder {
-    fn into_discovery(self, endpoint: &Endpoint) -> Result<impl Discovery> {
+    fn into_discovery(self, endpoint: &Endpoint) -> Result<impl Discovery, IntoDiscoveryError> {
         self.secret_key(endpoint.secret_key().clone()).build()
     }
 }
@@ -306,7 +314,7 @@ impl Discovery for DhtDiscovery {
         *task = Some(AbortOnDropHandle::new(curr));
     }
 
-    fn resolve(&self, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem>>> {
+    fn resolve(&self, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
         let pkarr_public_key =
             pkarr::PublicKey::try_from(node_id.as_bytes()).expect("valid public key");
         tracing::info!("resolving {} as {}", node_id, pkarr_public_key.to_z32());
@@ -325,7 +333,7 @@ mod tests {
     use std::collections::BTreeSet;
 
     use iroh_base::RelayUrl;
-    use testresult::TestResult;
+    use n0_snafu::{Result, ResultExt};
     use tracing_test::traced_test;
 
     use super::*;
@@ -333,20 +341,21 @@ mod tests {
     #[tokio::test]
     #[ignore = "flaky"]
     #[traced_test]
-    async fn dht_discovery_smoke() -> TestResult {
+    async fn dht_discovery_smoke() -> Result {
         let ep = Endpoint::builder().bind().await?;
         let secret = ep.secret_key().clone();
-        let testnet = pkarr::mainline::Testnet::new_async(3).await?;
+        let testnet = pkarr::mainline::Testnet::new_async(3).await.e()?;
         let client = pkarr::Client::builder()
             .dht(|builder| builder.bootstrap(&testnet.bootstrap))
-            .build()?;
+            .build()
+            .e()?;
         let discovery = DhtDiscovery::builder()
             .secret_key(secret.clone())
             .initial_publish_delay(Duration::ZERO)
             .client(client)
             .build()?;
 
-        let relay_url: RelayUrl = Url::parse("https://example.com")?.into();
+        let relay_url: RelayUrl = Url::parse("https://example.com").e()?.into();
 
         let data = NodeData::default().with_relay_url(Some(relay_url.clone()));
         discovery.publish(&data);

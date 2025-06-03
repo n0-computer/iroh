@@ -23,7 +23,7 @@ use n0_future::{
     time::SystemTime,
 };
 
-use super::{Discovery, DiscoveryItem, NodeData, NodeInfo};
+use super::{Discovery, DiscoveryError, DiscoveryItem, NodeData, NodeInfo};
 
 /// A static node discovery to manually add node addressing information.
 ///
@@ -42,7 +42,7 @@ use super::{Discovery, DiscoveryItem, NodeData, NodeInfo};
 /// use iroh_base::SecretKey;
 ///
 /// # #[tokio::main]
-/// # async fn main() -> anyhow::Result<()> {
+/// # async fn main() -> n0_snafu::Result<()> {
 /// // Create the discovery service and endpoint.
 /// let discovery = StaticProvider::new();
 ///
@@ -106,7 +106,7 @@ impl StaticProvider {
     /// #     Vec::new()
     /// # }
     /// # #[tokio::main]
-    /// # async fn main() -> anyhow::Result<()> {
+    /// # async fn main() -> n0_snafu::Result<()> {
     /// // get addrs from somewhere
     /// let addrs = get_addrs();
     ///
@@ -184,7 +184,10 @@ impl StaticProvider {
 impl Discovery for StaticProvider {
     fn publish(&self, _data: &NodeData) {}
 
-    fn resolve(&self, node_id: NodeId) -> Option<BoxStream<Result<super::DiscoveryItem>>> {
+    fn resolve(
+        &self,
+        node_id: NodeId,
+    ) -> Option<BoxStream<Result<super::DiscoveryItem, DiscoveryError>>> {
         let guard = self.nodes.read().expect("poisoned");
         let info = guard.get(&node_id);
         match info {
@@ -208,15 +211,14 @@ impl Discovery for StaticProvider {
 
 #[cfg(test)]
 mod tests {
-    use anyhow::Context;
     use iroh_base::{NodeAddr, SecretKey};
-    use testresult::TestResult;
+    use n0_snafu::{Result, ResultExt};
 
     use super::*;
     use crate::Endpoint;
 
     #[tokio::test]
-    async fn test_basic() -> TestResult {
+    async fn test_basic() -> Result {
         let discovery = StaticProvider::new();
 
         let _ep = Endpoint::builder()

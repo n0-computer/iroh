@@ -1,12 +1,11 @@
 //! DNS node discovery for iroh
 
-use anyhow::Result;
 use iroh_base::NodeId;
 use iroh_relay::dns::DnsResolver;
 pub use iroh_relay::dns::{N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING};
 use n0_future::boxed::BoxStream;
 
-use super::IntoDiscovery;
+use super::{DiscoveryError, IntoDiscovery, IntoDiscoveryError};
 use crate::{
     discovery::{Discovery, DiscoveryItem},
     endpoint::force_staging_infra,
@@ -94,7 +93,7 @@ impl DnsDiscovery {
 }
 
 impl IntoDiscovery for DnsDiscoveryBuilder {
-    fn into_discovery(mut self, endpoint: &Endpoint) -> Result<impl Discovery> {
+    fn into_discovery(mut self, endpoint: &Endpoint) -> Result<impl Discovery, IntoDiscoveryError> {
         if self.dns_resolver.is_none() {
             self.dns_resolver = Some(endpoint.dns_resolver().clone());
         }
@@ -103,13 +102,14 @@ impl IntoDiscovery for DnsDiscoveryBuilder {
 }
 
 impl Discovery for DnsDiscovery {
-    fn resolve(&self, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem>>> {
+    fn resolve(&self, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
         let resolver = self.dns_resolver.clone();
         let origin_domain = self.origin_domain.clone();
         let fut = async move {
             let node_info = resolver
                 .lookup_node_by_id_staggered(&node_id, &origin_domain, DNS_STAGGERING_MS)
-                .await?;
+                .await
+                .map_err(|e| DiscoveryError::from_err("dns", e))?;
             Ok(DiscoveryItem::new(node_info, "dns", None))
         };
         let stream = n0_future::stream::once_future(fut);

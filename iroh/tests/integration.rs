@@ -18,7 +18,7 @@ use n0_future::{
     time::{self, Duration},
     StreamExt,
 };
-use testresult::TestResult;
+use n0_snafu::{Result, ResultExt};
 #[cfg(not(wasm_browser))]
 use tokio::test;
 use tracing::{info_span, Instrument};
@@ -33,7 +33,7 @@ use wasm_bindgen_test::wasm_bindgen_test as test;
 const ECHO_ALPN: &[u8] = b"echo";
 
 #[test]
-async fn simple_node_id_based_connection_transfer() -> TestResult {
+async fn simple_node_id_based_connection_transfer() -> Result {
     setup_logging();
 
     let client = Endpoint::builder().discovery_n0().bind().await?;
@@ -48,24 +48,24 @@ async fn simple_node_id_based_connection_transfer() -> TestResult {
         let server = server.clone();
         async move {
             while let Some(incoming) = server.accept().await {
-                let conn = incoming.await?;
+                let conn = incoming.await.e()?;
                 let node_id = conn.remote_node_id()?;
                 tracing::info!(node_id = %node_id.fmt_short(), "Accepted connection");
 
-                let (mut send, mut recv) = conn.accept_bi().await?;
+                let (mut send, mut recv) = conn.accept_bi().await.e()?;
                 let mut bytes_sent = 0;
-                while let Some(chunk) = recv.read_chunk(10_000, true).await? {
+                while let Some(chunk) = recv.read_chunk(10_000, true).await.e()? {
                     bytes_sent += chunk.bytes.len();
-                    send.write_chunk(chunk.bytes).await?;
+                    send.write_chunk(chunk.bytes).await.e()?;
                 }
-                send.finish()?;
+                send.finish().e()?;
                 tracing::info!("Copied over {bytes_sent} byte(s)");
 
                 let code = conn.closed().await;
                 tracing::info!("Closed with code: {code:?}");
             }
 
-            TestResult::Ok(())
+            Ok::<_, n0_snafu::Error>(())
         }
         .instrument(info_span!("server"))
     });
@@ -91,18 +91,19 @@ async fn simple_node_id_based_connection_transfer() -> TestResult {
             }
         }
     })
-    .await?;
+    .await
+    .e()?;
 
     tracing::info!(to = %server.node_id().fmt_short(), "Opening a connection");
     let conn = client.connect(server.node_id(), ECHO_ALPN).await?;
     tracing::info!("Connection opened");
 
-    let (mut send, mut recv) = conn.open_bi().await?;
-    send.write_all(b"Hello, World!").await?;
-    send.finish()?;
+    let (mut send, mut recv) = conn.open_bi().await.e()?;
+    send.write_all(b"Hello, World!").await.e()?;
+    send.finish().e()?;
     tracing::info!("Sent request");
 
-    let response = recv.read_to_end(10_000).await?;
+    let response = recv.read_to_end(10_000).await.e()?;
     tracing::info!(len = response.len(), "Received response");
     assert_eq!(&response, b"Hello, World!");
 

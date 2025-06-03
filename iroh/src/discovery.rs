@@ -63,7 +63,7 @@
 //!     Endpoint, SecretKey,
 //! };
 //!
-//! # async fn wrapper() -> anyhow::Result<()> {
+//! # async fn wrapper() -> n0_snafu::Result<()> {
 //! let ep = Endpoint::builder()
 //!     .add_discovery(PkarrPublisher::n0_dns())
 //!     .add_discovery(DnsDiscovery::n0_dns())
@@ -83,7 +83,7 @@
 //! #    Endpoint, SecretKey,
 //! # };
 //! #
-//! # async fn wrapper() -> anyhow::Result<()> {
+//! # async fn wrapper() -> n0_snafu::Result<()> {
 //! let ep = Endpoint::builder()
 //!     .add_discovery(PkarrPublisher::n0_dns())
 //!     .add_discovery(DnsDiscovery::n0_dns())
@@ -91,7 +91,6 @@
 //!     .bind()
 //!     .await?;
 //! # Ok(())
-//! # }
 //! # }
 //! ```
 //!
@@ -109,8 +108,8 @@
 
 use std::sync::Arc;
 
-use anyhow::{anyhow, ensure, Result};
-use iroh_base::{NodeAddr, NodeId};
+use iroh_base::{NodeAddr, NodeId, PublicKey};
+use iroh_relay::node_info::EncodingError;
 use n0_future::{
     boxed::BoxStream,
     stream::StreamExt,
@@ -118,10 +117,12 @@ use n0_future::{
     time::{self, Duration},
     Stream, TryStreamExt,
 };
+use nested_enum_utils::common_fields;
+use snafu::{ensure, IntoError, Snafu};
 use tokio::sync::oneshot;
 use tracing::{debug, error_span, warn, Instrument};
 
-pub use crate::node_info::{NodeData, NodeInfo, UserData};
+pub use crate::node_info::{NodeData, NodeInfo, ParseError, UserData};
 use crate::Endpoint;
 
 #[cfg(not(wasm_browser))]
@@ -148,12 +149,12 @@ pub trait IntoDiscovery: Send + Sync + 'static {
     /// from here.
     ///
     /// If an error is returned, building the endpoint will fail with this error.
-    fn into_discovery(self, endpoint: &Endpoint) -> Result<impl Discovery>;
+    fn into_discovery(self, endpoint: &Endpoint) -> Result<impl Discovery, IntoDiscoveryError>;
 }
 
 /// Blanket no-op impl of `IntoDiscovery` for `T: Discovery`.
 impl<T: Discovery> IntoDiscovery for T {
-    fn into_discovery(self, _endpoint: &Endpoint) -> Result<impl Discovery> {
+    fn into_discovery(self, _endpoint: &Endpoint) -> Result<impl Discovery, IntoDiscoveryError> {
         Ok(self)
     }
 }
@@ -161,13 +162,106 @@ impl<T: Discovery> IntoDiscovery for T {
 /// Non-public dyn-compatible version of [`IntoDiscovery`], used in [`crate::endpoint::Builder`].
 pub(crate) trait DynIntoDiscovery: Send + Sync + 'static {
     /// See [`IntoDiscovery::into_discovery`]
-    fn into_discovery(self: Box<Self>, endpoint: &Endpoint) -> Result<Box<dyn Discovery>>;
+    fn into_discovery(
+        self: Box<Self>,
+        endpoint: &Endpoint,
+    ) -> Result<Box<dyn Discovery>, IntoDiscoveryError>;
 }
 
 impl<T: IntoDiscovery> DynIntoDiscovery for T {
-    fn into_discovery(self: Box<Self>, endpoint: &Endpoint) -> Result<Box<dyn Discovery>> {
+    fn into_discovery(
+        self: Box<Self>,
+        endpoint: &Endpoint,
+    ) -> Result<Box<dyn Discovery>, IntoDiscoveryError> {
         let disco: Box<dyn Discovery> = Box::new(IntoDiscovery::into_discovery(*self, endpoint)?);
         Ok(disco)
+    }
+}
+
+/// IntoDiscovery errors
+#[common_fields({
+    backtrace: Option<snafu::Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+#[snafu(module)]
+pub enum IntoDiscoveryError {
+    #[snafu(display("Service '{provenance}' error"))]
+    User {
+        provenance: &'static str,
+        source: Box<dyn std::error::Error + Send + Sync + 'static>,
+    },
+}
+
+impl IntoDiscoveryError {
+    /// Creates a new user error from an arbitrary error type.
+    pub fn from_err<T: std::error::Error + Send + Sync + 'static>(
+        provenance: &'static str,
+        source: T,
+    ) -> Self {
+        into_discovery_error::UserSnafu { provenance }.into_error(Box::new(source))
+    }
+
+    /// Creates a new user error from an arbitrary boxed error type.
+    pub fn from_err_box(
+        provenance: &'static str,
+        source: Box<dyn std::error::Error + Send + Sync + 'static>,
+    ) -> Self {
+        into_discovery_error::UserSnafu { provenance }.into_error(source)
+    }
+}
+
+/// Discovery errors
+#[common_fields({
+    backtrace: Option<snafu::Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+pub enum DiscoveryError {
+    #[snafu(display("No discovery service configured"))]
+    NoServiceConfigured {},
+    #[snafu(display("Cannot resolve node id"))]
+    NodeId { node_id: PublicKey },
+    #[snafu(display("Discovery produced no results"))]
+    NoResults { node_id: PublicKey },
+    #[snafu(display("Error encoding the signed packet"))]
+    SignedPacket {
+        #[snafu(source(from(EncodingError, Box::new)))]
+        source: Box<EncodingError>,
+    },
+    #[snafu(display("Error parsing the signed packet"))]
+    ParsePacket {
+        #[snafu(source(from(ParseError, Box::new)))]
+        source: Box<ParseError>,
+    },
+    #[snafu(display("Service '{provenance}' error"))]
+    User {
+        provenance: &'static str,
+        source: Box<dyn std::error::Error + Send + Sync + 'static>,
+    },
+}
+
+impl DiscoveryError {
+    /// Creates a new user error from an arbitrary error type.
+    pub fn from_err<T: std::error::Error + Send + Sync + 'static>(
+        provenance: &'static str,
+        source: T,
+    ) -> Self {
+        UserSnafu { provenance }.into_error(Box::new(source))
+    }
+
+    /// Creates a new user error from an arbitrary boxed error type.
+    pub fn from_err_box(
+        provenance: &'static str,
+        source: Box<dyn std::error::Error + Send + Sync + 'static>,
+    ) -> Self {
+        UserSnafu { provenance }.into_error(source)
     }
 }
 
@@ -201,7 +295,10 @@ pub trait Discovery: std::fmt::Debug + Send + Sync + 'static {
     ///
     /// Once the returned [`BoxStream`] is dropped, the service should stop any pending
     /// work.
-    fn resolve(&self, _node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem>>> {
+    fn resolve(
+        &self,
+        _node_id: NodeId,
+    ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
         None
     }
 
@@ -363,7 +460,7 @@ impl Discovery for ConcurrentDiscovery {
         }
     }
 
-    fn resolve(&self, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem>>> {
+    fn resolve(&self, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
         let streams = self
             .services
             .iter()
@@ -392,14 +489,14 @@ const MAX_AGE: Duration = Duration::from_secs(10);
 
 /// A wrapper around a tokio task which runs a node discovery.
 pub(super) struct DiscoveryTask {
-    on_first_rx: oneshot::Receiver<Result<()>>,
+    on_first_rx: oneshot::Receiver<Result<(), DiscoveryError>>,
     _task: AbortOnDropHandle<()>,
 }
 
 impl DiscoveryTask {
     /// Starts a discovery task.
-    pub(super) fn start(ep: Endpoint, node_id: NodeId) -> Result<Self> {
-        ensure!(ep.discovery().is_some(), "No discovery services configured");
+    pub(super) fn start(ep: Endpoint, node_id: NodeId) -> Result<Self, DiscoveryError> {
+        ensure!(ep.discovery().is_some(), NoServiceConfiguredSnafu);
         let (on_first_tx, on_first_rx) = oneshot::channel();
         let me = ep.node_id();
         let task = task::spawn(
@@ -425,12 +522,12 @@ impl DiscoveryTask {
         ep: &Endpoint,
         node_id: NodeId,
         delay: Option<Duration>,
-    ) -> Result<Option<Self>> {
+    ) -> Result<Option<Self>, DiscoveryError> {
         // If discovery is not needed, don't even spawn a task.
         if !Self::needs_discovery(ep, node_id) {
             return Ok(None);
         }
-        ensure!(ep.discovery().is_some(), "No discovery services configured");
+        ensure!(ep.discovery().is_some(), NoServiceConfiguredSnafu);
         let (on_first_tx, on_first_rx) = oneshot::channel();
         let ep = ep.clone();
         let me = ep.node_id();
@@ -458,19 +555,20 @@ impl DiscoveryTask {
     }
 
     /// Waits until the discovery task produced at least one result.
-    pub(super) async fn first_arrived(&mut self) -> Result<()> {
+    pub(super) async fn first_arrived(&mut self) -> Result<(), DiscoveryError> {
         let fut = &mut self.on_first_rx;
-        fut.await??;
+        fut.await.expect("sender dropped")?;
         Ok(())
     }
 
-    fn create_stream(ep: &Endpoint, node_id: NodeId) -> Result<BoxStream<Result<DiscoveryItem>>> {
-        let discovery = ep
-            .discovery()
-            .ok_or_else(|| anyhow!("No discovery service configured"))?;
+    fn create_stream(
+        ep: &Endpoint,
+        node_id: NodeId,
+    ) -> Result<BoxStream<Result<DiscoveryItem, DiscoveryError>>, DiscoveryError> {
+        let discovery = ep.discovery().ok_or(NoServiceConfiguredSnafu.build())?;
         let stream = discovery
             .resolve(node_id)
-            .ok_or_else(|| anyhow!("No discovery service can resolve node {node_id}",))?;
+            .ok_or(NodeIdSnafu { node_id }.build())?;
         Ok(stream)
     }
 
@@ -498,7 +596,11 @@ impl DiscoveryTask {
         }
     }
 
-    async fn run(ep: Endpoint, node_id: NodeId, on_first_tx: oneshot::Sender<Result<()>>) {
+    async fn run(
+        ep: Endpoint,
+        node_id: NodeId,
+        on_first_tx: oneshot::Sender<Result<(), DiscoveryError>>,
+    ) {
         let mut stream = match Self::create_stream(&ep, node_id) {
             Ok(stream) => stream,
             Err(err) => {
@@ -533,8 +635,7 @@ impl DiscoveryTask {
             }
         }
         if let Some(tx) = on_first_tx.take() {
-            let err = anyhow!("Discovery produced no results for {}", node_id.fmt_short());
-            tx.send(Err(err)).ok();
+            tx.send(Err(NoResultsSnafu { node_id }.build())).ok();
         }
     }
 }
@@ -547,9 +648,12 @@ impl DiscoveryTask {
 /// will return the oldest [`DiscoveryItem`] that is still retained.
 ///
 /// Includes the number of skipped messages.
-#[derive(Debug, thiserror::Error)]
-#[error("channel lagged by {0}")]
-pub struct Lagged(pub u64);
+#[derive(Debug, Snafu)]
+#[snafu(display("channel lagged by {val}"))]
+pub struct Lagged {
+    /// The number of skipped messages
+    pub val: u64,
+}
 
 #[derive(Clone, Debug)]
 pub(super) struct DiscoverySubscribers {
@@ -570,7 +674,7 @@ impl DiscoverySubscribers {
     pub(crate) fn subscribe(&self) -> impl Stream<Item = Result<DiscoveryItem, Lagged>> {
         use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
         let recv = self.inner.subscribe();
-        BroadcastStream::new(recv).map_err(|BroadcastStreamRecvError::Lagged(n)| Lagged(n))
+        BroadcastStream::new(recv).map_err(|BroadcastStreamRecvError::Lagged(n)| Lagged { val: n })
     }
 
     pub(crate) fn send(&self, item: DiscoveryItem) {
@@ -589,8 +693,8 @@ mod tests {
         time::SystemTime,
     };
 
-    use anyhow::{Context, Result};
     use iroh_base::{NodeAddr, SecretKey};
+    use n0_snafu::{Error, Result, ResultExt};
     use quinn::{IdleTimeout, TransportConfig};
     use rand::Rng;
     use tokio_util::task::AbortOnDropHandle;
@@ -664,7 +768,10 @@ mod tests {
                 .insert(self.node_id, (data.clone(), now));
         }
 
-        fn resolve(&self, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem>>> {
+        fn resolve(
+            &self,
+            node_id: NodeId,
+        ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
             let addr_info = if self.resolve_wrong {
                 let ts = system_time_now() - 100_000;
                 let port: u16 = rand::thread_rng().gen_range(10_000..20_000);
@@ -709,7 +816,10 @@ mod tests {
     impl Discovery for EmptyDiscovery {
         fn publish(&self, _data: &NodeData) {}
 
-        fn resolve(&self, _node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem>>> {
+        fn resolve(
+            &self,
+            _node_id: NodeId,
+        ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
             Some(n0_future::stream::empty().boxed())
         }
     }
@@ -719,7 +829,7 @@ mod tests {
     /// This is a smoke test for our discovery mechanism.
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_discovery_simple_shared() -> Result<()> {
+    async fn endpoint_discovery_simple_shared() -> Result {
         let disco_shared = TestDiscoveryShared::default();
         let (ep1, _guard1) = {
             let secret = SecretKey::generate(rand::thread_rng());
@@ -741,7 +851,7 @@ mod tests {
     /// This test adds an empty discovery which provides no addresses.
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_discovery_combined_with_empty() -> Result<()> {
+    async fn endpoint_discovery_combined_with_empty() -> Result {
         let disco_shared = TestDiscoveryShared::default();
         let (ep1, _guard1) = {
             let secret = SecretKey::generate(rand::thread_rng());
@@ -775,7 +885,7 @@ mod tests {
     /// will connect successfully.
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_discovery_combined_with_empty_and_wrong() -> Result<()> {
+    async fn endpoint_discovery_combined_with_empty_and_wrong() -> Result {
         let disco_shared = TestDiscoveryShared::default();
         let (ep1, _guard1) = {
             let secret = SecretKey::generate(rand::thread_rng());
@@ -802,7 +912,7 @@ mod tests {
     /// This test only has the "lying" discovery. It is here to make sure that this actually fails.
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_discovery_combined_wrong_only() -> Result<()> {
+    async fn endpoint_discovery_combined_wrong_only() -> Result {
         let disco_shared = TestDiscoveryShared::default();
         let (ep1, _guard1) = {
             let secret = SecretKey::generate(rand::thread_rng());
@@ -821,7 +931,7 @@ mod tests {
         // 10x faster test via a 3s idle timeout instead of the 30s default
         let mut config = TransportConfig::default();
         config.keep_alive_interval(Some(Duration::from_secs(1)));
-        config.max_idle_timeout(Some(IdleTimeout::try_from(Duration::from_secs(3))?));
+        config.max_idle_timeout(Some(IdleTimeout::try_from(Duration::from_secs(3)).unwrap()));
         let opts = ConnectOptions::new().with_transport_config(Arc::new(config));
 
         let res = ep2
@@ -836,7 +946,7 @@ mod tests {
     /// Connect should still succeed because the discovery service will be invoked (after a delay).
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_discovery_with_wrong_existing_addr() -> Result<()> {
+    async fn endpoint_discovery_with_wrong_existing_addr() -> Result {
         let disco_shared = TestDiscoveryShared::default();
         let (ep1, _guard1) = {
             let secret = SecretKey::generate(rand::thread_rng());
@@ -861,7 +971,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_discovery_watch() -> Result<()> {
+    async fn endpoint_discovery_watch() -> Result {
         let disco_shared = TestDiscoveryShared::default();
         let (ep1, _guard1) = {
             let secret = SecretKey::generate(rand::thread_rng());
@@ -926,11 +1036,11 @@ mod tests {
                 // we skip accept() errors, they can be caused by retransmits
                 while let Some(connecting) = ep.accept().await.and_then(|inc| inc.accept().ok()) {
                     // Just accept incoming connections, but don't do anything with them.
-                    let conn = connecting.await?;
+                    let conn = connecting.await.context("connecting")?;
                     connections.push(conn);
                 }
 
-                anyhow::Ok(())
+                Ok::<_, Error>(())
             }
         });
 
@@ -951,10 +1061,10 @@ mod tests {
 /// publish to. The DNS and pkarr servers share their state.
 #[cfg(test)]
 mod test_dns_pkarr {
-    use anyhow::Result;
     use iroh_base::{NodeAddr, SecretKey};
     use iroh_relay::{node_info::UserData, RelayMap};
     use n0_future::time::Duration;
+    use n0_snafu::{Error, Result, ResultExt};
     use tokio_util::task::AbortOnDropHandle;
     use tracing_test::traced_test;
 
@@ -975,13 +1085,17 @@ mod test_dns_pkarr {
     async fn dns_resolve() -> Result<()> {
         let origin = "testdns.example".to_string();
         let state = State::new(origin.clone());
-        let (nameserver, _dns_drop_guard) = run_dns_server(state.clone()).await?;
+        let (nameserver, _dns_drop_guard) = run_dns_server(state.clone())
+            .await
+            .context("Running DNS server")?;
 
         let secret_key = SecretKey::generate(rand::thread_rng());
         let node_info = NodeInfo::new(secret_key.public())
             .with_relay_url(Some("https://relay.example".parse().unwrap()));
         let signed_packet = node_info.to_pkarr_signed_packet(&secret_key, 30)?;
-        state.upsert(signed_packet)?;
+        state
+            .upsert(signed_packet)
+            .context("update and insert signed packet")?;
 
         let resolver = DnsResolver::with_nameserver(nameserver);
         let resolved = resolver
@@ -998,7 +1112,9 @@ mod test_dns_pkarr {
     async fn pkarr_publish_dns_resolve() -> Result<()> {
         let origin = "testdns.example".to_string();
 
-        let dns_pkarr_server = DnsPkarrServer::run_with_origin(origin.clone()).await?;
+        let dns_pkarr_server = DnsPkarrServer::run_with_origin(origin.clone())
+            .await
+            .context("DnsPkarrServer")?;
 
         let secret_key = SecretKey::generate(rand::thread_rng());
         let node_id = secret_key.public();
@@ -1014,7 +1130,10 @@ mod test_dns_pkarr {
         // does not block, update happens in background task
         publisher.update_node_data(&data);
         // wait until our shared state received the update from pkarr publishing
-        dns_pkarr_server.on_node(&node_id, PUBLISH_TIMEOUT).await?;
+        dns_pkarr_server
+            .on_node(&node_id, PUBLISH_TIMEOUT)
+            .await
+            .context("wait for on node update")?;
         let resolved = resolver.lookup_node_by_id(&node_id, &origin).await?;
         println!("resolved {resolved:?}");
 
@@ -1034,7 +1153,7 @@ mod test_dns_pkarr {
     #[tokio::test]
     #[traced_test]
     async fn pkarr_publish_dns_discover() -> Result<()> {
-        let dns_pkarr_server = DnsPkarrServer::run().await?;
+        let dns_pkarr_server = DnsPkarrServer::run().await.context("DnsPkarrServer run")?;
         let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
 
         let (ep1, _guard1) = ep_with_discovery(&relay_map, &dns_pkarr_server).await?;
@@ -1043,7 +1162,8 @@ mod test_dns_pkarr {
         // wait until our shared state received the update from pkarr publishing
         dns_pkarr_server
             .on_node(&ep1.node_id(), PUBLISH_TIMEOUT)
-            .await?;
+            .await
+            .context("wait for on node update")?;
 
         // we connect only by node id!
         let res = ep2.connect(ep1.node_id(), TEST_ALPN).await;
@@ -1071,11 +1191,11 @@ mod test_dns_pkarr {
             async move {
                 // we skip accept() errors, they can be caused by retransmits
                 while let Some(connecting) = ep.accept().await.and_then(|inc| inc.accept().ok()) {
-                    let _conn = connecting.await?;
+                    let _conn = connecting.await.context("connecting")?;
                     // Just accept incoming connections, but don't do anything with them.
                 }
 
-                anyhow::Ok(())
+                Ok::<_, Error>(())
             }
         });
 

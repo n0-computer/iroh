@@ -8,7 +8,6 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use bytes::Bytes;
 use hickory_server::{
@@ -26,6 +25,7 @@ use hickory_server::{
     server::{Request, RequestHandler, ResponseHandler, ResponseInfo},
     store::in_memory::InMemoryAuthority,
 };
+use n0_snafu::{format_err, Result, ResultExt};
 use serde::{Deserialize, Serialize};
 use tokio::{
     net::{TcpListener, UdpSocket},
@@ -82,12 +82,12 @@ impl DnsServer {
             config.port,
         );
 
-        let socket = UdpSocket::bind(bind_addr).await?;
+        let socket = UdpSocket::bind(bind_addr).await.e()?;
 
-        let socket_addr = socket.local_addr()?;
+        let socket_addr = socket.local_addr().e()?;
 
         server.register_socket(socket);
-        server.register_listener(TcpListener::bind(bind_addr).await?, TCP_TIMEOUT);
+        server.register_listener(TcpListener::bind(bind_addr).await.e()?, TCP_TIMEOUT);
         info!("DNS server listening on {}", bind_addr);
 
         Ok(Self {
@@ -103,7 +103,7 @@ impl DnsServer {
 
     /// Shutdown the server an wait for all tasks to complete.
     pub async fn shutdown(mut self) -> Result<()> {
-        self.server.shutdown_gracefully().await?;
+        self.server.shutdown_gracefully().await.e()?;
         Ok(())
     }
 
@@ -111,7 +111,7 @@ impl DnsServer {
     ///
     /// Runs forever unless tasks fail.
     pub async fn run_until_done(mut self) -> Result<()> {
-        self.server.block_until_done().await?;
+        self.server.block_until_done().await.e()?;
         Ok(())
     }
 }
@@ -132,7 +132,8 @@ impl DnsHandler {
             .origins
             .iter()
             .map(Name::from_utf8)
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<Vec<_>, _>>()
+            .e()?;
 
         let (static_authority, serial) = create_static_authority(&origins, config)?;
         let authority = Arc::new(NodeAuthority::new(
@@ -158,7 +159,7 @@ impl DnsHandler {
         let (tx, mut rx) = broadcast::channel(1);
         let response_handle = Handle(tx);
         self.handle_request(&request, response_handle).await;
-        Ok(rx.recv().await?)
+        rx.recv().await.e()
     }
 }
 
@@ -232,9 +233,10 @@ fn create_static_authority(
         RecordType::SOA,
         config.default_soa.split_ascii_whitespace(),
         None,
-    )?
+    )
+    .e()?
     .into_soa()
-    .map_err(|_| anyhow!("Couldn't parse SOA: {}", config.default_soa))?;
+    .map_err(|_| format_err!("Couldn't parse SOA: {}", config.default_soa))?;
     let serial = soa.serial();
     let mut records = BTreeMap::new();
     for name in origins {
@@ -258,7 +260,7 @@ fn create_static_authority(
             );
         }
         if let Some(ns) = &config.rr_ns {
-            let ns = Name::parse(ns, Some(&Name::root()))?;
+            let ns = Name::parse(ns, Some(&Name::root())).e()?;
             push_record(
                 &mut records,
                 serial,
@@ -268,7 +270,7 @@ fn create_static_authority(
     }
 
     let static_authority = InMemoryAuthority::new(Name::root(), records, ZoneType::Primary, false)
-        .map_err(|e| anyhow!(e))?;
+        .map_err(|e| format_err!("new authority: {}", e))?;
 
     Ok((static_authority, serial))
 }
