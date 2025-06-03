@@ -123,7 +123,7 @@ use tokio::sync::oneshot;
 use tracing::{debug, error_span, warn, Instrument};
 
 pub use crate::node_info::{NodeData, NodeInfo, ParseError, UserData};
-use crate::Endpoint;
+use crate::{dns::DnsResolver, Endpoint, SecretKey};
 
 #[cfg(not(wasm_browser))]
 pub mod dns;
@@ -149,12 +149,18 @@ pub trait IntoDiscovery: Send + Sync + 'static {
     /// from here.
     ///
     /// If an error is returned, building the endpoint will fail with this error.
-    fn into_discovery(self, endpoint: &Endpoint) -> Result<impl Discovery, IntoDiscoveryError>;
+    fn into_discovery(
+        self,
+        context: &DiscoveryContext,
+    ) -> Result<impl Discovery, IntoDiscoveryError>;
 }
 
 /// Blanket no-op impl of `IntoDiscovery` for `T: Discovery`.
 impl<T: Discovery> IntoDiscovery for T {
-    fn into_discovery(self, _endpoint: &Endpoint) -> Result<impl Discovery, IntoDiscoveryError> {
+    fn into_discovery(
+        self,
+        _context: &DiscoveryContext,
+    ) -> Result<impl Discovery, IntoDiscoveryError> {
         Ok(self)
     }
 }
@@ -164,17 +170,48 @@ pub(crate) trait DynIntoDiscovery: Send + Sync + 'static {
     /// See [`IntoDiscovery::into_discovery`]
     fn into_discovery(
         self: Box<Self>,
-        endpoint: &Endpoint,
+        context: &DiscoveryContext,
     ) -> Result<Box<dyn Discovery>, IntoDiscoveryError>;
 }
 
 impl<T: IntoDiscovery> DynIntoDiscovery for T {
     fn into_discovery(
         self: Box<Self>,
-        endpoint: &Endpoint,
+        context: &DiscoveryContext,
     ) -> Result<Box<dyn Discovery>, IntoDiscoveryError> {
-        let disco: Box<dyn Discovery> = Box::new(IntoDiscovery::into_discovery(*self, endpoint)?);
+        let disco: Box<dyn Discovery> = Box::new(IntoDiscovery::into_discovery(*self, context)?);
         Ok(disco)
+    }
+}
+
+/// Context for discovery services.
+#[derive(Debug)]
+pub struct DiscoveryContext<'a> {
+    dns_resolver: &'a DnsResolver,
+    secret_key: &'a SecretKey,
+}
+
+impl<'a> DiscoveryContext<'a> {
+    pub(crate) fn from_endpoint(endpoint: &'a Endpoint) -> Self {
+        Self {
+            dns_resolver: endpoint.dns_resolver(),
+            secret_key: endpoint.secret_key(),
+        }
+    }
+
+    /// Returns the [`NodeId`] of the endpoint.
+    pub fn node_id(&self) -> NodeId {
+        self.secret_key.public()
+    }
+
+    /// Returns the [`SecretKey`] of the endpoint.
+    pub fn secret_key(&self) -> &SecretKey {
+        self.secret_key
+    }
+
+    /// Returns the [`DnsResolver`] used by the endpoint.
+    pub fn dns_resolver(&self) -> &DnsResolver {
+        self.dns_resolver
     }
 }
 

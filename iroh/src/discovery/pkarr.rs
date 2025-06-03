@@ -61,14 +61,13 @@ use snafu::{ResultExt, Snafu};
 use tracing::{debug, error_span, warn, Instrument};
 use url::Url;
 
-use super::{DiscoveryError, IntoDiscovery, IntoDiscoveryError};
+use super::{DiscoveryContext, DiscoveryError, IntoDiscovery, IntoDiscoveryError};
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
 use crate::{
     discovery::{Discovery, DiscoveryItem, NodeData, ParsePacketSnafu, SignedPacketSnafu},
     endpoint::force_staging_infra,
     watcher::{self, Disconnected, Watchable, Watcher as _},
-    Endpoint,
 };
 
 #[cfg(feature = "discovery-pkarr-dht")]
@@ -201,13 +200,16 @@ impl PkarrPublisherBuilder {
 }
 
 impl IntoDiscovery for PkarrPublisherBuilder {
-    fn into_discovery(mut self, endpoint: &Endpoint) -> Result<impl Discovery, IntoDiscoveryError> {
+    fn into_discovery(
+        mut self,
+        context: &DiscoveryContext,
+    ) -> Result<impl Discovery, IntoDiscoveryError> {
         #[cfg(not(wasm_browser))]
         if self.dns_resolver.is_none() {
-            self.dns_resolver = Some(endpoint.dns_resolver().clone());
+            self.dns_resolver = Some(context.dns_resolver().clone());
         }
 
-        Ok(self.build(endpoint.secret_key().clone()))
+        Ok(self.build(context.secret_key().clone()))
     }
 }
 
@@ -429,10 +431,13 @@ impl PkarrResolverBuilder {
 }
 
 impl IntoDiscovery for PkarrResolverBuilder {
-    fn into_discovery(mut self, endpoint: &Endpoint) -> Result<impl Discovery, IntoDiscoveryError> {
+    fn into_discovery(
+        mut self,
+        context: &DiscoveryContext,
+    ) -> Result<impl Discovery, IntoDiscoveryError> {
         #[cfg(not(wasm_browser))]
         if self.dns_resolver.is_none() {
-            self.dns_resolver = Some(endpoint.dns_resolver().clone());
+            self.dns_resolver = Some(context.dns_resolver().clone());
         }
 
         Ok(self.build())

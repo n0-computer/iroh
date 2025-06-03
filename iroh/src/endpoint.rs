@@ -37,9 +37,9 @@ use crate::discovery::pkarr::PkarrResolver;
 use crate::{discovery::dns::DnsDiscovery, dns::DnsResolver};
 use crate::{
     discovery::{
-        pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryError, DiscoveryItem,
-        DiscoverySubscribers, DiscoveryTask, DynIntoDiscovery, IntoDiscovery, IntoDiscoveryError,
-        Lagged, UserData,
+        pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryContext, DiscoveryError,
+        DiscoveryItem, DiscoverySubscribers, DiscoveryTask, DynIntoDiscovery, IntoDiscovery,
+        IntoDiscoveryError, Lagged, UserData,
     },
     magicsock::{self, Handle, NodeIdMappedAddr, OwnAddressSnafu},
     metrics::EndpointMetrics,
@@ -216,10 +216,11 @@ impl Builder {
         };
         let endpoint = Endpoint::bind(static_config, msock_opts).await?;
 
+        let context = DiscoveryContext::from_endpoint(&endpoint);
         let discovery = self
             .discovery
             .into_iter()
-            .map(|builder| builder.into_discovery(&endpoint))
+            .map(|builder| builder.into_discovery(&context))
             .collect::<Result<Vec<_>, IntoDiscoveryError>>()?;
         let discovery: Option<Box<dyn Discovery>> = match discovery.len() {
             0 => None,

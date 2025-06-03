@@ -5,11 +5,10 @@ use iroh_relay::dns::DnsResolver;
 pub use iroh_relay::dns::{N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING};
 use n0_future::boxed::BoxStream;
 
-use super::{DiscoveryError, IntoDiscovery, IntoDiscoveryError};
+use super::{DiscoveryContext, DiscoveryError, IntoDiscovery, IntoDiscoveryError};
 use crate::{
     discovery::{Discovery, DiscoveryItem},
     endpoint::force_staging_infra,
-    Endpoint,
 };
 
 const DNS_STAGGERING_MS: &[u64] = &[200, 300];
@@ -93,9 +92,12 @@ impl DnsDiscovery {
 }
 
 impl IntoDiscovery for DnsDiscoveryBuilder {
-    fn into_discovery(mut self, endpoint: &Endpoint) -> Result<impl Discovery, IntoDiscoveryError> {
+    fn into_discovery(
+        mut self,
+        context: &DiscoveryContext,
+    ) -> Result<impl Discovery, IntoDiscoveryError> {
         if self.dns_resolver.is_none() {
-            self.dns_resolver = Some(endpoint.dns_resolver().clone());
+            self.dns_resolver = Some(context.dns_resolver().clone());
         }
         Ok(self.build())
     }

@@ -46,11 +46,10 @@ use swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
 use tokio::sync::mpsc::{self, error::TrySendError};
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
-use super::{DiscoveryError, IntoDiscovery, IntoDiscoveryError};
+use super::{DiscoveryContext, DiscoveryError, IntoDiscovery, IntoDiscoveryError};
 use crate::{
     discovery::{Discovery, DiscoveryItem, NodeData, NodeInfo},
     watcher::{Watchable, Watcher as _},
-    Endpoint,
 };
 
 /// The n0 local swarm node discovery name
@@ -133,8 +132,11 @@ impl Subscribers {
 pub struct MdnsDiscoveryBuilder;
 
 impl IntoDiscovery for MdnsDiscoveryBuilder {
-    fn into_discovery(self, endpoint: &Endpoint) -> Result<impl Discovery, IntoDiscoveryError> {
-        MdnsDiscovery::new(endpoint.node_id())
+    fn into_discovery(
+        self,
+        context: &DiscoveryContext,
+    ) -> Result<impl Discovery, IntoDiscoveryError> {
+        MdnsDiscovery::new(context.node_id())
     }
 }
 
