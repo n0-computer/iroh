@@ -38,9 +38,9 @@ use crate::{discovery::dns::DnsDiscovery, dns::DnsResolver};
 use crate::{
     discovery::{
         pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryError, DiscoveryItem,
-        DiscoverySubscribers, DiscoveryTask, Lagged, UserData,
+        DiscoverySubscribers, DiscoveryTask, UserData,
     },
-    magicsock::{self, Handle, NodeIdMappedAddr, OwnAddressSnafu},
+    magicsock::{self, Handle, NodeIdMappedAddr},
     metrics::EndpointMetrics,
     net_report::Report,
     tls,
@@ -135,8 +135,6 @@ pub struct Builder {
     discovery: Vec<DiscoveryBuilder>,
     discovery_user_data: Option<UserData>,
     proxy_url: Option<Url>,
-    /// List of known nodes. See [`Builder::known_nodes`].
-    node_map: Option<Vec<NodeAddr>>,
     #[cfg(not(wasm_browser))]
     dns_resolver: Option<DnsResolver>,
     #[cfg(any(test, feature = "test-utils"))]
@@ -161,7 +159,6 @@ impl Default for Builder {
             discovery: Default::default(),
             discovery_user_data: Default::default(),
             proxy_url: None,
-            node_map: None,
             #[cfg(not(wasm_browser))]
             dns_resolver: None,
             #[cfg(any(test, feature = "test-utils"))]
@@ -213,7 +210,7 @@ impl Builder {
             secret_key,
             relay_map,
             relay_protocol: self.relay_protocol,
-            node_map: self.node_map,
+            node_map: Default::default(),
             discovery,
             discovery_user_data: self.discovery_user_data,
             proxy_url: self.proxy_url,
@@ -446,12 +443,6 @@ impl Builder {
     /// for applications to parse and use.
     pub fn user_data_for_discovery(mut self, user_data: UserData) -> Self {
         self.discovery_user_data = Some(user_data);
-        self
-    }
-
-    /// Optionally set a list of known nodes.
-    pub fn known_nodes(mut self, nodes: Vec<NodeAddr>) -> Self {
-        self.node_map = Some(nodes);
         self
     }
 
@@ -783,7 +774,7 @@ impl Endpoint {
         ensure!(node_addr.node_id != self.node_id(), SelfConnectSnafu);
 
         if !node_addr.is_empty() {
-            self.add_node_addr(node_addr.clone())?;
+            self.msock.add_node_addr(node_addr.clone(), Source::App)?;
         }
         let node_id = node_addr.node_id;
         let direct_addresses = node_addr.direct_addresses.clone();
@@ -855,75 +846,6 @@ impl Endpoint {
             inner: self.msock.endpoint().accept(),
             ep: self.clone(),
         }
-    }
-
-    // # Methods for manipulating the internal state about other nodes.
-
-    /// Informs this [`Endpoint`] about addresses of the iroh node.
-    ///
-    /// This updates the local state for the remote node.  If the provided [`NodeAddr`]
-    /// contains a [`RelayUrl`] this will be used as the new relay server for this node.  If
-    /// it contains any new IP endpoints they will also be stored and tried when next
-    /// connecting to this node. Any address that matches this node's direct addresses will be
-    /// silently ignored.
-    ///
-    /// See also [`Endpoint::add_node_addr_with_source`].
-    ///
-    /// # Using node discovery instead
-    ///
-    /// It is strongly advised to use node discovery using the [`StaticProvider`] instead.
-    /// This provides more flexibility and future proofing.
-    ///
-    /// # Errors
-    ///
-    /// Will return an error if we attempt to add our own [`NodeId`] to the node map or
-    /// if the direct addresses are a subset of ours.
-    ///
-    /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
-    pub fn add_node_addr(&self, node_addr: NodeAddr) -> Result<(), AddNodeAddrError> {
-        self.add_node_addr_inner(node_addr, magicsock::Source::App)
-    }
-
-    /// Informs this [`Endpoint`] about addresses of the iroh node, noting the source.
-    ///
-    /// This updates the local state for the remote node.  If the provided [`NodeAddr`] contains a
-    /// [`RelayUrl`] this will be used as the new relay server for this node.  If it contains any
-    /// new IP endpoints they will also be stored and tried when next connecting to this node. Any
-    /// address that matches this node's direct addresses will be silently ignored. The *source* is
-    /// used for logging exclusively and will not be stored.
-    ///
-    /// # Using node discovery instead
-    ///
-    /// It is strongly advised to use node discovery using the [`StaticProvider`] instead.
-    /// This provides more flexibility and future proofing.
-    ///
-    /// # Errors
-    ///
-    /// Will return an error if we attempt to add our own [`NodeId`] to the node map or
-    /// if the direct addresses are a subset of ours.
-    ///
-    /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
-    pub fn add_node_addr_with_source(
-        &self,
-        node_addr: NodeAddr,
-        source: &'static str,
-    ) -> Result<(), AddNodeAddrError> {
-        self.add_node_addr_inner(
-            node_addr,
-            magicsock::Source::NamedApp {
-                name: source.into(),
-            },
-        )
-    }
-
-    fn add_node_addr_inner(
-        &self,
-        node_addr: NodeAddr,
-        source: magicsock::Source,
-    ) -> Result<(), AddNodeAddrError> {
-        // Connecting to ourselves is not supported.
-        snafu::ensure!(node_addr.node_id != self.node_id(), OwnAddressSnafu);
-        self.msock.add_node_addr(node_addr, source)
     }
 
     // # Getter methods for properties of this Endpoint itself.
@@ -1169,7 +1091,7 @@ impl Endpoint {
     ///
     /// [`MdnsDiscovery`]: crate::discovery::mdns::MdnsDiscovery
     /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
-    pub fn discovery_stream(&self) -> impl Stream<Item = Result<DiscoveryItem, Lagged>> {
+    pub fn discovery_stream(&self) -> impl Stream<Item = Option<DiscoveryItem>> {
         self.msock.discovery_subscribers().subscribe()
     }
 
@@ -2317,7 +2239,8 @@ mod tests {
 
     use super::Endpoint;
     use crate::{
-        endpoint::{ConnectOptions, Connection, ConnectionType, RemoteInfo},
+        discovery::static_provider::StaticProvider,
+        endpoint::{ConnectOptions, Connection, ConnectionType, RemoteInfo, Source},
         test_utils::{run_relay_server, run_relay_server_with},
         watcher::Watcher,
         RelayMode,
@@ -2339,7 +2262,7 @@ mod tests {
         let err = res.err().unwrap();
         assert!(err.to_string().starts_with("Connecting to ourself"));
 
-        let res = ep.add_node_addr(my_addr);
+        let res = ep.msock.add_node_addr(my_addr, Source::App);
         assert!(res.is_err());
         let err = res.err().unwrap();
         assert!(err.to_string().starts_with("Adding our own address"));
@@ -2458,7 +2381,7 @@ mod tests {
                 .secret_key(secret_key.clone())
                 .transport_config(transport_config);
             if let Some(nodes) = nodes {
-                builder = builder.known_nodes(nodes);
+                builder = builder.add_discovery(|_| Some(StaticProvider::from_node_info(nodes)));
             }
             Ok(builder.alpns(vec![TEST_ALPN.to_vec()]).bind().await?)
         }
@@ -2474,7 +2397,9 @@ mod tests {
         // information for a peer
         let endpoint = new_endpoint(secret_key.clone(), None).await?;
         assert_eq!(endpoint.remote_info_iter().count(), 0);
-        endpoint.add_node_addr(node_addr.clone())?;
+        endpoint
+            .msock
+            .add_node_addr(node_addr.clone(), Source::App)?;
 
         // Grab the current addrs
         let node_addrs: Vec<NodeAddr> = endpoint.remote_info_iter().map(Into::into).collect();
@@ -2668,8 +2593,8 @@ mod tests {
 
         let ep1_nodeaddr = ep1.node_addr().initialized().await?;
         let ep2_nodeaddr = ep2.node_addr().initialized().await?;
-        ep1.add_node_addr(ep2_nodeaddr.clone())?;
-        ep2.add_node_addr(ep1_nodeaddr.clone())?;
+        ep1.msock.add_node_addr(ep2_nodeaddr.clone(), Source::App)?;
+        ep2.msock.add_node_addr(ep1_nodeaddr.clone(), Source::App)?;
         let ep1_nodeid = ep1.node_id();
         let ep2_nodeid = ep2.node_id();
         eprintln!("node id 1 {ep1_nodeid}");
