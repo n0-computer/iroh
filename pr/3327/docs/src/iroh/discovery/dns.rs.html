@@ -5,35 +5,35 @@
 <a href=#5 id=5 data-nosnippet>5</a><span class="kw">pub use </span>iroh_relay::dns::{N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING};
 <a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>n0_future::boxed::BoxStream;
 <a href=#7 id=7 data-nosnippet>7</a>
-<a href=#8 id=8 data-nosnippet>8</a><span class="kw">use super</span>::{DiscoveryError, IntoDiscovery, IntoDiscoveryError};
+<a href=#8 id=8 data-nosnippet>8</a><span class="kw">use super</span>::{DiscoveryContext, DiscoveryError, IntoDiscovery, IntoDiscoveryError};
 <a href=#9 id=9 data-nosnippet>9</a><span class="kw">use crate</span>::{
 <a href=#10 id=10 data-nosnippet>10</a>    discovery::{Discovery, DiscoveryItem},
 <a href=#11 id=11 data-nosnippet>11</a>    endpoint::force_staging_infra,
-<a href=#12 id=12 data-nosnippet>12</a>    Endpoint,
-<a href=#13 id=13 data-nosnippet>13</a>};
-<a href=#14 id=14 data-nosnippet>14</a>
-<a href=#15 id=15 data-nosnippet>15</a><span class="kw">const </span>DNS_STAGGERING_MS: <span class="kw-2">&amp;</span>[u64] = <span class="kw-2">&amp;</span>[<span class="number">200</span>, <span class="number">300</span>];
-<a href=#16 id=16 data-nosnippet>16</a>
-<a href=#17 id=17 data-nosnippet>17</a><span class="doccomment">/// DNS node discovery
-<a href=#18 id=18 data-nosnippet>18</a>///
-<a href=#19 id=19 data-nosnippet>19</a>/// When asked to resolve a [`NodeId`], this service performs a lookup in the Domain Name System (DNS).
-<a href=#20 id=20 data-nosnippet>20</a>///
-<a href=#21 id=21 data-nosnippet>21</a>/// It uses the [`Endpoint`]'s DNS resolver to query for `TXT` records under the domain
-<a href=#22 id=22 data-nosnippet>22</a>/// `_iroh.&lt;z32-node-id&gt;.&lt;origin-domain&gt;`:
-<a href=#23 id=23 data-nosnippet>23</a>///
-<a href=#24 id=24 data-nosnippet>24</a>/// * `_iroh`: is the record name
-<a href=#25 id=25 data-nosnippet>25</a>/// * `&lt;z32-node-id&gt;` is the [`NodeId`] encoded in [`z-base-32`] format
-<a href=#26 id=26 data-nosnippet>26</a>/// * `&lt;origin-domain&gt;` is the node origin domain as set in [`DnsDiscovery::builder`].
-<a href=#27 id=27 data-nosnippet>27</a>///
-<a href=#28 id=28 data-nosnippet>28</a>/// Each TXT record returned from the query is expected to contain a string in the format `&lt;name&gt;=&lt;value&gt;`.
-<a href=#29 id=29 data-nosnippet>29</a>/// If a TXT record contains multiple character strings, they are concatenated first.
-<a href=#30 id=30 data-nosnippet>30</a>/// The supported attributes are:
-<a href=#31 id=31 data-nosnippet>31</a>/// * `relay=&lt;url&gt;`: The URL of the home relay server of the node
-<a href=#32 id=32 data-nosnippet>32</a>///
-<a href=#33 id=33 data-nosnippet>33</a>/// The DNS resolver defaults to using the nameservers configured on the host system, but can be changed
-<a href=#34 id=34 data-nosnippet>34</a>/// with [`crate::endpoint::Builder::dns_resolver`].
-<a href=#35 id=35 data-nosnippet>35</a>///
-<a href=#36 id=36 data-nosnippet>36</a>/// [z-base-32]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
+<a href=#12 id=12 data-nosnippet>12</a>};
+<a href=#13 id=13 data-nosnippet>13</a>
+<a href=#14 id=14 data-nosnippet>14</a><span class="kw">const </span>DNS_STAGGERING_MS: <span class="kw-2">&amp;</span>[u64] = <span class="kw-2">&amp;</span>[<span class="number">200</span>, <span class="number">300</span>];
+<a href=#15 id=15 data-nosnippet>15</a>
+<a href=#16 id=16 data-nosnippet>16</a><span class="doccomment">/// DNS node discovery
+<a href=#17 id=17 data-nosnippet>17</a>///
+<a href=#18 id=18 data-nosnippet>18</a>/// When asked to resolve a [`NodeId`], this service performs a lookup in the Domain Name System (DNS).
+<a href=#19 id=19 data-nosnippet>19</a>///
+<a href=#20 id=20 data-nosnippet>20</a>/// It uses the [`Endpoint`]'s DNS resolver to query for `TXT` records under the domain
+<a href=#21 id=21 data-nosnippet>21</a>/// `_iroh.&lt;z32-node-id&gt;.&lt;origin-domain&gt;`:
+<a href=#22 id=22 data-nosnippet>22</a>///
+<a href=#23 id=23 data-nosnippet>23</a>/// * `_iroh`: is the record name
+<a href=#24 id=24 data-nosnippet>24</a>/// * `&lt;z32-node-id&gt;` is the [`NodeId`] encoded in [`z-base-32`] format
+<a href=#25 id=25 data-nosnippet>25</a>/// * `&lt;origin-domain&gt;` is the node origin domain as set in [`DnsDiscovery::builder`].
+<a href=#26 id=26 data-nosnippet>26</a>///
+<a href=#27 id=27 data-nosnippet>27</a>/// Each TXT record returned from the query is expected to contain a string in the format `&lt;name&gt;=&lt;value&gt;`.
+<a href=#28 id=28 data-nosnippet>28</a>/// If a TXT record contains multiple character strings, they are concatenated first.
+<a href=#29 id=29 data-nosnippet>29</a>/// The supported attributes are:
+<a href=#30 id=30 data-nosnippet>30</a>/// * `relay=&lt;url&gt;`: The URL of the home relay server of the node
+<a href=#31 id=31 data-nosnippet>31</a>///
+<a href=#32 id=32 data-nosnippet>32</a>/// The DNS resolver defaults to using the nameservers configured on the host system, but can be changed
+<a href=#33 id=33 data-nosnippet>33</a>/// with [`crate::endpoint::Builder::dns_resolver`].
+<a href=#34 id=34 data-nosnippet>34</a>///
+<a href=#35 id=35 data-nosnippet>35</a>/// [z-base-32]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
+<a href=#36 id=36 data-nosnippet>36</a>/// [`Endpoint`]: crate::Endpoint
 <a href=#37 id=37 data-nosnippet>37</a></span><span class="attr">#[derive(Debug)]
 <a href=#38 id=38 data-nosnippet>38</a></span><span class="kw">pub struct </span>DnsDiscovery {
 <a href=#39 id=39 data-nosnippet>39</a>    origin_domain: String,
@@ -93,26 +93,29 @@
 <a href=#93 id=93 data-nosnippet>93</a>}
 <a href=#94 id=94 data-nosnippet>94</a>
 <a href=#95 id=95 data-nosnippet>95</a><span class="kw">impl </span>IntoDiscovery <span class="kw">for </span>DnsDiscoveryBuilder {
-<a href=#96 id=96 data-nosnippet>96</a>    <span class="kw">fn </span>into_discovery(<span class="kw-2">mut </span><span class="self">self</span>, endpoint: <span class="kw-2">&amp;</span>Endpoint) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Discovery, IntoDiscoveryError&gt; {
-<a href=#97 id=97 data-nosnippet>97</a>        <span class="kw">if </span><span class="self">self</span>.dns_resolver.is_none() {
-<a href=#98 id=98 data-nosnippet>98</a>            <span class="self">self</span>.dns_resolver = <span class="prelude-val">Some</span>(endpoint.dns_resolver().clone());
-<a href=#99 id=99 data-nosnippet>99</a>        }
-<a href=#100 id=100 data-nosnippet>100</a>        <span class="prelude-val">Ok</span>(<span class="self">self</span>.build())
-<a href=#101 id=101 data-nosnippet>101</a>    }
-<a href=#102 id=102 data-nosnippet>102</a>}
-<a href=#103 id=103 data-nosnippet>103</a>
-<a href=#104 id=104 data-nosnippet>104</a><span class="kw">impl </span>Discovery <span class="kw">for </span>DnsDiscovery {
-<a href=#105 id=105 data-nosnippet>105</a>    <span class="kw">fn </span>resolve(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem, DiscoveryError&gt;&gt;&gt; {
-<a href=#106 id=106 data-nosnippet>106</a>        <span class="kw">let </span>resolver = <span class="self">self</span>.dns_resolver.clone();
-<a href=#107 id=107 data-nosnippet>107</a>        <span class="kw">let </span>origin_domain = <span class="self">self</span>.origin_domain.clone();
-<a href=#108 id=108 data-nosnippet>108</a>        <span class="kw">let </span>fut = <span class="kw">async move </span>{
-<a href=#109 id=109 data-nosnippet>109</a>            <span class="kw">let </span>node_info = resolver
-<a href=#110 id=110 data-nosnippet>110</a>                .lookup_node_by_id_staggered(<span class="kw-2">&amp;</span>node_id, <span class="kw-2">&amp;</span>origin_domain, DNS_STAGGERING_MS)
-<a href=#111 id=111 data-nosnippet>111</a>                .<span class="kw">await
-<a href=#112 id=112 data-nosnippet>112</a>                </span>.map_err(|e| DiscoveryError::from_err(<span class="string">"dns"</span>, e))<span class="question-mark">?</span>;
-<a href=#113 id=113 data-nosnippet>113</a>            <span class="prelude-val">Ok</span>(DiscoveryItem::new(node_info, <span class="string">"dns"</span>, <span class="prelude-val">None</span>))
-<a href=#114 id=114 data-nosnippet>114</a>        };
-<a href=#115 id=115 data-nosnippet>115</a>        <span class="kw">let </span>stream = n0_future::stream::once_future(fut);
-<a href=#116 id=116 data-nosnippet>116</a>        <span class="prelude-val">Some</span>(Box::pin(stream))
-<a href=#117 id=117 data-nosnippet>117</a>    }
-<a href=#118 id=118 data-nosnippet>118</a>}</code></pre></div></section></main></body></html>
+<a href=#96 id=96 data-nosnippet>96</a>    <span class="kw">fn </span>into_discovery(
+<a href=#97 id=97 data-nosnippet>97</a>        <span class="kw-2">mut </span><span class="self">self</span>,
+<a href=#98 id=98 data-nosnippet>98</a>        context: <span class="kw-2">&amp;</span>DiscoveryContext,
+<a href=#99 id=99 data-nosnippet>99</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Discovery, IntoDiscoveryError&gt; {
+<a href=#100 id=100 data-nosnippet>100</a>        <span class="kw">if </span><span class="self">self</span>.dns_resolver.is_none() {
+<a href=#101 id=101 data-nosnippet>101</a>            <span class="self">self</span>.dns_resolver = <span class="prelude-val">Some</span>(context.dns_resolver().clone());
+<a href=#102 id=102 data-nosnippet>102</a>        }
+<a href=#103 id=103 data-nosnippet>103</a>        <span class="prelude-val">Ok</span>(<span class="self">self</span>.build())
+<a href=#104 id=104 data-nosnippet>104</a>    }
+<a href=#105 id=105 data-nosnippet>105</a>}
+<a href=#106 id=106 data-nosnippet>106</a>
+<a href=#107 id=107 data-nosnippet>107</a><span class="kw">impl </span>Discovery <span class="kw">for </span>DnsDiscovery {
+<a href=#108 id=108 data-nosnippet>108</a>    <span class="kw">fn </span>resolve(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: NodeId) -&gt; <span class="prelude-ty">Option</span>&lt;BoxStream&lt;<span class="prelude-ty">Result</span>&lt;DiscoveryItem, DiscoveryError&gt;&gt;&gt; {
+<a href=#109 id=109 data-nosnippet>109</a>        <span class="kw">let </span>resolver = <span class="self">self</span>.dns_resolver.clone();
+<a href=#110 id=110 data-nosnippet>110</a>        <span class="kw">let </span>origin_domain = <span class="self">self</span>.origin_domain.clone();
+<a href=#111 id=111 data-nosnippet>111</a>        <span class="kw">let </span>fut = <span class="kw">async move </span>{
+<a href=#112 id=112 data-nosnippet>112</a>            <span class="kw">let </span>node_info = resolver
+<a href=#113 id=113 data-nosnippet>113</a>                .lookup_node_by_id_staggered(<span class="kw-2">&amp;</span>node_id, <span class="kw-2">&amp;</span>origin_domain, DNS_STAGGERING_MS)
+<a href=#114 id=114 data-nosnippet>114</a>                .<span class="kw">await
+<a href=#115 id=115 data-nosnippet>115</a>                </span>.map_err(|e| DiscoveryError::from_err(<span class="string">"dns"</span>, e))<span class="question-mark">?</span>;
+<a href=#116 id=116 data-nosnippet>116</a>            <span class="prelude-val">Ok</span>(DiscoveryItem::new(node_info, <span class="string">"dns"</span>, <span class="prelude-val">None</span>))
+<a href=#117 id=117 data-nosnippet>117</a>        };
+<a href=#118 id=118 data-nosnippet>118</a>        <span class="kw">let </span>stream = n0_future::stream::once_future(fut);
+<a href=#119 id=119 data-nosnippet>119</a>        <span class="prelude-val">Some</span>(Box::pin(stream))
+<a href=#120 id=120 data-nosnippet>120</a>    }
+<a href=#121 id=121 data-nosnippet>121</a>}</code></pre></div></section></main></body></html>
