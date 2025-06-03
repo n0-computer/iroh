@@ -1191,14 +1191,11 @@ impl DirectAddrUpdateState {
                 net_reporter.get_report(relay_map, if_state, opts),
             );
             match fut.await {
-                Ok(Ok(report)) => {
+                Ok(report) => {
                     msock.net_report.set((Some(report), why)).ok();
                 }
-                Ok(Err(_)) => {
-                    warn!("net_report report not received");
-                }
-                Err(err) => {
-                    warn!("net_report report timeout: {:?}", err);
+                Err(time::Elapsed { .. }) => {
+                    warn!("net_report report timed out");
                 }
             }
 
