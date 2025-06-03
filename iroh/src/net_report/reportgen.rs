@@ -28,7 +28,7 @@ use std::{
 use http::StatusCode;
 use iroh_base::RelayUrl;
 #[cfg(not(wasm_browser))]
-use iroh_relay::dns::{DnsError, DnsResolver};
+use iroh_relay::dns::{DnsError, DnsResolver, StaggeredError};
 use iroh_relay::{
     defaults::{DEFAULT_RELAY_QUIC_PORT, DEFAULT_STUN_PORT},
     http::RELAY_PROBE_PATH,
@@ -1128,7 +1128,7 @@ async fn run_quic_probe(
 #[non_exhaustive]
 enum CaptivePortalError {
     #[snafu(transparent)]
-    DnsLookup { source: DnsError },
+    DnsLookup { source: StaggeredError<DnsError> },
     #[snafu(display("Creating HTTP client failed"))]
     CreateReqwestClient { source: reqwest::Error },
     #[snafu(display("HTTP request failed"))]
@@ -1260,7 +1260,7 @@ pub enum GetRelayAddrError {
     #[snafu(display("No suitable relay address found"))]
     NoAddrFound,
     #[snafu(display("DNS lookup failed"))]
-    DnsLookup { source: DnsError },
+    DnsLookup { source: StaggeredError<DnsError> },
     #[snafu(display("Relay node is not suitable for non-STUN probes"))]
     UnsupportedRelayNode,
     #[snafu(display("HTTPS probes are not implemented"))]
@@ -1423,7 +1423,7 @@ enum MeasureHttpsLatencyError {
     InvalidUrl { source: url::ParseError },
     #[cfg(not(wasm_browser))]
     #[snafu(transparent)]
-    DnsLookup { source: DnsError },
+    DnsLookup { source: StaggeredError<DnsError> },
     #[cfg(not(wasm_browser))]
     #[snafu(display("Invalid certificate"))]
     InvalidCertificate { source: reqwest::Error },
