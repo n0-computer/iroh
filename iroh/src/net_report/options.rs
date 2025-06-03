@@ -6,7 +6,7 @@ pub use imp::Options;
 mod imp {
     use std::collections::BTreeSet;
 
-    use crate::net_report::{probes::ProbeProto, QuicConfig};
+    use crate::net_report::{probes::Probe, QuicConfig};
 
     /// Options for running probes
     ///
@@ -70,18 +70,18 @@ mod imp {
         }
 
         /// Turn the options into set of valid protocols
-        pub fn to_protocols(&self) -> BTreeSet<ProbeProto> {
+        pub fn to_protocols(&self) -> BTreeSet<Probe> {
             let mut protocols = BTreeSet::new();
             if let Some(ref quic) = self.quic_config {
                 if quic.ipv4 {
-                    protocols.insert(ProbeProto::QadIpv4);
+                    protocols.insert(Probe::QadIpv4);
                 }
                 if quic.ipv6 {
-                    protocols.insert(ProbeProto::QadIpv6);
+                    protocols.insert(Probe::QadIpv6);
                 }
             }
             if self.https {
-                protocols.insert(ProbeProto::Https);
+                protocols.insert(Probe::Https);
             }
             protocols
         }
@@ -92,7 +92,7 @@ mod imp {
 mod imp {
     use std::collections::BTreeSet;
 
-    use crate::net_report::reportgen::ProbeProto;
+    use crate::net_report::Probe;
 
     /// Options for running probes (in browsers).
     ///
@@ -125,10 +125,10 @@ mod imp {
         }
 
         /// Turn the options into set of valid protocols
-        pub(crate) fn to_protocols(&self) -> BTreeSet<ProbeProto> {
+        pub(crate) fn to_protocols(&self) -> BTreeSet<Probe> {
             let mut protocols = BTreeSet::new();
             if self.https {
-                protocols.insert(ProbeProto::Https);
+                protocols.insert(Probe::Https);
             }
             protocols
         }

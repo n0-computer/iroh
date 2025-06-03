@@ -44,7 +44,7 @@ const NUM_INCREMENTAL_RELAYS: usize = 3;
 /// The protocol used to time a node's latency.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, derive_more::Display)]
 #[repr(u8)]
-pub enum ProbeProto {
+pub enum Probe {
     /// HTTPS
     Https,
     /// QUIC Address Discovery Ipv4
@@ -54,64 +54,10 @@ pub enum ProbeProto {
     #[cfg(not(wasm_browser))]
     QadIpv6,
 }
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, derive_more::Display)]
-pub(super) enum Probe {
-    #[display("HTTPS after {delay:?} to {node}")]
-    Https {
-        delay: Duration,
-        node: Arc<RelayNode>,
-    },
-    #[display("QAD Ipv4 after {delay:?} to {node}")]
-    #[cfg(not(wasm_browser))]
-    QadIpv4 {
-        delay: Duration,
-        node: Arc<RelayNode>,
-    },
-    #[display("QAD Ipv6 after {delay:?} to {node}")]
-    #[cfg(not(wasm_browser))]
-    QadIpv6 {
-        delay: Duration,
-        node: Arc<RelayNode>,
-    },
-}
-
 impl Probe {
-    pub(super) fn delay(&self) -> Duration {
-        match self {
-            #[cfg(not(wasm_browser))]
-            Probe::Https { delay, .. }
-            | Probe::QadIpv4 { delay, .. }
-            | Probe::QadIpv6 { delay, .. } => *delay,
-            #[cfg(wasm_browser)]
-            Probe::Https { delay, .. } => *delay,
-        }
-    }
-
-    pub(crate) fn proto(&self) -> ProbeProto {
-        match self {
-            Probe::Https { .. } => ProbeProto::Https,
-            #[cfg(not(wasm_browser))]
-            Probe::QadIpv4 { .. } => ProbeProto::QadIpv4,
-            #[cfg(not(wasm_browser))]
-            Probe::QadIpv6 { .. } => ProbeProto::QadIpv6,
-        }
-    }
-
-    pub(crate) fn node(&self) -> &Arc<RelayNode> {
-        match self {
-            #[cfg(not(wasm_browser))]
-            Probe::Https { node, .. }
-            | Probe::QadIpv4 { node, .. }
-            | Probe::QadIpv6 { node, .. } => node,
-            #[cfg(wasm_browser)]
-            Probe::Https { node, .. } => node,
-        }
-    }
-
     #[cfg(not(wasm_browser))]
     pub(super) fn is_udp(&self) -> bool {
-        matches!(self, Self::QadIpv4 { .. } | Self::QadIpv6 { .. })
+        matches!(self, Self::QadIpv4 | Self::QadIpv6)
     }
 
     #[cfg(wasm_browser)]
@@ -122,7 +68,7 @@ impl Probe {
 
 /// A probe set is a sequence of similar [`Probe`]s with delays between them.
 ///
-/// The probes are to the same Relayer and of the same [`ProbeProto`] but will have different
+/// The probes are to the same Relayer and of the same [`Probe`] but will have different
 /// delays.  The delays are effectively retries, though they do not wait for the previous
 /// probe to be finished.  The first successful probe will cancel all other probes in the
 /// set.
@@ -134,10 +80,10 @@ impl Probe {
 /// A [`ProbeSet`] implements [`IntoIterator`] similar to how [`Vec`] does.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) struct ProbeSet {
-    /// The [`ProbeProto`] all the probes in this set have.
-    proto: ProbeProto,
-    /// The probes in the set.
-    probes: Vec<Probe>,
+    /// The [`Probe`] all the probes in this set have.
+    proto: Probe,
+    /// The data in the set.
+    probes: Vec<(Duration, Arc<RelayNode>)>,
 }
 
 #[derive(Debug, Snafu)]
@@ -145,32 +91,30 @@ pub(super) struct ProbeSet {
 struct PushError;
 
 impl ProbeSet {
-    fn new(proto: ProbeProto) -> Self {
+    fn new(proto: Probe) -> Self {
         Self {
             probes: Vec::new(),
             proto,
         }
     }
 
-    fn push(&mut self, probe: Probe) -> Result<(), PushError> {
-        if probe.proto() != self.proto {
-            return Err(PushError);
-        }
-        self.probes.push(probe);
-        Ok(())
+    pub(super) fn proto(&self) -> Probe {
+        self.proto
+    }
+
+    fn push(&mut self, delay: Duration, node: Arc<RelayNode>) {
+        self.probes.push((delay, node));
     }
 
     fn is_empty(&self) -> bool {
         self.probes.is_empty()
     }
-}
 
-impl<'a> IntoIterator for &'a ProbeSet {
-    type Item = &'a Probe;
+    fn delays(&self) -> impl Iterator<Item = &Duration> {
+        self.probes.iter().map(|(d, _)| d)
+    }
 
-    type IntoIter = std::slice::Iter<'a, Probe>;
-
-    fn into_iter(self) -> Self::IntoIter {
+    pub(super) fn params(&self) -> impl Iterator<Item = &(Duration, Arc<RelayNode>)> {
         self.probes.iter()
     }
 }
@@ -178,8 +122,8 @@ impl<'a> IntoIterator for &'a ProbeSet {
 impl fmt::Display for ProbeSet {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(f, r#"ProbeSet("{}") {{"#, self.proto)?;
-        for probe in self.probes.iter() {
-            writeln!(f, "        {probe},")?;
+        for (delay, node) in self.probes.iter() {
+            writeln!(f, "        {delay:?} to {node},")?;
         }
         writeln!(f, "}}")
     }
@@ -198,7 +142,7 @@ impl fmt::Display for ProbeSet {
 #[derive(Debug, PartialEq, Eq)]
 pub(super) struct ProbePlan {
     set: BTreeSet<ProbeSet>,
-    protocols: BTreeSet<ProbeProto>,
+    protocols: BTreeSet<Probe>,
 }
 
 impl ProbePlan {
@@ -206,7 +150,7 @@ impl ProbePlan {
     #[cfg(not(wasm_browser))]
     pub(super) fn initial(
         relay_map: &RelayMap,
-        protocols: &BTreeSet<ProbeProto>,
+        protocols: &BTreeSet<Probe>,
         if_state: &super::IfStateDetails,
     ) -> Self {
         let mut plan = Self {
@@ -219,34 +163,24 @@ impl ProbePlan {
         let mut max_high_prio_delay: Option<Duration> = None;
 
         for relay_node in relay_map.nodes() {
-            let mut quic_ipv4_probes = ProbeSet::new(ProbeProto::QadIpv4);
-            let mut quic_ipv6_probes = ProbeSet::new(ProbeProto::QadIpv6);
+            let mut quic_ipv4_probes = ProbeSet::new(Probe::QadIpv4);
+            let mut quic_ipv6_probes = ProbeSet::new(Probe::QadIpv6);
 
             for attempt in 0..3 {
                 let delay = DEFAULT_INITIAL_RETRANSMIT * attempt as u32;
 
                 if if_state.have_v4 {
-                    quic_ipv4_probes
-                        .push(Probe::QadIpv4 {
-                            delay,
-                            node: relay_node.clone(),
-                        })
-                        .expect("adding QuicIpv4 probe to a QuicIpv4 probe set");
+                    quic_ipv4_probes.push(delay, relay_node.clone());
                 }
                 if if_state.have_v6 {
-                    quic_ipv6_probes
-                        .push(Probe::QadIpv6 {
-                            delay,
-                            node: relay_node.clone(),
-                        })
-                        .expect("adding QuicIpv6 probe to a QuicAddrIpv6 probe set");
+                    quic_ipv6_probes.push(delay, relay_node.clone());
                 }
             }
             plan.add_if_enabled(quic_ipv4_probes);
             plan.add_if_enabled(quic_ipv6_probes);
 
             // The HTTP probes only start after the QUAD probes have had a chance.
-            let mut https_probes = ProbeSet::new(ProbeProto::Https);
+            let mut https_probes = ProbeSet::new(Probe::Https);
 
             for attempt in 0..3 {
                 let mut start = *max_high_prio_delay.get_or_insert_with(|| plan.max_delay());
@@ -257,12 +191,7 @@ impl ProbePlan {
                     start += DEFAULT_INITIAL_RETRANSMIT;
                 }
                 let delay = start + DEFAULT_INITIAL_RETRANSMIT * attempt as u32;
-                https_probes
-                    .push(Probe::Https {
-                        delay,
-                        node: relay_node.clone(),
-                    })
-                    .expect("adding Https probe to a Https probe set");
+                https_probes.push(delay, relay_node.clone());
             }
 
             plan.add_if_enabled(https_probes);
@@ -274,23 +203,18 @@ impl ProbePlan {
     ///
     /// Here, we essentially only run HTTPS probes without any delays waiting for STUN.
     #[cfg(wasm_browser)]
-    pub(super) fn initial(relay_map: &RelayMap, protocols: &BTreeSet<ProbeProto>) -> Self {
+    pub(super) fn initial(relay_map: &RelayMap, protocols: &BTreeSet<Probe>) -> Self {
         let mut plan = Self {
             set: BTreeSet::new(),
             protocols: protocols.clone(),
         };
 
         for relay_node in relay_map.nodes() {
-            let mut https_probes = ProbeSet::new(ProbeProto::Https);
+            let mut https_probes = ProbeSet::new(Probe::Https);
 
             for attempt in 0u32..3 {
                 let delay = DEFAULT_INITIAL_RETRANSMIT * attempt;
-                https_probes
-                    .push(Probe::Https {
-                        delay,
-                        node: relay_node.clone(),
-                    })
-                    .expect("adding Https probe to a Https probe set");
+                https_probes.push(delay, relay_node.clone());
             }
 
             plan.add_if_enabled(https_probes);
@@ -305,7 +229,7 @@ impl ProbePlan {
     pub(super) fn with_last_report(
         relay_map: &RelayMap,
         last_report: &Report,
-        protocols: &BTreeSet<ProbeProto>,
+        protocols: &BTreeSet<Probe>,
         if_state: &super::IfStateDetails,
     ) -> Self {
         if last_report.relay_latency.is_empty() {
@@ -361,45 +285,30 @@ impl ProbePlan {
                 .map(|l| l * 120 / 100) // increases latency by 20%, why?
                 .unwrap_or(DEFAULT_ACTIVE_RETRANSMIT_DELAY);
 
-            let mut quic_ipv4_probes = ProbeSet::new(ProbeProto::QadIpv4);
-            let mut quic_ipv6_probes = ProbeSet::new(ProbeProto::QadIpv6);
+            let mut quic_ipv4_probes = ProbeSet::new(Probe::QadIpv4);
+            let mut quic_ipv6_probes = ProbeSet::new(Probe::QadIpv6);
 
             for attempt in 0..attempts {
                 let delay = (retransmit_delay * attempt as u32)
                     + (ACTIVE_RETRANSMIT_EXTRA_DELAY * attempt as u32);
                 if do4 {
-                    quic_ipv4_probes
-                        .push(Probe::QadIpv4 {
-                            delay,
-                            node: relay_node.clone(),
-                        })
-                        .expect("adding QuicIpv4 probe to a QuicAddrIpv4 probe set");
+                    quic_ipv4_probes.push(delay, relay_node.clone());
                 }
                 if do6 {
-                    quic_ipv6_probes
-                        .push(Probe::QadIpv6 {
-                            delay,
-                            node: relay_node.clone(),
-                        })
-                        .expect("adding QuicIpv6 probe to a QuicAddrIpv6 probe set");
+                    quic_ipv6_probes.push(delay, relay_node.clone());
                 }
             }
             plan.add_if_enabled(quic_ipv4_probes);
             plan.add_if_enabled(quic_ipv6_probes);
 
             // The HTTP and ICMP probes only start after the STUN probes have had a chance.
-            let mut https_probes = ProbeSet::new(ProbeProto::Https);
+            let mut https_probes = ProbeSet::new(Probe::Https);
             let start = *max_stun_delay.get_or_insert_with(|| plan.max_delay());
             for attempt in 0..attempts {
                 let delay = start
                     + (retransmit_delay * attempt as u32)
                     + (ACTIVE_RETRANSMIT_EXTRA_DELAY * (attempt as u32 + 1));
-                https_probes
-                    .push(Probe::Https {
-                        delay,
-                        node: relay_node.clone(),
-                    })
-                    .expect("Pushing Https Probe to an Https ProbeSet");
+                https_probes.push(delay, relay_node.clone());
             }
 
             plan.add_if_enabled(https_probes);
@@ -411,7 +320,7 @@ impl ProbePlan {
     pub(super) fn with_last_report(
         relay_map: &RelayMap,
         last_report: &Report,
-        protocols: &BTreeSet<ProbeProto>,
+        protocols: &BTreeSet<Probe>,
     ) -> Self {
         if last_report.relay_latency.is_empty() {
             return Self::initial(relay_map, protocols);
@@ -444,16 +353,11 @@ impl ProbePlan {
                 .map(|l| l * 120 / 100) // increases latency by 20%, why?
                 .unwrap_or(DEFAULT_ACTIVE_RETRANSMIT_DELAY);
 
-            let mut https_probes = ProbeSet::new(ProbeProto::Https);
+            let mut https_probes = ProbeSet::new(Probe::Https);
             for attempt in 0..attempts {
                 let delay =
                     (retransmit_delay * attempt) + (ACTIVE_RETRANSMIT_EXTRA_DELAY * (attempt + 1));
-                https_probes
-                    .push(Probe::Https {
-                        delay,
-                        node: relay_node.clone(),
-                    })
-                    .expect("Pushing Https Probe to an Https ProbeSet");
+                https_probes.push(delay, relay_node.clone());
             }
 
             plan.add_if_enabled(https_probes);
@@ -467,7 +371,7 @@ impl ProbePlan {
     }
 
     /// Adds a [`ProbeSet`] if it contains probes and the protocol indicated in
-    /// the [`ProbeSet] matches a protocol in our set of [`ProbeProto`]s.
+    /// the [`ProbeSet] matches a protocol in our set of [`Probe`]s.
     fn add_if_enabled(&mut self, set: ProbeSet) {
         if !set.is_empty() && self.protocols.contains(&set.proto) {
             self.set.insert(set);
@@ -478,21 +382,15 @@ impl ProbePlan {
     fn max_delay(&self) -> Duration {
         self.set
             .iter()
-            .flatten()
-            .map(|probe| probe.delay())
+            .flat_map(|probe_set| probe_set.delays())
             .max()
+            .copied()
             .unwrap_or_default()
     }
 
-    /// Stun & Quic probes are "priority" probes
+    /// Any UDP based probes are "priority" probes
     fn has_priority_probes(&self) -> bool {
-        #[cfg(not(wasm_browser))]
-        for probe in &self.set {
-            if matches!(probe.proto, ProbeProto::QadIpv4 | ProbeProto::QadIpv6) {
-                return true;
-            }
-        }
-        false
+        self.set.iter().any(|p| p.proto.is_udp())
     }
 }
 
@@ -501,8 +399,8 @@ impl fmt::Display for ProbePlan {
         writeln!(f, "ProbePlan {{")?;
         for probe_set in self.set.iter() {
             writeln!(f, r#"    ProbeSet("{}") {{"#, probe_set.proto)?;
-            for probe in probe_set.probes.iter() {
-                writeln!(f, "        {probe},")?;
+            for (delay, node) in probe_set.probes.iter() {
+                writeln!(f, "        {delay:?} to {node},")?;
             }
             writeln!(f, "    }}")?;
         }
@@ -564,26 +462,20 @@ mod tests {
 
     /// Shorthand which declares a new ProbeSet.
     ///
-    /// `$kind`: The `ProbeProto`.
+    /// `$kind`: The `Probe`.
     /// `$node`: Expression which will be an `Arc<RelayNode>`.
     /// `$delays`: A `Vec` of the delays for this probe.
     macro_rules! probeset {
-        (proto: ProbeProto::$kind:ident, relay: $node:expr, delays: $delays:expr,) => {
+        (proto: Probe::$kind:ident, relay: $node:expr, delays: $delays:expr,) => {
             ProbeSet {
-                proto: ProbeProto::$kind,
-                probes: $delays
-                    .iter()
-                    .map(|delay| Probe::$kind {
-                        delay: *delay,
-                        node: $node,
-                    })
-                    .collect(),
+                proto: Probe::$kind,
+                probes: $delays.iter().map(|delay| (*delay, $node)).collect(),
             }
         };
     }
 
-    fn default_protocols() -> BTreeSet<ProbeProto> {
-        BTreeSet::from([ProbeProto::QadIpv4, ProbeProto::QadIpv6, ProbeProto::Https])
+    fn default_protocols() -> BTreeSet<Probe> {
+        BTreeSet::from([Probe::QadIpv4, Probe::QadIpv6, Probe::Https])
     }
 
     #[tokio::test]
@@ -596,42 +488,42 @@ mod tests {
 
         let mut expected_plan: ProbePlan = [
             probeset! {
-                proto: ProbeProto::QadIpv4,
+                proto: Probe::QadIpv4,
                 relay: relay_node_1.clone(),
                 delays: [Duration::ZERO,
                          Duration::from_millis(100),
                          Duration::from_millis(200)],
             },
             probeset! {
-                proto: ProbeProto::QadIpv6,
+                proto: Probe::QadIpv6,
                 relay: relay_node_1.clone(),
                 delays: [Duration::ZERO,
                          Duration::from_millis(100),
                          Duration::from_millis(200)],
             },
             probeset! {
-                proto: ProbeProto::Https,
+                proto: Probe::Https,
                 relay: relay_node_1.clone(),
                 delays: [Duration::from_millis(300),
                          Duration::from_millis(400),
                          Duration::from_millis(500)],
             },
             probeset! {
-                proto: ProbeProto::QadIpv4,
+                proto: Probe::QadIpv4,
                 relay: relay_node_2.clone(),
                 delays: [Duration::ZERO,
                          Duration::from_millis(100),
                          Duration::from_millis(200)],
             },
             probeset! {
-                proto: ProbeProto::QadIpv6,
+                proto: Probe::QadIpv6,
                 relay: relay_node_2.clone(),
                 delays: [Duration::ZERO,
                          Duration::from_millis(100),
                          Duration::from_millis(200)],
             },
             probeset! {
-                proto: ProbeProto::Https,
+                proto: Probe::Https,
                 relay: relay_node_2.clone(),
                 delays: [Duration::from_millis(300),
                          Duration::from_millis(400),
@@ -658,18 +550,18 @@ mod tests {
         let relay_node_1 = relay_map.nodes().next().unwrap();
         let relay_node_2 = relay_map.nodes().nth(1).unwrap();
         let if_state = IfStateDetails::fake();
-        let plan = ProbePlan::initial(&relay_map, &BTreeSet::from([ProbeProto::Https]), &if_state);
+        let plan = ProbePlan::initial(&relay_map, &BTreeSet::from([Probe::Https]), &if_state);
 
         let mut expected_plan: ProbePlan = [
             probeset! {
-                proto: ProbeProto::Https,
+                proto: Probe::Https,
                 relay: relay_node_1.clone(),
                 delays: [Duration::ZERO,
                          Duration::from_millis(100),
                          Duration::from_millis(200)],
             },
             probeset! {
-                proto: ProbeProto::Https,
+                proto: Probe::Https,
                 relay: relay_node_2.clone(),
                 delays: [Duration::ZERO,
                          Duration::from_millis(100),
@@ -678,7 +570,7 @@ mod tests {
         ]
         .into_iter()
         .collect();
-        expected_plan.protocols = BTreeSet::from([ProbeProto::Https]);
+        expected_plan.protocols = BTreeSet::from([Probe::Https]);
 
         println!("expected:");
         println!("{expected_plan}");
@@ -704,12 +596,12 @@ mod tests {
             latencies.update_relay(
                 relay_node_1.url.clone(),
                 Duration::from_millis(2),
-                ProbeProto::QadIpv4,
+                Probe::QadIpv4,
             );
             latencies.update_relay(
                 relay_node_2.url.clone(),
                 Duration::from_millis(2),
-                ProbeProto::QadIpv4,
+                Probe::QadIpv4,
             );
             let last_report = Report {
                 udp: true,
@@ -735,7 +627,7 @@ mod tests {
             );
             let mut expected_plan: ProbePlan = [
                 probeset! {
-                    proto: ProbeProto::QadIpv4,
+                    proto: Probe::QadIpv4,
                     relay: relay_node_1.clone(),
                     delays: [Duration::ZERO,
                              Duration::from_micros(52_400),
@@ -743,7 +635,7 @@ mod tests {
                              Duration::from_micros(157_200)],
                 },
                 probeset! {
-                    proto: ProbeProto::QadIpv6,
+                    proto: Probe::QadIpv6,
                     relay: relay_node_1.clone(),
                     delays: [Duration::ZERO,
                              Duration::from_micros(52_400),
@@ -751,7 +643,7 @@ mod tests {
                              Duration::from_micros(157_200)],
                 },
                 probeset! {
-                    proto: ProbeProto::Https,
+                    proto: Probe::Https,
                     relay: relay_node_1.clone(),
                     delays: [Duration::from_micros(207_200),
                              Duration::from_micros(259_600),
@@ -759,19 +651,19 @@ mod tests {
                              Duration::from_micros(364_400)],
                 },
                 probeset! {
-                    proto: ProbeProto::QadIpv4,
+                    proto: Probe::QadIpv4,
                     relay: relay_node_2.clone(),
                     delays: [Duration::ZERO,
                              Duration::from_micros(52_400)],
                 },
                 probeset! {
-                    proto: ProbeProto::QadIpv6,
+                    proto: Probe::QadIpv6,
                     relay: relay_node_2.clone(),
                     delays: [Duration::ZERO,
                              Duration::from_micros(52_400)],
                 },
                 probeset! {
-                    proto: ProbeProto::Https,
+                    proto: Probe::Https,
                     relay: relay_node_2.clone(),
                     delays: [Duration::from_micros(207_200),
                              Duration::from_micros(259_600)],
@@ -801,10 +693,10 @@ mod tests {
     ) -> Report {
         let mut latencies = RelayLatencies::default();
         if let Some(latency_1) = latency_1 {
-            latencies.update_relay(url_1.clone(), latency_1, ProbeProto::QadIpv4);
+            latencies.update_relay(url_1.clone(), latency_1, Probe::QadIpv4);
         }
         if let Some(latency_2) = latency_2 {
-            latencies.update_relay(url_2.clone(), latency_2, ProbeProto::QadIpv4);
+            latencies.update_relay(url_2.clone(), latency_2, Probe::QadIpv4);
         }
         Report {
             udp: true,

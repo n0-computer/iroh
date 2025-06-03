@@ -8,7 +8,7 @@ use std::{
 use iroh_base::RelayUrl;
 use tracing::warn;
 
-use super::{probes::ProbeProto, ProbeReport};
+use super::{probes::Probe, ProbeReport};
 
 /// A net_report report.
 #[derive(Default, Debug, PartialEq, Eq, Clone)]
@@ -57,19 +57,13 @@ impl fmt::Display for Report {
 impl Report {
     /// Updates a net_report [`Report`] with a new [`ProbeReport`].
     pub(super) fn update(&mut self, probe_report: &ProbeReport) {
-        let relay_node = probe_report.probe.node();
+        let relay_node = &probe_report.node;
         if let Some(latency) = probe_report.latency {
-            self.relay_latency.update_relay(
-                relay_node.url.clone(),
-                latency,
-                probe_report.probe.proto(),
-            );
+            self.relay_latency
+                .update_relay(relay_node.url.clone(), latency, probe_report.probe);
 
             #[cfg(not(wasm_browser))]
-            if matches!(
-                probe_report.probe.proto(),
-                ProbeProto::QadIpv4 | ProbeProto::QadIpv6
-            ) {
+            if matches!(probe_report.probe, Probe::QadIpv4 | Probe::QadIpv6) {
                 self.udp = true;
 
                 match probe_report.addr {
@@ -119,13 +113,13 @@ pub struct RelayLatencies {
 
 impl RelayLatencies {
     /// Updates a relay's latency, if it is faster than before.
-    pub(super) fn update_relay(&mut self, url: RelayUrl, latency: Duration, probe: ProbeProto) {
+    pub(super) fn update_relay(&mut self, url: RelayUrl, latency: Duration, probe: Probe) {
         let list = match probe {
-            ProbeProto::Https => &mut self.https,
+            Probe::Https => &mut self.https,
             #[cfg(not(wasm_browser))]
-            ProbeProto::QadIpv4 => &mut self.ipv4,
+            Probe::QadIpv4 => &mut self.ipv4,
             #[cfg(not(wasm_browser))]
-            ProbeProto::QadIpv6 => &mut self.ipv6,
+            Probe::QadIpv6 => &mut self.ipv6,
         };
         let old_latency = list.entry(url).or_insert(latency);
         if latency < *old_latency {
@@ -138,15 +132,15 @@ impl RelayLatencies {
     /// For each relay the latency is updated using [`RelayLatencies::update_relay`].
     pub(super) fn merge(&mut self, other: &RelayLatencies) {
         for (url, latency) in other.https.iter() {
-            self.update_relay(url.clone(), *latency, ProbeProto::Https);
+            self.update_relay(url.clone(), *latency, Probe::Https);
         }
         #[cfg(not(wasm_browser))]
         for (url, latency) in other.ipv4.iter() {
-            self.update_relay(url.clone(), *latency, ProbeProto::QadIpv4);
+            self.update_relay(url.clone(), *latency, Probe::QadIpv4);
         }
         #[cfg(not(wasm_browser))]
         for (url, latency) in other.ipv6.iter() {
-            self.update_relay(url.clone(), *latency, ProbeProto::QadIpv6);
+            self.update_relay(url.clone(), *latency, Probe::QadIpv6);
         }
     }
 
