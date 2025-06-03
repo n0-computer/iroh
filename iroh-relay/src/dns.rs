@@ -13,7 +13,7 @@ use n0_future::{
     StreamExt,
 };
 use nested_enum_utils::common_fields;
-use snafu::{Backtrace, OptionExt, Snafu};
+use snafu::{Backtrace, GenerateImplicitData, OptionExt, Snafu};
 use url::Url;
 
 use crate::node_info::{LookupError, NodeInfo};
@@ -51,39 +51,29 @@ pub enum DnsError {
     },
     #[snafu(display("invalid DNS response: not a query for _iroh.z32encodedpubkey"))]
     InvalidResponse {},
-    #[snafu(display("no calls succeeded: [{}]", errors.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("")))]
-    Staggered { errors: Vec<DnsError> },
 }
 
-// TODO(matheus23): Remove this, or remove DnsError::Staggered, but don't keep both.
-mod staggered {
-    use snafu::{Backtrace, GenerateImplicitData, Snafu};
+/// Error returned when an input value is too long for [`crate::node_info::UserData`].
+#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[snafu(module)]
+#[snafu(display("no calls succeeded: [{}]", errors.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("")))]
+pub struct StaggeredError<E: std::fmt::Debug + std::fmt::Display> {
+    backtrace: Option<Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+    errors: Vec<E>,
+}
 
-    use super::LookupError;
-
-    /// Error returned when an input value is too long for [`crate::node_info::UserData`].
-    #[allow(missing_docs)]
-    #[derive(Debug, Snafu)]
-    #[snafu(display("no calls succeeded: [{}]", errors.iter().map(|e| e.to_string()).collect::<Vec<_>>().join("")))]
-    pub struct Error {
-        backtrace: Option<Backtrace>,
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
-        errors: Vec<LookupError>,
-    }
-
-    impl Error {
-        pub(crate) fn new(errors: Vec<LookupError>) -> Self {
-            Self {
-                errors,
-                backtrace: GenerateImplicitData::generate(),
-                span_trace: n0_snafu::SpanTrace::generate(),
-            }
+impl<E: std::fmt::Debug + std::fmt::Display> StaggeredError<E> {
+    pub(crate) fn new(errors: Vec<E>) -> Self {
+        Self {
+            errors,
+            backtrace: GenerateImplicitData::generate(),
+            span_trace: n0_snafu::SpanTrace::generate(),
         }
     }
 }
-
-pub use staggered::*;
 
 /// The DNS resolver used throughout `iroh`.
 #[derive(Debug, Clone)]
@@ -252,12 +242,10 @@ impl DnsResolver {
         host: impl ToString,
         timeout: Duration,
         delays_ms: &[u64],
-    ) -> Result<impl Iterator<Item = IpAddr>, DnsError> {
+    ) -> Result<impl Iterator<Item = IpAddr>, StaggeredError<DnsError>> {
         let host = host.to_string();
         let f = || self.lookup_ipv4(host.clone(), timeout);
-        stagger_call(f, delays_ms)
-            .await
-            .map_err(|errors| StaggeredSnafu { errors }.build())
+        stagger_call(f, delays_ms).await
     }
 
     /// Perform an ipv6 lookup with a timeout in a staggered fashion.
@@ -271,12 +259,10 @@ impl DnsResolver {
         host: impl ToString,
         timeout: Duration,
         delays_ms: &[u64],
-    ) -> Result<impl Iterator<Item = IpAddr>, DnsError> {
+    ) -> Result<impl Iterator<Item = IpAddr>, StaggeredError<DnsError>> {
         let host = host.to_string();
         let f = || self.lookup_ipv6(host.clone(), timeout);
-        stagger_call(f, delays_ms)
-            .await
-            .map_err(|errors| StaggeredSnafu { errors }.build())
+        stagger_call(f, delays_ms).await
     }
 
     /// Race an ipv4 and ipv6 lookup with a timeout in a staggered fashion.
@@ -291,12 +277,10 @@ impl DnsResolver {
         host: impl ToString,
         timeout: Duration,
         delays_ms: &[u64],
-    ) -> Result<impl Iterator<Item = IpAddr>, DnsError> {
+    ) -> Result<impl Iterator<Item = IpAddr>, StaggeredError<DnsError>> {
         let host = host.to_string();
         let f = || self.lookup_ipv4_ipv6(host.clone(), timeout);
-        stagger_call(f, delays_ms)
-            .await
-            .map_err(|errors| StaggeredSnafu { errors }.build())
+        stagger_call(f, delays_ms).await
     }
 
     /// Looks up node info by [`NodeId`] and origin domain name.
@@ -335,11 +319,9 @@ impl DnsResolver {
         &self,
         name: &str,
         delays_ms: &[u64],
-    ) -> Result<NodeInfo, staggered::Error> {
+    ) -> Result<NodeInfo, StaggeredError<LookupError>> {
         let f = || self.lookup_node_by_domain_name(name);
-        stagger_call(f, delays_ms)
-            .await
-            .map_err(staggered::Error::new)
+        stagger_call(f, delays_ms).await
     }
 
     /// Looks up node info by [`NodeId`] and origin domain name.
@@ -353,11 +335,9 @@ impl DnsResolver {
         node_id: &NodeId,
         origin: &str,
         delays_ms: &[u64],
-    ) -> Result<NodeInfo, staggered::Error> {
+    ) -> Result<NodeInfo, StaggeredError<LookupError>> {
         let f = || self.lookup_node_by_id(node_id, origin);
-        stagger_call(f, delays_ms)
-            .await
-            .map_err(staggered::Error::new)
+        stagger_call(f, delays_ms).await
     }
 }
 
@@ -447,10 +427,15 @@ impl<A: Iterator<Item = IpAddr>, B: Iterator<Item = IpAddr>> Iterator for Lookup
 ///
 /// The first call is performed immediately. The first call to succeed generates an Ok result
 /// ignoring any previous error. If all calls fail, an error summarizing all errors is returned.
-async fn stagger_call<T, E, F: Fn() -> Fut, Fut: Future<Output = Result<T, E>>>(
+async fn stagger_call<
+    T,
+    E: std::fmt::Debug + std::fmt::Display,
+    F: Fn() -> Fut,
+    Fut: Future<Output = Result<T, E>>,
+>(
     f: F,
     delays_ms: &[u64],
-) -> Result<T, Vec<E>> {
+) -> Result<T, StaggeredError<E>> {
     let mut calls = n0_future::FuturesUnorderedBounded::new(delays_ms.len() + 1);
     // NOTE: we add the 0 delay here to have a uniform set of futures. This is more performant than
     // using alternatives that allow futures of different types.
@@ -472,7 +457,7 @@ async fn stagger_call<T, E, F: Fn() -> Fut, Fut: Future<Output = Result<T, E>>>(
         }
     }
 
-    Err(errors)
+    Err(StaggeredError::new(errors))
 }
 
 #[cfg(test)]
