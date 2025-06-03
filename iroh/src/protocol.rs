@@ -3,7 +3,7 @@
 //! ## Example
 //!
 //! ```no_run
-//! # use iroh::{endpoint::{Connection, BindError}, protocol::{ProtocolHandler, Router, ProtocolError}, Endpoint, NodeAddr};
+//! # use iroh::{endpoint::{Connection, BindError}, protocol::{AcceptError, ProtocolHandler, Router}, Endpoint, NodeAddr};
 //! #
 //! # async fn test_compile() -> Result<(), BindError> {
 //! let endpoint = Endpoint::builder().discovery_n0().bind().await?;
@@ -19,7 +19,7 @@
 //! struct Echo;
 //!
 //! impl ProtocolHandler for Echo {
-//!     async fn accept(&self, connection: Connection) -> Result<(), ProtocolError> {
+//!     async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
 //!         let (mut send, mut recv) = connection.accept_bi().await?;
 //!
 //!         // Echo any bytes received back directly.
