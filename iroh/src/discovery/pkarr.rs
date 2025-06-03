@@ -451,8 +451,7 @@ impl PkarrRelayClient {
             return Err(HttpRequestSnafu {
                 status: response.status(),
             }
-            .build()
-            .into());
+            .build());
         }
 
         Ok(())
