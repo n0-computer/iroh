@@ -45,10 +45,12 @@
 //! discovery systems at the same time.
 //!
 //! [`Builder::add_discovery`] takes any type that implements [`IntoDiscovery`]. You can
-//! implement that trait on a builder struct if your discovery service needs access to the
-//! endpoint it is mounted on. During endpoint construction, your discovery service will
-//! be built by calling [`IntoDiscovery::into_discovery`], passing the endpoint to your
-//! builder. If your discovery service does not need access to its endpoint, you can
+//! implement that trait on a builder struct if your discovery service needs information
+//! from the endpoint it is mounted on. During endpoint construction, your discovery service
+//! is built by calling [`IntoDiscovery::into_discovery`], passing a [`DiscoveryContext`] to your
+//! builder. The [`DiscoveryContext`] gives access to the endpoint's secret key and DNS resolver.
+//!
+//! If your discovery service does not need any information from its endpoint, you can
 //! pass the discovery service directly to [`Builder::add_discovery`]: All types that
 //! implement [`Discovery`] also have a blanket implementation of [`IntoDiscovery`].
 //!
