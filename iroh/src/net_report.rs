@@ -57,7 +57,7 @@ use self::reportgen::SocketState;
 pub use self::{
     metrics::Metrics,
     options::Options,
-    probes::ProbeProto,
+    probes::Probe,
     report::{RelayLatencies, Report},
     reportgen::QuicConfig,
 };
@@ -431,7 +431,7 @@ mod tests {
     use tracing_test::traced_test;
 
     use super::*;
-    use crate::net_report::probes::ProbeProto;
+    use crate::net_report::probes::Probe;
 
     #[tokio::test]
     #[traced_test]
@@ -501,7 +501,7 @@ mod tests {
                 report.relay_latency.update_relay(
                     relay_url(id),
                     Duration::from_secs(d),
-                    ProbeProto::QadIpv4,
+                    Probe::QadIpv4,
                 );
             }
 
