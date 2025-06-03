@@ -143,8 +143,8 @@
 <a href=#143 id=143 data-nosnippet>143</a></span><span class="kw">pub enum </span>DiscoveryError {
 <a href=#144 id=144 data-nosnippet>144</a>    <span class="attr">#[snafu(display(<span class="string">"No discovery service configured"</span>))]
 <a href=#145 id=145 data-nosnippet>145</a>    </span>NoServiceConfigured {},
-<a href=#146 id=146 data-nosnippet>146</a>    <span class="attr">#[snafu(display(<span class="string">"Discovery produced no results"</span>))]
-<a href=#147 id=147 data-nosnippet>147</a>    </span>NoResults {},
+<a href=#146 id=146 data-nosnippet>146</a>    <span class="attr">#[snafu(display(<span class="string">"Discovery produced no results for {}"</span>, node_id.fmt_short()))]
+<a href=#147 id=147 data-nosnippet>147</a>    </span>NoResults { node_id: NodeId },
 <a href=#148 id=148 data-nosnippet>148</a>    <span class="attr">#[snafu(display(<span class="string">"Service '{provenance}' error"</span>))]
 <a href=#149 id=149 data-nosnippet>149</a>    </span>User {
 <a href=#150 id=150 data-nosnippet>150</a>        provenance: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
@@ -478,7 +478,7 @@
 <a href=#478 id=478 data-nosnippet>478</a>        <span class="kw">let </span>discovery = ep.discovery().ok_or(NoServiceConfiguredSnafu.build())<span class="question-mark">?</span>;
 <a href=#479 id=479 data-nosnippet>479</a>        <span class="kw">let </span>stream = discovery
 <a href=#480 id=480 data-nosnippet>480</a>            .resolve(ep.clone(), node_id)
-<a href=#481 id=481 data-nosnippet>481</a>            .ok_or(NoResultsSnafu {}.build())<span class="question-mark">?</span>;
+<a href=#481 id=481 data-nosnippet>481</a>            .ok_or(NoResultsSnafu { node_id }.build())<span class="question-mark">?</span>;
 <a href=#482 id=482 data-nosnippet>482</a>        <span class="prelude-val">Ok</span>(stream)
 <a href=#483 id=483 data-nosnippet>483</a>    }
 <a href=#484 id=484 data-nosnippet>484</a>
@@ -545,7 +545,7 @@
 <a href=#545 id=545 data-nosnippet>545</a>            }
 <a href=#546 id=546 data-nosnippet>546</a>        }
 <a href=#547 id=547 data-nosnippet>547</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(tx) = on_first_tx.take() {
-<a href=#548 id=548 data-nosnippet>548</a>            tx.send(<span class="prelude-val">Err</span>(NoResultsSnafu {}.build())).ok();
+<a href=#548 id=548 data-nosnippet>548</a>            tx.send(<span class="prelude-val">Err</span>(NoResultsSnafu { node_id }.build())).ok();
 <a href=#549 id=549 data-nosnippet>549</a>        }
 <a href=#550 id=550 data-nosnippet>550</a>    }
 <a href=#551 id=551 data-nosnippet>551</a>}
