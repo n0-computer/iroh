@@ -196,6 +196,23 @@ impl Builder {
 
         let metrics = EndpointMetrics::default();
 
+        let discovery: Option<Box<dyn Discovery>> = {
+            let context = DiscoveryContext {
+                secret_key: &secret_key,
+                dns_resolver: &dns_resolver,
+            };
+            let discovery = self
+                .discovery
+                .into_iter()
+                .map(|builder| builder.into_discovery(&context))
+                .collect::<Result<Vec<_>, IntoDiscoveryError>>()?;
+            match discovery.len() {
+                0 => None,
+                1 => Some(discovery.into_iter().next().expect("checked length")),
+                _ => Some(Box::new(ConcurrentDiscovery::from_services(discovery))),
+            }
+        };
+
         let msock_opts = magicsock::Options {
             addr_v4: self.addr_v4,
             addr_v6: self.addr_v6,
@@ -203,6 +220,7 @@ impl Builder {
             relay_map,
             relay_protocol: self.relay_protocol,
             node_map: self.node_map,
+            discovery,
             discovery_user_data: self.discovery_user_data,
             proxy_url: self.proxy_url,
             #[cfg(not(wasm_browser))]
@@ -214,26 +232,8 @@ impl Builder {
             path_selection: self.path_selection,
             metrics,
         };
-        let endpoint = Endpoint::bind(static_config, msock_opts).await?;
 
-        let context = DiscoveryContext::from_endpoint(&endpoint);
-        let discovery = self
-            .discovery
-            .into_iter()
-            .map(|builder| builder.into_discovery(&context))
-            .collect::<Result<Vec<_>, IntoDiscoveryError>>()?;
-        let discovery: Option<Box<dyn Discovery>> = match discovery.len() {
-            0 => None,
-            1 => Some(discovery.into_iter().next().expect("checked length")),
-            _ => Some(Box::new(ConcurrentDiscovery::from_services(discovery))),
-        };
-        if let Some(discovery) = discovery {
-            endpoint
-                .msock
-                .init_discovery(discovery)
-                .expect("set_discovery is called the first time");
-        }
-        Ok(endpoint)
+        Endpoint::bind(static_config, msock_opts).await
     }
 
     // # The very common methods everyone basically needs.

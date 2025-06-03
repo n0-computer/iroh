@@ -195,19 +195,11 @@ impl<T: IntoDiscovery> DynIntoDiscovery for T {
 #[derive(Debug)]
 pub struct DiscoveryContext<'a> {
     #[cfg(not(wasm_browser))]
-    dns_resolver: &'a DnsResolver,
-    secret_key: &'a SecretKey,
+    pub(crate) dns_resolver: &'a DnsResolver,
+    pub(crate) secret_key: &'a SecretKey,
 }
 
 impl<'a> DiscoveryContext<'a> {
-    pub(crate) fn from_endpoint(endpoint: &'a Endpoint) -> Self {
-        Self {
-            #[cfg(not(wasm_browser))]
-            dns_resolver: endpoint.dns_resolver(),
-            secret_key: endpoint.secret_key(),
-        }
-    }
-
     /// Returns the [`NodeId`] of the endpoint.
     pub fn node_id(&self) -> NodeId {
         self.secret_key.public()

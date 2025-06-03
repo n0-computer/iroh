@@ -23,7 +23,7 @@ use std::{
     pin::Pin,
     sync::{
         atomic::{AtomicBool, AtomicU16, AtomicU64, AtomicUsize, Ordering},
-        Arc, OnceLock, RwLock,
+        Arc, RwLock,
     },
     task::{Context, Poll, Waker},
 };
@@ -125,6 +125,9 @@ pub(crate) struct Options {
 
     /// An optional [`NodeMap`], to restore information about nodes.
     pub(crate) node_map: Option<Vec<NodeAddr>>,
+
+    /// Optional node discovery mechanism.
+    pub(crate) discovery: Option<Box<dyn Discovery>>,
 
     /// Optional user-defined discovery data.
     pub(crate) discovery_user_data: Option<UserData>,
@@ -237,7 +240,7 @@ pub(crate) struct MagicSock {
     udp_disco_sender: mpsc::Sender<(SocketAddr, PublicKey, disco::Message)>,
 
     /// Optional discovery service
-    discovery: OnceLock<Box<dyn Discovery>>,
+    discovery: Option<Box<dyn Discovery>>,
 
     /// Optional user-defined discover data.
     discovery_user_data: RwLock<Option<UserData>>,
@@ -472,17 +475,7 @@ impl MagicSock {
 
     /// Reference to optional discovery service
     pub(crate) fn discovery(&self) -> Option<&dyn Discovery> {
-        self.discovery.get().map(Box::as_ref)
-    }
-
-    /// Sets the discovery service. Only has an effect the first time this is called.
-    ///
-    /// Returns an error if not called for the first time, returning back the passed value.
-    pub(crate) fn init_discovery(
-        &self,
-        discovery: Box<dyn Discovery>,
-    ) -> Result<(), Box<dyn Discovery>> {
-        self.discovery.set(discovery)
+        self.discovery.as_ref().map(Box::as_ref)
     }
 
     /// Updates the user-defined discovery data for this node.
@@ -1604,7 +1597,7 @@ impl MagicSock {
     ///
     /// Called whenever our addresses or home relay node changes.
     fn publish_my_addr(&self) {
-        if let Some(discovery) = self.discovery.get() {
+        if let Some(ref discovery) = self.discovery {
             let relay_url = self.my_relay();
             let direct_addrs = self.direct_addrs.sockaddrs();
             let user_data = self
@@ -1776,6 +1769,7 @@ impl Handle {
             relay_map,
             relay_protocol,
             node_map,
+            discovery,
             discovery_user_data,
             #[cfg(not(wasm_browser))]
             dns_resolver,
@@ -1845,7 +1839,7 @@ impl Handle {
             node_map,
             ip_mapped_addrs,
             udp_disco_sender,
-            discovery: OnceLock::new(),
+            discovery,
             discovery_user_data: RwLock::new(discovery_user_data),
             direct_addrs: Default::default(),
             net_report: Default::default(),
@@ -3579,6 +3573,7 @@ mod tests {
                 relay_map: RelayMap::empty(),
                 relay_protocol: iroh_relay::http::Protocol::default(),
                 node_map: None,
+                discovery: None,
                 proxy_url: None,
                 dns_resolver: DnsResolver::new(),
                 server_config,
@@ -4181,6 +4176,7 @@ mod tests {
             relay_map: RelayMap::empty(),
             relay_protocol: iroh_relay::http::Protocol::default(),
             node_map: None,
+            discovery: None,
             discovery_user_data: None,
             dns_resolver,
             proxy_url: None,
