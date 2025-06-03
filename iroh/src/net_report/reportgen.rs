@@ -1335,7 +1335,10 @@ async fn relay_lookup_ipv4_staggered(
                 Ok(mut addrs) => addrs
                     .next()
                     .map(|ip| ip.to_canonical())
-                    .map(|addr| SocketAddr::new(addr, port))
+                    .map(|addr| {
+                        debug_assert!(addr.is_ipv4(), "bad DNS lookup: {:?}", addr);
+                        SocketAddr::new(addr, port)
+                    })
                     .ok_or(get_relay_addr_error::NoAddrFoundSnafu.build()),
                 Err(err) => Err(get_relay_addr_error::DnsLookupSnafu.into_error(err)),
             }
@@ -1364,14 +1367,16 @@ async fn relay_lookup_ipv6_staggered(
             {
                 Ok(mut addrs) => addrs
                     .next()
-                    .map(|ip| ip.to_canonical())
-                    .map(|addr| SocketAddr::new(addr, port))
+                    .map(|addr| {
+                        debug_assert!(addr.is_ipv6(), "bad DNS lookup: {:?}", addr);
+                        SocketAddr::new(addr, port)
+                    })
                     .ok_or(get_relay_addr_error::NoAddrFoundSnafu.build()),
                 Err(err) => Err(get_relay_addr_error::DnsLookupSnafu.into_error(err)),
             }
         }
-        Some(url::Host::Ipv4(addr)) => Ok(SocketAddr::new(addr.into(), port)),
-        Some(url::Host::Ipv6(_addr)) => Err(get_relay_addr_error::NoAddrFoundSnafu.build()),
+        Some(url::Host::Ipv4(_addr)) => Err(get_relay_addr_error::NoAddrFoundSnafu.build()),
+        Some(url::Host::Ipv6(addr)) => Ok(SocketAddr::new(addr.into(), port)),
         None => Err(get_relay_addr_error::InvalidHostnameSnafu.build()),
     }
 }

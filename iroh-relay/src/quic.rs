@@ -276,7 +276,7 @@ impl QuicClient {
         // we're sacrificing initial throughput, which is fine for
         // QAD, which doesn't require us to have good initial throughput.
         // It also implies a 999ms probe timeout, which means that
-        // if the packet gets lots (e.g. because we're probing ipv6, but
+        // if the packet gets lost (e.g. because we're probing ipv6, but
         // ipv6 packets always get lost in our network configuration) we
         // time out *closing the connection* after only 999ms.
         // Even if the round trip time is bigger than 999ms, this doesn't
@@ -391,7 +391,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     #[traced_test]
     async fn test_qad_client_closes_unresponsive_fast() -> Result {
         // create a client-side endpoint
@@ -430,9 +430,7 @@ mod tests {
         client_endpoint.wait_idle().await;
         let time = Instant::now().duration_since(before);
 
-        println!("Closed in {time:?}");
-        assert!(Duration::from_millis(900) < time);
-        assert!(time < Duration::from_millis(1800)); // give it some lee-way. Apparently github actions ubuntu runners can be slow?
+        assert_eq!(time, Duration::from_millis(999));
 
         Ok(())
     }
