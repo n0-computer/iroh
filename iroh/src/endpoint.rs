@@ -190,15 +190,15 @@ impl Builder {
             tls_config: tls::TlsConfig::new(secret_key.clone()),
             keylog: self.keylog,
         };
-        #[cfg(not(wasm_browser))]
-        let dns_resolver = self.dns_resolver.unwrap_or_default();
         let server_config = static_config.create_server_config(self.alpn_protocols);
 
-        let metrics = EndpointMetrics::default();
+        #[cfg(not(wasm_browser))]
+        let dns_resolver = self.dns_resolver.unwrap_or_default();
 
         let discovery: Option<Box<dyn Discovery>> = {
             let context = DiscoveryContext {
                 secret_key: &secret_key,
+                #[cfg(not(wasm_browser))]
                 dns_resolver: &dns_resolver,
             };
             let discovery = self
@@ -212,6 +212,8 @@ impl Builder {
                 _ => Some(Box::new(ConcurrentDiscovery::from_services(discovery))),
             }
         };
+
+        let metrics = EndpointMetrics::default();
 
         let msock_opts = magicsock::Options {
             addr_v4: self.addr_v4,
