@@ -276,7 +276,7 @@ impl QuicClient {
         // we're sacrificing initial throughput, which is fine for
         // QAD, which doesn't require us to have good initial throughput.
         // It also implies a 999ms probe timeout, which means that
-        // if the packet gets lots (e.g. because we're probing ipv6, but
+        // if the packet gets lost (e.g. because we're probing ipv6, but
         // ipv6 packets always get lost in our network configuration) we
         // time out *closing the connection* after only 999ms.
         // Even if the round trip time is bigger than 999ms, this doesn't
