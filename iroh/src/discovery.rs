@@ -143,8 +143,8 @@ pub mod static_provider;
 pub enum DiscoveryError {
     #[snafu(display("No discovery service configured"))]
     NoServiceConfigured {},
-    #[snafu(display("Discovery produced no results"))]
-    NoResults {},
+    #[snafu(display("Discovery produced no results for {}", node_id.fmt_short()))]
+    NoResults { node_id: NodeId },
     #[snafu(display("Service '{provenance}' error"))]
     User {
         provenance: &'static str,
@@ -478,7 +478,7 @@ impl DiscoveryTask {
         let discovery = ep.discovery().ok_or(NoServiceConfiguredSnafu.build())?;
         let stream = discovery
             .resolve(ep.clone(), node_id)
-            .ok_or(NoResultsSnafu {}.build())?;
+            .ok_or(NoResultsSnafu { node_id }.build())?;
         Ok(stream)
     }
 
@@ -545,7 +545,7 @@ impl DiscoveryTask {
             }
         }
         if let Some(tx) = on_first_tx.take() {
-            tx.send(Err(NoResultsSnafu {}.build())).ok();
+            tx.send(Err(NoResultsSnafu { node_id }.build())).ok();
         }
     }
 }
