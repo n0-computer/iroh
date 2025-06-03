@@ -50,7 +50,7 @@ use crate::net_report::{
 
 mod probes;
 
-pub use probes::ProbeProto;
+pub(crate) use probes::ProbeProto;
 use probes::{Probe, ProbePlan};
 
 use crate::net_report::defaults::timeouts::{
@@ -67,7 +67,7 @@ pub(super) struct Client {
 
 /// Some details required from the interface state of the device.
 #[derive(Debug, Clone, Default)]
-pub struct IfStateDetails {
+pub(crate) struct IfStateDetails {
     /// Do we have IPv4 capbilities
     pub have_v4: bool,
     /// Do we have IPv6 capbilities
@@ -173,22 +173,8 @@ struct Actor {
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
-pub enum ActorRunError {
-    #[snafu(display("Report generation timed out"))]
-    Timeout,
-    #[snafu(display("Client that requested the report is gone"))]
-    ClientGone,
-    #[snafu(display("Internal NetReport actor is gone"))]
-    ActorGone,
-    #[snafu(transparent)]
-    Probes { source: ProbesError },
-}
-
-#[allow(missing_docs)]
-#[derive(Debug, Snafu)]
-#[non_exhaustive]
 #[snafu(module)]
-pub enum ProbesError {
+pub(super) enum ProbesError {
     #[snafu(display("Probe failed"))]
     ProbeFailure { source: ProbeError },
     #[snafu(display("All probes failed"))]
@@ -211,10 +197,7 @@ pub(super) enum ProbeFinished {
 impl Actor {
     async fn run(self) {
         match time::timeout(OVERALL_REPORT_TIMEOUT, self.run_inner()).await {
-            Ok(Ok(())) => debug!("reportgen actor finished"),
-            Ok(Err(err)) => {
-                warn!("reportgen failed: {:?}", err);
-            }
+            Ok(()) => debug!("reportgen actor finished"),
             Err(time::Elapsed { .. }) => {
                 warn!("reportgen timed out");
             }
@@ -232,7 +215,7 @@ impl Actor {
     ///   - Receives actor messages (sent by those futures).
     ///   - Updates the report, cancels unneeded futures.
     /// - Sends the report to the net_report actor.
-    async fn run_inner(self) -> Result<(), ActorRunError> {
+    async fn run_inner(self) {
         debug!("reportstate actor starting");
 
         let mut probes = JoinSet::default();
@@ -281,8 +264,6 @@ impl Actor {
                 }
             }
         }
-
-        Ok(())
     }
 
     /// Creates the future which will perform the portmapper task.
@@ -449,11 +430,11 @@ impl Actor {
                         let res = fut.await;
                         let res = match res {
                             Some(Ok(Ok(report))) => Ok(report),
-                            Some(Ok(Err(ProbeErrorWithProbe::Error(err)))) => {
+                            Some(Ok(Err(RunProbeError::Error(err)))) => {
                                 warn!("probe failed: {:#}", err);
                                 Err(probes_error::ProbeFailureSnafu {}.into_error(err))
                             }
-                            Some(Ok(Err(ProbeErrorWithProbe::AbortSet(err)))) => {
+                            Some(Ok(Err(RunProbeError::AbortSet(err)))) => {
                                 debug!("probe set aborted: {:#}", err);
                                 set_token.cancel();
                                 Err(probes_error::ProbeFailureSnafu {}.into_error(err))
@@ -509,7 +490,7 @@ impl ProbeReport {
 /// the others in the set.  So this allows an unsuccessful probe to cancel the remainder of
 /// the set or not.
 #[derive(Debug)]
-enum ProbeErrorWithProbe {
+enum RunProbeError {
     /// Abort the current set.
     AbortSet(ProbeError),
     /// Continue the other probes in the set.
@@ -520,7 +501,7 @@ enum ProbeErrorWithProbe {
 #[derive(Debug, Snafu)]
 #[snafu(module)]
 #[non_exhaustive]
-pub enum ProbeError {
+pub(super) enum ProbeError {
     #[snafu(display("Client is gone"))]
     ClientGone,
     #[snafu(display("Probe is no longer useful"))]
@@ -528,8 +509,6 @@ pub enum ProbeError {
     #[cfg(not(wasm_browser))]
     #[snafu(display("Failed to retrieve the relay address"))]
     GetRelayAddr { source: GetRelayAddrError },
-    #[snafu(display("Failed to run stun probe"))]
-    Stun { source: StunError },
     #[snafu(display("Failed to run QUIC probe"))]
     Quic { source: QuicError },
     #[snafu(display("Failed to run HTTPS probe"))]
@@ -540,22 +519,7 @@ pub enum ProbeError {
 #[derive(Debug, Snafu)]
 #[snafu(module)]
 #[non_exhaustive]
-pub enum StunError {
-    #[snafu(display("No UDP socket available"))]
-    NoSocket,
-    #[snafu(display("Stun channel is gone"))]
-    StunChannelGone,
-    #[snafu(display("Failed to send full STUN request"))]
-    SendFull,
-    #[snafu(display("Failed to send STUN request"))]
-    Send { source: std::io::Error },
-}
-
-#[allow(missing_docs)]
-#[derive(Debug, Snafu)]
-#[snafu(module)]
-#[non_exhaustive]
-pub enum QuicError {
+pub(super) enum QuicError {
     #[snafu(display("No QUIC endpoint available"))]
     NoEndpoint,
     #[snafu(display("URL must have 'host' to use QUIC address discovery probes"))]
@@ -587,7 +551,7 @@ async fn run_probe(
     probe: Probe,
     #[cfg(not(wasm_browser))] socket_state: SocketState,
     #[cfg(any(test, feature = "test-utils"))] insecure_skip_relay_cert_verify: bool,
-) -> Result<ProbeReport, ProbeErrorWithProbe> {
+) -> Result<ProbeReport, RunProbeError> {
     if !probe.delay().is_zero() {
         trace!("delaying probe");
         time::sleep(probe.delay()).await;
@@ -615,7 +579,7 @@ async fn run_probe(
                     }
                     Ok(report)
                 }
-                Err(err) => Err(ProbeErrorWithProbe::Error(
+                Err(err) => Err(RunProbeError::Error(
                     probe_error::HttpsSnafu {}.into_error(err),
                 )),
             }
@@ -635,7 +599,7 @@ async fn run_probe(
                         _ => unreachable!(),
                     }
                     .map_err(|e| {
-                        ProbeErrorWithProbe::AbortSet(probe_error::GetRelayAddrSnafu.into_error(e))
+                        RunProbeError::AbortSet(probe_error::GetRelayAddrSnafu.into_error(e))
                     })?;
 
                     let url = node.url.clone();
@@ -649,7 +613,7 @@ async fn run_probe(
                     .await?;
                     Ok(report)
                 }
-                None => Err(ProbeErrorWithProbe::AbortSet(
+                None => Err(RunProbeError::AbortSet(
                     probe_error::QuicSnafu.into_error(quic_error::NoEndpointSnafu.build()),
                 )),
             }
@@ -676,19 +640,19 @@ async fn run_quic_probe(
     relay_addr: SocketAddr,
     probe: Probe,
     ip_mapped_addrs: Option<IpMappedAddresses>,
-) -> Result<ProbeReport, ProbeErrorWithProbe> {
+) -> Result<ProbeReport, RunProbeError> {
     trace!("QAD probe start");
     match probe.proto() {
         ProbeProto::QadIpv4 => {
             if !relay_addr.is_ipv4() {
-                return Err(ProbeErrorWithProbe::Error(
+                return Err(RunProbeError::Error(
                     probe_error::QuicSnafu {}.into_error(quic_error::InvalidUrlSnafu.build()),
                 ));
             }
         }
         ProbeProto::QadIpv6 => {
             if !relay_addr.is_ipv6() {
-                return Err(ProbeErrorWithProbe::Error(
+                return Err(RunProbeError::Error(
                     probe_error::QuicSnafu {}.into_error(quic_error::InvalidUrlSnafu.build()),
                 ));
             }
@@ -699,14 +663,14 @@ async fn run_quic_probe(
     let host = match url.host_str() {
         Some(host) => host,
         None => {
-            return Err(ProbeErrorWithProbe::Error(
+            return Err(RunProbeError::Error(
                 probe_error::QuicSnafu.into_error(quic_error::InvalidUrlSnafu.build()),
             ));
         }
     };
     let quic_client = iroh_relay::quic::QuicClient::new(quic_config.ep, quic_config.client_config)
         .map_err(|e| {
-            ProbeErrorWithProbe::Error(
+            RunProbeError::Error(
                 probe_error::QuicSnafu.into_error(quic_error::CreateClientSnafu.into_error(e)),
             )
         })?;
@@ -714,7 +678,7 @@ async fn run_quic_probe(
         .get_addr_and_latency(relay_addr, host)
         .await
         .map_err(|e| {
-            ProbeErrorWithProbe::Error(
+            RunProbeError::Error(
                 probe_error::QuicSnafu.into_error(quic_error::GetAddrSnafu.into_error(e)),
             )
         })?;
@@ -1104,7 +1068,7 @@ mod tests {
         {
             Ok(probe) => probe,
             Err(e) => match e {
-                ProbeErrorWithProbe::AbortSet(err) | ProbeErrorWithProbe::Error(err) => {
+                RunProbeError::AbortSet(err) | RunProbeError::Error(err) => {
                     return Err(err.into());
                 }
             },
