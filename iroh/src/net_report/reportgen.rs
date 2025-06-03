@@ -28,7 +28,7 @@ use std::{
 use http::StatusCode;
 use iroh_base::RelayUrl;
 #[cfg(not(wasm_browser))]
-use iroh_relay::dns::{DnsError, DnsResolver};
+use iroh_relay::dns::{DnsError, DnsResolver, StaggeredError};
 use iroh_relay::{
     defaults::{DEFAULT_RELAY_QUIC_PORT, DEFAULT_STUN_PORT},
     http::RELAY_PROBE_PATH,
@@ -1128,7 +1128,7 @@ async fn run_quic_probe(
 #[non_exhaustive]
 enum CaptivePortalError {
     #[snafu(transparent)]
-    DnsLookup { source: DnsError },
+    DnsLookup { source: StaggeredError<DnsError> },
     #[snafu(display("Creating HTTP client failed"))]
     CreateReqwestClient { source: reqwest::Error },
     #[snafu(display("HTTP request failed"))]
@@ -1260,7 +1260,7 @@ pub enum GetRelayAddrError {
     #[snafu(display("No suitable relay address found"))]
     NoAddrFound,
     #[snafu(display("DNS lookup failed"))]
-    DnsLookup { source: DnsError },
+    DnsLookup { source: StaggeredError<DnsError> },
     #[snafu(display("Relay node is not suitable for non-STUN probes"))]
     UnsupportedRelayNode,
     #[snafu(display("HTTPS probes are not implemented"))]
@@ -1324,7 +1324,10 @@ async fn relay_lookup_ipv4_staggered(
                 Ok(mut addrs) => addrs
                     .next()
                     .map(|ip| ip.to_canonical())
-                    .map(|addr| SocketAddr::new(addr, port))
+                    .map(|addr| {
+                        debug_assert!(addr.is_ipv4(), "bad DNS lookup: {:?}", addr);
+                        SocketAddr::new(addr, port)
+                    })
                     .ok_or(get_relay_addr_error::NoAddrFoundSnafu.build()),
                 Err(err) => Err(get_relay_addr_error::DnsLookupSnafu.into_error(err)),
             }
@@ -1353,14 +1356,16 @@ async fn relay_lookup_ipv6_staggered(
             {
                 Ok(mut addrs) => addrs
                     .next()
-                    .map(|ip| ip.to_canonical())
-                    .map(|addr| SocketAddr::new(addr, port))
+                    .map(|addr| {
+                        debug_assert!(addr.is_ipv6(), "bad DNS lookup: {:?}", addr);
+                        SocketAddr::new(addr, port)
+                    })
                     .ok_or(get_relay_addr_error::NoAddrFoundSnafu.build()),
                 Err(err) => Err(get_relay_addr_error::DnsLookupSnafu.into_error(err)),
             }
         }
-        Some(url::Host::Ipv4(addr)) => Ok(SocketAddr::new(addr.into(), port)),
-        Some(url::Host::Ipv6(_addr)) => Err(get_relay_addr_error::NoAddrFoundSnafu.build()),
+        Some(url::Host::Ipv4(_addr)) => Err(get_relay_addr_error::NoAddrFoundSnafu.build()),
+        Some(url::Host::Ipv6(addr)) => Ok(SocketAddr::new(addr.into(), port)),
         None => Err(get_relay_addr_error::InvalidHostnameSnafu.build()),
     }
 }
@@ -1418,7 +1423,7 @@ enum MeasureHttpsLatencyError {
     InvalidUrl { source: url::ParseError },
     #[cfg(not(wasm_browser))]
     #[snafu(transparent)]
-    DnsLookup { source: DnsError },
+    DnsLookup { source: StaggeredError<DnsError> },
     #[cfg(not(wasm_browser))]
     #[snafu(display("Invalid certificate"))]
     InvalidCertificate { source: reqwest::Error },
