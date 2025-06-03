@@ -196,45 +196,45 @@
 <a href=#196 id=196 data-nosnippet>196</a>
 <a href=#197 id=197 data-nosnippet>197</a>        <span class="kw">let </span>metrics = EndpointMetrics::default();
 <a href=#198 id=198 data-nosnippet>198</a>
-<a href=#199 id=199 data-nosnippet>199</a>        <span class="kw">let </span>msock_opts = magicsock::Options {
-<a href=#200 id=200 data-nosnippet>200</a>            addr_v4: <span class="self">self</span>.addr_v4,
-<a href=#201 id=201 data-nosnippet>201</a>            addr_v6: <span class="self">self</span>.addr_v6,
-<a href=#202 id=202 data-nosnippet>202</a>            secret_key,
-<a href=#203 id=203 data-nosnippet>203</a>            relay_map,
-<a href=#204 id=204 data-nosnippet>204</a>            relay_protocol: <span class="self">self</span>.relay_protocol,
-<a href=#205 id=205 data-nosnippet>205</a>            node_map: <span class="self">self</span>.node_map,
-<a href=#206 id=206 data-nosnippet>206</a>            discovery_user_data: <span class="self">self</span>.discovery_user_data,
-<a href=#207 id=207 data-nosnippet>207</a>            proxy_url: <span class="self">self</span>.proxy_url,
-<a href=#208 id=208 data-nosnippet>208</a>            <span class="attr">#[cfg(not(wasm_browser))]
-<a href=#209 id=209 data-nosnippet>209</a>            </span>dns_resolver,
-<a href=#210 id=210 data-nosnippet>210</a>            server_config,
-<a href=#211 id=211 data-nosnippet>211</a>            <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-<a href=#212 id=212 data-nosnippet>212</a>            </span>insecure_skip_relay_cert_verify: <span class="self">self</span>.insecure_skip_relay_cert_verify,
-<a href=#213 id=213 data-nosnippet>213</a>            <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-<a href=#214 id=214 data-nosnippet>214</a>            </span>path_selection: <span class="self">self</span>.path_selection,
-<a href=#215 id=215 data-nosnippet>215</a>            metrics,
-<a href=#216 id=216 data-nosnippet>216</a>        };
-<a href=#217 id=217 data-nosnippet>217</a>        <span class="kw">let </span>endpoint = Endpoint::bind(static_config, msock_opts).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#218 id=218 data-nosnippet>218</a>
-<a href=#219 id=219 data-nosnippet>219</a>        <span class="kw">let </span>context = DiscoveryContext::from_endpoint(<span class="kw-2">&amp;</span>endpoint);
-<a href=#220 id=220 data-nosnippet>220</a>        <span class="kw">let </span>discovery = <span class="self">self
-<a href=#221 id=221 data-nosnippet>221</a>            </span>.discovery
-<a href=#222 id=222 data-nosnippet>222</a>            .into_iter()
-<a href=#223 id=223 data-nosnippet>223</a>            .map(|builder| builder.into_discovery(<span class="kw-2">&amp;</span>context))
-<a href=#224 id=224 data-nosnippet>224</a>            .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, IntoDiscoveryError&gt;&gt;()<span class="question-mark">?</span>;
-<a href=#225 id=225 data-nosnippet>225</a>        <span class="kw">let </span>discovery: <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Discovery&gt;&gt; = <span class="kw">match </span>discovery.len() {
-<a href=#226 id=226 data-nosnippet>226</a>            <span class="number">0 </span>=&gt; <span class="prelude-val">None</span>,
-<a href=#227 id=227 data-nosnippet>227</a>            <span class="number">1 </span>=&gt; <span class="prelude-val">Some</span>(discovery.into_iter().next().expect(<span class="string">"checked length"</span>)),
-<a href=#228 id=228 data-nosnippet>228</a>            <span class="kw">_ </span>=&gt; <span class="prelude-val">Some</span>(Box::new(ConcurrentDiscovery::from_services(discovery))),
-<a href=#229 id=229 data-nosnippet>229</a>        };
-<a href=#230 id=230 data-nosnippet>230</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(discovery) = discovery {
-<a href=#231 id=231 data-nosnippet>231</a>            endpoint
-<a href=#232 id=232 data-nosnippet>232</a>                .msock
-<a href=#233 id=233 data-nosnippet>233</a>                .init_discovery(discovery)
-<a href=#234 id=234 data-nosnippet>234</a>                .expect(<span class="string">"set_discovery is called the first time"</span>);
-<a href=#235 id=235 data-nosnippet>235</a>        }
-<a href=#236 id=236 data-nosnippet>236</a>        <span class="prelude-val">Ok</span>(endpoint)
-<a href=#237 id=237 data-nosnippet>237</a>    }
+<a href=#199 id=199 data-nosnippet>199</a>        <span class="kw">let </span>discovery: <span class="prelude-ty">Option</span>&lt;Box&lt;<span class="kw">dyn </span>Discovery&gt;&gt; = {
+<a href=#200 id=200 data-nosnippet>200</a>            <span class="kw">let </span>context = DiscoveryContext {
+<a href=#201 id=201 data-nosnippet>201</a>                secret_key: <span class="kw-2">&amp;</span>secret_key,
+<a href=#202 id=202 data-nosnippet>202</a>                dns_resolver: <span class="kw-2">&amp;</span>dns_resolver,
+<a href=#203 id=203 data-nosnippet>203</a>            };
+<a href=#204 id=204 data-nosnippet>204</a>            <span class="kw">let </span>discovery = <span class="self">self
+<a href=#205 id=205 data-nosnippet>205</a>                </span>.discovery
+<a href=#206 id=206 data-nosnippet>206</a>                .into_iter()
+<a href=#207 id=207 data-nosnippet>207</a>                .map(|builder| builder.into_discovery(<span class="kw-2">&amp;</span>context))
+<a href=#208 id=208 data-nosnippet>208</a>                .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, IntoDiscoveryError&gt;&gt;()<span class="question-mark">?</span>;
+<a href=#209 id=209 data-nosnippet>209</a>            <span class="kw">match </span>discovery.len() {
+<a href=#210 id=210 data-nosnippet>210</a>                <span class="number">0 </span>=&gt; <span class="prelude-val">None</span>,
+<a href=#211 id=211 data-nosnippet>211</a>                <span class="number">1 </span>=&gt; <span class="prelude-val">Some</span>(discovery.into_iter().next().expect(<span class="string">"checked length"</span>)),
+<a href=#212 id=212 data-nosnippet>212</a>                <span class="kw">_ </span>=&gt; <span class="prelude-val">Some</span>(Box::new(ConcurrentDiscovery::from_services(discovery))),
+<a href=#213 id=213 data-nosnippet>213</a>            }
+<a href=#214 id=214 data-nosnippet>214</a>        };
+<a href=#215 id=215 data-nosnippet>215</a>
+<a href=#216 id=216 data-nosnippet>216</a>        <span class="kw">let </span>msock_opts = magicsock::Options {
+<a href=#217 id=217 data-nosnippet>217</a>            addr_v4: <span class="self">self</span>.addr_v4,
+<a href=#218 id=218 data-nosnippet>218</a>            addr_v6: <span class="self">self</span>.addr_v6,
+<a href=#219 id=219 data-nosnippet>219</a>            secret_key,
+<a href=#220 id=220 data-nosnippet>220</a>            relay_map,
+<a href=#221 id=221 data-nosnippet>221</a>            relay_protocol: <span class="self">self</span>.relay_protocol,
+<a href=#222 id=222 data-nosnippet>222</a>            node_map: <span class="self">self</span>.node_map,
+<a href=#223 id=223 data-nosnippet>223</a>            discovery,
+<a href=#224 id=224 data-nosnippet>224</a>            discovery_user_data: <span class="self">self</span>.discovery_user_data,
+<a href=#225 id=225 data-nosnippet>225</a>            proxy_url: <span class="self">self</span>.proxy_url,
+<a href=#226 id=226 data-nosnippet>226</a>            <span class="attr">#[cfg(not(wasm_browser))]
+<a href=#227 id=227 data-nosnippet>227</a>            </span>dns_resolver,
+<a href=#228 id=228 data-nosnippet>228</a>            server_config,
+<a href=#229 id=229 data-nosnippet>229</a>            <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+<a href=#230 id=230 data-nosnippet>230</a>            </span>insecure_skip_relay_cert_verify: <span class="self">self</span>.insecure_skip_relay_cert_verify,
+<a href=#231 id=231 data-nosnippet>231</a>            <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+<a href=#232 id=232 data-nosnippet>232</a>            </span>path_selection: <span class="self">self</span>.path_selection,
+<a href=#233 id=233 data-nosnippet>233</a>            metrics,
+<a href=#234 id=234 data-nosnippet>234</a>        };
+<a href=#235 id=235 data-nosnippet>235</a>
+<a href=#236 id=236 data-nosnippet>236</a>        Endpoint::bind(static_config, msock_opts).<span class="kw">await
+<a href=#237 id=237 data-nosnippet>237</a>    </span>}
 <a href=#238 id=238 data-nosnippet>238</a>
 <a href=#239 id=239 data-nosnippet>239</a>    <span class="comment">// # The very common methods everyone basically needs.
 <a href=#240 id=240 data-nosnippet>240</a>
