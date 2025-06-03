@@ -16,11 +16,9 @@ use std::{collections::BTreeMap, fmt::Debug, sync::Arc};
 use iroh_relay::dns::DnsResolver;
 use iroh_relay::RelayMap;
 use n0_future::time::{self, Duration, Instant};
-use nested_enum_utils::common_fields;
 #[cfg(not(wasm_browser))]
 use netwatch::UdpSocket;
-use reportgen::{ActorRunError, ProbeFinished, ProbeReport};
-use snafu::Snafu;
+use reportgen::{ProbeFinished, ProbeReport};
 use tracing::{debug, trace};
 
 mod defaults;
@@ -54,13 +52,14 @@ pub(crate) mod portmapper {
 
 pub(crate) use ip_mapped_addrs::{IpMappedAddr, IpMappedAddresses};
 
+pub(crate) use self::reportgen::IfStateDetails;
 #[cfg(not(wasm_browser))]
 use self::reportgen::SocketState;
 pub use self::{
     metrics::Metrics,
     options::Options,
     report::{RelayLatencies, Report},
-    reportgen::{IfStateDetails, QuicConfig},
+    reportgen::QuicConfig,
 };
 use crate::util::MaybeFuture;
 
@@ -160,7 +159,7 @@ impl Client {
         relay_map: RelayMap,
         if_state: IfStateDetails,
         opts: Options,
-    ) -> Result<Report, ReportError> {
+    ) -> Report {
         debug!("net_report starting");
 
         let protocols = opts.to_protocols();
@@ -265,7 +264,7 @@ impl Client {
         self.add_report_history_and_set_preferred_relay(&mut report);
         debug!("{report:?}");
 
-        Ok(report)
+        report
     }
 
     fn have_enough_reports(&self, enough_relays: usize, report: &Report) -> Option<Duration> {
@@ -366,23 +365,6 @@ impl Client {
     }
 }
 
-#[allow(missing_docs)]
-#[common_fields({
-    backtrace: Option<snafu::Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
-#[derive(Debug, Snafu)]
-#[non_exhaustive]
-pub enum ReportError {
-    #[snafu(display("Report aborted early"))]
-    Abort { reason: ActorRunError },
-    #[snafu(display("Report generation is already running"))]
-    AlreadyRunning {},
-    #[snafu(display("Internal actor is gone"))]
-    ActorGone {},
-}
-
 /// Test if IPv6 works at all, or if it's been hard disabled at the OS level.
 #[cfg(not(wasm_browser))]
 fn os_has_ipv6() -> bool {
@@ -472,7 +454,7 @@ mod tests {
                     if_state.clone(),
                     Options::default().quic_config(Some(quic_addr_disc.clone())),
                 )
-                .await?;
+                .await;
 
             assert!(r.udp, "want UDP");
             assert_eq!(
