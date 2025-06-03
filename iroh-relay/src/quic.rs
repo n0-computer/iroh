@@ -243,12 +243,10 @@ pub enum Error {
     Connection { source: quinn::ConnectionError },
     #[snafu(transparent)]
     WatchRecv { source: watch::error::RecvError },
-    #[snafu(transparent)]
-    NoIntitialCipherSuite { source: NoInitialCipherSuite },
 }
 
 /// Handles the client side of QUIC address discovery.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct QuicClient {
     /// A QUIC Endpoint.
     ep: quinn::Endpoint,
@@ -259,16 +257,14 @@ pub struct QuicClient {
 impl QuicClient {
     /// Create a new QuicClient to handle the client side of QUIC
     /// address discovery.
-    pub fn new(
-        ep: quinn::Endpoint,
-        mut client_config: rustls::ClientConfig,
-    ) -> Result<Self, Error> {
+    pub fn new(ep: quinn::Endpoint, mut client_config: rustls::ClientConfig) -> Self {
         // add QAD alpn
         client_config.alpn_protocols = vec![ALPN_QUIC_ADDR_DISC.into()];
         // go from rustls client config to rustls QUIC specific client config to
         // a quinn client config
-        let mut client_config =
-            quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(client_config)?));
+        let mut client_config = quinn::ClientConfig::new(Arc::new(
+            QuicClientConfig::try_from(client_config).expect("known ciphersuite"),
+        ));
 
         // enable the receive side of address discovery
         let mut transport = quinn_proto::TransportConfig::default();
@@ -286,7 +282,7 @@ impl QuicClient {
         transport.receive_observed_address_reports(true);
         client_config.transport_config(Arc::new(transport));
 
-        Ok(Self { ep, client_config })
+        Self { ep, client_config }
     }
 
     /// Client side of QUIC address discovery.
@@ -378,7 +374,7 @@ mod tests {
         // create the client configuration used for the client endpoint when they
         // initiate a connection with the server
         let client_config = crate::client::make_dangerous_client_config();
-        let quic_client = QuicClient::new(client_endpoint.clone(), client_config)?;
+        let quic_client = QuicClient::new(client_endpoint.clone(), client_config);
 
         let (addr, _latency) = quic_client
             .get_addr_and_latency(quic_server.bind_addr(), &host.to_string())
@@ -411,7 +407,7 @@ mod tests {
         // create the client configuration used for the client endpoint when they
         // initiate a connection with the server
         let client_config = crate::client::make_dangerous_client_config();
-        let quic_client = QuicClient::new(client_endpoint.clone(), client_config)?;
+        let quic_client = QuicClient::new(client_endpoint.clone(), client_config);
 
         // Start a connection attempt with nirvana - this will fail
         let task = AbortOnDropHandle::new(tokio::spawn({
@@ -511,7 +507,7 @@ mod tests {
         // create the client configuration used for the client endpoint when they
         // initiate a connection with the server
         let client_config = crate::client::make_dangerous_client_config();
-        let quic_client = QuicClient::new(client_endpoint.clone(), client_config)?;
+        let quic_client = QuicClient::new(client_endpoint.clone(), client_config);
 
         // Now we should still connect, but it should take more than 1s.
         info!("making QAD request");
