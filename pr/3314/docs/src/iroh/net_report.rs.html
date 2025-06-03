@@ -57,7 +57,7 @@
 <a href=#57 id=57 data-nosnippet>57</a><span class="kw">pub use </span><span class="self">self</span>::{
 <a href=#58 id=58 data-nosnippet>58</a>    metrics::Metrics,
 <a href=#59 id=59 data-nosnippet>59</a>    options::Options,
-<a href=#60 id=60 data-nosnippet>60</a>    probes::ProbeProto,
+<a href=#60 id=60 data-nosnippet>60</a>    probes::Probe,
 <a href=#61 id=61 data-nosnippet>61</a>    report::{RelayLatencies, Report},
 <a href=#62 id=62 data-nosnippet>62</a>    reportgen::QuicConfig,
 <a href=#63 id=63 data-nosnippet>63</a>};
@@ -431,7 +431,7 @@
 <a href=#431 id=431 data-nosnippet>431</a>    <span class="kw">use </span>tracing_test::traced_test;
 <a href=#432 id=432 data-nosnippet>432</a>
 <a href=#433 id=433 data-nosnippet>433</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#434 id=434 data-nosnippet>434</a>    <span class="kw">use </span><span class="kw">crate</span>::net_report::probes::ProbeProto;
+<a href=#434 id=434 data-nosnippet>434</a>    <span class="kw">use </span><span class="kw">crate</span>::net_report::probes::Probe;
 <a href=#435 id=435 data-nosnippet>435</a>
 <a href=#436 id=436 data-nosnippet>436</a>    <span class="attr">#[tokio::test]
 <a href=#437 id=437 data-nosnippet>437</a>    #[traced_test]
@@ -501,7 +501,7 @@
 <a href=#501 id=501 data-nosnippet>501</a>                report.relay_latency.update_relay(
 <a href=#502 id=502 data-nosnippet>502</a>                    relay_url(id),
 <a href=#503 id=503 data-nosnippet>503</a>                    Duration::from_secs(d),
-<a href=#504 id=504 data-nosnippet>504</a>                    ProbeProto::QadIpv4,
+<a href=#504 id=504 data-nosnippet>504</a>                    Probe::QadIpv4,
 <a href=#505 id=505 data-nosnippet>505</a>                );
 <a href=#506 id=506 data-nosnippet>506</a>            }
 <a href=#507 id=507 data-nosnippet>507</a>

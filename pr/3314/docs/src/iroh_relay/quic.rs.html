@@ -4,23 +4,23 @@
 <a href=#4 id=4 data-nosnippet>4</a>
 <a href=#5 id=5 data-nosnippet>5</a><span class="kw">use </span>n0_future::time::Duration;
 <a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>nested_enum_utils::common_fields;
-<a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>quinn::{
-<a href=#8 id=8 data-nosnippet>8</a>    crypto::rustls::{NoInitialCipherSuite, QuicClientConfig},
-<a href=#9 id=9 data-nosnippet>9</a>    VarInt,
-<a href=#10 id=10 data-nosnippet>10</a>};
-<a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span>snafu::{Backtrace, Snafu};
-<a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>tokio::sync::watch;
-<a href=#13 id=13 data-nosnippet>13</a>
-<a href=#14 id=14 data-nosnippet>14</a><span class="doccomment">/// ALPN for our quic addr discovery
-<a href=#15 id=15 data-nosnippet>15</a></span><span class="kw">pub const </span>ALPN_QUIC_ADDR_DISC: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"/iroh-qad/0"</span>;
-<a href=#16 id=16 data-nosnippet>16</a><span class="doccomment">/// Endpoint close error code
-<a href=#17 id=17 data-nosnippet>17</a></span><span class="kw">pub const </span>QUIC_ADDR_DISC_CLOSE_CODE: VarInt = VarInt::from_u32(<span class="number">1</span>);
-<a href=#18 id=18 data-nosnippet>18</a><span class="doccomment">/// Endpoint close reason
-<a href=#19 id=19 data-nosnippet>19</a></span><span class="kw">pub const </span>QUIC_ADDR_DISC_CLOSE_REASON: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"finished"</span>;
-<a href=#20 id=20 data-nosnippet>20</a>
-<a href=#21 id=21 data-nosnippet>21</a><span class="attr">#[cfg(feature = <span class="string">"server"</span>)]
-<a href=#22 id=22 data-nosnippet>22</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>server {
-<a href=#23 id=23 data-nosnippet>23</a>    <span class="kw">use </span>quinn::{crypto::rustls::QuicServerConfig, ApplicationClose, ConnectionError};
+<a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>quinn::{crypto::rustls::QuicClientConfig, VarInt};
+<a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>snafu::{Backtrace, Snafu};
+<a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>tokio::sync::watch;
+<a href=#10 id=10 data-nosnippet>10</a>
+<a href=#11 id=11 data-nosnippet>11</a><span class="doccomment">/// ALPN for our quic addr discovery
+<a href=#12 id=12 data-nosnippet>12</a></span><span class="kw">pub const </span>ALPN_QUIC_ADDR_DISC: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"/iroh-qad/0"</span>;
+<a href=#13 id=13 data-nosnippet>13</a><span class="doccomment">/// Endpoint close error code
+<a href=#14 id=14 data-nosnippet>14</a></span><span class="kw">pub const </span>QUIC_ADDR_DISC_CLOSE_CODE: VarInt = VarInt::from_u32(<span class="number">1</span>);
+<a href=#15 id=15 data-nosnippet>15</a><span class="doccomment">/// Endpoint close reason
+<a href=#16 id=16 data-nosnippet>16</a></span><span class="kw">pub const </span>QUIC_ADDR_DISC_CLOSE_REASON: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"finished"</span>;
+<a href=#17 id=17 data-nosnippet>17</a>
+<a href=#18 id=18 data-nosnippet>18</a><span class="attr">#[cfg(feature = <span class="string">"server"</span>)]
+<a href=#19 id=19 data-nosnippet>19</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>server {
+<a href=#20 id=20 data-nosnippet>20</a>    <span class="kw">use </span>quinn::{
+<a href=#21 id=21 data-nosnippet>21</a>        crypto::rustls::{NoInitialCipherSuite, QuicServerConfig},
+<a href=#22 id=22 data-nosnippet>22</a>        ApplicationClose, ConnectionError,
+<a href=#23 id=23 data-nosnippet>23</a>    };
 <a href=#24 id=24 data-nosnippet>24</a>    <span class="kw">use </span>snafu::ResultExt;
 <a href=#25 id=25 data-nosnippet>25</a>    <span class="kw">use </span>tokio::task::JoinSet;
 <a href=#26 id=26 data-nosnippet>26</a>    <span class="kw">use </span>tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
