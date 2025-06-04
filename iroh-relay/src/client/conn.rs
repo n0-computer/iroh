@@ -127,7 +127,7 @@ impl Conn {
         conn: ws_stream_wasm::WsStream,
         key_cache: KeyCache,
         secret_key: &SecretKey,
-    ) -> Result<Self, SendRelayError> {
+    ) -> Result<Self, handshake::Error> {
         let mut io = HandshakeIo { io: conn };
 
         // exchange information with the server
@@ -147,7 +147,7 @@ impl Conn {
         conn: MaybeTlsStreamChained,
         key_cache: KeyCache,
         secret_key: &SecretKey,
-    ) -> Result<Self, SendRelayError> {
+    ) -> Result<Self, handshake::Error> {
         use n0_future::SinkExt;
 
         let conn = Framed::new(conn, RelayCodec::new(key_cache));
@@ -174,7 +174,7 @@ impl Conn {
         conn: tokio_websockets::WebSocketStream<MaybeTlsStream<ProxyStream>>,
         key_cache: KeyCache,
         secret_key: &SecretKey,
-    ) -> Result<Self, SendRelayError> {
+    ) -> Result<Self, handshake::Error> {
         let mut io = HandshakeIo { io: conn };
 
         // exchange information with the server

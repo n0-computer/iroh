@@ -225,7 +225,7 @@ pub(crate) async fn legacy_send_client_key<S: Sink<Frame, Error = ConnSendError>
 /// upon it's initial connection.
 #[cfg(any(test, feature = "server"))]
 #[deprecated = "switch to proper handshake"]
-pub(crate) async fn legacy_recv_client_key<E, S: Stream<Item = Result<FrameE>> + Unpin>(
+pub(crate) async fn legacy_recv_client_key<E, S: Stream<Item = Result<Frame, E>> + Unpin>(
     stream: S,
 ) -> Result<(PublicKey, ClientInfo), E>
 where

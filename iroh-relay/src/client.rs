@@ -27,7 +27,7 @@ pub use self::conn::{ReceivedMessage, RecvError, SendError, SendMessage};
 use crate::dns::{DnsError, DnsResolver};
 use crate::{
     http::{Protocol, RELAY_PATH},
-    protos::relay::SendError as SendRelayError,
+    protos::handshake,
     KeyCache,
 };
 
@@ -64,7 +64,7 @@ pub enum ConnectError {
         source: ws_stream_wasm::WsErr,
     },
     #[snafu(transparent)]
-    Handshake { source: SendRelayError },
+    Handshake { source: handshake::Error },
     #[snafu(transparent)]
     Dial { source: DialError },
     #[snafu(display("Unexpected status during upgrade: {code}"))]

@@ -4,12 +4,13 @@ use std::{
     task::{Context, Poll},
 };
 
-use anyhow::Result;
 use bytes::Bytes;
 use n0_future::{ready, Sink, Stream};
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::ExportKeyingMaterial;
+
+use super::handshake::Error;
 
 #[derive(derive_more::Debug)]
 pub(crate) struct HandshakeIo<T> {
@@ -48,7 +49,7 @@ impl<IO: ExportKeyingMaterial + AsyncRead + AsyncWrite + Unpin> ExportKeyingMate
 }
 
 impl<T: AsyncRead + AsyncWrite + Unpin> Stream for HandshakeIo<T> {
-    type Item = Result<Bytes>;
+    type Item = Result<Bytes, Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         loop {
@@ -79,7 +80,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Stream for HandshakeIo<T> {
 }
 
 impl<T: AsyncRead + AsyncWrite + Unpin> Sink<Bytes> for HandshakeIo<T> {
-    type Error = anyhow::Error;
+    type Error = Error;
 
     fn start_send(mut self: Pin<&mut Self>, bytes: Bytes) -> Result<(), Self::Error> {
         #[cfg(not(wasm_browser))]

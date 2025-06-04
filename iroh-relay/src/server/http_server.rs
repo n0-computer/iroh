@@ -159,7 +159,7 @@ pub(super) struct TlsConfig {
 #[non_exhaustive]
 pub enum ServeConnectionError {
     #[snafu(display("TLS[acme] handshake"))]
-    Handshake {
+    TlsHandshake {
         source: std::io::Error,
         #[snafu(implicit)]
         span_trace: n0_snafu::SpanTrace,
@@ -214,6 +214,13 @@ pub enum AcceptError {
     RecvClientKey {
         #[allow(clippy::result_large_err)]
         source: StreamError,
+        #[snafu(implicit)]
+        span_trace: n0_snafu::SpanTrace,
+    },
+    #[snafu(display("Handshake failed"))]
+    Handshake {
+        #[allow(clippy::result_large_err)]
+        source: handshake::Error,
         #[snafu(implicit)]
         span_trace: n0_snafu::SpanTrace,
     },
@@ -651,7 +658,7 @@ impl Inner {
                 #[allow(deprecated)]
                 let (client_key, info) = legacy_recv_client_key(&mut io)
                     .await
-                    .context("unable to receive client information")?;
+                    .context(RecvClientKeySnafu)?;
 
                 if info.version != PROTOCOL_VERSION {
                     return Err(UnexpectedClientVersionSnafu {
@@ -674,7 +681,9 @@ impl Inner {
 
                 let mut io = HandshakeIo { io: websocket };
 
-                let client_info = handshake::serverside(&mut io, rand::rngs::OsRng).await?;
+                let client_info = handshake::serverside(&mut io, rand::rngs::OsRng)
+                    .await
+                    .context(HandshakeSnafu)?;
 
                 (
                     client_info.public_key,
@@ -808,7 +817,7 @@ impl RelayService {
                         let tls_stream = start_handshake
                             .into_stream(config)
                             .await
-                            .context(HandshakeSnafu)?;
+                            .context(TlsHandshakeSnafu)?;
                         self.serve_connection(MaybeTlsStream::Tls(tls_stream))
                             .await
                             .context(HttpsSnafu)?;

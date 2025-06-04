@@ -1,25 +1,41 @@
 //! TODO(matheus23) docs
 
-use anyhow::Result;
 use bytes::{BufMut, Bytes, BytesMut};
 use iroh_base::{PublicKey, SecretKey, Signature};
-use n0_future::{time, Sink, SinkExt, Stream, TryStreamExt};
+use n0_future::{
+    time::{self, Elapsed},
+    Sink, SinkExt, Stream, TryStreamExt,
+};
+use nested_enum_utils::common_fields;
 use quinn_proto::{coding::Codec, VarInt};
 use rand::{CryptoRng, RngCore};
+use snafu::{Backtrace, ResultExt, Snafu};
 
 use crate::ExportKeyingMaterial;
+
+use super::relay::SendError;
 
 /// TODO(matheus23) docs
 pub(crate) const PROTOCOL_VERSION: &[u8] = b"1";
 
+/// Possible frame types during handshaking
 #[repr(u32)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug, num_enum::IntoPrimitive, num_enum::FromPrimitive)]
-pub(crate) enum FrameType {
+pub enum FrameType {
+    /// The frame type for the client challenge request
     ClientRequestChallenge = 0,
+    /// The server frame type for the challenge response
     ServerChallenge = 1,
+    /// The client frame type for the authentication frame
     ClientAuth = 2,
+    /// The server frame type for authentication confirmation
     ServerConfirmsAuth = 3,
+    /// The server frame type for authentication denial
     ServerDeniesAuth = 4,
+    /// The frame type was unknown.
+    ///
+    /// This frame is the result of parsing any future frame types that this implementation
+    /// does not yet understand.
     #[num_enum(default)]
     Unknown,
 }
@@ -75,12 +91,12 @@ pub(crate) struct ServerDeniesAuth;
 
 /// TODO(matheus23) docs
 pub(crate) trait BytesStreamSink:
-    Stream<Item = Result<Bytes>> + Sink<Bytes, Error = anyhow::Error> + Unpin
+    Stream<Item = Result<Bytes, Error>> + Sink<Bytes, Error = Error> + Unpin
 {
 }
 
-impl<T: Stream<Item = Result<Bytes>> + Sink<Bytes, Error = anyhow::Error> + Unpin> BytesStreamSink
-    for T
+impl<T> BytesStreamSink for T where
+    T: Stream<Item = Result<Bytes, Error>> + Sink<Bytes, Error = Error> + Unpin
 {
 }
 
@@ -110,6 +126,37 @@ impl Frame for ServerConfirmsAuth {
 
 impl Frame for ServerDeniesAuth {
     const TAG: FrameType = FrameType::ServerDeniesAuth;
+}
+
+#[common_fields({
+    backtrace: Option<Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+pub enum Error {
+    #[snafu(transparent)]
+    Websocket { source: tokio_websockets::Error },
+    #[snafu(transparent)]
+    Legacy { source: SendError },
+    #[snafu(display("Handshake timeout reached"))]
+    Timeout { source: Elapsed },
+    #[snafu(display("Handshake stream ended prematurely"))]
+    UnexpectedEnd {},
+    #[snafu(display("The relay denied our authentication"))]
+    ServerDeniedAuth {},
+    #[snafu(display("Unexpected tag, got {tag}, but expected one of {expected_tags:?}"))]
+    UnexpectedTag {
+        tag: VarInt,
+        expected_tags: Vec<VarInt>,
+    },
+    #[snafu(display("Handshake failed while deserializing {frame_type:?} frame"))]
+    DeserializationError {
+        frame_type: FrameType,
+        source: postcard::Error,
+    },
 }
 
 impl ServerChallenge {
@@ -195,7 +242,7 @@ impl ClientAuth {
 pub(crate) async fn clientside(
     io: &mut (impl BytesStreamSink + ExportKeyingMaterial),
     secret_key: &SecretKey,
-) -> Result<ServerConfirmsAuth> {
+) -> Result<ServerConfirmsAuth, Error> {
     if let Some(client_auth) = ClientAuth::new_from_key_export(secret_key, io) {
         write_frame(io, client_auth).await?;
     } else {
@@ -215,7 +262,7 @@ pub(crate) async fn clientside(
     .await?;
 
     let (tag, frame) = if tag == ServerChallenge::TAG {
-        let challenge: ServerChallenge = postcard::from_bytes(&frame)?;
+        let challenge: ServerChallenge = deserialize_frame(frame)?;
 
         let client_info = ClientAuth::new_from_challenge(secret_key, &challenge);
         write_frame(io, client_info).await?;
@@ -232,12 +279,12 @@ pub(crate) async fn clientside(
 
     match tag {
         FrameType::ServerConfirmsAuth => {
-            let confirmation: ServerConfirmsAuth = postcard::from_bytes(&frame)?;
+            let confirmation: ServerConfirmsAuth = deserialize_frame(frame)?;
             Ok(confirmation)
         }
         FrameType::ServerDeniesAuth => {
-            let denial: ServerDeniesAuth = postcard::from_bytes(&frame)?;
-            anyhow::bail!("server denied connection: {denial:?}");
+            let _denial: ServerDeniesAuth = deserialize_frame(frame)?;
+            return Err(ServerDeniedAuthSnafu.build());
         }
         _ => unreachable!(),
     }
@@ -248,7 +295,7 @@ pub(crate) async fn clientside(
 pub(crate) async fn serverside(
     io: &mut (impl BytesStreamSink + ExportKeyingMaterial),
     rng: impl RngCore + CryptoRng,
-) -> Result<ClientAuth> {
+) -> Result<ClientAuth, Error> {
     let (tag, frame) = read_handshake_frame(
         io,
         &[ClientRequestChallenge::TAG, ClientAuth::TAG],
@@ -258,13 +305,13 @@ pub(crate) async fn serverside(
 
     // it might be fast-path authentication using TLS exported key material
     if tag == ClientAuth::TAG {
-        let client_auth: ClientAuth = postcard::from_bytes(&frame)?;
+        let client_auth: ClientAuth = deserialize_frame(frame)?;
         if client_auth.verify_from_key_export(io) {
             write_frame(io, ServerConfirmsAuth).await?;
             return Ok(client_auth);
         }
     } else {
-        let _frame: ClientRequestChallenge = postcard::from_bytes(&frame)?;
+        let _frame: ClientRequestChallenge = deserialize_frame(frame)?;
     }
 
     let challenge = ServerChallenge::new(rng);
@@ -272,7 +319,7 @@ pub(crate) async fn serverside(
 
     let (_, frame) =
         read_handshake_frame(io, &[ClientAuth::TAG], time::Duration::from_secs(10)).await?;
-    let client_auth: ClientAuth = postcard::from_bytes(&frame)?;
+    let client_auth: ClientAuth = deserialize_frame(frame)?;
 
     if client_auth.verify_from_challenge(&challenge) {
         write_frame(io, ServerConfirmsAuth).await?;
@@ -286,11 +333,12 @@ pub(crate) async fn serverside(
 async fn write_frame<F: serde::Serialize + Frame>(
     io: &mut impl BytesStreamSink,
     frame: F,
-) -> Result<()> {
+) -> Result<(), Error> {
     let tag: VarInt = F::TAG.into();
     let mut bytes = BytesMut::new();
     tag.encode(&mut bytes);
-    let bytes = postcard::to_io(&frame, bytes.writer())?
+    let bytes = postcard::to_io(&frame, bytes.writer())
+        .expect("serialization failed") // buffer can't become "full" without being a critical failure, datastructures shouldn't ever fail serialization
         .into_inner()
         .freeze();
     io.send(bytes).await?;
@@ -302,16 +350,21 @@ async fn read_frame(
     io: &mut impl BytesStreamSink,
     expected_tags: &[VarInt],
     timeout: time::Duration,
-) -> Result<(VarInt, Bytes)> {
+) -> Result<(VarInt, Bytes), Error> {
     let recv = time::timeout(timeout, io.try_next())
-        .await??
-        .ok_or_else(|| anyhow::anyhow!("disconnected"))?;
+        .await
+        .context(TimeoutSnafu)??
+        .ok_or_else(|| UnexpectedEndSnafu.build())?;
 
     let mut cursor = std::io::Cursor::new(recv);
-    let tag = VarInt::decode(&mut cursor)?;
-    anyhow::ensure!(
+    let tag = VarInt::decode(&mut cursor)
+        .map_err(|quinn_proto::coding::UnexpectedEnd| UnexpectedEndSnafu.build())?;
+    snafu::ensure!(
         expected_tags.contains(&tag),
-        "Unexpected tag {tag}, expected one of {expected_tags:?}"
+        UnexpectedTagSnafu {
+            tag,
+            expected_tags: expected_tags.into_iter().cloned().collect::<Vec<_>>()
+        }
     );
 
     let start = cursor.position() as usize;
@@ -324,7 +377,7 @@ async fn read_handshake_frame(
     io: &mut impl BytesStreamSink,
     expected_types: &[FrameType],
     timeout: time::Duration,
-) -> Result<(FrameType, Bytes)> {
+) -> Result<(FrameType, Bytes), Error> {
     let expected_tags = expected_types
         .into_iter()
         .map(|frame_type| VarInt::from(*frame_type))
@@ -334,16 +387,18 @@ async fn read_handshake_frame(
     Ok((frame_type, frame))
 }
 
+fn deserialize_frame<F: Frame + serde::de::DeserializeOwned>(frame: Bytes) -> Result<F, Error> {
+    postcard::from_bytes(&frame).context(DeserializationSnafu { frame_type: F::TAG })
+}
+
 #[cfg(all(test, feature = "server"))]
 mod tests {
-    use anyhow::Context;
+    use crate::ExportKeyingMaterial;
     use bytes::BytesMut;
     use iroh_base::SecretKey;
     use n0_future::{Sink, SinkExt, Stream, TryStreamExt};
-    use testresult::TestResult;
+    use n0_snafu::{Result, ResultExt};
     use tokio_util::codec::{Framed, LengthDelimitedCodec};
-
-    use crate::ExportKeyingMaterial;
 
     use super::{ClientAuth, ServerChallenge};
 
@@ -428,18 +483,18 @@ mod tests {
         secret_key: &SecretKey,
         client_shared_secret: Option<u64>,
         server_shared_secret: Option<u64>,
-    ) -> TestResult<ClientAuth> {
+    ) -> Result<ClientAuth> {
         let (client, server) = tokio::io::duplex(1024);
 
         let mut client_io = Framed::new(client, LengthDelimitedCodec::new())
             .map_ok(BytesMut::freeze)
-            .map_err(anyhow::Error::from)
-            .sink_err_into()
+            .map_err(|e| tokio_websockets::Error::Io(e).into())
+            .sink_map_err(|e| tokio_websockets::Error::Io(e).into())
             .with_shared_secret(client_shared_secret);
         let mut server_io = Framed::new(server, LengthDelimitedCodec::new())
             .map_ok(BytesMut::freeze)
-            .map_err(anyhow::Error::from)
-            .sink_err_into()
+            .map_err(|e| tokio_websockets::Error::Io(e).into())
+            .sink_map_err(|e| tokio_websockets::Error::Io(e).into())
             .with_shared_secret(server_shared_secret);
 
         let (_, client_auth) = n0_future::future::try_zip(
@@ -460,7 +515,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_handshake_via_shared_secrets() -> TestResult {
+    async fn test_handshake_via_shared_secrets() -> Result {
         let secret_key = SecretKey::generate(rand::rngs::OsRng);
         let auth = simulate_handshake(&secret_key, Some(42), Some(42)).await?;
         assert_eq!(auth.public_key, secret_key.public());
@@ -469,7 +524,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_handshake_via_challenge() -> TestResult {
+    async fn test_handshake_via_challenge() -> Result {
         let secret_key = SecretKey::generate(rand::rngs::OsRng);
         let auth = simulate_handshake(&secret_key, None, None).await?;
         assert_eq!(auth.public_key, secret_key.public());
@@ -478,7 +533,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_handshake_mismatching_shared_secrets() -> TestResult {
+    async fn test_handshake_mismatching_shared_secrets() -> Result {
         let secret_key = SecretKey::generate(rand::rngs::OsRng);
         // mismatching shared secrets *might* happen with HTTPS proxies that don't also middle-man the shared secret
         let auth = simulate_handshake(&secret_key, Some(10), Some(99)).await?;
@@ -488,7 +543,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_handshake_challenge_fallback() -> TestResult {
+    async fn test_handshake_challenge_fallback() -> Result {
         let secret_key = SecretKey::generate(rand::rngs::OsRng);
         // clients might not have access to shared secrets
         let auth = simulate_handshake(&secret_key, None, Some(99)).await?;
@@ -498,13 +553,13 @@ mod tests {
     }
 
     #[test]
-    fn test_client_auth_roundtrip() -> TestResult {
+    fn test_client_auth_roundtrip() -> Result {
         let secret_key = SecretKey::generate(rand::rngs::OsRng);
         let challenge = ServerChallenge::new(rand::rngs::OsRng);
         let client_auth = ClientAuth::new_from_challenge(&secret_key, &challenge);
 
-        let bytes = postcard::to_allocvec(&client_auth)?;
-        let decoded: ClientAuth = postcard::from_bytes(&bytes)?;
+        let bytes = postcard::to_allocvec(&client_auth).e()?;
+        let decoded: ClientAuth = postcard::from_bytes(&bytes).e()?;
 
         assert_eq!(client_auth.public_key, decoded.public_key);
         assert_eq!(client_auth.key_material_suffix, decoded.key_material_suffix);
@@ -515,7 +570,7 @@ mod tests {
     }
 
     #[test]
-    fn test_challenge_verification() -> TestResult {
+    fn test_challenge_verification() -> Result {
         let secret_key = SecretKey::generate(rand::rngs::OsRng);
         let challenge = ServerChallenge::new(rand::rngs::OsRng);
         let client_auth = ClientAuth::new_from_challenge(&secret_key, &challenge);

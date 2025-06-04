@@ -357,6 +357,8 @@ mod tests {
     #[traced_test]
     #[cfg(feature = "test-utils")]
     async fn quic_endpoint_basic() -> Result {
+        use super::server::{QuicConfig, QuicServer};
+
         let host: Ipv4Addr = "127.0.0.1".parse().unwrap();
         // create a server config with self signed certificates
         let (_, server_config) = super::super::server::testing::self_signed_tls_certs_and_config();
