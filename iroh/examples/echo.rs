@@ -8,7 +8,7 @@
 
 use iroh::{
     endpoint::Connection,
-    protocol::{ProtocolError, ProtocolHandler, Router},
+    protocol::{AcceptError, ProtocolHandler, Router},
     watcher::Watcher as _,
     Endpoint, NodeAddr,
 };
@@ -83,7 +83,7 @@ impl ProtocolHandler for Echo {
     ///
     /// The returned future runs on a newly spawned tokio task, so it can run as long as
     /// the connection lasts.
-    async fn accept(&self, connection: Connection) -> Result<(), ProtocolError> {
+    async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
         // We can get the remote's node id from the connection.
         let node_id = connection.remote_node_id()?;
         println!("accepted connection from {node_id}");

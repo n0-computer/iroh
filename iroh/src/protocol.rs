@@ -3,7 +3,7 @@
 //! ## Example
 //!
 //! ```no_run
-//! # use iroh::{endpoint::{Connection, BindError}, protocol::{ProtocolHandler, Router, ProtocolError}, Endpoint, NodeAddr};
+//! # use iroh::{endpoint::{Connection, BindError}, protocol::{AcceptError, ProtocolHandler, Router}, Endpoint, NodeAddr};
 //! #
 //! # async fn test_compile() -> Result<(), BindError> {
 //! let endpoint = Endpoint::builder().discovery_n0().bind().await?;
@@ -19,7 +19,7 @@
 //! struct Echo;
 //!
 //! impl ProtocolHandler for Echo {
-//!     async fn accept(&self, connection: Connection) -> Result<(), ProtocolError> {
+//!     async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
 //!         let (mut send, mut recv) = connection.accept_bi().await?;
 //!
 //!         // Echo any bytes received back directly.
@@ -98,16 +98,16 @@ pub struct RouterBuilder {
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
-pub enum ProtocolError {
+pub enum AcceptError {
     #[snafu(transparent)]
-    Connect {
+    Connection {
         source: crate::endpoint::ConnectionError,
         backtrace: Option<Backtrace>,
         #[snafu(implicit)]
         span_trace: n0_snafu::SpanTrace,
     },
     #[snafu(transparent)]
-    RemoteNodeId { source: RemoteNodeIdError },
+    MissingRemoteNodeId { source: RemoteNodeIdError },
     #[snafu(display("Not allowed."))]
     NotAllowed {},
 
@@ -117,7 +117,7 @@ pub enum ProtocolError {
     },
 }
 
-impl ProtocolError {
+impl AcceptError {
     /// Creates a new user error from an arbitrary error type.
     pub fn from_err<T: std::error::Error + Send + Sync + 'static>(value: T) -> Self {
         Self::User {
@@ -126,13 +126,13 @@ impl ProtocolError {
     }
 }
 
-impl From<std::io::Error> for ProtocolError {
+impl From<std::io::Error> for AcceptError {
     fn from(err: std::io::Error) -> Self {
         Self::from_err(err)
     }
 }
 
-impl From<quinn::ClosedStream> for ProtocolError {
+impl From<quinn::ClosedStream> for AcceptError {
     fn from(err: quinn::ClosedStream) -> Self {
         Self::from_err(err)
     }
@@ -158,7 +158,7 @@ pub trait ProtocolHandler: Send + Sync + std::fmt::Debug + 'static {
     fn on_connecting(
         &self,
         connecting: Connecting,
-    ) -> impl Future<Output = Result<Connection, ProtocolError>> + Send {
+    ) -> impl Future<Output = Result<Connection, AcceptError>> + Send {
         async move {
             let conn = connecting.await?;
             Ok(conn)
@@ -177,7 +177,7 @@ pub trait ProtocolHandler: Send + Sync + std::fmt::Debug + 'static {
     fn accept(
         &self,
         connection: Connection,
-    ) -> impl Future<Output = Result<(), ProtocolError>> + Send;
+    ) -> impl Future<Output = Result<(), AcceptError>> + Send;
 
     /// Called when the router shuts down.
     ///
@@ -191,11 +191,11 @@ pub trait ProtocolHandler: Send + Sync + std::fmt::Debug + 'static {
 }
 
 impl<T: ProtocolHandler> ProtocolHandler for Arc<T> {
-    async fn on_connecting(&self, conn: Connecting) -> Result<Connection, ProtocolError> {
+    async fn on_connecting(&self, conn: Connecting) -> Result<Connection, AcceptError> {
         self.as_ref().on_connecting(conn).await
     }
 
-    async fn accept(&self, conn: Connection) -> Result<(), ProtocolError> {
+    async fn accept(&self, conn: Connection) -> Result<(), AcceptError> {
         self.as_ref().accept(conn).await
     }
 
@@ -205,11 +205,11 @@ impl<T: ProtocolHandler> ProtocolHandler for Arc<T> {
 }
 
 impl<T: ProtocolHandler> ProtocolHandler for Box<T> {
-    async fn on_connecting(&self, conn: Connecting) -> Result<Connection, ProtocolError> {
+    async fn on_connecting(&self, conn: Connecting) -> Result<Connection, AcceptError> {
         self.as_ref().on_connecting(conn).await
     }
 
-    async fn accept(&self, conn: Connection) -> Result<(), ProtocolError> {
+    async fn accept(&self, conn: Connection) -> Result<(), AcceptError> {
         self.as_ref().accept(conn).await
     }
 
@@ -227,7 +227,7 @@ pub(crate) trait DynProtocolHandler: Send + Sync + std::fmt::Debug + 'static {
     fn on_connecting(
         &self,
         connecting: Connecting,
-    ) -> Pin<Box<dyn Future<Output = Result<Connection, ProtocolError>> + Send + '_>> {
+    ) -> Pin<Box<dyn Future<Output = Result<Connection, AcceptError>> + Send + '_>> {
         Box::pin(async move {
             let conn = connecting.await?;
             Ok(conn)
@@ -238,7 +238,7 @@ pub(crate) trait DynProtocolHandler: Send + Sync + std::fmt::Debug + 'static {
     fn accept(
         &self,
         connection: Connection,
-    ) -> Pin<Box<dyn Future<Output = Result<(), ProtocolError>> + Send + '_>>;
+    ) -> Pin<Box<dyn Future<Output = Result<(), AcceptError>> + Send + '_>>;
 
     /// See [`ProtocolHandler::shutdown`].
     fn shutdown(&self) -> Pin<Box<dyn Future<Output = ()> + Send + '_>> {
@@ -250,14 +250,14 @@ impl<P: ProtocolHandler> DynProtocolHandler for P {
     fn accept(
         &self,
         connection: Connection,
-    ) -> Pin<Box<dyn Future<Output = Result<(), ProtocolError>> + Send + '_>> {
+    ) -> Pin<Box<dyn Future<Output = Result<(), AcceptError>> + Send + '_>> {
         Box::pin(<Self as ProtocolHandler>::accept(self, connection))
     }
 
     fn on_connecting(
         &self,
         connecting: Connecting,
-    ) -> Pin<Box<dyn Future<Output = Result<Connection, ProtocolError>> + Send + '_>> {
+    ) -> Pin<Box<dyn Future<Output = Result<Connection, AcceptError>> + Send + '_>> {
         Box::pin(<Self as ProtocolHandler>::on_connecting(self, connecting))
     }
 
@@ -519,11 +519,11 @@ impl<P: ProtocolHandler + Clone> ProtocolHandler for AccessLimit<P> {
     fn on_connecting(
         &self,
         conn: Connecting,
-    ) -> impl Future<Output = Result<Connection, ProtocolError>> + Send {
+    ) -> impl Future<Output = Result<Connection, AcceptError>> + Send {
         self.proto.on_connecting(conn)
     }
 
-    async fn accept(&self, conn: Connection) -> Result<(), ProtocolError> {
+    async fn accept(&self, conn: Connection) -> Result<(), AcceptError> {
         let remote = conn.remote_node_id()?;
         let is_allowed = (self.limiter)(remote);
         if !is_allowed {
@@ -572,7 +572,7 @@ mod tests {
     const ECHO_ALPN: &[u8] = b"/iroh/echo/1";
 
     impl ProtocolHandler for Echo {
-        async fn accept(&self, connection: Connection) -> Result<(), ProtocolError> {
+        async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
             println!("accepting echo");
             let (mut send, mut recv) = connection.accept_bi().await?;
 
@@ -619,7 +619,7 @@ mod tests {
         const TEST_ALPN: &[u8] = b"/iroh/test/1";
 
         impl ProtocolHandler for TestProtocol {
-            async fn accept(&self, connection: Connection) -> Result<(), ProtocolError> {
+            async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
                 self.connections.lock().expect("poisoned").push(connection);
                 Ok(())
             }
