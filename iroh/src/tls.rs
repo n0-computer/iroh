@@ -1,8 +1,7 @@
 //! TLS configuration for iroh.
 //!
-//! Currently there are two mechanisms available
+//! Currently there is one mechanisms available
 //! - Raw Public Keys, using the TLS extension described in [RFC 7250]
-//! - libp2p-tls, based on <https://github.com/libp2p/specs/blob/master/tls/tls.md>.
 //!
 //! [RFC 7250]: https://datatracker.ietf.org/doc/html/rfc7250
 
@@ -14,7 +13,6 @@ use tracing::warn;
 
 use self::resolver::AlwaysResolvesCert;
 
-pub(crate) mod certificate;
 pub(crate) mod name;
 mod resolver;
 mod verifier;
@@ -29,16 +27,6 @@ mod verifier;
 /// I think 150KB is an acceptable default upper limit for such a cache.
 const MAX_TLS_TICKETS: usize = 8 * 32;
 
-/// TLS Authentication mechanism
-#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
-pub(crate) enum Authentication {
-    /// Self signed certificates, based on libp2p-tls
-    X509,
-    /// RFC 7250 TLS extension: Raw Public Keys.
-    #[default]
-    RawPublicKey,
-}
-
 /// Configuration for TLS.
 ///
 /// The main point of this struct is to keep state that should be kept the same
@@ -48,7 +36,6 @@ pub(crate) enum Authentication {
 /// This makes sure that's the case.
 #[derive(Debug)]
 pub(crate) struct TlsConfig {
-    pub(crate) auth: Authentication,
     pub(crate) secret_key: SecretKey,
     cert_resolver: Arc<AlwaysResolvesCert>,
     server_verifier: Arc<verifier::ServerCertificateVerifier>,
@@ -57,16 +44,15 @@ pub(crate) struct TlsConfig {
 }
 
 impl TlsConfig {
-    pub(crate) fn new(auth: Authentication, secret_key: SecretKey) -> Self {
+    pub(crate) fn new(secret_key: SecretKey) -> Self {
         let cert_resolver = Arc::new(
-            AlwaysResolvesCert::new(auth, &secret_key).expect("Client cert key DER is valid; qed"),
+            AlwaysResolvesCert::new(&secret_key).expect("Client cert key DER is valid; qed"),
         );
         Self {
-            auth,
             secret_key,
             cert_resolver,
-            server_verifier: Arc::new(verifier::ServerCertificateVerifier::new(auth)),
-            client_verifier: Arc::new(verifier::ClientCertificateVerifier::new(auth)),
+            server_verifier: Arc::new(verifier::ServerCertificateVerifier),
+            client_verifier: Arc::new(verifier::ClientCertificateVerifier),
             session_store: Arc::new(rustls::client::ClientSessionMemoryCache::new(
                 MAX_TLS_TICKETS,
             )),

@@ -46,18 +46,22 @@
 
 use std::sync::Arc;
 
-use anyhow::{anyhow, bail, Result};
-use iroh_base::{NodeId, SecretKey};
-use iroh_relay::node_info::NodeInfo;
+use iroh_base::{NodeId, RelayUrl, SecretKey};
+use iroh_relay::node_info::{EncodingError, NodeInfo};
 use n0_future::{
     boxed::BoxStream,
     task::{self, AbortOnDropHandle},
     time::{self, Duration, Instant},
 };
-use pkarr::SignedPacket;
+use pkarr::{
+    errors::{PublicKeyError, SignedPacketVerifyError},
+    SignedPacket,
+};
+use snafu::{ResultExt, Snafu};
 use tracing::{debug, error_span, warn, Instrument};
 use url::Url;
 
+use super::DiscoveryError;
 use crate::{
     discovery::{Discovery, DiscoveryItem, NodeData},
     endpoint::force_staging_infra,
@@ -67,6 +71,32 @@ use crate::{
 
 #[cfg(feature = "discovery-pkarr-dht")]
 pub mod dht;
+
+#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+pub enum PkarrError {
+    #[snafu(display("Invalid public key"))]
+    PublicKey { source: PublicKeyError },
+    #[snafu(display("Packet failed to verify"))]
+    Verify { source: SignedPacketVerifyError },
+    #[snafu(display("Invalid relay URL"))]
+    InvalidRelayUrl { url: RelayUrl },
+    #[snafu(display("Error sending http request"))]
+    HttpSend { source: reqwest::Error },
+    #[snafu(display("Error resolving http request"))]
+    HttpRequest { status: reqwest::StatusCode },
+    #[snafu(display("Http payload error"))]
+    HttpPayload { source: reqwest::Error },
+    #[snafu(display("EncodingError"))]
+    Encoding { source: EncodingError },
+}
+
+impl From<PkarrError> for DiscoveryError {
+    fn from(err: PkarrError) -> Self {
+        DiscoveryError::from_err("pkarr", err)
+    }
+}
 
 /// The production pkarr relay run by [number 0].
 ///
@@ -256,20 +286,22 @@ impl PublisherService {
             tokio::select! {
                 res = self.watcher.updated() => match res {
                     Ok(_) => debug!("Publish node info to pkarr (info changed)"),
-                    Err(Disconnected) => break,
+                    Err(Disconnected { .. }) => break,
                 },
                 _ = &mut republish => debug!("Publish node info to pkarr (interval elapsed)"),
             }
         }
     }
 
-    async fn publish_current(&self, info: NodeInfo) -> Result<()> {
+    async fn publish_current(&self, info: NodeInfo) -> Result<(), PkarrError> {
         debug!(
             data = ?info.data,
             pkarr_relay = %self.pkarr_client.pkarr_relay_url,
             "Publish node info to pkarr"
         );
-        let signed_packet = info.to_pkarr_signed_packet(&self.secret_key, self.ttl)?;
+        let signed_packet = info
+            .to_pkarr_signed_packet(&self.secret_key, self.ttl)
+            .context(EncodingSnafu)?;
         self.pkarr_client.publish(&signed_packet).await?;
         Ok(())
     }
@@ -322,11 +354,16 @@ impl PkarrResolver {
 }
 
 impl Discovery for PkarrResolver {
-    fn resolve(&self, _ep: Endpoint, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem>>> {
+    fn resolve(
+        &self,
+        _ep: Endpoint,
+        node_id: NodeId,
+    ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
         let pkarr_client = self.pkarr_client.clone();
         let fut = async move {
             let signed_packet = pkarr_client.resolve(node_id).await?;
-            let info = NodeInfo::from_pkarr_signed_packet(&signed_packet)?;
+            let info = NodeInfo::from_pkarr_signed_packet(&signed_packet)
+                .map_err(|err| DiscoveryError::from_err("pkarr", err))?;
             let item = DiscoveryItem::new(info, "pkarr", None);
             Ok(item)
         };
@@ -354,35 +391,52 @@ impl PkarrRelayClient {
     }
 
     /// Resolves a [`SignedPacket`] for the given [`NodeId`].
-    pub async fn resolve(&self, node_id: NodeId) -> anyhow::Result<SignedPacket> {
+    pub async fn resolve(&self, node_id: NodeId) -> Result<SignedPacket, DiscoveryError> {
         // We map the error to string, as in browsers the error is !Send
-        let public_key = pkarr::PublicKey::try_from(node_id.as_bytes())
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let public_key = pkarr::PublicKey::try_from(node_id.as_bytes()).context(PublicKeySnafu)?;
+
         let mut url = self.pkarr_relay_url.clone();
         url.path_segments_mut()
-            .map_err(|_| anyhow!("Failed to resolve: Invalid relay URL"))?
+            .map_err(|_| {
+                InvalidRelayUrlSnafu {
+                    url: self.pkarr_relay_url.clone(),
+                }
+                .build()
+            })?
             .push(&public_key.to_z32());
 
-        let response = self.http_client.get(url).send().await?;
+        let response = self
+            .http_client
+            .get(url)
+            .send()
+            .await
+            .context(HttpSendSnafu)?;
 
         if !response.status().is_success() {
-            bail!(format!(
-                "Resolve request failed with status {}",
-                response.status()
-            ))
+            return Err(HttpRequestSnafu {
+                status: response.status(),
+            }
+            .build()
+            .into());
         }
 
-        let payload = response.bytes().await?;
+        let payload = response.bytes().await.context(HttpPayloadSnafu)?;
         // We map the error to string, as in browsers the error is !Send
-        SignedPacket::from_relay_payload(&public_key, &payload)
-            .map_err(|e| anyhow::anyhow!(e.to_string()))
+        let packet =
+            SignedPacket::from_relay_payload(&public_key, &payload).context(VerifySnafu)?;
+        Ok(packet)
     }
 
     /// Publishes a [`SignedPacket`].
-    pub async fn publish(&self, signed_packet: &SignedPacket) -> anyhow::Result<()> {
+    pub async fn publish(&self, signed_packet: &SignedPacket) -> Result<(), PkarrError> {
         let mut url = self.pkarr_relay_url.clone();
         url.path_segments_mut()
-            .map_err(|_| anyhow!("Failed to publish: Invalid relay URL"))?
+            .map_err(|_| {
+                InvalidRelayUrlSnafu {
+                    url: self.pkarr_relay_url.clone(),
+                }
+                .build()
+            })?
             .push(&signed_packet.public_key().to_z32());
 
         let response = self
@@ -390,18 +444,14 @@ impl PkarrRelayClient {
             .put(url)
             .body(signed_packet.to_relay_payload())
             .send()
-            .await?;
+            .await
+            .context(HttpSendSnafu)?;
 
-        let status = response.status();
-        if !status.is_success() {
-            let text = if let Ok(text) = response.text().await {
-                text
-            } else {
-                "(no details provided)".to_string()
-            };
-            bail!(format!(
-                "Publish request failed with status {status}: {text}",
-            ))
+        if !response.status().is_success() {
+            return Err(HttpRequestSnafu {
+                status: response.status(),
+            }
+            .build());
         }
 
         Ok(())

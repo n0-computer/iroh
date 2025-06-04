@@ -7,9 +7,9 @@
 //! Run the `listen` example first (`iroh/examples/listen.rs`), which will give you instructions on how to run this example to watch two nodes connect and exchange bytes.
 use std::net::SocketAddr;
 
-use anyhow::Context;
 use clap::Parser;
 use iroh::{watcher::Watcher as _, Endpoint, NodeAddr, RelayMode, RelayUrl, SecretKey};
+use n0_snafu::{Result, ResultExt};
 use tracing::info;
 
 // An example ALPN that we are using to communicate over the `Endpoint`
@@ -29,7 +29,7 @@ struct Cli {
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     println!("\nconnect example!\n");
     let args = Cli::parse();
@@ -78,15 +78,15 @@ async fn main() -> anyhow::Result<()> {
     info!("connected");
 
     // Use the Quinn API to send and recv content.
-    let (mut send, mut recv) = conn.open_bi().await?;
+    let (mut send, mut recv) = conn.open_bi().await.e()?;
 
     let message = format!("{me} is saying 'hello!'");
-    send.write_all(message.as_bytes()).await?;
+    send.write_all(message.as_bytes()).await.e()?;
 
     // Call `finish` to close the send side of the connection gracefully.
-    send.finish()?;
-    let message = recv.read_to_end(100).await?;
-    let message = String::from_utf8(message)?;
+    send.finish().e()?;
+    let message = recv.read_to_end(100).await.e()?;
+    let message = String::from_utf8(message).e()?;
     println!("received: {message}");
 
     // We received the last message: close all connections and allow for the close

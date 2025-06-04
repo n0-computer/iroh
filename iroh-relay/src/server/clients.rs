@@ -9,7 +9,6 @@ use std::{
     },
 };
 
-use anyhow::Result;
 use bytes::Bytes;
 use dashmap::DashMap;
 use iroh_base::NodeId;
@@ -195,6 +194,7 @@ mod tests {
 
     use bytes::Bytes;
     use iroh_base::SecretKey;
+    use n0_snafu::{Result, ResultExt};
     use tokio::io::DuplexStream;
     use tokio_util::codec::{Framed, FramedRead};
 
@@ -222,7 +222,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_clients() -> Result<()> {
+    async fn test_clients() -> Result {
         let a_key = SecretKey::generate(rand::thread_rng()).public();
         let b_key = SecretKey::generate(rand::thread_rng()).public();
 
@@ -271,7 +271,8 @@ mod tests {
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
         })
-        .await?;
+        .await
+        .context("timeout")?;
         clients.shutdown().await;
 
         Ok(())

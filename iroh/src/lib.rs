@@ -9,12 +9,16 @@
 //!
 //! ```no_run
 //! # use iroh::{Endpoint, NodeAddr};
-//! # async fn wrapper() -> testresult::TestResult {
+//! # use n0_snafu::ResultExt;
+//! # async fn wrapper() -> n0_snafu::Result {
 //! let addr: NodeAddr = todo!();
 //! let ep = Endpoint::builder().bind().await?;
 //! let conn = ep.connect(addr, b"my-alpn").await?;
-//! let mut send_stream = conn.open_uni().await?;
-//! send_stream.write_all(b"msg").await?;
+//! let mut send_stream = conn.open_uni().await.context("unable to open uni")?;
+//! send_stream
+//!     .write_all(b"msg")
+//!     .await
+//!     .context("unable to write all")?;
 //! # Ok(())
 //! # }
 //! ```
@@ -23,15 +27,24 @@
 //!
 //! ```no_run
 //! # use iroh::{Endpoint, NodeAddr};
-//! # async fn wrapper() -> testresult::TestResult {
+//! # use n0_snafu::ResultExt;
+//! # async fn wrapper() -> n0_snafu::Result {
 //! let ep = Endpoint::builder()
 //!     .alpns(vec![b"my-alpn".to_vec()])
 //!     .bind()
 //!     .await?;
-//! let conn = ep.accept().await.ok_or("err")?.await?;
-//! let mut recv_stream = conn.accept_uni().await?;
+//! let conn = ep
+//!     .accept()
+//!     .await
+//!     .context("accept error")?
+//!     .await
+//!     .context("connecting error")?;
+//! let mut recv_stream = conn.accept_uni().await.context("unable to open uni")?;
 //! let mut buf = [0u8; 3];
-//! recv_stream.read_exact(&mut buf).await?;
+//! recv_stream
+//!     .read_exact(&mut buf)
+//!     .await
+//!     .context("unable to read")?;
 //! # Ok(())
 //! # }
 //! ```
@@ -157,8 +170,8 @@
 //! The central struct is the [`Endpoint`], which allows you to connect to other nodes:
 //!
 //! ```no_run
-//! use anyhow::Result;
 //! use iroh::{Endpoint, NodeAddr};
+//! use n0_snafu::{Result, ResultExt};
 //!
 //! async fn connect(addr: NodeAddr) -> Result<()> {
 //!     // The Endpoint is the central object that manages an iroh node.
@@ -166,10 +179,10 @@
 //!
 //!     // Establish a QUIC connection, open a bi-directional stream, exchange messages.
 //!     let conn = ep.connect(addr, b"hello-world").await?;
-//!     let (mut send_stream, mut recv_stream) = conn.open_bi().await?;
-//!     send_stream.write_all(b"hello").await?;
-//!     send_stream.finish()?;
-//!     let _msg = recv_stream.read_to_end(10).await?;
+//!     let (mut send_stream, mut recv_stream) = conn.open_bi().await.context("open bi")?;
+//!     send_stream.write_all(b"hello").await.context("write")?;
+//!     send_stream.finish().context("finish")?;
+//!     let _msg = recv_stream.read_to_end(10).await.context("read")?;
 //!
 //!     // Gracefully close the connection and endpoint.
 //!     conn.close(1u8.into(), b"done");
@@ -182,9 +195,9 @@
 //! Every [`Endpoint`] can also accept connections:
 //!
 //! ```no_run
-//! use anyhow::{Context, Result};
 //! use futures_lite::StreamExt;
 //! use iroh::{Endpoint, NodeAddr};
+//! use n0_snafu::{Result, ResultExt};
 //!
 //! async fn accept() -> Result<()> {
 //!     // To accept connections at least one ALPN must be configured.
@@ -194,11 +207,16 @@
 //!         .await?;
 //!
 //!     // Accept a QUIC connection, accept a bi-directional stream, exchange messages.
-//!     let conn = ep.accept().await.context("no incoming connection")?.await?;
-//!     let (mut send_stream, mut recv_stream) = conn.accept_bi().await?;
-//!     let _msg = recv_stream.read_to_end(10).await?;
-//!     send_stream.write_all(b"world").await?;
-//!     send_stream.finish()?;
+//!     let conn = ep
+//!         .accept()
+//!         .await
+//!         .context("no incoming connection")?
+//!         .await
+//!         .context("accept conn")?;
+//!     let (mut send_stream, mut recv_stream) = conn.accept_bi().await.context("accept stream")?;
+//!     let _msg = recv_stream.read_to_end(10).await.context("read")?;
+//!     send_stream.write_all(b"world").await.context("write")?;
+//!     send_stream.finish().context("finish")?;
 //!
 //!     // Wait for the client to close the connection and gracefully close the endpoint.
 //!     conn.closed().await;

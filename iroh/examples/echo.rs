@@ -6,13 +6,13 @@
 //!
 //!     cargo run --example echo --features=examples
 
-use anyhow::Result;
 use iroh::{
     endpoint::Connection,
-    protocol::{ProtocolHandler, Router},
+    protocol::{AcceptError, ProtocolHandler, Router},
     watcher::Watcher as _,
     Endpoint, NodeAddr,
 };
+use n0_snafu::{Result, ResultExt};
 
 /// Each protocol is identified by its ALPN string.
 ///
@@ -28,7 +28,7 @@ async fn main() -> Result<()> {
     connect_side(node_addr).await?;
 
     // This makes sure the endpoint in the router is closed properly and connections close gracefully
-    router.shutdown().await?;
+    router.shutdown().await.e()?;
 
     Ok(())
 }
@@ -40,16 +40,16 @@ async fn connect_side(addr: NodeAddr) -> Result<()> {
     let conn = endpoint.connect(addr, ALPN).await?;
 
     // Open a bidirectional QUIC stream
-    let (mut send, mut recv) = conn.open_bi().await?;
+    let (mut send, mut recv) = conn.open_bi().await.e()?;
 
     // Send some data to be echoed
-    send.write_all(b"Hello, world!").await?;
+    send.write_all(b"Hello, world!").await.e()?;
 
     // Signal the end of data for this particular stream
-    send.finish()?;
+    send.finish().e()?;
 
     // Receive the echo, but limit reading up to maximum 1000 bytes
-    let response = recv.read_to_end(1000).await?;
+    let response = recv.read_to_end(1000).await.e()?;
     assert_eq!(&response, b"Hello, world!");
 
     // Explicitly close the whole connection.
@@ -83,7 +83,7 @@ impl ProtocolHandler for Echo {
     ///
     /// The returned future runs on a newly spawned tokio task, so it can run as long as
     /// the connection lasts.
-    async fn accept(&self, connection: Connection) -> Result<()> {
+    async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
         // We can get the remote's node id from the connection.
         let node_id = connection.remote_node_id()?;
         println!("accepted connection from {node_id}");

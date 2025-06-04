@@ -21,12 +21,13 @@ use std::{
     task::Poll,
 };
 
-use anyhow::{bail, Context, Result};
 use ed25519_dalek::{pkcs8::DecodePublicKey, VerifyingKey};
 use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
 use iroh_relay::RelayMap;
 use n0_future::{time::Duration, Stream};
+use nested_enum_utils::common_fields;
 use pin_project::pin_project;
+use snafu::{ensure, ResultExt, Snafu};
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
@@ -36,10 +37,10 @@ use crate::discovery::pkarr::PkarrResolver;
 use crate::{discovery::dns::DnsDiscovery, dns::DnsResolver};
 use crate::{
     discovery::{
-        pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryItem, DiscoverySubscribers,
-        DiscoveryTask, Lagged, UserData,
+        pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryError, DiscoveryItem,
+        DiscoverySubscribers, DiscoveryTask, Lagged, UserData,
     },
-    magicsock::{self, Handle, NodeIdMappedAddr},
+    magicsock::{self, Handle, NodeIdMappedAddr, OwnAddressSnafu},
     metrics::EndpointMetrics,
     net_report::Report,
     tls,
@@ -68,7 +69,8 @@ pub use quinn_proto::{
 
 use self::rtt_actor::RttMessage;
 pub use super::magicsock::{
-    ConnectionType, ControlMsg, DirectAddr, DirectAddrInfo, DirectAddrType, RemoteInfo, Source,
+    AddNodeAddrError, ConnectionType, ControlMsg, DirectAddr, DirectAddrInfo, DirectAddrType,
+    RemoteInfo, Source,
 };
 
 /// The delay to fall back to discovery when direct addresses fail.
@@ -143,7 +145,6 @@ pub struct Builder {
     addr_v6: Option<SocketAddrV6>,
     #[cfg(any(test, feature = "test-utils"))]
     path_selection: PathSelection,
-    tls_auth: tls::Authentication,
 }
 
 impl Default for Builder {
@@ -169,7 +170,6 @@ impl Default for Builder {
             addr_v6: None,
             #[cfg(any(test, feature = "test-utils"))]
             path_selection: PathSelection::default(),
-            tls_auth: tls::Authentication::RawPublicKey,
         }
     }
 }
@@ -181,14 +181,14 @@ impl Builder {
     // # The final constructor that everyone needs.
 
     /// Binds the magic endpoint.
-    pub async fn bind(self) -> Result<Endpoint> {
+    pub async fn bind(self) -> Result<Endpoint, BindError> {
         let relay_map = self.relay_mode.relay_map();
         let secret_key = self
             .secret_key
             .unwrap_or_else(|| SecretKey::generate(rand::rngs::OsRng));
         let static_config = StaticConfig {
             transport_config: Arc::new(self.transport_config),
-            tls_config: tls::TlsConfig::new(self.tls_auth, secret_key.clone()),
+            tls_config: tls::TlsConfig::new(secret_key.clone()),
             keylog: self.keylog,
         };
         #[cfg(not(wasm_browser))]
@@ -395,24 +395,6 @@ impl Builder {
         self
     }
 
-    /// Use libp2p based self signed certificates for TLS.
-    ///
-    /// For details see the libp2p spec at <https://github.com/libp2p/specs/blob/master/tls/tls.md>
-    ///
-    /// This is the only mechanism available in `iroh@0.33.0` and earlier.
-    pub fn tls_x509(mut self) -> Self {
-        self.tls_auth = tls::Authentication::X509;
-        self
-    }
-
-    /// Use TLS Raw Public Keys
-    ///
-    /// This is the default, but is not compatible with older versions of iroh.
-    pub fn tls_raw_public_keys(mut self) -> Self {
-        self.tls_auth = tls::Authentication::RawPublicKey;
-        self
-    }
-
     #[cfg(feature = "discovery-pkarr-dht")]
     /// Configures the endpoint to also use the mainline DHT with default settings.
     ///
@@ -609,6 +591,79 @@ pub struct Endpoint {
     static_config: Arc<StaticConfig>,
 }
 
+#[allow(missing_docs)]
+#[common_fields({
+    backtrace: Option<snafu::Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+pub enum ConnectWithOptsError {
+    #[snafu(transparent)]
+    AddNodeAddr { source: AddNodeAddrError },
+    #[snafu(display("Connecting to ourself is not supported"))]
+    SelfConnect {},
+    #[snafu(display("No addressing information available"))]
+    NoAddress { source: GetMappingAddressError },
+    #[snafu(display("Unable to connect to remote"))]
+    Quinn { source: quinn::ConnectError },
+}
+
+#[allow(missing_docs)]
+#[common_fields({
+    backtrace: Option<snafu::Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+pub enum ConnectError {
+    #[snafu(transparent)]
+    Connect {
+        #[snafu(source(from(ConnectWithOptsError, Box::new)))]
+        source: Box<ConnectWithOptsError>,
+    },
+    #[snafu(transparent)]
+    Connection {
+        #[snafu(source(from(ConnectionError, Box::new)))]
+        source: Box<ConnectionError>,
+    },
+}
+
+#[allow(missing_docs)]
+#[common_fields({
+    backtrace: Option<snafu::Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+pub enum BindError {
+    #[snafu(transparent)]
+    MagicSpawn {
+        source: magicsock::CreateHandleError,
+    },
+}
+
+#[allow(missing_docs)]
+#[common_fields({
+    backtrace: Option<snafu::Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[derive(Debug, Snafu)]
+#[snafu(module)]
+#[non_exhaustive]
+pub enum GetMappingAddressError {
+    #[snafu(display("Discovery service required due to missing addressing information"))]
+    DiscoveryStart { source: DiscoveryError },
+    #[snafu(display("Discovery service failed"))]
+    Discover { source: DiscoveryError },
+    #[snafu(display("No addressing information found"))]
+    NoAddress {},
+}
+
 impl Endpoint {
     // The ordering of public methods is reflected directly in the documentation.  This is
     // roughly ordered by what is most commonly needed by users, but grouped in similar
@@ -626,7 +681,10 @@ impl Endpoint {
     /// This is for internal use, the public interface is the [`Builder`] obtained from
     /// [Self::builder]. See the methods on the builder for documentation of the parameters.
     #[instrument("ep", skip_all, fields(me = %static_config.tls_config.secret_key.public().fmt_short()))]
-    async fn bind(static_config: StaticConfig, msock_opts: magicsock::Options) -> Result<Self> {
+    async fn bind(
+        static_config: StaticConfig,
+        msock_opts: magicsock::Options,
+    ) -> Result<Self, BindError> {
         let msock = magicsock::MagicSock::spawn(msock_opts).await?;
         trace!("created magicsock");
         debug!(version = env!("CARGO_PKG_VERSION"), "iroh Endpoint created");
@@ -672,15 +730,18 @@ impl Endpoint {
     /// The `alpn`, or application-level protocol identifier, is also required. The remote
     /// endpoint must support this `alpn`, otherwise the connection attempt will fail with
     /// an error.
-    pub async fn connect(&self, node_addr: impl Into<NodeAddr>, alpn: &[u8]) -> Result<Connection> {
+    pub async fn connect(
+        &self,
+        node_addr: impl Into<NodeAddr>,
+        alpn: &[u8],
+    ) -> Result<Connection, ConnectError> {
         let node_addr = node_addr.into();
         let remote = node_addr.node_id;
         let connecting = self
             .connect_with_opts(node_addr, alpn, Default::default())
             .await?;
-        let conn = connecting
-            .await
-            .context("failed connecting to remote endpoint")?;
+        let conn = connecting.await?;
+
         debug!(
             me = %self.node_id().fmt_short(),
             remote = %remote.fmt_short(),
@@ -714,17 +775,12 @@ impl Endpoint {
         node_addr: impl Into<NodeAddr>,
         alpn: &[u8],
         options: ConnectOptions,
-    ) -> Result<Connecting> {
+    ) -> Result<Connecting, ConnectWithOptsError> {
         let node_addr: NodeAddr = node_addr.into();
         tracing::Span::current().record("remote", node_addr.node_id.fmt_short());
 
         // Connecting to ourselves is not supported.
-        if node_addr.node_id == self.node_id() {
-            bail!(
-                "Connecting to ourself is not supported ({} is the node id of this node)",
-                node_addr.node_id.fmt_short()
-            );
-        }
+        ensure!(node_addr.node_id != self.node_id(), SelfConnectSnafu);
 
         if !node_addr.is_empty() {
             self.add_node_addr(node_addr.clone())?;
@@ -740,12 +796,7 @@ impl Endpoint {
         let (mapped_addr, _discovery_drop_guard) = self
             .get_mapping_addr_and_maybe_start_discovery(node_addr)
             .await
-            .with_context(|| {
-                format!(
-                    "No addressing information for NodeId({}), unable to connect",
-                    node_id.fmt_short()
-                )
-            })?;
+            .context(NoAddressSnafu)?;
 
         let transport_config = options
             .transport_config
@@ -773,11 +824,15 @@ impl Endpoint {
         };
 
         let server_name = &tls::name::encode(node_id);
-        let connect = self.msock.endpoint().connect_with(
-            client_config,
-            mapped_addr.private_socket_addr(),
-            server_name,
-        )?;
+        let connect = self
+            .msock
+            .endpoint()
+            .connect_with(
+                client_config,
+                mapped_addr.private_socket_addr(),
+                server_name,
+            )
+            .context(QuinnSnafu)?;
 
         Ok(Connecting {
             inner: connect,
@@ -825,7 +880,7 @@ impl Endpoint {
     /// if the direct addresses are a subset of ours.
     ///
     /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
-    pub fn add_node_addr(&self, node_addr: NodeAddr) -> Result<()> {
+    pub fn add_node_addr(&self, node_addr: NodeAddr) -> Result<(), AddNodeAddrError> {
         self.add_node_addr_inner(node_addr, magicsock::Source::App)
     }
 
@@ -852,7 +907,7 @@ impl Endpoint {
         &self,
         node_addr: NodeAddr,
         source: &'static str,
-    ) -> Result<()> {
+    ) -> Result<(), AddNodeAddrError> {
         self.add_node_addr_inner(
             node_addr,
             magicsock::Source::NamedApp {
@@ -861,14 +916,13 @@ impl Endpoint {
         )
     }
 
-    fn add_node_addr_inner(&self, node_addr: NodeAddr, source: magicsock::Source) -> Result<()> {
+    fn add_node_addr_inner(
+        &self,
+        node_addr: NodeAddr,
+        source: magicsock::Source,
+    ) -> Result<(), AddNodeAddrError> {
         // Connecting to ourselves is not supported.
-        if node_addr.node_id == self.node_id() {
-            bail!(
-                "Adding our own address is not supported ({} is the node id of this node)",
-                node_addr.node_id.fmt_short()
-            );
-        }
+        snafu::ensure!(node_addr.node_id != self.node_id(), OwnAddressSnafu);
         self.msock.add_node_addr(node_addr, source)
     }
 
@@ -895,7 +949,7 @@ impl Endpoint {
     /// Use [`Watcher::initialized`] to wait for a [`NodeAddr`] that is ready to be connected to:
     ///
     /// ```no_run
-    /// # async fn wrapper() -> testresult::TestResult {
+    /// # async fn wrapper() -> n0_snafu::Result {
     /// use iroh::{watcher::Watcher, Endpoint};
     ///
     /// let endpoint = Endpoint::builder()
@@ -1147,8 +1201,8 @@ impl Endpoint {
     ///
     /// # Errors
     ///
-    /// Will error if we do not have any address information for the given `node_id`.
-    pub fn conn_type(&self, node_id: NodeId) -> Result<watcher::Direct<ConnectionType>> {
+    /// Will return `None` if we do not have any address information for the given `node_id`.
+    pub fn conn_type(&self, node_id: NodeId) -> Option<watcher::Direct<ConnectionType>> {
         self.msock.conn_type(node_id)
     }
 
@@ -1176,7 +1230,7 @@ impl Endpoint {
     /// ```rust
     /// # use std::collections::BTreeMap;
     /// # use iroh::endpoint::Endpoint;
-    /// # async fn wrapper() -> testresult::TestResult {
+    /// # async fn wrapper() -> n0_snafu::Result {
     /// let endpoint = Endpoint::builder().bind().await?;
     /// assert_eq!(endpoint.metrics().magicsock.recv_datagrams.get(), 0);
     /// # Ok(())
@@ -1194,7 +1248,7 @@ impl Endpoint {
     /// # use std::collections::BTreeMap;
     /// # use iroh_metrics::{Metric, MetricsGroup, MetricValue, MetricsGroupSet};
     /// # use iroh::endpoint::Endpoint;
-    /// # async fn wrapper() -> testresult::TestResult {
+    /// # async fn wrapper() -> n0_snafu::Result {
     /// let endpoint = Endpoint::builder().bind().await?;
     /// let metrics: BTreeMap<String, MetricValue> = endpoint
     ///     .metrics()
@@ -1217,7 +1271,7 @@ impl Endpoint {
     /// ```rust
     /// # use iroh_metrics::{Registry, MetricsSource};
     /// # use iroh::endpoint::Endpoint;
-    /// # async fn wrapper() -> testresult::TestResult {
+    /// # async fn wrapper() -> n0_snafu::Result {
     /// let endpoint = Endpoint::builder().bind().await?;
     /// let mut registry = Registry::default();
     /// registry.register_all(endpoint.metrics());
@@ -1240,7 +1294,8 @@ impl Endpoint {
     /// # use std::{sync::{Arc, RwLock}, time::Duration};
     /// # use iroh_metrics::{Registry, MetricsSource};
     /// # use iroh::endpoint::Endpoint;
-    /// # async fn wrapper() -> testresult::TestResult {
+    /// # use n0_snafu::ResultExt;
+    /// # async fn wrapper() -> n0_snafu::Result {
     /// // Create a registry, wrapped in a read-write lock so that we can register and serve
     /// // the metrics independently.
     /// let registry = Arc::new(RwLock::new(Registry::default()));
@@ -1260,9 +1315,11 @@ impl Endpoint {
     /// // Wait for the metrics server to bind, then fetch the metrics via HTTP.
     /// tokio::time::sleep(Duration::from_millis(500));
     /// let res = reqwest::get("http://localhost:9100/metrics")
-    ///     .await?
+    ///     .await
+    ///     .context("get")?
     ///     .text()
-    ///     .await?;
+    ///     .await
+    ///     .context("text")?;
     ///
     /// assert!(res.contains(r#"TYPE magicsock_recv_datagrams counter"#));
     /// assert!(res.contains(r#"magicsock_recv_datagrams_total 0"#));
@@ -1378,7 +1435,7 @@ impl Endpoint {
     async fn get_mapping_addr_and_maybe_start_discovery(
         &self,
         node_addr: NodeAddr,
-    ) -> Result<(NodeIdMappedAddr, Option<DiscoveryTask>)> {
+    ) -> Result<(NodeIdMappedAddr, Option<DiscoveryTask>), GetMappingAddressError> {
         let node_id = node_addr.node_id;
 
         // Only return a mapped addr if we have some way of dialing this node, in other
@@ -1409,16 +1466,16 @@ impl Endpoint {
                 // So, we start a discovery task and wait for the first result to arrive, and
                 // only then continue, because otherwise we wouldn't have any
                 // path to the remote endpoint.
-                let mut discovery = DiscoveryTask::start(self.clone(), node_id)
-                    .context("Discovery service required due to missing addressing information")?;
+                let res = DiscoveryTask::start(self.clone(), node_id);
+                let mut discovery = res.context(get_mapping_address_error::DiscoveryStartSnafu)?;
                 discovery
                     .first_arrived()
                     .await
-                    .context("Discovery service failed")?;
+                    .context(get_mapping_address_error::DiscoverSnafu)?;
                 if let Some(addr) = self.msock.get_mapping_addr(node_id) {
                     Ok((addr, Some(discovery)))
                 } else {
-                    bail!("Discovery did not find addressing information");
+                    Err(get_mapping_address_error::NoAddressSnafu.build())
                 }
             }
         }
@@ -1629,10 +1686,7 @@ impl Future for IncomingFuture {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
             Poll::Ready(Ok(inner)) => {
-                let conn = Connection {
-                    inner,
-                    tls_auth: this.ep.static_config.tls_config.auth,
-                };
+                let conn = Connection { inner };
                 try_send_rtt_msg(&conn, this.ep, None);
                 Poll::Ready(Ok(conn))
             }
@@ -1651,6 +1705,23 @@ pub struct Connecting {
     /// We run discovery as long as we haven't established a connection yet.
     #[debug("Option<DiscoveryTask>")]
     _discovery_drop_guard: Option<DiscoveryTask>,
+}
+
+#[allow(missing_docs)]
+#[common_fields({
+    backtrace: Option<snafu::Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+pub enum AlpnError {
+    #[snafu(transparent)]
+    ConnectionError { source: ConnectionError },
+    #[snafu(display("No ALPN available"))]
+    Unavailable {},
+    #[snafu(display("Unknown handshake type"))]
+    UnknownHandshake {},
 }
 
 impl Connecting {
@@ -1703,10 +1774,7 @@ impl Connecting {
     pub fn into_0rtt(self) -> Result<(Connection, ZeroRttAccepted), Self> {
         match self.inner.into_0rtt() {
             Ok((inner, zrtt_accepted)) => {
-                let conn = Connection {
-                    inner,
-                    tls_auth: self.ep.static_config.tls_config.auth,
-                };
+                let conn = Connection { inner };
                 let zrtt_accepted = ZeroRttAccepted {
                     inner: zrtt_accepted,
                     _discovery_drop_guard: self._discovery_drop_guard,
@@ -1735,16 +1803,14 @@ impl Connecting {
     }
 
     /// Extracts the ALPN protocol from the peer's handshake data.
-    // Note, we could totally provide this method to be on a Connection as well.  But we'd
-    // need to wrap Connection too.
-    pub async fn alpn(&mut self) -> Result<Vec<u8>> {
+    pub async fn alpn(&mut self) -> Result<Vec<u8>, AlpnError> {
         let data = self.handshake_data().await?;
         match data.downcast::<quinn::crypto::rustls::HandshakeData>() {
             Ok(data) => match data.protocol {
                 Some(protocol) => Ok(protocol),
-                None => bail!("no ALPN protocol available"),
+                None => Err(UnavailableSnafu.build()),
             },
-            Err(_) => bail!("unknown handshake type"),
+            Err(_) => Err(UnknownHandshakeSnafu.build()),
         }
     }
 }
@@ -1758,10 +1824,7 @@ impl Future for Connecting {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
             Poll::Ready(Ok(inner)) => {
-                let conn = Connection {
-                    inner,
-                    tls_auth: this.ep.static_config.tls_config.auth,
-                };
+                let conn = Connection { inner };
                 try_send_rtt_msg(&conn, this.ep, *this.remote_node_id);
                 Poll::Ready(Ok(conn))
             }
@@ -1810,7 +1873,13 @@ impl Future for ZeroRttAccepted {
 #[derive(Debug, Clone)]
 pub struct Connection {
     inner: quinn::Connection,
-    tls_auth: tls::Authentication,
+}
+
+#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[snafu(display("Protocol error: no remote id available"))]
+pub struct RemoteNodeIdError {
+    backtrace: Option<snafu::Backtrace>,
 }
 
 impl Connection {
@@ -2028,31 +2097,32 @@ impl Connection {
     ///
     /// [`PublicKey`]: iroh_base::PublicKey
     // TODO: Would be nice if this could be infallible.
-    pub fn remote_node_id(&self) -> Result<NodeId> {
+    pub fn remote_node_id(&self) -> Result<NodeId, RemoteNodeIdError> {
         let data = self.peer_identity();
         match data {
-            None => bail!("no peer certificate found"),
+            None => {
+                warn!("no peer certificate found");
+                Err(RemoteNodeIdSnafu.build())
+            }
             Some(data) => match data.downcast::<Vec<rustls::pki_types::CertificateDer>>() {
                 Ok(certs) => {
                     if certs.len() != 1 {
-                        bail!(
+                        warn!(
                             "expected a single peer certificate, but {} found",
                             certs.len()
                         );
+                        return Err(RemoteNodeIdSnafu.build());
                     }
 
-                    match self.tls_auth {
-                        tls::Authentication::X509 => {
-                            let cert = tls::certificate::parse(&certs[0])?;
-                            Ok(cert.peer_id())
-                        }
-                        tls::Authentication::RawPublicKey => {
-                            let peer_id = VerifyingKey::from_public_key_der(&certs[0])?.into();
-                            Ok(peer_id)
-                        }
-                    }
+                    let peer_id = VerifyingKey::from_public_key_der(&certs[0])
+                        .map_err(|_| RemoteNodeIdSnafu.build())?
+                        .into();
+                    Ok(peer_id)
                 }
-                Err(_) => bail!("invalid peer certificate"),
+                Err(err) => {
+                    warn!("invalid peer certificate: {:?}", err);
+                    Err(RemoteNodeIdSnafu.build())
+                }
             },
         }
     }
@@ -2119,7 +2189,7 @@ fn try_send_rtt_msg(conn: &Connection, magic_ep: &Endpoint, remote_node_id: Opti
         warn!(?conn, "failed to get remote node id");
         return;
     };
-    let Ok(conn_type_changes) = magic_ep.conn_type(node_id) else {
+    let Some(conn_type_changes) = magic_ep.conn_type(node_id) else {
         warn!(?conn, "failed to create conn_type stream");
         return;
     };
@@ -2231,25 +2301,33 @@ fn is_cgi() -> bool {
 // https://github.com/n0-computer/iroh/issues/1183
 #[cfg(test)]
 mod tests {
+    use std::{
+        net::SocketAddr,
+        time::{Duration, Instant},
+    };
 
-    use std::time::Instant;
-
-    use iroh_metrics::MetricsSource;
+    use iroh_base::{NodeAddr, NodeId, SecretKey};
     use iroh_relay::http::Protocol;
     use n0_future::{task::AbortOnDropHandle, StreamExt};
+    use n0_snafu::{Error, Result, ResultExt};
+    use quinn::ConnectionError;
     use rand::SeedableRng;
-    use testresult::TestResult;
     use tracing::{error_span, info, info_span, Instrument};
     use tracing_test::traced_test;
 
-    use super::*;
-    use crate::test_utils::{run_relay_server, run_relay_server_with};
+    use super::Endpoint;
+    use crate::{
+        endpoint::{ConnectOptions, Connection, ConnectionType, RemoteInfo},
+        test_utils::{run_relay_server, run_relay_server_with},
+        watcher::Watcher,
+        RelayMode,
+    };
 
     const TEST_ALPN: &[u8] = b"n0/iroh/test";
 
     #[tokio::test]
     #[traced_test]
-    async fn test_connect_self() {
+    async fn test_connect_self() -> Result {
         let ep = Endpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
@@ -2265,12 +2343,13 @@ mod tests {
         assert!(res.is_err());
         let err = res.err().unwrap();
         assert!(err.to_string().starts_with("Adding our own address"));
+        Ok(())
     }
 
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_connect_close() {
-        let (relay_map, relay_url, _guard) = run_relay_server().await.unwrap();
+    async fn endpoint_connect_close() -> Result {
+        let (relay_map, relay_url, _guard) = run_relay_server().await?;
         let server_secret_key = SecretKey::generate(rand::thread_rng());
         let server_peer_id = server_secret_key.public();
 
@@ -2284,14 +2363,13 @@ mod tests {
                         .relay_mode(RelayMode::Custom(relay_map))
                         .insecure_skip_relay_cert_verify(true)
                         .bind()
-                        .await
-                        .unwrap();
+                        .await?;
                     info!("accepting connection");
-                    let incoming = ep.accept().await.unwrap();
-                    let conn = incoming.await.unwrap();
-                    let mut stream = conn.accept_uni().await.unwrap();
+                    let incoming = ep.accept().await.e()?;
+                    let conn = incoming.await.e()?;
+                    let mut stream = conn.accept_uni().await.e()?;
                     let mut buf = [0u8; 5];
-                    stream.read_exact(&mut buf).await.unwrap();
+                    stream.read_exact(&mut buf).await.e()?;
                     info!("Accepted 1 stream, received {buf:?}.  Closing now.");
                     // close the connection
                     conn.close(7u8.into(), b"bye");
@@ -2307,6 +2385,7 @@ mod tests {
                         ))
                     );
                     info!("server test completed");
+                    Ok::<_, Error>(())
                 }
                 .instrument(info_span!("test-server")),
             )
@@ -2319,18 +2398,17 @@ mod tests {
                     .relay_mode(RelayMode::Custom(relay_map))
                     .insecure_skip_relay_cert_verify(true)
                     .bind()
-                    .await
-                    .unwrap();
+                    .await?;
                 info!("client connecting");
                 let node_addr = NodeAddr::new(server_peer_id).with_relay_url(relay_url);
-                let conn = ep.connect(node_addr, TEST_ALPN).await.unwrap();
-                let mut stream = conn.open_uni().await.unwrap();
+                let conn = ep.connect(node_addr, TEST_ALPN).await?;
+                let mut stream = conn.open_uni().await.e()?;
 
                 // First write is accepted by server.  We need this bit of synchronisation
                 // because if the server closes after simply accepting the connection we can
                 // not be sure our .open_uni() call would succeed as it may already receive
                 // the error.
-                stream.write_all(b"hello").await.unwrap();
+                stream.write_all(b"hello").await.e()?;
 
                 info!("waiting for closed");
                 // Remote now closes the connection, we should see an error sometime soon.
@@ -2346,6 +2424,7 @@ mod tests {
                 let res = conn.open_uni().await;
                 assert_eq!(res.unwrap_err(), expected_err);
                 info!("client test completed");
+                Ok::<_, Error>(())
             }
             .instrument(info_span!("test-client")),
         );
@@ -2355,19 +2434,23 @@ mod tests {
             n0_future::future::zip(server, client),
         )
         .await
-        .expect("timeout");
-        server.unwrap();
-        client.unwrap();
+        .e()?;
+        server.e()??;
+        client.e()??;
+        Ok(())
     }
 
     /// Test that peers are properly restored
     #[tokio::test]
     #[traced_test]
-    async fn restore_peers() {
+    async fn restore_peers() -> Result {
         let secret_key = SecretKey::generate(rand::thread_rng());
 
         /// Create an endpoint for the test.
-        async fn new_endpoint(secret_key: SecretKey, nodes: Option<Vec<NodeAddr>>) -> Endpoint {
+        async fn new_endpoint(
+            secret_key: SecretKey,
+            nodes: Option<Vec<NodeAddr>>,
+        ) -> Result<Endpoint> {
             let mut transport_config = quinn::TransportConfig::default();
             transport_config.max_idle_timeout(Some(Duration::from_secs(10).try_into().unwrap()));
 
@@ -2377,11 +2460,7 @@ mod tests {
             if let Some(nodes) = nodes {
                 builder = builder.known_nodes(nodes);
             }
-            builder
-                .alpns(vec![TEST_ALPN.to_vec()])
-                .bind()
-                .await
-                .unwrap()
+            Ok(builder.alpns(vec![TEST_ALPN.to_vec()]).bind().await?)
         }
 
         // create the peer that will be added to the peer map
@@ -2393,9 +2472,9 @@ mod tests {
         info!("setting up first endpoint");
         // first time, create a magic endpoint without peers but a peers file and add addressing
         // information for a peer
-        let endpoint = new_endpoint(secret_key.clone(), None).await;
+        let endpoint = new_endpoint(secret_key.clone(), None).await?;
         assert_eq!(endpoint.remote_info_iter().count(), 0);
-        endpoint.add_node_addr(node_addr.clone()).unwrap();
+        endpoint.add_node_addr(node_addr.clone())?;
 
         // Grab the current addrs
         let node_addrs: Vec<NodeAddr> = endpoint.remote_info_iter().map(Into::into).collect();
@@ -2408,15 +2487,16 @@ mod tests {
 
         info!("restarting endpoint");
         // now restart it and check the addressing info of the peer
-        let endpoint = new_endpoint(secret_key, Some(node_addrs)).await;
-        let RemoteInfo { mut addrs, .. } = endpoint.remote_info(peer_id).unwrap();
+        let endpoint = new_endpoint(secret_key, Some(node_addrs)).await?;
+        let RemoteInfo { mut addrs, .. } = endpoint.remote_info(peer_id).e()?;
         let conn_addr = addrs.pop().unwrap().addr;
         assert_eq!(conn_addr, direct_addr);
+        Ok(())
     }
 
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_relay_connect_loop() {
+    async fn endpoint_relay_connect_loop() -> Result {
         let start = Instant::now();
         let n_clients = 5;
         let n_chunks_per_client = 2;
@@ -2437,29 +2517,29 @@ mod tests {
                         .alpns(vec![TEST_ALPN.to_vec()])
                         .relay_mode(RelayMode::Custom(relay_map))
                         .bind()
-                        .await
-                        .unwrap();
+                        .await?;
                     let eps = ep.bound_sockets();
                     info!(me = %ep.node_id().fmt_short(), ipv4=%eps.0, ipv6=?eps.1, "server listening on");
                     for i in 0..n_clients {
                         let round_start = Instant::now();
                         info!("[server] round {i}");
-                        let incoming = ep.accept().await.unwrap();
-                        let conn = incoming.await.unwrap();
-                        let node_id = conn.remote_node_id().unwrap();
+                        let incoming = ep.accept().await.e()?;
+                        let conn = incoming.await.e()?;
+                        let node_id = conn.remote_node_id()?;
                         info!(%i, peer = %node_id.fmt_short(), "accepted connection");
-                        let (mut send, mut recv) = conn.accept_bi().await.unwrap();
+                        let (mut send, mut recv) = conn.accept_bi().await.e()?;
                         let mut buf = vec![0u8; chunk_size];
                         for _i in 0..n_chunks_per_client {
-                            recv.read_exact(&mut buf).await.unwrap();
-                            send.write_all(&buf).await.unwrap();
+                            recv.read_exact(&mut buf).await.e()?;
+                            send.write_all(&buf).await.e()?;
                         }
-                        send.finish().unwrap();
-                        send.stopped().await.unwrap();
-                        recv.read_to_end(0).await.unwrap();
+                        send.finish().e()?;
+                        send.stopped().await.e()?;
+                        recv.read_to_end(0).await.e()?;
                         info!(%i, peer = %node_id.fmt_short(), "finished");
                         info!("[server] round {i} done in {:?}", round_start.elapsed());
                     }
+                    Ok::<_, Error>(())
                 }
                 .instrument(error_span!("server")),
             )
@@ -2479,35 +2559,35 @@ mod tests {
                     .relay_mode(RelayMode::Custom(relay_map))
                     .secret_key(client_secret_key)
                     .bind()
-                    .await
-                    .unwrap();
+                    .await?;
                 let eps = ep.bound_sockets();
                 info!(me = %ep.node_id().fmt_short(), ipv4=%eps.0, ipv6=?eps.1, "client bound");
                 let node_addr = NodeAddr::new(server_node_id).with_relay_url(relay_url);
                 info!(to = ?node_addr, "client connecting");
-                let conn = ep.connect(node_addr, TEST_ALPN).await.unwrap();
+                let conn = ep.connect(node_addr, TEST_ALPN).await.e()?;
                 info!("client connected");
-                let (mut send, mut recv) = conn.open_bi().await.unwrap();
+                let (mut send, mut recv) = conn.open_bi().await.e()?;
 
                 for i in 0..n_chunks_per_client {
                     let mut buf = vec![i; chunk_size];
-                    send.write_all(&buf).await.unwrap();
-                    recv.read_exact(&mut buf).await.unwrap();
+                    send.write_all(&buf).await.e()?;
+                    recv.read_exact(&mut buf).await.e()?;
                     assert_eq!(buf, vec![i; chunk_size]);
                 }
-                send.finish().unwrap();
-                send.stopped().await.unwrap();
-                recv.read_to_end(0).await.unwrap();
+                send.finish().e()?;
+                send.stopped().await.e()?;
+                recv.read_to_end(0).await.e()?;
                 info!("client finished");
                 ep.close().await;
                 info!("client closed");
+                Ok::<_, Error>(())
             }
             .instrument(error_span!("client", %i))
-            .await;
+            .await?;
             info!("[client] round {i} done in {:?}", round_start.elapsed());
         }
 
-        server.await.unwrap();
+        server.await.e()??;
 
         // We appear to have seen this being very slow at times.  So ensure we fail if this
         // test is too slow.  We're only making two connections transferring very little
@@ -2515,11 +2595,13 @@ mod tests {
         if start.elapsed() > Duration::from_secs(15) {
             panic!("Test too slow, something went wrong");
         }
+
+        Ok(())
     }
 
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_send_relay_websockets() -> testresult::TestResult {
+    async fn endpoint_send_relay_websockets() -> Result {
         let (relay_map, _relay_url, _guard) = run_relay_server().await?;
         let client = Endpoint::builder()
             .relay_conn_protocol(Protocol::Websocket)
@@ -2539,28 +2621,28 @@ mod tests {
             let server = server.clone();
             async move {
                 let Some(conn) = server.accept().await else {
-                    bail!("Expected an incoming connection");
+                    snafu::whatever!("Expected an incoming connection");
                 };
-                let conn = conn.await?;
-                let (mut send, mut recv) = conn.accept_bi().await?;
-                let data = recv.read_to_end(1000).await?;
-                send.write_all(&data).await?;
-                send.finish()?;
+                let conn = conn.await.e()?;
+                let (mut send, mut recv) = conn.accept_bi().await.e()?;
+                let data = recv.read_to_end(1000).await.e()?;
+                send.write_all(&data).await.e()?;
+                send.finish().e()?;
                 conn.closed().await;
 
-                Ok(())
+                Ok::<_, Error>(())
             }
         });
 
         let addr = server.node_addr().initialized().await?;
         let conn = client.connect(addr, TEST_ALPN).await?;
-        let (mut send, mut recv) = conn.open_bi().await?;
-        send.write_all(b"Hello, world!").await?;
-        send.finish()?;
-        let data = recv.read_to_end(1000).await?;
+        let (mut send, mut recv) = conn.open_bi().await.e()?;
+        send.write_all(b"Hello, world!").await.e()?;
+        send.finish().e()?;
+        let data = recv.read_to_end(1000).await.e()?;
         conn.close(0u32.into(), b"bye!");
 
-        task.await??;
+        task.await.e()??;
 
         client.close().await;
         server.close().await;
@@ -2572,75 +2654,59 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_bidi_send_recv_x509() {
-        endpoint_bidi_send_recv(tls::Authentication::X509).await
-    }
-
-    #[tokio::test]
-    #[traced_test]
-    async fn endpoint_bidi_send_recv_raw_public_key() {
-        endpoint_bidi_send_recv(tls::Authentication::RawPublicKey).await
-    }
-
-    async fn endpoint_bidi_send_recv(auth: tls::Authentication) {
+    async fn endpoint_bidi_send_recv() -> Result {
         let ep1 = Endpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Disabled);
 
-        let ep1 = match auth {
-            tls::Authentication::X509 => ep1.tls_x509(),
-            tls::Authentication::RawPublicKey => ep1.tls_raw_public_keys(),
-        };
-        let ep1 = ep1.bind().await.unwrap();
+        let ep1 = ep1.bind().await?;
         let ep2 = Endpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Disabled);
 
-        let ep2 = match auth {
-            tls::Authentication::X509 => ep2.tls_x509(),
-            tls::Authentication::RawPublicKey => ep2.tls_raw_public_keys(),
-        };
-        let ep2 = ep2.bind().await.unwrap();
+        let ep2 = ep2.bind().await?;
 
-        let ep1_nodeaddr = ep1.node_addr().initialized().await.unwrap();
-        let ep2_nodeaddr = ep2.node_addr().initialized().await.unwrap();
-        ep1.add_node_addr(ep2_nodeaddr.clone()).unwrap();
-        ep2.add_node_addr(ep1_nodeaddr.clone()).unwrap();
+        let ep1_nodeaddr = ep1.node_addr().initialized().await?;
+        let ep2_nodeaddr = ep2.node_addr().initialized().await?;
+        ep1.add_node_addr(ep2_nodeaddr.clone())?;
+        ep2.add_node_addr(ep1_nodeaddr.clone())?;
         let ep1_nodeid = ep1.node_id();
         let ep2_nodeid = ep2.node_id();
         eprintln!("node id 1 {ep1_nodeid}");
         eprintln!("node id 2 {ep2_nodeid}");
 
-        async fn connect_hello(ep: Endpoint, dst: NodeAddr) {
-            let conn = ep.connect(dst, TEST_ALPN).await.unwrap();
-            let (mut send, mut recv) = conn.open_bi().await.unwrap();
+        async fn connect_hello(ep: Endpoint, dst: NodeAddr) -> Result {
+            let conn = ep.connect(dst, TEST_ALPN).await?;
+            let (mut send, mut recv) = conn.open_bi().await.e()?;
             info!("sending hello");
-            send.write_all(b"hello").await.unwrap();
-            send.finish().unwrap();
+            send.write_all(b"hello").await.e()?;
+            send.finish().e()?;
             info!("receiving world");
-            let m = recv.read_to_end(100).await.unwrap();
+            let m = recv.read_to_end(100).await.e()?;
             assert_eq!(m, b"world");
             conn.close(1u8.into(), b"done");
+            Ok(())
         }
 
-        async fn accept_world(ep: Endpoint, src: NodeId) {
-            let incoming = ep.accept().await.unwrap();
-            let mut iconn = incoming.accept().unwrap();
-            let alpn = iconn.alpn().await.unwrap();
-            let conn = iconn.await.unwrap();
-            let node_id = conn.remote_node_id().unwrap();
+        async fn accept_world(ep: Endpoint, src: NodeId) -> Result {
+            let incoming = ep.accept().await.e()?;
+            let mut iconn = incoming.accept().e()?;
+            let alpn = iconn.alpn().await?;
+            let conn = iconn.await.e()?;
+            let node_id = conn.remote_node_id()?;
             assert_eq!(node_id, src);
             assert_eq!(alpn, TEST_ALPN);
-            let (mut send, mut recv) = conn.accept_bi().await.unwrap();
+            let (mut send, mut recv) = conn.accept_bi().await.e()?;
             info!("receiving hello");
-            let m = recv.read_to_end(100).await.unwrap();
+            let m = recv.read_to_end(100).await.e()?;
             assert_eq!(m, b"hello");
             info!("sending hello");
-            send.write_all(b"world").await.unwrap();
-            send.finish().unwrap();
+            send.write_all(b"world").await.e()?;
+            send.finish().e()?;
             match conn.closed().await {
                 ConnectionError::ApplicationClosed(closed) => {
                     assert_eq!(closed.error_code, 1u8.into());
+                    Ok(())
                 }
                 _ => panic!("wrong close error"),
             }
@@ -2671,15 +2737,17 @@ mod tests {
             ),
         ));
 
-        p1_accept.await.unwrap();
-        p2_accept.await.unwrap();
-        p1_connect.await.unwrap();
-        p2_connect.await.unwrap();
+        p1_accept.await.e()??;
+        p2_accept.await.e()??;
+        p1_connect.await.e()??;
+        p2_connect.await.e()??;
+
+        Ok(())
     }
 
     #[tokio::test]
     #[traced_test]
-    async fn endpoint_conn_type_becomes_direct() -> TestResult {
+    async fn endpoint_conn_type_becomes_direct() -> Result {
         const TIMEOUT: Duration = std::time::Duration::from_secs(15);
         let (relay_map, _relay_url, _relay_guard) = run_relay_server().await?;
         let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(42);
@@ -2700,8 +2768,8 @@ mod tests {
             .bind()
             .await?;
 
-        async fn wait_for_conn_type_direct(ep: &Endpoint, node_id: NodeId) -> TestResult {
-            let mut stream = ep.conn_type(node_id)?.stream();
+        async fn wait_for_conn_type_direct(ep: &Endpoint, node_id: NodeId) -> Result {
+            let mut stream = ep.conn_type(node_id).expect("connection exists").stream();
             let src = ep.node_id().fmt_short();
             let dst = node_id.fmt_short();
             while let Some(conn_type) = stream.next().await {
@@ -2710,12 +2778,12 @@ mod tests {
                     return Ok(());
                 }
             }
-            panic!("conn_type stream ended before `ConnectionType::Direct`");
+            snafu::whatever!("conn_type stream ended before `ConnectionType::Direct`");
         }
 
-        async fn accept(ep: &Endpoint) -> TestResult<Connection> {
+        async fn accept(ep: &Endpoint) -> Result<Connection> {
             let incoming = ep.accept().await.expect("ep closed");
-            let conn = incoming.await?;
+            let conn = incoming.await.e()?;
             let node_id = conn.remote_node_id()?;
             tracing::info!(node_id=%node_id.fmt_short(), "accepted connection");
             Ok(conn)
@@ -2733,52 +2801,51 @@ mod tests {
 
         let ep1_side = tokio::time::timeout(TIMEOUT, async move {
             let conn = accept(&ep1).await?;
-            let mut send = conn.open_uni().await?;
+            let mut send = conn.open_uni().await.e()?;
             wait_for_conn_type_direct(&ep1, ep2_nodeid).await?;
-            send.write_all(b"Conn is direct").await?;
-            send.finish()?;
+            send.write_all(b"Conn is direct").await.e()?;
+            send.finish().e()?;
             conn.closed().await;
-            TestResult::Ok(())
+            Ok::<(), Error>(())
         });
 
         let ep2_side = tokio::time::timeout(TIMEOUT, async move {
             let conn = ep2.connect(ep1_nodeaddr, TEST_ALPN).await?;
-            let mut recv = conn.accept_uni().await?;
+            let mut recv = conn.accept_uni().await.e()?;
             wait_for_conn_type_direct(&ep2, ep1_nodeid).await?;
-            let read = recv.read_to_end(100).await?;
+            let read = recv.read_to_end(100).await.e()?;
             assert_eq!(read, b"Conn is direct".to_vec());
             conn.close(0u32.into(), b"done");
             conn.closed().await;
-            TestResult::Ok(())
+            Ok::<(), Error>(())
         });
 
         let res_ep1 = AbortOnDropHandle::new(tokio::spawn(ep1_side));
         let res_ep2 = AbortOnDropHandle::new(tokio::spawn(ep2_side));
 
-        let (r1, r2) = tokio::try_join!(res_ep1, res_ep2)?;
-        r1??;
-        r2??;
+        let (r1, r2) = tokio::try_join!(res_ep1, res_ep2).e()?;
+        r1.e()??;
+        r2.e()??;
 
         Ok(())
     }
 
     #[tokio::test]
     #[traced_test]
-    async fn test_direct_addresses_no_stun_relay() {
-        let (relay_map, _, _guard) = run_relay_server_with(None, false).await.unwrap();
+    async fn test_direct_addresses_no_stun_relay() -> Result {
+        let (relay_map, _, _guard) = run_relay_server_with(None, false).await?;
 
         let ep = Endpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])
             .relay_mode(RelayMode::Custom(relay_map))
             .insecure_skip_relay_cert_verify(true)
             .bind()
-            .await
-            .unwrap();
+            .await?;
 
         tokio::time::timeout(Duration::from_secs(10), ep.direct_addresses().initialized())
             .await
-            .unwrap()
-            .unwrap();
+            .e()??;
+        Ok(())
     }
 
     async fn spawn_0rtt_server(secret_key: SecretKey, log_span: tracing::Span) -> Result<Endpoint> {
@@ -2795,7 +2862,7 @@ mod tests {
             let server = server.clone();
             async move {
                 while let Some(incoming) = server.accept().await {
-                    let connecting = incoming.accept()?;
+                    let connecting = incoming.accept().e()?;
                     let conn = match connecting.into_0rtt() {
                         Ok((conn, _)) => {
                             info!("0rtt accepted");
@@ -2803,18 +2870,18 @@ mod tests {
                         }
                         Err(connecting) => {
                             info!("0rtt denied");
-                            connecting.await?
+                            connecting.await.e()?
                         }
                     };
-                    let (mut send, mut recv) = conn.accept_bi().await?;
-                    let data = recv.read_to_end(10_000_000).await?;
-                    send.write_all(&data).await?;
-                    send.finish()?;
+                    let (mut send, mut recv) = conn.accept_bi().await.e()?;
+                    let data = recv.read_to_end(10_000_000).await.e()?;
+                    send.write_all(&data).await.e()?;
+                    send.finish().e()?;
 
                     // Stay alive until the other side closes the connection.
                     conn.closed().await;
                 }
-                anyhow::Ok(())
+                Ok::<_, Error>(())
             }
             .instrument(log_span)
         });
@@ -2822,21 +2889,19 @@ mod tests {
         Ok(server)
     }
 
-    async fn connect_client_0rtt_expect_err(
-        client: &Endpoint,
-        server_addr: NodeAddr,
-    ) -> Result<()> {
+    async fn connect_client_0rtt_expect_err(client: &Endpoint, server_addr: NodeAddr) -> Result {
         let conn = client
             .connect_with_opts(server_addr, TEST_ALPN, ConnectOptions::new())
             .await?
             .into_0rtt()
             .expect_err("expected 0rtt to fail")
-            .await?;
+            .await
+            .e()?;
 
-        let (mut send, mut recv) = conn.open_bi().await?;
-        send.write_all(b"hello").await?;
-        send.finish()?;
-        let received = recv.read_to_end(1_000).await?;
+        let (mut send, mut recv) = conn.open_bi().await.e()?;
+        send.write_all(b"hello").await.e()?;
+        send.finish().e()?;
+        let received = recv.read_to_end(1_000).await.e()?;
         assert_eq!(&received, b"hello");
         conn.close(0u32.into(), b"thx");
         Ok(())
@@ -2846,18 +2911,18 @@ mod tests {
         client: &Endpoint,
         server_addr: NodeAddr,
         expect_server_accepts: bool,
-    ) -> Result<()> {
+    ) -> Result {
         let (conn, accepted_0rtt) = client
             .connect_with_opts(server_addr, TEST_ALPN, ConnectOptions::new())
             .await?
             .into_0rtt()
-            .map_err(|_| "0rtt failed")
-            .unwrap();
+            .ok()
+            .e()?;
 
         // This is how we send data in 0-RTT:
-        let (mut send, recv) = conn.open_bi().await?;
-        send.write_all(b"hello").await?;
-        send.finish()?;
+        let (mut send, recv) = conn.open_bi().await.e()?;
+        send.write_all(b"hello").await.e()?;
+        send.finish().e()?;
         // When this resolves, we've gotten a response from the server about whether the 0-RTT data above was accepted:
         let accepted = accepted_0rtt.await;
         assert_eq!(accepted, expect_server_accepts);
@@ -2865,12 +2930,12 @@ mod tests {
             recv
         } else {
             // in this case we need to re-send data by re-creating the connection.
-            let (mut send, recv) = conn.open_bi().await?;
-            send.write_all(b"hello").await?;
-            send.finish()?;
+            let (mut send, recv) = conn.open_bi().await.e()?;
+            send.write_all(b"hello").await.e()?;
+            send.finish().e()?;
             recv
         };
-        let received = recv.read_to_end(1_000).await?;
+        let received = recv.read_to_end(1_000).await.e()?;
         assert_eq!(&received, b"hello");
         conn.close(0u32.into(), b"thx");
         Ok(())
@@ -2878,7 +2943,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_0rtt() -> TestResult {
+    async fn test_0rtt() -> Result {
         let client = Endpoint::builder()
             .relay_mode(RelayMode::Disabled)
             .bind()
@@ -2905,7 +2970,7 @@ mod tests {
     // receive into the respective "bucket" for the recipient.
     #[tokio::test]
     #[traced_test]
-    async fn test_0rtt_non_consecutive() -> TestResult {
+    async fn test_0rtt_non_consecutive() -> Result {
         let client = Endpoint::builder()
             .relay_mode(RelayMode::Disabled)
             .bind()
@@ -2940,7 +3005,7 @@ mod tests {
     // Test whether 0-RTT is possible after a restart:
     #[tokio::test]
     #[traced_test]
-    async fn test_0rtt_after_server_restart() -> TestResult {
+    async fn test_0rtt_after_server_restart() -> Result {
         let client = Endpoint::builder()
             .relay_mode(RelayMode::Disabled)
             .bind()
@@ -2969,7 +3034,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn graceful_close() -> testresult::TestResult {
+    async fn graceful_close() -> Result {
         let client = Endpoint::builder().bind().await?;
         let server = Endpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])
@@ -2977,25 +3042,25 @@ mod tests {
             .await?;
         let server_addr = server.node_addr().initialized().await?;
         let server_task = tokio::spawn(async move {
-            let incoming = server.accept().await.unwrap();
-            let conn = incoming.await?;
-            let (mut send, mut recv) = conn.accept_bi().await?;
-            let msg = recv.read_to_end(1_000).await?;
-            send.write_all(&msg).await?;
-            send.finish()?;
+            let incoming = server.accept().await.e()?;
+            let conn = incoming.await.e()?;
+            let (mut send, mut recv) = conn.accept_bi().await.e()?;
+            let msg = recv.read_to_end(1_000).await.e()?;
+            send.write_all(&msg).await.e()?;
+            send.finish().e()?;
             let close_reason = conn.closed().await;
-            testresult::TestResult::Ok(close_reason)
+            Ok::<_, Error>(close_reason)
         });
 
         let conn = client.connect(server_addr, TEST_ALPN).await?;
-        let (mut send, mut recv) = conn.open_bi().await?;
-        send.write_all(b"Hello, world!").await?;
-        send.finish()?;
-        recv.read_to_end(1_000).await?;
+        let (mut send, mut recv) = conn.open_bi().await.e()?;
+        send.write_all(b"Hello, world!").await.e()?;
+        send.finish().e()?;
+        recv.read_to_end(1_000).await.e()?;
         conn.close(42u32.into(), b"thanks, bye!");
         client.close().await;
 
-        let close_err = server_task.await??;
+        let close_err = server_task.await.e()??;
         let ConnectionError::ApplicationClosed(app_close) = close_err else {
             panic!("Unexpected close reason: {close_err:?}");
         };
@@ -3006,10 +3071,11 @@ mod tests {
         Ok(())
     }
 
+    #[cfg(feature = "metrics")]
     #[tokio::test]
     #[traced_test]
-    async fn metrics_smoke() -> testresult::TestResult {
-        use iroh_metrics::Registry;
+    async fn metrics_smoke() -> Result {
+        use iroh_metrics::{MetricsSource, Registry};
 
         let secret_key = SecretKey::from_bytes(&[0u8; 32]);
         let client = Endpoint::builder()
@@ -3026,24 +3092,19 @@ mod tests {
             .await?;
         let server_addr = server.node_addr().initialized().await?;
         let server_task = tokio::task::spawn(async move {
-            let conn = server
-                .accept()
-                .await
-                .context("expected conn")?
-                .accept()?
-                .await?;
-            let mut uni = conn.accept_uni().await?;
-            uni.read_to_end(10).await?;
+            let conn = server.accept().await.e()?.accept().e()?.await.e()?;
+            let mut uni = conn.accept_uni().await.e()?;
+            uni.read_to_end(10).await.e()?;
             drop(conn);
-            anyhow::Ok(server)
+            Ok::<_, Error>(server)
         });
         let conn = client.connect(server_addr, TEST_ALPN).await?;
-        let mut uni = conn.open_uni().await?;
-        uni.write_all(b"helloworld").await?;
-        uni.finish()?;
+        let mut uni = conn.open_uni().await.e()?;
+        uni.write_all(b"helloworld").await.e()?;
+        uni.finish().e()?;
         conn.closed().await;
         drop(conn);
-        let server = server_task.await??;
+        let server = server_task.await.e()??;
 
         let m = client.metrics();
         assert_eq!(m.magicsock.num_direct_conns_added.get(), 1);
@@ -3080,7 +3141,7 @@ mod tests {
         accept_alpns: Vec<Vec<u8>>,
         primary_connect_alpn: &[u8],
         secondary_connect_alpns: Vec<Vec<u8>>,
-    ) -> testresult::TestResult<Option<Vec<u8>>> {
+    ) -> Result<Option<Vec<u8>>> {
         let client = Endpoint::builder()
             .relay_mode(RelayMode::Disabled)
             .bind()
@@ -3094,10 +3155,10 @@ mod tests {
         let server_task = tokio::spawn({
             let server = server.clone();
             async move {
-                let incoming = server.accept().await.unwrap();
-                let conn = incoming.await?;
+                let incoming = server.accept().await.e()?;
+                let conn = incoming.await.e()?;
                 conn.close(0u32.into(), b"bye!");
-                testresult::TestResult::Ok(conn.alpn())
+                Ok::<_, n0_snafu::Error>(conn.alpn())
             }
         });
 
@@ -3108,13 +3169,13 @@ mod tests {
                 ConnectOptions::new().with_additional_alpns(secondary_connect_alpns),
             )
             .await?;
-        let conn = conn.await?;
+        let conn = conn.await.e()?;
         let client_alpn = conn.alpn();
         conn.closed().await;
         client.close().await;
         server.close().await;
 
-        let server_alpn = server_task.await??;
+        let server_alpn = server_task.await.e()??;
 
         assert_eq!(client_alpn, server_alpn);
 
@@ -3123,7 +3184,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn connect_multiple_alpn_negotiated() -> testresult::TestResult {
+    async fn connect_multiple_alpn_negotiated() -> Result {
         const ALPN_ONE: &[u8] = b"alpn/1";
         const ALPN_TWO: &[u8] = b"alpn/2";
 
@@ -3174,7 +3235,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn watch_net_report() -> testresult::TestResult {
+    async fn watch_net_report() -> Result {
         let endpoint = Endpoint::builder()
             .relay_mode(RelayMode::Staging)
             .bind()
