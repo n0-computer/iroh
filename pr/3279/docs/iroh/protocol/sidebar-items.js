@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["ProtocolError"],"struct":["AccessLimit","Router","RouterBuilder"],"trait":["ProtocolHandler"]};
+window.SIDEBAR_ITEMS = {"enum":["AcceptError"],"struct":["AccessLimit","Router","RouterBuilder"],"trait":["ProtocolHandler"]};
