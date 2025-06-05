@@ -659,15 +659,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "concurrent-queue"
-version = "2.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4ca0197aee26d1ae37445ee532fefce43251d24cc7c166799f4d46817f1d3973"
-dependencies = [
- "crossbeam-utils",
-]
-
-[[package]]
 name = "console"
 version = "0.15.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2229,20 +2220,17 @@ version = "0.35.0"
 dependencies = [
  "aead",
  "anyhow",
- "atomic-waker",
  "axum",
  "backon",
  "bytes",
  "cfg_aliases",
  "clap",
- "concurrent-queue",
  "crypto_box",
  "data-encoding",
  "der",
  "derive_more",
  "ed25519-dalek",
  "futures-buffered",
- "futures-lite",
  "futures-util",
  "getrandom 0.3.2",
  "hickory-resolver",
@@ -2258,9 +2246,10 @@ dependencies = [
  "iroh-relay",
  "n0-future",
  "n0-snafu",
+ "n0-watcher",
  "nested_enum_utils",
  "netdev",
- "netwatch",
+ "netwatch 0.6.0",
  "parse-size",
  "pin-project",
  "pkarr",
@@ -2331,6 +2320,7 @@ dependencies = [
  "iroh-quinn",
  "n0-future",
  "n0-snafu",
+ "n0-watcher",
  "rand 0.8.5",
  "rcgen",
  "rustls",
@@ -2423,9 +2413,9 @@ dependencies = [
 
 [[package]]
 name = "iroh-quinn"
-version = "0.13.0"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76c6245c9ed906506ab9185e8d7f64857129aee4f935e899f398a3bd3b70338d"
+checksum = "0cde160ebee7aabede6ae887460cd303c8b809054224815addf1469d54a6fcf7"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2825,15 +2815,26 @@ dependencies = [
 
 [[package]]
 name = "n0-snafu"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6726cb23c307232453032bca1c4fba5a5c60dc36775211e134ab304ab510b548"
+checksum = "c4fed465ff57041f29db78a9adc8864296ef93c6c16029f9e192dc303404ebd0"
 dependencies = [
  "anyhow",
  "btparse",
  "color-backtrace",
  "snafu",
  "tracing-error",
+]
+
+[[package]]
+name = "n0-watcher"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f216d4ebc5fcf9548244803cbb93f488a2ae160feba3706cd17040d69cf7a368"
+dependencies = [
+ "derive_more",
+ "n0-future",
+ "snafu",
 ]
 
 [[package]]
@@ -2964,6 +2965,41 @@ dependencies = [
  "netlink-packet-route 0.23.0",
  "netlink-proto",
  "netlink-sys",
+ "serde",
+ "snafu",
+ "socket2",
+ "time",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "web-sys",
+ "windows 0.59.0",
+ "windows-result 0.3.2",
+ "wmi",
+]
+
+[[package]]
+name = "netwatch"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2a829a830199b14989f9bccce6136ab928ab48336ab1f8b9002495dbbbb2edbe"
+dependencies = [
+ "atomic-waker",
+ "bytes",
+ "cfg_aliases",
+ "derive_more",
+ "iroh-quinn-udp",
+ "js-sys",
+ "libc",
+ "n0-future",
+ "n0-watcher",
+ "nested_enum_utils",
+ "netdev",
+ "netlink-packet-core",
+ "netlink-packet-route 0.23.0",
+ "netlink-proto",
+ "netlink-sys",
+ "pin-project-lite",
  "serde",
  "snafu",
  "socket2",
@@ -3456,7 +3492,7 @@ dependencies = [
  "iroh-metrics",
  "libc",
  "nested_enum_utils",
- "netwatch",
+ "netwatch 0.5.0",
  "num_enum",
  "rand 0.8.5",
  "serde",
@@ -4451,9 +4487,9 @@ checksum = "fad6c857cbab2627dcf01ec85a623ca4e7dcb5691cbaa3d7fb7653671f0d09c9"
 
 [[package]]
 name = "snafu"
-version = "0.8.5"
+version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "223891c85e2a29c3fe8fb900c1fae5e69c2e42415e3177752e8718475efa5019"
+checksum = "320b01e011bf8d5d7a4a4a4be966d9160968935849c83b918827f6a435e7f627"
 dependencies = [
  "backtrace",
  "snafu-derive",
@@ -4461,9 +4497,9 @@ dependencies = [
 
 [[package]]
 name = "snafu-derive"
-version = "0.8.5"
+version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03c3c6b7927ffe7ecaa769ee0e3994da3b8cafc8f444578982c83ecb161af917"
+checksum = "1961e2ef424c1424204d3a5d6975f934f56b6d50ff5732382d84ebf460e147f7"
 dependencies = [
  "heck",
  "proc-macro2",

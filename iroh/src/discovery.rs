@@ -605,13 +605,14 @@ mod tests {
 
     use iroh_base::{NodeAddr, SecretKey};
     use n0_snafu::{Error, Result, ResultExt};
+    use n0_watcher::Watcher as _;
     use quinn::{IdleTimeout, TransportConfig};
     use rand::Rng;
     use tokio_util::task::AbortOnDropHandle;
     use tracing_test::traced_test;
 
     use super::*;
-    use crate::{endpoint::ConnectOptions, watcher::Watcher as _, RelayMode};
+    use crate::{endpoint::ConnectOptions, RelayMode};
 
     type InfoStore = HashMap<NodeId, (NodeData, u64)>;
 
@@ -1095,8 +1096,7 @@ mod test_dns_pkarr {
             .context("wait for on node update")?;
 
         // we connect only by node id!
-        let res = ep2.connect(ep1.node_id(), TEST_ALPN).await;
-        assert!(res.is_ok(), "connection established");
+        let _conn = ep2.connect(ep1.node_id(), TEST_ALPN).await?;
         Ok(())
     }
 

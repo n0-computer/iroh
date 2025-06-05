@@ -195,8 +195,8 @@
 //! Every [`Endpoint`] can also accept connections:
 //!
 //! ```no_run
-//! use futures_lite::StreamExt;
 //! use iroh::{Endpoint, NodeAddr};
+//! use n0_future::StreamExt;
 //! use n0_snafu::{Result, ResultExt};
 //!
 //! async fn accept() -> Result<()> {
@@ -269,7 +269,6 @@ pub mod endpoint;
 pub mod metrics;
 pub mod net_report;
 pub mod protocol;
-pub mod watcher;
 
 pub use endpoint::{Endpoint, RelayMode};
 pub use iroh_base::{

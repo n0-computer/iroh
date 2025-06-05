@@ -9,10 +9,10 @@
 use iroh::{
     endpoint::Connection,
     protocol::{AcceptError, ProtocolHandler, Router},
-    watcher::Watcher as _,
     Endpoint, NodeAddr,
 };
 use n0_snafu::{Result, ResultExt};
+use n0_watcher::Watcher as _;
 
 /// Each protocol is identified by its ALPN string.
 ///
