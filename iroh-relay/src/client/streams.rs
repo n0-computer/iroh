@@ -10,9 +10,8 @@ use tokio::{
     net::TcpStream,
 };
 
-use crate::ExportKeyingMaterial;
-
 use super::util;
+use crate::ExportKeyingMaterial;
 
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]

@@ -11,9 +11,8 @@ use quinn_proto::{coding::Codec, VarInt};
 use rand::{CryptoRng, RngCore};
 use snafu::{Backtrace, ResultExt, Snafu};
 
-use crate::ExportKeyingMaterial;
-
 use super::relay::SendError;
+use crate::ExportKeyingMaterial;
 
 /// TODO(matheus23) docs
 pub(crate) const PROTOCOL_VERSION: &[u8] = b"1";
@@ -394,7 +393,6 @@ fn deserialize_frame<F: Frame + serde::de::DeserializeOwned>(frame: Bytes) -> Re
 
 #[cfg(all(test, feature = "server"))]
 mod tests {
-    use crate::ExportKeyingMaterial;
     use bytes::BytesMut;
     use iroh_base::SecretKey;
     use n0_future::{Sink, SinkExt, Stream, TryStreamExt};
@@ -402,6 +400,7 @@ mod tests {
     use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
     use super::{ClientAuth, ServerChallenge};
+    use crate::ExportKeyingMaterial;
 
     struct TestKeyingMaterial<IO> {
         shared_secret: Option<u64>,

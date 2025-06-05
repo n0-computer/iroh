@@ -8,9 +8,8 @@ use bytes::Bytes;
 use n0_future::{ready, Sink, Stream};
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use crate::ExportKeyingMaterial;
-
 use super::handshake::Error;
+use crate::ExportKeyingMaterial;
 
 #[derive(derive_more::Debug)]
 pub(crate) struct HandshakeIo<T> {
