@@ -2249,7 +2249,7 @@ dependencies = [
  "n0-watcher",
  "nested_enum_utils",
  "netdev",
- "netwatch",
+ "netwatch 0.6.0",
  "parse-size",
  "pin-project",
  "pkarr",
@@ -2948,7 +2948,41 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.5.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=feat-new-udp-api#7d688fbd49a9716660664533862ce355c6d96491"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "67eeaa5f7505c93c5a9b35ba84fd21fb8aa3f24678c76acfe8716af7862fb07a"
+dependencies = [
+ "atomic-waker",
+ "bytes",
+ "cfg_aliases",
+ "derive_more",
+ "iroh-quinn-udp",
+ "js-sys",
+ "libc",
+ "n0-future",
+ "nested_enum_utils",
+ "netdev",
+ "netlink-packet-core",
+ "netlink-packet-route 0.23.0",
+ "netlink-proto",
+ "netlink-sys",
+ "serde",
+ "snafu",
+ "socket2",
+ "time",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "web-sys",
+ "windows 0.59.0",
+ "windows-result 0.3.2",
+ "wmi",
+]
+
+[[package]]
+name = "netwatch"
+version = "0.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2a829a830199b14989f9bccce6136ab928ab48336ab1f8b9002495dbbbb2edbe"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -3458,7 +3492,7 @@ dependencies = [
  "iroh-metrics",
  "libc",
  "nested_enum_utils",
- "netwatch",
+ "netwatch 0.5.0",
  "num_enum",
  "rand 0.8.5",
  "serde",

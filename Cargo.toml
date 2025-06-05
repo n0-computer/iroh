@@ -40,11 +40,3 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(iroh_docsrs)", "cfg(iroh_l
 
 [workspace.lints.clippy]
 unused-async = "warn"
-
-
-[patch.crates-io]
-# iroh-quinn = { path = "../iroh-quinn/quinn" }
-# iroh-quinn-udp = { path = "../iroh-quinn/quinn-udp" }
-# iroh-quinn-proto = { path = "../iroh-quinn/quinn-proto" }
-# netwatch = { path = "../net-tools/netwatch" }
-netwatch = { git = "https://github.com/n0-computer/net-tools", branch = "feat-new-udp-api"}
