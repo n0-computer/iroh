@@ -195,29 +195,25 @@ mod tests {
     use bytes::Bytes;
     use iroh_base::SecretKey;
     use n0_snafu::{Result, ResultExt};
-    use tokio::io::DuplexStream;
-    use tokio_util::codec::{Framed, FramedRead};
 
     use super::*;
     use crate::{
-        protos::relay::{recv_frame, Frame, FrameType, RelayCodec},
+        protos::relay::{recv_frame, Frame, FrameType},
         server::streams::{MaybeTlsStream, RelayedStream},
+        KeyCache,
     };
 
-    fn test_client_builder(key: NodeId) -> (Config, FramedRead<DuplexStream, RelayCodec>) {
-        let (test_io, io) = tokio::io::duplex(1024);
+    fn test_client_builder(key: NodeId) -> (Config, RelayedStream) {
+        let (server, client) = tokio::io::duplex(1024);
         (
             Config {
                 node_id: key,
-                stream: RelayedStream::Relay(Framed::new(
-                    MaybeTlsStream::Test(io),
-                    RelayCodec::test(),
-                )),
+                stream: RelayedStream::test_client(client),
                 write_timeout: Duration::from_secs(1),
                 channel_capacity: 10,
                 rate_limit: None,
             },
-            FramedRead::new(test_io, RelayCodec::test()),
+            RelayedStream::test_server(server),
         )
     }
 

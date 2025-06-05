@@ -220,13 +220,6 @@ impl ClientBuilder {
                 let (conn, local_addr) = self.connect_ws().await?;
                 (conn, Some(local_addr))
             }
-            #[cfg(not(wasm_browser))]
-            Protocol::Relay => {
-                let (conn, local_addr) = self.connect_relay().await?;
-                (conn, Some(local_addr))
-            }
-            #[cfg(wasm_browser)]
-            Protocol::Relay => return Err(RelayProtoNotAvailableSnafu.build()),
         };
 
         event!(

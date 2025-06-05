@@ -161,6 +161,7 @@ pub enum Error {
 
 impl ServerChallenge {
     /// TODO(matheus23): docs
+    #[cfg(feature = "server")]
     pub(crate) fn new(mut rng: impl RngCore + CryptoRng) -> Self {
         let mut challenge = [0u8; 16];
         rng.fill_bytes(&mut challenge);

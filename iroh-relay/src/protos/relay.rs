@@ -13,7 +13,7 @@
 //!  * server then sends `FrameType::RecvPacket` to recipient
 
 use bytes::{BufMut, Bytes};
-use iroh_base::{PublicKey, SecretKey, Signature, SignatureError};
+use iroh_base::{PublicKey, Signature, SignatureError};
 #[cfg(feature = "server")]
 use n0_future::time::Duration;
 use n0_future::{time, Sink, SinkExt};
@@ -35,7 +35,7 @@ pub const MAX_PACKET_SIZE: usize = 64 * 1024;
 ///
 /// This is also the minimum burst size that a rate-limiter has to accept.
 #[cfg(not(wasm_browser))]
-const MAX_FRAME_SIZE: usize = 1024 * 1024;
+pub(crate) const MAX_FRAME_SIZE: usize = 1024 * 1024;
 
 /// The Relay magic number, sent in the FrameType::ClientInfo frame upon initial connection.
 const MAGIC: &str = "RELAY🔑";
@@ -197,97 +197,6 @@ pub(crate) async fn write_frame<S: Sink<Frame, Error = std::io::Error> + Unpin>(
     Ok(())
 }
 
-/// Writes a `FrameType::ClientInfo`, including the client's [`PublicKey`],
-/// and the client's [`ClientInfo`], sealed using the server's [`PublicKey`].
-///
-/// Flushes after writing.
-#[deprecated = "switch to proper handshake"]
-pub(crate) async fn legacy_send_client_key<S: Sink<Frame, Error = ConnSendError> + Unpin>(
-    mut writer: S,
-    client_secret_key: &SecretKey,
-    client_info: &ClientInfo,
-) -> Result<(), SendError> {
-    let msg = postcard::to_stdvec(client_info)?;
-    let signature = client_secret_key.sign(&msg);
-
-    writer
-        .send(Frame::ClientInfo {
-            client_public_key: client_secret_key.public(),
-            message: msg.into(),
-            signature,
-        })
-        .await?;
-    writer.flush().await?;
-    Ok(())
-}
-
-/// Reads the `FrameType::ClientInfo` frame from the client (its proof of identity)
-/// upon it's initial connection.
-#[cfg(any(test, feature = "server"))]
-#[deprecated = "switch to proper handshake"]
-pub(crate) async fn legacy_recv_client_key<E, S: Stream<Item = Result<Frame, E>> + Unpin>(
-    stream: S,
-) -> Result<(PublicKey, ClientInfo), E>
-where
-    E: From<RecvError>,
-{
-    // the client is untrusted at this point, limit the input size even smaller than our usual
-    // maximum frame size, and give a timeout
-
-    // TODO: variable recv size: 256 * 1024
-    let buf = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        recv_frame(FrameType::ClientInfo, stream),
-    )
-    .await
-    .map_err(RecvError::from)??;
-
-    if let Frame::ClientInfo {
-        client_public_key,
-        message,
-        signature,
-    } = buf
-    {
-        client_public_key
-            .verify(&message, &signature)
-            .map_err(RecvError::from)?;
-
-        let info: ClientInfo = postcard::from_bytes(&message).map_err(RecvError::from)?;
-        Ok((client_public_key, info))
-    } else {
-        Err(UnexpectedFrameSnafu {
-            got: buf.typ(),
-            expected: FrameType::ClientInfo,
-        }
-        .build()
-        .into())
-    }
-}
-
-/// The protocol for the relay server.
-///
-/// This is a framed protocol, using [`tokio_util::codec`] to turn the streams of bytes into
-/// [`Frame`]s.
-#[cfg(not(wasm_browser))]
-#[derive(Debug, Clone)]
-pub(crate) struct RelayCodec {
-    cache: KeyCache,
-}
-
-#[cfg(not(wasm_browser))]
-impl RelayCodec {
-    #[cfg(test)]
-    pub fn test() -> Self {
-        Self {
-            cache: KeyCache::test(),
-        }
-    }
-
-    pub(crate) fn new(cache: KeyCache) -> Self {
-        Self { cache }
-    }
-}
-
 /// The frames in the [`RelayCodec`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Frame {
@@ -369,6 +278,7 @@ impl Frame {
     /// Serialized length with frame header.
     #[cfg(feature = "server")]
     pub(crate) fn len_with_header(&self) -> usize {
+        const HEADER_LEN: usize = 5; // TODO(matheus23): This is used with the rate-limiter. It really shouldn't be. The websocket frames work on a different level!
         self.len() + HEADER_LEN
     }
 
@@ -568,89 +478,6 @@ impl Frame {
     }
 }
 
-// No need for framing when using websockets, thus this is cfg-ed out for browsers:
-#[cfg(not(wasm_browser))]
-// rustc doesn't figure out that the trait impls mean it's not unused
-#[cfg_attr(not(wasm_browser), allow(unused))]
-pub use framing::*;
-
-#[cfg(not(wasm_browser))]
-mod framing {
-    use bytes::{Buf, BytesMut};
-    use tokio_util::codec::{Decoder, Encoder};
-
-    use super::*;
-
-    pub(super) const HEADER_LEN: usize = 5;
-
-    impl Decoder for RelayCodec {
-        type Item = Frame;
-        type Error = RecvError;
-
-        fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-            // Need at least 5 bytes
-            if src.len() < HEADER_LEN {
-                return Ok(None);
-            }
-
-            // Can't use the `Buf::get_*` APIs, as that advances the buffer.
-            let Some(frame_type) = src.first().map(|b| FrameType::from(*b)) else {
-                return Ok(None); // Not enough bytes
-            };
-            let Some(frame_len) = src
-                .get(1..5)
-                .and_then(|s| TryInto::<[u8; 4]>::try_into(s).ok())
-                .map(u32::from_be_bytes)
-                .map(|l| l as usize)
-            else {
-                return Ok(None); // Not enough bytes
-            };
-
-            if frame_len > MAX_FRAME_SIZE {
-                return Err(FrameTooLargeSnafu { frame_len }.build());
-            }
-
-            if src.len() < HEADER_LEN + frame_len {
-                // Optimization: prereserve the buffer space
-                src.reserve(HEADER_LEN + frame_len - src.len());
-
-                return Ok(None);
-            }
-
-            // advance the header
-            src.advance(HEADER_LEN);
-
-            let content = src.split_to(frame_len).freeze();
-            let frame = Frame::from_bytes(frame_type, content, &self.cache)?;
-
-            Ok(Some(frame))
-        }
-    }
-
-    impl Encoder<Frame> for RelayCodec {
-        type Error = std::io::Error;
-
-        fn encode(&mut self, frame: Frame, dst: &mut BytesMut) -> Result<(), Self::Error> {
-            let frame_len: usize = frame.len();
-            if frame_len > MAX_FRAME_SIZE {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("Frame of length {} is too large.", frame_len),
-                ));
-            }
-
-            let frame_len_u32 = u32::try_from(frame_len).expect("just checked");
-
-            dst.reserve(HEADER_LEN + frame_len);
-            dst.put_u8(frame.typ().into());
-            dst.put_u32(frame_len_u32);
-            frame.write_to(dst);
-
-            Ok(())
-        }
-    }
-}
-
 /// Receives the next frame and matches the frame type. If the correct type is found returns the content,
 /// otherwise an error.
 #[cfg(any(test, feature = "server"))]
@@ -685,51 +512,10 @@ where
 #[cfg(test)]
 mod tests {
     use data_encoding::HEXLOWER;
+    use iroh_base::SecretKey;
     use n0_snafu::{Result, ResultExt};
-    use tokio_util::codec::{FramedRead, FramedWrite};
 
     use super::*;
-
-    #[tokio::test]
-    #[cfg(feature = "server")]
-    async fn test_basic_read_write() -> Result {
-        let (reader, writer) = tokio::io::duplex(1024);
-        let mut reader = FramedRead::new(reader, RelayCodec::test());
-        let mut writer = FramedWrite::new(writer, RelayCodec::test());
-
-        let expect_buf = b"hello world!";
-        let expected_frame = Frame::Health {
-            problem: expect_buf.to_vec().into(),
-        };
-        write_frame(&mut writer, expected_frame.clone(), None).await?;
-        writer.flush().await.context("flush")?;
-        println!("{:?}", reader);
-        let buf = recv_frame(FrameType::Health, &mut reader).await?;
-        assert_eq!(expect_buf.len(), buf.len());
-        assert_eq!(expected_frame, buf);
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    #[allow(deprecated)]
-    async fn test_send_recv_client_key() -> Result {
-        let (reader, writer) = tokio::io::duplex(1024);
-        let mut reader = FramedRead::new(reader, RelayCodec::test());
-        let mut writer =
-            FramedWrite::new(writer, RelayCodec::test()).sink_map_err(ConnSendError::from);
-
-        let client_key = SecretKey::generate(rand::thread_rng());
-        let client_info = ClientInfo {
-            version: PROTOCOL_VERSION,
-        };
-        println!("client_key pub {:?}", client_key.public());
-        legacy_send_client_key(&mut writer, &client_key, &client_info).await?;
-        let (client_pub_key, got_client_info) = legacy_recv_client_key(&mut reader).await?;
-        assert_eq!(client_key.public(), client_pub_key);
-        assert_eq!(client_info, got_client_info);
-        Ok(())
-    }
 
     #[test]
     fn test_frame_snapshot() -> Result {
@@ -831,8 +617,8 @@ mod tests {
 #[cfg(test)]
 mod proptests {
     use bytes::BytesMut;
+    use iroh_base::SecretKey;
     use proptest::prelude::*;
-    use tokio_util::codec::{Decoder, Encoder};
 
     use super::*;
 
@@ -922,34 +708,12 @@ mod proptests {
     }
 
     proptest! {
-
-        // Test that we can roundtrip a frame to bytes
-        #[test]
-        fn frame_roundtrip(frame in frame()) {
-            let mut buf = BytesMut::new();
-            let mut codec = RelayCodec::test();
-            codec.encode(frame.clone(), &mut buf).unwrap();
-            let decoded = codec.decode(&mut buf).unwrap().unwrap();
-            prop_assert_eq!(frame, decoded);
-        }
-
         #[test]
         fn frame_ws_roundtrip(frame in frame()) {
             let mut encoded = Vec::new();
             frame.clone().encode_for_ws_msg(&mut encoded);
             let decoded = Frame::decode_from_ws_msg(Bytes::from(encoded), &KeyCache::test()).unwrap();
             prop_assert_eq!(frame, decoded);
-        }
-
-        // Test that typical invalid frames will result in an error
-        #[test]
-        fn broken_frame_handling(frame in frame()) {
-            let mut buf = BytesMut::new();
-            let mut codec = RelayCodec::test();
-            codec.encode(frame.clone(), &mut buf).unwrap();
-            inject_error(&mut buf);
-            let decoded = codec.decode(&mut buf);
-            prop_assert!(decoded.is_err(), "{:?}", decoded);
         }
     }
 }
