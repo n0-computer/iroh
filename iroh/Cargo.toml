@@ -49,7 +49,7 @@ pin-project = "1"
 pkarr = { version = "3.7", default-features = false, features = [
     "relays",
 ] }
-quinn = { package = "iroh-quinn", version = "0.13.0", default-features = false, features = ["rustls-ring"] }
+quinn = { package = "iroh-quinn", version = "0.14.0", default-features = false, features = ["rustls-ring"] }
 quinn-proto = { package = "iroh-quinn-proto", version = "0.13.0" }
 quinn-udp = { package = "iroh-quinn-udp", version = "0.5.7" }
 rand = "0.8"
@@ -110,7 +110,7 @@ hickory-resolver = "0.25.1"
 igd-next = { version = "0.16", features = ["aio_tokio"] }
 netdev = { version = "0.31.0" }
 portmapper = { version = "0.5.0", default-features = false }
-quinn = { package = "iroh-quinn", version = "0.13.0", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+quinn = { package = "iroh-quinn", version = "0.14.0", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 tokio = { version = "1", features = [
     "io-util",
     "macros",
