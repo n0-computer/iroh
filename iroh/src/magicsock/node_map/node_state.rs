@@ -277,7 +277,7 @@ impl NodeState {
     /// Returns the address(es) that should be used for sending the next packet.
     ///
     /// This may return to send on one, both or no paths.
-    pub(super) fn addr_for_send(
+    fn addr_for_send(
         &mut self,
         now: &Instant,
         have_ipv6: bool,
@@ -567,6 +567,8 @@ impl NodeState {
     /// our call-me-maybe they will reach us and the other side establishes a direct
     /// connection upon our subsequent pong response.
     ///
+    /// For [`SendCallMeMaybe::IfNoRecent`], **no** paths will be pinged if there already
+    /// was a recent call-me-maybe sent.
     ///
     /// The caller is responsible for sending the messages.
     #[must_use = "actions must be handled"]
@@ -1174,14 +1176,19 @@ impl NodeState {
             metrics.nodes_contacted.inc();
         }
         let (udp_addr, relay_url) = self.addr_for_send(&now, have_ipv6, metrics);
-        trace!(?udp_addr, ?relay_url, "found send address");
 
-        let ping_actions = if self.want_call_me_maybe(&now) {
+        let ping_msgs = if self.want_call_me_maybe(&now) {
             self.send_call_me_maybe(now, SendCallMeMaybe::IfNoRecent)
         } else {
             Vec::new()
         };
-        (udp_addr, relay_url, ping_actions)
+        trace!(
+            ?udp_addr,
+            ?relay_url,
+            pings = %ping_msgs.len(),
+            "found send address",
+        );
+        (udp_addr, relay_url, ping_msgs)
     }
 
     /// Get the direct addresses for this endpoint.
