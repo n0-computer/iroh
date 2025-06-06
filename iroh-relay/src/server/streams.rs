@@ -261,20 +261,10 @@ impl AsyncWrite for MaybeTlsStream {
 pub(crate) struct RateLimited<S> {
     inner: S,
     limiter: Option<Arc<governor::DefaultDirectRateLimiter>>,
-    state: State,
+    ready: Option<Pin<Box<time::Sleep>>>,
     /// Keeps track if this stream was ever rate-limited.
     limited_once: bool,
     metrics: Arc<Metrics>,
-}
-
-#[derive(derive_more::Debug)]
-enum State {
-    #[debug("Blocked")]
-    Blocked {
-        /// Future which will complete when the item can be yielded.
-        delay: Pin<Box<time::Sleep>>,
-    },
-    Ready,
 }
 
 impl<S> RateLimited<S> {
@@ -300,7 +290,7 @@ impl<S> RateLimited<S> {
         Self {
             inner,
             limiter: Some(Arc::new(limiter)),
-            state: State::Ready,
+            ready: None,
             limited_once: false,
             metrics,
         }
@@ -310,7 +300,7 @@ impl<S> RateLimited<S> {
         Self {
             inner,
             limiter: None,
-            state: State::Ready,
+            ready: None,
             limited_once: false,
             metrics,
         }
@@ -339,54 +329,47 @@ impl<S: AsyncRead + Unpin> AsyncRead for RateLimited<S> {
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
         let Some(ref limiter) = self.limiter else {
-            // If there is no rate-limiter directly poll the inner.
+            // If there is no rate-limiter, then directly poll the inner.
             return Pin::new(&mut self.inner).poll_read(cx, buf);
         };
         let limiter = limiter.clone();
-        loop {
-            match &mut self.state {
-                State::Ready => {
-                    let bytes_before = buf.remaining();
+        // If we're currently limited, wait
+        if let Some(ready) = &mut self.ready {
+            ready!(ready.poll(cx));
+            self.ready = None;
+        }
 
-                    // Poll inner for a new item.
-                    ready!(Pin::new(&mut self.inner).poll_read(cx, buf))?;
+        // Poll inner for a new item.
+        let bytes_before = buf.remaining();
+        ready!(Pin::new(&mut self.inner).poll_read(cx, buf))?;
+        let bytes_read = bytes_before - buf.remaining();
 
-                    let bytes_read = bytes_before - buf.remaining();
-                    let Ok(bytes_read) = u32::try_from(bytes_read).and_then(NonZeroU32::try_from)
-                    else {
-                        // 0 bytes read, nothing to rate limit
-                        return Poll::Ready(Ok(()));
-                    };
+        let Ok(bytes_read) = u32::try_from(bytes_read).and_then(NonZeroU32::try_from) else {
+            // 0 bytes read, nothing to rate limit
+            return Poll::Ready(Ok(()));
+        };
 
-                    match limiter.check_n(bytes_read) {
-                        Ok(Ok(())) => {}
-                        Ok(Err(not_until)) => {
-                            let delay = not_until.wait_time_from(limiter.clock().now());
-                            // Item is rate-limited.
-                            self.record_rate_limited(bytes_read);
-                            self.state = State::Blocked {
-                                delay: Box::pin(time::sleep(delay)),
-                            };
-                            // Continue in `State::Blocked`
-                            continue;
-                        }
-                        Err(capacity_err) => {
-                            error!(
-                                ?capacity_err,
-                                ?bytes_read,
-                                "read burst larger than bucket capacity"
-                            );
-                            // Continue as normal though
-                        }
-                    }
-                    return Poll::Ready(Ok(()));
-                }
-                State::Blocked { delay } => {
-                    ready!(delay.poll(cx));
-                    self.state = State::Ready;
-                    // Allow polling again, since the delay expired
-                    continue;
-                }
+        match limiter.check_n(bytes_read) {
+            Ok(Ok(())) => {
+                // We're fine
+                Poll::Ready(Ok(()))
+            }
+            Ok(Err(not_until)) => {
+                let delay = not_until.wait_time_from(limiter.clock().now());
+                // Item is rate-limited.
+                self.record_rate_limited(bytes_read);
+                self.ready = Some(Box::pin(time::sleep(delay)));
+                // We already read the bytes into the buffer we were given, though
+                Poll::Ready(Ok(()))
+            }
+            Err(capacity_err) => {
+                error!(
+                    ?capacity_err,
+                    ?bytes_read,
+                    "read burst larger than bucket capacity"
+                );
+                // Continue as normal though
+                Poll::Ready(Ok(()))
             }
         }
     }
