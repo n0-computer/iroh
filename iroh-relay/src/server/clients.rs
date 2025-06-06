@@ -199,8 +199,7 @@ mod tests {
     use super::*;
     use crate::{
         protos::relay::{recv_frame, Frame, FrameType},
-        server::streams::{MaybeTlsStream, RelayedStream},
-        KeyCache,
+        server::streams::RelayedStream,
     };
 
     fn test_client_builder(key: NodeId) -> (Config, RelayedStream) {
@@ -211,7 +210,6 @@ mod tests {
                 stream: RelayedStream::test_client(client),
                 write_timeout: Duration::from_secs(1),
                 channel_capacity: 10,
-                rate_limit: None,
             },
             RelayedStream::test_server(server),
         )

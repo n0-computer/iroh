@@ -22,7 +22,6 @@ use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, debug_span, error, info, info_span, trace, warn, Instrument};
 
 use super::{clients::Clients, AccessConfig, SpawnError};
-use crate::protos::{handshake, io::HandshakeIo};
 #[allow(deprecated)]
 use crate::{
     defaults::{timeouts::SERVER_WRITE_TIMEOUT, DEFAULT_KEY_CACHE_CAPACITY},
@@ -35,6 +34,10 @@ use crate::{
         BindTcpListenerSnafu, ClientRateLimit, NoLocalAddrSnafu,
     },
     KeyCache,
+};
+use crate::{
+    protos::{handshake, io::HandshakeIo},
+    server::streams::RateLimited,
 };
 
 type BytesBody = http_body_util::Full<hyper::body::Bytes>;
@@ -631,6 +634,8 @@ impl Inner {
     async fn accept(&self, protocol: Protocol, io: MaybeTlsStream) -> Result<(), AcceptError> {
         use snafu::ResultExt;
 
+        let io = RateLimited::from_cfg(self.rate_limit, io, self.metrics.clone());
+
         trace!(?protocol, "accept: start");
         let (client_key, mut io) = match protocol {
             Protocol::Websocket => {
@@ -675,7 +680,6 @@ impl Inner {
             stream: io,
             write_timeout: self.write_timeout,
             channel_capacity: PER_CLIENT_SEND_QUEUE_DEPTH,
-            rate_limit: self.rate_limit,
         };
         trace!("accept: create client");
         let node_id = client_conn_builder.node_id;
