@@ -164,7 +164,7 @@ struct Config {
     key_cache_capacity: Option<usize>,
     /// Access control for relaying connections.
     ///
-    /// This controls which nodes are allowed to relay connections, other endpoints, are not controlled by this.
+    /// This controls which nodes are allowed to relay connections, other endpoints are not controlled by this.
     #[serde(default)]
     access: AccessConfig,
 }
