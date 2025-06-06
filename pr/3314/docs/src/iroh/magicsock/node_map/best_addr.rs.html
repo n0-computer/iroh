@@ -179,7 +179,7 @@
 <a href=#179 id=179 data-nosnippet>179</a>        <span class="self">self</span>.<span class="number">0 </span>= <span class="prelude-val">Some</span>(inner);
 <a href=#180 id=180 data-nosnippet>180</a>    }
 <a href=#181 id=181 data-nosnippet>181</a>
-<a href=#182 id=182 data-nosnippet>182</a>    <span class="kw">pub fn </span>state(<span class="kw-2">&amp;</span><span class="self">self</span>, now: Instant) -&gt; State {
+<a href=#182 id=182 data-nosnippet>182</a>    <span class="kw">pub fn </span>state(<span class="kw-2">&amp;</span><span class="self">self</span>, now: Instant) -&gt; State&lt;<span class="lifetime">'_</span>&gt; {
 <a href=#183 id=183 data-nosnippet>183</a>        <span class="kw">match </span><span class="kw-2">&amp;</span><span class="self">self</span>.<span class="number">0 </span>{
 <a href=#184 id=184 data-nosnippet>184</a>            <span class="prelude-val">None </span>=&gt; State::Empty,
 <a href=#185 id=185 data-nosnippet>185</a>            <span class="prelude-val">Some</span>(state) =&gt; <span class="kw">match </span>state.trust_until {
