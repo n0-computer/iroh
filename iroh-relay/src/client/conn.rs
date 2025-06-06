@@ -9,24 +9,25 @@ use std::{
     task::{ready, Context, Poll},
 };
 
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use iroh_base::{NodeId, SecretKey};
 use n0_future::{time::Duration, Sink, Stream};
 use nested_enum_utils::common_fields;
 use snafu::{Backtrace, ResultExt, Snafu};
-#[cfg(not(wasm_browser))]
-use tokio_util::codec::Framed;
 use tracing::debug;
 
 use super::KeyCache;
-use crate::protos::relay::{
-    ClientInfo, Frame, RecvError as RecvRelayError, SendError as SendRelayError, MAX_PACKET_SIZE,
-    PROTOCOL_VERSION,
-};
 #[cfg(not(wasm_browser))]
 use crate::{
-    client::streams::{MaybeTlsStream, MaybeTlsStreamChained, ProxyStream},
-    protos::relay::RelayCodec,
+    client::streams::{MaybeTlsStream, ProxyStream},
+    protos::io::HandshakeIo,
+};
+use crate::{
+    protos::{
+        handshake,
+        relay::{Frame, RecvError as RecvRelayError, SendError as SendRelayError},
+    },
+    MAX_PACKET_SIZE,
 };
 
 /// Error for sending messages to the relay server.
@@ -98,11 +99,6 @@ pub enum RecvError {
 #[derive(derive_more::Debug)]
 pub(crate) enum Conn {
     #[cfg(not(wasm_browser))]
-    Relay {
-        #[debug("Framed<MaybeTlsStreamChained, RelayCodec>")]
-        conn: Framed<MaybeTlsStreamChained, RelayCodec>,
-    },
-    #[cfg(not(wasm_browser))]
     Ws {
         #[debug("WebSocketStream<MaybeTlsStream<ProxyStream>>")]
         conn: tokio_websockets::WebSocketStream<MaybeTlsStream<ProxyStream>>,
@@ -123,30 +119,18 @@ impl Conn {
         conn: ws_stream_wasm::WsStream,
         key_cache: KeyCache,
         secret_key: &SecretKey,
-    ) -> Result<Self, SendRelayError> {
-        let mut conn = Self::WsBrowser { conn, key_cache };
+    ) -> Result<Self, handshake::Error> {
+        let mut io = HandshakeIo { io: conn };
 
         // exchange information with the server
-        server_handshake(&mut conn, secret_key).await?;
+        debug!("server_handshake: started");
+        handshake::clientside(&mut io, secret_key).await?;
+        debug!("server_handshake: done");
 
-        Ok(conn)
-    }
-
-    /// Constructs a new websocket connection, including the initial server handshake.
-    #[cfg(not(wasm_browser))]
-    pub(crate) async fn new_relay(
-        conn: MaybeTlsStreamChained,
-        key_cache: KeyCache,
-        secret_key: &SecretKey,
-    ) -> Result<Self, SendRelayError> {
-        let conn = Framed::new(conn, RelayCodec::new(key_cache));
-
-        let mut conn = Self::Relay { conn };
-
-        // exchange information with the server
-        server_handshake(&mut conn, secret_key).await?;
-
-        Ok(conn)
+        Ok(Self::WsBrowser {
+            conn: io.io,
+            key_cache,
+        })
     }
 
     #[cfg(not(wasm_browser))]
@@ -154,27 +138,19 @@ impl Conn {
         conn: tokio_websockets::WebSocketStream<MaybeTlsStream<ProxyStream>>,
         key_cache: KeyCache,
         secret_key: &SecretKey,
-    ) -> Result<Self, SendRelayError> {
-        let mut conn = Self::Ws { conn, key_cache };
+    ) -> Result<Self, handshake::Error> {
+        let mut io = HandshakeIo { io: conn };
 
         // exchange information with the server
-        server_handshake(&mut conn, secret_key).await?;
+        debug!("server_handshake: started");
+        handshake::clientside(&mut io, secret_key).await?;
+        debug!("server_handshake: done");
 
-        Ok(conn)
+        Ok(Self::Ws {
+            conn: io.io,
+            key_cache,
+        })
     }
-}
-
-/// Sends the server handshake message.
-async fn server_handshake(writer: &mut Conn, secret_key: &SecretKey) -> Result<(), SendRelayError> {
-    debug!("server_handshake: started");
-    let client_info = ClientInfo {
-        version: PROTOCOL_VERSION,
-    };
-    debug!("server_handshake: sending client_key: {:?}", &client_info);
-    crate::protos::relay::send_client_key(&mut *writer, secret_key, &client_info).await?;
-
-    debug!("server_handshake: done");
-    Ok(())
 }
 
 impl Stream for Conn {
@@ -182,15 +158,6 @@ impl Stream for Conn {
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match *self {
-            #[cfg(not(wasm_browser))]
-            Self::Relay { ref mut conn } => match ready!(Pin::new(conn).poll_next(cx)) {
-                Some(Ok(frame)) => {
-                    let message = ReceivedMessage::try_from(frame);
-                    Poll::Ready(Some(message))
-                }
-                Some(Err(err)) => Poll::Ready(Some(Err(err.into()))),
-                None => Poll::Ready(None),
-            },
             #[cfg(not(wasm_browser))]
             Self::Ws {
                 ref mut conn,
@@ -235,13 +202,12 @@ impl Stream for Conn {
     }
 }
 
+// TODO(matheus23): Remove this impl, make `new_relay` work on the `Framed` directly, make the impl not rely on `ConnSendError`.
 impl Sink<Frame> for Conn {
     type Error = SendError;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
-            #[cfg(not(wasm_browser))]
-            Self::Relay { ref mut conn } => Pin::new(conn).poll_ready(cx).map_err(Into::into),
             #[cfg(not(wasm_browser))]
             Self::Ws { ref mut conn, .. } => Pin::new(conn).poll_ready(cx).map_err(Into::into),
             #[cfg(wasm_browser)]
@@ -259,12 +225,12 @@ impl Sink<Frame> for Conn {
         }
         match *self {
             #[cfg(not(wasm_browser))]
-            Self::Relay { ref mut conn } => Pin::new(conn).start_send(frame).map_err(Into::into),
-            #[cfg(not(wasm_browser))]
             Self::Ws { ref mut conn, .. } => Pin::new(conn)
-                .start_send(tokio_websockets::Message::binary(
-                    tokio_websockets::Payload::from(frame.encode_for_ws_msg()),
-                ))
+                .start_send(tokio_websockets::Message::binary({
+                    let mut buf = BytesMut::new();
+                    frame.encode_for_ws_msg(&mut buf);
+                    tokio_websockets::Payload::from(buf.freeze())
+                }))
                 .map_err(Into::into),
             #[cfg(wasm_browser)]
             Self::WsBrowser { ref mut conn, .. } => Pin::new(conn)
@@ -276,8 +242,6 @@ impl Sink<Frame> for Conn {
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
             #[cfg(not(wasm_browser))]
-            Self::Relay { ref mut conn } => Pin::new(conn).poll_flush(cx).map_err(Into::into),
-            #[cfg(not(wasm_browser))]
             Self::Ws { ref mut conn, .. } => Pin::new(conn).poll_flush(cx).map_err(Into::into),
             #[cfg(wasm_browser)]
             Self::WsBrowser { ref mut conn, .. } => {
@@ -288,8 +252,6 @@ impl Sink<Frame> for Conn {
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
-            #[cfg(not(wasm_browser))]
-            Self::Relay { ref mut conn } => Pin::new(conn).poll_close(cx).map_err(Into::into),
             #[cfg(not(wasm_browser))]
             Self::Ws { ref mut conn, .. } => Pin::new(conn).poll_flush(cx).map_err(Into::into),
             #[cfg(wasm_browser)]
@@ -305,8 +267,6 @@ impl Sink<SendMessage> for Conn {
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
-            #[cfg(not(wasm_browser))]
-            Self::Relay { ref mut conn } => Pin::new(conn).poll_ready(cx).map_err(Into::into),
             #[cfg(not(wasm_browser))]
             Self::Ws { ref mut conn, .. } => Pin::new(conn).poll_ready(cx).map_err(Into::into),
             #[cfg(wasm_browser)]
@@ -324,12 +284,12 @@ impl Sink<SendMessage> for Conn {
         let frame = Frame::from(item);
         match *self {
             #[cfg(not(wasm_browser))]
-            Self::Relay { ref mut conn } => Pin::new(conn).start_send(frame).map_err(Into::into),
-            #[cfg(not(wasm_browser))]
             Self::Ws { ref mut conn, .. } => Pin::new(conn)
-                .start_send(tokio_websockets::Message::binary(
-                    tokio_websockets::Payload::from(frame.encode_for_ws_msg()),
-                ))
+                .start_send(tokio_websockets::Message::binary({
+                    let mut buf = BytesMut::new();
+                    frame.encode_for_ws_msg(&mut buf);
+                    tokio_websockets::Payload::from(buf.freeze())
+                }))
                 .map_err(Into::into),
             #[cfg(wasm_browser)]
             Self::WsBrowser { ref mut conn, .. } => Pin::new(conn)
@@ -341,8 +301,6 @@ impl Sink<SendMessage> for Conn {
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
             #[cfg(not(wasm_browser))]
-            Self::Relay { ref mut conn } => Pin::new(conn).poll_flush(cx).map_err(Into::into),
-            #[cfg(not(wasm_browser))]
             Self::Ws { ref mut conn, .. } => Pin::new(conn).poll_flush(cx).map_err(Into::into),
             #[cfg(wasm_browser)]
             Self::WsBrowser { ref mut conn, .. } => {
@@ -353,8 +311,6 @@ impl Sink<SendMessage> for Conn {
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         match *self {
-            #[cfg(not(wasm_browser))]
-            Self::Relay { ref mut conn } => Pin::new(conn).poll_close(cx).map_err(Into::into),
             #[cfg(not(wasm_browser))]
             Self::Ws { ref mut conn, .. } => Pin::new(conn).poll_close(cx).map_err(Into::into),
             #[cfg(wasm_browser)]

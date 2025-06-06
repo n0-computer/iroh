@@ -54,3 +54,12 @@ pub use self::{
     ping_tracker::PingTracker,
     relay_map::{RelayMap, RelayNode, RelayQuicConfig},
 };
+
+pub(crate) trait ExportKeyingMaterial {
+    fn export_keying_material<T: AsMut<[u8]>>(
+        &self,
+        output: T,
+        label: &[u8],
+        context: Option<&[u8]>,
+    ) -> Option<T>;
+}

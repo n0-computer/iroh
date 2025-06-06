@@ -27,7 +27,7 @@ pub use self::conn::{ReceivedMessage, RecvError, SendError, SendMessage};
 use crate::dns::{DnsError, DnsResolver};
 use crate::{
     http::{Protocol, RELAY_PATH},
-    protos::relay::SendError as SendRelayError,
+    protos::handshake,
     KeyCache,
 };
 
@@ -64,7 +64,7 @@ pub enum ConnectError {
         source: ws_stream_wasm::WsErr,
     },
     #[snafu(transparent)]
-    Handshake { source: SendRelayError },
+    Handshake { source: handshake::Error },
     #[snafu(transparent)]
     Dial { source: DialError },
     #[snafu(display("Unexpected status during upgrade: {code}"))]
@@ -121,8 +121,6 @@ pub struct ClientBuilder {
     /// Default is None
     #[debug("address family selector callback")]
     address_family_selector: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
-    /// Default is false
-    is_prober: bool,
     /// Server url.
     url: RelayUrl,
     /// Relay protocol
@@ -150,7 +148,6 @@ impl ClientBuilder {
     ) -> Self {
         ClientBuilder {
             address_family_selector: None,
-            is_prober: false,
             url: url.into(),
 
             // Resolves to websockets in browsers and relay otherwise
@@ -185,12 +182,6 @@ impl ClientBuilder {
         S: Fn() -> bool + Send + Sync + 'static,
     {
         self.address_family_selector = Some(Arc::new(selector));
-        self
-    }
-
-    /// Indicates this client is a prober
-    pub fn is_prober(mut self, is: bool) -> Self {
-        self.is_prober = is;
         self
     }
 
@@ -229,13 +220,6 @@ impl ClientBuilder {
                 let (conn, local_addr) = self.connect_ws().await?;
                 (conn, Some(local_addr))
             }
-            #[cfg(not(wasm_browser))]
-            Protocol::Relay => {
-                let (conn, local_addr) = self.connect_relay().await?;
-                (conn, Some(local_addr))
-            }
-            #[cfg(wasm_browser)]
-            Protocol::Relay => return Err(RelayProtoNotAvailableSnafu.build()),
         };
 
         event!(

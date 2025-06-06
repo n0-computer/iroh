@@ -18,16 +18,15 @@ use nested_enum_utils::common_fields;
 use snafu::{Backtrace, ResultExt, Snafu};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls_acme::AcmeAcceptor;
-use tokio_util::{codec::Framed, sync::CancellationToken, task::AbortOnDropHandle};
+use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, debug_span, error, info, info_span, trace, warn, Instrument};
 
-use super::{clients::Clients, streams::StreamError, AccessConfig, SpawnError};
+use super::{clients::Clients, AccessConfig, SpawnError};
+#[allow(deprecated)]
 use crate::{
     defaults::{timeouts::SERVER_WRITE_TIMEOUT, DEFAULT_KEY_CACHE_CAPACITY},
-    http::{Protocol, LEGACY_RELAY_PATH, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},
-    protos::relay::{
-        recv_client_key, Frame, RelayCodec, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
-    },
+    http::{Protocol, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},
+    protos::relay::{Frame, PER_CLIENT_SEND_QUEUE_DEPTH},
     server::{
         client::Config,
         metrics::Metrics,
@@ -35,6 +34,10 @@ use crate::{
         BindTcpListenerSnafu, ClientRateLimit, NoLocalAddrSnafu,
     },
     KeyCache,
+};
+use crate::{
+    protos::{handshake, io::HandshakeIo},
+    server::streams::RateLimited,
 };
 
 type BytesBody = http_body_util::Full<hyper::body::Bytes>;
@@ -157,7 +160,7 @@ pub(super) struct TlsConfig {
 #[non_exhaustive]
 pub enum ServeConnectionError {
     #[snafu(display("TLS[acme] handshake"))]
-    Handshake {
+    TlsHandshake {
         source: std::io::Error,
         #[snafu(implicit)]
         span_trace: n0_snafu::SpanTrace,
@@ -208,17 +211,10 @@ pub enum ServeConnectionError {
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
 pub enum AcceptError {
-    #[snafu(display("Unable to receive client information"))]
-    RecvClientKey {
+    #[snafu(display("Handshake failed"))]
+    Handshake {
         #[allow(clippy::result_large_err)]
-        source: StreamError,
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
-    },
-    #[snafu(display("Unexpected client version {version}, expected {expected_version}"))]
-    UnexpectedClientVersion {
-        version: usize,
-        expected_version: usize,
+        source: handshake::Error,
         #[snafu(implicit)]
         span_trace: n0_snafu::SpanTrace,
     },
@@ -564,7 +560,7 @@ impl Service<Request<Incoming>> for RelayService {
         // Create a client if the request hits the relay endpoint.
         if matches!(
             (req.method(), req.uri().path()),
-            (&hyper::Method::GET, LEGACY_RELAY_PATH | RELAY_PATH)
+            (&hyper::Method::GET, RELAY_PATH)
         ) {
             let this = self.clone();
             return Box::pin(async move { this.call_client_conn(req).await.map_err(Into::into) });
@@ -638,12 +634,10 @@ impl Inner {
     async fn accept(&self, protocol: Protocol, io: MaybeTlsStream) -> Result<(), AcceptError> {
         use snafu::ResultExt;
 
+        let io = RateLimited::from_cfg(self.rate_limit, io, self.metrics.clone());
+
         trace!(?protocol, "accept: start");
-        let mut io = match protocol {
-            Protocol::Relay => {
-                self.metrics.relay_accepts.inc();
-                RelayedStream::Relay(Framed::new(io, RelayCodec::new(self.key_cache.clone())))
-            }
+        let (client_key, mut io) = match protocol {
             Protocol::Websocket => {
                 self.metrics.websocket_accepts.inc();
                 // Since we already did the HTTP upgrade in the previous step,
@@ -652,11 +646,22 @@ impl Inner {
                 let builder = tokio_websockets::ServerBuilder::new();
                 // Serve will create a WebSocketStream on an already upgraded connection
                 let websocket = builder.serve(io);
-                RelayedStream::Ws(websocket, self.key_cache.clone())
+
+                let mut io = HandshakeIo { io: websocket };
+
+                let client_info = handshake::serverside(&mut io, rand::rngs::OsRng)
+                    .await
+                    .context(HandshakeSnafu)?;
+
+                (
+                    client_info.public_key,
+                    RelayedStream {
+                        inner: io.io,
+                        key_cache: self.key_cache.clone(),
+                    },
+                )
             }
         };
-        trace!("accept: recv client key");
-        let (client_key, info) = recv_client_key(&mut io).await.context(RecvClientKeySnafu)?;
 
         trace!("accept: checking access: {:?}", self.access);
         if !self.access.is_allowed(client_key).await {
@@ -669,21 +674,12 @@ impl Inner {
             return Err(ClientNotAuthenticatedSnafu { key: client_key }.build());
         }
 
-        if info.version != PROTOCOL_VERSION {
-            return Err(UnexpectedClientVersionSnafu {
-                version: info.version,
-                expected_version: PROTOCOL_VERSION,
-            }
-            .build());
-        }
-
         trace!("accept: build client conn");
         let client_conn_builder = Config {
             node_id: client_key,
             stream: io,
             write_timeout: self.write_timeout,
             channel_capacity: PER_CLIENT_SEND_QUEUE_DEPTH,
-            rate_limit: self.rate_limit,
         };
         trace!("accept: create client");
         let node_id = client_conn_builder.node_id;
@@ -791,7 +787,7 @@ impl RelayService {
                         let tls_stream = start_handshake
                             .into_stream(config)
                             .await
-                            .context(HandshakeSnafu)?;
+                            .context(TlsHandshakeSnafu)?;
                         self.serve_connection(MaybeTlsStream::Tls(tls_stream))
                             .await
                             .context(HttpsSnafu)?;
@@ -869,7 +865,6 @@ mod tests {
     use crate::{
         client::{
             conn::{Conn, ReceivedMessage, SendMessage},
-            streams::MaybeTlsStreamChained,
             Client, ClientBuilder, ConnectError,
         },
         dns::DnsResolver,
@@ -1085,8 +1080,9 @@ mod tests {
     }
 
     async fn make_test_client(client: tokio::io::DuplexStream, key: &SecretKey) -> Result<Conn> {
-        let client = MaybeTlsStreamChained::Mem(client);
-        let client = Conn::new_relay(client, KeyCache::test(), key).await?;
+        let client = crate::client::streams::MaybeTlsStream::Test(client);
+        let client = tokio_websockets::ClientBuilder::new().take_over(client);
+        let client = Conn::new_ws(client, KeyCache::test(), key).await?;
         Ok(client)
     }
 
@@ -1109,7 +1105,7 @@ mod tests {
         let (client_a, rw_a) = tokio::io::duplex(10);
         let s = service.clone();
         let handler_task = tokio::spawn(async move {
-            s.0.accept(Protocol::Relay, MaybeTlsStream::Test(rw_a))
+            s.0.accept(Protocol::Websocket, MaybeTlsStream::Test(rw_a))
                 .await
         });
         let mut client_a = make_test_client(client_a, &key_a).await?;
@@ -1121,7 +1117,7 @@ mod tests {
         let (client_b, rw_b) = tokio::io::duplex(10);
         let s = service.clone();
         let handler_task = tokio::spawn(async move {
-            s.0.accept(Protocol::Relay, MaybeTlsStream::Test(rw_b))
+            s.0.accept(Protocol::Websocket, MaybeTlsStream::Test(rw_b))
                 .await
         });
         let mut client_b = make_test_client(client_b, &key_b).await?;
@@ -1197,7 +1193,7 @@ mod tests {
         let (client_a, rw_a) = tokio::io::duplex(10);
         let s = service.clone();
         let handler_task = tokio::spawn(async move {
-            s.0.accept(Protocol::Relay, MaybeTlsStream::Test(rw_a))
+            s.0.accept(Protocol::Websocket, MaybeTlsStream::Test(rw_a))
                 .await
         });
         let mut client_a = make_test_client(client_a, &key_a).await?;
@@ -1209,7 +1205,7 @@ mod tests {
         let (client_b, rw_b) = tokio::io::duplex(10);
         let s = service.clone();
         let handler_task = tokio::spawn(async move {
-            s.0.accept(Protocol::Relay, MaybeTlsStream::Test(rw_b))
+            s.0.accept(Protocol::Websocket, MaybeTlsStream::Test(rw_b))
                 .await
         });
         let mut client_b = make_test_client(client_b, &key_b).await?;
@@ -1255,7 +1251,7 @@ mod tests {
         let (new_client_b, new_rw_b) = tokio::io::duplex(10);
         let s = service.clone();
         let handler_task = tokio::spawn(async move {
-            s.0.accept(Protocol::Relay, MaybeTlsStream::Test(new_rw_b))
+            s.0.accept(Protocol::Websocket, MaybeTlsStream::Test(new_rw_b))
                 .await
         });
         let mut new_client_b = make_test_client(new_client_b, &key_b).await?;
