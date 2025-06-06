@@ -57,7 +57,6 @@ pub(super) enum State<'a> {
 
 #[derive(Debug, Clone, Copy)]
 pub enum ClearReason {
-    Reset,
     Inactive,
     PongTimeout,
     MatchesOurLocalAddr,
@@ -180,7 +179,7 @@ impl BestAddr {
         self.0 = Some(inner);
     }
 
-    pub fn state(&self, now: Instant) -> State {
+    pub fn state(&self, now: Instant) -> State<'_> {
         match &self.0 {
             None => State::Empty,
             Some(state) => match state.trust_until {

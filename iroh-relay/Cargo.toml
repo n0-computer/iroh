@@ -51,7 +51,6 @@ reqwest = { version = "0.12", default-features = false, features = [
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 serde = { version = "1", features = ["derive", "rc"] }
 strum = { version = "0.26", features = ["derive"] }
-stun-rs = "0.1.11"
 tokio = { version = "1", features = [
     "io-util",
     "macros",

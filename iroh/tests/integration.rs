@@ -34,6 +34,7 @@ const ECHO_ALPN: &[u8] = b"echo";
 
 #[test]
 async fn simple_node_id_based_connection_transfer() -> Result {
+    std::panic::set_hook(Box::new(console_error_panic_hook::hook));
     setup_logging();
 
     let client = Endpoint::builder().discovery_n0().bind().await?;

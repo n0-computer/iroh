@@ -21,7 +21,8 @@ pub(crate) use self::ip::IpTransport;
 #[cfg(not(wasm_browser))]
 use self::ip::{IpNetworkChangeSender, IpSender};
 pub(crate) use self::relay::{RelayActorConfig, RelayTransport};
-use super::{MagicSock, NetInfo};
+use super::MagicSock;
+use crate::net_report::Report;
 
 /// Manages the different underlying data transports that the magicsock
 /// can support.
@@ -262,14 +263,14 @@ pub(crate) struct NetworkChangeSender {
 }
 
 impl NetworkChangeSender {
-    pub(crate) fn on_network_change(&self, info: &NetInfo) {
+    pub(crate) fn on_network_change(&self, report: &Report) {
         #[cfg(not(wasm_browser))]
         for ip in &self.ip {
-            ip.on_network_change(info);
+            ip.on_network_change(report);
         }
 
         for relay in &self.relay {
-            relay.on_network_change(info);
+            relay.on_network_change(report);
         }
     }
 
@@ -335,10 +336,6 @@ impl From<(RelayUrl, NodeId)> for Addr {
 impl Addr {
     pub(crate) fn is_relay(&self) -> bool {
         matches!(self, Self::Relay(..))
-    }
-
-    pub(crate) fn is_ip(&self) -> bool {
-        matches!(self, Self::Ip(..))
     }
 
     /// Returns `None` if not an `Ip`.
