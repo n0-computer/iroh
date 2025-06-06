@@ -1,19 +1,17 @@
 //! Streams used in the server-side implementation of iroh relays.
 
 use std::{
-    num::NonZeroU32,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
 };
 
 use bytes::BytesMut;
-use governor::clock::Clock;
 use n0_future::{ready, time, FutureExt, Sink, Stream};
 use snafu::Snafu;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_websockets::WebSocketStream;
-use tracing::{error, instrument};
+use tracing::instrument;
 
 use crate::{
     protos::relay::{Frame, RecvError},
@@ -57,10 +55,16 @@ impl RelayedStream {
 
     pub(crate) fn test_server_limited(
         stream: tokio::io::DuplexStream,
-        limiter: governor::DefaultDirectRateLimiter,
+        max_burst_bytes: u32,
+        bytes_per_second: u32,
     ) -> Self {
         let stream = MaybeTlsStream::Test(stream);
-        let stream = RateLimited::new(stream, limiter, Arc::new(Metrics::default()));
+        let stream = RateLimited::new(
+            stream,
+            max_burst_bytes,
+            bytes_per_second,
+            Arc::new(Metrics::default()),
+        );
         Self {
             inner: tokio_websockets::ServerBuilder::new()
                 .limits(Self::limits())
@@ -260,23 +264,81 @@ impl AsyncWrite for MaybeTlsStream {
 #[derive(Debug)]
 pub(crate) struct RateLimited<S> {
     inner: S,
-    limiter: Option<Arc<governor::DefaultDirectRateLimiter>>,
-    ready: Option<Pin<Box<time::Sleep>>>,
+    bucket: Option<Bucket>,
+    bucket_refilled: Option<Pin<Box<time::Sleep>>>,
     /// Keeps track if this stream was ever rate-limited.
     limited_once: bool,
     metrics: Arc<Metrics>,
+}
+
+#[derive(Debug)]
+struct Bucket {
+    // The current bucket fill
+    fill: i64,
+    // The maximum bucket fill
+    max: i64,
+    // The bucket's last fill time
+    last_fill: time::Instant,
+    // Interval length of one refill
+    refill_period: time::Duration,
+    // How much we re-fill per refill period
+    refill: i64,
+}
+
+impl Bucket {
+    fn new(max: i64, bytes_per_second: i64, refill_period: time::Duration) -> Self {
+        // TODO(matheus23) convert to errors
+        debug_assert!(max > 0);
+        debug_assert!(bytes_per_second > 0);
+        debug_assert_ne!(refill_period.as_millis(), 0);
+        // milliseconds is the tokio timer resolution
+        Self {
+            fill: max,
+            max,
+            last_fill: time::Instant::now(),
+            refill_period,
+            refill: bytes_per_second * refill_period.as_millis() as i64 / 1000,
+        }
+    }
+
+    fn update_state(&mut self) {
+        let now = time::Instant::now();
+        let refill_periods = now.saturating_duration_since(self.last_fill).as_millis() as u32
+            / self.refill_period.as_millis() as u32;
+        if refill_periods == 0 {
+            // Nothing to do - we won't refill yet
+            return;
+        }
+
+        self.fill += refill_periods as i64 * self.refill;
+        self.fill = std::cmp::min(self.fill, self.max);
+        self.last_fill += self.refill_period * refill_periods;
+    }
+
+    fn consume(&mut self, bytes: i64) -> Result<(), time::Instant> {
+        self.update_state();
+
+        self.fill -= bytes;
+
+        if self.fill > 0 {
+            return Ok(());
+        }
+
+        let missing = -self.fill;
+
+        let periods_needed = (missing / self.refill) + 1;
+
+        Err(self.last_fill + periods_needed as u32 * self.refill_period)
+    }
 }
 
 impl<S> RateLimited<S> {
     pub(crate) fn from_cfg(cfg: Option<ClientRateLimit>, io: S, metrics: Arc<Metrics>) -> Self {
         match cfg {
             Some(cfg) => {
-                let mut quota = governor::Quota::per_second(cfg.bytes_per_second);
-                if let Some(max_burst) = cfg.max_burst_bytes {
-                    quota = quota.allow_burst(max_burst);
-                }
-                let limiter = governor::RateLimiter::direct(quota);
-                Self::new(io, limiter, metrics)
+                let bytes_per_second = cfg.bytes_per_second.into();
+                let max_burst_bytes = cfg.max_burst_bytes.map_or(bytes_per_second / 10, u32::from);
+                Self::new(io, max_burst_bytes, bytes_per_second, metrics)
             }
             None => Self::unlimited(io, metrics),
         }
@@ -284,13 +346,18 @@ impl<S> RateLimited<S> {
 
     pub(crate) fn new(
         inner: S,
-        limiter: governor::DefaultDirectRateLimiter,
+        max_burst_bytes: u32,
+        bytes_per_second: u32,
         metrics: Arc<Metrics>,
     ) -> Self {
         Self {
             inner,
-            limiter: Some(Arc::new(limiter)),
-            ready: None,
+            bucket: Some(Bucket::new(
+                max_burst_bytes as i64,
+                bytes_per_second as i64,
+                time::Duration::from_millis(100),
+            )),
+            bucket_refilled: None,
             limited_once: false,
             metrics,
         }
@@ -299,8 +366,8 @@ impl<S> RateLimited<S> {
     pub(crate) fn unlimited(inner: S, metrics: Arc<Metrics>) -> Self {
         Self {
             inner,
-            limiter: None,
-            ready: None,
+            bucket: None,
+            bucket_refilled: None,
             limited_once: false,
             metrics,
         }
@@ -309,11 +376,9 @@ impl<S> RateLimited<S> {
 
 impl<S> RateLimited<S> {
     /// Records metrics about being rate-limited.
-    fn record_rate_limited(&mut self, bytes: NonZeroU32) {
+    fn record_rate_limited(&mut self, bytes: usize) {
         // TODO: add a label for the frame type.
-        self.metrics
-            .bytes_rx_ratelimited_total
-            .inc_by(u32::from(bytes) as u64);
+        self.metrics.bytes_rx_ratelimited_total.inc_by(bytes as u64);
         if !self.limited_once {
             self.metrics.conns_rx_ratelimited_total.inc();
             self.limited_once = true;
@@ -328,50 +393,32 @@ impl<S: AsyncRead + Unpin> AsyncRead for RateLimited<S> {
         cx: &mut std::task::Context<'_>,
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
-        let Some(ref limiter) = self.limiter else {
+        let this = &mut *self;
+        let Some(bucket) = &mut this.bucket else {
             // If there is no rate-limiter, then directly poll the inner.
-            return Pin::new(&mut self.inner).poll_read(cx, buf);
+            return Pin::new(&mut this.inner).poll_read(cx, buf);
         };
-        let limiter = limiter.clone();
-        // If we're currently limited, wait
-        if let Some(ready) = &mut self.ready {
-            ready!(ready.poll(cx));
-            self.ready = None;
+
+        // If we're currently limited, wait until we've got some bucket space again
+        if let Some(bucket_refilled) = &mut this.bucket_refilled {
+            ready!(bucket_refilled.poll(cx));
+            this.bucket_refilled = None;
         }
+
+        // We're not currently limited, let's read
 
         // Poll inner for a new item.
         let bytes_before = buf.remaining();
-        ready!(Pin::new(&mut self.inner).poll_read(cx, buf))?;
+        ready!(Pin::new(&mut this.inner).poll_read(cx, buf))?;
         let bytes_read = bytes_before - buf.remaining();
 
-        let Ok(bytes_read) = u32::try_from(bytes_read).and_then(NonZeroU32::try_from) else {
-            // 0 bytes read, nothing to rate limit
-            return Poll::Ready(Ok(()));
-        };
-
-        match limiter.check_n(bytes_read) {
-            Ok(Ok(())) => {
-                // We're fine
-                Poll::Ready(Ok(()))
-            }
-            Ok(Err(not_until)) => {
-                let delay = not_until.wait_time_from(limiter.clock().now());
-                // Item is rate-limited.
-                self.record_rate_limited(bytes_read);
-                self.ready = Some(Box::pin(time::sleep(delay)));
-                // We already read the bytes into the buffer we were given, though
-                Poll::Ready(Ok(()))
-            }
-            Err(capacity_err) => {
-                error!(
-                    ?capacity_err,
-                    ?bytes_read,
-                    "read burst larger than bucket capacity"
-                );
-                // Continue as normal though
-                Poll::Ready(Ok(()))
-            }
+        // Record how much we've read, rate limit accordingly, if need be.
+        if let Err(refill_time) = bucket.consume(bytes_read as i64) {
+            this.record_rate_limited(bytes_read);
+            this.bucket_refilled = Some(Box::pin(time::sleep_until(refill_time)));
         }
+
+        Poll::Ready(Ok(()))
     }
 }
 
@@ -407,5 +454,61 @@ impl<S: ExportKeyingMaterial> ExportKeyingMaterial for RateLimited<S> {
         context: Option<&[u8]>,
     ) -> Option<T> {
         self.inner.export_keying_material(output, label, context)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use n0_future::time;
+    use n0_snafu::{Result, ResultExt};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tracing_test::traced_test;
+
+    use crate::server::{streams::RateLimited, Metrics};
+
+    #[tokio::test(start_paused = true)]
+    #[traced_test]
+    async fn test_ratelimiter() -> Result {
+        let (read, mut write) = tokio::io::duplex(4096);
+
+        let send_total = 10 * 1024 * 1024; // 10MiB
+        let send_data = vec![42u8; send_total];
+
+        let bytes_per_second = 12_345;
+
+        let mut rate_limited = RateLimited::new(
+            read,
+            bytes_per_second / 10,
+            bytes_per_second,
+            Arc::new(Metrics::default()),
+        );
+
+        let before = time::Instant::now();
+        n0_future::future::try_zip(
+            async {
+                let mut remaining = send_total;
+                let mut buf = [0u8; 4096];
+                while remaining > 0 {
+                    remaining -= rate_limited.read(&mut buf).await?;
+                }
+                Ok(())
+            },
+            async {
+                write.write_all(&send_data).await?;
+                write.flush().await
+            },
+        )
+        .await
+        .e()?;
+
+        let duration = time::Instant::now().duration_since(before);
+        assert_ne!(duration.as_millis(), 0);
+
+        let actual_bytes_per_second = send_total as f64 / duration.as_secs_f64();
+        assert_eq!(actual_bytes_per_second.round() as u32, bytes_per_second);
+
+        Ok(())
     }
 }

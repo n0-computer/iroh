@@ -681,20 +681,17 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     #[traced_test]
     async fn test_rate_limit() -> Result {
         const LIMIT: u32 = 50;
         const MAX_FRAMES: u32 = 100;
 
-        // Rate limiter allowing LIMIT bytes/s
-        let quota = governor::Quota::per_second(NonZeroU32::try_from(LIMIT).unwrap());
-        let limiter = governor::RateLimiter::direct(quota);
-
         // Build the rate limited stream.
         let (io_read, io_write) = tokio::io::duplex((LIMIT * MAX_FRAMES) as _);
         let mut frame_writer = RelayedStream::test_client(io_write);
-        let mut stream = RelayedStream::test_server_limited(io_read, limiter);
+        // Rate limiter allowing LIMIT bytes/s
+        let mut stream = RelayedStream::test_server_limited(io_read, LIMIT / 10, LIMIT);
 
         // Prepare a frame to send, assert its size.
         let data = Bytes::from_static(b"hello world!!");
