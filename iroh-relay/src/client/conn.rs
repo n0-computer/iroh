@@ -202,66 +202,6 @@ impl Stream for Conn {
     }
 }
 
-// TODO(matheus23): Remove this impl, make `new_relay` work on the `Framed` directly, make the impl not rely on `ConnSendError`.
-impl Sink<Frame> for Conn {
-    type Error = SendError;
-
-    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        match *self {
-            #[cfg(not(wasm_browser))]
-            Self::Ws { ref mut conn, .. } => Pin::new(conn).poll_ready(cx).map_err(Into::into),
-            #[cfg(wasm_browser)]
-            Self::WsBrowser { ref mut conn, .. } => {
-                Pin::new(conn).poll_ready(cx).map_err(Into::into)
-            }
-        }
-    }
-
-    fn start_send(mut self: Pin<&mut Self>, frame: Frame) -> Result<(), Self::Error> {
-        if let Frame::SendPacket { dst_key: _, packet } = &frame {
-            if packet.len() > MAX_PACKET_SIZE {
-                return Err(ExceedsMaxPacketSizeSnafu { size: packet.len() }.build());
-            }
-        }
-        match *self {
-            #[cfg(not(wasm_browser))]
-            Self::Ws { ref mut conn, .. } => Pin::new(conn)
-                .start_send(tokio_websockets::Message::binary({
-                    let mut buf = BytesMut::new();
-                    frame.encode_for_ws_msg(&mut buf);
-                    tokio_websockets::Payload::from(buf.freeze())
-                }))
-                .map_err(Into::into),
-            #[cfg(wasm_browser)]
-            Self::WsBrowser { ref mut conn, .. } => Pin::new(conn)
-                .start_send(ws_stream_wasm::WsMessage::Binary(frame.encode_for_ws_msg()))
-                .map_err(Into::into),
-        }
-    }
-
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        match *self {
-            #[cfg(not(wasm_browser))]
-            Self::Ws { ref mut conn, .. } => Pin::new(conn).poll_flush(cx).map_err(Into::into),
-            #[cfg(wasm_browser)]
-            Self::WsBrowser { ref mut conn, .. } => {
-                Pin::new(conn).poll_flush(cx).map_err(Into::into)
-            }
-        }
-    }
-
-    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        match *self {
-            #[cfg(not(wasm_browser))]
-            Self::Ws { ref mut conn, .. } => Pin::new(conn).poll_flush(cx).map_err(Into::into),
-            #[cfg(wasm_browser)]
-            Self::WsBrowser { ref mut conn, .. } => {
-                Pin::new(conn).poll_close(cx).map_err(Into::into)
-            }
-        }
-    }
-}
-
 impl Sink<SendMessage> for Conn {
     type Error = SendError;
 
