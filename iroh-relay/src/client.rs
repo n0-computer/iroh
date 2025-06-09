@@ -22,12 +22,15 @@ use tracing::warn;
 use tracing::{debug, event, trace, Level};
 use url::Url;
 
-pub use self::conn::{ReceivedMessage, RecvError, SendError, SendMessage};
+pub use self::conn::{RecvError, SendError};
 #[cfg(not(wasm_browser))]
 use crate::dns::{DnsError, DnsResolver};
 use crate::{
     http::{Protocol, RELAY_PATH},
-    protos::handshake,
+    protos::{
+        handshake,
+        relay::{ClientToServerMsg, ServerToClientMsg},
+    },
     KeyCache,
 };
 
@@ -283,24 +286,24 @@ impl Client {
 }
 
 impl Stream for Client {
-    type Item = Result<ReceivedMessage, RecvError>;
+    type Item = Result<ServerToClientMsg, RecvError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Option<Self::Item>> {
         Pin::new(&mut self.conn).poll_next(cx)
     }
 }
 
-impl Sink<SendMessage> for Client {
+impl Sink<ClientToServerMsg> for Client {
     type Error = SendError;
 
     fn poll_ready(
         mut self: Pin<&mut Self>,
         cx: &mut task::Context<'_>,
     ) -> Poll<Result<(), Self::Error>> {
-        <Conn as Sink<SendMessage>>::poll_ready(Pin::new(&mut self.conn), cx)
+        <Conn as Sink<ClientToServerMsg>>::poll_ready(Pin::new(&mut self.conn), cx)
     }
 
-    fn start_send(mut self: Pin<&mut Self>, item: SendMessage) -> Result<(), Self::Error> {
+    fn start_send(mut self: Pin<&mut Self>, item: ClientToServerMsg) -> Result<(), Self::Error> {
         Pin::new(&mut self.conn).start_send(item)
     }
 
@@ -308,24 +311,24 @@ impl Sink<SendMessage> for Client {
         mut self: Pin<&mut Self>,
         cx: &mut task::Context<'_>,
     ) -> Poll<Result<(), Self::Error>> {
-        <Conn as Sink<SendMessage>>::poll_flush(Pin::new(&mut self.conn), cx)
+        <Conn as Sink<ClientToServerMsg>>::poll_flush(Pin::new(&mut self.conn), cx)
     }
 
     fn poll_close(
         mut self: Pin<&mut Self>,
         cx: &mut task::Context<'_>,
     ) -> Poll<Result<(), Self::Error>> {
-        <Conn as Sink<SendMessage>>::poll_close(Pin::new(&mut self.conn), cx)
+        <Conn as Sink<ClientToServerMsg>>::poll_close(Pin::new(&mut self.conn), cx)
     }
 }
 
 /// The send half of a relay client.
 #[derive(Debug)]
 pub struct ClientSink {
-    sink: SplitSink<Conn, SendMessage>,
+    sink: SplitSink<Conn, ClientToServerMsg>,
 }
 
-impl Sink<SendMessage> for ClientSink {
+impl Sink<ClientToServerMsg> for ClientSink {
     type Error = SendError;
 
     fn poll_ready(
@@ -335,7 +338,7 @@ impl Sink<SendMessage> for ClientSink {
         Pin::new(&mut self.sink).poll_ready(cx)
     }
 
-    fn start_send(mut self: Pin<&mut Self>, item: SendMessage) -> Result<(), Self::Error> {
+    fn start_send(mut self: Pin<&mut Self>, item: ClientToServerMsg) -> Result<(), Self::Error> {
         Pin::new(&mut self.sink).start_send(item)
     }
 
@@ -369,7 +372,7 @@ impl ClientStream {
 }
 
 impl Stream for ClientStream {
-    type Item = Result<ReceivedMessage, RecvError>;
+    type Item = Result<ServerToClientMsg, RecvError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Option<Self::Item>> {
         Pin::new(&mut self.stream).poll_next(cx)

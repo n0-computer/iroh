@@ -19,7 +19,10 @@ use tracing::{debug, trace, warn, Instrument};
 use crate::{
     protos::{
         disco,
-        relay::{write_frame, Frame, SendError as SendRelayError, PING_INTERVAL},
+        relay::{
+            write_frame, ClientToServerMsg, SendError as SendRelayError, ServerToClientMsg,
+            PING_INTERVAL,
+        },
     },
     server::{
         clients::Clients,
@@ -187,12 +190,6 @@ pub enum HandleFrameError {
     },
     #[snafu(transparent)]
     Relay { source: SendRelayError },
-    #[snafu(display("Server issue: {problem:?}"))]
-    Health {
-        problem: Bytes,
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
-    },
 }
 
 /// Run error
@@ -364,7 +361,7 @@ impl Actor {
                 node_id = self.node_gone.recv() => {
                     let node_id = node_id.ok_or(NodeGoneDropSnafu.build())?;
                     trace!("node_id gone: {:?}", node_id);
-                    self.write_frame(Frame::NodeGone { node_id }).await.context(NodeGoneWriteFrameSnafu)?;
+                    self.write_frame(ServerToClientMsg::NodeGone(node_id)).await.context(NodeGoneWriteFrameSnafu)?;
                 }
                 _ = self.ping_tracker.timeout() => {
                     trace!("pong timed out");
@@ -375,7 +372,7 @@ impl Actor {
                     // new interval
                     ping_interval.reset_after(next_interval());
                     let data = self.ping_tracker.new_ping();
-                    self.write_frame(Frame::Ping { data }).await.context(KeepAliveWriteFrameSnafu)?;
+                    self.write_frame(ServerToClientMsg::Ping(data)).await.context(KeepAliveWriteFrameSnafu)?;
                 }
             }
 
@@ -390,7 +387,7 @@ impl Actor {
     /// Writes the given frame to the connection.
     ///
     /// Errors if the send does not happen within the `timeout` duration
-    async fn write_frame(&mut self, frame: Frame) -> Result<(), SendRelayError> {
+    async fn write_frame(&mut self, frame: ServerToClientMsg) -> Result<(), SendRelayError> {
         write_frame(&mut self.stream, frame, Some(self.timeout)).await
     }
 
@@ -405,8 +402,11 @@ impl Actor {
         if let Ok(len) = content.len().try_into() {
             self.metrics.bytes_sent.inc_by(len);
         }
-        self.write_frame(Frame::RecvPacket { src_key, content })
-            .await
+        self.write_frame(ServerToClientMsg::ReceivedPacket {
+            remote_node_id: src_key,
+            data: content,
+        })
+        .await
     }
 
     async fn send_packet(&mut self, packet: Packet) -> Result<(), SendRelayError> {
@@ -440,7 +440,7 @@ impl Actor {
     /// Handles frame read results.
     async fn handle_frame(
         &mut self,
-        maybe_frame: Option<Result<Frame, StreamError>>,
+        maybe_frame: Option<Result<ClientToServerMsg, StreamError>>,
     ) -> Result<(), HandleFrameError> {
         trace!(?maybe_frame, "handle incoming frame");
         let frame = match maybe_frame {
@@ -449,7 +449,7 @@ impl Actor {
         };
 
         match frame {
-            Frame::SendPacket { dst_key, packet } => {
+            ClientToServerMsg::SendPacket { dst_key, packet } => {
                 let packet_len = packet.len();
                 if let Err(err @ ForwardPacketError { .. }) =
                     self.handle_frame_send_packet(dst_key, packet)
@@ -458,18 +458,14 @@ impl Actor {
                 }
                 self.metrics.bytes_recv.inc_by(packet_len as u64);
             }
-            Frame::Ping { data } => {
+            ClientToServerMsg::Ping(data) => {
                 self.metrics.got_ping.inc();
                 // TODO: add rate limiter
-                self.write_frame(Frame::Pong { data }).await?;
+                self.write_frame(ServerToClientMsg::Pong(data)).await?;
                 self.metrics.sent_pong.inc();
             }
-            Frame::Pong { data } => {
+            ClientToServerMsg::Pong(data) => {
                 self.ping_tracker.pong_received(data);
-            }
-            Frame::Health { problem } => return Err(HealthSnafu { problem }.build()),
-            _ => {
-                self.metrics.unknown_frames.inc();
             }
         }
         Ok(())
@@ -561,15 +557,15 @@ mod tests {
     use tracing_test::traced_test;
 
     use super::*;
-    use crate::protos::relay::FrameType;
+    use crate::{client::conn::Conn, protos::relay::FrameType};
 
     async fn recv_frame<
         E: snafu::Error + Sync + Send + 'static,
-        S: Stream<Item = Result<Frame, E>> + Unpin,
+        S: Stream<Item = Result<ServerToClientMsg, E>> + Unpin,
     >(
         frame_type: FrameType,
         mut stream: S,
-    ) -> Result<Frame> {
+    ) -> Result<ServerToClientMsg> {
         match stream.next().await {
             Some(Ok(frame)) => {
                 if frame_type != frame.typ() {
@@ -595,8 +591,8 @@ mod tests {
 
         let node_id = SecretKey::generate(rand::thread_rng()).public();
         let (io, io_rw) = tokio::io::duplex(1024);
-        let mut io_rw = RelayedStream::test_client(io_rw);
-        let stream = RelayedStream::test_server(io);
+        let mut io_rw = Conn::test(io_rw);
+        let stream = RelayedStream::test(io);
 
         let clients = Clients::default();
         let metrics = Arc::new(Metrics::default());
@@ -632,9 +628,9 @@ mod tests {
         let frame = recv_frame(FrameType::RecvPacket, &mut io_rw).await.e()?;
         assert_eq!(
             frame,
-            Frame::RecvPacket {
-                src_key: node_id,
-                content: data.to_vec().into()
+            ServerToClientMsg::ReceivedPacket {
+                remote_node_id: node_id,
+                data: data.to_vec().into()
             }
         );
 
@@ -647,29 +643,29 @@ mod tests {
         let frame = recv_frame(FrameType::RecvPacket, &mut io_rw).await.e()?;
         assert_eq!(
             frame,
-            Frame::RecvPacket {
-                src_key: node_id,
-                content: data.to_vec().into()
+            ServerToClientMsg::ReceivedPacket {
+                remote_node_id: node_id,
+                data: data.to_vec().into()
             }
         );
 
         // send peer_gone
         println!("send peer gone");
         peer_gone_s.send(node_id).await.context("send")?;
-        let frame = recv_frame(FrameType::PeerGone, &mut io_rw).await.e()?;
-        assert_eq!(frame, Frame::NodeGone { node_id });
+        let frame = recv_frame(FrameType::NodeGone, &mut io_rw).await.e()?;
+        assert_eq!(frame, ServerToClientMsg::NodeGone(node_id));
 
         // Read tests
         println!("--read");
 
         // send ping, expect pong
         let data = b"pingpong";
-        write_frame(&mut io_rw, Frame::Ping { data: *data }, None).await?;
+        io_rw.send(ClientToServerMsg::Ping(*data)).await?;
 
         // recv pong
         println!(" recv pong");
         let frame = recv_frame(FrameType::Pong, &mut io_rw).await?;
-        assert_eq!(frame, Frame::Pong { data: *data });
+        assert_eq!(frame, ServerToClientMsg::Pong(*data));
 
         let target = SecretKey::generate(rand::thread_rng()).public();
 
@@ -677,7 +673,7 @@ mod tests {
         println!("  send packet");
         let data = b"hello world!";
         io_rw
-            .send(Frame::SendPacket {
+            .send(ClientToServerMsg::SendPacket {
                 dst_key: target,
                 packet: Bytes::from_static(data),
             })
@@ -691,7 +687,7 @@ mod tests {
         disco_data.extend_from_slice(target.as_bytes());
         disco_data.extend_from_slice(data);
         io_rw
-            .send(Frame::SendPacket {
+            .send(ClientToServerMsg::SendPacket {
                 dst_key: target,
                 packet: disco_data.clone().into(),
             })
@@ -711,14 +707,14 @@ mod tests {
 
         // Build the rate limited stream.
         let (io_read, io_write) = tokio::io::duplex((LIMIT * MAX_FRAMES) as _);
-        let mut frame_writer = RelayedStream::test_client(io_write);
+        let mut frame_writer = Conn::test(io_write);
         // Rate limiter allowing LIMIT bytes/s
-        let mut stream = RelayedStream::test_server_limited(io_read, LIMIT / 10, LIMIT);
+        let mut stream = RelayedStream::test_limited(io_read, LIMIT / 10, LIMIT);
 
         // Prepare a frame to send, assert its size.
         let data = Bytes::from_static(b"hello world!1eins");
         let target = SecretKey::generate(rand::thread_rng()).public();
-        let frame = Frame::SendPacket {
+        let frame = ClientToServerMsg::SendPacket {
             dst_key: target,
             packet: data.clone(),
         };

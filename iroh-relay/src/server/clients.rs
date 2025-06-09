@@ -199,17 +199,18 @@ mod tests {
 
     use super::*;
     use crate::{
-        protos::relay::{Frame, FrameType},
+        client::conn::Conn,
+        protos::relay::{FrameType, ServerToClientMsg},
         server::streams::RelayedStream,
     };
 
     async fn recv_frame<
         E: snafu::Error + Sync + Send + 'static,
-        S: Stream<Item = Result<Frame, E>> + Unpin,
+        S: Stream<Item = Result<ServerToClientMsg, E>> + Unpin,
     >(
         frame_type: FrameType,
         mut stream: S,
-    ) -> Result<Frame> {
+    ) -> Result<ServerToClientMsg> {
         match stream.next().await {
             Some(Ok(frame)) => {
                 if frame_type != frame.typ() {
@@ -226,16 +227,16 @@ mod tests {
         }
     }
 
-    fn test_client_builder(key: NodeId) -> (Config, RelayedStream) {
+    fn test_client_builder(key: NodeId) -> (Config, Conn) {
         let (server, client) = tokio::io::duplex(1024);
         (
             Config {
                 node_id: key,
-                stream: RelayedStream::test_client(client),
+                stream: RelayedStream::test(server),
                 write_timeout: Duration::from_secs(1),
                 channel_capacity: 10,
             },
-            RelayedStream::test_server(server),
+            Conn::test(client),
         )
     }
 
@@ -256,9 +257,9 @@ mod tests {
         let frame = recv_frame(FrameType::RecvPacket, &mut a_rw).await?;
         assert_eq!(
             frame,
-            Frame::RecvPacket {
-                src_key: b_key,
-                content: data.to_vec().into(),
+            ServerToClientMsg::ReceivedPacket {
+                remote_node_id: b_key,
+                data: data.to_vec().into(),
             }
         );
 
@@ -267,9 +268,9 @@ mod tests {
         let frame = recv_frame(FrameType::RecvPacket, &mut a_rw).await?;
         assert_eq!(
             frame,
-            Frame::RecvPacket {
-                src_key: b_key,
-                content: data.to_vec().into(),
+            ServerToClientMsg::ReceivedPacket {
+                remote_node_id: b_key,
+                data: data.to_vec().into(),
             }
         );
 

@@ -14,7 +14,7 @@ use tokio_websockets::WebSocketStream;
 use tracing::instrument;
 
 use crate::{
-    protos::relay::{Frame, RecvError},
+    protos::relay::{ClientToServerMsg, RecvError, ServerToClientMsg},
     ExportKeyingMaterial, KeyCache,
 };
 
@@ -31,18 +31,7 @@ pub(crate) struct RelayedStream {
 
 #[cfg(test)]
 impl RelayedStream {
-    pub(crate) fn test_client(stream: tokio::io::DuplexStream) -> Self {
-        let stream = MaybeTlsStream::Test(stream);
-        let stream = RateLimited::unlimited(stream, Arc::new(Metrics::default()));
-        Self {
-            inner: tokio_websockets::ClientBuilder::new()
-                .limits(Self::limits())
-                .take_over(stream),
-            key_cache: KeyCache::test(),
-        }
-    }
-
-    pub(crate) fn test_server(stream: tokio::io::DuplexStream) -> Self {
+    pub(crate) fn test(stream: tokio::io::DuplexStream) -> Self {
         let stream = MaybeTlsStream::Test(stream);
         let stream = RateLimited::unlimited(stream, Arc::new(Metrics::default()));
         Self {
@@ -53,7 +42,7 @@ impl RelayedStream {
         }
     }
 
-    pub(crate) fn test_server_limited(
+    pub(crate) fn test_limited(
         stream: tokio::io::DuplexStream,
         max_burst_bytes: u32,
         bytes_per_second: u32,
@@ -86,7 +75,7 @@ fn ws_to_io_err(e: tokio_websockets::Error) -> std::io::Error {
     }
 }
 
-impl Sink<Frame> for RelayedStream {
+impl Sink<ServerToClientMsg> for RelayedStream {
     type Error = std::io::Error;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -95,13 +84,11 @@ impl Sink<Frame> for RelayedStream {
             .map_err(ws_to_io_err)
     }
 
-    fn start_send(mut self: Pin<&mut Self>, item: Frame) -> Result<(), Self::Error> {
+    fn start_send(mut self: Pin<&mut Self>, item: ServerToClientMsg) -> Result<(), Self::Error> {
         Pin::new(&mut self.inner)
-            .start_send(tokio_websockets::Message::binary({
-                let mut buf = BytesMut::new();
-                item.write_to(&mut buf);
-                tokio_websockets::Payload::from(buf.freeze())
-            }))
+            .start_send(tokio_websockets::Message::binary(
+                tokio_websockets::Payload::from(item.write_to(BytesMut::new()).freeze()),
+            ))
             .map_err(ws_to_io_err)
     }
 
@@ -129,7 +116,7 @@ pub enum StreamError {
 }
 
 impl Stream for RelayedStream {
-    type Item = Result<Frame, StreamError>;
+    type Item = Result<ClientToServerMsg, StreamError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match Pin::new(&mut self.inner).poll_next(cx) {
@@ -144,7 +131,7 @@ impl Stream for RelayedStream {
                     return Poll::Pending;
                 }
                 Poll::Ready(Some(
-                    Frame::from_bytes(msg.into_payload().into(), &self.key_cache)
+                    ClientToServerMsg::from_bytes(msg.into_payload().into(), &self.key_cache)
                         .map_err(Into::into),
                 ))
             }

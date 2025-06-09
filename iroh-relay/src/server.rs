@@ -890,10 +890,13 @@ mod tests {
         NO_CONTENT_CHALLENGE_HEADER, NO_CONTENT_RESPONSE_HEADER,
     };
     use crate::{
-        client::{conn::ReceivedMessage, ClientBuilder, SendMessage},
+        client::ClientBuilder,
         dns::DnsResolver,
         http::Protocol,
-        protos,
+        protos::{
+            self,
+            relay::{ClientToServerMsg, ServerToClientMsg},
+        },
     };
 
     async fn spawn_local_relay() -> std::result::Result<Server, SpawnError> {
@@ -918,11 +921,14 @@ mod tests {
         client_b: &mut crate::client::Client,
         b_key: NodeId,
         msg: Bytes,
-    ) -> Result<ReceivedMessage> {
+    ) -> Result<ServerToClientMsg> {
         // try resend 10 times
         for _ in 0..10 {
             client_a
-                .send(SendMessage::SendPacket(b_key, msg.clone()))
+                .send(ClientToServerMsg::SendPacket {
+                    dst_key: b_key,
+                    packet: msg.clone(),
+                })
                 .await?;
             let Ok(res) = tokio::time::timeout(Duration::from_millis(500), client_b.next()).await
             else {
@@ -1040,7 +1046,7 @@ mod tests {
         // send message from a to b
         let msg = Bytes::from("hello, b");
         let res = try_send_recv(&mut client_a, &mut client_b, b_key, msg.clone()).await?;
-        let ReceivedMessage::ReceivedPacket {
+        let ServerToClientMsg::ReceivedPacket {
             remote_node_id,
             data,
         } = res
@@ -1056,7 +1062,7 @@ mod tests {
         let msg = Bytes::from("howdy, a");
         let res = try_send_recv(&mut client_b, &mut client_a, a_key, msg.clone()).await?;
 
-        let ReceivedMessage::ReceivedPacket {
+        let ServerToClientMsg::ReceivedPacket {
             remote_node_id,
             data,
         } = res
@@ -1148,7 +1154,7 @@ mod tests {
         // the next message should be the rejection of the connection
         tokio::time::timeout(Duration::from_millis(500), async move {
             match client_a.next().await.unwrap().unwrap() {
-                ReceivedMessage::Health { problem } => {
+                ServerToClientMsg::Health { problem } => {
                     assert_eq!(problem, Some("not authenticated".to_string()));
                 }
                 msg => {
@@ -1183,7 +1189,7 @@ mod tests {
         let msg = Bytes::from("hello, c");
         let res = try_send_recv(&mut client_b, &mut client_c, c_key, msg.clone()).await?;
 
-        if let ReceivedMessage::ReceivedPacket {
+        if let ServerToClientMsg::ReceivedPacket {
             remote_node_id,
             data,
         } = res
@@ -1224,7 +1230,10 @@ mod tests {
         let msg = Bytes::from("hello, b");
         for _i in 0..1000 {
             client_a
-                .send(SendMessage::SendPacket(b_key, msg.clone()))
+                .send(ClientToServerMsg::SendPacket {
+                    dst_key: b_key,
+                    packet: msg.clone(),
+                })
                 .await?;
         }
         Ok(())

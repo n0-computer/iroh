@@ -5,15 +5,14 @@
 use std::{
     io,
     pin::Pin,
-    str::Utf8Error,
     task::{ready, Context, Poll},
 };
 
-use bytes::{Bytes, BytesMut};
-use iroh_base::{NodeId, SecretKey};
-use n0_future::{time::Duration, Sink, Stream};
+use bytes::BytesMut;
+use iroh_base::SecretKey;
+use n0_future::{Sink, Stream};
 use nested_enum_utils::common_fields;
-use snafu::{Backtrace, ResultExt, Snafu};
+use snafu::{Backtrace, Snafu};
 use tracing::debug;
 
 use super::KeyCache;
@@ -25,7 +24,10 @@ use crate::{
 use crate::{
     protos::{
         handshake,
-        relay::{Frame, RecvError as RecvRelayError, SendError as SendRelayError},
+        relay::{
+            ClientToServerMsg, RecvError as RecvRelayError, SendError as SendRelayError,
+            ServerToClientMsg,
+        },
     },
     MAX_PACKET_SIZE,
 };
@@ -77,8 +79,6 @@ pub enum RecvError {
         #[cfg(wasm_browser)]
         source: ws_stream_wasm::WsErr,
     },
-    #[snafu(display("invalid protocol message encoding"))]
-    InvalidProtocolMessageEncoding { source: Utf8Error },
     #[snafu(display("Unexpected frame received: {frame_type}"))]
     UnexpectedFrame {
         frame_type: crate::protos::relay::FrameType,
@@ -113,6 +113,18 @@ pub(crate) enum Conn {
 }
 
 impl Conn {
+    #[cfg(test)]
+    pub(crate) fn test(io: tokio::io::DuplexStream) -> Self {
+        use crate::protos::relay::MAX_FRAME_SIZE;
+
+        Self::Ws {
+            conn: tokio_websockets::ClientBuilder::new()
+                .limits(tokio_websockets::Limits::default().max_payload_len(Some(MAX_FRAME_SIZE)))
+                .take_over(MaybeTlsStream::Test(io)),
+            key_cache: KeyCache::test(),
+        }
+    }
+
     /// Constructs a new websocket connection, including the initial server handshake.
     #[cfg(wasm_browser)]
     pub(crate) async fn new_ws_browser(
@@ -154,7 +166,7 @@ impl Conn {
 }
 
 impl Stream for Conn {
-    type Item = Result<ReceivedMessage, RecvError>;
+    type Item = Result<ServerToClientMsg, RecvError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match *self {
@@ -176,9 +188,9 @@ impl Stream for Conn {
                         );
                         return Poll::Pending;
                     }
-                    let frame = Frame::from_bytes(msg.into_payload().into(), key_cache)?;
-                    let message = ReceivedMessage::try_from(frame);
-                    Poll::Ready(Some(message))
+                    let message =
+                        ServerToClientMsg::from_bytes(msg.into_payload().into(), key_cache);
+                    Poll::Ready(Some(message.map_err(Into::into)))
                 }
                 Some(Err(e)) => Poll::Ready(Some(Err(e.into()))),
                 None => Poll::Ready(None),
@@ -202,7 +214,7 @@ impl Stream for Conn {
     }
 }
 
-impl Sink<SendMessage> for Conn {
+impl Sink<ClientToServerMsg> for Conn {
     type Error = SendError;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -216,12 +228,12 @@ impl Sink<SendMessage> for Conn {
         }
     }
 
-    fn start_send(mut self: Pin<&mut Self>, item: SendMessage) -> Result<(), Self::Error> {
-        if let SendMessage::SendPacket(_, bytes) = &item {
-            let size = bytes.len();
+    fn start_send(mut self: Pin<&mut Self>, frame: ClientToServerMsg) -> Result<(), Self::Error> {
+        // TODO(matheus23): Check this in send message construction instead
+        if let ClientToServerMsg::SendPacket { packet, .. } = &frame {
+            let size = packet.len();
             snafu::ensure!(size <= MAX_PACKET_SIZE, ExceedsMaxPacketSizeSnafu { size });
         }
-        let frame = Frame::from(item);
         match *self {
             #[cfg(not(wasm_browser))]
             Self::Ws { ref mut conn, .. } => Pin::new(conn)
@@ -233,7 +245,9 @@ impl Sink<SendMessage> for Conn {
                 .map_err(Into::into),
             #[cfg(wasm_browser)]
             Self::WsBrowser { ref mut conn, .. } => Pin::new(conn)
-                .start_send(ws_stream_wasm::WsMessage::Binary(frame.encode_for_ws_msg()))
+                .start_send(ws_stream_wasm::WsMessage::Binary(
+                    frame.write_to(Vec::new()),
+                ))
                 .map_err(Into::into),
         }
     }
@@ -257,113 +271,6 @@ impl Sink<SendMessage> for Conn {
             Self::WsBrowser { ref mut conn, .. } => {
                 Pin::new(conn).poll_close(cx).map_err(Into::into)
             }
-        }
-    }
-}
-
-/// The messages received from a framed relay stream.
-///
-/// This is a type-validated version of the `Frame`s on the `RelayCodec`.
-#[derive(derive_more::Debug, Clone)]
-pub enum ReceivedMessage {
-    /// Represents an incoming packet.
-    ReceivedPacket {
-        /// The [`NodeId`] of the packet sender.
-        remote_node_id: NodeId,
-        /// The received packet bytes.
-        #[debug(skip)]
-        data: Bytes, // TODO: ref
-    },
-    /// Indicates that the client identified by the underlying public key had previously sent you a
-    /// packet but has now disconnected from the server.
-    NodeGone(NodeId),
-    /// Request from a client or server to reply to the
-    /// other side with a [`ReceivedMessage::Pong`] with the given payload.
-    Ping([u8; 8]),
-    /// Reply to a [`ReceivedMessage::Ping`] from a client or server
-    /// with the payload sent previously in the ping.
-    Pong([u8; 8]),
-    /// A one-way message from server to client, declaring the connection health state.
-    Health {
-        /// If set, is a description of why the connection is unhealthy.
-        ///
-        /// If `None` means the connection is healthy again.
-        ///
-        /// The default condition is healthy, so the server doesn't broadcast a [`ReceivedMessage::Health`]
-        /// until a problem exists.
-        problem: Option<String>,
-    },
-    /// A one-way message from server to client, advertising that the server is restarting.
-    ServerRestarting {
-        /// An advisory duration that the client should wait before attempting to reconnect.
-        /// It might be zero. It exists for the server to smear out the reconnects.
-        reconnect_in: Duration,
-        /// An advisory duration for how long the client should attempt to reconnect
-        /// before giving up and proceeding with its normal connection failure logic. The interval
-        /// between retries is undefined for now. A server should not send a TryFor duration more
-        /// than a few seconds.
-        try_for: Duration,
-    },
-}
-
-impl TryFrom<Frame> for ReceivedMessage {
-    type Error = RecvError;
-
-    fn try_from(frame: Frame) -> std::result::Result<Self, Self::Error> {
-        match frame {
-            Frame::NodeGone { node_id } => Ok(ReceivedMessage::NodeGone(node_id)),
-            Frame::RecvPacket { src_key, content } => {
-                let packet = ReceivedMessage::ReceivedPacket {
-                    remote_node_id: src_key,
-                    data: content,
-                };
-                Ok(packet)
-            }
-            Frame::Ping { data } => Ok(ReceivedMessage::Ping(data)),
-            Frame::Pong { data } => Ok(ReceivedMessage::Pong(data)),
-            Frame::Health { problem } => {
-                let problem = std::str::from_utf8(&problem)
-                    .context(InvalidProtocolMessageEncodingSnafu)?
-                    .to_owned();
-                let problem = Some(problem);
-                Ok(ReceivedMessage::Health { problem })
-            }
-            Frame::Restarting {
-                reconnect_in,
-                try_for,
-            } => {
-                let reconnect_in = Duration::from_millis(reconnect_in as u64);
-                let try_for = Duration::from_millis(try_for as u64);
-                Ok(ReceivedMessage::ServerRestarting {
-                    reconnect_in,
-                    try_for,
-                })
-            }
-            _ => Err(UnexpectedFrameSnafu {
-                frame_type: frame.typ(),
-            }
-            .build()),
-        }
-    }
-}
-
-/// Messages we can send to a relay server.
-#[derive(Debug)]
-pub enum SendMessage {
-    /// Send a packet of data to the [`NodeId`].
-    SendPacket(NodeId, Bytes),
-    /// Sends a ping message to the connected relay server.
-    Ping([u8; 8]),
-    /// Sends a pong message to the connected relay server.
-    Pong([u8; 8]),
-}
-
-impl From<SendMessage> for Frame {
-    fn from(source: SendMessage) -> Self {
-        match source {
-            SendMessage::SendPacket(dst_key, packet) => Frame::SendPacket { dst_key, packet },
-            SendMessage::Ping(data) => Frame::Ping { data },
-            SendMessage::Pong(data) => Frame::Pong { data },
         }
     }
 }

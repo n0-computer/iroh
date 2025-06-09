@@ -42,7 +42,8 @@ use bytes::{Bytes, BytesMut};
 use iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_relay::{
     self as relay,
-    client::{Client, ConnectError, ReceivedMessage, RecvError, SendError, SendMessage},
+    client::{Client, ConnectError, RecvError, SendError},
+    protos::relay::{ClientToServerMsg, ServerToClientMsg},
     PingTracker, MAX_PACKET_SIZE,
 };
 use n0_future::{
@@ -551,7 +552,7 @@ impl ActiveRelayActor {
 
         let res = loop {
             if let Some(data) = state.pong_pending.take() {
-                let fut = client_sink.send(SendMessage::Pong(data));
+                let fut = client_sink.send(ClientToServerMsg::Pong(data));
                 self.run_sending(fut, &mut state, &mut client_stream)
                     .await?;
             }
@@ -578,7 +579,7 @@ impl ActiveRelayActor {
                 }
                 _ = ping_interval.tick() => {
                     let data = state.ping_tracker.new_ping();
-                    let fut = client_sink.send(SendMessage::Ping(data));
+                    let fut = client_sink.send(ClientToServerMsg::Ping(data));
                     self.run_sending(fut, &mut state, &mut client_stream).await?;
                 }
                 msg = self.inbox.recv() => {
@@ -594,7 +595,7 @@ impl ActiveRelayActor {
                             match client_stream.local_addr() {
                                 Some(addr) if local_ips.contains(&addr.ip()) => {
                                     let data = state.ping_tracker.new_ping();
-                                    let fut = client_sink.send(SendMessage::Ping(data));
+                                    let fut = client_sink.send(ClientToServerMsg::Ping(data));
                                     self.run_sending(fut, &mut state, &mut client_stream).await?;
                                 }
                                 Some(_) => break Err(LocalIpInvalidSnafu.build()),
@@ -610,7 +611,7 @@ impl ActiveRelayActor {
                         ActiveRelayMessage::PingServer(sender) => {
                             let data = rand::random();
                             state.test_pong = Some((data, sender));
-                            let fut = client_sink.send(SendMessage::Ping(data));
+                            let fut = client_sink.send(ClientToServerMsg::Ping(data));
                             self.run_sending(fut, &mut state, &mut client_stream).await?;
                         }
                     }
@@ -638,11 +639,11 @@ impl ActiveRelayActor {
                             datagrams.datagrams.clone(),
                         )
                         .map(|p| {
-                            Ok(SendMessage::SendPacket(p.node_id, p.payload))
+                            Ok(ClientToServerMsg::SendPacket { dst_key: p.node_id, packet: p.payload })
                         })
                     });
                     let mut packet_stream = n0_future::stream::iter(packet_iter).inspect(|m| {
-                        if let Ok(SendMessage::SendPacket(_node_id, payload)) = m {
+                        if let Ok(ClientToServerMsg::SendPacket { dst_key: _node_id, packet: payload }) = m {
                             metrics.send_relay.inc_by(payload.len() as _);
                         }
                     });
@@ -678,9 +679,9 @@ impl ActiveRelayActor {
         res.map_err(|err| state.map_err(err))
     }
 
-    fn handle_relay_msg(&mut self, msg: ReceivedMessage, state: &mut ConnectedRelayState) {
+    fn handle_relay_msg(&mut self, msg: ServerToClientMsg, state: &mut ConnectedRelayState) {
         match msg {
-            ReceivedMessage::ReceivedPacket {
+            ServerToClientMsg::ReceivedPacket {
                 remote_node_id,
                 data,
             } => {
@@ -706,11 +707,11 @@ impl ActiveRelayActor {
                     }
                 }
             }
-            ReceivedMessage::NodeGone(node_id) => {
+            ServerToClientMsg::NodeGone(node_id) => {
                 state.nodes_present.remove(&node_id);
             }
-            ReceivedMessage::Ping(data) => state.pong_pending = Some(data),
-            ReceivedMessage::Pong(data) => {
+            ServerToClientMsg::Ping(data) => state.pong_pending = Some(data),
+            ServerToClientMsg::Pong(data) => {
                 #[cfg(test)]
                 {
                     if let Some((expected_data, sender)) = state.test_pong.take() {
@@ -724,11 +725,11 @@ impl ActiveRelayActor {
                 state.ping_tracker.pong_received(data);
                 state.established = true;
             }
-            ReceivedMessage::Health { problem } => {
+            ServerToClientMsg::Health { problem } => {
                 let problem = problem.as_deref().unwrap_or("unknown");
                 warn!("Relay server reports problem: {problem}");
             }
-            ReceivedMessage::ServerRestarting { .. } => {
+            ServerToClientMsg::Restarting { .. } => {
                 trace!("Ignoring {msg:?}")
             }
         }
@@ -1272,7 +1273,7 @@ where
     }
 }
 
-/// Splits a single [`ReceivedMessage::ReceivedPacket`] frame into datagrams.
+/// Splits a single [`ServerToClientMsg::ReceivedPacket`] frame into datagrams.
 ///
 /// This splits packets joined by [`PacketizeIter`] back into individual datagrams.  See
 /// that struct for more details.
