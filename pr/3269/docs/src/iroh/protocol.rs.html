@@ -3,7 +3,7 @@
 <a href=#3 id=3 data-nosnippet>3</a>//! ## Example
 <a href=#4 id=4 data-nosnippet>4</a>//!
 <a href=#5 id=5 data-nosnippet>5</a>//! ```no_run
-<a href=#6 id=6 data-nosnippet>6</a>//! # use iroh::{endpoint::{Connection, BindError}, protocol::{ProtocolHandler, Router, ProtocolError}, Endpoint, NodeAddr};
+<a href=#6 id=6 data-nosnippet>6</a>//! # use iroh::{endpoint::{Connection, BindError}, protocol::{AcceptError, ProtocolHandler, Router}, Endpoint, NodeAddr};
 <a href=#7 id=7 data-nosnippet>7</a>//! #
 <a href=#8 id=8 data-nosnippet>8</a>//! # async fn test_compile() -&gt; Result&lt;(), BindError&gt; {
 <a href=#9 id=9 data-nosnippet>9</a>//! let endpoint = Endpoint::builder().discovery_n0().bind().await?;
@@ -19,7 +19,7 @@
 <a href=#19 id=19 data-nosnippet>19</a>//! struct Echo;
 <a href=#20 id=20 data-nosnippet>20</a>//!
 <a href=#21 id=21 data-nosnippet>21</a>//! impl ProtocolHandler for Echo {
-<a href=#22 id=22 data-nosnippet>22</a>//!     async fn accept(&amp;self, connection: Connection) -&gt; Result&lt;(), ProtocolError&gt; {
+<a href=#22 id=22 data-nosnippet>22</a>//!     async fn accept(&amp;self, connection: Connection) -&gt; Result&lt;(), AcceptError&gt; {
 <a href=#23 id=23 data-nosnippet>23</a>//!         let (mut send, mut recv) = connection.accept_bi().await?;
 <a href=#24 id=24 data-nosnippet>24</a>//!
 <a href=#25 id=25 data-nosnippet>25</a>//!         // Echo any bytes received back directly.
@@ -98,16 +98,16 @@
 <a href=#98 id=98 data-nosnippet>98</a><span class="attr">#[allow(missing_docs)]
 <a href=#99 id=99 data-nosnippet>99</a>#[derive(Debug, Snafu)]
 <a href=#100 id=100 data-nosnippet>100</a>#[non_exhaustive]
-<a href=#101 id=101 data-nosnippet>101</a></span><span class="kw">pub enum </span>ProtocolError {
+<a href=#101 id=101 data-nosnippet>101</a></span><span class="kw">pub enum </span>AcceptError {
 <a href=#102 id=102 data-nosnippet>102</a>    <span class="attr">#[snafu(transparent)]
-<a href=#103 id=103 data-nosnippet>103</a>    </span>Connect {
+<a href=#103 id=103 data-nosnippet>103</a>    </span>Connection {
 <a href=#104 id=104 data-nosnippet>104</a>        source: <span class="kw">crate</span>::endpoint::ConnectionError,
 <a href=#105 id=105 data-nosnippet>105</a>        backtrace: <span class="prelude-ty">Option</span>&lt;Backtrace&gt;,
 <a href=#106 id=106 data-nosnippet>106</a>        <span class="attr">#[snafu(implicit)]
 <a href=#107 id=107 data-nosnippet>107</a>        </span>span_trace: n0_snafu::SpanTrace,
 <a href=#108 id=108 data-nosnippet>108</a>    },
 <a href=#109 id=109 data-nosnippet>109</a>    <span class="attr">#[snafu(transparent)]
-<a href=#110 id=110 data-nosnippet>110</a>    </span>RemoteNodeId { source: RemoteNodeIdError },
+<a href=#110 id=110 data-nosnippet>110</a>    </span>MissingRemoteNodeId { source: RemoteNodeIdError },
 <a href=#111 id=111 data-nosnippet>111</a>    <span class="attr">#[snafu(display(<span class="string">"Not allowed."</span>))]
 <a href=#112 id=112 data-nosnippet>112</a>    </span>NotAllowed {},
 <a href=#113 id=113 data-nosnippet>113</a>
@@ -117,7 +117,7 @@
 <a href=#117 id=117 data-nosnippet>117</a>    },
 <a href=#118 id=118 data-nosnippet>118</a>}
 <a href=#119 id=119 data-nosnippet>119</a>
-<a href=#120 id=120 data-nosnippet>120</a><span class="kw">impl </span>ProtocolError {
+<a href=#120 id=120 data-nosnippet>120</a><span class="kw">impl </span>AcceptError {
 <a href=#121 id=121 data-nosnippet>121</a>    <span class="doccomment">/// Creates a new user error from an arbitrary error type.
 <a href=#122 id=122 data-nosnippet>122</a>    </span><span class="kw">pub fn </span>from_err&lt;T: std::error::Error + Send + Sync + <span class="lifetime">'static</span>&gt;(value: T) -&gt; <span class="self">Self </span>{
 <a href=#123 id=123 data-nosnippet>123</a>        <span class="self">Self</span>::User {
@@ -126,13 +126,13 @@
 <a href=#126 id=126 data-nosnippet>126</a>    }
 <a href=#127 id=127 data-nosnippet>127</a>}
 <a href=#128 id=128 data-nosnippet>128</a>
-<a href=#129 id=129 data-nosnippet>129</a><span class="kw">impl </span>From&lt;std::io::Error&gt; <span class="kw">for </span>ProtocolError {
+<a href=#129 id=129 data-nosnippet>129</a><span class="kw">impl </span>From&lt;std::io::Error&gt; <span class="kw">for </span>AcceptError {
 <a href=#130 id=130 data-nosnippet>130</a>    <span class="kw">fn </span>from(err: std::io::Error) -&gt; <span class="self">Self </span>{
 <a href=#131 id=131 data-nosnippet>131</a>        <span class="self">Self</span>::from_err(err)
 <a href=#132 id=132 data-nosnippet>132</a>    }
 <a href=#133 id=133 data-nosnippet>133</a>}
 <a href=#134 id=134 data-nosnippet>134</a>
-<a href=#135 id=135 data-nosnippet>135</a><span class="kw">impl </span>From&lt;quinn::ClosedStream&gt; <span class="kw">for </span>ProtocolError {
+<a href=#135 id=135 data-nosnippet>135</a><span class="kw">impl </span>From&lt;quinn::ClosedStream&gt; <span class="kw">for </span>AcceptError {
 <a href=#136 id=136 data-nosnippet>136</a>    <span class="kw">fn </span>from(err: quinn::ClosedStream) -&gt; <span class="self">Self </span>{
 <a href=#137 id=137 data-nosnippet>137</a>        <span class="self">Self</span>::from_err(err)
 <a href=#138 id=138 data-nosnippet>138</a>    }
@@ -158,7 +158,7 @@
 <a href=#158 id=158 data-nosnippet>158</a>    </span><span class="kw">fn </span>on_connecting(
 <a href=#159 id=159 data-nosnippet>159</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
 <a href=#160 id=160 data-nosnippet>160</a>        connecting: Connecting,
-<a href=#161 id=161 data-nosnippet>161</a>    ) -&gt; <span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;Connection, ProtocolError&gt;&gt; + Send {
+<a href=#161 id=161 data-nosnippet>161</a>    ) -&gt; <span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;Connection, AcceptError&gt;&gt; + Send {
 <a href=#162 id=162 data-nosnippet>162</a>        <span class="kw">async move </span>{
 <a href=#163 id=163 data-nosnippet>163</a>            <span class="kw">let </span>conn = connecting.<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#164 id=164 data-nosnippet>164</a>            <span class="prelude-val">Ok</span>(conn)
@@ -177,7 +177,7 @@
 <a href=#177 id=177 data-nosnippet>177</a>    </span><span class="kw">fn </span>accept(
 <a href=#178 id=178 data-nosnippet>178</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
 <a href=#179 id=179 data-nosnippet>179</a>        connection: Connection,
-<a href=#180 id=180 data-nosnippet>180</a>    ) -&gt; <span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;(), ProtocolError&gt;&gt; + Send;
+<a href=#180 id=180 data-nosnippet>180</a>    ) -&gt; <span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;(), AcceptError&gt;&gt; + Send;
 <a href=#181 id=181 data-nosnippet>181</a>
 <a href=#182 id=182 data-nosnippet>182</a>    <span class="doccomment">/// Called when the router shuts down.
 <a href=#183 id=183 data-nosnippet>183</a>    ///
@@ -191,11 +191,11 @@
 <a href=#191 id=191 data-nosnippet>191</a>}
 <a href=#192 id=192 data-nosnippet>192</a>
 <a href=#193 id=193 data-nosnippet>193</a><span class="kw">impl</span>&lt;T: ProtocolHandler&gt; ProtocolHandler <span class="kw">for </span>Arc&lt;T&gt; {
-<a href=#194 id=194 data-nosnippet>194</a>    <span class="kw">async fn </span>on_connecting(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connecting) -&gt; <span class="prelude-ty">Result</span>&lt;Connection, ProtocolError&gt; {
+<a href=#194 id=194 data-nosnippet>194</a>    <span class="kw">async fn </span>on_connecting(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connecting) -&gt; <span class="prelude-ty">Result</span>&lt;Connection, AcceptError&gt; {
 <a href=#195 id=195 data-nosnippet>195</a>        <span class="self">self</span>.as_ref().on_connecting(conn).<span class="kw">await
 <a href=#196 id=196 data-nosnippet>196</a>    </span>}
 <a href=#197 id=197 data-nosnippet>197</a>
-<a href=#198 id=198 data-nosnippet>198</a>    <span class="kw">async fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connection) -&gt; <span class="prelude-ty">Result</span>&lt;(), ProtocolError&gt; {
+<a href=#198 id=198 data-nosnippet>198</a>    <span class="kw">async fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connection) -&gt; <span class="prelude-ty">Result</span>&lt;(), AcceptError&gt; {
 <a href=#199 id=199 data-nosnippet>199</a>        <span class="self">self</span>.as_ref().accept(conn).<span class="kw">await
 <a href=#200 id=200 data-nosnippet>200</a>    </span>}
 <a href=#201 id=201 data-nosnippet>201</a>
@@ -205,11 +205,11 @@
 <a href=#205 id=205 data-nosnippet>205</a>}
 <a href=#206 id=206 data-nosnippet>206</a>
 <a href=#207 id=207 data-nosnippet>207</a><span class="kw">impl</span>&lt;T: ProtocolHandler&gt; ProtocolHandler <span class="kw">for </span>Box&lt;T&gt; {
-<a href=#208 id=208 data-nosnippet>208</a>    <span class="kw">async fn </span>on_connecting(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connecting) -&gt; <span class="prelude-ty">Result</span>&lt;Connection, ProtocolError&gt; {
+<a href=#208 id=208 data-nosnippet>208</a>    <span class="kw">async fn </span>on_connecting(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connecting) -&gt; <span class="prelude-ty">Result</span>&lt;Connection, AcceptError&gt; {
 <a href=#209 id=209 data-nosnippet>209</a>        <span class="self">self</span>.as_ref().on_connecting(conn).<span class="kw">await
 <a href=#210 id=210 data-nosnippet>210</a>    </span>}
 <a href=#211 id=211 data-nosnippet>211</a>
-<a href=#212 id=212 data-nosnippet>212</a>    <span class="kw">async fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connection) -&gt; <span class="prelude-ty">Result</span>&lt;(), ProtocolError&gt; {
+<a href=#212 id=212 data-nosnippet>212</a>    <span class="kw">async fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connection) -&gt; <span class="prelude-ty">Result</span>&lt;(), AcceptError&gt; {
 <a href=#213 id=213 data-nosnippet>213</a>        <span class="self">self</span>.as_ref().accept(conn).<span class="kw">await
 <a href=#214 id=214 data-nosnippet>214</a>    </span>}
 <a href=#215 id=215 data-nosnippet>215</a>
@@ -227,7 +227,7 @@
 <a href=#227 id=227 data-nosnippet>227</a>    </span><span class="kw">fn </span>on_connecting(
 <a href=#228 id=228 data-nosnippet>228</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
 <a href=#229 id=229 data-nosnippet>229</a>        connecting: Connecting,
-<a href=#230 id=230 data-nosnippet>230</a>    ) -&gt; Pin&lt;Box&lt;<span class="kw">dyn </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;Connection, ProtocolError&gt;&gt; + Send + <span class="lifetime">'_</span>&gt;&gt; {
+<a href=#230 id=230 data-nosnippet>230</a>    ) -&gt; Pin&lt;Box&lt;<span class="kw">dyn </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;Connection, AcceptError&gt;&gt; + Send + <span class="lifetime">'_</span>&gt;&gt; {
 <a href=#231 id=231 data-nosnippet>231</a>        Box::pin(<span class="kw">async move </span>{
 <a href=#232 id=232 data-nosnippet>232</a>            <span class="kw">let </span>conn = connecting.<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#233 id=233 data-nosnippet>233</a>            <span class="prelude-val">Ok</span>(conn)
@@ -238,7 +238,7 @@
 <a href=#238 id=238 data-nosnippet>238</a>    </span><span class="kw">fn </span>accept(
 <a href=#239 id=239 data-nosnippet>239</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
 <a href=#240 id=240 data-nosnippet>240</a>        connection: Connection,
-<a href=#241 id=241 data-nosnippet>241</a>    ) -&gt; Pin&lt;Box&lt;<span class="kw">dyn </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;(), ProtocolError&gt;&gt; + Send + <span class="lifetime">'_</span>&gt;&gt;;
+<a href=#241 id=241 data-nosnippet>241</a>    ) -&gt; Pin&lt;Box&lt;<span class="kw">dyn </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;(), AcceptError&gt;&gt; + Send + <span class="lifetime">'_</span>&gt;&gt;;
 <a href=#242 id=242 data-nosnippet>242</a>
 <a href=#243 id=243 data-nosnippet>243</a>    <span class="doccomment">/// See [`ProtocolHandler::shutdown`].
 <a href=#244 id=244 data-nosnippet>244</a>    </span><span class="kw">fn </span>shutdown(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; Pin&lt;Box&lt;<span class="kw">dyn </span>Future&lt;Output = ()&gt; + Send + <span class="lifetime">'_</span>&gt;&gt; {
@@ -250,14 +250,14 @@
 <a href=#250 id=250 data-nosnippet>250</a>    <span class="kw">fn </span>accept(
 <a href=#251 id=251 data-nosnippet>251</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
 <a href=#252 id=252 data-nosnippet>252</a>        connection: Connection,
-<a href=#253 id=253 data-nosnippet>253</a>    ) -&gt; Pin&lt;Box&lt;<span class="kw">dyn </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;(), ProtocolError&gt;&gt; + Send + <span class="lifetime">'_</span>&gt;&gt; {
+<a href=#253 id=253 data-nosnippet>253</a>    ) -&gt; Pin&lt;Box&lt;<span class="kw">dyn </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;(), AcceptError&gt;&gt; + Send + <span class="lifetime">'_</span>&gt;&gt; {
 <a href=#254 id=254 data-nosnippet>254</a>        Box::pin(&lt;<span class="self">Self </span><span class="kw">as </span>ProtocolHandler&gt;::accept(<span class="self">self</span>, connection))
 <a href=#255 id=255 data-nosnippet>255</a>    }
 <a href=#256 id=256 data-nosnippet>256</a>
 <a href=#257 id=257 data-nosnippet>257</a>    <span class="kw">fn </span>on_connecting(
 <a href=#258 id=258 data-nosnippet>258</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
 <a href=#259 id=259 data-nosnippet>259</a>        connecting: Connecting,
-<a href=#260 id=260 data-nosnippet>260</a>    ) -&gt; Pin&lt;Box&lt;<span class="kw">dyn </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;Connection, ProtocolError&gt;&gt; + Send + <span class="lifetime">'_</span>&gt;&gt; {
+<a href=#260 id=260 data-nosnippet>260</a>    ) -&gt; Pin&lt;Box&lt;<span class="kw">dyn </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;Connection, AcceptError&gt;&gt; + Send + <span class="lifetime">'_</span>&gt;&gt; {
 <a href=#261 id=261 data-nosnippet>261</a>        Box::pin(&lt;<span class="self">Self </span><span class="kw">as </span>ProtocolHandler&gt;::on_connecting(<span class="self">self</span>, connecting))
 <a href=#262 id=262 data-nosnippet>262</a>    }
 <a href=#263 id=263 data-nosnippet>263</a>
@@ -519,11 +519,11 @@
 <a href=#519 id=519 data-nosnippet>519</a>    <span class="kw">fn </span>on_connecting(
 <a href=#520 id=520 data-nosnippet>520</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
 <a href=#521 id=521 data-nosnippet>521</a>        conn: Connecting,
-<a href=#522 id=522 data-nosnippet>522</a>    ) -&gt; <span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;Connection, ProtocolError&gt;&gt; + Send {
+<a href=#522 id=522 data-nosnippet>522</a>    ) -&gt; <span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;Connection, AcceptError&gt;&gt; + Send {
 <a href=#523 id=523 data-nosnippet>523</a>        <span class="self">self</span>.proto.on_connecting(conn)
 <a href=#524 id=524 data-nosnippet>524</a>    }
 <a href=#525 id=525 data-nosnippet>525</a>
-<a href=#526 id=526 data-nosnippet>526</a>    <span class="kw">async fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connection) -&gt; <span class="prelude-ty">Result</span>&lt;(), ProtocolError&gt; {
+<a href=#526 id=526 data-nosnippet>526</a>    <span class="kw">async fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, conn: Connection) -&gt; <span class="prelude-ty">Result</span>&lt;(), AcceptError&gt; {
 <a href=#527 id=527 data-nosnippet>527</a>        <span class="kw">let </span>remote = conn.remote_node_id()<span class="question-mark">?</span>;
 <a href=#528 id=528 data-nosnippet>528</a>        <span class="kw">let </span>is_allowed = (<span class="self">self</span>.limiter)(remote);
 <a href=#529 id=529 data-nosnippet>529</a>        <span class="kw">if </span>!is_allowed {
@@ -572,7 +572,7 @@
 <a href=#572 id=572 data-nosnippet>572</a>    <span class="kw">const </span>ECHO_ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"/iroh/echo/1"</span>;
 <a href=#573 id=573 data-nosnippet>573</a>
 <a href=#574 id=574 data-nosnippet>574</a>    <span class="kw">impl </span>ProtocolHandler <span class="kw">for </span>Echo {
-<a href=#575 id=575 data-nosnippet>575</a>        <span class="kw">async fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, connection: Connection) -&gt; <span class="prelude-ty">Result</span>&lt;(), ProtocolError&gt; {
+<a href=#575 id=575 data-nosnippet>575</a>        <span class="kw">async fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, connection: Connection) -&gt; <span class="prelude-ty">Result</span>&lt;(), AcceptError&gt; {
 <a href=#576 id=576 data-nosnippet>576</a>            <span class="macro">println!</span>(<span class="string">"accepting echo"</span>);
 <a href=#577 id=577 data-nosnippet>577</a>            <span class="kw">let </span>(<span class="kw-2">mut </span>send, <span class="kw-2">mut </span>recv) = connection.accept_bi().<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#578 id=578 data-nosnippet>578</a>
@@ -619,7 +619,7 @@
 <a href=#619 id=619 data-nosnippet>619</a>        <span class="kw">const </span>TEST_ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"/iroh/test/1"</span>;
 <a href=#620 id=620 data-nosnippet>620</a>
 <a href=#621 id=621 data-nosnippet>621</a>        <span class="kw">impl </span>ProtocolHandler <span class="kw">for </span>TestProtocol {
-<a href=#622 id=622 data-nosnippet>622</a>            <span class="kw">async fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, connection: Connection) -&gt; <span class="prelude-ty">Result</span>&lt;(), ProtocolError&gt; {
+<a href=#622 id=622 data-nosnippet>622</a>            <span class="kw">async fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, connection: Connection) -&gt; <span class="prelude-ty">Result</span>&lt;(), AcceptError&gt; {
 <a href=#623 id=623 data-nosnippet>623</a>                <span class="self">self</span>.connections.lock().expect(<span class="string">"poisoned"</span>).push(connection);
 <a href=#624 id=624 data-nosnippet>624</a>                <span class="prelude-val">Ok</span>(())
 <a href=#625 id=625 data-nosnippet>625</a>            }
