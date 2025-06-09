@@ -17,8 +17,6 @@ use iroh_base::{PublicKey, Signature, SignatureError};
 #[cfg(feature = "server")]
 use n0_future::time::Duration;
 use n0_future::{time, Sink, SinkExt};
-#[cfg(any(test, feature = "server"))]
-use n0_future::{Stream, StreamExt};
 use nested_enum_utils::common_fields;
 use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
@@ -251,37 +249,6 @@ impl Frame {
         }
     }
 
-    /// Serialized length (without the frame header)
-    #[cfg(not(wasm_browser))] // Not needed with websocket framing - thus not needed in browsers
-    pub(crate) fn len(&self) -> usize {
-        match self {
-            Frame::ClientInfo {
-                client_public_key: _,
-                message,
-                signature: _,
-            } => MAGIC.len() + PublicKey::LENGTH + message.len() + Signature::BYTE_SIZE,
-            Frame::SendPacket { dst_key: _, packet } => PublicKey::LENGTH + packet.len(),
-            Frame::RecvPacket {
-                src_key: _,
-                content,
-            } => PublicKey::LENGTH + content.len(),
-            Frame::KeepAlive => 0,
-            Frame::NotePreferred { .. } => 1,
-            Frame::NodeGone { .. } => PublicKey::LENGTH,
-            Frame::Ping { .. } => 8,
-            Frame::Pong { .. } => 8,
-            Frame::Health { problem } => problem.len(),
-            Frame::Restarting { .. } => 4 + 4,
-        }
-    }
-
-    /// Serialized length with frame header.
-    #[cfg(feature = "server")]
-    pub(crate) fn len_with_header(&self) -> usize {
-        const HEADER_LEN: usize = 5; // TODO(matheus23): This is used with the rate-limiter. It really shouldn't be. The websocket frames work on a different level!
-        self.len() + HEADER_LEN
-    }
-
     /// Tries to decode a frame received over websockets.
     ///
     /// Specifically, bytes received from a binary websocket message frame.
@@ -298,13 +265,13 @@ impl Frame {
     /// Encodes this frame for sending over websockets.
     ///
     /// Specifically meant for being put into a binary websocket message frame.
-    pub(crate) fn encode_for_ws_msg(self, dst: &mut impl BufMut) {
+    pub(crate) fn encode_for_ws_msg<O: BufMut>(self, mut dst: O) -> O {
         dst.put_u8(self.typ().into());
-        self.write_to(dst);
+        self.write_to(dst)
     }
 
     /// Writes it self to the given buffer.
-    fn write_to(&self, dst: &mut impl BufMut) {
+    fn write_to<O: BufMut>(&self, mut dst: O) -> O {
         match self {
             Frame::ClientInfo {
                 client_public_key,
@@ -352,6 +319,7 @@ impl Frame {
                 dst.put_u32(*try_for);
             }
         }
+        dst
     }
 
     #[allow(clippy::result_large_err)]
@@ -478,37 +446,6 @@ impl Frame {
     }
 }
 
-/// Receives the next frame and matches the frame type. If the correct type is found returns the content,
-/// otherwise an error.
-#[cfg(any(test, feature = "server"))]
-pub(crate) async fn recv_frame<E, S: Stream<Item = Result<Frame, E>> + Unpin>(
-    frame_type: FrameType,
-    mut stream: S,
-) -> Result<Frame, E>
-where
-    RecvError: Into<E>,
-{
-    match stream.next().await {
-        Some(Ok(frame)) => {
-            if frame_type != frame.typ() {
-                return Err(UnexpectedFrameSnafu {
-                    got: frame.typ(),
-                    expected: frame_type,
-                }
-                .build()
-                .into());
-            }
-            Ok(frame)
-        }
-        Some(Err(err)) => Err(err),
-        None => Err(RecvError::from(std::io::Error::new(
-            std::io::ErrorKind::UnexpectedEof,
-            "expected frame".to_string(),
-        ))
-        .into()),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use data_encoding::HEXLOWER;
@@ -616,7 +553,6 @@ mod tests {
 
 #[cfg(test)]
 mod proptests {
-    use bytes::BytesMut;
     use iroh_base::SecretKey;
     use proptest::prelude::*;
 
@@ -677,34 +613,6 @@ mod proptests {
             health,
             restarting,
         ]
-    }
-
-    fn inject_error(buf: &mut BytesMut) {
-        fn is_fixed_size(tpe: FrameType) -> bool {
-            match tpe {
-                FrameType::KeepAlive
-                | FrameType::NotePreferred
-                | FrameType::Ping
-                | FrameType::Pong
-                | FrameType::Restarting
-                | FrameType::PeerGone => true,
-                FrameType::ClientInfo
-                | FrameType::Health
-                | FrameType::SendPacket
-                | FrameType::RecvPacket
-                | FrameType::Unknown => false,
-            }
-        }
-        let tpe: FrameType = buf[0].into();
-        let mut len = u32::from_be_bytes(buf[1..5].try_into().unwrap()) as usize;
-        if is_fixed_size(tpe) {
-            buf.put_u8(0);
-            len += 1;
-        } else {
-            buf.resize(MAX_FRAME_SIZE + 1, 0);
-            len = MAX_FRAME_SIZE + 1;
-        }
-        buf[1..5].copy_from_slice(&u32::to_be_bytes(len as u32));
     }
 
     proptest! {

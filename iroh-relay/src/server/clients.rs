@@ -194,13 +194,37 @@ mod tests {
 
     use bytes::Bytes;
     use iroh_base::SecretKey;
+    use n0_future::{Stream, StreamExt};
     use n0_snafu::{Result, ResultExt};
 
     use super::*;
     use crate::{
-        protos::relay::{recv_frame, Frame, FrameType},
+        protos::relay::{Frame, FrameType},
         server::streams::RelayedStream,
     };
+
+    async fn recv_frame<
+        E: snafu::Error + Sync + Send + 'static,
+        S: Stream<Item = Result<Frame, E>> + Unpin,
+    >(
+        frame_type: FrameType,
+        mut stream: S,
+    ) -> Result<Frame> {
+        match stream.next().await {
+            Some(Ok(frame)) => {
+                if frame_type != frame.typ() {
+                    snafu::whatever!(
+                        "Unepxected frame, got {}, but expected {}",
+                        frame.typ(),
+                        frame_type
+                    );
+                }
+                Ok(frame)
+            }
+            Some(Err(err)) => Err(err).e(),
+            None => snafu::whatever!("Unexpected EOF, expected frame {frame_type}"),
+        }
+    }
 
     fn test_client_builder(key: NodeId) -> (Config, RelayedStream) {
         let (server, client) = tokio::io::duplex(1024);

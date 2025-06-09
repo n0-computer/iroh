@@ -8,6 +8,7 @@ use n0_future::{
 };
 use nested_enum_utils::common_fields;
 use quinn_proto::{coding::Codec, VarInt};
+#[cfg(feature = "server")]
 use rand::{CryptoRng, RngCore};
 use snafu::{Backtrace, ResultExt, Snafu};
 

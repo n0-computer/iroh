@@ -553,16 +553,38 @@ impl ClientCounter {
 
 #[cfg(test)]
 mod tests {
-    use std::num::NonZeroU32;
-
-    use bytes::Bytes;
+    use bytes::{Bytes, BytesMut};
     use iroh_base::SecretKey;
+    use n0_future::Stream;
     use n0_snafu::{Result, ResultExt};
     use tracing::info;
     use tracing_test::traced_test;
 
     use super::*;
-    use crate::protos::relay::{recv_frame, FrameType};
+    use crate::protos::relay::FrameType;
+
+    async fn recv_frame<
+        E: snafu::Error + Sync + Send + 'static,
+        S: Stream<Item = Result<Frame, E>> + Unpin,
+    >(
+        frame_type: FrameType,
+        mut stream: S,
+    ) -> Result<Frame> {
+        match stream.next().await {
+            Some(Ok(frame)) => {
+                if frame_type != frame.typ() {
+                    snafu::whatever!(
+                        "Unepxected frame, got {}, but expected {}",
+                        frame.typ(),
+                        frame_type
+                    );
+                }
+                Ok(frame)
+            }
+            Some(Err(err)) => Err(err).e(),
+            None => snafu::whatever!("Unexpected EOF, expected frame {frame_type}"),
+        }
+    }
 
     #[tokio::test]
     #[traced_test]
@@ -607,7 +629,7 @@ mod tests {
             data: Bytes::from(&data[..]),
         };
         send_queue_s.send(packet.clone()).await.context("send")?;
-        let frame = recv_frame(FrameType::RecvPacket, &mut io_rw).await?;
+        let frame = recv_frame(FrameType::RecvPacket, &mut io_rw).await.e()?;
         assert_eq!(
             frame,
             Frame::RecvPacket {
@@ -622,7 +644,7 @@ mod tests {
             .send(packet.clone())
             .await
             .context("send")?;
-        let frame = recv_frame(FrameType::RecvPacket, &mut io_rw).await?;
+        let frame = recv_frame(FrameType::RecvPacket, &mut io_rw).await.e()?;
         assert_eq!(
             frame,
             Frame::RecvPacket {
@@ -634,7 +656,7 @@ mod tests {
         // send peer_gone
         println!("send peer gone");
         peer_gone_s.send(node_id).await.context("send")?;
-        let frame = recv_frame(FrameType::PeerGone, &mut io_rw).await?;
+        let frame = recv_frame(FrameType::PeerGone, &mut io_rw).await.e()?;
         assert_eq!(frame, Frame::NodeGone { node_id });
 
         // Read tests
@@ -694,13 +716,17 @@ mod tests {
         let mut stream = RelayedStream::test_server_limited(io_read, LIMIT / 10, LIMIT);
 
         // Prepare a frame to send, assert its size.
-        let data = Bytes::from_static(b"hello world!!");
+        let data = Bytes::from_static(b"hello world!1eins");
         let target = SecretKey::generate(rand::thread_rng()).public();
         let frame = Frame::SendPacket {
             dst_key: target,
             packet: data.clone(),
         };
-        let frame_len = frame.len_with_header();
+        let frame_len = frame
+            .clone()
+            .encode_for_ws_msg(BytesMut::new())
+            .freeze()
+            .len();
         assert_eq!(frame_len, LIMIT as usize);
 
         // Send a frame, it should arrive.
