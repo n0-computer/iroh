@@ -728,7 +728,7 @@ impl ActiveRelayActor {
                 let problem = problem.as_deref().unwrap_or("unknown");
                 warn!("Relay server reports problem: {problem}");
             }
-            ReceivedMessage::KeepAlive | ReceivedMessage::ServerRestarting { .. } => {
+            ReceivedMessage::ServerRestarting { .. } => {
                 trace!("Ignoring {msg:?}")
             }
         }

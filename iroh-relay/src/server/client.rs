@@ -722,11 +722,7 @@ mod tests {
             dst_key: target,
             packet: data.clone(),
         };
-        let frame_len = frame
-            .clone()
-            .encode_for_ws_msg(BytesMut::new())
-            .freeze()
-            .len();
+        let frame_len = frame.clone().write_to(BytesMut::new()).freeze().len();
         assert_eq!(frame_len, LIMIT as usize);
 
         // Send a frame, it should arrive.

@@ -13,7 +13,7 @@
 //!  * server then sends `FrameType::RecvPacket` to recipient
 
 use bytes::{BufMut, Bytes};
-use iroh_base::{PublicKey, Signature, SignatureError};
+use iroh_base::{PublicKey, SignatureError};
 #[cfg(feature = "server")]
 use n0_future::time::Duration;
 use n0_future::{time, Sink, SinkExt};
@@ -35,9 +35,6 @@ pub const MAX_PACKET_SIZE: usize = 64 * 1024;
 #[cfg(not(wasm_browser))]
 pub(crate) const MAX_FRAME_SIZE: usize = 1024 * 1024;
 
-/// The Relay magic number, sent in the FrameType::ClientInfo frame upon initial connection.
-const MAGIC: &str = "RELAY🔑";
-
 /// Interval in which we ping the relay server to ensure the connection is alive.
 ///
 /// The default QUIC max_idle_timeout is 30s, so setting that to half this time gives some
@@ -47,26 +44,7 @@ pub(crate) const PING_INTERVAL: Duration = Duration::from_secs(15);
 
 /// The number of packets buffered for sending per client
 #[cfg(feature = "server")]
-pub(crate) const PER_CLIENT_SEND_QUEUE_DEPTH: usize = 512; //32;
-
-/// ProtocolVersion is bumped whenever there's a wire-incompatible change.
-///  - version 1 (zero on wire): consistent box headers, in use by employee dev nodes a bit
-///  - version 2: received packets have src addrs in FrameType::RecvPacket at beginning.
-///
-/// NOTE: we are technically running a modified version of the protocol.
-/// `FrameType::PeerPresent`, `FrameType::WatchConn`, `FrameType::ClosePeer`, have been removed.
-/// The server will error on that connection if a client sends one of these frames.
-/// We have split with the DERP protocol significantly starting with our relay protocol 3
-/// `FrameType::PeerPresent`, `FrameType::WatchConn`, `FrameType::ClosePeer`, `FrameType::ServerKey`, and `FrameType::ServerInfo` have been removed.
-/// The server will error on that connection if a client sends one of these frames.
-/// This materially affects the handshake protocol, and so relay nodes on version 3 will be unable to communicate
-/// with nodes running earlier protocol versions.
-pub(crate) const PROTOCOL_VERSION: usize = 3;
-
-/// Indicates this IS the client's home node
-const PREFERRED: u8 = 1u8;
-/// Indicates this IS NOT the client's home node
-const NOT_PREFERRED: u8 = 0u8;
+pub(crate) const PER_CLIENT_SEND_QUEUE_DEPTH: usize = 512;
 
 /// The one byte frame type at the beginning of the frame
 /// header. The second field is a big-endian u32 describing the
@@ -80,10 +58,6 @@ pub enum FrameType {
     SendPacket = 4,
     /// v0/1 packet bytes, v2: 32B src pub key + packet bytes
     RecvPacket = 5,
-    /// no payload, no-op (to be replaced with ping/pong)
-    KeepAlive = 6,
-    /// 1 byte payload: 0x01 or 0x00 for whether this is client's home node
-    NotePreferred = 7,
     /// Sent from server to client to signal that a previous sender is no longer connected.
     ///
     /// That is, if A sent to B, and then if A disconnects, the server sends `FrameType::PeerGone`
@@ -198,49 +172,20 @@ pub(crate) async fn write_frame<S: Sink<Frame, Error = std::io::Error> + Unpin>(
 /// The frames in the [`RelayCodec`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Frame {
-    ClientInfo {
-        client_public_key: PublicKey,
-        message: Bytes,
-        signature: Signature,
-    },
-    SendPacket {
-        dst_key: PublicKey,
-        packet: Bytes,
-    },
-    RecvPacket {
-        src_key: PublicKey,
-        content: Bytes,
-    },
-    KeepAlive,
-    NotePreferred {
-        preferred: bool,
-    },
-    NodeGone {
-        node_id: PublicKey,
-    },
-    Ping {
-        data: [u8; 8],
-    },
-    Pong {
-        data: [u8; 8],
-    },
-    Health {
-        problem: Bytes,
-    },
-    Restarting {
-        reconnect_in: u32,
-        try_for: u32,
-    },
+    SendPacket { dst_key: PublicKey, packet: Bytes },
+    RecvPacket { src_key: PublicKey, content: Bytes },
+    NodeGone { node_id: PublicKey },
+    Ping { data: [u8; 8] },
+    Pong { data: [u8; 8] },
+    Health { problem: Bytes },
+    Restarting { reconnect_in: u32, try_for: u32 },
 }
 
 impl Frame {
     pub(crate) fn typ(&self) -> FrameType {
         match self {
-            Frame::ClientInfo { .. } => FrameType::ClientInfo,
             Frame::SendPacket { .. } => FrameType::SendPacket,
             Frame::RecvPacket { .. } => FrameType::RecvPacket,
-            Frame::KeepAlive => FrameType::KeepAlive,
-            Frame::NotePreferred { .. } => FrameType::NotePreferred,
             Frame::NodeGone { .. } => FrameType::PeerGone,
             Frame::Ping { .. } => FrameType::Ping,
             Frame::Pong { .. } => FrameType::Pong,
@@ -249,40 +194,12 @@ impl Frame {
         }
     }
 
-    /// Tries to decode a frame received over websockets.
-    ///
-    /// Specifically, bytes received from a binary websocket message frame.
-    #[allow(clippy::result_large_err)]
-    pub(crate) fn decode_from_ws_msg(bytes: Bytes, cache: &KeyCache) -> Result<Self, RecvError> {
-        if bytes.is_empty() {
-            return Err(TooSmallSnafu.build());
-        }
-        let typ = FrameType::from(bytes[0]);
-        let frame = Self::from_bytes(typ, bytes.slice(1..), cache)?;
-        Ok(frame)
-    }
-
     /// Encodes this frame for sending over websockets.
     ///
     /// Specifically meant for being put into a binary websocket message frame.
-    pub(crate) fn encode_for_ws_msg<O: BufMut>(self, mut dst: O) -> O {
+    pub(crate) fn write_to<O: BufMut>(&self, mut dst: O) -> O {
         dst.put_u8(self.typ().into());
-        self.write_to(dst)
-    }
-
-    /// Writes it self to the given buffer.
-    fn write_to<O: BufMut>(&self, mut dst: O) -> O {
         match self {
-            Frame::ClientInfo {
-                client_public_key,
-                message,
-                signature,
-            } => {
-                dst.put(MAGIC.as_bytes());
-                dst.put(client_public_key.as_ref());
-                dst.put(&signature.to_bytes()[..]);
-                dst.put(&message[..]);
-            }
             Frame::SendPacket { dst_key, packet } => {
                 dst.put(dst_key.as_ref());
                 dst.put(packet.as_ref());
@@ -290,14 +207,6 @@ impl Frame {
             Frame::RecvPacket { src_key, content } => {
                 dst.put(src_key.as_ref());
                 dst.put(content.as_ref());
-            }
-            Frame::KeepAlive => {}
-            Frame::NotePreferred { preferred } => {
-                if *preferred {
-                    dst.put_u8(PREFERRED);
-                } else {
-                    dst.put_u8(NOT_PREFERRED);
-                }
             }
             Frame::NodeGone { node_id: peer } => {
                 dst.put(peer.as_ref());
@@ -322,35 +231,18 @@ impl Frame {
         dst
     }
 
+    /// Tries to decode a frame received over websockets.
+    ///
+    /// Specifically, bytes received from a binary websocket message frame.
     #[allow(clippy::result_large_err)]
-    fn from_bytes(
-        frame_type: FrameType,
-        content: Bytes,
-        cache: &KeyCache,
-    ) -> Result<Self, RecvError> {
-        let res = match frame_type {
-            FrameType::ClientInfo => {
-                if content.len() < PublicKey::LENGTH + Signature::BYTE_SIZE + MAGIC.len() {
-                    return Err(InvalidFrameSnafu.build());
-                }
-                if &content[..MAGIC.len()] != MAGIC.as_bytes() {
-                    return Err(InvalidFrameSnafu.build());
-                }
+    pub(crate) fn from_bytes(bytes: Bytes, cache: &KeyCache) -> Result<Self, RecvError> {
+        if bytes.is_empty() {
+            return Err(TooSmallSnafu.build());
+        }
+        let frame_type = FrameType::from(bytes[0]);
+        let content = bytes.slice(1..);
 
-                let start = MAGIC.len();
-                let client_public_key =
-                    cache.key_from_slice(&content[start..start + PublicKey::LENGTH])?;
-                let start = start + PublicKey::LENGTH;
-                let signature =
-                    Signature::from_slice(&content[start..start + Signature::BYTE_SIZE])?;
-                let start = start + Signature::BYTE_SIZE;
-                let message = content.slice(start..);
-                Self::ClientInfo {
-                    client_public_key,
-                    message,
-                    signature,
-                }
-            }
+        let res = match frame_type {
             FrameType::SendPacket => {
                 if content.len() < PublicKey::LENGTH {
                     return Err(InvalidFrameSnafu.build());
@@ -377,23 +269,6 @@ impl Frame {
                 let src_key = cache.key_from_slice(&content[..PublicKey::LENGTH])?;
                 let content = content.slice(PublicKey::LENGTH..);
                 Self::RecvPacket { src_key, content }
-            }
-            FrameType::KeepAlive => {
-                if !content.is_empty() {
-                    return Err(InvalidFrameSnafu.build());
-                }
-                Self::KeepAlive
-            }
-            FrameType::NotePreferred => {
-                if content.len() != 1 {
-                    return Err(InvalidFrameSnafu.build());
-                }
-                let preferred = match content[0] {
-                    PREFERRED => true,
-                    NOT_PREFERRED => false,
-                    _ => return Err(InvalidFrameSnafu.build()),
-                };
-                Self::NotePreferred { preferred }
             }
             FrameType::PeerGone => {
                 if content.len() != PublicKey::LENGTH {
@@ -450,34 +325,15 @@ impl Frame {
 mod tests {
     use data_encoding::HEXLOWER;
     use iroh_base::SecretKey;
-    use n0_snafu::{Result, ResultExt};
+    use n0_snafu::Result;
 
     use super::*;
 
     #[test]
     fn test_frame_snapshot() -> Result {
         let client_key = SecretKey::from_bytes(&[42u8; 32]);
-        let client_info = ClientInfo {
-            version: PROTOCOL_VERSION,
-        };
-        let message = postcard::to_stdvec(&client_info).context("encode")?;
-        let signature = client_key.sign(&message);
 
         let frames = vec![
-            (
-                Frame::ClientInfo {
-                    client_public_key: client_key.public(),
-                    message: Bytes::from(message),
-                    signature,
-                },
-                "02 52 45 4c 41 59 f0 9f 94 91 19 7f 6b 23 e1 6c
-                85 32 c6 ab c8 38 fa cd 5e a7 89 be 0c 76 b2 92
-                03 34 03 9b fa 8b 3d 36 8d 61 88 e7 7b 22 f2 92
-                ab 37 43 5d a8 de 0b c8 cb 84 e2 88 f4 e7 3b 35
-                82 a5 27 31 e9 ff 98 65 46 5c 87 e0 5e 8d 42 7d
-                f4 22 bb 6e 85 e1 c0 5f 6f 74 98 37 ba a4 a5 c7
-                eb a3 23 0d 77 56 99 10 43 0e 03",
-            ),
             (
                 Frame::Health {
                     problem: "Hello? Yes this is dog.".into(),
@@ -485,8 +341,6 @@ mod tests {
                 "0e 48 65 6c 6c 6f 3f 20 59 65 73 20 74 68 69 73
                 20 69 73 20 64 6f 67 2e",
             ),
-            (Frame::KeepAlive, "06"),
-            (Frame::NotePreferred { preferred: true }, "07 01"),
             (
                 Frame::NodeGone {
                     node_id: client_key.public(),
@@ -532,7 +386,7 @@ mod tests {
 
         for (frame, expected_hex) in frames {
             let mut bytes = Vec::new();
-            frame.encode_for_ws_msg(&mut bytes);
+            frame.write_to(&mut bytes);
             let stripped: Vec<u8> = expected_hex
                 .chars()
                 .filter_map(|s| {
@@ -574,24 +428,10 @@ mod proptests {
 
     /// Generates a random valid frame
     fn frame() -> impl Strategy<Value = Frame> {
-        let client_info = (secret_key()).prop_map(|secret_key| {
-            let info = ClientInfo {
-                version: PROTOCOL_VERSION,
-            };
-            let msg = postcard::to_stdvec(&info).expect("using default ClientInfo");
-            let signature = secret_key.sign(&msg);
-            Frame::ClientInfo {
-                client_public_key: secret_key.public(),
-                message: msg.into(),
-                signature,
-            }
-        });
         let send_packet =
             (key(), data(32)).prop_map(|(dst_key, packet)| Frame::SendPacket { dst_key, packet });
         let recv_packet =
             (key(), data(32)).prop_map(|(src_key, content)| Frame::RecvPacket { src_key, content });
-        let keep_alive = Just(Frame::KeepAlive);
-        let note_preferred = any::<bool>().prop_map(|preferred| Frame::NotePreferred { preferred });
         let peer_gone = key().prop_map(|peer| Frame::NodeGone { node_id: peer });
         let ping = prop::array::uniform8(any::<u8>()).prop_map(|data| Frame::Ping { data });
         let pong = prop::array::uniform8(any::<u8>()).prop_map(|data| Frame::Pong { data });
@@ -602,11 +442,8 @@ mod proptests {
                 try_for,
             });
         prop_oneof![
-            client_info,
             send_packet,
             recv_packet,
-            keep_alive,
-            note_preferred,
             peer_gone,
             ping,
             pong,
@@ -617,10 +454,10 @@ mod proptests {
 
     proptest! {
         #[test]
-        fn frame_ws_roundtrip(frame in frame()) {
+        fn frame_roundtrip(frame in frame()) {
             let mut encoded = Vec::new();
-            frame.clone().encode_for_ws_msg(&mut encoded);
-            let decoded = Frame::decode_from_ws_msg(Bytes::from(encoded), &KeyCache::test()).unwrap();
+            frame.clone().write_to(&mut encoded);
+            let decoded = Frame::from_bytes(Bytes::from(encoded), &KeyCache::test()).unwrap();
             prop_assert_eq!(frame, decoded);
         }
     }

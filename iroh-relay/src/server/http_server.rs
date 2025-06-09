@@ -36,7 +36,7 @@ use crate::{
     KeyCache,
 };
 use crate::{
-    protos::{handshake, io::HandshakeIo},
+    protos::{handshake, io::HandshakeIo, relay::MAX_FRAME_SIZE},
     server::streams::RateLimited,
 };
 
@@ -643,7 +643,9 @@ impl Inner {
                 // Since we already did the HTTP upgrade in the previous step,
                 // we use tokio-websockets to handle this connection
                 // Create a server builder with default config
-                let builder = tokio_websockets::ServerBuilder::new();
+                let builder = tokio_websockets::ServerBuilder::new().limits(
+                    tokio_websockets::Limits::default().max_payload_len(Some(MAX_FRAME_SIZE)),
+                );
                 // Serve will create a WebSocketStream on an already upgraded connection
                 let websocket = builder.serve(io);
 

@@ -99,7 +99,7 @@ impl Sink<Frame> for RelayedStream {
         Pin::new(&mut self.inner)
             .start_send(tokio_websockets::Message::binary({
                 let mut buf = BytesMut::new();
-                item.encode_for_ws_msg(&mut buf);
+                item.write_to(&mut buf);
                 tokio_websockets::Payload::from(buf.freeze())
             }))
             .map_err(ws_to_io_err)
@@ -144,7 +144,7 @@ impl Stream for RelayedStream {
                     return Poll::Pending;
                 }
                 Poll::Ready(Some(
-                    Frame::decode_from_ws_msg(msg.into_payload().into(), &self.key_cache)
+                    Frame::from_bytes(msg.into_payload().into(), &self.key_cache)
                         .map_err(Into::into),
                 ))
             }

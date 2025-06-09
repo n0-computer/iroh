@@ -176,7 +176,7 @@ impl Stream for Conn {
                         );
                         return Poll::Pending;
                     }
-                    let frame = Frame::decode_from_ws_msg(msg.into_payload().into(), key_cache)?;
+                    let frame = Frame::from_bytes(msg.into_payload().into(), key_cache)?;
                     let message = ReceivedMessage::try_from(frame);
                     Poll::Ready(Some(message))
                 }
@@ -227,7 +227,7 @@ impl Sink<SendMessage> for Conn {
             Self::Ws { ref mut conn, .. } => Pin::new(conn)
                 .start_send(tokio_websockets::Message::binary({
                     let mut buf = BytesMut::new();
-                    frame.encode_for_ws_msg(&mut buf);
+                    frame.write_to(&mut buf);
                     tokio_websockets::Payload::from(buf.freeze())
                 }))
                 .map_err(Into::into),
@@ -283,10 +283,6 @@ pub enum ReceivedMessage {
     /// Reply to a [`ReceivedMessage::Ping`] from a client or server
     /// with the payload sent previously in the ping.
     Pong([u8; 8]),
-    /// A one-way empty message from server to client, just to
-    /// keep the connection alive. It's like a [`ReceivedMessage::Ping`], but doesn't solicit
-    /// a reply from the client.
-    KeepAlive,
     /// A one-way message from server to client, declaring the connection health state.
     Health {
         /// If set, is a description of why the connection is unhealthy.
@@ -315,11 +311,6 @@ impl TryFrom<Frame> for ReceivedMessage {
 
     fn try_from(frame: Frame) -> std::result::Result<Self, Self::Error> {
         match frame {
-            Frame::KeepAlive => {
-                // A one-way keep-alive message that doesn't require an ack.
-                // This predated FrameType::Ping/FrameType::Pong.
-                Ok(ReceivedMessage::KeepAlive)
-            }
             Frame::NodeGone { node_id } => Ok(ReceivedMessage::NodeGone(node_id)),
             Frame::RecvPacket { src_key, content } => {
                 let packet = ReceivedMessage::ReceivedPacket {
