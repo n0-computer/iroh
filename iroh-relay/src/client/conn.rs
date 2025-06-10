@@ -19,7 +19,7 @@ use super::KeyCache;
 #[cfg(not(wasm_browser))]
 use crate::{
     client::streams::{MaybeTlsStream, ProxyStream},
-    protos::io::HandshakeIo,
+    protos::streams::WsBytesFramed,
 };
 use crate::{
     protos::{
@@ -95,27 +95,21 @@ pub enum RecvError {
 /// The [`SendMessage`] and [`ReceivedMessage`] are safer wrappers enforcing some protocol
 /// invariants.
 #[derive(derive_more::Debug)]
-pub(crate) enum Conn {
+pub(crate) struct Conn {
+    #[debug("tokio_websockets::WebSocketStream")]
     #[cfg(not(wasm_browser))]
-    Ws {
-        #[debug("WebSocketStream<MaybeTlsStream<ProxyStream>>")]
-        conn: tokio_websockets::WebSocketStream<MaybeTlsStream<ProxyStream>>,
-        key_cache: KeyCache,
-    },
+    pub(crate) conn: tokio_websockets::WebSocketStream<MaybeTlsStream<ProxyStream>>,
+    #[debug("ws_stream_wasm::WsStream")]
     #[cfg(wasm_browser)]
-    WsBrowser {
-        #[debug("WebSocketStream")]
-        conn: ws_stream_wasm::WsStream,
-        key_cache: KeyCache,
-    },
+    pub(crate) conn: ws_stream_wasm::WsStream,
+    pub(crate) key_cache: KeyCache,
 }
 
 impl Conn {
     #[cfg(test)]
     pub(crate) fn test(io: tokio::io::DuplexStream) -> Self {
         use crate::protos::relay::MAX_FRAME_SIZE;
-
-        Self::Ws {
+        Self {
             conn: tokio_websockets::ClientBuilder::new()
                 .limits(tokio_websockets::Limits::default().max_payload_len(Some(MAX_FRAME_SIZE)))
                 .take_over(MaybeTlsStream::Test(io)),
@@ -125,38 +119,38 @@ impl Conn {
 
     /// Constructs a new websocket connection, including the initial server handshake.
     #[cfg(wasm_browser)]
-    pub(crate) async fn new_ws_browser(
+    pub(crate) async fn new(
         conn: ws_stream_wasm::WsStream,
         key_cache: KeyCache,
         secret_key: &SecretKey,
     ) -> Result<Self, handshake::Error> {
-        let mut io = HandshakeIo { io: conn };
+        let mut io = WsBytesFramed { io: conn };
 
         // exchange information with the server
         debug!("server_handshake: started");
         handshake::clientside(&mut io, secret_key).await?;
         debug!("server_handshake: done");
 
-        Ok(Self::WsBrowser {
+        Ok(Self {
             conn: io.io,
             key_cache,
         })
     }
 
     #[cfg(not(wasm_browser))]
-    pub(crate) async fn new_ws(
+    pub(crate) async fn new(
         conn: tokio_websockets::WebSocketStream<MaybeTlsStream<ProxyStream>>,
         key_cache: KeyCache,
         secret_key: &SecretKey,
     ) -> Result<Self, handshake::Error> {
-        let mut io = HandshakeIo { io: conn };
+        let mut io = WsBytesFramed { io: conn };
 
         // exchange information with the server
         debug!("server_handshake: started");
         handshake::clientside(&mut io, secret_key).await?;
         debug!("server_handshake: done");
 
-        Ok(Self::Ws {
+        Ok(Self {
             conn: io.io,
             key_cache,
         })
@@ -167,47 +161,38 @@ impl Stream for Conn {
     type Item = Result<ServerToClientMsg, RecvError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match *self {
+        let msg = ready!(Pin::new(&mut self.conn).poll_next(cx));
+        match msg {
             #[cfg(not(wasm_browser))]
-            Self::Ws {
-                ref mut conn,
-                ref key_cache,
-            } => match ready!(Pin::new(conn).poll_next(cx)) {
-                Some(Ok(msg)) => {
-                    if msg.is_close() {
-                        // Indicate the stream is done when we receive a close message.
-                        // Note: We don't have to poll the stream to completion for it to close gracefully.
-                        return Poll::Ready(None);
-                    }
-                    if !msg.is_binary() {
-                        tracing::warn!(
-                            ?msg,
-                            "Got websocket message of unsupported type, skipping."
-                        );
-                        return Poll::Pending;
-                    }
-                    let message =
-                        ServerToClientMsg::from_bytes(msg.into_payload().into(), key_cache);
-                    Poll::Ready(Some(message.map_err(Into::into)))
+            Some(Ok(msg)) => {
+                if msg.is_close() {
+                    // Indicate the stream is done when we receive a close message.
+                    // Note: We don't have to poll the stream to completion for it to close gracefully.
+                    return Poll::Ready(None);
                 }
-                Some(Err(e)) => Poll::Ready(Some(Err(e.into()))),
-                None => Poll::Ready(None),
-            },
-            #[cfg(wasm_browser)]
-            Self::WsBrowser {
-                ref mut conn,
-                ref key_cache,
-            } => match ready!(Pin::new(conn).poll_next(cx)) {
-                Some(ws_stream_wasm::WsMessage::Binary(vec)) => {
-                    let frame = Frame::decode_from_ws_msg(Bytes::from(vec), key_cache)?;
-                    Poll::Ready(Some(ReceivedMessage::try_from(frame)))
-                }
-                Some(msg) => {
+                if !msg.is_binary() {
                     tracing::warn!(?msg, "Got websocket message of unsupported type, skipping.");
-                    Poll::Pending
+                    return Poll::Pending;
                 }
-                None => Poll::Ready(None),
-            },
+                let message =
+                    ServerToClientMsg::from_bytes(msg.into_payload().into(), &self.key_cache);
+                Poll::Ready(Some(message.map_err(Into::into)))
+            }
+            #[cfg(not(wasm_browser))]
+            Some(Err(e)) => Poll::Ready(Some(Err(e.into()))),
+
+            #[cfg(wasm_browser)]
+            Some(ws_stream_wasm::WsMessage::Binary(vec)) => {
+                let frame = Frame::decode_from_ws_msg(Bytes::from(vec), &self.key_cache)?;
+                Poll::Ready(Some(ReceivedMessage::try_from(frame)))
+            }
+            #[cfg(wasm_browser)]
+            Some(msg) => {
+                tracing::warn!(?msg, "Got websocket message of unsupported type, skipping.");
+                Poll::Pending
+            }
+
+            None => Poll::Ready(None),
         }
     }
 }
@@ -216,14 +201,7 @@ impl Sink<ClientToServerMsg> for Conn {
     type Error = SendError;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        match *self {
-            #[cfg(not(wasm_browser))]
-            Self::Ws { ref mut conn, .. } => Pin::new(conn).poll_ready(cx).map_err(Into::into),
-            #[cfg(wasm_browser)]
-            Self::WsBrowser { ref mut conn, .. } => {
-                Pin::new(conn).poll_ready(cx).map_err(Into::into)
-            }
-        }
+        Pin::new(&mut self.conn).poll_ready(cx).map_err(Into::into)
     }
 
     fn start_send(mut self: Pin<&mut Self>, frame: ClientToServerMsg) -> Result<(), Self::Error> {
@@ -232,43 +210,26 @@ impl Sink<ClientToServerMsg> for Conn {
             let size = packet.len();
             snafu::ensure!(size <= MAX_PACKET_SIZE, ExceedsMaxPacketSizeSnafu { size });
         }
-        match *self {
-            #[cfg(not(wasm_browser))]
-            Self::Ws { ref mut conn, .. } => Pin::new(conn)
-                .start_send(tokio_websockets::Message::binary({
-                    let mut buf = BytesMut::new();
-                    frame.write_to(&mut buf);
-                    tokio_websockets::Payload::from(buf.freeze())
-                }))
-                .map_err(Into::into),
-            #[cfg(wasm_browser)]
-            Self::WsBrowser { ref mut conn, .. } => Pin::new(conn)
-                .start_send(ws_stream_wasm::WsMessage::Binary(
-                    frame.write_to(Vec::new()),
-                ))
-                .map_err(Into::into),
-        }
+
+        #[cfg(not(wasm_browser))]
+        let frame = tokio_websockets::Message::binary({
+            let mut buf = BytesMut::new();
+            frame.write_to(&mut buf);
+            tokio_websockets::Payload::from(buf.freeze())
+        });
+        #[cfg(wasm_browser)]
+        let frame = ws_stream_wasm::WsMessage::Binary(frame.write_to(Vec::new()));
+
+        Pin::new(&mut self.conn)
+            .start_send(frame)
+            .map_err(Into::into)
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        match *self {
-            #[cfg(not(wasm_browser))]
-            Self::Ws { ref mut conn, .. } => Pin::new(conn).poll_flush(cx).map_err(Into::into),
-            #[cfg(wasm_browser)]
-            Self::WsBrowser { ref mut conn, .. } => {
-                Pin::new(conn).poll_flush(cx).map_err(Into::into)
-            }
-        }
+        Pin::new(&mut self.conn).poll_flush(cx).map_err(Into::into)
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        match *self {
-            #[cfg(not(wasm_browser))]
-            Self::Ws { ref mut conn, .. } => Pin::new(conn).poll_close(cx).map_err(Into::into),
-            #[cfg(wasm_browser)]
-            Self::WsBrowser { ref mut conn, .. } => {
-                Pin::new(conn).poll_close(cx).map_err(Into::into)
-            }
-        }
+        Pin::new(&mut self.conn).poll_close(cx).map_err(Into::into)
     }
 }

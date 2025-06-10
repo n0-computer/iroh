@@ -4,7 +4,7 @@ use bytes::{BufMut, Bytes, BytesMut};
 use iroh_base::{PublicKey, SecretKey, Signature};
 use n0_future::{
     time::{self, Elapsed},
-    Sink, SinkExt, Stream, TryStreamExt,
+    SinkExt, TryStreamExt,
 };
 use nested_enum_utils::common_fields;
 use quinn_proto::{coding::Codec, VarInt};
@@ -12,7 +12,7 @@ use quinn_proto::{coding::Codec, VarInt};
 use rand::{CryptoRng, RngCore};
 use snafu::{Backtrace, ResultExt, Snafu};
 
-use super::relay::SendError;
+use super::{relay::SendError, streams::BytesStreamSink};
 use crate::ExportKeyingMaterial;
 
 /// TODO(matheus23) docs
@@ -22,7 +22,7 @@ pub(crate) const PROTOCOL_VERSION: &[u8] = b"1";
 #[repr(u32)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug, num_enum::IntoPrimitive, num_enum::FromPrimitive)]
 pub enum FrameType {
-    /// The frame type for the client challenge request
+    /// The client frame type for the client challenge request
     ClientRequestChallenge = 1,
     /// The server frame type for the challenge response
     ServerChallenge = 2,
@@ -123,17 +123,6 @@ pub(crate) struct ServerConfirmsAuth;
 #[derive(derive_more::Debug, serde::Deserialize)]
 #[cfg_attr(feature = "server", derive(serde::Serialize))]
 pub(crate) struct ServerDeniesAuth;
-
-/// TODO(matheus23) docs
-pub(crate) trait BytesStreamSink:
-    Stream<Item = Result<Bytes, Error>> + Sink<Bytes, Error = Error> + Unpin
-{
-}
-
-impl<T> BytesStreamSink for T where
-    T: Stream<Item = Result<Bytes, Error>> + Sink<Bytes, Error = Error> + Unpin
-{
-}
 
 /// TODO(matheus23): Docs
 pub trait Frame {

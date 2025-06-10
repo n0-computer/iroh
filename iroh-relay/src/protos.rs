@@ -2,6 +2,6 @@
 
 pub mod disco;
 pub mod handshake;
-pub mod io;
 pub mod relay;
+pub mod streams;
 pub mod stun;

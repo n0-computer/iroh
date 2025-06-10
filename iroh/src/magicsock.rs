@@ -120,9 +120,6 @@ pub(crate) struct Options {
     /// The [`RelayMap`] to use, leave empty to not use a relay server.
     pub(crate) relay_map: RelayMap,
 
-    /// Whether to use websockets or the nonstandard legacy protocol to connect to relays
-    pub(crate) relay_protocol: iroh_relay::http::Protocol,
-
     /// An optional [`NodeMap`], to restore information about nodes.
     pub(crate) node_map: Option<Vec<NodeAddr>>,
 
@@ -1767,7 +1764,6 @@ impl Handle {
             addr_v6,
             secret_key,
             relay_map,
-            relay_protocol,
             node_map,
             discovery,
             discovery_user_data,
@@ -1874,7 +1870,7 @@ impl Handle {
 
         let mut actor_tasks = JoinSet::default();
 
-        let relay_actor = RelayActor::new(msock.clone(), relay_datagram_recv_queue, relay_protocol);
+        let relay_actor = RelayActor::new(msock.clone(), relay_datagram_recv_queue);
         let relay_actor_cancel_token = relay_actor.cancel_token();
         actor_tasks.spawn(
             async move {
@@ -3571,7 +3567,6 @@ mod tests {
                 addr_v6: None,
                 secret_key,
                 relay_map: RelayMap::empty(),
-                relay_protocol: iroh_relay::http::Protocol::default(),
                 node_map: None,
                 discovery: None,
                 proxy_url: None,
@@ -4174,7 +4169,6 @@ mod tests {
             addr_v6: None,
             secret_key: secret_key.clone(),
             relay_map: RelayMap::empty(),
-            relay_protocol: iroh_relay::http::Protocol::default(),
             node_map: None,
             discovery: None,
             discovery_user_data: None,

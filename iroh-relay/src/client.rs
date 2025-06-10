@@ -26,7 +26,7 @@ pub use self::conn::{RecvError, SendError};
 #[cfg(not(wasm_browser))]
 use crate::dns::{DnsError, DnsResolver};
 use crate::{
-    http::{Protocol, RELAY_PATH},
+    http::RELAY_PATH,
     protos::{
         handshake,
         relay::{ClientToServerMsg, ServerToClientMsg},
@@ -126,8 +126,6 @@ pub struct ClientBuilder {
     address_family_selector: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
     /// Server url.
     url: RelayUrl,
-    /// Relay protocol
-    protocol: Protocol,
     /// Allow self-signed certificates from relay servers
     #[cfg(any(test, feature = "test-utils"))]
     insecure_skip_cert_verify: bool,
@@ -153,9 +151,6 @@ impl ClientBuilder {
             address_family_selector: None,
             url: url.into(),
 
-            // Resolves to websockets in browsers and relay otherwise
-            protocol: Protocol::default(),
-
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_cert_verify: false,
 
@@ -165,13 +160,6 @@ impl ClientBuilder {
             dns_resolver,
             key_cache: KeyCache::new(128),
         }
-    }
-
-    /// Sets whether to connect to the relay via websockets or not.
-    /// Set to use non-websocket, normal relaying by default.
-    pub fn protocol(mut self, protocol: Protocol) -> Self {
-        self.protocol = protocol;
-        self
     }
 
     /// Returns if we should prefer ipv6
@@ -210,34 +198,94 @@ impl ClientBuilder {
     }
 
     /// Establishes a new connection to the relay server.
+    #[cfg(not(wasm_browser))]
     pub async fn connect(&self) -> Result<Client, ConnectError> {
-        let (conn, local_addr) = match self.protocol {
-            #[cfg(wasm_browser)]
-            Protocol::Websocket => {
-                let conn = self.connect_ws().await?;
-                let local_addr = None;
-                (conn, local_addr)
+        use tls::MaybeTlsStreamBuilder;
+
+        let mut dial_url = (*self.url).clone();
+        dial_url.set_path(RELAY_PATH);
+        // The relay URL is exchanged with the http(s) scheme in tickets and similar.
+        // We need to use the ws:// or wss:// schemes when connecting with websockets, though.
+        dial_url
+            .set_scheme(match self.url.scheme() {
+                "http" => "ws",
+                "ws" => "ws",
+                _ => "wss",
+            })
+            .map_err(|_| {
+                InvalidWebsocketUrlSnafu {
+                    url: dial_url.clone(),
+                }
+                .build()
+            })?;
+
+        debug!(%dial_url, "Dialing relay by websocket");
+
+        #[allow(unused_mut)]
+        let mut builder = MaybeTlsStreamBuilder::new(dial_url.clone(), self.dns_resolver.clone())
+            .prefer_ipv6(self.prefer_ipv6())
+            .proxy_url(self.proxy_url.clone());
+
+        #[cfg(any(test, feature = "test-utils"))]
+        if self.insecure_skip_cert_verify {
+            builder = builder.insecure_skip_cert_verify(self.insecure_skip_cert_verify);
+        }
+
+        let stream = builder.connect().await?;
+        let local_addr = stream
+            .as_ref()
+            .local_addr()
+            .map_err(|_| NoLocalAddrSnafu.build())?;
+        let (conn, response) = tokio_websockets::ClientBuilder::new()
+            .uri(dial_url.as_str())
+            .map_err(|_| {
+                InvalidRelayUrlSnafu {
+                    url: dial_url.clone(),
+                }
+                .build()
+            })?
+            .connect_on(stream)
+            .await?;
+
+        if response.status() != hyper::StatusCode::SWITCHING_PROTOCOLS {
+            UnexpectedUpgradeStatusSnafu {
+                code: response.status(),
             }
-            #[cfg(not(wasm_browser))]
-            Protocol::Websocket => {
-                let (conn, local_addr) = self.connect_ws().await?;
-                (conn, Some(local_addr))
-            }
-        };
+            .fail()?;
+        }
+
+        let conn = Conn::new(conn, self.key_cache.clone(), &self.secret_key).await?;
 
         event!(
             target: "events.net.relay.connected",
             Level::DEBUG,
             url = %self.url,
-            protocol = ?self.protocol,
         );
 
         trace!("connect done");
-        Ok(Client { conn, local_addr })
+
+        Ok(Client {
+            conn,
+            local_addr: Some(local_addr),
+        })
     }
 
+    /// Reports whether IPv4 dials should be slightly
+    /// delayed to give IPv6 a better chance of winning dial races.
+    /// Implementations should only return true if IPv6 is expected
+    /// to succeed. (otherwise delaying IPv4 will delay the connection
+    /// overall)
+    #[cfg(not(wasm_browser))]
+    fn prefer_ipv6(&self) -> bool {
+        match self.address_family_selector {
+            Some(ref selector) => selector(),
+            None => false,
+        }
+    }
+
+    /// Establishes a new connection to the relay server.
     #[cfg(wasm_browser)]
-    async fn connect_ws(&self) -> Result<Conn, ConnectError> {
+    async fn connect(&self) -> Result<Client, ConnectError> {
         let mut dial_url = (*self.url).clone();
         dial_url.set_path(RELAY_PATH);
         // The relay URL is exchanged with the http(s) scheme in tickets and similar.
@@ -260,7 +308,19 @@ impl ClientBuilder {
         let (_, ws_stream) = ws_stream_wasm::WsMeta::connect(dial_url.as_str(), None).await?;
         let conn =
             Conn::new_ws_browser(ws_stream, self.key_cache.clone(), &self.secret_key).await?;
-        Ok(conn)
+
+        event!(
+            target: "events.net.relay.connected",
+            Level::DEBUG,
+            url = %self.url,
+        );
+
+        trace!("connect done");
+
+        Ok(Client {
+            conn,
+            local_addr: None,
+        })
     }
 }
 

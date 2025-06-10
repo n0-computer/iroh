@@ -8,21 +8,38 @@ use bytes::Bytes;
 use n0_future::{ready, Sink, Stream};
 use tokio::io::{AsyncRead, AsyncWrite};
 
-use super::handshake::Error;
 use crate::ExportKeyingMaterial;
 
 #[derive(derive_more::Debug)]
-pub(crate) struct HandshakeIo<T> {
+pub(crate) struct WsBytesFramed<T> {
     #[cfg(not(wasm_browser))]
-    #[debug("WebSocketStream<MaybeTlsStream<ProxyStream>>")]
+    #[debug("WebSocketStream<T>")]
     pub(crate) io: tokio_websockets::WebSocketStream<T>,
     #[cfg(wasm_browser)]
     #[debug("WebSocketStream")]
     pub(crate) io: ws_stream_wasm::WsStream,
+    #[cfg(wasm_browser)]
+    _data: PhantomData<T>,
+}
+
+#[cfg(not(wasm_browser))]
+type StreamError = tokio_websockets::Error;
+#[cfg(wasm_browser)]
+type StreamError = ws_stream_wasm::WsErr;
+
+/// TODO(matheus23) docs
+pub(crate) trait BytesStreamSink:
+    Stream<Item = Result<Bytes, StreamError>> + Sink<Bytes, Error = StreamError> + Unpin
+{
+}
+
+impl<T> BytesStreamSink for T where
+    T: Stream<Item = Result<Bytes, StreamError>> + Sink<Bytes, Error = StreamError> + Unpin
+{
 }
 
 impl<IO: ExportKeyingMaterial + AsyncRead + AsyncWrite + Unpin> ExportKeyingMaterial
-    for HandshakeIo<IO>
+    for WsBytesFramed<IO>
 {
     #[cfg(wasm_browser)]
     fn export_keying_material<T: AsMut<[u8]>>(
@@ -47,8 +64,8 @@ impl<IO: ExportKeyingMaterial + AsyncRead + AsyncWrite + Unpin> ExportKeyingMate
     }
 }
 
-impl<T: AsyncRead + AsyncWrite + Unpin> Stream for HandshakeIo<T> {
-    type Item = Result<Bytes, Error>;
+impl<T: AsyncRead + AsyncWrite + Unpin> Stream for WsBytesFramed<T> {
+    type Item = Result<Bytes, StreamError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         loop {
@@ -78,8 +95,8 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Stream for HandshakeIo<T> {
     }
 }
 
-impl<T: AsyncRead + AsyncWrite + Unpin> Sink<Bytes> for HandshakeIo<T> {
-    type Error = Error;
+impl<T: AsyncRead + AsyncWrite + Unpin> Sink<Bytes> for WsBytesFramed<T> {
+    type Error = StreamError;
 
     fn start_send(mut self: Pin<&mut Self>, bytes: Bytes) -> Result<(), Self::Error> {
         #[cfg(not(wasm_browser))]

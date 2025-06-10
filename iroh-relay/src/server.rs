@@ -892,7 +892,6 @@ mod tests {
     use crate::{
         client::ClientBuilder,
         dns::DnsResolver,
-        http::Protocol,
         protos::{
             self,
             relay::{ClientToServerMsg, ServerToClientMsg},
@@ -1028,7 +1027,6 @@ mod tests {
         let resolver = dns_resolver();
         info!("client a build & connect");
         let mut client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver.clone())
-            .protocol(Protocol::Websocket)
             .connect()
             .await?;
 
@@ -1037,7 +1035,6 @@ mod tests {
         let b_key = b_secret_key.public();
         info!("client b build & connect");
         let mut client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver.clone())
-            .protocol(Protocol::Websocket) // another websocket client
             .connect()
             .await?;
 
