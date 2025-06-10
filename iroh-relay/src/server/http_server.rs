@@ -669,7 +669,7 @@ impl Inner {
         // TODO(matheus23): Maybe use new frame?
         if !self.access.is_allowed(client_key).await {
             io.send(ServerToClientMsg::Health {
-                problem: Some("not authenticated".into()),
+                problem: "not authenticated".into(),
             })
             .await?;
             io.flush().await?;

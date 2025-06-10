@@ -1155,7 +1155,7 @@ mod tests {
         tokio::time::timeout(Duration::from_millis(500), async move {
             match client_a.next().await.unwrap().unwrap() {
                 ServerToClientMsg::Health { problem } => {
-                    assert_eq!(problem, Some("not authenticated".to_string()));
+                    assert_eq!(problem, "not authenticated".to_string());
                 }
                 msg => {
                     panic!("other msg: {:?}", msg);

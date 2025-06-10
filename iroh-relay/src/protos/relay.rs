@@ -196,7 +196,7 @@ pub enum ServerToClientMsg {
         ///
         /// The default condition is healthy, so the server doesn't broadcast a [`ReceivedMessage::Health`]
         /// until a problem exists.
-        problem: Option<String>,
+        problem: String,
     },
     /// A one-way message from server to client, advertising that the server is restarting.
     Restarting {
@@ -271,9 +271,7 @@ impl ServerToClientMsg {
                 dst.put(&data[..]);
             }
             Self::Health { problem } => {
-                if let Some(problem) = problem {
-                    dst.put(problem.as_ref());
-                }
+                dst.put(problem.as_ref());
             }
             Self::Restarting {
                 reconnect_in,
@@ -343,7 +341,6 @@ impl ServerToClientMsg {
                     .context(InvalidProtocolMessageEncodingSnafu)?
                     .to_owned();
                 // TODO(matheus23): Actually encode/decode the option
-                let problem = Some(problem);
                 Self::Health { problem }
             }
             FrameType::Restarting => {
@@ -485,7 +482,7 @@ mod tests {
         check_expected_bytes(vec![
             (
                 ServerToClientMsg::Health {
-                    problem: Some("Hello? Yes this is dog.".into()),
+                    problem: "Hello? Yes this is dog.".into(),
                 }
                 .write_to(Vec::new()),
                 "0e 48 65 6c 6c 6f 3f 20 59 65 73 20 74 68 69 73
@@ -590,7 +587,9 @@ mod proptests {
         let ping = prop::array::uniform8(any::<u8>()).prop_map(ServerToClientMsg::Ping);
         let pong = prop::array::uniform8(any::<u8>()).prop_map(ServerToClientMsg::Pong);
         // TODO(matheus23): Actually fix these
-        let health = data(0).prop_map(|_problem| ServerToClientMsg::Health { problem: None });
+        let health = data(0).prop_map(|_problem| ServerToClientMsg::Health {
+            problem: "".to_string(),
+        });
         let restarting = (any::<u32>(), any::<u32>()).prop_map(|(reconnect_in, try_for)| {
             ServerToClientMsg::Restarting {
                 reconnect_in: Duration::from_millis(reconnect_in.into()),
