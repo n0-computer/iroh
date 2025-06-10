@@ -14,7 +14,7 @@ use tokio_websockets::WebSocketStream;
 use tracing::instrument;
 
 use crate::{
-    protos::relay::{ClientToServerMsg, RecvError, ServerToClientMsg},
+    protos::send_recv::{ClientToServerMsg, RecvError, ServerToClientMsg},
     ExportKeyingMaterial, KeyCache,
 };
 
@@ -64,7 +64,7 @@ impl RelayedStream {
 
     fn limits() -> tokio_websockets::Limits {
         tokio_websockets::Limits::default()
-            .max_payload_len(Some(crate::protos::relay::MAX_FRAME_SIZE))
+            .max_payload_len(Some(crate::protos::send_recv::MAX_FRAME_SIZE))
     }
 }
 

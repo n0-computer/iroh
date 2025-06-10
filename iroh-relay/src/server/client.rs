@@ -19,7 +19,7 @@ use tracing::{debug, trace, warn, Instrument};
 use crate::{
     protos::{
         disco,
-        relay::{
+        send_recv::{
             write_frame, ClientToServerMsg, SendError as SendRelayError, ServerToClientMsg,
             PING_INTERVAL,
         },
@@ -557,7 +557,7 @@ mod tests {
     use tracing_test::traced_test;
 
     use super::*;
-    use crate::{client::conn::Conn, protos::handshake::FrameType};
+    use crate::{client::conn::Conn, protos::relay::FrameType};
 
     async fn recv_frame<
         E: snafu::Error + Sync + Send + 'static,

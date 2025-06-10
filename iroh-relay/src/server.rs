@@ -894,7 +894,7 @@ mod tests {
         dns::DnsResolver,
         protos::{
             self,
-            relay::{ClientToServerMsg, ServerToClientMsg},
+            send_recv::{ClientToServerMsg, ServerToClientMsg},
         },
     };
 

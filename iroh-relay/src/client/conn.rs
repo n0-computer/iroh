@@ -24,7 +24,7 @@ use crate::{
 use crate::{
     protos::{
         handshake,
-        relay::{
+        send_recv::{
             ClientToServerMsg, RecvError as RecvRelayError, SendError as SendRelayError,
             ServerToClientMsg,
         },
@@ -42,9 +42,6 @@ use crate::{
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
 pub enum SendError {
-    #[cfg(not(wasm_browser))]
-    #[snafu(transparent)]
-    RelayIo { source: io::Error },
     #[snafu(transparent)]
     WebsocketIo {
         #[cfg(not(wasm_browser))]
@@ -79,8 +76,6 @@ pub enum RecvError {
         #[cfg(wasm_browser)]
         source: ws_stream_wasm::WsErr,
     },
-    #[snafu(display("Unexpected frame received: {frame_type}"))]
-    UnexpectedFrame { frame_type: handshake::FrameType },
 }
 
 /// A connection to a relay server.
@@ -108,7 +103,7 @@ pub(crate) struct Conn {
 impl Conn {
     #[cfg(test)]
     pub(crate) fn test(io: tokio::io::DuplexStream) -> Self {
-        use crate::protos::relay::MAX_FRAME_SIZE;
+        use crate::protos::send_recv::MAX_FRAME_SIZE;
         Self {
             conn: tokio_websockets::ClientBuilder::new()
                 .limits(tokio_websockets::Limits::default().max_payload_len(Some(MAX_FRAME_SIZE)))
@@ -205,7 +200,7 @@ impl Sink<ClientToServerMsg> for Conn {
     }
 
     fn start_send(mut self: Pin<&mut Self>, frame: ClientToServerMsg) -> Result<(), Self::Error> {
-        // TODO(matheus23): Check this in send message construction instead
+        // TODO(matheus23): Check this in send message construction instead (and also check this in RecvPacket construction)
         if let ClientToServerMsg::SendPacket { packet, .. } = &frame {
             let size = packet.len();
             snafu::ensure!(size <= MAX_PACKET_SIZE, ExceedsMaxPacketSizeSnafu { size });

@@ -12,74 +12,8 @@ use quinn_proto::{coding::Codec, VarInt};
 use rand::{CryptoRng, RngCore};
 use snafu::{Backtrace, ResultExt, Snafu};
 
-use super::{relay::SendError, streams::BytesStreamSink};
+use super::{relay::FrameType, send_recv::SendError, streams::BytesStreamSink};
 use crate::ExportKeyingMaterial;
-
-/// TODO(matheus23) docs
-pub(crate) const PROTOCOL_VERSION: &[u8] = b"1";
-
-/// Possible frame types during handshaking
-#[repr(u32)]
-#[derive(Copy, Clone, PartialEq, Eq, Debug, num_enum::IntoPrimitive, num_enum::FromPrimitive)]
-pub enum FrameType {
-    /// The client frame type for the client challenge request
-    ClientRequestChallenge = 1,
-    /// The server frame type for the challenge response
-    ServerChallenge = 2,
-    /// The client frame type for the authentication frame
-    ClientAuth = 3,
-    /// The server frame type for authentication confirmation
-    ServerConfirmsAuth = 4,
-    /// The server frame type for authentication denial
-    ServerDeniesAuth = 5,
-    /// 32B dest pub key + packet bytes
-    SendPacket = 10,
-    /// v0/1 packet bytes, v2: 32B src pub key + packet bytes
-    RecvPacket = 11,
-    /// no payload, no-op (to be replaced with ping/pong)
-    KeepAlive = 12,
-    /// Sent from server to client to signal that a previous sender is no longer connected.
-    ///
-    /// That is, if A sent to B, and then if A disconnects, the server sends `FrameType::PeerGone`
-    /// to B so B can forget that a reverse path exists on that connection to get back to A
-    ///
-    /// 32B pub key of peer that's gone
-    NodeGone = 14,
-    /// Frames 9-11 concern meshing, which we have eliminated from our version of the protocol.
-    /// Messages with these frames will be ignored.
-    /// 8 byte ping payload, to be echoed back in FrameType::Pong
-    Ping = 15,
-    /// 8 byte payload, the contents of ping being replied to
-    Pong = 16,
-    /// Sent from server to client to tell the client if their connection is
-    /// unhealthy somehow.
-    Health = 17,
-
-    /// Sent from server to client for the server to declare that it's restarting.
-    /// Payload is two big endian u32 durations in milliseconds: when to reconnect,
-    /// and how long to try total.
-    ///
-    /// Handled on the `[relay::Client]`, but currently never sent on the `[relay::Server]`
-    Restarting = 18,
-    /// The frame type was unknown.
-    ///
-    /// This frame is the result of parsing any future frame types that this implementation
-    /// does not yet understand.
-    #[num_enum(default)]
-    Unknown,
-}
-
-impl std::fmt::Display for FrameType {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{self:?}")
-    }
-}
-
-impl From<FrameType> for VarInt {
-    fn from(value: FrameType) -> Self {
-        (value as u32).into()
-    }
-}
 
 /// Message that tells the server the client needs a challenge to authenticate.
 #[derive(derive_more::Debug, serde::Serialize)]
@@ -109,9 +43,6 @@ pub(crate) struct ClientAuth {
     pub(crate) signature: [u8; 64],
     /// Part of the extracted key material, if that's what was signed.
     pub(crate) key_material_suffix: Option<[u8; 16]>,
-    /// Supported versions/protocol features for version negotiation
-    /// with other connected relay clients
-    pub(crate) versions: Vec<Vec<u8>>,
 }
 
 /// Confirmation of successful connection.
@@ -124,9 +55,14 @@ pub(crate) struct ServerConfirmsAuth;
 #[cfg_attr(feature = "server", derive(serde::Serialize))]
 pub(crate) struct ServerDeniesAuth;
 
-/// TODO(matheus23): Docs
-pub trait Frame {
-    /// ...
+/// Trait for getting the frame type tag for a frame.
+///
+/// Used only in the handshake, as the frame we expect next
+/// is fairly stateful.
+/// Not used in the send/recv protocol, as any frame is
+/// allowed to happen at any time there.
+trait Frame {
+    /// The frame type this frame is identified by and prefixed with
     const TAG: FrameType;
 }
 
@@ -173,34 +109,16 @@ pub enum Error {
     UnexpectedEnd {},
     #[snafu(display("The relay denied our authentication"))]
     ServerDeniedAuth {},
-    #[snafu(display("Unexpected tag, got {tag}, but expected one of {expected_tags:?}"))]
-    UnexpectedTag {
-        tag: VarInt,
-        expected_tags: Vec<VarInt>,
+    #[snafu(display("Unexpected tag, got {frame_type}, but expected one of {expected_types:?}"))]
+    UnexpectedFrameType {
+        frame_type: FrameType,
+        expected_types: Vec<FrameType>,
     },
     #[snafu(display("Handshake failed while deserializing {frame_type} frame"))]
     DeserializationError {
         frame_type: FrameType,
         source: postcard::Error,
     },
-}
-
-impl FrameType {
-    pub(crate) fn write_to<O: BufMut>(&self, mut dst: O) -> O {
-        VarInt::from(*self).encode(&mut dst);
-        dst
-    }
-
-    // TODO(matheus23): Consolidate errors between handshake.rs and relay.rs
-    // Perhaps a shared error type `FramingError`?
-    pub(crate) fn from_bytes(bytes: Bytes) -> Option<(Self, Bytes)> {
-        let mut cursor = std::io::Cursor::new(&bytes);
-        let tag = VarInt::decode(&mut cursor).ok()?;
-        let tag_u32 = u32::try_from(u64::from(tag)).ok()?;
-        let frame_type = FrameType::from(tag_u32);
-        let content = bytes.slice(cursor.position() as usize..);
-        Some((frame_type, content))
-    }
 }
 
 impl ServerChallenge {
@@ -227,7 +145,6 @@ impl ClientAuth {
             public_key: secret_key.public(),
             key_material_suffix: None,
             signature: secret_key.sign(&challenge.message_to_sign()).to_bytes(),
-            versions: vec![PROTOCOL_VERSION.to_vec()],
         }
     }
 
@@ -260,7 +177,6 @@ impl ClientAuth {
             public_key,
             signature: secret_key.sign(&message).to_bytes(),
             key_material_suffix: Some(key_material[16..].try_into().expect("split right")),
-            versions: vec![PROTOCOL_VERSION.to_vec()],
         })
     }
 
@@ -295,7 +211,7 @@ pub(crate) async fn clientside(
         write_frame(io, ClientRequestChallenge).await?;
     }
 
-    let (tag, frame) = read_handshake_frame(
+    let (tag, frame) = read_frame(
         io,
         &[
             ServerChallenge::TAG,
@@ -312,7 +228,7 @@ pub(crate) async fn clientside(
         let client_info = ClientAuth::new_from_challenge(secret_key, &challenge);
         write_frame(io, client_info).await?;
 
-        read_handshake_frame(
+        read_frame(
             io,
             &[ServerConfirmsAuth::TAG, ServerDeniesAuth::TAG],
             time::Duration::from_secs(30),
@@ -341,7 +257,7 @@ pub(crate) async fn serverside(
     io: &mut (impl BytesStreamSink + ExportKeyingMaterial),
     rng: impl RngCore + CryptoRng,
 ) -> Result<ClientAuth, Error> {
-    let (tag, frame) = read_handshake_frame(
+    let (tag, frame) = read_frame(
         io,
         &[ClientRequestChallenge::TAG, ClientAuth::TAG],
         time::Duration::from_secs(10),
@@ -362,8 +278,7 @@ pub(crate) async fn serverside(
     let challenge = ServerChallenge::new(rng);
     write_frame(io, &challenge).await?;
 
-    let (_, frame) =
-        read_handshake_frame(io, &[ClientAuth::TAG], time::Duration::from_secs(10)).await?;
+    let (_, frame) = read_frame(io, &[ClientAuth::TAG], time::Duration::from_secs(10)).await?;
     let client_auth: ClientAuth = deserialize_frame(frame)?;
 
     if client_auth.verify_from_challenge(&challenge) {
@@ -392,9 +307,9 @@ async fn write_frame<F: serde::Serialize + Frame>(
 
 async fn read_frame(
     io: &mut impl BytesStreamSink,
-    expected_tags: &[VarInt],
+    expected_types: &[FrameType],
     timeout: time::Duration,
-) -> Result<(VarInt, Bytes), Error> {
+) -> Result<(FrameType, Bytes), Error> {
     let recv = time::timeout(timeout, io.try_next())
         .await
         .context(TimeoutSnafu)??
@@ -402,34 +317,23 @@ async fn read_frame(
 
     // TODO(matheus23) restructure: use FrameType::from_bytes, perhaps always use `FrameType` instead
     let mut cursor = std::io::Cursor::new(recv);
-    let tag = VarInt::decode(&mut cursor)
+    let var_int = VarInt::decode(&mut cursor)
         .map_err(|quinn_proto::coding::UnexpectedEnd| UnexpectedEndSnafu.build())?;
+    let frame_type = u32::try_from(var_int.into_inner())
+        .ok()
+        .map_or(FrameType::Unknown, FrameType::from);
     snafu::ensure!(
-        expected_tags.contains(&tag),
-        UnexpectedTagSnafu {
-            tag,
-            expected_tags: expected_tags.into_iter().cloned().collect::<Vec<_>>()
+        expected_types.contains(&frame_type),
+        UnexpectedFrameTypeSnafu {
+            frame_type,
+            expected_types: expected_types.into_iter().cloned().collect::<Vec<_>>()
         }
     );
 
     let start = cursor.position() as usize;
     let payload = cursor.into_inner().slice(start..);
 
-    Ok((tag, payload))
-}
-
-async fn read_handshake_frame(
-    io: &mut impl BytesStreamSink,
-    expected_types: &[FrameType],
-    timeout: time::Duration,
-) -> Result<(FrameType, Bytes), Error> {
-    let expected_tags = expected_types
-        .into_iter()
-        .map(|frame_type| VarInt::from(*frame_type))
-        .collect::<Vec<_>>();
-    let (tag, frame) = read_frame(io, &expected_tags, timeout).await?;
-    let frame_type = u32::try_from(tag.into_inner()).map_or(FrameType::Unknown, FrameType::from);
-    Ok((frame_type, frame))
+    Ok((frame_type, payload))
 }
 
 fn deserialize_frame<F: Frame + serde::de::DeserializeOwned>(frame: Bytes) -> Result<F, Error> {
@@ -609,7 +513,6 @@ mod tests {
         assert_eq!(client_auth.public_key, decoded.public_key);
         assert_eq!(client_auth.key_material_suffix, decoded.key_material_suffix);
         assert_eq!(client_auth.signature, decoded.signature);
-        assert_eq!(client_auth.versions, decoded.versions);
 
         Ok(())
     }

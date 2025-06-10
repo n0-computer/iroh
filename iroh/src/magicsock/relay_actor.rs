@@ -43,7 +43,7 @@ use iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_relay::{
     self as relay,
     client::{Client, ConnectError, RecvError, SendError},
-    protos::relay::{ClientToServerMsg, ServerToClientMsg},
+    protos::send_recv::{ClientToServerMsg, ServerToClientMsg},
     PingTracker, MAX_PACKET_SIZE,
 };
 use n0_future::{

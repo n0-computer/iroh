@@ -48,7 +48,7 @@ pub(crate) use key_cache::KeyCache;
 pub mod dns;
 pub mod node_info;
 
-pub use protos::relay::MAX_PACKET_SIZE;
+pub use protos::send_recv::MAX_PACKET_SIZE;
 
 pub use self::{
     ping_tracker::PingTracker,

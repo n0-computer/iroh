@@ -29,7 +29,7 @@ use crate::{
     http::RELAY_PATH,
     protos::{
         handshake,
-        relay::{ClientToServerMsg, ServerToClientMsg},
+        send_recv::{ClientToServerMsg, ServerToClientMsg},
     },
     KeyCache,
 };

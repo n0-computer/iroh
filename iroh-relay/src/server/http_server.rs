@@ -26,7 +26,7 @@ use super::{clients::Clients, AccessConfig, SpawnError};
 use crate::{
     defaults::{timeouts::SERVER_WRITE_TIMEOUT, DEFAULT_KEY_CACHE_CAPACITY},
     http::{RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},
-    protos::relay::{ServerToClientMsg, PER_CLIENT_SEND_QUEUE_DEPTH},
+    protos::send_recv::{ServerToClientMsg, PER_CLIENT_SEND_QUEUE_DEPTH},
     server::{
         client::Config,
         metrics::Metrics,
@@ -37,7 +37,7 @@ use crate::{
 };
 use crate::{
     http::WEBSOCKET_UPGRADE_PROTOCOL,
-    protos::{handshake, relay::MAX_FRAME_SIZE, streams::WsBytesFramed},
+    protos::{handshake, send_recv::MAX_FRAME_SIZE, streams::WsBytesFramed},
     server::streams::RateLimited,
 };
 
@@ -849,7 +849,7 @@ mod tests {
     use crate::{
         client::{conn::Conn, Client, ClientBuilder, ConnectError},
         dns::DnsResolver,
-        protos::relay::ClientToServerMsg,
+        protos::send_recv::ClientToServerMsg,
     };
 
     pub(crate) fn make_tls_config() -> TlsConfig {
