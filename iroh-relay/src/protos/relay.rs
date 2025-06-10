@@ -407,7 +407,7 @@ mod tests {
                 })
                 .collect();
             let expected_bytes = HEXLOWER.decode(&stripped).unwrap();
-            assert_eq!(bytes, expected_bytes);
+            assert_eq!(HEXLOWER.encode(&bytes), HEXLOWER.encode(&expected_bytes));
         }
     }
 
@@ -421,22 +421,22 @@ mod tests {
                     problem: "Hello? Yes this is dog.".into(),
                 }
                 .write_to(Vec::new()),
-                "0e 48 65 6c 6c 6f 3f 20 59 65 73 20 74 68 69 73
+                "11 48 65 6c 6c 6f 3f 20 59 65 73 20 74 68 69 73
                 20 69 73 20 64 6f 67 2e",
             ),
             (
                 ServerToClientMsg::NodeGone(client_key.public()).write_to(Vec::new()),
-                "08 19 7f 6b 23 e1 6c 85 32 c6 ab c8 38 fa cd 5e
+                "0e 19 7f 6b 23 e1 6c 85 32 c6 ab c8 38 fa cd 5e
                 a7 89 be 0c 76 b2 92 03 34 03 9b fa 8b 3d 36 8d
                 61",
             ),
             (
                 ServerToClientMsg::Ping([42u8; 8]).write_to(Vec::new()),
-                "0c 2a 2a 2a 2a 2a 2a 2a 2a",
+                "0f 2a 2a 2a 2a 2a 2a 2a 2a",
             ),
             (
                 ServerToClientMsg::Pong([42u8; 8]).write_to(Vec::new()),
-                "0d 2a 2a 2a 2a 2a 2a 2a 2a",
+                "10 2a 2a 2a 2a 2a 2a 2a 2a",
             ),
             (
                 ServerToClientMsg::ReceivedPacket {
@@ -444,7 +444,7 @@ mod tests {
                     data: "Hello World!".into(),
                 }
                 .write_to(Vec::new()),
-                "05 19 7f 6b 23 e1 6c 85 32 c6 ab c8 38 fa cd 5e
+                "0b 19 7f 6b 23 e1 6c 85 32 c6 ab c8 38 fa cd 5e
                 a7 89 be 0c 76 b2 92 03 34 03 9b fa 8b 3d 36 8d
                 61 48 65 6c 6c 6f 20 57 6f 72 6c 64 21",
             ),
@@ -454,7 +454,7 @@ mod tests {
                     try_for: Duration::from_millis(20),
                 }
                 .write_to(Vec::new()),
-                "0f 00 00 00 0a 00 00 00 14",
+                "12 00 00 00 0a 00 00 00 14",
             ),
         ]);
 
@@ -468,11 +468,11 @@ mod tests {
         check_expected_bytes(vec![
             (
                 ClientToServerMsg::Ping([42u8; 8]).write_to(Vec::new()),
-                "0c 2a 2a 2a 2a 2a 2a 2a 2a",
+                "0f 2a 2a 2a 2a 2a 2a 2a 2a",
             ),
             (
                 ClientToServerMsg::Pong([42u8; 8]).write_to(Vec::new()),
-                "0d 2a 2a 2a 2a 2a 2a 2a 2a",
+                "10 2a 2a 2a 2a 2a 2a 2a 2a",
             ),
             (
                 ClientToServerMsg::SendPacket {
@@ -480,7 +480,7 @@ mod tests {
                     packet: "Goodbye!".into(),
                 }
                 .write_to(Vec::new()),
-                "04 19 7f 6b 23 e1 6c 85 32 c6 ab c8 38 fa cd 5e
+                "0a 19 7f 6b 23 e1 6c 85 32 c6 ab c8 38 fa cd 5e
                 a7 89 be 0c 76 b2 92 03 34 03 9b fa 8b 3d 36 8d
                 61 47 6f 6f 64 62 79 65 21",
             ),
