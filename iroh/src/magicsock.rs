@@ -113,9 +113,6 @@ pub(crate) struct Options {
     /// The [`RelayMap`] to use, leave empty to not use a relay server.
     pub(crate) relay_map: RelayMap,
 
-    /// Whether to use websockets or the nonstandard legacy protocol to connect to relays
-    pub(crate) relay_protocol: iroh_relay::http::Protocol,
-
     /// An optional [`NodeMap`], to restore information about nodes.
     pub(crate) node_map: Option<Vec<NodeAddr>>,
 
@@ -1234,7 +1231,6 @@ impl Handle {
             addr_v6,
             secret_key,
             relay_map,
-            relay_protocol,
             node_map,
             discovery,
             discovery_user_data,
@@ -1279,7 +1275,6 @@ impl Handle {
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify,
             metrics: metrics.magicsock.clone(),
-            protocol: relay_protocol,
         });
         let relay_transports = vec![relay_transport];
 
@@ -2449,7 +2444,6 @@ mod tests {
                 addr_v6: None,
                 secret_key,
                 relay_map: RelayMap::empty(),
-                relay_protocol: iroh_relay::http::Protocol::default(),
                 node_map: None,
                 discovery: None,
                 proxy_url: None,
@@ -2982,7 +2976,6 @@ mod tests {
             addr_v6: None,
             secret_key: secret_key.clone(),
             relay_map: RelayMap::empty(),
-            relay_protocol: iroh_relay::http::Protocol::default(),
             node_map: None,
             discovery: None,
             discovery_user_data: None,

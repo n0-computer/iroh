@@ -9,39 +9,3 @@ pub(crate) const SUPPORTED_WEBSOCKET_VERSION: &str = "13";
 pub const RELAY_PATH: &str = "/relay";
 /// The HTTP path under which the relay allows doing latency queries for testing.
 pub const RELAY_PROBE_PATH: &str = "/ping";
-/// The legacy HTTP path under which the relay used to accept relaying connections.
-/// We keep this for backwards compatibility.
-
-/// The HTTP upgrade protocol used for relaying.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum Protocol {
-    /// Relays over websockets.
-    ///
-    /// Originally introduced to support browser connections.
-    Websocket,
-}
-
-impl Default for Protocol {
-    fn default() -> Self {
-        Self::Websocket
-    }
-}
-
-impl Protocol {
-    /// The HTTP upgrade header used or expected.
-    pub const fn upgrade_header(&self) -> &'static str {
-        match self {
-            Protocol::Websocket => WEBSOCKET_UPGRADE_PROTOCOL,
-        }
-    }
-
-    /// Tries to match the value of an HTTP upgrade header to figure out which protocol should be initiated.
-    pub fn parse_header(header: &http::HeaderValue) -> Option<Self> {
-        let header_bytes = header.as_bytes();
-        if header_bytes == Protocol::Websocket.upgrade_header().as_bytes() {
-            Some(Protocol::Websocket)
-        } else {
-            None
-        }
-    }
-}

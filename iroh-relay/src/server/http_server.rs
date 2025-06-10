@@ -22,10 +22,9 @@ use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, debug_span, error, info, info_span, trace, warn, Instrument};
 
 use super::{clients::Clients, streams::StreamError, AccessConfig, SpawnError};
-use crate::server::streams::RateLimited;
 use crate::{
     defaults::{timeouts::SERVER_WRITE_TIMEOUT, DEFAULT_KEY_CACHE_CAPACITY},
-    http::{Protocol, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},
+    http::{RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},
     protos::relay::{
         recv_client_key, Frame, MAX_FRAME_SIZE, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
     },
@@ -37,6 +36,7 @@ use crate::{
     },
     KeyCache,
 };
+use crate::{http::WEBSOCKET_UPGRADE_PROTOCOL, server::streams::RateLimited};
 
 type BytesBody = http_body_util::Full<hyper::body::Bytes>;
 type HyperError = Box<dyn std::error::Error + Send + Sync>;
@@ -465,47 +465,42 @@ impl RelayService {
         async move {
             {
                 // Send a 400 to any request that doesn't have an `Upgrade` header.
-                let Some(protocol) = req.headers().get(UPGRADE).and_then(Protocol::parse_header)
-                else {
+                if req.headers().get(UPGRADE)
+                    != Some(&HeaderValue::from_static(WEBSOCKET_UPGRADE_PROTOCOL))
+                {
                     return Ok(builder
                         .status(StatusCode::BAD_REQUEST)
                         .body(body_empty())
                         .expect("valid body"));
                 };
 
-                let websocket_headers = if protocol == Protocol::Websocket {
-                    let Some(key) = req.headers().get("Sec-WebSocket-Key").cloned() else {
-                        warn!("missing header Sec-WebSocket-Key for websocket relay protocol");
-                        return Ok(builder
-                            .status(StatusCode::BAD_REQUEST)
-                            .body(body_empty())
-                            .expect("valid body"));
-                    };
-
-                    let Some(version) = req.headers().get("Sec-WebSocket-Version").cloned() else {
-                        warn!("missing header Sec-WebSocket-Version for websocket relay protocol");
-                        return Ok(builder
-                            .status(StatusCode::BAD_REQUEST)
-                            .body(body_empty())
-                            .expect("valid body"));
-                    };
-
-                    if version.as_bytes() != SUPPORTED_WEBSOCKET_VERSION.as_bytes() {
-                        warn!("invalid header Sec-WebSocket-Version: {:?}", version);
-                        return Ok(builder
-                            .status(StatusCode::BAD_REQUEST)
-                            // It's convention to send back the version(s) we *do* support
-                            .header("Sec-WebSocket-Version", SUPPORTED_WEBSOCKET_VERSION)
-                            .body(body_empty())
-                            .expect("valid body"));
-                    }
-
-                    Some((key, version))
-                } else {
-                    None
+                let Some(key) = req.headers().get("Sec-WebSocket-Key").cloned() else {
+                    warn!("missing header Sec-WebSocket-Key for websocket relay protocol");
+                    return Ok(builder
+                        .status(StatusCode::BAD_REQUEST)
+                        .body(body_empty())
+                        .expect("valid body"));
                 };
 
-                debug!(?protocol, "upgrading connection");
+                let Some(version) = req.headers().get("Sec-WebSocket-Version").cloned() else {
+                    warn!("missing header Sec-WebSocket-Version for websocket relay protocol");
+                    return Ok(builder
+                        .status(StatusCode::BAD_REQUEST)
+                        .body(body_empty())
+                        .expect("valid body"));
+                };
+
+                if version.as_bytes() != SUPPORTED_WEBSOCKET_VERSION.as_bytes() {
+                    warn!("invalid header Sec-WebSocket-Version: {:?}", version);
+                    return Ok(builder
+                        .status(StatusCode::BAD_REQUEST)
+                        // It's convention to send back the version(s) we *do* support
+                        .header("Sec-WebSocket-Version", SUPPORTED_WEBSOCKET_VERSION)
+                        .body(body_empty())
+                        .expect("valid body"));
+                }
+
+                debug!("upgrading connection");
 
                 // Setup a future that will eventually receive the upgraded
                 // connection and talk a new protocol, and spawn the future
@@ -518,15 +513,10 @@ impl RelayService {
                     async move {
                         match hyper::upgrade::on(&mut req).await {
                             Ok(upgraded) => {
-                                if let Err(err) =
-                                    this.0.relay_connection_handler(protocol, upgraded).await
-                                {
-                                    warn!(
-                                        ?protocol,
-                                        "error accepting upgraded connection: {err:#}",
-                                    );
+                                if let Err(err) = this.0.relay_connection_handler(upgraded).await {
+                                    warn!("error accepting upgraded connection: {err:#}",);
                                 } else {
-                                    debug!(?protocol, "upgraded connection completed");
+                                    debug!("upgraded connection completed");
                                 };
                             }
                             Err(err) => warn!("upgrade error: {err:#}"),
@@ -536,20 +526,17 @@ impl RelayService {
                 );
 
                 // Now return a 101 Response saying we agree to the upgrade to the
-                // HTTP_UPGRADE_PROTOCOL
-                builder = builder
-                    .status(StatusCode::SWITCHING_PROTOCOLS)
-                    .header(UPGRADE, HeaderValue::from_static(protocol.upgrade_header()));
+                // websocket upgrade protocol
+                builder = builder.status(StatusCode::SWITCHING_PROTOCOLS).header(
+                    UPGRADE,
+                    HeaderValue::from_static(WEBSOCKET_UPGRADE_PROTOCOL),
+                );
 
-                if let Some((key, _version)) = websocket_headers {
-                    Ok(builder
-                        .header(SEC_WEBSOCKET_ACCEPT, derive_accept_key(&key))
-                        .header(CONNECTION, "upgrade")
-                        .body(body_full("switching to websocket protocol"))
-                        .expect("valid body"))
-                } else {
-                    Ok(builder.body(body_empty()).expect("valid body"))
-                }
+                Ok(builder
+                    .header(SEC_WEBSOCKET_ACCEPT, derive_accept_key(&key))
+                    .header(CONNECTION, "upgrade")
+                    .body(body_full("switching to websocket protocol"))
+                    .expect("valid body"))
             }
         }
         .boxed()
@@ -613,16 +600,15 @@ impl Inner {
     /// having sent off the connection this handler returns.
     async fn relay_connection_handler(
         &self,
-        protocol: Protocol,
         upgraded: Upgraded,
     ) -> Result<(), ConnectionHandlerError> {
-        debug!(?protocol, "relay_connection upgraded");
+        debug!("relay_connection upgraded");
         let (io, read_buf) = downcast_upgrade(upgraded)?;
         if !read_buf.is_empty() {
             return Err(BufferNotEmptySnafu { buf: read_buf }.build());
         }
 
-        self.accept(protocol, io).await?;
+        self.accept(io).await?;
         Ok(())
     }
 
@@ -636,12 +622,12 @@ impl Inner {
     ///
     /// [`AsyncRead`]: tokio::io::AsyncRead
     /// [`AsyncWrite`]: tokio::io::AsyncWrite
-    async fn accept(&self, protocol: Protocol, io: MaybeTlsStream) -> Result<(), AcceptError> {
+    async fn accept(&self, io: MaybeTlsStream) -> Result<(), AcceptError> {
         use snafu::ResultExt;
 
-        let io = RateLimited::from_cfg(self.rate_limit, io, self.metrics.clone());
+        trace!("accept: start");
 
-        trace!(?protocol, "accept: start");
+        let io = RateLimited::from_cfg(self.rate_limit, io, self.metrics.clone());
         self.metrics.accepts.inc();
         // Create a server builder with default config
         let websocket = tokio_websockets::ServerBuilder::new()
@@ -1104,10 +1090,8 @@ mod tests {
         let public_key_a = key_a.public();
         let (client_a, rw_a) = tokio::io::duplex(10);
         let s = service.clone();
-        let handler_task = tokio::spawn(async move {
-            s.0.accept(Protocol::Websocket, MaybeTlsStream::Test(rw_a))
-                .await
-        });
+        let handler_task =
+            tokio::spawn(async move { s.0.accept(MaybeTlsStream::Test(rw_a)).await });
         let mut client_a = make_test_client(client_a, &key_a).await?;
         handler_task.await.context("join")??;
 
@@ -1116,10 +1100,8 @@ mod tests {
         let public_key_b = key_b.public();
         let (client_b, rw_b) = tokio::io::duplex(10);
         let s = service.clone();
-        let handler_task = tokio::spawn(async move {
-            s.0.accept(Protocol::Websocket, MaybeTlsStream::Test(rw_b))
-                .await
-        });
+        let handler_task =
+            tokio::spawn(async move { s.0.accept(MaybeTlsStream::Test(rw_b)).await });
         let mut client_b = make_test_client(client_b, &key_b).await?;
         handler_task.await.context("join")??;
 
@@ -1192,10 +1174,8 @@ mod tests {
         let public_key_a = key_a.public();
         let (client_a, rw_a) = tokio::io::duplex(10);
         let s = service.clone();
-        let handler_task = tokio::spawn(async move {
-            s.0.accept(Protocol::Websocket, MaybeTlsStream::Test(rw_a))
-                .await
-        });
+        let handler_task =
+            tokio::spawn(async move { s.0.accept(MaybeTlsStream::Test(rw_a)).await });
         let mut client_a = make_test_client(client_a, &key_a).await?;
         handler_task.await.context("join")??;
 
@@ -1204,10 +1184,8 @@ mod tests {
         let public_key_b = key_b.public();
         let (client_b, rw_b) = tokio::io::duplex(10);
         let s = service.clone();
-        let handler_task = tokio::spawn(async move {
-            s.0.accept(Protocol::Websocket, MaybeTlsStream::Test(rw_b))
-                .await
-        });
+        let handler_task =
+            tokio::spawn(async move { s.0.accept(MaybeTlsStream::Test(rw_b)).await });
         let mut client_b = make_test_client(client_b, &key_b).await?;
         handler_task.await.context("join")??;
 
@@ -1250,10 +1228,8 @@ mod tests {
         info!("Create client B and connect it to the server");
         let (new_client_b, new_rw_b) = tokio::io::duplex(10);
         let s = service.clone();
-        let handler_task = tokio::spawn(async move {
-            s.0.accept(Protocol::Websocket, MaybeTlsStream::Test(new_rw_b))
-                .await
-        });
+        let handler_task =
+            tokio::spawn(async move { s.0.accept(MaybeTlsStream::Test(new_rw_b)).await });
         let mut new_client_b = make_test_client(new_client_b, &key_b).await?;
         handler_task.await.context("join")??;
 

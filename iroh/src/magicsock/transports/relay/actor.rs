@@ -215,7 +215,6 @@ struct RelayConnectionOptions {
     prefer_ipv6: Arc<AtomicBool>,
     #[cfg(any(test, feature = "test-utils"))]
     insecure_skip_cert_verify: bool,
-    protocol: iroh_relay::http::Protocol,
 }
 
 /// Possible reasons for a failed relay connection.
@@ -315,7 +314,6 @@ impl ActiveRelayActor {
             prefer_ipv6,
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_cert_verify,
-            protocol,
         } = opts;
 
         let mut builder = relay::client::ClientBuilder::new(
@@ -324,7 +322,6 @@ impl ActiveRelayActor {
             #[cfg(not(wasm_browser))]
             dns_resolver,
         )
-        .protocol(protocol)
         .address_family_selector(move || prefer_ipv6.load(Ordering::Relaxed));
         if let Some(proxy_url) = proxy_url {
             builder = builder.proxy_url(proxy_url);
@@ -885,7 +882,6 @@ pub struct Config {
     #[cfg(any(test, feature = "test-utils"))]
     pub insecure_skip_relay_cert_verify: bool,
     pub metrics: Arc<MagicsockMetrics>,
-    pub protocol: iroh_relay::http::Protocol,
 }
 
 impl RelayActor {
@@ -1121,7 +1117,6 @@ impl RelayActor {
             prefer_ipv6: self.config.ipv6_reported.clone(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_cert_verify: self.config.insecure_skip_relay_cert_verify,
-            protocol: self.config.protocol,
         };
 
         // TODO: Replace 64 with PER_CLIENT_SEND_QUEUE_DEPTH once that's unused
@@ -1446,7 +1441,6 @@ mod tests {
                 proxy_url: None,
                 prefer_ipv6: Arc::new(AtomicBool::new(true)),
                 insecure_skip_cert_verify: true,
-                protocol: iroh_relay::http::Protocol::default(),
             },
             stop_token,
             metrics: Default::default(),

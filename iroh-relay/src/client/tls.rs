@@ -1,16 +1,8 @@
 //! Functionality related to lower-level tls-based connection establishment.
 //!
-//! Primarily to support [`ClientBuilder::connect_relay`].
+//! Primarily to support [`ClientBuilder::connect`].
 //!
 //! This doesn't work in the browser - thus separated into its own file.
-//!
-//! `connect_relay` uses a custom HTTP upgrade header value (see [`HTTP_UPGRADE_PROTOCOL`]),
-//! as opposed to [`WEBSOCKET_UPGRADE_PROTOCOL`].
-//!
-//! `connect_ws` however reuses websockets for framing.
-//!
-//! [`HTTP_UPGRADE_PROTOCOL`]: crate::http::HTTP_UPGRADE_PROTOCOL
-//! [`WEBSOCKET_UPGRADE_PROTOCOL`]: crate::http::WEBSOCKET_UPGRADE_PROTOCOL
 
 // Based on tailscale/derp/derphttp/derphttp_client.go
 
@@ -26,7 +18,7 @@ use super::{
     streams::{MaybeTlsStream, ProxyStream},
     *,
 };
-use crate::{defaults::timeouts::*, protos::relay::MAX_FRAME_SIZE};
+use crate::defaults::timeouts::*;
 
 #[derive(Debug, Clone)]
 pub struct MaybeTlsStreamBuilder {
@@ -271,79 +263,6 @@ impl MaybeTlsStreamBuilder {
         let res = util::chain(std::io::Cursor::new(read_buf), io.into_inner());
 
         Ok(res)
-    }
-}
-
-impl ClientBuilder {
-    pub(super) async fn connect_ws(&self) -> Result<(Conn, SocketAddr), ConnectError> {
-        let mut dial_url = (*self.url).clone();
-        dial_url.set_path(RELAY_PATH);
-        // The relay URL is exchanged with the http(s) scheme in tickets and similar.
-        // We need to use the ws:// or wss:// schemes when connecting with websockets, though.
-        dial_url
-            .set_scheme(match self.url.scheme() {
-                "http" => "ws",
-                "ws" => "ws",
-                _ => "wss",
-            })
-            .map_err(|_| {
-                InvalidWebsocketUrlSnafu {
-                    url: dial_url.clone(),
-                }
-                .build()
-            })?;
-
-        debug!(%dial_url, "Dialing relay by websocket");
-
-        #[allow(unused_mut)]
-        let mut builder = MaybeTlsStreamBuilder::new(dial_url.clone(), self.dns_resolver.clone())
-            .prefer_ipv6(self.prefer_ipv6())
-            .proxy_url(self.proxy_url.clone());
-
-        #[cfg(any(test, feature = "test-utils"))]
-        if self.insecure_skip_cert_verify {
-            builder = builder.insecure_skip_cert_verify(self.insecure_skip_cert_verify);
-        }
-
-        let stream = builder.connect().await?;
-        let local_addr = stream
-            .as_ref()
-            .local_addr()
-            .map_err(|_| NoLocalAddrSnafu.build())?;
-        let (conn, response) = tokio_websockets::ClientBuilder::new()
-            .uri(dial_url.as_str())
-            .map_err(|_| {
-                InvalidRelayUrlSnafu {
-                    url: dial_url.clone(),
-                }
-                .build()
-            })?
-            .limits(tokio_websockets::Limits::default().max_payload_len(Some(MAX_FRAME_SIZE)))
-            .connect_on(stream)
-            .await?;
-
-        if response.status() != hyper::StatusCode::SWITCHING_PROTOCOLS {
-            UnexpectedUpgradeStatusSnafu {
-                code: response.status(),
-            }
-            .fail()?;
-        }
-
-        let conn = Conn::new(conn, self.key_cache.clone(), &self.secret_key).await?;
-
-        Ok((conn, local_addr))
-    }
-
-    /// Reports whether IPv4 dials should be slightly
-    /// delayed to give IPv6 a better chance of winning dial races.
-    /// Implementations should only return true if IPv6 is expected
-    /// to succeed. (otherwise delaying IPv4 will delay the connection
-    /// overall)
-    fn prefer_ipv6(&self) -> bool {
-        match self.address_family_selector {
-            Some(ref selector) => selector(),
-            None => false,
-        }
     }
 }
 
