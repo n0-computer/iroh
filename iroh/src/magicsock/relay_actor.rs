@@ -726,7 +726,6 @@ impl ActiveRelayActor {
                 state.established = true;
             }
             ServerToClientMsg::Health { problem } => {
-                let problem = problem.as_deref().unwrap_or("unknown");
                 warn!("Relay server reports problem: {problem}");
             }
             ServerToClientMsg::Restarting { .. } => {
