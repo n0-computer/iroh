@@ -200,7 +200,7 @@ mod tests {
     use super::*;
     use crate::{
         client::conn::Conn,
-        protos::relay::{FrameType, ServerToClientMsg},
+        protos::{handshake::FrameType, relay::ServerToClientMsg},
         server::streams::RelayedStream,
     };
 

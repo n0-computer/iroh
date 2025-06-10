@@ -80,9 +80,7 @@ pub enum RecvError {
         source: ws_stream_wasm::WsErr,
     },
     #[snafu(display("Unexpected frame received: {frame_type}"))]
-    UnexpectedFrame {
-        frame_type: crate::protos::relay::FrameType,
-    },
+    UnexpectedFrame { frame_type: handshake::FrameType },
 }
 
 /// A connection to a relay server.

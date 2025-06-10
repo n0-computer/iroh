@@ -557,7 +557,7 @@ mod tests {
     use tracing_test::traced_test;
 
     use super::*;
-    use crate::{client::conn::Conn, protos::relay::FrameType};
+    use crate::{client::conn::Conn, protos::handshake::FrameType};
 
     async fn recv_frame<
         E: snafu::Error + Sync + Send + 'static,

@@ -18,11 +18,11 @@ use iroh_base::{NodeId, SignatureError};
 use n0_future::time::Duration;
 use n0_future::{time, Sink, SinkExt};
 use nested_enum_utils::common_fields;
-use postcard::experimental::max_size::MaxSize;
-use serde::{Deserialize, Serialize};
-use snafu::{Backtrace, ResultExt, Snafu};
+use snafu::{Backtrace, OptionExt, ResultExt, Snafu};
 
 use crate::{client::conn::SendError as ConnSendError, KeyCache};
+
+use super::handshake::FrameType;
 
 /// The maximum size of a packet sent over relay.
 /// (This only includes the data bytes visible to magicsock, not
@@ -45,60 +45,6 @@ pub(crate) const PING_INTERVAL: Duration = Duration::from_secs(15);
 /// The number of packets buffered for sending per client
 #[cfg(feature = "server")]
 pub(crate) const PER_CLIENT_SEND_QUEUE_DEPTH: usize = 512;
-
-/// The one byte frame type at the beginning of the frame
-/// header. The second field is a big-endian u32 describing the
-/// length of the remaining frame (not including the initial 5 bytes)
-#[derive(Debug, PartialEq, Eq, num_enum::IntoPrimitive, num_enum::FromPrimitive, Clone, Copy)]
-#[repr(u8)]
-pub enum FrameType {
-    /// magic + 32b pub key + 24B nonce + bytes
-    ClientInfo = 2,
-    /// 32B dest pub key + packet bytes
-    SendPacket = 4,
-    /// v0/1 packet bytes, v2: 32B src pub key + packet bytes
-    RecvPacket = 5,
-    /// Sent from server to client to signal that a previous sender is no longer connected.
-    ///
-    /// That is, if A sent to B, and then if A disconnects, the server sends `FrameType::PeerGone`
-    /// to B so B can forget that a reverse path exists on that connection to get back to A
-    ///
-    /// 32B pub key of peer that's gone
-    NodeGone = 8,
-    /// Frames 9-11 concern meshing, which we have eliminated from our version of the protocol.
-    /// Messages with these frames will be ignored.
-    /// 8 byte ping payload, to be echoed back in FrameType::Pong
-    Ping = 12,
-    /// 8 byte payload, the contents of ping being replied to
-    Pong = 13,
-    /// Sent from server to client to tell the client if their connection is
-    /// unhealthy somehow.
-    ///
-    /// Currently this is used to indicate that the connection was closed because of authentication issues.
-    Health = 14,
-
-    /// Sent from server to client for the server to declare that it's restarting.
-    /// Payload is two big endian u32 durations in milliseconds: when to reconnect,
-    /// and how long to try total.
-    ///
-    /// Handled on the `[relay::Client]`, but currently never sent on the `[relay::Server]`
-    Restarting = 15,
-    /// Unknown frame type
-    #[num_enum(default)]
-    Unknown = 255,
-}
-
-impl std::fmt::Display for FrameType {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{self:?}")
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, MaxSize, PartialEq, Eq)]
-pub(crate) struct ClientInfo {
-    /// The relay protocol version that the client was built with.
-    pub(crate) version: usize,
-}
 
 /// Protocol send errors.
 #[common_fields({
@@ -252,7 +198,7 @@ impl ServerToClientMsg {
     ///
     /// Specifically meant for being put into a binary websocket message frame.
     pub(crate) fn write_to<O: BufMut>(&self, mut dst: O) -> O {
-        dst.put_u8(self.typ().into());
+        dst = self.typ().write_to(dst);
         match self {
             Self::ReceivedPacket {
                 remote_node_id: src_key,
@@ -289,12 +235,7 @@ impl ServerToClientMsg {
     /// Specifically, bytes received from a binary websocket message frame.
     #[allow(clippy::result_large_err)]
     pub(crate) fn from_bytes(bytes: Bytes, cache: &KeyCache) -> Result<Self, RecvError> {
-        if bytes.is_empty() {
-            return Err(TooSmallSnafu.build());
-        }
-        let frame_type = FrameType::from(bytes[0]);
-        let content = bytes.slice(1..);
-
+        let (frame_type, content) = FrameType::from_bytes(bytes).context(InvalidFrameSnafu)?;
         let res = match frame_type {
             FrameType::RecvPacket => {
                 if content.len() < NodeId::LENGTH {
@@ -385,7 +326,7 @@ impl ClientToServerMsg {
     ///
     /// Specifically meant for being put into a binary websocket message frame.
     pub(crate) fn write_to<O: BufMut>(&self, mut dst: O) -> O {
-        dst.put_u8(self.typ().into());
+        dst = self.typ().write_to(dst);
         match self {
             Self::SendPacket { dst_key, packet } => {
                 dst.put(dst_key.as_ref());
@@ -406,12 +347,7 @@ impl ClientToServerMsg {
     /// Specifically, bytes received from a binary websocket message frame.
     #[allow(clippy::result_large_err)]
     pub(crate) fn from_bytes(bytes: Bytes, cache: &KeyCache) -> Result<Self, RecvError> {
-        if bytes.is_empty() {
-            return Err(TooSmallSnafu.build());
-        }
-        let frame_type = FrameType::from(bytes[0]);
-        let content = bytes.slice(1..);
-
+        let (frame_type, content) = FrameType::from_bytes(bytes).context(InvalidFrameSnafu)?;
         let res = match frame_type {
             FrameType::SendPacket => {
                 if content.len() < NodeId::LENGTH {

@@ -44,7 +44,7 @@ pub enum FrameType {
     /// to B so B can forget that a reverse path exists on that connection to get back to A
     ///
     /// 32B pub key of peer that's gone
-    PeerGone = 14,
+    NodeGone = 14,
     /// Frames 9-11 concern meshing, which we have eliminated from our version of the protocol.
     /// Messages with these frames will be ignored.
     /// 8 byte ping payload, to be echoed back in FrameType::Pong
@@ -135,7 +135,9 @@ impl<T> BytesStreamSink for T where
 {
 }
 
-trait Frame {
+/// TODO(matheus23): Docs
+pub trait Frame {
+    /// ...
     const TAG: FrameType;
 }
 
@@ -192,6 +194,24 @@ pub enum Error {
         frame_type: FrameType,
         source: postcard::Error,
     },
+}
+
+impl FrameType {
+    pub(crate) fn write_to<O: BufMut>(&self, mut dst: O) -> O {
+        VarInt::from(*self).encode(&mut dst);
+        dst
+    }
+
+    // TODO(matheus23): Consolidate errors between handshake.rs and relay.rs
+    // Perhaps a shared error type `FramingError`?
+    pub(crate) fn from_bytes(bytes: Bytes) -> Option<(Self, Bytes)> {
+        let mut cursor = std::io::Cursor::new(&bytes);
+        let tag = VarInt::decode(&mut cursor).ok()?;
+        let tag_u32 = u32::try_from(u64::from(tag)).ok()?;
+        let frame_type = FrameType::from(tag_u32);
+        let content = bytes.slice(cursor.position() as usize..);
+        Some((frame_type, content))
+    }
 }
 
 impl ServerChallenge {
@@ -370,9 +390,8 @@ async fn write_frame<F: serde::Serialize + Frame>(
     io: &mut impl BytesStreamSink,
     frame: F,
 ) -> Result<(), Error> {
-    let tag: VarInt = F::TAG.into();
     let mut bytes = BytesMut::new();
-    tag.encode(&mut bytes);
+    F::TAG.write_to(&mut bytes);
     let bytes = postcard::to_io(&frame, bytes.writer())
         .expect("serialization failed") // buffer can't become "full" without being a critical failure, datastructures shouldn't ever fail serialization
         .into_inner()
@@ -392,6 +411,7 @@ async fn read_frame(
         .context(TimeoutSnafu)??
         .ok_or_else(|| UnexpectedEndSnafu.build())?;
 
+    // TODO(matheus23) restructure: use FrameType::from_bytes, perhaps always use `FrameType` instead
     let mut cursor = std::io::Cursor::new(recv);
     let tag = VarInt::decode(&mut cursor)
         .map_err(|quinn_proto::coding::UnexpectedEnd| UnexpectedEndSnafu.build())?;
