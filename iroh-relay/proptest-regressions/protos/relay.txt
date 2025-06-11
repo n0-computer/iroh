@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 9295f5287162dfb180e5826e563c2cea08b477b803ef412ff8351eb5c3eb45ef # shrinks to frame = KeepAlive
+cc 753aabcf8ae2b4e4a52f451d58339aab85a4b61108afdf4b9600f97b3a33bf42 # shrinks to frame = Health { problem: None }

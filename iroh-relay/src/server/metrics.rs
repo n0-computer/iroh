@@ -56,8 +56,8 @@ pub struct Metrics {
     #[metrics(help = "Number of unknown frames sent to this server.")]
     pub unknown_frames: Counter,
 
-    /// Number of frames received from client connection which have been rate-limited.
-    pub frames_rx_ratelimited_total: Counter,
+    /// Number of bytes received from client connection which have been rate-limited.
+    pub bytes_rx_ratelimited_total: Counter,
     /// Number of client connections which have had any frames rate-limited.
     pub conns_rx_ratelimited_total: Counter,
 

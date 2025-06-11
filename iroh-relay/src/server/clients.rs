@@ -194,30 +194,49 @@ mod tests {
 
     use bytes::Bytes;
     use iroh_base::SecretKey;
+    use n0_future::{Stream, StreamExt};
     use n0_snafu::{Result, ResultExt};
-    use tokio::io::DuplexStream;
-    use tokio_util::codec::{Framed, FramedRead};
 
     use super::*;
     use crate::{
-        protos::relay::{recv_frame, Frame, FrameType, RelayCodec},
-        server::streams::{MaybeTlsStream, RelayedStream},
+        client::conn::Conn,
+        protos::{relay::FrameType, send_recv::ServerToClientMsg},
+        server::streams::RelayedStream,
     };
 
-    fn test_client_builder(key: NodeId) -> (Config, FramedRead<DuplexStream, RelayCodec>) {
-        let (test_io, io) = tokio::io::duplex(1024);
+    async fn recv_frame<
+        E: snafu::Error + Sync + Send + 'static,
+        S: Stream<Item = Result<ServerToClientMsg, E>> + Unpin,
+    >(
+        frame_type: FrameType,
+        mut stream: S,
+    ) -> Result<ServerToClientMsg> {
+        match stream.next().await {
+            Some(Ok(frame)) => {
+                if frame_type != frame.typ() {
+                    snafu::whatever!(
+                        "Unepxected frame, got {}, but expected {}",
+                        frame.typ(),
+                        frame_type
+                    );
+                }
+                Ok(frame)
+            }
+            Some(Err(err)) => Err(err).e(),
+            None => snafu::whatever!("Unexpected EOF, expected frame {frame_type}"),
+        }
+    }
+
+    fn test_client_builder(key: NodeId) -> (Config, Conn) {
+        let (server, client) = tokio::io::duplex(1024);
         (
             Config {
                 node_id: key,
-                stream: RelayedStream::Relay(Framed::new(
-                    MaybeTlsStream::Test(io),
-                    RelayCodec::test(),
-                )),
+                stream: RelayedStream::test(server),
                 write_timeout: Duration::from_secs(1),
                 channel_capacity: 10,
-                rate_limit: None,
             },
-            FramedRead::new(test_io, RelayCodec::test()),
+            Conn::test(client),
         )
     }
 
@@ -238,9 +257,9 @@ mod tests {
         let frame = recv_frame(FrameType::RecvPacket, &mut a_rw).await?;
         assert_eq!(
             frame,
-            Frame::RecvPacket {
-                src_key: b_key,
-                content: data.to_vec().into(),
+            ServerToClientMsg::ReceivedPacket {
+                remote_node_id: b_key,
+                data: data.to_vec().into(),
             }
         );
 
@@ -249,9 +268,9 @@ mod tests {
         let frame = recv_frame(FrameType::RecvPacket, &mut a_rw).await?;
         assert_eq!(
             frame,
-            Frame::RecvPacket {
-                src_key: b_key,
-                content: data.to_vec().into(),
+            ServerToClientMsg::ReceivedPacket {
+                remote_node_id: b_key,
+                data: data.to_vec().into(),
             }
         );
 

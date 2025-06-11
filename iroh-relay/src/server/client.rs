@@ -1,13 +1,10 @@
 //! The server-side representation of an ongoing client relaying connection.
 
-use std::{
-    collections::HashSet, future::Future, num::NonZeroU32, pin::Pin, sync::Arc, task::Poll,
-    time::Duration,
-};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use bytes::Bytes;
 use iroh_base::NodeId;
-use n0_future::{FutureExt, Sink, SinkExt, Stream, StreamExt};
+use n0_future::{SinkExt, StreamExt};
 use nested_enum_utils::common_fields;
 use rand::Rng;
 use snafu::{Backtrace, GenerateImplicitData, Snafu};
@@ -17,18 +14,20 @@ use tokio::{
     time::MissedTickBehavior,
 };
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
-use tracing::{debug, error, instrument, trace, warn, Instrument};
+use tracing::{debug, trace, warn, Instrument};
 
 use crate::{
     protos::{
         disco,
-        relay::{write_frame, Frame, SendError as SendRelayError, PING_INTERVAL},
+        send_recv::{
+            write_frame, ClientToServerMsg, SendError as SendRelayError, ServerToClientMsg,
+            PING_INTERVAL,
+        },
     },
     server::{
         clients::Clients,
         metrics::Metrics,
         streams::{RelayedStream, StreamError},
-        ClientRateLimit,
     },
     PingTracker,
 };
@@ -49,7 +48,6 @@ pub(super) struct Config {
     pub(super) stream: RelayedStream,
     pub(super) write_timeout: Duration,
     pub(super) channel_capacity: usize,
-    pub(super) rate_limit: Option<ClientRateLimit>,
 }
 
 /// The [`Server`] side representation of a [`Client`]'s connection.
@@ -86,23 +84,10 @@ impl Client {
     ) -> Client {
         let Config {
             node_id,
-            stream: io,
+            stream,
             write_timeout,
             channel_capacity,
-            rate_limit,
         } = config;
-
-        let stream = match rate_limit {
-            Some(cfg) => {
-                let mut quota = governor::Quota::per_second(cfg.bytes_per_second);
-                if let Some(max_burst) = cfg.max_burst_bytes {
-                    quota = quota.allow_burst(max_burst);
-                }
-                let limiter = governor::RateLimiter::direct(quota);
-                RateLimitedRelayedStream::new(io, limiter, metrics.clone())
-            }
-            None => RateLimitedRelayedStream::unlimited(io, metrics.clone()),
-        };
 
         let done = CancellationToken::new();
         let (send_queue_s, send_queue_r) = mpsc::channel(channel_capacity);
@@ -205,12 +190,6 @@ pub enum HandleFrameError {
     },
     #[snafu(transparent)]
     Relay { source: SendRelayError },
-    #[snafu(display("Server issue: {problem:?}"))]
-    Health {
-        problem: Bytes,
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
-    },
 }
 
 /// Run error
@@ -296,7 +275,7 @@ pub enum RunError {
 #[derive(Debug)]
 struct Actor {
     /// IO Stream to talk to the client
-    stream: RateLimitedRelayedStream,
+    stream: RelayedStream,
     /// Maximum time we wait to complete a write to the client
     timeout: Duration,
     /// Packets queued to send to the client
@@ -382,7 +361,7 @@ impl Actor {
                 node_id = self.node_gone.recv() => {
                     let node_id = node_id.ok_or(NodeGoneDropSnafu.build())?;
                     trace!("node_id gone: {:?}", node_id);
-                    self.write_frame(Frame::NodeGone { node_id }).await.context(NodeGoneWriteFrameSnafu)?;
+                    self.write_frame(ServerToClientMsg::NodeGone(node_id)).await.context(NodeGoneWriteFrameSnafu)?;
                 }
                 _ = self.ping_tracker.timeout() => {
                     trace!("pong timed out");
@@ -393,7 +372,7 @@ impl Actor {
                     // new interval
                     ping_interval.reset_after(next_interval());
                     let data = self.ping_tracker.new_ping();
-                    self.write_frame(Frame::Ping { data }).await.context(KeepAliveWriteFrameSnafu)?;
+                    self.write_frame(ServerToClientMsg::Ping(data)).await.context(KeepAliveWriteFrameSnafu)?;
                 }
             }
 
@@ -408,7 +387,7 @@ impl Actor {
     /// Writes the given frame to the connection.
     ///
     /// Errors if the send does not happen within the `timeout` duration
-    async fn write_frame(&mut self, frame: Frame) -> Result<(), SendRelayError> {
+    async fn write_frame(&mut self, frame: ServerToClientMsg) -> Result<(), SendRelayError> {
         write_frame(&mut self.stream, frame, Some(self.timeout)).await
     }
 
@@ -423,8 +402,11 @@ impl Actor {
         if let Ok(len) = content.len().try_into() {
             self.metrics.bytes_sent.inc_by(len);
         }
-        self.write_frame(Frame::RecvPacket { src_key, content })
-            .await
+        self.write_frame(ServerToClientMsg::ReceivedPacket {
+            remote_node_id: src_key,
+            data: content,
+        })
+        .await
     }
 
     async fn send_packet(&mut self, packet: Packet) -> Result<(), SendRelayError> {
@@ -458,7 +440,7 @@ impl Actor {
     /// Handles frame read results.
     async fn handle_frame(
         &mut self,
-        maybe_frame: Option<Result<Frame, StreamError>>,
+        maybe_frame: Option<Result<ClientToServerMsg, StreamError>>,
     ) -> Result<(), HandleFrameError> {
         trace!(?maybe_frame, "handle incoming frame");
         let frame = match maybe_frame {
@@ -467,7 +449,7 @@ impl Actor {
         };
 
         match frame {
-            Frame::SendPacket { dst_key, packet } => {
+            ClientToServerMsg::SendPacket { dst_key, packet } => {
                 let packet_len = packet.len();
                 if let Err(err @ ForwardPacketError { .. }) =
                     self.handle_frame_send_packet(dst_key, packet)
@@ -476,18 +458,14 @@ impl Actor {
                 }
                 self.metrics.bytes_recv.inc_by(packet_len as u64);
             }
-            Frame::Ping { data } => {
+            ClientToServerMsg::Ping(data) => {
                 self.metrics.got_ping.inc();
                 // TODO: add rate limiter
-                self.write_frame(Frame::Pong { data }).await?;
+                self.write_frame(ServerToClientMsg::Pong(data)).await?;
                 self.metrics.sent_pong.inc();
             }
-            Frame::Pong { data } => {
+            ClientToServerMsg::Pong(data) => {
                 self.ping_tracker.pong_received(data);
-            }
-            Frame::Health { problem } => return Err(HealthSnafu { problem }.build()),
-            _ => {
-                self.metrics.unknown_frames.inc();
             }
         }
         Ok(())
@@ -537,187 +515,6 @@ impl ForwardPacketError {
     }
 }
 
-/// Rate limiter for reading from a [`RelayedStream`].
-///
-/// The writes to the sink are not rate limited.
-///
-/// This potentially buffers one frame if the rate limiter does not allows this frame.
-/// While the frame is buffered the undernlying stream is no longer polled.
-#[derive(Debug)]
-struct RateLimitedRelayedStream {
-    inner: RelayedStream,
-    limiter: Option<Arc<governor::DefaultDirectRateLimiter>>,
-    state: State,
-    /// Keeps track if this stream was ever rate-limited.
-    limited_once: bool,
-    metrics: Arc<Metrics>,
-}
-
-#[derive(derive_more::Debug)]
-enum State {
-    #[debug("Blocked")]
-    Blocked {
-        /// Future which will complete when the item can be yielded.
-        delay: Pin<Box<dyn Future<Output = ()> + Send + Sync>>,
-        /// Item to yield when the `delay` future completes.
-        item: Result<Frame, StreamError>,
-    },
-    Ready,
-}
-
-impl RateLimitedRelayedStream {
-    fn new(
-        inner: RelayedStream,
-        limiter: governor::DefaultDirectRateLimiter,
-        metrics: Arc<Metrics>,
-    ) -> Self {
-        Self {
-            inner,
-            limiter: Some(Arc::new(limiter)),
-            state: State::Ready,
-            limited_once: false,
-            metrics,
-        }
-    }
-
-    fn unlimited(inner: RelayedStream, metrics: Arc<Metrics>) -> Self {
-        Self {
-            inner,
-            limiter: None,
-            state: State::Ready,
-            limited_once: false,
-            metrics,
-        }
-    }
-}
-
-impl RateLimitedRelayedStream {
-    /// Records metrics about being rate-limited.
-    fn record_rate_limited(&mut self) {
-        // TODO: add a label for the frame type.
-        self.metrics.frames_rx_ratelimited_total.inc();
-        if !self.limited_once {
-            self.metrics.conns_rx_ratelimited_total.inc();
-            self.limited_once = true;
-        }
-    }
-}
-
-impl Stream for RateLimitedRelayedStream {
-    type Item = Result<Frame, StreamError>;
-
-    #[instrument(name = "rate_limited_relayed_stream", skip_all)]
-    fn poll_next(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<Option<Self::Item>> {
-        let Some(ref limiter) = self.limiter else {
-            // If there is no rate-limiter directly poll the inner.
-            return Pin::new(&mut self.inner).poll_next(cx);
-        };
-        let limiter = limiter.clone();
-        loop {
-            match &mut self.state {
-                State::Ready => {
-                    // Poll inner for a new item.
-                    match Pin::new(&mut self.inner).poll_next(cx) {
-                        Poll::Ready(Some(item)) => {
-                            match &item {
-                                Ok(frame) => {
-                                    // How many bytes does this frame consume?
-                                    let Ok(frame_len) =
-                                        TryInto::<u32>::try_into(frame.len_with_header())
-                                            .and_then(TryInto::<NonZeroU32>::try_into)
-                                    else {
-                                        error!("frame len not NonZeroU32, is MAX_FRAME_SIZE too large?");
-                                        // Let this frame through so to not completely break.
-                                        return Poll::Ready(Some(item));
-                                    };
-
-                                    match limiter.check_n(frame_len) {
-                                        Ok(Ok(_)) => return Poll::Ready(Some(item)),
-                                        Ok(Err(_)) => {
-                                            // Item is rate-limited.
-                                            self.record_rate_limited();
-                                            let delay = Box::pin({
-                                                let limiter = limiter.clone();
-                                                async move {
-                                                    limiter.until_n_ready(frame_len).await.ok();
-                                                }
-                                            });
-                                            self.state = State::Blocked { delay, item };
-                                            continue;
-                                        }
-                                        Err(_insufficient_capacity) => {
-                                            error!(
-                                                "frame larger than bucket capacity: \
-                                                 configuration error: \
-                                                 max_burst_bytes < MAX_FRAME_SIZE?"
-                                            );
-                                            // Let this frame through so to not completely break.
-                                            return Poll::Ready(Some(item));
-                                        }
-                                    }
-                                }
-                                Err(_) => {
-                                    // Yielding errors is not rate-limited.
-                                    return Poll::Ready(Some(item));
-                                }
-                            }
-                        }
-                        Poll::Ready(None) => return Poll::Ready(None),
-                        Poll::Pending => return Poll::Pending,
-                    }
-                }
-                State::Blocked { delay, .. } => {
-                    match delay.poll(cx) {
-                        Poll::Ready(_) => {
-                            match std::mem::replace(&mut self.state, State::Ready) {
-                                State::Ready => unreachable!(),
-                                State::Blocked { item, .. } => {
-                                    // Yield the item directly, rate-limit has already been
-                                    // accounted for by awaiting the future.
-                                    return Poll::Ready(Some(item));
-                                }
-                            }
-                        }
-                        Poll::Pending => return Poll::Pending,
-                    }
-                }
-            }
-        }
-    }
-}
-
-impl Sink<Frame> for RateLimitedRelayedStream {
-    type Error = std::io::Error;
-
-    fn poll_ready(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<std::result::Result<(), Self::Error>> {
-        Pin::new(&mut self.inner).poll_ready(cx)
-    }
-
-    fn start_send(mut self: Pin<&mut Self>, item: Frame) -> std::result::Result<(), Self::Error> {
-        Pin::new(&mut self.inner).start_send(item)
-    }
-
-    fn poll_flush(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<std::result::Result<(), Self::Error>> {
-        Pin::new(&mut self.inner).poll_flush(cx)
-    }
-
-    fn poll_close(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<std::result::Result<(), Self::Error>> {
-        Pin::new(&mut self.inner).poll_close(cx)
-    }
-}
-
 /// Tracks how many unique nodes have been seen during the last day.
 #[derive(Debug)]
 struct ClientCounter {
@@ -752,18 +549,38 @@ impl ClientCounter {
 
 #[cfg(test)]
 mod tests {
-    use bytes::Bytes;
+    use bytes::{Bytes, BytesMut};
     use iroh_base::SecretKey;
+    use n0_future::Stream;
     use n0_snafu::{Result, ResultExt};
-    use tokio_util::codec::Framed;
     use tracing::info;
     use tracing_test::traced_test;
 
     use super::*;
-    use crate::{
-        protos::relay::{recv_frame, FrameType, RelayCodec},
-        server::streams::MaybeTlsStream,
-    };
+    use crate::{client::conn::Conn, protos::relay::FrameType};
+
+    async fn recv_frame<
+        E: snafu::Error + Sync + Send + 'static,
+        S: Stream<Item = Result<ServerToClientMsg, E>> + Unpin,
+    >(
+        frame_type: FrameType,
+        mut stream: S,
+    ) -> Result<ServerToClientMsg> {
+        match stream.next().await {
+            Some(Ok(frame)) => {
+                if frame_type != frame.typ() {
+                    snafu::whatever!(
+                        "Unepxected frame, got {}, but expected {}",
+                        frame.typ(),
+                        frame_type
+                    );
+                }
+                Ok(frame)
+            }
+            Some(Err(err)) => Err(err).e(),
+            None => snafu::whatever!("Unexpected EOF, expected frame {frame_type}"),
+        }
+    }
 
     #[tokio::test]
     #[traced_test]
@@ -774,14 +591,13 @@ mod tests {
 
         let node_id = SecretKey::generate(rand::thread_rng()).public();
         let (io, io_rw) = tokio::io::duplex(1024);
-        let mut io_rw = Framed::new(io_rw, RelayCodec::test());
-        let stream =
-            RelayedStream::Relay(Framed::new(MaybeTlsStream::Test(io), RelayCodec::test()));
+        let mut io_rw = Conn::test(io_rw);
+        let stream = RelayedStream::test(io);
 
         let clients = Clients::default();
         let metrics = Arc::new(Metrics::default());
         let actor = Actor {
-            stream: RateLimitedRelayedStream::unlimited(stream, metrics.clone()),
+            stream,
             timeout: Duration::from_secs(1),
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
@@ -809,12 +625,12 @@ mod tests {
             data: Bytes::from(&data[..]),
         };
         send_queue_s.send(packet.clone()).await.context("send")?;
-        let frame = recv_frame(FrameType::RecvPacket, &mut io_rw).await?;
+        let frame = recv_frame(FrameType::RecvPacket, &mut io_rw).await.e()?;
         assert_eq!(
             frame,
-            Frame::RecvPacket {
-                src_key: node_id,
-                content: data.to_vec().into()
+            ServerToClientMsg::ReceivedPacket {
+                remote_node_id: node_id,
+                data: data.to_vec().into()
             }
         );
 
@@ -824,32 +640,32 @@ mod tests {
             .send(packet.clone())
             .await
             .context("send")?;
-        let frame = recv_frame(FrameType::RecvPacket, &mut io_rw).await?;
+        let frame = recv_frame(FrameType::RecvPacket, &mut io_rw).await.e()?;
         assert_eq!(
             frame,
-            Frame::RecvPacket {
-                src_key: node_id,
-                content: data.to_vec().into()
+            ServerToClientMsg::ReceivedPacket {
+                remote_node_id: node_id,
+                data: data.to_vec().into()
             }
         );
 
         // send peer_gone
         println!("send peer gone");
         peer_gone_s.send(node_id).await.context("send")?;
-        let frame = recv_frame(FrameType::PeerGone, &mut io_rw).await?;
-        assert_eq!(frame, Frame::NodeGone { node_id });
+        let frame = recv_frame(FrameType::NodeGone, &mut io_rw).await.e()?;
+        assert_eq!(frame, ServerToClientMsg::NodeGone(node_id));
 
         // Read tests
         println!("--read");
 
         // send ping, expect pong
         let data = b"pingpong";
-        write_frame(&mut io_rw, Frame::Ping { data: *data }, None).await?;
+        io_rw.send(ClientToServerMsg::Ping(*data)).await?;
 
         // recv pong
         println!(" recv pong");
         let frame = recv_frame(FrameType::Pong, &mut io_rw).await?;
-        assert_eq!(frame, Frame::Pong { data: *data });
+        assert_eq!(frame, ServerToClientMsg::Pong(*data));
 
         let target = SecretKey::generate(rand::thread_rng()).public();
 
@@ -857,7 +673,7 @@ mod tests {
         println!("  send packet");
         let data = b"hello world!";
         io_rw
-            .send(Frame::SendPacket {
+            .send(ClientToServerMsg::SendPacket {
                 dst_key: target,
                 packet: Bytes::from_static(data),
             })
@@ -871,7 +687,7 @@ mod tests {
         disco_data.extend_from_slice(target.as_bytes());
         disco_data.extend_from_slice(data);
         io_rw
-            .send(Frame::SendPacket {
+            .send(ClientToServerMsg::SendPacket {
                 dst_key: target,
                 packet: disco_data.clone().into(),
             })
@@ -883,33 +699,26 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     #[traced_test]
     async fn test_rate_limit() -> Result {
         const LIMIT: u32 = 50;
         const MAX_FRAMES: u32 = 100;
 
-        // Rate limiter allowing LIMIT bytes/s
-        let quota = governor::Quota::per_second(NonZeroU32::try_from(LIMIT).unwrap());
-        let limiter = governor::RateLimiter::direct(quota);
-
         // Build the rate limited stream.
         let (io_read, io_write) = tokio::io::duplex((LIMIT * MAX_FRAMES) as _);
-        let mut frame_writer = Framed::new(io_write, RelayCodec::test());
-        let stream = RelayedStream::Relay(Framed::new(
-            MaybeTlsStream::Test(io_read),
-            RelayCodec::test(),
-        ));
-        let mut stream = RateLimitedRelayedStream::new(stream, limiter, Default::default());
+        let mut frame_writer = Conn::test(io_write);
+        // Rate limiter allowing LIMIT bytes/s
+        let mut stream = RelayedStream::test_limited(io_read, LIMIT / 10, LIMIT);
 
         // Prepare a frame to send, assert its size.
-        let data = Bytes::from_static(b"hello world!!");
+        let data = Bytes::from_static(b"hello world!1eins");
         let target = SecretKey::generate(rand::thread_rng()).public();
-        let frame = Frame::SendPacket {
+        let frame = ClientToServerMsg::SendPacket {
             dst_key: target,
             packet: data.clone(),
         };
-        let frame_len = frame.len_with_header();
+        let frame_len = frame.clone().write_to(BytesMut::new()).freeze().len();
         assert_eq!(frame_len, LIMIT as usize);
 
         // Send a frame, it should arrive.
