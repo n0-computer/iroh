@@ -53,6 +53,7 @@ use n0_future::{
     task::{self, AbortOnDropHandle},
     time::{self, Duration, Instant},
 };
+use n0_watcher::{Disconnected, Watchable, Watcher as _};
 use pkarr::{
     errors::{PublicKeyError, SignedPacketVerifyError},
     SignedPacket,
@@ -65,7 +66,6 @@ use super::DiscoveryError;
 use crate::{
     discovery::{Discovery, DiscoveryItem, NodeData},
     endpoint::force_staging_infra,
-    watcher::{self, Disconnected, Watchable, Watcher as _},
     Endpoint,
 };
 
@@ -247,7 +247,7 @@ struct PublisherService {
     secret_key: SecretKey,
     #[debug("PkarrClient")]
     pkarr_client: PkarrRelayClient,
-    watcher: watcher::Direct<Option<NodeInfo>>,
+    watcher: n0_watcher::Direct<Option<NodeInfo>>,
     ttl: u32,
     republish_interval: Duration,
 }
