@@ -25,9 +25,9 @@ pub struct Report {
     pub ipv4_can_send: bool,
     /// could bind a socket to ::1
     pub os_has_ipv6: bool,
-    /// Whether STUN results depend on which STUN server you're talking to (on IPv4).
+    /// Whether the reported public address differs when probing different servers (on IPv4).
     pub mapping_varies_by_dest_ip: Option<bool>,
-    /// Whether STUN results depend on which STUN server you're talking to (on IPv6).
+    /// Whether the reported public address differs when probing different servers (on IPv6).
     ///
     /// Note that we don't really expect this to happen and are merely logging this if
     /// detecting rather than using it.  For now.
