@@ -101,8 +101,6 @@ impl From<netwatch::netmon::State> for IfStateDetails {
 #[cfg(not(wasm_browser))]
 #[derive(Debug, Clone)]
 pub(crate) struct SocketState {
-    /// The portmapper client, if there is one.
-    pub(crate) port_mapper: Option<portmapper::Client>,
     /// QUIC client to do QUIC address Discovery
     pub(crate) quic_client: Option<QuicClient>,
     /// The DNS resolver to use for probes that need to resolve DNS records.
@@ -191,8 +189,6 @@ pub(super) enum ProbesError {
 pub(super) enum ProbeFinished {
     Regular(Result<ProbeReport, ProbesError>),
     #[cfg(not(wasm_browser))]
-    Portmap(Option<portmapper::ProbeOutput>),
-    #[cfg(not(wasm_browser))]
     CaptivePortal(Option<bool>),
 }
 
@@ -225,7 +221,6 @@ impl Actor {
         let _probes_token = self.spawn_probes_task(self.if_state.clone(), &mut probes);
         let mut num_probes = probes.len();
 
-        let port_token = self.prepare_portmapper_task(&mut probes);
         let captive_token = self.prepare_captive_portal_task(&mut probes);
 
         // any reports of working UDP/QUIC?
@@ -247,10 +242,9 @@ impl Actor {
                         // If all probes are done & we have_udp cancel portmapper and captive
                         if num_probes == 0 {
                             debug!("all regular probes done");
-                            debug_assert!(probes.len() <= 2, "{} probes", probes.len());
+                            debug_assert!(probes.len() <= 1, "{} probes", probes.len());
 
                             if have_udp {
-                                port_token.cancel();
                                 captive_token.cancel();
                             }
                         }
@@ -266,40 +260,6 @@ impl Actor {
                 }
             }
         }
-    }
-
-    /// Creates the future which will perform the portmapper task.
-    ///
-    /// The returned future will run the portmapper, if enabled, resolving to it's result.
-    fn prepare_portmapper_task(&self, tasks: &mut JoinSet<ProbeFinished>) -> CancellationToken {
-        let token = CancellationToken::new();
-        #[cfg(not(wasm_browser))]
-        if let Some(port_mapper) = self.socket_state.port_mapper.clone() {
-            let token = token.clone();
-            tasks.spawn(
-                async move {
-                    let res = token.run_until_cancelled_owned(port_mapper.probe()).await;
-                    let res = match res {
-                        Some(Ok(Ok(res))) => Some(res),
-                        Some(Ok(Err(err))) => {
-                            debug!("skipping port mapping: {err:?}");
-                            None
-                        }
-                        Some(Err(recv_err)) => {
-                            warn!("probe failed: {recv_err:?}");
-                            None
-                        }
-                        None => {
-                            trace!("probe cancelled");
-                            None
-                        }
-                    };
-                    ProbeFinished::Portmap(res)
-                }
-                .instrument(debug_span!("port-mapper")),
-            );
-        }
-        token
     }
 
     /// Creates the future which will perform the captive portal check.
