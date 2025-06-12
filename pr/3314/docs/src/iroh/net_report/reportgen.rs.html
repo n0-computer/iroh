@@ -236,7 +236,7 @@
 <a href=#236 id=236 data-nosnippet>236</a>                        have_udp |= report.as_ref().map(|r| r.is_udp()).unwrap_or_default();
 <a href=#237 id=237 data-nosnippet>237</a>                        num_probes -= <span class="number">1</span>;
 <a href=#238 id=238 data-nosnippet>238</a>
-<a href=#239 id=239 data-nosnippet>239</a>                        <span class="comment">// If all probes are done &amp; we have_udp cancel portmapper and captive
+<a href=#239 id=239 data-nosnippet>239</a>                        <span class="comment">// If all probes are done &amp; we have_udp cancel captive
 <a href=#240 id=240 data-nosnippet>240</a>                        </span><span class="kw">if </span>num_probes == <span class="number">0 </span>{
 <a href=#241 id=241 data-nosnippet>241</a>                            <span class="macro">debug!</span>(<span class="string">"all regular probes done"</span>);
 <a href=#242 id=242 data-nosnippet>242</a>                            <span class="macro">debug_assert!</span>(probes.len() &lt;= <span class="number">1</span>, <span class="string">"{} probes"</span>, probes.len());
@@ -621,7 +621,7 @@
 <a href=#621 id=621 data-nosnippet>621</a>    relay_addr: SocketAddr,
 <a href=#622 id=622 data-nosnippet>622</a>    ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddresses&gt;,
 <a href=#623 id=623 data-nosnippet>623</a>) -&gt; <span class="prelude-ty">Result</span>&lt;QadProbeReport, RunProbeError&gt; {
-<a href=#624 id=624 data-nosnippet>624</a>    <span class="macro">trace!</span>(%relay_node, <span class="string">"QAD probe start"</span>);
+<a href=#624 id=624 data-nosnippet>624</a>    <span class="macro">trace!</span>(<span class="string">"QAD probe start"</span>);
 <a href=#625 id=625 data-nosnippet>625</a>
 <a href=#626 id=626 data-nosnippet>626</a>    <span class="kw">let </span>relay_addr = maybe_to_mapped_addr(ip_mapped_addrs, relay_addr);
 <a href=#627 id=627 data-nosnippet>627</a>    <span class="kw">let </span>host = <span class="kw">match </span>relay_node.url.host_str() {
@@ -889,7 +889,7 @@
 <a href=#889 id=889 data-nosnippet>889</a>    relay_node: Arc&lt;RelayNode&gt;,
 <a href=#890 id=890 data-nosnippet>890</a>    <span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))] </span>insecure_skip_relay_cert_verify: bool,
 <a href=#891 id=891 data-nosnippet>891</a>) -&gt; <span class="prelude-ty">Result</span>&lt;HttpsProbeReport, MeasureHttpsLatencyError&gt; {
-<a href=#892 id=892 data-nosnippet>892</a>    <span class="macro">trace!</span>(%relay_node, <span class="string">"HTTPS probe start"</span>);
+<a href=#892 id=892 data-nosnippet>892</a>    <span class="macro">trace!</span>(<span class="string">"HTTPS probe start"</span>);
 <a href=#893 id=893 data-nosnippet>893</a>    <span class="kw">let </span>url = relay_node.url.join(RELAY_PROBE_PATH)<span class="question-mark">?</span>;
 <a href=#894 id=894 data-nosnippet>894</a>
 <a href=#895 id=895 data-nosnippet>895</a>    <span class="comment">// This should also use same connection establishment as relay client itself, which
