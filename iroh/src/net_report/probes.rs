@@ -54,6 +54,7 @@ pub enum Probe {
     #[cfg(not(wasm_browser))]
     QadIpv6,
 }
+
 impl Probe {
     #[cfg(not(wasm_browser))]
     pub(super) fn is_udp(&self) -> bool {
