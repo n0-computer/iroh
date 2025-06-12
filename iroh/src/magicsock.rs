@@ -1086,8 +1086,6 @@ struct DirectAddrUpdateState {
     /// If set, start a new update as soon as the current one is finished.
     want_update: Option<UpdateReason>,
     msock: Arc<MagicSock>,
-    /// Configuration for net report
-    net_report_config: net_report::Options,
     #[cfg(not(wasm_browser))]
     port_mapper: portmapper::Client,
     /// The prober that discovers local network conditions, including the closest relay relay and NAT mappings.
@@ -1111,7 +1109,6 @@ enum UpdateReason {
 impl DirectAddrUpdateState {
     fn new(
         msock: Arc<MagicSock>,
-        net_report_config: net_report::Options,
         #[cfg(not(wasm_browser))] port_mapper: portmapper::Client,
         net_reporter: Arc<Mutex<net_report::Client>>,
         relay_map: RelayMap,
@@ -1119,7 +1116,6 @@ impl DirectAddrUpdateState {
     ) -> Self {
         DirectAddrUpdateState {
             want_update: Default::default(),
-            net_report_config,
             #[cfg(not(wasm_browser))]
             port_mapper,
             net_reporter,
@@ -1178,18 +1174,12 @@ impl DirectAddrUpdateState {
             return;
         }
 
-        let relay_map = self.relay_map.clone();
-        let opts = self.net_report_config.clone();
-
         debug!("requesting net_report report");
         let msock = self.msock.clone();
 
         let run_done = self.run_done.clone();
         task::spawn(async move {
-            let fut = time::timeout(
-                NET_REPORT_TIMEOUT,
-                net_reporter.get_report(relay_map, if_state, opts),
-            );
+            let fut = time::timeout(NET_REPORT_TIMEOUT, net_reporter.get_report(if_state));
             match fut.await {
                 Ok(report) => {
                     msock.net_report.set((Some(report), why)).ok();
@@ -1258,14 +1248,6 @@ impl Handle {
 
         let ip_mapped_addrs = IpMappedAddresses::default();
 
-        let net_reporter = net_report::Client::new(
-            #[cfg(not(wasm_browser))]
-            dns_resolver.clone(),
-            #[cfg(not(wasm_browser))]
-            Some(ip_mapped_addrs.clone()),
-            metrics.net_report.clone(),
-        );
-
         let (actor_sender, actor_receiver) = mpsc::channel(256);
 
         // load the node data
@@ -1311,15 +1293,15 @@ impl Handle {
             actor_sender: actor_sender.clone(),
             ipv6_reported,
             node_map,
-            ip_mapped_addrs,
+            ip_mapped_addrs: ip_mapped_addrs.clone(),
             discovery,
             discovery_user_data: RwLock::new(discovery_user_data),
             direct_addrs: Default::default(),
             net_report: Watchable::new((None, UpdateReason::None)),
             #[cfg(not(wasm_browser))]
-            dns_resolver,
+            dns_resolver: dns_resolver.clone(),
             discovery_subscribers: DiscoverySubscribers::new(),
-            metrics,
+            metrics: metrics.clone(),
             local_addrs_watch: transports.local_addrs_watch(),
             #[cfg(not(wasm_browser))]
             ip_bind_addrs: transports.ip_bind_addrs(),
@@ -1379,10 +1361,19 @@ impl Handle {
         let net_report_config =
             net_report_config.insecure_skip_relay_cert_verify(insecure_skip_relay_cert_verify);
 
+        let net_reporter = net_report::Client::new(
+            #[cfg(not(wasm_browser))]
+            dns_resolver,
+            #[cfg(not(wasm_browser))]
+            Some(ip_mapped_addrs),
+            relay_map.clone(),
+            net_report_config,
+            metrics.net_report.clone(),
+        );
+
         let (direct_addr_done_tx, direct_addr_done_rx) = mpsc::channel(8);
         let direct_addr_update_state = DirectAddrUpdateState::new(
             msock.clone(),
-            net_report_config,
             #[cfg(not(wasm_browser))]
             port_mapper,
             Arc::new(Mutex::new(net_reporter)),
