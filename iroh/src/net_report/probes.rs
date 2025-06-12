@@ -586,12 +586,8 @@ mod tests {
                 Probe::QadIpv4,
             );
             let last_report = Report {
-                udp: true,
-                ipv6: true,
-                ipv4: true,
-                ipv6_can_send: true,
-                ipv4_can_send: true,
-                os_has_ipv6: true,
+                udp_v6: true,
+                udp_v4: true,
                 mapping_varies_by_dest_ip: Some(false),
                 mapping_varies_by_dest_ipv6: Some(false),
                 portmap_probe: None,
@@ -680,12 +676,8 @@ mod tests {
             latencies.update_relay(url_2.clone(), latency_2, Probe::QadIpv4);
         }
         Report {
-            udp: true,
-            ipv6: true,
-            ipv4: true,
-            ipv6_can_send: true,
-            ipv4_can_send: true,
-            os_has_ipv6: true,
+            udp_v6: true,
+            udp_v4: true,
             mapping_varies_by_dest_ip: Some(false),
             mapping_varies_by_dest_ipv6: Some(false),
             portmap_probe: None,
