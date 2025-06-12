@@ -70,7 +70,7 @@
 <a href=#70 id=70 data-nosnippet>70</a>        </span>}
 <a href=#71 id=71 data-nosnippet>71</a>
 <a href=#72 id=72 data-nosnippet>72</a>        <span class="doccomment">/// Turn the options into set of valid protocols
-<a href=#73 id=73 data-nosnippet>73</a>        </span><span class="kw">pub fn </span>to_protocols(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; BTreeSet&lt;Probe&gt; {
+<a href=#73 id=73 data-nosnippet>73</a>        </span><span class="kw">pub fn </span>as_protocols(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; BTreeSet&lt;Probe&gt; {
 <a href=#74 id=74 data-nosnippet>74</a>            <span class="kw">let </span><span class="kw-2">mut </span>protocols = BTreeSet::new();
 <a href=#75 id=75 data-nosnippet>75</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref </span>quic) = <span class="self">self</span>.quic_config {
 <a href=#76 id=76 data-nosnippet>76</a>                <span class="kw">if </span>quic.ipv4 {
@@ -125,7 +125,7 @@
 <a href=#125 id=125 data-nosnippet>125</a>        </span>}
 <a href=#126 id=126 data-nosnippet>126</a>
 <a href=#127 id=127 data-nosnippet>127</a>        <span class="doccomment">/// Turn the options into set of valid protocols
-<a href=#128 id=128 data-nosnippet>128</a>        </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>to_protocols(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; BTreeSet&lt;Probe&gt; {
+<a href=#128 id=128 data-nosnippet>128</a>        </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>as_protocols(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; BTreeSet&lt;Probe&gt; {
 <a href=#129 id=129 data-nosnippet>129</a>            <span class="kw">let </span><span class="kw-2">mut </span>protocols = BTreeSet::new();
 <a href=#130 id=130 data-nosnippet>130</a>            <span class="kw">if </span><span class="self">self</span>.https {
 <a href=#131 id=131 data-nosnippet>131</a>                protocols.insert(Probe::Https);
