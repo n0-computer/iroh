@@ -10,7 +10,11 @@
 #![cfg_attr(not(test), deny(clippy::unwrap_used))]
 #![cfg_attr(wasm_browser, allow(unused))]
 
-use std::{collections::BTreeMap, fmt::Debug, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt::Debug,
+    sync::Arc,
+};
 
 #[cfg(not(wasm_browser))]
 use iroh_relay::dns::DnsResolver;
@@ -86,13 +90,13 @@ const ENOUGH_NODES: usize = 3;
 /// `Addr::receive_stun_packet`.
 #[derive(Debug)]
 pub(crate) struct Client {
-    /// The DNS resolver to use for probes that need to perform DNS lookups
     #[cfg(not(wasm_browser))]
-    dns_resolver: DnsResolver,
-    /// The [`IpMappedAddresses`] that allows you to do QAD in iroh
-    #[cfg(not(wasm_browser))]
-    ip_mapped_addrs: Option<IpMappedAddresses>,
+    socket_state: SocketState,
     metrics: Arc<Metrics>,
+    probes: BTreeSet<Probe>,
+    relay_map: RelayMap,
+    #[cfg(any(test, feature = "test-utils"))]
+    insecure_skip_relay_cert_verify: bool,
 
     /// A collection of previously generated reports.
     ///
@@ -128,30 +132,13 @@ impl Client {
     pub(crate) fn new(
         #[cfg(not(wasm_browser))] dns_resolver: DnsResolver,
         #[cfg(not(wasm_browser))] ip_mapped_addrs: Option<IpMappedAddresses>,
+        relay_map: RelayMap,
+        opts: Options,
         metrics: Arc<Metrics>,
     ) -> Self {
-        Client {
-            #[cfg(not(wasm_browser))]
-            dns_resolver,
-            #[cfg(not(wasm_browser))]
-            ip_mapped_addrs,
-            metrics,
-            reports: Reports::default(),
-        }
-    }
-
-    /// Generates a [`Report`].
-    ///
-    /// Look at [`Options`] for the different configuration options.
-    pub(crate) async fn get_report(
-        &mut self,
-        relay_map: RelayMap,
-        if_state: IfStateDetails,
-        opts: Options,
-    ) -> Report {
-        debug!("net_report starting");
-
-        let protocols = opts.to_protocols();
+        let probes = opts.as_protocols();
+        #[cfg(any(test, feature = "test-utils"))]
+        let insecure_skip_relay_cert_verify = opts.insecure_skip_relay_cert_verify;
 
         #[cfg(not(wasm_browser))]
         let quic_client = opts
@@ -161,10 +148,28 @@ impl Client {
         #[cfg(not(wasm_browser))]
         let socket_state = SocketState {
             quic_client,
-            dns_resolver: self.dns_resolver.clone(),
-            ip_mapped_addrs: self.ip_mapped_addrs.clone(),
+            dns_resolver,
+            ip_mapped_addrs,
         };
-        trace!("Attempting probes for protocols {protocols:#?}");
+
+        Client {
+            #[cfg(not(wasm_browser))]
+            socket_state,
+            metrics,
+            reports: Reports::default(),
+            probes,
+            relay_map,
+            #[cfg(any(test, feature = "test-utils"))]
+            insecure_skip_relay_cert_verify,
+        }
+    }
+
+    /// Generates a [`Report`].
+    ///
+    /// Look at [`Options`] for the different configuration options.
+    pub(crate) async fn get_report(&mut self, if_state: IfStateDetails) -> Report {
+        debug!("net_report starting");
+        trace!(probes = ?self.probes, "Attempting probes");
 
         let now = Instant::now();
 
@@ -187,7 +192,7 @@ impl Client {
         }
         self.metrics.reports.inc();
 
-        let enough_relays = std::cmp::min(relay_map.len(), ENOUGH_NODES);
+        let enough_relays = std::cmp::min(self.relay_map.len(), ENOUGH_NODES);
         #[cfg(wasm_browser)]
         let if_state = IfStateDetails::default();
         #[cfg(not(wasm_browser))]
@@ -198,13 +203,13 @@ impl Client {
 
         let (actor, mut probe_rx) = reportgen::Client::new(
             self.reports.last.clone(),
-            relay_map,
-            protocols,
+            self.relay_map.clone(),
+            self.probes.clone(),
             if_state,
             #[cfg(not(wasm_browser))]
-            socket_state,
+            self.socket_state.clone(),
             #[cfg(any(test, feature = "test-utils"))]
-            opts.insecure_skip_relay_cert_verify,
+            self.insecure_skip_relay_cert_verify,
         );
 
         let mut report = Report {
@@ -419,20 +424,21 @@ mod tests {
         let relay_map = RelayMap::from(relay);
 
         let resolver = DnsResolver::new();
-        let mut client = Client::new(resolver.clone(), None, Default::default());
+        let opts = Options::default().quic_config(Some(quic_addr_disc.clone()));
+        let mut client = Client::new(
+            resolver.clone(),
+            None,
+            relay_map.clone(),
+            opts.clone(),
+            Default::default(),
+        );
         let if_state = IfStateDetails::fake();
 
         // Note that the ProbePlan will change with each iteration.
         for i in 0..5 {
             let cancel = CancellationToken::new();
             println!("--round {}", i);
-            let r = client
-                .get_report(
-                    relay_map.clone(),
-                    if_state.clone(),
-                    Options::default().quic_config(Some(quic_addr_disc.clone())),
-                )
-                .await;
+            let r = client.get_report(if_state.clone()).await;
 
             assert!(r.has_udp(), "want UDP");
             assert_eq!(
@@ -620,7 +626,10 @@ mod tests {
         let resolver = DnsResolver::new();
         for mut tt in tests {
             println!("test: {}", tt.name);
-            let mut client = Client::new(resolver.clone(), None, Default::default());
+            let relay_map = RelayMap::empty();
+            let opts = Options::default();
+            let mut client =
+                Client::new(resolver.clone(), None, relay_map, opts, Default::default());
             for s in &mut tt.steps {
                 // trigger the timer
                 tokio::time::advance(Duration::from_secs(s.after)).await;

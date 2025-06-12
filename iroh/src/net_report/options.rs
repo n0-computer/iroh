@@ -70,7 +70,7 @@ mod imp {
         }
 
         /// Turn the options into set of valid protocols
-        pub fn to_protocols(&self) -> BTreeSet<Probe> {
+        pub fn as_protocols(&self) -> BTreeSet<Probe> {
             let mut protocols = BTreeSet::new();
             if let Some(ref quic) = self.quic_config {
                 if quic.ipv4 {
@@ -125,7 +125,7 @@ mod imp {
         }
 
         /// Turn the options into set of valid protocols
-        pub(crate) fn to_protocols(&self) -> BTreeSet<Probe> {
+        pub(crate) fn as_protocols(&self) -> BTreeSet<Probe> {
             let mut protocols = BTreeSet::new();
             if self.https {
                 protocols.insert(Probe::Https);
