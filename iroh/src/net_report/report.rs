@@ -51,42 +51,57 @@ impl Report {
     }
 
     /// Updates a net_report [`Report`] with a new [`ProbeReport`].
-    pub(super) fn update(&mut self, probe_report: &ProbeReport) {
-        let relay_node = &probe_report.node;
-        if let Some(latency) = probe_report.latency {
-            self.relay_latency
-                .update_relay(relay_node.url.clone(), latency, probe_report.probe);
-
+    pub(super) fn update(&mut self, report: &ProbeReport) {
+        match report {
+            ProbeReport::Https(report) => {
+                self.relay_latency.update_relay(
+                    report.node.url.clone(),
+                    report.latency,
+                    Probe::Https,
+                );
+            }
             #[cfg(not(wasm_browser))]
-            if matches!(probe_report.probe, Probe::QadIpv4 | Probe::QadIpv6) {
-                match probe_report.addr {
-                    Some(SocketAddr::V4(ipp)) => {
-                        self.udp_v4 = true;
-                        if self.global_v4.is_none() {
-                            self.global_v4 = Some(ipp);
-                        } else if self.global_v4 != Some(ipp) {
-                            self.mapping_varies_by_dest_ip = Some(true);
-                            warn!("IPv4 address detected by QAD varies by destination");
-                        } else if self.mapping_varies_by_dest_ip.is_none() {
-                            self.mapping_varies_by_dest_ip = Some(false);
-                        }
-                    }
-                    Some(SocketAddr::V6(ipp)) => {
-                        self.udp_v6 = true;
-                        if self.global_v6.is_none() {
-                            self.global_v6 = Some(ipp);
-                        } else if self.global_v6 != Some(ipp) {
-                            self.mapping_varies_by_dest_ipv6 = Some(true);
-                            warn!("IPv6 address detected by QAD varies by destination");
-                        } else if self.mapping_varies_by_dest_ipv6.is_none() {
-                            self.mapping_varies_by_dest_ipv6 = Some(false);
-                        }
-                    }
-                    None => {
-                        // If we are here we had a relay server latency reported from a QAD probe.
-                        // Thus we must have a reported address.
-                        debug_assert!(probe_report.addr.is_some());
-                    }
+            ProbeReport::QadIpv4(report) => {
+                self.relay_latency.update_relay(
+                    report.node.url.clone(),
+                    report.latency,
+                    Probe::QadIpv4,
+                );
+                let SocketAddr::V4(ipp) = report.addr else {
+                    warn!("received IPv6 address from IPv4 QAD: {}", report.addr);
+                    return;
+                };
+
+                self.udp_v4 = true;
+                if self.global_v4.is_none() {
+                    self.global_v4 = Some(ipp);
+                } else if self.global_v4 != Some(ipp) {
+                    self.mapping_varies_by_dest_ip = Some(true);
+                    warn!("IPv4 address detected by QAD varies by destination");
+                } else if self.mapping_varies_by_dest_ip.is_none() {
+                    self.mapping_varies_by_dest_ip = Some(false);
+                }
+            }
+            #[cfg(not(wasm_browser))]
+            ProbeReport::QadIpv6(report) => {
+                self.relay_latency.update_relay(
+                    report.node.url.clone(),
+                    report.latency,
+                    Probe::QadIpv6,
+                );
+                let SocketAddr::V6(ipp) = report.addr else {
+                    warn!("received IPv4 address from IPv6 QAD: {}", report.addr);
+                    return;
+                };
+
+                self.udp_v6 = true;
+                if self.global_v6.is_none() {
+                    self.global_v6 = Some(ipp);
+                } else if self.global_v6 != Some(ipp) {
+                    self.mapping_varies_by_dest_ipv6 = Some(true);
+                    warn!("IPv6 address detected by QAD varies by destination");
+                } else if self.mapping_varies_by_dest_ipv6.is_none() {
+                    self.mapping_varies_by_dest_ipv6 = Some(false);
                 }
             }
         }
