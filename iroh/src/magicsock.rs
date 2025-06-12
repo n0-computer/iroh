@@ -1260,8 +1260,6 @@ impl Handle {
 
         let net_reporter = net_report::Client::new(
             #[cfg(not(wasm_browser))]
-            Some(port_mapper.clone()),
-            #[cfg(not(wasm_browser))]
             dns_resolver.clone(),
             #[cfg(not(wasm_browser))]
             Some(ip_mapped_addrs.clone()),

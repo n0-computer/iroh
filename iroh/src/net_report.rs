@@ -86,12 +86,6 @@ const ENOUGH_NODES: usize = 3;
 /// `Addr::receive_stun_packet`.
 #[derive(Debug)]
 pub(crate) struct Client {
-    /// The port mapper client, if those are requested.
-    ///
-    /// The port mapper is responsible for talking to routers via UPnP and the like to try
-    /// and open ports.
-    #[cfg(not(wasm_browser))]
-    port_mapper: Option<portmapper::Client>,
     /// The DNS resolver to use for probes that need to perform DNS lookups
     #[cfg(not(wasm_browser))]
     dns_resolver: DnsResolver,
@@ -132,14 +126,11 @@ impl Default for Reports {
 impl Client {
     /// Creates a new net_report client.
     pub(crate) fn new(
-        #[cfg(not(wasm_browser))] port_mapper: Option<portmapper::Client>,
         #[cfg(not(wasm_browser))] dns_resolver: DnsResolver,
         #[cfg(not(wasm_browser))] ip_mapped_addrs: Option<IpMappedAddresses>,
         metrics: Arc<Metrics>,
     ) -> Self {
         Client {
-            #[cfg(not(wasm_browser))]
-            port_mapper,
             #[cfg(not(wasm_browser))]
             dns_resolver,
             #[cfg(not(wasm_browser))]
@@ -169,7 +160,6 @@ impl Client {
 
         #[cfg(not(wasm_browser))]
         let socket_state = SocketState {
-            port_mapper: self.port_mapper.clone(),
             quic_client,
             dns_resolver: self.dns_resolver.clone(),
             ip_mapped_addrs: self.ip_mapped_addrs.clone(),
@@ -254,10 +244,6 @@ impl Client {
                         #[cfg(not(wasm_browser))]
                         ProbeFinished::CaptivePortal(portal) => {
                             report.captive_portal = portal;
-                        }
-                        #[cfg(not(wasm_browser))]
-                        ProbeFinished::Portmap(portmap) => {
-                            report.portmap_probe = portmap;
                         }
                     }
                 }
@@ -433,7 +419,7 @@ mod tests {
         let relay_map = RelayMap::from(relay);
 
         let resolver = DnsResolver::new();
-        let mut client = Client::new(None, resolver.clone(), None, Default::default());
+        let mut client = Client::new(resolver.clone(), None, Default::default());
         let if_state = IfStateDetails::fake();
 
         // Note that the ProbePlan will change with each iteration.
@@ -634,7 +620,7 @@ mod tests {
         let resolver = DnsResolver::new();
         for mut tt in tests {
             println!("test: {}", tt.name);
-            let mut client = Client::new(None, resolver.clone(), None, Default::default());
+            let mut client = Client::new(resolver.clone(), None, Default::default());
             for s in &mut tt.steps {
                 // trigger the timer
                 tokio::time::advance(Duration::from_secs(s.after)).await;
