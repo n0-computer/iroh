@@ -16,8 +16,6 @@ use std::{collections::BTreeMap, fmt::Debug, sync::Arc};
 use iroh_relay::dns::DnsResolver;
 use iroh_relay::RelayMap;
 use n0_future::time::{self, Duration, Instant};
-#[cfg(not(wasm_browser))]
-use netwatch::UdpSocket;
 use reportgen::{ProbeFinished, ProbeReport};
 use tracing::{debug, trace};
 
@@ -188,7 +186,7 @@ impl Client {
         // captive portal blocking us. If so, make this report a full (non-incremental) one.
         if !do_full {
             if let Some(ref last) = self.reports.last {
-                do_full = !last.udp && last.captive_portal.unwrap_or_default();
+                do_full = !last.has_udp() && last.captive_portal.unwrap_or_default();
             }
         }
         if do_full {
@@ -220,7 +218,6 @@ impl Client {
         );
 
         let mut report = Report {
-            os_has_ipv6: os_has_ipv6(),
             ..Default::default()
         };
 
@@ -371,18 +368,6 @@ impl Client {
     }
 }
 
-/// Test if IPv6 works at all, or if it's been hard disabled at the OS level.
-#[cfg(not(wasm_browser))]
-fn os_has_ipv6() -> bool {
-    UdpSocket::bind_local_v6(0).is_ok()
-}
-
-/// Always returns false in browsers
-#[cfg(wasm_browser)]
-fn os_has_ipv6() -> bool {
-    false
-}
-
 #[cfg(test)]
 mod test_utils {
     //! Creates a relay server against which to perform tests
@@ -463,7 +448,7 @@ mod tests {
                 )
                 .await;
 
-            assert!(r.udp, "want UDP");
+            assert!(r.has_udp(), "want UDP");
             assert_eq!(
                 r.relay_latency.len(),
                 1,

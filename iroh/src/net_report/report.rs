@@ -13,18 +13,10 @@ use super::{probes::Probe, ProbeReport};
 /// A net_report report.
 #[derive(Default, Debug, PartialEq, Eq, Clone)]
 pub struct Report {
-    /// A UDP STUN round trip completed.
-    pub udp: bool,
-    /// An IPv6 round trip completed.
-    pub ipv6: bool,
-    /// An IPv4 round trip completed.
-    pub ipv4: bool,
-    /// An IPv6 packet was able to be sent
-    pub ipv6_can_send: bool,
-    /// an IPv4 packet was able to be sent
-    pub ipv4_can_send: bool,
-    /// could bind a socket to ::1
-    pub os_has_ipv6: bool,
+    /// A QAD IPv4 round trip completed.
+    pub udp_v4: bool,
+    /// A QAD IPv6 round trip completed.
+    pub udp_v6: bool,
     /// Whether the reported public address differs when probing different servers (on IPv4).
     pub mapping_varies_by_dest_ip: Option<bool>,
     /// Whether the reported public address differs when probing different servers (on IPv6).
@@ -55,6 +47,11 @@ impl fmt::Display for Report {
 }
 
 impl Report {
+    /// Do we have any indication that UDP is working?
+    pub fn has_udp(&self) -> bool {
+        self.udp_v4 || self.udp_v6
+    }
+
     /// Updates a net_report [`Report`] with a new [`ProbeReport`].
     pub(super) fn update(&mut self, probe_report: &ProbeReport) {
         let relay_node = &probe_report.node;
@@ -64,40 +61,37 @@ impl Report {
 
             #[cfg(not(wasm_browser))]
             if matches!(probe_report.probe, Probe::QadIpv4 | Probe::QadIpv6) {
-                self.udp = true;
-
                 match probe_report.addr {
                     Some(SocketAddr::V4(ipp)) => {
-                        self.ipv4 = true;
+                        self.udp_v4 = true;
                         if self.global_v4.is_none() {
                             self.global_v4 = Some(ipp);
                         } else if self.global_v4 != Some(ipp) {
                             self.mapping_varies_by_dest_ip = Some(true);
+                            warn!("IPv4 address detected by QAD varies by destination");
                         } else if self.mapping_varies_by_dest_ip.is_none() {
                             self.mapping_varies_by_dest_ip = Some(false);
                         }
                     }
                     Some(SocketAddr::V6(ipp)) => {
-                        self.ipv6 = true;
+                        self.udp_v6 = true;
                         if self.global_v6.is_none() {
                             self.global_v6 = Some(ipp);
                         } else if self.global_v6 != Some(ipp) {
                             self.mapping_varies_by_dest_ipv6 = Some(true);
-                            warn!("IPv6 Address detected by STUN varies by destination");
+                            warn!("IPv6 address detected by QAD varies by destination");
                         } else if self.mapping_varies_by_dest_ipv6.is_none() {
                             self.mapping_varies_by_dest_ipv6 = Some(false);
                         }
                     }
                     None => {
-                        // If we are here we had a relay server latency reported from a STUN probe.
+                        // If we are here we had a relay server latency reported from a QAD probe.
                         // Thus we must have a reported address.
                         debug_assert!(probe_report.addr.is_some());
                     }
                 }
             }
         }
-        self.ipv4_can_send |= probe_report.ipv4_can_send;
-        self.ipv6_can_send |= probe_report.ipv6_can_send;
     }
 }
 

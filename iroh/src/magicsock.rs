@@ -2124,7 +2124,7 @@ impl Actor {
 
     fn handle_net_report_report(&mut self, mut report: Option<net_report::Report>) {
         if let Some(ref mut r) = report {
-            self.msock.ipv6_reported.store(r.ipv6, Ordering::Relaxed);
+            self.msock.ipv6_reported.store(r.udp_v6, Ordering::Relaxed);
             if r.preferred_relay.is_none() {
                 if let Some(my_relay) = self.msock.my_relay() {
                     r.preferred_relay.replace(my_relay);

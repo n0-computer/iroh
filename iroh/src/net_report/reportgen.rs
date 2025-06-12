@@ -467,9 +467,6 @@ impl Actor {
 pub(super) struct ProbeReport {
     /// The probe that generated this report.
     pub(super) probe: Probe,
-    /// Probe delay
-    #[allow(dead_code)]
-    pub(super) delay: Duration,
     /// The relay node that was probed
     pub(super) node: Arc<RelayNode>,
     /// Whether we can send IPv4 UDP packets.
@@ -483,10 +480,9 @@ pub(super) struct ProbeReport {
 }
 
 impl ProbeReport {
-    fn new(probe: Probe, delay: Duration, node: Arc<RelayNode>) -> Self {
+    fn new(probe: Probe, node: Arc<RelayNode>) -> Self {
         ProbeReport {
             probe,
-            delay,
             node,
             ipv4_can_send: false,
             ipv6_can_send: false,
@@ -583,7 +579,7 @@ async fn run_probe(
             {
                 Ok((latency, ip)) => {
                     debug!(?latency, "https latency");
-                    let mut report = ProbeReport::new(probe, delay, relay_node);
+                    let mut report = ProbeReport::new(probe, relay_node);
                     report.latency = Some(latency);
                     match ip {
                         IpAddr::V4(_) => report.ipv4_can_send = true,
@@ -613,7 +609,7 @@ async fn run_probe(
                     socket_state.ip_mapped_addrs,
                 )
                 .await?;
-                let mut report = ProbeReport::new(probe, delay, relay_node);
+                let mut report = ProbeReport::new(probe, relay_node);
                 report.ipv4_can_send = true;
                 report.addr = Some(addr);
                 report.latency = Some(latency);
@@ -640,7 +636,7 @@ async fn run_probe(
                     socket_state.ip_mapped_addrs,
                 )
                 .await?;
-                let mut report = ProbeReport::new(probe, delay, relay_node);
+                let mut report = ProbeReport::new(probe, relay_node);
                 report.ipv6_can_send = true;
                 report.addr = Some(addr);
                 report.latency = Some(latency);
