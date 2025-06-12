@@ -586,191 +586,183 @@
 <a href=#586 id=586 data-nosnippet>586</a>                Probe::QadIpv4,
 <a href=#587 id=587 data-nosnippet>587</a>            );
 <a href=#588 id=588 data-nosnippet>588</a>            <span class="kw">let </span>last_report = Report {
-<a href=#589 id=589 data-nosnippet>589</a>                udp: <span class="bool-val">true</span>,
-<a href=#590 id=590 data-nosnippet>590</a>                ipv6: <span class="bool-val">true</span>,
-<a href=#591 id=591 data-nosnippet>591</a>                ipv4: <span class="bool-val">true</span>,
-<a href=#592 id=592 data-nosnippet>592</a>                ipv6_can_send: <span class="bool-val">true</span>,
-<a href=#593 id=593 data-nosnippet>593</a>                ipv4_can_send: <span class="bool-val">true</span>,
-<a href=#594 id=594 data-nosnippet>594</a>                os_has_ipv6: <span class="bool-val">true</span>,
-<a href=#595 id=595 data-nosnippet>595</a>                mapping_varies_by_dest_ip: <span class="prelude-val">Some</span>(<span class="bool-val">false</span>),
-<a href=#596 id=596 data-nosnippet>596</a>                mapping_varies_by_dest_ipv6: <span class="prelude-val">Some</span>(<span class="bool-val">false</span>),
-<a href=#597 id=597 data-nosnippet>597</a>                portmap_probe: <span class="prelude-val">None</span>,
-<a href=#598 id=598 data-nosnippet>598</a>                preferred_relay: <span class="prelude-val">Some</span>(relay_node_1.url.clone()),
-<a href=#599 id=599 data-nosnippet>599</a>                relay_latency: latencies.clone(),
-<a href=#600 id=600 data-nosnippet>600</a>                global_v4: <span class="prelude-val">None</span>,
-<a href=#601 id=601 data-nosnippet>601</a>                global_v6: <span class="prelude-val">None</span>,
-<a href=#602 id=602 data-nosnippet>602</a>                captive_portal: <span class="prelude-val">None</span>,
-<a href=#603 id=603 data-nosnippet>603</a>            };
-<a href=#604 id=604 data-nosnippet>604</a>            <span class="kw">let </span>plan = ProbePlan::with_last_report(
-<a href=#605 id=605 data-nosnippet>605</a>                <span class="kw-2">&amp;</span>relay_map,
-<a href=#606 id=606 data-nosnippet>606</a>                <span class="kw-2">&amp;</span>last_report,
-<a href=#607 id=607 data-nosnippet>607</a>                <span class="kw-2">&amp;</span>default_protocols(),
-<a href=#608 id=608 data-nosnippet>608</a>                <span class="kw-2">&amp;</span>if_state,
-<a href=#609 id=609 data-nosnippet>609</a>            );
-<a href=#610 id=610 data-nosnippet>610</a>            <span class="kw">let </span>expected_plan: ProbePlan = [
-<a href=#611 id=611 data-nosnippet>611</a>                <span class="macro">probeset!</span> {
-<a href=#612 id=612 data-nosnippet>612</a>                    proto: Probe::QadIpv4,
-<a href=#613 id=613 data-nosnippet>613</a>                    relay: relay_node_1.clone(),
-<a href=#614 id=614 data-nosnippet>614</a>                    delays: [Duration::ZERO,
-<a href=#615 id=615 data-nosnippet>615</a>                             Duration::from_micros(<span class="number">52_400</span>),
-<a href=#616 id=616 data-nosnippet>616</a>                             Duration::from_micros(<span class="number">104_800</span>),
-<a href=#617 id=617 data-nosnippet>617</a>                             Duration::from_micros(<span class="number">157_200</span>)],
-<a href=#618 id=618 data-nosnippet>618</a>                },
-<a href=#619 id=619 data-nosnippet>619</a>                <span class="macro">probeset!</span> {
-<a href=#620 id=620 data-nosnippet>620</a>                    proto: Probe::QadIpv6,
-<a href=#621 id=621 data-nosnippet>621</a>                    relay: relay_node_1.clone(),
-<a href=#622 id=622 data-nosnippet>622</a>                    delays: [Duration::ZERO,
-<a href=#623 id=623 data-nosnippet>623</a>                             Duration::from_micros(<span class="number">52_400</span>),
-<a href=#624 id=624 data-nosnippet>624</a>                             Duration::from_micros(<span class="number">104_800</span>),
-<a href=#625 id=625 data-nosnippet>625</a>                             Duration::from_micros(<span class="number">157_200</span>)],
-<a href=#626 id=626 data-nosnippet>626</a>                },
-<a href=#627 id=627 data-nosnippet>627</a>                <span class="macro">probeset!</span> {
-<a href=#628 id=628 data-nosnippet>628</a>                    proto: Probe::Https,
-<a href=#629 id=629 data-nosnippet>629</a>                    relay: relay_node_1.clone(),
-<a href=#630 id=630 data-nosnippet>630</a>                    delays: [Duration::from_micros(<span class="number">207_200</span>),
-<a href=#631 id=631 data-nosnippet>631</a>                             Duration::from_micros(<span class="number">259_600</span>),
-<a href=#632 id=632 data-nosnippet>632</a>                             Duration::from_micros(<span class="number">312_000</span>),
-<a href=#633 id=633 data-nosnippet>633</a>                             Duration::from_micros(<span class="number">364_400</span>)],
-<a href=#634 id=634 data-nosnippet>634</a>                },
-<a href=#635 id=635 data-nosnippet>635</a>                <span class="macro">probeset!</span> {
-<a href=#636 id=636 data-nosnippet>636</a>                    proto: Probe::QadIpv4,
-<a href=#637 id=637 data-nosnippet>637</a>                    relay: relay_node_2.clone(),
-<a href=#638 id=638 data-nosnippet>638</a>                    delays: [Duration::ZERO,
-<a href=#639 id=639 data-nosnippet>639</a>                             Duration::from_micros(<span class="number">52_400</span>)],
-<a href=#640 id=640 data-nosnippet>640</a>                },
-<a href=#641 id=641 data-nosnippet>641</a>                <span class="macro">probeset!</span> {
-<a href=#642 id=642 data-nosnippet>642</a>                    proto: Probe::QadIpv6,
-<a href=#643 id=643 data-nosnippet>643</a>                    relay: relay_node_2.clone(),
-<a href=#644 id=644 data-nosnippet>644</a>                    delays: [Duration::ZERO,
-<a href=#645 id=645 data-nosnippet>645</a>                             Duration::from_micros(<span class="number">52_400</span>)],
-<a href=#646 id=646 data-nosnippet>646</a>                },
-<a href=#647 id=647 data-nosnippet>647</a>                <span class="macro">probeset!</span> {
-<a href=#648 id=648 data-nosnippet>648</a>                    proto: Probe::Https,
-<a href=#649 id=649 data-nosnippet>649</a>                    relay: relay_node_2.clone(),
-<a href=#650 id=650 data-nosnippet>650</a>                    delays: [Duration::from_micros(<span class="number">207_200</span>),
-<a href=#651 id=651 data-nosnippet>651</a>                             Duration::from_micros(<span class="number">259_600</span>)],
-<a href=#652 id=652 data-nosnippet>652</a>                },
-<a href=#653 id=653 data-nosnippet>653</a>            ]
-<a href=#654 id=654 data-nosnippet>654</a>            .into_iter()
-<a href=#655 id=655 data-nosnippet>655</a>            .collect();
-<a href=#656 id=656 data-nosnippet>656</a>
-<a href=#657 id=657 data-nosnippet>657</a>            <span class="macro">println!</span>(<span class="string">"{} round"</span>, i);
-<a href=#658 id=658 data-nosnippet>658</a>            <span class="macro">println!</span>(<span class="string">"expected:"</span>);
-<a href=#659 id=659 data-nosnippet>659</a>            <span class="macro">println!</span>(<span class="string">"{expected_plan}"</span>);
-<a href=#660 id=660 data-nosnippet>660</a>            <span class="macro">println!</span>(<span class="string">"actual:"</span>);
-<a href=#661 id=661 data-nosnippet>661</a>            <span class="macro">println!</span>(<span class="string">"{plan}"</span>);
-<a href=#662 id=662 data-nosnippet>662</a>            <span class="comment">// The readable error:
-<a href=#663 id=663 data-nosnippet>663</a>            </span><span class="macro">assert_eq!</span>(plan.to_string(), expected_plan.to_string(), <span class="string">"{}"</span>, i);
-<a href=#664 id=664 data-nosnippet>664</a>            <span class="comment">// Just in case there's a bug in the Display impl:
-<a href=#665 id=665 data-nosnippet>665</a>            </span><span class="macro">assert_eq!</span>(plan, expected_plan, <span class="string">"{}"</span>, i);
-<a href=#666 id=666 data-nosnippet>666</a>        }
-<a href=#667 id=667 data-nosnippet>667</a>    }
-<a href=#668 id=668 data-nosnippet>668</a>
-<a href=#669 id=669 data-nosnippet>669</a>    <span class="kw">fn </span>create_last_report(
-<a href=#670 id=670 data-nosnippet>670</a>        url_1: <span class="kw-2">&amp;</span>RelayUrl,
-<a href=#671 id=671 data-nosnippet>671</a>        latency_1: <span class="prelude-ty">Option</span>&lt;Duration&gt;,
-<a href=#672 id=672 data-nosnippet>672</a>        url_2: <span class="kw-2">&amp;</span>RelayUrl,
-<a href=#673 id=673 data-nosnippet>673</a>        latency_2: <span class="prelude-ty">Option</span>&lt;Duration&gt;,
-<a href=#674 id=674 data-nosnippet>674</a>    ) -&gt; Report {
-<a href=#675 id=675 data-nosnippet>675</a>        <span class="kw">let </span><span class="kw-2">mut </span>latencies = RelayLatencies::default();
-<a href=#676 id=676 data-nosnippet>676</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(latency_1) = latency_1 {
-<a href=#677 id=677 data-nosnippet>677</a>            latencies.update_relay(url_1.clone(), latency_1, Probe::QadIpv4);
-<a href=#678 id=678 data-nosnippet>678</a>        }
-<a href=#679 id=679 data-nosnippet>679</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(latency_2) = latency_2 {
-<a href=#680 id=680 data-nosnippet>680</a>            latencies.update_relay(url_2.clone(), latency_2, Probe::QadIpv4);
-<a href=#681 id=681 data-nosnippet>681</a>        }
-<a href=#682 id=682 data-nosnippet>682</a>        Report {
-<a href=#683 id=683 data-nosnippet>683</a>            udp: <span class="bool-val">true</span>,
-<a href=#684 id=684 data-nosnippet>684</a>            ipv6: <span class="bool-val">true</span>,
-<a href=#685 id=685 data-nosnippet>685</a>            ipv4: <span class="bool-val">true</span>,
-<a href=#686 id=686 data-nosnippet>686</a>            ipv6_can_send: <span class="bool-val">true</span>,
-<a href=#687 id=687 data-nosnippet>687</a>            ipv4_can_send: <span class="bool-val">true</span>,
-<a href=#688 id=688 data-nosnippet>688</a>            os_has_ipv6: <span class="bool-val">true</span>,
-<a href=#689 id=689 data-nosnippet>689</a>            mapping_varies_by_dest_ip: <span class="prelude-val">Some</span>(<span class="bool-val">false</span>),
-<a href=#690 id=690 data-nosnippet>690</a>            mapping_varies_by_dest_ipv6: <span class="prelude-val">Some</span>(<span class="bool-val">false</span>),
-<a href=#691 id=691 data-nosnippet>691</a>            portmap_probe: <span class="prelude-val">None</span>,
-<a href=#692 id=692 data-nosnippet>692</a>            preferred_relay: <span class="prelude-val">Some</span>(url_1.clone()),
-<a href=#693 id=693 data-nosnippet>693</a>            relay_latency: latencies,
-<a href=#694 id=694 data-nosnippet>694</a>            global_v4: <span class="prelude-val">None</span>,
-<a href=#695 id=695 data-nosnippet>695</a>            global_v6: <span class="prelude-val">None</span>,
-<a href=#696 id=696 data-nosnippet>696</a>            captive_portal: <span class="prelude-val">None</span>,
-<a href=#697 id=697 data-nosnippet>697</a>        }
-<a href=#698 id=698 data-nosnippet>698</a>    }
-<a href=#699 id=699 data-nosnippet>699</a>
-<a href=#700 id=700 data-nosnippet>700</a>    <span class="attr">#[tokio::test]
-<a href=#701 id=701 data-nosnippet>701</a>    #[traced_test]
-<a href=#702 id=702 data-nosnippet>702</a>    </span><span class="kw">async fn </span>test_relay_sort_two_latencies() {
-<a href=#703 id=703 data-nosnippet>703</a>        <span class="kw">let </span>(_servers, relay_map) = test_utils::relay_map(<span class="number">2</span>).<span class="kw">await</span>;
-<a href=#704 id=704 data-nosnippet>704</a>        <span class="kw">let </span>r1 = relay_map.nodes().next().unwrap();
-<a href=#705 id=705 data-nosnippet>705</a>        <span class="kw">let </span>r2 = relay_map.nodes().nth(<span class="number">1</span>).unwrap();
-<a href=#706 id=706 data-nosnippet>706</a>        <span class="kw">let </span>last_report = create_last_report(
-<a href=#707 id=707 data-nosnippet>707</a>            <span class="kw-2">&amp;</span>r1.url,
-<a href=#708 id=708 data-nosnippet>708</a>            <span class="prelude-val">Some</span>(Duration::from_millis(<span class="number">1</span>)),
-<a href=#709 id=709 data-nosnippet>709</a>            <span class="kw-2">&amp;</span>r2.url,
-<a href=#710 id=710 data-nosnippet>710</a>            <span class="prelude-val">Some</span>(Duration::from_millis(<span class="number">2</span>)),
-<a href=#711 id=711 data-nosnippet>711</a>        );
-<a href=#712 id=712 data-nosnippet>712</a>        <span class="kw">let </span>sorted: Vec&lt;<span class="kw">_</span>&gt; = sort_relays(<span class="kw-2">&amp;</span>relay_map, <span class="kw-2">&amp;</span>last_report)
-<a href=#713 id=713 data-nosnippet>713</a>            .iter()
-<a href=#714 id=714 data-nosnippet>714</a>            .map(|(url, _reg)| <span class="kw-2">*</span>url)
-<a href=#715 id=715 data-nosnippet>715</a>            .collect();
-<a href=#716 id=716 data-nosnippet>716</a>        <span class="macro">assert_eq!</span>(sorted, <span class="macro">vec!</span>[<span class="kw-2">&amp;</span>r1.url, <span class="kw-2">&amp;</span>r2.url]);
-<a href=#717 id=717 data-nosnippet>717</a>    }
-<a href=#718 id=718 data-nosnippet>718</a>
-<a href=#719 id=719 data-nosnippet>719</a>    <span class="attr">#[tokio::test]
-<a href=#720 id=720 data-nosnippet>720</a>    #[traced_test]
-<a href=#721 id=721 data-nosnippet>721</a>    </span><span class="kw">async fn </span>test_relay_sort_equal_latencies() {
-<a href=#722 id=722 data-nosnippet>722</a>        <span class="kw">let </span>(_servers, relay_map) = test_utils::relay_map(<span class="number">2</span>).<span class="kw">await</span>;
-<a href=#723 id=723 data-nosnippet>723</a>        <span class="kw">let </span>r1 = relay_map.nodes().next().unwrap();
-<a href=#724 id=724 data-nosnippet>724</a>        <span class="kw">let </span>r2 = relay_map.nodes().nth(<span class="number">1</span>).unwrap();
-<a href=#725 id=725 data-nosnippet>725</a>        <span class="kw">let </span>last_report = create_last_report(
-<a href=#726 id=726 data-nosnippet>726</a>            <span class="kw-2">&amp;</span>r1.url,
-<a href=#727 id=727 data-nosnippet>727</a>            <span class="prelude-val">Some</span>(Duration::from_millis(<span class="number">2</span>)),
-<a href=#728 id=728 data-nosnippet>728</a>            <span class="kw-2">&amp;</span>r2.url,
-<a href=#729 id=729 data-nosnippet>729</a>            <span class="prelude-val">Some</span>(Duration::from_millis(<span class="number">2</span>)),
-<a href=#730 id=730 data-nosnippet>730</a>        );
-<a href=#731 id=731 data-nosnippet>731</a>        <span class="kw">let </span>sorted: Vec&lt;<span class="kw">_</span>&gt; = sort_relays(<span class="kw-2">&amp;</span>relay_map, <span class="kw-2">&amp;</span>last_report)
-<a href=#732 id=732 data-nosnippet>732</a>            .iter()
-<a href=#733 id=733 data-nosnippet>733</a>            .map(|(url, <span class="kw">_</span>)| <span class="kw-2">*</span>url)
-<a href=#734 id=734 data-nosnippet>734</a>            .collect();
-<a href=#735 id=735 data-nosnippet>735</a>        <span class="macro">assert_eq!</span>(sorted, <span class="macro">vec!</span>[<span class="kw-2">&amp;</span>r1.url, <span class="kw-2">&amp;</span>r2.url]);
-<a href=#736 id=736 data-nosnippet>736</a>    }
-<a href=#737 id=737 data-nosnippet>737</a>
-<a href=#738 id=738 data-nosnippet>738</a>    <span class="attr">#[tokio::test]
-<a href=#739 id=739 data-nosnippet>739</a>    </span><span class="kw">async fn </span>test_relay_sort_missing_latency() {
-<a href=#740 id=740 data-nosnippet>740</a>        <span class="kw">let </span>(_servers, relay_map) = test_utils::relay_map(<span class="number">2</span>).<span class="kw">await</span>;
-<a href=#741 id=741 data-nosnippet>741</a>        <span class="kw">let </span>r1 = relay_map.nodes().next().unwrap();
-<a href=#742 id=742 data-nosnippet>742</a>        <span class="kw">let </span>r2 = relay_map.nodes().nth(<span class="number">1</span>).unwrap();
+<a href=#589 id=589 data-nosnippet>589</a>                udp_v6: <span class="bool-val">true</span>,
+<a href=#590 id=590 data-nosnippet>590</a>                udp_v4: <span class="bool-val">true</span>,
+<a href=#591 id=591 data-nosnippet>591</a>                mapping_varies_by_dest_ip: <span class="prelude-val">Some</span>(<span class="bool-val">false</span>),
+<a href=#592 id=592 data-nosnippet>592</a>                mapping_varies_by_dest_ipv6: <span class="prelude-val">Some</span>(<span class="bool-val">false</span>),
+<a href=#593 id=593 data-nosnippet>593</a>                portmap_probe: <span class="prelude-val">None</span>,
+<a href=#594 id=594 data-nosnippet>594</a>                preferred_relay: <span class="prelude-val">Some</span>(relay_node_1.url.clone()),
+<a href=#595 id=595 data-nosnippet>595</a>                relay_latency: latencies.clone(),
+<a href=#596 id=596 data-nosnippet>596</a>                global_v4: <span class="prelude-val">None</span>,
+<a href=#597 id=597 data-nosnippet>597</a>                global_v6: <span class="prelude-val">None</span>,
+<a href=#598 id=598 data-nosnippet>598</a>                captive_portal: <span class="prelude-val">None</span>,
+<a href=#599 id=599 data-nosnippet>599</a>            };
+<a href=#600 id=600 data-nosnippet>600</a>            <span class="kw">let </span>plan = ProbePlan::with_last_report(
+<a href=#601 id=601 data-nosnippet>601</a>                <span class="kw-2">&amp;</span>relay_map,
+<a href=#602 id=602 data-nosnippet>602</a>                <span class="kw-2">&amp;</span>last_report,
+<a href=#603 id=603 data-nosnippet>603</a>                <span class="kw-2">&amp;</span>default_protocols(),
+<a href=#604 id=604 data-nosnippet>604</a>                <span class="kw-2">&amp;</span>if_state,
+<a href=#605 id=605 data-nosnippet>605</a>            );
+<a href=#606 id=606 data-nosnippet>606</a>            <span class="kw">let </span>expected_plan: ProbePlan = [
+<a href=#607 id=607 data-nosnippet>607</a>                <span class="macro">probeset!</span> {
+<a href=#608 id=608 data-nosnippet>608</a>                    proto: Probe::QadIpv4,
+<a href=#609 id=609 data-nosnippet>609</a>                    relay: relay_node_1.clone(),
+<a href=#610 id=610 data-nosnippet>610</a>                    delays: [Duration::ZERO,
+<a href=#611 id=611 data-nosnippet>611</a>                             Duration::from_micros(<span class="number">52_400</span>),
+<a href=#612 id=612 data-nosnippet>612</a>                             Duration::from_micros(<span class="number">104_800</span>),
+<a href=#613 id=613 data-nosnippet>613</a>                             Duration::from_micros(<span class="number">157_200</span>)],
+<a href=#614 id=614 data-nosnippet>614</a>                },
+<a href=#615 id=615 data-nosnippet>615</a>                <span class="macro">probeset!</span> {
+<a href=#616 id=616 data-nosnippet>616</a>                    proto: Probe::QadIpv6,
+<a href=#617 id=617 data-nosnippet>617</a>                    relay: relay_node_1.clone(),
+<a href=#618 id=618 data-nosnippet>618</a>                    delays: [Duration::ZERO,
+<a href=#619 id=619 data-nosnippet>619</a>                             Duration::from_micros(<span class="number">52_400</span>),
+<a href=#620 id=620 data-nosnippet>620</a>                             Duration::from_micros(<span class="number">104_800</span>),
+<a href=#621 id=621 data-nosnippet>621</a>                             Duration::from_micros(<span class="number">157_200</span>)],
+<a href=#622 id=622 data-nosnippet>622</a>                },
+<a href=#623 id=623 data-nosnippet>623</a>                <span class="macro">probeset!</span> {
+<a href=#624 id=624 data-nosnippet>624</a>                    proto: Probe::Https,
+<a href=#625 id=625 data-nosnippet>625</a>                    relay: relay_node_1.clone(),
+<a href=#626 id=626 data-nosnippet>626</a>                    delays: [Duration::from_micros(<span class="number">207_200</span>),
+<a href=#627 id=627 data-nosnippet>627</a>                             Duration::from_micros(<span class="number">259_600</span>),
+<a href=#628 id=628 data-nosnippet>628</a>                             Duration::from_micros(<span class="number">312_000</span>),
+<a href=#629 id=629 data-nosnippet>629</a>                             Duration::from_micros(<span class="number">364_400</span>)],
+<a href=#630 id=630 data-nosnippet>630</a>                },
+<a href=#631 id=631 data-nosnippet>631</a>                <span class="macro">probeset!</span> {
+<a href=#632 id=632 data-nosnippet>632</a>                    proto: Probe::QadIpv4,
+<a href=#633 id=633 data-nosnippet>633</a>                    relay: relay_node_2.clone(),
+<a href=#634 id=634 data-nosnippet>634</a>                    delays: [Duration::ZERO,
+<a href=#635 id=635 data-nosnippet>635</a>                             Duration::from_micros(<span class="number">52_400</span>)],
+<a href=#636 id=636 data-nosnippet>636</a>                },
+<a href=#637 id=637 data-nosnippet>637</a>                <span class="macro">probeset!</span> {
+<a href=#638 id=638 data-nosnippet>638</a>                    proto: Probe::QadIpv6,
+<a href=#639 id=639 data-nosnippet>639</a>                    relay: relay_node_2.clone(),
+<a href=#640 id=640 data-nosnippet>640</a>                    delays: [Duration::ZERO,
+<a href=#641 id=641 data-nosnippet>641</a>                             Duration::from_micros(<span class="number">52_400</span>)],
+<a href=#642 id=642 data-nosnippet>642</a>                },
+<a href=#643 id=643 data-nosnippet>643</a>                <span class="macro">probeset!</span> {
+<a href=#644 id=644 data-nosnippet>644</a>                    proto: Probe::Https,
+<a href=#645 id=645 data-nosnippet>645</a>                    relay: relay_node_2.clone(),
+<a href=#646 id=646 data-nosnippet>646</a>                    delays: [Duration::from_micros(<span class="number">207_200</span>),
+<a href=#647 id=647 data-nosnippet>647</a>                             Duration::from_micros(<span class="number">259_600</span>)],
+<a href=#648 id=648 data-nosnippet>648</a>                },
+<a href=#649 id=649 data-nosnippet>649</a>            ]
+<a href=#650 id=650 data-nosnippet>650</a>            .into_iter()
+<a href=#651 id=651 data-nosnippet>651</a>            .collect();
+<a href=#652 id=652 data-nosnippet>652</a>
+<a href=#653 id=653 data-nosnippet>653</a>            <span class="macro">println!</span>(<span class="string">"{} round"</span>, i);
+<a href=#654 id=654 data-nosnippet>654</a>            <span class="macro">println!</span>(<span class="string">"expected:"</span>);
+<a href=#655 id=655 data-nosnippet>655</a>            <span class="macro">println!</span>(<span class="string">"{expected_plan}"</span>);
+<a href=#656 id=656 data-nosnippet>656</a>            <span class="macro">println!</span>(<span class="string">"actual:"</span>);
+<a href=#657 id=657 data-nosnippet>657</a>            <span class="macro">println!</span>(<span class="string">"{plan}"</span>);
+<a href=#658 id=658 data-nosnippet>658</a>            <span class="comment">// The readable error:
+<a href=#659 id=659 data-nosnippet>659</a>            </span><span class="macro">assert_eq!</span>(plan.to_string(), expected_plan.to_string(), <span class="string">"{}"</span>, i);
+<a href=#660 id=660 data-nosnippet>660</a>            <span class="comment">// Just in case there's a bug in the Display impl:
+<a href=#661 id=661 data-nosnippet>661</a>            </span><span class="macro">assert_eq!</span>(plan, expected_plan, <span class="string">"{}"</span>, i);
+<a href=#662 id=662 data-nosnippet>662</a>        }
+<a href=#663 id=663 data-nosnippet>663</a>    }
+<a href=#664 id=664 data-nosnippet>664</a>
+<a href=#665 id=665 data-nosnippet>665</a>    <span class="kw">fn </span>create_last_report(
+<a href=#666 id=666 data-nosnippet>666</a>        url_1: <span class="kw-2">&amp;</span>RelayUrl,
+<a href=#667 id=667 data-nosnippet>667</a>        latency_1: <span class="prelude-ty">Option</span>&lt;Duration&gt;,
+<a href=#668 id=668 data-nosnippet>668</a>        url_2: <span class="kw-2">&amp;</span>RelayUrl,
+<a href=#669 id=669 data-nosnippet>669</a>        latency_2: <span class="prelude-ty">Option</span>&lt;Duration&gt;,
+<a href=#670 id=670 data-nosnippet>670</a>    ) -&gt; Report {
+<a href=#671 id=671 data-nosnippet>671</a>        <span class="kw">let </span><span class="kw-2">mut </span>latencies = RelayLatencies::default();
+<a href=#672 id=672 data-nosnippet>672</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(latency_1) = latency_1 {
+<a href=#673 id=673 data-nosnippet>673</a>            latencies.update_relay(url_1.clone(), latency_1, Probe::QadIpv4);
+<a href=#674 id=674 data-nosnippet>674</a>        }
+<a href=#675 id=675 data-nosnippet>675</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(latency_2) = latency_2 {
+<a href=#676 id=676 data-nosnippet>676</a>            latencies.update_relay(url_2.clone(), latency_2, Probe::QadIpv4);
+<a href=#677 id=677 data-nosnippet>677</a>        }
+<a href=#678 id=678 data-nosnippet>678</a>        Report {
+<a href=#679 id=679 data-nosnippet>679</a>            udp_v6: <span class="bool-val">true</span>,
+<a href=#680 id=680 data-nosnippet>680</a>            udp_v4: <span class="bool-val">true</span>,
+<a href=#681 id=681 data-nosnippet>681</a>            mapping_varies_by_dest_ip: <span class="prelude-val">Some</span>(<span class="bool-val">false</span>),
+<a href=#682 id=682 data-nosnippet>682</a>            mapping_varies_by_dest_ipv6: <span class="prelude-val">Some</span>(<span class="bool-val">false</span>),
+<a href=#683 id=683 data-nosnippet>683</a>            portmap_probe: <span class="prelude-val">None</span>,
+<a href=#684 id=684 data-nosnippet>684</a>            preferred_relay: <span class="prelude-val">Some</span>(url_1.clone()),
+<a href=#685 id=685 data-nosnippet>685</a>            relay_latency: latencies,
+<a href=#686 id=686 data-nosnippet>686</a>            global_v4: <span class="prelude-val">None</span>,
+<a href=#687 id=687 data-nosnippet>687</a>            global_v6: <span class="prelude-val">None</span>,
+<a href=#688 id=688 data-nosnippet>688</a>            captive_portal: <span class="prelude-val">None</span>,
+<a href=#689 id=689 data-nosnippet>689</a>        }
+<a href=#690 id=690 data-nosnippet>690</a>    }
+<a href=#691 id=691 data-nosnippet>691</a>
+<a href=#692 id=692 data-nosnippet>692</a>    <span class="attr">#[tokio::test]
+<a href=#693 id=693 data-nosnippet>693</a>    #[traced_test]
+<a href=#694 id=694 data-nosnippet>694</a>    </span><span class="kw">async fn </span>test_relay_sort_two_latencies() {
+<a href=#695 id=695 data-nosnippet>695</a>        <span class="kw">let </span>(_servers, relay_map) = test_utils::relay_map(<span class="number">2</span>).<span class="kw">await</span>;
+<a href=#696 id=696 data-nosnippet>696</a>        <span class="kw">let </span>r1 = relay_map.nodes().next().unwrap();
+<a href=#697 id=697 data-nosnippet>697</a>        <span class="kw">let </span>r2 = relay_map.nodes().nth(<span class="number">1</span>).unwrap();
+<a href=#698 id=698 data-nosnippet>698</a>        <span class="kw">let </span>last_report = create_last_report(
+<a href=#699 id=699 data-nosnippet>699</a>            <span class="kw-2">&amp;</span>r1.url,
+<a href=#700 id=700 data-nosnippet>700</a>            <span class="prelude-val">Some</span>(Duration::from_millis(<span class="number">1</span>)),
+<a href=#701 id=701 data-nosnippet>701</a>            <span class="kw-2">&amp;</span>r2.url,
+<a href=#702 id=702 data-nosnippet>702</a>            <span class="prelude-val">Some</span>(Duration::from_millis(<span class="number">2</span>)),
+<a href=#703 id=703 data-nosnippet>703</a>        );
+<a href=#704 id=704 data-nosnippet>704</a>        <span class="kw">let </span>sorted: Vec&lt;<span class="kw">_</span>&gt; = sort_relays(<span class="kw-2">&amp;</span>relay_map, <span class="kw-2">&amp;</span>last_report)
+<a href=#705 id=705 data-nosnippet>705</a>            .iter()
+<a href=#706 id=706 data-nosnippet>706</a>            .map(|(url, _reg)| <span class="kw-2">*</span>url)
+<a href=#707 id=707 data-nosnippet>707</a>            .collect();
+<a href=#708 id=708 data-nosnippet>708</a>        <span class="macro">assert_eq!</span>(sorted, <span class="macro">vec!</span>[<span class="kw-2">&amp;</span>r1.url, <span class="kw-2">&amp;</span>r2.url]);
+<a href=#709 id=709 data-nosnippet>709</a>    }
+<a href=#710 id=710 data-nosnippet>710</a>
+<a href=#711 id=711 data-nosnippet>711</a>    <span class="attr">#[tokio::test]
+<a href=#712 id=712 data-nosnippet>712</a>    #[traced_test]
+<a href=#713 id=713 data-nosnippet>713</a>    </span><span class="kw">async fn </span>test_relay_sort_equal_latencies() {
+<a href=#714 id=714 data-nosnippet>714</a>        <span class="kw">let </span>(_servers, relay_map) = test_utils::relay_map(<span class="number">2</span>).<span class="kw">await</span>;
+<a href=#715 id=715 data-nosnippet>715</a>        <span class="kw">let </span>r1 = relay_map.nodes().next().unwrap();
+<a href=#716 id=716 data-nosnippet>716</a>        <span class="kw">let </span>r2 = relay_map.nodes().nth(<span class="number">1</span>).unwrap();
+<a href=#717 id=717 data-nosnippet>717</a>        <span class="kw">let </span>last_report = create_last_report(
+<a href=#718 id=718 data-nosnippet>718</a>            <span class="kw-2">&amp;</span>r1.url,
+<a href=#719 id=719 data-nosnippet>719</a>            <span class="prelude-val">Some</span>(Duration::from_millis(<span class="number">2</span>)),
+<a href=#720 id=720 data-nosnippet>720</a>            <span class="kw-2">&amp;</span>r2.url,
+<a href=#721 id=721 data-nosnippet>721</a>            <span class="prelude-val">Some</span>(Duration::from_millis(<span class="number">2</span>)),
+<a href=#722 id=722 data-nosnippet>722</a>        );
+<a href=#723 id=723 data-nosnippet>723</a>        <span class="kw">let </span>sorted: Vec&lt;<span class="kw">_</span>&gt; = sort_relays(<span class="kw-2">&amp;</span>relay_map, <span class="kw-2">&amp;</span>last_report)
+<a href=#724 id=724 data-nosnippet>724</a>            .iter()
+<a href=#725 id=725 data-nosnippet>725</a>            .map(|(url, <span class="kw">_</span>)| <span class="kw-2">*</span>url)
+<a href=#726 id=726 data-nosnippet>726</a>            .collect();
+<a href=#727 id=727 data-nosnippet>727</a>        <span class="macro">assert_eq!</span>(sorted, <span class="macro">vec!</span>[<span class="kw-2">&amp;</span>r1.url, <span class="kw-2">&amp;</span>r2.url]);
+<a href=#728 id=728 data-nosnippet>728</a>    }
+<a href=#729 id=729 data-nosnippet>729</a>
+<a href=#730 id=730 data-nosnippet>730</a>    <span class="attr">#[tokio::test]
+<a href=#731 id=731 data-nosnippet>731</a>    </span><span class="kw">async fn </span>test_relay_sort_missing_latency() {
+<a href=#732 id=732 data-nosnippet>732</a>        <span class="kw">let </span>(_servers, relay_map) = test_utils::relay_map(<span class="number">2</span>).<span class="kw">await</span>;
+<a href=#733 id=733 data-nosnippet>733</a>        <span class="kw">let </span>r1 = relay_map.nodes().next().unwrap();
+<a href=#734 id=734 data-nosnippet>734</a>        <span class="kw">let </span>r2 = relay_map.nodes().nth(<span class="number">1</span>).unwrap();
+<a href=#735 id=735 data-nosnippet>735</a>
+<a href=#736 id=736 data-nosnippet>736</a>        <span class="kw">let </span>last_report =
+<a href=#737 id=737 data-nosnippet>737</a>            create_last_report(<span class="kw-2">&amp;</span>r1.url, <span class="prelude-val">None</span>, <span class="kw-2">&amp;</span>r2.url, <span class="prelude-val">Some</span>(Duration::from_millis(<span class="number">2</span>)));
+<a href=#738 id=738 data-nosnippet>738</a>        <span class="kw">let </span>sorted: Vec&lt;<span class="kw">_</span>&gt; = sort_relays(<span class="kw-2">&amp;</span>relay_map, <span class="kw-2">&amp;</span>last_report)
+<a href=#739 id=739 data-nosnippet>739</a>            .iter()
+<a href=#740 id=740 data-nosnippet>740</a>            .map(|(url, <span class="kw">_</span>)| <span class="kw-2">*</span>url)
+<a href=#741 id=741 data-nosnippet>741</a>            .collect();
+<a href=#742 id=742 data-nosnippet>742</a>        <span class="macro">assert_eq!</span>(sorted, <span class="macro">vec!</span>[<span class="kw-2">&amp;</span>r2.url, <span class="kw-2">&amp;</span>r1.url]);
 <a href=#743 id=743 data-nosnippet>743</a>
 <a href=#744 id=744 data-nosnippet>744</a>        <span class="kw">let </span>last_report =
-<a href=#745 id=745 data-nosnippet>745</a>            create_last_report(<span class="kw-2">&amp;</span>r1.url, <span class="prelude-val">None</span>, <span class="kw-2">&amp;</span>r2.url, <span class="prelude-val">Some</span>(Duration::from_millis(<span class="number">2</span>)));
+<a href=#745 id=745 data-nosnippet>745</a>            create_last_report(<span class="kw-2">&amp;</span>r1.url, <span class="prelude-val">Some</span>(Duration::from_millis(<span class="number">2</span>)), <span class="kw-2">&amp;</span>r2.url, <span class="prelude-val">None</span>);
 <a href=#746 id=746 data-nosnippet>746</a>        <span class="kw">let </span>sorted: Vec&lt;<span class="kw">_</span>&gt; = sort_relays(<span class="kw-2">&amp;</span>relay_map, <span class="kw-2">&amp;</span>last_report)
 <a href=#747 id=747 data-nosnippet>747</a>            .iter()
 <a href=#748 id=748 data-nosnippet>748</a>            .map(|(url, <span class="kw">_</span>)| <span class="kw-2">*</span>url)
 <a href=#749 id=749 data-nosnippet>749</a>            .collect();
-<a href=#750 id=750 data-nosnippet>750</a>        <span class="macro">assert_eq!</span>(sorted, <span class="macro">vec!</span>[<span class="kw-2">&amp;</span>r2.url, <span class="kw-2">&amp;</span>r1.url]);
-<a href=#751 id=751 data-nosnippet>751</a>
-<a href=#752 id=752 data-nosnippet>752</a>        <span class="kw">let </span>last_report =
-<a href=#753 id=753 data-nosnippet>753</a>            create_last_report(<span class="kw-2">&amp;</span>r1.url, <span class="prelude-val">Some</span>(Duration::from_millis(<span class="number">2</span>)), <span class="kw-2">&amp;</span>r2.url, <span class="prelude-val">None</span>);
-<a href=#754 id=754 data-nosnippet>754</a>        <span class="kw">let </span>sorted: Vec&lt;<span class="kw">_</span>&gt; = sort_relays(<span class="kw-2">&amp;</span>relay_map, <span class="kw-2">&amp;</span>last_report)
-<a href=#755 id=755 data-nosnippet>755</a>            .iter()
-<a href=#756 id=756 data-nosnippet>756</a>            .map(|(url, <span class="kw">_</span>)| <span class="kw-2">*</span>url)
-<a href=#757 id=757 data-nosnippet>757</a>            .collect();
-<a href=#758 id=758 data-nosnippet>758</a>        <span class="macro">assert_eq!</span>(sorted, <span class="macro">vec!</span>[<span class="kw-2">&amp;</span>r1.url, <span class="kw-2">&amp;</span>r2.url]);
-<a href=#759 id=759 data-nosnippet>759</a>    }
-<a href=#760 id=760 data-nosnippet>760</a>
-<a href=#761 id=761 data-nosnippet>761</a>    <span class="attr">#[tokio::test]
-<a href=#762 id=762 data-nosnippet>762</a>    #[traced_test]
-<a href=#763 id=763 data-nosnippet>763</a>    </span><span class="kw">async fn </span>test_relay_sort_no_latency() {
-<a href=#764 id=764 data-nosnippet>764</a>        <span class="kw">let </span>(_servers, relay_map) = test_utils::relay_map(<span class="number">2</span>).<span class="kw">await</span>;
-<a href=#765 id=765 data-nosnippet>765</a>        <span class="kw">let </span>r1 = relay_map.nodes().next().unwrap();
-<a href=#766 id=766 data-nosnippet>766</a>        <span class="kw">let </span>r2 = relay_map.nodes().nth(<span class="number">1</span>).unwrap();
-<a href=#767 id=767 data-nosnippet>767</a>
-<a href=#768 id=768 data-nosnippet>768</a>        <span class="kw">let </span>last_report = create_last_report(<span class="kw-2">&amp;</span>r1.url, <span class="prelude-val">None</span>, <span class="kw-2">&amp;</span>r2.url, <span class="prelude-val">None</span>);
-<a href=#769 id=769 data-nosnippet>769</a>        <span class="kw">let </span>sorted: Vec&lt;<span class="kw">_</span>&gt; = sort_relays(<span class="kw-2">&amp;</span>relay_map, <span class="kw-2">&amp;</span>last_report)
-<a href=#770 id=770 data-nosnippet>770</a>            .iter()
-<a href=#771 id=771 data-nosnippet>771</a>            .map(|(url, <span class="kw">_</span>)| <span class="kw-2">*</span>url)
-<a href=#772 id=772 data-nosnippet>772</a>            .collect();
-<a href=#773 id=773 data-nosnippet>773</a>        <span class="comment">// sorted by relay url only
-<a href=#774 id=774 data-nosnippet>774</a>        </span><span class="macro">assert_eq!</span>(sorted, <span class="macro">vec!</span>[<span class="kw-2">&amp;</span>r1.url, <span class="kw-2">&amp;</span>r2.url]);
-<a href=#775 id=775 data-nosnippet>775</a>    }
-<a href=#776 id=776 data-nosnippet>776</a>}</code></pre></div></section></main></body></html>
+<a href=#750 id=750 data-nosnippet>750</a>        <span class="macro">assert_eq!</span>(sorted, <span class="macro">vec!</span>[<span class="kw-2">&amp;</span>r1.url, <span class="kw-2">&amp;</span>r2.url]);
+<a href=#751 id=751 data-nosnippet>751</a>    }
+<a href=#752 id=752 data-nosnippet>752</a>
+<a href=#753 id=753 data-nosnippet>753</a>    <span class="attr">#[tokio::test]
+<a href=#754 id=754 data-nosnippet>754</a>    #[traced_test]
+<a href=#755 id=755 data-nosnippet>755</a>    </span><span class="kw">async fn </span>test_relay_sort_no_latency() {
+<a href=#756 id=756 data-nosnippet>756</a>        <span class="kw">let </span>(_servers, relay_map) = test_utils::relay_map(<span class="number">2</span>).<span class="kw">await</span>;
+<a href=#757 id=757 data-nosnippet>757</a>        <span class="kw">let </span>r1 = relay_map.nodes().next().unwrap();
+<a href=#758 id=758 data-nosnippet>758</a>        <span class="kw">let </span>r2 = relay_map.nodes().nth(<span class="number">1</span>).unwrap();
+<a href=#759 id=759 data-nosnippet>759</a>
+<a href=#760 id=760 data-nosnippet>760</a>        <span class="kw">let </span>last_report = create_last_report(<span class="kw-2">&amp;</span>r1.url, <span class="prelude-val">None</span>, <span class="kw-2">&amp;</span>r2.url, <span class="prelude-val">None</span>);
+<a href=#761 id=761 data-nosnippet>761</a>        <span class="kw">let </span>sorted: Vec&lt;<span class="kw">_</span>&gt; = sort_relays(<span class="kw-2">&amp;</span>relay_map, <span class="kw-2">&amp;</span>last_report)
+<a href=#762 id=762 data-nosnippet>762</a>            .iter()
+<a href=#763 id=763 data-nosnippet>763</a>            .map(|(url, <span class="kw">_</span>)| <span class="kw-2">*</span>url)
+<a href=#764 id=764 data-nosnippet>764</a>            .collect();
+<a href=#765 id=765 data-nosnippet>765</a>        <span class="comment">// sorted by relay url only
+<a href=#766 id=766 data-nosnippet>766</a>        </span><span class="macro">assert_eq!</span>(sorted, <span class="macro">vec!</span>[<span class="kw-2">&amp;</span>r1.url, <span class="kw-2">&amp;</span>r2.url]);
+<a href=#767 id=767 data-nosnippet>767</a>    }
+<a href=#768 id=768 data-nosnippet>768</a>}</code></pre></div></section></main></body></html>

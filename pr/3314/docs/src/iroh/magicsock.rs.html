@@ -2124,7 +2124,7 @@
 <a href=#2124 id=2124 data-nosnippet>2124</a>
 <a href=#2125 id=2125 data-nosnippet>2125</a>    <span class="kw">fn </span>handle_net_report_report(<span class="kw-2">&amp;mut </span><span class="self">self</span>, <span class="kw-2">mut </span>report: <span class="prelude-ty">Option</span>&lt;net_report::Report&gt;) {
 <a href=#2126 id=2126 data-nosnippet>2126</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(<span class="kw-2">ref mut </span>r) = report {
-<a href=#2127 id=2127 data-nosnippet>2127</a>            <span class="self">self</span>.msock.ipv6_reported.store(r.ipv6, Ordering::Relaxed);
+<a href=#2127 id=2127 data-nosnippet>2127</a>            <span class="self">self</span>.msock.ipv6_reported.store(r.udp_v6, Ordering::Relaxed);
 <a href=#2128 id=2128 data-nosnippet>2128</a>            <span class="kw">if </span>r.preferred_relay.is_none() {
 <a href=#2129 id=2129 data-nosnippet>2129</a>                <span class="kw">if let </span><span class="prelude-val">Some</span>(my_relay) = <span class="self">self</span>.msock.my_relay() {
 <a href=#2130 id=2130 data-nosnippet>2130</a>                    r.preferred_relay.replace(my_relay);
