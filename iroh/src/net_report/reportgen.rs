@@ -236,7 +236,7 @@ impl Actor {
                         have_udp |= report.as_ref().map(|r| r.is_udp()).unwrap_or_default();
                         num_probes -= 1;
 
-                        // If all probes are done & we have_udp cancel portmapper and captive
+                        // If all probes are done & we have_udp cancel captive
                         if num_probes == 0 {
                             debug!("all regular probes done");
                             debug_assert!(probes.len() <= 1, "{} probes", probes.len());
@@ -621,7 +621,7 @@ async fn run_qad_probe(
     relay_addr: SocketAddr,
     ip_mapped_addrs: Option<IpMappedAddresses>,
 ) -> Result<QadProbeReport, RunProbeError> {
-    trace!(%relay_node, "QAD probe start");
+    trace!("QAD probe start");
 
     let relay_addr = maybe_to_mapped_addr(ip_mapped_addrs, relay_addr);
     let host = match relay_node.url.host_str() {
@@ -889,7 +889,7 @@ async fn run_https_probe(
     relay_node: Arc<RelayNode>,
     #[cfg(any(test, feature = "test-utils"))] insecure_skip_relay_cert_verify: bool,
 ) -> Result<HttpsProbeReport, MeasureHttpsLatencyError> {
-    trace!(%relay_node, "HTTPS probe start");
+    trace!("HTTPS probe start");
     let url = relay_node.url.join(RELAY_PROBE_PATH)?;
 
     // This should also use same connection establishment as relay client itself, which
