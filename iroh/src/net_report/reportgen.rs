@@ -226,6 +226,23 @@ impl Actor {
         // any reports of working UDP/QUIC?
         let mut have_udp = false;
 
+        // initial & re_stun(major):
+        //
+        // par [
+        //   timeout(race(qad_v4_probes)),
+        //   timeout(race(qad_v6_probes)),
+        // ]
+        //
+        // if all_error [
+        //   run_https_probes
+        //   run_captive_portal_check
+        // ]
+        //
+        // if have_qad_conns [
+        //   store(qad_conns) & keep alive
+        // ]
+        //
+
         // Check for probes finishing.
         while let Some(probe_result) = probes.join_next().await {
             trace!(?probe_result, num_probes, "processing finished probe");
@@ -441,10 +458,10 @@ impl ProbeReport {
 }
 
 #[cfg(not(wasm_browser))]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct QadProbeReport {
     /// The relay node that was probed
-    pub(super) node: Arc<RelayNode>,
+    pub(super) node: RelayUrl,
     /// The latency to the relay node.
     pub(super) latency: Duration,
     /// The discovered public address.
@@ -454,7 +471,7 @@ pub(super) struct QadProbeReport {
 #[derive(Debug, Clone)]
 pub(super) struct HttpsProbeReport {
     /// The relay node that was probed
-    pub(super) node: Arc<RelayNode>,
+    pub(super) node: RelayUrl,
     /// The latency to the relay node.
     pub(super) latency: Duration,
 }
@@ -539,7 +556,7 @@ impl Probe {
                 match run_https_probe(
                     #[cfg(not(wasm_browser))]
                     &socket_state.dns_resolver,
-                    relay_node,
+                    relay_node.url.clone(),
                     #[cfg(any(test, feature = "test-utils"))]
                     insecure_skip_relay_cert_verify,
                 )
@@ -563,9 +580,9 @@ impl Probe {
 
                     let report = run_qad_probe(
                         &quic_client,
-                        relay_node,
+                        relay_node.url.clone(),
                         relay_addr.into(),
-                        socket_state.ip_mapped_addrs,
+                        socket_state.ip_mapped_addrs.as_ref(),
                     )
                     .await?;
 
@@ -586,9 +603,9 @@ impl Probe {
 
                     let report = run_qad_probe(
                         &quic_client,
-                        relay_node,
+                        relay_node.url.clone(),
                         relay_addr.into(),
-                        socket_state.ip_mapped_addrs,
+                        socket_state.ip_mapped_addrs.as_ref(),
                     )
                     .await?;
 
@@ -603,11 +620,11 @@ impl Probe {
 }
 
 #[cfg(not(wasm_browser))]
-fn maybe_to_mapped_addr(
-    ip_mapped_addrs: Option<IpMappedAddresses>,
+pub(super) fn maybe_to_mapped_addr(
+    ip_mapped_addrs: Option<&IpMappedAddresses>,
     addr: SocketAddr,
 ) -> SocketAddr {
-    if let Some(ip_mapped_addrs) = ip_mapped_addrs.as_ref() {
+    if let Some(ip_mapped_addrs) = ip_mapped_addrs {
         return ip_mapped_addrs.get_or_register(addr).private_socket_addr();
     }
     addr
@@ -617,14 +634,14 @@ fn maybe_to_mapped_addr(
 #[cfg(not(wasm_browser))]
 async fn run_qad_probe(
     quic_client: &iroh_relay::quic::QuicClient,
-    relay_node: Arc<RelayNode>,
+    relay_node: RelayUrl,
     relay_addr: SocketAddr,
-    ip_mapped_addrs: Option<IpMappedAddresses>,
+    ip_mapped_addrs: Option<&IpMappedAddresses>,
 ) -> Result<QadProbeReport, RunProbeError> {
     trace!("QAD probe start");
 
     let relay_addr = maybe_to_mapped_addr(ip_mapped_addrs, relay_addr);
-    let host = match relay_node.url.host_str() {
+    let host = match relay_node.host_str() {
         Some(host) => host,
         None => {
             return Err(RunProbeError::Error(
@@ -780,7 +797,7 @@ pub enum GetRelayAddrError {
 
 /// Returns the IP address to use to communicate to this relay node for quic.
 #[cfg(not(wasm_browser))]
-async fn get_relay_addr_ipv4(
+pub(super) async fn get_relay_addr_ipv4(
     dns_resolver: &DnsResolver,
     relay_node: &RelayNode,
 ) -> Result<SocketAddrV4, GetRelayAddrError> {
@@ -789,7 +806,7 @@ async fn get_relay_addr_ipv4(
 }
 
 #[cfg(not(wasm_browser))]
-async fn get_relay_addr_ipv6(
+pub(super) async fn get_relay_addr_ipv6(
     dns_resolver: &DnsResolver,
     relay_node: &RelayNode,
 ) -> Result<SocketAddrV6, GetRelayAddrError> {
@@ -886,11 +903,11 @@ pub enum MeasureHttpsLatencyError {
 #[allow(clippy::unused_async)]
 async fn run_https_probe(
     #[cfg(not(wasm_browser))] dns_resolver: &DnsResolver,
-    relay_node: Arc<RelayNode>,
+    relay_node: RelayUrl,
     #[cfg(any(test, feature = "test-utils"))] insecure_skip_relay_cert_verify: bool,
 ) -> Result<HttpsProbeReport, MeasureHttpsLatencyError> {
     trace!("HTTPS probe start");
-    let url = relay_node.url.join(RELAY_PROBE_PATH)?;
+    let url = relay_node.join(RELAY_PROBE_PATH)?;
 
     // This should also use same connection establishment as relay client itself, which
     // needs to be more configurable so users can do more crazy things:
@@ -916,6 +933,7 @@ async fn run_https_probe(
             .await?
             .map(|ipaddr| SocketAddr::new(ipaddr, 0))
             .collect();
+        trace!(?addrs, "resolved addrs");
         builder = builder.resolve_to_addrs(domain, &addrs);
     }
 
@@ -973,7 +991,7 @@ mod tests {
         let (_server, relay) = test_utils::relay().await;
         let dns_resolver = DnsResolver::new();
         tracing::info!(relay_url = ?relay.url , "RELAY_URL");
-        let report = run_https_probe(&dns_resolver, Arc::new(relay), true).await?;
+        let report = run_https_probe(&dns_resolver, relay.url, true).await?;
 
         assert!(report.latency > Duration::ZERO);
 
@@ -993,7 +1011,7 @@ mod tests {
         let quic_client = iroh_relay::quic::QuicClient::new(ep.clone(), client_config);
         let report = match run_qad_probe(
             &quic_client,
-            relay,
+            relay.url.clone(),
             (Ipv4Addr::LOCALHOST, port).into(),
             None,
         )

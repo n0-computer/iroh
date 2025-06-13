@@ -280,6 +280,12 @@ impl QuicClient {
         // timeout (set to 30s by default).
         transport.initial_rtt(Duration::from_millis(111));
         transport.receive_observed_address_reports(true);
+
+        // keep it alive
+        transport.keep_alive_interval(Some(Duration::from_secs(15)));
+        transport.max_idle_timeout(Some(
+            Duration::from_secs(35).try_into().expect("known value"),
+        ));
         client_config.transport_config(Arc::new(transport));
 
         Self { ep, client_config }
@@ -332,6 +338,18 @@ impl QuicClient {
         // gracefully close the connections
         conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
         Ok((observed_addr, latency))
+    }
+
+    /// Create a connection usable for qad
+    pub async fn create_conn(
+        &self,
+        server_addr: SocketAddr,
+        host: &str,
+    ) -> Result<quinn::Connection, Error> {
+        let config = self.client_config.clone();
+        let connecting = self.ep.connect_with(config, server_addr, host);
+        let conn = connecting?.await?;
+        Ok(conn)
     }
 }
 

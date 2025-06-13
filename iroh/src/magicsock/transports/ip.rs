@@ -105,9 +105,11 @@ pub(super) struct IpNetworkChangeSender {
 
 impl IpNetworkChangeSender {
     pub(super) fn rebind(&self) -> io::Result<()> {
+        let old_addr = self.local_addr.get();
         self.socket.rebind()?;
         let addr = self.socket.local_addr()?;
         self.local_addr.set(addr).ok();
+        trace!("rebound from {} to {}", old_addr, addr);
 
         Ok(())
     }
