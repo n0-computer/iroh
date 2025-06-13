@@ -130,7 +130,7 @@ impl ProbeSet {
 /// sufficient information for a report.
 ///
 /// [`reportgen`]: crate::net_report::reportgen
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub(super) struct ProbePlan {
     set: BTreeSet<ProbeSet>,
 }
@@ -165,8 +165,8 @@ impl ProbePlan {
                     quic_ipv6_probes.push(delay, relay_node.clone());
                 }
             }
-            plan.add_if_enabled(protocols, quic_ipv4_probes);
-            plan.add_if_enabled(protocols, quic_ipv6_probes);
+            // plan.add_if_enabled(protocols, quic_ipv4_probes);
+            // plan.add_if_enabled(protocols, quic_ipv6_probes);
 
             // The HTTP probes only start after the QAD probes have had a chance.
             let mut https_probes = ProbeSet::new(Probe::Https);
@@ -213,7 +213,6 @@ impl ProbePlan {
     /// Creates a follow up probe plan using a previous net_report report in browsers.
     ///
     /// This will only schedule HTTPS probes.
-    #[cfg(not(wasm_browser))]
     pub(super) fn with_last_report(
         relay_map: &RelayMap,
         last_report: &Report,
@@ -223,132 +222,7 @@ impl ProbePlan {
         if last_report.relay_latency.is_empty() {
             return Self::initial(relay_map, protocols, if_state);
         }
-        let mut plan = Self {
-            set: Default::default(),
-        };
-
-        // The first time we need to add probes after the STUN we record this delay, so that
-        // further relay servers can reuse this delay.
-        let mut max_stun_delay: Option<Duration> = None;
-
-        let had_stun_ipv4 = !last_report.relay_latency.ipv4().is_empty();
-        let had_stun_ipv6 = !last_report.relay_latency.ipv6().is_empty();
-        let had_both = if_state.have_v6 && had_stun_ipv4 && had_stun_ipv6;
-        let sorted_relays = sort_relays(relay_map, last_report);
-        for (ri, (url, relay_node)) in sorted_relays.into_iter().enumerate() {
-            if ri == NUM_INCREMENTAL_RELAYS {
-                break;
-            }
-            let mut do4 = if_state.have_v4;
-            let mut do6 = if_state.have_v6;
-
-            // By default, each node only gets one STUN packet sent,
-            // except the fastest two from the previous round.
-            let mut attempts = 1;
-            let is_fastest_two = ri < 2;
-
-            if is_fastest_two {
-                attempts = 2;
-            } else if had_both {
-                // For dual stack machines, make the 3rd & slower nodes alternate between
-                // IPv4 and IPv6 for STUN and ICMP probes.
-                if ri % 2 == 0 {
-                    (do4, do6) = (true, false);
-                } else {
-                    (do4, do6) = (false, true);
-                }
-            }
-            if !is_fastest_two && !had_stun_ipv6 {
-                do6 = false;
-            }
-            if Some(url) == last_report.preferred_relay.as_ref() {
-                // But if we already had a relay home, try extra hard to
-                // make sure it's there so we don't flip flop around.
-                attempts = 4;
-            }
-            let retransmit_delay = last_report
-                .relay_latency
-                .get(url)
-                .map(|l| l * 120 / 100) // increases latency by 20%, why?
-                .unwrap_or(DEFAULT_ACTIVE_RETRANSMIT_DELAY);
-
-            let mut quic_ipv4_probes = ProbeSet::new(Probe::QadIpv4);
-            let mut quic_ipv6_probes = ProbeSet::new(Probe::QadIpv6);
-
-            for attempt in 0..attempts {
-                let delay = (retransmit_delay * attempt as u32)
-                    + (ACTIVE_RETRANSMIT_EXTRA_DELAY * attempt as u32);
-                if do4 {
-                    quic_ipv4_probes.push(delay, relay_node.clone());
-                }
-                if do6 {
-                    quic_ipv6_probes.push(delay, relay_node.clone());
-                }
-            }
-            plan.add_if_enabled(protocols, quic_ipv4_probes);
-            plan.add_if_enabled(protocols, quic_ipv6_probes);
-
-            // The HTTP and ICMP probes only start after the STUN probes have had a chance.
-            let mut https_probes = ProbeSet::new(Probe::Https);
-            let start = *max_stun_delay.get_or_insert_with(|| plan.max_delay());
-            for attempt in 0..attempts {
-                let delay = start
-                    + (retransmit_delay * attempt as u32)
-                    + (ACTIVE_RETRANSMIT_EXTRA_DELAY * (attempt as u32 + 1));
-                https_probes.push(delay, relay_node.clone());
-            }
-
-            plan.add_if_enabled(protocols, https_probes);
-        }
-        plan
-    }
-
-    #[cfg(wasm_browser)]
-    pub(super) fn with_last_report(
-        relay_map: &RelayMap,
-        last_report: &Report,
-        protocols: &BTreeSet<Probe>,
-    ) -> Self {
-        if last_report.relay_latency.is_empty() {
-            return Self::initial(relay_map, protocols);
-        }
-        let mut plan = Self {
-            set: Default::default(),
-        };
-
-        let sorted_relays = sort_relays(relay_map, last_report);
-        for (ri, (url, relay_node)) in sorted_relays.into_iter().enumerate() {
-            if ri == NUM_INCREMENTAL_RELAYS {
-                break;
-            }
-
-            // By default, each node only gets one probe sent,
-            let mut attempts: u32 = 1;
-            // except the fastest two from the previous round.
-            if ri < 2 {
-                attempts = 2;
-            }
-            if Some(url) == last_report.preferred_relay.as_ref() {
-                // But if we already had a relay home, try extra hard to
-                // make sure it's there so we don't flip flop around.
-                attempts = 4;
-            }
-            let retransmit_delay = last_report
-                .relay_latency
-                .get(url)
-                .map(|l| l * 120 / 100) // increases latency by 20%, why?
-                .unwrap_or(DEFAULT_ACTIVE_RETRANSMIT_DELAY);
-
-            let mut https_probes = ProbeSet::new(Probe::Https);
-            for attempt in 0..attempts {
-                let delay =
-                    (retransmit_delay * attempt) + (ACTIVE_RETRANSMIT_EXTRA_DELAY * (attempt + 1));
-                https_probes.push(delay, relay_node.clone());
-            }
-
-            plan.add_if_enabled(protocols, https_probes);
-        }
-        plan
+        Self::default()
     }
 
     /// Returns an iterator over the [`ProbeSet`]s in this plan.
@@ -589,7 +463,7 @@ mod tests {
             let last_report = Report {
                 udp_v6: true,
                 udp_v4: true,
-                mapping_varies_by_dest_ip: Some(false),
+                mapping_varies_by_dest_ipv4: Some(false),
                 mapping_varies_by_dest_ipv6: Some(false),
                 preferred_relay: Some(relay_node_1.url.clone()),
                 relay_latency: latencies.clone(),
@@ -678,7 +552,7 @@ mod tests {
         Report {
             udp_v6: true,
             udp_v4: true,
-            mapping_varies_by_dest_ip: Some(false),
+            mapping_varies_by_dest_ipv4: Some(false),
             mapping_varies_by_dest_ipv6: Some(false),
             preferred_relay: Some(url_1.clone()),
             relay_latency: latencies,

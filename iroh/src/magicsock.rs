@@ -1106,6 +1106,12 @@ enum UpdateReason {
     LinkChangeMinor,
 }
 
+impl UpdateReason {
+    fn is_major(self) -> bool {
+        matches!(self, Self::LinkChangeMajor)
+    }
+}
+
 impl DirectAddrUpdateState {
     fn new(
         msock: Arc<MagicSock>,
@@ -1179,7 +1185,10 @@ impl DirectAddrUpdateState {
 
         let run_done = self.run_done.clone();
         task::spawn(async move {
-            let fut = time::timeout(NET_REPORT_TIMEOUT, net_reporter.get_report(if_state));
+            let fut = time::timeout(
+                NET_REPORT_TIMEOUT,
+                net_reporter.get_report(if_state, why.is_major()),
+            );
             match fut.await {
                 Ok(report) => {
                     msock.net_report.set((Some(report), why)).ok();
@@ -1864,7 +1873,7 @@ impl Actor {
                     current_netmon_state = state;
                     trace!("tick: link change {}", is_major);
                     self.msock.metrics.magicsock.actor_link_change.inc();
-                    self.handle_network_change(is_major);
+                    self.handle_network_change(is_major).await;
                 }
                 // Even if `discovery_events` yields `None`, it could begin to yield
                 // `Some` again in the future, so we don't want to disable this branch
@@ -1893,7 +1902,7 @@ impl Actor {
         }
     }
 
-    fn handle_network_change(&mut self, is_major: bool) {
+    async fn handle_network_change(&mut self, is_major: bool) {
         debug!("link change detected: major? {}", is_major);
 
         if is_major {
@@ -1902,7 +1911,7 @@ impl Actor {
             }
 
             #[cfg(not(wasm_browser))]
-            self.msock.dns_resolver.clear_cache();
+            self.msock.dns_resolver.reset().await;
             self.re_stun(UpdateReason::LinkChangeMajor);
             self.reset_endpoint_states();
         } else {
@@ -2001,7 +2010,7 @@ impl Actor {
 
                 if let Some(port) = port {
                     if net_report_report
-                        .mapping_varies_by_dest_ip
+                        .mapping_varies_by_dest()
                         .unwrap_or_default()
                     {
                         let mut addr = global_v4;

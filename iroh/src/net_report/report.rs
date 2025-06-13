@@ -18,11 +18,8 @@ pub struct Report {
     /// A QAD IPv6 round trip completed.
     pub udp_v6: bool,
     /// Whether the reported public address differs when probing different servers (on IPv4).
-    pub mapping_varies_by_dest_ip: Option<bool>,
+    pub mapping_varies_by_dest_ipv4: Option<bool>,
     /// Whether the reported public address differs when probing different servers (on IPv6).
-    ///
-    /// Note that we don't really expect this to happen and are merely logging this if
-    /// detecting rather than using it.  For now.
     pub mapping_varies_by_dest_ipv6: Option<bool>,
     /// Probe indicating the presence of port mapping protocols on the LAN.
     /// `None` for unknown
@@ -50,20 +47,30 @@ impl Report {
         self.udp_v4 || self.udp_v6
     }
 
+    /// Whether the reported public address differs when probing different servers.
+    pub fn mapping_varies_by_dest(&self) -> Option<bool> {
+        match (
+            self.mapping_varies_by_dest_ipv4,
+            self.mapping_varies_by_dest_ipv6,
+        ) {
+            (Some(v4), Some(v6)) => Some(v4 || v6),
+            (None, Some(v6)) => Some(v6),
+            (Some(v4), None) => Some(v4),
+            (None, None) => None,
+        }
+    }
+
     /// Updates a net_report [`Report`] with a new [`ProbeReport`].
     pub(super) fn update(&mut self, report: &ProbeReport) {
         match report {
             ProbeReport::Https(report) => {
-                self.relay_latency.update_relay(
-                    report.node.url.clone(),
-                    report.latency,
-                    Probe::Https,
-                );
+                self.relay_latency
+                    .update_relay(report.node.clone(), report.latency, Probe::Https);
             }
             #[cfg(not(wasm_browser))]
             ProbeReport::QadIpv4(report) => {
                 self.relay_latency.update_relay(
-                    report.node.url.clone(),
+                    report.node.clone(),
                     report.latency,
                     Probe::QadIpv4,
                 );
@@ -73,19 +80,25 @@ impl Report {
                 };
 
                 self.udp_v4 = true;
-                if self.global_v4.is_none() {
+
+                tracing::debug!(?self.global_v4, ?self.mapping_varies_by_dest_ipv4, %ipp,"got");
+                if let Some(global) = self.global_v4 {
+                    if global == ipp {
+                        if self.mapping_varies_by_dest_ipv4.is_none() {
+                            self.mapping_varies_by_dest_ipv4 = Some(false);
+                        }
+                    } else {
+                        self.mapping_varies_by_dest_ipv4 = Some(true);
+                        warn!("IPv4 address detected by QAD varies by destination");
+                    }
+                } else {
                     self.global_v4 = Some(ipp);
-                } else if self.global_v4 != Some(ipp) {
-                    self.mapping_varies_by_dest_ip = Some(true);
-                    warn!("IPv4 address detected by QAD varies by destination");
-                } else if self.mapping_varies_by_dest_ip.is_none() {
-                    self.mapping_varies_by_dest_ip = Some(false);
                 }
             }
             #[cfg(not(wasm_browser))]
             ProbeReport::QadIpv6(report) => {
                 self.relay_latency.update_relay(
-                    report.node.url.clone(),
+                    report.node.clone(),
                     report.latency,
                     Probe::QadIpv6,
                 );
@@ -95,13 +108,18 @@ impl Report {
                 };
 
                 self.udp_v6 = true;
-                if self.global_v6.is_none() {
+                tracing::debug!(?self.global_v6, ?self.mapping_varies_by_dest_ipv6, %ipp,"got");
+                if let Some(global) = self.global_v6 {
+                    if global == ipp {
+                        if self.mapping_varies_by_dest_ipv6.is_none() {
+                            self.mapping_varies_by_dest_ipv6 = Some(false);
+                        }
+                    } else {
+                        self.mapping_varies_by_dest_ipv6 = Some(true);
+                        warn!("IPv6 address detected by QAD varies by destination");
+                    }
+                } else {
                     self.global_v6 = Some(ipp);
-                } else if self.global_v6 != Some(ipp) {
-                    self.mapping_varies_by_dest_ipv6 = Some(true);
-                    warn!("IPv6 address detected by QAD varies by destination");
-                } else if self.mapping_varies_by_dest_ipv6.is_none() {
-                    self.mapping_varies_by_dest_ipv6 = Some(false);
                 }
             }
         }

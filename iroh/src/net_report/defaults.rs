@@ -11,7 +11,7 @@ pub(crate) mod timeouts {
 
     /// The total time we wait for all the probes.
     ///
-    /// This includes the STUN, ICMP and HTTPS probes, which will all
+    /// This includes the QAD and HTTPS probes, which will all
     /// start at different times based on the ProbePlan.
     pub(crate) const PROBES_TIMEOUT: Duration = Duration::from_secs(3);
 
