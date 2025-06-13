@@ -1,18 +1,7 @@
 //! Exposes functions to quickly configure a server suitable for testing.
 use std::net::Ipv4Addr;
 
-use super::{
-    AccessConfig, CertConfig, QuicConfig, RelayConfig, ServerConfig, StunConfig, TlsConfig,
-};
-
-/// Creates a [`StunConfig`] suitable for testing.
-///
-/// To ensure port availability for testing, the port is configured to be assigned by the OS.
-pub fn stun_config() -> StunConfig {
-    StunConfig {
-        bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
-    }
-}
+use super::{AccessConfig, CertConfig, QuicConfig, RelayConfig, ServerConfig, TlsConfig};
 
 /// Creates a [`rustls::ServerConfig`] and certificates suitable for testing.
 ///
@@ -88,13 +77,11 @@ pub fn quic_config() -> QuicConfig {
 /// Creates a [`ServerConfig`] suitable for testing.
 ///
 /// - Relaying is enabled using [`relay_config`]
-/// - Stun is enabled using [`stun_config`]
 /// - QUIC addr discovery is disabled.
 /// - Metrics are not enabled.
 pub fn server_config() -> ServerConfig<()> {
     ServerConfig {
         relay: Some(relay_config()),
-        stun: Some(stun_config()),
         quic: Some(quic_config()),
         #[cfg(feature = "metrics")]
         metrics_addr: None,

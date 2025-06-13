@@ -57,7 +57,6 @@ pub(super) enum State<'a> {
 
 #[derive(Debug, Clone, Copy)]
 pub enum ClearReason {
-    Reset,
     Inactive,
     PongTimeout,
     MatchesOurLocalAddr,
