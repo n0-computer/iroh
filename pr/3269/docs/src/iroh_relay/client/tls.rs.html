@@ -131,7 +131,7 @@
 <a href=#131 id=131 data-nosnippet>131</a>        }
 <a href=#132 id=132 data-nosnippet>132</a>    }
 <a href=#133 id=133 data-nosnippet>133</a>
-<a href=#134 id=134 data-nosnippet>134</a>    <span class="kw">fn </span>tls_servername(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;rustls::pki_types::ServerName&gt; {
+<a href=#134 id=134 data-nosnippet>134</a>    <span class="kw">fn </span>tls_servername(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;rustls::pki_types::ServerName&lt;<span class="lifetime">'_</span>&gt;&gt; {
 <a href=#135 id=135 data-nosnippet>135</a>        <span class="kw">let </span>host_str = <span class="self">self</span>.url.host_str()<span class="question-mark">?</span>;
 <a href=#136 id=136 data-nosnippet>136</a>        <span class="kw">let </span>servername = rustls::pki_types::ServerName::try_from(host_str).ok()<span class="question-mark">?</span>;
 <a href=#137 id=137 data-nosnippet>137</a>        <span class="prelude-val">Some</span>(servername)

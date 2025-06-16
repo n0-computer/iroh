@@ -6,10 +6,10 @@
 <a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>bytes::Bytes;
 <a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>iroh::{
 <a href=#8 id=8 data-nosnippet>8</a>    endpoint::{Connection, ConnectionError, RecvStream, SendStream, TransportConfig},
-<a href=#9 id=9 data-nosnippet>9</a>    watcher::Watcher <span class="kw">as _</span>,
-<a href=#10 id=10 data-nosnippet>10</a>    Endpoint, NodeAddr, RelayMode, RelayUrl,
-<a href=#11 id=11 data-nosnippet>11</a>};
-<a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>n0_snafu::{<span class="prelude-ty">Result</span>, ResultExt};
+<a href=#9 id=9 data-nosnippet>9</a>    Endpoint, NodeAddr, RelayMode, RelayUrl,
+<a href=#10 id=10 data-nosnippet>10</a>};
+<a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span>n0_snafu::{<span class="prelude-ty">Result</span>, ResultExt};
+<a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>n0_watcher::Watcher <span class="kw">as _</span>;
 <a href=#13 id=13 data-nosnippet>13</a><span class="kw">use </span>tracing::{trace, warn};
 <a href=#14 id=14 data-nosnippet>14</a>
 <a href=#15 id=15 data-nosnippet>15</a><span class="kw">use crate</span>::{
@@ -54,7 +54,7 @@
 <a href=#54 id=54 data-nosnippet>54</a>        }
 <a href=#55 id=55 data-nosnippet>55</a>
 <a href=#56 id=56 data-nosnippet>56</a>        <span class="kw">let </span>addr = ep.bound_sockets();
-<a href=#57 id=57 data-nosnippet>57</a>        <span class="kw">let </span>addr = SocketAddr::new(<span class="string">"127.0.0.1"</span>.parse().unwrap(), addr.<span class="number">0</span>.port());
+<a href=#57 id=57 data-nosnippet>57</a>        <span class="kw">let </span>addr = SocketAddr::new(<span class="string">"127.0.0.1"</span>.parse().unwrap(), addr[<span class="number">0</span>].port());
 <a href=#58 id=58 data-nosnippet>58</a>        <span class="kw">let </span><span class="kw-2">mut </span>addr = NodeAddr::new(ep.node_id()).with_direct_addresses([addr]);
 <a href=#59 id=59 data-nosnippet>59</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(relay_url) = relay_url {
 <a href=#60 id=60 data-nosnippet>60</a>            addr = addr.with_relay_url(relay_url.clone());

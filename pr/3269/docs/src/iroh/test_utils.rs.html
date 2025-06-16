@@ -372,173 +372,180 @@
 <a href=#372 id=372 data-nosnippet>372</a>    <span class="kw">use </span>iroh_base::NodeId;
 <a href=#373 id=373 data-nosnippet>373</a>    <span class="kw">use </span>iroh_relay::node_info::{NodeIdExt, NodeInfo, IROH_TXT_NAME};
 <a href=#374 id=374 data-nosnippet>374</a>    <span class="kw">use </span>pkarr::SignedPacket;
-<a href=#375 id=375 data-nosnippet>375</a>
-<a href=#376 id=376 data-nosnippet>376</a>    <span class="kw">use </span><span class="kw">crate</span>::test_utils::dns_server::QueryHandler;
-<a href=#377 id=377 data-nosnippet>377</a>
-<a href=#378 id=378 data-nosnippet>378</a>    <span class="attr">#[derive(Debug, Clone)]
-<a href=#379 id=379 data-nosnippet>379</a>    </span><span class="kw">pub struct </span>State {
-<a href=#380 id=380 data-nosnippet>380</a>        packets: Arc&lt;Mutex&lt;HashMap&lt;NodeId, SignedPacket&gt;&gt;&gt;,
-<a href=#381 id=381 data-nosnippet>381</a>        origin: String,
-<a href=#382 id=382 data-nosnippet>382</a>        notify: Arc&lt;tokio::sync::Notify&gt;,
-<a href=#383 id=383 data-nosnippet>383</a>    }
-<a href=#384 id=384 data-nosnippet>384</a>
-<a href=#385 id=385 data-nosnippet>385</a>    <span class="kw">impl </span>State {
-<a href=#386 id=386 data-nosnippet>386</a>        <span class="kw">pub fn </span>new(origin: String) -&gt; <span class="self">Self </span>{
-<a href=#387 id=387 data-nosnippet>387</a>            <span class="self">Self </span>{
-<a href=#388 id=388 data-nosnippet>388</a>                packets: Default::default(),
-<a href=#389 id=389 data-nosnippet>389</a>                origin,
-<a href=#390 id=390 data-nosnippet>390</a>                notify: Arc::new(tokio::sync::Notify::new()),
-<a href=#391 id=391 data-nosnippet>391</a>            }
-<a href=#392 id=392 data-nosnippet>392</a>        }
-<a href=#393 id=393 data-nosnippet>393</a>
-<a href=#394 id=394 data-nosnippet>394</a>        <span class="kw">pub fn </span>on_update(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; tokio::sync::futures::Notified&lt;<span class="lifetime">'_</span>&gt; {
-<a href=#395 id=395 data-nosnippet>395</a>            <span class="self">self</span>.notify.notified()
-<a href=#396 id=396 data-nosnippet>396</a>        }
-<a href=#397 id=397 data-nosnippet>397</a>
-<a href=#398 id=398 data-nosnippet>398</a>        <span class="kw">pub async fn </span>on_node(<span class="kw-2">&amp;</span><span class="self">self</span>, node: <span class="kw-2">&amp;</span>NodeId, timeout: Duration) -&gt; std::io::Result&lt;()&gt; {
-<a href=#399 id=399 data-nosnippet>399</a>            <span class="kw">let </span>timeout = tokio::time::sleep(timeout);
-<a href=#400 id=400 data-nosnippet>400</a>            <span class="macro">tokio::pin!</span>(timeout);
-<a href=#401 id=401 data-nosnippet>401</a>            <span class="kw">while </span><span class="self">self</span>.get(node, |p| p.is_none()) {
-<a href=#402 id=402 data-nosnippet>402</a>                <span class="macro">tokio::select!</span> {
-<a href=#403 id=403 data-nosnippet>403</a>                    <span class="kw">_ </span>= <span class="kw-2">&amp;mut </span>timeout =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(std::io::Error::other(<span class="string">"timeout"</span>)),
-<a href=#404 id=404 data-nosnippet>404</a>                    <span class="kw">_ </span>= <span class="self">self</span>.on_update() =&gt; {}
-<a href=#405 id=405 data-nosnippet>405</a>                }
-<a href=#406 id=406 data-nosnippet>406</a>            }
-<a href=#407 id=407 data-nosnippet>407</a>            <span class="prelude-val">Ok</span>(())
-<a href=#408 id=408 data-nosnippet>408</a>        }
-<a href=#409 id=409 data-nosnippet>409</a>
-<a href=#410 id=410 data-nosnippet>410</a>        <span class="kw">pub fn </span>upsert(<span class="kw-2">&amp;</span><span class="self">self</span>, signed_packet: SignedPacket) -&gt; std::io::Result&lt;bool&gt; {
-<a href=#411 id=411 data-nosnippet>411</a>            <span class="kw">let </span>node_id = NodeId::from_bytes(<span class="kw-2">&amp;</span>signed_packet.public_key().to_bytes())
-<a href=#412 id=412 data-nosnippet>412</a>                .map_err(std::io::Error::other)<span class="question-mark">?</span>;
-<a href=#413 id=413 data-nosnippet>413</a>            <span class="kw">let </span><span class="kw-2">mut </span>map = <span class="self">self</span>.packets.lock().expect(<span class="string">"poisoned"</span>);
-<a href=#414 id=414 data-nosnippet>414</a>            <span class="kw">let </span>updated = <span class="kw">match </span>map.entry(node_id) {
-<a href=#415 id=415 data-nosnippet>415</a>                hash_map::Entry::Vacant(e) =&gt; {
-<a href=#416 id=416 data-nosnippet>416</a>                    e.insert(signed_packet);
-<a href=#417 id=417 data-nosnippet>417</a>                    <span class="bool-val">true
-<a href=#418 id=418 data-nosnippet>418</a>                </span>}
-<a href=#419 id=419 data-nosnippet>419</a>                hash_map::Entry::Occupied(<span class="kw-2">mut </span>e) =&gt; {
-<a href=#420 id=420 data-nosnippet>420</a>                    <span class="kw">if </span>signed_packet.more_recent_than(e.get()) {
-<a href=#421 id=421 data-nosnippet>421</a>                        e.insert(signed_packet);
-<a href=#422 id=422 data-nosnippet>422</a>                        <span class="bool-val">true
-<a href=#423 id=423 data-nosnippet>423</a>                    </span>} <span class="kw">else </span>{
-<a href=#424 id=424 data-nosnippet>424</a>                        <span class="bool-val">false
-<a href=#425 id=425 data-nosnippet>425</a>                    </span>}
-<a href=#426 id=426 data-nosnippet>426</a>                }
-<a href=#427 id=427 data-nosnippet>427</a>            };
-<a href=#428 id=428 data-nosnippet>428</a>            <span class="kw">if </span>updated {
-<a href=#429 id=429 data-nosnippet>429</a>                <span class="self">self</span>.notify.notify_waiters();
-<a href=#430 id=430 data-nosnippet>430</a>            }
-<a href=#431 id=431 data-nosnippet>431</a>            <span class="prelude-val">Ok</span>(updated)
-<a href=#432 id=432 data-nosnippet>432</a>        }
-<a href=#433 id=433 data-nosnippet>433</a>
-<a href=#434 id=434 data-nosnippet>434</a>        <span class="doccomment">/// Returns a mutex guard, do not hold over await points
-<a href=#435 id=435 data-nosnippet>435</a>        </span><span class="kw">pub fn </span>get&lt;F, T&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: <span class="kw-2">&amp;</span>NodeId, cb: F) -&gt; T
-<a href=#436 id=436 data-nosnippet>436</a>        <span class="kw">where
-<a href=#437 id=437 data-nosnippet>437</a>            </span>F: FnOnce(<span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;mut </span>SignedPacket&gt;) -&gt; T,
-<a href=#438 id=438 data-nosnippet>438</a>        {
-<a href=#439 id=439 data-nosnippet>439</a>            <span class="kw">let </span><span class="kw-2">mut </span>map = <span class="self">self</span>.packets.lock().expect(<span class="string">"poisoned"</span>);
-<a href=#440 id=440 data-nosnippet>440</a>            <span class="kw">let </span>packet = map.get_mut(node_id);
-<a href=#441 id=441 data-nosnippet>441</a>            cb(packet)
-<a href=#442 id=442 data-nosnippet>442</a>        }
-<a href=#443 id=443 data-nosnippet>443</a>
-<a href=#444 id=444 data-nosnippet>444</a>        <span class="kw">pub fn </span>resolve_dns(
-<a href=#445 id=445 data-nosnippet>445</a>            <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#446 id=446 data-nosnippet>446</a>            query: <span class="kw-2">&amp;</span>hickory_resolver::proto::op::Message,
-<a href=#447 id=447 data-nosnippet>447</a>            reply: <span class="kw-2">&amp;mut </span>hickory_resolver::proto::op::Message,
-<a href=#448 id=448 data-nosnippet>448</a>            ttl: u32,
-<a href=#449 id=449 data-nosnippet>449</a>        ) -&gt; std::io::Result&lt;()&gt; {
-<a href=#450 id=450 data-nosnippet>450</a>            <span class="kw">for </span>query <span class="kw">in </span>query.queries() {
-<a href=#451 id=451 data-nosnippet>451</a>                <span class="kw">let </span>domain_name = query.name().to_string();
-<a href=#452 id=452 data-nosnippet>452</a>                <span class="kw">let </span><span class="prelude-val">Some</span>(node_id) = node_id_from_domain_name(<span class="kw-2">&amp;</span>domain_name) <span class="kw">else </span>{
-<a href=#453 id=453 data-nosnippet>453</a>                    <span class="kw">continue</span>;
-<a href=#454 id=454 data-nosnippet>454</a>                };
-<a href=#455 id=455 data-nosnippet>455</a>
-<a href=#456 id=456 data-nosnippet>456</a>                <span class="self">self</span>.get(<span class="kw-2">&amp;</span>node_id, |packet| {
-<a href=#457 id=457 data-nosnippet>457</a>                    <span class="kw">if let </span><span class="prelude-val">Some</span>(packet) = packet {
-<a href=#458 id=458 data-nosnippet>458</a>                        <span class="kw">let </span>node_info = NodeInfo::from_pkarr_signed_packet(packet)
-<a href=#459 id=459 data-nosnippet>459</a>                            .map_err(std::io::Error::other)<span class="question-mark">?</span>;
-<a href=#460 id=460 data-nosnippet>460</a>                        <span class="kw">for </span>record <span class="kw">in </span>node_info_to_hickory_records(<span class="kw-2">&amp;</span>node_info, <span class="kw-2">&amp;</span><span class="self">self</span>.origin, ttl) {
-<a href=#461 id=461 data-nosnippet>461</a>                            reply.add_answer(record);
-<a href=#462 id=462 data-nosnippet>462</a>                        }
-<a href=#463 id=463 data-nosnippet>463</a>                    }
-<a href=#464 id=464 data-nosnippet>464</a>                    <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, std::io::Error&gt;(())
-<a href=#465 id=465 data-nosnippet>465</a>                })<span class="question-mark">?</span>;
-<a href=#466 id=466 data-nosnippet>466</a>            }
-<a href=#467 id=467 data-nosnippet>467</a>            <span class="prelude-val">Ok</span>(())
-<a href=#468 id=468 data-nosnippet>468</a>        }
-<a href=#469 id=469 data-nosnippet>469</a>    }
-<a href=#470 id=470 data-nosnippet>470</a>
-<a href=#471 id=471 data-nosnippet>471</a>    <span class="kw">impl </span>QueryHandler <span class="kw">for </span>State {
-<a href=#472 id=472 data-nosnippet>472</a>        <span class="kw">fn </span>resolve(
-<a href=#473 id=473 data-nosnippet>473</a>            <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#474 id=474 data-nosnippet>474</a>            query: <span class="kw-2">&amp;</span>hickory_resolver::proto::op::Message,
-<a href=#475 id=475 data-nosnippet>475</a>            reply: <span class="kw-2">&amp;mut </span>hickory_resolver::proto::op::Message,
-<a href=#476 id=476 data-nosnippet>476</a>        ) -&gt; <span class="kw">impl </span>Future&lt;Output = std::io::Result&lt;()&gt;&gt; + Send {
-<a href=#477 id=477 data-nosnippet>477</a>            <span class="kw">const </span>TTL: u32 = <span class="number">30</span>;
-<a href=#478 id=478 data-nosnippet>478</a>            <span class="kw">let </span>res = <span class="self">self</span>.resolve_dns(query, reply, TTL);
-<a href=#479 id=479 data-nosnippet>479</a>            std::future::ready(res)
-<a href=#480 id=480 data-nosnippet>480</a>        }
-<a href=#481 id=481 data-nosnippet>481</a>    }
-<a href=#482 id=482 data-nosnippet>482</a>
-<a href=#483 id=483 data-nosnippet>483</a>    <span class="doccomment">/// Parses a [`NodeId`] from a DNS domain name.
-<a href=#484 id=484 data-nosnippet>484</a>    ///
-<a href=#485 id=485 data-nosnippet>485</a>    /// Splits the domain name into labels on each dot. Expects the first label to be
-<a href=#486 id=486 data-nosnippet>486</a>    /// [`IROH_TXT_NAME`] and the second label to be a z32 encoded [`NodeId`]. Ignores
-<a href=#487 id=487 data-nosnippet>487</a>    /// subsequent labels.
-<a href=#488 id=488 data-nosnippet>488</a>    ///
-<a href=#489 id=489 data-nosnippet>489</a>    /// Returns a [`NodeId`] if parsed successfully, otherwise `None`.
-<a href=#490 id=490 data-nosnippet>490</a>    </span><span class="kw">fn </span>node_id_from_domain_name(name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Option</span>&lt;NodeId&gt; {
-<a href=#491 id=491 data-nosnippet>491</a>        <span class="kw">let </span><span class="kw-2">mut </span>labels = name.split(<span class="string">"."</span>);
-<a href=#492 id=492 data-nosnippet>492</a>        <span class="kw">let </span>label = labels.next()<span class="question-mark">?</span>;
-<a href=#493 id=493 data-nosnippet>493</a>        <span class="kw">if </span>label != IROH_TXT_NAME {
-<a href=#494 id=494 data-nosnippet>494</a>            <span class="kw">return </span><span class="prelude-val">None</span>;
-<a href=#495 id=495 data-nosnippet>495</a>        }
-<a href=#496 id=496 data-nosnippet>496</a>        <span class="kw">let </span>label = labels.next()<span class="question-mark">?</span>;
-<a href=#497 id=497 data-nosnippet>497</a>        <span class="kw">let </span>node_id = NodeId::from_z32(label).ok()<span class="question-mark">?</span>;
-<a href=#498 id=498 data-nosnippet>498</a>        <span class="prelude-val">Some</span>(node_id)
-<a href=#499 id=499 data-nosnippet>499</a>    }
-<a href=#500 id=500 data-nosnippet>500</a>
-<a href=#501 id=501 data-nosnippet>501</a>    <span class="doccomment">/// Converts a [`NodeInfo`]into a [`hickory_resolver::proto::rr::Record`] DNS record.
-<a href=#502 id=502 data-nosnippet>502</a>    </span><span class="kw">fn </span>node_info_to_hickory_records(
-<a href=#503 id=503 data-nosnippet>503</a>        node_info: <span class="kw-2">&amp;</span>NodeInfo,
-<a href=#504 id=504 data-nosnippet>504</a>        origin: <span class="kw-2">&amp;</span>str,
-<a href=#505 id=505 data-nosnippet>505</a>        ttl: u32,
-<a href=#506 id=506 data-nosnippet>506</a>    ) -&gt; <span class="kw">impl </span>Iterator&lt;Item = hickory_resolver::proto::rr::Record&gt; + <span class="lifetime">'static </span>{
-<a href=#507 id=507 data-nosnippet>507</a>        <span class="kw">let </span>txt_strings = node_info.to_txt_strings();
-<a href=#508 id=508 data-nosnippet>508</a>        <span class="kw">let </span>records = to_hickory_records(txt_strings, node_info.node_id, origin, ttl);
-<a href=#509 id=509 data-nosnippet>509</a>        records.collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;().into_iter()
-<a href=#510 id=510 data-nosnippet>510</a>    }
-<a href=#511 id=511 data-nosnippet>511</a>
-<a href=#512 id=512 data-nosnippet>512</a>    <span class="doccomment">/// Converts to a list of [`hickory_resolver::proto::rr::Record`] resource records.
-<a href=#513 id=513 data-nosnippet>513</a>    </span><span class="kw">fn </span>to_hickory_records(
-<a href=#514 id=514 data-nosnippet>514</a>        txt_strings: Vec&lt;String&gt;,
-<a href=#515 id=515 data-nosnippet>515</a>        node_id: NodeId,
-<a href=#516 id=516 data-nosnippet>516</a>        origin: <span class="kw-2">&amp;</span>str,
-<a href=#517 id=517 data-nosnippet>517</a>        ttl: u32,
-<a href=#518 id=518 data-nosnippet>518</a>    ) -&gt; <span class="kw">impl </span>Iterator&lt;Item = hickory_resolver::proto::rr::Record&gt; + <span class="lifetime">'_ </span>{
-<a href=#519 id=519 data-nosnippet>519</a>        <span class="kw">use </span>hickory_resolver::proto::rr;
-<a href=#520 id=520 data-nosnippet>520</a>        <span class="kw">let </span>name = <span class="macro">format!</span>(<span class="string">"{}.{}.{}"</span>, IROH_TXT_NAME, node_id.to_z32(), origin);
-<a href=#521 id=521 data-nosnippet>521</a>        <span class="kw">let </span>name = rr::Name::from_utf8(name).expect(<span class="string">"invalid name"</span>);
-<a href=#522 id=522 data-nosnippet>522</a>        txt_strings.into_iter().map(<span class="kw">move </span>|s| {
-<a href=#523 id=523 data-nosnippet>523</a>            <span class="kw">let </span>txt = rr::rdata::TXT::new(<span class="macro">vec!</span>[s]);
-<a href=#524 id=524 data-nosnippet>524</a>            <span class="kw">let </span>rdata = rr::RData::TXT(txt);
-<a href=#525 id=525 data-nosnippet>525</a>            rr::Record::from_rdata(name.clone(), ttl, rdata)
-<a href=#526 id=526 data-nosnippet>526</a>        })
-<a href=#527 id=527 data-nosnippet>527</a>    }
-<a href=#528 id=528 data-nosnippet>528</a>
-<a href=#529 id=529 data-nosnippet>529</a>    <span class="attr">#[cfg(test)]
-<a href=#530 id=530 data-nosnippet>530</a>    </span><span class="kw">mod </span>tests {
-<a href=#531 id=531 data-nosnippet>531</a>        <span class="kw">use </span>iroh_base::NodeId;
-<a href=#532 id=532 data-nosnippet>532</a>        <span class="kw">use </span>n0_snafu::Result;
-<a href=#533 id=533 data-nosnippet>533</a>
-<a href=#534 id=534 data-nosnippet>534</a>        <span class="attr">#[test]
-<a href=#535 id=535 data-nosnippet>535</a>        </span><span class="kw">fn </span>test_node_id_from_domain_name() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#536 id=536 data-nosnippet>536</a>            <span class="kw">let </span>name = <span class="string">"_iroh.dgjpkxyn3zyrk3zfads5duwdgbqpkwbjxfj4yt7rezidr3fijccy.dns.iroh.link."</span>;
-<a href=#537 id=537 data-nosnippet>537</a>            <span class="kw">let </span>node_id = <span class="kw">super</span>::node_id_from_domain_name(name);
-<a href=#538 id=538 data-nosnippet>538</a>            <span class="kw">let </span>expected: NodeId =
-<a href=#539 id=539 data-nosnippet>539</a>                <span class="string">"1992d53c02cdc04566e5c0edb1ce83305cd550297953a047a445ea3264b54b18"</span>.parse()<span class="question-mark">?</span>;
-<a href=#540 id=540 data-nosnippet>540</a>            <span class="macro">assert_eq!</span>(node_id, <span class="prelude-val">Some</span>(expected));
-<a href=#541 id=541 data-nosnippet>541</a>            <span class="prelude-val">Ok</span>(())
-<a href=#542 id=542 data-nosnippet>542</a>        }
-<a href=#543 id=543 data-nosnippet>543</a>    }
-<a href=#544 id=544 data-nosnippet>544</a>}</code></pre></div></section></main></body></html>
+<a href=#375 id=375 data-nosnippet>375</a>    <span class="kw">use </span>tracing::debug;
+<a href=#376 id=376 data-nosnippet>376</a>
+<a href=#377 id=377 data-nosnippet>377</a>    <span class="kw">use </span><span class="kw">crate</span>::test_utils::dns_server::QueryHandler;
+<a href=#378 id=378 data-nosnippet>378</a>
+<a href=#379 id=379 data-nosnippet>379</a>    <span class="attr">#[derive(Debug, Clone)]
+<a href=#380 id=380 data-nosnippet>380</a>    </span><span class="kw">pub struct </span>State {
+<a href=#381 id=381 data-nosnippet>381</a>        packets: Arc&lt;Mutex&lt;HashMap&lt;NodeId, SignedPacket&gt;&gt;&gt;,
+<a href=#382 id=382 data-nosnippet>382</a>        origin: String,
+<a href=#383 id=383 data-nosnippet>383</a>        notify: Arc&lt;tokio::sync::Notify&gt;,
+<a href=#384 id=384 data-nosnippet>384</a>    }
+<a href=#385 id=385 data-nosnippet>385</a>
+<a href=#386 id=386 data-nosnippet>386</a>    <span class="kw">impl </span>State {
+<a href=#387 id=387 data-nosnippet>387</a>        <span class="kw">pub fn </span>new(origin: String) -&gt; <span class="self">Self </span>{
+<a href=#388 id=388 data-nosnippet>388</a>            <span class="self">Self </span>{
+<a href=#389 id=389 data-nosnippet>389</a>                packets: Default::default(),
+<a href=#390 id=390 data-nosnippet>390</a>                origin,
+<a href=#391 id=391 data-nosnippet>391</a>                notify: Arc::new(tokio::sync::Notify::new()),
+<a href=#392 id=392 data-nosnippet>392</a>            }
+<a href=#393 id=393 data-nosnippet>393</a>        }
+<a href=#394 id=394 data-nosnippet>394</a>
+<a href=#395 id=395 data-nosnippet>395</a>        <span class="kw">pub fn </span>on_update(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; tokio::sync::futures::Notified&lt;<span class="lifetime">'_</span>&gt; {
+<a href=#396 id=396 data-nosnippet>396</a>            <span class="self">self</span>.notify.notified()
+<a href=#397 id=397 data-nosnippet>397</a>        }
+<a href=#398 id=398 data-nosnippet>398</a>
+<a href=#399 id=399 data-nosnippet>399</a>        <span class="kw">pub async fn </span>on_node(<span class="kw-2">&amp;</span><span class="self">self</span>, node: <span class="kw-2">&amp;</span>NodeId, timeout: Duration) -&gt; std::io::Result&lt;()&gt; {
+<a href=#400 id=400 data-nosnippet>400</a>            <span class="kw">let </span>timeout = tokio::time::sleep(timeout);
+<a href=#401 id=401 data-nosnippet>401</a>            <span class="macro">tokio::pin!</span>(timeout);
+<a href=#402 id=402 data-nosnippet>402</a>            <span class="kw">while </span><span class="self">self</span>.get(node, |p| {
+<a href=#403 id=403 data-nosnippet>403</a>                <span class="kw">let </span>node_info = p
+<a href=#404 id=404 data-nosnippet>404</a>                    .as_ref()
+<a href=#405 id=405 data-nosnippet>405</a>                    .and_then(|p| NodeInfo::from_pkarr_signed_packet(p).ok());
+<a href=#406 id=406 data-nosnippet>406</a>                <span class="macro">debug!</span>(<span class="string">"got info {:#?}"</span>, node_info);
+<a href=#407 id=407 data-nosnippet>407</a>                p.is_none()
+<a href=#408 id=408 data-nosnippet>408</a>            }) {
+<a href=#409 id=409 data-nosnippet>409</a>                <span class="macro">tokio::select!</span> {
+<a href=#410 id=410 data-nosnippet>410</a>                    <span class="kw">_ </span>= <span class="kw-2">&amp;mut </span>timeout =&gt; <span class="kw">return </span><span class="prelude-val">Err</span>(std::io::Error::other(<span class="string">"timeout"</span>)),
+<a href=#411 id=411 data-nosnippet>411</a>                    <span class="kw">_ </span>= <span class="self">self</span>.on_update() =&gt; {}
+<a href=#412 id=412 data-nosnippet>412</a>                }
+<a href=#413 id=413 data-nosnippet>413</a>            }
+<a href=#414 id=414 data-nosnippet>414</a>            <span class="prelude-val">Ok</span>(())
+<a href=#415 id=415 data-nosnippet>415</a>        }
+<a href=#416 id=416 data-nosnippet>416</a>
+<a href=#417 id=417 data-nosnippet>417</a>        <span class="kw">pub fn </span>upsert(<span class="kw-2">&amp;</span><span class="self">self</span>, signed_packet: SignedPacket) -&gt; std::io::Result&lt;bool&gt; {
+<a href=#418 id=418 data-nosnippet>418</a>            <span class="kw">let </span>node_id = NodeId::from_bytes(<span class="kw-2">&amp;</span>signed_packet.public_key().to_bytes())
+<a href=#419 id=419 data-nosnippet>419</a>                .map_err(std::io::Error::other)<span class="question-mark">?</span>;
+<a href=#420 id=420 data-nosnippet>420</a>            <span class="kw">let </span><span class="kw-2">mut </span>map = <span class="self">self</span>.packets.lock().expect(<span class="string">"poisoned"</span>);
+<a href=#421 id=421 data-nosnippet>421</a>            <span class="kw">let </span>updated = <span class="kw">match </span>map.entry(node_id) {
+<a href=#422 id=422 data-nosnippet>422</a>                hash_map::Entry::Vacant(e) =&gt; {
+<a href=#423 id=423 data-nosnippet>423</a>                    e.insert(signed_packet);
+<a href=#424 id=424 data-nosnippet>424</a>                    <span class="bool-val">true
+<a href=#425 id=425 data-nosnippet>425</a>                </span>}
+<a href=#426 id=426 data-nosnippet>426</a>                hash_map::Entry::Occupied(<span class="kw-2">mut </span>e) =&gt; {
+<a href=#427 id=427 data-nosnippet>427</a>                    <span class="kw">if </span>signed_packet.more_recent_than(e.get()) {
+<a href=#428 id=428 data-nosnippet>428</a>                        e.insert(signed_packet);
+<a href=#429 id=429 data-nosnippet>429</a>                        <span class="bool-val">true
+<a href=#430 id=430 data-nosnippet>430</a>                    </span>} <span class="kw">else </span>{
+<a href=#431 id=431 data-nosnippet>431</a>                        <span class="bool-val">false
+<a href=#432 id=432 data-nosnippet>432</a>                    </span>}
+<a href=#433 id=433 data-nosnippet>433</a>                }
+<a href=#434 id=434 data-nosnippet>434</a>            };
+<a href=#435 id=435 data-nosnippet>435</a>            <span class="kw">if </span>updated {
+<a href=#436 id=436 data-nosnippet>436</a>                <span class="self">self</span>.notify.notify_waiters();
+<a href=#437 id=437 data-nosnippet>437</a>            }
+<a href=#438 id=438 data-nosnippet>438</a>            <span class="prelude-val">Ok</span>(updated)
+<a href=#439 id=439 data-nosnippet>439</a>        }
+<a href=#440 id=440 data-nosnippet>440</a>
+<a href=#441 id=441 data-nosnippet>441</a>        <span class="doccomment">/// Returns a mutex guard, do not hold over await points
+<a href=#442 id=442 data-nosnippet>442</a>        </span><span class="kw">pub fn </span>get&lt;F, T&gt;(<span class="kw-2">&amp;</span><span class="self">self</span>, node_id: <span class="kw-2">&amp;</span>NodeId, cb: F) -&gt; T
+<a href=#443 id=443 data-nosnippet>443</a>        <span class="kw">where
+<a href=#444 id=444 data-nosnippet>444</a>            </span>F: FnOnce(<span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;mut </span>SignedPacket&gt;) -&gt; T,
+<a href=#445 id=445 data-nosnippet>445</a>        {
+<a href=#446 id=446 data-nosnippet>446</a>            <span class="kw">let </span><span class="kw-2">mut </span>map = <span class="self">self</span>.packets.lock().expect(<span class="string">"poisoned"</span>);
+<a href=#447 id=447 data-nosnippet>447</a>            <span class="kw">let </span>packet = map.get_mut(node_id);
+<a href=#448 id=448 data-nosnippet>448</a>            cb(packet)
+<a href=#449 id=449 data-nosnippet>449</a>        }
+<a href=#450 id=450 data-nosnippet>450</a>
+<a href=#451 id=451 data-nosnippet>451</a>        <span class="kw">pub fn </span>resolve_dns(
+<a href=#452 id=452 data-nosnippet>452</a>            <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#453 id=453 data-nosnippet>453</a>            query: <span class="kw-2">&amp;</span>hickory_resolver::proto::op::Message,
+<a href=#454 id=454 data-nosnippet>454</a>            reply: <span class="kw-2">&amp;mut </span>hickory_resolver::proto::op::Message,
+<a href=#455 id=455 data-nosnippet>455</a>            ttl: u32,
+<a href=#456 id=456 data-nosnippet>456</a>        ) -&gt; std::io::Result&lt;()&gt; {
+<a href=#457 id=457 data-nosnippet>457</a>            <span class="kw">for </span>query <span class="kw">in </span>query.queries() {
+<a href=#458 id=458 data-nosnippet>458</a>                <span class="kw">let </span>domain_name = query.name().to_string();
+<a href=#459 id=459 data-nosnippet>459</a>                <span class="kw">let </span><span class="prelude-val">Some</span>(node_id) = node_id_from_domain_name(<span class="kw-2">&amp;</span>domain_name) <span class="kw">else </span>{
+<a href=#460 id=460 data-nosnippet>460</a>                    <span class="kw">continue</span>;
+<a href=#461 id=461 data-nosnippet>461</a>                };
+<a href=#462 id=462 data-nosnippet>462</a>
+<a href=#463 id=463 data-nosnippet>463</a>                <span class="self">self</span>.get(<span class="kw-2">&amp;</span>node_id, |packet| {
+<a href=#464 id=464 data-nosnippet>464</a>                    <span class="kw">if let </span><span class="prelude-val">Some</span>(packet) = packet {
+<a href=#465 id=465 data-nosnippet>465</a>                        <span class="kw">let </span>node_info = NodeInfo::from_pkarr_signed_packet(packet)
+<a href=#466 id=466 data-nosnippet>466</a>                            .map_err(std::io::Error::other)<span class="question-mark">?</span>;
+<a href=#467 id=467 data-nosnippet>467</a>                        <span class="kw">for </span>record <span class="kw">in </span>node_info_to_hickory_records(<span class="kw-2">&amp;</span>node_info, <span class="kw-2">&amp;</span><span class="self">self</span>.origin, ttl) {
+<a href=#468 id=468 data-nosnippet>468</a>                            reply.add_answer(record);
+<a href=#469 id=469 data-nosnippet>469</a>                        }
+<a href=#470 id=470 data-nosnippet>470</a>                    }
+<a href=#471 id=471 data-nosnippet>471</a>                    <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, std::io::Error&gt;(())
+<a href=#472 id=472 data-nosnippet>472</a>                })<span class="question-mark">?</span>;
+<a href=#473 id=473 data-nosnippet>473</a>            }
+<a href=#474 id=474 data-nosnippet>474</a>            <span class="prelude-val">Ok</span>(())
+<a href=#475 id=475 data-nosnippet>475</a>        }
+<a href=#476 id=476 data-nosnippet>476</a>    }
+<a href=#477 id=477 data-nosnippet>477</a>
+<a href=#478 id=478 data-nosnippet>478</a>    <span class="kw">impl </span>QueryHandler <span class="kw">for </span>State {
+<a href=#479 id=479 data-nosnippet>479</a>        <span class="kw">fn </span>resolve(
+<a href=#480 id=480 data-nosnippet>480</a>            <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#481 id=481 data-nosnippet>481</a>            query: <span class="kw-2">&amp;</span>hickory_resolver::proto::op::Message,
+<a href=#482 id=482 data-nosnippet>482</a>            reply: <span class="kw-2">&amp;mut </span>hickory_resolver::proto::op::Message,
+<a href=#483 id=483 data-nosnippet>483</a>        ) -&gt; <span class="kw">impl </span>Future&lt;Output = std::io::Result&lt;()&gt;&gt; + Send {
+<a href=#484 id=484 data-nosnippet>484</a>            <span class="kw">const </span>TTL: u32 = <span class="number">30</span>;
+<a href=#485 id=485 data-nosnippet>485</a>            <span class="kw">let </span>res = <span class="self">self</span>.resolve_dns(query, reply, TTL);
+<a href=#486 id=486 data-nosnippet>486</a>            std::future::ready(res)
+<a href=#487 id=487 data-nosnippet>487</a>        }
+<a href=#488 id=488 data-nosnippet>488</a>    }
+<a href=#489 id=489 data-nosnippet>489</a>
+<a href=#490 id=490 data-nosnippet>490</a>    <span class="doccomment">/// Parses a [`NodeId`] from a DNS domain name.
+<a href=#491 id=491 data-nosnippet>491</a>    ///
+<a href=#492 id=492 data-nosnippet>492</a>    /// Splits the domain name into labels on each dot. Expects the first label to be
+<a href=#493 id=493 data-nosnippet>493</a>    /// [`IROH_TXT_NAME`] and the second label to be a z32 encoded [`NodeId`]. Ignores
+<a href=#494 id=494 data-nosnippet>494</a>    /// subsequent labels.
+<a href=#495 id=495 data-nosnippet>495</a>    ///
+<a href=#496 id=496 data-nosnippet>496</a>    /// Returns a [`NodeId`] if parsed successfully, otherwise `None`.
+<a href=#497 id=497 data-nosnippet>497</a>    </span><span class="kw">fn </span>node_id_from_domain_name(name: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Option</span>&lt;NodeId&gt; {
+<a href=#498 id=498 data-nosnippet>498</a>        <span class="kw">let </span><span class="kw-2">mut </span>labels = name.split(<span class="string">"."</span>);
+<a href=#499 id=499 data-nosnippet>499</a>        <span class="kw">let </span>label = labels.next()<span class="question-mark">?</span>;
+<a href=#500 id=500 data-nosnippet>500</a>        <span class="kw">if </span>label != IROH_TXT_NAME {
+<a href=#501 id=501 data-nosnippet>501</a>            <span class="kw">return </span><span class="prelude-val">None</span>;
+<a href=#502 id=502 data-nosnippet>502</a>        }
+<a href=#503 id=503 data-nosnippet>503</a>        <span class="kw">let </span>label = labels.next()<span class="question-mark">?</span>;
+<a href=#504 id=504 data-nosnippet>504</a>        <span class="kw">let </span>node_id = NodeId::from_z32(label).ok()<span class="question-mark">?</span>;
+<a href=#505 id=505 data-nosnippet>505</a>        <span class="prelude-val">Some</span>(node_id)
+<a href=#506 id=506 data-nosnippet>506</a>    }
+<a href=#507 id=507 data-nosnippet>507</a>
+<a href=#508 id=508 data-nosnippet>508</a>    <span class="doccomment">/// Converts a [`NodeInfo`]into a [`hickory_resolver::proto::rr::Record`] DNS record.
+<a href=#509 id=509 data-nosnippet>509</a>    </span><span class="kw">fn </span>node_info_to_hickory_records(
+<a href=#510 id=510 data-nosnippet>510</a>        node_info: <span class="kw-2">&amp;</span>NodeInfo,
+<a href=#511 id=511 data-nosnippet>511</a>        origin: <span class="kw-2">&amp;</span>str,
+<a href=#512 id=512 data-nosnippet>512</a>        ttl: u32,
+<a href=#513 id=513 data-nosnippet>513</a>    ) -&gt; <span class="kw">impl </span>Iterator&lt;Item = hickory_resolver::proto::rr::Record&gt; + <span class="lifetime">'static </span>{
+<a href=#514 id=514 data-nosnippet>514</a>        <span class="kw">let </span>txt_strings = node_info.to_txt_strings();
+<a href=#515 id=515 data-nosnippet>515</a>        <span class="kw">let </span>records = to_hickory_records(txt_strings, node_info.node_id, origin, ttl);
+<a href=#516 id=516 data-nosnippet>516</a>        records.collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;().into_iter()
+<a href=#517 id=517 data-nosnippet>517</a>    }
+<a href=#518 id=518 data-nosnippet>518</a>
+<a href=#519 id=519 data-nosnippet>519</a>    <span class="doccomment">/// Converts to a list of [`hickory_resolver::proto::rr::Record`] resource records.
+<a href=#520 id=520 data-nosnippet>520</a>    </span><span class="kw">fn </span>to_hickory_records(
+<a href=#521 id=521 data-nosnippet>521</a>        txt_strings: Vec&lt;String&gt;,
+<a href=#522 id=522 data-nosnippet>522</a>        node_id: NodeId,
+<a href=#523 id=523 data-nosnippet>523</a>        origin: <span class="kw-2">&amp;</span>str,
+<a href=#524 id=524 data-nosnippet>524</a>        ttl: u32,
+<a href=#525 id=525 data-nosnippet>525</a>    ) -&gt; <span class="kw">impl </span>Iterator&lt;Item = hickory_resolver::proto::rr::Record&gt; + <span class="lifetime">'_ </span>{
+<a href=#526 id=526 data-nosnippet>526</a>        <span class="kw">use </span>hickory_resolver::proto::rr;
+<a href=#527 id=527 data-nosnippet>527</a>        <span class="kw">let </span>name = <span class="macro">format!</span>(<span class="string">"{}.{}.{}"</span>, IROH_TXT_NAME, node_id.to_z32(), origin);
+<a href=#528 id=528 data-nosnippet>528</a>        <span class="kw">let </span>name = rr::Name::from_utf8(name).expect(<span class="string">"invalid name"</span>);
+<a href=#529 id=529 data-nosnippet>529</a>        txt_strings.into_iter().map(<span class="kw">move </span>|s| {
+<a href=#530 id=530 data-nosnippet>530</a>            <span class="kw">let </span>txt = rr::rdata::TXT::new(<span class="macro">vec!</span>[s]);
+<a href=#531 id=531 data-nosnippet>531</a>            <span class="kw">let </span>rdata = rr::RData::TXT(txt);
+<a href=#532 id=532 data-nosnippet>532</a>            rr::Record::from_rdata(name.clone(), ttl, rdata)
+<a href=#533 id=533 data-nosnippet>533</a>        })
+<a href=#534 id=534 data-nosnippet>534</a>    }
+<a href=#535 id=535 data-nosnippet>535</a>
+<a href=#536 id=536 data-nosnippet>536</a>    <span class="attr">#[cfg(test)]
+<a href=#537 id=537 data-nosnippet>537</a>    </span><span class="kw">mod </span>tests {
+<a href=#538 id=538 data-nosnippet>538</a>        <span class="kw">use </span>iroh_base::NodeId;
+<a href=#539 id=539 data-nosnippet>539</a>        <span class="kw">use </span>n0_snafu::Result;
+<a href=#540 id=540 data-nosnippet>540</a>
+<a href=#541 id=541 data-nosnippet>541</a>        <span class="attr">#[test]
+<a href=#542 id=542 data-nosnippet>542</a>        </span><span class="kw">fn </span>test_node_id_from_domain_name() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#543 id=543 data-nosnippet>543</a>            <span class="kw">let </span>name = <span class="string">"_iroh.dgjpkxyn3zyrk3zfads5duwdgbqpkwbjxfj4yt7rezidr3fijccy.dns.iroh.link."</span>;
+<a href=#544 id=544 data-nosnippet>544</a>            <span class="kw">let </span>node_id = <span class="kw">super</span>::node_id_from_domain_name(name);
+<a href=#545 id=545 data-nosnippet>545</a>            <span class="kw">let </span>expected: NodeId =
+<a href=#546 id=546 data-nosnippet>546</a>                <span class="string">"1992d53c02cdc04566e5c0edb1ce83305cd550297953a047a445ea3264b54b18"</span>.parse()<span class="question-mark">?</span>;
+<a href=#547 id=547 data-nosnippet>547</a>            <span class="macro">assert_eq!</span>(node_id, <span class="prelude-val">Some</span>(expected));
+<a href=#548 id=548 data-nosnippet>548</a>            <span class="prelude-val">Ok</span>(())
+<a href=#549 id=549 data-nosnippet>549</a>        }
+<a href=#550 id=550 data-nosnippet>550</a>    }
+<a href=#551 id=551 data-nosnippet>551</a>}</code></pre></div></section></main></body></html>

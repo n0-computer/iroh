@@ -53,19 +53,19 @@
 <a href=#53 id=53 data-nosnippet>53</a>    task::{<span class="self">self</span>, AbortOnDropHandle},
 <a href=#54 id=54 data-nosnippet>54</a>    time::{<span class="self">self</span>, Duration, Instant},
 <a href=#55 id=55 data-nosnippet>55</a>};
-<a href=#56 id=56 data-nosnippet>56</a><span class="kw">use </span>pkarr::{
-<a href=#57 id=57 data-nosnippet>57</a>    errors::{PublicKeyError, SignedPacketVerifyError},
-<a href=#58 id=58 data-nosnippet>58</a>    SignedPacket,
-<a href=#59 id=59 data-nosnippet>59</a>};
-<a href=#60 id=60 data-nosnippet>60</a><span class="kw">use </span>snafu::{ResultExt, Snafu};
-<a href=#61 id=61 data-nosnippet>61</a><span class="kw">use </span>tracing::{debug, error_span, warn, Instrument};
-<a href=#62 id=62 data-nosnippet>62</a><span class="kw">use </span>url::Url;
-<a href=#63 id=63 data-nosnippet>63</a>
-<a href=#64 id=64 data-nosnippet>64</a><span class="kw">use </span><span class="kw">super</span>::DiscoveryError;
-<a href=#65 id=65 data-nosnippet>65</a><span class="kw">use crate</span>::{
-<a href=#66 id=66 data-nosnippet>66</a>    discovery::{Discovery, DiscoveryItem, NodeData},
-<a href=#67 id=67 data-nosnippet>67</a>    endpoint::force_staging_infra,
-<a href=#68 id=68 data-nosnippet>68</a>    watcher::{<span class="self">self</span>, Disconnected, Watchable, Watcher <span class="kw">as _</span>},
+<a href=#56 id=56 data-nosnippet>56</a><span class="kw">use </span>n0_watcher::{Disconnected, Watchable, Watcher <span class="kw">as _</span>};
+<a href=#57 id=57 data-nosnippet>57</a><span class="kw">use </span>pkarr::{
+<a href=#58 id=58 data-nosnippet>58</a>    errors::{PublicKeyError, SignedPacketVerifyError},
+<a href=#59 id=59 data-nosnippet>59</a>    SignedPacket,
+<a href=#60 id=60 data-nosnippet>60</a>};
+<a href=#61 id=61 data-nosnippet>61</a><span class="kw">use </span>snafu::{ResultExt, Snafu};
+<a href=#62 id=62 data-nosnippet>62</a><span class="kw">use </span>tracing::{debug, error_span, warn, Instrument};
+<a href=#63 id=63 data-nosnippet>63</a><span class="kw">use </span>url::Url;
+<a href=#64 id=64 data-nosnippet>64</a>
+<a href=#65 id=65 data-nosnippet>65</a><span class="kw">use </span><span class="kw">super</span>::DiscoveryError;
+<a href=#66 id=66 data-nosnippet>66</a><span class="kw">use crate</span>::{
+<a href=#67 id=67 data-nosnippet>67</a>    discovery::{Discovery, DiscoveryItem, NodeData},
+<a href=#68 id=68 data-nosnippet>68</a>    endpoint::force_staging_infra,
 <a href=#69 id=69 data-nosnippet>69</a>    Endpoint,
 <a href=#70 id=70 data-nosnippet>70</a>};
 <a href=#71 id=71 data-nosnippet>71</a>
@@ -247,7 +247,7 @@
 <a href=#247 id=247 data-nosnippet>247</a>    </span>secret_key: SecretKey,
 <a href=#248 id=248 data-nosnippet>248</a>    <span class="attr">#[debug(<span class="string">"PkarrClient"</span>)]
 <a href=#249 id=249 data-nosnippet>249</a>    </span>pkarr_client: PkarrRelayClient,
-<a href=#250 id=250 data-nosnippet>250</a>    watcher: watcher::Direct&lt;<span class="prelude-ty">Option</span>&lt;NodeInfo&gt;&gt;,
+<a href=#250 id=250 data-nosnippet>250</a>    watcher: n0_watcher::Direct&lt;<span class="prelude-ty">Option</span>&lt;NodeInfo&gt;&gt;,
 <a href=#251 id=251 data-nosnippet>251</a>    ttl: u32,
 <a href=#252 id=252 data-nosnippet>252</a>    republish_interval: Duration,
 <a href=#253 id=253 data-nosnippet>253</a>}
