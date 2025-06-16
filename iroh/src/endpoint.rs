@@ -3039,8 +3039,11 @@ mod tests {
         let (mut send, mut recv) = conn.open_bi().await.e()?;
         send.write_all(b"Hello, world!").await.e()?;
         send.finish().e()?;
-        recv.read_to_end(1_000).await.e()?;
+        let response = recv.read_to_end(1_000).await.e()?;
+        assert_eq!(&response, b"Hello, world!");
         conn.close(42u32.into(), b"thanks, bye!");
+        // TODO this causes a warn that things are not cleaned up gracefully, how can we fail a
+        // test due to that?
         client.close().await;
 
         let close_err = server_task.await.e()??;
@@ -3050,6 +3053,81 @@ mod tests {
 
         assert_eq!(app_close.error_code, 42u32.into());
         assert_eq!(app_close.reason.as_ref(), b"thanks, bye!");
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn can_connect_from_same_id() -> Result {
+        std::env::set_var("RUST_LOG", "warn");
+        const ECHOS: usize = 3;
+
+        let server = Endpoint::builder()
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .discovery_local_network()
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .await?;
+        let server_addr = server.node_addr().initialized().await?;
+        let server_task = tokio::spawn(async move {
+            let mut close_reasons = Vec::new();
+
+            for _ in 0..ECHOS {
+                let incoming = server.accept().await.e()?;
+                let conn = incoming.await.e()?;
+                let (mut send, mut recv) = conn.accept_bi().await.e()?;
+                let msg = recv.read_to_end(1000).await.e()?;
+                send.write_all(&msg).await.e()?;
+                send.finish().e()?;
+                let close_reason = conn.closed().await;
+                close_reasons.push(close_reason);
+            }
+            Ok::<_, Error>(close_reasons)
+        });
+
+        let mut elapsed_times = Vec::with_capacity(ECHOS);
+        for i in 0..ECHOS {
+            let timer = std::time::Instant::now();
+            let client_secret_key = SecretKey::from_bytes(&[0u8; 32]);
+            let client = Endpoint::builder()
+                .secret_key(client_secret_key)
+                .discovery_local_network()
+                .relay_mode(RelayMode::Disabled)
+                .bind()
+                .await?;
+            let conn = client.connect(server_addr.clone(), TEST_ALPN).await?;
+            let (mut send, mut recv) = conn.open_bi().await.e()?;
+            let bytes = format!("Hello, world {i}").into_bytes();
+            send.write_all(&bytes).await.e()?;
+            send.finish().e()?;
+            let response = recv.read_to_end(1_000).await.e()?;
+            assert_eq!(&response, &bytes);
+            conn.close(42u32.into(), b"thanks, bye!");
+            client.close().await;
+            let elapsed = timer.elapsed();
+            elapsed_times.push(elapsed);
+        }
+
+        elapsed_times.iter().enumerate().for_each(|(i, elapsed)| {
+            println!("Elapsed time for connection {i}: {elapsed:?}");
+        });
+
+        // assert!(elapsed1 < Duration::from_secs(5));
+        // assert!(elapsed2 < Duration::from_secs(5));
+        // check that elapsed2 completed within 1 second of elapsed1
+        // assert!(elapsed2 <= elapsed1 + Duration::from_secs(1));
+
+        let close_errs = server_task.await.e()??;
+        assert_eq!(close_errs.len(), ECHOS);
+
+        for (i, err) in close_errs.into_iter().enumerate() {
+            let ConnectionError::ApplicationClosed(app_close) = err else {
+                panic!("Unexpected close reason for conn {i}: {err:?}");
+            };
+            assert_eq!(app_close.error_code, 42u32.into());
+            assert_eq!(app_close.reason.as_ref(), b"thanks, bye!" as &[u8]);
+        }
 
         Ok(())
     }
