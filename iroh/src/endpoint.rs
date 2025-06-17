@@ -3059,13 +3059,11 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn can_connect_from_same_id() -> Result {
-        std::env::set_var("RUST_LOG", "warn");
-        const ECHOS: usize = 3;
+    async fn connecting_is_fast_from_same_id_consecutively() -> Result {
+        const ECHOS: usize = 10;
 
         let server = Endpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])
-            .discovery_local_network()
             .relay_mode(RelayMode::Disabled)
             .bind()
             .await?;
@@ -3092,8 +3090,9 @@ mod tests {
             let client_secret_key = SecretKey::from_bytes(&[0u8; 32]);
             let client = Endpoint::builder()
                 .secret_key(client_secret_key)
-                .discovery_local_network()
-                .relay_mode(RelayMode::Disabled)
+                // NOTE this is not necessary to trigger the failure so I have it commented out for
+                // now
+                // .relay_mode(RelayMode::Disabled)
                 .bind()
                 .await?;
             let conn = client.connect(server_addr.clone(), TEST_ALPN).await?;
@@ -3109,15 +3108,6 @@ mod tests {
             elapsed_times.push(elapsed);
         }
 
-        elapsed_times.iter().enumerate().for_each(|(i, elapsed)| {
-            println!("Elapsed time for connection {i}: {elapsed:?}");
-        });
-
-        // assert!(elapsed1 < Duration::from_secs(5));
-        // assert!(elapsed2 < Duration::from_secs(5));
-        // check that elapsed2 completed within 1 second of elapsed1
-        // assert!(elapsed2 <= elapsed1 + Duration::from_secs(1));
-
         let close_errs = server_task.await.e()??;
         assert_eq!(close_errs.len(), ECHOS);
 
@@ -3127,6 +3117,18 @@ mod tests {
             };
             assert_eq!(app_close.error_code, 42u32.into());
             assert_eq!(app_close.reason.as_ref(), b"thanks, bye!" as &[u8]);
+        }
+
+        elapsed_times.iter().enumerate().for_each(|(i, elapsed)| {
+            println!("Elapsed time for connection {i}: {elapsed:?}");
+        });
+
+        // If any of the elapsed times are greater than 3x the minimum throw an error
+        let min_elapsed = elapsed_times.iter().min().unwrap_or(&Duration::ZERO);
+        for (i, elapsed) in elapsed_times.iter().enumerate() {
+            if *elapsed > *min_elapsed * 3 {
+                panic!("Connection {i} took too long compared to baseline ({min_elapsed:?}): {elapsed:?}");
+            }
         }
 
         Ok(())
