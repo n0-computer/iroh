@@ -68,7 +68,7 @@ impl FromIterator<RelayNode> for RelayMap {
 impl From<RelayUrl> for RelayMap {
     /// Creates a [`RelayMap`] from a [`RelayUrl`].
     ///
-    /// The [`RelayNode`]s in the [`RelayMap`] will have the default STUN and QUIC address
+    /// The [`RelayNode`]s in the [`RelayMap`] will have the default QUIC address
     /// discovery ports.
     fn from(value: RelayUrl) -> Self {
         Self {
@@ -88,7 +88,7 @@ impl From<RelayNode> for RelayMap {
 impl FromIterator<RelayUrl> for RelayMap {
     /// Creates a [`RelayMap`] from an iterator of [`RelayUrl`].
     ///
-    /// The [`RelayNode`]s in the [`RelayMap`] will have the default STUN and QUIC address
+    /// The [`RelayNode`]s in the [`RelayMap`] will have the default QUIC address
     /// discovery ports.
     fn from_iter<T: IntoIterator<Item = RelayUrl>>(iter: T) -> Self {
         Self {

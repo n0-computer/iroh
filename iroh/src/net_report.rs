@@ -92,7 +92,7 @@ const FULL_REPORT_INTERVAL: Duration = Duration::from_secs(5 * 60);
 /// The maximum latency of all nodes, if none are found yet.
 ///
 /// Normally the max latency of all nodes is computed, but if we don't yet know any nodes
-/// latencies we return this as default.  This is the value of the initial STUN probe
+/// latencies we return this as default.  This is the value of the initial QAD probe
 /// delays.  It is only used as time to wait for further latencies to arrive, which *should*
 /// never happen unless there already is at least one latency.  Yet here we are, defining a
 /// default which will never be used.
@@ -101,15 +101,6 @@ const DEFAULT_MAX_LATENCY: Duration = Duration::from_millis(100);
 const ENOUGH_NODES: usize = 3;
 
 /// Client to run net_reports.
-///
-/// Creating this creates a net_report actor which runs in the background.  Most of the time
-/// it is idle unless [`Client::get_report`] is called, which is the main interface.
-///
-/// The [`Client`] struct can be cloned and results multiple handles to the running actor.
-/// If all [`Client`]s are dropped the actor stops running.
-///
-/// While running the net_report actor expects to be passed all received stun packets using
-/// `Addr::receive_stun_packet`.
 #[derive(Debug)]
 pub(crate) struct Client {
     #[cfg(not(wasm_browser))]

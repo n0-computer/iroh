@@ -5,10 +5,6 @@
 ///
 /// The port is "QUIC" typed on a phone keypad.
 pub use iroh_relay::defaults::DEFAULT_RELAY_QUIC_PORT;
-/// The default STUN port used by the Relay server.
-///
-/// The STUN port as defined by [RFC
-/// 8489](<https://www.rfc-editor.org/rfc/rfc8489#section-18.6>)
 use url::Url;
 
 /// The default HTTP port used by the Relay server.

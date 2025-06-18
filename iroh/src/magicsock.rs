@@ -89,7 +89,7 @@ pub use self::{
     node_map::{ConnectionType, ControlMsg, DirectAddrInfo, RemoteInfo},
 };
 
-/// How long we consider a STUN-derived endpoint valid for. UDP NAT mappings typically
+/// How long we consider a QAD-derived endpoint valid for. UDP NAT mappings typically
 /// expire at 30 seconds, so this is a few seconds shy of that.
 const ENDPOINTS_FRESH_ENOUGH_DURATION: Duration = Duration::from_secs(27);
 
@@ -624,7 +624,7 @@ impl MagicSock {
                 self.metrics.magicsock.recv_gro_datagrams.inc();
             }
 
-            // Chunk through the datagrams in this GRO payload to find disco and stun
+            // Chunk through the datagrams in this GRO payload to find disco
             // packets and forward them to the actor
             for datagram in buf[..quinn_meta.len].chunks_mut(quinn_meta.stride) {
                 if datagram.len() < quinn_meta.stride {
@@ -635,7 +635,7 @@ impl MagicSock {
                     );
                 }
 
-                // Detect DISCO and STUN datagrams and process them.  Overwrite the first
+                // Detect DISCO datagrams and process them.  Overwrite the first
                 // byte of those packets with zero to make Quinn ignore the packet.  This
                 // relies on quinn::EndpointConfig::grease_quic_bit being set to `false`,
                 // which we do in Endpoint::bind.
@@ -728,7 +728,7 @@ impl MagicSock {
                     }
                 }
             } else {
-                // If all datagrams in this buf are DISCO or STUN, set len to zero to make
+                // If all datagrams in this buf are DISCO, set len to zero to make
                 // Quinn skip the buf completely.
                 quinn_meta.len = 0;
             }
@@ -1992,9 +1992,7 @@ impl Actor {
         // Next add STUN addresses from the net_report report.
         if let Some(net_report_report) = net_report_report {
             if let Some(global_v4) = net_report_report.global_v4 {
-                addrs
-                    .entry(global_v4.into())
-                    .or_insert(DirectAddrType::Stun);
+                addrs.entry(global_v4.into()).or_insert(DirectAddrType::Qad);
 
                 // If they're behind a hard NAT and are using a fixed
                 // port locally, assume they might've added a static
@@ -2017,14 +2015,12 @@ impl Actor {
                         addr.set_port(port);
                         addrs
                             .entry(addr.into())
-                            .or_insert(DirectAddrType::Stun4LocalPort);
+                            .or_insert(DirectAddrType::Qad4LocalPort);
                     }
                 }
             }
             if let Some(global_v6) = net_report_report.global_v6 {
-                addrs
-                    .entry(global_v6.into())
-                    .or_insert(DirectAddrType::Stun);
+                addrs.entry(global_v6.into()).or_insert(DirectAddrType::Qad);
             }
         }
 
@@ -2191,7 +2187,7 @@ fn bind_with_fallback(mut addr: SocketAddr) -> io::Result<UdpSocket> {
 ///
 /// These are all the [`DirectAddr`]s that this [`MagicSock`] is aware of for itself.
 /// They include all locally bound ones as well as those discovered by other mechanisms like
-/// STUN.
+/// QAD.
 #[derive(derive_more::Debug, Default, Clone)]
 struct DiscoveredDirectAddrs {
     /// The last set of discovered direct addresses.
@@ -2381,23 +2377,23 @@ pub enum DirectAddrType {
     Unknown,
     /// A locally bound socket address.
     Local,
-    /// Public internet address discovered via STUN.
+    /// Public internet address discovered via QAD.
     ///
-    /// When possible an iroh node will perform STUN to discover which is the address
+    /// When possible an iroh node will perform QAD to discover which is the address
     /// from which it sends data on the public internet.  This can be different from locally
     /// bound addresses when the node is on a local network which performs NAT or similar.
-    Stun,
+    Qad,
     /// An address assigned by the router using port mapping.
     ///
     /// When possible an iroh node will request a port mapping from the local router to
     /// get a publicly routable direct address.
     Portmapped,
-    /// Hard NAT: STUN'ed IPv4 address + local fixed port.
+    /// Hard NAT: QAD'ed IPv4 address + local fixed port.
     ///
     /// It is possible to configure iroh to bound to a specific port and independently
     /// configure the router to forward this port to the iroh node.  This indicates a
-    /// situation like this, which still uses STUN to discover the public address.
-    Stun4LocalPort,
+    /// situation like this, which still uses QAD to discover the public address.
+    Qad4LocalPort,
 }
 
 impl Display for DirectAddrType {
@@ -2405,9 +2401,9 @@ impl Display for DirectAddrType {
         match self {
             DirectAddrType::Unknown => write!(f, "?"),
             DirectAddrType::Local => write!(f, "local"),
-            DirectAddrType::Stun => write!(f, "stun"),
+            DirectAddrType::Qad => write!(f, "qad"),
             DirectAddrType::Portmapped => write!(f, "portmap"),
-            DirectAddrType::Stun4LocalPort => write!(f, "stun4localport"),
+            DirectAddrType::Qad4LocalPort => write!(f, "qad4localport"),
         }
     }
 }

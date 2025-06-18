@@ -43,7 +43,7 @@ const PING_TIMEOUT_DURATION: Duration = Duration::from_secs(5);
 const GOOD_ENOUGH_LATENCY: Duration = Duration::from_millis(5);
 
 /// How long since the last activity we try to keep an established endpoint peering alive.
-/// It's also the idle time at which we stop doing STUN queries to keep NAT mappings alive.
+/// It's also the idle time at which we stop doing QAD queries to keep NAT mappings alive.
 pub(super) const SESSION_ACTIVE_TIMEOUT: Duration = Duration::from_secs(45);
 
 /// How often we try to upgrade to a better patheven if we have some non-relay route that works.
@@ -284,7 +284,9 @@ impl NodeState {
     ) -> (Option<SocketAddr>, Option<RelayUrl>) {
         #[cfg(any(test, feature = "test-utils"))]
         if self.path_selection == PathSelection::RelayOnly {
-            debug!("in `RelayOnly` mode, giving the relay address as the only viable address for this endpoint");
+            debug!(
+                "in `RelayOnly` mode, giving the relay address as the only viable address for this endpoint"
+            );
             return (None, self.relay_url());
         }
         let (best_addr, relay_url) = match self.udp_paths.send_addr(*now, have_ipv6) {

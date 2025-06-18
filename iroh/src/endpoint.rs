@@ -1018,7 +1018,7 @@ impl Endpoint {
     /// iroh nodes to establish direct connectivity, depending on the network
     /// situation. The yielded lists of direct addresses contain both the locally-bound
     /// addresses and the [`Endpoint`]'s publicly reachable addresses discovered through
-    /// mechanisms such as [STUN] and port mapping.  Hence usually only a subset of these
+    /// mechanisms such as [QAD] and port mapping.  Hence usually only a subset of these
     /// will be applicable to a certain remote iroh node.
     ///
     /// The [`Endpoint`] continuously monitors the direct addresses for changes as its own
@@ -1046,7 +1046,7 @@ impl Endpoint {
     /// # });
     /// ```
     ///
-    /// [STUN]: https://en.wikipedia.org/wiki/STUN
+    /// [QAD]: https://www.ietf.org/archive/id/draft-seemann-quic-nat-traversal-02.html
     pub fn direct_addresses(&self) -> n0_watcher::Direct<Option<BTreeSet<DirectAddr>>> {
         self.msock.direct_addresses()
     }

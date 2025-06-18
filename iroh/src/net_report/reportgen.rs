@@ -264,7 +264,7 @@ impl Actor {
         let token = CancellationToken::new();
 
         // If we're doing a full probe, also check for a captive portal. We
-        // delay by a bit to wait for UDP STUN to finish, to avoid the probe if
+        // delay by a bit to wait for UDP QAD to finish, to avoid the probe if
         // it's unnecessary.
         #[cfg(not(wasm_browser))]
         if self.last_report.is_none() {
@@ -553,7 +553,7 @@ async fn check_captive_portal(
     dm: &RelayMap,
     preferred_relay: Option<RelayUrl>,
 ) -> Result<bool, CaptivePortalError> {
-    // If we have a preferred relay node and we can use it for non-STUN requests, try that;
+    // If we have a preferred relay node and we can use it for non-QAD requests, try that;
     // otherwise, pick a random one suitable for non-STUN requests.
 
     let preferred_relay = preferred_relay.and_then(|url| dm.get_node(&url).map(|_| url));

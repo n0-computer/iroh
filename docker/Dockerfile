@@ -2,7 +2,7 @@ FROM rust:alpine AS chef
 
 RUN update-ca-certificates
 RUN apk add --no-cache musl-dev openssl-dev pkgconfig
-RUN cargo install cargo-chef 
+RUN cargo install cargo-chef
 WORKDIR /iroh
 
 FROM chef AS planner
@@ -40,7 +40,7 @@ RUN chmod +x /iroh-relay
 WORKDIR /
 
 # expose the default ports
-# http, https, stun, metrics
+# http, https, metrics
 EXPOSE  80 443 3478/udp 9090
 ENTRYPOINT ["/iroh-relay"]
 CMD [""]

@@ -52,7 +52,7 @@ pub(crate) mod streams;
 pub mod testing;
 
 pub use self::{
-    metrics::{Metrics, RelayMetrics, StunMetrics},
+    metrics::{Metrics, RelayMetrics},
     resolver::{ReloadingResolver, DEFAULT_CERT_RELOAD_INTERVAL},
 };
 
@@ -67,8 +67,14 @@ const INDEX: &[u8] = br#"<html><body>
 </p>
 "#;
 const TLS_HEADERS: [(&str, &str); 2] = [
-    ("Strict-Transport-Security", "max-age=63072000; includeSubDomains"),
-    ("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'; form-action 'none'; base-uri 'self'; block-all-mixed-content; plugin-types 'none'")
+    (
+        "Strict-Transport-Security",
+        "max-age=63072000; includeSubDomains",
+    ),
+    (
+        "Content-Security-Policy",
+        "default-src 'none'; frame-ancestors 'none'; form-action 'none'; base-uri 'self'; block-all-mixed-content; plugin-types 'none'",
+    ),
 ];
 
 type BytesBody = http_body_util::Full<hyper::body::Bytes>;
@@ -228,9 +234,9 @@ pub enum CertConfig<EC: fmt::Debug, EA: fmt::Debug = EC> {
     Reloading,
 }
 
-/// A running Relay + STUN server.
+/// A running Relay + QAD server.
 ///
-/// This is a full Relay server, including STUN, Relay and various associated HTTP services.
+/// This is a full Relay server, including QAD, Relay and various associated HTTP services.
 ///
 /// Dropping this will stop the server.
 #[derive(Debug)]
@@ -270,9 +276,7 @@ pub struct Server {
 pub enum SpawnError {
     #[snafu(display("Unable to get local address"))]
     LocalAddr { source: std::io::Error },
-    #[snafu(display("Failed to bind STUN listener"))]
-    UdpSocketBind { source: std::io::Error },
-    #[snafu(display("Failed to bind STUN listener"))]
+    #[snafu(display("Failed to bind QAD listener"))]
     QuicSpawn { source: QuicSpawnError },
     #[snafu(display("Failed to parse TLS header"))]
     TlsHeaderParse { source: InvalidHeaderValue },

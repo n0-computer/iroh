@@ -20,10 +20,10 @@
     doc = "- `server`: A fully-fledged iroh-relay server over HTTP or HTTPS."
 )]
 //!
-//!    Optionally will also expose a stun endpoint and metrics. (requires the feature flag `server`)
+//!    Optionally will also expose a QAD endpoint and metrics. (requires the feature flag `server`)
 //! - [`client`]: A client for establishing connections to the relay.
 //! - *Server Binary*: A CLI for running your own relay server. It can be configured to also offer
-//!   STUN support and expose metrics.
+//!   QAD support and expose metrics.
 // Based on tailscale/derp/derp.go
 
 #![cfg_attr(iroh_docsrs, feature(doc_auto_cfg))]

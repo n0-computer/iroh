@@ -1,8 +1,8 @@
 //! The relay probes.
 //!
-//! All the probes try and establish the latency to the relay servers.  Preferably the STUN
+//! All the probes try and establish the latency to the relay servers.  Preferably the QAD
 //! probes work and we also learn about our public IP addresses and ports.  But fallback
-//! probes for HTTPS and ICMP exist as well.
+//! probes for HTTPS exist as well.
 
 use std::{collections::BTreeSet, fmt, sync::Arc};
 

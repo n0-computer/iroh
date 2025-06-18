@@ -17,9 +17,9 @@ pub(crate) mod timeouts {
 
     /// How long to await for a captive-portal result.
     ///
-    /// This delay is chosen so it starts after good-working STUN probes
+    /// This delay is chosen so it starts after good-working QAD probes
     /// would have finished, but not too long so the delay is bearable if
-    /// STUN is blocked.
+    /// UDP/QAD is blocked.
     pub(crate) const CAPTIVE_PORTAL_DELAY: Duration = Duration::from_millis(200);
 
     /// Timeout for captive portal checks

@@ -32,9 +32,6 @@ pub async fn run_relay_server() -> Result<(RelayMap, RelayUrl, Server), SpawnErr
 
 /// Runs a relay server.
 ///
-/// `stun` can be set to `None` to disable stun, or set to `Some` `StunConfig`,
-/// to enable stun on a specific socket.
-///
 /// If `quic` is set to `true`, it will make the appropriate [`QuicConfig`] from the generated tls certificates and run the quic server at a random free port.
 ///
 ///
