@@ -1953,7 +1953,7 @@
 <a href=#1953 id=1953 data-nosnippet>1953</a>            }
 <a href=#1954 id=1954 data-nosnippet>1954</a>            <span class="attr">#[cfg(test)]
 <a href=#1955 id=1955 data-nosnippet>1955</a>            </span>ActorMessage::ForceNetworkChange(is_major) =&gt; {
-<a href=#1956 id=1956 data-nosnippet>1956</a>                <span class="self">self</span>.handle_network_change(is_major);
+<a href=#1956 id=1956 data-nosnippet>1956</a>                <span class="self">self</span>.handle_network_change(is_major).<span class="kw">await</span>;
 <a href=#1957 id=1957 data-nosnippet>1957</a>            }
 <a href=#1958 id=1958 data-nosnippet>1958</a>            ActorMessage::PingActions(ping_actions) =&gt; {
 <a href=#1959 id=1959 data-nosnippet>1959</a>                <span class="self">self</span>.handle_ping_actions(sender, ping_actions).<span class="kw">await</span>;
