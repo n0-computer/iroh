@@ -1953,7 +1953,7 @@ impl Actor {
             }
             #[cfg(test)]
             ActorMessage::ForceNetworkChange(is_major) => {
-                self.handle_network_change(is_major);
+                self.handle_network_change(is_major).await;
             }
             ActorMessage::PingActions(ping_actions) => {
                 self.handle_ping_actions(sender, ping_actions).await;

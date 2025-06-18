@@ -2260,7 +2260,7 @@ dependencies = [
  "n0-watcher",
  "nested_enum_utils",
  "netdev",
- "netwatch 0.6.0",
+ "netwatch",
  "parse-size",
  "pin-project",
  "pkarr",
@@ -2957,39 +2957,6 @@ dependencies = [
 
 [[package]]
 name = "netwatch"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67eeaa5f7505c93c5a9b35ba84fd21fb8aa3f24678c76acfe8716af7862fb07a"
-dependencies = [
- "atomic-waker",
- "bytes",
- "cfg_aliases",
- "derive_more",
- "iroh-quinn-udp",
- "js-sys",
- "libc",
- "n0-future",
- "nested_enum_utils",
- "netdev",
- "netlink-packet-core",
- "netlink-packet-route 0.23.0",
- "netlink-proto",
- "netlink-sys",
- "serde",
- "snafu",
- "socket2",
- "time",
- "tokio",
- "tokio-util",
- "tracing",
- "web-sys",
- "windows 0.59.0",
- "windows-result 0.3.2",
- "wmi",
-]
-
-[[package]]
-name = "netwatch"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2a829a830199b14989f9bccce6136ab928ab48336ab1f8b9002495dbbbb2edbe"
@@ -3488,9 +3455,9 @@ checksum = "350e9b48cbc6b0e028b0473b114454c6316e57336ee184ceab6e53f72c178b3e"
 
 [[package]]
 name = "portmapper"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d6db66007eac4a0ec8331d0d20c734bd64f6445d64bbaf0d0a27fea7a054e36"
+checksum = "f651ba57abd6d766deb1b86f45b50c189db69204f20126e84f033168c1bf0853"
 dependencies = [
  "base64",
  "bytes",
@@ -3502,7 +3469,7 @@ dependencies = [
  "iroh-metrics",
  "libc",
  "nested_enum_utils",
- "netwatch 0.5.0",
+ "netwatch",
  "num_enum",
  "rand 0.8.5",
  "serde",

@@ -364,19 +364,10 @@ impl Actor {
     ) -> CancellationToken {
         debug!(?if_state, "local interface details");
         let plan = match self.last_report {
-            Some(ref report) => ProbePlan::with_last_report(
-                &self.relay_map,
-                report,
-                &self.protocols,
-                #[cfg(not(wasm_browser))]
-                &if_state,
-            ),
-            None => ProbePlan::initial(
-                &self.relay_map,
-                &self.protocols,
-                #[cfg(not(wasm_browser))]
-                &if_state,
-            ),
+            Some(ref report) => {
+                ProbePlan::with_last_report(&self.relay_map, report, &self.protocols)
+            }
+            None => ProbePlan::initial(&self.relay_map, &self.protocols),
         };
         trace!(%plan, "probe plan");
 
@@ -500,11 +491,6 @@ pub(super) enum ProbeError {
     ClientGone,
     #[snafu(display("Probe is no longer useful"))]
     NotUseful,
-    #[cfg(not(wasm_browser))]
-    #[snafu(display("Failed to retrieve the relay address"))]
-    GetRelayAddr { source: GetRelayAddrError },
-    #[snafu(display("Failed to run QUIC probe"))]
-    Quic { source: QuicError },
     #[snafu(display("Failed to run HTTPS probe"))]
     Https { source: MeasureHttpsLatencyError },
 }
@@ -568,53 +554,8 @@ impl Probe {
                     )),
                 }
             }
-
             #[cfg(not(wasm_browser))]
-            Probe::QadIpv4 => match socket_state.quic_client {
-                Some(quic_client) => {
-                    let relay_addr = get_relay_addr_ipv4(&socket_state.dns_resolver, &relay_node)
-                        .await
-                        .map_err(|e| {
-                            RunProbeError::AbortSet(probe_error::GetRelayAddrSnafu.into_error(e))
-                        })?;
-
-                    let report = run_qad_probe(
-                        &quic_client,
-                        relay_node.url.clone(),
-                        relay_addr.into(),
-                        socket_state.ip_mapped_addrs.as_ref(),
-                    )
-                    .await?;
-
-                    Ok(ProbeReport::QadIpv4(report))
-                }
-                None => Err(RunProbeError::AbortSet(
-                    probe_error::QuicSnafu.into_error(quic_error::NoEndpointSnafu.build()),
-                )),
-            },
-            #[cfg(not(wasm_browser))]
-            Probe::QadIpv6 => match socket_state.quic_client {
-                Some(quic_client) => {
-                    let relay_addr = get_relay_addr_ipv6(&socket_state.dns_resolver, &relay_node)
-                        .await
-                        .map_err(|e| {
-                            RunProbeError::AbortSet(probe_error::GetRelayAddrSnafu.into_error(e))
-                        })?;
-
-                    let report = run_qad_probe(
-                        &quic_client,
-                        relay_node.url.clone(),
-                        relay_addr.into(),
-                        socket_state.ip_mapped_addrs.as_ref(),
-                    )
-                    .await?;
-
-                    Ok(ProbeReport::QadIpv6(report))
-                }
-                None => Err(RunProbeError::AbortSet(
-                    probe_error::QuicSnafu.into_error(quic_error::NoEndpointSnafu.build()),
-                )),
-            },
+            Probe::QadIpv4 | Probe::QadIpv6 => unreachable!("must not be used"),
         }
     }
 }
@@ -628,41 +569,6 @@ pub(super) fn maybe_to_mapped_addr(
         return ip_mapped_addrs.get_or_register(addr).private_socket_addr();
     }
     addr
-}
-
-/// Run a QUIC address discovery probe.
-#[cfg(not(wasm_browser))]
-async fn run_qad_probe(
-    quic_client: &iroh_relay::quic::QuicClient,
-    relay_node: RelayUrl,
-    relay_addr: SocketAddr,
-    ip_mapped_addrs: Option<&IpMappedAddresses>,
-) -> Result<QadProbeReport, RunProbeError> {
-    trace!("QAD probe start");
-
-    let relay_addr = maybe_to_mapped_addr(ip_mapped_addrs, relay_addr);
-    let host = match relay_node.host_str() {
-        Some(host) => host,
-        None => {
-            return Err(RunProbeError::Error(
-                probe_error::QuicSnafu.into_error(quic_error::InvalidUrlSnafu.build()),
-            ));
-        }
-    };
-    let (addr, latency) = quic_client
-        .get_addr_and_latency(relay_addr, host)
-        .await
-        .map_err(|e| {
-            RunProbeError::Error(
-                probe_error::QuicSnafu.into_error(quic_error::GetAddrSnafu.into_error(e)),
-            )
-        })?;
-
-    Ok(QadProbeReport {
-        node: relay_node,
-        latency,
-        addr,
-    })
 }
 
 #[cfg(not(wasm_browser))]
@@ -1000,31 +906,22 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_quic_probe() -> Result {
+    async fn test_qad_probe_v4() -> Result {
         let (server, relay) = test_utils::relay().await;
         let relay = Arc::new(relay);
         let client_config = iroh_relay::client::make_dangerous_client_config();
         let ep = quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0)).e()?;
         let client_addr = ep.local_addr().e()?;
-        let port = server.quic_addr().unwrap().port();
 
         let quic_client = iroh_relay::quic::QuicClient::new(ep.clone(), client_config);
-        let report = match run_qad_probe(
-            &quic_client,
-            relay.url.clone(),
-            (Ipv4Addr::LOCALHOST, port).into(),
-            None,
-        )
-        .await
-        {
-            Ok(probe) => probe,
-            Err(e) => match e {
-                RunProbeError::AbortSet(err) | RunProbeError::Error(err) => {
-                    return Err(err.into());
-                }
-            },
-        };
+        let dns_resolver = DnsResolver::default();
+
+        let (report, conn) = super::super::run_probe_v4(None, relay, quic_client, dns_resolver)
+            .await
+            .unwrap();
+
         assert_eq!(report.addr, client_addr);
+        drop(conn);
         ep.wait_idle().await;
         server.shutdown().await?;
         Ok(())

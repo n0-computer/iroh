@@ -6,7 +6,6 @@
 
 use std::{collections::BTreeSet, fmt, sync::Arc};
 
-use iroh_base::RelayUrl;
 use iroh_relay::{RelayMap, RelayNode};
 use n0_future::time::Duration;
 use snafu::Snafu;
@@ -20,27 +19,6 @@ use crate::net_report::Report;
 /// packets at startup is fine.
 const DEFAULT_INITIAL_RETRANSMIT: Duration = Duration::from_millis(100);
 
-/// The retransmit interval used when a previous report exists but is missing latency.
-///
-/// When in an active steady-state, i.e. a previous report exists, we use the latency of the
-/// previous report to determine the retransmit interval.  However when this previous relay
-/// latency is missing this default is used.
-///
-/// This is a somewhat conservative guess because if we have no data, likely the relay node
-/// is very far away and we have no data because we timed out the last time we probed it.
-const DEFAULT_ACTIVE_RETRANSMIT_DELAY: Duration = Duration::from_millis(200);
-
-/// The extra time to add to retransmits if a previous report exists.
-///
-/// When in an active steady-state, i.e. a previous report exists, we add this delay
-/// multiplied with the attempt to probe retries to give later attempts increasingly more
-/// time.
-const ACTIVE_RETRANSMIT_EXTRA_DELAY: Duration = Duration::from_millis(50);
-
-/// The number of fastest relays to periodically re-query during incremental net_report
-/// reports. (During a full report, all relay servers are scanned.)
-const NUM_INCREMENTAL_RELAYS: usize = 3;
-
 /// The protocol used to time a node's latency.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, derive_more::Display)]
 #[repr(u8)]
@@ -53,18 +31,6 @@ pub enum Probe {
     /// QUIC Address Discovery Ipv6
     #[cfg(not(wasm_browser))]
     QadIpv6,
-}
-
-impl Probe {
-    #[cfg(not(wasm_browser))]
-    pub(super) fn is_udp(&self) -> bool {
-        matches!(self, Self::QadIpv4 | Self::QadIpv6)
-    }
-
-    #[cfg(wasm_browser)]
-    pub(super) fn is_udp(&self) -> bool {
-        false
-    }
 }
 
 /// A probe set is a sequence of similar [`Probe`]s with delays between them.
@@ -136,62 +102,7 @@ pub(super) struct ProbePlan {
 }
 
 impl ProbePlan {
-    /// Creates an initial probe plan.
-    #[cfg(not(wasm_browser))]
-    pub(super) fn initial(
-        relay_map: &RelayMap,
-        protocols: &BTreeSet<Probe>,
-        if_state: &super::IfStateDetails,
-    ) -> Self {
-        let mut plan = Self {
-            set: Default::default(),
-        };
-
-        // The first time we need add probes after the STUN we record this delay, so that
-        // further relay server can reuse this delay.
-        let mut max_high_prio_delay: Option<Duration> = None;
-
-        for relay_node in relay_map.nodes() {
-            let mut quic_ipv4_probes = ProbeSet::new(Probe::QadIpv4);
-            let mut quic_ipv6_probes = ProbeSet::new(Probe::QadIpv6);
-
-            for attempt in 0..3 {
-                let delay = DEFAULT_INITIAL_RETRANSMIT * attempt as u32;
-
-                if if_state.have_v4 {
-                    quic_ipv4_probes.push(delay, relay_node.clone());
-                }
-                if if_state.have_v6 {
-                    quic_ipv6_probes.push(delay, relay_node.clone());
-                }
-            }
-            // plan.add_if_enabled(protocols, quic_ipv4_probes);
-            // plan.add_if_enabled(protocols, quic_ipv6_probes);
-
-            // The HTTP probes only start after the QAD probes have had a chance.
-            let mut https_probes = ProbeSet::new(Probe::Https);
-
-            for attempt in 0..3 {
-                let mut start = *max_high_prio_delay.get_or_insert_with(|| plan.max_delay());
-                // if there are high priority probes, ensure there is a buffer between
-                // the highest probe delay and the next probes we create
-                // if there are no high priority probes, we don't need a buffer
-                if plan.has_priority_probes() {
-                    start += DEFAULT_INITIAL_RETRANSMIT;
-                }
-                let delay = start + DEFAULT_INITIAL_RETRANSMIT * attempt as u32;
-                https_probes.push(delay, relay_node.clone());
-            }
-
-            plan.add_if_enabled(protocols, https_probes);
-        }
-        plan
-    }
-
-    /// Creates an initial probe plan for browsers.
-    ///
-    /// Here, we essentially only run HTTPS probes without any delays waiting for STUN.
-    #[cfg(wasm_browser)]
+    /// Creates an initial probe plan
     pub(super) fn initial(relay_map: &RelayMap, protocols: &BTreeSet<Probe>) -> Self {
         let mut plan = Self {
             set: Default::default(),
@@ -217,10 +128,9 @@ impl ProbePlan {
         relay_map: &RelayMap,
         last_report: &Report,
         protocols: &BTreeSet<Probe>,
-        if_state: &super::IfStateDetails,
     ) -> Self {
         if last_report.relay_latency.is_empty() {
-            return Self::initial(relay_map, protocols, if_state);
+            return Self::initial(relay_map, protocols);
         }
         Self::default()
     }
@@ -247,11 +157,6 @@ impl ProbePlan {
             .copied()
             .unwrap_or_default()
     }
-
-    /// Any UDP based probes are "priority" probes
-    fn has_priority_probes(&self) -> bool {
-        self.set.iter().any(|p| p.proto.is_udp())
-    }
 }
 
 impl fmt::Display for ProbePlan {
@@ -276,43 +181,9 @@ impl FromIterator<ProbeSet> for ProbePlan {
     }
 }
 
-/// Sorts the nodes in the [`RelayMap`] from fastest to slowest.
-///
-/// This uses the latencies from the last report to determine the order. Relay Nodes with no
-/// data are at the end.
-fn sort_relays<'a>(
-    relay_map: &'a RelayMap,
-    last_report: &Report,
-) -> Vec<(&'a RelayUrl, &'a Arc<RelayNode>)> {
-    let mut prev: Vec<_> = relay_map.nodes().collect();
-    prev.sort_by(|a, b| {
-        let latencies_a = last_report.relay_latency.get(&a.url);
-        let latencies_b = last_report.relay_latency.get(&b.url);
-        match (latencies_a, latencies_b) {
-            (Some(_), None) => {
-                // Non-zero sorts before zero.
-                std::cmp::Ordering::Less
-            }
-            (None, Some(_)) => {
-                // Zero can't sort before anything else.
-                std::cmp::Ordering::Greater
-            }
-            (None, None) => {
-                // For both empty latencies sort by relay_id.
-                a.url.cmp(&b.url)
-            }
-            (Some(_), Some(_)) => match latencies_a.cmp(&latencies_b) {
-                std::cmp::Ordering::Equal => a.url.cmp(&b.url),
-                x => x,
-            },
-        }
-    });
-
-    prev.into_iter().map(|n| (&n.url, n)).collect()
-}
-
 #[cfg(test)]
 mod tests {
+    use iroh_base::RelayUrl;
     use pretty_assertions::assert_eq;
     use tracing_test::traced_test;
 
@@ -342,8 +213,7 @@ mod tests {
         let (_servers, relay_map) = test_utils::relay_map(2).await;
         let relay_node_1 = relay_map.nodes().next().unwrap();
         let relay_node_2 = relay_map.nodes().nth(1).unwrap();
-        let if_state = IfStateDetails::fake();
-        let plan = ProbePlan::initial(&relay_map, &default_protocols(), &if_state);
+        let plan = ProbePlan::initial(&relay_map, &default_protocols());
 
         let expected_plan: ProbePlan = [
             probeset! {
@@ -407,8 +277,7 @@ mod tests {
         let (_servers, relay_map) = test_utils::relay_map(2).await;
         let relay_node_1 = relay_map.nodes().next().unwrap();
         let relay_node_2 = relay_map.nodes().nth(1).unwrap();
-        let if_state = IfStateDetails::fake();
-        let plan = ProbePlan::initial(&relay_map, &BTreeSet::from([Probe::Https]), &if_state);
+        let plan = ProbePlan::initial(&relay_map, &BTreeSet::from([Probe::Https]));
 
         let expected_plan: ProbePlan = [
             probeset! {
@@ -445,7 +314,6 @@ mod tests {
         let (_servers, relay_map) = test_utils::relay_map(2).await;
         let relay_node_1 = relay_map.nodes().next().unwrap().clone();
         let relay_node_2 = relay_map.nodes().nth(1).unwrap().clone();
-        let if_state = IfStateDetails::fake();
 
         for i in 0..10 {
             println!("round {}", i);
@@ -471,12 +339,7 @@ mod tests {
                 global_v6: None,
                 captive_portal: None,
             };
-            let plan = ProbePlan::with_last_report(
-                &relay_map,
-                &last_report,
-                &default_protocols(),
-                &if_state,
-            );
+            let plan = ProbePlan::with_last_report(&relay_map, &last_report, &default_protocols());
             let expected_plan: ProbePlan = [
                 probeset! {
                     proto: Probe::QadIpv4,
@@ -560,82 +423,5 @@ mod tests {
             global_v6: None,
             captive_portal: None,
         }
-    }
-
-    #[tokio::test]
-    #[traced_test]
-    async fn test_relay_sort_two_latencies() {
-        let (_servers, relay_map) = test_utils::relay_map(2).await;
-        let r1 = relay_map.nodes().next().unwrap();
-        let r2 = relay_map.nodes().nth(1).unwrap();
-        let last_report = create_last_report(
-            &r1.url,
-            Some(Duration::from_millis(1)),
-            &r2.url,
-            Some(Duration::from_millis(2)),
-        );
-        let sorted: Vec<_> = sort_relays(&relay_map, &last_report)
-            .iter()
-            .map(|(url, _reg)| *url)
-            .collect();
-        assert_eq!(sorted, vec![&r1.url, &r2.url]);
-    }
-
-    #[tokio::test]
-    #[traced_test]
-    async fn test_relay_sort_equal_latencies() {
-        let (_servers, relay_map) = test_utils::relay_map(2).await;
-        let r1 = relay_map.nodes().next().unwrap();
-        let r2 = relay_map.nodes().nth(1).unwrap();
-        let last_report = create_last_report(
-            &r1.url,
-            Some(Duration::from_millis(2)),
-            &r2.url,
-            Some(Duration::from_millis(2)),
-        );
-        let sorted: Vec<_> = sort_relays(&relay_map, &last_report)
-            .iter()
-            .map(|(url, _)| *url)
-            .collect();
-        assert_eq!(sorted, vec![&r1.url, &r2.url]);
-    }
-
-    #[tokio::test]
-    async fn test_relay_sort_missing_latency() {
-        let (_servers, relay_map) = test_utils::relay_map(2).await;
-        let r1 = relay_map.nodes().next().unwrap();
-        let r2 = relay_map.nodes().nth(1).unwrap();
-
-        let last_report =
-            create_last_report(&r1.url, None, &r2.url, Some(Duration::from_millis(2)));
-        let sorted: Vec<_> = sort_relays(&relay_map, &last_report)
-            .iter()
-            .map(|(url, _)| *url)
-            .collect();
-        assert_eq!(sorted, vec![&r2.url, &r1.url]);
-
-        let last_report =
-            create_last_report(&r1.url, Some(Duration::from_millis(2)), &r2.url, None);
-        let sorted: Vec<_> = sort_relays(&relay_map, &last_report)
-            .iter()
-            .map(|(url, _)| *url)
-            .collect();
-        assert_eq!(sorted, vec![&r1.url, &r2.url]);
-    }
-
-    #[tokio::test]
-    #[traced_test]
-    async fn test_relay_sort_no_latency() {
-        let (_servers, relay_map) = test_utils::relay_map(2).await;
-        let r1 = relay_map.nodes().next().unwrap();
-        let r2 = relay_map.nodes().nth(1).unwrap();
-
-        let last_report = create_last_report(&r1.url, None, &r2.url, None);
-        let sorted: Vec<_> = sort_relays(&relay_map, &last_report)
-            .iter()
-            .map(|(url, _)| *url)
-            .collect();
-        // sorted by relay url only
-        assert_eq!(sorted, vec![&r1.url, &r2.url]);
     }
 }
