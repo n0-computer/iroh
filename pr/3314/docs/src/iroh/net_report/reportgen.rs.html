@@ -264,7 +264,7 @@
 <a href=#264 id=264 data-nosnippet>264</a>        <span class="kw">let </span>token = CancellationToken::new();
 <a href=#265 id=265 data-nosnippet>265</a>
 <a href=#266 id=266 data-nosnippet>266</a>        <span class="comment">// If we're doing a full probe, also check for a captive portal. We
-<a href=#267 id=267 data-nosnippet>267</a>        // delay by a bit to wait for UDP STUN to finish, to avoid the probe if
+<a href=#267 id=267 data-nosnippet>267</a>        // delay by a bit to wait for UDP QAD to finish, to avoid the probe if
 <a href=#268 id=268 data-nosnippet>268</a>        // it's unnecessary.
 <a href=#269 id=269 data-nosnippet>269</a>        </span><span class="attr">#[cfg(not(wasm_browser))]
 <a href=#270 id=270 data-nosnippet>270</a>        </span><span class="kw">if </span><span class="self">self</span>.last_report.is_none() {
@@ -553,7 +553,7 @@
 <a href=#553 id=553 data-nosnippet>553</a>    dm: <span class="kw-2">&amp;</span>RelayMap,
 <a href=#554 id=554 data-nosnippet>554</a>    preferred_relay: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;,
 <a href=#555 id=555 data-nosnippet>555</a>) -&gt; <span class="prelude-ty">Result</span>&lt;bool, CaptivePortalError&gt; {
-<a href=#556 id=556 data-nosnippet>556</a>    <span class="comment">// If we have a preferred relay node and we can use it for non-STUN requests, try that;
+<a href=#556 id=556 data-nosnippet>556</a>    <span class="comment">// If we have a preferred relay node and we can use it for non-QAD requests, try that;
 <a href=#557 id=557 data-nosnippet>557</a>    // otherwise, pick a random one suitable for non-STUN requests.
 <a href=#558 id=558 data-nosnippet>558</a>
 <a href=#559 id=559 data-nosnippet>559</a>    </span><span class="kw">let </span>preferred_relay = preferred_relay.and_then(|url| dm.get_node(<span class="kw-2">&amp;</span>url).map(|<span class="kw">_</span>| url));

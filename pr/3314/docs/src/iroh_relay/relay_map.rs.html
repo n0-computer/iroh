@@ -68,7 +68,7 @@
 <a href=#68 id=68 data-nosnippet>68</a><span class="kw">impl </span>From&lt;RelayUrl&gt; <span class="kw">for </span>RelayMap {
 <a href=#69 id=69 data-nosnippet>69</a>    <span class="doccomment">/// Creates a [`RelayMap`] from a [`RelayUrl`].
 <a href=#70 id=70 data-nosnippet>70</a>    ///
-<a href=#71 id=71 data-nosnippet>71</a>    /// The [`RelayNode`]s in the [`RelayMap`] will have the default STUN and QUIC address
+<a href=#71 id=71 data-nosnippet>71</a>    /// The [`RelayNode`]s in the [`RelayMap`] will have the default QUIC address
 <a href=#72 id=72 data-nosnippet>72</a>    /// discovery ports.
 <a href=#73 id=73 data-nosnippet>73</a>    </span><span class="kw">fn </span>from(value: RelayUrl) -&gt; <span class="self">Self </span>{
 <a href=#74 id=74 data-nosnippet>74</a>        <span class="self">Self </span>{
@@ -88,7 +88,7 @@
 <a href=#88 id=88 data-nosnippet>88</a><span class="kw">impl </span>FromIterator&lt;RelayUrl&gt; <span class="kw">for </span>RelayMap {
 <a href=#89 id=89 data-nosnippet>89</a>    <span class="doccomment">/// Creates a [`RelayMap`] from an iterator of [`RelayUrl`].
 <a href=#90 id=90 data-nosnippet>90</a>    ///
-<a href=#91 id=91 data-nosnippet>91</a>    /// The [`RelayNode`]s in the [`RelayMap`] will have the default STUN and QUIC address
+<a href=#91 id=91 data-nosnippet>91</a>    /// The [`RelayNode`]s in the [`RelayMap`] will have the default QUIC address
 <a href=#92 id=92 data-nosnippet>92</a>    /// discovery ports.
 <a href=#93 id=93 data-nosnippet>93</a>    </span><span class="kw">fn </span>from_iter&lt;T: IntoIterator&lt;Item = RelayUrl&gt;&gt;(iter: T) -&gt; <span class="self">Self </span>{
 <a href=#94 id=94 data-nosnippet>94</a>        <span class="self">Self </span>{
