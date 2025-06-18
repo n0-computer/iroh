@@ -37,10 +37,13 @@ use n0_future::{
     StreamExt,
 };
 use n0_watcher::{Watchable, Watcher};
-use reportgen::{ProbeFinished, ProbeReport, QadProbeReport};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, trace};
+
+#[cfg(not(wasm_browser))]
+use self::reportgen::QadProbeReport;
+use self::reportgen::{ProbeFinished, ProbeReport};
 
 mod defaults;
 mod ip_mapped_addrs;
@@ -249,6 +252,7 @@ impl Client {
             reports: Reports::default(),
             probes,
             relay_map,
+            #[cfg(not(wasm_browser))]
             qad_conns: QadConns::default(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify,
@@ -321,8 +325,12 @@ impl Client {
 
         #[cfg(not(wasm_browser))]
         let mut qad_v4_stream = self.qad_conns.watch_v4();
+        #[cfg(wasm_browser)]
+        let mut qad_v4_stream = n0_future::stream::empty::<Option<()>>();
         #[cfg(not(wasm_browser))]
         let mut qad_v6_stream = self.qad_conns.watch_v6();
+        #[cfg(wasm_browser)]
+        let mut qad_v6_stream = n0_future::stream::empty::<Option<()>>();
 
         loop {
             tokio::select! {
@@ -335,13 +343,19 @@ impl Client {
                 }
 
                 Some(Some(r)) = qad_v4_stream.next() => {
-                    trace!(?r, "new report from QAD V4");
-                    report.update(&ProbeReport::QadIpv4(r));
+                    #[cfg(not(wasm_browser))]
+                    {
+                        trace!(?r, "new report from QAD V4");
+                        report.update(&ProbeReport::QadIpv4(r));
+                    }
                 }
 
                 Some(Some(r)) = qad_v6_stream.next() => {
-                    trace!(?r, "new report from QAD V6");
-                    report.update(&ProbeReport::QadIpv6(r));
+                    #[cfg(not(wasm_browser))]
+                    {
+                        trace!(?r, "new report from QAD V6");
+                        report.update(&ProbeReport::QadIpv6(r));
+                    }
                 }
 
                 maybe_probe = probe_rx.recv() => {
@@ -640,6 +654,7 @@ impl Client {
     }
 }
 
+#[cfg(not(wasm_browser))]
 async fn run_probe_v4(
     ip_mapped_addrs: Option<IpMappedAddresses>,
     relay_node: Arc<RelayNode>,
@@ -710,6 +725,7 @@ async fn run_probe_v4(
     ))
 }
 
+#[cfg(not(wasm_browser))]
 async fn run_probe_v6(
     ip_mapped_addrs: Option<IpMappedAddresses>,
     relay_node: Arc<RelayNode>,
