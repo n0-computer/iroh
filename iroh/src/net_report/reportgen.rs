@@ -403,7 +403,7 @@ impl Actor {
     }
 }
 
-/// The success result of [`run_probe`].
+/// The result of running a probe.
 #[derive(Debug, Clone)]
 pub(super) enum ProbeReport {
     #[cfg(not(wasm_browser))]

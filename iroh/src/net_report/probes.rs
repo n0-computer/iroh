@@ -14,8 +14,7 @@ use crate::net_report::Report;
 
 /// The retransmit interval used when net_report first runs.
 ///
-/// We have no past context to work with, and we want answers relatively quickly, so it's
-/// biased slightly more aggressive than [`DEFAULT_ACTIVE_RETRANSMIT_DELAY`]. A few extra
+/// We have no past context to work with, and we want answers relatively quickly. A few extra
 /// packets at startup is fine.
 const DEFAULT_INITIAL_RETRANSMIT: Duration = Duration::from_millis(100);
 
