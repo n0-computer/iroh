@@ -19,7 +19,7 @@ use url::Url;
 
 use crate::{
     discovery::{
-        pkarr::{DEFAULT_PKARR_TTL, N0_DNS_PKARR_RELAY_PROD},
+        pkarr::{DEFAULT_PKARR_TTL, N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING},
         Discovery, DiscoveryError, DiscoveryItem, NodeData,
     },
     node_info::NodeInfo,
@@ -171,7 +171,12 @@ impl Builder {
     ///
     /// [number 0]: https://n0.computer
     pub fn n0_dns_pkarr_relay(mut self) -> Self {
-        self.pkarr_relay = Some(N0_DNS_PKARR_RELAY_PROD.parse().expect("valid URL"));
+        let url = if crate::endpoint::force_staging_infra() {
+            N0_DNS_PKARR_RELAY_STAGING
+        } else {
+            N0_DNS_PKARR_RELAY_PROD
+        };
+        self.pkarr_relay = Some(url.parse().expect("valid URL"));
         self
     }
 
