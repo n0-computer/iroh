@@ -282,7 +282,7 @@ impl QuicClient {
         transport.receive_observed_address_reports(true);
 
         // keep it alive
-        transport.keep_alive_interval(Some(Duration::from_secs(15)));
+        transport.keep_alive_interval(Some(Duration::from_secs(25)));
         transport.max_idle_timeout(Some(
             Duration::from_secs(35).try_into().expect("known value"),
         ));

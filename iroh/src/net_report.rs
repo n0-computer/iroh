@@ -148,13 +148,17 @@ impl QadConns {
     fn current(&self) -> Vec<ProbeReport> {
         let mut reports = Vec::new();
         if let Some((_, ref conn)) = self.v4 {
-            if let Some(r) = conn.observer.get() {
+            if let Some(mut r) = conn.observer.get() {
+                // grab latest rtt
+                r.latency = conn.conn.rtt();
                 reports.push(ProbeReport::QadIpv4(r));
             }
         }
 
         if let Some((_, ref conn)) = self.v6 {
-            if let Some(r) = conn.observer.get() {
+            if let Some(mut r) = conn.observer.get() {
+                // grab latest rtt
+                r.latency = conn.conn.rtt();
                 reports.push(ProbeReport::QadIpv6(r));
             }
         }
@@ -559,7 +563,16 @@ impl Client {
         let mut prev_relay = None;
         if let Some(ref last) = self.reports.last {
             prev_relay.clone_from(&last.preferred_relay);
+
+            // If we don't have new information, copy this from the last report
+            if r.mapping_varies_by_dest_ipv4.is_none() {
+                r.mapping_varies_by_dest_ipv4 = last.mapping_varies_by_dest_ipv4;
+            }
+            if r.mapping_varies_by_dest_ipv6.is_none() {
+                r.mapping_varies_by_dest_ipv6 = last.mapping_varies_by_dest_ipv6;
+            }
         }
+
         let now = Instant::now();
         const MAX_AGE: Duration = Duration::from_secs(5 * 60);
 

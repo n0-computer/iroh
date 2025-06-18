@@ -226,23 +226,6 @@ impl Actor {
         // any reports of working UDP/QUIC?
         let mut have_udp = false;
 
-        // initial & re_stun(major):
-        //
-        // par [
-        //   timeout(race(qad_v4_probes)),
-        //   timeout(race(qad_v6_probes)),
-        // ]
-        //
-        // if all_error [
-        //   run_https_probes
-        //   run_captive_portal_check
-        // ]
-        //
-        // if have_qad_conns [
-        //   store(qad_conns) & keep alive
-        // ]
-        //
-
         // Check for probes finishing.
         while let Some(probe_result) = probes.join_next().await {
             trace!(?probe_result, num_probes, "processing finished probe");
