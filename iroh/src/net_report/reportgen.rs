@@ -361,7 +361,6 @@ impl Actor {
             let proto = probe_set.proto();
             for (delay, relay_node) in probe_set.params() {
                 let probe_token = set_token.child_token();
-                let set_token = set_token.clone();
 
                 let fut = probe_token.run_until_cancelled_owned(time::timeout(
                     PROBES_TIMEOUT,
@@ -379,13 +378,8 @@ impl Actor {
                         let res = fut.await;
                         let res = match res {
                             Some(Ok(Ok(report))) => Ok(report),
-                            Some(Ok(Err(RunProbeError::Error(err)))) => {
+                            Some(Ok(Err(err))) => {
                                 warn!("probe failed: {:#}", err);
-                                Err(probes_error::ProbeFailureSnafu {}.into_error(err))
-                            }
-                            Some(Ok(Err(RunProbeError::AbortSet(err)))) => {
-                                debug!("probe set aborted: {:#}", err);
-                                set_token.cancel();
                                 Err(probes_error::ProbeFailureSnafu {}.into_error(err))
                             }
                             Some(Err(time::Elapsed { .. })) => {
@@ -450,21 +444,6 @@ pub(super) struct HttpsProbeReport {
     pub(super) latency: Duration,
 }
 
-/// Errors for [`run_probe`].
-///
-/// The main purpose is to signal whether other probes in this probe set should still be
-/// run.  Recall that a probe set is normally a set of identical probes with delays,
-/// effectively creating retries, and the first successful probe of a probe set will cancel
-/// the others in the set.  So this allows an unsuccessful probe to cancel the remainder of
-/// the set or not.
-#[derive(Debug)]
-enum RunProbeError {
-    /// Abort the current set.
-    AbortSet(ProbeError),
-    /// Continue the other probes in the set.
-    Error(ProbeError),
-}
-
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
 #[snafu(module)]
@@ -487,8 +466,6 @@ pub(super) enum QuicError {
     NoEndpoint,
     #[snafu(display("URL must have 'host' to use QUIC address discovery probes"))]
     InvalidUrl,
-    #[snafu(display("Failed to get address and latency"))]
-    GetAddr { source: iroh_relay::quic::Error },
 }
 
 /// Pieces needed to do QUIC address discovery.
@@ -513,7 +490,7 @@ impl Probe {
         relay_node: Arc<RelayNode>,
         #[cfg(not(wasm_browser))] socket_state: SocketState,
         #[cfg(any(test, feature = "test-utils"))] insecure_skip_relay_cert_verify: bool,
-    ) -> Result<ProbeReport, RunProbeError> {
+    ) -> Result<ProbeReport, ProbeError> {
         if !delay.is_zero() {
             trace!("delaying probe");
             time::sleep(delay).await;
@@ -532,9 +509,7 @@ impl Probe {
                 .await
                 {
                     Ok(report) => Ok(ProbeReport::Https(report)),
-                    Err(err) => Err(RunProbeError::Error(
-                        probe_error::HttpsSnafu.into_error(err),
-                    )),
+                    Err(err) => Err(probe_error::HttpsSnafu.into_error(err)),
                 }
             }
             #[cfg(not(wasm_browser))]

@@ -77,10 +77,6 @@ impl ProbeSet {
         self.probes.is_empty()
     }
 
-    fn delays(&self) -> impl Iterator<Item = &Duration> {
-        self.probes.iter().map(|(d, _)| d)
-    }
-
     pub(super) fn params(&self) -> impl Iterator<Item = &(Duration, Arc<RelayNode>)> {
         self.probes.iter()
     }
@@ -147,16 +143,6 @@ impl ProbePlan {
             self.set.insert(set);
         }
     }
-
-    /// Returns the delay of the last probe in the probe plan.
-    fn max_delay(&self) -> Duration {
-        self.set
-            .iter()
-            .flat_map(|probe_set| probe_set.delays())
-            .max()
-            .copied()
-            .unwrap_or_default()
-    }
 }
 
 impl fmt::Display for ProbePlan {
@@ -183,12 +169,11 @@ impl FromIterator<ProbeSet> for ProbePlan {
 
 #[cfg(test)]
 mod tests {
-    use iroh_base::RelayUrl;
     use pretty_assertions::assert_eq;
     use tracing_test::traced_test;
 
     use super::*;
-    use crate::net_report::{reportgen::IfStateDetails, test_utils, RelayLatencies};
+    use crate::net_report::{test_utils, RelayLatencies};
 
     /// Shorthand which declares a new ProbeSet.
     ///
@@ -396,32 +381,6 @@ mod tests {
             assert_eq!(plan.to_string(), expected_plan.to_string(), "{}", i);
             // Just in case there's a bug in the Display impl:
             assert_eq!(plan, expected_plan, "{}", i);
-        }
-    }
-
-    fn create_last_report(
-        url_1: &RelayUrl,
-        latency_1: Option<Duration>,
-        url_2: &RelayUrl,
-        latency_2: Option<Duration>,
-    ) -> Report {
-        let mut latencies = RelayLatencies::default();
-        if let Some(latency_1) = latency_1 {
-            latencies.update_relay(url_1.clone(), latency_1, Probe::QadIpv4);
-        }
-        if let Some(latency_2) = latency_2 {
-            latencies.update_relay(url_2.clone(), latency_2, Probe::QadIpv4);
-        }
-        Report {
-            udp_v6: true,
-            udp_v4: true,
-            mapping_varies_by_dest_ipv4: Some(false),
-            mapping_varies_by_dest_ipv6: Some(false),
-            preferred_relay: Some(url_1.clone()),
-            relay_latency: latencies,
-            global_v4: None,
-            global_v6: None,
-            captive_portal: None,
         }
     }
 }

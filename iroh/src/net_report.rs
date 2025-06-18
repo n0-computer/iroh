@@ -389,6 +389,8 @@ impl Client {
         enough_relays: usize,
         do_full: bool,
     ) -> Vec<ProbeReport> {
+        use tracing::{info_span, Instrument};
+
         debug!("spawning QAD probes");
 
         let Some(ref quic_client) = self.socket_state.quic_client else {
@@ -434,14 +436,15 @@ impl Client {
                 let relay_node = relay_node.clone();
                 let dns_resolver = self.socket_state.dns_resolver.clone();
                 let quic_client = quic_client.clone();
-
+                let relay_url = relay_node.url.clone();
                 v4_buf.spawn(
                     cancel_v4
                         .child_token()
                         .run_until_cancelled_owned(time::timeout(
                             PROBES_TIMEOUT,
                             run_probe_v4(ip_mapped_addrs, relay_node, quic_client, dns_resolver),
-                        )),
+                        ))
+                        .instrument(info_span!("QAD IPv6", %relay_url)),
                 );
             }
 
@@ -451,13 +454,15 @@ impl Client {
                 let relay_node = relay_node.clone();
                 let dns_resolver = self.socket_state.dns_resolver.clone();
                 let quic_client = quic_client.clone();
+                let relay_url = relay_node.url.clone();
                 v6_buf.spawn(
                     cancel_v6
                         .child_token()
                         .run_until_cancelled_owned(time::timeout(
                             PROBES_TIMEOUT,
                             run_probe_v6(ip_mapped_addrs, relay_node, quic_client, dns_resolver),
-                        )),
+                        ))
+                        .instrument(info_span!("QAD IPv6", %relay_url)),
                 );
             }
         }
@@ -641,12 +646,14 @@ async fn run_probe_v4(
     quic_client: QuicClient,
     dns_resolver: DnsResolver,
 ) -> n0_snafu::Result<(QadProbeReport, QadConn)> {
+    use n0_snafu::ResultExt;
+
     let relay_addr_orig = reportgen::get_relay_addr_ipv4(&dns_resolver, &relay_node).await?;
     let relay_addr =
         reportgen::maybe_to_mapped_addr(ip_mapped_addrs.as_ref(), relay_addr_orig.into());
 
     debug!(?relay_addr_orig, ?relay_addr, "relay addr v4");
-    let host = relay_node.url.host_str().unwrap();
+    let host = relay_node.url.host_str().context("missing host url")?;
     let conn = quic_client.create_conn(relay_addr, host).await?;
     let mut receiver = conn.observed_external_addr();
 
@@ -654,7 +661,7 @@ async fn run_probe_v4(
     let addr = receiver
         .wait_for(|addr| addr.is_some())
         .await
-        .unwrap()
+        .context("receiver dropped")?
         .expect("known");
     let report = QadProbeReport {
         node: relay_node.url.clone(),
@@ -709,12 +716,13 @@ async fn run_probe_v6(
     quic_client: QuicClient,
     dns_resolver: DnsResolver,
 ) -> n0_snafu::Result<(QadProbeReport, QadConn)> {
+    use n0_snafu::ResultExt;
     let relay_addr_orig = reportgen::get_relay_addr_ipv6(&dns_resolver, &relay_node).await?;
     let relay_addr =
         reportgen::maybe_to_mapped_addr(ip_mapped_addrs.as_ref(), relay_addr_orig.into());
 
     debug!(?relay_addr_orig, ?relay_addr, "relay addr v6");
-    let host = relay_node.url.host_str().unwrap();
+    let host = relay_node.url.host_str().context("missing host url")?;
     let conn = quic_client.create_conn(relay_addr, host).await?;
     let mut receiver = conn.observed_external_addr();
 
@@ -722,7 +730,7 @@ async fn run_probe_v6(
     let addr = receiver
         .wait_for(|addr| addr.is_some())
         .await
-        .unwrap()
+        .context("receiver dropped")?
         .expect("known");
     let report = QadProbeReport {
         node: relay_node.url.clone(),

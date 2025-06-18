@@ -297,7 +297,8 @@ impl QuicClient {
     /// and estimated latency of the connection.
     ///
     /// Consumes and gracefully closes the connection.
-    pub async fn get_addr_and_latency(
+    #[cfg(test)]
+    async fn get_addr_and_latency(
         &self,
         server_addr: SocketAddr,
         host: &str,

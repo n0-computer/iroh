@@ -216,14 +216,4 @@ impl RelayLatencies {
         }
         list.into_iter().min()
     }
-
-    #[cfg(not(wasm_browser))]
-    pub(super) fn ipv4(&self) -> &BTreeMap<RelayUrl, Duration> {
-        &self.ipv4
-    }
-
-    #[cfg(not(wasm_browser))]
-    pub(super) fn ipv6(&self) -> &BTreeMap<RelayUrl, Duration> {
-        &self.ipv6
-    }
 }
