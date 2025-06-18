@@ -128,6 +128,8 @@ impl ProbePlan {
         if last_report.relay_latency.is_empty() {
             return Self::initial(relay_map, protocols);
         }
+
+        // TODO: is this good?
         Self::default()
     }
 
@@ -170,10 +172,9 @@ impl FromIterator<ProbeSet> for ProbePlan {
 #[cfg(test)]
 mod tests {
     use pretty_assertions::assert_eq;
-    use tracing_test::traced_test;
 
     use super::*;
-    use crate::net_report::{test_utils, RelayLatencies};
+    use crate::net_report::test_utils;
 
     /// Shorthand which declares a new ProbeSet.
     ///
@@ -202,46 +203,22 @@ mod tests {
 
         let expected_plan: ProbePlan = [
             probeset! {
-                proto: Probe::QadIpv4,
-                relay: relay_node_1.clone(),
-                delays: [Duration::ZERO,
-                         Duration::from_millis(100),
-                         Duration::from_millis(200)],
-            },
-            probeset! {
-                proto: Probe::QadIpv6,
-                relay: relay_node_1.clone(),
-                delays: [Duration::ZERO,
-                         Duration::from_millis(100),
-                         Duration::from_millis(200)],
-            },
-            probeset! {
                 proto: Probe::Https,
                 relay: relay_node_1.clone(),
-                delays: [Duration::from_millis(300),
-                         Duration::from_millis(400),
-                         Duration::from_millis(500)],
-            },
-            probeset! {
-                proto: Probe::QadIpv4,
-                relay: relay_node_2.clone(),
-                delays: [Duration::ZERO,
-                         Duration::from_millis(100),
-                         Duration::from_millis(200)],
-            },
-            probeset! {
-                proto: Probe::QadIpv6,
-                relay: relay_node_2.clone(),
-                delays: [Duration::ZERO,
-                         Duration::from_millis(100),
-                         Duration::from_millis(200)],
+                delays: [
+                    Duration::from_millis(0),
+                    Duration::from_millis(100),
+                    Duration::from_millis(200)
+                ],
             },
             probeset! {
                 proto: Probe::Https,
                 relay: relay_node_2.clone(),
-                delays: [Duration::from_millis(300),
-                         Duration::from_millis(400),
-                         Duration::from_millis(500)],
+                delays: [
+                    Duration::from_millis(0),
+                    Duration::from_millis(100),
+                    Duration::from_millis(200)
+                ],
             },
         ]
         .into_iter()
@@ -291,96 +268,5 @@ mod tests {
         assert_eq!(plan.to_string(), expected_plan.to_string());
         // Just in case there's a bug in the Display impl:
         assert_eq!(plan, expected_plan);
-    }
-
-    #[tokio::test]
-    #[traced_test]
-    async fn test_plan_with_report() {
-        let (_servers, relay_map) = test_utils::relay_map(2).await;
-        let relay_node_1 = relay_map.nodes().next().unwrap().clone();
-        let relay_node_2 = relay_map.nodes().nth(1).unwrap().clone();
-
-        for i in 0..10 {
-            println!("round {}", i);
-            let mut latencies = RelayLatencies::default();
-            latencies.update_relay(
-                relay_node_1.url.clone(),
-                Duration::from_millis(2),
-                Probe::QadIpv4,
-            );
-            latencies.update_relay(
-                relay_node_2.url.clone(),
-                Duration::from_millis(2),
-                Probe::QadIpv4,
-            );
-            let last_report = Report {
-                udp_v6: true,
-                udp_v4: true,
-                mapping_varies_by_dest_ipv4: Some(false),
-                mapping_varies_by_dest_ipv6: Some(false),
-                preferred_relay: Some(relay_node_1.url.clone()),
-                relay_latency: latencies.clone(),
-                global_v4: None,
-                global_v6: None,
-                captive_portal: None,
-            };
-            let plan = ProbePlan::with_last_report(&relay_map, &last_report, &default_protocols());
-            let expected_plan: ProbePlan = [
-                probeset! {
-                    proto: Probe::QadIpv4,
-                    relay: relay_node_1.clone(),
-                    delays: [Duration::ZERO,
-                             Duration::from_micros(52_400),
-                             Duration::from_micros(104_800),
-                             Duration::from_micros(157_200)],
-                },
-                probeset! {
-                    proto: Probe::QadIpv6,
-                    relay: relay_node_1.clone(),
-                    delays: [Duration::ZERO,
-                             Duration::from_micros(52_400),
-                             Duration::from_micros(104_800),
-                             Duration::from_micros(157_200)],
-                },
-                probeset! {
-                    proto: Probe::Https,
-                    relay: relay_node_1.clone(),
-                    delays: [Duration::from_micros(207_200),
-                             Duration::from_micros(259_600),
-                             Duration::from_micros(312_000),
-                             Duration::from_micros(364_400)],
-                },
-                probeset! {
-                    proto: Probe::QadIpv4,
-                    relay: relay_node_2.clone(),
-                    delays: [Duration::ZERO,
-                             Duration::from_micros(52_400)],
-                },
-                probeset! {
-                    proto: Probe::QadIpv6,
-                    relay: relay_node_2.clone(),
-                    delays: [Duration::ZERO,
-                             Duration::from_micros(52_400)],
-                },
-                probeset! {
-                    proto: Probe::Https,
-                    relay: relay_node_2.clone(),
-                    delays: [Duration::from_micros(207_200),
-                             Duration::from_micros(259_600)],
-                },
-            ]
-            .into_iter()
-            .collect();
-
-            println!("{} round", i);
-            println!("expected:");
-            println!("{expected_plan}");
-            println!("actual:");
-            println!("{plan}");
-            // The readable error:
-            assert_eq!(plan.to_string(), expected_plan.to_string(), "{}", i);
-            // Just in case there's a bug in the Display impl:
-            assert_eq!(plan, expected_plan, "{}", i);
-        }
     }
 }

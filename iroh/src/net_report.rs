@@ -877,6 +877,7 @@ mod tests {
             cancel.cancel();
         }
 
+        drop(client);
         ep.wait_idle().await;
         server.shutdown().await?;
 
