@@ -150,7 +150,7 @@ pub mod static_provider;
 /// creation via the [`DiscoveryContext`] parameter to [`IntoDiscovery::into_discovery`].
 ///
 /// [`Builder::add_discovery`]: crate::endpoint::Builder::add_discovery
-pub trait IntoDiscovery: Send + Sync + 'static {
+pub trait IntoDiscovery: Send + Sync + std::fmt::Debug + 'static {
     /// Turns this discovery builder into a ready-to-use discovery service.
     ///
     /// The [`DiscoveryContext`] contains information about the [`Endpoint`] onto which this
@@ -175,7 +175,7 @@ impl<T: Discovery> IntoDiscovery for T {
 }
 
 /// Non-public dyn-compatible version of [`IntoDiscovery`], used in [`crate::endpoint::Builder`].
-pub(crate) trait DynIntoDiscovery: Send + Sync + 'static {
+pub(crate) trait DynIntoDiscovery: Send + Sync + std::fmt::Debug + 'static {
     /// See [`IntoDiscovery::into_discovery`]
     fn into_discovery(
         self: Box<Self>,

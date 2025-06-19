@@ -122,7 +122,7 @@ pub enum PathSelection {
 /// new [`NodeId`].
 ///
 /// To create the [`Endpoint`] call [`Builder::bind`].
-#[derive(derive_more::Debug)]
+#[derive(Debug)]
 pub struct Builder {
     secret_key: Option<SecretKey>,
     relay_mode: RelayMode,
@@ -130,7 +130,6 @@ pub struct Builder {
     alpn_protocols: Vec<Vec<u8>>,
     transport_config: quinn::TransportConfig,
     keylog: bool,
-    #[debug(skip)]
     discovery: Vec<Box<dyn DynIntoDiscovery>>,
     discovery_user_data: Option<UserData>,
     proxy_url: Option<Url>,
