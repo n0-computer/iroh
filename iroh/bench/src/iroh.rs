@@ -6,10 +6,10 @@ use std::{
 use bytes::Bytes;
 use iroh::{
     endpoint::{Connection, ConnectionError, RecvStream, SendStream, TransportConfig},
-    watcher::Watcher as _,
     Endpoint, NodeAddr, RelayMode, RelayUrl,
 };
 use n0_snafu::{Result, ResultExt};
+use n0_watcher::Watcher as _;
 use tracing::{trace, warn};
 
 use crate::{
@@ -54,7 +54,7 @@ pub fn server_endpoint(
         }
 
         let addr = ep.bound_sockets();
-        let addr = SocketAddr::new("127.0.0.1".parse().unwrap(), addr.0.port());
+        let addr = SocketAddr::new("127.0.0.1".parse().unwrap(), addr[0].port());
         let mut addr = NodeAddr::new(ep.node_id()).with_direct_addresses([addr]);
         if let Some(relay_url) = relay_url {
             addr = addr.with_relay_url(relay_url.clone());

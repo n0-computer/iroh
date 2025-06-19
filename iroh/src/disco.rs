@@ -30,6 +30,8 @@ use serde::{Deserialize, Serialize};
 use snafu::{ensure, Snafu};
 use url::Url;
 
+use crate::magicsock::transports;
+
 // TODO: custom magicn
 /// The 6 byte header of all discovery messages.
 pub const MAGIC: &str = "TS💬"; // 6 bytes: 0x54 53 f0 9f 92 ac
@@ -154,6 +156,15 @@ impl SendAddr {
         match self {
             Self::Relay(url) => Some(url.clone()),
             Self::Udp(_) => None,
+        }
+    }
+}
+
+impl From<transports::Addr> for SendAddr {
+    fn from(addr: transports::Addr) -> Self {
+        match addr {
+            transports::Addr::Ip(addr) => SendAddr::Udp(addr),
+            transports::Addr::Relay(url, _) => SendAddr::Relay(url),
         }
     }
 }

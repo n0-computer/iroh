@@ -8,11 +8,11 @@
 
 use iroh::{
     endpoint::Connection,
-    protocol::{ProtocolError, ProtocolHandler, Router},
-    watcher::Watcher as _,
+    protocol::{AcceptError, ProtocolHandler, Router},
     Endpoint, NodeAddr,
 };
 use n0_snafu::{Result, ResultExt};
+use n0_watcher::Watcher as _;
 
 /// Each protocol is identified by its ALPN string.
 ///
@@ -83,7 +83,7 @@ impl ProtocolHandler for Echo {
     ///
     /// The returned future runs on a newly spawned tokio task, so it can run as long as
     /// the connection lasts.
-    async fn accept(&self, connection: Connection) -> Result<(), ProtocolError> {
+    async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
         // We can get the remote's node id from the connection.
         let node_id = connection.remote_node_id()?;
         println!("accepted connection from {node_id}");

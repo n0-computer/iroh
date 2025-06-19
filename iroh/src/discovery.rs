@@ -111,8 +111,7 @@
 
 use std::sync::Arc;
 
-use iroh_base::{NodeAddr, NodeId, PublicKey};
-use iroh_relay::node_info::EncodingError;
+use iroh_base::{NodeAddr, NodeId};
 use n0_future::{
     boxed::BoxStream,
     stream::StreamExt,
@@ -267,20 +266,8 @@ impl IntoDiscoveryError {
 pub enum DiscoveryError {
     #[snafu(display("No discovery service configured"))]
     NoServiceConfigured {},
-    #[snafu(display("Cannot resolve node id"))]
-    NodeId { node_id: PublicKey },
-    #[snafu(display("Discovery produced no results"))]
-    NoResults { node_id: PublicKey },
-    #[snafu(display("Error encoding the signed packet"))]
-    SignedPacket {
-        #[snafu(source(from(EncodingError, Box::new)))]
-        source: Box<EncodingError>,
-    },
-    #[snafu(display("Error parsing the signed packet"))]
-    ParsePacket {
-        #[snafu(source(from(ParseError, Box::new)))]
-        source: Box<ParseError>,
-    },
+    #[snafu(display("Discovery produced no results for {}", node_id.fmt_short()))]
+    NoResults { node_id: NodeId },
     #[snafu(display("Service '{provenance}' error"))]
     User {
         provenance: &'static str,
@@ -609,7 +596,7 @@ impl DiscoveryTask {
         let discovery = ep.discovery().ok_or(NoServiceConfiguredSnafu.build())?;
         let stream = discovery
             .resolve(node_id)
-            .ok_or(NodeIdSnafu { node_id }.build())?;
+            .ok_or(NoResultsSnafu { node_id }.build())?;
         Ok(stream)
     }
 
@@ -736,13 +723,14 @@ mod tests {
 
     use iroh_base::{NodeAddr, SecretKey};
     use n0_snafu::{Error, Result, ResultExt};
+    use n0_watcher::Watcher as _;
     use quinn::{IdleTimeout, TransportConfig};
     use rand::Rng;
     use tokio_util::task::AbortOnDropHandle;
     use tracing_test::traced_test;
 
     use super::*;
-    use crate::{endpoint::ConnectOptions, watcher::Watcher as _, Endpoint, RelayMode};
+    use crate::{endpoint::ConnectOptions, Endpoint, RelayMode};
 
     type InfoStore = HashMap<NodeId, (NodeData, u64)>;
 
@@ -1207,8 +1195,7 @@ mod test_dns_pkarr {
             .context("wait for on node update")?;
 
         // we connect only by node id!
-        let res = ep2.connect(ep1.node_id(), TEST_ALPN).await;
-        assert!(res.is_ok(), "connection established");
+        let _conn = ep2.connect(ep1.node_id(), TEST_ALPN).await?;
         Ok(())
     }
 

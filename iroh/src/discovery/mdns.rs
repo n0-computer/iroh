@@ -42,15 +42,13 @@ use n0_future::{
     task::{self, AbortOnDropHandle, JoinSet},
     time::{self, Duration},
 };
+use n0_watcher::{Watchable, Watcher as _};
 use swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
 use tokio::sync::mpsc::{self, error::TrySendError};
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
 use super::{DiscoveryContext, DiscoveryError, IntoDiscovery, IntoDiscoveryError};
-use crate::{
-    discovery::{Discovery, DiscoveryItem, NodeData, NodeInfo},
-    watcher::{Watchable, Watcher as _},
-};
+use crate::discovery::{Discovery, DiscoveryItem, NodeData, NodeInfo};
 
 /// The n0 local swarm node discovery name
 const N0_LOCAL_SWARM: &str = "iroh.local.swarm";

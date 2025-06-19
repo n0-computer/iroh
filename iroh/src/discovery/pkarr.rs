@@ -47,12 +47,13 @@
 use std::sync::Arc;
 
 use iroh_base::{NodeId, RelayUrl, SecretKey};
-use iroh_relay::node_info::NodeInfo;
+use iroh_relay::node_info::{EncodingError, NodeInfo};
 use n0_future::{
     boxed::BoxStream,
     task::{self, AbortOnDropHandle},
     time::{self, Duration, Instant},
 };
+use n0_watcher::{Disconnected, Watchable, Watcher as _};
 use pkarr::{
     errors::{PublicKeyError, SignedPacketVerifyError},
     SignedPacket,
@@ -65,9 +66,8 @@ use super::{DiscoveryContext, DiscoveryError, IntoDiscovery, IntoDiscoveryError}
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
 use crate::{
-    discovery::{Discovery, DiscoveryItem, NodeData, ParsePacketSnafu, SignedPacketSnafu},
+    discovery::{Discovery, DiscoveryItem, NodeData},
     endpoint::force_staging_infra,
-    watcher::{self, Disconnected, Watchable, Watcher as _},
 };
 
 #[cfg(feature = "discovery-pkarr-dht")]
@@ -89,6 +89,8 @@ pub enum PkarrError {
     HttpRequest { status: reqwest::StatusCode },
     #[snafu(display("Http payload error"))]
     HttpPayload { source: reqwest::Error },
+    #[snafu(display("EncodingError"))]
+    Encoding { source: EncodingError },
 }
 
 impl From<PkarrError> for DiscoveryError {
@@ -336,7 +338,7 @@ struct PublisherService {
     secret_key: SecretKey,
     #[debug("PkarrClient")]
     pkarr_client: PkarrRelayClient,
-    watcher: watcher::Direct<Option<NodeInfo>>,
+    watcher: n0_watcher::Direct<Option<NodeInfo>>,
     ttl: u32,
     republish_interval: Duration,
 }
@@ -382,7 +384,7 @@ impl PublisherService {
         }
     }
 
-    async fn publish_current(&self, info: NodeInfo) -> Result<(), DiscoveryError> {
+    async fn publish_current(&self, info: NodeInfo) -> Result<(), PkarrError> {
         debug!(
             data = ?info.data,
             pkarr_relay = %self.pkarr_client.pkarr_relay_url,
@@ -390,7 +392,7 @@ impl PublisherService {
         );
         let signed_packet = info
             .to_pkarr_signed_packet(&self.secret_key, self.ttl)
-            .context(SignedPacketSnafu)?;
+            .context(EncodingSnafu)?;
         self.pkarr_client.publish(&signed_packet).await?;
         Ok(())
     }
@@ -499,8 +501,8 @@ impl Discovery for PkarrResolver {
         let pkarr_client = self.pkarr_client.clone();
         let fut = async move {
             let signed_packet = pkarr_client.resolve(node_id).await?;
-            let info =
-                NodeInfo::from_pkarr_signed_packet(&signed_packet).context(ParsePacketSnafu)?;
+            let info = NodeInfo::from_pkarr_signed_packet(&signed_packet)
+                .map_err(|err| DiscoveryError::from_err("pkarr", err))?;
             let item = DiscoveryItem::new(info, "pkarr", None);
             Ok(item)
         };
@@ -578,7 +580,7 @@ impl PkarrRelayClient {
     }
 
     /// Publishes a [`SignedPacket`].
-    pub async fn publish(&self, signed_packet: &SignedPacket) -> Result<(), DiscoveryError> {
+    pub async fn publish(&self, signed_packet: &SignedPacket) -> Result<(), PkarrError> {
         let mut url = self.pkarr_relay_url.clone();
         url.path_segments_mut()
             .map_err(|_| {
@@ -601,8 +603,7 @@ impl PkarrRelayClient {
             return Err(HttpRequestSnafu {
                 status: response.status(),
             }
-            .build()
-            .into());
+            .build());
         }
 
         Ok(())

@@ -25,6 +25,7 @@ use ed25519_dalek::{pkcs8::DecodePublicKey, VerifyingKey};
 use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
 use iroh_relay::RelayMap;
 use n0_future::{time::Duration, Stream};
+use n0_watcher::Watcher;
 use nested_enum_utils::common_fields;
 use pin_project::pin_project;
 use snafu::{ensure, ResultExt, Snafu};
@@ -44,9 +45,7 @@ use crate::{
     magicsock::{self, Handle, NodeIdMappedAddr, OwnAddressSnafu},
     metrics::EndpointMetrics,
     net_report::Report,
-    tls,
-    watcher::{self, Watcher},
-    RelayProtocol,
+    tls, RelayProtocol,
 };
 
 mod rtt_actor;
@@ -80,29 +79,6 @@ pub use super::magicsock::{
 /// [`Endpoint`] assumes one of those addresses probably works.  If after this delay there
 /// is still no connection the configured [`Discovery`] will be used however.
 const DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(500);
-
-/// A type alias for the return value of [`Endpoint::node_addr`].
-///
-/// This type implements [`Watcher`] with `Value` being an optional [`NodeAddr`].
-///
-/// We return a named type instead of `impl Watcher<Value = NodeAddr>`, as this allows
-/// you to e.g. store the watcher in a struct.
-#[cfg(not(wasm_browser))]
-pub type NodeAddrWatcher = watcher::Map<
-    (
-        watcher::Direct<Option<BTreeSet<DirectAddr>>>,
-        watcher::Direct<Option<RelayUrl>>,
-    ),
-    Option<NodeAddr>,
->;
-/// A type alias for the return value of [`Endpoint::node_addr`].
-///
-/// This type implements [`Watcher`] with `Value` being an optional [`NodeAddr`].
-///
-/// We return a named type instead of `impl Watcher<Value = NodeAddr>`, as this allows
-/// you to e.g. store the watcher in a struct.
-#[cfg(wasm_browser)]
-pub type NodeAddrWatcher = watcher::Map<watcher::Direct<Option<RelayUrl>>, Option<NodeAddr>>;
 
 /// Defines the mode of path selection for all traffic flowing through
 /// the endpoint.
@@ -674,9 +650,10 @@ impl Endpoint {
         trace!("created magicsock");
         debug!(version = env!("CARGO_PKG_VERSION"), "iroh Endpoint created");
 
+        let metrics = msock.metrics.magicsock.clone();
         let ep = Self {
-            msock: msock.clone(),
-            rtt_actor: Arc::new(rtt_actor::RttHandle::new(msock.metrics.magicsock.clone())),
+            msock,
+            rtt_actor: Arc::new(rtt_actor::RttHandle::new(metrics)),
             static_config: Arc::new(static_config),
         };
         Ok(ep)
@@ -935,7 +912,8 @@ impl Endpoint {
     ///
     /// ```no_run
     /// # async fn wrapper() -> n0_snafu::Result {
-    /// use iroh::{watcher::Watcher, Endpoint};
+    /// use iroh::Endpoint;
+    /// use n0_watcher::Watcher;
     ///
     /// let endpoint = Endpoint::builder()
     ///     .alpns(vec![b"my-alpn".to_vec()])
@@ -947,25 +925,22 @@ impl Endpoint {
     /// # }
     /// ```
     #[cfg(not(wasm_browser))]
-    pub fn node_addr(&self) -> NodeAddrWatcher {
+    pub fn node_addr(&self) -> impl n0_watcher::Watcher<Value = Option<NodeAddr>> {
         let watch_addrs = self.direct_addresses();
         let watch_relay = self.home_relay();
         let node_id = self.node_id();
 
         watch_addrs
             .or(watch_relay)
-            .map(move |(addrs, relay)| match (addrs, relay) {
-                (Some(addrs), relay) => Some(NodeAddr::from_parts(
+            .map(move |(addrs, mut relays)| match addrs {
+                Some(addrs) => Some(NodeAddr::from_parts(
                     node_id,
-                    relay,
+                    relays.pop(),
                     addrs.into_iter().map(|x| x.addr),
                 )),
-                (None, Some(relay)) => Some(NodeAddr::from_parts(
-                    node_id,
-                    Some(relay),
-                    std::iter::empty(),
-                )),
-                (None, None) => None,
+                None => relays.pop().map(|relay_url| {
+                    NodeAddr::from_parts(node_id, Some(relay_url), std::iter::empty())
+                }),
             })
             .expect("watchable is alive - cannot be disconnected yet")
     }
@@ -976,15 +951,17 @@ impl Endpoint {
     /// with a [`NodeAddr`] that only contains a relay URL, but no direct addresses,
     /// as there are no APIs for directly using sockets in browsers.
     #[cfg(wasm_browser)]
-    pub fn node_addr(&self) -> NodeAddrWatcher {
+    pub fn node_addr(&self) -> impl n0_watcher::Watcher<Value = Option<NodeAddr>> + '_ {
         // In browsers, there will never be any direct addresses, so we wait
         // for the home relay instead. This makes the `NodeAddr` have *some* way
         // of connecting to us.
         let watch_relay = self.home_relay();
         let node_id = self.node_id();
         watch_relay
-            .map(move |relay| {
-                relay.map(|relay| NodeAddr::from_parts(node_id, Some(relay), std::iter::empty()))
+            .map(move |mut relays| {
+                relays.pop().map(|relay_url| {
+                    NodeAddr::from_parts(node_id, Some(relay_url), std::iter::empty())
+                })
             })
             .expect("watchable is alive - cannot be disconnected yet")
     }
@@ -1005,8 +982,9 @@ impl Endpoint {
     ///
     /// To wait for a home relay connection to be established, use [`Watcher::initialized`]:
     /// ```no_run
-    /// use futures_lite::StreamExt;
-    /// use iroh::{watcher::Watcher, Endpoint};
+    /// use iroh::Endpoint;
+    /// use n0_future::StreamExt;
+    /// use n0_watcher::Watcher as _;
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
@@ -1014,7 +992,7 @@ impl Endpoint {
     /// let _relay_url = mep.home_relay().initialized().await.unwrap();
     /// # });
     /// ```
-    pub fn home_relay(&self) -> watcher::Direct<Option<RelayUrl>> {
+    pub fn home_relay(&self) -> impl n0_watcher::Watcher<Value = Vec<RelayUrl>> {
         self.msock.home_relay()
     }
 
@@ -1041,8 +1019,9 @@ impl Endpoint {
     ///
     /// To get the first set of direct addresses use [`Watcher::initialized`]:
     /// ```no_run
-    /// use futures_lite::StreamExt;
-    /// use iroh::{watcher::Watcher, Endpoint};
+    /// use iroh::Endpoint;
+    /// use n0_future::StreamExt;
+    /// use n0_watcher::Watcher as _;
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
@@ -1052,7 +1031,7 @@ impl Endpoint {
     /// ```
     ///
     /// [STUN]: https://en.wikipedia.org/wiki/STUN
-    pub fn direct_addresses(&self) -> watcher::Direct<Option<BTreeSet<DirectAddr>>> {
+    pub fn direct_addresses(&self) -> n0_watcher::Direct<Option<BTreeSet<DirectAddr>>> {
         self.msock.direct_addresses()
     }
 
@@ -1076,8 +1055,9 @@ impl Endpoint {
     ///
     /// To get the first report use [`Watcher::initialized`]:
     /// ```no_run
-    /// use futures_lite::StreamExt;
-    /// use iroh::{watcher::Watcher, Endpoint};
+    /// use iroh::Endpoint;
+    /// use n0_future::StreamExt;
+    /// use n0_watcher::Watcher as _;
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
@@ -1086,7 +1066,7 @@ impl Endpoint {
     /// # });
     /// ```
     #[doc(hidden)]
-    pub fn net_report(&self) -> watcher::Direct<Option<Arc<Report>>> {
+    pub fn net_report(&self) -> n0_watcher::Direct<Option<Arc<Report>>> {
         self.msock.net_report()
     }
 
@@ -1094,9 +1074,12 @@ impl Endpoint {
     ///
     /// The [`Endpoint`] always binds on an IPv4 address and also tries to bind on an IPv6
     /// address if available.
-    #[cfg(not(wasm_browser))]
-    pub fn bound_sockets(&self) -> (SocketAddr, Option<SocketAddr>) {
-        self.msock.local_addr()
+    pub fn bound_sockets(&self) -> Vec<SocketAddr> {
+        self.msock
+            .local_addr()
+            .into_iter()
+            .filter_map(|addr| addr.into_socket_addr())
+            .collect()
     }
 
     // # Getter methods for information about other nodes.
@@ -1184,10 +1167,8 @@ impl Endpoint {
     /// recently connected to this node id but previous methods of reaching the node have
     /// become inaccessible.
     ///
-    /// # Errors
-    ///
     /// Will return `None` if we do not have any address information for the given `node_id`.
-    pub fn conn_type(&self, node_id: NodeId) -> Option<watcher::Direct<ConnectionType>> {
+    pub fn conn_type(&self, node_id: NodeId) -> Option<n0_watcher::Direct<ConnectionType>> {
         self.msock.conn_type(node_id)
     }
 
@@ -2295,6 +2276,7 @@ mod tests {
     use iroh_relay::http::Protocol;
     use n0_future::{task::AbortOnDropHandle, StreamExt};
     use n0_snafu::{Error, Result, ResultExt};
+    use n0_watcher::Watcher;
     use quinn::ConnectionError;
     use rand::SeedableRng;
     use tracing::{error_span, info, info_span, Instrument};
@@ -2304,7 +2286,6 @@ mod tests {
     use crate::{
         endpoint::{ConnectOptions, Connection, ConnectionType, RemoteInfo},
         test_utils::{run_relay_server, run_relay_server_with},
-        watcher::Watcher,
         RelayMode,
     };
 
@@ -2504,7 +2485,8 @@ mod tests {
                         .bind()
                         .await?;
                     let eps = ep.bound_sockets();
-                    info!(me = %ep.node_id().fmt_short(), ipv4=%eps.0, ipv6=?eps.1, "server listening on");
+
+                    info!(me = %ep.node_id().fmt_short(), eps = ?eps, "server listening on");
                     for i in 0..n_clients {
                         let round_start = Instant::now();
                         info!("[server] round {i}");
@@ -2546,7 +2528,8 @@ mod tests {
                     .bind()
                     .await?;
                 let eps = ep.bound_sockets();
-                info!(me = %ep.node_id().fmt_short(), ipv4=%eps.0, ipv6=?eps.1, "client bound");
+
+                info!(me = %ep.node_id().fmt_short(), eps=?eps, "client bound");
                 let node_addr = NodeAddr::new(server_node_id).with_relay_url(relay_url);
                 info!(to = ?node_addr, "client connecting");
                 let conn = ep.connect(node_addr, TEST_ALPN).await.e()?;

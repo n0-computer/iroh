@@ -50,6 +50,9 @@ mod imp {
         ///
         /// On by default
         pub(crate) https: bool,
+
+        #[cfg(any(test, feature = "test-utils"))]
+        pub(crate) insecure_skip_relay_cert_verify: bool,
     }
 
     impl Default for Options {
@@ -61,6 +64,8 @@ mod imp {
                 icmp_v4: true,
                 icmp_v6: true,
                 https: true,
+                #[cfg(any(test, feature = "test-utils"))]
+                insecure_skip_relay_cert_verify: false,
             }
         }
     }
@@ -75,6 +80,8 @@ mod imp {
                 icmp_v4: false,
                 icmp_v6: false,
                 https: false,
+                #[cfg(any(test, feature = "test-utils"))]
+                insecure_skip_relay_cert_verify: false,
             }
         }
 
@@ -111,6 +118,13 @@ mod imp {
         /// Enable or disable https probe
         pub fn https(mut self, enable: bool) -> Self {
             self.https = enable;
+            self
+        }
+
+        /// Skip cert verification
+        #[cfg(any(test, feature = "test-utils"))]
+        pub fn insecure_skip_relay_cert_verify(mut self, skip: bool) -> Self {
+            self.insecure_skip_relay_cert_verify = skip;
             self
         }
 
