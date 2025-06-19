@@ -195,8 +195,8 @@
 <a href=#195 id=195 data-nosnippet>195</a>//! Every [`Endpoint`] can also accept connections:
 <a href=#196 id=196 data-nosnippet>196</a>//!
 <a href=#197 id=197 data-nosnippet>197</a>//! ```no_run
-<a href=#198 id=198 data-nosnippet>198</a>//! use futures_lite::StreamExt;
-<a href=#199 id=199 data-nosnippet>199</a>//! use iroh::{Endpoint, NodeAddr};
+<a href=#198 id=198 data-nosnippet>198</a>//! use iroh::{Endpoint, NodeAddr};
+<a href=#199 id=199 data-nosnippet>199</a>//! use n0_future::StreamExt;
 <a href=#200 id=200 data-nosnippet>200</a>//! use n0_snafu::{Result, ResultExt};
 <a href=#201 id=201 data-nosnippet>201</a>//!
 <a href=#202 id=202 data-nosnippet>202</a>//! async fn accept() -&gt; Result&lt;()&gt; {
@@ -269,13 +269,12 @@
 <a href=#269 id=269 data-nosnippet>269</a><span class="kw">pub mod </span>metrics;
 <a href=#270 id=270 data-nosnippet>270</a><span class="kw">pub mod </span>net_report;
 <a href=#271 id=271 data-nosnippet>271</a><span class="kw">pub mod </span>protocol;
-<a href=#272 id=272 data-nosnippet>272</a><span class="kw">pub mod </span>watcher;
-<a href=#273 id=273 data-nosnippet>273</a>
-<a href=#274 id=274 data-nosnippet>274</a><span class="kw">pub use </span>endpoint::{Endpoint, RelayMode};
-<a href=#275 id=275 data-nosnippet>275</a><span class="kw">pub use </span>iroh_base::{
-<a href=#276 id=276 data-nosnippet>276</a>    KeyParsingError, NodeAddr, NodeId, PublicKey, RelayUrl, RelayUrlParseError, SecretKey,
-<a href=#277 id=277 data-nosnippet>277</a>};
-<a href=#278 id=278 data-nosnippet>278</a><span class="kw">pub use </span>iroh_relay::{http::Protocol <span class="kw">as </span>RelayProtocol, node_info, RelayMap, RelayNode};
-<a href=#279 id=279 data-nosnippet>279</a>
-<a href=#280 id=280 data-nosnippet>280</a><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
-<a href=#281 id=281 data-nosnippet>281</a></span><span class="kw">pub mod </span>test_utils;</code></pre></div></section></main></body></html>
+<a href=#272 id=272 data-nosnippet>272</a>
+<a href=#273 id=273 data-nosnippet>273</a><span class="kw">pub use </span>endpoint::{Endpoint, RelayMode};
+<a href=#274 id=274 data-nosnippet>274</a><span class="kw">pub use </span>iroh_base::{
+<a href=#275 id=275 data-nosnippet>275</a>    KeyParsingError, NodeAddr, NodeId, PublicKey, RelayUrl, RelayUrlParseError, SecretKey,
+<a href=#276 id=276 data-nosnippet>276</a>};
+<a href=#277 id=277 data-nosnippet>277</a><span class="kw">pub use </span>iroh_relay::{http::Protocol <span class="kw">as </span>RelayProtocol, node_info, RelayMap, RelayNode};
+<a href=#278 id=278 data-nosnippet>278</a>
+<a href=#279 id=279 data-nosnippet>279</a><span class="attr">#[cfg(any(test, feature = <span class="string">"test-utils"</span>))]
+<a href=#280 id=280 data-nosnippet>280</a></span><span class="kw">pub mod </span>test_utils;</code></pre></div></section></main></body></html>
