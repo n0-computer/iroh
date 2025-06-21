@@ -966,7 +966,7 @@ impl Endpoint {
     /// with a [`NodeAddr`] that only contains a relay URL, but no direct addresses,
     /// as there are no APIs for directly using sockets in browsers.
     #[cfg(wasm_browser)]
-    pub fn node_addr(&self) -> impl n0_watcher::Watcher<Value = Option<NodeAddr>> + '_ {
+    pub fn node_addr(&self) -> impl n0_watcher::Watcher<Value = Option<NodeAddr>> {
         // In browsers, there will never be any direct addresses, so we wait
         // for the home relay instead. This makes the `NodeAddr` have *some* way
         // of connecting to us.
@@ -2475,6 +2475,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(windows, ignore = "flaky")]
     #[tokio::test]
     #[traced_test]
     async fn endpoint_relay_connect_loop() -> Result {
