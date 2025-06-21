@@ -40,7 +40,7 @@ use n0_future::{
     task::{self, AbortOnDropHandle, JoinSet},
 };
 use snafu::{Backtrace, Snafu};
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info_span, trace, warn, Instrument};
 
@@ -85,6 +85,19 @@ pub struct Router {
     // `Router` needs to be `Clone + Send`, and we need to `task.await` in its `shutdown()` impl.
     task: Arc<Mutex<Option<AbortOnDropHandle<()>>>>,
     cancel_token: CancellationToken,
+    tx: mpsc::Sender<ToRouterTask>,
+}
+
+enum ToRouterTask {
+    Accept {
+        alpn: Vec<u8>,
+        handler: Arc<dyn DynProtocolHandler>,
+        reply: oneshot::Sender<()>,
+    },
+    StopAccepting {
+        alpn: Vec<u8>,
+        reply: oneshot::Sender<()>,
+    },
 }
 
 /// Builder for creating a [`Router`] for accepting protocols.
@@ -114,6 +127,14 @@ pub enum AcceptError {
     User {
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
     },
+}
+
+#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+pub enum RouterError {
+    #[snafu(display("The router actor closed"))]
+    Closed {},
 }
 
 impl AcceptError {
@@ -267,30 +288,40 @@ impl<P: ProtocolHandler> DynProtocolHandler for P {
 
 /// A typed map of protocol handlers, mapping them from ALPNs.
 #[derive(Debug, Default)]
-pub(crate) struct ProtocolMap(BTreeMap<Vec<u8>, Box<dyn DynProtocolHandler>>);
+pub(crate) struct ProtocolMap(std::sync::Mutex<BTreeMap<Vec<u8>, Arc<dyn DynProtocolHandler>>>);
 
 impl ProtocolMap {
     /// Returns the registered protocol handler for an ALPN as a [`Arc<dyn ProtocolHandler>`].
-    pub(crate) fn get(&self, alpn: &[u8]) -> Option<&dyn DynProtocolHandler> {
-        self.0.get(alpn).map(|p| &**p)
+    pub(crate) fn get(&self, alpn: &[u8]) -> Option<Arc<dyn DynProtocolHandler>> {
+        self.0.lock().expect("poisoned").get(alpn).cloned()
     }
 
     /// Inserts a protocol handler.
-    pub(crate) fn insert(&mut self, alpn: Vec<u8>, handler: impl ProtocolHandler) {
-        let handler = Box::new(handler);
-        self.0.insert(alpn, handler);
+    pub(crate) fn insert(&self, alpn: Vec<u8>, handler: Arc<dyn DynProtocolHandler>) {
+        self.0.lock().expect("poisoned").insert(alpn, handler);
+    }
+
+    pub(crate) fn remove(&self, alpn: &[u8]) {
+        self.0.lock().expect("poisoned").remove(alpn);
     }
 
     /// Returns an iterator of all registered ALPN protocol identifiers.
-    pub(crate) fn alpns(&self) -> impl Iterator<Item = &Vec<u8>> {
-        self.0.keys()
+    pub(crate) fn alpns(&self) -> Vec<Vec<u8>> {
+        self.0.lock().expect("poisoned").keys().cloned().collect()
     }
 
     /// Shuts down all protocol handlers.
     ///
     /// Calls and awaits [`ProtocolHandler::shutdown`] for all registered handlers concurrently.
     pub(crate) async fn shutdown(&self) {
-        let handlers = self.0.values().map(|p| p.shutdown());
+        let handlers: Vec<_> = {
+            let inner = self.0.lock().expect("poisoned");
+            inner
+                .values()
+                .cloned()
+                .map(|p| async move { p.shutdown().await })
+                .collect()
+        };
         join_all(handlers).await;
     }
 }
@@ -309,6 +340,47 @@ impl Router {
     /// Checks if the router is already shutdown.
     pub fn is_shutdown(&self) -> bool {
         self.cancel_token.is_cancelled()
+    }
+
+    /// Add a protocol to the list of accepted protocols.
+    ///
+    /// Configures the router to accept the [`ProtocolHandler`] when receiving a connection
+    /// with this `alpn`.
+    ///
+    /// Once the function yields, new connections with this `alpn` will be handled.
+    pub async fn accept(
+        &self,
+        alpn: impl AsRef<[u8]>,
+        handler: impl ProtocolHandler,
+    ) -> Result<(), RouterError> {
+        let (reply, reply_rx) = oneshot::channel();
+        self.tx
+            .send(ToRouterTask::Accept {
+                alpn: alpn.as_ref().to_vec(),
+                handler: Arc::new(handler),
+                reply,
+            })
+            .await
+            .map_err(|_| RouterError::Closed {})?;
+        reply_rx.await.map_err(|_| RouterError::Closed {})?;
+        Ok(())
+    }
+
+    /// Stops accepting a protocol.
+    ///
+    /// Note that this has only an effect on new connections. Existing connections that were
+    /// accepted with `alpn` won't be closed when calling [`Router::stop_accepting`].
+    pub async fn stop_accepting(&self, alpn: impl AsRef<[u8]>) -> Result<(), RouterError> {
+        let (reply, reply_rx) = oneshot::channel();
+        self.tx
+            .send(ToRouterTask::StopAccepting {
+                alpn: alpn.as_ref().to_vec(),
+                reply,
+            })
+            .await
+            .map_err(|_| RouterError::Closed {})?;
+        reply_rx.await.map_err(|_| RouterError::Closed {})?;
+        Ok(())
     }
 
     /// Shuts down the accept loop cleanly.
@@ -348,8 +420,9 @@ impl RouterBuilder {
 
     /// Configures the router to accept the [`ProtocolHandler`] when receiving a connection
     /// with this `alpn`.
-    pub fn accept(mut self, alpn: impl AsRef<[u8]>, handler: impl ProtocolHandler) -> Self {
-        self.protocols.insert(alpn.as_ref().to_vec(), handler);
+    pub fn accept(self, alpn: impl AsRef<[u8]>, handler: impl ProtocolHandler) -> Self {
+        self.protocols
+            .insert(alpn.as_ref().to_vec(), Arc::new(handler));
         self
     }
 
@@ -361,14 +434,9 @@ impl RouterBuilder {
     /// Spawns an accept loop and returns a handle to it encapsulated as the [`Router`].
     pub fn spawn(self) -> Router {
         // Update the endpoint with our alpns.
-        let alpns = self
-            .protocols
-            .alpns()
-            .map(|alpn| alpn.to_vec())
-            .collect::<Vec<_>>();
+        self.endpoint.set_alpns(self.protocols.alpns());
 
         let protocols = Arc::new(self.protocols);
-        self.endpoint.set_alpns(alpns);
 
         let mut join_set = JoinSet::new();
         let endpoint = self.endpoint.clone();
@@ -376,6 +444,8 @@ impl RouterBuilder {
         // Our own shutdown works with a cancellation token.
         let cancel = CancellationToken::new();
         let cancel_token = cancel.clone();
+
+        let (tx, mut rx) = mpsc::channel(8);
 
         let run_loop_fut = async move {
             // Make sure to cancel the token, if this future ever exits.
@@ -390,6 +460,20 @@ impl RouterBuilder {
                     _ = cancel_token.cancelled() => {
                         break;
                     },
+                    Some(msg) = rx.recv() => {
+                        match msg {
+                            ToRouterTask::Accept { alpn, handler, reply } => {
+                                protocols.insert(alpn, handler);
+                                endpoint.set_alpns(protocols.alpns());
+                                reply.send(()).ok();
+                            }
+                            ToRouterTask::StopAccepting { alpn, reply } => {
+                                protocols.remove(&alpn);
+                                endpoint.set_alpns(protocols.alpns());
+                                reply.send(()).ok();
+                            }
+                        }
+                    }
                     // handle task terminations and quit on panics.
                     Some(res) = join_set.join_next() => {
                         match res {
@@ -452,6 +536,7 @@ impl RouterBuilder {
             endpoint: self.endpoint,
             task: Arc::new(Mutex::new(Some(task))),
             cancel_token: cancel,
+            tx,
         }
     }
 }
@@ -542,12 +627,16 @@ impl<P: ProtocolHandler + Clone> ProtocolHandler for AccessLimit<P> {
 mod tests {
     use std::{sync::Mutex, time::Duration};
 
+    use iroh_base::NodeAddr;
     use n0_snafu::{Result, ResultExt};
     use n0_watcher::Watcher;
-    use quinn::ApplicationClose;
+    use quinn::{ApplicationClose, TransportErrorCode};
 
     use super::*;
-    use crate::{endpoint::ConnectionError, RelayMode};
+    use crate::{
+        endpoint::{ConnectError, ConnectionError},
+        RelayMode,
+    };
 
     #[tokio::test]
     async fn test_shutdown() -> Result {
@@ -672,6 +761,86 @@ mod tests {
                 reason: b"shutdown".to_vec().into()
             })
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_add_and_remove_protocol() -> Result {
+        async fn connect_assert_ok(endpoint: &Endpoint, addr: &NodeAddr, alpn: &[u8]) {
+            let conn = endpoint
+                .connect(addr.clone(), alpn)
+                .await
+                .expect("expected connection to succeed");
+            let reason = conn.closed().await;
+            assert!(matches!(reason,
+                ConnectionError::ApplicationClosed(ApplicationClose { error_code, .. }) if error_code == 42u32.into()
+            ));
+        }
+
+        async fn connect_assert_fail(endpoint: &Endpoint, addr: &NodeAddr, alpn: &[u8]) {
+            let conn = endpoint.connect(addr.clone(), alpn).await;
+            assert!(matches!(
+                &conn,
+                Err(ConnectError::Connection { source, .. })
+                if matches!(
+                    source.as_ref(),
+                    ConnectionError::ConnectionClosed(frame)
+                    if frame.error_code == TransportErrorCode::crypto(rustls::AlertDescription::NoApplicationProtocol.into())
+                )
+            ));
+        }
+
+        #[derive(Debug, Clone, Default)]
+        struct TestProtocol;
+
+        const ALPN_1: &[u8] = b"/iroh/test/1";
+        const ALPN_2: &[u8] = b"/iroh/test/2";
+
+        impl ProtocolHandler for TestProtocol {
+            async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
+                connection.close(42u32.into(), b"bye");
+                Ok(())
+            }
+        }
+
+        let server = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .await?;
+        let router = Router::builder(server)
+            .accept(ALPN_1, TestProtocol::default())
+            .spawn();
+
+        let addr = router.endpoint().node_addr().initialized().await?;
+
+        let client = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .await?;
+
+        connect_assert_ok(&client, &addr, ALPN_1).await;
+        connect_assert_fail(&client, &addr, ALPN_2).await;
+
+        router.stop_accepting(ALPN_1).await?;
+        connect_assert_fail(&client, &addr, ALPN_1).await;
+        connect_assert_fail(&client, &addr, ALPN_2).await;
+
+        router.accept(ALPN_2, TestProtocol).await?;
+        connect_assert_fail(&client, &addr, ALPN_1).await;
+        connect_assert_ok(&client, &addr, ALPN_2).await;
+
+        router.accept(ALPN_1, TestProtocol).await?;
+        connect_assert_ok(&client, &addr, ALPN_1).await;
+        connect_assert_ok(&client, &addr, ALPN_2).await;
+
+        router.stop_accepting(ALPN_2).await?;
+        connect_assert_ok(&client, &addr, ALPN_1).await;
+        connect_assert_fail(&client, &addr, ALPN_2).await;
+
+        router.stop_accepting(ALPN_1).await?;
+        connect_assert_fail(&client, &addr, ALPN_1).await;
+        connect_assert_fail(&client, &addr, ALPN_2).await;
+
         Ok(())
     }
 }
