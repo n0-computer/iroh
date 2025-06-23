@@ -43,7 +43,7 @@ use n0_future::{
 use snafu::{Backtrace, Snafu};
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info_span, trace, warn, Instrument};
+use tracing::{debug, error, info_span, trace, warn, Instrument};
 
 use crate::{
     endpoint::{Connecting, Connection, RemoteNodeIdError},
@@ -310,10 +310,16 @@ impl<P: ProtocolHandler> DynProtocolHandler for P {
     }
 }
 
-async fn shutdown_timeout(handler: Arc<dyn DynProtocolHandler>) -> Option<()> {
-    time::timeout(SHUTDOWN_TIMEOUT, handler.shutdown())
-        .await
-        .ok()
+async fn shutdown_timeout(alpn: Vec<u8>, handler: Arc<dyn DynProtocolHandler>) -> Option<()> {
+    if let Err(_elapsed) = time::timeout(SHUTDOWN_TIMEOUT, handler.shutdown()).await {
+        debug!(
+            alpn = String::from_utf8_lossy(&alpn).to_string(),
+            "Protocol handler exceeded the shutdown timeout and was aborted"
+        );
+        None
+    } else {
+        Some(())
+    }
 }
 
 /// A typed map of protocol handlers, mapping them from ALPNs.
@@ -348,15 +354,14 @@ impl ProtocolMap {
     ///
     /// Calls and awaits [`ProtocolHandler::shutdown`] for all registered handlers concurrently.
     pub(crate) async fn shutdown(&self) {
-        let handlers: Vec<_> = {
-            let inner = self.0.read().expect("poisoned");
-            inner
-                .values()
-                .cloned()
-                .map(|handler| shutdown_timeout(handler))
-                .collect()
-        };
-        join_all(handlers).await;
+        let mut futures = Vec::new();
+        {
+            let mut inner = self.0.write().expect("poisoned");
+            while let Some((alpn, handler)) = inner.pop_first() {
+                futures.push(shutdown_timeout(alpn, handler));
+            }
+        }
+        join_all(futures).await;
     }
 }
 
@@ -499,8 +504,8 @@ impl RouterBuilder {
                     Some(msg) = rx.recv() => {
                         match msg {
                             ToRouterTask::Accept { alpn, handler, reply } => {
-                                let outcome = if let Some(previous) = protocols.insert(alpn, handler) {
-                                    join_set.spawn(shutdown_timeout(previous));
+                                let outcome = if let Some(previous) = protocols.insert(alpn.clone(), handler) {
+                                    join_set.spawn(shutdown_timeout(alpn, previous));
                                     AddProtocolOutcome::Replaced
                                 } else {
                                     AddProtocolOutcome::Inserted
@@ -510,7 +515,7 @@ impl RouterBuilder {
                             }
                             ToRouterTask::StopAccepting { alpn, reply } => {
                                 if let Some(handler) = protocols.remove(&alpn) {
-                                    join_set.spawn(shutdown_timeout(handler));
+                                    join_set.spawn(shutdown_timeout(alpn, handler));
                                     endpoint.set_alpns(protocols.alpns());
                                     reply.send(Ok(())).ok();
                                 } else {
@@ -565,7 +570,7 @@ impl RouterBuilder {
             endpoint.close().await;
             // Finally, we abort the remaining accept tasks. This should be a noop because we already cancelled
             // the futures above.
-            tracing::debug!("Shutting down remaining tasks");
+            debug!("Shutting down remaining tasks");
             join_set.abort_all();
             while let Some(res) = join_set.join_next().await {
                 match res {
