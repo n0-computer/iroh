@@ -898,208 +898,207 @@
 <a href=#898 id=898 data-nosnippet>898</a>            <span class="macro">assert!</span>(r.has_udp(), <span class="string">"want UDP"</span>);
 <a href=#899 id=899 data-nosnippet>899</a>            <span class="macro">dbg!</span>(<span class="kw-2">&amp;</span>r);
 <a href=#900 id=900 data-nosnippet>900</a>            <span class="macro">assert!</span>(
-<a href=#901 id=901 data-nosnippet>901</a>                r.relay_latency.len() &gt;= <span class="number">1</span>,
-<a href=#902 id=902 data-nosnippet>902</a>                <span class="string">"expected at least 1 key in RelayLatency; got {}"</span>,
-<a href=#903 id=903 data-nosnippet>903</a>                r.relay_latency.len()
-<a href=#904 id=904 data-nosnippet>904</a>            );
-<a href=#905 id=905 data-nosnippet>905</a>            <span class="macro">assert!</span>(
-<a href=#906 id=906 data-nosnippet>906</a>                r.relay_latency.iter().next().is_some(),
-<a href=#907 id=907 data-nosnippet>907</a>                <span class="string">"expected key 1 in RelayLatency; got {:?}"</span>,
-<a href=#908 id=908 data-nosnippet>908</a>                r.relay_latency
-<a href=#909 id=909 data-nosnippet>909</a>            );
-<a href=#910 id=910 data-nosnippet>910</a>            <span class="macro">assert!</span>(r.global_v4.is_some(), <span class="string">"expected globalV4 set"</span>);
-<a href=#911 id=911 data-nosnippet>911</a>            <span class="macro">assert!</span>(r.preferred_relay.is_some(),);
-<a href=#912 id=912 data-nosnippet>912</a>            cancel.cancel();
-<a href=#913 id=913 data-nosnippet>913</a>        }
-<a href=#914 id=914 data-nosnippet>914</a>
-<a href=#915 id=915 data-nosnippet>915</a>        drop(client);
-<a href=#916 id=916 data-nosnippet>916</a>        ep.wait_idle().<span class="kw">await</span>;
-<a href=#917 id=917 data-nosnippet>917</a>        server.shutdown().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#918 id=918 data-nosnippet>918</a>
-<a href=#919 id=919 data-nosnippet>919</a>        <span class="prelude-val">Ok</span>(())
-<a href=#920 id=920 data-nosnippet>920</a>    }
-<a href=#921 id=921 data-nosnippet>921</a>
-<a href=#922 id=922 data-nosnippet>922</a>    <span class="attr">#[tokio::test(flavor = <span class="string">"current_thread"</span>, start_paused = <span class="bool-val">true</span>)]
-<a href=#923 id=923 data-nosnippet>923</a>    </span><span class="kw">async fn </span>test_add_report_history_set_preferred_relay() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#924 id=924 data-nosnippet>924</a>        <span class="kw">fn </span>relay_url(i: u16) -&gt; RelayUrl {
-<a href=#925 id=925 data-nosnippet>925</a>            <span class="macro">format!</span>(<span class="string">"http://{i}.com"</span>).parse().unwrap()
-<a href=#926 id=926 data-nosnippet>926</a>        }
-<a href=#927 id=927 data-nosnippet>927</a>
-<a href=#928 id=928 data-nosnippet>928</a>        <span class="comment">// report returns a *Report from (relay host, Duration)+ pairs.
-<a href=#929 id=929 data-nosnippet>929</a>        </span><span class="kw">fn </span>report(a: <span class="kw">impl </span>IntoIterator&lt;Item = (<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str, u64)&gt;) -&gt; <span class="prelude-ty">Option</span>&lt;Report&gt; {
-<a href=#930 id=930 data-nosnippet>930</a>            <span class="kw">let </span><span class="kw-2">mut </span>report = Report::default();
-<a href=#931 id=931 data-nosnippet>931</a>            <span class="kw">for </span>(s, d) <span class="kw">in </span>a {
-<a href=#932 id=932 data-nosnippet>932</a>                <span class="macro">assert!</span>(s.starts_with(<span class="string">'d'</span>), <span class="string">"invalid relay server key"</span>);
-<a href=#933 id=933 data-nosnippet>933</a>                <span class="kw">let </span>id: u16 = s[<span class="number">1</span>..].parse().unwrap();
-<a href=#934 id=934 data-nosnippet>934</a>                report.relay_latency.update_relay(
-<a href=#935 id=935 data-nosnippet>935</a>                    relay_url(id),
-<a href=#936 id=936 data-nosnippet>936</a>                    Duration::from_secs(d),
-<a href=#937 id=937 data-nosnippet>937</a>                    Probe::QadIpv4,
-<a href=#938 id=938 data-nosnippet>938</a>                );
-<a href=#939 id=939 data-nosnippet>939</a>            }
-<a href=#940 id=940 data-nosnippet>940</a>
-<a href=#941 id=941 data-nosnippet>941</a>            <span class="prelude-val">Some</span>(report)
-<a href=#942 id=942 data-nosnippet>942</a>        }
-<a href=#943 id=943 data-nosnippet>943</a>        <span class="kw">struct </span>Step {
-<a href=#944 id=944 data-nosnippet>944</a>            <span class="doccomment">/// Delay in seconds
-<a href=#945 id=945 data-nosnippet>945</a>            </span>after: u64,
-<a href=#946 id=946 data-nosnippet>946</a>            r: <span class="prelude-ty">Option</span>&lt;Report&gt;,
-<a href=#947 id=947 data-nosnippet>947</a>        }
-<a href=#948 id=948 data-nosnippet>948</a>        <span class="kw">struct </span>Test {
-<a href=#949 id=949 data-nosnippet>949</a>            name: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
-<a href=#950 id=950 data-nosnippet>950</a>            steps: Vec&lt;Step&gt;,
-<a href=#951 id=951 data-nosnippet>951</a>            <span class="doccomment">/// want PreferredRelay on final step
-<a href=#952 id=952 data-nosnippet>952</a>            </span>want_relay: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;,
-<a href=#953 id=953 data-nosnippet>953</a>            <span class="comment">// wanted len(c.prev)
-<a href=#954 id=954 data-nosnippet>954</a>            </span>want_prev_len: usize,
-<a href=#955 id=955 data-nosnippet>955</a>        }
-<a href=#956 id=956 data-nosnippet>956</a>
-<a href=#957 id=957 data-nosnippet>957</a>        <span class="kw">let </span>tests = [
-<a href=#958 id=958 data-nosnippet>958</a>            Test {
-<a href=#959 id=959 data-nosnippet>959</a>                name: <span class="string">"first_reading"</span>,
-<a href=#960 id=960 data-nosnippet>960</a>                steps: <span class="macro">vec!</span>[Step {
-<a href=#961 id=961 data-nosnippet>961</a>                    after: <span class="number">0</span>,
-<a href=#962 id=962 data-nosnippet>962</a>                    r: report([(<span class="string">"d1"</span>, <span class="number">2</span>), (<span class="string">"d2"</span>, <span class="number">3</span>)]),
-<a href=#963 id=963 data-nosnippet>963</a>                }],
-<a href=#964 id=964 data-nosnippet>964</a>                want_prev_len: <span class="number">1</span>,
-<a href=#965 id=965 data-nosnippet>965</a>                want_relay: <span class="prelude-val">Some</span>(relay_url(<span class="number">1</span>)),
-<a href=#966 id=966 data-nosnippet>966</a>            },
-<a href=#967 id=967 data-nosnippet>967</a>            Test {
-<a href=#968 id=968 data-nosnippet>968</a>                name: <span class="string">"with_two"</span>,
-<a href=#969 id=969 data-nosnippet>969</a>                steps: <span class="macro">vec!</span>[
-<a href=#970 id=970 data-nosnippet>970</a>                    Step {
-<a href=#971 id=971 data-nosnippet>971</a>                        after: <span class="number">0</span>,
-<a href=#972 id=972 data-nosnippet>972</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">2</span>), (<span class="string">"d2"</span>, <span class="number">3</span>)]),
-<a href=#973 id=973 data-nosnippet>973</a>                    },
-<a href=#974 id=974 data-nosnippet>974</a>                    Step {
-<a href=#975 id=975 data-nosnippet>975</a>                        after: <span class="number">1</span>,
-<a href=#976 id=976 data-nosnippet>976</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">4</span>), (<span class="string">"d2"</span>, <span class="number">3</span>)]),
-<a href=#977 id=977 data-nosnippet>977</a>                    },
-<a href=#978 id=978 data-nosnippet>978</a>                ],
-<a href=#979 id=979 data-nosnippet>979</a>                want_prev_len: <span class="number">2</span>,
-<a href=#980 id=980 data-nosnippet>980</a>                want_relay: <span class="prelude-val">Some</span>(relay_url(<span class="number">1</span>)), <span class="comment">// t0's d1 of 2 is still best
-<a href=#981 id=981 data-nosnippet>981</a>            </span>},
-<a href=#982 id=982 data-nosnippet>982</a>            Test {
-<a href=#983 id=983 data-nosnippet>983</a>                name: <span class="string">"but_now_d1_gone"</span>,
-<a href=#984 id=984 data-nosnippet>984</a>                steps: <span class="macro">vec!</span>[
-<a href=#985 id=985 data-nosnippet>985</a>                    Step {
-<a href=#986 id=986 data-nosnippet>986</a>                        after: <span class="number">0</span>,
-<a href=#987 id=987 data-nosnippet>987</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">2</span>), (<span class="string">"d2"</span>, <span class="number">3</span>)]),
-<a href=#988 id=988 data-nosnippet>988</a>                    },
-<a href=#989 id=989 data-nosnippet>989</a>                    Step {
-<a href=#990 id=990 data-nosnippet>990</a>                        after: <span class="number">1</span>,
-<a href=#991 id=991 data-nosnippet>991</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">4</span>), (<span class="string">"d2"</span>, <span class="number">3</span>)]),
-<a href=#992 id=992 data-nosnippet>992</a>                    },
-<a href=#993 id=993 data-nosnippet>993</a>                    Step {
-<a href=#994 id=994 data-nosnippet>994</a>                        after: <span class="number">2</span>,
-<a href=#995 id=995 data-nosnippet>995</a>                        r: report([(<span class="string">"d2"</span>, <span class="number">3</span>)]),
-<a href=#996 id=996 data-nosnippet>996</a>                    },
-<a href=#997 id=997 data-nosnippet>997</a>                ],
-<a href=#998 id=998 data-nosnippet>998</a>                want_prev_len: <span class="number">3</span>,
-<a href=#999 id=999 data-nosnippet>999</a>                want_relay: <span class="prelude-val">Some</span>(relay_url(<span class="number">2</span>)), <span class="comment">// only option
-<a href=#1000 id=1000 data-nosnippet>1000</a>            </span>},
-<a href=#1001 id=1001 data-nosnippet>1001</a>            Test {
-<a href=#1002 id=1002 data-nosnippet>1002</a>                name: <span class="string">"d1_is_back"</span>,
-<a href=#1003 id=1003 data-nosnippet>1003</a>                steps: <span class="macro">vec!</span>[
-<a href=#1004 id=1004 data-nosnippet>1004</a>                    Step {
-<a href=#1005 id=1005 data-nosnippet>1005</a>                        after: <span class="number">0</span>,
-<a href=#1006 id=1006 data-nosnippet>1006</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">2</span>), (<span class="string">"d2"</span>, <span class="number">3</span>)]),
-<a href=#1007 id=1007 data-nosnippet>1007</a>                    },
-<a href=#1008 id=1008 data-nosnippet>1008</a>                    Step {
-<a href=#1009 id=1009 data-nosnippet>1009</a>                        after: <span class="number">1</span>,
-<a href=#1010 id=1010 data-nosnippet>1010</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">4</span>), (<span class="string">"d2"</span>, <span class="number">3</span>)]),
-<a href=#1011 id=1011 data-nosnippet>1011</a>                    },
-<a href=#1012 id=1012 data-nosnippet>1012</a>                    Step {
-<a href=#1013 id=1013 data-nosnippet>1013</a>                        after: <span class="number">2</span>,
-<a href=#1014 id=1014 data-nosnippet>1014</a>                        r: report([(<span class="string">"d2"</span>, <span class="number">3</span>)]),
-<a href=#1015 id=1015 data-nosnippet>1015</a>                    },
-<a href=#1016 id=1016 data-nosnippet>1016</a>                    Step {
-<a href=#1017 id=1017 data-nosnippet>1017</a>                        after: <span class="number">3</span>,
-<a href=#1018 id=1018 data-nosnippet>1018</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">4</span>), (<span class="string">"d2"</span>, <span class="number">3</span>)]),
-<a href=#1019 id=1019 data-nosnippet>1019</a>                    }, <span class="comment">// same as 2 seconds ago
-<a href=#1020 id=1020 data-nosnippet>1020</a>                </span>],
-<a href=#1021 id=1021 data-nosnippet>1021</a>                want_prev_len: <span class="number">4</span>,
-<a href=#1022 id=1022 data-nosnippet>1022</a>                want_relay: <span class="prelude-val">Some</span>(relay_url(<span class="number">1</span>)), <span class="comment">// t0's d1 of 2 is still best
-<a href=#1023 id=1023 data-nosnippet>1023</a>            </span>},
-<a href=#1024 id=1024 data-nosnippet>1024</a>            Test {
-<a href=#1025 id=1025 data-nosnippet>1025</a>                name: <span class="string">"things_clean_up"</span>,
-<a href=#1026 id=1026 data-nosnippet>1026</a>                steps: <span class="macro">vec!</span>[
-<a href=#1027 id=1027 data-nosnippet>1027</a>                    Step {
-<a href=#1028 id=1028 data-nosnippet>1028</a>                        after: <span class="number">0</span>,
-<a href=#1029 id=1029 data-nosnippet>1029</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">1</span>), (<span class="string">"d2"</span>, <span class="number">2</span>)]),
-<a href=#1030 id=1030 data-nosnippet>1030</a>                    },
-<a href=#1031 id=1031 data-nosnippet>1031</a>                    Step {
-<a href=#1032 id=1032 data-nosnippet>1032</a>                        after: <span class="number">1</span>,
-<a href=#1033 id=1033 data-nosnippet>1033</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">1</span>), (<span class="string">"d2"</span>, <span class="number">2</span>)]),
-<a href=#1034 id=1034 data-nosnippet>1034</a>                    },
-<a href=#1035 id=1035 data-nosnippet>1035</a>                    Step {
-<a href=#1036 id=1036 data-nosnippet>1036</a>                        after: <span class="number">2</span>,
-<a href=#1037 id=1037 data-nosnippet>1037</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">1</span>), (<span class="string">"d2"</span>, <span class="number">2</span>)]),
-<a href=#1038 id=1038 data-nosnippet>1038</a>                    },
-<a href=#1039 id=1039 data-nosnippet>1039</a>                    Step {
-<a href=#1040 id=1040 data-nosnippet>1040</a>                        after: <span class="number">3</span>,
-<a href=#1041 id=1041 data-nosnippet>1041</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">1</span>), (<span class="string">"d2"</span>, <span class="number">2</span>)]),
-<a href=#1042 id=1042 data-nosnippet>1042</a>                    },
-<a href=#1043 id=1043 data-nosnippet>1043</a>                    Step {
-<a href=#1044 id=1044 data-nosnippet>1044</a>                        after: <span class="number">10 </span>* <span class="number">60</span>,
-<a href=#1045 id=1045 data-nosnippet>1045</a>                        r: report([(<span class="string">"d3"</span>, <span class="number">3</span>)]),
-<a href=#1046 id=1046 data-nosnippet>1046</a>                    },
-<a href=#1047 id=1047 data-nosnippet>1047</a>                ],
-<a href=#1048 id=1048 data-nosnippet>1048</a>                want_prev_len: <span class="number">1</span>, <span class="comment">// t=[0123]s all gone. (too old, older than 10 min)
-<a href=#1049 id=1049 data-nosnippet>1049</a>                </span>want_relay: <span class="prelude-val">Some</span>(relay_url(<span class="number">3</span>)), <span class="comment">// only option
-<a href=#1050 id=1050 data-nosnippet>1050</a>            </span>},
-<a href=#1051 id=1051 data-nosnippet>1051</a>            Test {
-<a href=#1052 id=1052 data-nosnippet>1052</a>                name: <span class="string">"preferred_relay_hysteresis_no_switch"</span>,
-<a href=#1053 id=1053 data-nosnippet>1053</a>                steps: <span class="macro">vec!</span>[
-<a href=#1054 id=1054 data-nosnippet>1054</a>                    Step {
-<a href=#1055 id=1055 data-nosnippet>1055</a>                        after: <span class="number">0</span>,
-<a href=#1056 id=1056 data-nosnippet>1056</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">4</span>), (<span class="string">"d2"</span>, <span class="number">5</span>)]),
-<a href=#1057 id=1057 data-nosnippet>1057</a>                    },
-<a href=#1058 id=1058 data-nosnippet>1058</a>                    Step {
-<a href=#1059 id=1059 data-nosnippet>1059</a>                        after: <span class="number">1</span>,
-<a href=#1060 id=1060 data-nosnippet>1060</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">4</span>), (<span class="string">"d2"</span>, <span class="number">3</span>)]),
-<a href=#1061 id=1061 data-nosnippet>1061</a>                    },
-<a href=#1062 id=1062 data-nosnippet>1062</a>                ],
-<a href=#1063 id=1063 data-nosnippet>1063</a>                want_prev_len: <span class="number">2</span>,
-<a href=#1064 id=1064 data-nosnippet>1064</a>                want_relay: <span class="prelude-val">Some</span>(relay_url(<span class="number">1</span>)), <span class="comment">// 2 didn't get fast enough
-<a href=#1065 id=1065 data-nosnippet>1065</a>            </span>},
-<a href=#1066 id=1066 data-nosnippet>1066</a>            Test {
-<a href=#1067 id=1067 data-nosnippet>1067</a>                name: <span class="string">"preferred_relay_hysteresis_do_switch"</span>,
-<a href=#1068 id=1068 data-nosnippet>1068</a>                steps: <span class="macro">vec!</span>[
-<a href=#1069 id=1069 data-nosnippet>1069</a>                    Step {
-<a href=#1070 id=1070 data-nosnippet>1070</a>                        after: <span class="number">0</span>,
-<a href=#1071 id=1071 data-nosnippet>1071</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">4</span>), (<span class="string">"d2"</span>, <span class="number">5</span>)]),
-<a href=#1072 id=1072 data-nosnippet>1072</a>                    },
-<a href=#1073 id=1073 data-nosnippet>1073</a>                    Step {
-<a href=#1074 id=1074 data-nosnippet>1074</a>                        after: <span class="number">1</span>,
-<a href=#1075 id=1075 data-nosnippet>1075</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">4</span>), (<span class="string">"d2"</span>, <span class="number">1</span>)]),
-<a href=#1076 id=1076 data-nosnippet>1076</a>                    },
-<a href=#1077 id=1077 data-nosnippet>1077</a>                ],
-<a href=#1078 id=1078 data-nosnippet>1078</a>                want_prev_len: <span class="number">2</span>,
-<a href=#1079 id=1079 data-nosnippet>1079</a>                want_relay: <span class="prelude-val">Some</span>(relay_url(<span class="number">2</span>)), <span class="comment">// 2 got fast enough
-<a href=#1080 id=1080 data-nosnippet>1080</a>            </span>},
-<a href=#1081 id=1081 data-nosnippet>1081</a>        ];
-<a href=#1082 id=1082 data-nosnippet>1082</a>        <span class="kw">let </span>resolver = DnsResolver::new();
-<a href=#1083 id=1083 data-nosnippet>1083</a>        <span class="kw">for </span><span class="kw-2">mut </span>tt <span class="kw">in </span>tests {
-<a href=#1084 id=1084 data-nosnippet>1084</a>            <span class="macro">println!</span>(<span class="string">"test: {}"</span>, tt.name);
-<a href=#1085 id=1085 data-nosnippet>1085</a>            <span class="kw">let </span>relay_map = RelayMap::empty();
-<a href=#1086 id=1086 data-nosnippet>1086</a>            <span class="kw">let </span>opts = Options::default();
-<a href=#1087 id=1087 data-nosnippet>1087</a>            <span class="kw">let </span><span class="kw-2">mut </span>client =
-<a href=#1088 id=1088 data-nosnippet>1088</a>                Client::new(resolver.clone(), <span class="prelude-val">None</span>, relay_map, opts, Default::default());
-<a href=#1089 id=1089 data-nosnippet>1089</a>            <span class="kw">for </span>s <span class="kw">in </span><span class="kw-2">&amp;mut </span>tt.steps {
-<a href=#1090 id=1090 data-nosnippet>1090</a>                <span class="comment">// trigger the timer
-<a href=#1091 id=1091 data-nosnippet>1091</a>                </span>tokio::time::advance(Duration::from_secs(s.after)).<span class="kw">await</span>;
-<a href=#1092 id=1092 data-nosnippet>1092</a>                client.add_report_history_and_set_preferred_relay(s.r.as_mut().unwrap());
-<a href=#1093 id=1093 data-nosnippet>1093</a>            }
-<a href=#1094 id=1094 data-nosnippet>1094</a>            <span class="kw">let </span>last_report = tt.steps.last().unwrap().r.clone().unwrap();
-<a href=#1095 id=1095 data-nosnippet>1095</a>            <span class="kw">let </span>got = client.reports.prev.len();
-<a href=#1096 id=1096 data-nosnippet>1096</a>            <span class="kw">let </span>want = tt.want_prev_len;
-<a href=#1097 id=1097 data-nosnippet>1097</a>            <span class="macro">assert_eq!</span>(got, want, <span class="string">"prev length"</span>);
-<a href=#1098 id=1098 data-nosnippet>1098</a>            <span class="kw">let </span>got = <span class="kw-2">&amp;</span>last_report.preferred_relay;
-<a href=#1099 id=1099 data-nosnippet>1099</a>            <span class="kw">let </span>want = <span class="kw-2">&amp;</span>tt.want_relay;
-<a href=#1100 id=1100 data-nosnippet>1100</a>            <span class="macro">assert_eq!</span>(got, want, <span class="string">"preferred_relay"</span>);
-<a href=#1101 id=1101 data-nosnippet>1101</a>        }
-<a href=#1102 id=1102 data-nosnippet>1102</a>
-<a href=#1103 id=1103 data-nosnippet>1103</a>        <span class="prelude-val">Ok</span>(())
-<a href=#1104 id=1104 data-nosnippet>1104</a>    }
-<a href=#1105 id=1105 data-nosnippet>1105</a>}</code></pre></div></section></main></body></html>
+<a href=#901 id=901 data-nosnippet>901</a>                !r.relay_latency.is_empty(),
+<a href=#902 id=902 data-nosnippet>902</a>                <span class="string">"expected at least 1 key in RelayLatency; got none"</span>,
+<a href=#903 id=903 data-nosnippet>903</a>            );
+<a href=#904 id=904 data-nosnippet>904</a>            <span class="macro">assert!</span>(
+<a href=#905 id=905 data-nosnippet>905</a>                r.relay_latency.iter().next().is_some(),
+<a href=#906 id=906 data-nosnippet>906</a>                <span class="string">"expected key 1 in RelayLatency; got {:?}"</span>,
+<a href=#907 id=907 data-nosnippet>907</a>                r.relay_latency
+<a href=#908 id=908 data-nosnippet>908</a>            );
+<a href=#909 id=909 data-nosnippet>909</a>            <span class="macro">assert!</span>(r.global_v4.is_some(), <span class="string">"expected globalV4 set"</span>);
+<a href=#910 id=910 data-nosnippet>910</a>            <span class="macro">assert!</span>(r.preferred_relay.is_some(),);
+<a href=#911 id=911 data-nosnippet>911</a>            cancel.cancel();
+<a href=#912 id=912 data-nosnippet>912</a>        }
+<a href=#913 id=913 data-nosnippet>913</a>
+<a href=#914 id=914 data-nosnippet>914</a>        drop(client);
+<a href=#915 id=915 data-nosnippet>915</a>        ep.wait_idle().<span class="kw">await</span>;
+<a href=#916 id=916 data-nosnippet>916</a>        server.shutdown().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#917 id=917 data-nosnippet>917</a>
+<a href=#918 id=918 data-nosnippet>918</a>        <span class="prelude-val">Ok</span>(())
+<a href=#919 id=919 data-nosnippet>919</a>    }
+<a href=#920 id=920 data-nosnippet>920</a>
+<a href=#921 id=921 data-nosnippet>921</a>    <span class="attr">#[tokio::test(flavor = <span class="string">"current_thread"</span>, start_paused = <span class="bool-val">true</span>)]
+<a href=#922 id=922 data-nosnippet>922</a>    </span><span class="kw">async fn </span>test_add_report_history_set_preferred_relay() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#923 id=923 data-nosnippet>923</a>        <span class="kw">fn </span>relay_url(i: u16) -&gt; RelayUrl {
+<a href=#924 id=924 data-nosnippet>924</a>            <span class="macro">format!</span>(<span class="string">"http://{i}.com"</span>).parse().unwrap()
+<a href=#925 id=925 data-nosnippet>925</a>        }
+<a href=#926 id=926 data-nosnippet>926</a>
+<a href=#927 id=927 data-nosnippet>927</a>        <span class="comment">// report returns a *Report from (relay host, Duration)+ pairs.
+<a href=#928 id=928 data-nosnippet>928</a>        </span><span class="kw">fn </span>report(a: <span class="kw">impl </span>IntoIterator&lt;Item = (<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str, u64)&gt;) -&gt; <span class="prelude-ty">Option</span>&lt;Report&gt; {
+<a href=#929 id=929 data-nosnippet>929</a>            <span class="kw">let </span><span class="kw-2">mut </span>report = Report::default();
+<a href=#930 id=930 data-nosnippet>930</a>            <span class="kw">for </span>(s, d) <span class="kw">in </span>a {
+<a href=#931 id=931 data-nosnippet>931</a>                <span class="macro">assert!</span>(s.starts_with(<span class="string">'d'</span>), <span class="string">"invalid relay server key"</span>);
+<a href=#932 id=932 data-nosnippet>932</a>                <span class="kw">let </span>id: u16 = s[<span class="number">1</span>..].parse().unwrap();
+<a href=#933 id=933 data-nosnippet>933</a>                report.relay_latency.update_relay(
+<a href=#934 id=934 data-nosnippet>934</a>                    relay_url(id),
+<a href=#935 id=935 data-nosnippet>935</a>                    Duration::from_secs(d),
+<a href=#936 id=936 data-nosnippet>936</a>                    Probe::QadIpv4,
+<a href=#937 id=937 data-nosnippet>937</a>                );
+<a href=#938 id=938 data-nosnippet>938</a>            }
+<a href=#939 id=939 data-nosnippet>939</a>
+<a href=#940 id=940 data-nosnippet>940</a>            <span class="prelude-val">Some</span>(report)
+<a href=#941 id=941 data-nosnippet>941</a>        }
+<a href=#942 id=942 data-nosnippet>942</a>        <span class="kw">struct </span>Step {
+<a href=#943 id=943 data-nosnippet>943</a>            <span class="doccomment">/// Delay in seconds
+<a href=#944 id=944 data-nosnippet>944</a>            </span>after: u64,
+<a href=#945 id=945 data-nosnippet>945</a>            r: <span class="prelude-ty">Option</span>&lt;Report&gt;,
+<a href=#946 id=946 data-nosnippet>946</a>        }
+<a href=#947 id=947 data-nosnippet>947</a>        <span class="kw">struct </span>Test {
+<a href=#948 id=948 data-nosnippet>948</a>            name: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
+<a href=#949 id=949 data-nosnippet>949</a>            steps: Vec&lt;Step&gt;,
+<a href=#950 id=950 data-nosnippet>950</a>            <span class="doccomment">/// want PreferredRelay on final step
+<a href=#951 id=951 data-nosnippet>951</a>            </span>want_relay: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;,
+<a href=#952 id=952 data-nosnippet>952</a>            <span class="comment">// wanted len(c.prev)
+<a href=#953 id=953 data-nosnippet>953</a>            </span>want_prev_len: usize,
+<a href=#954 id=954 data-nosnippet>954</a>        }
+<a href=#955 id=955 data-nosnippet>955</a>
+<a href=#956 id=956 data-nosnippet>956</a>        <span class="kw">let </span>tests = [
+<a href=#957 id=957 data-nosnippet>957</a>            Test {
+<a href=#958 id=958 data-nosnippet>958</a>                name: <span class="string">"first_reading"</span>,
+<a href=#959 id=959 data-nosnippet>959</a>                steps: <span class="macro">vec!</span>[Step {
+<a href=#960 id=960 data-nosnippet>960</a>                    after: <span class="number">0</span>,
+<a href=#961 id=961 data-nosnippet>961</a>                    r: report([(<span class="string">"d1"</span>, <span class="number">2</span>), (<span class="string">"d2"</span>, <span class="number">3</span>)]),
+<a href=#962 id=962 data-nosnippet>962</a>                }],
+<a href=#963 id=963 data-nosnippet>963</a>                want_prev_len: <span class="number">1</span>,
+<a href=#964 id=964 data-nosnippet>964</a>                want_relay: <span class="prelude-val">Some</span>(relay_url(<span class="number">1</span>)),
+<a href=#965 id=965 data-nosnippet>965</a>            },
+<a href=#966 id=966 data-nosnippet>966</a>            Test {
+<a href=#967 id=967 data-nosnippet>967</a>                name: <span class="string">"with_two"</span>,
+<a href=#968 id=968 data-nosnippet>968</a>                steps: <span class="macro">vec!</span>[
+<a href=#969 id=969 data-nosnippet>969</a>                    Step {
+<a href=#970 id=970 data-nosnippet>970</a>                        after: <span class="number">0</span>,
+<a href=#971 id=971 data-nosnippet>971</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">2</span>), (<span class="string">"d2"</span>, <span class="number">3</span>)]),
+<a href=#972 id=972 data-nosnippet>972</a>                    },
+<a href=#973 id=973 data-nosnippet>973</a>                    Step {
+<a href=#974 id=974 data-nosnippet>974</a>                        after: <span class="number">1</span>,
+<a href=#975 id=975 data-nosnippet>975</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">4</span>), (<span class="string">"d2"</span>, <span class="number">3</span>)]),
+<a href=#976 id=976 data-nosnippet>976</a>                    },
+<a href=#977 id=977 data-nosnippet>977</a>                ],
+<a href=#978 id=978 data-nosnippet>978</a>                want_prev_len: <span class="number">2</span>,
+<a href=#979 id=979 data-nosnippet>979</a>                want_relay: <span class="prelude-val">Some</span>(relay_url(<span class="number">1</span>)), <span class="comment">// t0's d1 of 2 is still best
+<a href=#980 id=980 data-nosnippet>980</a>            </span>},
+<a href=#981 id=981 data-nosnippet>981</a>            Test {
+<a href=#982 id=982 data-nosnippet>982</a>                name: <span class="string">"but_now_d1_gone"</span>,
+<a href=#983 id=983 data-nosnippet>983</a>                steps: <span class="macro">vec!</span>[
+<a href=#984 id=984 data-nosnippet>984</a>                    Step {
+<a href=#985 id=985 data-nosnippet>985</a>                        after: <span class="number">0</span>,
+<a href=#986 id=986 data-nosnippet>986</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">2</span>), (<span class="string">"d2"</span>, <span class="number">3</span>)]),
+<a href=#987 id=987 data-nosnippet>987</a>                    },
+<a href=#988 id=988 data-nosnippet>988</a>                    Step {
+<a href=#989 id=989 data-nosnippet>989</a>                        after: <span class="number">1</span>,
+<a href=#990 id=990 data-nosnippet>990</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">4</span>), (<span class="string">"d2"</span>, <span class="number">3</span>)]),
+<a href=#991 id=991 data-nosnippet>991</a>                    },
+<a href=#992 id=992 data-nosnippet>992</a>                    Step {
+<a href=#993 id=993 data-nosnippet>993</a>                        after: <span class="number">2</span>,
+<a href=#994 id=994 data-nosnippet>994</a>                        r: report([(<span class="string">"d2"</span>, <span class="number">3</span>)]),
+<a href=#995 id=995 data-nosnippet>995</a>                    },
+<a href=#996 id=996 data-nosnippet>996</a>                ],
+<a href=#997 id=997 data-nosnippet>997</a>                want_prev_len: <span class="number">3</span>,
+<a href=#998 id=998 data-nosnippet>998</a>                want_relay: <span class="prelude-val">Some</span>(relay_url(<span class="number">2</span>)), <span class="comment">// only option
+<a href=#999 id=999 data-nosnippet>999</a>            </span>},
+<a href=#1000 id=1000 data-nosnippet>1000</a>            Test {
+<a href=#1001 id=1001 data-nosnippet>1001</a>                name: <span class="string">"d1_is_back"</span>,
+<a href=#1002 id=1002 data-nosnippet>1002</a>                steps: <span class="macro">vec!</span>[
+<a href=#1003 id=1003 data-nosnippet>1003</a>                    Step {
+<a href=#1004 id=1004 data-nosnippet>1004</a>                        after: <span class="number">0</span>,
+<a href=#1005 id=1005 data-nosnippet>1005</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">2</span>), (<span class="string">"d2"</span>, <span class="number">3</span>)]),
+<a href=#1006 id=1006 data-nosnippet>1006</a>                    },
+<a href=#1007 id=1007 data-nosnippet>1007</a>                    Step {
+<a href=#1008 id=1008 data-nosnippet>1008</a>                        after: <span class="number">1</span>,
+<a href=#1009 id=1009 data-nosnippet>1009</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">4</span>), (<span class="string">"d2"</span>, <span class="number">3</span>)]),
+<a href=#1010 id=1010 data-nosnippet>1010</a>                    },
+<a href=#1011 id=1011 data-nosnippet>1011</a>                    Step {
+<a href=#1012 id=1012 data-nosnippet>1012</a>                        after: <span class="number">2</span>,
+<a href=#1013 id=1013 data-nosnippet>1013</a>                        r: report([(<span class="string">"d2"</span>, <span class="number">3</span>)]),
+<a href=#1014 id=1014 data-nosnippet>1014</a>                    },
+<a href=#1015 id=1015 data-nosnippet>1015</a>                    Step {
+<a href=#1016 id=1016 data-nosnippet>1016</a>                        after: <span class="number">3</span>,
+<a href=#1017 id=1017 data-nosnippet>1017</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">4</span>), (<span class="string">"d2"</span>, <span class="number">3</span>)]),
+<a href=#1018 id=1018 data-nosnippet>1018</a>                    }, <span class="comment">// same as 2 seconds ago
+<a href=#1019 id=1019 data-nosnippet>1019</a>                </span>],
+<a href=#1020 id=1020 data-nosnippet>1020</a>                want_prev_len: <span class="number">4</span>,
+<a href=#1021 id=1021 data-nosnippet>1021</a>                want_relay: <span class="prelude-val">Some</span>(relay_url(<span class="number">1</span>)), <span class="comment">// t0's d1 of 2 is still best
+<a href=#1022 id=1022 data-nosnippet>1022</a>            </span>},
+<a href=#1023 id=1023 data-nosnippet>1023</a>            Test {
+<a href=#1024 id=1024 data-nosnippet>1024</a>                name: <span class="string">"things_clean_up"</span>,
+<a href=#1025 id=1025 data-nosnippet>1025</a>                steps: <span class="macro">vec!</span>[
+<a href=#1026 id=1026 data-nosnippet>1026</a>                    Step {
+<a href=#1027 id=1027 data-nosnippet>1027</a>                        after: <span class="number">0</span>,
+<a href=#1028 id=1028 data-nosnippet>1028</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">1</span>), (<span class="string">"d2"</span>, <span class="number">2</span>)]),
+<a href=#1029 id=1029 data-nosnippet>1029</a>                    },
+<a href=#1030 id=1030 data-nosnippet>1030</a>                    Step {
+<a href=#1031 id=1031 data-nosnippet>1031</a>                        after: <span class="number">1</span>,
+<a href=#1032 id=1032 data-nosnippet>1032</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">1</span>), (<span class="string">"d2"</span>, <span class="number">2</span>)]),
+<a href=#1033 id=1033 data-nosnippet>1033</a>                    },
+<a href=#1034 id=1034 data-nosnippet>1034</a>                    Step {
+<a href=#1035 id=1035 data-nosnippet>1035</a>                        after: <span class="number">2</span>,
+<a href=#1036 id=1036 data-nosnippet>1036</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">1</span>), (<span class="string">"d2"</span>, <span class="number">2</span>)]),
+<a href=#1037 id=1037 data-nosnippet>1037</a>                    },
+<a href=#1038 id=1038 data-nosnippet>1038</a>                    Step {
+<a href=#1039 id=1039 data-nosnippet>1039</a>                        after: <span class="number">3</span>,
+<a href=#1040 id=1040 data-nosnippet>1040</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">1</span>), (<span class="string">"d2"</span>, <span class="number">2</span>)]),
+<a href=#1041 id=1041 data-nosnippet>1041</a>                    },
+<a href=#1042 id=1042 data-nosnippet>1042</a>                    Step {
+<a href=#1043 id=1043 data-nosnippet>1043</a>                        after: <span class="number">10 </span>* <span class="number">60</span>,
+<a href=#1044 id=1044 data-nosnippet>1044</a>                        r: report([(<span class="string">"d3"</span>, <span class="number">3</span>)]),
+<a href=#1045 id=1045 data-nosnippet>1045</a>                    },
+<a href=#1046 id=1046 data-nosnippet>1046</a>                ],
+<a href=#1047 id=1047 data-nosnippet>1047</a>                want_prev_len: <span class="number">1</span>, <span class="comment">// t=[0123]s all gone. (too old, older than 10 min)
+<a href=#1048 id=1048 data-nosnippet>1048</a>                </span>want_relay: <span class="prelude-val">Some</span>(relay_url(<span class="number">3</span>)), <span class="comment">// only option
+<a href=#1049 id=1049 data-nosnippet>1049</a>            </span>},
+<a href=#1050 id=1050 data-nosnippet>1050</a>            Test {
+<a href=#1051 id=1051 data-nosnippet>1051</a>                name: <span class="string">"preferred_relay_hysteresis_no_switch"</span>,
+<a href=#1052 id=1052 data-nosnippet>1052</a>                steps: <span class="macro">vec!</span>[
+<a href=#1053 id=1053 data-nosnippet>1053</a>                    Step {
+<a href=#1054 id=1054 data-nosnippet>1054</a>                        after: <span class="number">0</span>,
+<a href=#1055 id=1055 data-nosnippet>1055</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">4</span>), (<span class="string">"d2"</span>, <span class="number">5</span>)]),
+<a href=#1056 id=1056 data-nosnippet>1056</a>                    },
+<a href=#1057 id=1057 data-nosnippet>1057</a>                    Step {
+<a href=#1058 id=1058 data-nosnippet>1058</a>                        after: <span class="number">1</span>,
+<a href=#1059 id=1059 data-nosnippet>1059</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">4</span>), (<span class="string">"d2"</span>, <span class="number">3</span>)]),
+<a href=#1060 id=1060 data-nosnippet>1060</a>                    },
+<a href=#1061 id=1061 data-nosnippet>1061</a>                ],
+<a href=#1062 id=1062 data-nosnippet>1062</a>                want_prev_len: <span class="number">2</span>,
+<a href=#1063 id=1063 data-nosnippet>1063</a>                want_relay: <span class="prelude-val">Some</span>(relay_url(<span class="number">1</span>)), <span class="comment">// 2 didn't get fast enough
+<a href=#1064 id=1064 data-nosnippet>1064</a>            </span>},
+<a href=#1065 id=1065 data-nosnippet>1065</a>            Test {
+<a href=#1066 id=1066 data-nosnippet>1066</a>                name: <span class="string">"preferred_relay_hysteresis_do_switch"</span>,
+<a href=#1067 id=1067 data-nosnippet>1067</a>                steps: <span class="macro">vec!</span>[
+<a href=#1068 id=1068 data-nosnippet>1068</a>                    Step {
+<a href=#1069 id=1069 data-nosnippet>1069</a>                        after: <span class="number">0</span>,
+<a href=#1070 id=1070 data-nosnippet>1070</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">4</span>), (<span class="string">"d2"</span>, <span class="number">5</span>)]),
+<a href=#1071 id=1071 data-nosnippet>1071</a>                    },
+<a href=#1072 id=1072 data-nosnippet>1072</a>                    Step {
+<a href=#1073 id=1073 data-nosnippet>1073</a>                        after: <span class="number">1</span>,
+<a href=#1074 id=1074 data-nosnippet>1074</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">4</span>), (<span class="string">"d2"</span>, <span class="number">1</span>)]),
+<a href=#1075 id=1075 data-nosnippet>1075</a>                    },
+<a href=#1076 id=1076 data-nosnippet>1076</a>                ],
+<a href=#1077 id=1077 data-nosnippet>1077</a>                want_prev_len: <span class="number">2</span>,
+<a href=#1078 id=1078 data-nosnippet>1078</a>                want_relay: <span class="prelude-val">Some</span>(relay_url(<span class="number">2</span>)), <span class="comment">// 2 got fast enough
+<a href=#1079 id=1079 data-nosnippet>1079</a>            </span>},
+<a href=#1080 id=1080 data-nosnippet>1080</a>        ];
+<a href=#1081 id=1081 data-nosnippet>1081</a>        <span class="kw">let </span>resolver = DnsResolver::new();
+<a href=#1082 id=1082 data-nosnippet>1082</a>        <span class="kw">for </span><span class="kw-2">mut </span>tt <span class="kw">in </span>tests {
+<a href=#1083 id=1083 data-nosnippet>1083</a>            <span class="macro">println!</span>(<span class="string">"test: {}"</span>, tt.name);
+<a href=#1084 id=1084 data-nosnippet>1084</a>            <span class="kw">let </span>relay_map = RelayMap::empty();
+<a href=#1085 id=1085 data-nosnippet>1085</a>            <span class="kw">let </span>opts = Options::default();
+<a href=#1086 id=1086 data-nosnippet>1086</a>            <span class="kw">let </span><span class="kw-2">mut </span>client =
+<a href=#1087 id=1087 data-nosnippet>1087</a>                Client::new(resolver.clone(), <span class="prelude-val">None</span>, relay_map, opts, Default::default());
+<a href=#1088 id=1088 data-nosnippet>1088</a>            <span class="kw">for </span>s <span class="kw">in </span><span class="kw-2">&amp;mut </span>tt.steps {
+<a href=#1089 id=1089 data-nosnippet>1089</a>                <span class="comment">// trigger the timer
+<a href=#1090 id=1090 data-nosnippet>1090</a>                </span>tokio::time::advance(Duration::from_secs(s.after)).<span class="kw">await</span>;
+<a href=#1091 id=1091 data-nosnippet>1091</a>                client.add_report_history_and_set_preferred_relay(s.r.as_mut().unwrap());
+<a href=#1092 id=1092 data-nosnippet>1092</a>            }
+<a href=#1093 id=1093 data-nosnippet>1093</a>            <span class="kw">let </span>last_report = tt.steps.last().unwrap().r.clone().unwrap();
+<a href=#1094 id=1094 data-nosnippet>1094</a>            <span class="kw">let </span>got = client.reports.prev.len();
+<a href=#1095 id=1095 data-nosnippet>1095</a>            <span class="kw">let </span>want = tt.want_prev_len;
+<a href=#1096 id=1096 data-nosnippet>1096</a>            <span class="macro">assert_eq!</span>(got, want, <span class="string">"prev length"</span>);
+<a href=#1097 id=1097 data-nosnippet>1097</a>            <span class="kw">let </span>got = <span class="kw-2">&amp;</span>last_report.preferred_relay;
+<a href=#1098 id=1098 data-nosnippet>1098</a>            <span class="kw">let </span>want = <span class="kw-2">&amp;</span>tt.want_relay;
+<a href=#1099 id=1099 data-nosnippet>1099</a>            <span class="macro">assert_eq!</span>(got, want, <span class="string">"preferred_relay"</span>);
+<a href=#1100 id=1100 data-nosnippet>1100</a>        }
+<a href=#1101 id=1101 data-nosnippet>1101</a>
+<a href=#1102 id=1102 data-nosnippet>1102</a>        <span class="prelude-val">Ok</span>(())
+<a href=#1103 id=1103 data-nosnippet>1103</a>    }
+<a href=#1104 id=1104 data-nosnippet>1104</a>}</code></pre></div></section></main></body></html>
