@@ -509,7 +509,7 @@ impl Client {
                         }
                         Some(Err(err)) => {
                             if err.is_panic() {
-                                panic!("probe v4 paniced: {:?}", err);
+                                panic!("probe v4 panicked: {:?}", err);
                             }
                             warn!("probe v4 failed: {:?}", err);
                         }
@@ -543,7 +543,7 @@ impl Client {
                         }
                         Some(Err(err)) => {
                             if err.is_panic() {
-                                panic!("probe v6 paniced: {:?}", err);
+                                panic!("probe v6 panicked: {:?}", err);
                             }
                             warn!("probe v6 failed: {:?}", err);
                         }

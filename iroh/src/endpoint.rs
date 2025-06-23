@@ -21,32 +21,31 @@ use std::{
     task::Poll,
 };
 
-use ed25519_dalek::{VerifyingKey, pkcs8::DecodePublicKey};
+use ed25519_dalek::{pkcs8::DecodePublicKey, VerifyingKey};
 use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
 use iroh_relay::RelayMap;
-use n0_future::{Stream, time::Duration};
+use n0_future::{time::Duration, Stream};
 use n0_watcher::Watcher;
 use nested_enum_utils::common_fields;
 use pin_project::pin_project;
-use snafu::{ResultExt, Snafu, ensure};
+use snafu::{ensure, ResultExt, Snafu};
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
 #[cfg(wasm_browser)]
 use crate::discovery::pkarr::PkarrResolver;
+#[cfg(not(wasm_browser))]
+use crate::{discovery::dns::DnsDiscovery, dns::DnsResolver};
 use crate::{
-    RelayProtocol,
     discovery::{
-        ConcurrentDiscovery, Discovery, DiscoveryError, DiscoveryItem, DiscoverySubscribers,
-        DiscoveryTask, Lagged, UserData, pkarr::PkarrPublisher,
+        pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryError, DiscoveryItem,
+        DiscoverySubscribers, DiscoveryTask, Lagged, UserData,
     },
     magicsock::{self, Handle, NodeIdMappedAddr, OwnAddressSnafu},
     metrics::EndpointMetrics,
     net_report::Report,
-    tls,
+    tls, RelayProtocol,
 };
-#[cfg(not(wasm_browser))]
-use crate::{discovery::dns::DnsDiscovery, dns::DnsResolver};
 
 mod rtt_actor;
 
@@ -59,12 +58,12 @@ pub use quinn::{
     WeakConnectionHandle, WriteError,
 };
 pub use quinn_proto::{
-    FrameStats, PathStats, TransportError, TransportErrorCode, UdpStats, Written,
     congestion::{Controller, ControllerFactory},
     crypto::{
         AeadKey, CryptoError, ExportKeyingMaterialError, HandshakeTokenKey,
         ServerConfig as CryptoServerConfig, UnsupportedVersion,
     },
+    FrameStats, PathStats, TransportError, TransportErrorCode, UdpStats, Written,
 };
 
 use self::rtt_actor::RttMessage;
@@ -2290,19 +2289,19 @@ mod tests {
 
     use iroh_base::{NodeAddr, NodeId, SecretKey};
     use iroh_relay::http::Protocol;
-    use n0_future::{StreamExt, task::AbortOnDropHandle};
+    use n0_future::{task::AbortOnDropHandle, StreamExt};
     use n0_snafu::{Error, Result, ResultExt};
     use n0_watcher::Watcher;
     use quinn::ConnectionError;
     use rand::SeedableRng;
-    use tracing::{Instrument, error_span, info, info_span};
+    use tracing::{error_span, info, info_span, Instrument};
     use tracing_test::traced_test;
 
     use super::Endpoint;
     use crate::{
-        RelayMode,
         endpoint::{ConnectOptions, Connection, ConnectionType, RemoteInfo},
         test_utils::{run_relay_server, run_relay_server_with},
+        RelayMode,
     };
 
     const TEST_ALPN: &[u8] = b"n0/iroh/test";

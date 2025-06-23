@@ -1730,6 +1730,7 @@ impl Actor {
         sender: UdpSender,
     ) {
         // Initialize addresses
+        #[cfg(not(wasm_browser))]
         self.update_direct_addresses(None);
 
         // Setup network monitoring
