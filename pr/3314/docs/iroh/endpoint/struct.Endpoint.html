@@ -135,7 +135,7 @@ some time to connect to find and connect to the home relay server.</p>
 iroh nodes to establish direct connectivity, depending on the network
 situation. The yielded lists of direct addresses contain both the locally-bound
 addresses and the <a href="struct.Endpoint.html" title="struct iroh::endpoint::Endpoint"><code>Endpoint</code></a>’s publicly reachable addresses discovered through
-mechanisms such as <a href="https://www.ietf.org/archive/id/draft-seemann-quic-nat-traversal-02.html">QAD</a> and port mapping.  Hence usually only a subset of these
+mechanisms such as <a href="https://www.ietf.org/archive/id/draft-ietf-quic-address-discovery-00.html">QAD</a> and port mapping.  Hence usually only a subset of these
 will be applicable to a certain remote iroh node.</p>
 <p>The <a href="struct.Endpoint.html" title="struct iroh::endpoint::Endpoint"><code>Endpoint</code></a> continuously monitors the direct addresses for changes as its own
 location in the network might change.  Whenever changes are detected this stream
