@@ -39,7 +39,7 @@ use n0_future::{
 use n0_watcher::{Watchable, Watcher};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, trace};
+use tracing::{debug, trace, warn};
 
 #[cfg(not(wasm_browser))]
 use self::reportgen::QadProbeReport;
@@ -489,45 +489,71 @@ impl Client {
                 biased;
 
                 val = v4_buf.join_next(), if !v4_buf.is_empty() => {
-                    if let Some(Ok(Some(Ok(res)))) = val {
-                        match res {
-                            Ok((r, conn)) => {
-                                debug!(?r, "got v4 QAD conn");
-                                let url = r.node.clone();
-                                reports.push(ProbeReport::QadIpv4(r));
-                                if self.qad_conns.v4.is_none() {
-                                    self.qad_conns.v4.replace((url, conn));
-                                } else {
-                                    conn.conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
+                    match val {
+                        Some(Ok(Some(Ok(res)))) => {
+                            match res {
+                                Ok((r, conn)) => {
+                                    debug!(?r, "got v4 QAD conn");
+                                    let url = r.node.clone();
+                                    reports.push(ProbeReport::QadIpv4(r));
+                                    if self.qad_conns.v4.is_none() {
+                                        self.qad_conns.v4.replace((url, conn));
+                                    } else {
+                                        conn.conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
+                                    }
+                                }
+                                Err(err) => {
+                                    debug!("probe v4 failed: {:?}", err);
                                 }
                             }
-                            Err(err) => {
-                                debug!("probe v4 failed: {:?}", err);
-                            }
                         }
-                    } else {
-                        dbg!(val);
+                        Some(Err(err)) => {
+                            if err.is_panic() {
+                                panic!("probe v4 paniced: {:?}", err);
+                            }
+                            warn!("probe v4 failed: {:?}", err);
+                        }
+                        Some(Ok(None)) => {
+                            debug!("probe v4 canceled");
+                        }
+                        Some(Ok(Some(Err(time::Elapsed { .. })))) => {
+                            debug!("probe v4 timed out");
+                        }
+                        None => {}
                     }
                 }
                 val = v6_buf.join_next(), if !v6_buf.is_empty() => {
-                    if let Some(Ok(Some(Ok(res)))) = val {
-                        match res {
-                            Ok((r, conn)) => {
-                                debug!(?r, "got v6 QAD conn");
-                                let url = r.node.clone();
-                                reports.push(ProbeReport::QadIpv6(r));
-                                if self.qad_conns.v6.is_none() {
-                                    self.qad_conns.v6.replace((url, conn));
-                                } else {
-                                    conn.conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
+                    match val {
+                        Some(Ok(Some(Ok(res)))) => {
+                            match res {
+                                Ok((r, conn)) => {
+                                    debug!(?r, "got v6 QAD conn");
+                                    let url = r.node.clone();
+                                    reports.push(ProbeReport::QadIpv6(r));
+                                    if self.qad_conns.v6.is_none() {
+                                        self.qad_conns.v6.replace((url, conn));
+                                    } else {
+                                        conn.conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
+                                    }
+                                }
+                                Err(err) => {
+                                    debug!("probe v6 failed: {:?}", err);
                                 }
                             }
-                            Err(err) => {
-                                debug!("probe v6 failed: {:?}", err);
-                            }
                         }
-                    } else {
-                        dbg!(val);
+                        Some(Err(err)) => {
+                            if err.is_panic() {
+                                panic!("probe v6 paniced: {:?}", err);
+                            }
+                            warn!("probe v6 failed: {:?}", err);
+                        }
+                        Some(Ok(None)) => {
+                            debug!("probe v6 canceled");
+                        }
+                        Some(Ok(Some(Err(time::Elapsed { .. })))) => {
+                            debug!("probe v6 timed out");
+                        }
+                        None => {}
                     }
                 }
                 else => {

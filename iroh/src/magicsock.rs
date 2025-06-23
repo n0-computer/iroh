@@ -1729,6 +1729,9 @@ impl Actor {
         mut watcher: impl Watcher<Value = Vec<transports::Addr>> + Send + Sync,
         sender: UdpSender,
     ) {
+        // Initialize addresses
+        self.update_direct_addresses(None);
+
         // Setup network monitoring
         let mut current_netmon_state = self.netmon_watcher.get().expect("missing network state");
 
