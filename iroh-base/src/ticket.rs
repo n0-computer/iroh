@@ -7,7 +7,7 @@ use std::{collections::BTreeSet, net::SocketAddr};
 
 use nested_enum_utils::common_fields;
 use serde::{Deserialize, Serialize};
-use snafu::{Backtrace, Snafu};
+use snafu::{Backtrace, IntoError, Snafu};
 
 use crate::{key::NodeId, relay_url::RelayUrl};
 
@@ -69,7 +69,7 @@ pub trait Ticket: Sized {
 #[snafu(visibility(pub(crate)))]
 #[non_exhaustive]
 pub enum ParseError {
-    /// Found a ticket of with the wrong prefix, indicating the wrong kind.
+    /// Found a ticket with the wrong prefix, indicating the wrong kind.
     #[snafu(display("wrong prefix, expected {expected}"))]
     Kind {
         /// The expected prefix.
@@ -84,6 +84,28 @@ pub enum ParseError {
     /// Verification of the deserialized bytes failed.
     #[snafu(display("verification failed: {message}"))]
     Verify { message: &'static str },
+}
+
+impl ParseError {
+    /// Returns a [`ParseError`] that indicates the given ticket has the wrong
+    /// prefix.
+    ///
+    /// Indicate the expected prefix.
+    pub fn wrong_prefix(expected: &'static str) -> Self {
+        KindSnafu { expected }.build()
+    }
+
+    /// Return a `ParseError` variant that indicates verification of the
+    /// deserialized bytes failed.
+    pub fn verification_failed(message: &'static str) -> Self {
+        VerifySnafu { message }.build()
+    }
+}
+
+impl From<postcard::Error> for ParseError {
+    fn from(source: postcard::Error) -> Self {
+        PostcardSnafu.into_error(source)
+    }
 }
 
 #[derive(Serialize, Deserialize)]
