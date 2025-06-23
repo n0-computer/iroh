@@ -155,7 +155,7 @@ impl From<quinn::ClosedStream> for AcceptError {
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
 pub enum RouterError {
-    #[snafu(display("The router actor closed"))]
+    #[snafu(display("Endpoint closed"))]
     Closed {},
 }
 
@@ -164,7 +164,7 @@ pub enum RouterError {
 #[snafu(module)]
 #[non_exhaustive]
 pub enum StopAcceptingError {
-    #[snafu(display("The router actor closed"))]
+    #[snafu(display("Endpoint closed"))]
     Closed {},
     #[snafu(display("The ALPN requested to be removed is not registered"))]
     UnknownAlpn {},
@@ -381,16 +381,15 @@ impl Router {
         self.cancel_token.is_cancelled()
     }
 
-    /// Adds a protocol to the list of accepted protocols.
+    /// Accepts incoming connections with this `alpn` via [`ProtocolHandler`].
     ///
-    /// Configures the router to accept the [`ProtocolHandler`] when receiving a connection
-    /// with this `alpn`.
+    /// After this function returns, new connections with this `alpn` will be handled
+    /// by the passed `handler`.
     ///
-    /// Once the function yields, new connections with this `alpn` will be handled.
-    ///
-    /// If a protocol handler was already registered for `alpn`, the previous handler will be shutdown.
-    ///
-    /// Returns `true` if
+    /// If a protocol handler was already registered for `alpn`, the previous handler will be
+    /// shutdown. Existing connections will not be aborted by the router, but some protocol
+    /// handlers may abort existing connnections in their [`Router::shutdown`] implementation.
+    /// Consult the documentation of the protocol handler to see if that is the case.
     pub async fn accept(
         &self,
         alpn: impl AsRef<[u8]>,
@@ -408,10 +407,16 @@ impl Router {
         reply_rx.await.map_err(|_| RouterError::Closed {})
     }
 
-    /// Stops accepting a protocol.
+    /// Stops accepting connections with this `alpn`.
     ///
-    /// Note that this has only an effect on new connections. Existing connections that were
-    /// accepted with `alpn` won't be closed when calling [`Router::stop_accepting`].
+    /// After this function returns, new connections with `alpn` will no longer be accepted.
+    ///
+    /// If a protocol handler was registered for `alpn`, the handler will be
+    /// shutdown. Existing connections will not be aborted by the router, but some protocol
+    /// handlers may abort existing connnections in their [`Router::shutdown`] implementation.
+    /// Consult the documentation of the protocol handler to see if that is the case.
+    ///
+    /// Returns an error if the router has been shutdown or no protocol is registered for `alpn`.
     pub async fn stop_accepting(&self, alpn: impl AsRef<[u8]>) -> Result<(), StopAcceptingError> {
         let (reply, reply_rx) = oneshot::channel();
         self.tx
@@ -424,7 +429,7 @@ impl Router {
         reply_rx.await.map_err(|_| StopAcceptingError::Closed {})?
     }
 
-    /// Shuts down the accept loop cleanly.
+    /// Shuts down the accept loop and endpoint cleanly.
     ///
     /// When this function returns, all [`ProtocolHandler`]s will be shutdown and
     /// `Endpoint::close` will have been called.
@@ -459,8 +464,7 @@ impl RouterBuilder {
         }
     }
 
-    /// Configures the router to accept the [`ProtocolHandler`] when receiving a connection
-    /// with this `alpn`.
+    /// Configures the router to accept incoming connections with this `alpn` via [`ProtocolHandler`].
     pub fn accept(self, alpn: impl AsRef<[u8]>, handler: impl ProtocolHandler) -> Self {
         self.protocols
             .insert(alpn.as_ref().to_vec(), Arc::new(handler));
