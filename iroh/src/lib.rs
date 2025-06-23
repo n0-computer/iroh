@@ -276,5 +276,7 @@ pub use iroh_base::{
 };
 pub use iroh_relay::{http::Protocol as RelayProtocol, node_info, RelayMap, RelayNode};
 
+pub use n0_watcher::Watcher;
+
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;
