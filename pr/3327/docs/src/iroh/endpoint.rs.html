@@ -951,7 +951,7 @@
 <a href=#951 id=951 data-nosnippet>951</a>    /// with a [`NodeAddr`] that only contains a relay URL, but no direct addresses,
 <a href=#952 id=952 data-nosnippet>952</a>    /// as there are no APIs for directly using sockets in browsers.
 <a href=#953 id=953 data-nosnippet>953</a>    </span><span class="attr">#[cfg(wasm_browser)]
-<a href=#954 id=954 data-nosnippet>954</a>    </span><span class="kw">pub fn </span>node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>n0_watcher::Watcher&lt;Value = <span class="prelude-ty">Option</span>&lt;NodeAddr&gt;&gt; + <span class="lifetime">'_ </span>{
+<a href=#954 id=954 data-nosnippet>954</a>    </span><span class="kw">pub fn </span>node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>n0_watcher::Watcher&lt;Value = <span class="prelude-ty">Option</span>&lt;NodeAddr&gt;&gt; {
 <a href=#955 id=955 data-nosnippet>955</a>        <span class="comment">// In browsers, there will never be any direct addresses, so we wait
 <a href=#956 id=956 data-nosnippet>956</a>        // for the home relay instead. This makes the `NodeAddr` have *some* way
 <a href=#957 id=957 data-nosnippet>957</a>        // of connecting to us.
@@ -2460,7 +2460,7 @@
 <a href=#2460 id=2460 data-nosnippet>2460</a>        <span class="prelude-val">Ok</span>(())
 <a href=#2461 id=2461 data-nosnippet>2461</a>    }
 <a href=#2462 id=2462 data-nosnippet>2462</a>
-<a href=#2463 id=2463 data-nosnippet>2463</a>    <span class="attr">#[cfg_attr(target_os = <span class="string">"windows"</span>, ignore = <span class="string">"flaky"</span>)]
+<a href=#2463 id=2463 data-nosnippet>2463</a>    <span class="attr">#[cfg_attr(windows, ignore = <span class="string">"flaky"</span>)]
 <a href=#2464 id=2464 data-nosnippet>2464</a>    #[tokio::test]
 <a href=#2465 id=2465 data-nosnippet>2465</a>    #[traced_test]
 <a href=#2466 id=2466 data-nosnippet>2466</a>    </span><span class="kw">async fn </span>endpoint_relay_connect_loop() -&gt; <span class="prelude-ty">Result</span> {
