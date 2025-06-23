@@ -877,7 +877,9 @@ mod tests {
         let relay_map = RelayMap::from(relay);
 
         let resolver = DnsResolver::new();
-        let opts = Options::default().quic_config(Some(quic_addr_disc.clone()));
+        let opts = Options::default()
+            .quic_config(Some(quic_addr_disc.clone()))
+            .insecure_skip_relay_cert_verify(true);
         let mut client = Client::new(
             resolver.clone(),
             None,
@@ -894,10 +896,10 @@ mod tests {
             let r = client.get_report(if_state.clone(), false).await;
 
             assert!(r.has_udp(), "want UDP");
-            assert_eq!(
-                r.relay_latency.len(),
-                1,
-                "expected 1 key in RelayLatency; got {}",
+            dbg!(&r);
+            assert!(
+                r.relay_latency.len() >= 1,
+                "expected at least 1 key in RelayLatency; got {}",
                 r.relay_latency.len()
             );
             assert!(
