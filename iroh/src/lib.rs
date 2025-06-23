@@ -232,7 +232,7 @@
 //! [bi-directional streams]: crate::endpoint::Connection::open_bi
 //! [hole punching]: https://en.wikipedia.org/wiki/Hole_punching_(networking)
 //! [socket addresses]: https://doc.rust-lang.org/stable/std/net/enum.SocketAddr.html
-//! [QAD]: https://www.ietf.org/archive/id/draft-seemann-quic-nat-traversal-02.html
+//! [QAD]: https://www.ietf.org/archive/id/draft-ietf-quic-address-discovery-00.html
 //! [ALPN]: https://en.wikipedia.org/wiki/Application-Layer_Protocol_Negotiation
 //! [HTTP3]: https://en.wikipedia.org/wiki/HTTP/3
 //! [`SecretKey`]: crate::SecretKey

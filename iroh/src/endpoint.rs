@@ -1045,7 +1045,7 @@ impl Endpoint {
     /// # });
     /// ```
     ///
-    /// [QAD]: https://www.ietf.org/archive/id/draft-seemann-quic-nat-traversal-02.html
+    /// [QAD]: https://www.ietf.org/archive/id/draft-ietf-quic-address-discovery-00.html
     pub fn direct_addresses(&self) -> n0_watcher::Direct<Option<BTreeSet<DirectAddr>>> {
         self.msock.direct_addresses()
     }
