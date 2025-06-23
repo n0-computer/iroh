@@ -27,7 +27,7 @@ router.shutdown().<span class="kw">await</span>.context(<span class="string">"sh
 by the passed <code>handler</code>.</p>
 <p>If a protocol handler was already registered for <code>alpn</code>, the previous handler will be
 shutdown. Existing connections will not be aborted by the router, but some protocol
-handlers may abort existing connnections in their <a href="struct.Router.html#method.shutdown" title="method iroh::protocol::Router::shutdown"><code>Router::shutdown</code></a> implementation.
+handlers may abort existing connections in their <a href="struct.Router.html#method.shutdown" title="method iroh::protocol::Router::shutdown"><code>Router::shutdown</code></a> implementation.
 Consult the documentation of the protocol handler to see if that is the case.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.stop_accepting" class="method"><a class="src rightside" href="../../src/iroh/protocol.rs.html#420-430">Source</a><h4 class="code-header">pub async fn <a href="#method.stop_accepting" class="fn">stop_accepting</a>(
     &amp;self,
@@ -36,7 +36,7 @@ Consult the documentation of the protocol handler to see if that is the case.</p
 <p>After this function returns, new connections with <code>alpn</code> will no longer be accepted.</p>
 <p>If a protocol handler was registered for <code>alpn</code>, the handler will be
 shutdown. Existing connections will not be aborted by the router, but some protocol
-handlers may abort existing connnections in their <a href="struct.Router.html#method.shutdown" title="method iroh::protocol::Router::shutdown"><code>Router::shutdown</code></a> implementation.
+handlers may abort existing connections in their <a href="struct.Router.html#method.shutdown" title="method iroh::protocol::Router::shutdown"><code>Router::shutdown</code></a> implementation.
 Consult the documentation of the protocol handler to see if that is the case.</p>
 <p>Returns an error if the router has been shutdown or no protocol is registered for <code>alpn</code>.</p>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.shutdown" class="method"><a class="src rightside" href="../../src/iroh/protocol.rs.html#441-455">Source</a><h4 class="code-header">pub async fn <a href="#method.shutdown" class="fn">shutdown</a>(&amp;self) -&gt; <a class="enum" href="https://doc.rust-lang.org/nightly/core/result/enum.Result.html" title="enum core::result::Result">Result</a>&lt;<a class="primitive" href="https://doc.rust-lang.org/nightly/std/primitive.unit.html">()</a>, JoinError&gt;</h4></section></summary><div class="docblock"><p>Shuts down the accept loop and endpoint cleanly.</p>
