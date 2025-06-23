@@ -275,7 +275,6 @@ pub use iroh_base::{
     KeyParsingError, NodeAddr, NodeId, PublicKey, RelayUrl, RelayUrlParseError, SecretKey,
 };
 pub use iroh_relay::{http::Protocol as RelayProtocol, node_info, RelayMap, RelayNode};
-
 pub use n0_watcher::Watcher;
 
 #[cfg(any(test, feature = "test-utils"))]
