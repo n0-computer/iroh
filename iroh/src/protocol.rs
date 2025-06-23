@@ -388,7 +388,7 @@ impl Router {
     ///
     /// If a protocol handler was already registered for `alpn`, the previous handler will be
     /// shutdown. Existing connections will not be aborted by the router, but some protocol
-    /// handlers may abort existing connnections in their [`Router::shutdown`] implementation.
+    /// handlers may abort existing connections in their [`Router::shutdown`] implementation.
     /// Consult the documentation of the protocol handler to see if that is the case.
     pub async fn accept(
         &self,
@@ -413,7 +413,7 @@ impl Router {
     ///
     /// If a protocol handler was registered for `alpn`, the handler will be
     /// shutdown. Existing connections will not be aborted by the router, but some protocol
-    /// handlers may abort existing connnections in their [`Router::shutdown`] implementation.
+    /// handlers may abort existing connections in their [`Router::shutdown`] implementation.
     /// Consult the documentation of the protocol handler to see if that is the case.
     ///
     /// Returns an error if the router has been shutdown or no protocol is registered for `alpn`.
