@@ -32,12 +32,13 @@
 //!     }
 //! }
 //! ```
-use std::{collections::BTreeMap, future::Future, pin::Pin, sync::Arc};
+use std::{collections::BTreeMap, future::Future, pin::Pin, sync::Arc, time::Duration};
 
 use iroh_base::NodeId;
 use n0_future::{
     join_all,
     task::{self, AbortOnDropHandle, JoinSet},
+    time,
 };
 use snafu::{Backtrace, Snafu};
 use tokio::sync::{mpsc, oneshot, Mutex};
@@ -92,11 +93,11 @@ enum ToRouterTask {
     Accept {
         alpn: Vec<u8>,
         handler: Arc<dyn DynProtocolHandler>,
-        reply: oneshot::Sender<()>,
+        reply: oneshot::Sender<AddProtocolOutcome>,
     },
     StopAccepting {
         alpn: Vec<u8>,
-        reply: oneshot::Sender<()>,
+        reply: oneshot::Sender<Result<(), StopAcceptingError>>,
     },
 }
 
@@ -129,14 +130,6 @@ pub enum AcceptError {
     },
 }
 
-#[allow(missing_docs)]
-#[derive(Debug, Snafu)]
-#[non_exhaustive]
-pub enum RouterError {
-    #[snafu(display("The router actor closed"))]
-    Closed {},
-}
-
 impl AcceptError {
     /// Creates a new user error from an arbitrary error type.
     pub fn from_err<T: std::error::Error + Send + Sync + 'static>(value: T) -> Self {
@@ -157,6 +150,37 @@ impl From<quinn::ClosedStream> for AcceptError {
         Self::from_err(err)
     }
 }
+
+#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+pub enum RouterError {
+    #[snafu(display("The router actor closed"))]
+    Closed {},
+}
+
+#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[snafu(module)]
+#[non_exhaustive]
+pub enum StopAcceptingError {
+    #[snafu(display("The router actor closed"))]
+    Closed {},
+    #[snafu(display("The ALPN requested to be removed is not registered"))]
+    UnknownAlpn {},
+}
+
+/// Returned from [`Router::accept`]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum AddProtocolOutcome {
+    /// The protocol handler has been newly inserted.
+    Inserted,
+    /// The protocol handler replaced a previously registered protocol handler.
+    Replaced,
+}
+
+/// Timeout applied to [`ProtocolHandler::shutdown] futures.
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Handler for incoming connections.
 ///
@@ -286,28 +310,38 @@ impl<P: ProtocolHandler> DynProtocolHandler for P {
     }
 }
 
+async fn shutdown_timeout(handler: Arc<dyn DynProtocolHandler>) -> Option<()> {
+    time::timeout(SHUTDOWN_TIMEOUT, handler.shutdown())
+        .await
+        .ok()
+}
+
 /// A typed map of protocol handlers, mapping them from ALPNs.
 #[derive(Debug, Default)]
-pub(crate) struct ProtocolMap(std::sync::Mutex<BTreeMap<Vec<u8>, Arc<dyn DynProtocolHandler>>>);
+pub(crate) struct ProtocolMap(std::sync::RwLock<BTreeMap<Vec<u8>, Arc<dyn DynProtocolHandler>>>);
 
 impl ProtocolMap {
     /// Returns the registered protocol handler for an ALPN as a [`Arc<dyn ProtocolHandler>`].
     pub(crate) fn get(&self, alpn: &[u8]) -> Option<Arc<dyn DynProtocolHandler>> {
-        self.0.lock().expect("poisoned").get(alpn).cloned()
+        self.0.read().expect("poisoned").get(alpn).cloned()
     }
 
     /// Inserts a protocol handler.
-    pub(crate) fn insert(&self, alpn: Vec<u8>, handler: Arc<dyn DynProtocolHandler>) {
-        self.0.lock().expect("poisoned").insert(alpn, handler);
+    pub(crate) fn insert(
+        &self,
+        alpn: Vec<u8>,
+        handler: Arc<dyn DynProtocolHandler>,
+    ) -> Option<Arc<dyn DynProtocolHandler>> {
+        self.0.write().expect("poisoned").insert(alpn, handler)
     }
 
-    pub(crate) fn remove(&self, alpn: &[u8]) {
-        self.0.lock().expect("poisoned").remove(alpn);
+    pub(crate) fn remove(&self, alpn: &[u8]) -> Option<Arc<dyn DynProtocolHandler>> {
+        self.0.write().expect("poisoned").remove(alpn)
     }
 
     /// Returns an iterator of all registered ALPN protocol identifiers.
     pub(crate) fn alpns(&self) -> Vec<Vec<u8>> {
-        self.0.lock().expect("poisoned").keys().cloned().collect()
+        self.0.read().expect("poisoned").keys().cloned().collect()
     }
 
     /// Shuts down all protocol handlers.
@@ -315,11 +349,11 @@ impl ProtocolMap {
     /// Calls and awaits [`ProtocolHandler::shutdown`] for all registered handlers concurrently.
     pub(crate) async fn shutdown(&self) {
         let handlers: Vec<_> = {
-            let inner = self.0.lock().expect("poisoned");
+            let inner = self.0.read().expect("poisoned");
             inner
                 .values()
                 .cloned()
-                .map(|p| async move { p.shutdown().await })
+                .map(|handler| shutdown_timeout(handler))
                 .collect()
         };
         join_all(handlers).await;
@@ -342,17 +376,21 @@ impl Router {
         self.cancel_token.is_cancelled()
     }
 
-    /// Add a protocol to the list of accepted protocols.
+    /// Adds a protocol to the list of accepted protocols.
     ///
     /// Configures the router to accept the [`ProtocolHandler`] when receiving a connection
     /// with this `alpn`.
     ///
     /// Once the function yields, new connections with this `alpn` will be handled.
+    ///
+    /// If a protocol handler was already registered for `alpn`, the previous handler will be shutdown.
+    ///
+    /// Returns `true` if
     pub async fn accept(
         &self,
         alpn: impl AsRef<[u8]>,
         handler: impl ProtocolHandler,
-    ) -> Result<(), RouterError> {
+    ) -> Result<AddProtocolOutcome, RouterError> {
         let (reply, reply_rx) = oneshot::channel();
         self.tx
             .send(ToRouterTask::Accept {
@@ -362,15 +400,14 @@ impl Router {
             })
             .await
             .map_err(|_| RouterError::Closed {})?;
-        reply_rx.await.map_err(|_| RouterError::Closed {})?;
-        Ok(())
+        reply_rx.await.map_err(|_| RouterError::Closed {})
     }
 
     /// Stops accepting a protocol.
     ///
     /// Note that this has only an effect on new connections. Existing connections that were
     /// accepted with `alpn` won't be closed when calling [`Router::stop_accepting`].
-    pub async fn stop_accepting(&self, alpn: impl AsRef<[u8]>) -> Result<(), RouterError> {
+    pub async fn stop_accepting(&self, alpn: impl AsRef<[u8]>) -> Result<(), StopAcceptingError> {
         let (reply, reply_rx) = oneshot::channel();
         self.tx
             .send(ToRouterTask::StopAccepting {
@@ -378,9 +415,8 @@ impl Router {
                 reply,
             })
             .await
-            .map_err(|_| RouterError::Closed {})?;
-        reply_rx.await.map_err(|_| RouterError::Closed {})?;
-        Ok(())
+            .map_err(|_| StopAcceptingError::Closed {})?;
+        reply_rx.await.map_err(|_| StopAcceptingError::Closed {})?
     }
 
     /// Shuts down the accept loop cleanly.
@@ -463,14 +499,23 @@ impl RouterBuilder {
                     Some(msg) = rx.recv() => {
                         match msg {
                             ToRouterTask::Accept { alpn, handler, reply } => {
-                                protocols.insert(alpn, handler);
+                                let outcome = if let Some(previous) = protocols.insert(alpn, handler) {
+                                    join_set.spawn(shutdown_timeout(previous));
+                                    AddProtocolOutcome::Replaced
+                                } else {
+                                    AddProtocolOutcome::Inserted
+                                };
                                 endpoint.set_alpns(protocols.alpns());
-                                reply.send(()).ok();
+                                reply.send(outcome).ok();
                             }
                             ToRouterTask::StopAccepting { alpn, reply } => {
-                                protocols.remove(&alpn);
-                                endpoint.set_alpns(protocols.alpns());
-                                reply.send(()).ok();
+                                if let Some(handler) = protocols.remove(&alpn) {
+                                    join_set.spawn(shutdown_timeout(handler));
+                                    endpoint.set_alpns(protocols.alpns());
+                                    reply.send(Ok(())).ok();
+                                } else {
+                                    reply.send(Err(StopAcceptingError::UnknownAlpn {})).ok();
+                                }
                             }
                         }
                     }
@@ -766,14 +811,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_add_and_remove_protocol() -> Result {
-        async fn connect_assert_ok(endpoint: &Endpoint, addr: &NodeAddr, alpn: &[u8]) {
+        async fn connect_assert_ok(
+            endpoint: &Endpoint,
+            addr: &NodeAddr,
+            alpn: &[u8],
+            expected_code: u32,
+        ) {
             let conn = endpoint
                 .connect(addr.clone(), alpn)
                 .await
                 .expect("expected connection to succeed");
             let reason = conn.closed().await;
             assert!(matches!(reason,
-                ConnectionError::ApplicationClosed(ApplicationClose { error_code, .. }) if error_code == 42u32.into()
+                ConnectionError::ApplicationClosed(ApplicationClose { error_code, .. }) if error_code == expected_code.into()
             ));
         }
 
@@ -791,14 +841,14 @@ mod tests {
         }
 
         #[derive(Debug, Clone, Default)]
-        struct TestProtocol;
+        struct TestProtocol(u32);
 
         const ALPN_1: &[u8] = b"/iroh/test/1";
         const ALPN_2: &[u8] = b"/iroh/test/2";
 
         impl ProtocolHandler for TestProtocol {
             async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
-                connection.close(42u32.into(), b"bye");
+                connection.close(self.0.into(), b"bye");
                 Ok(())
             }
         }
@@ -808,7 +858,7 @@ mod tests {
             .bind()
             .await?;
         let router = Router::builder(server)
-            .accept(ALPN_1, TestProtocol::default())
+            .accept(ALPN_1, TestProtocol(1))
             .spawn();
 
         let addr = router.endpoint().node_addr().initialized().await?;
@@ -818,28 +868,43 @@ mod tests {
             .bind()
             .await?;
 
-        connect_assert_ok(&client, &addr, ALPN_1).await;
+        connect_assert_ok(&client, &addr, ALPN_1, 1).await;
         connect_assert_fail(&client, &addr, ALPN_2).await;
 
         router.stop_accepting(ALPN_1).await?;
         connect_assert_fail(&client, &addr, ALPN_1).await;
         connect_assert_fail(&client, &addr, ALPN_2).await;
 
-        router.accept(ALPN_2, TestProtocol).await?;
+        let outcome = router.accept(ALPN_2, TestProtocol(2)).await?;
+        assert_eq!(outcome, AddProtocolOutcome::Inserted);
         connect_assert_fail(&client, &addr, ALPN_1).await;
-        connect_assert_ok(&client, &addr, ALPN_2).await;
+        connect_assert_ok(&client, &addr, ALPN_2, 2).await;
 
-        router.accept(ALPN_1, TestProtocol).await?;
-        connect_assert_ok(&client, &addr, ALPN_1).await;
-        connect_assert_ok(&client, &addr, ALPN_2).await;
+        let outcome = router.accept(ALPN_1, TestProtocol(3)).await?;
+        assert_eq!(outcome, AddProtocolOutcome::Inserted);
+        connect_assert_ok(&client, &addr, ALPN_1, 3).await;
+        connect_assert_ok(&client, &addr, ALPN_2, 2).await;
+
+        let outcome = router.accept(ALPN_1, TestProtocol(4)).await?;
+        assert_eq!(outcome, AddProtocolOutcome::Replaced);
+        connect_assert_ok(&client, &addr, ALPN_1, 4).await;
 
         router.stop_accepting(ALPN_2).await?;
-        connect_assert_ok(&client, &addr, ALPN_1).await;
+        connect_assert_ok(&client, &addr, ALPN_1, 4).await;
         connect_assert_fail(&client, &addr, ALPN_2).await;
 
         router.stop_accepting(ALPN_1).await?;
         connect_assert_fail(&client, &addr, ALPN_1).await;
         connect_assert_fail(&client, &addr, ALPN_2).await;
+
+        assert!(matches!(
+            router.stop_accepting(ALPN_1).await,
+            Err(StopAcceptingError::UnknownAlpn {})
+        ));
+        assert!(matches!(
+            router.stop_accepting(ALPN_2).await,
+            Err(StopAcceptingError::UnknownAlpn {})
+        ));
 
         Ok(())
     }
