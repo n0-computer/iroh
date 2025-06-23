@@ -195,11 +195,6 @@ impl RelayLatencies {
         self.https.is_empty()
     }
 
-    #[cfg(test)]
-    pub(super) fn len(&self) -> usize {
-        self.https.len() + self.ipv4.len() + self.ipv6.len()
-    }
-
     /// Returns the lowest latency across records.
     pub(super) fn get(&self, url: &RelayUrl) -> Option<Duration> {
         let mut list = Vec::with_capacity(3);

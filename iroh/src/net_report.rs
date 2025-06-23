@@ -898,9 +898,8 @@ mod tests {
             assert!(r.has_udp(), "want UDP");
             dbg!(&r);
             assert!(
-                r.relay_latency.len() >= 1,
-                "expected at least 1 key in RelayLatency; got {}",
-                r.relay_latency.len()
+                !r.relay_latency.is_empty(),
+                "expected at least 1 key in RelayLatency; got none",
             );
             assert!(
                 r.relay_latency.iter().next().is_some(),
