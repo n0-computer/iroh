@@ -1,6 +1,7 @@
 use std::{env, future::Future, str::FromStr, time::Instant};
 
 use clap::Parser;
+use data_encoding::HEXLOWER;
 use iroh::{
     endpoint::{Connecting, Connection},
     SecretKey,
@@ -35,7 +36,10 @@ pub fn get_or_generate_secret_key() -> n0_snafu::Result<SecretKey> {
     } else {
         // Generate a new random key
         let secret_key = SecretKey::generate(&mut thread_rng());
-        println!("Generated new secret key: {}", secret_key);
+        println!(
+            "Generated new secret key: {}",
+            HEXLOWER.encode(&secret_key.to_bytes())
+        );
         println!("To reuse this key, set the IROH_SECRET environment variable to this value");
         Ok(secret_key)
     }
