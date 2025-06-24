@@ -291,6 +291,18 @@ impl Client {
 
         let mut report = Report::default();
 
+        // Start the reportgen client to start any needed probes
+        let (actor, mut probe_rx) = reportgen::Client::new(
+            self.reports.last.clone(),
+            self.relay_map.clone(),
+            self.probes.clone(),
+            if_state.clone(),
+            #[cfg(not(wasm_browser))]
+            self.socket_state.clone(),
+            #[cfg(any(test, feature = "test-utils"))]
+            self.insecure_skip_relay_cert_verify,
+        );
+
         #[cfg(not(wasm_browser))]
         let reports = self
             .spawn_qad_probes(&if_state, enough_relays, do_full)
@@ -300,17 +312,6 @@ impl Client {
         for r in reports {
             report.update(&r);
         }
-
-        let (actor, mut probe_rx) = reportgen::Client::new(
-            self.reports.last.clone(),
-            self.relay_map.clone(),
-            self.probes.clone(),
-            if_state,
-            #[cfg(not(wasm_browser))]
-            self.socket_state.clone(),
-            #[cfg(any(test, feature = "test-utils"))]
-            self.insecure_skip_relay_cert_verify,
-        );
 
         let mut timeout_fut = std::pin::pin!(MaybeFuture::default());
 

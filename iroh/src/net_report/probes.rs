@@ -12,11 +12,11 @@ use snafu::Snafu;
 
 use crate::net_report::Report;
 
-/// The retransmit interval used when net_report first runs.
-///
-/// We have no past context to work with, and we want answers relatively quickly. A few extra
-/// packets at startup is fine.
+/// The retransmit interval used.
 const DEFAULT_INITIAL_RETRANSMIT: Duration = Duration::from_millis(100);
+
+/// The delay before starting HTTPS probes.
+const HTTPS_OFFSET: Duration = Duration::from_millis(200);
 
 /// The protocol used to time a node's latency.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, derive_more::Display)]
@@ -99,15 +99,13 @@ pub(super) struct ProbePlan {
 impl ProbePlan {
     /// Creates an initial probe plan
     pub(super) fn initial(relay_map: &RelayMap, protocols: &BTreeSet<Probe>) -> Self {
-        let mut plan = Self {
-            set: Default::default(),
-        };
+        let mut plan = Self::default();
 
         for relay_node in relay_map.nodes() {
             let mut https_probes = ProbeSet::new(Probe::Https);
 
             for attempt in 0u32..3 {
-                let delay = DEFAULT_INITIAL_RETRANSMIT * attempt;
+                let delay = HTTPS_OFFSET + DEFAULT_INITIAL_RETRANSMIT * attempt;
                 https_probes.push(delay, relay_node.clone());
             }
 
