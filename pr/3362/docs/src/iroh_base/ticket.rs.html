@@ -7,7 +7,7 @@
 <a href=#7 id=7 data-nosnippet>7</a>
 <a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>nested_enum_utils::common_fields;
 <a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>serde::{Deserialize, Serialize};
-<a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span>snafu::{Backtrace, IntoError, Snafu};
+<a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span>snafu::{Backtrace, Snafu};
 <a href=#11 id=11 data-nosnippet>11</a>
 <a href=#12 id=12 data-nosnippet>12</a><span class="kw">use crate</span>::{key::NodeId, relay_url::RelayUrl};
 <a href=#13 id=13 data-nosnippet>13</a>
@@ -76,7 +76,7 @@
 <a href=#76 id=76 data-nosnippet>76</a>        </span>expected: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
 <a href=#77 id=77 data-nosnippet>77</a>    },
 <a href=#78 id=78 data-nosnippet>78</a>    <span class="doccomment">/// This looks like a ticket, but postcard deserialization failed.
-<a href=#79 id=79 data-nosnippet>79</a>    </span><span class="attr">#[snafu(display(<span class="string">"deserialization failed"</span>))]
+<a href=#79 id=79 data-nosnippet>79</a>    </span><span class="attr">#[snafu(transparent)]
 <a href=#80 id=80 data-nosnippet>80</a>    </span>Postcard { source: postcard::Error },
 <a href=#81 id=81 data-nosnippet>81</a>    <span class="doccomment">/// This looks like a ticket, but base32 decoding failed.
 <a href=#82 id=82 data-nosnippet>82</a>    </span><span class="attr">#[snafu(transparent)]
@@ -102,20 +102,14 @@
 <a href=#102 id=102 data-nosnippet>102</a>    }
 <a href=#103 id=103 data-nosnippet>103</a>}
 <a href=#104 id=104 data-nosnippet>104</a>
-<a href=#105 id=105 data-nosnippet>105</a><span class="kw">impl </span>From&lt;postcard::Error&gt; <span class="kw">for </span>ParseError {
-<a href=#106 id=106 data-nosnippet>106</a>    <span class="kw">fn </span>from(source: postcard::Error) -&gt; <span class="self">Self </span>{
-<a href=#107 id=107 data-nosnippet>107</a>        PostcardSnafu.into_error(source)
-<a href=#108 id=108 data-nosnippet>108</a>    }
+<a href=#105 id=105 data-nosnippet>105</a><span class="attr">#[derive(Serialize, Deserialize)]
+<a href=#106 id=106 data-nosnippet>106</a></span><span class="kw">struct </span>Variant0NodeAddr {
+<a href=#107 id=107 data-nosnippet>107</a>    node_id: NodeId,
+<a href=#108 id=108 data-nosnippet>108</a>    info: Variant0AddrInfo,
 <a href=#109 id=109 data-nosnippet>109</a>}
 <a href=#110 id=110 data-nosnippet>110</a>
 <a href=#111 id=111 data-nosnippet>111</a><span class="attr">#[derive(Serialize, Deserialize)]
-<a href=#112 id=112 data-nosnippet>112</a></span><span class="kw">struct </span>Variant0NodeAddr {
-<a href=#113 id=113 data-nosnippet>113</a>    node_id: NodeId,
-<a href=#114 id=114 data-nosnippet>114</a>    info: Variant0AddrInfo,
-<a href=#115 id=115 data-nosnippet>115</a>}
-<a href=#116 id=116 data-nosnippet>116</a>
-<a href=#117 id=117 data-nosnippet>117</a><span class="attr">#[derive(Serialize, Deserialize)]
-<a href=#118 id=118 data-nosnippet>118</a></span><span class="kw">struct </span>Variant0AddrInfo {
-<a href=#119 id=119 data-nosnippet>119</a>    relay_url: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;,
-<a href=#120 id=120 data-nosnippet>120</a>    direct_addresses: BTreeSet&lt;SocketAddr&gt;,
-<a href=#121 id=121 data-nosnippet>121</a>}</code></pre></div></section></main></body></html>
+<a href=#112 id=112 data-nosnippet>112</a></span><span class="kw">struct </span>Variant0AddrInfo {
+<a href=#113 id=113 data-nosnippet>113</a>    relay_url: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;,
+<a href=#114 id=114 data-nosnippet>114</a>    direct_addresses: BTreeSet&lt;SocketAddr&gt;,
+<a href=#115 id=115 data-nosnippet>115</a>}</code></pre></div></section></main></body></html>
