@@ -7,7 +7,7 @@ use std::{collections::BTreeSet, net::SocketAddr};
 
 use nested_enum_utils::common_fields;
 use serde::{Deserialize, Serialize};
-use snafu::{Backtrace, IntoError, Snafu};
+use snafu::{Backtrace, Snafu};
 
 use crate::{key::NodeId, relay_url::RelayUrl};
 
@@ -76,7 +76,7 @@ pub enum ParseError {
         expected: &'static str,
     },
     /// This looks like a ticket, but postcard deserialization failed.
-    #[snafu(display("deserialization failed"))]
+    #[snafu(transparent)]
     Postcard { source: postcard::Error },
     /// This looks like a ticket, but base32 decoding failed.
     #[snafu(transparent)]
@@ -99,12 +99,6 @@ impl ParseError {
     /// deserialized bytes failed.
     pub fn verification_failed(message: &'static str) -> Self {
         VerifySnafu { message }.build()
-    }
-}
-
-impl From<postcard::Error> for ParseError {
-    fn from(source: postcard::Error) -> Self {
-        PostcardSnafu.into_error(source)
     }
 }
 
