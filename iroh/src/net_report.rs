@@ -476,8 +476,6 @@ impl Client {
         let mut reports = Vec::new();
 
         loop {
-            trace!("tick: qad probes");
-
             if reports.len() >= enough_relays {
                 debug!("enough probes: {}", reports.len());
                 cancel_v4.cancel();
@@ -485,7 +483,6 @@ impl Client {
                 break;
             }
 
-            // TODO: verify select and join_next work as expected
             tokio::select! {
                 biased;
 
@@ -703,7 +700,6 @@ async fn run_probe_v4(
     };
 
     let observer = Watchable::new(None);
-    // TODO: this is sad
     let ob = observer.clone();
     let node = relay_node.url.clone();
     let conn2 = conn.clone();
@@ -773,7 +769,6 @@ async fn run_probe_v6(
     };
 
     let observer = Watchable::new(None);
-    // TODO: this is sad
     let ob = observer.clone();
     let node = relay_node.url.clone();
     let conn2 = conn.clone();
@@ -863,7 +858,7 @@ mod tests {
     use super::*;
     use crate::net_report::probes::Probe;
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread")]
     #[traced_test]
     async fn test_basic() -> Result<()> {
         let (server, relay) = test_utils::relay().await;
