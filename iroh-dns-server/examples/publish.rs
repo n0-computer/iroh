@@ -65,7 +65,10 @@ async fn main() -> Result<()> {
         Err(_) => {
             let s = SecretKey::generate(rand::rngs::OsRng);
             println!("Generated a new node secret. To reuse, set");
-            println!("\tIROH_SECRET={s}\n");
+            println!(
+                "\tIROH_SECRET={}",
+                data_encoding::HEXLOWER.encode(&s.to_bytes())
+            );
             s
         }
     };

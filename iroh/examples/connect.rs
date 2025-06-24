@@ -35,7 +35,7 @@ async fn main() -> Result<()> {
     println!("\nconnect example!\n");
     let args = Cli::parse();
     let secret_key = SecretKey::generate(rand::rngs::OsRng);
-    println!("secret key: {secret_key}");
+    println!("public key: {}", secret_key.public());
 
     // Build a `Endpoint`, which uses PublicKeys as node identifiers, uses QUIC for directly connecting to other nodes, and uses the relay protocol and relay servers to holepunch direct connections between nodes when there are NATs or firewalls preventing direct connections. If no direct connection can be made, packets are relayed over the relay servers.
     let endpoint = Endpoint::builder()

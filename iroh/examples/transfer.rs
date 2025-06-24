@@ -5,6 +5,7 @@ use std::{
 
 use bytes::Bytes;
 use clap::{Parser, Subcommand};
+use data_encoding::HEXLOWER;
 use indicatif::HumanBytes;
 use iroh::{
     discovery::{
@@ -184,7 +185,7 @@ impl EndpointArgs {
             Err(_) => {
                 let s = SecretKey::generate(rand::rngs::OsRng);
                 println!("Generated a new node secret. To reuse, set");
-                println!("\tIROH_SECRET={s}");
+                println!("\tIROH_SECRET={}", HEXLOWER.encode(&s.to_bytes()));
                 s
             }
         };
