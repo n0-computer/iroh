@@ -203,18 +203,18 @@ mod tests {
                 proto: Probe::Https,
                 relay: relay_node_1.clone(),
                 delays: [
-                    Duration::from_millis(0),
-                    Duration::from_millis(100),
-                    Duration::from_millis(200)
+                    Duration::from_millis(200),
+                    Duration::from_millis(300),
+                    Duration::from_millis(400)
                 ],
             },
             probeset! {
                 proto: Probe::Https,
                 relay: relay_node_2.clone(),
                 delays: [
-                    Duration::from_millis(0),
-                    Duration::from_millis(100),
-                    Duration::from_millis(200)
+                    Duration::from_millis(200),
+                    Duration::from_millis(300),
+                    Duration::from_millis(400)
                 ],
             },
         ]
@@ -242,16 +242,16 @@ mod tests {
             probeset! {
                 proto: Probe::Https,
                 relay: relay_node_1.clone(),
-                delays: [Duration::ZERO,
-                         Duration::from_millis(100),
-                         Duration::from_millis(200)],
+                delays: [Duration::from_millis(200),
+                         Duration::from_millis(300),
+                         Duration::from_millis(400)],
             },
             probeset! {
                 proto: Probe::Https,
                 relay: relay_node_2.clone(),
-                delays: [Duration::ZERO,
-                         Duration::from_millis(100),
-                         Duration::from_millis(200)],
+                delays: [Duration::from_millis(200),
+                         Duration::from_millis(300),
+                         Duration::from_millis(400)],
             },
         ]
         .into_iter()
