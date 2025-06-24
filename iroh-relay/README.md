@@ -15,10 +15,10 @@ relays, including:
 - Relay Protocol: The protocol used to communicate between relay servers and
   clients
 - Relay Server: A fully-fledged iroh-relay server over HTTP or HTTPS.
-  Optionally will also expose a stun endpoint and metrics.
+  Optionally will also expose a QAD endpoint and metrics.
 - Relay Client: A client for establishing connections to the relay.
 - Server Binary: A CLI for running your own relay server. It can be configured
-  to also offer STUN support and expose metrics.
+  to also expose metrics.
 
 
 Used in [iroh], created with love by the [n0 team](https://n0.computer/).

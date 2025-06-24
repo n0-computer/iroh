@@ -189,6 +189,9 @@ impl EndpointArgs {
             }
         };
         builder = builder.secret_key(secret_key);
+        if Env::Dev == self.env {
+            builder = builder.insecure_skip_relay_cert_verify(true);
+        }
 
         let relay_mode = if self.no_relay {
             RelayMode::Disabled
@@ -245,17 +248,31 @@ impl EndpointArgs {
 
         let node_id = endpoint.node_id();
         println!("Our node id:\n\t{node_id}");
+
+        let eps = endpoint.direct_addresses().initialized().await?;
         println!("Our direct addresses:");
-        for local_endpoint in endpoint.direct_addresses().initialized().await? {
+        for local_endpoint in eps {
             println!("\t{} (type: {:?})", local_endpoint.addr, local_endpoint.typ)
         }
-        if !self.no_relay {
-            let relay_url = endpoint
-                .home_relay()
-                .get()?
-                .pop()
-                .context("Failed to resolve our home relay")?;
-            println!("Our home relay server:\n\t{relay_url}");
+
+        if self.relay_only {
+            let relay_url = endpoint.home_relay().initialized().await?;
+            println!("Our home relay server:\t{relay_url}");
+        } else if !self.no_relay {
+            let relay_url = tokio::time::timeout(Duration::from_secs(2), async {
+                endpoint
+                    .home_relay()
+                    .initialized()
+                    .await
+                    .expect("disconnected")
+            })
+            .await
+            .ok();
+            if let Some(url) = relay_url {
+                println!("Our home relay server:\t{url}");
+            } else {
+                println!("No home relay server found");
+            }
         }
 
         println!();

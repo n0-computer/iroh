@@ -87,10 +87,6 @@ impl IpTransport {
         }
     }
 
-    pub(crate) fn socket(&self) -> Arc<UdpSocket> {
-        self.socket.clone()
-    }
-
     pub(super) fn create_sender(&self) -> IpSender {
         let sender = self.socket.clone().create_sender();
         IpSender {
@@ -109,14 +105,16 @@ pub(super) struct IpNetworkChangeSender {
 
 impl IpNetworkChangeSender {
     pub(super) fn rebind(&self) -> io::Result<()> {
+        let old_addr = self.local_addr.get();
         self.socket.rebind()?;
         let addr = self.socket.local_addr()?;
         self.local_addr.set(addr).ok();
+        trace!("rebound from {} to {}", old_addr, addr);
 
         Ok(())
     }
 
-    pub(super) fn on_network_change(&self, _info: &crate::magicsock::NetInfo) {
+    pub(super) fn on_network_change(&self, _info: &crate::magicsock::Report) {
         // Nothing to do for now
     }
 }

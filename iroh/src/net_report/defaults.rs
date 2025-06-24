@@ -11,15 +11,15 @@ pub(crate) mod timeouts {
 
     /// The total time we wait for all the probes.
     ///
-    /// This includes the STUN, ICMP and HTTPS probes, which will all
+    /// This includes the QAD and HTTPS probes, which will all
     /// start at different times based on the ProbePlan.
     pub(crate) const PROBES_TIMEOUT: Duration = Duration::from_secs(3);
 
     /// How long to await for a captive-portal result.
     ///
-    /// This delay is chosen so it starts after good-working STUN probes
+    /// This delay is chosen so it starts after good-working QAD probes
     /// would have finished, but not too long so the delay is bearable if
-    /// STUN is blocked.
+    /// UDP/QAD is blocked.
     pub(crate) const CAPTIVE_PORTAL_DELAY: Duration = Duration::from_millis(200);
 
     /// Timeout for captive portal checks
@@ -29,10 +29,4 @@ pub(crate) mod timeouts {
     pub(crate) const CAPTIVE_PORTAL_TIMEOUT: Duration = Duration::from_secs(2);
 
     pub(crate) const DNS_TIMEOUT: Duration = Duration::from_secs(3);
-
-    /// The amount of time we wait for a hairpinned packet to come back.
-    pub(crate) const HAIRPIN_CHECK_TIMEOUT: Duration = Duration::from_millis(100);
-
-    /// Default Pinger timeout
-    pub(crate) const DEFAULT_PINGER_TIMEOUT: Duration = Duration::from_secs(5);
 }

@@ -1017,7 +1017,7 @@ impl Endpoint {
     /// iroh nodes to establish direct connectivity, depending on the network
     /// situation. The yielded lists of direct addresses contain both the locally-bound
     /// addresses and the [`Endpoint`]'s publicly reachable addresses discovered through
-    /// mechanisms such as [STUN] and port mapping.  Hence usually only a subset of these
+    /// mechanisms such as [QAD] and port mapping.  Hence usually only a subset of these
     /// will be applicable to a certain remote iroh node.
     ///
     /// The [`Endpoint`] continuously monitors the direct addresses for changes as its own
@@ -1045,7 +1045,7 @@ impl Endpoint {
     /// # });
     /// ```
     ///
-    /// [STUN]: https://en.wikipedia.org/wiki/STUN
+    /// [QAD]: https://www.ietf.org/archive/id/draft-ietf-quic-address-discovery-00.html
     pub fn direct_addresses(&self) -> n0_watcher::Direct<Option<BTreeSet<DirectAddr>>> {
         self.msock.direct_addresses()
     }
@@ -1081,7 +1081,7 @@ impl Endpoint {
     /// # });
     /// ```
     #[doc(hidden)]
-    pub fn net_report(&self) -> n0_watcher::Direct<Option<Arc<Report>>> {
+    pub fn net_report(&self) -> impl Watcher<Value = Option<Report>> {
         self.msock.net_report()
     }
 
@@ -2816,8 +2816,8 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_direct_addresses_no_stun_relay() -> Result {
-        let (relay_map, _, _guard) = run_relay_server_with(None, false).await?;
+    async fn test_direct_addresses_no_qad_relay() -> Result {
+        let (relay_map, _, _guard) = run_relay_server_with(false).await.unwrap();
 
         let ep = Endpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])
@@ -3226,7 +3226,7 @@ mod tests {
             .await?;
 
         // can get a first report
-        endpoint.net_report().initialized().await?;
+        endpoint.net_report().updated().await?;
 
         Ok(())
     }

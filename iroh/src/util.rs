@@ -73,7 +73,7 @@ impl<T: Future> Future for MaybeFuture<T> {
 mod tests {
     use std::pin::pin;
 
-    use tokio::time::Duration;
+    use n0_future::time::Duration;
 
     use super::*;
 

@@ -62,7 +62,8 @@ use url::Url;
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
 use crate::{
-    magicsock::{Metrics as MagicsockMetrics, NetInfo, RelayContents},
+    magicsock::{Metrics as MagicsockMetrics, RelayContents},
+    net_report::Report,
     util::MaybeFuture,
 };
 
@@ -844,7 +845,7 @@ impl ConnectedRelayState {
 
 pub(super) enum RelayActorMessage {
     MaybeCloseRelaysOnRebind,
-    NetworkChange { info: NetInfo },
+    NetworkChange { report: Report },
 }
 
 #[derive(Debug, Clone)]
@@ -970,8 +971,8 @@ impl RelayActor {
 
     async fn handle_msg(&mut self, msg: RelayActorMessage) {
         match msg {
-            RelayActorMessage::NetworkChange { info } => {
-                self.on_network_change(info).await;
+            RelayActorMessage::NetworkChange { report } => {
+                self.on_network_change(report).await;
             }
             RelayActorMessage::MaybeCloseRelaysOnRebind => {
                 self.maybe_close_relays_on_rebind().await;
@@ -1007,19 +1008,19 @@ impl RelayActor {
         }
     }
 
-    async fn on_network_change(&mut self, info: NetInfo) {
+    async fn on_network_change(&mut self, report: Report) {
         let my_relay = self.config.my_relay.get();
-        if info.preferred_relay == my_relay {
+        if report.preferred_relay == my_relay {
             // No change.
             return;
         }
         let old_relay = self
             .config
             .my_relay
-            .set(info.preferred_relay.clone())
+            .set(report.preferred_relay.clone())
             .unwrap_or_else(|e| e);
 
-        if let Some(relay_url) = info.preferred_relay {
+        if let Some(relay_url) = report.preferred_relay {
             self.config.metrics.relay_home_change.inc();
 
             // On change, notify all currently connected relay servers and

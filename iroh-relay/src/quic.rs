@@ -4,10 +4,7 @@ use std::{net::SocketAddr, sync::Arc};
 
 use n0_future::time::Duration;
 use nested_enum_utils::common_fields;
-use quinn::{
-    crypto::rustls::{NoInitialCipherSuite, QuicClientConfig},
-    VarInt,
-};
+use quinn::{crypto::rustls::QuicClientConfig, VarInt};
 use snafu::{Backtrace, Snafu};
 use tokio::sync::watch;
 
@@ -20,7 +17,10 @@ pub const QUIC_ADDR_DISC_CLOSE_REASON: &[u8] = b"finished";
 
 #[cfg(feature = "server")]
 pub(crate) mod server {
-    use quinn::{crypto::rustls::QuicServerConfig, ApplicationClose, ConnectionError};
+    use quinn::{
+        crypto::rustls::{NoInitialCipherSuite, QuicServerConfig},
+        ApplicationClose, ConnectionError,
+    };
     use snafu::ResultExt;
     use tokio::task::JoinSet;
     use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
@@ -243,12 +243,10 @@ pub enum Error {
     Connection { source: quinn::ConnectionError },
     #[snafu(transparent)]
     WatchRecv { source: watch::error::RecvError },
-    #[snafu(transparent)]
-    NoIntitialCipherSuite { source: NoInitialCipherSuite },
 }
 
 /// Handles the client side of QUIC address discovery.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct QuicClient {
     /// A QUIC Endpoint.
     ep: quinn::Endpoint,
@@ -259,16 +257,14 @@ pub struct QuicClient {
 impl QuicClient {
     /// Create a new QuicClient to handle the client side of QUIC
     /// address discovery.
-    pub fn new(
-        ep: quinn::Endpoint,
-        mut client_config: rustls::ClientConfig,
-    ) -> Result<Self, Error> {
+    pub fn new(ep: quinn::Endpoint, mut client_config: rustls::ClientConfig) -> Self {
         // add QAD alpn
         client_config.alpn_protocols = vec![ALPN_QUIC_ADDR_DISC.into()];
         // go from rustls client config to rustls QUIC specific client config to
         // a quinn client config
-        let mut client_config =
-            quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(client_config)?));
+        let mut client_config = quinn::ClientConfig::new(Arc::new(
+            QuicClientConfig::try_from(client_config).expect("known ciphersuite"),
+        ));
 
         // enable the receive side of address discovery
         let mut transport = quinn_proto::TransportConfig::default();
@@ -284,9 +280,15 @@ impl QuicClient {
         // timeout (set to 30s by default).
         transport.initial_rtt(Duration::from_millis(111));
         transport.receive_observed_address_reports(true);
+
+        // keep it alive
+        transport.keep_alive_interval(Some(Duration::from_secs(25)));
+        transport.max_idle_timeout(Some(
+            Duration::from_secs(35).try_into().expect("known value"),
+        ));
         client_config.transport_config(Arc::new(transport));
 
-        Ok(Self { ep, client_config })
+        Self { ep, client_config }
     }
 
     /// Client side of QUIC address discovery.
@@ -295,7 +297,8 @@ impl QuicClient {
     /// and estimated latency of the connection.
     ///
     /// Consumes and gracefully closes the connection.
-    pub async fn get_addr_and_latency(
+    #[cfg(test)]
+    async fn get_addr_and_latency(
         &self,
         server_addr: SocketAddr,
         host: &str,
@@ -337,16 +340,30 @@ impl QuicClient {
         conn.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
         Ok((observed_addr, latency))
     }
+
+    /// Create a connection usable for qad
+    pub async fn create_conn(
+        &self,
+        server_addr: SocketAddr,
+        host: &str,
+    ) -> Result<quinn::Connection, Error> {
+        let config = self.client_config.clone();
+        let connecting = self.ep.connect_with(config, server_addr, host);
+        let conn = connecting?.await?;
+        Ok(conn)
+    }
 }
 
 #[cfg(all(test, feature = "server"))]
 mod tests {
     use std::net::Ipv4Addr;
 
-    use n0_future::{task::AbortOnDropHandle, time};
+    use n0_future::{
+        task::AbortOnDropHandle,
+        time::{self, Instant},
+    };
     use n0_snafu::{Error, Result, ResultExt};
     use quinn::crypto::rustls::QuicServerConfig;
-    use tokio::time::Instant;
     use tracing::{debug, info, info_span, Instrument};
     use tracing_test::traced_test;
     use webpki_types::PrivatePkcs8KeyDer;
@@ -376,7 +393,7 @@ mod tests {
         // create the client configuration used for the client endpoint when they
         // initiate a connection with the server
         let client_config = crate::client::make_dangerous_client_config();
-        let quic_client = QuicClient::new(client_endpoint.clone(), client_config)?;
+        let quic_client = QuicClient::new(client_endpoint.clone(), client_config);
 
         let (addr, _latency) = quic_client
             .get_addr_and_latency(quic_server.bind_addr(), &host.to_string())
@@ -409,7 +426,7 @@ mod tests {
         // create the client configuration used for the client endpoint when they
         // initiate a connection with the server
         let client_config = crate::client::make_dangerous_client_config();
-        let quic_client = QuicClient::new(client_endpoint.clone(), client_config)?;
+        let quic_client = QuicClient::new(client_endpoint.clone(), client_config);
 
         // Start a connection attempt with nirvana - this will fail
         let task = AbortOnDropHandle::new(tokio::spawn({
@@ -509,7 +526,7 @@ mod tests {
         // create the client configuration used for the client endpoint when they
         // initiate a connection with the server
         let client_config = crate::client::make_dangerous_client_config();
-        let quic_client = QuicClient::new(client_endpoint.clone(), client_config)?;
+        let quic_client = QuicClient::new(client_endpoint.clone(), client_config);
 
         // Now we should still connect, but it should take more than 1s.
         info!("making QAD request");

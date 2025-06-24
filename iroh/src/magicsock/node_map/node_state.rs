@@ -6,7 +6,6 @@ use std::{
 
 use data_encoding::HEXLOWER;
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
-use iroh_relay::protos::stun;
 use n0_future::{
     task::{self, AbortOnDropHandle},
     time::{self, Duration, Instant},
@@ -44,7 +43,7 @@ const PING_TIMEOUT_DURATION: Duration = Duration::from_secs(5);
 const GOOD_ENOUGH_LATENCY: Duration = Duration::from_millis(5);
 
 /// How long since the last activity we try to keep an established endpoint peering alive.
-/// It's also the idle time at which we stop doing STUN queries to keep NAT mappings alive.
+/// It's also the idle time at which we stop doing QAD queries to keep NAT mappings alive.
 pub(super) const SESSION_ACTIVE_TIMEOUT: Duration = Duration::from_secs(45);
 
 /// How often we try to upgrade to a better patheven if we have some non-relay route that works.
@@ -67,7 +66,7 @@ pub(in crate::magicsock) struct SendPing {
     pub id: usize,
     pub dst: SendAddr,
     pub dst_node: NodeId,
-    pub tx_id: stun::TransactionId,
+    pub tx_id: stun_rs::TransactionId,
     pub purpose: DiscoPingPurpose,
 }
 
@@ -114,7 +113,7 @@ pub(super) struct NodeState {
     /// The fallback/bootstrap path, if non-zero (non-zero for well-behaved clients).
     relay_url: Option<(RelayUrl, PathState)>,
     udp_paths: NodeUdpPaths,
-    sent_pings: HashMap<stun::TransactionId, SentPing>,
+    sent_pings: HashMap<stun_rs::TransactionId, SentPing>,
     /// Last time this node was used.
     ///
     /// A node is marked as in use when sending datagrams to them, or when having received
@@ -285,7 +284,9 @@ impl NodeState {
     ) -> (Option<SocketAddr>, Option<RelayUrl>) {
         #[cfg(any(test, feature = "test-utils"))]
         if self.path_selection == PathSelection::RelayOnly {
-            debug!("in `RelayOnly` mode, giving the relay address as the only viable address for this endpoint");
+            debug!(
+                "in `RelayOnly` mode, giving the relay address as the only viable address for this endpoint"
+            );
             return (None, self.relay_url());
         }
         let (best_addr, relay_url) = match self.udp_paths.send_addr(*now, have_ipv6) {
@@ -429,7 +430,7 @@ impl NodeState {
 
     /// Cleanup the expired ping for the passed in txid.
     #[instrument("disco", skip_all, fields(node = %self.node_id.fmt_short()))]
-    pub(super) fn ping_timeout(&mut self, txid: stun::TransactionId) {
+    pub(super) fn ping_timeout(&mut self, txid: stun_rs::TransactionId) {
         if let Some(sp) = self.sent_pings.remove(&txid) {
             debug!(tx = %HEXLOWER.encode(&txid), addr = %sp.to, "pong not received in timeout");
             match sp.to {
@@ -487,7 +488,7 @@ impl NodeState {
             return None; // Similar to `RelayOnly` mode, we don't send UDP pings for hole-punching.
         }
 
-        let tx_id = stun::TransactionId::default();
+        let tx_id = stun_rs::TransactionId::default();
         trace!(tx = %HEXLOWER.encode(&tx_id), %dst, ?purpose,
                dst = %self.node_id.fmt_short(), "start ping");
         event!(
@@ -511,7 +512,7 @@ impl NodeState {
     pub(super) fn ping_sent(
         &mut self,
         to: SendAddr,
-        tx_id: stun::TransactionId,
+        tx_id: stun_rs::TransactionId,
         purpose: DiscoPingPurpose,
         sender: mpsc::Sender<ActorMessage>,
     ) {
@@ -708,19 +709,6 @@ impl NodeState {
         debug!(new = ?new_addrs , %paths, "added new direct paths for endpoint");
     }
 
-    /// Clears all the endpoint's p2p state, reverting it to a relay-only endpoint.
-    #[instrument(skip_all, fields(node = %self.node_id.fmt_short()))]
-    pub(super) fn reset(&mut self) {
-        self.last_full_ping = None;
-        self.udp_paths
-            .best_addr
-            .clear(ClearReason::Reset, self.relay_url.is_some());
-
-        for es in self.udp_paths.paths.values_mut() {
-            es.last_ping = None;
-        }
-    }
-
     /// Handle a received Disco Ping.
     ///
     /// - Ensures the paths the ping was received on is a known path for this endpoint.
@@ -733,7 +721,7 @@ impl NodeState {
     pub(super) fn handle_ping(
         &mut self,
         path: SendAddr,
-        tx_id: stun::TransactionId,
+        tx_id: stun_rs::TransactionId,
     ) -> PingHandled {
         let now = Instant::now();
 
