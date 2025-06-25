@@ -86,7 +86,8 @@ futures-buffered = "0.2.11"
 spki = { version = "0.7.3", features = ["std"] }
 
 # metrics
-iroh-metrics = { version = "0.34", default-features = false }
+# iroh-metrics = { version = "0.34", default-features = false }
+iroh-metrics = { git = "https://github.com/n0-computer/iroh-metrics", branch = "main" }
 
 # local-swarm-discovery
 swarm-discovery = { version = "0.3.1", optional = true }
@@ -109,7 +110,8 @@ parse-size = { version = "=1.0.0", optional = true, features = ['std'] } # pinne
 hickory-resolver = "0.25.1"
 igd-next = { version = "0.16", features = ["aio_tokio"] }
 netdev = { version = "0.31.0" }
-portmapper = { version = "0.6.0", default-features = false }
+# portmapper = { version = "0.6.0", default-features = false }
+portmapper = { git = "https://github.com/n0-computer/net-tools", branch = "arqu/hp" }
 quinn = { package = "iroh-quinn", version = "0.14.0", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 tokio = { version = "1", features = [
     "io-util",
