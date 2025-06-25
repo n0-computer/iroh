@@ -64,13 +64,11 @@ fn build_discovery(args: Args) -> iroh::discovery::pkarr::dht::Builder {
 async fn chat_server(args: Args) -> n0_snafu::Result<()> {
     let secret_key = iroh::SecretKey::generate(rand::rngs::OsRng);
     let node_id = secret_key.public();
-    let discovery = build_discovery(args)
-        .secret_key(secret_key.clone())
-        .build()?;
+    let discovery = build_discovery(args);
     let endpoint = Endpoint::builder()
         .alpns(vec![CHAT_ALPN.to_vec()])
         .secret_key(secret_key)
-        .discovery(Box::new(discovery))
+        .discovery(discovery)
         .bind()
         .await?;
     let zid = pkarr::PublicKey::try_from(node_id.as_bytes()).e()?.to_z32();
@@ -111,11 +109,11 @@ async fn chat_client(args: Args) -> n0_snafu::Result<()> {
     let secret_key = iroh::SecretKey::generate(rand::rngs::OsRng);
     let node_id = secret_key.public();
     // note: we don't pass a secret key here, because we don't need to publish our address, don't spam the DHT
-    let discovery = build_discovery(args).build()?;
+    let discovery = build_discovery(args).no_publish();
     // we do not need to specify the alpn here, because we are not going to accept connections
     let endpoint = Endpoint::builder()
         .secret_key(secret_key)
-        .discovery(Box::new(discovery))
+        .discovery(discovery)
         .bind()
         .await?;
     println!("We are {} and connecting to {}", node_id, remote_node_id);

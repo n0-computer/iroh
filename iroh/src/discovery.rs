@@ -18,7 +18,7 @@
 //! The [`Discovery`] trait is used to define node discovery.  This allows multiple
 //! implementations to co-exist because there are many possible ways to implement this.
 //! Each [`Endpoint`] can use the discovery mechanisms most suitable to the application.
-//! The [`Builder::discovery`] method is used to add a discovery mechanism to an
+//! The [`Builder::add_discovery`] method is used to add a discovery mechanism to an
 //! [`Endpoint`].
 //!
 //! Some generally useful discovery implementations are provided:
@@ -40,8 +40,19 @@
 //! - The [`DhtDiscovery`] also uses the [`pkarr`] system but can also publish and lookup
 //!   records to/from the Mainline DHT.
 //!
-//! To use multiple discovery systems simultaneously use [`ConcurrentDiscovery`] which will
-//! perform lookups to all discovery systems at the same time.
+//! To use multiple discovery systems simultaneously you can call [`Builder::add_discovery`].
+//! This will use [`ConcurrentDiscovery`] under the hood, which performs lookups to all
+//! discovery systems at the same time.
+//!
+//! [`Builder::add_discovery`] takes any type that implements [`IntoDiscovery`]. You can
+//! implement that trait on a builder struct if your discovery service needs information
+//! from the endpoint it is mounted on. During endpoint construction, your discovery service
+//! is built by calling [`IntoDiscovery::into_discovery`], passing a [`DiscoveryContext`] to your
+//! builder. The [`DiscoveryContext`] gives access to the endpoint's secret key and DNS resolver.
+//!
+//! If your discovery service does not need any information from its endpoint, you can
+//! pass the discovery service directly to [`Builder::add_discovery`]: All types that
+//! implement [`Discovery`] also have a blanket implementation of [`IntoDiscovery`].
 //!
 //! # Examples
 //!
@@ -50,44 +61,37 @@
 //!
 //! ```no_run
 //! use iroh::{
-//!     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery},
+//!     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher},
 //!     Endpoint, SecretKey,
 //! };
 //!
 //! # async fn wrapper() -> n0_snafu::Result<()> {
-//! let secret_key = SecretKey::generate(rand::rngs::OsRng);
-//! let discovery = ConcurrentDiscovery::from_services(vec![
-//!     Box::new(PkarrPublisher::n0_dns(secret_key.clone())),
-//!     Box::new(DnsDiscovery::n0_dns()),
-//! ]);
 //! let ep = Endpoint::builder()
-//!     .secret_key(secret_key)
-//!     .discovery(Box::new(discovery))
+//!     .add_discovery(PkarrPublisher::n0_dns())
+//!     .add_discovery(DnsDiscovery::n0_dns())
 //!     .bind()
 //!     .await?;
 //! # Ok(())
 //! # }
 //! ```
 //!
-//! To also enable [`MdnsDiscovery`] it can be added as another service in the
-//! [`ConcurrentDiscovery`]:
+//! To also enable [`MdnsDiscovery`] it can be added as another service.
 //!
 //! ```no_run
-//! # #[cfg(feature = "discovery-local-network")]
+//! #[cfg(feature = "discovery-local-network")]
 //! # {
-//! # use iroh::discovery::dns::DnsDiscovery;
-//! # use iroh::discovery::mdns::MdnsDiscovery;
-//! # use iroh::discovery::pkarr::PkarrPublisher;
-//! # use iroh::discovery::ConcurrentDiscovery;
-//! # use iroh::SecretKey;
+//! # use iroh::{
+//! #    discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, mdns::MdnsDiscovery},
+//! #    Endpoint, SecretKey,
+//! # };
 //! #
 //! # async fn wrapper() -> n0_snafu::Result<()> {
-//! # let secret_key = SecretKey::generate(rand::rngs::OsRng);
-//! let discovery = ConcurrentDiscovery::from_services(vec![
-//!     Box::new(PkarrPublisher::n0_dns(secret_key.clone())),
-//!     Box::new(DnsDiscovery::n0_dns()),
-//!     Box::new(MdnsDiscovery::new(secret_key.public())?),
-//! ]);
+//! let ep = Endpoint::builder()
+//!     .add_discovery(PkarrPublisher::n0_dns())
+//!     .add_discovery(DnsDiscovery::n0_dns())
+//!     .add_discovery(MdnsDiscovery::builder())
+//!     .bind()
+//!     .await?;
 //! # Ok(())
 //! # }
 //! # }
@@ -95,7 +99,7 @@
 //!
 //! [`NodeAddr`]: iroh_base::NodeAddr
 //! [`RelayUrl`]: crate::RelayUrl
-//! [`Builder::discovery`]: crate::endpoint::Builder::discovery
+//! [`Builder::add_discovery`]: crate::endpoint::Builder::add_discovery
 //! [`DnsDiscovery`]: dns::DnsDiscovery
 //! [Number 0]: https://n0.computer
 //! [`PkarrResolver`]: pkarr::PkarrResolver
@@ -120,8 +124,10 @@ use snafu::{ensure, IntoError, Snafu};
 use tokio::sync::oneshot;
 use tracing::{debug, error_span, warn, Instrument};
 
+#[cfg(not(wasm_browser))]
+use crate::dns::DnsResolver;
 pub use crate::node_info::{NodeData, NodeInfo, ParseError, UserData};
-use crate::Endpoint;
+use crate::{Endpoint, SecretKey};
 
 #[cfg(not(wasm_browser))]
 pub mod dns;
@@ -130,6 +136,123 @@ pub mod dns;
 pub mod mdns;
 pub mod pkarr;
 pub mod static_provider;
+
+/// Trait for structs that can be converted into [`Discovery`].
+///
+/// This trait is implemented on builders for discovery services. Any type that implements this
+/// trait can be added as a discovery service in [`Builder::add_discovery`].
+///
+/// Any type that implements [`Discovery`] also implements [`IntoDiscovery`].
+///
+/// Iroh uses this trait to allow configuring the set of discovery services on the endpoint
+/// builder, while providing the discovery services access to information about the endpoint
+/// creation via the [`DiscoveryContext`] parameter to [`IntoDiscovery::into_discovery`].
+///
+/// [`Builder::add_discovery`]: crate::endpoint::Builder::add_discovery
+pub trait IntoDiscovery: Send + Sync + std::fmt::Debug + 'static {
+    /// Turns this discovery builder into a ready-to-use discovery service.
+    ///
+    /// The [`DiscoveryContext`] contains information about the [`Endpoint`] onto which this
+    /// discovery service is being added. It can be used by discovery services that need
+    /// a DNS resolver, or the endpoint's secret key to sign messages.
+    ///
+    /// If an error is returned, building the endpoint will fail with this error.
+    fn into_discovery(
+        self,
+        context: &DiscoveryContext,
+    ) -> Result<impl Discovery, IntoDiscoveryError>;
+}
+
+/// Blanket no-op impl of `IntoDiscovery` for `T: Discovery`.
+impl<T: Discovery> IntoDiscovery for T {
+    fn into_discovery(
+        self,
+        _context: &DiscoveryContext,
+    ) -> Result<impl Discovery, IntoDiscoveryError> {
+        Ok(self)
+    }
+}
+
+/// Non-public dyn-compatible version of [`IntoDiscovery`], used in [`crate::endpoint::Builder`].
+pub(crate) trait DynIntoDiscovery: Send + Sync + std::fmt::Debug + 'static {
+    /// See [`IntoDiscovery::into_discovery`]
+    fn into_discovery(
+        self: Box<Self>,
+        context: &DiscoveryContext,
+    ) -> Result<Box<dyn Discovery>, IntoDiscoveryError>;
+}
+
+impl<T: IntoDiscovery> DynIntoDiscovery for T {
+    fn into_discovery(
+        self: Box<Self>,
+        context: &DiscoveryContext,
+    ) -> Result<Box<dyn Discovery>, IntoDiscoveryError> {
+        let disco: Box<dyn Discovery> = Box::new(IntoDiscovery::into_discovery(*self, context)?);
+        Ok(disco)
+    }
+}
+
+/// Context about the [`Endpoint`] for discovery services.
+#[derive(Debug)]
+pub struct DiscoveryContext<'a> {
+    #[cfg(not(wasm_browser))]
+    pub(crate) dns_resolver: &'a DnsResolver,
+    pub(crate) secret_key: &'a SecretKey,
+}
+
+impl<'a> DiscoveryContext<'a> {
+    /// Returns the [`NodeId`] of the endpoint.
+    pub fn node_id(&self) -> NodeId {
+        self.secret_key.public()
+    }
+
+    /// Returns the [`SecretKey`] of the endpoint.
+    pub fn secret_key(&self) -> &SecretKey {
+        self.secret_key
+    }
+
+    /// Returns the [`DnsResolver`] used by the endpoint.
+    #[cfg(not(wasm_browser))]
+    pub fn dns_resolver(&self) -> &DnsResolver {
+        self.dns_resolver
+    }
+}
+
+/// IntoDiscovery errors
+#[common_fields({
+    backtrace: Option<snafu::Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+#[snafu(module)]
+pub enum IntoDiscoveryError {
+    #[snafu(display("Service '{provenance}' error"))]
+    User {
+        provenance: &'static str,
+        source: Box<dyn std::error::Error + Send + Sync + 'static>,
+    },
+}
+
+impl IntoDiscoveryError {
+    /// Creates a new user error from an arbitrary error type.
+    pub fn from_err<T: std::error::Error + Send + Sync + 'static>(
+        provenance: &'static str,
+        source: T,
+    ) -> Self {
+        into_discovery_error::UserSnafu { provenance }.into_error(Box::new(source))
+    }
+
+    /// Creates a new user error from an arbitrary boxed error type.
+    pub fn from_err_box(
+        provenance: &'static str,
+        source: Box<dyn std::error::Error + Send + Sync + 'static>,
+    ) -> Self {
+        into_discovery_error::UserSnafu { provenance }.into_error(source)
+    }
+}
 
 /// Discovery errors
 #[common_fields({
@@ -186,7 +309,7 @@ impl DiscoveryError {
 /// refresh, it should start its own task.
 ///
 /// [`RelayUrl`]: crate::RelayUrl
-pub trait Discovery: std::fmt::Debug + Send + Sync {
+pub trait Discovery: std::fmt::Debug + Send + Sync + 'static {
     /// Publishes the given [`NodeData`] to the discovery mechanism.
     ///
     /// This is fire and forget, since the [`Endpoint`] can not wait for successful
@@ -202,7 +325,6 @@ pub trait Discovery: std::fmt::Debug + Send + Sync {
     /// work.
     fn resolve(
         &self,
-        _endpoint: Endpoint,
         _node_id: NodeId,
     ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
         None
@@ -366,15 +488,11 @@ impl Discovery for ConcurrentDiscovery {
         }
     }
 
-    fn resolve(
-        &self,
-        endpoint: Endpoint,
-        node_id: NodeId,
-    ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
+    fn resolve(&self, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
         let streams = self
             .services
             .iter()
-            .filter_map(|service| service.resolve(endpoint.clone(), node_id));
+            .filter_map(|service| service.resolve(node_id));
 
         let streams = n0_future::MergeBounded::from_iter(streams);
         Some(Box::pin(streams))
@@ -477,7 +595,7 @@ impl DiscoveryTask {
     ) -> Result<BoxStream<Result<DiscoveryItem, DiscoveryError>>, DiscoveryError> {
         let discovery = ep.discovery().ok_or(NoServiceConfiguredSnafu.build())?;
         let stream = discovery
-            .resolve(ep.clone(), node_id)
+            .resolve(node_id)
             .ok_or(NoResultsSnafu { node_id }.build())?;
         Ok(stream)
     }
@@ -612,7 +730,7 @@ mod tests {
     use tracing_test::traced_test;
 
     use super::*;
-    use crate::{endpoint::ConnectOptions, RelayMode};
+    use crate::{endpoint::ConnectOptions, Endpoint, RelayMode};
 
     type InfoStore = HashMap<NodeId, (NodeData, u64)>;
 
@@ -681,7 +799,6 @@ mod tests {
 
         fn resolve(
             &self,
-            endpoint: Endpoint,
             node_id: NodeId,
         ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
             let addr_info = if self.resolve_wrong {
@@ -704,11 +821,7 @@ mod tests {
                     let delay = self.delay;
                     let fut = async move {
                         time::sleep(delay).await;
-                        tracing::debug!(
-                            "resolve on {}: {} = {item:?}",
-                            endpoint.node_id().fmt_short(),
-                            node_id.fmt_short()
-                        );
+                        tracing::debug!("resolve: {} = {item:?}", node_id.fmt_short());
                         Ok(item)
                     };
                     n0_future::stream::once_future(fut).boxed()
@@ -726,14 +839,14 @@ mod tests {
         }
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     struct EmptyDiscovery;
+
     impl Discovery for EmptyDiscovery {
         fn publish(&self, _data: &NodeData) {}
 
         fn resolve(
             &self,
-            _endpoint: Endpoint,
             _node_id: NodeId,
         ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
             Some(n0_future::stream::empty().boxed())
@@ -933,11 +1046,11 @@ mod tests {
 
     async fn new_endpoint(
         secret: SecretKey,
-        disco: impl Discovery + 'static,
+        disco: impl IntoDiscovery + 'static,
     ) -> (Endpoint, AbortOnDropHandle<Result<()>>) {
         let ep = Endpoint::builder()
             .secret_key(secret)
-            .discovery(Box::new(disco))
+            .discovery(disco)
             .relay_mode(RelayMode::Disabled)
             .alpns(vec![TEST_ALPN.to_vec()])
             .bind()
@@ -968,21 +1081,6 @@ mod tests {
             .duration_since(SystemTime::UNIX_EPOCH)
             .expect("time drift")
             .as_micros() as u64
-    }
-
-    #[tokio::test]
-    async fn test_arc_discovery() -> Result {
-        let discovery = Arc::new(EmptyDiscovery);
-
-        let _ep = Endpoint::builder()
-            .add_discovery({
-                let discovery = discovery.clone();
-                move |_| Some(discovery)
-            })
-            .bind()
-            .await?;
-
-        Ok(())
     }
 }
 
@@ -1053,7 +1151,8 @@ mod test_dns_pkarr {
         let relay_url = Some("https://relay.example".parse().unwrap());
 
         let resolver = DnsResolver::with_nameserver(dns_pkarr_server.nameserver);
-        let publisher = PkarrPublisher::new(secret_key, dns_pkarr_server.pkarr_url.clone());
+        let publisher =
+            PkarrPublisher::builder(dns_pkarr_server.pkarr_url.clone()).build(secret_key);
         let user_data: UserData = "foobar".parse().unwrap();
         let data = NodeData::new(relay_url.clone(), Default::default())
             .with_user_data(Some(user_data.clone()));

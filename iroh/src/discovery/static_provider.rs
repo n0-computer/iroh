@@ -15,6 +15,7 @@ use std::{
     sync::{Arc, RwLock},
 };
 
+use anyhow::Result;
 use iroh_base::NodeId;
 use n0_future::{
     boxed::BoxStream,
@@ -22,7 +23,7 @@ use n0_future::{
     time::SystemTime,
 };
 
-use super::{Discovery, DiscoveryItem, NodeData, NodeInfo};
+use super::{Discovery, DiscoveryError, DiscoveryItem, NodeData, NodeInfo};
 
 /// A static node discovery to manually add node addressing information.
 ///
@@ -46,10 +47,7 @@ use super::{Discovery, DiscoveryItem, NodeData, NodeInfo};
 /// let discovery = StaticProvider::new();
 ///
 /// let _ep = Endpoint::builder()
-///     .add_discovery({
-///         let discovery = discovery.clone();
-///         move |_| Some(discovery)
-///     })
+///     .add_discovery(discovery.clone())
 ///     .bind()
 ///     .await?;
 ///
@@ -115,10 +113,7 @@ impl StaticProvider {
     /// // create a StaticProvider from the list of addrs.
     /// let discovery = StaticProvider::from_node_info(addrs);
     /// // create an endpoint with the discovery
-    /// let endpoint = Endpoint::builder()
-    ///     .add_discovery(|_| Some(discovery))
-    ///     .bind()
-    ///     .await?;
+    /// let endpoint = Endpoint::builder().add_discovery(discovery).bind().await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -191,9 +186,8 @@ impl Discovery for StaticProvider {
 
     fn resolve(
         &self,
-        _endpoint: crate::Endpoint,
         node_id: NodeId,
-    ) -> Option<BoxStream<Result<super::DiscoveryItem, super::DiscoveryError>>> {
+    ) -> Option<BoxStream<Result<super::DiscoveryItem, DiscoveryError>>> {
         let guard = self.nodes.read().expect("poisoned");
         let info = guard.get(&node_id);
         match info {
@@ -228,10 +222,7 @@ mod tests {
         let discovery = StaticProvider::new();
 
         let _ep = Endpoint::builder()
-            .add_discovery({
-                let discovery = discovery.clone();
-                move |_| Some(discovery)
-            })
+            .add_discovery(discovery.clone())
             .bind()
             .await?;
 
