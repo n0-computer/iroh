@@ -61,6 +61,7 @@ z32 = "1.1.1"
 
 [dev-dependencies]
 criterion = "0.5.1"
+data-encoding = "2.3.3"
 hickory-resolver = "0.25.0"
 iroh = { path = "../iroh" }
 rand = "0.8"

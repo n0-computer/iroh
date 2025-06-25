@@ -73,15 +73,14 @@ async fn simple_node_id_based_connection_transfer() -> Result {
 
     // Wait for pkarr records to be published
     time::timeout(Duration::from_secs(10), {
-        let client = client.clone();
         let node_id = server.node_id();
         async move {
-            let resolver = PkarrResolver::n0_dns();
+            let resolver = PkarrResolver::n0_dns().build();
             loop {
                 // Very rudimentary non-backoff algorithm
                 time::sleep(Duration::from_secs(1)).await;
 
-                let Some(mut stream) = resolver.resolve(client.clone(), node_id) else {
+                let Some(mut stream) = resolver.resolve(node_id) else {
                     continue;
                 };
                 let Ok(Some(item)) = stream.try_next().await else {

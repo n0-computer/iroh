@@ -5,6 +5,7 @@ use std::{
 
 use bytes::Bytes;
 use clap::{Parser, Subcommand};
+use data_encoding::HEXLOWER;
 use indicatif::HumanBytes;
 use iroh::{
     discovery::{
@@ -184,7 +185,7 @@ impl EndpointArgs {
             Err(_) => {
                 let s = SecretKey::generate(rand::rngs::OsRng);
                 println!("Generated a new node secret. To reuse, set");
-                println!("\tIROH_SECRET={s}");
+                println!("\tIROH_SECRET={}", HEXLOWER.encode(&s.to_bytes()));
                 s
             }
         };
@@ -206,25 +207,19 @@ impl EndpointArgs {
             let url = self
                 .pkarr_relay_url
                 .unwrap_or_else(|| self.env.pkarr_relay_url());
-            builder = builder
-                .add_discovery(|secret_key| Some(PkarrPublisher::new(secret_key.clone(), url)));
+            builder = builder.add_discovery(PkarrPublisher::builder(url));
         }
 
         if !self.no_dns_resolve {
             let domain = self
                 .dns_origin_domain
                 .unwrap_or_else(|| self.env.dns_origin_domain());
-            builder = builder.add_discovery(|_| Some(DnsDiscovery::new(domain)));
+            builder = builder.add_discovery(DnsDiscovery::builder(domain));
         }
 
         #[cfg(feature = "discovery-local-network")]
         if self.mdns {
-            builder = builder.add_discovery(|secret_key| {
-                Some(
-                    iroh::discovery::mdns::MdnsDiscovery::new(secret_key.public())
-                        .expect("Failed to create mDNS discovery"),
-                )
-            });
+            builder = builder.discovery_local_network();
         }
 
         #[cfg(feature = "test-utils")]

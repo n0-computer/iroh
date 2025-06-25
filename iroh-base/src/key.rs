@@ -229,17 +229,6 @@ impl Debug for SecretKey {
     }
 }
 
-impl Display for SecretKey {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // TODO: revivew for security
-        write!(
-            f,
-            "{}",
-            data_encoding::HEXLOWER.encode(self.secret.as_bytes())
-        )
-    }
-}
-
 impl FromStr for SecretKey {
     type Err = KeyParsingError;
 
@@ -394,10 +383,12 @@ mod tests {
     }
 
     #[test]
-    fn test_display_from_str() {
+    fn test_from_str() {
         let key = SecretKey::generate(&mut rand::thread_rng());
         assert_eq!(
-            SecretKey::from_str(&key.to_string()).unwrap().to_bytes(),
+            SecretKey::from_str(&HEXLOWER.encode(&key.to_bytes()))
+                .unwrap()
+                .to_bytes(),
             key.to_bytes()
         );
 
