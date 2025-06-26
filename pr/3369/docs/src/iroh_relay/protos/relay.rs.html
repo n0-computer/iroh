@@ -703,7 +703,7 @@
 <a href=#703 id=703 data-nosnippet>703</a>        };
 <a href=#704 id=704 data-nosnippet>704</a>        write_frame(<span class="kw-2">&amp;mut </span>writer, expected_frame.clone(), <span class="prelude-val">None</span>).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#705 id=705 data-nosnippet>705</a>        writer.flush().<span class="kw">await</span>.context(<span class="string">"flush"</span>)<span class="question-mark">?</span>;
-<a href=#706 id=706 data-nosnippet>706</a>        <span class="macro">println!</span>(<span class="string">"{:?}"</span>, reader);
+<a href=#706 id=706 data-nosnippet>706</a>        <span class="macro">println!</span>(<span class="string">"{reader:?}"</span>);
 <a href=#707 id=707 data-nosnippet>707</a>        <span class="kw">let </span>buf = recv_frame(FrameType::Health, <span class="kw-2">&amp;mut </span>reader).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#708 id=708 data-nosnippet>708</a>        <span class="macro">assert_eq!</span>(expect_buf.len(), buf.len());
 <a href=#709 id=709 data-nosnippet>709</a>        <span class="macro">assert_eq!</span>(expected_frame, buf);

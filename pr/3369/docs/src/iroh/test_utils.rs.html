@@ -497,7 +497,7 @@
 <a href=#497 id=497 data-nosnippet>497</a>        ttl: u32,
 <a href=#498 id=498 data-nosnippet>498</a>    ) -&gt; <span class="kw">impl </span>Iterator&lt;Item = hickory_resolver::proto::rr::Record&gt; + <span class="lifetime">'_ </span>{
 <a href=#499 id=499 data-nosnippet>499</a>        <span class="kw">use </span>hickory_resolver::proto::rr;
-<a href=#500 id=500 data-nosnippet>500</a>        <span class="kw">let </span>name = <span class="macro">format!</span>(<span class="string">"{}.{}.{}"</span>, IROH_TXT_NAME, node_id.to_z32(), origin);
+<a href=#500 id=500 data-nosnippet>500</a>        <span class="kw">let </span>name = <span class="macro">format!</span>(<span class="string">"{IROH_TXT_NAME}.{}.{origin}"</span>, node_id.to_z32());
 <a href=#501 id=501 data-nosnippet>501</a>        <span class="kw">let </span>name = rr::Name::from_utf8(name).expect(<span class="string">"invalid name"</span>);
 <a href=#502 id=502 data-nosnippet>502</a>        txt_strings.into_iter().map(<span class="kw">move </span>|s| {
 <a href=#503 id=503 data-nosnippet>503</a>            <span class="kw">let </span>txt = rr::rdata::TXT::new(<span class="macro">vec!</span>[s]);

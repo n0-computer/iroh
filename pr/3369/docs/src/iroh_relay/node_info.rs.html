@@ -730,7 +730,7 @@
 <a href=#730 id=730 data-nosnippet>730</a>
 <a href=#731 id=731 data-nosnippet>731</a><span class="attr">#[cfg(not(wasm_browser))]
 <a href=#732 id=732 data-nosnippet>732</a></span><span class="kw">fn </span>node_domain(node_id: <span class="kw-2">&amp;</span>NodeId, origin: <span class="kw-2">&amp;</span>str) -&gt; <span class="prelude-ty">Result</span>&lt;Name, LookupError&gt; {
-<a href=#733 id=733 data-nosnippet>733</a>    <span class="kw">let </span>domain = <span class="macro">format!</span>(<span class="string">"{}.{}"</span>, NodeId::to_z32(node_id), origin);
+<a href=#733 id=733 data-nosnippet>733</a>    <span class="kw">let </span>domain = <span class="macro">format!</span>(<span class="string">"{}.{origin}"</span>, NodeId::to_z32(node_id));
 <a href=#734 id=734 data-nosnippet>734</a>    <span class="kw">let </span>domain = Name::from_str(<span class="kw-2">&amp;</span>domain).context(InvalidLabelSnafu)<span class="question-mark">?</span>;
 <a href=#735 id=735 data-nosnippet>735</a>    <span class="prelude-val">Ok</span>(domain)
 <a href=#736 id=736 data-nosnippet>736</a>}
