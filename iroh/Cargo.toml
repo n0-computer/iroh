@@ -21,7 +21,6 @@ crate-type = ["lib", "cdylib"]
 workspace = true
 
 [dependencies]
-anyhow = "1.0.98"
 aead = { version = "0.5.2", features = ["bytes", "std"] }
 backon = { version = "1.4" }
 bytes = "1.7"
@@ -86,10 +85,10 @@ futures-buffered = "0.2.11"
 spki = { version = "0.7.3", features = ["std"] }
 
 # metrics
-iroh-metrics = { version = "0.34", default-features = false }
+iroh-metrics = { version = "0.35", default-features = false }
 
 # local-swarm-discovery
-swarm-discovery = { version = "0.3.1", optional = true }
+swarm-discovery = { version = "0.4", optional = true }
 futures-util = "0.3"
 
 # test_utils
@@ -109,7 +108,7 @@ parse-size = { version = "=1.0.0", optional = true, features = ['std'] } # pinne
 hickory-resolver = "0.25.1"
 igd-next = { version = "0.16", features = ["aio_tokio"] }
 netdev = { version = "0.31.0" }
-portmapper = { version = "0.6.0", default-features = false }
+portmapper = { version = "0.6.1", default-features = false }
 quinn = { package = "iroh-quinn", version = "0.14.0", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 tokio = { version = "1", features = [
     "io-util",

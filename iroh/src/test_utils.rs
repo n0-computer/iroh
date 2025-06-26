@@ -497,7 +497,7 @@ pub(crate) mod pkarr_dns_state {
         ttl: u32,
     ) -> impl Iterator<Item = hickory_resolver::proto::rr::Record> + '_ {
         use hickory_resolver::proto::rr;
-        let name = format!("{}.{}.{}", IROH_TXT_NAME, node_id.to_z32(), origin);
+        let name = format!("{IROH_TXT_NAME}.{}.{origin}", node_id.to_z32());
         let name = rr::Name::from_utf8(name).expect("invalid name");
         txt_strings.into_iter().map(move |s| {
             let txt = rr::rdata::TXT::new(vec![s]);

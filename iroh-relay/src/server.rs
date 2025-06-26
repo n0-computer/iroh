@@ -685,7 +685,7 @@ async fn run_captive_portal_service(http_listener: TcpListener) {
             Some(res) = tasks.join_next() => {
                 if let Err(err) = res {
                     if err.is_panic() {
-                        panic!("task panicked: {:#?}", err);
+                        panic!("task panicked: {err:#?}");
                     }
                 }
             }
@@ -1115,7 +1115,7 @@ mod tests {
                     assert_eq!(problem, Some("not authenticated".to_string()));
                 }
                 msg => {
-                    panic!("other msg: {:?}", msg);
+                    panic!("other msg: {msg:?}");
                 }
             }
         })

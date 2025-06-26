@@ -395,7 +395,7 @@ impl ServerBuilder {
                         Some(res) = set.join_next() => {
                             if let Err(err) = res {
                                 if err.is_panic() {
-                                    panic!("task panicked: {:#?}", err);
+                                    panic!("task panicked: {err:#?}");
                                 }
                             }
                         }

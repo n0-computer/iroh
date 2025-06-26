@@ -257,7 +257,7 @@ fn decode_request(bytes: &[u8], src_addr: SocketAddr) -> Result<DNSRequest, AppE
         }
         Err(err) => Err(AppError::new(
             StatusCode::BAD_REQUEST,
-            Some(format!("Invalid DNS message: {}", err)),
+            Some(format!("Invalid DNS message: {err}")),
         )),
     }
 }

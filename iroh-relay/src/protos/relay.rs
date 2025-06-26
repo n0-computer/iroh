@@ -635,7 +635,7 @@ mod framing {
             if frame_len > MAX_FRAME_SIZE {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
-                    format!("Frame of length {} is too large.", frame_len),
+                    format!("Frame of length {frame_len} is too large."),
                 ));
             }
 
@@ -703,7 +703,7 @@ mod tests {
         };
         write_frame(&mut writer, expected_frame.clone(), None).await?;
         writer.flush().await.context("flush")?;
-        println!("{:?}", reader);
+        println!("{reader:?}");
         let buf = recv_frame(FrameType::Health, &mut reader).await?;
         assert_eq!(expect_buf.len(), buf.len());
         assert_eq!(expected_frame, buf);

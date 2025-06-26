@@ -501,15 +501,15 @@ impl Client {
                                     }
                                 }
                                 Err(err) => {
-                                    debug!("probe v4 failed: {:?}", err);
+                                    debug!("probe v4 failed: {err:?}");
                                 }
                             }
                         }
                         Some(Err(err)) => {
                             if err.is_panic() {
-                                panic!("probe v4 panicked: {:?}", err);
+                                panic!("probe v4 panicked: {err:?}");
                             }
-                            warn!("probe v4 failed: {:?}", err);
+                            warn!("probe v4 failed: {err:?}");
                         }
                         Some(Ok(None)) => {
                             debug!("probe v4 canceled");
@@ -535,15 +535,15 @@ impl Client {
                                     }
                                 }
                                 Err(err) => {
-                                    debug!("probe v6 failed: {:?}", err);
+                                    debug!("probe v6 failed: {err:?}");
                                 }
                             }
                         }
                         Some(Err(err)) => {
                             if err.is_panic() {
-                                panic!("probe v6 panicked: {:?}", err);
+                                panic!("probe v6 panicked: {err:?}");
                             }
-                            warn!("probe v6 failed: {:?}", err);
+                            warn!("probe v6 failed: {err:?}");
                         }
                         Some(Ok(None)) => {
                             debug!("probe v6 canceled");
@@ -888,7 +888,7 @@ mod tests {
         // Note that the ProbePlan will change with each iteration.
         for i in 0..5 {
             let cancel = CancellationToken::new();
-            println!("--round {}", i);
+            println!("--round {i}");
             let r = client.get_report(if_state.clone(), false).await;
 
             assert!(r.has_udp(), "want UDP");

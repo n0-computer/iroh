@@ -193,8 +193,8 @@ impl PartialEq<SocketAddr> for SendAddr {
 impl Display for SendAddr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SendAddr::Relay(id) => write!(f, "Relay({})", id),
-            SendAddr::Udp(addr) => write!(f, "UDP({})", addr),
+            SendAddr::Relay(id) => write!(f, "Relay({id})"),
+            SendAddr::Udp(addr) => write!(f, "UDP({addr})"),
         }
     }
 }

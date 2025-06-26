@@ -1214,7 +1214,7 @@ impl RelayActor {
             if !self.active_relays.is_empty() {
                 s += ":";
                 for node in self.active_relay_sorted() {
-                    s += &format!(" relay-{}", node,);
+                    s += &format!(" relay-{node}");
                 }
             }
             s

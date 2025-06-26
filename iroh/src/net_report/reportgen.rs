@@ -599,8 +599,8 @@ async fn check_captive_portal(
     // details.
 
     let host_name = url.host_str().unwrap_or_default();
-    let challenge = format!("ts_{}", host_name);
-    let portal_url = format!("http://{}/generate_204", host_name);
+    let challenge = format!("ts_{host_name}");
+    let portal_url = format!("http://{host_name}/generate_204");
     let res = client
         .request(reqwest::Method::GET, portal_url)
         .header("X-Tailscale-Challenge", &challenge)

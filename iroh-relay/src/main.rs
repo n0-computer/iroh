@@ -586,7 +586,7 @@ async fn maybe_load_tls(
                 .clone()
                 .context("LetsEncrypt needs a contact email")?;
             let config = AcmeConfig::new(vec![hostname.clone()])
-                .contact([format!("mailto:{}", contact)])
+                .contact([format!("mailto:{contact}")])
                 .cache_option(Some(DirCache::new(tls.cert_dir())))
                 .directory_lets_encrypt(tls.prod_tls);
             let state = config.state();
