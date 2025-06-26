@@ -106,7 +106,7 @@ async fn main() -> Result<()> {
             let num_matches = proto.query_remote(node_id, &query).await?;
 
             // Print out our query results.
-            println!("Found {} matches", num_matches);
+            println!("Found {num_matches} matches");
         }
     }
 

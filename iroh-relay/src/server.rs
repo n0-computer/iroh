@@ -1115,7 +1115,7 @@ mod tests {
                     assert_eq!(problem, Some("not authenticated".to_string()));
                 }
                 msg => {
-                    panic!("other msg: {:?}", msg);
+                    panic!("other msg: {msg:?}");
                 }
             }
         })

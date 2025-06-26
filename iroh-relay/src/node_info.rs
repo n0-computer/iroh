@@ -730,7 +730,7 @@ fn ensure_iroh_txt_label(name: Name) -> Result<Name, LookupError> {
 
 #[cfg(not(wasm_browser))]
 fn node_domain(node_id: &NodeId, origin: &str) -> Result<Name, LookupError> {
-    let domain = format!("{}.{}", NodeId::to_z32(node_id), origin);
+    let domain = format!("{}.{origin}", NodeId::to_z32(node_id));
     let domain = Name::from_str(&domain).context(InvalidLabelSnafu)?;
     Ok(domain)
 }

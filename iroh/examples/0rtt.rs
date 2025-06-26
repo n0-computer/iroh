@@ -121,7 +121,7 @@ async fn connect(args: Args) -> n0_snafu::Result<()> {
             connection.close(0u8.into(), b"");
         });
         let elapsed = t0.elapsed();
-        println!("round {}: {} us", i, elapsed.as_micros());
+        println!("round {i}: {} us", elapsed.as_micros());
     }
     let elapsed = t0.elapsed();
     println!("total time: {} us", elapsed.as_micros());
@@ -151,7 +151,7 @@ async fn accept(_args: Args) -> n0_snafu::Result<()> {
             }
         }
     };
-    println!("Listening on: {:?}", addr);
+    println!("Listening on: {addr:?}");
     println!("Node ID: {:?}", addr.node_id);
     println!("Ticket: {}", NodeTicket::from(addr));
 

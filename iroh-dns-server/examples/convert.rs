@@ -27,7 +27,7 @@ fn main() -> Result<()> {
         Command::PkarrToNode { z32_pubkey } => {
             let public_key = pkarr::PublicKey::try_from(z32_pubkey.as_str()).e()?;
             let node_id = NodeId::from_bytes(public_key.as_bytes()).e()?;
-            println!("{}", node_id)
+            println!("{node_id}")
         }
     }
     Ok(())

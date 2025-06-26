@@ -270,7 +270,7 @@ fn create_static_authority(
     }
 
     let static_authority = InMemoryAuthority::new(Name::root(), records, ZoneType::Primary, false)
-        .map_err(|e| format_err!("new authority: {}", e))?;
+        .map_err(|e| format_err!("new authority: {e}"))?;
 
     Ok((static_authority, serial))
 }

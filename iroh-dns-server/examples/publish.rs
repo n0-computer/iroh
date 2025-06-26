@@ -150,5 +150,5 @@ async fn main() -> Result<()> {
 }
 
 fn fmt_domain(node_id: &NodeId, origin: &str) -> String {
-    format!("{}.{}.{}", IROH_TXT_NAME, node_id.to_z32(), origin)
+    format!("{IROH_TXT_NAME}.{}.{origin}", node_id.to_z32())
 }
