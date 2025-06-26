@@ -120,20 +120,24 @@ impl ProtocolHandler for TestProtocol {
 }
 
 pub mod router {
+    use std::{collections::BTreeMap, sync::Arc, time::Duration};
+
     use futures_util::future::join_all;
-    use iroh::protocol::{DynProtocolHandler, ProtocolHandler};
-    use iroh::Endpoint;
-    use n0_future::task::{self, AbortOnDropHandle};
-    use n0_future::time;
+    use iroh::{
+        protocol::{DynProtocolHandler, ProtocolHandler},
+        Endpoint,
+    };
+    use n0_future::{
+        task::{self, AbortOnDropHandle},
+        time,
+    };
     use snafu::Snafu;
-    use std::collections::BTreeMap;
-    use std::sync::Arc;
-    use std::time::Duration;
-    use tokio::sync::{mpsc, oneshot, Mutex};
-    use tokio::task::JoinSet;
+    use tokio::{
+        sync::{mpsc, oneshot, Mutex},
+        task::JoinSet,
+    };
     use tokio_util::sync::CancellationToken;
-    use tracing::Instrument;
-    use tracing::{debug, error, info_span, trace, warn};
+    use tracing::{debug, error, info_span, trace, warn, Instrument};
 
     /// The built router.
     ///
