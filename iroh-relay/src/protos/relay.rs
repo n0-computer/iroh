@@ -635,7 +635,7 @@ mod framing {
             if frame_len > MAX_FRAME_SIZE {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
-                    format!("Frame of length {} is too large.", frame_len),
+                    format!("Frame of length {frame_len} is too large."),
                 ));
             }
 

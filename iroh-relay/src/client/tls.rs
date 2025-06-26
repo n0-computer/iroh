@@ -228,7 +228,7 @@ impl MaybeTlsStreamBuilder {
 
         // Establish Proxy Tunnel
         let mut req_builder = Request::builder()
-            .uri(format!("{}:{}", target_host, port))
+            .uri(format!("{target_host}:{port}"))
             .method("CONNECT")
             .header("Host", target_host)
             .header("Proxy-Connection", "Keep-Alive");
@@ -245,7 +245,7 @@ impl MaybeTlsStreamBuilder {
                 proxy_url.password().unwrap_or_default()
             );
             let encoded = BASE64URL.encode(to_encode.as_bytes());
-            req_builder = req_builder.header("Proxy-Authorization", format!("Basic {}", encoded));
+            req_builder = req_builder.header("Proxy-Authorization", format!("Basic {encoded}"));
         }
         let req = req_builder
             .body(Empty::<Bytes>::new())
