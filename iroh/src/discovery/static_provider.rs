@@ -15,7 +15,6 @@ use std::{
     sync::{Arc, RwLock},
 };
 
-use anyhow::Result;
 use iroh_base::NodeId;
 use n0_future::{
     boxed::BoxStream,

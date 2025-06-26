@@ -349,7 +349,7 @@ impl MdnsDiscovery {
         }
         discoverer
             .spawn(rt)
-            .map_err(|e| IntoDiscoveryError::from_err_box("mdns", e.into_boxed_dyn_error()))
+            .map_err(|e| IntoDiscoveryError::from_err("mdns", e))
     }
 
     fn socketaddrs_to_addrs(socketaddrs: &BTreeSet<SocketAddr>) -> HashMap<u16, Vec<IpAddr>> {
