@@ -217,11 +217,21 @@ impl<T: ProtocolHandler> ProtocolHandler for Box<T> {
     }
 }
 
+impl<T: ProtocolHandler> From<T> for Box<dyn DynProtocolHandler> {
+    fn from(value: T) -> Self {
+        Box::new(value)
+    }
+}
+
 /// A dyn-compatible version of [`ProtocolHandler`] that returns boxed futures.
 ///
-/// We are not using [`n0_future::boxed::BoxFuture] because we don't need a `'static` bound
-/// on these futures.
-pub(crate) trait DynProtocolHandler: Send + Sync + std::fmt::Debug + 'static {
+/// Any type that implements [`ProtocolHandler`] automatically also implements [`DynProtocolHandler`].
+/// There is a also [`From`] impl to turn any type that implements [`ProtocolHandler`] into a
+/// `Box<dyn DynProtocolHandler>`.
+//
+// We are not using [`n0_future::boxed::BoxFuture] because we don't need a `'static` bound
+// on these futures.
+pub trait DynProtocolHandler: Send + Sync + std::fmt::Debug + 'static {
     /// See [`ProtocolHandler::on_connecting`].
     fn on_connecting(
         &self,
@@ -276,8 +286,7 @@ impl ProtocolMap {
     }
 
     /// Inserts a protocol handler.
-    pub(crate) fn insert(&mut self, alpn: Vec<u8>, handler: impl ProtocolHandler) {
-        let handler = Box::new(handler);
+    pub(crate) fn insert(&mut self, alpn: Vec<u8>, handler: Box<dyn DynProtocolHandler>) {
         self.0.insert(alpn, handler);
     }
 
@@ -348,8 +357,18 @@ impl RouterBuilder {
 
     /// Configures the router to accept the [`ProtocolHandler`] when receiving a connection
     /// with this `alpn`.
-    pub fn accept(mut self, alpn: impl AsRef<[u8]>, handler: impl ProtocolHandler) -> Self {
-        self.protocols.insert(alpn.as_ref().to_vec(), handler);
+    ///
+    /// `handler` can either be a type that implements [`ProtocolHandler`] or a
+    /// [`Box<dyn DynProtocolHandler>`].
+    ///
+    /// [`Box<dyn DynProtocolHandler>`]: DynProtocolHandler
+    pub fn accept(
+        mut self,
+        alpn: impl AsRef<[u8]>,
+        handler: impl Into<Box<dyn DynProtocolHandler>>,
+    ) -> Self {
+        self.protocols
+            .insert(alpn.as_ref().to_vec(), handler.into());
         self
     }
 
