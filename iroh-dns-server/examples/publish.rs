@@ -116,30 +116,21 @@ async fn main() -> Result<()> {
 
     match args.env {
         Env::Staging => {
-            println!(
-                "   cargo run --example resolve -- --env staging node {}",
-                node_id
-            );
+            println!("   cargo run --example resolve -- --env staging node {node_id}");
             println!(
                 "   dig {} TXT",
                 fmt_domain(&node_id, N0_DNS_NODE_ORIGIN_STAGING)
             )
         }
         Env::Prod => {
-            println!(
-                "   cargo run --example resolve -- --env prod node {}",
-                node_id
-            );
+            println!("   cargo run --example resolve -- --env prod node {node_id}");
             println!(
                 "   dig {} TXT",
                 fmt_domain(&node_id, N0_DNS_NODE_ORIGIN_PROD)
             )
         }
         Env::Dev => {
-            println!(
-                "    cargo run --example resolve -- --env dev node {}",
-                node_id
-            );
+            println!("    cargo run --example resolve -- --env dev node {node_id}");
             println!(
                 "    dig @localhost -p 5300 {} TXT",
                 fmt_domain(&node_id, DEV_DNS_ORIGIN_DOMAIN)
