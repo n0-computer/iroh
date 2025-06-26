@@ -888,7 +888,7 @@ mod tests {
         // Note that the ProbePlan will change with each iteration.
         for i in 0..5 {
             let cancel = CancellationToken::new();
-            println!("--round {}", i);
+            println!("--round {i}");
             let r = client.get_report(if_state.clone(), false).await;
 
             assert!(r.has_udp(), "want UDP");

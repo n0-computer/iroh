@@ -200,7 +200,7 @@ pub struct DiscoveryContext<'a> {
     pub(crate) secret_key: &'a SecretKey,
 }
 
-impl<'a> DiscoveryContext<'a> {
+impl DiscoveryContext<'_> {
     /// Returns the [`NodeId`] of the endpoint.
     pub fn node_id(&self) -> NodeId {
         self.secret_key.public()

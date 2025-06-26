@@ -628,7 +628,7 @@ mod tests {
 
         let (_send, mut recv) = conn.open_bi().await.e()?;
         let response = recv.read_to_end(1000).await.unwrap_err();
-        assert!(format!("{:#?}", response).contains("not allowed"));
+        assert!(format!("{response:#?}").contains("not allowed"));
 
         r1.shutdown().await.e()?;
         e2.close().await;
@@ -676,7 +676,7 @@ mod tests {
             .relay_mode(RelayMode::Disabled)
             .bind()
             .await?;
-        eprintln!("connecting to {:?}", addr);
+        eprintln!("connecting to {addr:?}");
         let conn = endpoint2.connect(addr, TEST_ALPN).await?;
 
         eprintln!("starting shutdown");
