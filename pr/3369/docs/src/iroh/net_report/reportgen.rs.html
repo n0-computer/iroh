@@ -599,8 +599,8 @@
 <a href=#599 id=599 data-nosnippet>599</a>    // details.
 <a href=#600 id=600 data-nosnippet>600</a>
 <a href=#601 id=601 data-nosnippet>601</a>    </span><span class="kw">let </span>host_name = url.host_str().unwrap_or_default();
-<a href=#602 id=602 data-nosnippet>602</a>    <span class="kw">let </span>challenge = <span class="macro">format!</span>(<span class="string">"ts_{}"</span>, host_name);
-<a href=#603 id=603 data-nosnippet>603</a>    <span class="kw">let </span>portal_url = <span class="macro">format!</span>(<span class="string">"http://{}/generate_204"</span>, host_name);
+<a href=#602 id=602 data-nosnippet>602</a>    <span class="kw">let </span>challenge = <span class="macro">format!</span>(<span class="string">"ts_{host_name}"</span>);
+<a href=#603 id=603 data-nosnippet>603</a>    <span class="kw">let </span>portal_url = <span class="macro">format!</span>(<span class="string">"http://{host_name}/generate_204"</span>);
 <a href=#604 id=604 data-nosnippet>604</a>    <span class="kw">let </span>res = client
 <a href=#605 id=605 data-nosnippet>605</a>        .request(reqwest::Method::GET, portal_url)
 <a href=#606 id=606 data-nosnippet>606</a>        .header(<span class="string">"X-Tailscale-Challenge"</span>, <span class="kw-2">&amp;</span>challenge)
