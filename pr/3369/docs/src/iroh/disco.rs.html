@@ -193,8 +193,8 @@
 <a href=#193 id=193 data-nosnippet>193</a><span class="kw">impl </span>Display <span class="kw">for </span>SendAddr {
 <a href=#194 id=194 data-nosnippet>194</a>    <span class="kw">fn </span>fmt(<span class="kw-2">&amp;</span><span class="self">self</span>, f: <span class="kw-2">&amp;mut </span>std::fmt::Formatter&lt;<span class="lifetime">'_</span>&gt;) -&gt; std::fmt::Result {
 <a href=#195 id=195 data-nosnippet>195</a>        <span class="kw">match </span><span class="self">self </span>{
-<a href=#196 id=196 data-nosnippet>196</a>            SendAddr::Relay(id) =&gt; <span class="macro">write!</span>(f, <span class="string">"Relay({})"</span>, id),
-<a href=#197 id=197 data-nosnippet>197</a>            SendAddr::Udp(addr) =&gt; <span class="macro">write!</span>(f, <span class="string">"UDP({})"</span>, addr),
+<a href=#196 id=196 data-nosnippet>196</a>            SendAddr::Relay(id) =&gt; <span class="macro">write!</span>(f, <span class="string">"Relay({id})"</span>),
+<a href=#197 id=197 data-nosnippet>197</a>            SendAddr::Udp(addr) =&gt; <span class="macro">write!</span>(f, <span class="string">"UDP({addr})"</span>),
 <a href=#198 id=198 data-nosnippet>198</a>        }
 <a href=#199 id=199 data-nosnippet>199</a>    }
 <a href=#200 id=200 data-nosnippet>200</a>}

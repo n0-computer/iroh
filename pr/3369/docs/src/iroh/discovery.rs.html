@@ -200,7 +200,7 @@
 <a href=#200 id=200 data-nosnippet>200</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) secret_key: <span class="kw-2">&amp;</span><span class="lifetime">'a </span>SecretKey,
 <a href=#201 id=201 data-nosnippet>201</a>}
 <a href=#202 id=202 data-nosnippet>202</a>
-<a href=#203 id=203 data-nosnippet>203</a><span class="kw">impl</span>&lt;<span class="lifetime">'a</span>&gt; DiscoveryContext&lt;<span class="lifetime">'a</span>&gt; {
+<a href=#203 id=203 data-nosnippet>203</a><span class="kw">impl </span>DiscoveryContext&lt;<span class="lifetime">'_</span>&gt; {
 <a href=#204 id=204 data-nosnippet>204</a>    <span class="doccomment">/// Returns the [`NodeId`] of the endpoint.
 <a href=#205 id=205 data-nosnippet>205</a>    </span><span class="kw">pub fn </span>node_id(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; NodeId {
 <a href=#206 id=206 data-nosnippet>206</a>        <span class="self">self</span>.secret_key.public()

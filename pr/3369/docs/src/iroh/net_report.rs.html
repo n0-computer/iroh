@@ -888,7 +888,7 @@
 <a href=#888 id=888 data-nosnippet>888</a>        <span class="comment">// Note that the ProbePlan will change with each iteration.
 <a href=#889 id=889 data-nosnippet>889</a>        </span><span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..<span class="number">5 </span>{
 <a href=#890 id=890 data-nosnippet>890</a>            <span class="kw">let </span>cancel = CancellationToken::new();
-<a href=#891 id=891 data-nosnippet>891</a>            <span class="macro">println!</span>(<span class="string">"--round {}"</span>, i);
+<a href=#891 id=891 data-nosnippet>891</a>            <span class="macro">println!</span>(<span class="string">"--round {i}"</span>);
 <a href=#892 id=892 data-nosnippet>892</a>            <span class="kw">let </span>r = client.get_report(if_state.clone(), <span class="bool-val">false</span>).<span class="kw">await</span>;
 <a href=#893 id=893 data-nosnippet>893</a>
 <a href=#894 id=894 data-nosnippet>894</a>            <span class="macro">assert!</span>(r.has_udp(), <span class="string">"want UDP"</span>);

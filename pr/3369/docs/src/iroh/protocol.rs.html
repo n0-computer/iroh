@@ -628,7 +628,7 @@
 <a href=#628 id=628 data-nosnippet>628</a>
 <a href=#629 id=629 data-nosnippet>629</a>        <span class="kw">let </span>(_send, <span class="kw-2">mut </span>recv) = conn.open_bi().<span class="kw">await</span>.e()<span class="question-mark">?</span>;
 <a href=#630 id=630 data-nosnippet>630</a>        <span class="kw">let </span>response = recv.read_to_end(<span class="number">1000</span>).<span class="kw">await</span>.unwrap_err();
-<a href=#631 id=631 data-nosnippet>631</a>        <span class="macro">assert!</span>(<span class="macro">format!</span>(<span class="string">"{:#?}"</span>, response).contains(<span class="string">"not allowed"</span>));
+<a href=#631 id=631 data-nosnippet>631</a>        <span class="macro">assert!</span>(<span class="macro">format!</span>(<span class="string">"{response:#?}"</span>).contains(<span class="string">"not allowed"</span>));
 <a href=#632 id=632 data-nosnippet>632</a>
 <a href=#633 id=633 data-nosnippet>633</a>        r1.shutdown().<span class="kw">await</span>.e()<span class="question-mark">?</span>;
 <a href=#634 id=634 data-nosnippet>634</a>        e2.close().<span class="kw">await</span>;
@@ -676,7 +676,7 @@
 <a href=#676 id=676 data-nosnippet>676</a>            .relay_mode(RelayMode::Disabled)
 <a href=#677 id=677 data-nosnippet>677</a>            .bind()
 <a href=#678 id=678 data-nosnippet>678</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#679 id=679 data-nosnippet>679</a>        <span class="macro">eprintln!</span>(<span class="string">"connecting to {:?}"</span>, addr);
+<a href=#679 id=679 data-nosnippet>679</a>        <span class="macro">eprintln!</span>(<span class="string">"connecting to {addr:?}"</span>);
 <a href=#680 id=680 data-nosnippet>680</a>        <span class="kw">let </span>conn = endpoint2.connect(addr, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#681 id=681 data-nosnippet>681</a>
 <a href=#682 id=682 data-nosnippet>682</a>        <span class="macro">eprintln!</span>(<span class="string">"starting shutdown"</span>);

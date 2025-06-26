@@ -1214,7 +1214,7 @@
 <a href=#1214 id=1214 data-nosnippet>1214</a>            <span class="kw">if </span>!<span class="self">self</span>.active_relays.is_empty() {
 <a href=#1215 id=1215 data-nosnippet>1215</a>                s += <span class="string">":"</span>;
 <a href=#1216 id=1216 data-nosnippet>1216</a>                <span class="kw">for </span>node <span class="kw">in </span><span class="self">self</span>.active_relay_sorted() {
-<a href=#1217 id=1217 data-nosnippet>1217</a>                    s += <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">" relay-{}"</span>, node,);
+<a href=#1217 id=1217 data-nosnippet>1217</a>                    s += <span class="kw-2">&amp;</span><span class="macro">format!</span>(<span class="string">" relay-{node}"</span>);
 <a href=#1218 id=1218 data-nosnippet>1218</a>                }
 <a href=#1219 id=1219 data-nosnippet>1219</a>            }
 <a href=#1220 id=1220 data-nosnippet>1220</a>            s
