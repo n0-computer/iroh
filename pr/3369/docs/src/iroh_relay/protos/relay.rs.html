@@ -635,7 +635,7 @@
 <a href=#635 id=635 data-nosnippet>635</a>            <span class="kw">if </span>frame_len &gt; MAX_FRAME_SIZE {
 <a href=#636 id=636 data-nosnippet>636</a>                <span class="kw">return </span><span class="prelude-val">Err</span>(std::io::Error::new(
 <a href=#637 id=637 data-nosnippet>637</a>                    std::io::ErrorKind::InvalidData,
-<a href=#638 id=638 data-nosnippet>638</a>                    <span class="macro">format!</span>(<span class="string">"Frame of length {} is too large."</span>, frame_len),
+<a href=#638 id=638 data-nosnippet>638</a>                    <span class="macro">format!</span>(<span class="string">"Frame of length {frame_len} is too large."</span>),
 <a href=#639 id=639 data-nosnippet>639</a>                ));
 <a href=#640 id=640 data-nosnippet>640</a>            }
 <a href=#641 id=641 data-nosnippet>641</a>

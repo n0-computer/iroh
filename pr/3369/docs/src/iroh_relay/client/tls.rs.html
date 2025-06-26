@@ -228,7 +228,7 @@
 <a href=#228 id=228 data-nosnippet>228</a>
 <a href=#229 id=229 data-nosnippet>229</a>        <span class="comment">// Establish Proxy Tunnel
 <a href=#230 id=230 data-nosnippet>230</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>req_builder = Request::builder()
-<a href=#231 id=231 data-nosnippet>231</a>            .uri(<span class="macro">format!</span>(<span class="string">"{}:{}"</span>, target_host, port))
+<a href=#231 id=231 data-nosnippet>231</a>            .uri(<span class="macro">format!</span>(<span class="string">"{target_host}:{port}"</span>))
 <a href=#232 id=232 data-nosnippet>232</a>            .method(<span class="string">"CONNECT"</span>)
 <a href=#233 id=233 data-nosnippet>233</a>            .header(<span class="string">"Host"</span>, target_host)
 <a href=#234 id=234 data-nosnippet>234</a>            .header(<span class="string">"Proxy-Connection"</span>, <span class="string">"Keep-Alive"</span>);
@@ -245,7 +245,7 @@
 <a href=#245 id=245 data-nosnippet>245</a>                proxy_url.password().unwrap_or_default()
 <a href=#246 id=246 data-nosnippet>246</a>            );
 <a href=#247 id=247 data-nosnippet>247</a>            <span class="kw">let </span>encoded = BASE64URL.encode(to_encode.as_bytes());
-<a href=#248 id=248 data-nosnippet>248</a>            req_builder = req_builder.header(<span class="string">"Proxy-Authorization"</span>, <span class="macro">format!</span>(<span class="string">"Basic {}"</span>, encoded));
+<a href=#248 id=248 data-nosnippet>248</a>            req_builder = req_builder.header(<span class="string">"Proxy-Authorization"</span>, <span class="macro">format!</span>(<span class="string">"Basic {encoded}"</span>));
 <a href=#249 id=249 data-nosnippet>249</a>        }
 <a href=#250 id=250 data-nosnippet>250</a>        <span class="kw">let </span>req = req_builder
 <a href=#251 id=251 data-nosnippet>251</a>            .body(Empty::&lt;Bytes&gt;::new())

@@ -395,7 +395,7 @@
 <a href=#395 id=395 data-nosnippet>395</a>                        <span class="prelude-val">Some</span>(res) = set.join_next() =&gt; {
 <a href=#396 id=396 data-nosnippet>396</a>                            <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = res {
 <a href=#397 id=397 data-nosnippet>397</a>                                <span class="kw">if </span>err.is_panic() {
-<a href=#398 id=398 data-nosnippet>398</a>                                    <span class="macro">panic!</span>(<span class="string">"task panicked: {:#?}"</span>, err);
+<a href=#398 id=398 data-nosnippet>398</a>                                    <span class="macro">panic!</span>(<span class="string">"task panicked: {err:#?}"</span>);
 <a href=#399 id=399 data-nosnippet>399</a>                                }
 <a href=#400 id=400 data-nosnippet>400</a>                            }
 <a href=#401 id=401 data-nosnippet>401</a>                        }
