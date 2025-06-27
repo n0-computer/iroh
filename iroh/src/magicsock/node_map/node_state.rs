@@ -789,12 +789,13 @@ impl NodeState {
             self.prune_direct_addresses();
         }
 
-        // if the endpoint does not yet have a best_addrr
+        // if the endpoint does not yet have a best_addr, or if this is a new path
         let needs_ping_back = if matches!(path, SendAddr::Udp(_))
-            && matches!(
+            && (matches!(
                 self.udp_paths.best_addr.state(now),
                 best_addr::State::Empty | best_addr::State::Outdated(_)
-            ) {
+            ) || matches!(role, PingRole::NewPath))
+        {
             // We also need to send a ping to make this path available to us as well.  This
             // is always sent together with a pong.  So in the worst case the pong gets lost
             // and this ping does not.  In that case we ping-pong until both sides have
