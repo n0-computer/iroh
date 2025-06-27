@@ -3218,11 +3218,17 @@ mod tests {
     }
 
     /// Test that we can immediately reconnect after respawning an endpoint with the same node id.
+    ///
+    /// Importantly, this test does not use a relay. This means there is no other path but the UDP
+    /// path available. The respawned endpoint will have different direct addrs from the previous
+    /// endpoint. The test attempts to ensure that this works, i.e. that the server endpoint will
+    /// reply to the new addresses and not keep sending to the old UDP addresses which won't be
+    /// received anymore.
     #[tokio::test]
     #[traced_test]
     async fn can_abort_and_reconnect() -> Result {
         const TEST_ALPN: &[u8] = b"/iroh/test/1";
-        const TIMEOUT: Duration = Duration::from_secs(5);
+        const TIMEOUT: Duration = Duration::from_secs(10);
 
         let mut rng = &mut rand_chacha::ChaCha12Rng::seed_from_u64(1);
 
@@ -3241,10 +3247,15 @@ mod tests {
         let server_loop = tokio::task::spawn(async move {
             while let Some(conn) = server.accept().await {
                 let conn = conn.accept().e()?.await.e()?;
+                info!("server ACCEPT");
+                let mut stream = conn.open_uni().await.e()?;
+                stream.write_all(b"hi").await.e()?;
+                stream.finish().e()?;
                 let res = match conn.closed().await {
                     ConnectionError::ApplicationClosed(frame) => Ok(u64::from(frame.error_code)),
                     reason => Err(reason),
                 };
+                info!("server CLOSED");
                 tx.send(res).await.e()?;
             }
             Result::<_, n0_snafu::Error>::Ok(())
@@ -3259,13 +3270,16 @@ mod tests {
                 .relay_mode(RelayMode::Disabled)
                 .bind()
                 .await?;
-            info!(
-                "connect client {} ({:?}) to {addr:?}",
-                ep.node_id().fmt_short(),
-                ep.bound_sockets(),
-            );
+            let ipv4 = ep.bound_sockets()[0];
+            let node_id = ep.node_id().fmt_short();
+            info!(%node_id, %ipv4, "client CONNECT");
             let conn = ep.connect(addr, TEST_ALPN).await?;
+            info!(%node_id, %ipv4, "client CONNECTED");
+            let mut stream = conn.accept_uni().await.e()?;
+            let buf = stream.read_to_end(2).await.e()?;
+            assert_eq!(&buf, b"hi");
             conn.close(code.into(), b"bye");
+            info!(%node_id, %ipv4, "client CLOSE");
             Ok(ep)
         }
 
@@ -3279,8 +3293,7 @@ mod tests {
         .await
         .e()??;
         assert_eq!(rx.recv().await.unwrap().unwrap(), 23);
-        // close the endpoint in a separate task, to not lose time for our immediate respawn testing
-        let close1 = tokio::task::spawn(async move { ep.close().await });
+        ep.close().await;
 
         // Second connection
         let ep = n0_future::time::timeout(
@@ -3290,9 +3303,8 @@ mod tests {
         .await
         .e()??;
         assert_eq!(rx.recv().await.unwrap().unwrap(), 24);
-
-        close1.await.e()?;
         ep.close().await;
+
         server_loop.abort();
 
         Ok(())
