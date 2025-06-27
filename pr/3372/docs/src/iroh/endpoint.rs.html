@@ -3222,7 +3222,7 @@
 <a href=#3222 id=3222 data-nosnippet>3222</a>    #[traced_test]
 <a href=#3223 id=3223 data-nosnippet>3223</a>    </span><span class="kw">async fn </span>can_abort_and_reconnect() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#3224 id=3224 data-nosnippet>3224</a>        <span class="kw">const </span>TEST_ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"/iroh/test/1"</span>;
-<a href=#3225 id=3225 data-nosnippet>3225</a>        <span class="kw">const </span>TIMEOUT: Duration = Duration::from_secs(<span class="number">1</span>);
+<a href=#3225 id=3225 data-nosnippet>3225</a>        <span class="kw">const </span>TIMEOUT: Duration = Duration::from_secs(<span class="number">5</span>);
 <a href=#3226 id=3226 data-nosnippet>3226</a>
 <a href=#3227 id=3227 data-nosnippet>3227</a>        <span class="kw">let </span><span class="kw-2">mut </span>rng = <span class="kw-2">&amp;mut </span>rand_chacha::ChaCha12Rng::seed_from_u64(<span class="number">1</span>);
 <a href=#3228 id=3228 data-nosnippet>3228</a>
