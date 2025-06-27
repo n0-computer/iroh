@@ -3253,38 +3253,45 @@
 <a href=#3253 id=3253 data-nosnippet>3253</a>        <span class="comment">// Clients connect to the server, and immediately close the connection with a code
 <a href=#3254 id=3254 data-nosnippet>3254</a>        // and then close the endpoint.
 <a href=#3255 id=3255 data-nosnippet>3255</a>        </span><span class="kw">async fn </span>connect(secret_key: SecretKey, addr: NodeAddr, code: u32) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#3256 id=3256 data-nosnippet>3256</a>            <span class="kw">let </span>ep = Endpoint::builder()
-<a href=#3257 id=3257 data-nosnippet>3257</a>                .secret_key(secret_key)
-<a href=#3258 id=3258 data-nosnippet>3258</a>                .relay_mode(RelayMode::Disabled)
-<a href=#3259 id=3259 data-nosnippet>3259</a>                .bind()
-<a href=#3260 id=3260 data-nosnippet>3260</a>                .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#3261 id=3261 data-nosnippet>3261</a>            <span class="kw">let </span>conn = ep.connect(addr, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#3262 id=3262 data-nosnippet>3262</a>            conn.close(code.into(), <span class="string">b"bye"</span>);
-<a href=#3263 id=3263 data-nosnippet>3263</a>            ep.close().<span class="kw">await</span>;
-<a href=#3264 id=3264 data-nosnippet>3264</a>            <span class="prelude-val">Ok</span>(())
-<a href=#3265 id=3265 data-nosnippet>3265</a>        }
-<a href=#3266 id=3266 data-nosnippet>3266</a>
-<a href=#3267 id=3267 data-nosnippet>3267</a>        <span class="kw">let </span>client_secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
-<a href=#3268 id=3268 data-nosnippet>3268</a>
-<a href=#3269 id=3269 data-nosnippet>3269</a>        <span class="comment">// First connection
-<a href=#3270 id=3270 data-nosnippet>3270</a>        </span>n0_future::time::timeout(
-<a href=#3271 id=3271 data-nosnippet>3271</a>            TIMEOUT,
-<a href=#3272 id=3272 data-nosnippet>3272</a>            connect(client_secret_key.clone(), server_addr.clone(), <span class="number">23</span>),
-<a href=#3273 id=3273 data-nosnippet>3273</a>        )
-<a href=#3274 id=3274 data-nosnippet>3274</a>        .<span class="kw">await
-<a href=#3275 id=3275 data-nosnippet>3275</a>        </span>.e()<span class="question-mark">??</span>;
-<a href=#3276 id=3276 data-nosnippet>3276</a>        <span class="macro">assert_eq!</span>(rx.recv().<span class="kw">await</span>.unwrap().unwrap(), <span class="number">23</span>);
-<a href=#3277 id=3277 data-nosnippet>3277</a>
-<a href=#3278 id=3278 data-nosnippet>3278</a>        <span class="comment">// Second connection
-<a href=#3279 id=3279 data-nosnippet>3279</a>        </span>n0_future::time::timeout(
-<a href=#3280 id=3280 data-nosnippet>3280</a>            TIMEOUT,
-<a href=#3281 id=3281 data-nosnippet>3281</a>            connect(client_secret_key.clone(), server_addr.clone(), <span class="number">24</span>),
-<a href=#3282 id=3282 data-nosnippet>3282</a>        )
-<a href=#3283 id=3283 data-nosnippet>3283</a>        .<span class="kw">await
-<a href=#3284 id=3284 data-nosnippet>3284</a>        </span>.e()<span class="question-mark">??</span>;
-<a href=#3285 id=3285 data-nosnippet>3285</a>        <span class="macro">assert_eq!</span>(rx.recv().<span class="kw">await</span>.unwrap().unwrap(), <span class="number">24</span>);
-<a href=#3286 id=3286 data-nosnippet>3286</a>        server_loop.abort();
-<a href=#3287 id=3287 data-nosnippet>3287</a>
-<a href=#3288 id=3288 data-nosnippet>3288</a>        <span class="prelude-val">Ok</span>(())
-<a href=#3289 id=3289 data-nosnippet>3289</a>    }
-<a href=#3290 id=3290 data-nosnippet>3290</a>}</code></pre></div></section></main></body></html>
+<a href=#3256 id=3256 data-nosnippet>3256</a>            <span class="macro">info!</span>(<span class="string">"spawn client node {}"</span>, secret_key.public().fmt_short());
+<a href=#3257 id=3257 data-nosnippet>3257</a>            <span class="kw">let </span>ep = Endpoint::builder()
+<a href=#3258 id=3258 data-nosnippet>3258</a>                .secret_key(secret_key)
+<a href=#3259 id=3259 data-nosnippet>3259</a>                .relay_mode(RelayMode::Disabled)
+<a href=#3260 id=3260 data-nosnippet>3260</a>                .bind()
+<a href=#3261 id=3261 data-nosnippet>3261</a>                .<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#3262 id=3262 data-nosnippet>3262</a>            <span class="macro">info!</span>(
+<a href=#3263 id=3263 data-nosnippet>3263</a>                <span class="string">"connect client {} ({:?}) to {addr:?}"</span>,
+<a href=#3264 id=3264 data-nosnippet>3264</a>                ep.node_id().fmt_short(),
+<a href=#3265 id=3265 data-nosnippet>3265</a>                ep.bound_sockets(),
+<a href=#3266 id=3266 data-nosnippet>3266</a>            );
+<a href=#3267 id=3267 data-nosnippet>3267</a>            <span class="kw">let </span>conn = ep.connect(addr, TEST_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#3268 id=3268 data-nosnippet>3268</a>            conn.close(code.into(), <span class="string">b"bye"</span>);
+<a href=#3269 id=3269 data-nosnippet>3269</a>            ep.close().<span class="kw">await</span>;
+<a href=#3270 id=3270 data-nosnippet>3270</a>            <span class="macro">info!</span>(<span class="string">"client closed"</span>);
+<a href=#3271 id=3271 data-nosnippet>3271</a>            <span class="prelude-val">Ok</span>(())
+<a href=#3272 id=3272 data-nosnippet>3272</a>        }
+<a href=#3273 id=3273 data-nosnippet>3273</a>
+<a href=#3274 id=3274 data-nosnippet>3274</a>        <span class="kw">let </span>client_secret_key = SecretKey::generate(<span class="kw-2">&amp;mut </span>rng);
+<a href=#3275 id=3275 data-nosnippet>3275</a>
+<a href=#3276 id=3276 data-nosnippet>3276</a>        <span class="comment">// First connection
+<a href=#3277 id=3277 data-nosnippet>3277</a>        </span>n0_future::time::timeout(
+<a href=#3278 id=3278 data-nosnippet>3278</a>            TIMEOUT,
+<a href=#3279 id=3279 data-nosnippet>3279</a>            connect(client_secret_key.clone(), server_addr.clone(), <span class="number">23</span>),
+<a href=#3280 id=3280 data-nosnippet>3280</a>        )
+<a href=#3281 id=3281 data-nosnippet>3281</a>        .<span class="kw">await
+<a href=#3282 id=3282 data-nosnippet>3282</a>        </span>.e()<span class="question-mark">??</span>;
+<a href=#3283 id=3283 data-nosnippet>3283</a>        <span class="macro">assert_eq!</span>(rx.recv().<span class="kw">await</span>.unwrap().unwrap(), <span class="number">23</span>);
+<a href=#3284 id=3284 data-nosnippet>3284</a>
+<a href=#3285 id=3285 data-nosnippet>3285</a>        <span class="comment">// Second connection
+<a href=#3286 id=3286 data-nosnippet>3286</a>        </span>n0_future::time::timeout(
+<a href=#3287 id=3287 data-nosnippet>3287</a>            TIMEOUT,
+<a href=#3288 id=3288 data-nosnippet>3288</a>            connect(client_secret_key.clone(), server_addr.clone(), <span class="number">24</span>),
+<a href=#3289 id=3289 data-nosnippet>3289</a>        )
+<a href=#3290 id=3290 data-nosnippet>3290</a>        .<span class="kw">await
+<a href=#3291 id=3291 data-nosnippet>3291</a>        </span>.e()<span class="question-mark">??</span>;
+<a href=#3292 id=3292 data-nosnippet>3292</a>        <span class="macro">assert_eq!</span>(rx.recv().<span class="kw">await</span>.unwrap().unwrap(), <span class="number">24</span>);
+<a href=#3293 id=3293 data-nosnippet>3293</a>        server_loop.abort();
+<a href=#3294 id=3294 data-nosnippet>3294</a>
+<a href=#3295 id=3295 data-nosnippet>3295</a>        <span class="prelude-val">Ok</span>(())
+<a href=#3296 id=3296 data-nosnippet>3296</a>    }
+<a href=#3297 id=3297 data-nosnippet>3297</a>}</code></pre></div></section></main></body></html>
