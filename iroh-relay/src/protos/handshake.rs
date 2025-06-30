@@ -9,10 +9,9 @@ use n0_future::{
     SinkExt, TryStreamExt,
 };
 use nested_enum_utils::common_fields;
-use quinn_proto::{coding::Codec, VarInt};
 #[cfg(feature = "server")]
 use rand::{CryptoRng, RngCore};
-use snafu::{Backtrace, ResultExt, Snafu};
+use snafu::{Backtrace, OptionExt, ResultExt, Snafu};
 
 use super::{relay::FrameType, send_recv::SendError, streams::BytesStreamSink};
 use crate::ExportKeyingMaterial;
@@ -319,13 +318,7 @@ async fn read_frame(
         .context(TimeoutSnafu)??
         .ok_or_else(|| UnexpectedEndSnafu.build())?;
 
-    // TODO(matheus23) restructure: use FrameType::from_bytes, perhaps always use `FrameType` instead
-    let mut cursor = std::io::Cursor::new(recv);
-    let var_int = VarInt::decode(&mut cursor)
-        .map_err(|quinn_proto::coding::UnexpectedEnd| UnexpectedEndSnafu.build())?;
-    let frame_type = u32::try_from(var_int.into_inner())
-        .ok()
-        .map_or(FrameType::Unknown, FrameType::from);
+    let (frame_type, payload) = FrameType::from_bytes(recv).context(UnexpectedEndSnafu)?;
     snafu::ensure!(
         expected_types.contains(&frame_type),
         UnexpectedFrameTypeSnafu {
@@ -333,9 +326,6 @@ async fn read_frame(
             expected_types: expected_types.into_iter().cloned().collect::<Vec<_>>()
         }
     );
-
-    let start = cursor.position() as usize;
-    let payload = cursor.into_inner().slice(start..);
 
     Ok((frame_type, payload))
 }

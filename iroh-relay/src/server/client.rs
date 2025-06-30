@@ -631,7 +631,7 @@ mod tests {
             data: Datagrams::from(&data[..]),
         };
         send_queue_s.send(packet.clone()).await.context("send")?;
-        let frame = recv_frame(FrameType::RecvPacket, &mut io_rw).await.e()?;
+        let frame = recv_frame(FrameType::RecvDatagrams, &mut io_rw).await.e()?;
         assert_eq!(
             frame,
             ServerToClientMsg::ReceivedDatagrams {
@@ -646,7 +646,7 @@ mod tests {
             .send(packet.clone())
             .await
             .context("send")?;
-        let frame = recv_frame(FrameType::RecvPacket, &mut io_rw).await.e()?;
+        let frame = recv_frame(FrameType::RecvDatagrams, &mut io_rw).await.e()?;
         assert_eq!(
             frame,
             ServerToClientMsg::ReceivedDatagrams {

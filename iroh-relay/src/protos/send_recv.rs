@@ -244,7 +244,7 @@ impl ServerToClientMsg {
     /// TODO(matheus23): docs
     pub fn typ(&self) -> FrameType {
         match self {
-            Self::ReceivedDatagrams { .. } => FrameType::RecvPacket,
+            Self::ReceivedDatagrams { .. } => FrameType::RecvDatagrams,
             Self::NodeGone { .. } => FrameType::NodeGone,
             Self::Ping { .. } => FrameType::Ping,
             Self::Pong { .. } => FrameType::Pong,
@@ -296,15 +296,15 @@ impl ServerToClientMsg {
     #[allow(clippy::result_large_err)]
     pub(crate) fn from_bytes(bytes: Bytes, cache: &KeyCache) -> Result<Self, RecvError> {
         let (frame_type, content) = FrameType::from_bytes(bytes).context(InvalidFrameSnafu)?;
-        let res = match frame_type {
-            FrameType::RecvPacket => {
-                snafu::ensure!(content.len() >= NodeId::LENGTH, InvalidFrameSnafu);
+        let frame_len = content.len();
+        snafu::ensure!(
+            frame_len <= MAX_PACKET_SIZE,
+            FrameTooLargeSnafu { frame_len }
+        );
 
-                let frame_len = content.len() - NodeId::LENGTH;
-                snafu::ensure!(
-                    frame_len <= MAX_PACKET_SIZE,
-                    FrameTooLargeSnafu { frame_len }
-                );
+        let res = match frame_type {
+            FrameType::RecvDatagrams => {
+                snafu::ensure!(content.len() >= NodeId::LENGTH, InvalidFrameSnafu);
 
                 let remote_node_id = cache.key_from_slice(&content[..NodeId::LENGTH])?;
                 let datagrams = Datagrams::from_bytes(content.slice(NodeId::LENGTH..))?;
@@ -334,7 +334,6 @@ impl ServerToClientMsg {
                 let problem = std::str::from_utf8(&content)
                     .context(InvalidProtocolMessageEncodingSnafu)?
                     .to_owned();
-                // TODO(matheus23): Actually encode/decode the option
                 Self::Health { problem }
             }
             FrameType::Restarting => {
@@ -367,7 +366,7 @@ impl ServerToClientMsg {
 impl ClientToServerMsg {
     pub(crate) fn typ(&self) -> FrameType {
         match self {
-            Self::SendDatagrams { .. } => FrameType::SendPacket,
+            Self::SendDatagrams { .. } => FrameType::SendDatagrams,
             Self::Ping { .. } => FrameType::Ping,
             Self::Pong { .. } => FrameType::Pong,
         }
@@ -403,16 +402,14 @@ impl ClientToServerMsg {
     #[cfg(feature = "server")]
     pub(crate) fn from_bytes(bytes: Bytes, cache: &KeyCache) -> Result<Self, RecvError> {
         let (frame_type, content) = FrameType::from_bytes(bytes).context(InvalidFrameSnafu)?;
-        let res = match frame_type {
-            FrameType::SendPacket => {
-                if content.len() < NodeId::LENGTH {
-                    return Err(InvalidFrameSnafu.build());
-                }
-                let frame_len = content.len() - NodeId::LENGTH;
-                if frame_len > MAX_PACKET_SIZE {
-                    return Err(FrameTooLargeSnafu { frame_len }.build());
-                }
+        let frame_len = content.len();
+        snafu::ensure!(
+            frame_len <= MAX_PACKET_SIZE,
+            FrameTooLargeSnafu { frame_len }
+        );
 
+        let res = match frame_type {
+            FrameType::SendDatagrams => {
                 let dst_node_id = cache.key_from_slice(&content[..NodeId::LENGTH])?;
                 let datagrams = Datagrams::from_bytes(content.slice(NodeId::LENGTH..))?;
                 Self::SendDatagrams {
@@ -421,17 +418,13 @@ impl ClientToServerMsg {
                 }
             }
             FrameType::Ping => {
-                if content.len() != 8 {
-                    return Err(InvalidFrameSnafu.build());
-                }
+                snafu::ensure!(content.len() == 8, InvalidFrameSnafu);
                 let mut data = [0u8; 8];
                 data.copy_from_slice(&content[..8]);
                 Self::Ping(data)
             }
             FrameType::Pong => {
-                if content.len() != 8 {
-                    return Err(InvalidFrameSnafu.build());
-                }
+                snafu::ensure!(content.len() == 8, InvalidFrameSnafu);
                 let mut data = [0u8; 8];
                 data.copy_from_slice(&content[..8]);
                 Self::Pong(data)

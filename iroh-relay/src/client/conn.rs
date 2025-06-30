@@ -26,7 +26,7 @@ use crate::{
         handshake,
         send_recv::{
             ClientToServerMsg, RecvError as RecvRelayError, SendError as SendRelayError,
-            ServerToClientMsg,
+            ServerToClientMsg, MAX_PAYLOAD_SIZE,
         },
     },
     MAX_PACKET_SIZE,
@@ -200,18 +200,15 @@ impl Sink<ClientToServerMsg> for Conn {
     }
 
     fn start_send(mut self: Pin<&mut Self>, frame: ClientToServerMsg) -> Result<(), Self::Error> {
-        // TODO(matheus23): Check this in send message construction instead (and also check this in RecvPacket construction)
         if let ClientToServerMsg::SendDatagrams { datagrams, .. } = &frame {
             let size = datagrams.contents.len();
-            snafu::ensure!(size <= MAX_PACKET_SIZE, ExceedsMaxPacketSizeSnafu { size });
+            snafu::ensure!(size <= MAX_PAYLOAD_SIZE, ExceedsMaxPacketSizeSnafu { size });
         }
 
         #[cfg(not(wasm_browser))]
-        let frame = tokio_websockets::Message::binary({
-            let mut buf = BytesMut::new();
-            frame.write_to(&mut buf);
-            tokio_websockets::Payload::from(buf.freeze())
-        });
+        let frame = tokio_websockets::Message::binary(tokio_websockets::Payload::from(
+            frame.write_to(BytesMut::new()).freeze(),
+        ));
         #[cfg(wasm_browser)]
         let frame = ws_stream_wasm::WsMessage::Binary(frame.write_to(Vec::new()));
 
