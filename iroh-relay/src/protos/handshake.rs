@@ -101,7 +101,12 @@ impl Frame for ServerDeniesAuth {
 #[non_exhaustive]
 pub enum Error {
     #[snafu(transparent)]
-    Websocket { source: tokio_websockets::Error },
+    Websocket {
+        #[cfg(not(wasm_browser))]
+        source: tokio_websockets::Error,
+        #[cfg(wasm_browser)]
+        source: ws_stream_wasm::WsErr,
+    },
     #[snafu(transparent)]
     Legacy { source: SendError },
     #[snafu(display("Handshake timeout reached"))]

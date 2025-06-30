@@ -288,7 +288,7 @@ impl ClientBuilder {
 
     /// Establishes a new connection to the relay server.
     #[cfg(wasm_browser)]
-    async fn connect(&self) -> Result<Client, ConnectError> {
+    pub async fn connect(&self) -> Result<Client, ConnectError> {
         let mut dial_url = (*self.url).clone();
         dial_url.set_path(RELAY_PATH);
         // The relay URL is exchanged with the http(s) scheme in tickets and similar.
@@ -309,8 +309,7 @@ impl ClientBuilder {
         debug!(%dial_url, "Dialing relay by websocket");
 
         let (_, ws_stream) = ws_stream_wasm::WsMeta::connect(dial_url.as_str(), None).await?;
-        let conn =
-            Conn::new_ws_browser(ws_stream, self.key_cache.clone(), &self.secret_key).await?;
+        let conn = Conn::new(ws_stream, self.key_cache.clone(), &self.secret_key).await?;
 
         event!(
             target: "events.net.relay.connected",

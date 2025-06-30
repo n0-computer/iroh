@@ -10,20 +10,23 @@ use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::ExportKeyingMaterial;
 
+#[cfg(not(wasm_browser))]
 #[derive(derive_more::Debug)]
 pub(crate) struct WsBytesFramed<T> {
-    #[cfg(not(wasm_browser))]
     #[debug("WebSocketStream<T>")]
     pub(crate) io: tokio_websockets::WebSocketStream<T>,
-    #[cfg(wasm_browser)]
+}
+
+#[cfg(wasm_browser)]
+#[derive(derive_more::Debug)]
+pub(crate) struct WsBytesFramed {
     #[debug("WebSocketStream")]
     pub(crate) io: ws_stream_wasm::WsStream,
-    #[cfg(wasm_browser)]
-    _data: PhantomData<T>,
 }
 
 #[cfg(not(wasm_browser))]
 type StreamError = tokio_websockets::Error;
+
 #[cfg(wasm_browser)]
 type StreamError = ws_stream_wasm::WsErr;
 
@@ -38,20 +41,10 @@ impl<T> BytesStreamSink for T where
 {
 }
 
+#[cfg(not(wasm_browser))]
 impl<IO: ExportKeyingMaterial + AsyncRead + AsyncWrite + Unpin> ExportKeyingMaterial
     for WsBytesFramed<IO>
 {
-    #[cfg(wasm_browser)]
-    fn export_keying_material<T: AsMut<[u8]>>(
-        &self,
-        output: T,
-        label: &[u8],
-        context: Option<&[u8]>,
-    ) -> Option<T> {
-        None
-    }
-
-    #[cfg(not(wasm_browser))]
     fn export_keying_material<T: AsMut<[u8]>>(
         &self,
         output: T,
@@ -64,6 +57,19 @@ impl<IO: ExportKeyingMaterial + AsyncRead + AsyncWrite + Unpin> ExportKeyingMate
     }
 }
 
+#[cfg(wasm_browser)]
+impl ExportKeyingMaterial for WsBytesFramed {
+    fn export_keying_material<T: AsMut<[u8]>>(
+        &self,
+        _output: T,
+        _label: &[u8],
+        _context: Option<&[u8]>,
+    ) -> Option<T> {
+        None
+    }
+}
+
+#[cfg(not(wasm_browser))]
 impl<T: AsyncRead + AsyncWrite + Unpin> Stream for WsBytesFramed<T> {
     type Item = Result<Bytes, StreamError>;
 
@@ -95,13 +101,53 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Stream for WsBytesFramed<T> {
     }
 }
 
+#[cfg(wasm_browser)]
+impl Stream for WsBytesFramed {
+    type Item = Result<Bytes, StreamError>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        loop {
+            match ready!(Pin::new(&mut self.io).poll_next(cx)) {
+                None => return Poll::Ready(None),
+                Some(ws_stream_wasm::WsMessage::Binary(msg)) => {
+                    return Poll::Ready(Some(Ok(msg.into())))
+                }
+                Some(msg) => {
+                    tracing::warn!(?msg, "Got websocket message of unsupported type, skipping.");
+                    continue;
+                }
+            }
+        }
+    }
+}
+
+#[cfg(not(wasm_browser))]
 impl<T: AsyncRead + AsyncWrite + Unpin> Sink<Bytes> for WsBytesFramed<T> {
     type Error = StreamError;
 
     fn start_send(mut self: Pin<&mut Self>, bytes: Bytes) -> Result<(), Self::Error> {
-        #[cfg(not(wasm_browser))]
         let msg = tokio_websockets::Message::binary(tokio_websockets::Payload::from(bytes));
-        #[cfg(wasm_browser)]
+        Pin::new(&mut self.io).start_send(msg).map_err(Into::into)
+    }
+
+    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Pin::new(&mut self.io).poll_ready(cx).map_err(Into::into)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Pin::new(&mut self.io).poll_flush(cx).map_err(Into::into)
+    }
+
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Pin::new(&mut self.io).poll_close(cx).map_err(Into::into)
+    }
+}
+
+#[cfg(wasm_browser)]
+impl Sink<Bytes> for WsBytesFramed {
+    type Error = StreamError;
+
+    fn start_send(mut self: Pin<&mut Self>, bytes: Bytes) -> Result<(), Self::Error> {
         let msg = ws_stream_wasm::WsMessage::Binary(bytes.to_vec());
         Pin::new(&mut self.io).start_send(msg).map_err(Into::into)
     }

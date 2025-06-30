@@ -8,6 +8,7 @@ use std::{
     task::{ready, Context, Poll},
 };
 
+#[cfg(not(wasm_browser))]
 use bytes::BytesMut;
 use iroh_base::SecretKey;
 use n0_future::{Sink, Stream};
@@ -17,10 +18,7 @@ use tracing::debug;
 
 use super::KeyCache;
 #[cfg(not(wasm_browser))]
-use crate::{
-    client::streams::{MaybeTlsStream, ProxyStream},
-    protos::streams::WsBytesFramed,
-};
+use crate::client::streams::{MaybeTlsStream, ProxyStream};
 use crate::{
     protos::{
         handshake,
@@ -28,6 +26,7 @@ use crate::{
             ClientToServerMsg, RecvError as RecvRelayError, SendError as SendRelayError,
             ServerToClientMsg, MAX_PAYLOAD_SIZE,
         },
+        streams::WsBytesFramed,
     },
     MAX_PACKET_SIZE,
 };
@@ -119,6 +118,8 @@ impl Conn {
         key_cache: KeyCache,
         secret_key: &SecretKey,
     ) -> Result<Self, handshake::Error> {
+        // We use a phantom type param of ProxyStream for wrapping, just because it's easier to cfg-out code for wasm.
+        // It's a little ugly though.
         let mut io = WsBytesFramed { io: conn };
 
         // exchange information with the server
@@ -177,10 +178,10 @@ impl Stream for Conn {
             Some(Err(e)) => Poll::Ready(Some(Err(e.into()))),
 
             #[cfg(wasm_browser)]
-            Some(ws_stream_wasm::WsMessage::Binary(vec)) => {
-                let frame = Frame::decode_from_ws_msg(Bytes::from(vec), &self.key_cache)?;
-                Poll::Ready(Some(ReceivedMessage::try_from(frame)))
-            }
+            Some(ws_stream_wasm::WsMessage::Binary(vec)) => Poll::Ready(Some(
+                ServerToClientMsg::from_bytes(bytes::Bytes::from(vec), &self.key_cache)
+                    .map_err(Into::into),
+            )),
             #[cfg(wasm_browser)]
             Some(msg) => {
                 tracing::warn!(?msg, "Got websocket message of unsupported type, skipping.");
