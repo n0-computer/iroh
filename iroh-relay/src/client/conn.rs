@@ -201,8 +201,8 @@ impl Sink<ClientToServerMsg> for Conn {
 
     fn start_send(mut self: Pin<&mut Self>, frame: ClientToServerMsg) -> Result<(), Self::Error> {
         // TODO(matheus23): Check this in send message construction instead (and also check this in RecvPacket construction)
-        if let ClientToServerMsg::SendPacket { packet, .. } = &frame {
-            let size = packet.len();
+        if let ClientToServerMsg::SendDatagrams { datagrams, .. } = &frame {
+            let size = datagrams.contents.len();
             snafu::ensure!(size <= MAX_PACKET_SIZE, ExceedsMaxPacketSizeSnafu { size });
         }
 

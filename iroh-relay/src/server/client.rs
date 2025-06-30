@@ -2,7 +2,6 @@
 
 use std::{collections::HashSet, sync::Arc, time::Duration};
 
-use bytes::Bytes;
 use iroh_base::NodeId;
 use n0_future::{SinkExt, StreamExt};
 use nested_enum_utils::common_fields;
@@ -20,8 +19,8 @@ use crate::{
     protos::{
         disco,
         send_recv::{
-            write_frame, ClientToServerMsg, SendError as SendRelayError, ServerToClientMsg,
-            PING_INTERVAL,
+            write_frame, ClientToServerMsg, Datagrams, SendError as SendRelayError,
+            ServerToClientMsg, PING_INTERVAL,
         },
     },
     server::{
@@ -38,7 +37,7 @@ pub(super) struct Packet {
     /// The sender of the packet
     src: NodeId,
     /// The data packet bytes.
-    data: Bytes,
+    data: Datagrams,
 }
 
 /// Configuration for a [`Client`].
@@ -153,7 +152,7 @@ impl Client {
     pub(super) fn try_send_packet(
         &self,
         src: NodeId,
-        data: Bytes,
+        data: Datagrams,
     ) -> Result<(), TrySendError<Packet>> {
         self.send_queue.try_send(Packet { src, data })
     }
@@ -161,7 +160,7 @@ impl Client {
     pub(super) fn try_send_disco_packet(
         &self,
         src: NodeId,
-        data: Bytes,
+        data: Datagrams,
     ) -> Result<(), TrySendError<Packet>> {
         self.disco_send_queue.try_send(Packet { src, data })
     }
@@ -396,15 +395,15 @@ impl Actor {
     /// Errors if the send does not happen within the `timeout` duration
     /// Does not flush.
     async fn send_raw(&mut self, packet: Packet) -> Result<(), SendRelayError> {
-        let src_key = packet.src;
-        let content = packet.data;
+        let remote_node_id = packet.src;
+        let datagrams = packet.data;
 
-        if let Ok(len) = content.len().try_into() {
+        if let Ok(len) = datagrams.contents.len().try_into() {
             self.metrics.bytes_sent.inc_by(len);
         }
-        self.write_frame(ServerToClientMsg::ReceivedPacket {
-            remote_node_id: src_key,
-            data: content,
+        self.write_frame(ServerToClientMsg::ReceivedDatagrams {
+            remote_node_id,
+            datagrams,
         })
         .await
     }
@@ -449,10 +448,13 @@ impl Actor {
         };
 
         match frame {
-            ClientToServerMsg::SendPacket { dst_key, packet } => {
-                let packet_len = packet.len();
+            ClientToServerMsg::SendDatagrams {
+                dst_node_id: dst_key,
+                datagrams,
+            } => {
+                let packet_len = datagrams.contents.len();
                 if let Err(err @ ForwardPacketError { .. }) =
-                    self.handle_frame_send_packet(dst_key, packet)
+                    self.handle_frame_send_packet(dst_key, datagrams)
                 {
                     warn!("failed to handle send packet frame: {err:#}");
                 }
@@ -471,8 +473,12 @@ impl Actor {
         Ok(())
     }
 
-    fn handle_frame_send_packet(&self, dst: NodeId, data: Bytes) -> Result<(), ForwardPacketError> {
-        if disco::looks_like_disco_wrapper(&data) {
+    fn handle_frame_send_packet(
+        &self,
+        dst: NodeId,
+        data: Datagrams,
+    ) -> Result<(), ForwardPacketError> {
+        if disco::looks_like_disco_wrapper(&data.contents) {
             self.metrics.disco_packets_recv.inc();
             self.clients
                 .send_disco_packet(dst, data, self.node_id, &self.metrics)?;
@@ -549,7 +555,7 @@ impl ClientCounter {
 
 #[cfg(test)]
 mod tests {
-    use bytes::{Bytes, BytesMut};
+    use bytes::BytesMut;
     use iroh_base::SecretKey;
     use n0_future::Stream;
     use n0_snafu::{Result, ResultExt};
@@ -622,15 +628,15 @@ mod tests {
         println!("  send packet");
         let packet = Packet {
             src: node_id,
-            data: Bytes::from(&data[..]),
+            data: Datagrams::from(&data[..]),
         };
         send_queue_s.send(packet.clone()).await.context("send")?;
         let frame = recv_frame(FrameType::RecvPacket, &mut io_rw).await.e()?;
         assert_eq!(
             frame,
-            ServerToClientMsg::ReceivedPacket {
+            ServerToClientMsg::ReceivedDatagrams {
                 remote_node_id: node_id,
-                data: data.to_vec().into()
+                datagrams: data.to_vec().into()
             }
         );
 
@@ -643,9 +649,9 @@ mod tests {
         let frame = recv_frame(FrameType::RecvPacket, &mut io_rw).await.e()?;
         assert_eq!(
             frame,
-            ServerToClientMsg::ReceivedPacket {
+            ServerToClientMsg::ReceivedDatagrams {
                 remote_node_id: node_id,
-                data: data.to_vec().into()
+                datagrams: data.to_vec().into()
             }
         );
 
@@ -673,9 +679,9 @@ mod tests {
         println!("  send packet");
         let data = b"hello world!";
         io_rw
-            .send(ClientToServerMsg::SendPacket {
-                dst_key: target,
-                packet: Bytes::from_static(data),
+            .send(ClientToServerMsg::SendDatagrams {
+                dst_node_id: target,
+                datagrams: Datagrams::from(data),
             })
             .await
             .context("send")?;
@@ -687,9 +693,9 @@ mod tests {
         disco_data.extend_from_slice(target.as_bytes());
         disco_data.extend_from_slice(data);
         io_rw
-            .send(ClientToServerMsg::SendPacket {
-                dst_key: target,
-                packet: disco_data.clone().into(),
+            .send(ClientToServerMsg::SendDatagrams {
+                dst_node_id: target,
+                datagrams: disco_data.clone().into(),
             })
             .await
             .context("send")?;
@@ -712,11 +718,11 @@ mod tests {
         let mut stream = RelayedStream::test_limited(io_read, LIMIT / 10, LIMIT);
 
         // Prepare a frame to send, assert its size.
-        let data = Bytes::from_static(b"hello world!1eins");
+        let data = Datagrams::from(b"hello world!1eins");
         let target = SecretKey::generate(rand::thread_rng()).public();
-        let frame = ClientToServerMsg::SendPacket {
-            dst_key: target,
-            packet: data.clone(),
+        let frame = ClientToServerMsg::SendDatagrams {
+            dst_node_id: target,
+            datagrams: data.clone(),
         };
         let frame_len = frame.clone().write_to(BytesMut::new()).freeze().len();
         assert_eq!(frame_len, LIMIT as usize);

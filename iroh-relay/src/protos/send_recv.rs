@@ -121,12 +121,11 @@ pub(crate) async fn write_frame<S: Sink<ServerToClientMsg, Error = std::io::Erro
 #[derive(derive_more::Debug, Clone, PartialEq, Eq)]
 pub enum ServerToClientMsg {
     /// Represents an incoming packet.
-    ReceivedPacket {
+    ReceivedDatagrams {
         /// The [`NodeId`] of the packet sender.
         remote_node_id: NodeId,
-        /// The received packet bytes.
-        #[debug(skip)]
-        data: Bytes,
+        /// The datagrams and related metadata we received
+        datagrams: Datagrams,
     },
     /// Indicates that the client identified by the underlying public key had previously sent you a
     /// packet but has now disconnected from the server.
@@ -170,19 +169,76 @@ pub enum ClientToServerMsg {
     /// TODO
     Pong([u8; 8]),
     /// TODO
-    SendPacket {
+    SendDatagrams {
         /// TODO
-        dst_key: NodeId,
+        dst_node_id: NodeId,
         /// TODO
-        packet: Bytes,
+        datagrams: Datagrams,
     },
+}
+
+/// TODO(matheus23): Docs
+#[derive(derive_more::Debug, Clone, PartialEq, Eq)]
+pub struct Datagrams {
+    /// Explicit congestion notification bits
+    pub ecn: Option<quinn_proto::EcnCodepoint>,
+    /// The segment size if this transmission contains multiple datagrams.
+    /// This is `None` if the transmit only contains a single datagram
+    pub segment_size: Option<u16>,
+    /// The contents of the datagram(s)
+    #[debug(skip)]
+    pub contents: Bytes,
+}
+
+impl<T: AsRef<[u8]>> From<T> for Datagrams {
+    fn from(bytes: T) -> Self {
+        Self {
+            ecn: None,
+            segment_size: None,
+            contents: Bytes::copy_from_slice(bytes.as_ref()),
+        }
+    }
+}
+
+impl Datagrams {
+    fn write_to<O: BufMut>(&self, mut dst: O) -> O {
+        let ecn = self.ecn.map_or(0, |ecn| ecn as u8);
+        let segment_size = self.segment_size.unwrap_or_default();
+        dst.put_u8(ecn);
+        dst.put_u16(segment_size);
+        dst.put(self.contents.as_ref());
+        dst
+    }
+
+    fn from_bytes(bytes: Bytes) -> Result<Self, RecvError> {
+        // 1 bytes ECN, 2 bytes segment size
+        snafu::ensure!(bytes.len() > 3, InvalidFrameSnafu);
+
+        let ecn_byte = bytes[0];
+        let ecn = quinn_proto::EcnCodepoint::from_bits(ecn_byte);
+
+        let segment_size = u16::from_be_bytes(bytes[1..3].try_into().expect("length checked"));
+        let segment_size = if segment_size == 0 {
+            None
+        } else {
+            Some(segment_size)
+        };
+
+        let contents = bytes.slice(3..);
+
+        Ok(Self {
+            ecn,
+            segment_size,
+            contents,
+        })
+    }
 }
 
 impl ServerToClientMsg {
     /// TODO(matheus23): docs
     pub fn typ(&self) -> FrameType {
         match self {
-            Self::ReceivedPacket { .. } => FrameType::RecvPacket,
+            Self::ReceivedDatagrams { .. } => FrameType::RecvPacket,
             Self::NodeGone { .. } => FrameType::NodeGone,
             Self::Ping { .. } => FrameType::Ping,
             Self::Pong { .. } => FrameType::Pong,
@@ -198,12 +254,12 @@ impl ServerToClientMsg {
     pub(crate) fn write_to<O: BufMut>(&self, mut dst: O) -> O {
         dst = self.typ().write_to(dst);
         match self {
-            Self::ReceivedPacket {
-                remote_node_id: src_key,
-                data: content,
+            Self::ReceivedDatagrams {
+                remote_node_id,
+                datagrams,
             } => {
-                dst.put(src_key.as_ref());
-                dst.put(content.as_ref());
+                dst.put(remote_node_id.as_ref());
+                dst = datagrams.write_to(dst);
             }
             Self::NodeGone(node_id) => {
                 dst.put(node_id.as_ref());
@@ -236,41 +292,34 @@ impl ServerToClientMsg {
         let (frame_type, content) = FrameType::from_bytes(bytes).context(InvalidFrameSnafu)?;
         let res = match frame_type {
             FrameType::RecvPacket => {
-                if content.len() < NodeId::LENGTH {
-                    return Err(InvalidFrameSnafu.build());
-                }
+                snafu::ensure!(content.len() >= NodeId::LENGTH, InvalidFrameSnafu);
 
                 let frame_len = content.len() - NodeId::LENGTH;
-                if frame_len > MAX_PACKET_SIZE {
-                    return Err(FrameTooLargeSnafu { frame_len }.build());
-                }
+                snafu::ensure!(
+                    frame_len <= MAX_PACKET_SIZE,
+                    FrameTooLargeSnafu { frame_len }
+                );
 
-                let src_key = cache.key_from_slice(&content[..NodeId::LENGTH])?;
-                let content = content.slice(NodeId::LENGTH..);
-                Self::ReceivedPacket {
-                    remote_node_id: src_key,
-                    data: content,
+                let remote_node_id = cache.key_from_slice(&content[..NodeId::LENGTH])?;
+                let datagrams = Datagrams::from_bytes(content.slice(NodeId::LENGTH..))?;
+                Self::ReceivedDatagrams {
+                    remote_node_id,
+                    datagrams,
                 }
             }
             FrameType::NodeGone => {
-                if content.len() != NodeId::LENGTH {
-                    return Err(InvalidFrameSnafu.build());
-                }
-                let node_id = cache.key_from_slice(&content[..32])?;
+                snafu::ensure!(content.len() == NodeId::LENGTH, InvalidFrameSnafu);
+                let node_id = cache.key_from_slice(content.as_ref())?;
                 Self::NodeGone(node_id)
             }
             FrameType::Ping => {
-                if content.len() != 8 {
-                    return Err(InvalidFrameSnafu.build());
-                }
+                snafu::ensure!(content.len() == 8, InvalidFrameSnafu);
                 let mut data = [0u8; 8];
                 data.copy_from_slice(&content[..8]);
                 Self::Ping(data)
             }
             FrameType::Pong => {
-                if content.len() != 8 {
-                    return Err(InvalidFrameSnafu.build());
-                }
+                snafu::ensure!(content.len() == 8, InvalidFrameSnafu);
                 let mut data = [0u8; 8];
                 data.copy_from_slice(&content[..8]);
                 Self::Pong(data)
@@ -283,9 +332,7 @@ impl ServerToClientMsg {
                 Self::Health { problem }
             }
             FrameType::Restarting => {
-                if content.len() != 4 + 4 {
-                    return Err(InvalidFrameSnafu.build());
-                }
+                snafu::ensure!(content.len() == 4 + 4, InvalidFrameSnafu);
                 let reconnect_in = u32::from_be_bytes(
                     content[..4]
                         .try_into()
@@ -314,7 +361,7 @@ impl ServerToClientMsg {
 impl ClientToServerMsg {
     pub(crate) fn typ(&self) -> FrameType {
         match self {
-            Self::SendPacket { .. } => FrameType::SendPacket,
+            Self::SendDatagrams { .. } => FrameType::SendPacket,
             Self::Ping { .. } => FrameType::Ping,
             Self::Pong { .. } => FrameType::Pong,
         }
@@ -326,9 +373,12 @@ impl ClientToServerMsg {
     pub(crate) fn write_to<O: BufMut>(&self, mut dst: O) -> O {
         dst = self.typ().write_to(dst);
         match self {
-            Self::SendPacket { dst_key, packet } => {
-                dst.put(dst_key.as_ref());
-                dst.put(packet.as_ref());
+            Self::SendDatagrams {
+                dst_node_id,
+                datagrams,
+            } => {
+                dst.put(dst_node_id.as_ref());
+                dst = datagrams.write_to(dst);
             }
             Self::Ping(data) => {
                 dst.put(&data[..]);
@@ -357,9 +407,12 @@ impl ClientToServerMsg {
                     return Err(FrameTooLargeSnafu { frame_len }.build());
                 }
 
-                let dst_key = cache.key_from_slice(&content[..NodeId::LENGTH])?;
-                let packet = content.slice(NodeId::LENGTH..);
-                Self::SendPacket { dst_key, packet }
+                let dst_node_id = cache.key_from_slice(&content[..NodeId::LENGTH])?;
+                let datagrams = Datagrams::from_bytes(content.slice(NodeId::LENGTH..))?;
+                Self::SendDatagrams {
+                    dst_node_id,
+                    datagrams,
+                }
             }
             FrameType::Ping => {
                 if content.len() != 8 {
@@ -438,9 +491,13 @@ mod tests {
                 "10 2a 2a 2a 2a 2a 2a 2a 2a",
             ),
             (
-                ServerToClientMsg::ReceivedPacket {
+                ServerToClientMsg::ReceivedDatagrams {
                     remote_node_id: client_key.public(),
-                    data: "Hello World!".into(),
+                    datagrams: Datagrams {
+                        ecn: Some(quinn::EcnCodepoint::Ce),
+                        segment_size: Some(6),
+                        contents: "Hello World!".into(),
+                    },
                 }
                 .write_to(Vec::new()),
                 "0b 19 7f 6b 23 e1 6c 85 32 c6 ab c8 38 fa cd 5e
@@ -474,9 +531,13 @@ mod tests {
                 "10 2a 2a 2a 2a 2a 2a 2a 2a",
             ),
             (
-                ClientToServerMsg::SendPacket {
-                    dst_key: client_key.public(),
-                    packet: "Goodbye!".into(),
+                ClientToServerMsg::SendDatagrams {
+                    dst_node_id: client_key.public(),
+                    datagrams: Datagrams {
+                        ecn: Some(quinn::EcnCodepoint::Ce),
+                        segment_size: Some(6),
+                        contents: "Hello World!".into(),
+                    },
                 }
                 .write_to(Vec::new()),
                 "0a 19 7f 6b 23 e1 6c 85 32 c6 ab c8 38 fa cd 5e
@@ -511,13 +572,18 @@ mod proptests {
         prop::collection::vec(any::<u8>(), 0..len).prop_map(Bytes::from)
     }
 
+    fn datagrams(data: impl Strategy<Value = Bytes>) -> impl Strategy<Value = Datagrams> {
+        data.prop_map(|_content| todo!())
+    }
+
     /// Generates a random valid frame
     fn server_client_frame() -> impl Strategy<Value = ServerToClientMsg> {
-        let recv_packet =
-            (key(), data(32)).prop_map(|(src_key, content)| ServerToClientMsg::ReceivedPacket {
-                remote_node_id: src_key,
-                data: content,
-            });
+        let recv_packet = (key(), datagrams(data(32))).prop_map(|(remote_node_id, datagrams)| {
+            ServerToClientMsg::ReceivedDatagrams {
+                remote_node_id,
+                datagrams,
+            }
+        });
         let node_gone = key().prop_map(|node_id| ServerToClientMsg::NodeGone(node_id));
         let ping = prop::array::uniform8(any::<u8>()).prop_map(ServerToClientMsg::Ping);
         let pong = prop::array::uniform8(any::<u8>()).prop_map(ServerToClientMsg::Pong);
@@ -535,8 +601,12 @@ mod proptests {
     }
 
     fn client_server_frame() -> impl Strategy<Value = ClientToServerMsg> {
-        let send_packet = (key(), data(32))
-            .prop_map(|(dst_key, packet)| ClientToServerMsg::SendPacket { dst_key, packet });
+        let send_packet = (key(), datagrams(data(32))).prop_map(|(dst_node_id, datagrams)| {
+            ClientToServerMsg::SendDatagrams {
+                dst_node_id,
+                datagrams,
+            }
+        });
         let ping = prop::array::uniform8(any::<u8>()).prop_map(ClientToServerMsg::Ping);
         let pong = prop::array::uniform8(any::<u8>()).prop_map(ClientToServerMsg::Pong);
         prop_oneof![send_packet, ping, pong]

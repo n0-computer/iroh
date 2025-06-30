@@ -18,9 +18,9 @@ pub enum FrameType {
     ServerConfirmsAuth = 4,
     /// The server frame type for authentication denial
     ServerDeniesAuth = 5,
-    /// 32B dest pub key + packet bytes
+    /// 32B dest pub key + packet bytes TODO(matheus23): Fix docs
     SendPacket = 10,
-    /// v0/1 packet bytes, v2: 32B src pub key + packet bytes
+    /// v0/1 packet bytes, v2: 32B src pub key + packet bytes TODO(matheus23): Fix docs
     RecvPacket = 11,
     /// no payload, no-op (to be replaced with ping/pong)
     KeepAlive = 12,

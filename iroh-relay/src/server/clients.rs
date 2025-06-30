@@ -9,16 +9,18 @@ use std::{
     },
 };
 
-use bytes::Bytes;
 use dashmap::DashMap;
 use iroh_base::NodeId;
 use tokio::sync::mpsc::error::TrySendError;
 use tracing::{debug, trace};
 
 use super::client::{Client, Config, ForwardPacketError};
-use crate::server::{
-    client::{PacketScope, SendError},
-    metrics::Metrics,
+use crate::{
+    protos::send_recv::Datagrams,
+    server::{
+        client::{PacketScope, SendError},
+        metrics::Metrics,
+    },
 };
 
 /// Manages the connections to all currently connected clients.
@@ -108,7 +110,7 @@ impl Clients {
     pub(super) fn send_packet(
         &self,
         dst: NodeId,
-        data: Bytes,
+        data: Datagrams,
         src: NodeId,
         metrics: &Metrics,
     ) -> Result<(), ForwardPacketError> {
@@ -148,7 +150,7 @@ impl Clients {
     pub(super) fn send_disco_packet(
         &self,
         dst: NodeId,
-        data: Bytes,
+        data: Datagrams,
         src: NodeId,
         metrics: &Metrics,
     ) -> Result<(), ForwardPacketError> {
@@ -192,7 +194,6 @@ impl Clients {
 mod tests {
     use std::time::Duration;
 
-    use bytes::Bytes;
     use iroh_base::SecretKey;
     use n0_future::{Stream, StreamExt};
     use n0_snafu::{Result, ResultExt};
@@ -253,24 +254,24 @@ mod tests {
 
         // send packet
         let data = b"hello world!";
-        clients.send_packet(a_key, Bytes::from(&data[..]), b_key, &metrics)?;
+        clients.send_packet(a_key, Datagrams::from(&data[..]), b_key, &metrics)?;
         let frame = recv_frame(FrameType::RecvPacket, &mut a_rw).await?;
         assert_eq!(
             frame,
-            ServerToClientMsg::ReceivedPacket {
+            ServerToClientMsg::ReceivedDatagrams {
                 remote_node_id: b_key,
-                data: data.to_vec().into(),
+                datagrams: data.to_vec().into(),
             }
         );
 
         // send disco packet
-        clients.send_disco_packet(a_key, Bytes::from(&data[..]), b_key, &metrics)?;
+        clients.send_disco_packet(a_key, Datagrams::from(&data[..]), b_key, &metrics)?;
         let frame = recv_frame(FrameType::RecvPacket, &mut a_rw).await?;
         assert_eq!(
             frame,
-            ServerToClientMsg::ReceivedPacket {
+            ServerToClientMsg::ReceivedDatagrams {
                 remote_node_id: b_key,
-                data: data.to_vec().into(),
+                datagrams: data.to_vec().into(),
             }
         );
 
