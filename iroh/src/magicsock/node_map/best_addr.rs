@@ -121,11 +121,19 @@ impl BestAddr {
             }
             Some(state) => {
                 let candidate = AddrLatency { addr, latency };
+                // If the current address has exceeded its trust interval, or if the new address has lower latency,
+                // use the new address.
                 if !state.is_trusted(confirmed_at) || candidate.is_better_than(&state.addr) {
                     self.insert(addr, latency, source, confirmed_at);
+                // If the new address is equal to the current address, mark it as reconfirmed now and expand its trust
+                // interval.
                 } else if state.addr.addr == addr {
                     state.confirmed_at = confirmed_at;
                     state.trust_until = Some(source.trust_until(confirmed_at));
+                // If we receive a pong on a different port but the same IP address as the current best addr,
+                // we assume that the endpoint has rebound, and thus use the new port.
+                } else if state.addr.addr.ip() == addr.ip() {
+                    self.insert(addr, latency, source, confirmed_at)
                 }
             }
         }
