@@ -718,7 +718,7 @@ mod tests {
         let mut stream = RelayedStream::test_limited(io_read, LIMIT / 10, LIMIT);
 
         // Prepare a frame to send, assert its size.
-        let data = Datagrams::from(b"hello world!1eins");
+        let data = Datagrams::from(b"hello world!!1");
         let target = SecretKey::generate(rand::thread_rng()).public();
         let frame = ClientToServerMsg::SendDatagrams {
             dst_node_id: target,

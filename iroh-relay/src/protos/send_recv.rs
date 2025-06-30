@@ -28,6 +28,12 @@ use crate::KeyCache;
 /// including its on-wire framing overhead)
 pub const MAX_PACKET_SIZE: usize = 64 * 1024;
 
+/// Maximum size a datagram payload is allowed to be.
+///
+/// This is [`MAX_PACKET_SIZE`] minus the length of an encoded public key minus 3 bytes,
+/// one for ECN, and two for the segment size.
+pub const MAX_PAYLOAD_SIZE: usize = MAX_PACKET_SIZE - NodeId::LENGTH - 3;
+
 /// The maximum frame size.
 ///
 /// This is also the minimum burst size that a rate-limiter has to accept.
@@ -500,9 +506,18 @@ mod tests {
                     },
                 }
                 .write_to(Vec::new()),
-                "0b 19 7f 6b 23 e1 6c 85 32 c6 ab c8 38 fa cd 5e
-                a7 89 be 0c 76 b2 92 03 34 03 9b fa 8b 3d 36 8d
-                61 48 65 6c 6c 6f 20 57 6f 72 6c 64 21",
+                // frame type
+                // public key first 16 bytes
+                // public key second 16 bytes
+                // ECN byte
+                // segment size
+                // hello world contents bytes
+                "0b
+                19 7f 6b 23 e1 6c 85 32 c6 ab c8 38 fa cd 5e a7
+                89 be 0c 76 b2 92 03 34 03 9b fa 8b 3d 36 8d 61
+                03
+                00 06
+                48 65 6c 6c 6f 20 57 6f 72 6c 64 21",
             ),
             (
                 ServerToClientMsg::Restarting {
@@ -540,9 +555,18 @@ mod tests {
                     },
                 }
                 .write_to(Vec::new()),
-                "0a 19 7f 6b 23 e1 6c 85 32 c6 ab c8 38 fa cd 5e
-                a7 89 be 0c 76 b2 92 03 34 03 9b fa 8b 3d 36 8d
-                61 47 6f 6f 64 62 79 65 21",
+                // frame type
+                // public key first 16 bytes
+                // public key second 16 bytes
+                // ECN byte
+                // segment size
+                // hello world contents
+                "0a
+                19 7f 6b 23 e1 6c 85 32 c6 ab c8 38 fa cd 5e a7
+                89 be 0c 76 b2 92 03 34 03 9b fa 8b 3d 36 8d 61
+                03
+                00 06
+                48 65 6c 6c 6f 20 57 6f 72 6c 64 21",
             ),
         ]);
 
@@ -566,19 +590,31 @@ mod proptests {
         secret_key().prop_map(|key| key.public())
     }
 
-    /// Generates random data, up to the maximum packet size minus the given number of bytes
-    fn data(consumed: usize) -> impl Strategy<Value = Bytes> {
-        let len = MAX_PACKET_SIZE - consumed;
-        prop::collection::vec(any::<u8>(), 0..len).prop_map(Bytes::from)
+    fn ecn() -> impl Strategy<Value = Option<quinn_proto::EcnCodepoint>> {
+        (0..=3).prop_map(|n| match n {
+            1 => Some(quinn_proto::EcnCodepoint::Ce),
+            2 => Some(quinn_proto::EcnCodepoint::Ect0),
+            3 => Some(quinn_proto::EcnCodepoint::Ect1),
+            _ => None,
+        })
     }
 
-    fn datagrams(data: impl Strategy<Value = Bytes>) -> impl Strategy<Value = Datagrams> {
-        data.prop_map(|_content| todo!())
+    fn datagrams() -> impl Strategy<Value = Datagrams> {
+        (
+            ecn(),
+            prop::option::of(MAX_PAYLOAD_SIZE / 20..MAX_PAYLOAD_SIZE),
+            prop::collection::vec(any::<u8>(), 0..MAX_PAYLOAD_SIZE),
+        )
+            .prop_map(|(ecn, segment_size, data)| Datagrams {
+                ecn,
+                segment_size: segment_size.map(|ss| std::cmp::min(data.len(), ss) as u16),
+                contents: Bytes::from(data),
+            })
     }
 
     /// Generates a random valid frame
     fn server_client_frame() -> impl Strategy<Value = ServerToClientMsg> {
-        let recv_packet = (key(), datagrams(data(32))).prop_map(|(remote_node_id, datagrams)| {
+        let recv_packet = (key(), datagrams()).prop_map(|(remote_node_id, datagrams)| {
             ServerToClientMsg::ReceivedDatagrams {
                 remote_node_id,
                 datagrams,
@@ -587,10 +623,7 @@ mod proptests {
         let node_gone = key().prop_map(|node_id| ServerToClientMsg::NodeGone(node_id));
         let ping = prop::array::uniform8(any::<u8>()).prop_map(ServerToClientMsg::Ping);
         let pong = prop::array::uniform8(any::<u8>()).prop_map(ServerToClientMsg::Pong);
-        // TODO(matheus23): Actually fix these
-        let health = data(0).prop_map(|_problem| ServerToClientMsg::Health {
-            problem: "".to_string(),
-        });
+        let health = ".{0,65536}".prop_map(|problem| ServerToClientMsg::Health { problem });
         let restarting = (any::<u32>(), any::<u32>()).prop_map(|(reconnect_in, try_for)| {
             ServerToClientMsg::Restarting {
                 reconnect_in: Duration::from_millis(reconnect_in.into()),
@@ -601,7 +634,7 @@ mod proptests {
     }
 
     fn client_server_frame() -> impl Strategy<Value = ClientToServerMsg> {
-        let send_packet = (key(), datagrams(data(32))).prop_map(|(dst_node_id, datagrams)| {
+        let send_packet = (key(), datagrams()).prop_map(|(dst_node_id, datagrams)| {
             ClientToServerMsg::SendDatagrams {
                 dst_node_id,
                 datagrams,

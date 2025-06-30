@@ -38,12 +38,12 @@ use std::{
 };
 
 use backon::{Backoff, BackoffBuilder, ExponentialBuilder};
-use iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
+use iroh_base::{NodeId, RelayUrl, SecretKey};
 use iroh_relay::{
     self as relay,
     client::{Client, ConnectError, RecvError, SendError},
     protos::send_recv::{ClientToServerMsg, Datagrams, ServerToClientMsg},
-    PingTracker, MAX_PACKET_SIZE,
+    PingTracker,
 };
 use n0_future::{
     task::JoinSet,
@@ -65,9 +65,6 @@ use crate::{magicsock::Metrics as MagicsockMetrics, net_report::Report, util::Ma
 
 /// How long a non-home relay connection needs to be idle (last written to) before we close it.
 const RELAY_INACTIVE_CLEANUP_TIME: Duration = Duration::from_secs(60);
-
-/// Maximum size a datagram payload is allowed to be.
-const MAX_PAYLOAD_SIZE: usize = MAX_PACKET_SIZE - PublicKey::LENGTH;
 
 /// Interval in which we ping the relay server to ensure the connection is alive.
 ///
