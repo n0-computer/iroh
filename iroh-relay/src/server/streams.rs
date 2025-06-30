@@ -13,12 +13,11 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_websockets::WebSocketStream;
 use tracing::instrument;
 
+use super::{ClientRateLimit, Metrics};
 use crate::{
     protos::send_recv::{ClientToServerMsg, RecvError, ServerToClientMsg},
     ExportKeyingMaterial, KeyCache,
 };
-
-use super::{ClientRateLimit, Metrics};
 
 /// A Stream and Sink for [`Frame`]s connected to a single relay client.
 ///

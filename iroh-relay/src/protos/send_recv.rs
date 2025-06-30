@@ -20,9 +20,8 @@ use n0_future::{Sink, SinkExt};
 use nested_enum_utils::common_fields;
 use snafu::{Backtrace, OptionExt, ResultExt, Snafu};
 
-use crate::KeyCache;
-
 use super::relay::FrameType;
+use crate::KeyCache;
 
 /// The maximum size of a packet sent over relay.
 /// (This only includes the data bytes visible to magicsock, not
