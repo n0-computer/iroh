@@ -765,10 +765,7 @@ mod tests {
     use crate::{
         client::ClientBuilder,
         dns::DnsResolver,
-        protos::{
-            self,
-            send_recv::{ClientToServerMsg, ServerToClientMsg},
-        },
+        protos::send_recv::{ClientToServerMsg, ServerToClientMsg},
     };
 
     async fn spawn_local_relay() -> std::result::Result<Server, SpawnError> {

@@ -1,7 +1,9 @@
 //! TODO(matheus23) docs
 
 use bytes::{BufMut, Bytes, BytesMut};
-use iroh_base::{PublicKey, SecretKey, Signature};
+#[cfg(feature = "server")]
+use iroh_base::Signature;
+use iroh_base::{PublicKey, SecretKey};
 use n0_future::{
     time::{self, Elapsed},
     SinkExt, TryStreamExt,
@@ -149,6 +151,7 @@ impl ClientAuth {
     }
 
     /// TODO(matheus23): docs
+    #[cfg(feature = "server")]
     pub(crate) fn verify_from_challenge(&self, challenge: &ServerChallenge) -> bool {
         self.public_key
             .verify(
@@ -180,6 +183,7 @@ impl ClientAuth {
         })
     }
 
+    #[cfg(feature = "server")]
     pub(crate) fn verify_from_key_export(&self, io: &mut impl ExportKeyingMaterial) -> bool {
         let Some(key_material) = io.export_keying_material(
             [0u8; 32],

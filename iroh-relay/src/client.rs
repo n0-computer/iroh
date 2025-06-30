@@ -202,6 +202,8 @@ impl ClientBuilder {
     pub async fn connect(&self) -> Result<Client, ConnectError> {
         use tls::MaybeTlsStreamBuilder;
 
+        use crate::protos::send_recv::MAX_FRAME_SIZE;
+
         let mut dial_url = (*self.url).clone();
         dial_url.set_path(RELAY_PATH);
         // The relay URL is exchanged with the http(s) scheme in tickets and similar.
@@ -244,6 +246,7 @@ impl ClientBuilder {
                 }
                 .build()
             })?
+            .limits(tokio_websockets::Limits::default().max_payload_len(Some(MAX_FRAME_SIZE)))
             .connect_on(stream)
             .await?;
 

@@ -14,9 +14,9 @@
 
 use bytes::{BufMut, Bytes};
 use iroh_base::{NodeId, SignatureError};
+use n0_future::time::{self, Duration};
 #[cfg(feature = "server")]
-use n0_future::time::Duration;
-use n0_future::{time, Sink, SinkExt};
+use n0_future::{Sink, SinkExt};
 use nested_enum_utils::common_fields;
 use snafu::{Backtrace, OptionExt, ResultExt, Snafu};
 
@@ -195,6 +195,7 @@ impl ServerToClientMsg {
     /// Encodes this frame for sending over websockets.
     ///
     /// Specifically meant for being put into a binary websocket message frame.
+    #[cfg(feature = "server")]
     pub(crate) fn write_to<O: BufMut>(&self, mut dst: O) -> O {
         dst = self.typ().write_to(dst);
         match self {
@@ -344,6 +345,7 @@ impl ClientToServerMsg {
     ///
     /// Specifically, bytes received from a binary websocket message frame.
     #[allow(clippy::result_large_err)]
+    #[cfg(feature = "server")]
     pub(crate) fn from_bytes(bytes: Bytes, cache: &KeyCache) -> Result<Self, RecvError> {
         let (frame_type, content) = FrameType::from_bytes(bytes).context(InvalidFrameSnafu)?;
         let res = match frame_type {
