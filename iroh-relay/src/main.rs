@@ -16,7 +16,6 @@ use iroh_base::NodeId;
 use iroh_relay::{
     defaults::{
         DEFAULT_HTTPS_PORT, DEFAULT_HTTP_PORT, DEFAULT_METRICS_PORT, DEFAULT_RELAY_QUIC_PORT,
-        DEFAULT_STUN_PORT,
     },
     server::{self as relay, ClientRateLimit, QuicConfig},
 };
@@ -114,7 +113,7 @@ struct Config {
     ///
     /// Defaults to `true`.
     ///
-    /// Disabling will leave only the STUN server.  The `http_bind_addr` and `tls`
+    /// Disabling will leave only the quic server.  The `http_bind_addr` and `tls`
     /// configuration options will be ignored.
     #[serde(default = "cfg_defaults::enable_relay")]
     enable_relay: bool,
@@ -140,15 +139,6 @@ struct Config {
     ///
     /// Must exist if `enable_quic_addr_discovery` is `true`.
     tls: Option<TlsConfig>,
-    /// Whether to run a STUN server. It will bind to the same IP as the `addr` field.
-    ///
-    /// Defaults to `true`.
-    #[serde(default = "cfg_defaults::enable_stun")]
-    enable_stun: bool,
-    /// The socket address to bind the STUN server on.
-    ///
-    /// Defaults to using the `http_bind_addr` with the port set to [`DEFAULT_STUN_PORT`].
-    stun_bind_addr: Option<SocketAddr>,
     /// Whether to allow QUIC connections for QUIC address discovery
     ///
     /// If no `tls` is set, this will error.
@@ -174,7 +164,7 @@ struct Config {
     key_cache_capacity: Option<usize>,
     /// Access control for relaying connections.
     ///
-    /// This controls which nodes are allowed to relay connections, other endpoints, like STUN are not controlled by this.
+    /// This controls which nodes are allowed to relay connections, other endpoints are not controlled by this.
     #[serde(default)]
     access: AccessConfig,
 }
@@ -314,11 +304,6 @@ impl Config {
             .unwrap_or((Ipv6Addr::UNSPECIFIED, DEFAULT_HTTP_PORT).into())
     }
 
-    fn stun_bind_addr(&self) -> SocketAddr {
-        self.stun_bind_addr
-            .unwrap_or_else(|| SocketAddr::new(self.http_bind_addr().ip(), DEFAULT_STUN_PORT))
-    }
-
     fn metrics_bind_addr(&self) -> SocketAddr {
         self.metrics_bind_addr
             .unwrap_or_else(|| SocketAddr::new(self.http_bind_addr().ip(), DEFAULT_METRICS_PORT))
@@ -331,8 +316,6 @@ impl Default for Config {
             enable_relay: cfg_defaults::enable_relay(),
             http_bind_addr: None,
             tls: None,
-            enable_stun: cfg_defaults::enable_stun(),
-            stun_bind_addr: None,
             enable_quic_addr_discovery: cfg_defaults::enable_quic_addr_discovery(),
             limits: None,
             enable_metrics: cfg_defaults::enable_metrics(),
@@ -349,10 +332,6 @@ impl Default for Config {
 /// and can not immediately be substituted by serde.
 mod cfg_defaults {
     pub(crate) fn enable_relay() -> bool {
-        true
-    }
-
-    pub(crate) fn enable_stun() -> bool {
         true
     }
 
@@ -607,7 +586,7 @@ async fn maybe_load_tls(
                 .clone()
                 .context("LetsEncrypt needs a contact email")?;
             let config = AcmeConfig::new(vec![hostname.clone()])
-                .contact([format!("mailto:{}", contact)])
+                .contact([format!("mailto:{contact}")])
                 .cache_option(Some(DirCache::new(tls.cert_dir())))
                 .directory_lets_encrypt(tls.prod_tls);
             let state = config.state();
@@ -722,12 +701,8 @@ async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig<std::io::
         access: cfg.access.clone().into(),
     };
 
-    let stun_config = relay::StunConfig {
-        bind_addr: cfg.stun_bind_addr(),
-    };
     Ok(relay::ServerConfig {
         relay: Some(relay_config),
-        stun: Some(stun_config).filter(|_| cfg.enable_stun),
         quic: quic_config,
         #[cfg(feature = "metrics")]
         metrics_addr: Some(cfg.metrics_bind_addr()).filter(|_| cfg.enable_metrics),

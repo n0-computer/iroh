@@ -4,6 +4,7 @@ use std::{
     fmt,
     future::Future,
     net::{IpAddr, Ipv6Addr, SocketAddr},
+    sync::Arc,
 };
 
 use hickory_resolver::{name_server::TokioConnectionProvider, TokioResolver};
@@ -14,9 +15,13 @@ use n0_future::{
 };
 use nested_enum_utils::common_fields;
 use snafu::{Backtrace, GenerateImplicitData, OptionExt, Snafu};
+use tokio::sync::RwLock;
 use url::Url;
 
-use crate::node_info::{LookupError, NodeInfo};
+use crate::{
+    defaults::timeouts::DNS_TIMEOUT,
+    node_info::{LookupError, NodeInfo},
+};
 
 /// The n0 testing DNS node origin, for production.
 pub const N0_DNS_NODE_ORIGIN_PROD: &str = "dns.iroh.link";
@@ -77,7 +82,10 @@ impl<E: std::fmt::Debug + std::fmt::Display> StaggeredError<E> {
 
 /// The DNS resolver used throughout `iroh`.
 #[derive(Debug, Clone)]
-pub struct DnsResolver(TokioResolver);
+pub struct DnsResolver {
+    resolver: Arc<RwLock<TokioResolver>>,
+    nameserver: Option<SocketAddr>,
+}
 
 impl DnsResolver {
     /// Create a new DNS resolver with sensible cross-platform defaults.
@@ -86,6 +94,14 @@ impl DnsResolver {
     /// This does not work at least on some Androids, therefore we fallback
     /// to the default `ResolverConfig` which uses eg. to google's `8.8.8.8` or `8.8.4.4`.
     pub fn new() -> Self {
+        let resolver = Self::new_inner();
+        Self {
+            resolver: Arc::new(RwLock::new(resolver)),
+            nameserver: None,
+        }
+    }
+
+    fn new_inner() -> TokioResolver {
         let (system_config, mut options) =
             hickory_resolver::system_conf::read_system_conf().unwrap_or_default();
 
@@ -110,11 +126,19 @@ impl DnsResolver {
         let mut builder =
             TokioResolver::builder_with_config(config, TokioConnectionProvider::default());
         *builder.options_mut() = options;
-        DnsResolver(builder.build())
+        builder.build()
     }
 
     /// Create a new DNS resolver configured with a single UDP DNS nameserver.
     pub fn with_nameserver(nameserver: SocketAddr) -> Self {
+        let resolver = Self::with_nameserver_inner(nameserver);
+        Self {
+            resolver: Arc::new(RwLock::new(resolver)),
+            nameserver: Some(nameserver),
+        }
+    }
+
+    fn with_nameserver_inner(nameserver: SocketAddr) -> TokioResolver {
         let mut config = hickory_resolver::config::ResolverConfig::new();
         let nameserver_config = hickory_resolver::config::NameServerConfig::new(
             nameserver,
@@ -124,12 +148,24 @@ impl DnsResolver {
 
         let builder =
             TokioResolver::builder_with_config(config, TokioConnectionProvider::default());
-        DnsResolver(builder.build())
+        builder.build()
     }
 
     /// Removes all entries from the cache.
-    pub fn clear_cache(&self) {
-        self.0.clear_cache();
+    pub async fn clear_cache(&self) {
+        self.resolver.read().await.clear_cache();
+    }
+
+    /// Recreate the inner resolver
+    pub async fn reset(&self) {
+        let mut this = self.resolver.write().await;
+        let resolver = if let Some(nameserver) = self.nameserver {
+            Self::with_nameserver_inner(nameserver)
+        } else {
+            Self::new_inner()
+        };
+
+        *this = resolver;
     }
 
     /// Lookup a TXT record.
@@ -139,7 +175,8 @@ impl DnsResolver {
         timeout: Duration,
     ) -> Result<TxtLookup, DnsError> {
         let host = host.to_string();
-        let res = time::timeout(timeout, self.0.txt_lookup(host)).await??;
+        let this = self.resolver.read().await;
+        let res = time::timeout(timeout, this.txt_lookup(host)).await??;
         Ok(TxtLookup(res))
     }
 
@@ -150,7 +187,8 @@ impl DnsResolver {
         timeout: Duration,
     ) -> Result<impl Iterator<Item = IpAddr>, DnsError> {
         let host = host.to_string();
-        let addrs = time::timeout(timeout, self.0.ipv4_lookup(host)).await??;
+        let this = self.resolver.read().await;
+        let addrs = time::timeout(timeout, this.ipv4_lookup(host)).await??;
         Ok(addrs.into_iter().map(|ip| IpAddr::V4(ip.0)))
     }
 
@@ -161,7 +199,8 @@ impl DnsResolver {
         timeout: Duration,
     ) -> Result<impl Iterator<Item = IpAddr>, DnsError> {
         let host = host.to_string();
-        let addrs = time::timeout(timeout, self.0.ipv6_lookup(host)).await??;
+        let this = self.resolver.read().await;
+        let addrs = time::timeout(timeout, this.ipv6_lookup(host)).await??;
         Ok(addrs.into_iter().map(|ip| IpAddr::V6(ip.0)))
     }
 
@@ -349,7 +388,31 @@ impl Default for DnsResolver {
 
 impl From<TokioResolver> for DnsResolver {
     fn from(resolver: TokioResolver) -> Self {
-        DnsResolver(resolver)
+        DnsResolver {
+            resolver: Arc::new(RwLock::new(resolver)),
+            nameserver: None,
+        }
+    }
+}
+
+impl reqwest::dns::Resolve for DnsResolver {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        let this = self.clone();
+        let name = name.as_str().to_string();
+        Box::pin(async move {
+            let res = this.lookup_ipv4_ipv6(name, DNS_TIMEOUT).await;
+            match res {
+                Ok(addrs) => {
+                    let addrs: reqwest::dns::Addrs =
+                        Box::new(addrs.map(|addr| SocketAddr::new(addr, 0)));
+                    Ok(addrs)
+                }
+                Err(err) => {
+                    let err: Box<dyn std::error::Error + Send + Sync> = Box::new(err);
+                    Err(err)
+                }
+            }
+        })
     }
 }
 

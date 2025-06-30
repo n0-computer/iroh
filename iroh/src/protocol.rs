@@ -63,7 +63,6 @@ use crate::{
 ///
 /// ```no_run
 /// # use std::sync::Arc;
-/// # use futures_lite::future::Boxed as BoxedFuture;
 /// # use n0_snafu::ResultExt;
 /// # use iroh::{endpoint::Connecting, protocol::{ProtocolHandler, Router}, Endpoint, NodeAddr};
 /// #
@@ -218,11 +217,21 @@ impl<T: ProtocolHandler> ProtocolHandler for Box<T> {
     }
 }
 
+impl<T: ProtocolHandler> From<T> for Box<dyn DynProtocolHandler> {
+    fn from(value: T) -> Self {
+        Box::new(value)
+    }
+}
+
 /// A dyn-compatible version of [`ProtocolHandler`] that returns boxed futures.
 ///
-/// We are not using [`n0_future::boxed::BoxFuture] because we don't need a `'static` bound
-/// on these futures.
-pub(crate) trait DynProtocolHandler: Send + Sync + std::fmt::Debug + 'static {
+/// Any type that implements [`ProtocolHandler`] automatically also implements [`DynProtocolHandler`].
+/// There is a also [`From`] impl to turn any type that implements [`ProtocolHandler`] into a
+/// `Box<dyn DynProtocolHandler>`.
+//
+// We are not using [`n0_future::boxed::BoxFuture] because we don't need a `'static` bound
+// on these futures.
+pub trait DynProtocolHandler: Send + Sync + std::fmt::Debug + 'static {
     /// See [`ProtocolHandler::on_connecting`].
     fn on_connecting(
         &self,
@@ -277,8 +286,7 @@ impl ProtocolMap {
     }
 
     /// Inserts a protocol handler.
-    pub(crate) fn insert(&mut self, alpn: Vec<u8>, handler: impl ProtocolHandler) {
-        let handler = Box::new(handler);
+    pub(crate) fn insert(&mut self, alpn: Vec<u8>, handler: Box<dyn DynProtocolHandler>) {
         self.0.insert(alpn, handler);
     }
 
@@ -349,8 +357,18 @@ impl RouterBuilder {
 
     /// Configures the router to accept the [`ProtocolHandler`] when receiving a connection
     /// with this `alpn`.
-    pub fn accept(mut self, alpn: impl AsRef<[u8]>, handler: impl ProtocolHandler) -> Self {
-        self.protocols.insert(alpn.as_ref().to_vec(), handler);
+    ///
+    /// `handler` can either be a type that implements [`ProtocolHandler`] or a
+    /// [`Box<dyn DynProtocolHandler>`].
+    ///
+    /// [`Box<dyn DynProtocolHandler>`]: DynProtocolHandler
+    pub fn accept(
+        mut self,
+        alpn: impl AsRef<[u8]>,
+        handler: impl Into<Box<dyn DynProtocolHandler>>,
+    ) -> Self {
+        self.protocols
+            .insert(alpn.as_ref().to_vec(), handler.into());
         self
     }
 
@@ -544,10 +562,11 @@ mod tests {
     use std::{sync::Mutex, time::Duration};
 
     use n0_snafu::{Result, ResultExt};
+    use n0_watcher::Watcher;
     use quinn::ApplicationClose;
 
     use super::*;
-    use crate::{endpoint::ConnectionError, watcher::Watcher, RelayMode};
+    use crate::{endpoint::ConnectionError, RelayMode};
 
     #[tokio::test]
     async fn test_shutdown() -> Result {
@@ -585,23 +604,31 @@ mod tests {
             Ok(())
         }
     }
+
     #[tokio::test]
     async fn test_limiter() -> Result {
-        let e1 = Endpoint::builder().bind().await?;
+        // tracing_subscriber::fmt::try_init().ok();
+        let e1 = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .await?;
         // deny all access
         let proto = AccessLimit::new(Echo, |_node_id| false);
         let r1 = Router::builder(e1.clone()).accept(ECHO_ALPN, proto).spawn();
 
         let addr1 = r1.endpoint().node_addr().initialized().await?;
-
-        let e2 = Endpoint::builder().bind().await?;
+        dbg!(&addr1);
+        let e2 = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .bind()
+            .await?;
 
         println!("connecting");
         let conn = e2.connect(addr1, ECHO_ALPN).await?;
 
         let (_send, mut recv) = conn.open_bi().await.e()?;
         let response = recv.read_to_end(1000).await.unwrap_err();
-        assert!(format!("{:#?}", response).contains("not allowed"));
+        assert!(format!("{response:#?}").contains("not allowed"));
 
         r1.shutdown().await.e()?;
         e2.close().await;
@@ -633,6 +660,7 @@ mod tests {
             }
         }
 
+        eprintln!("creating ep1");
         let endpoint = Endpoint::builder()
             .relay_mode(RelayMode::Disabled)
             .bind()
@@ -640,16 +668,21 @@ mod tests {
         let router = Router::builder(endpoint)
             .accept(TEST_ALPN, TestProtocol::default())
             .spawn();
+        eprintln!("waiting for node addr");
         let addr = router.endpoint().node_addr().initialized().await?;
 
+        eprintln!("creating ep2");
         let endpoint2 = Endpoint::builder()
             .relay_mode(RelayMode::Disabled)
             .bind()
             .await?;
+        eprintln!("connecting to {addr:?}");
         let conn = endpoint2.connect(addr, TEST_ALPN).await?;
 
+        eprintln!("starting shutdown");
         router.shutdown().await.e()?;
 
+        eprintln!("waiting for closed conn");
         let reason = conn.closed().await;
         assert_eq!(
             reason,

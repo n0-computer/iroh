@@ -84,28 +84,10 @@ pub struct Metrics {
     // pub average_queue_duration:
 }
 
-/// Metrics tracked for the STUN server.
-#[derive(Debug, Default, MetricsGroup)]
-#[metrics(name = "stun")]
-pub struct StunMetrics {
-    /// Number of STUN requests made to the server.
-    pub requests: Counter,
-    /// Number of successful ipv4 STUN requests served.
-    pub ipv4_success: Counter,
-    /// Number of successful ipv6 STUN requests served.
-    pub ipv6_success: Counter,
-    /// Number of bad requests made to the STUN endpoint.
-    pub bad_requests: Counter,
-    /// Number of STUN requests that end in failure.
-    pub failures: Counter,
-}
-
 /// All metrics tracked in the relay server.
 #[derive(Debug, Default, Clone, MetricsGroupSet)]
 #[metrics(name = "relay")]
 pub struct RelayMetrics {
-    /// Metrics tracked for the STUN server.
-    pub stun: Arc<StunMetrics>,
     /// Metrics tracked for the relay server.
     pub server: Arc<Metrics>,
 }

@@ -1,14 +1,15 @@
 use std::{env, future::Future, str::FromStr, time::Instant};
 
 use clap::Parser;
+use data_encoding::HEXLOWER;
 use iroh::{
     endpoint::{Connecting, Connection},
-    watcher::Watcher,
     SecretKey,
 };
 use iroh_base::ticket::NodeTicket;
 use n0_future::{future, StreamExt};
 use n0_snafu::ResultExt;
+use n0_watcher::Watcher;
 use rand::thread_rng;
 use tracing::{info, trace};
 
@@ -35,7 +36,10 @@ pub fn get_or_generate_secret_key() -> n0_snafu::Result<SecretKey> {
     } else {
         // Generate a new random key
         let secret_key = SecretKey::generate(&mut thread_rng());
-        println!("Generated new secret key: {}", secret_key);
+        println!(
+            "Generated new secret key: {}",
+            HEXLOWER.encode(&secret_key.to_bytes())
+        );
         println!("To reuse this key, set the IROH_SECRET environment variable to this value");
         Ok(secret_key)
     }
@@ -117,7 +121,7 @@ async fn connect(args: Args) -> n0_snafu::Result<()> {
             connection.close(0u8.into(), b"");
         });
         let elapsed = t0.elapsed();
-        println!("round {}: {} us", i, elapsed.as_micros());
+        println!("round {i}: {} us", elapsed.as_micros());
     }
     let elapsed = t0.elapsed();
     println!("total time: {} us", elapsed.as_micros());
@@ -147,9 +151,10 @@ async fn accept(_args: Args) -> n0_snafu::Result<()> {
             }
         }
     };
-    println!("Listening on: {:?}", addr);
+    println!("Listening on: {addr:?}");
     println!("Node ID: {:?}", addr.node_id);
     println!("Ticket: {}", NodeTicket::from(addr));
+
     let accept = async move {
         while let Some(incoming) = endpoint.accept().await {
             tokio::spawn(async move {

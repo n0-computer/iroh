@@ -5,6 +5,7 @@ use std::{
 
 use bytes::Bytes;
 use clap::{Parser, Subcommand};
+use data_encoding::HEXLOWER;
 use indicatif::HumanBytes;
 use iroh::{
     discovery::{
@@ -13,12 +14,12 @@ use iroh::{
     },
     dns::{DnsResolver, N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING},
     endpoint::ConnectionError,
-    watcher::Watcher as _,
     Endpoint, NodeAddr, NodeId, RelayMap, RelayMode, RelayUrl, SecretKey,
 };
 use iroh_base::ticket::NodeTicket;
 use n0_future::task::AbortOnDropHandle;
 use n0_snafu::{Result, ResultExt};
+use n0_watcher::Watcher as _;
 use tokio_stream::StreamExt;
 use tracing::{info, warn};
 use url::Url;
@@ -184,11 +185,14 @@ impl EndpointArgs {
             Err(_) => {
                 let s = SecretKey::generate(rand::rngs::OsRng);
                 println!("Generated a new node secret. To reuse, set");
-                println!("\tIROH_SECRET={s}");
+                println!("\tIROH_SECRET={}", HEXLOWER.encode(&s.to_bytes()));
                 s
             }
         };
         builder = builder.secret_key(secret_key);
+        if Env::Dev == self.env {
+            builder = builder.insecure_skip_relay_cert_verify(true);
+        }
 
         let relay_mode = if self.no_relay {
             RelayMode::Disabled
@@ -203,25 +207,19 @@ impl EndpointArgs {
             let url = self
                 .pkarr_relay_url
                 .unwrap_or_else(|| self.env.pkarr_relay_url());
-            builder = builder
-                .add_discovery(|secret_key| Some(PkarrPublisher::new(secret_key.clone(), url)));
+            builder = builder.add_discovery(PkarrPublisher::builder(url));
         }
 
         if !self.no_dns_resolve {
             let domain = self
                 .dns_origin_domain
                 .unwrap_or_else(|| self.env.dns_origin_domain());
-            builder = builder.add_discovery(|_| Some(DnsDiscovery::new(domain)));
+            builder = builder.add_discovery(DnsDiscovery::builder(domain));
         }
 
         #[cfg(feature = "discovery-local-network")]
         if self.mdns {
-            builder = builder.add_discovery(|secret_key| {
-                Some(
-                    iroh::discovery::mdns::MdnsDiscovery::new(secret_key.public())
-                        .expect("Failed to create mDNS discovery"),
-                )
-            });
+            builder = builder.discovery_local_network();
         }
 
         #[cfg(feature = "test-utils")]
@@ -245,16 +243,31 @@ impl EndpointArgs {
 
         let node_id = endpoint.node_id();
         println!("Our node id:\n\t{node_id}");
+
+        let eps = endpoint.direct_addresses().initialized().await?;
         println!("Our direct addresses:");
-        for local_endpoint in endpoint.direct_addresses().initialized().await? {
+        for local_endpoint in eps {
             println!("\t{} (type: {:?})", local_endpoint.addr, local_endpoint.typ)
         }
-        if !self.no_relay {
-            let relay_url = endpoint
-                .home_relay()
-                .get()?
-                .context("Failed to resolve our home relay")?;
-            println!("Our home relay server:\n\t{relay_url}");
+
+        if self.relay_only {
+            let relay_url = endpoint.home_relay().initialized().await?;
+            println!("Our home relay server:\t{relay_url}");
+        } else if !self.no_relay {
+            let relay_url = tokio::time::timeout(Duration::from_secs(2), async {
+                endpoint
+                    .home_relay()
+                    .initialized()
+                    .await
+                    .expect("disconnected")
+            })
+            .await
+            .ok();
+            if let Some(url) = relay_url {
+                println!("Our home relay server:\t{url}");
+            } else {
+                println!("No home relay server found");
+            }
         }
 
         println!();

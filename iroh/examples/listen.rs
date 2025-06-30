@@ -5,8 +5,9 @@
 //!     $ cargo run --example listen
 use std::time::Duration;
 
-use iroh::{endpoint::ConnectionError, watcher::Watcher as _, Endpoint, RelayMode, SecretKey};
+use iroh::{endpoint::ConnectionError, Endpoint, RelayMode, SecretKey};
 use n0_snafu::ResultExt;
+use n0_watcher::Watcher as _;
 use tracing::{debug, info, warn};
 
 // An example ALPN that we are using to communicate over the `Endpoint`
@@ -17,7 +18,7 @@ async fn main() -> n0_snafu::Result<()> {
     tracing_subscriber::fmt::init();
     println!("\nlisten example!\n");
     let secret_key = SecretKey::generate(rand::rngs::OsRng);
-    println!("secret key: {secret_key}");
+    println!("public key: {}", secret_key.public());
 
     // Build a `Endpoint`, which uses PublicKeys as node identifiers, uses QUIC for directly connecting to other nodes, and uses the relay protocol and relay servers to holepunch direct connections between nodes when there are NATs or firewalls preventing direct connections. If no direct connection can be made, packets are relayed over the relay servers.
     let endpoint = Endpoint::builder()

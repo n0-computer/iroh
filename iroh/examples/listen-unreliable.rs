@@ -3,8 +3,9 @@
 //! This example uses the default relay servers to attempt to holepunch, and will use that relay server to relay packets if the two devices cannot establish a direct UDP connection.
 //! run this example from the project root:
 //!     $ cargo run --example listen-unreliable
-use iroh::{watcher::Watcher as _, Endpoint, RelayMode, SecretKey};
+use iroh::{Endpoint, RelayMode, SecretKey};
 use n0_snafu::{Error, Result, ResultExt};
+use n0_watcher::Watcher as _;
 use tracing::{info, warn};
 
 // An example ALPN that we are using to communicate over the `Endpoint`
@@ -15,7 +16,7 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     println!("\nlisten (unreliable) example!\n");
     let secret_key = SecretKey::generate(rand::rngs::OsRng);
-    println!("secret key: {secret_key}");
+    println!("public key: {}", secret_key.public());
 
     // Build a `Endpoint`, which uses PublicKeys as node identifiers, uses QUIC for directly connecting to other nodes, and uses the relay servers to holepunch direct connections between nodes when there are NATs or firewalls preventing direct connections. If no direct connection can be made, packets are relayed over the relay servers.
     let endpoint = Endpoint::builder()

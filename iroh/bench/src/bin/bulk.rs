@@ -95,7 +95,6 @@ pub fn run_iroh(opt: Opt) -> Result<()> {
         #[cfg(feature = "local-relay")]
         if let Some(relay_server) = relay_server.as_ref() {
             collect_and_print("RelayServerMetrics", &*relay_server.metrics().server);
-            collect_and_print("RelayStunMetrics", &*relay_server.metrics().stun);
         }
     }
 

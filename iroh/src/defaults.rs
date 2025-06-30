@@ -5,11 +5,6 @@
 ///
 /// The port is "QUIC" typed on a phone keypad.
 pub use iroh_relay::defaults::DEFAULT_RELAY_QUIC_PORT;
-/// The default STUN port used by the Relay server.
-///
-/// The STUN port as defined by [RFC
-/// 8489](<https://www.rfc-editor.org/rfc/rfc8489#section-18.6>)
-pub use iroh_relay::defaults::DEFAULT_STUN_PORT;
 use url::Url;
 
 /// The default HTTP port used by the Relay server.
@@ -28,11 +23,11 @@ pub mod prod {
     use super::*;
 
     /// Hostname of the default NA relay.
-    pub const NA_RELAY_HOSTNAME: &str = "use1-1.relay.iroh.network.";
+    pub const NA_RELAY_HOSTNAME: &str = "use1-1.relay.n0.iroh-canary.iroh.link.";
     /// Hostname of the default EU relay.
-    pub const EU_RELAY_HOSTNAME: &str = "euw1-1.relay.iroh.network.";
+    pub const EU_RELAY_HOSTNAME: &str = "euc1-1.relay.n0.iroh-canary.iroh.link.";
     /// Hostname of the default Asia-Pacific relay.
-    pub const AP_RELAY_HOSTNAME: &str = "aps1-1.relay.iroh.network.";
+    pub const AP_RELAY_HOSTNAME: &str = "aps1-1.relay.n0.iroh-canary.iroh.link.";
 
     /// Get the default [`RelayMap`].
     pub fn default_relay_map() -> RelayMap {
@@ -51,8 +46,6 @@ pub mod prod {
             .expect("default url");
         RelayNode {
             url: url.into(),
-            stun_only: false,
-            stun_port: DEFAULT_STUN_PORT,
             quic: Some(RelayQuicConfig::default()),
         }
     }
@@ -65,8 +58,6 @@ pub mod prod {
             .expect("default_url");
         RelayNode {
             url: url.into(),
-            stun_only: false,
-            stun_port: DEFAULT_STUN_PORT,
             quic: Some(RelayQuicConfig::default()),
         }
     }
@@ -79,8 +70,6 @@ pub mod prod {
             .expect("default_url");
         RelayNode {
             url: url.into(),
-            stun_only: false,
-            stun_port: DEFAULT_STUN_PORT,
             quic: Some(RelayQuicConfig::default()),
         }
     }
@@ -97,9 +86,11 @@ pub mod staging {
     use super::*;
 
     /// Hostname of the default NA relay.
-    pub const NA_RELAY_HOSTNAME: &str = "staging-use1-1.relay.iroh.network.";
+    // TODO(ramfox): for `0.91` release, make sure we have canary staging relays
+    pub const NA_RELAY_HOSTNAME: &str = "use1-1.relay.n0.iroh-canary.iroh.link.";
     /// Hostname of the default EU relay.
-    pub const EU_RELAY_HOSTNAME: &str = "staging-euw1-1.relay.iroh.network.";
+    // TODO(ramfox): for `0.91` release, make sure we have canary staging relays
+    pub const EU_RELAY_HOSTNAME: &str = "euc1-1.relay.n0.iroh-canary.iroh.link.";
 
     /// Get the default [`RelayMap`].
     pub fn default_relay_map() -> RelayMap {
@@ -114,8 +105,6 @@ pub mod staging {
             .expect("default url");
         RelayNode {
             url: url.into(),
-            stun_only: false,
-            stun_port: DEFAULT_STUN_PORT,
             quic: Some(RelayQuicConfig::default()),
         }
     }
@@ -128,8 +117,6 @@ pub mod staging {
             .expect("default_url");
         RelayNode {
             url: url.into(),
-            stun_only: false,
-            stun_port: DEFAULT_STUN_PORT,
             quic: Some(RelayQuicConfig::default()),
         }
     }

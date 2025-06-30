@@ -25,6 +25,7 @@ use ed25519_dalek::{pkcs8::DecodePublicKey, VerifyingKey};
 use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
 use iroh_relay::RelayMap;
 use n0_future::{time::Duration, Stream};
+use n0_watcher::Watcher;
 use nested_enum_utils::common_fields;
 use pin_project::pin_project;
 use snafu::{ensure, ResultExt, Snafu};
@@ -37,14 +38,14 @@ use crate::discovery::pkarr::PkarrResolver;
 use crate::{discovery::dns::DnsDiscovery, dns::DnsResolver};
 use crate::{
     discovery::{
-        pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryError, DiscoveryItem,
-        DiscoverySubscribers, DiscoveryTask, Lagged, UserData,
+        pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryContext, DiscoveryError,
+        DiscoveryItem, DiscoverySubscribers, DiscoveryTask, DynIntoDiscovery, IntoDiscovery,
+        IntoDiscoveryError, Lagged, UserData,
     },
     magicsock::{self, Handle, NodeIdMappedAddr, OwnAddressSnafu},
     metrics::EndpointMetrics,
     net_report::Report,
     tls,
-    watcher::{self, Watcher},
 };
 
 mod rtt_actor;
@@ -79,31 +80,6 @@ pub use super::magicsock::{
 /// is still no connection the configured [`Discovery`] will be used however.
 const DISCOVERY_WAIT_PERIOD: Duration = Duration::from_millis(500);
 
-type DiscoveryBuilder = Box<dyn FnOnce(&SecretKey) -> Option<Box<dyn Discovery>> + Send + Sync>;
-
-/// A type alias for the return value of [`Endpoint::node_addr`].
-///
-/// This type implements [`Watcher`] with `Value` being an optional [`NodeAddr`].
-///
-/// We return a named type instead of `impl Watcher<Value = NodeAddr>`, as this allows
-/// you to e.g. store the watcher in a struct.
-#[cfg(not(wasm_browser))]
-pub type NodeAddrWatcher = watcher::Map<
-    (
-        watcher::Direct<Option<BTreeSet<DirectAddr>>>,
-        watcher::Direct<Option<RelayUrl>>,
-    ),
-    Option<NodeAddr>,
->;
-/// A type alias for the return value of [`Endpoint::node_addr`].
-///
-/// This type implements [`Watcher`] with `Value` being an optional [`NodeAddr`].
-///
-/// We return a named type instead of `impl Watcher<Value = NodeAddr>`, as this allows
-/// you to e.g. store the watcher in a struct.
-#[cfg(wasm_browser)]
-pub type NodeAddrWatcher = watcher::Map<watcher::Direct<Option<RelayUrl>>, Option<NodeAddr>>;
-
 /// Defines the mode of path selection for all traffic flowing through
 /// the endpoint.
 #[cfg(any(test, feature = "test-utils"))]
@@ -122,15 +98,14 @@ pub enum PathSelection {
 /// new [`NodeId`].
 ///
 /// To create the [`Endpoint`] call [`Builder::bind`].
-#[derive(derive_more::Debug)]
+#[derive(Debug)]
 pub struct Builder {
     secret_key: Option<SecretKey>,
     relay_mode: RelayMode,
     alpn_protocols: Vec<Vec<u8>>,
     transport_config: quinn::TransportConfig,
     keylog: bool,
-    #[debug(skip)]
-    discovery: Vec<DiscoveryBuilder>,
+    discovery: Vec<Box<dyn DynIntoDiscovery>>,
     discovery_user_data: Option<UserData>,
     proxy_url: Option<Url>,
     /// List of known nodes. See [`Builder::known_nodes`].
@@ -188,19 +163,28 @@ impl Builder {
             tls_config: tls::TlsConfig::new(secret_key.clone()),
             keylog: self.keylog,
         };
+        let server_config = static_config.create_server_config(self.alpn_protocols);
+
         #[cfg(not(wasm_browser))]
         let dns_resolver = self.dns_resolver.unwrap_or_default();
-        let discovery = self
-            .discovery
-            .into_iter()
-            .filter_map(|f| f(&secret_key))
-            .collect::<Vec<_>>();
-        let discovery: Option<Box<dyn Discovery>> = match discovery.len() {
-            0 => None,
-            1 => Some(discovery.into_iter().next().expect("checked length")),
-            _ => Some(Box::new(ConcurrentDiscovery::from_services(discovery))),
+
+        let discovery: Option<Box<dyn Discovery>> = {
+            let context = DiscoveryContext {
+                secret_key: &secret_key,
+                #[cfg(not(wasm_browser))]
+                dns_resolver: &dns_resolver,
+            };
+            let discovery = self
+                .discovery
+                .into_iter()
+                .map(|builder| builder.into_discovery(&context))
+                .collect::<Result<Vec<_>, IntoDiscoveryError>>()?;
+            match discovery.len() {
+                0 => None,
+                1 => Some(discovery.into_iter().next().expect("checked length")),
+                _ => Some(Box::new(ConcurrentDiscovery::from_services(discovery))),
+            }
         };
-        let server_config = static_config.create_server_config(self.alpn_protocols);
 
         let metrics = EndpointMetrics::default();
 
@@ -222,6 +206,7 @@ impl Builder {
             path_selection: self.path_selection,
             metrics,
         };
+
         Endpoint::bind(static_config, msock_opts).await
     }
 
@@ -311,9 +296,9 @@ impl Builder {
     /// direct addresses or relay URLs will fail.
     ///
     /// See the documentation of the [`Discovery`] trait for details.
-    pub fn discovery(mut self, discovery: Box<dyn Discovery>) -> Self {
+    pub fn discovery(mut self, discovery: impl IntoDiscovery) -> Self {
         self.discovery.clear();
-        self.discovery.push(Box::new(move |_| Some(discovery)));
+        self.discovery.push(Box::new(discovery));
         self
     }
 
@@ -333,14 +318,8 @@ impl Builder {
     /// To clear all discovery services, use [`Builder::clear_discovery`].
     ///
     /// See the documentation of the [`Discovery`] trait for details.
-    pub fn add_discovery<F, D>(mut self, discovery: F) -> Self
-    where
-        F: FnOnce(&SecretKey) -> Option<D> + Send + Sync + 'static,
-        D: Discovery + 'static,
-    {
-        let discovery: DiscoveryBuilder =
-            Box::new(move |secret_key| discovery(secret_key).map(|x| Box::new(x) as _));
-        self.discovery.push(discovery);
+    pub fn add_discovery(mut self, discovery: impl IntoDiscovery) -> Self {
+        self.discovery.push(Box::new(discovery));
         self
     }
 
@@ -360,20 +339,16 @@ impl Builder {
     /// [`N0_DNS_PKARR_RELAY_PROD`]: crate::discovery::pkarr::N0_DNS_PKARR_RELAY_PROD
     /// [`N0_DNS_PKARR_RELAY_STAGING`]: crate::discovery::pkarr::N0_DNS_PKARR_RELAY_STAGING
     pub fn discovery_n0(mut self) -> Self {
-        self.discovery.push(Box::new(|secret_key| {
-            Some(Box::new(PkarrPublisher::n0_dns(secret_key.clone())))
-        }));
+        self = self.add_discovery(PkarrPublisher::n0_dns());
         // Resolve using HTTPS requests to our DNS server's /pkarr path in browsers
         #[cfg(wasm_browser)]
         {
-            self.discovery
-                .push(Box::new(|_| Some(Box::new(PkarrResolver::n0_dns()))));
+            self = self.add_discovery(PkarrResolver::n0_dns());
         }
         // Resolve using DNS queries outside browsers.
         #[cfg(not(wasm_browser))]
         {
-            self.discovery
-                .push(Box::new(|_| Some(Box::new(DnsDiscovery::n0_dns()))));
+            self = self.add_discovery(DnsDiscovery::n0_dns());
         }
         self
     }
@@ -386,19 +361,7 @@ impl Builder {
     /// configuration options. If you need any of those, you should manually
     /// create a DhtDiscovery and add it with [`Builder::add_discovery`].
     pub fn discovery_dht(mut self) -> Self {
-        use crate::discovery::pkarr::dht::DhtDiscovery;
-        self.discovery.push(Box::new(|secret_key| {
-            match DhtDiscovery::builder()
-                .secret_key(secret_key.clone())
-                .build()
-            {
-                Ok(discovery) => Some(Box::new(discovery)),
-                Err(err) => {
-                    tracing::error!("failed to build discovery: {:?}", err);
-                    None
-                }
-            }
-        }));
+        self = self.add_discovery(crate::discovery::pkarr::dht::DhtDiscovery::builder());
         self
     }
 
@@ -410,12 +373,7 @@ impl Builder {
     /// configuration options. If you need any of those, you should manually
     /// create a MdnsDiscovery and add it with [`Builder::add_discovery`].
     pub fn discovery_local_network(mut self) -> Self {
-        use crate::discovery::mdns::MdnsDiscovery;
-        self.discovery.push(Box::new(|secret_key| {
-            MdnsDiscovery::new(secret_key.public())
-                .map(|x| Box::new(x) as _)
-                .ok()
-        }));
+        self = self.add_discovery(crate::discovery::mdns::MdnsDiscovery::builder());
         self
     }
 
@@ -627,6 +585,10 @@ pub enum BindError {
     MagicSpawn {
         source: magicsock::CreateHandleError,
     },
+    #[snafu(transparent)]
+    Discovery {
+        source: crate::discovery::IntoDiscoveryError,
+    },
 }
 
 #[allow(missing_docs)]
@@ -672,9 +634,10 @@ impl Endpoint {
         trace!("created magicsock");
         debug!(version = env!("CARGO_PKG_VERSION"), "iroh Endpoint created");
 
+        let metrics = msock.metrics.magicsock.clone();
         let ep = Self {
-            msock: msock.clone(),
-            rtt_actor: Arc::new(rtt_actor::RttHandle::new(msock.metrics.magicsock.clone())),
+            msock,
+            rtt_actor: Arc::new(rtt_actor::RttHandle::new(metrics)),
             static_config: Arc::new(static_config),
         };
         Ok(ep)
@@ -933,7 +896,8 @@ impl Endpoint {
     ///
     /// ```no_run
     /// # async fn wrapper() -> n0_snafu::Result {
-    /// use iroh::{watcher::Watcher, Endpoint};
+    /// use iroh::Endpoint;
+    /// use n0_watcher::Watcher;
     ///
     /// let endpoint = Endpoint::builder()
     ///     .alpns(vec![b"my-alpn".to_vec()])
@@ -945,25 +909,22 @@ impl Endpoint {
     /// # }
     /// ```
     #[cfg(not(wasm_browser))]
-    pub fn node_addr(&self) -> NodeAddrWatcher {
+    pub fn node_addr(&self) -> impl n0_watcher::Watcher<Value = Option<NodeAddr>> {
         let watch_addrs = self.direct_addresses();
         let watch_relay = self.home_relay();
         let node_id = self.node_id();
 
         watch_addrs
             .or(watch_relay)
-            .map(move |(addrs, relay)| match (addrs, relay) {
-                (Some(addrs), relay) => Some(NodeAddr::from_parts(
+            .map(move |(addrs, mut relays)| match addrs {
+                Some(addrs) => Some(NodeAddr::from_parts(
                     node_id,
-                    relay,
+                    relays.pop(),
                     addrs.into_iter().map(|x| x.addr),
                 )),
-                (None, Some(relay)) => Some(NodeAddr::from_parts(
-                    node_id,
-                    Some(relay),
-                    std::iter::empty(),
-                )),
-                (None, None) => None,
+                None => relays.pop().map(|relay_url| {
+                    NodeAddr::from_parts(node_id, Some(relay_url), std::iter::empty())
+                }),
             })
             .expect("watchable is alive - cannot be disconnected yet")
     }
@@ -974,15 +935,17 @@ impl Endpoint {
     /// with a [`NodeAddr`] that only contains a relay URL, but no direct addresses,
     /// as there are no APIs for directly using sockets in browsers.
     #[cfg(wasm_browser)]
-    pub fn node_addr(&self) -> NodeAddrWatcher {
+    pub fn node_addr(&self) -> impl n0_watcher::Watcher<Value = Option<NodeAddr>> {
         // In browsers, there will never be any direct addresses, so we wait
         // for the home relay instead. This makes the `NodeAddr` have *some* way
         // of connecting to us.
         let watch_relay = self.home_relay();
         let node_id = self.node_id();
         watch_relay
-            .map(move |relay| {
-                relay.map(|relay| NodeAddr::from_parts(node_id, Some(relay), std::iter::empty()))
+            .map(move |mut relays| {
+                relays.pop().map(|relay_url| {
+                    NodeAddr::from_parts(node_id, Some(relay_url), std::iter::empty())
+                })
             })
             .expect("watchable is alive - cannot be disconnected yet")
     }
@@ -1003,8 +966,9 @@ impl Endpoint {
     ///
     /// To wait for a home relay connection to be established, use [`Watcher::initialized`]:
     /// ```no_run
-    /// use futures_lite::StreamExt;
-    /// use iroh::{watcher::Watcher, Endpoint};
+    /// use iroh::Endpoint;
+    /// use n0_future::StreamExt;
+    /// use n0_watcher::Watcher as _;
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
@@ -1012,7 +976,7 @@ impl Endpoint {
     /// let _relay_url = mep.home_relay().initialized().await.unwrap();
     /// # });
     /// ```
-    pub fn home_relay(&self) -> watcher::Direct<Option<RelayUrl>> {
+    pub fn home_relay(&self) -> impl n0_watcher::Watcher<Value = Vec<RelayUrl>> {
         self.msock.home_relay()
     }
 
@@ -1022,7 +986,7 @@ impl Endpoint {
     /// iroh nodes to establish direct connectivity, depending on the network
     /// situation. The yielded lists of direct addresses contain both the locally-bound
     /// addresses and the [`Endpoint`]'s publicly reachable addresses discovered through
-    /// mechanisms such as [STUN] and port mapping.  Hence usually only a subset of these
+    /// mechanisms such as [QAD] and port mapping.  Hence usually only a subset of these
     /// will be applicable to a certain remote iroh node.
     ///
     /// The [`Endpoint`] continuously monitors the direct addresses for changes as its own
@@ -1039,8 +1003,9 @@ impl Endpoint {
     ///
     /// To get the first set of direct addresses use [`Watcher::initialized`]:
     /// ```no_run
-    /// use futures_lite::StreamExt;
-    /// use iroh::{watcher::Watcher, Endpoint};
+    /// use iroh::Endpoint;
+    /// use n0_future::StreamExt;
+    /// use n0_watcher::Watcher as _;
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
@@ -1049,8 +1014,8 @@ impl Endpoint {
     /// # });
     /// ```
     ///
-    /// [STUN]: https://en.wikipedia.org/wiki/STUN
-    pub fn direct_addresses(&self) -> watcher::Direct<Option<BTreeSet<DirectAddr>>> {
+    /// [QAD]: https://www.ietf.org/archive/id/draft-ietf-quic-address-discovery-00.html
+    pub fn direct_addresses(&self) -> n0_watcher::Direct<Option<BTreeSet<DirectAddr>>> {
         self.msock.direct_addresses()
     }
 
@@ -1074,8 +1039,9 @@ impl Endpoint {
     ///
     /// To get the first report use [`Watcher::initialized`]:
     /// ```no_run
-    /// use futures_lite::StreamExt;
-    /// use iroh::{watcher::Watcher, Endpoint};
+    /// use iroh::Endpoint;
+    /// use n0_future::StreamExt;
+    /// use n0_watcher::Watcher as _;
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
@@ -1084,7 +1050,7 @@ impl Endpoint {
     /// # });
     /// ```
     #[doc(hidden)]
-    pub fn net_report(&self) -> watcher::Direct<Option<Arc<Report>>> {
+    pub fn net_report(&self) -> impl Watcher<Value = Option<Report>> {
         self.msock.net_report()
     }
 
@@ -1092,9 +1058,12 @@ impl Endpoint {
     ///
     /// The [`Endpoint`] always binds on an IPv4 address and also tries to bind on an IPv6
     /// address if available.
-    #[cfg(not(wasm_browser))]
-    pub fn bound_sockets(&self) -> (SocketAddr, Option<SocketAddr>) {
-        self.msock.local_addr()
+    pub fn bound_sockets(&self) -> Vec<SocketAddr> {
+        self.msock
+            .local_addr()
+            .into_iter()
+            .filter_map(|addr| addr.into_socket_addr())
+            .collect()
     }
 
     // # Getter methods for information about other nodes.
@@ -1182,10 +1151,8 @@ impl Endpoint {
     /// recently connected to this node id but previous methods of reaching the node have
     /// become inaccessible.
     ///
-    /// # Errors
-    ///
     /// Will return `None` if we do not have any address information for the given `node_id`.
-    pub fn conn_type(&self, node_id: NodeId) -> Option<watcher::Direct<ConnectionType>> {
+    pub fn conn_type(&self, node_id: NodeId) -> Option<n0_watcher::Direct<ConnectionType>> {
         self.msock.conn_type(node_id)
     }
 
@@ -2292,6 +2259,7 @@ mod tests {
     use iroh_base::{NodeAddr, NodeId, SecretKey};
     use n0_future::{task::AbortOnDropHandle, StreamExt};
     use n0_snafu::{Error, Result, ResultExt};
+    use n0_watcher::Watcher;
     use quinn::ConnectionError;
     use rand::SeedableRng;
     use tracing::{error_span, info, info_span, Instrument};
@@ -2301,7 +2269,6 @@ mod tests {
     use crate::{
         endpoint::{ConnectOptions, Connection, ConnectionType, RemoteInfo},
         test_utils::{run_relay_server, run_relay_server_with},
-        watcher::Watcher,
         RelayMode,
     };
 
@@ -2476,6 +2443,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(windows, ignore = "flaky")]
     #[tokio::test]
     #[traced_test]
     async fn endpoint_relay_connect_loop() -> Result {
@@ -2501,7 +2469,8 @@ mod tests {
                         .bind()
                         .await?;
                     let eps = ep.bound_sockets();
-                    info!(me = %ep.node_id().fmt_short(), ipv4=%eps.0, ipv6=?eps.1, "server listening on");
+
+                    info!(me = %ep.node_id().fmt_short(), eps = ?eps, "server listening on");
                     for i in 0..n_clients {
                         let round_start = Instant::now();
                         info!("[server] round {i}");
@@ -2543,7 +2512,8 @@ mod tests {
                     .bind()
                     .await?;
                 let eps = ep.bound_sockets();
-                info!(me = %ep.node_id().fmt_short(), ipv4=%eps.0, ipv6=?eps.1, "client bound");
+
+                info!(me = %ep.node_id().fmt_short(), eps=?eps, "client bound");
                 let node_addr = NodeAddr::new(server_node_id).with_relay_url(relay_url);
                 info!(to = ?node_addr, "client connecting");
                 let conn = ep.connect(node_addr, TEST_ALPN).await.e()?;
@@ -2812,8 +2782,8 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_direct_addresses_no_stun_relay() -> Result {
-        let (relay_map, _, _guard) = run_relay_server_with(None, false).await?;
+    async fn test_direct_addresses_no_qad_relay() -> Result {
+        let (relay_map, _, _guard) = run_relay_server_with(false).await.unwrap();
 
         let ep = Endpoint::builder()
             .alpns(vec![TEST_ALPN.to_vec()])
@@ -3012,6 +2982,7 @@ mod tests {
         Ok(())
     }
 
+    #[cfg_attr(target_os = "windows", ignore = "flaky")]
     #[tokio::test]
     #[traced_test]
     async fn graceful_close() -> Result {
@@ -3222,7 +3193,7 @@ mod tests {
             .await?;
 
         // can get a first report
-        endpoint.net_report().initialized().await?;
+        endpoint.net_report().updated().await?;
 
         Ok(())
     }

@@ -65,7 +65,10 @@ async fn main() -> Result<()> {
         Err(_) => {
             let s = SecretKey::generate(rand::rngs::OsRng);
             println!("Generated a new node secret. To reuse, set");
-            println!("\tIROH_SECRET={s}\n");
+            println!(
+                "\tIROH_SECRET={}",
+                data_encoding::HEXLOWER.encode(&s.to_bytes())
+            );
             s
         }
     };
@@ -113,30 +116,21 @@ async fn main() -> Result<()> {
 
     match args.env {
         Env::Staging => {
-            println!(
-                "   cargo run --example resolve -- --env staging node {}",
-                node_id
-            );
+            println!("   cargo run --example resolve -- --env staging node {node_id}");
             println!(
                 "   dig {} TXT",
                 fmt_domain(&node_id, N0_DNS_NODE_ORIGIN_STAGING)
             )
         }
         Env::Prod => {
-            println!(
-                "   cargo run --example resolve -- --env prod node {}",
-                node_id
-            );
+            println!("   cargo run --example resolve -- --env prod node {node_id}");
             println!(
                 "   dig {} TXT",
                 fmt_domain(&node_id, N0_DNS_NODE_ORIGIN_PROD)
             )
         }
         Env::Dev => {
-            println!(
-                "    cargo run --example resolve -- --env dev node {}",
-                node_id
-            );
+            println!("    cargo run --example resolve -- --env dev node {node_id}");
             println!(
                 "    dig @localhost -p 5300 {} TXT",
                 fmt_domain(&node_id, DEV_DNS_ORIGIN_DOMAIN)
@@ -147,5 +141,5 @@ async fn main() -> Result<()> {
 }
 
 fn fmt_domain(node_id: &NodeId, origin: &str) -> String {
-    format!("{}.{}.{}", IROH_TXT_NAME, node_id.to_z32(), origin)
+    format!("{IROH_TXT_NAME}.{}.{origin}", node_id.to_z32())
 }

@@ -15,13 +15,10 @@ use self::{
     best_addr::ClearReason,
     node_state::{NodeState, Options, PingHandled},
 };
-use super::{metrics::Metrics, ActorMessage, DiscoMessageSource, NodeIdMappedAddr};
+use super::{metrics::Metrics, transports, ActorMessage, NodeIdMappedAddr};
+use crate::disco::{CallMeMaybe, Pong, SendAddr};
 #[cfg(any(test, feature = "test-utils"))]
 use crate::endpoint::PathSelection;
-use crate::{
-    disco::{CallMeMaybe, Pong, SendAddr},
-    watcher,
-};
 
 mod best_addr;
 mod node_state;
@@ -228,7 +225,7 @@ impl NodeMap {
             .handle_ping(sender, src, tx_id)
     }
 
-    pub(super) fn handle_pong(&self, sender: PublicKey, src: &DiscoMessageSource, pong: Pong) {
+    pub(super) fn handle_pong(&self, sender: PublicKey, src: &transports::Addr, pong: Pong) {
         self.inner
             .lock()
             .expect("poisoned")
@@ -264,15 +261,8 @@ impl NodeMap {
         let ep = inner.get_mut(NodeStateKey::NodeIdMappedAddr(addr))?;
         let public_key = *ep.public_key();
         trace!(dest = %addr, node_id = %public_key.fmt_short(), "dst mapped to NodeId");
-        let (udp_addr, relay_url, msgs) = ep.get_send_addrs(have_ipv6, metrics);
-        Some((public_key, udp_addr, relay_url, msgs))
-    }
-
-    pub(super) fn notify_shutdown(&self) {
-        let mut inner = self.inner.lock().expect("poisoned");
-        for (_, ep) in inner.node_states_mut() {
-            ep.reset();
-        }
+        let (udp_addr, relay_url, ping_actions) = ep.get_send_addrs(have_ipv6, metrics);
+        Some((public_key, udp_addr, relay_url, ping_actions))
     }
 
     pub(super) fn reset_node_states(&self) {
@@ -303,13 +293,13 @@ impl NodeMap {
             .collect()
     }
 
-    /// Returns a [`watcher::Direct`] for given node's [`ConnectionType`].
+    /// Returns a [`n0_watcher::Direct`] for given node's [`ConnectionType`].
     ///
     /// # Errors
     ///
     /// Will return `None` if there is not an entry in the [`NodeMap`] for
     /// the `node_id`
-    pub(super) fn conn_type(&self, node_id: NodeId) -> Option<watcher::Direct<ConnectionType>> {
+    pub(super) fn conn_type(&self, node_id: NodeId) -> Option<n0_watcher::Direct<ConnectionType>> {
         self.inner.lock().expect("poisoned").conn_type(node_id)
     }
 
@@ -505,14 +495,14 @@ impl NodeMapInner {
     ///
     /// Will return `None` if there is not an entry in the [`NodeMap`] for
     /// the `public_key`
-    fn conn_type(&self, node_id: NodeId) -> Option<watcher::Direct<ConnectionType>> {
+    fn conn_type(&self, node_id: NodeId) -> Option<n0_watcher::Direct<ConnectionType>> {
         self.get(NodeStateKey::NodeId(node_id))
             .map(|ep| ep.conn_type())
     }
 
-    fn handle_pong(&mut self, sender: NodeId, src: &DiscoMessageSource, pong: Pong) {
+    fn handle_pong(&mut self, sender: NodeId, src: &transports::Addr, pong: Pong) {
         if let Some(ns) = self.get_mut(NodeStateKey::NodeId(sender)).as_mut() {
-            let insert = ns.handle_pong(&pong, src.into());
+            let insert = ns.handle_pong(&pong, src.clone().into());
             if let Some((src, key)) = insert {
                 self.set_node_key_for_ip_port(src, &key);
             }

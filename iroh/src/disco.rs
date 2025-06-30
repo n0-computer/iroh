@@ -30,6 +30,8 @@ use serde::{Deserialize, Serialize};
 use snafu::{ensure, Snafu};
 use url::Url;
 
+use crate::magicsock::transports;
+
 // TODO: custom magicn
 /// The 6 byte header of all discovery messages.
 pub const MAGIC: &str = "TS💬"; // 6 bytes: 0x54 53 f0 9f 92 ac
@@ -158,6 +160,15 @@ impl SendAddr {
     }
 }
 
+impl From<transports::Addr> for SendAddr {
+    fn from(addr: transports::Addr) -> Self {
+        match addr {
+            transports::Addr::Ip(addr) => SendAddr::Udp(addr),
+            transports::Addr::Relay(url, _) => SendAddr::Relay(url),
+        }
+    }
+}
+
 impl From<SocketAddr> for SendAddr {
     fn from(source: SocketAddr) -> Self {
         SendAddr::Udp(source)
@@ -182,8 +193,8 @@ impl PartialEq<SocketAddr> for SendAddr {
 impl Display for SendAddr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SendAddr::Relay(id) => write!(f, "Relay({})", id),
-            SendAddr::Udp(addr) => write!(f, "UDP({})", addr),
+            SendAddr::Relay(id) => write!(f, "Relay({id})"),
+            SendAddr::Udp(addr) => write!(f, "UDP({addr})"),
         }
     }
 }

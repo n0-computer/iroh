@@ -105,7 +105,7 @@
 //!
 //! Additionally to providing reliable connectivity between iroh nodes, Relay servers
 //! provide some functions to assist in [hole punching].  They have various services to help
-//! nodes understand their own network situation.  This includes offering a [STUN] server,
+//! nodes understand their own network situation.  This includes offering a [QAD] server,
 //! but also a few HTTP extra endpoints as well as responding to ICMP echo requests.
 //!
 //! By default the [number 0] relay servers are used, see [`RelayMode::Default`].
@@ -195,8 +195,8 @@
 //! Every [`Endpoint`] can also accept connections:
 //!
 //! ```no_run
-//! use futures_lite::StreamExt;
 //! use iroh::{Endpoint, NodeAddr};
+//! use n0_future::StreamExt;
 //! use n0_snafu::{Result, ResultExt};
 //!
 //! async fn accept() -> Result<()> {
@@ -232,7 +232,7 @@
 //! [bi-directional streams]: crate::endpoint::Connection::open_bi
 //! [hole punching]: https://en.wikipedia.org/wiki/Hole_punching_(networking)
 //! [socket addresses]: https://doc.rust-lang.org/stable/std/net/enum.SocketAddr.html
-//! [STUN]: https://en.wikipedia.org/wiki/STUN
+//! [QAD]: https://www.ietf.org/archive/id/draft-ietf-quic-address-discovery-00.html
 //! [ALPN]: https://en.wikipedia.org/wiki/Application-Layer_Protocol_Negotiation
 //! [HTTP3]: https://en.wikipedia.org/wiki/HTTP/3
 //! [`SecretKey`]: crate::SecretKey
@@ -269,13 +269,13 @@ pub mod endpoint;
 pub mod metrics;
 pub mod net_report;
 pub mod protocol;
-pub mod watcher;
 
 pub use endpoint::{Endpoint, RelayMode};
 pub use iroh_base::{
     KeyParsingError, NodeAddr, NodeId, PublicKey, RelayUrl, RelayUrlParseError, SecretKey,
 };
 pub use iroh_relay::{node_info, RelayMap, RelayNode};
+pub use n0_watcher::Watcher;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_utils;

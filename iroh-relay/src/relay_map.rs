@@ -5,7 +5,7 @@ use std::{collections::BTreeMap, fmt, sync::Arc};
 use iroh_base::RelayUrl;
 use serde::{Deserialize, Serialize};
 
-use crate::defaults::{DEFAULT_RELAY_QUIC_PORT, DEFAULT_STUN_PORT};
+use crate::defaults::DEFAULT_RELAY_QUIC_PORT;
 
 /// Configuration of all the relay servers that can be used.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,7 +68,7 @@ impl FromIterator<RelayNode> for RelayMap {
 impl From<RelayUrl> for RelayMap {
     /// Creates a [`RelayMap`] from a [`RelayUrl`].
     ///
-    /// The [`RelayNode`]s in the [`RelayMap`] will have the default STUN and QUIC address
+    /// The [`RelayNode`]s in the [`RelayMap`] will have the default QUIC address
     /// discovery ports.
     fn from(value: RelayUrl) -> Self {
         Self {
@@ -88,7 +88,7 @@ impl From<RelayNode> for RelayMap {
 impl FromIterator<RelayUrl> for RelayMap {
     /// Creates a [`RelayMap`] from an iterator of [`RelayUrl`].
     ///
-    /// The [`RelayNode`]s in the [`RelayMap`] will have the default STUN and QUIC address
+    /// The [`RelayNode`]s in the [`RelayMap`] will have the default QUIC address
     /// discovery ports.
     fn from_iter<T: IntoIterator<Item = RelayUrl>>(iter: T) -> Self {
         Self {
@@ -116,15 +116,6 @@ impl fmt::Display for RelayMap {
 pub struct RelayNode {
     /// The [`RelayUrl`] where this relay server can be dialed.
     pub url: RelayUrl,
-    /// Whether this relay server should only be used for STUN requests.
-    ///
-    /// This essentially allows you to use a normal STUN server as a relay node, no relay
-    /// functionality is used.
-    pub stun_only: bool,
-    /// The stun port of the relay server.
-    ///
-    /// Setting this to `0` means the default STUN port is used.
-    pub stun_port: u16,
     /// Configuration to speak to the QUIC endpoint on the relay server.
     ///
     /// When `None`, we will not attempt to do QUIC address discovery
@@ -137,8 +128,6 @@ impl From<RelayUrl> for RelayNode {
     fn from(value: RelayUrl) -> Self {
         Self {
             url: value,
-            stun_only: false,
-            stun_port: DEFAULT_STUN_PORT,
             quic: quic_config(),
         }
     }

@@ -2,7 +2,60 @@
 
 All notable changes to iroh will be documented in this file.
 
-## [0.35.0](https://github.com/n0-computer/iroh/compare/v0.34.1..0.35.0) - 2025-05-12
+## [0.90.0](https://github.com/n0-computer/iroh/compare/v0.35.0..0.90.0) - 2025-06-26
+
+### ⛰️  Features
+
+- *(iroh)* Allow protocols to gracefully shutdown connections ([#3319](https://github.com/n0-computer/iroh/issues/3319)) - ([da571c1](https://github.com/n0-computer/iroh/commit/da571c19591fee13504e5a226b5cc0dc4dc1435e))
+- *(iroh)* [**breaking**] Make ProtocolHandler use async functions ([#3320](https://github.com/n0-computer/iroh/issues/3320)) - ([e36ac77](https://github.com/n0-computer/iroh/commit/e36ac776fec2d5aabec8300e13b30b6f81ed4721))
+- *(iroh)* [**breaking**] Remove deprecated x509 libp2p TLS authentication ([#3330](https://github.com/n0-computer/iroh/issues/3330)) - ([136b855](https://github.com/n0-computer/iroh/commit/136b855087900fd65638833aae1513267955fcf6))
+- *(iroh)* [**breaking**] Introduce transport abstraction ([#3279](https://github.com/n0-computer/iroh/issues/3279)) - ([d915bfd](https://github.com/n0-computer/iroh/commit/d915bfdff45235f90e06e7a8502bebebd6621857))
+- *(iroh)* Re-export `n0_watcher::Watcher` trait ([#3356](https://github.com/n0-computer/iroh/issues/3356)) - ([bc6e9e3](https://github.com/n0-computer/iroh/commit/bc6e9e3077a62f61f25efcd0bc93540006222e18))
+- *(iroh)* [**breaking**] Expose `DynProtocolHandler` ([#3366](https://github.com/n0-computer/iroh/issues/3366)) - ([056df1d](https://github.com/n0-computer/iroh/commit/056df1de3ccd01b918d95c0140a36c13b42758dd))
+- Make `Endpoint::node_addr` watchable and add `trait Watcher` & combinators ([#3045](https://github.com/n0-computer/iroh/issues/3045)) - ([7911255](https://github.com/n0-computer/iroh/commit/79112552b71301db4e17795862b5e06865644a93))
+- [**breaking**] Concrete errors ([#3161](https://github.com/n0-computer/iroh/issues/3161)) - ([75eae87](https://github.com/n0-computer/iroh/commit/75eae87c5b14b7f919f1d3e3a083e97547e11a6e))
+- Add methods to create variants of the `iroh-base::ticket::ParseError` enum. ([#3362](https://github.com/n0-computer/iroh/issues/3362)) - ([1859de3](https://github.com/n0-computer/iroh/commit/1859de331e9df01eecea2ede1143edb19005c9a6))
+
+### 🐛 Bug Fixes
+
+- *(iroh)* Correctly hook up ipv6 addr lookups ([#3342](https://github.com/n0-computer/iroh/issues/3342)) - ([b8b5bc3](https://github.com/n0-computer/iroh/commit/b8b5bc36b63e43d06ba494135b1ad549c619f202))
+- *(iroh-base)* [**breaking**] Remove display impl for SecretKey ([#3364](https://github.com/n0-computer/iroh/issues/3364)) - ([19323e6](https://github.com/n0-computer/iroh/commit/19323e6f5a892f7c9648b934be0e993b6e9c574c))
+- Remove unneeded lifetime bound for watcher in wasm ([#3354](https://github.com/n0-computer/iroh/issues/3354)) - ([84dd511](https://github.com/n0-computer/iroh/commit/84dd511c1057d5e68ee8c35cf5ca77df4fee86f6))
+
+### 🚜 Refactor
+
+- *(iroh)* [**breaking**] Simplify discovery errors ([#3340](https://github.com/n0-computer/iroh/issues/3340)) - ([fad99ab](https://github.com/n0-computer/iroh/commit/fad99ab551117ebea2f391605243ee864128ee1e))
+- *(iroh)* [**breaking**] Rename ProtocolError to AcceptError ([#3339](https://github.com/n0-computer/iroh/issues/3339)) - ([d4de591](https://github.com/n0-computer/iroh/commit/d4de591cb54be888e587320e6fb705648036ab38))
+- *(iroh)* [**breaking**] Rework net_report ([#3314](https://github.com/n0-computer/iroh/issues/3314)) - ([dcbebe9](https://github.com/n0-computer/iroh/commit/dcbebe93f90b2b6408496869fc61503297ba9b86))
+- *(iroh)* [**breaking**] Add `IntoDiscovery` trait ([#3327](https://github.com/n0-computer/iroh/issues/3327)) - ([7f2cdd1](https://github.com/n0-computer/iroh/commit/7f2cdd17fd8a01ab4a7d1b48c6e82e5d7520233e))
+- *(iroh-relay,iroh)* Slightly clean up staggered DNS errors ([#3337](https://github.com/n0-computer/iroh/issues/3337)) - ([444c76b](https://github.com/n0-computer/iroh/commit/444c76b54680b748684242a34f5a880212509ab0))
+
+### 🧪 Testing
+
+- *(iroh-relay)* Add 300ms timeout to the `test_qad_client_closes_unresponsive_fast` test ([#3332](https://github.com/n0-computer/iroh/issues/3332)) - ([b647af9](https://github.com/n0-computer/iroh/commit/b647af998c8705abaf3183fd7682291350c47225))
+
+### ⚙️ Miscellaneous Tasks
+
+- *(*)* Upgrade to the latest `iroh-metrics`, `portmapper`, and `swarm-discovery` ([#3369](https://github.com/n0-computer/iroh/issues/3369)) - ([79bc05b](https://github.com/n0-computer/iroh/commit/79bc05bdfcb8829adbc8c9ea55c72861556ff846))
+- *(iroh)* [**breaking**] Change default relays to new "canary" relays ([#3368](https://github.com/n0-computer/iroh/issues/3368)) - ([6e72f20](https://github.com/n0-computer/iroh/commit/6e72f201db1a6b5c03818a2c193d5dda4d9d03cc))
+- *(iroh-relay)* Make QAD test non-flaky by using tokio's paused time ([#3341](https://github.com/n0-computer/iroh/issues/3341)) - ([2b6c258](https://github.com/n0-computer/iroh/commit/2b6c2589b08a516086d4e9aa807d98983085b719))
+- *(iroh-relay)* Fix cargo check warning ([#3346](https://github.com/n0-computer/iroh/issues/3346)) - ([c7cf08d](https://github.com/n0-computer/iroh/commit/c7cf08da74ce547c87601a05b309d5e3110d8161))
+- Make clippy 1.87 happy ([#3318](https://github.com/n0-computer/iroh/issues/3318)) - ([02acba9](https://github.com/n0-computer/iroh/commit/02acba96985808d6243036965a37021180bf1515))
+- Update project_sync workflow ([#3325](https://github.com/n0-computer/iroh/issues/3325)) - ([518400b](https://github.com/n0-computer/iroh/commit/518400b0d7fa1851b49da3598995ff9f0aeece3b))
+
+### Bugfix
+
+- Use staging relay in n0_dns_pkarr_relay ([#3335](https://github.com/n0-computer/iroh/issues/3335)) - ([aebbc72](https://github.com/n0-computer/iroh/commit/aebbc727ffbb72d738f8c76b489e034fdd6a5cc8))
+
+### Example
+
+- Example for 0rtt that can also serve as a benchmark ([#3323](https://github.com/n0-computer/iroh/issues/3323)) - ([b0b11f0](https://github.com/n0-computer/iroh/commit/b0b11f0a52951215bb4e39404a79d3ddabfa60c3))
+
+### Iroh
+
+- *(deps)* Dedupe lru and webpki ([#3306](https://github.com/n0-computer/iroh/issues/3306)) - ([ba07bcc](https://github.com/n0-computer/iroh/commit/ba07bcc2b6180ef55bc41e8e277fb0cf000fb434))
+
+## [0.35.0](https://github.com/n0-computer/iroh/compare/v0.34.1..v0.35.0) - 2025-05-12
 
 ### ⛰️  Features
 
@@ -26,6 +79,7 @@ All notable changes to iroh will be documented in this file.
 
 - *(iroh)* Add `echo-no-router.rs` example ([#3267](https://github.com/n0-computer/iroh/issues/3267)) - ([7e13aa3](https://github.com/n0-computer/iroh/commit/7e13aa3ea76204f7ee4d59be84ed454dff73766c))
 - Update to mozilla-actions/sccache-action@v0.0.9 ([#3268](https://github.com/n0-computer/iroh/issues/3268)) - ([792e6c4](https://github.com/n0-computer/iroh/commit/792e6c4148a4a721189f16d453a365f7663e2439))
+- Release - ([31895bf](https://github.com/n0-computer/iroh/commit/31895bf09ee58c2d7ae38d7f65698f3f983c12e9))
 
 ### Deps
 

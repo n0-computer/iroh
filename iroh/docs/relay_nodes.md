@@ -14,8 +14,6 @@ RelayNode {
   url: format!("https://derp.iroh.network")
          .parse()
          .unwrap(),
-  stun_only: false,
-  stun_port: 3478,
 }
 ```
 
@@ -26,7 +24,5 @@ RelayNode {
   url: format!("https://eu1.derp.iroh.network")
        .parse()
        .unwrap(),
-  stun_only: false,
-  stun_port: 3478,
 }
 ```

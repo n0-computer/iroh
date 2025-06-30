@@ -1,6 +1,6 @@
 [package]
 name = "iroh"
-version = "0.35.0"
+version = "0.90.0"
 edition = "2021"
 readme = "README.md"
 description = "p2p quic connections dialed by public key"
@@ -21,10 +21,7 @@ crate-type = ["lib", "cdylib"]
 workspace = true
 
 [dependencies]
-anyhow = "1.0.98"
 aead = { version = "0.5.2", features = ["bytes", "std"] }
-atomic-waker = "1.1.2"
-concurrent-queue = "2.5"
 backon = { version = "1.4" }
 bytes = "1.7"
 crypto_box = { version = "0.9.1", features = ["serde", "chacha20"] }
@@ -40,17 +37,18 @@ derive_more = { version = "1.0.0", features = [
 ] }
 ed25519-dalek = { version = "2.1.1", features = ["serde", "rand_core", "zeroize", "pkcs8", "pem"] }
 http = "1"
-iroh-base = { version = "0.35.0", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
-iroh-relay = { version = "0.35", path = "../iroh-relay", default-features = false }
+iroh-base = { version = "0.90.0", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
+iroh-relay = { version = "0.90", path = "../iroh-relay", default-features = false }
 n0-future = "0.1.2"
-n0-snafu = "0.2.0"
+n0-snafu = "0.2.1"
+n0-watcher = "0.2"
 nested_enum_utils = "0.2.1"
-netwatch = { version = "0.5" }
+netwatch = { version = "0.6" }
 pin-project = "1"
 pkarr = { version = "3.7", default-features = false, features = [
     "relays",
 ] }
-quinn = { package = "iroh-quinn", version = "0.13.0", default-features = false, features = ["rustls-ring"] }
+quinn = { package = "iroh-quinn", version = "0.14.0", default-features = false, features = ["rustls-ring"] }
 quinn-proto = { package = "iroh-quinn-proto", version = "0.13.0" }
 quinn-udp = { package = "iroh-quinn-udp", version = "0.5.7" }
 rand = "0.8"
@@ -87,10 +85,10 @@ futures-buffered = "0.2.11"
 spki = { version = "0.7.3", features = ["std"] }
 
 # metrics
-iroh-metrics = { version = "0.34", default-features = false }
+iroh-metrics = { version = "0.35", default-features = false }
 
 # local-swarm-discovery
-swarm-discovery = { version = "0.3.1", optional = true }
+swarm-discovery = { version = "0.4", optional = true }
 futures-util = "0.3"
 
 # test_utils
@@ -104,13 +102,14 @@ tracing-subscriber = { version = "0.3", features = [
 indicatif = { version = "0.17", features = ["tokio"], optional = true }
 parse-size = { version = "=1.0.0", optional = true, features = ['std'] } # pinned version to avoid bumping msrv to 1.81
 
+
 # non-wasm-in-browser dependencies
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
 hickory-resolver = "0.25.1"
 igd-next = { version = "0.16", features = ["aio_tokio"] }
 netdev = { version = "0.31.0" }
-portmapper = { version = "0.5.0", default-features = false }
-quinn = { package = "iroh-quinn", version = "0.13.0", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+portmapper = { version = "0.6.1", default-features = false }
+quinn = { package = "iroh-quinn", version = "0.14.0", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 tokio = { version = "1", features = [
     "io-util",
     "macros",
@@ -134,6 +133,7 @@ getrandom = { version = "0.3.2", features = ["wasm_js"] }
 
 # target-common test/dev dependencies
 [dev-dependencies]
+console_error_panic_hook = "0.1"
 postcard = { version = "1.1.1", features = ["use-std"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
@@ -141,7 +141,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 [target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dev-dependencies]
 axum = { version = "0.8" }
 clap = { version = "4", features = ["derive"] }
-futures-lite = "2.6"
 pretty_assertions = "1.4"
 rand_chacha = "0.3.1"
 tokio = { version = "1", features = [

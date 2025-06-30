@@ -6,13 +6,11 @@ use iroh_base::RelayUrl;
 use iroh_relay::{
     server::{
         AccessConfig, CertConfig, QuicConfig, RelayConfig, Server, ServerConfig, SpawnError,
-        StunConfig, TlsConfig,
+        TlsConfig,
     },
     RelayMap, RelayNode, RelayQuicConfig,
 };
 use tokio::sync::oneshot;
-
-use crate::defaults::DEFAULT_STUN_PORT;
 
 /// A drop guard to clean up test infrastructure.
 ///
@@ -24,47 +22,21 @@ use crate::defaults::DEFAULT_STUN_PORT;
 #[allow(dead_code)]
 pub struct CleanupDropGuard(pub(crate) oneshot::Sender<()>);
 
-/// Runs a relay server with STUN and QUIC enabled suitable for tests.
+/// Runs a relay server with QUIC enabled suitable for tests.
 ///
 /// The returned `Url` is the url of the relay server in the returned [`RelayMap`].
 /// When dropped, the returned [`Server`] does will stop running.
 pub async fn run_relay_server() -> Result<(RelayMap, RelayUrl, Server), SpawnError> {
-    run_relay_server_with(
-        Some(StunConfig {
-            bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
-        }),
-        true,
-    )
-    .await
-}
-
-/// Runs a relay server with STUN enabled suitable for tests.
-///
-/// The returned `Url` is the url of the relay server in the returned [`RelayMap`].
-/// When dropped, the returned [`Server`] does will stop running.
-pub async fn run_relay_server_with_stun() -> Result<(RelayMap, RelayUrl, Server), SpawnError> {
-    run_relay_server_with(
-        Some(StunConfig {
-            bind_addr: (Ipv4Addr::LOCALHOST, 0).into(),
-        }),
-        false,
-    )
-    .await
+    run_relay_server_with(true).await
 }
 
 /// Runs a relay server.
-///
-/// `stun` can be set to `None` to disable stun, or set to `Some` `StunConfig`,
-/// to enable stun on a specific socket.
 ///
 /// If `quic` is set to `true`, it will make the appropriate [`QuicConfig`] from the generated tls certificates and run the quic server at a random free port.
 ///
 ///
 /// The return value is similar to [`run_relay_server`].
-pub async fn run_relay_server_with(
-    stun: Option<StunConfig>,
-    quic: bool,
-) -> Result<(RelayMap, RelayUrl, Server), SpawnError> {
+pub async fn run_relay_server_with(quic: bool) -> Result<(RelayMap, RelayUrl, Server), SpawnError> {
     let (certs, server_config) = iroh_relay::server::testing::self_signed_tls_certs_and_config();
 
     let tls = TlsConfig {
@@ -90,7 +62,6 @@ pub async fn run_relay_server_with(
             access: AccessConfig::Everyone,
         }),
         quic,
-        stun,
         ..Default::default()
     };
     let server = Server::spawn(config).await?;
@@ -103,8 +74,6 @@ pub async fn run_relay_server_with(
         .map(|addr| RelayQuicConfig { port: addr.port() });
     let n: RelayMap = RelayNode {
         url: url.clone(),
-        stun_only: false,
-        stun_port: server.stun_addr().map_or(DEFAULT_STUN_PORT, |s| s.port()),
         quic,
     }
     .into();
@@ -166,13 +135,17 @@ pub(crate) mod dns_and_pkarr_servers {
 
         /// Create a [`ConcurrentDiscovery`] with [`DnsDiscovery`] and [`PkarrPublisher`]
         /// configured to use the test servers.
-        pub fn discovery(&self, secret_key: SecretKey) -> Box<ConcurrentDiscovery> {
-            Box::new(ConcurrentDiscovery::from_services(vec![
+        pub fn discovery(&self, secret_key: SecretKey) -> ConcurrentDiscovery {
+            ConcurrentDiscovery::from_services(vec![
                 // Enable DNS discovery by default
-                Box::new(DnsDiscovery::new(self.node_origin.clone())),
+                Box::new(
+                    DnsDiscovery::builder(self.node_origin.clone())
+                        .dns_resolver(self.dns_resolver())
+                        .build(),
+                ),
                 // Enable pkarr publishing by default
-                Box::new(PkarrPublisher::new(secret_key, self.pkarr_url.clone())),
-            ]))
+                Box::new(PkarrPublisher::builder(self.pkarr_url.clone()).build(secret_key)),
+            ])
         }
 
         /// Create a [`DnsResolver`] configured to use the test DNS server.
@@ -372,6 +345,7 @@ pub(crate) mod pkarr_dns_state {
     use iroh_base::NodeId;
     use iroh_relay::node_info::{NodeIdExt, NodeInfo, IROH_TXT_NAME};
     use pkarr::SignedPacket;
+    use tracing::debug;
 
     use crate::test_utils::dns_server::QueryHandler;
 
@@ -398,7 +372,13 @@ pub(crate) mod pkarr_dns_state {
         pub async fn on_node(&self, node: &NodeId, timeout: Duration) -> std::io::Result<()> {
             let timeout = tokio::time::sleep(timeout);
             tokio::pin!(timeout);
-            while self.get(node, |p| p.is_none()) {
+            while self.get(node, |p| {
+                let node_info = p
+                    .as_ref()
+                    .and_then(|p| NodeInfo::from_pkarr_signed_packet(p).ok());
+                debug!("got info {:#?}", node_info);
+                p.is_none()
+            }) {
                 tokio::select! {
                     _ = &mut timeout => return Err(std::io::Error::other("timeout")),
                     _ = self.on_update() => {}
@@ -517,7 +497,7 @@ pub(crate) mod pkarr_dns_state {
         ttl: u32,
     ) -> impl Iterator<Item = hickory_resolver::proto::rr::Record> + '_ {
         use hickory_resolver::proto::rr;
-        let name = format!("{}.{}.{}", IROH_TXT_NAME, node_id.to_z32(), origin);
+        let name = format!("{IROH_TXT_NAME}.{}.{origin}", node_id.to_z32());
         let name = rr::Name::from_utf8(name).expect("invalid name");
         txt_strings.into_iter().map(move |s| {
             let txt = rr::rdata::TXT::new(vec![s]);

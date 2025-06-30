@@ -42,16 +42,13 @@ use n0_future::{
     task::{self, AbortOnDropHandle, JoinSet},
     time::{self, Duration},
 };
+use n0_watcher::{Watchable, Watcher as _};
 use swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
 use tokio::sync::mpsc::{self, error::TrySendError};
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
-use super::DiscoveryError;
-use crate::{
-    discovery::{Discovery, DiscoveryItem, NodeData, NodeInfo},
-    watcher::{Watchable, Watcher as _},
-    Endpoint,
-};
+use super::{DiscoveryContext, DiscoveryError, IntoDiscovery, IntoDiscoveryError};
+use crate::discovery::{Discovery, DiscoveryItem, NodeData, NodeInfo};
 
 /// The n0 local swarm node discovery name
 const N0_LOCAL_SWARM: &str = "iroh.local.swarm";
@@ -128,7 +125,25 @@ impl Subscribers {
     }
 }
 
+/// Builder for [`MdnsDiscovery`].
+#[derive(Debug)]
+pub struct MdnsDiscoveryBuilder;
+
+impl IntoDiscovery for MdnsDiscoveryBuilder {
+    fn into_discovery(
+        self,
+        context: &DiscoveryContext,
+    ) -> Result<impl Discovery, IntoDiscoveryError> {
+        MdnsDiscovery::new(context.node_id())
+    }
+}
+
 impl MdnsDiscovery {
+    /// Returns a [`MdnsDiscoveryBuilder`] that implements [`IntoDiscovery`].
+    pub fn builder() -> MdnsDiscoveryBuilder {
+        MdnsDiscoveryBuilder
+    }
+
     /// Create a new [`MdnsDiscovery`] Service.
     ///
     /// This starts a [`Discoverer`] that broadcasts your addresses and receives addresses from other nodes in your local network.
@@ -138,7 +153,7 @@ impl MdnsDiscovery {
     ///
     /// # Panics
     /// This relies on [`tokio::runtime::Handle::current`] and will panic if called outside of the context of a tokio runtime.
-    pub fn new(node_id: NodeId) -> Result<Self, DiscoveryError> {
+    pub fn new(node_id: NodeId) -> Result<Self, IntoDiscoveryError> {
         debug!("Creating new MdnsDiscovery service");
         let (send, mut recv) = mpsc::channel(64);
         let task_sender = send.clone();
@@ -306,7 +321,7 @@ impl MdnsDiscovery {
         sender: mpsc::Sender<Message>,
         socketaddrs: BTreeSet<SocketAddr>,
         rt: &tokio::runtime::Handle,
-    ) -> Result<DropGuard, DiscoveryError> {
+    ) -> Result<DropGuard, IntoDiscoveryError> {
         let spawn_rt = rt.clone();
         let callback = move |node_id: &str, peer: &Peer| {
             trace!(
@@ -334,7 +349,7 @@ impl MdnsDiscovery {
         }
         discoverer
             .spawn(rt)
-            .map_err(|e| DiscoveryError::from_err_box("mdns", e.into_boxed_dyn_error()))
+            .map_err(|e| IntoDiscoveryError::from_err("mdns", e))
     }
 
     fn socketaddrs_to_addrs(socketaddrs: &BTreeSet<SocketAddr>) -> HashMap<u16, Vec<IpAddr>> {
@@ -375,11 +390,7 @@ fn peer_to_discovery_item(peer: &Peer, node_id: &NodeId) -> DiscoveryItem {
 }
 
 impl Discovery for MdnsDiscovery {
-    fn resolve(
-        &self,
-        _ep: Endpoint,
-        node_id: NodeId,
-    ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
+    fn resolve(&self, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
         use futures_util::FutureExt;
 
         let (send, recv) = mpsc::channel(20);
@@ -438,12 +449,9 @@ mod tests {
                 .with_user_data(Some(user_data.clone()));
             println!("info {node_data:?}");
 
-            // pass in endpoint, this is never used
-            let ep = crate::endpoint::Builder::default().bind().await?;
-
             // resolve twice to ensure we can create separate streams for the same node_id
-            let mut s1 = discovery_a.resolve(ep.clone(), node_id_b).unwrap();
-            let mut s2 = discovery_a.resolve(ep, node_id_b).unwrap();
+            let mut s1 = discovery_a.resolve(node_id_b).unwrap();
+            let mut s2 = discovery_a.resolve(node_id_b).unwrap();
 
             tracing::debug!(?node_id_b, "Discovering node id b");
             // publish discovery_b's address
