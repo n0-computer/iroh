@@ -142,7 +142,7 @@ pub enum ServerToClientMsg {
         ///
         /// If `None` means the connection is healthy again.
         ///
-        /// The default condition is healthy, so the server doesn't broadcast a [`ReceivedMessage::Health`]
+        /// The default condition is healthy, so the server doesn't broadcast a [`ServerToClientMsg::Health`]
         /// until a problem exists.
         problem: String,
     },
@@ -157,12 +157,10 @@ pub enum ServerToClientMsg {
         /// than a few seconds.
         try_for: Duration,
     },
-    /// TODO(matheus23) fix docs
-    /// Request from a client or server to reply to the
-    /// other side with a [`ReceivedMessage::Pong`] with the given payload.
+    /// Request from the server to reply to the
+    /// other side with a [`ClientToServerMsg::Pong`] with the given payload.
     Ping([u8; 8]),
-    /// TODO(matheus23) fix docs
-    /// Reply to a [`ReceivedMessage::Ping`] from a client or server
+    /// Reply to a [`ClientToServerMsg::Ping`] from a client
     /// with the payload sent previously in the ping.
     Pong([u8; 8]),
 }
@@ -170,9 +168,11 @@ pub enum ServerToClientMsg {
 /// TODO(matheus23): Docs
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClientToServerMsg {
-    /// TODO
+    /// Request from the client to the server to reply to the
+    /// other side with a [`ServerToClientMsg::Pong`] with the given payload.
     Ping([u8; 8]),
-    /// TODO
+    /// Reply to a [`ServerToClientMsg::Ping`] from a server
+    /// with the payload sent previously in the ping.
     Pong([u8; 8]),
     /// TODO
     SendDatagrams {
@@ -183,7 +183,10 @@ pub enum ClientToServerMsg {
     },
 }
 
-/// TODO(matheus23): Docs
+/// One or multiple datagrams being transferred via the relay.
+///
+/// This type is modeled after [`quinn_proto::Transmit`]
+/// (or even more similarly `quinn_udp::Transmit`, but we don't depend on that library here).
 #[derive(derive_more::Debug, Clone, PartialEq, Eq)]
 pub struct Datagrams {
     /// Explicit congestion notification bits
@@ -613,10 +616,14 @@ mod proptests {
                 datagrams,
             }
         });
-        let node_gone = key().prop_map(|node_id| ServerToClientMsg::NodeGone(node_id));
+        let node_gone = key().prop_map(ServerToClientMsg::NodeGone);
         let ping = prop::array::uniform8(any::<u8>()).prop_map(ServerToClientMsg::Ping);
         let pong = prop::array::uniform8(any::<u8>()).prop_map(ServerToClientMsg::Pong);
-        let health = ".{0,65536}".prop_map(|problem| ServerToClientMsg::Health { problem });
+        let health = ".{0,65536}"
+            .prop_filter("exceeds MAX_PAYLOAD_SIZE", |s| {
+                s.len() < MAX_PAYLOAD_SIZE // a single unicode character can match a regex "." but take up multiple bytes
+            })
+            .prop_map(|problem| ServerToClientMsg::Health { problem });
         let restarting = (any::<u32>(), any::<u32>()).prop_map(|(reconnect_in, try_for)| {
             ServerToClientMsg::Restarting {
                 reconnect_in: Duration::from_millis(reconnect_in.into()),

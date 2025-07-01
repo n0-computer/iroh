@@ -1,16 +1,8 @@
 //! Functionality related to lower-level tls-based connection establishment.
 //!
-//! Primarily to support [`ClientBuilder::connect_relay`].
+//! Primarily to support [`ClientBuilder::connect`].
 //!
 //! This doesn't work in the browser - thus separated into its own file.
-//!
-//! `connect_relay` uses a custom HTTP upgrade header value (see [`HTTP_UPGRADE_PROTOCOL`]),
-//! as opposed to [`WEBSOCKET_UPGRADE_PROTOCOL`].
-//!
-//! `connect_ws` however reuses websockets for framing.
-//!
-//! [`HTTP_UPGRADE_PROTOCOL`]: crate::http::HTTP_UPGRADE_PROTOCOL
-//! [`WEBSOCKET_UPGRADE_PROTOCOL`]: crate::http::WEBSOCKET_UPGRADE_PROTOCOL
 
 // Based on tailscale/derp/derphttp/derphttp_client.go
 

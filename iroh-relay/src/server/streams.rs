@@ -19,9 +19,11 @@ use crate::{
     ExportKeyingMaterial, KeyCache,
 };
 
-/// A Stream and Sink for [`Frame`]s connected to a single relay client.
+/// The relay's connection to a client.
 ///
-/// The stream receives message from the client while the sink sends them to the client.
+/// This implements
+/// - a [`Stream`] of [`ClientToServerMsg`]s that are received from the client,
+/// - a [`Sink`] of [`ServerToClientMsg`]s that can be sent to the client.
 #[derive(Debug)]
 pub(crate) struct RelayedStream {
     pub(crate) inner: WebSocketStream<RateLimited<MaybeTlsStream>>,

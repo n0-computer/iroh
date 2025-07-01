@@ -13,7 +13,7 @@ use nested_enum_utils::common_fields;
 use rand::{CryptoRng, RngCore};
 use snafu::{Backtrace, OptionExt, ResultExt, Snafu};
 
-use super::{relay::FrameType, send_recv::SendError, streams::BytesStreamSink};
+use super::{relay::FrameType, streams::BytesStreamSink};
 use crate::ExportKeyingMaterial;
 
 /// Message that tells the server the client needs a challenge to authenticate.
@@ -107,8 +107,6 @@ pub enum Error {
         #[cfg(wasm_browser)]
         source: ws_stream_wasm::WsErr,
     },
-    #[snafu(transparent)]
-    Legacy { source: SendError },
     #[snafu(display("Handshake timeout reached"))]
     Timeout { source: Elapsed },
     #[snafu(display("Handshake stream ended prematurely"))]
@@ -253,7 +251,7 @@ pub(crate) async fn clientside(
         }
         FrameType::ServerDeniesAuth => {
             let _denial: ServerDeniesAuth = deserialize_frame(frame)?;
-            return Err(ServerDeniedAuthSnafu.build());
+            Err(ServerDeniedAuthSnafu.build())
         }
         _ => unreachable!(),
     }
@@ -328,7 +326,7 @@ async fn read_frame(
         expected_types.contains(&frame_type),
         UnexpectedFrameTypeSnafu {
             frame_type,
-            expected_types: expected_types.into_iter().cloned().collect::<Vec<_>>()
+            expected_types: expected_types.to_vec()
         }
     );
 
@@ -436,18 +434,18 @@ mod tests {
 
         let mut client_io = Framed::new(client, LengthDelimitedCodec::new())
             .map_ok(BytesMut::freeze)
-            .map_err(|e| tokio_websockets::Error::Io(e).into())
-            .sink_map_err(|e| tokio_websockets::Error::Io(e).into())
+            .map_err(tokio_websockets::Error::Io)
+            .sink_map_err(tokio_websockets::Error::Io)
             .with_shared_secret(client_shared_secret);
         let mut server_io = Framed::new(server, LengthDelimitedCodec::new())
             .map_ok(BytesMut::freeze)
-            .map_err(|e| tokio_websockets::Error::Io(e).into())
-            .sink_map_err(|e| tokio_websockets::Error::Io(e).into())
+            .map_err(tokio_websockets::Error::Io)
+            .sink_map_err(tokio_websockets::Error::Io)
             .with_shared_secret(server_shared_secret);
 
         let (_, client_auth) = n0_future::future::try_zip(
             async {
-                super::clientside(&mut client_io, &secret_key)
+                super::clientside(&mut client_io, secret_key)
                     .await
                     .context("clientside")
             },

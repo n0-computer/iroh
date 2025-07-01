@@ -81,13 +81,8 @@ pub enum RecvError {
 ///
 /// This holds a connection to a relay server.  It is:
 ///
-/// - A [`Stream`] for [`ReceivedMessage`] to receive from the server.
-/// - A [`Sink`] for [`SendMessage`] to send to the server.
-/// - A [`Sink`] for [`Frame`] to send to the server.
-///
-/// The [`Frame`] sink is a more internal interface, it allows performing the handshake.
-/// The [`SendMessage`] and [`ReceivedMessage`] are safer wrappers enforcing some protocol
-/// invariants.
+/// - A [`Stream`] for [`ServerToClientMsg`] to receive from the server.
+/// - A [`Sink`] for [`ClientToServerMsg`] to send to the server.
 #[derive(derive_more::Debug)]
 pub(crate) struct Conn {
     #[debug("tokio_websockets::WebSocketStream")]

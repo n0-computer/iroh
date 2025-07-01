@@ -6,3 +6,4 @@
 # everyone who runs the test benefits from these saved cases.
 cc 8f4f94b7c917bb0f52d31b529c3d580728ea57954ca45d91768cf4ae745e6eb9 # shrinks to frame = ReceivedDatagrams { remote_node_id: PublicKey(3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29), datagrams: Datagrams { ecn: None, segment_size: Some(43846), .. } }
 cc e40ca61e22386f1c76f717f2a6dbba367ea05d906317b3f979b46031567edbca # shrinks to frame = SendDatagrams { dst_node_id: PublicKey(3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29), datagrams: Datagrams { ecn: None, segment_size: Some(44811), .. } }
+cc 435ec32fc803db22bf4688a6356878073752b58fcd0b4422876fb3ab2a622684 # shrinks to a huge frame = Health { .. }

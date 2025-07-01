@@ -77,7 +77,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Stream for WsBytesFramed<T> {
         loop {
             match ready!(Pin::new(&mut self.io).poll_next(cx)) {
                 None => return Poll::Ready(None),
-                Some(Err(e)) => return Poll::Ready(Some(Err(e.into()))),
+                Some(Err(e)) => return Poll::Ready(Some(Err(e))),
                 Some(Ok(msg)) => {
                     if msg.is_close() {
                         // Indicate the stream is done when we receive a close message.
@@ -127,7 +127,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Sink<Bytes> for WsBytesFramed<T> {
 
     fn start_send(mut self: Pin<&mut Self>, bytes: Bytes) -> Result<(), Self::Error> {
         let msg = tokio_websockets::Message::binary(tokio_websockets::Payload::from(bytes));
-        Pin::new(&mut self.io).start_send(msg).map_err(Into::into)
+        Pin::new(&mut self.io).start_send(msg)
     }
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
