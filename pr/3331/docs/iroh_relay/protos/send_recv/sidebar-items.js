@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["MAX_PACKET_SIZE","MAX_PAYLOAD_SIZE"],"enum":["ClientToServerMsg","RecvError","SendError","ServerToClientMsg"],"struct":["Datagrams"]};

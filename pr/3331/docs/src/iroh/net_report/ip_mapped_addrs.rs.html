@@ -18,7 +18,7 @@
 <a href=#18 id=18 data-nosnippet>18</a>///
 <a href=#19 id=19 data-nosnippet>19</a>/// It is essentially a lookup key for an IP that iroh's magicsocket knows about.
 <a href=#20 id=20 data-nosnippet>20</a></span><span class="attr">#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Ord, PartialOrd)]
-<a href=#21 id=21 data-nosnippet>21</a></span><span class="kw">pub struct </span>IpMappedAddr(Ipv6Addr);
+<a href=#21 id=21 data-nosnippet>21</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>IpMappedAddr(Ipv6Addr);
 <a href=#22 id=22 data-nosnippet>22</a>
 <a href=#23 id=23 data-nosnippet>23</a><span class="doccomment">/// Counter to always generate unique addresses for [`IpMappedAddr`].
 <a href=#24 id=24 data-nosnippet>24</a></span><span class="kw">static </span>IP_ADDR_COUNTER: AtomicU64 = AtomicU64::new(<span class="number">1</span>);
@@ -38,7 +38,7 @@
 <a href=#38 id=38 data-nosnippet>38</a>    ///
 <a href=#39 id=39 data-nosnippet>39</a>    /// This generates a new IPv6 address in the Unique Local Address range (RFC 4193)
 <a href=#40 id=40 data-nosnippet>40</a>    /// which is recognised by iroh as an IP mapped address.
-<a href=#41 id=41 data-nosnippet>41</a>    </span><span class="kw">pub fn </span>generate() -&gt; <span class="self">Self </span>{
+<a href=#41 id=41 data-nosnippet>41</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>generate() -&gt; <span class="self">Self </span>{
 <a href=#42 id=42 data-nosnippet>42</a>        <span class="kw">let </span><span class="kw-2">mut </span>addr = [<span class="number">0u8</span>; <span class="number">16</span>];
 <a href=#43 id=43 data-nosnippet>43</a>        addr[<span class="number">0</span>] = <span class="self">Self</span>::ADDR_PREFIXL;
 <a href=#44 id=44 data-nosnippet>44</a>        addr[<span class="number">1</span>..<span class="number">6</span>].copy_from_slice(<span class="kw-2">&amp;</span><span class="self">Self</span>::ADDR_GLOBAL_ID);
@@ -57,7 +57,7 @@
 <a href=#57 id=57 data-nosnippet>57</a>    /// This uses a made-up, but fixed port number.  The [IpMappedAddresses`] map this is
 <a href=#58 id=58 data-nosnippet>58</a>    /// made for creates a unique [`IpMappedAddr`] for each IP+port and thus does not use
 <a href=#59 id=59 data-nosnippet>59</a>    /// the port to map back to the original [`SocketAddr`].
-<a href=#60 id=60 data-nosnippet>60</a>    </span><span class="kw">pub fn </span>private_socket_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; SocketAddr {
+<a href=#60 id=60 data-nosnippet>60</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>private_socket_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; SocketAddr {
 <a href=#61 id=61 data-nosnippet>61</a>        SocketAddr::new(IpAddr::from(<span class="self">self</span>.<span class="number">0</span>), <span class="self">Self</span>::MAPPED_ADDR_PORT)
 <a href=#62 id=62 data-nosnippet>62</a>    }
 <a href=#63 id=63 data-nosnippet>63</a>}
@@ -88,10 +88,10 @@
 <a href=#88 id=88 data-nosnippet>88</a>// mechanisms for keeping track of "aliveness" and pruning address, as we do
 <a href=#89 id=89 data-nosnippet>89</a>// with the `NodeMap`
 <a href=#90 id=90 data-nosnippet>90</a></span><span class="attr">#[derive(Debug, Clone, Default)]
-<a href=#91 id=91 data-nosnippet>91</a></span><span class="kw">pub struct </span>IpMappedAddresses(Arc&lt;std::sync::Mutex&lt;Inner&gt;&gt;);
+<a href=#91 id=91 data-nosnippet>91</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>IpMappedAddresses(Arc&lt;std::sync::Mutex&lt;Inner&gt;&gt;);
 <a href=#92 id=92 data-nosnippet>92</a>
 <a href=#93 id=93 data-nosnippet>93</a><span class="attr">#[derive(Debug, Default)]
-<a href=#94 id=94 data-nosnippet>94</a></span><span class="kw">pub struct </span>Inner {
+<a href=#94 id=94 data-nosnippet>94</a></span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">struct </span>Inner {
 <a href=#95 id=95 data-nosnippet>95</a>    by_mapped_addr: BTreeMap&lt;IpMappedAddr, SocketAddr&gt;,
 <a href=#96 id=96 data-nosnippet>96</a>    <span class="doccomment">/// Because [`std::net::SocketAddrV6`] contains extra fields besides the IP
 <a href=#97 id=97 data-nosnippet>97</a>    /// address and port (ie, flow_info and scope_id), the a [`std::net::SocketAddrV6`]
@@ -101,39 +101,34 @@
 <a href=#101 id=101 data-nosnippet>101</a>}
 <a href=#102 id=102 data-nosnippet>102</a>
 <a href=#103 id=103 data-nosnippet>103</a><span class="kw">impl </span>IpMappedAddresses {
-<a href=#104 id=104 data-nosnippet>104</a>    <span class="doccomment">/// Creates an empty [`IpMappedAddresses`].
-<a href=#105 id=105 data-nosnippet>105</a>    </span><span class="kw">pub fn </span>new() -&gt; <span class="self">Self </span>{
-<a href=#106 id=106 data-nosnippet>106</a>        <span class="self">Self</span>(Arc::new(std::sync::Mutex::new(Inner::default())))
-<a href=#107 id=107 data-nosnippet>107</a>    }
-<a href=#108 id=108 data-nosnippet>108</a>
-<a href=#109 id=109 data-nosnippet>109</a>    <span class="doccomment">/// Adds a [`SocketAddr`] to the map and returns the generated [`IpMappedAddr`].
-<a href=#110 id=110 data-nosnippet>110</a>    ///
-<a href=#111 id=111 data-nosnippet>111</a>    /// If this [`SocketAddr`] already exists in the map, it returns its
-<a href=#112 id=112 data-nosnippet>112</a>    /// associated [`IpMappedAddr`].
-<a href=#113 id=113 data-nosnippet>113</a>    ///
-<a href=#114 id=114 data-nosnippet>114</a>    /// Otherwise a new [`IpMappedAddr`] is generated for it and returned.
-<a href=#115 id=115 data-nosnippet>115</a>    </span><span class="kw">pub fn </span>get_or_register(<span class="kw-2">&amp;</span><span class="self">self</span>, socket_addr: SocketAddr) -&gt; IpMappedAddr {
-<a href=#116 id=116 data-nosnippet>116</a>        <span class="kw">let </span>ip_port = (socket_addr.ip(), socket_addr.port());
-<a href=#117 id=117 data-nosnippet>117</a>        <span class="kw">let </span><span class="kw-2">mut </span>inner = <span class="self">self</span>.<span class="number">0</span>.lock().expect(<span class="string">"poisoned"</span>);
-<a href=#118 id=118 data-nosnippet>118</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(mapped_addr) = inner.by_ip_port.get(<span class="kw-2">&amp;</span>ip_port) {
-<a href=#119 id=119 data-nosnippet>119</a>            <span class="kw">return </span><span class="kw-2">*</span>mapped_addr;
-<a href=#120 id=120 data-nosnippet>120</a>        }
-<a href=#121 id=121 data-nosnippet>121</a>        <span class="kw">let </span>ip_mapped_addr = IpMappedAddr::generate();
-<a href=#122 id=122 data-nosnippet>122</a>        inner.by_mapped_addr.insert(ip_mapped_addr, socket_addr);
-<a href=#123 id=123 data-nosnippet>123</a>        inner.by_ip_port.insert(ip_port, ip_mapped_addr);
-<a href=#124 id=124 data-nosnippet>124</a>        ip_mapped_addr
-<a href=#125 id=125 data-nosnippet>125</a>    }
-<a href=#126 id=126 data-nosnippet>126</a>
-<a href=#127 id=127 data-nosnippet>127</a>    <span class="doccomment">/// Returns the [`IpMappedAddr`] for the given [`SocketAddr`].
-<a href=#128 id=128 data-nosnippet>128</a>    </span><span class="kw">pub fn </span>get_mapped_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, socket_addr: <span class="kw-2">&amp;</span>SocketAddr) -&gt; <span class="prelude-ty">Option</span>&lt;IpMappedAddr&gt; {
-<a href=#129 id=129 data-nosnippet>129</a>        <span class="kw">let </span>ip_port = (socket_addr.ip(), socket_addr.port());
-<a href=#130 id=130 data-nosnippet>130</a>        <span class="kw">let </span>inner = <span class="self">self</span>.<span class="number">0</span>.lock().expect(<span class="string">"poisoned"</span>);
-<a href=#131 id=131 data-nosnippet>131</a>        inner.by_ip_port.get(<span class="kw-2">&amp;</span>ip_port).copied()
-<a href=#132 id=132 data-nosnippet>132</a>    }
-<a href=#133 id=133 data-nosnippet>133</a>
-<a href=#134 id=134 data-nosnippet>134</a>    <span class="doccomment">/// Returns the [`SocketAddr`] for the given [`IpMappedAddr`].
-<a href=#135 id=135 data-nosnippet>135</a>    </span><span class="kw">pub fn </span>get_ip_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, mapped_addr: <span class="kw-2">&amp;</span>IpMappedAddr) -&gt; <span class="prelude-ty">Option</span>&lt;SocketAddr&gt; {
-<a href=#136 id=136 data-nosnippet>136</a>        <span class="kw">let </span>inner = <span class="self">self</span>.<span class="number">0</span>.lock().expect(<span class="string">"poisoned"</span>);
-<a href=#137 id=137 data-nosnippet>137</a>        inner.by_mapped_addr.get(mapped_addr).copied()
-<a href=#138 id=138 data-nosnippet>138</a>    }
-<a href=#139 id=139 data-nosnippet>139</a>}</code></pre></div></section></main></body></html>
+<a href=#104 id=104 data-nosnippet>104</a>    <span class="doccomment">/// Adds a [`SocketAddr`] to the map and returns the generated [`IpMappedAddr`].
+<a href=#105 id=105 data-nosnippet>105</a>    ///
+<a href=#106 id=106 data-nosnippet>106</a>    /// If this [`SocketAddr`] already exists in the map, it returns its
+<a href=#107 id=107 data-nosnippet>107</a>    /// associated [`IpMappedAddr`].
+<a href=#108 id=108 data-nosnippet>108</a>    ///
+<a href=#109 id=109 data-nosnippet>109</a>    /// Otherwise a new [`IpMappedAddr`] is generated for it and returned.
+<a href=#110 id=110 data-nosnippet>110</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>get_or_register(<span class="kw-2">&amp;</span><span class="self">self</span>, socket_addr: SocketAddr) -&gt; IpMappedAddr {
+<a href=#111 id=111 data-nosnippet>111</a>        <span class="kw">let </span>ip_port = (socket_addr.ip(), socket_addr.port());
+<a href=#112 id=112 data-nosnippet>112</a>        <span class="kw">let </span><span class="kw-2">mut </span>inner = <span class="self">self</span>.<span class="number">0</span>.lock().expect(<span class="string">"poisoned"</span>);
+<a href=#113 id=113 data-nosnippet>113</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(mapped_addr) = inner.by_ip_port.get(<span class="kw-2">&amp;</span>ip_port) {
+<a href=#114 id=114 data-nosnippet>114</a>            <span class="kw">return </span><span class="kw-2">*</span>mapped_addr;
+<a href=#115 id=115 data-nosnippet>115</a>        }
+<a href=#116 id=116 data-nosnippet>116</a>        <span class="kw">let </span>ip_mapped_addr = IpMappedAddr::generate();
+<a href=#117 id=117 data-nosnippet>117</a>        inner.by_mapped_addr.insert(ip_mapped_addr, socket_addr);
+<a href=#118 id=118 data-nosnippet>118</a>        inner.by_ip_port.insert(ip_port, ip_mapped_addr);
+<a href=#119 id=119 data-nosnippet>119</a>        ip_mapped_addr
+<a href=#120 id=120 data-nosnippet>120</a>    }
+<a href=#121 id=121 data-nosnippet>121</a>
+<a href=#122 id=122 data-nosnippet>122</a>    <span class="doccomment">/// Returns the [`IpMappedAddr`] for the given [`SocketAddr`].
+<a href=#123 id=123 data-nosnippet>123</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>get_mapped_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, socket_addr: <span class="kw-2">&amp;</span>SocketAddr) -&gt; <span class="prelude-ty">Option</span>&lt;IpMappedAddr&gt; {
+<a href=#124 id=124 data-nosnippet>124</a>        <span class="kw">let </span>ip_port = (socket_addr.ip(), socket_addr.port());
+<a href=#125 id=125 data-nosnippet>125</a>        <span class="kw">let </span>inner = <span class="self">self</span>.<span class="number">0</span>.lock().expect(<span class="string">"poisoned"</span>);
+<a href=#126 id=126 data-nosnippet>126</a>        inner.by_ip_port.get(<span class="kw-2">&amp;</span>ip_port).copied()
+<a href=#127 id=127 data-nosnippet>127</a>    }
+<a href=#128 id=128 data-nosnippet>128</a>
+<a href=#129 id=129 data-nosnippet>129</a>    <span class="doccomment">/// Returns the [`SocketAddr`] for the given [`IpMappedAddr`].
+<a href=#130 id=130 data-nosnippet>130</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>get_ip_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, mapped_addr: <span class="kw-2">&amp;</span>IpMappedAddr) -&gt; <span class="prelude-ty">Option</span>&lt;SocketAddr&gt; {
+<a href=#131 id=131 data-nosnippet>131</a>        <span class="kw">let </span>inner = <span class="self">self</span>.<span class="number">0</span>.lock().expect(<span class="string">"poisoned"</span>);
+<a href=#132 id=132 data-nosnippet>132</a>        inner.by_mapped_addr.get(mapped_addr).copied()
+<a href=#133 id=133 data-nosnippet>133</a>    }
+<a href=#134 id=134 data-nosnippet>134</a>}</code></pre></div></section></main></body></html>

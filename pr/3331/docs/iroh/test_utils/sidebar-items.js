@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"fn":["run_relay_server","run_relay_server_with","run_relay_server_with_stun"],"struct":["CleanupDropGuard","DnsPkarrServer"]};
+window.SIDEBAR_ITEMS = {"fn":["run_relay_server","run_relay_server_with"],"struct":["CleanupDropGuard","DnsPkarrServer"]};

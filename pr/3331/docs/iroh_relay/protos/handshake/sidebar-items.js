@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"enum":["Error","FrameType"]};
+window.SIDEBAR_ITEMS = {"enum":["Error"]};
