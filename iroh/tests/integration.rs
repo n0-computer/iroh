@@ -9,9 +9,11 @@
 //!
 //! In the past we've hit relay rate-limits from all the tests in our CI, but I expect
 //! we won't hit these with only this integration test.
+use std::str::FromStr;
+
 use iroh::{
     discovery::{pkarr::PkarrResolver, Discovery},
-    Endpoint,
+    Endpoint, RelayMap, RelayMode, RelayUrl,
 };
 use n0_future::{
     task,
@@ -37,8 +39,19 @@ async fn simple_node_id_based_connection_transfer() -> Result {
     std::panic::set_hook(Box::new(console_error_panic_hook::hook));
     setup_logging();
 
-    let client = Endpoint::builder().discovery_n0().bind().await?;
+    // TODO(matheus23): Replace this with actual production relays eventually
+    let relay_map = RelayMode::Custom(RelayMap::from_iter([RelayUrl::from_str(
+        "https://philipp.iroh.link.",
+    )
+    .e()?]));
+
+    let client = Endpoint::builder()
+        .relay_mode(relay_map.clone())
+        .discovery_n0()
+        .bind()
+        .await?;
     let server = Endpoint::builder()
+        .relay_mode(relay_map)
         .discovery_n0()
         .alpns(vec![ECHO_ALPN.to_vec()])
         .bind()
@@ -134,5 +147,7 @@ fn setup_logging() {
 
 #[cfg(not(wasm_browser))]
 fn setup_logging() {
-    tracing_subscriber::fmt().init();
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
 }
