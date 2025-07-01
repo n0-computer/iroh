@@ -23,7 +23,7 @@ use std::{
     pin::Pin,
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
-        Arc, RwLock,
+        Arc, Mutex, RwLock,
     },
     task::{Context, Poll},
 };
@@ -47,7 +47,7 @@ use quinn::{AsyncUdpSocket, ServerConfig};
 use rand::Rng;
 use smallvec::SmallVec;
 use snafu::{ResultExt, Snafu};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, Mutex as AsyncMutex};
 use tokio_util::sync::CancellationToken;
 use tracing::{
     debug, error, event, info, info_span, instrument, trace, trace_span, warn, Instrument, Level,
@@ -1089,7 +1089,7 @@ struct DirectAddrUpdateState {
     #[cfg(not(wasm_browser))]
     port_mapper: portmapper::Client,
     /// The prober that discovers local network conditions, including the closest relay relay and NAT mappings.
-    net_reporter: Arc<Mutex<net_report::Client>>,
+    net_reporter: Arc<AsyncMutex<net_report::Client>>,
     relay_map: RelayMap,
     run_done: mpsc::Sender<()>,
 }
@@ -1116,7 +1116,7 @@ impl DirectAddrUpdateState {
     fn new(
         msock: Arc<MagicSock>,
         #[cfg(not(wasm_browser))] port_mapper: portmapper::Client,
-        net_reporter: Arc<Mutex<net_report::Client>>,
+        net_reporter: Arc<AsyncMutex<net_report::Client>>,
         relay_map: RelayMap,
         run_done: mpsc::Sender<()>,
     ) -> Self {
@@ -1385,7 +1385,7 @@ impl Handle {
             msock.clone(),
             #[cfg(not(wasm_browser))]
             port_mapper,
-            Arc::new(Mutex::new(net_reporter)),
+            Arc::new(AsyncMutex::new(net_reporter)),
             relay_map,
             direct_addr_done_tx,
         );
@@ -1461,7 +1461,9 @@ impl Handle {
         self.msock.closing.store(true, Ordering::Relaxed);
         self.actor_token.cancel();
 
-        if let Some(task) = self.actor_task.lock().await.take() {
+        // MutexGuard is not held across await points
+        let task = self.actor_task.lock().expect("poisoned").take();
+        if let Some(task) = task {
             // give the tasks a moment to shutdown cleanly
             let shutdown_done = time::timeout(Duration::from_millis(100), async move {
                 if let Err(err) = task.await {
@@ -1502,7 +1504,7 @@ struct DiscoState {
     /// Encryption key for this node.
     secret_encryption_key: crypto_box::SecretKey,
     /// The state for an active DiscoKey.
-    secrets: std::sync::Mutex<HashMap<PublicKey, SharedSecret>>,
+    secrets: Mutex<HashMap<PublicKey, SharedSecret>>,
     /// Disco (ping) queue
     sender: mpsc::Sender<(SendAddr, PublicKey, disco::Message)>,
 }

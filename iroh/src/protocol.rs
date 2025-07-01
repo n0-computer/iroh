@@ -32,7 +32,12 @@
 //!     }
 //! }
 //! ```
-use std::{collections::BTreeMap, future::Future, pin::Pin, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    future::Future,
+    pin::Pin,
+    sync::{Arc, Mutex},
+};
 
 use iroh_base::NodeId;
 use n0_future::{
@@ -40,7 +45,6 @@ use n0_future::{
     task::{self, AbortOnDropHandle, JoinSet},
 };
 use snafu::{Backtrace, Snafu};
-use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info_span, trace, warn, Instrument};
 
@@ -338,7 +342,10 @@ impl Router {
         self.cancel_token.cancel();
 
         // Wait for the main task to terminate.
-        if let Some(task) = self.task.lock().await.take() {
+
+        // MutexGuard is not held across await point
+        let task = self.task.lock().expect("poisoned").take();
+        if let Some(task) = task {
             task.await?;
         }
 
