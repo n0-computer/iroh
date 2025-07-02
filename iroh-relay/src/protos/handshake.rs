@@ -187,7 +187,7 @@ impl KeyMaterialClientAuth {
         })
     }
 
-    pub(crate) fn to_header_value(self) -> HeaderValue {
+    pub(crate) fn into_header_value(self) -> HeaderValue {
         HeaderValue::from_str(
             &data_encoding::BASE64URL_NOPAD
                 .encode(&postcard::to_allocvec(&self).expect("encoding never fails")),
@@ -455,7 +455,7 @@ mod tests {
             .with_shared_secret(server_shared_secret);
 
         let client_auth_header = KeyMaterialClientAuth::new(secret_key, &mut client_io)
-            .map(KeyMaterialClientAuth::to_header_value);
+            .map(KeyMaterialClientAuth::into_header_value);
 
         let (_, auth) = n0_future::future::try_zip(
             async {

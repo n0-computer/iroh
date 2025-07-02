@@ -253,7 +253,7 @@ impl ClientBuilder {
         if let Some(client_auth) = KeyMaterialClientAuth::new(&self.secret_key, &stream) {
             debug!("Using TLS key export for relay client authentication");
             builder = builder
-                .add_header(CLIENT_AUTH_HEADER, client_auth.to_header_value())
+                .add_header(CLIENT_AUTH_HEADER, client_auth.into_header_value())
                 .expect(
                     "impossible: CLIENT_AUTH_HEADER isn't a disallowed header value for websockets",
                 );
