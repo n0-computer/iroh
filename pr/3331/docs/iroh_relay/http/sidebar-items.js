@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["RELAY_PATH","RELAY_PROBE_PATH"]};
+window.SIDEBAR_ITEMS = {"constant":["CLIENT_AUTH_HEADER","RELAY_PATH","RELAY_PROBE_PATH"]};

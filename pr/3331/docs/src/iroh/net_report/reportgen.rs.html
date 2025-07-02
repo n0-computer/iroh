@@ -379,7 +379,7 @@
 <a href=#379 id=379 data-nosnippet>379</a>                        <span class="kw">let </span>res = <span class="kw">match </span>res {
 <a href=#380 id=380 data-nosnippet>380</a>                            <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(report))) =&gt; <span class="prelude-val">Ok</span>(report),
 <a href=#381 id=381 data-nosnippet>381</a>                            <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err))) =&gt; {
-<a href=#382 id=382 data-nosnippet>382</a>                                <span class="macro">warn!</span>(<span class="string">"probe failed: {:#}"</span>, err);
+<a href=#382 id=382 data-nosnippet>382</a>                                <span class="macro">warn!</span>(<span class="string">"probe failed: {:#?}"</span>, err);
 <a href=#383 id=383 data-nosnippet>383</a>                                <span class="prelude-val">Err</span>(probes_error::ProbeFailureSnafu {}.into_error(err))
 <a href=#384 id=384 data-nosnippet>384</a>                            }
 <a href=#385 id=385 data-nosnippet>385</a>                            <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(time::Elapsed { .. })) =&gt; {
