@@ -204,7 +204,7 @@
 <a href=#204 id=204 data-nosnippet>204</a>
 <a href=#205 id=205 data-nosnippet>205</a>        <span class="kw">use crate</span>::{
 <a href=#206 id=206 data-nosnippet>206</a>            http::CLIENT_AUTH_HEADER,
-<a href=#207 id=207 data-nosnippet>207</a>            protos::{handshake::ClientAuth, send_recv::MAX_FRAME_SIZE},
+<a href=#207 id=207 data-nosnippet>207</a>            protos::{handshake::KeyMaterialClientAuth, send_recv::MAX_FRAME_SIZE},
 <a href=#208 id=208 data-nosnippet>208</a>        };
 <a href=#209 id=209 data-nosnippet>209</a>
 <a href=#210 id=210 data-nosnippet>210</a>        <span class="kw">let </span><span class="kw-2">mut </span>dial_url = (<span class="kw-2">*</span><span class="self">self</span>.url).clone();
@@ -250,7 +250,7 @@
 <a href=#250 id=250 data-nosnippet>250</a>                .build()
 <a href=#251 id=251 data-nosnippet>251</a>            })<span class="question-mark">?
 <a href=#252 id=252 data-nosnippet>252</a>            </span>.limits(tokio_websockets::Limits::default().max_payload_len(<span class="prelude-val">Some</span>(MAX_FRAME_SIZE)));
-<a href=#253 id=253 data-nosnippet>253</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(client_auth) = ClientAuth::new_from_key_export(<span class="kw-2">&amp;</span><span class="self">self</span>.secret_key, <span class="kw-2">&amp;</span>stream) {
+<a href=#253 id=253 data-nosnippet>253</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(client_auth) = KeyMaterialClientAuth::new(<span class="kw-2">&amp;</span><span class="self">self</span>.secret_key, <span class="kw-2">&amp;</span>stream) {
 <a href=#254 id=254 data-nosnippet>254</a>            <span class="macro">debug!</span>(<span class="string">"Using TLS key export for relay client authentication"</span>);
 <a href=#255 id=255 data-nosnippet>255</a>            builder = builder
 <a href=#256 id=256 data-nosnippet>256</a>                .add_header(CLIENT_AUTH_HEADER, client_auth.to_header_value())
