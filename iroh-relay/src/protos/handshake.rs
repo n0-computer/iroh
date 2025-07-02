@@ -1,6 +1,7 @@
 //! TODO(matheus23) docs
 
 use bytes::{BufMut, Bytes, BytesMut};
+use http::HeaderValue;
 #[cfg(feature = "server")]
 use iroh_base::Signature;
 use iroh_base::{PublicKey, SecretKey};
@@ -123,6 +124,9 @@ pub enum Error {
         frame_type: FrameType,
         source: postcard::Error,
     },
+    #[cfg(feature = "server")]
+    /// Failed to deserialize client auth header
+    ClientAuthHeaderInvalid { value: HeaderValue },
 }
 
 impl ServerChallenge {
@@ -165,7 +169,7 @@ impl ClientAuth {
 
     pub(crate) fn new_from_key_export(
         secret_key: &SecretKey,
-        io: &mut impl ExportKeyingMaterial,
+        io: &impl ExportKeyingMaterial,
     ) -> Option<Self> {
         let public_key = secret_key.public();
         let key_material = io.export_keying_material(
@@ -183,6 +187,14 @@ impl ClientAuth {
             signature: secret_key.sign(&message).to_bytes(),
             key_material_suffix: Some(key_material[16..].try_into().expect("split right")),
         })
+    }
+
+    pub(crate) fn to_header_value(self) -> HeaderValue {
+        HeaderValue::from_str(
+            &data_encoding::BASE64URL_NOPAD
+                .encode(&postcard::to_allocvec(&self).expect("encoding never fails")),
+        )
+        .expect("BASE64URL_NOPAD encoding contained invisible ascii characters")
     }
 
     #[cfg(feature = "server")]
@@ -210,20 +222,9 @@ pub(crate) async fn clientside(
     io: &mut (impl BytesStreamSink + ExportKeyingMaterial),
     secret_key: &SecretKey,
 ) -> Result<ServerConfirmsAuth, Error> {
-    if let Some(client_auth) = ClientAuth::new_from_key_export(secret_key, io) {
-        write_frame(io, client_auth).await?;
-    } else {
-        // we can't use key exporting, so request a challenge.
-        write_frame(io, ClientRequestChallenge).await?;
-    }
-
     let (tag, frame) = read_frame(
         io,
-        &[
-            ServerChallenge::TAG,
-            ServerConfirmsAuth::TAG,
-            ServerDeniesAuth::TAG,
-        ],
+        &[ServerChallenge::TAG, ServerConfirmsAuth::TAG],
         time::Duration::from_secs(30),
     )
     .await?;
@@ -261,24 +262,30 @@ pub(crate) async fn clientside(
 #[cfg(feature = "server")]
 pub(crate) async fn serverside(
     io: &mut (impl BytesStreamSink + ExportKeyingMaterial),
+    client_auth_header: Option<HeaderValue>,
     rng: impl RngCore + CryptoRng,
 ) -> Result<ClientAuth, Error> {
-    let (tag, frame) = read_frame(
-        io,
-        &[ClientRequestChallenge::TAG, ClientAuth::TAG],
-        time::Duration::from_secs(10),
-    )
-    .await?;
+    if let Some(client_auth_header) = client_auth_header {
+        let client_auth_bytes = data_encoding::BASE64URL_NOPAD
+            .decode(client_auth_header.as_ref())
+            .map_err(|_| {
+                ClientAuthHeaderInvalidSnafu {
+                    value: client_auth_header.clone(),
+                }
+                .build()
+            })?;
 
-    // it might be fast-path authentication using TLS exported key material
-    if tag == ClientAuth::TAG {
-        let client_auth: ClientAuth = deserialize_frame(frame)?;
+        let client_auth: ClientAuth = postcard::from_bytes(&client_auth_bytes).map_err(|_| {
+            ClientAuthHeaderInvalidSnafu {
+                value: client_auth_header.clone(),
+            }
+            .build()
+        })?;
+
         if client_auth.verify_from_key_export(io) {
             write_frame(io, ServerConfirmsAuth).await?;
             return Ok(client_auth);
         }
-    } else {
-        let _frame: ClientRequestChallenge = deserialize_frame(frame)?;
     }
 
     let challenge = ServerChallenge::new(rng);
@@ -443,6 +450,9 @@ mod tests {
             .sink_map_err(tokio_websockets::Error::Io)
             .with_shared_secret(server_shared_secret);
 
+        let client_auth_header = ClientAuth::new_from_key_export(secret_key, &mut client_io)
+            .map(ClientAuth::to_header_value);
+
         let (_, client_auth) = n0_future::future::try_zip(
             async {
                 super::clientside(&mut client_io, secret_key)
@@ -450,7 +460,7 @@ mod tests {
                     .context("clientside")
             },
             async {
-                super::serverside(&mut server_io, rand::rngs::OsRng)
+                super::serverside(&mut server_io, client_auth_header, rand::rngs::OsRng)
                     .await
                     .context("serverside")
             },

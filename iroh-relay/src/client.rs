@@ -202,7 +202,10 @@ impl ClientBuilder {
     pub async fn connect(&self) -> Result<Client, ConnectError> {
         use tls::MaybeTlsStreamBuilder;
 
-        use crate::protos::send_recv::MAX_FRAME_SIZE;
+        use crate::{
+            http::CLIENT_AUTH_HEADER,
+            protos::{handshake::ClientAuth, send_recv::MAX_FRAME_SIZE},
+        };
 
         let mut dial_url = (*self.url).clone();
         dial_url.set_path(RELAY_PATH);
@@ -238,7 +241,7 @@ impl ClientBuilder {
             .as_ref()
             .local_addr()
             .map_err(|_| NoLocalAddrSnafu.build())?;
-        let (conn, response) = tokio_websockets::ClientBuilder::new()
+        let mut builder = tokio_websockets::ClientBuilder::new()
             .uri(dial_url.as_str())
             .map_err(|_| {
                 InvalidRelayUrlSnafu {
@@ -246,9 +249,16 @@ impl ClientBuilder {
                 }
                 .build()
             })?
-            .limits(tokio_websockets::Limits::default().max_payload_len(Some(MAX_FRAME_SIZE)))
-            .connect_on(stream)
-            .await?;
+            .limits(tokio_websockets::Limits::default().max_payload_len(Some(MAX_FRAME_SIZE)));
+        if let Some(client_auth) = ClientAuth::new_from_key_export(&self.secret_key, &stream) {
+            debug!("Using TLS key export for relay client authentication");
+            builder = builder
+                .add_header(CLIENT_AUTH_HEADER, client_auth.to_header_value())
+                .expect(
+                    "impossible: CLIENT_AUTH_HEADER isn't a disallowed header value for websockets",
+                );
+        }
+        let (conn, response) = builder.connect_on(stream).await?;
 
         if response.status() != hyper::StatusCode::SWITCHING_PROTOCOLS {
             UnexpectedUpgradeStatusSnafu {

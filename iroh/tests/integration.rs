@@ -133,6 +133,7 @@ async fn simple_node_id_based_connection_transfer() -> Result {
 #[cfg(wasm_browser)]
 fn setup_logging() {
     tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_str("trace").expect("hardcoded"))
         .with_max_level(tracing::level_filters::LevelFilter::DEBUG)
         .with_writer(
             // To avoide trace events in the browser from showing their JS backtrace

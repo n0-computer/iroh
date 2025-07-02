@@ -6,6 +6,7 @@ use std::{
 
 use bytes::Bytes;
 use n0_future::{ready, Sink, Stream};
+#[cfg(not(wasm_browser))]
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use crate::ExportKeyingMaterial;

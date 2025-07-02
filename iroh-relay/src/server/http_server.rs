@@ -36,7 +36,7 @@ use crate::{
     KeyCache,
 };
 use crate::{
-    http::WEBSOCKET_UPGRADE_PROTOCOL,
+    http::{CLIENT_AUTH_HEADER, WEBSOCKET_UPGRADE_PROTOCOL},
     protos::{handshake, send_recv::MAX_FRAME_SIZE, streams::WsBytesFramed},
     server::streams::RateLimited,
 };
@@ -496,7 +496,7 @@ impl RelayService {
                         .expect("valid body"));
                 }
 
-                debug!("upgrading connection");
+                let client_auth_header = req.headers().get(CLIENT_AUTH_HEADER).cloned();
 
                 // Setup a future that will eventually receive the upgraded
                 // connection and talk a new protocol, and spawn the future
@@ -509,7 +509,11 @@ impl RelayService {
                     async move {
                         match hyper::upgrade::on(&mut req).await {
                             Ok(upgraded) => {
-                                if let Err(err) = this.0.relay_connection_handler(upgraded).await {
+                                if let Err(err) = this
+                                    .0
+                                    .relay_connection_handler(upgraded, client_auth_header)
+                                    .await
+                                {
                                     warn!("error accepting upgraded connection: {err:#}",);
                                 } else {
                                     debug!("upgraded connection completed");
@@ -597,6 +601,7 @@ impl Inner {
     async fn relay_connection_handler(
         &self,
         upgraded: Upgraded,
+        client_auth_header: Option<HeaderValue>,
     ) -> Result<(), ConnectionHandlerError> {
         debug!("relay_connection upgraded");
         let (io, read_buf) = downcast_upgrade(upgraded)?;
@@ -604,7 +609,7 @@ impl Inner {
             return Err(BufferNotEmptySnafu { buf: read_buf }.build());
         }
 
-        self.accept(io).await?;
+        self.accept(io, client_auth_header).await?;
         Ok(())
     }
 
@@ -618,7 +623,11 @@ impl Inner {
     ///
     /// [`AsyncRead`]: tokio::io::AsyncRead
     /// [`AsyncWrite`]: tokio::io::AsyncWrite
-    async fn accept(&self, io: MaybeTlsStream) -> Result<(), AcceptError> {
+    async fn accept(
+        &self,
+        io: MaybeTlsStream,
+        client_auth_header: Option<HeaderValue>,
+    ) -> Result<(), AcceptError> {
         use snafu::ResultExt;
 
         trace!("accept: start");
@@ -636,7 +645,7 @@ impl Inner {
 
         let mut io = WsBytesFramed { io: websocket };
 
-        let client_info = handshake::serverside(&mut io, rand::rngs::OsRng)
+        let client_info = handshake::serverside(&mut io, client_auth_header, rand::rngs::OsRng)
             .await
             .context(HandshakeSnafu)?;
 
@@ -1098,7 +1107,7 @@ mod tests {
         let (client_a, rw_a) = tokio::io::duplex(10);
         let s = service.clone();
         let handler_task =
-            tokio::spawn(async move { s.0.accept(MaybeTlsStream::Test(rw_a)).await });
+            tokio::spawn(async move { s.0.accept(MaybeTlsStream::Test(rw_a), None).await });
         let mut client_a = make_test_client(client_a, &key_a).await?;
         handler_task.await.context("join")??;
 
@@ -1108,7 +1117,7 @@ mod tests {
         let (client_b, rw_b) = tokio::io::duplex(10);
         let s = service.clone();
         let handler_task =
-            tokio::spawn(async move { s.0.accept(MaybeTlsStream::Test(rw_b)).await });
+            tokio::spawn(async move { s.0.accept(MaybeTlsStream::Test(rw_b), None).await });
         let mut client_b = make_test_client(client_b, &key_b).await?;
         handler_task.await.context("join")??;
 
@@ -1188,7 +1197,7 @@ mod tests {
         let (client_a, rw_a) = tokio::io::duplex(10);
         let s = service.clone();
         let handler_task =
-            tokio::spawn(async move { s.0.accept(MaybeTlsStream::Test(rw_a)).await });
+            tokio::spawn(async move { s.0.accept(MaybeTlsStream::Test(rw_a), None).await });
         let mut client_a = make_test_client(client_a, &key_a).await?;
         handler_task.await.context("join")??;
 
@@ -1198,7 +1207,7 @@ mod tests {
         let (client_b, rw_b) = tokio::io::duplex(10);
         let s = service.clone();
         let handler_task =
-            tokio::spawn(async move { s.0.accept(MaybeTlsStream::Test(rw_b)).await });
+            tokio::spawn(async move { s.0.accept(MaybeTlsStream::Test(rw_b), None).await });
         let mut client_b = make_test_client(client_b, &key_b).await?;
         handler_task.await.context("join")??;
 
@@ -1248,7 +1257,7 @@ mod tests {
         let (new_client_b, new_rw_b) = tokio::io::duplex(10);
         let s = service.clone();
         let handler_task =
-            tokio::spawn(async move { s.0.accept(MaybeTlsStream::Test(new_rw_b)).await });
+            tokio::spawn(async move { s.0.accept(MaybeTlsStream::Test(new_rw_b), None).await });
         let mut new_client_b = make_test_client(new_client_b, &key_b).await?;
         handler_task.await.context("join")??;
 
