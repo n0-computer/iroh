@@ -17,10 +17,20 @@ use snafu::{Backtrace, OptionExt, ResultExt, Snafu};
 use super::{relay::FrameType, streams::BytesStreamSink};
 use crate::ExportKeyingMaterial;
 
-/// Message that tells the server the client needs a challenge to authenticate.
+/// Authentication message from the client.
 #[derive(derive_more::Debug, serde::Serialize)]
 #[cfg_attr(feature = "server", derive(serde::Deserialize))]
-pub(crate) struct ClientRequestChallenge;
+pub(crate) struct KeyMaterialClientAuth {
+    /// The client's public key
+    pub(crate) public_key: PublicKey,
+    /// A signature of (a hash of) extracted key material.
+    #[serde(with = "serde_bytes")]
+    pub(crate) signature: [u8; 64],
+    /// Part of the extracted key material.
+    ///
+    /// Allows making sure we have the same underlying key material.
+    pub(crate) key_material_suffix: [u8; 16],
+}
 
 /// A challenge for the client to sign with their secret key for NodeId authentication.
 #[derive(derive_more::Debug, serde::Deserialize)]
@@ -33,18 +43,17 @@ pub(crate) struct ServerChallenge {
 
 /// Authentication message from the client.
 ///
-/// Also serves to inform the server about the client's send message version,
-/// which will be passed on to other connecting clients.
+/// Used when authentication via [`KeyMaterialClientAuth`] didn't work.
 #[derive(derive_more::Debug, serde::Serialize)]
 #[cfg_attr(feature = "server", derive(serde::Deserialize))]
 pub(crate) struct ClientAuth {
     /// The client's public key, a.k.a. the `NodeId`
     pub(crate) public_key: PublicKey,
-    /// A signature of the server challenge, serves as authentication.
+    /// A signature of (a hash of) the [`ServerChallenge`].
+    ///
+    /// This is what provides the authentication.
     #[serde(with = "serde_bytes")]
     pub(crate) signature: [u8; 64],
-    /// Part of the extracted key material, if that's what was signed.
-    pub(crate) key_material_suffix: Option<[u8; 16]>,
 }
 
 /// Confirmation of successful connection.
@@ -70,10 +79,6 @@ trait Frame {
 
 impl<T: Frame> Frame for &T {
     const TAG: FrameType = T::TAG;
-}
-
-impl Frame for ClientRequestChallenge {
-    const TAG: FrameType = FrameType::ClientRequestChallenge;
 }
 
 impl Frame for ServerChallenge {
@@ -148,17 +153,16 @@ impl ServerChallenge {
 
 impl ClientAuth {
     /// TODO(matheus23): docs
-    pub(crate) fn new_from_challenge(secret_key: &SecretKey, challenge: &ServerChallenge) -> Self {
+    pub(crate) fn new(secret_key: &SecretKey, challenge: &ServerChallenge) -> Self {
         Self {
             public_key: secret_key.public(),
-            key_material_suffix: None,
             signature: secret_key.sign(&challenge.message_to_sign()).to_bytes(),
         }
     }
 
     /// TODO(matheus23): docs
     #[cfg(feature = "server")]
-    pub(crate) fn verify_from_challenge(&self, challenge: &ServerChallenge) -> bool {
+    pub(crate) fn verify(&self, challenge: &ServerChallenge) -> bool {
         self.public_key
             .verify(
                 &challenge.message_to_sign(),
@@ -166,26 +170,20 @@ impl ClientAuth {
             )
             .is_ok()
     }
+}
 
-    pub(crate) fn new_from_key_export(
-        secret_key: &SecretKey,
-        io: &impl ExportKeyingMaterial,
-    ) -> Option<Self> {
+impl KeyMaterialClientAuth {
+    pub(crate) fn new(secret_key: &SecretKey, io: &impl ExportKeyingMaterial) -> Option<Self> {
         let public_key = secret_key.public();
         let key_material = io.export_keying_material(
             [0u8; 32],
             b"iroh-relay handshake v1",
             Some(secret_key.public().as_bytes()),
         )?;
-
-        let message = blake3::derive_key(
-            "iroh-relay handshake v1 key material signature",
-            &key_material[..16],
-        );
-        Some(ClientAuth {
+        Some(Self {
             public_key,
-            signature: secret_key.sign(&message).to_bytes(),
-            key_material_suffix: Some(key_material[16..].try_into().expect("split right")),
+            signature: secret_key.sign(&key_material[..16]).to_bytes(),
+            key_material_suffix: key_material[16..].try_into().expect("split right"),
         })
     }
 
@@ -198,7 +196,7 @@ impl ClientAuth {
     }
 
     #[cfg(feature = "server")]
-    pub(crate) fn verify_from_key_export(&self, io: &mut impl ExportKeyingMaterial) -> bool {
+    pub(crate) fn verify(&self, io: &impl ExportKeyingMaterial) -> bool {
         let Some(key_material) = io.export_keying_material(
             [0u8; 32],
             b"iroh-relay handshake v1",
@@ -207,13 +205,11 @@ impl ClientAuth {
             return false;
         };
 
-        let message = blake3::derive_key(
-            "iroh-relay handshake v1 key material signature",
-            &key_material[..16],
-        );
-        self.public_key
-            .verify(&message, &Signature::from_bytes(&self.signature))
-            .is_ok()
+        key_material[16..] == self.key_material_suffix
+            && self
+                .public_key
+                .verify(&key_material[..16], &Signature::from_bytes(&self.signature))
+                .is_ok()
     }
 }
 
@@ -232,7 +228,7 @@ pub(crate) async fn clientside(
     let (tag, frame) = if tag == ServerChallenge::TAG {
         let challenge: ServerChallenge = deserialize_frame(frame)?;
 
-        let client_info = ClientAuth::new_from_challenge(secret_key, &challenge);
+        let client_info = ClientAuth::new(secret_key, &challenge);
         write_frame(io, client_info).await?;
 
         read_frame(
@@ -258,13 +254,20 @@ pub(crate) async fn clientside(
     }
 }
 
+#[cfg(feature = "server")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Auth {
+    SignedChallenge,
+    SignedKeyMaterial,
+}
+
 /// TODO(matheus23) docs
 #[cfg(feature = "server")]
 pub(crate) async fn serverside(
     io: &mut (impl BytesStreamSink + ExportKeyingMaterial),
     client_auth_header: Option<HeaderValue>,
     rng: impl RngCore + CryptoRng,
-) -> Result<ClientAuth, Error> {
+) -> Result<(PublicKey, Auth), Error> {
     if let Some(client_auth_header) = client_auth_header {
         let client_auth_bytes = data_encoding::BASE64URL_NOPAD
             .decode(client_auth_header.as_ref())
@@ -275,16 +278,17 @@ pub(crate) async fn serverside(
                 .build()
             })?;
 
-        let client_auth: ClientAuth = postcard::from_bytes(&client_auth_bytes).map_err(|_| {
-            ClientAuthHeaderInvalidSnafu {
-                value: client_auth_header.clone(),
-            }
-            .build()
-        })?;
+        let client_auth: KeyMaterialClientAuth =
+            postcard::from_bytes(&client_auth_bytes).map_err(|_| {
+                ClientAuthHeaderInvalidSnafu {
+                    value: client_auth_header.clone(),
+                }
+                .build()
+            })?;
 
-        if client_auth.verify_from_key_export(io) {
+        if client_auth.verify(io) {
             write_frame(io, ServerConfirmsAuth).await?;
-            return Ok(client_auth);
+            return Ok((client_auth.public_key, Auth::SignedKeyMaterial));
         }
     }
 
@@ -294,13 +298,13 @@ pub(crate) async fn serverside(
     let (_, frame) = read_frame(io, &[ClientAuth::TAG], time::Duration::from_secs(10)).await?;
     let client_auth: ClientAuth = deserialize_frame(frame)?;
 
-    if client_auth.verify_from_challenge(&challenge) {
+    if client_auth.verify(&challenge) {
         write_frame(io, ServerConfirmsAuth).await?;
     } else {
         write_frame(io, ServerDeniesAuth).await?;
     }
 
-    Ok(client_auth)
+    Ok((client_auth.public_key, Auth::SignedChallenge))
 }
 
 async fn write_frame<F: serde::Serialize + Frame>(
@@ -347,12 +351,12 @@ fn deserialize_frame<F: Frame + serde::de::DeserializeOwned>(frame: Bytes) -> Re
 #[cfg(all(test, feature = "server"))]
 mod tests {
     use bytes::BytesMut;
-    use iroh_base::SecretKey;
+    use iroh_base::{PublicKey, SecretKey};
     use n0_future::{Sink, SinkExt, Stream, TryStreamExt};
     use n0_snafu::{Result, ResultExt};
     use tokio_util::codec::{Framed, LengthDelimitedCodec};
 
-    use super::{ClientAuth, ServerChallenge};
+    use super::{Auth, ClientAuth, KeyMaterialClientAuth, ServerChallenge};
     use crate::ExportKeyingMaterial;
 
     struct TestKeyingMaterial<IO> {
@@ -436,7 +440,7 @@ mod tests {
         secret_key: &SecretKey,
         client_shared_secret: Option<u64>,
         server_shared_secret: Option<u64>,
-    ) -> Result<ClientAuth> {
+    ) -> Result<(PublicKey, Auth)> {
         let (client, server) = tokio::io::duplex(1024);
 
         let mut client_io = Framed::new(client, LengthDelimitedCodec::new())
@@ -450,10 +454,10 @@ mod tests {
             .sink_map_err(tokio_websockets::Error::Io)
             .with_shared_secret(server_shared_secret);
 
-        let client_auth_header = ClientAuth::new_from_key_export(secret_key, &mut client_io)
-            .map(ClientAuth::to_header_value);
+        let client_auth_header = KeyMaterialClientAuth::new(secret_key, &mut client_io)
+            .map(KeyMaterialClientAuth::to_header_value);
 
-        let (_, client_auth) = n0_future::future::try_zip(
+        let (_, auth) = n0_future::future::try_zip(
             async {
                 super::clientside(&mut client_io, secret_key)
                     .await
@@ -467,24 +471,24 @@ mod tests {
         )
         .await?;
 
-        Ok(client_auth)
+        Ok(auth)
     }
 
     #[tokio::test]
     async fn test_handshake_via_shared_secrets() -> Result {
         let secret_key = SecretKey::generate(rand::rngs::OsRng);
-        let auth = simulate_handshake(&secret_key, Some(42), Some(42)).await?;
-        assert_eq!(auth.public_key, secret_key.public());
-        assert!(auth.key_material_suffix.is_some()); // it got verified via shared key material
+        let (public_key, auth) = simulate_handshake(&secret_key, Some(42), Some(42)).await?;
+        assert_eq!(public_key, secret_key.public());
+        assert_eq!(auth, Auth::SignedKeyMaterial); // it got verified via shared key material
         Ok(())
     }
 
     #[tokio::test]
     async fn test_handshake_via_challenge() -> Result {
         let secret_key = SecretKey::generate(rand::rngs::OsRng);
-        let auth = simulate_handshake(&secret_key, None, None).await?;
-        assert_eq!(auth.public_key, secret_key.public());
-        assert!(auth.key_material_suffix.is_none());
+        let (public_key, auth) = simulate_handshake(&secret_key, None, None).await?;
+        assert_eq!(public_key, secret_key.public());
+        assert_eq!(auth, Auth::SignedChallenge);
         Ok(())
     }
 
@@ -492,9 +496,9 @@ mod tests {
     async fn test_handshake_mismatching_shared_secrets() -> Result {
         let secret_key = SecretKey::generate(rand::rngs::OsRng);
         // mismatching shared secrets *might* happen with HTTPS proxies that don't also middle-man the shared secret
-        let auth = simulate_handshake(&secret_key, Some(10), Some(99)).await?;
-        assert_eq!(auth.public_key, secret_key.public());
-        assert!(auth.key_material_suffix.is_none());
+        let (public_key, auth) = simulate_handshake(&secret_key, Some(10), Some(99)).await?;
+        assert_eq!(public_key, secret_key.public());
+        assert_eq!(auth, Auth::SignedChallenge);
         Ok(())
     }
 
@@ -502,9 +506,9 @@ mod tests {
     async fn test_handshake_challenge_fallback() -> Result {
         let secret_key = SecretKey::generate(rand::rngs::OsRng);
         // clients might not have access to shared secrets
-        let auth = simulate_handshake(&secret_key, None, Some(99)).await?;
-        assert_eq!(auth.public_key, secret_key.public());
-        assert!(auth.key_material_suffix.is_none());
+        let (public_key, auth) = simulate_handshake(&secret_key, None, Some(99)).await?;
+        assert_eq!(public_key, secret_key.public());
+        assert_eq!(auth, Auth::SignedChallenge);
         Ok(())
     }
 
@@ -512,13 +516,33 @@ mod tests {
     fn test_client_auth_roundtrip() -> Result {
         let secret_key = SecretKey::generate(rand::rngs::OsRng);
         let challenge = ServerChallenge::new(rand::rngs::OsRng);
-        let client_auth = ClientAuth::new_from_challenge(&secret_key, &challenge);
+        let client_auth = ClientAuth::new(&secret_key, &challenge);
 
         let bytes = postcard::to_allocvec(&client_auth).e()?;
         let decoded: ClientAuth = postcard::from_bytes(&bytes).e()?;
 
         assert_eq!(client_auth.public_key, decoded.public_key);
-        assert_eq!(client_auth.key_material_suffix, decoded.key_material_suffix);
+        assert_eq!(client_auth.signature, decoded.signature);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_km_client_auth_roundtrip() -> Result {
+        let secret_key = SecretKey::generate(rand::rngs::OsRng);
+        let client_auth = KeyMaterialClientAuth::new(
+            &secret_key,
+            &TestKeyingMaterial {
+                inner: (),
+                shared_secret: Some(42),
+            },
+        )
+        .e()?;
+
+        let bytes = postcard::to_allocvec(&client_auth).e()?;
+        let decoded: KeyMaterialClientAuth = postcard::from_bytes(&bytes).e()?;
+
+        assert_eq!(client_auth.public_key, decoded.public_key);
         assert_eq!(client_auth.signature, decoded.signature);
 
         Ok(())
@@ -528,8 +552,21 @@ mod tests {
     fn test_challenge_verification() -> Result {
         let secret_key = SecretKey::generate(rand::rngs::OsRng);
         let challenge = ServerChallenge::new(rand::rngs::OsRng);
-        let client_auth = ClientAuth::new_from_challenge(&secret_key, &challenge);
-        assert!(client_auth.verify_from_challenge(&challenge));
+        let client_auth = ClientAuth::new(&secret_key, &challenge);
+        assert!(client_auth.verify(&challenge));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_key_material_verification() -> Result {
+        let secret_key = SecretKey::generate(rand::rngs::OsRng);
+        let io = TestKeyingMaterial {
+            inner: (),
+            shared_secret: Some(42),
+        };
+        let client_auth = KeyMaterialClientAuth::new(&secret_key, &io).e()?;
+        assert!(client_auth.verify(&io));
 
         Ok(())
     }

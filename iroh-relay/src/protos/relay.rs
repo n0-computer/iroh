@@ -8,8 +8,6 @@ use quinn_proto::{coding::Codec, VarInt};
 #[derive(Copy, Clone, PartialEq, Eq, Debug, num_enum::IntoPrimitive, num_enum::FromPrimitive)]
 // needs to be pub due to being exposed in error types
 pub enum FrameType {
-    /// The client frame type for the client challenge request
-    ClientRequestChallenge = 1,
     /// The server frame type for the challenge response
     ServerChallenge = 2,
     /// The client frame type for the authentication frame

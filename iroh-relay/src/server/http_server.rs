@@ -645,11 +645,13 @@ impl Inner {
 
         let mut io = WsBytesFramed { io: websocket };
 
-        let client_info = handshake::serverside(&mut io, client_auth_header, rand::rngs::OsRng)
-            .await
-            .context(HandshakeSnafu)?;
+        let (client_key, auth_type) =
+            handshake::serverside(&mut io, client_auth_header, rand::rngs::OsRng)
+                .await
+                .context(HandshakeSnafu)?;
 
-        let client_key = client_info.public_key;
+        trace!(?auth_type, "accept: verified authentication");
+
         let mut io = RelayedStream {
             inner: io.io,
             key_cache: self.key_cache.clone(),

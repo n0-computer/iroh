@@ -204,7 +204,7 @@ impl ClientBuilder {
 
         use crate::{
             http::CLIENT_AUTH_HEADER,
-            protos::{handshake::ClientAuth, send_recv::MAX_FRAME_SIZE},
+            protos::{handshake::KeyMaterialClientAuth, send_recv::MAX_FRAME_SIZE},
         };
 
         let mut dial_url = (*self.url).clone();
@@ -250,7 +250,7 @@ impl ClientBuilder {
                 .build()
             })?
             .limits(tokio_websockets::Limits::default().max_payload_len(Some(MAX_FRAME_SIZE)));
-        if let Some(client_auth) = ClientAuth::new_from_key_export(&self.secret_key, &stream) {
+        if let Some(client_auth) = KeyMaterialClientAuth::new(&self.secret_key, &stream) {
             debug!("Using TLS key export for relay client authentication");
             builder = builder
                 .add_header(CLIENT_AUTH_HEADER, client_auth.to_header_value())
