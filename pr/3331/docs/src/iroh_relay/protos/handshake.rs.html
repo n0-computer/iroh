@@ -454,7 +454,7 @@
 <a href=#454 id=454 data-nosnippet>454</a>            .sink_map_err(tokio_websockets::Error::Io)
 <a href=#455 id=455 data-nosnippet>455</a>            .with_shared_secret(server_shared_secret);
 <a href=#456 id=456 data-nosnippet>456</a>
-<a href=#457 id=457 data-nosnippet>457</a>        <span class="kw">let </span>client_auth_header = KeyMaterialClientAuth::new(secret_key, <span class="kw-2">&amp;mut </span>client_io)
+<a href=#457 id=457 data-nosnippet>457</a>        <span class="kw">let </span>client_auth_header = KeyMaterialClientAuth::new(secret_key, <span class="kw-2">&amp;</span>client_io)
 <a href=#458 id=458 data-nosnippet>458</a>            .map(KeyMaterialClientAuth::into_header_value);
 <a href=#459 id=459 data-nosnippet>459</a>
 <a href=#460 id=460 data-nosnippet>460</a>        <span class="kw">let </span>(<span class="kw">_</span>, auth) = n0_future::future::try_zip(
