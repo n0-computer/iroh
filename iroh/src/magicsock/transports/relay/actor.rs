@@ -1534,7 +1534,15 @@ mod tests {
         tokio::time::advance(RELAY_INACTIVE_CLEANUP_TIME).await;
         tokio::time::resume();
         assert!(
-            tokio::time::timeout(Duration::from_secs(1), task)
+            // About the 5 second timeout:
+            // The time advancing above can set off a bunch of async work at once, since suddenly multiple
+            // timers end up firing when time is resumed.
+            // This can cause work to build up, and might slow down slower machines (especially in CI).
+            // With a 1s timeout, I was still seeing proper procedures in the logs ("Inactive for 60s, exiting."),
+            // But it didn't quite get to the final log line "exiting." yet. Instead, there was a bunch of ping/pong
+            // logs in between.
+            // So increasing the timeout instead.
+            tokio::time::timeout(Duration::from_secs(5), task)
                 .await
                 .is_ok(),
             "actor task still running"
