@@ -454,7 +454,7 @@ mod tests {
             .sink_map_err(tokio_websockets::Error::Io)
             .with_shared_secret(server_shared_secret);
 
-        let client_auth_header = KeyMaterialClientAuth::new(secret_key, &mut client_io)
+        let client_auth_header = KeyMaterialClientAuth::new(secret_key, &client_io)
             .map(KeyMaterialClientAuth::into_header_value);
 
         let (_, auth) = n0_future::future::try_zip(

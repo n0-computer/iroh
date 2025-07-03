@@ -111,7 +111,7 @@ impl Client {
         // start io loop
         let io_done = done.clone();
         let handle = tokio::task::spawn(actor.run(io_done).instrument(tracing::info_span!(
-            "client connection actor",
+            "client-connection-actor",
             remote_node = %node_id.fmt_short(),
             connection_id = connection_id
         )));
@@ -305,6 +305,12 @@ impl Actor {
             self.metrics.unique_client_keys.inc();
         }
         match self.run_inner(done).await {
+            Err(RunError::HandleFrame {
+                source: HandleFrameError::StreamTerminated { .. },
+                ..
+            }) => {
+                debug!("client stream closed, exiting");
+            }
             Err(e) => {
                 warn!("actor errored {e:#?}, exiting");
             }
