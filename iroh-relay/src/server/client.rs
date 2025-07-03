@@ -305,14 +305,8 @@ impl Actor {
             self.metrics.unique_client_keys.inc();
         }
         match self.run_inner(done).await {
-            Err(RunError::HandleFrame {
-                source: HandleFrameError::StreamTerminated { .. },
-                ..
-            }) => {
-                debug!("client stream closed, exiting");
-            }
             Err(e) => {
-                warn!("actor errored {e:#?}, exiting");
+                warn!("actor errored {e:#}, exiting");
             }
             Ok(()) => {
                 debug!("actor finished, exiting");

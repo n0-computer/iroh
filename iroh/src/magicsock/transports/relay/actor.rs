@@ -1498,11 +1498,11 @@ mod tests {
         );
 
         // Wait until the actor is connected to the relay server.
-        tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::time::timeout(Duration::from_millis(200), async {
             loop {
                 let (tx, rx) = oneshot::channel();
                 inbox_tx.send(ActiveRelayMessage::PingServer(tx)).await.ok();
-                if tokio::time::timeout(Duration::from_millis(200), rx)
+                if tokio::time::timeout(Duration::from_millis(100), rx)
                     .await
                     .map(|resp| resp.is_ok())
                     .unwrap_or_default()
@@ -1514,12 +1514,12 @@ mod tests {
         .await
         .context("timeout")?;
 
+        // From now on, we pause time
+        tokio::time::pause();
         // We now have an idling ActiveRelayActor.  If we advance time just a little it
         // should stay alive.
         info!("Stepping time forwards by RELAY_INACTIVE_CLEANUP_TIME / 2");
-        tokio::time::pause();
         tokio::time::advance(RELAY_INACTIVE_CLEANUP_TIME / 2).await;
-        tokio::time::resume();
 
         assert!(
             tokio::time::timeout(Duration::from_millis(100), &mut task)
@@ -1530,19 +1530,9 @@ mod tests {
 
         // If we advance time a lot it should finish.
         info!("Stepping time forwards by RELAY_INACTIVE_CLEANUP_TIME");
-        tokio::time::pause();
         tokio::time::advance(RELAY_INACTIVE_CLEANUP_TIME).await;
-        tokio::time::resume();
         assert!(
-            // About the 5 second timeout:
-            // The time advancing above can set off a bunch of async work at once, since suddenly multiple
-            // timers end up firing when time is resumed.
-            // This can cause work to build up, and might slow down slower machines (especially in CI).
-            // With a 1s timeout, I was still seeing proper procedures in the logs ("Inactive for 60s, exiting."),
-            // But it didn't quite get to the final log line "exiting." yet. Instead, there was a bunch of ping/pong
-            // logs in between.
-            // So increasing the timeout instead.
-            tokio::time::timeout(Duration::from_secs(5), task)
+            tokio::time::timeout(Duration::from_millis(100), task)
                 .await
                 .is_ok(),
             "actor task still running"
