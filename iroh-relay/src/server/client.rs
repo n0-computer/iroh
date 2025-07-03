@@ -310,7 +310,7 @@ impl Actor {
         }
         match self.run_inner(done).await {
             Err(e) => {
-                warn!("actor errored {e:#?}, exiting");
+                warn!("actor errored {e:#}, exiting");
             }
             Ok(()) => {
                 debug!("actor finished, exiting");
