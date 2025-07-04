@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"mod":["disco","handshake","relay","send_recv","streams"]};
+window.SIDEBAR_ITEMS = {"mod":["common","disco","handshake","relay","streams"]};

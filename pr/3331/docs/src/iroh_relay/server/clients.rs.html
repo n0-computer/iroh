@@ -16,7 +16,7 @@
 <a href=#16 id=16 data-nosnippet>16</a>
 <a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span><span class="kw">super</span>::client::{Client, Config, ForwardPacketError};
 <a href=#18 id=18 data-nosnippet>18</a><span class="kw">use crate</span>::{
-<a href=#19 id=19 data-nosnippet>19</a>    protos::send_recv::Datagrams,
+<a href=#19 id=19 data-nosnippet>19</a>    protos::relay::Datagrams,
 <a href=#20 id=20 data-nosnippet>20</a>    server::{
 <a href=#21 id=21 data-nosnippet>21</a>        client::{PacketScope, SendError},
 <a href=#22 id=22 data-nosnippet>22</a>        metrics::Metrics,
@@ -201,7 +201,7 @@
 <a href=#201 id=201 data-nosnippet>201</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
 <a href=#202 id=202 data-nosnippet>202</a>    <span class="kw">use crate</span>::{
 <a href=#203 id=203 data-nosnippet>203</a>        client::conn::Conn,
-<a href=#204 id=204 data-nosnippet>204</a>        protos::{relay::FrameType, send_recv::RelayToClientMsg},
+<a href=#204 id=204 data-nosnippet>204</a>        protos::{common::FrameType, relay::RelayToClientMsg},
 <a href=#205 id=205 data-nosnippet>205</a>        server::streams::RelayedStream,
 <a href=#206 id=206 data-nosnippet>206</a>    };
 <a href=#207 id=207 data-nosnippet>207</a>
@@ -255,7 +255,7 @@
 <a href=#255 id=255 data-nosnippet>255</a>        <span class="comment">// send packet
 <a href=#256 id=256 data-nosnippet>256</a>        </span><span class="kw">let </span>data = <span class="string">b"hello world!"</span>;
 <a href=#257 id=257 data-nosnippet>257</a>        clients.send_packet(a_key, Datagrams::from(<span class="kw-2">&amp;</span>data[..]), b_key, <span class="kw-2">&amp;</span>metrics)<span class="question-mark">?</span>;
-<a href=#258 id=258 data-nosnippet>258</a>        <span class="kw">let </span>frame = recv_frame(FrameType::RecvDatagrams, <span class="kw-2">&amp;mut </span>a_rw).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#258 id=258 data-nosnippet>258</a>        <span class="kw">let </span>frame = recv_frame(FrameType::RelayToClientDatagrams, <span class="kw-2">&amp;mut </span>a_rw).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#259 id=259 data-nosnippet>259</a>        <span class="macro">assert_eq!</span>(
 <a href=#260 id=260 data-nosnippet>260</a>            frame,
 <a href=#261 id=261 data-nosnippet>261</a>            RelayToClientMsg::Datagrams {
@@ -266,7 +266,7 @@
 <a href=#266 id=266 data-nosnippet>266</a>
 <a href=#267 id=267 data-nosnippet>267</a>        <span class="comment">// send disco packet
 <a href=#268 id=268 data-nosnippet>268</a>        </span>clients.send_disco_packet(a_key, Datagrams::from(<span class="kw-2">&amp;</span>data[..]), b_key, <span class="kw-2">&amp;</span>metrics)<span class="question-mark">?</span>;
-<a href=#269 id=269 data-nosnippet>269</a>        <span class="kw">let </span>frame = recv_frame(FrameType::RecvDatagrams, <span class="kw-2">&amp;mut </span>a_rw).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#269 id=269 data-nosnippet>269</a>        <span class="kw">let </span>frame = recv_frame(FrameType::RelayToClientDatagrams, <span class="kw-2">&amp;mut </span>a_rw).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#270 id=270 data-nosnippet>270</a>        <span class="macro">assert_eq!</span>(
 <a href=#271 id=271 data-nosnippet>271</a>            frame,
 <a href=#272 id=272 data-nosnippet>272</a>            RelayToClientMsg::Datagrams {

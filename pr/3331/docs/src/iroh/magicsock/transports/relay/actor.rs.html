@@ -42,7 +42,7 @@
 <a href=#42 id=42 data-nosnippet>42</a><span class="kw">use </span>iroh_relay::{
 <a href=#43 id=43 data-nosnippet>43</a>    <span class="self">self </span><span class="kw">as </span>relay,
 <a href=#44 id=44 data-nosnippet>44</a>    client::{Client, ConnectError, RecvError, SendError},
-<a href=#45 id=45 data-nosnippet>45</a>    protos::send_recv::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
+<a href=#45 id=45 data-nosnippet>45</a>    protos::relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
 <a href=#46 id=46 data-nosnippet>46</a>    PingTracker,
 <a href=#47 id=47 data-nosnippet>47</a>};
 <a href=#48 id=48 data-nosnippet>48</a><span class="kw">use </span>n0_future::{
@@ -1234,7 +1234,7 @@
 <a href=#1234 id=1234 data-nosnippet>1234</a>    };
 <a href=#1235 id=1235 data-nosnippet>1235</a>
 <a href=#1236 id=1236 data-nosnippet>1236</a>    <span class="kw">use </span>iroh_base::{NodeId, RelayUrl, SecretKey};
-<a href=#1237 id=1237 data-nosnippet>1237</a>    <span class="kw">use </span>iroh_relay::{protos::send_recv::Datagrams, PingTracker};
+<a href=#1237 id=1237 data-nosnippet>1237</a>    <span class="kw">use </span>iroh_relay::{protos::relay::Datagrams, PingTracker};
 <a href=#1238 id=1238 data-nosnippet>1238</a>    <span class="kw">use </span>n0_snafu::{Error, <span class="prelude-ty">Result</span>, ResultExt};
 <a href=#1239 id=1239 data-nosnippet>1239</a>    <span class="kw">use </span>tokio::sync::{mpsc, oneshot};
 <a href=#1240 id=1240 data-nosnippet>1240</a>    <span class="kw">use </span>tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};

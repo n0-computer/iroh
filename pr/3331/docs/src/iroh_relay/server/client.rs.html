@@ -18,7 +18,7 @@
 <a href=#18 id=18 data-nosnippet>18</a><span class="kw">use crate</span>::{
 <a href=#19 id=19 data-nosnippet>19</a>    protos::{
 <a href=#20 id=20 data-nosnippet>20</a>        disco,
-<a href=#21 id=21 data-nosnippet>21</a>        send_recv::{ClientToRelayMsg, Datagrams, RelayToClientMsg, PING_INTERVAL},
+<a href=#21 id=21 data-nosnippet>21</a>        relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg, PING_INTERVAL},
 <a href=#22 id=22 data-nosnippet>22</a>        streams::StreamError,
 <a href=#23 id=23 data-nosnippet>23</a>    },
 <a href=#24 id=24 data-nosnippet>24</a>    server::{
@@ -573,7 +573,7 @@
 <a href=#573 id=573 data-nosnippet>573</a>    <span class="kw">use </span>tracing_test::traced_test;
 <a href=#574 id=574 data-nosnippet>574</a>
 <a href=#575 id=575 data-nosnippet>575</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#576 id=576 data-nosnippet>576</a>    <span class="kw">use crate</span>::{client::conn::Conn, protos::relay::FrameType};
+<a href=#576 id=576 data-nosnippet>576</a>    <span class="kw">use crate</span>::{client::conn::Conn, protos::common::FrameType};
 <a href=#577 id=577 data-nosnippet>577</a>
 <a href=#578 id=578 data-nosnippet>578</a>    <span class="kw">async fn </span>recv_frame&lt;
 <a href=#579 id=579 data-nosnippet>579</a>        E: snafu::Error + Sync + Send + <span class="lifetime">'static</span>,
@@ -641,133 +641,137 @@
 <a href=#641 id=641 data-nosnippet>641</a>            data: Datagrams::from(<span class="kw-2">&amp;</span>data[..]),
 <a href=#642 id=642 data-nosnippet>642</a>        };
 <a href=#643 id=643 data-nosnippet>643</a>        send_queue_s.send(packet.clone()).<span class="kw">await</span>.context(<span class="string">"send"</span>)<span class="question-mark">?</span>;
-<a href=#644 id=644 data-nosnippet>644</a>        <span class="kw">let </span>frame = recv_frame(FrameType::RecvDatagrams, <span class="kw-2">&amp;mut </span>io_rw).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
-<a href=#645 id=645 data-nosnippet>645</a>        <span class="macro">assert_eq!</span>(
-<a href=#646 id=646 data-nosnippet>646</a>            frame,
-<a href=#647 id=647 data-nosnippet>647</a>            RelayToClientMsg::Datagrams {
-<a href=#648 id=648 data-nosnippet>648</a>                remote_node_id: node_id,
-<a href=#649 id=649 data-nosnippet>649</a>                datagrams: data.to_vec().into()
-<a href=#650 id=650 data-nosnippet>650</a>            }
-<a href=#651 id=651 data-nosnippet>651</a>        );
-<a href=#652 id=652 data-nosnippet>652</a>
-<a href=#653 id=653 data-nosnippet>653</a>        <span class="comment">// send disco packet
-<a href=#654 id=654 data-nosnippet>654</a>        </span><span class="macro">println!</span>(<span class="string">"  send disco packet"</span>);
-<a href=#655 id=655 data-nosnippet>655</a>        disco_send_queue_s
-<a href=#656 id=656 data-nosnippet>656</a>            .send(packet.clone())
-<a href=#657 id=657 data-nosnippet>657</a>            .<span class="kw">await
-<a href=#658 id=658 data-nosnippet>658</a>            </span>.context(<span class="string">"send"</span>)<span class="question-mark">?</span>;
-<a href=#659 id=659 data-nosnippet>659</a>        <span class="kw">let </span>frame = recv_frame(FrameType::RecvDatagrams, <span class="kw-2">&amp;mut </span>io_rw).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
-<a href=#660 id=660 data-nosnippet>660</a>        <span class="macro">assert_eq!</span>(
-<a href=#661 id=661 data-nosnippet>661</a>            frame,
-<a href=#662 id=662 data-nosnippet>662</a>            RelayToClientMsg::Datagrams {
-<a href=#663 id=663 data-nosnippet>663</a>                remote_node_id: node_id,
-<a href=#664 id=664 data-nosnippet>664</a>                datagrams: data.to_vec().into()
-<a href=#665 id=665 data-nosnippet>665</a>            }
-<a href=#666 id=666 data-nosnippet>666</a>        );
-<a href=#667 id=667 data-nosnippet>667</a>
-<a href=#668 id=668 data-nosnippet>668</a>        <span class="comment">// send peer_gone
-<a href=#669 id=669 data-nosnippet>669</a>        </span><span class="macro">println!</span>(<span class="string">"send peer gone"</span>);
-<a href=#670 id=670 data-nosnippet>670</a>        peer_gone_s.send(node_id).<span class="kw">await</span>.context(<span class="string">"send"</span>)<span class="question-mark">?</span>;
-<a href=#671 id=671 data-nosnippet>671</a>        <span class="kw">let </span>frame = recv_frame(FrameType::NodeGone, <span class="kw-2">&amp;mut </span>io_rw).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
-<a href=#672 id=672 data-nosnippet>672</a>        <span class="macro">assert_eq!</span>(frame, RelayToClientMsg::NodeGone(node_id));
-<a href=#673 id=673 data-nosnippet>673</a>
-<a href=#674 id=674 data-nosnippet>674</a>        <span class="comment">// Read tests
-<a href=#675 id=675 data-nosnippet>675</a>        </span><span class="macro">println!</span>(<span class="string">"--read"</span>);
-<a href=#676 id=676 data-nosnippet>676</a>
-<a href=#677 id=677 data-nosnippet>677</a>        <span class="comment">// send ping, expect pong
-<a href=#678 id=678 data-nosnippet>678</a>        </span><span class="kw">let </span>data = <span class="string">b"pingpong"</span>;
-<a href=#679 id=679 data-nosnippet>679</a>        io_rw.send(ClientToRelayMsg::Ping(<span class="kw-2">*</span>data)).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#644 id=644 data-nosnippet>644</a>        <span class="kw">let </span>frame = recv_frame(FrameType::RelayToClientDatagrams, <span class="kw-2">&amp;mut </span>io_rw)
+<a href=#645 id=645 data-nosnippet>645</a>            .<span class="kw">await
+<a href=#646 id=646 data-nosnippet>646</a>            </span>.e()<span class="question-mark">?</span>;
+<a href=#647 id=647 data-nosnippet>647</a>        <span class="macro">assert_eq!</span>(
+<a href=#648 id=648 data-nosnippet>648</a>            frame,
+<a href=#649 id=649 data-nosnippet>649</a>            RelayToClientMsg::Datagrams {
+<a href=#650 id=650 data-nosnippet>650</a>                remote_node_id: node_id,
+<a href=#651 id=651 data-nosnippet>651</a>                datagrams: data.to_vec().into()
+<a href=#652 id=652 data-nosnippet>652</a>            }
+<a href=#653 id=653 data-nosnippet>653</a>        );
+<a href=#654 id=654 data-nosnippet>654</a>
+<a href=#655 id=655 data-nosnippet>655</a>        <span class="comment">// send disco packet
+<a href=#656 id=656 data-nosnippet>656</a>        </span><span class="macro">println!</span>(<span class="string">"  send disco packet"</span>);
+<a href=#657 id=657 data-nosnippet>657</a>        disco_send_queue_s
+<a href=#658 id=658 data-nosnippet>658</a>            .send(packet.clone())
+<a href=#659 id=659 data-nosnippet>659</a>            .<span class="kw">await
+<a href=#660 id=660 data-nosnippet>660</a>            </span>.context(<span class="string">"send"</span>)<span class="question-mark">?</span>;
+<a href=#661 id=661 data-nosnippet>661</a>        <span class="kw">let </span>frame = recv_frame(FrameType::RelayToClientDatagrams, <span class="kw-2">&amp;mut </span>io_rw)
+<a href=#662 id=662 data-nosnippet>662</a>            .<span class="kw">await
+<a href=#663 id=663 data-nosnippet>663</a>            </span>.e()<span class="question-mark">?</span>;
+<a href=#664 id=664 data-nosnippet>664</a>        <span class="macro">assert_eq!</span>(
+<a href=#665 id=665 data-nosnippet>665</a>            frame,
+<a href=#666 id=666 data-nosnippet>666</a>            RelayToClientMsg::Datagrams {
+<a href=#667 id=667 data-nosnippet>667</a>                remote_node_id: node_id,
+<a href=#668 id=668 data-nosnippet>668</a>                datagrams: data.to_vec().into()
+<a href=#669 id=669 data-nosnippet>669</a>            }
+<a href=#670 id=670 data-nosnippet>670</a>        );
+<a href=#671 id=671 data-nosnippet>671</a>
+<a href=#672 id=672 data-nosnippet>672</a>        <span class="comment">// send peer_gone
+<a href=#673 id=673 data-nosnippet>673</a>        </span><span class="macro">println!</span>(<span class="string">"send peer gone"</span>);
+<a href=#674 id=674 data-nosnippet>674</a>        peer_gone_s.send(node_id).<span class="kw">await</span>.context(<span class="string">"send"</span>)<span class="question-mark">?</span>;
+<a href=#675 id=675 data-nosnippet>675</a>        <span class="kw">let </span>frame = recv_frame(FrameType::NodeGone, <span class="kw-2">&amp;mut </span>io_rw).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
+<a href=#676 id=676 data-nosnippet>676</a>        <span class="macro">assert_eq!</span>(frame, RelayToClientMsg::NodeGone(node_id));
+<a href=#677 id=677 data-nosnippet>677</a>
+<a href=#678 id=678 data-nosnippet>678</a>        <span class="comment">// Read tests
+<a href=#679 id=679 data-nosnippet>679</a>        </span><span class="macro">println!</span>(<span class="string">"--read"</span>);
 <a href=#680 id=680 data-nosnippet>680</a>
-<a href=#681 id=681 data-nosnippet>681</a>        <span class="comment">// recv pong
-<a href=#682 id=682 data-nosnippet>682</a>        </span><span class="macro">println!</span>(<span class="string">" recv pong"</span>);
-<a href=#683 id=683 data-nosnippet>683</a>        <span class="kw">let </span>frame = recv_frame(FrameType::Pong, <span class="kw-2">&amp;mut </span>io_rw).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#684 id=684 data-nosnippet>684</a>        <span class="macro">assert_eq!</span>(frame, RelayToClientMsg::Pong(<span class="kw-2">*</span>data));
-<a href=#685 id=685 data-nosnippet>685</a>
-<a href=#686 id=686 data-nosnippet>686</a>        <span class="kw">let </span>target = SecretKey::generate(rand::thread_rng()).public();
-<a href=#687 id=687 data-nosnippet>687</a>
-<a href=#688 id=688 data-nosnippet>688</a>        <span class="comment">// send packet
-<a href=#689 id=689 data-nosnippet>689</a>        </span><span class="macro">println!</span>(<span class="string">"  send packet"</span>);
-<a href=#690 id=690 data-nosnippet>690</a>        <span class="kw">let </span>data = <span class="string">b"hello world!"</span>;
-<a href=#691 id=691 data-nosnippet>691</a>        io_rw
-<a href=#692 id=692 data-nosnippet>692</a>            .send(ClientToRelayMsg::Datagrams {
-<a href=#693 id=693 data-nosnippet>693</a>                dst_node_id: target,
-<a href=#694 id=694 data-nosnippet>694</a>                datagrams: Datagrams::from(data),
-<a href=#695 id=695 data-nosnippet>695</a>            })
-<a href=#696 id=696 data-nosnippet>696</a>            .<span class="kw">await
-<a href=#697 id=697 data-nosnippet>697</a>            </span>.context(<span class="string">"send"</span>)<span class="question-mark">?</span>;
-<a href=#698 id=698 data-nosnippet>698</a>
-<a href=#699 id=699 data-nosnippet>699</a>        <span class="comment">// send disco packet
-<a href=#700 id=700 data-nosnippet>700</a>        </span><span class="macro">println!</span>(<span class="string">"  send disco packet"</span>);
-<a href=#701 id=701 data-nosnippet>701</a>        <span class="comment">// starts with `MAGIC` &amp; key, then data
-<a href=#702 id=702 data-nosnippet>702</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>disco_data = disco::MAGIC.as_bytes().to_vec();
-<a href=#703 id=703 data-nosnippet>703</a>        disco_data.extend_from_slice(target.as_bytes());
-<a href=#704 id=704 data-nosnippet>704</a>        disco_data.extend_from_slice(data);
-<a href=#705 id=705 data-nosnippet>705</a>        io_rw
-<a href=#706 id=706 data-nosnippet>706</a>            .send(ClientToRelayMsg::Datagrams {
-<a href=#707 id=707 data-nosnippet>707</a>                dst_node_id: target,
-<a href=#708 id=708 data-nosnippet>708</a>                datagrams: disco_data.clone().into(),
-<a href=#709 id=709 data-nosnippet>709</a>            })
-<a href=#710 id=710 data-nosnippet>710</a>            .<span class="kw">await
-<a href=#711 id=711 data-nosnippet>711</a>            </span>.context(<span class="string">"send"</span>)<span class="question-mark">?</span>;
-<a href=#712 id=712 data-nosnippet>712</a>
-<a href=#713 id=713 data-nosnippet>713</a>        done.cancel();
-<a href=#714 id=714 data-nosnippet>714</a>        handle.<span class="kw">await</span>.context(<span class="string">"join"</span>)<span class="question-mark">?</span>;
-<a href=#715 id=715 data-nosnippet>715</a>        <span class="prelude-val">Ok</span>(())
-<a href=#716 id=716 data-nosnippet>716</a>    }
-<a href=#717 id=717 data-nosnippet>717</a>
-<a href=#718 id=718 data-nosnippet>718</a>    <span class="attr">#[tokio::test(start_paused = <span class="bool-val">true</span>)]
-<a href=#719 id=719 data-nosnippet>719</a>    #[traced_test]
-<a href=#720 id=720 data-nosnippet>720</a>    </span><span class="kw">async fn </span>test_rate_limit() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#721 id=721 data-nosnippet>721</a>        <span class="kw">const </span>LIMIT: u32 = <span class="number">50</span>;
-<a href=#722 id=722 data-nosnippet>722</a>        <span class="kw">const </span>MAX_FRAMES: u32 = <span class="number">100</span>;
-<a href=#723 id=723 data-nosnippet>723</a>
-<a href=#724 id=724 data-nosnippet>724</a>        <span class="comment">// Build the rate limited stream.
-<a href=#725 id=725 data-nosnippet>725</a>        </span><span class="kw">let </span>(io_read, io_write) = tokio::io::duplex((LIMIT * MAX_FRAMES) <span class="kw">as _</span>);
-<a href=#726 id=726 data-nosnippet>726</a>        <span class="kw">let </span><span class="kw-2">mut </span>frame_writer = Conn::test(io_write);
-<a href=#727 id=727 data-nosnippet>727</a>        <span class="comment">// Rate limiter allowing LIMIT bytes/s
-<a href=#728 id=728 data-nosnippet>728</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>stream = RelayedStream::test_limited(io_read, LIMIT / <span class="number">10</span>, LIMIT)<span class="question-mark">?</span>;
-<a href=#729 id=729 data-nosnippet>729</a>
-<a href=#730 id=730 data-nosnippet>730</a>        <span class="comment">// Prepare a frame to send, assert its size.
-<a href=#731 id=731 data-nosnippet>731</a>        </span><span class="kw">let </span>data = Datagrams::from(<span class="string">b"hello world!!1"</span>);
-<a href=#732 id=732 data-nosnippet>732</a>        <span class="kw">let </span>target = SecretKey::generate(rand::thread_rng()).public();
-<a href=#733 id=733 data-nosnippet>733</a>        <span class="kw">let </span>frame = ClientToRelayMsg::Datagrams {
-<a href=#734 id=734 data-nosnippet>734</a>            dst_node_id: target,
-<a href=#735 id=735 data-nosnippet>735</a>            datagrams: data.clone(),
-<a href=#736 id=736 data-nosnippet>736</a>        };
-<a href=#737 id=737 data-nosnippet>737</a>        <span class="kw">let </span>frame_len = frame.clone().write_to(BytesMut::new()).freeze().len();
-<a href=#738 id=738 data-nosnippet>738</a>        <span class="macro">assert_eq!</span>(frame_len, LIMIT <span class="kw">as </span>usize);
-<a href=#739 id=739 data-nosnippet>739</a>
-<a href=#740 id=740 data-nosnippet>740</a>        <span class="comment">// Send a frame, it should arrive.
-<a href=#741 id=741 data-nosnippet>741</a>        </span><span class="macro">info!</span>(<span class="string">"-- send packet"</span>);
-<a href=#742 id=742 data-nosnippet>742</a>        frame_writer.send(frame.clone()).<span class="kw">await</span>.context(<span class="string">"send"</span>)<span class="question-mark">?</span>;
-<a href=#743 id=743 data-nosnippet>743</a>        frame_writer.flush().<span class="kw">await</span>.context(<span class="string">"flush"</span>)<span class="question-mark">?</span>;
-<a href=#744 id=744 data-nosnippet>744</a>        <span class="kw">let </span>recv_frame = tokio::time::timeout(Duration::from_millis(<span class="number">500</span>), stream.next())
-<a href=#745 id=745 data-nosnippet>745</a>            .<span class="kw">await
-<a href=#746 id=746 data-nosnippet>746</a>            </span>.expect(<span class="string">"timeout"</span>)
-<a href=#747 id=747 data-nosnippet>747</a>            .expect(<span class="string">"option"</span>)
-<a href=#748 id=748 data-nosnippet>748</a>            .expect(<span class="string">"ok"</span>);
-<a href=#749 id=749 data-nosnippet>749</a>        <span class="macro">assert_eq!</span>(recv_frame, frame);
-<a href=#750 id=750 data-nosnippet>750</a>
-<a href=#751 id=751 data-nosnippet>751</a>        <span class="comment">// Next frame does not arrive.
-<a href=#752 id=752 data-nosnippet>752</a>        </span><span class="macro">info!</span>(<span class="string">"-- send packet"</span>);
-<a href=#753 id=753 data-nosnippet>753</a>        frame_writer.send(frame.clone()).<span class="kw">await</span>.context(<span class="string">"send"</span>)<span class="question-mark">?</span>;
-<a href=#754 id=754 data-nosnippet>754</a>        frame_writer.flush().<span class="kw">await</span>.context(<span class="string">"flush"</span>)<span class="question-mark">?</span>;
-<a href=#755 id=755 data-nosnippet>755</a>        <span class="kw">let </span>res = tokio::time::timeout(Duration::from_millis(<span class="number">100</span>), stream.next()).<span class="kw">await</span>;
-<a href=#756 id=756 data-nosnippet>756</a>        <span class="macro">assert!</span>(res.is_err(), <span class="string">"expecting a timeout"</span>);
-<a href=#757 id=757 data-nosnippet>757</a>        <span class="macro">info!</span>(<span class="string">"-- timeout happened"</span>);
-<a href=#758 id=758 data-nosnippet>758</a>
-<a href=#759 id=759 data-nosnippet>759</a>        <span class="comment">// Wait long enough.
-<a href=#760 id=760 data-nosnippet>760</a>        </span><span class="macro">info!</span>(<span class="string">"-- sleep"</span>);
-<a href=#761 id=761 data-nosnippet>761</a>        tokio::time::sleep(Duration::from_secs(<span class="number">1</span>)).<span class="kw">await</span>;
+<a href=#681 id=681 data-nosnippet>681</a>        <span class="comment">// send ping, expect pong
+<a href=#682 id=682 data-nosnippet>682</a>        </span><span class="kw">let </span>data = <span class="string">b"pingpong"</span>;
+<a href=#683 id=683 data-nosnippet>683</a>        io_rw.send(ClientToRelayMsg::Ping(<span class="kw-2">*</span>data)).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#684 id=684 data-nosnippet>684</a>
+<a href=#685 id=685 data-nosnippet>685</a>        <span class="comment">// recv pong
+<a href=#686 id=686 data-nosnippet>686</a>        </span><span class="macro">println!</span>(<span class="string">" recv pong"</span>);
+<a href=#687 id=687 data-nosnippet>687</a>        <span class="kw">let </span>frame = recv_frame(FrameType::Pong, <span class="kw-2">&amp;mut </span>io_rw).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#688 id=688 data-nosnippet>688</a>        <span class="macro">assert_eq!</span>(frame, RelayToClientMsg::Pong(<span class="kw-2">*</span>data));
+<a href=#689 id=689 data-nosnippet>689</a>
+<a href=#690 id=690 data-nosnippet>690</a>        <span class="kw">let </span>target = SecretKey::generate(rand::thread_rng()).public();
+<a href=#691 id=691 data-nosnippet>691</a>
+<a href=#692 id=692 data-nosnippet>692</a>        <span class="comment">// send packet
+<a href=#693 id=693 data-nosnippet>693</a>        </span><span class="macro">println!</span>(<span class="string">"  send packet"</span>);
+<a href=#694 id=694 data-nosnippet>694</a>        <span class="kw">let </span>data = <span class="string">b"hello world!"</span>;
+<a href=#695 id=695 data-nosnippet>695</a>        io_rw
+<a href=#696 id=696 data-nosnippet>696</a>            .send(ClientToRelayMsg::Datagrams {
+<a href=#697 id=697 data-nosnippet>697</a>                dst_node_id: target,
+<a href=#698 id=698 data-nosnippet>698</a>                datagrams: Datagrams::from(data),
+<a href=#699 id=699 data-nosnippet>699</a>            })
+<a href=#700 id=700 data-nosnippet>700</a>            .<span class="kw">await
+<a href=#701 id=701 data-nosnippet>701</a>            </span>.context(<span class="string">"send"</span>)<span class="question-mark">?</span>;
+<a href=#702 id=702 data-nosnippet>702</a>
+<a href=#703 id=703 data-nosnippet>703</a>        <span class="comment">// send disco packet
+<a href=#704 id=704 data-nosnippet>704</a>        </span><span class="macro">println!</span>(<span class="string">"  send disco packet"</span>);
+<a href=#705 id=705 data-nosnippet>705</a>        <span class="comment">// starts with `MAGIC` &amp; key, then data
+<a href=#706 id=706 data-nosnippet>706</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>disco_data = disco::MAGIC.as_bytes().to_vec();
+<a href=#707 id=707 data-nosnippet>707</a>        disco_data.extend_from_slice(target.as_bytes());
+<a href=#708 id=708 data-nosnippet>708</a>        disco_data.extend_from_slice(data);
+<a href=#709 id=709 data-nosnippet>709</a>        io_rw
+<a href=#710 id=710 data-nosnippet>710</a>            .send(ClientToRelayMsg::Datagrams {
+<a href=#711 id=711 data-nosnippet>711</a>                dst_node_id: target,
+<a href=#712 id=712 data-nosnippet>712</a>                datagrams: disco_data.clone().into(),
+<a href=#713 id=713 data-nosnippet>713</a>            })
+<a href=#714 id=714 data-nosnippet>714</a>            .<span class="kw">await
+<a href=#715 id=715 data-nosnippet>715</a>            </span>.context(<span class="string">"send"</span>)<span class="question-mark">?</span>;
+<a href=#716 id=716 data-nosnippet>716</a>
+<a href=#717 id=717 data-nosnippet>717</a>        done.cancel();
+<a href=#718 id=718 data-nosnippet>718</a>        handle.<span class="kw">await</span>.context(<span class="string">"join"</span>)<span class="question-mark">?</span>;
+<a href=#719 id=719 data-nosnippet>719</a>        <span class="prelude-val">Ok</span>(())
+<a href=#720 id=720 data-nosnippet>720</a>    }
+<a href=#721 id=721 data-nosnippet>721</a>
+<a href=#722 id=722 data-nosnippet>722</a>    <span class="attr">#[tokio::test(start_paused = <span class="bool-val">true</span>)]
+<a href=#723 id=723 data-nosnippet>723</a>    #[traced_test]
+<a href=#724 id=724 data-nosnippet>724</a>    </span><span class="kw">async fn </span>test_rate_limit() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#725 id=725 data-nosnippet>725</a>        <span class="kw">const </span>LIMIT: u32 = <span class="number">50</span>;
+<a href=#726 id=726 data-nosnippet>726</a>        <span class="kw">const </span>MAX_FRAMES: u32 = <span class="number">100</span>;
+<a href=#727 id=727 data-nosnippet>727</a>
+<a href=#728 id=728 data-nosnippet>728</a>        <span class="comment">// Build the rate limited stream.
+<a href=#729 id=729 data-nosnippet>729</a>        </span><span class="kw">let </span>(io_read, io_write) = tokio::io::duplex((LIMIT * MAX_FRAMES) <span class="kw">as _</span>);
+<a href=#730 id=730 data-nosnippet>730</a>        <span class="kw">let </span><span class="kw-2">mut </span>frame_writer = Conn::test(io_write);
+<a href=#731 id=731 data-nosnippet>731</a>        <span class="comment">// Rate limiter allowing LIMIT bytes/s
+<a href=#732 id=732 data-nosnippet>732</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>stream = RelayedStream::test_limited(io_read, LIMIT / <span class="number">10</span>, LIMIT)<span class="question-mark">?</span>;
+<a href=#733 id=733 data-nosnippet>733</a>
+<a href=#734 id=734 data-nosnippet>734</a>        <span class="comment">// Prepare a frame to send, assert its size.
+<a href=#735 id=735 data-nosnippet>735</a>        </span><span class="kw">let </span>data = Datagrams::from(<span class="string">b"hello world!!1"</span>);
+<a href=#736 id=736 data-nosnippet>736</a>        <span class="kw">let </span>target = SecretKey::generate(rand::thread_rng()).public();
+<a href=#737 id=737 data-nosnippet>737</a>        <span class="kw">let </span>frame = ClientToRelayMsg::Datagrams {
+<a href=#738 id=738 data-nosnippet>738</a>            dst_node_id: target,
+<a href=#739 id=739 data-nosnippet>739</a>            datagrams: data.clone(),
+<a href=#740 id=740 data-nosnippet>740</a>        };
+<a href=#741 id=741 data-nosnippet>741</a>        <span class="kw">let </span>frame_len = frame.clone().write_to(BytesMut::new()).freeze().len();
+<a href=#742 id=742 data-nosnippet>742</a>        <span class="macro">assert_eq!</span>(frame_len, LIMIT <span class="kw">as </span>usize);
+<a href=#743 id=743 data-nosnippet>743</a>
+<a href=#744 id=744 data-nosnippet>744</a>        <span class="comment">// Send a frame, it should arrive.
+<a href=#745 id=745 data-nosnippet>745</a>        </span><span class="macro">info!</span>(<span class="string">"-- send packet"</span>);
+<a href=#746 id=746 data-nosnippet>746</a>        frame_writer.send(frame.clone()).<span class="kw">await</span>.context(<span class="string">"send"</span>)<span class="question-mark">?</span>;
+<a href=#747 id=747 data-nosnippet>747</a>        frame_writer.flush().<span class="kw">await</span>.context(<span class="string">"flush"</span>)<span class="question-mark">?</span>;
+<a href=#748 id=748 data-nosnippet>748</a>        <span class="kw">let </span>recv_frame = tokio::time::timeout(Duration::from_millis(<span class="number">500</span>), stream.next())
+<a href=#749 id=749 data-nosnippet>749</a>            .<span class="kw">await
+<a href=#750 id=750 data-nosnippet>750</a>            </span>.expect(<span class="string">"timeout"</span>)
+<a href=#751 id=751 data-nosnippet>751</a>            .expect(<span class="string">"option"</span>)
+<a href=#752 id=752 data-nosnippet>752</a>            .expect(<span class="string">"ok"</span>);
+<a href=#753 id=753 data-nosnippet>753</a>        <span class="macro">assert_eq!</span>(recv_frame, frame);
+<a href=#754 id=754 data-nosnippet>754</a>
+<a href=#755 id=755 data-nosnippet>755</a>        <span class="comment">// Next frame does not arrive.
+<a href=#756 id=756 data-nosnippet>756</a>        </span><span class="macro">info!</span>(<span class="string">"-- send packet"</span>);
+<a href=#757 id=757 data-nosnippet>757</a>        frame_writer.send(frame.clone()).<span class="kw">await</span>.context(<span class="string">"send"</span>)<span class="question-mark">?</span>;
+<a href=#758 id=758 data-nosnippet>758</a>        frame_writer.flush().<span class="kw">await</span>.context(<span class="string">"flush"</span>)<span class="question-mark">?</span>;
+<a href=#759 id=759 data-nosnippet>759</a>        <span class="kw">let </span>res = tokio::time::timeout(Duration::from_millis(<span class="number">100</span>), stream.next()).<span class="kw">await</span>;
+<a href=#760 id=760 data-nosnippet>760</a>        <span class="macro">assert!</span>(res.is_err(), <span class="string">"expecting a timeout"</span>);
+<a href=#761 id=761 data-nosnippet>761</a>        <span class="macro">info!</span>(<span class="string">"-- timeout happened"</span>);
 <a href=#762 id=762 data-nosnippet>762</a>
-<a href=#763 id=763 data-nosnippet>763</a>        <span class="comment">// Frame arrives.
-<a href=#764 id=764 data-nosnippet>764</a>        </span><span class="kw">let </span>recv_frame = tokio::time::timeout(Duration::from_millis(<span class="number">500</span>), stream.next())
-<a href=#765 id=765 data-nosnippet>765</a>            .<span class="kw">await
-<a href=#766 id=766 data-nosnippet>766</a>            </span>.expect(<span class="string">"timeout"</span>)
-<a href=#767 id=767 data-nosnippet>767</a>            .expect(<span class="string">"option"</span>)
-<a href=#768 id=768 data-nosnippet>768</a>            .expect(<span class="string">"ok"</span>);
-<a href=#769 id=769 data-nosnippet>769</a>        <span class="macro">assert_eq!</span>(recv_frame, frame);
-<a href=#770 id=770 data-nosnippet>770</a>
-<a href=#771 id=771 data-nosnippet>771</a>        <span class="prelude-val">Ok</span>(())
-<a href=#772 id=772 data-nosnippet>772</a>    }
-<a href=#773 id=773 data-nosnippet>773</a>}</code></pre></div></section></main></body></html>
+<a href=#763 id=763 data-nosnippet>763</a>        <span class="comment">// Wait long enough.
+<a href=#764 id=764 data-nosnippet>764</a>        </span><span class="macro">info!</span>(<span class="string">"-- sleep"</span>);
+<a href=#765 id=765 data-nosnippet>765</a>        tokio::time::sleep(Duration::from_secs(<span class="number">1</span>)).<span class="kw">await</span>;
+<a href=#766 id=766 data-nosnippet>766</a>
+<a href=#767 id=767 data-nosnippet>767</a>        <span class="comment">// Frame arrives.
+<a href=#768 id=768 data-nosnippet>768</a>        </span><span class="kw">let </span>recv_frame = tokio::time::timeout(Duration::from_millis(<span class="number">500</span>), stream.next())
+<a href=#769 id=769 data-nosnippet>769</a>            .<span class="kw">await
+<a href=#770 id=770 data-nosnippet>770</a>            </span>.expect(<span class="string">"timeout"</span>)
+<a href=#771 id=771 data-nosnippet>771</a>            .expect(<span class="string">"option"</span>)
+<a href=#772 id=772 data-nosnippet>772</a>            .expect(<span class="string">"ok"</span>);
+<a href=#773 id=773 data-nosnippet>773</a>        <span class="macro">assert_eq!</span>(recv_frame, frame);
+<a href=#774 id=774 data-nosnippet>774</a>
+<a href=#775 id=775 data-nosnippet>775</a>        <span class="prelude-val">Ok</span>(())
+<a href=#776 id=776 data-nosnippet>776</a>    }
+<a href=#777 id=777 data-nosnippet>777</a>}</code></pre></div></section></main></body></html>

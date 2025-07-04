@@ -25,7 +25,7 @@
 <a href=#25 id=25 data-nosnippet>25</a></span><span class="kw">use crate</span>::{
 <a href=#26 id=26 data-nosnippet>26</a>    defaults::{timeouts::SERVER_WRITE_TIMEOUT, DEFAULT_KEY_CACHE_CAPACITY},
 <a href=#27 id=27 data-nosnippet>27</a>    http::{RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},
-<a href=#28 id=28 data-nosnippet>28</a>    protos::send_recv::PER_CLIENT_SEND_QUEUE_DEPTH,
+<a href=#28 id=28 data-nosnippet>28</a>    protos::relay::PER_CLIENT_SEND_QUEUE_DEPTH,
 <a href=#29 id=29 data-nosnippet>29</a>    server::{
 <a href=#30 id=30 data-nosnippet>30</a>        client::Config,
 <a href=#31 id=31 data-nosnippet>31</a>        metrics::Metrics,
@@ -36,7 +36,7 @@
 <a href=#36 id=36 data-nosnippet>36</a>};
 <a href=#37 id=37 data-nosnippet>37</a><span class="kw">use crate</span>::{
 <a href=#38 id=38 data-nosnippet>38</a>    http::{CLIENT_AUTH_HEADER, WEBSOCKET_UPGRADE_PROTOCOL},
-<a href=#39 id=39 data-nosnippet>39</a>    protos::{handshake, send_recv::MAX_FRAME_SIZE, streams::WsBytesFramed},
+<a href=#39 id=39 data-nosnippet>39</a>    protos::{handshake, relay::MAX_FRAME_SIZE, streams::WsBytesFramed},
 <a href=#40 id=40 data-nosnippet>40</a>    server::streams::RateLimited,
 <a href=#41 id=41 data-nosnippet>41</a>};
 <a href=#42 id=42 data-nosnippet>42</a>
@@ -837,7 +837,7 @@
 <a href=#837 id=837 data-nosnippet>837</a>    <span class="kw">use crate</span>::{
 <a href=#838 id=838 data-nosnippet>838</a>        client::{conn::Conn, Client, ClientBuilder, ConnectError},
 <a href=#839 id=839 data-nosnippet>839</a>        dns::DnsResolver,
-<a href=#840 id=840 data-nosnippet>840</a>        protos::send_recv::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
+<a href=#840 id=840 data-nosnippet>840</a>        protos::relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
 <a href=#841 id=841 data-nosnippet>841</a>    };
 <a href=#842 id=842 data-nosnippet>842</a>
 <a href=#843 id=843 data-nosnippet>843</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>make_tls_config() -&gt; TlsConfig {
