@@ -15,8 +15,6 @@
 use bytes::{BufMut, Bytes};
 use iroh_base::{NodeId, SignatureError};
 use n0_future::time::{self, Duration};
-#[cfg(feature = "server")]
-use n0_future::{Sink, SinkExt};
 use nested_enum_utils::common_fields;
 use snafu::{Backtrace, OptionExt, ResultExt, Snafu};
 
@@ -60,27 +58,7 @@ pub(crate) const PER_CLIENT_SEND_QUEUE_DEPTH: usize = 512;
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
-pub enum SendError {
-    #[snafu(transparent)]
-    Io { source: std::io::Error },
-    #[snafu(transparent)]
-    Timeout { source: time::Elapsed },
-    #[snafu(transparent)]
-    SerDe { source: postcard::Error },
-}
-
-/// Protocol send errors.
-#[common_fields({
-    backtrace: Option<Backtrace>,
-    #[snafu(implicit)]
-    span_trace: n0_snafu::SpanTrace,
-})]
-#[allow(missing_docs)]
-#[derive(Debug, Snafu)]
-#[non_exhaustive]
-pub enum RecvError {
-    #[snafu(transparent)]
-    Io { source: std::io::Error },
+pub enum Error {
     #[snafu(display("unexpected frame: got {got}, expected {expected}"))]
     UnexpectedFrame { got: FrameType, expected: FrameType },
     #[snafu(display("Frame is too large, has {frame_len} bytes"))]
@@ -89,35 +67,16 @@ pub enum RecvError {
     Timeout { source: time::Elapsed },
     #[snafu(transparent)]
     SerDe { source: postcard::Error },
-    #[snafu(transparent)]
-    InvalidSignature { source: SignatureError },
+    #[snafu(display("Invalid public key"))]
+    InvalidPublicKey { source: SignatureError },
     #[snafu(display("Invalid frame encoding"))]
     InvalidFrame {},
     #[snafu(display("Invalid frame type: {frame_type}"))]
     InvalidFrameType { frame_type: FrameType },
-    #[snafu(display("invalid protocol message encoding"))]
+    #[snafu(display("Invalid protocol message encoding"))]
     InvalidProtocolMessageEncoding { source: std::str::Utf8Error },
     #[snafu(display("Too few bytes"))]
     TooSmall {},
-}
-
-/// Writes complete frame, errors if it is unable to write within the given `timeout`.
-/// Ignores the timeout if `None`
-///
-/// Does not flush.
-#[cfg(feature = "server")]
-pub(crate) async fn write_frame<S: Sink<ServerToClientMsg, Error = std::io::Error> + Unpin>(
-    mut writer: S,
-    frame: ServerToClientMsg,
-    timeout: Option<Duration>,
-) -> Result<(), SendError> {
-    if let Some(duration) = timeout {
-        tokio::time::timeout(duration, writer.send(frame)).await??;
-    } else {
-        writer.send(frame).await?;
-    }
-
-    Ok(())
 }
 
 /// TODO(matheus23): Docs
@@ -219,7 +178,7 @@ impl Datagrams {
         dst
     }
 
-    fn from_bytes(bytes: Bytes) -> Result<Self, RecvError> {
+    fn from_bytes(bytes: Bytes) -> Result<Self, Error> {
         // 1 bytes ECN, 2 bytes segment size
         snafu::ensure!(bytes.len() > 3, InvalidFrameSnafu);
 
@@ -297,7 +256,7 @@ impl ServerToClientMsg {
     ///
     /// Specifically, bytes received from a binary websocket message frame.
     #[allow(clippy::result_large_err)]
-    pub(crate) fn from_bytes(bytes: Bytes, cache: &KeyCache) -> Result<Self, RecvError> {
+    pub(crate) fn from_bytes(bytes: Bytes, cache: &KeyCache) -> Result<Self, Error> {
         let (frame_type, content) = FrameType::from_bytes(bytes).context(InvalidFrameSnafu)?;
         let frame_len = content.len();
         snafu::ensure!(
@@ -309,7 +268,9 @@ impl ServerToClientMsg {
             FrameType::RecvDatagrams => {
                 snafu::ensure!(content.len() >= NodeId::LENGTH, InvalidFrameSnafu);
 
-                let remote_node_id = cache.key_from_slice(&content[..NodeId::LENGTH])?;
+                let remote_node_id = cache
+                    .key_from_slice(&content[..NodeId::LENGTH])
+                    .context(InvalidPublicKeySnafu)?;
                 let datagrams = Datagrams::from_bytes(content.slice(NodeId::LENGTH..))?;
                 Self::ReceivedDatagrams {
                     remote_node_id,
@@ -318,7 +279,9 @@ impl ServerToClientMsg {
             }
             FrameType::NodeGone => {
                 snafu::ensure!(content.len() == NodeId::LENGTH, InvalidFrameSnafu);
-                let node_id = cache.key_from_slice(content.as_ref())?;
+                let node_id = cache
+                    .key_from_slice(content.as_ref())
+                    .context(InvalidPublicKeySnafu)?;
                 Self::NodeGone(node_id)
             }
             FrameType::Ping => {
@@ -403,7 +366,7 @@ impl ClientToServerMsg {
     /// Specifically, bytes received from a binary websocket message frame.
     #[allow(clippy::result_large_err)]
     #[cfg(feature = "server")]
-    pub(crate) fn from_bytes(bytes: Bytes, cache: &KeyCache) -> Result<Self, RecvError> {
+    pub(crate) fn from_bytes(bytes: Bytes, cache: &KeyCache) -> Result<Self, Error> {
         let (frame_type, content) = FrameType::from_bytes(bytes).context(InvalidFrameSnafu)?;
         let frame_len = content.len();
         snafu::ensure!(
@@ -413,7 +376,9 @@ impl ClientToServerMsg {
 
         let res = match frame_type {
             FrameType::SendDatagrams => {
-                let dst_node_id = cache.key_from_slice(&content[..NodeId::LENGTH])?;
+                let dst_node_id = cache
+                    .key_from_slice(&content[..NodeId::LENGTH])
+                    .context(InvalidPublicKeySnafu)?;
                 let datagrams = Datagrams::from_bytes(content.slice(NodeId::LENGTH..))?;
                 Self::SendDatagrams {
                     dst_node_id,
@@ -441,6 +406,7 @@ impl ClientToServerMsg {
 }
 
 #[cfg(test)]
+#[cfg(feature = "server")]
 mod tests {
     use data_encoding::HEXLOWER;
     use iroh_base::SecretKey;
@@ -571,6 +537,7 @@ mod tests {
 }
 
 #[cfg(test)]
+#[cfg(feature = "server")]
 mod proptests {
     use bytes::BytesMut;
     use iroh_base::SecretKey;

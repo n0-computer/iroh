@@ -1,5 +1,4 @@
 //! TODO(matheus23) docs
-
 use bytes::{BufMut, Bytes, BytesMut};
 use http::HeaderValue;
 #[cfg(feature = "server")]
@@ -62,9 +61,11 @@ pub(crate) struct ClientAuth {
 pub(crate) struct ServerConfirmsAuth;
 
 /// Denial of connection. The client couldn't be verified as authentic.
-#[derive(derive_more::Debug, serde::Deserialize)]
+#[derive(derive_more::Debug, Clone, serde::Deserialize)]
 #[cfg_attr(feature = "server", derive(serde::Serialize))]
-pub(crate) struct ServerDeniesAuth;
+pub(crate) struct ServerDeniesAuth {
+    reason: String,
+}
 
 /// Trait for getting the frame type tag for a frame.
 ///
@@ -117,8 +118,8 @@ pub enum Error {
     Timeout { source: Elapsed },
     #[snafu(display("Handshake stream ended prematurely"))]
     UnexpectedEnd {},
-    #[snafu(display("The relay denied our authentication"))]
-    ServerDeniedAuth {},
+    #[snafu(display("The relay denied our authentication ({reason})"))]
+    ServerDeniedAuth { reason: String },
     #[snafu(display("Unexpected tag, got {frame_type}, but expected one of {expected_types:?}"))]
     UnexpectedFrameType {
         frame_type: FrameType,
@@ -247,16 +248,26 @@ pub(crate) async fn clientside(
             Ok(confirmation)
         }
         FrameType::ServerDeniesAuth => {
-            let _denial: ServerDeniesAuth = deserialize_frame(frame)?;
-            Err(ServerDeniedAuthSnafu.build())
+            let denial: ServerDeniesAuth = deserialize_frame(frame)?;
+            Err(ServerDeniedAuthSnafu {
+                reason: denial.reason,
+            }
+            .build())
         }
         _ => unreachable!(),
     }
 }
 
 #[cfg(feature = "server")]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Auth {
+#[derive(Debug)]
+pub(crate) struct SuccessfulAuthentication {
+    pub(crate) client_key: PublicKey,
+    pub(crate) mechanism: Mechanism,
+}
+
+#[cfg(feature = "server")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Mechanism {
     SignedChallenge,
     SignedKeyMaterial,
 }
@@ -267,7 +278,7 @@ pub(crate) async fn serverside(
     io: &mut (impl BytesStreamSink + ExportKeyingMaterial),
     client_auth_header: Option<HeaderValue>,
     rng: impl RngCore + CryptoRng,
-) -> Result<(PublicKey, Auth), Error> {
+) -> Result<SuccessfulAuthentication, Error> {
     if let Some(client_auth_header) = client_auth_header {
         let client_auth_bytes = data_encoding::BASE64URL_NOPAD
             .decode(client_auth_header.as_ref())
@@ -287,8 +298,11 @@ pub(crate) async fn serverside(
             })?;
 
         if client_auth.verify(io) {
-            write_frame(io, ServerConfirmsAuth).await?;
-            return Ok((client_auth.public_key, Auth::SignedKeyMaterial));
+            tracing::trace!(?client_auth.public_key, "authentication succeeded via keying material");
+            return Ok(SuccessfulAuthentication {
+                client_key: client_auth.public_key,
+                mechanism: Mechanism::SignedKeyMaterial,
+            });
         }
     }
 
@@ -299,12 +313,47 @@ pub(crate) async fn serverside(
     let client_auth: ClientAuth = deserialize_frame(frame)?;
 
     if client_auth.verify(&challenge) {
-        write_frame(io, ServerConfirmsAuth).await?;
+        tracing::trace!(?client_auth.public_key, "authentication succeeded via challenge");
+        Ok(SuccessfulAuthentication {
+            client_key: client_auth.public_key,
+            mechanism: Mechanism::SignedChallenge,
+        })
     } else {
-        write_frame(io, ServerDeniesAuth).await?;
+        tracing::trace!(?client_auth.public_key, "authentication failed");
+        let denial = ServerDeniesAuth {
+            reason: "signature invalid".into(),
+        };
+        write_frame(io, denial.clone()).await?;
+        Err(ServerDeniedAuthSnafu {
+            reason: denial.reason,
+        }
+        .build())
     }
+}
 
-    Ok((client_auth.public_key, Auth::SignedChallenge))
+#[cfg(feature = "server")]
+impl SuccessfulAuthentication {
+    pub async fn authorize(
+        self,
+        io: &mut (impl BytesStreamSink + ExportKeyingMaterial),
+        is_authorized: bool,
+    ) -> Result<PublicKey, Error> {
+        if is_authorized {
+            tracing::trace!("authorizing client");
+            write_frame(io, ServerConfirmsAuth).await?;
+            Ok(self.client_key)
+        } else {
+            tracing::trace!("denying client auth");
+            let denial = ServerDeniesAuth {
+                reason: "not authorized".into(),
+            };
+            write_frame(io, denial.clone()).await?;
+            Err(ServerDeniedAuthSnafu {
+                reason: denial.reason,
+            }
+            .build())
+        }
+    }
 }
 
 async fn write_frame<F: serde::Serialize + Frame>(
@@ -312,6 +361,7 @@ async fn write_frame<F: serde::Serialize + Frame>(
     frame: F,
 ) -> Result<(), Error> {
     let mut bytes = BytesMut::new();
+    tracing::trace!(frame_type = %F::TAG, "Writing frame");
     F::TAG.write_to(&mut bytes);
     let bytes = postcard::to_io(&frame, bytes.writer())
         .expect("serialization failed") // buffer can't become "full" without being a critical failure, datastructures shouldn't ever fail serialization
@@ -333,6 +383,7 @@ async fn read_frame(
         .ok_or_else(|| UnexpectedEndSnafu.build())?;
 
     let (frame_type, payload) = FrameType::from_bytes(recv).context(UnexpectedEndSnafu)?;
+    tracing::trace!(%frame_type, "Reading frame");
     snafu::ensure!(
         expected_types.contains(&frame_type),
         UnexpectedFrameTypeSnafu {
@@ -355,8 +406,12 @@ mod tests {
     use n0_future::{Sink, SinkExt, Stream, TryStreamExt};
     use n0_snafu::{Result, ResultExt};
     use tokio_util::codec::{Framed, LengthDelimitedCodec};
+    use tracing::{info_span, Instrument};
+    use tracing_test::traced_test;
 
-    use super::{Auth, ClientAuth, KeyMaterialClientAuth, ServerChallenge};
+    use super::{
+        ClientAuth, KeyMaterialClientAuth, Mechanism, ServerChallenge, ServerConfirmsAuth,
+    };
     use crate::ExportKeyingMaterial;
 
     struct TestKeyingMaterial<IO> {
@@ -440,7 +495,8 @@ mod tests {
         secret_key: &SecretKey,
         client_shared_secret: Option<u64>,
         server_shared_secret: Option<u64>,
-    ) -> Result<(PublicKey, Auth)> {
+        restricted_to: Option<PublicKey>,
+    ) -> (Result<ServerConfirmsAuth>, Result<(PublicKey, Mechanism)>) {
         let (client, server) = tokio::io::duplex(1024);
 
         let mut client_io = Framed::new(client, LengthDelimitedCodec::new())
@@ -457,58 +513,113 @@ mod tests {
         let client_auth_header = KeyMaterialClientAuth::new(secret_key, &client_io)
             .map(KeyMaterialClientAuth::into_header_value);
 
-        let (_, auth) = n0_future::future::try_zip(
+        n0_future::future::zip(
             async {
                 super::clientside(&mut client_io, secret_key)
                     .await
                     .context("clientside")
-            },
+            }
+            .instrument(info_span!("clientside")),
             async {
-                super::serverside(&mut server_io, client_auth_header, rand::rngs::OsRng)
-                    .await
-                    .context("serverside")
-            },
+                let auth_n =
+                    super::serverside(&mut server_io, client_auth_header, rand::rngs::OsRng)
+                        .await
+                        .context("serverside")?;
+                let mechanism = auth_n.mechanism;
+                let is_authorized = restricted_to.map_or(true, |key| key == auth_n.client_key);
+                let key = auth_n.authorize(&mut server_io, is_authorized).await?;
+                Ok((key, mechanism))
+            }
+            .instrument(info_span!("serverside")),
         )
-        .await?;
-
-        Ok(auth)
+        .await
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_handshake_via_shared_secrets() -> Result {
         let secret_key = SecretKey::generate(rand::rngs::OsRng);
-        let (public_key, auth) = simulate_handshake(&secret_key, Some(42), Some(42)).await?;
+        let (client, server) = simulate_handshake(&secret_key, Some(42), Some(42), None).await;
+        client?;
+        let (public_key, auth) = server?;
         assert_eq!(public_key, secret_key.public());
-        assert_eq!(auth, Auth::SignedKeyMaterial); // it got verified via shared key material
+        assert_eq!(auth, Mechanism::SignedKeyMaterial); // it got verified via shared key material
         Ok(())
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_handshake_via_challenge() -> Result {
         let secret_key = SecretKey::generate(rand::rngs::OsRng);
-        let (public_key, auth) = simulate_handshake(&secret_key, None, None).await?;
+        let (client, server) = simulate_handshake(&secret_key, None, None, None).await;
+        client?;
+        let (public_key, auth) = server?;
         assert_eq!(public_key, secret_key.public());
-        assert_eq!(auth, Auth::SignedChallenge);
+        assert_eq!(auth, Mechanism::SignedChallenge);
         Ok(())
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_handshake_mismatching_shared_secrets() -> Result {
         let secret_key = SecretKey::generate(rand::rngs::OsRng);
         // mismatching shared secrets *might* happen with HTTPS proxies that don't also middle-man the shared secret
-        let (public_key, auth) = simulate_handshake(&secret_key, Some(10), Some(99)).await?;
+        let (client, server) = simulate_handshake(&secret_key, Some(10), Some(99), None).await;
+        client?;
+        let (public_key, auth) = server?;
         assert_eq!(public_key, secret_key.public());
-        assert_eq!(auth, Auth::SignedChallenge);
+        assert_eq!(auth, Mechanism::SignedChallenge);
         Ok(())
     }
 
     #[tokio::test]
+    #[traced_test]
     async fn test_handshake_challenge_fallback() -> Result {
         let secret_key = SecretKey::generate(rand::rngs::OsRng);
         // clients might not have access to shared secrets
-        let (public_key, auth) = simulate_handshake(&secret_key, None, Some(99)).await?;
+        let (client, server) = simulate_handshake(&secret_key, None, Some(99), None).await;
+        client?;
+        let (public_key, auth) = server?;
         assert_eq!(public_key, secret_key.public());
-        assert_eq!(auth, Auth::SignedChallenge);
+        assert_eq!(auth, Mechanism::SignedChallenge);
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_handshake_with_auth_positive() -> Result {
+        let secret_key = SecretKey::generate(rand::rngs::OsRng);
+        let public_key = secret_key.public();
+        let (client, server) = simulate_handshake(&secret_key, None, None, Some(public_key)).await;
+        client?;
+        let (public_key, _) = server?;
+        assert_eq!(public_key, secret_key.public());
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_handshake_with_auth_negative() -> Result {
+        let secret_key = SecretKey::generate(rand::rngs::OsRng);
+        let public_key = secret_key.public();
+        let wrong_secret_key = SecretKey::generate(rand::rngs::OsRng);
+        let (client, server) =
+            simulate_handshake(&wrong_secret_key, None, None, Some(public_key)).await;
+        assert!(client.is_err());
+        assert!(server.is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[traced_test]
+    async fn test_handshake_via_shared_secret_with_auth_negative() -> Result {
+        let secret_key = SecretKey::generate(rand::rngs::OsRng);
+        let public_key = secret_key.public();
+        let wrong_secret_key = SecretKey::generate(rand::rngs::OsRng);
+        let (client, server) =
+            simulate_handshake(&wrong_secret_key, Some(42), Some(42), Some(public_key)).await;
+        assert!(client.is_err());
+        assert!(server.is_err());
         Ok(())
     }
 

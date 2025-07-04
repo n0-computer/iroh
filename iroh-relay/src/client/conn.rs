@@ -3,7 +3,6 @@
 //! based on tailscale/derp/derp_client.go
 
 use std::{
-    io,
     pin::Pin,
     task::{ready, Context, Poll},
 };
@@ -23,8 +22,7 @@ use crate::{
     protos::{
         handshake,
         send_recv::{
-            ClientToServerMsg, RecvError as RecvRelayError, SendError as SendRelayError,
-            ServerToClientMsg, MAX_PAYLOAD_SIZE,
+            ClientToServerMsg, Error as RecvRelayError, ServerToClientMsg, MAX_PAYLOAD_SIZE,
         },
         streams::WsBytesFramed,
     },
@@ -42,7 +40,7 @@ use crate::{
 #[non_exhaustive]
 pub enum SendError {
     #[snafu(transparent)]
-    WebsocketIo {
+    StreamError {
         #[cfg(not(wasm_browser))]
         source: tokio_websockets::Error,
         #[cfg(wasm_browser)]
@@ -63,13 +61,9 @@ pub enum SendError {
 #[non_exhaustive]
 pub enum RecvError {
     #[snafu(transparent)]
-    Io { source: io::Error },
+    Protocol { source: RecvRelayError },
     #[snafu(transparent)]
-    ProtocolSend { source: SendRelayError },
-    #[snafu(transparent)]
-    ProtocolRecv { source: RecvRelayError },
-    #[snafu(transparent)]
-    Websocket {
+    StreamError {
         #[cfg(not(wasm_browser))]
         source: tokio_websockets::Error,
         #[cfg(wasm_browser)]
@@ -87,10 +81,10 @@ pub enum RecvError {
 pub(crate) struct Conn {
     #[debug("tokio_websockets::WebSocketStream")]
     #[cfg(not(wasm_browser))]
-    pub(crate) conn: tokio_websockets::WebSocketStream<MaybeTlsStream<ProxyStream>>,
+    pub(crate) conn: WsBytesFramed<MaybeTlsStream<ProxyStream>>,
     #[debug("ws_stream_wasm::WsStream")]
     #[cfg(wasm_browser)]
-    pub(crate) conn: ws_stream_wasm::WsStream,
+    pub(crate) conn: WsBytesFramed,
     pub(crate) key_cache: KeyCache,
 }
 
@@ -99,52 +93,34 @@ impl Conn {
     pub(crate) fn test(io: tokio::io::DuplexStream) -> Self {
         use crate::protos::send_recv::MAX_FRAME_SIZE;
         Self {
-            conn: tokio_websockets::ClientBuilder::new()
-                .limits(tokio_websockets::Limits::default().max_payload_len(Some(MAX_FRAME_SIZE)))
-                .take_over(MaybeTlsStream::Test(io)),
+            conn: WsBytesFramed {
+                io: tokio_websockets::ClientBuilder::new()
+                    .limits(
+                        tokio_websockets::Limits::default().max_payload_len(Some(MAX_FRAME_SIZE)),
+                    )
+                    .take_over(MaybeTlsStream::Test(io)),
+            },
             key_cache: KeyCache::test(),
         }
     }
 
     /// Constructs a new websocket connection, including the initial server handshake.
-    #[cfg(wasm_browser)]
     pub(crate) async fn new(
-        conn: ws_stream_wasm::WsStream,
+        #[cfg(not(wasm_browser))] io: tokio_websockets::WebSocketStream<
+            MaybeTlsStream<ProxyStream>,
+        >,
+        #[cfg(wasm_browser)] io: ws_stream_wasm::WsStream,
         key_cache: KeyCache,
         secret_key: &SecretKey,
     ) -> Result<Self, handshake::Error> {
-        // We use a phantom type param of ProxyStream for wrapping, just because it's easier to cfg-out code for wasm.
-        // It's a little ugly though.
-        let mut io = WsBytesFramed { io: conn };
+        let mut conn = WsBytesFramed { io };
 
         // exchange information with the server
         debug!("server_handshake: started");
-        handshake::clientside(&mut io, secret_key).await?;
+        handshake::clientside(&mut conn, secret_key).await?;
         debug!("server_handshake: done");
 
-        Ok(Self {
-            conn: io.io,
-            key_cache,
-        })
-    }
-
-    #[cfg(not(wasm_browser))]
-    pub(crate) async fn new(
-        conn: tokio_websockets::WebSocketStream<MaybeTlsStream<ProxyStream>>,
-        key_cache: KeyCache,
-        secret_key: &SecretKey,
-    ) -> Result<Self, handshake::Error> {
-        let mut io = WsBytesFramed { io: conn };
-
-        // exchange information with the server
-        debug!("server_handshake: started");
-        handshake::clientside(&mut io, secret_key).await?;
-        debug!("server_handshake: done");
-
-        Ok(Self {
-            conn: io.io,
-            key_cache,
-        })
+        Ok(Self { conn, key_cache })
     }
 }
 
@@ -154,35 +130,11 @@ impl Stream for Conn {
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let msg = ready!(Pin::new(&mut self.conn).poll_next(cx));
         match msg {
-            #[cfg(not(wasm_browser))]
             Some(Ok(msg)) => {
-                if msg.is_close() {
-                    // Indicate the stream is done when we receive a close message.
-                    // Note: We don't have to poll the stream to completion for it to close gracefully.
-                    return Poll::Ready(None);
-                }
-                if !msg.is_binary() {
-                    tracing::warn!(?msg, "Got websocket message of unsupported type, skipping.");
-                    return Poll::Pending;
-                }
-                let message =
-                    ServerToClientMsg::from_bytes(msg.into_payload().into(), &self.key_cache);
+                let message = ServerToClientMsg::from_bytes(msg, &self.key_cache);
                 Poll::Ready(Some(message.map_err(Into::into)))
             }
-            #[cfg(not(wasm_browser))]
             Some(Err(e)) => Poll::Ready(Some(Err(e.into()))),
-
-            #[cfg(wasm_browser)]
-            Some(ws_stream_wasm::WsMessage::Binary(vec)) => Poll::Ready(Some(
-                ServerToClientMsg::from_bytes(bytes::Bytes::from(vec), &self.key_cache)
-                    .map_err(Into::into),
-            )),
-            #[cfg(wasm_browser)]
-            Some(msg) => {
-                tracing::warn!(?msg, "Got websocket message of unsupported type, skipping.");
-                Poll::Pending
-            }
-
             None => Poll::Ready(None),
         }
     }
@@ -201,15 +153,8 @@ impl Sink<ClientToServerMsg> for Conn {
             snafu::ensure!(size <= MAX_PAYLOAD_SIZE, ExceedsMaxPacketSizeSnafu { size });
         }
 
-        #[cfg(not(wasm_browser))]
-        let frame = tokio_websockets::Message::binary(tokio_websockets::Payload::from(
-            frame.write_to(BytesMut::new()).freeze(),
-        ));
-        #[cfg(wasm_browser)]
-        let frame = ws_stream_wasm::WsMessage::Binary(frame.write_to(Vec::new()));
-
         Pin::new(&mut self.conn)
-            .start_send(frame)
+            .start_send(frame.write_to(BytesMut::new()).freeze())
             .map_err(Into::into)
     }
 

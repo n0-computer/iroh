@@ -753,7 +753,7 @@ mod tests {
     use http::StatusCode;
     use iroh_base::{NodeId, RelayUrl, SecretKey};
     use n0_future::{FutureExt, SinkExt, StreamExt};
-    use n0_snafu::{Result, ResultExt};
+    use n0_snafu::Result;
     use tracing::{info, instrument};
     use tracing_test::traced_test;
 
@@ -762,9 +762,12 @@ mod tests {
         NO_CONTENT_CHALLENGE_HEADER, NO_CONTENT_RESPONSE_HEADER,
     };
     use crate::{
-        client::ClientBuilder,
+        client::{ClientBuilder, ConnectError},
         dns::DnsResolver,
-        protos::send_recv::{ClientToServerMsg, Datagrams, ServerToClientMsg},
+        protos::{
+            handshake,
+            send_recv::{ClientToServerMsg, Datagrams, ServerToClientMsg},
+        },
     };
 
     async fn spawn_local_relay() -> std::result::Result<Server, SpawnError> {
@@ -978,23 +981,13 @@ mod tests {
 
         // set up client a
         let resolver = dns_resolver();
-        let mut client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver)
+        let result = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver)
             .connect()
-            .await?;
+            .await;
 
-        // the next message should be the rejection of the connection
-        tokio::time::timeout(Duration::from_millis(500), async move {
-            match client_a.next().await.unwrap().unwrap() {
-                ServerToClientMsg::Health { problem } => {
-                    assert_eq!(problem, "not authenticated".to_string());
-                }
-                msg => {
-                    panic!("other msg: {msg:?}");
-                }
-            }
-        })
-        .await
-        .context("timeout")?;
+        assert!(
+            matches!(result, Err(ConnectError::Handshake { source: handshake::Error::ServerDeniedAuth { reason, .. }, .. }) if reason == "not authorized")
+        );
 
         // test that another client has access
 

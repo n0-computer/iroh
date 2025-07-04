@@ -18,15 +18,13 @@ use tracing::{debug, trace, warn, Instrument};
 use crate::{
     protos::{
         disco,
-        send_recv::{
-            write_frame, ClientToServerMsg, Datagrams, SendError as SendRelayError,
-            ServerToClientMsg, PING_INTERVAL,
-        },
+        send_recv::{ClientToServerMsg, Datagrams, ServerToClientMsg, PING_INTERVAL},
+        streams::StreamError,
     },
     server::{
         clients::Clients,
         metrics::Metrics,
-        streams::{RelayedStream, StreamError},
+        streams::{RecvError as StreamRecvError, RelayedStream},
     },
     PingTracker,
 };
@@ -170,7 +168,7 @@ impl Client {
     }
 }
 
-/// Handle frame error
+/// Receive frame error
 #[common_fields({
     backtrace: Option<Backtrace>,
 })]
@@ -180,15 +178,26 @@ impl Client {
 pub enum HandleFrameError {
     #[snafu(transparent)]
     ForwardPacket { source: ForwardPacketError },
-    #[snafu(transparent)]
-    Streams { source: StreamError },
     #[snafu(display("Stream terminated"))]
-    StreamTerminated {
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
-    },
+    StreamTerminated {},
     #[snafu(transparent)]
-    Relay { source: SendRelayError },
+    Recv { source: StreamRecvError },
+    #[snafu(transparent)]
+    Send { source: SendFrameError },
+}
+
+/// Send frame error
+#[common_fields({
+    backtrace: Option<Backtrace>,
+})]
+#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+pub enum SendFrameError {
+    #[snafu(transparent)]
+    Stream { source: StreamError },
+    #[snafu(transparent)]
+    Timeout { source: tokio::time::error::Elapsed },
 }
 
 /// Run error
@@ -215,7 +224,7 @@ pub enum RunError {
     },
     #[snafu(display("Failed to send disco packet"))]
     DiscoPacketSend {
-        source: SendRelayError,
+        source: SendFrameError,
         #[snafu(implicit)]
         span_trace: n0_snafu::SpanTrace,
     },
@@ -226,7 +235,7 @@ pub enum RunError {
     },
     #[snafu(display("Failed to send packet"))]
     PacketSend {
-        source: SendRelayError,
+        source: SendFrameError,
         #[snafu(implicit)]
         span_trace: n0_snafu::SpanTrace,
     },
@@ -237,13 +246,13 @@ pub enum RunError {
     },
     #[snafu(display("NodeGone write frame failed"))]
     NodeGoneWriteFrame {
-        source: SendRelayError,
+        source: SendFrameError,
         #[snafu(implicit)]
         span_trace: n0_snafu::SpanTrace,
     },
     #[snafu(display("Keep alive write frame failed"))]
     KeepAliveWriteFrame {
-        source: SendRelayError,
+        source: SendFrameError,
         #[snafu(implicit)]
         span_trace: n0_snafu::SpanTrace,
     },
@@ -386,15 +395,16 @@ impl Actor {
     /// Writes the given frame to the connection.
     ///
     /// Errors if the send does not happen within the `timeout` duration
-    async fn write_frame(&mut self, frame: ServerToClientMsg) -> Result<(), SendRelayError> {
-        write_frame(&mut self.stream, frame, Some(self.timeout)).await
+    async fn write_frame(&mut self, frame: ServerToClientMsg) -> Result<(), SendFrameError> {
+        tokio::time::timeout(self.timeout, self.stream.send(frame)).await??;
+        Ok(())
     }
 
     /// Writes contents to the client in a `RECV_PACKET` frame.
     ///
     /// Errors if the send does not happen within the `timeout` duration
     /// Does not flush.
-    async fn send_raw(&mut self, packet: Packet) -> Result<(), SendRelayError> {
+    async fn send_raw(&mut self, packet: Packet) -> Result<(), SendFrameError> {
         let remote_node_id = packet.src;
         let datagrams = packet.data;
 
@@ -408,7 +418,7 @@ impl Actor {
         .await
     }
 
-    async fn send_packet(&mut self, packet: Packet) -> Result<(), SendRelayError> {
+    async fn send_packet(&mut self, packet: Packet) -> Result<(), SendFrameError> {
         trace!("send packet");
         match self.send_raw(packet).await {
             Ok(()) => {
@@ -422,7 +432,7 @@ impl Actor {
         }
     }
 
-    async fn send_disco_packet(&mut self, packet: Packet) -> Result<(), SendRelayError> {
+    async fn send_disco_packet(&mut self, packet: Packet) -> Result<(), SendFrameError> {
         trace!("send disco packet");
         match self.send_raw(packet).await {
             Ok(()) => {
@@ -439,7 +449,7 @@ impl Actor {
     /// Handles frame read results.
     async fn handle_frame(
         &mut self,
-        maybe_frame: Option<Result<ClientToServerMsg, StreamError>>,
+        maybe_frame: Option<Result<ClientToServerMsg, StreamRecvError>>,
     ) -> Result<(), HandleFrameError> {
         trace!(?maybe_frame, "handle incoming frame");
         let frame = match maybe_frame {

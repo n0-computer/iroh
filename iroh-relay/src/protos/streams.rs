@@ -26,10 +26,10 @@ pub(crate) struct WsBytesFramed {
 }
 
 #[cfg(not(wasm_browser))]
-type StreamError = tokio_websockets::Error;
+pub(crate) type StreamError = tokio_websockets::Error;
 
 #[cfg(wasm_browser)]
-type StreamError = ws_stream_wasm::WsErr;
+pub(crate) type StreamError = ws_stream_wasm::WsErr;
 
 /// TODO(matheus23) docs
 pub(crate) trait BytesStreamSink:

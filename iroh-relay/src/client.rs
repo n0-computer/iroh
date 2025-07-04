@@ -372,7 +372,7 @@ impl Sink<ClientToServerMsg> for Client {
         mut self: Pin<&mut Self>,
         cx: &mut task::Context<'_>,
     ) -> Poll<Result<(), Self::Error>> {
-        <Conn as Sink<ClientToServerMsg>>::poll_ready(Pin::new(&mut self.conn), cx)
+        Pin::new(&mut self.conn).poll_ready(cx)
     }
 
     fn start_send(mut self: Pin<&mut Self>, item: ClientToServerMsg) -> Result<(), Self::Error> {
@@ -383,14 +383,14 @@ impl Sink<ClientToServerMsg> for Client {
         mut self: Pin<&mut Self>,
         cx: &mut task::Context<'_>,
     ) -> Poll<Result<(), Self::Error>> {
-        <Conn as Sink<ClientToServerMsg>>::poll_flush(Pin::new(&mut self.conn), cx)
+        Pin::new(&mut self.conn).poll_flush(cx)
     }
 
     fn poll_close(
         mut self: Pin<&mut Self>,
         cx: &mut task::Context<'_>,
     ) -> Poll<Result<(), Self::Error>> {
-        <Conn as Sink<ClientToServerMsg>>::poll_close(Pin::new(&mut self.conn), cx)
+        Pin::new(&mut self.conn).poll_close(cx)
     }
 }
 

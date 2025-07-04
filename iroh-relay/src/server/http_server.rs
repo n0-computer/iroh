@@ -12,8 +12,7 @@ use hyper::{
     upgrade::Upgraded,
     HeaderMap, Method, Request, Response, StatusCode,
 };
-use iroh_base::PublicKey;
-use n0_future::{time::Elapsed, FutureExt, SinkExt};
+use n0_future::{time::Elapsed, FutureExt};
 use nested_enum_utils::common_fields;
 use snafu::{Backtrace, ResultExt, Snafu};
 use tokio::net::{TcpListener, TcpStream};
@@ -26,7 +25,7 @@ use super::{clients::Clients, AccessConfig, SpawnError};
 use crate::{
     defaults::{timeouts::SERVER_WRITE_TIMEOUT, DEFAULT_KEY_CACHE_CAPACITY},
     http::{RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},
-    protos::send_recv::{ServerToClientMsg, PER_CLIENT_SEND_QUEUE_DEPTH},
+    protos::send_recv::PER_CLIENT_SEND_QUEUE_DEPTH,
     server::{
         client::Config,
         metrics::Metrics,
@@ -204,31 +203,6 @@ pub enum ServeConnectionError {
     },
 }
 
-/// Server accept errors.
-#[common_fields({
-    backtrace: Option<Backtrace>,
-})]
-#[allow(missing_docs)]
-#[derive(Debug, Snafu)]
-#[non_exhaustive]
-pub enum AcceptError {
-    #[snafu(display("Handshake failed"))]
-    Handshake {
-        #[allow(clippy::result_large_err)]
-        source: handshake::Error,
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
-    },
-    #[snafu(transparent)]
-    Io { source: std::io::Error },
-    #[snafu(display("Client not authenticated: {key:?}"))]
-    ClientNotAuthenticated {
-        key: PublicKey,
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
-    },
-}
-
 /// Server connection errors, includes errors that can happen on `accept`.
 #[common_fields({
     backtrace: Option<Backtrace>,
@@ -238,7 +212,7 @@ pub enum AcceptError {
 #[non_exhaustive]
 pub enum ConnectionHandlerError {
     #[snafu(transparent)]
-    Accept { source: AcceptError },
+    Accept { source: handshake::Error },
     #[snafu(display("Could not downcast the upgraded connection to MaybeTlsStream"))]
     DowncastUpgrade {
         #[snafu(implicit)]
@@ -627,9 +601,7 @@ impl Inner {
         &self,
         io: MaybeTlsStream,
         client_auth_header: Option<HeaderValue>,
-    ) -> Result<(), AcceptError> {
-        use snafu::ResultExt;
-
+    ) -> Result<(), handshake::Error> {
         trace!("accept: start");
 
         let io = RateLimited::from_cfg(self.rate_limit, io, self.metrics.clone());
@@ -645,29 +617,20 @@ impl Inner {
 
         let mut io = WsBytesFramed { io: websocket };
 
-        let (client_key, auth_type) =
-            handshake::serverside(&mut io, client_auth_header, rand::rngs::OsRng)
-                .await
-                .context(HandshakeSnafu)?;
+        let authentication =
+            handshake::serverside(&mut io, client_auth_header, rand::rngs::OsRng).await?;
 
-        trace!(?auth_type, "accept: verified authentication");
+        trace!(?authentication.mechanism, "accept: verified authentication");
 
-        let mut io = RelayedStream {
-            inner: io.io,
+        let is_authorized = self.access.is_allowed(authentication.client_key).await;
+        let client_key = authentication.authorize(&mut io, is_authorized).await?;
+
+        trace!("accept: verified authorization");
+
+        let io = RelayedStream {
+            inner: io,
             key_cache: self.key_cache.clone(),
         };
-
-        trace!("accept: checking access: {:?}", self.access);
-        // TODO(matheus23): Maybe use new frame?
-        if !self.access.is_allowed(client_key).await {
-            io.send(ServerToClientMsg::Health {
-                problem: "not authenticated".into(),
-            })
-            .await?;
-            io.flush().await?;
-
-            return Err(ClientNotAuthenticatedSnafu { key: client_key }.build());
-        }
 
         trace!("accept: build client conn");
         let client_conn_builder = Config {
@@ -859,7 +822,7 @@ mod tests {
     use crate::{
         client::{conn::Conn, Client, ClientBuilder, ConnectError},
         dns::DnsResolver,
-        protos::send_recv::{ClientToServerMsg, Datagrams},
+        protos::send_recv::{ClientToServerMsg, Datagrams, ServerToClientMsg},
     };
 
     pub(crate) fn make_tls_config() -> TlsConfig {
