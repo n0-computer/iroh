@@ -16,7 +16,7 @@ use tracing::{debug, trace};
 
 use super::client::{Client, Config, ForwardPacketError};
 use crate::{
-    protos::send_recv::Datagrams,
+    protos::relay::Datagrams,
     server::{
         client::{PacketScope, SendError},
         metrics::Metrics,
@@ -201,7 +201,7 @@ mod tests {
     use super::*;
     use crate::{
         client::conn::Conn,
-        protos::{relay::FrameType, send_recv::RelayToClientMsg},
+        protos::{common::FrameType, relay::RelayToClientMsg},
         server::streams::RelayedStream,
     };
 
@@ -255,7 +255,7 @@ mod tests {
         // send packet
         let data = b"hello world!";
         clients.send_packet(a_key, Datagrams::from(&data[..]), b_key, &metrics)?;
-        let frame = recv_frame(FrameType::RecvDatagrams, &mut a_rw).await?;
+        let frame = recv_frame(FrameType::RelayToClientDatagrams, &mut a_rw).await?;
         assert_eq!(
             frame,
             RelayToClientMsg::Datagrams {
@@ -266,7 +266,7 @@ mod tests {
 
         // send disco packet
         clients.send_disco_packet(a_key, Datagrams::from(&data[..]), b_key, &metrics)?;
-        let frame = recv_frame(FrameType::RecvDatagrams, &mut a_rw).await?;
+        let frame = recv_frame(FrameType::RelayToClientDatagrams, &mut a_rw).await?;
         assert_eq!(
             frame,
             RelayToClientMsg::Datagrams {

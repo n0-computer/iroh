@@ -766,7 +766,7 @@ mod tests {
         dns::DnsResolver,
         protos::{
             handshake,
-            send_recv::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
+            relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
         },
     };
 

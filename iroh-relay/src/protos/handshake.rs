@@ -38,7 +38,7 @@ use nested_enum_utils::common_fields;
 use rand::{CryptoRng, RngCore};
 use snafu::{Backtrace, OptionExt, ResultExt, Snafu};
 
-use super::{relay::FrameType, streams::BytesStreamSink};
+use super::{common::FrameType, streams::BytesStreamSink};
 use crate::ExportKeyingMaterial;
 
 /// Authentication message from the client.

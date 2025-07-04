@@ -18,7 +18,7 @@ use tracing::{debug, trace, warn, Instrument};
 use crate::{
     protos::{
         disco,
-        send_recv::{ClientToRelayMsg, Datagrams, RelayToClientMsg, PING_INTERVAL},
+        relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg, PING_INTERVAL},
         streams::StreamError,
     },
     server::{
@@ -573,7 +573,7 @@ mod tests {
     use tracing_test::traced_test;
 
     use super::*;
-    use crate::{client::conn::Conn, protos::relay::FrameType};
+    use crate::{client::conn::Conn, protos::common::FrameType};
 
     async fn recv_frame<
         E: snafu::Error + Sync + Send + 'static,
@@ -641,7 +641,9 @@ mod tests {
             data: Datagrams::from(&data[..]),
         };
         send_queue_s.send(packet.clone()).await.context("send")?;
-        let frame = recv_frame(FrameType::RecvDatagrams, &mut io_rw).await.e()?;
+        let frame = recv_frame(FrameType::RelayToClientDatagrams, &mut io_rw)
+            .await
+            .e()?;
         assert_eq!(
             frame,
             RelayToClientMsg::Datagrams {
@@ -656,7 +658,9 @@ mod tests {
             .send(packet.clone())
             .await
             .context("send")?;
-        let frame = recv_frame(FrameType::RecvDatagrams, &mut io_rw).await.e()?;
+        let frame = recv_frame(FrameType::RelayToClientDatagrams, &mut io_rw)
+            .await
+            .e()?;
         assert_eq!(
             frame,
             RelayToClientMsg::Datagrams {

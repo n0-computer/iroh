@@ -42,7 +42,7 @@ use iroh_base::{NodeId, RelayUrl, SecretKey};
 use iroh_relay::{
     self as relay,
     client::{Client, ConnectError, RecvError, SendError},
-    protos::send_recv::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
+    protos::relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
     PingTracker,
 };
 use n0_future::{
@@ -1234,7 +1234,7 @@ mod tests {
     };
 
     use iroh_base::{NodeId, RelayUrl, SecretKey};
-    use iroh_relay::{protos::send_recv::Datagrams, PingTracker};
+    use iroh_relay::{protos::relay::Datagrams, PingTracker};
     use n0_snafu::{Error, Result, ResultExt};
     use tokio::sync::{mpsc, oneshot};
     use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};

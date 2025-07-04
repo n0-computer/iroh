@@ -29,7 +29,7 @@ use crate::{
     http::RELAY_PATH,
     protos::{
         handshake,
-        send_recv::{ClientToRelayMsg, RelayToClientMsg},
+        relay::{ClientToRelayMsg, RelayToClientMsg},
     },
     KeyCache,
 };
@@ -204,7 +204,7 @@ impl ClientBuilder {
 
         use crate::{
             http::CLIENT_AUTH_HEADER,
-            protos::{handshake::KeyMaterialClientAuth, send_recv::MAX_FRAME_SIZE},
+            protos::{handshake::KeyMaterialClientAuth, relay::MAX_FRAME_SIZE},
         };
 
         let mut dial_url = (*self.url).clone();

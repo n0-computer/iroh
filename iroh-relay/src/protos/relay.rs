@@ -1,86 +1,621 @@
-//! Common types between the [`super::handshake`] and [`super::send_recv`] protocols.
+//! This module implements the send/recv relaying protocol.
 //!
-//! Hosts the [`FrameType`] enum to make sure we're not accidentally reusing frame type
-//! integers for different frames.
+//! Protocol flow:
+//!  * server occasionally sends [`FrameType::Ping`]
+//!  * client responds to any [`FrameType::Ping`] with a [`FrameType::Pong`]
+//!  * clients sends [`FrameType::ClientToRelayDatagrams`]
+//!  * server then sends [`FrameType::RelayToClientDatagrams`] to recipient
+//!  * server sends [`FrameType::NodeGone`] when the other client disconnects
 
 use bytes::{BufMut, Bytes};
-use quinn_proto::{coding::Codec, VarInt};
+use iroh_base::{NodeId, SignatureError};
+use n0_future::time::{self, Duration};
+use nested_enum_utils::common_fields;
+use snafu::{Backtrace, OptionExt, ResultExt, Snafu};
 
-/// Possible frame types during handshaking
-#[repr(u32)]
-#[derive(Copy, Clone, PartialEq, Eq, Debug, num_enum::IntoPrimitive, num_enum::FromPrimitive)]
-// needs to be pub due to being exposed in error types
-pub enum FrameType {
-    /// The server frame type for the challenge response
-    ServerChallenge = 2,
-    /// The client frame type for the authentication frame
-    ClientAuth = 3,
-    /// The server frame type for authentication confirmation
-    ServerConfirmsAuth = 4,
-    /// The server frame type for authentication denial
-    ServerDeniesAuth = 5,
-    /// 32B dest pub key + ECN byte + segment size u16 + datagrams contents
-    SendDatagrams = 10,
-    /// 32B src pub key + ECN byte + segment size u16 + datagrams contents
-    RecvDatagrams = 11,
-    /// Sent from server to client to signal that a previous sender is no longer connected.
-    ///
-    /// That is, if A sent to B, and then if A disconnects, the server sends `FrameType::PeerGone`
-    /// to B so B can forget that a reverse path exists on that connection to get back to A
-    ///
-    /// 32B pub key of peer that's gone
-    NodeGone = 14,
-    /// Frames 9-11 concern meshing, which we have eliminated from our version of the protocol.
-    /// Messages with these frames will be ignored.
-    /// 8 byte ping payload, to be echoed back in FrameType::Pong
-    Ping = 15,
-    /// 8 byte payload, the contents of ping being replied to
-    Pong = 16,
-    /// Sent from server to client to tell the client if their connection is
-    /// unhealthy somehow.
-    Health = 17,
+use super::common::FrameType;
+use crate::KeyCache;
 
-    /// Sent from server to client for the server to declare that it's restarting.
-    /// Payload is two big endian u32 durations in milliseconds: when to reconnect,
-    /// and how long to try total.
-    ///
-    /// Handled on the `[relay::Client]`, but currently never sent on the `[relay::Server]`
-    Restarting = 18,
-    /// The frame type was unknown.
-    ///
-    /// This frame is the result of parsing any future frame types that this implementation
-    /// does not yet understand.
-    #[num_enum(default)]
-    Unknown,
+/// The maximum size of a packet sent over relay.
+/// (This only includes the data bytes visible to magicsock, not
+/// including its on-wire framing overhead)
+pub const MAX_PACKET_SIZE: usize = 64 * 1024;
+
+/// Maximum size a datagram payload is allowed to be.
+///
+/// This is [`MAX_PACKET_SIZE`] minus the length of an encoded public key minus 3 bytes,
+/// one for ECN, and two for the segment size.
+pub const MAX_PAYLOAD_SIZE: usize = MAX_PACKET_SIZE - NodeId::LENGTH - 3;
+
+/// The maximum frame size.
+///
+/// This is also the minimum burst size that a rate-limiter has to accept.
+#[cfg(not(wasm_browser))]
+pub(crate) const MAX_FRAME_SIZE: usize = 1024 * 1024;
+
+/// Interval in which we ping the relay server to ensure the connection is alive.
+///
+/// The default QUIC max_idle_timeout is 30s, so setting that to half this time gives some
+/// chance of recovering.
+#[cfg(feature = "server")]
+pub(crate) const PING_INTERVAL: Duration = Duration::from_secs(15);
+
+/// The number of packets buffered for sending per client
+#[cfg(feature = "server")]
+pub(crate) const PER_CLIENT_SEND_QUEUE_DEPTH: usize = 512;
+
+/// Protocol send errors.
+#[common_fields({
+    backtrace: Option<Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+})]
+#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+pub enum Error {
+    #[snafu(display("unexpected frame: got {got}, expected {expected}"))]
+    UnexpectedFrame { got: FrameType, expected: FrameType },
+    #[snafu(display("Frame is too large, has {frame_len} bytes"))]
+    FrameTooLarge { frame_len: usize },
+    #[snafu(transparent)]
+    Timeout { source: time::Elapsed },
+    #[snafu(transparent)]
+    SerDe { source: postcard::Error },
+    #[snafu(display("Invalid public key"))]
+    InvalidPublicKey { source: SignatureError },
+    #[snafu(display("Invalid frame encoding"))]
+    InvalidFrame {},
+    #[snafu(display("Invalid frame type: {frame_type}"))]
+    InvalidFrameType { frame_type: FrameType },
+    #[snafu(display("Invalid protocol message encoding"))]
+    InvalidProtocolMessageEncoding { source: std::str::Utf8Error },
+    #[snafu(display("Too few bytes"))]
+    TooSmall {},
 }
 
-impl std::fmt::Display for FrameType {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{self:?}")
+/// The messages that a relay sends to clients or the clients receive from the relay.
+#[derive(derive_more::Debug, Clone, PartialEq, Eq)]
+pub enum RelayToClientMsg {
+    /// Represents datagrams sent from relays (originally sent to them by another client).
+    Datagrams {
+        /// The [`NodeId`] of the original sender.
+        remote_node_id: NodeId,
+        /// The datagrams and related metadata.
+        datagrams: Datagrams,
+    },
+    /// Indicates that the client identified by the underlying public key had previously sent you a
+    /// packet but has now disconnected from the relay.
+    NodeGone(NodeId),
+    /// A one-way message from relay to client, declaring the connection health state.
+    Health {
+        /// If set, is a description of why the connection is unhealthy.
+        ///
+        /// If `None` means the connection is healthy again.
+        ///
+        /// The default condition is healthy, so the relay doesn't broadcast a [`RelayToClientMsg::Health`]
+        /// until a problem exists.
+        problem: String,
+    },
+    /// A one-way message from relay to client, advertising that the relay is restarting.
+    Restarting {
+        /// An advisory duration that the client should wait before attempting to reconnect.
+        /// It might be zero. It exists for the relay to smear out the reconnects.
+        reconnect_in: Duration,
+        /// An advisory duration for how long the client should attempt to reconnect
+        /// before giving up and proceeding with its normal connection failure logic. The interval
+        /// between retries is undefined for now. A relay should not send a `try_for` duration more
+        /// than a few seconds.
+        try_for: Duration,
+    },
+    /// Request from the relay to reply to the
+    /// other side with a [`ClientToRelayMsg::Pong`] with the given payload.
+    Ping([u8; 8]),
+    /// Reply to a [`ClientToRelayMsg::Ping`] from a client
+    /// with the payload sent previously in the ping.
+    Pong([u8; 8]),
+}
+
+/// Messages that clients send to relays.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClientToRelayMsg {
+    /// Request from the client to the server to reply to the
+    /// other side with a [`RelayToClientMsg::Pong`] with the given payload.
+    Ping([u8; 8]),
+    /// Reply to a [`RelayToClientMsg::Ping`] from a server
+    /// with the payload sent previously in the ping.
+    Pong([u8; 8]),
+    /// Request from the client to relay datagrams to given remote node.
+    Datagrams {
+        /// The remote node to relay to.
+        dst_node_id: NodeId,
+        /// The datagrams and related metadata to relay.
+        datagrams: Datagrams,
+    },
+}
+
+/// One or multiple datagrams being transferred via the relay.
+///
+/// This type is modeled after [`quinn_proto::Transmit`]
+/// (or even more similarly `quinn_udp::Transmit`, but we don't depend on that library here).
+#[derive(derive_more::Debug, Clone, PartialEq, Eq)]
+pub struct Datagrams {
+    /// Explicit congestion notification bits
+    pub ecn: Option<quinn_proto::EcnCodepoint>,
+    /// The segment size if this transmission contains multiple datagrams.
+    /// This is `None` if the transmit only contains a single datagram
+    pub segment_size: Option<u16>,
+    /// The contents of the datagram(s)
+    #[debug(skip)]
+    pub contents: Bytes,
+}
+
+impl<T: AsRef<[u8]>> From<T> for Datagrams {
+    fn from(bytes: T) -> Self {
+        Self {
+            ecn: None,
+            segment_size: None,
+            contents: Bytes::copy_from_slice(bytes.as_ref()),
+        }
     }
 }
 
-impl FrameType {
-    /// Writes the frame type to the buffer (as a QUIC-encoded varint).
-    pub(crate) fn write_to<O: BufMut>(&self, mut dst: O) -> O {
-        VarInt::from(*self).encode(&mut dst);
+impl Datagrams {
+    fn write_to<O: BufMut>(&self, mut dst: O) -> O {
+        let ecn = self.ecn.map_or(0, |ecn| ecn as u8);
+        let segment_size = self.segment_size.unwrap_or_default();
+        dst.put_u8(ecn);
+        dst.put_u16(segment_size);
+        dst.put(self.contents.as_ref());
         dst
     }
 
-    /// Parses the frame type (as a QUIC-encoded varint) from the first couple of bytes given
-    /// and returns the frame type and the rest.
-    pub(crate) fn from_bytes(bytes: Bytes) -> Option<(Self, Bytes)> {
-        let mut cursor = std::io::Cursor::new(&bytes);
-        let tag = VarInt::decode(&mut cursor).ok()?;
-        let tag_u32 = u32::try_from(u64::from(tag)).ok()?;
-        let frame_type = FrameType::from(tag_u32);
-        let content = bytes.slice(cursor.position() as usize..);
-        Some((frame_type, content))
+    fn from_bytes(bytes: Bytes) -> Result<Self, Error> {
+        // 1 bytes ECN, 2 bytes segment size
+        snafu::ensure!(bytes.len() > 3, InvalidFrameSnafu);
+
+        let ecn_byte = bytes[0];
+        let ecn = quinn_proto::EcnCodepoint::from_bits(ecn_byte);
+
+        let segment_size = u16::from_be_bytes(bytes[1..3].try_into().expect("length checked"));
+        let segment_size = if segment_size == 0 {
+            None
+        } else {
+            Some(segment_size)
+        };
+
+        let contents = bytes.slice(3..);
+
+        Ok(Self {
+            ecn,
+            segment_size,
+            contents,
+        })
     }
 }
 
-impl From<FrameType> for VarInt {
-    fn from(value: FrameType) -> Self {
-        (value as u32).into()
+impl RelayToClientMsg {
+    /// Returns this frame's corresponding frame type.
+    pub fn typ(&self) -> FrameType {
+        match self {
+            Self::Datagrams { .. } => FrameType::RelayToClientDatagrams,
+            Self::NodeGone { .. } => FrameType::NodeGone,
+            Self::Ping { .. } => FrameType::Ping,
+            Self::Pong { .. } => FrameType::Pong,
+            Self::Health { .. } => FrameType::Health,
+            Self::Restarting { .. } => FrameType::Restarting,
+        }
+    }
+
+    /// Encodes this frame for sending over websockets.
+    ///
+    /// Specifically meant for being put into a binary websocket message frame.
+    #[cfg(feature = "server")]
+    pub(crate) fn write_to<O: BufMut>(&self, mut dst: O) -> O {
+        dst = self.typ().write_to(dst);
+        match self {
+            Self::Datagrams {
+                remote_node_id,
+                datagrams,
+            } => {
+                dst.put(remote_node_id.as_ref());
+                dst = datagrams.write_to(dst);
+            }
+            Self::NodeGone(node_id) => {
+                dst.put(node_id.as_ref());
+            }
+            Self::Ping(data) => {
+                dst.put(&data[..]);
+            }
+            Self::Pong(data) => {
+                dst.put(&data[..]);
+            }
+            Self::Health { problem } => {
+                dst.put(problem.as_ref());
+            }
+            Self::Restarting {
+                reconnect_in,
+                try_for,
+            } => {
+                dst.put_u32(reconnect_in.as_millis() as u32);
+                dst.put_u32(try_for.as_millis() as u32);
+            }
+        }
+        dst
+    }
+
+    /// Tries to decode a frame received over websockets.
+    ///
+    /// Specifically, bytes received from a binary websocket message frame.
+    #[allow(clippy::result_large_err)]
+    pub(crate) fn from_bytes(bytes: Bytes, cache: &KeyCache) -> Result<Self, Error> {
+        let (frame_type, content) = FrameType::from_bytes(bytes).context(InvalidFrameSnafu)?;
+        let frame_len = content.len();
+        snafu::ensure!(
+            frame_len <= MAX_PACKET_SIZE,
+            FrameTooLargeSnafu { frame_len }
+        );
+
+        let res = match frame_type {
+            FrameType::RelayToClientDatagrams => {
+                snafu::ensure!(content.len() >= NodeId::LENGTH, InvalidFrameSnafu);
+
+                let remote_node_id = cache
+                    .key_from_slice(&content[..NodeId::LENGTH])
+                    .context(InvalidPublicKeySnafu)?;
+                let datagrams = Datagrams::from_bytes(content.slice(NodeId::LENGTH..))?;
+                Self::Datagrams {
+                    remote_node_id,
+                    datagrams,
+                }
+            }
+            FrameType::NodeGone => {
+                snafu::ensure!(content.len() == NodeId::LENGTH, InvalidFrameSnafu);
+                let node_id = cache
+                    .key_from_slice(content.as_ref())
+                    .context(InvalidPublicKeySnafu)?;
+                Self::NodeGone(node_id)
+            }
+            FrameType::Ping => {
+                snafu::ensure!(content.len() == 8, InvalidFrameSnafu);
+                let mut data = [0u8; 8];
+                data.copy_from_slice(&content[..8]);
+                Self::Ping(data)
+            }
+            FrameType::Pong => {
+                snafu::ensure!(content.len() == 8, InvalidFrameSnafu);
+                let mut data = [0u8; 8];
+                data.copy_from_slice(&content[..8]);
+                Self::Pong(data)
+            }
+            FrameType::Health => {
+                let problem = std::str::from_utf8(&content)
+                    .context(InvalidProtocolMessageEncodingSnafu)?
+                    .to_owned();
+                Self::Health { problem }
+            }
+            FrameType::Restarting => {
+                snafu::ensure!(content.len() == 4 + 4, InvalidFrameSnafu);
+                let reconnect_in = u32::from_be_bytes(
+                    content[..4]
+                        .try_into()
+                        .map_err(|_| InvalidFrameSnafu.build())?,
+                );
+                let try_for = u32::from_be_bytes(
+                    content[4..]
+                        .try_into()
+                        .map_err(|_| InvalidFrameSnafu.build())?,
+                );
+                let reconnect_in = Duration::from_millis(reconnect_in as u64);
+                let try_for = Duration::from_millis(try_for as u64);
+                Self::Restarting {
+                    reconnect_in,
+                    try_for,
+                }
+            }
+            _ => {
+                return Err(InvalidFrameTypeSnafu { frame_type }.build());
+            }
+        };
+        Ok(res)
+    }
+}
+
+impl ClientToRelayMsg {
+    pub(crate) fn typ(&self) -> FrameType {
+        match self {
+            Self::Datagrams { .. } => FrameType::ClientToRelayDatagrams,
+            Self::Ping { .. } => FrameType::Ping,
+            Self::Pong { .. } => FrameType::Pong,
+        }
+    }
+
+    /// Encodes this frame for sending over websockets.
+    ///
+    /// Specifically meant for being put into a binary websocket message frame.
+    pub(crate) fn write_to<O: BufMut>(&self, mut dst: O) -> O {
+        dst = self.typ().write_to(dst);
+        match self {
+            Self::Datagrams {
+                dst_node_id,
+                datagrams,
+            } => {
+                dst.put(dst_node_id.as_ref());
+                dst = datagrams.write_to(dst);
+            }
+            Self::Ping(data) => {
+                dst.put(&data[..]);
+            }
+            Self::Pong(data) => {
+                dst.put(&data[..]);
+            }
+        }
+        dst
+    }
+
+    /// Tries to decode a frame received over websockets.
+    ///
+    /// Specifically, bytes received from a binary websocket message frame.
+    #[allow(clippy::result_large_err)]
+    #[cfg(feature = "server")]
+    pub(crate) fn from_bytes(bytes: Bytes, cache: &KeyCache) -> Result<Self, Error> {
+        let (frame_type, content) = FrameType::from_bytes(bytes).context(InvalidFrameSnafu)?;
+        let frame_len = content.len();
+        snafu::ensure!(
+            frame_len <= MAX_PACKET_SIZE,
+            FrameTooLargeSnafu { frame_len }
+        );
+
+        let res = match frame_type {
+            FrameType::ClientToRelayDatagrams => {
+                let dst_node_id = cache
+                    .key_from_slice(&content[..NodeId::LENGTH])
+                    .context(InvalidPublicKeySnafu)?;
+                let datagrams = Datagrams::from_bytes(content.slice(NodeId::LENGTH..))?;
+                Self::Datagrams {
+                    dst_node_id,
+                    datagrams,
+                }
+            }
+            FrameType::Ping => {
+                snafu::ensure!(content.len() == 8, InvalidFrameSnafu);
+                let mut data = [0u8; 8];
+                data.copy_from_slice(&content[..8]);
+                Self::Ping(data)
+            }
+            FrameType::Pong => {
+                snafu::ensure!(content.len() == 8, InvalidFrameSnafu);
+                let mut data = [0u8; 8];
+                data.copy_from_slice(&content[..8]);
+                Self::Pong(data)
+            }
+            _ => {
+                return Err(InvalidFrameTypeSnafu { frame_type }.build());
+            }
+        };
+        Ok(res)
+    }
+}
+
+#[cfg(test)]
+#[cfg(feature = "server")]
+mod tests {
+    use data_encoding::HEXLOWER;
+    use iroh_base::SecretKey;
+    use n0_snafu::Result;
+
+    use super::*;
+
+    fn check_expected_bytes(frames: Vec<(Vec<u8>, &str)>) {
+        for (bytes, expected_hex) in frames {
+            let stripped: Vec<u8> = expected_hex
+                .chars()
+                .filter_map(|s| {
+                    if s.is_ascii_whitespace() {
+                        None
+                    } else {
+                        Some(s as u8)
+                    }
+                })
+                .collect();
+            let expected_bytes = HEXLOWER.decode(&stripped).unwrap();
+            assert_eq!(HEXLOWER.encode(&bytes), HEXLOWER.encode(&expected_bytes));
+        }
+    }
+
+    #[test]
+    fn test_server_client_frames_snapshot() -> Result {
+        let client_key = SecretKey::from_bytes(&[42u8; 32]);
+
+        check_expected_bytes(vec![
+            (
+                RelayToClientMsg::Health {
+                    problem: "Hello? Yes this is dog.".into(),
+                }
+                .write_to(Vec::new()),
+                "11 48 65 6c 6c 6f 3f 20 59 65 73 20 74 68 69 73
+                20 69 73 20 64 6f 67 2e",
+            ),
+            (
+                RelayToClientMsg::NodeGone(client_key.public()).write_to(Vec::new()),
+                "0e 19 7f 6b 23 e1 6c 85 32 c6 ab c8 38 fa cd 5e
+                a7 89 be 0c 76 b2 92 03 34 03 9b fa 8b 3d 36 8d
+                61",
+            ),
+            (
+                RelayToClientMsg::Ping([42u8; 8]).write_to(Vec::new()),
+                "0f 2a 2a 2a 2a 2a 2a 2a 2a",
+            ),
+            (
+                RelayToClientMsg::Pong([42u8; 8]).write_to(Vec::new()),
+                "10 2a 2a 2a 2a 2a 2a 2a 2a",
+            ),
+            (
+                RelayToClientMsg::Datagrams {
+                    remote_node_id: client_key.public(),
+                    datagrams: Datagrams {
+                        ecn: Some(quinn::EcnCodepoint::Ce),
+                        segment_size: Some(6),
+                        contents: "Hello World!".into(),
+                    },
+                }
+                .write_to(Vec::new()),
+                // frame type
+                // public key first 16 bytes
+                // public key second 16 bytes
+                // ECN byte
+                // segment size
+                // hello world contents bytes
+                "0b
+                19 7f 6b 23 e1 6c 85 32 c6 ab c8 38 fa cd 5e a7
+                89 be 0c 76 b2 92 03 34 03 9b fa 8b 3d 36 8d 61
+                03
+                00 06
+                48 65 6c 6c 6f 20 57 6f 72 6c 64 21",
+            ),
+            (
+                RelayToClientMsg::Restarting {
+                    reconnect_in: Duration::from_millis(10),
+                    try_for: Duration::from_millis(20),
+                }
+                .write_to(Vec::new()),
+                "12 00 00 00 0a 00 00 00 14",
+            ),
+        ]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_client_server_frames_snapshot() -> Result {
+        let client_key = SecretKey::from_bytes(&[42u8; 32]);
+
+        check_expected_bytes(vec![
+            (
+                ClientToRelayMsg::Ping([42u8; 8]).write_to(Vec::new()),
+                "0f 2a 2a 2a 2a 2a 2a 2a 2a",
+            ),
+            (
+                ClientToRelayMsg::Pong([42u8; 8]).write_to(Vec::new()),
+                "10 2a 2a 2a 2a 2a 2a 2a 2a",
+            ),
+            (
+                ClientToRelayMsg::Datagrams {
+                    dst_node_id: client_key.public(),
+                    datagrams: Datagrams {
+                        ecn: Some(quinn::EcnCodepoint::Ce),
+                        segment_size: Some(6),
+                        contents: "Hello World!".into(),
+                    },
+                }
+                .write_to(Vec::new()),
+                // frame type
+                // public key first 16 bytes
+                // public key second 16 bytes
+                // ECN byte
+                // segment size
+                // hello world contents
+                "0a
+                19 7f 6b 23 e1 6c 85 32 c6 ab c8 38 fa cd 5e a7
+                89 be 0c 76 b2 92 03 34 03 9b fa 8b 3d 36 8d 61
+                03
+                00 06
+                48 65 6c 6c 6f 20 57 6f 72 6c 64 21",
+            ),
+        ]);
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+#[cfg(feature = "server")]
+mod proptests {
+    use bytes::BytesMut;
+    use iroh_base::SecretKey;
+    use proptest::prelude::*;
+
+    use super::*;
+
+    fn secret_key() -> impl Strategy<Value = SecretKey> {
+        prop::array::uniform32(any::<u8>()).prop_map(SecretKey::from)
+    }
+
+    fn key() -> impl Strategy<Value = NodeId> {
+        secret_key().prop_map(|key| key.public())
+    }
+
+    fn ecn() -> impl Strategy<Value = Option<quinn_proto::EcnCodepoint>> {
+        (0..=3).prop_map(|n| match n {
+            1 => Some(quinn_proto::EcnCodepoint::Ce),
+            2 => Some(quinn_proto::EcnCodepoint::Ect0),
+            3 => Some(quinn_proto::EcnCodepoint::Ect1),
+            _ => None,
+        })
+    }
+
+    fn datagrams() -> impl Strategy<Value = Datagrams> {
+        (
+            ecn(),
+            prop::option::of(MAX_PAYLOAD_SIZE / 20..MAX_PAYLOAD_SIZE),
+            prop::collection::vec(any::<u8>(), 0..MAX_PAYLOAD_SIZE),
+        )
+            .prop_map(|(ecn, segment_size, data)| Datagrams {
+                ecn,
+                segment_size: segment_size.map(|ss| std::cmp::min(data.len(), ss) as u16),
+                contents: Bytes::from(data),
+            })
+    }
+
+    /// Generates a random valid frame
+    fn server_client_frame() -> impl Strategy<Value = RelayToClientMsg> {
+        let recv_packet = (key(), datagrams()).prop_map(|(remote_node_id, datagrams)| {
+            RelayToClientMsg::Datagrams {
+                remote_node_id,
+                datagrams,
+            }
+        });
+        let node_gone = key().prop_map(RelayToClientMsg::NodeGone);
+        let ping = prop::array::uniform8(any::<u8>()).prop_map(RelayToClientMsg::Ping);
+        let pong = prop::array::uniform8(any::<u8>()).prop_map(RelayToClientMsg::Pong);
+        let health = ".{0,65536}"
+            .prop_filter("exceeds MAX_PAYLOAD_SIZE", |s| {
+                s.len() < MAX_PAYLOAD_SIZE // a single unicode character can match a regex "." but take up multiple bytes
+            })
+            .prop_map(|problem| RelayToClientMsg::Health { problem });
+        let restarting = (any::<u32>(), any::<u32>()).prop_map(|(reconnect_in, try_for)| {
+            RelayToClientMsg::Restarting {
+                reconnect_in: Duration::from_millis(reconnect_in.into()),
+                try_for: Duration::from_millis(try_for.into()),
+            }
+        });
+        prop_oneof![recv_packet, node_gone, ping, pong, health, restarting]
+    }
+
+    fn client_server_frame() -> impl Strategy<Value = ClientToRelayMsg> {
+        let send_packet =
+            (key(), datagrams()).prop_map(|(dst_node_id, datagrams)| ClientToRelayMsg::Datagrams {
+                dst_node_id,
+                datagrams,
+            });
+        let ping = prop::array::uniform8(any::<u8>()).prop_map(ClientToRelayMsg::Ping);
+        let pong = prop::array::uniform8(any::<u8>()).prop_map(ClientToRelayMsg::Pong);
+        prop_oneof![send_packet, ping, pong]
+    }
+
+    proptest! {
+        #[test]
+        fn server_client_frame_roundtrip(frame in server_client_frame()) {
+            let encoded = frame.clone().write_to(BytesMut::new()).freeze();
+            let decoded = RelayToClientMsg::from_bytes(encoded, &KeyCache::test()).unwrap();
+            prop_assert_eq!(frame, decoded);
+        }
+
+        #[test]
+        fn client_server_frame_roundtrip(frame in client_server_frame()) {
+            let encoded = frame.clone().write_to(BytesMut::new()).freeze();
+            let decoded = ClientToRelayMsg::from_bytes(encoded, &KeyCache::test()).unwrap();
+            prop_assert_eq!(frame, decoded);
+        }
     }
 }

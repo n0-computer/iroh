@@ -5,7 +5,7 @@ use std::{
 
 use bytes::Bytes;
 use iroh_base::{NodeId, RelayUrl};
-use iroh_relay::protos::send_recv::Datagrams;
+use iroh_relay::protos::relay::Datagrams;
 use n0_future::{
     ready,
     task::{self, AbortOnDropHandle},

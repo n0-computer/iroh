@@ -20,7 +20,7 @@ use crate::client::streams::{MaybeTlsStream, ProxyStream};
 use crate::{
     protos::{
         handshake,
-        send_recv::{
+        relay::{
             ClientToRelayMsg, Error as RecvRelayError, RelayToClientMsg, MAX_PAYLOAD_SIZE,
         },
         streams::WsBytesFramed,
@@ -90,7 +90,7 @@ pub(crate) struct Conn {
 impl Conn {
     #[cfg(test)]
     pub(crate) fn test(io: tokio::io::DuplexStream) -> Self {
-        use crate::protos::send_recv::MAX_FRAME_SIZE;
+        use crate::protos::relay::MAX_FRAME_SIZE;
         Self {
             conn: WsBytesFramed {
                 io: tokio_websockets::ClientBuilder::new()
