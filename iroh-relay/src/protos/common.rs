@@ -1,4 +1,4 @@
-//! Common types between the [`super::handshake`] and [`super::send_recv`] protocols.
+//! Common types between the [`super::handshake`] and [`super::relay`] protocols.
 //!
 //! Hosts the [`FrameType`] enum to make sure we're not accidentally reusing frame type
 //! integers for different frames.
