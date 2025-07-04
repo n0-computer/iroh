@@ -372,7 +372,7 @@
 <a href=#372 id=372 data-nosnippet>372</a>        <span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;,
 <a href=#373 id=373 data-nosnippet>373</a>        cx: <span class="kw-2">&amp;mut </span>task::Context&lt;<span class="lifetime">'_</span>&gt;,
 <a href=#374 id=374 data-nosnippet>374</a>    ) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt;&gt; {
-<a href=#375 id=375 data-nosnippet>375</a>        &lt;Conn <span class="kw">as </span>Sink&lt;ClientToServerMsg&gt;&gt;::poll_ready(Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.conn), cx)
+<a href=#375 id=375 data-nosnippet>375</a>        Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.conn).poll_ready(cx)
 <a href=#376 id=376 data-nosnippet>376</a>    }
 <a href=#377 id=377 data-nosnippet>377</a>
 <a href=#378 id=378 data-nosnippet>378</a>    <span class="kw">fn </span>start_send(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, item: ClientToServerMsg) -&gt; <span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt; {
@@ -383,14 +383,14 @@
 <a href=#383 id=383 data-nosnippet>383</a>        <span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;,
 <a href=#384 id=384 data-nosnippet>384</a>        cx: <span class="kw-2">&amp;mut </span>task::Context&lt;<span class="lifetime">'_</span>&gt;,
 <a href=#385 id=385 data-nosnippet>385</a>    ) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt;&gt; {
-<a href=#386 id=386 data-nosnippet>386</a>        &lt;Conn <span class="kw">as </span>Sink&lt;ClientToServerMsg&gt;&gt;::poll_flush(Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.conn), cx)
+<a href=#386 id=386 data-nosnippet>386</a>        Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.conn).poll_flush(cx)
 <a href=#387 id=387 data-nosnippet>387</a>    }
 <a href=#388 id=388 data-nosnippet>388</a>
 <a href=#389 id=389 data-nosnippet>389</a>    <span class="kw">fn </span>poll_close(
 <a href=#390 id=390 data-nosnippet>390</a>        <span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;,
 <a href=#391 id=391 data-nosnippet>391</a>        cx: <span class="kw-2">&amp;mut </span>task::Context&lt;<span class="lifetime">'_</span>&gt;,
 <a href=#392 id=392 data-nosnippet>392</a>    ) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt;&gt; {
-<a href=#393 id=393 data-nosnippet>393</a>        &lt;Conn <span class="kw">as </span>Sink&lt;ClientToServerMsg&gt;&gt;::poll_close(Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.conn), cx)
+<a href=#393 id=393 data-nosnippet>393</a>        Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.conn).poll_close(cx)
 <a href=#394 id=394 data-nosnippet>394</a>    }
 <a href=#395 id=395 data-nosnippet>395</a>}
 <a href=#396 id=396 data-nosnippet>396</a>

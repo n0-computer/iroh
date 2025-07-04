@@ -26,10 +26,10 @@
 <a href=#26 id=26 data-nosnippet>26</a>}
 <a href=#27 id=27 data-nosnippet>27</a>
 <a href=#28 id=28 data-nosnippet>28</a><span class="attr">#[cfg(not(wasm_browser))]
-<a href=#29 id=29 data-nosnippet>29</a></span><span class="kw">type </span>StreamError = tokio_websockets::Error;
+<a href=#29 id=29 data-nosnippet>29</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">type </span>StreamError = tokio_websockets::Error;
 <a href=#30 id=30 data-nosnippet>30</a>
 <a href=#31 id=31 data-nosnippet>31</a><span class="attr">#[cfg(wasm_browser)]
-<a href=#32 id=32 data-nosnippet>32</a></span><span class="kw">type </span>StreamError = ws_stream_wasm::WsErr;
+<a href=#32 id=32 data-nosnippet>32</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">type </span>StreamError = ws_stream_wasm::WsErr;
 <a href=#33 id=33 data-nosnippet>33</a>
 <a href=#34 id=34 data-nosnippet>34</a><span class="doccomment">/// TODO(matheus23) docs
 <a href=#35 id=35 data-nosnippet>35</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">trait </span>BytesStreamSink:
