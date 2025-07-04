@@ -379,7 +379,7 @@ impl Actor {
                         let res = match res {
                             Some(Ok(Ok(report))) => Ok(report),
                             Some(Ok(Err(err))) => {
-                                warn!("probe failed: {:#?}", err);
+                                warn!("probe failed: {:#}", err);
                                 Err(probes_error::ProbeFailureSnafu {}.into_error(err))
                             }
                             Some(Err(time::Elapsed { .. })) => {
