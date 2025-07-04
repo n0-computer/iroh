@@ -20,9 +20,7 @@ use crate::client::streams::{MaybeTlsStream, ProxyStream};
 use crate::{
     protos::{
         handshake,
-        relay::{
-            ClientToRelayMsg, Error as RecvRelayError, RelayToClientMsg, MAX_PAYLOAD_SIZE,
-        },
+        relay::{ClientToRelayMsg, Error as RecvRelayError, RelayToClientMsg, MAX_PAYLOAD_SIZE},
         streams::WsBytesFramed,
     },
     MAX_PACKET_SIZE,
