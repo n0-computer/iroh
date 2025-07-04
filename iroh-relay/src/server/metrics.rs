@@ -75,8 +75,6 @@ pub struct Metrics {
 
     /// Number of accepted websocket connections
     pub websocket_accepts: Counter,
-    /// Number of accepted 'iroh derp http' connection upgrades
-    pub relay_accepts: Counter,
     // TODO: enable when we can have multiple connections for one node id
     // pub duplicate_client_keys: Counter,
     // pub duplicate_client_conns: Counter,

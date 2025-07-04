@@ -1,4 +1,5 @@
-//! TODO(matheus23) docs
+//! Implements logic for abstracing over a websocket stream that allows sending only [`Bytes`]-based
+//! messages.
 use std::{
     pin::Pin,
     task::{Context, Poll},
@@ -31,7 +32,7 @@ pub(crate) type StreamError = tokio_websockets::Error;
 #[cfg(wasm_browser)]
 pub(crate) type StreamError = ws_stream_wasm::WsErr;
 
-/// TODO(matheus23) docs
+/// Shorthand for a type that implements both a websocket-based stream & sink for [`Bytes`].
 pub(crate) trait BytesStreamSink:
     Stream<Item = Result<Bytes, StreamError>> + Sink<Bytes, Error = StreamError> + Unpin
 {

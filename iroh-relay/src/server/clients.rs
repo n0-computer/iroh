@@ -258,7 +258,7 @@ mod tests {
         let frame = recv_frame(FrameType::RecvDatagrams, &mut a_rw).await?;
         assert_eq!(
             frame,
-            ServerToClientMsg::ReceivedDatagrams {
+            ServerToClientMsg::Datagrams {
                 remote_node_id: b_key,
                 datagrams: data.to_vec().into(),
             }
@@ -269,7 +269,7 @@ mod tests {
         let frame = recv_frame(FrameType::RecvDatagrams, &mut a_rw).await?;
         assert_eq!(
             frame,
-            ServerToClientMsg::ReceivedDatagrams {
+            ServerToClientMsg::Datagrams {
                 remote_node_id: b_key,
                 datagrams: data.to_vec().into(),
             }

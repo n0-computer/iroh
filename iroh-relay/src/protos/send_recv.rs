@@ -79,44 +79,41 @@ pub enum Error {
     TooSmall {},
 }
 
-/// TODO(matheus23): Docs
-/// The messages received from a framed relay stream.
-///
-/// This is a type-validated version of the `Frame`s on the `RelayCodec`.
+/// The messages that a relay sends to clients or the clients receive from the relay.
 #[derive(derive_more::Debug, Clone, PartialEq, Eq)]
 pub enum ServerToClientMsg {
-    /// Represents an incoming packet.
-    ReceivedDatagrams {
-        /// The [`NodeId`] of the packet sender.
+    /// Represents datagrams sent from relays (originally sent to them by another client).
+    Datagrams {
+        /// The [`NodeId`] of the original sender.
         remote_node_id: NodeId,
-        /// The datagrams and related metadata we received
+        /// The datagrams and related metadata.
         datagrams: Datagrams,
     },
     /// Indicates that the client identified by the underlying public key had previously sent you a
-    /// packet but has now disconnected from the server.
+    /// packet but has now disconnected from the relay.
     NodeGone(NodeId),
-    /// A one-way message from server to client, declaring the connection health state.
+    /// A one-way message from relay to client, declaring the connection health state.
     Health {
         /// If set, is a description of why the connection is unhealthy.
         ///
         /// If `None` means the connection is healthy again.
         ///
-        /// The default condition is healthy, so the server doesn't broadcast a [`ServerToClientMsg::Health`]
+        /// The default condition is healthy, so the relay doesn't broadcast a [`ServerToClientMsg::Health`]
         /// until a problem exists.
         problem: String,
     },
-    /// A one-way message from server to client, advertising that the server is restarting.
+    /// A one-way message from relay to client, advertising that the relay is restarting.
     Restarting {
         /// An advisory duration that the client should wait before attempting to reconnect.
-        /// It might be zero. It exists for the server to smear out the reconnects.
+        /// It might be zero. It exists for the relay to smear out the reconnects.
         reconnect_in: Duration,
         /// An advisory duration for how long the client should attempt to reconnect
         /// before giving up and proceeding with its normal connection failure logic. The interval
-        /// between retries is undefined for now. A server should not send a TryFor duration more
+        /// between retries is undefined for now. A relay should not send a `try_for` duration more
         /// than a few seconds.
         try_for: Duration,
     },
-    /// Request from the server to reply to the
+    /// Request from the relay to reply to the
     /// other side with a [`ClientToServerMsg::Pong`] with the given payload.
     Ping([u8; 8]),
     /// Reply to a [`ClientToServerMsg::Ping`] from a client
@@ -124,7 +121,7 @@ pub enum ServerToClientMsg {
     Pong([u8; 8]),
 }
 
-/// TODO(matheus23): Docs
+/// Messages that clients send to relays.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClientToServerMsg {
     /// Request from the client to the server to reply to the
@@ -133,11 +130,11 @@ pub enum ClientToServerMsg {
     /// Reply to a [`ServerToClientMsg::Ping`] from a server
     /// with the payload sent previously in the ping.
     Pong([u8; 8]),
-    /// TODO
-    SendDatagrams {
-        /// TODO
+    /// Request from the client to relay datagrams to given remote node.
+    Datagrams {
+        /// The remote node to relay to.
         dst_node_id: NodeId,
-        /// TODO
+        /// The datagrams and related metadata to relay.
         datagrams: Datagrams,
     },
 }
@@ -203,10 +200,10 @@ impl Datagrams {
 }
 
 impl ServerToClientMsg {
-    /// TODO(matheus23): docs
+    /// Returns this frame's corresponding frame type.
     pub fn typ(&self) -> FrameType {
         match self {
-            Self::ReceivedDatagrams { .. } => FrameType::RecvDatagrams,
+            Self::Datagrams { .. } => FrameType::RecvDatagrams,
             Self::NodeGone { .. } => FrameType::NodeGone,
             Self::Ping { .. } => FrameType::Ping,
             Self::Pong { .. } => FrameType::Pong,
@@ -222,7 +219,7 @@ impl ServerToClientMsg {
     pub(crate) fn write_to<O: BufMut>(&self, mut dst: O) -> O {
         dst = self.typ().write_to(dst);
         match self {
-            Self::ReceivedDatagrams {
+            Self::Datagrams {
                 remote_node_id,
                 datagrams,
             } => {
@@ -272,7 +269,7 @@ impl ServerToClientMsg {
                     .key_from_slice(&content[..NodeId::LENGTH])
                     .context(InvalidPublicKeySnafu)?;
                 let datagrams = Datagrams::from_bytes(content.slice(NodeId::LENGTH..))?;
-                Self::ReceivedDatagrams {
+                Self::Datagrams {
                     remote_node_id,
                     datagrams,
                 }
@@ -332,7 +329,7 @@ impl ServerToClientMsg {
 impl ClientToServerMsg {
     pub(crate) fn typ(&self) -> FrameType {
         match self {
-            Self::SendDatagrams { .. } => FrameType::SendDatagrams,
+            Self::Datagrams { .. } => FrameType::SendDatagrams,
             Self::Ping { .. } => FrameType::Ping,
             Self::Pong { .. } => FrameType::Pong,
         }
@@ -344,7 +341,7 @@ impl ClientToServerMsg {
     pub(crate) fn write_to<O: BufMut>(&self, mut dst: O) -> O {
         dst = self.typ().write_to(dst);
         match self {
-            Self::SendDatagrams {
+            Self::Datagrams {
                 dst_node_id,
                 datagrams,
             } => {
@@ -380,7 +377,7 @@ impl ClientToServerMsg {
                     .key_from_slice(&content[..NodeId::LENGTH])
                     .context(InvalidPublicKeySnafu)?;
                 let datagrams = Datagrams::from_bytes(content.slice(NodeId::LENGTH..))?;
-                Self::SendDatagrams {
+                Self::Datagrams {
                     dst_node_id,
                     datagrams,
                 }
@@ -459,7 +456,7 @@ mod tests {
                 "10 2a 2a 2a 2a 2a 2a 2a 2a",
             ),
             (
-                ServerToClientMsg::ReceivedDatagrams {
+                ServerToClientMsg::Datagrams {
                     remote_node_id: client_key.public(),
                     datagrams: Datagrams {
                         ecn: Some(quinn::EcnCodepoint::Ce),
@@ -508,7 +505,7 @@ mod tests {
                 "10 2a 2a 2a 2a 2a 2a 2a 2a",
             ),
             (
-                ClientToServerMsg::SendDatagrams {
+                ClientToServerMsg::Datagrams {
                     dst_node_id: client_key.public(),
                     datagrams: Datagrams {
                         ecn: Some(quinn::EcnCodepoint::Ce),
@@ -578,7 +575,7 @@ mod proptests {
     /// Generates a random valid frame
     fn server_client_frame() -> impl Strategy<Value = ServerToClientMsg> {
         let recv_packet = (key(), datagrams()).prop_map(|(remote_node_id, datagrams)| {
-            ServerToClientMsg::ReceivedDatagrams {
+            ServerToClientMsg::Datagrams {
                 remote_node_id,
                 datagrams,
             }
@@ -602,7 +599,7 @@ mod proptests {
 
     fn client_server_frame() -> impl Strategy<Value = ClientToServerMsg> {
         let send_packet = (key(), datagrams()).prop_map(|(dst_node_id, datagrams)| {
-            ClientToServerMsg::SendDatagrams {
+            ClientToServerMsg::Datagrams {
                 dst_node_id,
                 datagrams,
             }

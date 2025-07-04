@@ -1,4 +1,7 @@
-//! TODO(matheus23) docs
+//! Common types between the [`super::handshake`] and [`super::send_recv`] protocols.
+//!
+//! Hosts the [`FrameType`] enum to make sure we're not accidentally re-using frame type
+//! integers for different frames.
 
 use bytes::{BufMut, Bytes};
 use quinn_proto::{coding::Codec, VarInt};
@@ -58,13 +61,14 @@ impl std::fmt::Display for FrameType {
 }
 
 impl FrameType {
+    /// Writes the frame type to the buffer (as a QUIC-encoded varint).
     pub(crate) fn write_to<O: BufMut>(&self, mut dst: O) -> O {
         VarInt::from(*self).encode(&mut dst);
         dst
     }
 
-    // TODO(matheus23): Consolidate errors between handshake.rs and relay.rs
-    // Perhaps a shared error type `FramingError`?
+    /// Parses the frame type (as a QUIC-encoded varint) from the first couple of bytes given
+    /// and returns the frame type and the rest.
     pub(crate) fn from_bytes(bytes: Bytes) -> Option<(Self, Bytes)> {
         let mut cursor = std::io::Cursor::new(&bytes);
         let tag = VarInt::decode(&mut cursor).ok()?;

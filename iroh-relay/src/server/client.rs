@@ -411,7 +411,7 @@ impl Actor {
         if let Ok(len) = datagrams.contents.len().try_into() {
             self.metrics.bytes_sent.inc_by(len);
         }
-        self.write_frame(ServerToClientMsg::ReceivedDatagrams {
+        self.write_frame(ServerToClientMsg::Datagrams {
             remote_node_id,
             datagrams,
         })
@@ -458,7 +458,7 @@ impl Actor {
         };
 
         match frame {
-            ClientToServerMsg::SendDatagrams {
+            ClientToServerMsg::Datagrams {
                 dst_node_id: dst_key,
                 datagrams,
             } => {
@@ -644,7 +644,7 @@ mod tests {
         let frame = recv_frame(FrameType::RecvDatagrams, &mut io_rw).await.e()?;
         assert_eq!(
             frame,
-            ServerToClientMsg::ReceivedDatagrams {
+            ServerToClientMsg::Datagrams {
                 remote_node_id: node_id,
                 datagrams: data.to_vec().into()
             }
@@ -659,7 +659,7 @@ mod tests {
         let frame = recv_frame(FrameType::RecvDatagrams, &mut io_rw).await.e()?;
         assert_eq!(
             frame,
-            ServerToClientMsg::ReceivedDatagrams {
+            ServerToClientMsg::Datagrams {
                 remote_node_id: node_id,
                 datagrams: data.to_vec().into()
             }
@@ -689,7 +689,7 @@ mod tests {
         println!("  send packet");
         let data = b"hello world!";
         io_rw
-            .send(ClientToServerMsg::SendDatagrams {
+            .send(ClientToServerMsg::Datagrams {
                 dst_node_id: target,
                 datagrams: Datagrams::from(data),
             })
@@ -703,7 +703,7 @@ mod tests {
         disco_data.extend_from_slice(target.as_bytes());
         disco_data.extend_from_slice(data);
         io_rw
-            .send(ClientToServerMsg::SendDatagrams {
+            .send(ClientToServerMsg::Datagrams {
                 dst_node_id: target,
                 datagrams: disco_data.clone().into(),
             })
@@ -725,12 +725,12 @@ mod tests {
         let (io_read, io_write) = tokio::io::duplex((LIMIT * MAX_FRAMES) as _);
         let mut frame_writer = Conn::test(io_write);
         // Rate limiter allowing LIMIT bytes/s
-        let mut stream = RelayedStream::test_limited(io_read, LIMIT / 10, LIMIT);
+        let mut stream = RelayedStream::test_limited(io_read, LIMIT / 10, LIMIT)?;
 
         // Prepare a frame to send, assert its size.
         let data = Datagrams::from(b"hello world!!1");
         let target = SecretKey::generate(rand::thread_rng()).public();
-        let frame = ClientToServerMsg::SendDatagrams {
+        let frame = ClientToServerMsg::Datagrams {
             dst_node_id: target,
             datagrams: data.clone(),
         };

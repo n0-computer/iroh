@@ -1,4 +1,29 @@
-//! TODO(matheus23) docs
+//! Implements the handshake protocol that iroh's relays and iroh clients that connect to it go through.
+//!
+//! The purpose of the handshake is to
+//! 1. Inform the relay of the client's NodeId
+//! 2. Check that the connecting client owns the secret key for its NodeId ("is authentic"/"authentication")
+//! 3. Possibly check that the client has access to this relay, if the relay requires authorization.
+//!
+//! Additional complexity comes from the fact that there's two ways that clients can authenticate with
+//! relays.
+//!
+//! One way is via an explicitly sent challenge:
+//!
+//! 1. Once a websocket connection is opened, a client recieves a challenge (the [`ServerChallenge`] frame)
+//! 2. The client sends back what is essentially a signature of that challenge with their secret key
+//!    that matches the NodeId they have, as well as the NodeId (the [`ClientAuth`] frame)
+//!
+//! The second way is very similar to the [Concealed HTTP Auth RFC], and involves send a header that
+//! contains a signature of some shared keying material extracted from TLS ([RFC 5705]).
+//!
+//! The second way can save a full round trip, because the challenge doesn't have to be sent to the client
+//! first, however, it won't always work, as it relies on the keying material extraction feature of TLS,
+//! which is not available in browsers (but might be in the future?) and might break when there's an
+//! HTTPS proxy that doesn't properly deal with this TLS feature.
+//!
+//! [Concealed HTTP Auth RFC]: https://datatracker.ietf.org/doc/rfc9729/
+//! [RFC 5705]: https://datatracker.ietf.org/doc/html/rfc5705
 use bytes::{BufMut, Bytes, BytesMut};
 use http::HeaderValue;
 #[cfg(feature = "server")]
@@ -137,7 +162,7 @@ pub enum Error {
 }
 
 impl ServerChallenge {
-    /// TODO(matheus23): docs
+    /// Generates a new challenge.
     #[cfg(feature = "server")]
     pub(crate) fn new(mut rng: impl RngCore + CryptoRng) -> Self {
         let mut challenge = [0u8; 16];
@@ -145,6 +170,7 @@ impl ServerChallenge {
         Self { challenge }
     }
 
+    /// The actual message bytes to sign (and verify against) for this challenge.
     fn message_to_sign(&self) -> [u8; 32] {
         blake3::derive_key(
             "iroh-relay handshake v1 challenge signature",
@@ -154,7 +180,7 @@ impl ServerChallenge {
 }
 
 impl ClientAuth {
-    /// TODO(matheus23): docs
+    /// Generates a signature for given challenge from the server.
     pub(crate) fn new(secret_key: &SecretKey, challenge: &ServerChallenge) -> Self {
         Self {
             public_key: secret_key.public(),
@@ -162,7 +188,7 @@ impl ClientAuth {
         }
     }
 
-    /// TODO(matheus23): docs
+    /// Verifies this client's authentication given the challenge this was sent in response to.
     #[cfg(feature = "server")]
     pub(crate) fn verify(&self, challenge: &ServerChallenge) -> bool {
         self.public_key
@@ -176,6 +202,8 @@ impl ClientAuth {
 
 #[cfg_attr(wasm_browser, allow(unused))]
 impl KeyMaterialClientAuth {
+    /// Generates a client's authentication, similar to [`ClientAuth`], but by using TLS keying material
+    /// instead of a received challenge.
     pub(crate) fn new(secret_key: &SecretKey, io: &impl ExportKeyingMaterial) -> Option<Self> {
         let public_key = secret_key.public();
         let key_material = io.export_keying_material(
@@ -190,6 +218,7 @@ impl KeyMaterialClientAuth {
         })
     }
 
+    /// Generate the base64url-nopad-encoded header value.
     pub(crate) fn into_header_value(self) -> HeaderValue {
         HeaderValue::from_str(
             &data_encoding::BASE64URL_NOPAD
@@ -198,6 +227,13 @@ impl KeyMaterialClientAuth {
         .expect("BASE64URL_NOPAD encoding contained invisible ascii characters")
     }
 
+    /// Verifies this client auth on the server side using the same key material.
+    ///
+    /// This might return false for a couple of reasons:
+    /// 1. The exported keying material might not be the same between both ends of the TLS session
+    ///    (e.g. there's an HTTPS proxy in between that doesn't think/care about the TLS keying material exporter).
+    ///    This situation is detected when the key material suffix mismatches.
+    /// 2. The signature itself doesn't verify.
     #[cfg(feature = "server")]
     pub(crate) fn verify(&self, io: &impl ExportKeyingMaterial) -> bool {
         let Some(key_material) = io.export_keying_material(
@@ -216,7 +252,13 @@ impl KeyMaterialClientAuth {
     }
 }
 
-/// TODO(matheus23) docs
+/// Runs the client side of the handshake protocol.
+///
+/// See the module docs for details on the protocol.
+/// This is already after having potentially transferred a [`KeyMaterialClientAuth`],
+/// but before having received a response for whether that worked or not.
+///
+/// This requires access to the client's secret key to sign a challenge.
 pub(crate) async fn clientside(
     io: &mut (impl BytesStreamSink + ExportKeyingMaterial),
     secret_key: &SecretKey,
@@ -260,21 +302,42 @@ pub(crate) async fn clientside(
     }
 }
 
+/// This represents successful authentication for the client with the `client_key` public key
+/// via the authentication [`Mechanism`] `mechanism`.
+///
+/// You must call [`SuccessfulAuthentication::authorize`] to finish the protocol.
 #[cfg(feature = "server")]
 #[derive(Debug)]
+#[must_use = "the protocol is not finished unless `authorize` is called"]
 pub(crate) struct SuccessfulAuthentication {
     pub(crate) client_key: PublicKey,
     pub(crate) mechanism: Mechanism,
 }
 
+/// The mechanism that was used for authentication.
 #[cfg(feature = "server")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Mechanism {
+    /// Authentication was performed by verifying a signature of a challenge we sent
     SignedChallenge,
+    /// Authentication was performed by verifying a signature of shared extracted TLS keying material
     SignedKeyMaterial,
 }
 
-/// TODO(matheus23) docs
+/// Runs the server side of the handshaking protocol.
+///
+/// See the module documentation for an overview of the handshaking protocol.
+///
+/// This takes `rng` to generate cryptographic randomness for the authentication challenge.
+///
+/// This also takes the `client_auth_header`, if present, to perform authentication without
+/// requiring sending a challenge, saving a round-trip, if possible.
+///
+/// If this fails, the protocol falls back to doing a normal extra round trip with a challenge.
+///
+/// The return value [`SuccessfulAuthentication`] still needs to be resolved by calling
+/// [`SuccessfulAuthentication::authorize`] to finish the whole authorization protocol
+/// (otherwise the client won't be notified about auth success or failure).
 #[cfg(feature = "server")]
 pub(crate) async fn serverside(
     io: &mut (impl BytesStreamSink + ExportKeyingMaterial),

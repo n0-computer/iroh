@@ -20,7 +20,7 @@ use tokio_rustls_acme::AcmeAcceptor;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, debug_span, error, info, info_span, trace, warn, Instrument};
 
-use super::{clients::Clients, AccessConfig, SpawnError};
+use super::{clients::Clients, streams::InvalidBucketConfig, AccessConfig, SpawnError};
 #[allow(deprecated)]
 use crate::{
     defaults::{timeouts::SERVER_WRITE_TIMEOUT, DEFAULT_KEY_CACHE_CAPACITY},
@@ -203,6 +203,20 @@ pub enum ServeConnectionError {
     },
 }
 
+/// Server accept errors.
+#[common_fields({
+    backtrace: Option<Backtrace>,
+})]
+#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+pub enum AcceptError {
+    #[snafu(transparent)]
+    Handshake { source: handshake::Error },
+    #[snafu(display("rate limiting misconfigured"))]
+    RateLimitingMisconfigured { source: InvalidBucketConfig },
+}
+
 /// Server connection errors, includes errors that can happen on `accept`.
 #[common_fields({
     backtrace: Option<Backtrace>,
@@ -212,7 +226,7 @@ pub enum ServeConnectionError {
 #[non_exhaustive]
 pub enum ConnectionHandlerError {
     #[snafu(transparent)]
-    Accept { source: handshake::Error },
+    Accept { source: AcceptError },
     #[snafu(display("Could not downcast the upgraded connection to MaybeTlsStream"))]
     DowncastUpgrade {
         #[snafu(implicit)]
@@ -601,12 +615,13 @@ impl Inner {
         &self,
         io: MaybeTlsStream,
         client_auth_header: Option<HeaderValue>,
-    ) -> Result<(), handshake::Error> {
+    ) -> Result<(), AcceptError> {
         trace!("accept: start");
 
-        let io = RateLimited::from_cfg(self.rate_limit, io, self.metrics.clone());
+        let io = RateLimited::from_cfg(self.rate_limit, io, self.metrics.clone())
+            .context(RateLimitingMisconfiguredSnafu)?;
 
-        self.metrics.websocket_accepts.inc();
+        self.metrics.accepts.inc();
         // Since we already did the HTTP upgrade in the previous step,
         // we use tokio-websockets to handle this connection
         // Create a server builder with default config
@@ -892,7 +907,7 @@ mod tests {
         info!("sending message from a to b");
         let msg = Datagrams::from(b"hi there, client b!");
         client_a
-            .send(ClientToServerMsg::SendDatagrams {
+            .send(ClientToServerMsg::Datagrams {
                 dst_node_id: b_key,
                 datagrams: msg.clone(),
             })
@@ -906,7 +921,7 @@ mod tests {
         info!("sending message from b to a");
         let msg = Datagrams::from(b"right back at ya, client b!");
         client_b
-            .send(ClientToServerMsg::SendDatagrams {
+            .send(ClientToServerMsg::Datagrams {
                 dst_node_id: a_key,
                 datagrams: msg.clone(),
             })
@@ -947,7 +962,7 @@ mod tests {
             }
             Some(Ok(msg)) => {
                 info!("got message on: {msg:?}");
-                if let ServerToClientMsg::ReceivedDatagrams {
+                if let ServerToClientMsg::Datagrams {
                     remote_node_id: source,
                     datagrams,
                 } = msg
@@ -1012,7 +1027,7 @@ mod tests {
         info!("sending message from a to b");
         let msg = Datagrams::from(b"hi there, client b!");
         client_a
-            .send(ClientToServerMsg::SendDatagrams {
+            .send(ClientToServerMsg::Datagrams {
                 dst_node_id: b_key,
                 datagrams: msg.clone(),
             })
@@ -1026,7 +1041,7 @@ mod tests {
         info!("sending message from b to a");
         let msg = Datagrams::from(b"right back at ya, client b!");
         client_b
-            .send(ClientToServerMsg::SendDatagrams {
+            .send(ClientToServerMsg::Datagrams {
                 dst_node_id: a_key,
                 datagrams: msg.clone(),
             })
@@ -1089,13 +1104,13 @@ mod tests {
         info!("Send message from A to B.");
         let msg = Datagrams::from(b"hello client b!!");
         client_a
-            .send(ClientToServerMsg::SendDatagrams {
+            .send(ClientToServerMsg::Datagrams {
                 dst_node_id: public_key_b,
                 datagrams: msg.clone(),
             })
             .await?;
         match client_b.next().await.unwrap()? {
-            ServerToClientMsg::ReceivedDatagrams {
+            ServerToClientMsg::Datagrams {
                 remote_node_id,
                 datagrams,
             } => {
@@ -1110,13 +1125,13 @@ mod tests {
         info!("Send message from B to A.");
         let msg = Datagrams::from(b"nice to meet you client a!!");
         client_b
-            .send(ClientToServerMsg::SendDatagrams {
+            .send(ClientToServerMsg::Datagrams {
                 dst_node_id: public_key_a,
                 datagrams: msg.clone(),
             })
             .await?;
         match client_a.next().await.unwrap()? {
-            ServerToClientMsg::ReceivedDatagrams {
+            ServerToClientMsg::Datagrams {
                 remote_node_id,
                 datagrams,
             } => {
@@ -1134,7 +1149,7 @@ mod tests {
 
         info!("Fail to send message from A to B.");
         let res = client_a
-            .send(ClientToServerMsg::SendDatagrams {
+            .send(ClientToServerMsg::Datagrams {
                 dst_node_id: public_key_b,
                 datagrams: Datagrams::from(b"try to send"),
             })
@@ -1179,13 +1194,13 @@ mod tests {
         info!("Send message from A to B.");
         let msg = Datagrams::from(b"hello client b!!");
         client_a
-            .send(ClientToServerMsg::SendDatagrams {
+            .send(ClientToServerMsg::Datagrams {
                 dst_node_id: public_key_b,
                 datagrams: msg.clone(),
             })
             .await?;
         match client_b.next().await.expect("eos")? {
-            ServerToClientMsg::ReceivedDatagrams {
+            ServerToClientMsg::Datagrams {
                 remote_node_id,
                 datagrams,
             } => {
@@ -1200,13 +1215,13 @@ mod tests {
         info!("Send message from B to A.");
         let msg = Datagrams::from(b"nice to meet you client a!!");
         client_b
-            .send(ClientToServerMsg::SendDatagrams {
+            .send(ClientToServerMsg::Datagrams {
                 dst_node_id: public_key_a,
                 datagrams: msg.clone(),
             })
             .await?;
         match client_a.next().await.expect("eos")? {
-            ServerToClientMsg::ReceivedDatagrams {
+            ServerToClientMsg::Datagrams {
                 remote_node_id,
                 datagrams,
             } => {
@@ -1231,13 +1246,13 @@ mod tests {
         info!("Send message from A to B.");
         let msg = Datagrams::from(b"are you still there, b?!");
         client_a
-            .send(ClientToServerMsg::SendDatagrams {
+            .send(ClientToServerMsg::Datagrams {
                 dst_node_id: public_key_b,
                 datagrams: msg.clone(),
             })
             .await?;
         match new_client_b.next().await.expect("eos")? {
-            ServerToClientMsg::ReceivedDatagrams {
+            ServerToClientMsg::Datagrams {
                 remote_node_id,
                 datagrams,
             } => {
@@ -1252,13 +1267,13 @@ mod tests {
         info!("Send message from B to A.");
         let msg = Datagrams::from(b"just had a spot of trouble but I'm back now,a!!");
         new_client_b
-            .send(ClientToServerMsg::SendDatagrams {
+            .send(ClientToServerMsg::Datagrams {
                 dst_node_id: public_key_a,
                 datagrams: msg.clone(),
             })
             .await?;
         match client_a.next().await.expect("eos")? {
-            ServerToClientMsg::ReceivedDatagrams {
+            ServerToClientMsg::Datagrams {
                 remote_node_id,
                 datagrams,
             } => {
@@ -1275,7 +1290,7 @@ mod tests {
 
         info!("Sending message from A to B fails");
         let res = client_a
-            .send(ClientToServerMsg::SendDatagrams {
+            .send(ClientToServerMsg::Datagrams {
                 dst_node_id: public_key_b,
                 datagrams: Datagrams::from(b"try to send"),
             })

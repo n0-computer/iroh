@@ -147,7 +147,7 @@ impl Sink<ClientToServerMsg> for Conn {
     }
 
     fn start_send(mut self: Pin<&mut Self>, frame: ClientToServerMsg) -> Result<(), Self::Error> {
-        if let ClientToServerMsg::SendDatagrams { datagrams, .. } = &frame {
+        if let ClientToServerMsg::Datagrams { datagrams, .. } = &frame {
             let size = datagrams.contents.len();
             snafu::ensure!(size <= MAX_PAYLOAD_SIZE, ExceedsMaxPacketSizeSnafu { size });
         }

@@ -8,7 +8,7 @@ use std::{
 
 use bytes::BytesMut;
 use n0_future::{ready, time, FutureExt, Sink, Stream};
-use snafu::Snafu;
+use snafu::{Backtrace, Snafu};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::instrument;
 
@@ -51,22 +51,22 @@ impl RelayedStream {
         stream: tokio::io::DuplexStream,
         max_burst_bytes: u32,
         bytes_per_second: u32,
-    ) -> Self {
+    ) -> Result<Self, InvalidBucketConfig> {
         let stream = MaybeTlsStream::Test(stream);
         let stream = RateLimited::new(
             stream,
             max_burst_bytes,
             bytes_per_second,
             Arc::new(Metrics::default()),
-        );
-        Self {
+        )?;
+        Ok(Self {
             inner: WsBytesFramed {
                 io: tokio_websockets::ServerBuilder::new()
                     .limits(Self::limits())
                     .serve(stream),
             },
             key_cache: KeyCache::test(),
-        }
+        })
     }
 
     fn limits() -> tokio_websockets::Limits {
@@ -249,20 +249,39 @@ struct Bucket {
     refill: i64,
 }
 
+#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+pub struct InvalidBucketConfig {
+    backtrace: Option<Backtrace>,
+    #[snafu(implicit)]
+    span_trace: n0_snafu::SpanTrace,
+    max: i64,
+    bytes_per_second: i64,
+    refill_period: time::Duration,
+}
+
 impl Bucket {
-    fn new(max: i64, bytes_per_second: i64, refill_period: time::Duration) -> Self {
-        // TODO(matheus23) convert to errors
-        debug_assert!(max > 0);
-        debug_assert!(bytes_per_second > 0);
-        debug_assert_ne!(refill_period.as_millis(), 0);
+    fn new(
+        max: i64,
+        bytes_per_second: i64,
+        refill_period: time::Duration,
+    ) -> Result<Self, InvalidBucketConfig> {
         // milliseconds is the tokio timer resolution
-        Self {
+        snafu::ensure!(
+            max > 0 && bytes_per_second > 0 && refill_period.as_millis() != 0,
+            InvalidBucketConfigSnafu {
+                max,
+                bytes_per_second,
+                refill_period,
+            },
+        );
+        Ok(Self {
             fill: max,
             max,
             last_fill: time::Instant::now(),
             refill_period,
             refill: bytes_per_second * refill_period.as_millis() as i64 / 1000,
-        }
+        })
     }
 
     fn update_state(&mut self) {
@@ -297,14 +316,18 @@ impl Bucket {
 }
 
 impl<S> RateLimited<S> {
-    pub(crate) fn from_cfg(cfg: Option<ClientRateLimit>, io: S, metrics: Arc<Metrics>) -> Self {
+    pub(crate) fn from_cfg(
+        cfg: Option<ClientRateLimit>,
+        io: S,
+        metrics: Arc<Metrics>,
+    ) -> Result<Self, InvalidBucketConfig> {
         match cfg {
             Some(cfg) => {
                 let bytes_per_second = cfg.bytes_per_second.into();
                 let max_burst_bytes = cfg.max_burst_bytes.map_or(bytes_per_second / 10, u32::from);
                 Self::new(io, max_burst_bytes, bytes_per_second, metrics)
             }
-            None => Self::unlimited(io, metrics),
+            None => Ok(Self::unlimited(io, metrics)),
         }
     }
 
@@ -313,18 +336,18 @@ impl<S> RateLimited<S> {
         max_burst_bytes: u32,
         bytes_per_second: u32,
         metrics: Arc<Metrics>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, InvalidBucketConfig> {
+        Ok(Self {
             inner,
             bucket: Some(Bucket::new(
                 max_burst_bytes as i64,
                 bytes_per_second as i64,
                 time::Duration::from_millis(100),
-            )),
+            )?),
             bucket_refilled: None,
             limited_once: false,
             metrics,
-        }
+        })
     }
 
     pub(crate) fn unlimited(inner: S, metrics: Arc<Metrics>) -> Self {
@@ -447,7 +470,7 @@ mod tests {
             bytes_per_second / 10,
             bytes_per_second,
             Arc::new(Metrics::default()),
-        );
+        )?;
 
         let before = time::Instant::now();
         n0_future::future::try_zip(
@@ -471,6 +494,7 @@ mod tests {
         assert_ne!(duration.as_millis(), 0);
 
         let actual_bytes_per_second = send_total as f64 / duration.as_secs_f64();
+        println!("{actual_bytes_per_second}");
         assert_eq!(actual_bytes_per_second.round() as u32, bytes_per_second);
 
         Ok(())
