@@ -625,13 +625,13 @@ impl ActiveRelayActor {
                     // TODO(frando): can we avoid the clone here?
                     let metrics = self.metrics.clone();
                     let packet_iter = batch.into_iter().map(|item| {
-                            Ok(ClientToRelayMsg::Datagrams { dst_node_id: item.remote_node, datagrams: item.datagrams })
-                        });
-                    let mut packet_stream = n0_future::stream::iter(packet_iter).inspect(|m| {
-                        if let Ok(ClientToRelayMsg::Datagrams { dst_node_id: _node_id, datagrams }) = m {
-                            metrics.send_relay.inc_by(datagrams.contents.len() as _);
-                        }
+                        metrics.send_relay.inc_by(item.datagrams.contents.len() as _);
+                        Ok(ClientToRelayMsg::Datagrams {
+                            dst_node_id: item.remote_node,
+                            datagrams: item.datagrams
+                        })
                     });
+                    let mut packet_stream = n0_future::stream::iter(packet_iter);
                     let fut = client_sink.send_all(&mut packet_stream);
                     self.run_sending(fut, &mut state, &mut client_stream).await?;
                 }
