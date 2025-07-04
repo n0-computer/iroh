@@ -7,7 +7,6 @@ use std::{
     task::{ready, Context, Poll},
 };
 
-#[cfg(not(wasm_browser))]
 use bytes::BytesMut;
 use iroh_base::SecretKey;
 use n0_future::{Sink, Stream};

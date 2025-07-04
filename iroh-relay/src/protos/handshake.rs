@@ -19,6 +19,7 @@ use crate::ExportKeyingMaterial;
 /// Authentication message from the client.
 #[derive(derive_more::Debug, serde::Serialize)]
 #[cfg_attr(feature = "server", derive(serde::Deserialize))]
+#[cfg_attr(wasm_browser, allow(unused))]
 pub(crate) struct KeyMaterialClientAuth {
     /// The client's public key
     pub(crate) public_key: PublicKey,
@@ -173,6 +174,7 @@ impl ClientAuth {
     }
 }
 
+#[cfg_attr(wasm_browser, allow(unused))]
 impl KeyMaterialClientAuth {
     pub(crate) fn new(secret_key: &SecretKey, io: &impl ExportKeyingMaterial) -> Option<Self> {
         let public_key = secret_key.public();
@@ -526,7 +528,7 @@ mod tests {
                         .await
                         .context("serverside")?;
                 let mechanism = auth_n.mechanism;
-                let is_authorized = restricted_to.map_or(true, |key| key == auth_n.client_key);
+                let is_authorized = restricted_to.is_none_or(|key| key == auth_n.client_key);
                 let key = auth_n.authorize(&mut server_io, is_authorized).await?;
                 Ok((key, mechanism))
             }

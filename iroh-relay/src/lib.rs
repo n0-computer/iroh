@@ -56,6 +56,7 @@ pub use self::{
 };
 
 pub(crate) trait ExportKeyingMaterial {
+    #[cfg_attr(wasm_browser, allow(unused))]
     fn export_keying_material<T: AsMut<[u8]>>(
         &self,
         output: T,
