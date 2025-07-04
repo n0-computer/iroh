@@ -29,7 +29,7 @@ use crate::{
     http::RELAY_PATH,
     protos::{
         handshake,
-        send_recv::{ClientToServerMsg, ServerToClientMsg},
+        send_recv::{ClientToRelayMsg, RelayToClientMsg},
     },
     KeyCache,
 };
@@ -358,14 +358,14 @@ impl Client {
 }
 
 impl Stream for Client {
-    type Item = Result<ServerToClientMsg, RecvError>;
+    type Item = Result<RelayToClientMsg, RecvError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Option<Self::Item>> {
         Pin::new(&mut self.conn).poll_next(cx)
     }
 }
 
-impl Sink<ClientToServerMsg> for Client {
+impl Sink<ClientToRelayMsg> for Client {
     type Error = SendError;
 
     fn poll_ready(
@@ -375,7 +375,7 @@ impl Sink<ClientToServerMsg> for Client {
         Pin::new(&mut self.conn).poll_ready(cx)
     }
 
-    fn start_send(mut self: Pin<&mut Self>, item: ClientToServerMsg) -> Result<(), Self::Error> {
+    fn start_send(mut self: Pin<&mut Self>, item: ClientToRelayMsg) -> Result<(), Self::Error> {
         Pin::new(&mut self.conn).start_send(item)
     }
 
@@ -397,10 +397,10 @@ impl Sink<ClientToServerMsg> for Client {
 /// The send half of a relay client.
 #[derive(Debug)]
 pub struct ClientSink {
-    sink: SplitSink<Conn, ClientToServerMsg>,
+    sink: SplitSink<Conn, ClientToRelayMsg>,
 }
 
-impl Sink<ClientToServerMsg> for ClientSink {
+impl Sink<ClientToRelayMsg> for ClientSink {
     type Error = SendError;
 
     fn poll_ready(
@@ -410,7 +410,7 @@ impl Sink<ClientToServerMsg> for ClientSink {
         Pin::new(&mut self.sink).poll_ready(cx)
     }
 
-    fn start_send(mut self: Pin<&mut Self>, item: ClientToServerMsg) -> Result<(), Self::Error> {
+    fn start_send(mut self: Pin<&mut Self>, item: ClientToRelayMsg) -> Result<(), Self::Error> {
         Pin::new(&mut self.sink).start_send(item)
     }
 
@@ -444,7 +444,7 @@ impl ClientStream {
 }
 
 impl Stream for ClientStream {
-    type Item = Result<ServerToClientMsg, RecvError>;
+    type Item = Result<RelayToClientMsg, RecvError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Option<Self::Item>> {
         Pin::new(&mut self.stream).poll_next(cx)

@@ -201,17 +201,17 @@ mod tests {
     use super::*;
     use crate::{
         client::conn::Conn,
-        protos::{relay::FrameType, send_recv::ServerToClientMsg},
+        protos::{relay::FrameType, send_recv::RelayToClientMsg},
         server::streams::RelayedStream,
     };
 
     async fn recv_frame<
         E: snafu::Error + Sync + Send + 'static,
-        S: Stream<Item = Result<ServerToClientMsg, E>> + Unpin,
+        S: Stream<Item = Result<RelayToClientMsg, E>> + Unpin,
     >(
         frame_type: FrameType,
         mut stream: S,
-    ) -> Result<ServerToClientMsg> {
+    ) -> Result<RelayToClientMsg> {
         match stream.next().await {
             Some(Ok(frame)) => {
                 if frame_type != frame.typ() {
@@ -258,7 +258,7 @@ mod tests {
         let frame = recv_frame(FrameType::RecvDatagrams, &mut a_rw).await?;
         assert_eq!(
             frame,
-            ServerToClientMsg::Datagrams {
+            RelayToClientMsg::Datagrams {
                 remote_node_id: b_key,
                 datagrams: data.to_vec().into(),
             }
@@ -269,7 +269,7 @@ mod tests {
         let frame = recv_frame(FrameType::RecvDatagrams, &mut a_rw).await?;
         assert_eq!(
             frame,
-            ServerToClientMsg::Datagrams {
+            RelayToClientMsg::Datagrams {
                 remote_node_id: b_key,
                 datagrams: data.to_vec().into(),
             }

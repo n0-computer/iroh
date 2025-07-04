@@ -15,7 +15,7 @@ use tracing::instrument;
 use super::{ClientRateLimit, Metrics};
 use crate::{
     protos::{
-        send_recv::{ClientToServerMsg, Error as ProtoError, ServerToClientMsg},
+        send_recv::{ClientToRelayMsg, Error as ProtoError, RelayToClientMsg},
         streams::{StreamError, WsBytesFramed},
     },
     ExportKeyingMaterial, KeyCache,
@@ -24,8 +24,8 @@ use crate::{
 /// The relay's connection to a client.
 ///
 /// This implements
-/// - a [`Stream`] of [`ClientToServerMsg`]s that are received from the client,
-/// - a [`Sink`] of [`ServerToClientMsg`]s that can be sent to the client.
+/// - a [`Stream`] of [`ClientToRelayMsg`]s that are received from the client,
+/// - a [`Sink`] of [`RelayToClientMsg`]s that can be sent to the client.
 #[derive(Debug)]
 pub(crate) struct RelayedStream {
     pub(crate) inner: WsBytesFramed<RateLimited<MaybeTlsStream>>,
@@ -75,14 +75,14 @@ impl RelayedStream {
     }
 }
 
-impl Sink<ServerToClientMsg> for RelayedStream {
+impl Sink<RelayToClientMsg> for RelayedStream {
     type Error = StreamError;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         Pin::new(&mut self.inner).poll_ready(cx)
     }
 
-    fn start_send(mut self: Pin<&mut Self>, item: ServerToClientMsg) -> Result<(), Self::Error> {
+    fn start_send(mut self: Pin<&mut Self>, item: RelayToClientMsg) -> Result<(), Self::Error> {
         Pin::new(&mut self.inner).start_send(item.write_to(BytesMut::new()).freeze())
     }
 
@@ -106,12 +106,12 @@ pub enum RecvError {
 }
 
 impl Stream for RelayedStream {
-    type Item = Result<ClientToServerMsg, RecvError>;
+    type Item = Result<ClientToRelayMsg, RecvError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         Poll::Ready(match ready!(Pin::new(&mut self.inner).poll_next(cx)) {
             Some(Ok(msg)) => {
-                Some(ClientToServerMsg::from_bytes(msg, &self.key_cache).map_err(Into::into))
+                Some(ClientToRelayMsg::from_bytes(msg, &self.key_cache).map_err(Into::into))
             }
             Some(Err(e)) => Some(Err(e.into())),
             None => None,

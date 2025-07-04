@@ -837,7 +837,7 @@ mod tests {
     use crate::{
         client::{conn::Conn, Client, ClientBuilder, ConnectError},
         dns::DnsResolver,
-        protos::send_recv::{ClientToServerMsg, Datagrams, ServerToClientMsg},
+        protos::send_recv::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
     };
 
     pub(crate) fn make_tls_config() -> TlsConfig {
@@ -895,19 +895,19 @@ mod tests {
         info!("created client {b_key:?}");
 
         info!("ping a");
-        client_a.send(ClientToServerMsg::Ping([1u8; 8])).await?;
+        client_a.send(ClientToRelayMsg::Ping([1u8; 8])).await?;
         let pong = client_a.next().await.expect("eos")?;
-        assert!(matches!(pong, ServerToClientMsg::Pong { .. }));
+        assert!(matches!(pong, RelayToClientMsg::Pong { .. }));
 
         info!("ping b");
-        client_b.send(ClientToServerMsg::Ping([2u8; 8])).await?;
+        client_b.send(ClientToRelayMsg::Ping([2u8; 8])).await?;
         let pong = client_b.next().await.expect("eos")?;
-        assert!(matches!(pong, ServerToClientMsg::Pong { .. }));
+        assert!(matches!(pong, RelayToClientMsg::Pong { .. }));
 
         info!("sending message from a to b");
         let msg = Datagrams::from(b"hi there, client b!");
         client_a
-            .send(ClientToServerMsg::Datagrams {
+            .send(ClientToRelayMsg::Datagrams {
                 dst_node_id: b_key,
                 datagrams: msg.clone(),
             })
@@ -921,7 +921,7 @@ mod tests {
         info!("sending message from b to a");
         let msg = Datagrams::from(b"right back at ya, client b!");
         client_b
-            .send(ClientToServerMsg::Datagrams {
+            .send(ClientToRelayMsg::Datagrams {
                 dst_node_id: a_key,
                 datagrams: msg.clone(),
             })
@@ -953,7 +953,7 @@ mod tests {
     }
 
     fn process_msg(
-        msg: Option<Result<ServerToClientMsg, crate::client::RecvError>>,
+        msg: Option<Result<RelayToClientMsg, crate::client::RecvError>>,
     ) -> Option<(PublicKey, Datagrams)> {
         match msg {
             Some(Err(e)) => {
@@ -962,7 +962,7 @@ mod tests {
             }
             Some(Ok(msg)) => {
                 info!("got message on: {msg:?}");
-                if let ServerToClientMsg::Datagrams {
+                if let RelayToClientMsg::Datagrams {
                     remote_node_id: source,
                     datagrams,
                 } = msg
@@ -1015,19 +1015,19 @@ mod tests {
         info!("created client {b_key:?}");
 
         info!("ping a");
-        client_a.send(ClientToServerMsg::Ping([1u8; 8])).await?;
+        client_a.send(ClientToRelayMsg::Ping([1u8; 8])).await?;
         let pong = client_a.next().await.expect("eos")?;
-        assert!(matches!(pong, ServerToClientMsg::Pong { .. }));
+        assert!(matches!(pong, RelayToClientMsg::Pong { .. }));
 
         info!("ping b");
-        client_b.send(ClientToServerMsg::Ping([2u8; 8])).await?;
+        client_b.send(ClientToRelayMsg::Ping([2u8; 8])).await?;
         let pong = client_b.next().await.expect("eos")?;
-        assert!(matches!(pong, ServerToClientMsg::Pong { .. }));
+        assert!(matches!(pong, RelayToClientMsg::Pong { .. }));
 
         info!("sending message from a to b");
         let msg = Datagrams::from(b"hi there, client b!");
         client_a
-            .send(ClientToServerMsg::Datagrams {
+            .send(ClientToRelayMsg::Datagrams {
                 dst_node_id: b_key,
                 datagrams: msg.clone(),
             })
@@ -1041,7 +1041,7 @@ mod tests {
         info!("sending message from b to a");
         let msg = Datagrams::from(b"right back at ya, client b!");
         client_b
-            .send(ClientToServerMsg::Datagrams {
+            .send(ClientToRelayMsg::Datagrams {
                 dst_node_id: a_key,
                 datagrams: msg.clone(),
             })
@@ -1104,13 +1104,13 @@ mod tests {
         info!("Send message from A to B.");
         let msg = Datagrams::from(b"hello client b!!");
         client_a
-            .send(ClientToServerMsg::Datagrams {
+            .send(ClientToRelayMsg::Datagrams {
                 dst_node_id: public_key_b,
                 datagrams: msg.clone(),
             })
             .await?;
         match client_b.next().await.unwrap()? {
-            ServerToClientMsg::Datagrams {
+            RelayToClientMsg::Datagrams {
                 remote_node_id,
                 datagrams,
             } => {
@@ -1125,13 +1125,13 @@ mod tests {
         info!("Send message from B to A.");
         let msg = Datagrams::from(b"nice to meet you client a!!");
         client_b
-            .send(ClientToServerMsg::Datagrams {
+            .send(ClientToRelayMsg::Datagrams {
                 dst_node_id: public_key_a,
                 datagrams: msg.clone(),
             })
             .await?;
         match client_a.next().await.unwrap()? {
-            ServerToClientMsg::Datagrams {
+            RelayToClientMsg::Datagrams {
                 remote_node_id,
                 datagrams,
             } => {
@@ -1149,7 +1149,7 @@ mod tests {
 
         info!("Fail to send message from A to B.");
         let res = client_a
-            .send(ClientToServerMsg::Datagrams {
+            .send(ClientToRelayMsg::Datagrams {
                 dst_node_id: public_key_b,
                 datagrams: Datagrams::from(b"try to send"),
             })
@@ -1194,13 +1194,13 @@ mod tests {
         info!("Send message from A to B.");
         let msg = Datagrams::from(b"hello client b!!");
         client_a
-            .send(ClientToServerMsg::Datagrams {
+            .send(ClientToRelayMsg::Datagrams {
                 dst_node_id: public_key_b,
                 datagrams: msg.clone(),
             })
             .await?;
         match client_b.next().await.expect("eos")? {
-            ServerToClientMsg::Datagrams {
+            RelayToClientMsg::Datagrams {
                 remote_node_id,
                 datagrams,
             } => {
@@ -1215,13 +1215,13 @@ mod tests {
         info!("Send message from B to A.");
         let msg = Datagrams::from(b"nice to meet you client a!!");
         client_b
-            .send(ClientToServerMsg::Datagrams {
+            .send(ClientToRelayMsg::Datagrams {
                 dst_node_id: public_key_a,
                 datagrams: msg.clone(),
             })
             .await?;
         match client_a.next().await.expect("eos")? {
-            ServerToClientMsg::Datagrams {
+            RelayToClientMsg::Datagrams {
                 remote_node_id,
                 datagrams,
             } => {
@@ -1246,13 +1246,13 @@ mod tests {
         info!("Send message from A to B.");
         let msg = Datagrams::from(b"are you still there, b?!");
         client_a
-            .send(ClientToServerMsg::Datagrams {
+            .send(ClientToRelayMsg::Datagrams {
                 dst_node_id: public_key_b,
                 datagrams: msg.clone(),
             })
             .await?;
         match new_client_b.next().await.expect("eos")? {
-            ServerToClientMsg::Datagrams {
+            RelayToClientMsg::Datagrams {
                 remote_node_id,
                 datagrams,
             } => {
@@ -1267,13 +1267,13 @@ mod tests {
         info!("Send message from B to A.");
         let msg = Datagrams::from(b"just had a spot of trouble but I'm back now,a!!");
         new_client_b
-            .send(ClientToServerMsg::Datagrams {
+            .send(ClientToRelayMsg::Datagrams {
                 dst_node_id: public_key_a,
                 datagrams: msg.clone(),
             })
             .await?;
         match client_a.next().await.expect("eos")? {
-            ServerToClientMsg::Datagrams {
+            RelayToClientMsg::Datagrams {
                 remote_node_id,
                 datagrams,
             } => {
@@ -1290,7 +1290,7 @@ mod tests {
 
         info!("Sending message from A to B fails");
         let res = client_a
-            .send(ClientToServerMsg::Datagrams {
+            .send(ClientToRelayMsg::Datagrams {
                 dst_node_id: public_key_b,
                 datagrams: Datagrams::from(b"try to send"),
             })

@@ -21,7 +21,7 @@ use crate::{
     protos::{
         handshake,
         send_recv::{
-            ClientToServerMsg, Error as RecvRelayError, ServerToClientMsg, MAX_PAYLOAD_SIZE,
+            ClientToRelayMsg, Error as RecvRelayError, RelayToClientMsg, MAX_PAYLOAD_SIZE,
         },
         streams::WsBytesFramed,
     },
@@ -74,8 +74,8 @@ pub enum RecvError {
 ///
 /// This holds a connection to a relay server.  It is:
 ///
-/// - A [`Stream`] for [`ServerToClientMsg`] to receive from the server.
-/// - A [`Sink`] for [`ClientToServerMsg`] to send to the server.
+/// - A [`Stream`] for [`RelayToClientMsg`] to receive from the server.
+/// - A [`Sink`] for [`ClientToRelayMsg`] to send to the server.
 #[derive(derive_more::Debug)]
 pub(crate) struct Conn {
     #[debug("tokio_websockets::WebSocketStream")]
@@ -124,13 +124,13 @@ impl Conn {
 }
 
 impl Stream for Conn {
-    type Item = Result<ServerToClientMsg, RecvError>;
+    type Item = Result<RelayToClientMsg, RecvError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let msg = ready!(Pin::new(&mut self.conn).poll_next(cx));
         match msg {
             Some(Ok(msg)) => {
-                let message = ServerToClientMsg::from_bytes(msg, &self.key_cache);
+                let message = RelayToClientMsg::from_bytes(msg, &self.key_cache);
                 Poll::Ready(Some(message.map_err(Into::into)))
             }
             Some(Err(e)) => Poll::Ready(Some(Err(e.into()))),
@@ -139,15 +139,15 @@ impl Stream for Conn {
     }
 }
 
-impl Sink<ClientToServerMsg> for Conn {
+impl Sink<ClientToRelayMsg> for Conn {
     type Error = SendError;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         Pin::new(&mut self.conn).poll_ready(cx).map_err(Into::into)
     }
 
-    fn start_send(mut self: Pin<&mut Self>, frame: ClientToServerMsg) -> Result<(), Self::Error> {
-        if let ClientToServerMsg::Datagrams { datagrams, .. } = &frame {
+    fn start_send(mut self: Pin<&mut Self>, frame: ClientToRelayMsg) -> Result<(), Self::Error> {
+        if let ClientToRelayMsg::Datagrams { datagrams, .. } = &frame {
             let size = datagrams.contents.len();
             snafu::ensure!(size <= MAX_PAYLOAD_SIZE, ExceedsMaxPacketSizeSnafu { size });
         }

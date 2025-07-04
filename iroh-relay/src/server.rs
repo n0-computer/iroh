@@ -766,7 +766,7 @@ mod tests {
         dns::DnsResolver,
         protos::{
             handshake,
-            send_recv::{ClientToServerMsg, Datagrams, ServerToClientMsg},
+            send_recv::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
         },
     };
 
@@ -791,11 +791,11 @@ mod tests {
         client_b: &mut crate::client::Client,
         b_key: NodeId,
         msg: Datagrams,
-    ) -> Result<ServerToClientMsg> {
+    ) -> Result<RelayToClientMsg> {
         // try resend 10 times
         for _ in 0..10 {
             client_a
-                .send(ClientToServerMsg::Datagrams {
+                .send(ClientToRelayMsg::Datagrams {
                     dst_node_id: b_key,
                     datagrams: msg.clone(),
                 })
@@ -913,7 +913,7 @@ mod tests {
         // send message from a to b
         let msg = Datagrams::from("hello, b");
         let res = try_send_recv(&mut client_a, &mut client_b, b_key, msg.clone()).await?;
-        let ServerToClientMsg::Datagrams {
+        let RelayToClientMsg::Datagrams {
             remote_node_id,
             datagrams,
         } = res
@@ -929,7 +929,7 @@ mod tests {
         let msg = Datagrams::from("howdy, a");
         let res = try_send_recv(&mut client_b, &mut client_a, a_key, msg.clone()).await?;
 
-        let ServerToClientMsg::Datagrams {
+        let RelayToClientMsg::Datagrams {
             remote_node_id,
             datagrams,
         } = res
@@ -1013,7 +1013,7 @@ mod tests {
         let msg = Datagrams::from("hello, c");
         let res = try_send_recv(&mut client_b, &mut client_c, c_key, msg.clone()).await?;
 
-        if let ServerToClientMsg::Datagrams {
+        if let RelayToClientMsg::Datagrams {
             remote_node_id,
             datagrams,
         } = res
@@ -1054,7 +1054,7 @@ mod tests {
         let msg = Datagrams::from("hello, b");
         for _i in 0..1000 {
             client_a
-                .send(ClientToServerMsg::Datagrams {
+                .send(ClientToRelayMsg::Datagrams {
                     dst_node_id: b_key,
                     datagrams: msg.clone(),
                 })

@@ -18,7 +18,7 @@ use tracing::{debug, trace, warn, Instrument};
 use crate::{
     protos::{
         disco,
-        send_recv::{ClientToServerMsg, Datagrams, ServerToClientMsg, PING_INTERVAL},
+        send_recv::{ClientToRelayMsg, Datagrams, RelayToClientMsg, PING_INTERVAL},
         streams::StreamError,
     },
     server::{
@@ -369,7 +369,7 @@ impl Actor {
                 node_id = self.node_gone.recv() => {
                     let node_id = node_id.ok_or(NodeGoneDropSnafu.build())?;
                     trace!("node_id gone: {:?}", node_id);
-                    self.write_frame(ServerToClientMsg::NodeGone(node_id)).await.context(NodeGoneWriteFrameSnafu)?;
+                    self.write_frame(RelayToClientMsg::NodeGone(node_id)).await.context(NodeGoneWriteFrameSnafu)?;
                 }
                 _ = self.ping_tracker.timeout() => {
                     trace!("pong timed out");
@@ -380,7 +380,7 @@ impl Actor {
                     // new interval
                     ping_interval.reset_after(next_interval());
                     let data = self.ping_tracker.new_ping();
-                    self.write_frame(ServerToClientMsg::Ping(data)).await.context(KeepAliveWriteFrameSnafu)?;
+                    self.write_frame(RelayToClientMsg::Ping(data)).await.context(KeepAliveWriteFrameSnafu)?;
                 }
             }
 
@@ -395,7 +395,7 @@ impl Actor {
     /// Writes the given frame to the connection.
     ///
     /// Errors if the send does not happen within the `timeout` duration
-    async fn write_frame(&mut self, frame: ServerToClientMsg) -> Result<(), SendFrameError> {
+    async fn write_frame(&mut self, frame: RelayToClientMsg) -> Result<(), SendFrameError> {
         tokio::time::timeout(self.timeout, self.stream.send(frame)).await??;
         Ok(())
     }
@@ -411,7 +411,7 @@ impl Actor {
         if let Ok(len) = datagrams.contents.len().try_into() {
             self.metrics.bytes_sent.inc_by(len);
         }
-        self.write_frame(ServerToClientMsg::Datagrams {
+        self.write_frame(RelayToClientMsg::Datagrams {
             remote_node_id,
             datagrams,
         })
@@ -449,7 +449,7 @@ impl Actor {
     /// Handles frame read results.
     async fn handle_frame(
         &mut self,
-        maybe_frame: Option<Result<ClientToServerMsg, StreamRecvError>>,
+        maybe_frame: Option<Result<ClientToRelayMsg, StreamRecvError>>,
     ) -> Result<(), HandleFrameError> {
         trace!(?maybe_frame, "handle incoming frame");
         let frame = match maybe_frame {
@@ -458,7 +458,7 @@ impl Actor {
         };
 
         match frame {
-            ClientToServerMsg::Datagrams {
+            ClientToRelayMsg::Datagrams {
                 dst_node_id: dst_key,
                 datagrams,
             } => {
@@ -470,13 +470,13 @@ impl Actor {
                 }
                 self.metrics.bytes_recv.inc_by(packet_len as u64);
             }
-            ClientToServerMsg::Ping(data) => {
+            ClientToRelayMsg::Ping(data) => {
                 self.metrics.got_ping.inc();
                 // TODO: add rate limiter
-                self.write_frame(ServerToClientMsg::Pong(data)).await?;
+                self.write_frame(RelayToClientMsg::Pong(data)).await?;
                 self.metrics.sent_pong.inc();
             }
-            ClientToServerMsg::Pong(data) => {
+            ClientToRelayMsg::Pong(data) => {
                 self.ping_tracker.pong_received(data);
             }
         }
@@ -577,11 +577,11 @@ mod tests {
 
     async fn recv_frame<
         E: snafu::Error + Sync + Send + 'static,
-        S: Stream<Item = Result<ServerToClientMsg, E>> + Unpin,
+        S: Stream<Item = Result<RelayToClientMsg, E>> + Unpin,
     >(
         frame_type: FrameType,
         mut stream: S,
-    ) -> Result<ServerToClientMsg> {
+    ) -> Result<RelayToClientMsg> {
         match stream.next().await {
             Some(Ok(frame)) => {
                 if frame_type != frame.typ() {
@@ -644,7 +644,7 @@ mod tests {
         let frame = recv_frame(FrameType::RecvDatagrams, &mut io_rw).await.e()?;
         assert_eq!(
             frame,
-            ServerToClientMsg::Datagrams {
+            RelayToClientMsg::Datagrams {
                 remote_node_id: node_id,
                 datagrams: data.to_vec().into()
             }
@@ -659,7 +659,7 @@ mod tests {
         let frame = recv_frame(FrameType::RecvDatagrams, &mut io_rw).await.e()?;
         assert_eq!(
             frame,
-            ServerToClientMsg::Datagrams {
+            RelayToClientMsg::Datagrams {
                 remote_node_id: node_id,
                 datagrams: data.to_vec().into()
             }
@@ -669,19 +669,19 @@ mod tests {
         println!("send peer gone");
         peer_gone_s.send(node_id).await.context("send")?;
         let frame = recv_frame(FrameType::NodeGone, &mut io_rw).await.e()?;
-        assert_eq!(frame, ServerToClientMsg::NodeGone(node_id));
+        assert_eq!(frame, RelayToClientMsg::NodeGone(node_id));
 
         // Read tests
         println!("--read");
 
         // send ping, expect pong
         let data = b"pingpong";
-        io_rw.send(ClientToServerMsg::Ping(*data)).await?;
+        io_rw.send(ClientToRelayMsg::Ping(*data)).await?;
 
         // recv pong
         println!(" recv pong");
         let frame = recv_frame(FrameType::Pong, &mut io_rw).await?;
-        assert_eq!(frame, ServerToClientMsg::Pong(*data));
+        assert_eq!(frame, RelayToClientMsg::Pong(*data));
 
         let target = SecretKey::generate(rand::thread_rng()).public();
 
@@ -689,7 +689,7 @@ mod tests {
         println!("  send packet");
         let data = b"hello world!";
         io_rw
-            .send(ClientToServerMsg::Datagrams {
+            .send(ClientToRelayMsg::Datagrams {
                 dst_node_id: target,
                 datagrams: Datagrams::from(data),
             })
@@ -703,7 +703,7 @@ mod tests {
         disco_data.extend_from_slice(target.as_bytes());
         disco_data.extend_from_slice(data);
         io_rw
-            .send(ClientToServerMsg::Datagrams {
+            .send(ClientToRelayMsg::Datagrams {
                 dst_node_id: target,
                 datagrams: disco_data.clone().into(),
             })
@@ -730,7 +730,7 @@ mod tests {
         // Prepare a frame to send, assert its size.
         let data = Datagrams::from(b"hello world!!1");
         let target = SecretKey::generate(rand::thread_rng()).public();
-        let frame = ClientToServerMsg::Datagrams {
+        let frame = ClientToRelayMsg::Datagrams {
             dst_node_id: target,
             datagrams: data.clone(),
         };

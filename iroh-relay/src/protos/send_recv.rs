@@ -81,7 +81,7 @@ pub enum Error {
 
 /// The messages that a relay sends to clients or the clients receive from the relay.
 #[derive(derive_more::Debug, Clone, PartialEq, Eq)]
-pub enum ServerToClientMsg {
+pub enum RelayToClientMsg {
     /// Represents datagrams sent from relays (originally sent to them by another client).
     Datagrams {
         /// The [`NodeId`] of the original sender.
@@ -98,7 +98,7 @@ pub enum ServerToClientMsg {
         ///
         /// If `None` means the connection is healthy again.
         ///
-        /// The default condition is healthy, so the relay doesn't broadcast a [`ServerToClientMsg::Health`]
+        /// The default condition is healthy, so the relay doesn't broadcast a [`RelayToClientMsg::Health`]
         /// until a problem exists.
         problem: String,
     },
@@ -114,20 +114,20 @@ pub enum ServerToClientMsg {
         try_for: Duration,
     },
     /// Request from the relay to reply to the
-    /// other side with a [`ClientToServerMsg::Pong`] with the given payload.
+    /// other side with a [`ClientToRelayMsg::Pong`] with the given payload.
     Ping([u8; 8]),
-    /// Reply to a [`ClientToServerMsg::Ping`] from a client
+    /// Reply to a [`ClientToRelayMsg::Ping`] from a client
     /// with the payload sent previously in the ping.
     Pong([u8; 8]),
 }
 
 /// Messages that clients send to relays.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ClientToServerMsg {
+pub enum ClientToRelayMsg {
     /// Request from the client to the server to reply to the
-    /// other side with a [`ServerToClientMsg::Pong`] with the given payload.
+    /// other side with a [`RelayToClientMsg::Pong`] with the given payload.
     Ping([u8; 8]),
-    /// Reply to a [`ServerToClientMsg::Ping`] from a server
+    /// Reply to a [`RelayToClientMsg::Ping`] from a server
     /// with the payload sent previously in the ping.
     Pong([u8; 8]),
     /// Request from the client to relay datagrams to given remote node.
@@ -199,7 +199,7 @@ impl Datagrams {
     }
 }
 
-impl ServerToClientMsg {
+impl RelayToClientMsg {
     /// Returns this frame's corresponding frame type.
     pub fn typ(&self) -> FrameType {
         match self {
@@ -326,7 +326,7 @@ impl ServerToClientMsg {
     }
 }
 
-impl ClientToServerMsg {
+impl ClientToRelayMsg {
     pub(crate) fn typ(&self) -> FrameType {
         match self {
             Self::Datagrams { .. } => FrameType::SendDatagrams,
@@ -434,7 +434,7 @@ mod tests {
 
         check_expected_bytes(vec![
             (
-                ServerToClientMsg::Health {
+                RelayToClientMsg::Health {
                     problem: "Hello? Yes this is dog.".into(),
                 }
                 .write_to(Vec::new()),
@@ -442,21 +442,21 @@ mod tests {
                 20 69 73 20 64 6f 67 2e",
             ),
             (
-                ServerToClientMsg::NodeGone(client_key.public()).write_to(Vec::new()),
+                RelayToClientMsg::NodeGone(client_key.public()).write_to(Vec::new()),
                 "0e 19 7f 6b 23 e1 6c 85 32 c6 ab c8 38 fa cd 5e
                 a7 89 be 0c 76 b2 92 03 34 03 9b fa 8b 3d 36 8d
                 61",
             ),
             (
-                ServerToClientMsg::Ping([42u8; 8]).write_to(Vec::new()),
+                RelayToClientMsg::Ping([42u8; 8]).write_to(Vec::new()),
                 "0f 2a 2a 2a 2a 2a 2a 2a 2a",
             ),
             (
-                ServerToClientMsg::Pong([42u8; 8]).write_to(Vec::new()),
+                RelayToClientMsg::Pong([42u8; 8]).write_to(Vec::new()),
                 "10 2a 2a 2a 2a 2a 2a 2a 2a",
             ),
             (
-                ServerToClientMsg::Datagrams {
+                RelayToClientMsg::Datagrams {
                     remote_node_id: client_key.public(),
                     datagrams: Datagrams {
                         ecn: Some(quinn::EcnCodepoint::Ce),
@@ -479,7 +479,7 @@ mod tests {
                 48 65 6c 6c 6f 20 57 6f 72 6c 64 21",
             ),
             (
-                ServerToClientMsg::Restarting {
+                RelayToClientMsg::Restarting {
                     reconnect_in: Duration::from_millis(10),
                     try_for: Duration::from_millis(20),
                 }
@@ -497,15 +497,15 @@ mod tests {
 
         check_expected_bytes(vec![
             (
-                ClientToServerMsg::Ping([42u8; 8]).write_to(Vec::new()),
+                ClientToRelayMsg::Ping([42u8; 8]).write_to(Vec::new()),
                 "0f 2a 2a 2a 2a 2a 2a 2a 2a",
             ),
             (
-                ClientToServerMsg::Pong([42u8; 8]).write_to(Vec::new()),
+                ClientToRelayMsg::Pong([42u8; 8]).write_to(Vec::new()),
                 "10 2a 2a 2a 2a 2a 2a 2a 2a",
             ),
             (
-                ClientToServerMsg::Datagrams {
+                ClientToRelayMsg::Datagrams {
                     dst_node_id: client_key.public(),
                     datagrams: Datagrams {
                         ecn: Some(quinn::EcnCodepoint::Ce),
@@ -573,23 +573,23 @@ mod proptests {
     }
 
     /// Generates a random valid frame
-    fn server_client_frame() -> impl Strategy<Value = ServerToClientMsg> {
+    fn server_client_frame() -> impl Strategy<Value = RelayToClientMsg> {
         let recv_packet = (key(), datagrams()).prop_map(|(remote_node_id, datagrams)| {
-            ServerToClientMsg::Datagrams {
+            RelayToClientMsg::Datagrams {
                 remote_node_id,
                 datagrams,
             }
         });
-        let node_gone = key().prop_map(ServerToClientMsg::NodeGone);
-        let ping = prop::array::uniform8(any::<u8>()).prop_map(ServerToClientMsg::Ping);
-        let pong = prop::array::uniform8(any::<u8>()).prop_map(ServerToClientMsg::Pong);
+        let node_gone = key().prop_map(RelayToClientMsg::NodeGone);
+        let ping = prop::array::uniform8(any::<u8>()).prop_map(RelayToClientMsg::Ping);
+        let pong = prop::array::uniform8(any::<u8>()).prop_map(RelayToClientMsg::Pong);
         let health = ".{0,65536}"
             .prop_filter("exceeds MAX_PAYLOAD_SIZE", |s| {
                 s.len() < MAX_PAYLOAD_SIZE // a single unicode character can match a regex "." but take up multiple bytes
             })
-            .prop_map(|problem| ServerToClientMsg::Health { problem });
+            .prop_map(|problem| RelayToClientMsg::Health { problem });
         let restarting = (any::<u32>(), any::<u32>()).prop_map(|(reconnect_in, try_for)| {
-            ServerToClientMsg::Restarting {
+            RelayToClientMsg::Restarting {
                 reconnect_in: Duration::from_millis(reconnect_in.into()),
                 try_for: Duration::from_millis(try_for.into()),
             }
@@ -597,15 +597,14 @@ mod proptests {
         prop_oneof![recv_packet, node_gone, ping, pong, health, restarting]
     }
 
-    fn client_server_frame() -> impl Strategy<Value = ClientToServerMsg> {
-        let send_packet = (key(), datagrams()).prop_map(|(dst_node_id, datagrams)| {
-            ClientToServerMsg::Datagrams {
+    fn client_server_frame() -> impl Strategy<Value = ClientToRelayMsg> {
+        let send_packet =
+            (key(), datagrams()).prop_map(|(dst_node_id, datagrams)| ClientToRelayMsg::Datagrams {
                 dst_node_id,
                 datagrams,
-            }
-        });
-        let ping = prop::array::uniform8(any::<u8>()).prop_map(ClientToServerMsg::Ping);
-        let pong = prop::array::uniform8(any::<u8>()).prop_map(ClientToServerMsg::Pong);
+            });
+        let ping = prop::array::uniform8(any::<u8>()).prop_map(ClientToRelayMsg::Ping);
+        let pong = prop::array::uniform8(any::<u8>()).prop_map(ClientToRelayMsg::Pong);
         prop_oneof![send_packet, ping, pong]
     }
 
@@ -613,14 +612,14 @@ mod proptests {
         #[test]
         fn server_client_frame_roundtrip(frame in server_client_frame()) {
             let encoded = frame.clone().write_to(BytesMut::new()).freeze();
-            let decoded = ServerToClientMsg::from_bytes(encoded, &KeyCache::test()).unwrap();
+            let decoded = RelayToClientMsg::from_bytes(encoded, &KeyCache::test()).unwrap();
             prop_assert_eq!(frame, decoded);
         }
 
         #[test]
         fn client_server_frame_roundtrip(frame in client_server_frame()) {
             let encoded = frame.clone().write_to(BytesMut::new()).freeze();
-            let decoded = ClientToServerMsg::from_bytes(encoded, &KeyCache::test()).unwrap();
+            let decoded = ClientToRelayMsg::from_bytes(encoded, &KeyCache::test()).unwrap();
             prop_assert_eq!(frame, decoded);
         }
     }

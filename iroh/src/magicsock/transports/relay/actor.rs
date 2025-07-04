@@ -42,7 +42,7 @@ use iroh_base::{NodeId, RelayUrl, SecretKey};
 use iroh_relay::{
     self as relay,
     client::{Client, ConnectError, RecvError, SendError},
-    protos::send_recv::{ClientToServerMsg, Datagrams, ServerToClientMsg},
+    protos::send_recv::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
     PingTracker,
 };
 use n0_future::{
@@ -543,7 +543,7 @@ impl ActiveRelayActor {
 
         let res = loop {
             if let Some(data) = state.pong_pending.take() {
-                let fut = client_sink.send(ClientToServerMsg::Pong(data));
+                let fut = client_sink.send(ClientToRelayMsg::Pong(data));
                 self.run_sending(fut, &mut state, &mut client_stream)
                     .await?;
             }
@@ -570,7 +570,7 @@ impl ActiveRelayActor {
                 }
                 _ = ping_interval.tick() => {
                     let data = state.ping_tracker.new_ping();
-                    let fut = client_sink.send(ClientToServerMsg::Ping(data));
+                    let fut = client_sink.send(ClientToRelayMsg::Ping(data));
                     self.run_sending(fut, &mut state, &mut client_stream).await?;
                 }
                 msg = self.inbox.recv() => {
@@ -586,7 +586,7 @@ impl ActiveRelayActor {
                             match client_stream.local_addr() {
                                 Some(addr) if local_ips.contains(&addr.ip()) => {
                                     let data = state.ping_tracker.new_ping();
-                                    let fut = client_sink.send(ClientToServerMsg::Ping(data));
+                                    let fut = client_sink.send(ClientToRelayMsg::Ping(data));
                                     self.run_sending(fut, &mut state, &mut client_stream).await?;
                                 }
                                 Some(_) => break Err(LocalIpInvalidSnafu.build()),
@@ -602,7 +602,7 @@ impl ActiveRelayActor {
                         ActiveRelayMessage::PingServer(sender) => {
                             let data = rand::random();
                             state.test_pong = Some((data, sender));
-                            let fut = client_sink.send(ClientToServerMsg::Ping(data));
+                            let fut = client_sink.send(ClientToRelayMsg::Ping(data));
                             self.run_sending(fut, &mut state, &mut client_stream).await?;
                         }
                     }
@@ -625,10 +625,10 @@ impl ActiveRelayActor {
                     // TODO(frando): can we avoid the clone here?
                     let metrics = self.metrics.clone();
                     let packet_iter = batch.into_iter().map(|item| {
-                            Ok(ClientToServerMsg::Datagrams { dst_node_id: item.remote_node, datagrams: item.datagrams })
+                            Ok(ClientToRelayMsg::Datagrams { dst_node_id: item.remote_node, datagrams: item.datagrams })
                         });
                     let mut packet_stream = n0_future::stream::iter(packet_iter).inspect(|m| {
-                        if let Ok(ClientToServerMsg::Datagrams { dst_node_id: _node_id, datagrams }) = m {
+                        if let Ok(ClientToRelayMsg::Datagrams { dst_node_id: _node_id, datagrams }) = m {
                             metrics.send_relay.inc_by(datagrams.contents.len() as _);
                         }
                     });
@@ -664,9 +664,9 @@ impl ActiveRelayActor {
         res.map_err(|err| state.map_err(err))
     }
 
-    fn handle_relay_msg(&mut self, msg: ServerToClientMsg, state: &mut ConnectedRelayState) {
+    fn handle_relay_msg(&mut self, msg: RelayToClientMsg, state: &mut ConnectedRelayState) {
         match msg {
-            ServerToClientMsg::Datagrams {
+            RelayToClientMsg::Datagrams {
                 remote_node_id,
                 datagrams,
             } => {
@@ -690,11 +690,11 @@ impl ActiveRelayActor {
                     warn!("Dropping received relay packet: {err:#}");
                 }
             }
-            ServerToClientMsg::NodeGone(node_id) => {
+            RelayToClientMsg::NodeGone(node_id) => {
                 state.nodes_present.remove(&node_id);
             }
-            ServerToClientMsg::Ping(data) => state.pong_pending = Some(data),
-            ServerToClientMsg::Pong(data) => {
+            RelayToClientMsg::Ping(data) => state.pong_pending = Some(data),
+            RelayToClientMsg::Pong(data) => {
                 #[cfg(test)]
                 {
                     if let Some((expected_data, sender)) = state.test_pong.take() {
@@ -708,10 +708,10 @@ impl ActiveRelayActor {
                 state.ping_tracker.pong_received(data);
                 state.established = true;
             }
-            ServerToClientMsg::Health { problem } => {
+            RelayToClientMsg::Health { problem } => {
                 warn!("Relay server reports problem: {problem}");
             }
-            ServerToClientMsg::Restarting { .. } => {
+            RelayToClientMsg::Restarting { .. } => {
                 trace!("Ignoring {msg:?}")
             }
         }
