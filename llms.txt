@@ -1,0 +1,82 @@
+# Iroh
+
+> A peer-to-peer QUIC library for establishing direct connections between devices. Built in Rust by n0-computer.
+
+## Overview
+
+Iroh is a library for establishing the most direct QUIC connection possible between two devices. It provides "dial by public key" functionality, where you connect to nodes using their NodeId (32-byte ed25519 public key) rather than IP addresses. The library handles NAT traversal, hole punching, and relay fallbacks automatically.
+
+Iroh is compiled & tested for nearly all common platforms: Windows, MacOS, Linux, Android, iOS, etc. It runs on devices as small as an ESP32, as well as datacenter-grade servers.
+
+## Key Features
+
+- **Direct P2P connections**: Establishes direct QUIC connections whenever possible
+- **NAT traversal**: Automatic hole punching and relay server fallback
+- **Cryptographic identity**: Each node identified by ed25519 public key (NodeId)
+- **QUIC-based**: Built on QUIC for encryption, authentication, and stream multiplexing
+- **Composable protocols**: Compose multiple protocols for pluggable functionality from a community-driven set
+
+## Core Documentation
+
+- [API Reference](https://docs.rs/iroh/latest/iroh/): Complete Rust API documentation for the core iroh library
+- [Overview](https://www.iroh.computer/docs/overview): High-level introduction to iroh's architecture and benefits
+- [Quickstart](https://www.iroh.computer/docs/quickstart): Build a simple peer-to-peer file transfer tool
+- [Getting Started](https://www.iroh.computer/docs/): Main documentation hub with guides and examples
+
+## Architecture & Concepts
+
+- [Connection Establishment](https://docs.rs/iroh/latest/iroh/#connection-establishment): How iroh establishes connections via relay servers and direct addressing
+- [Encryption](https://docs.rs/iroh/latest/iroh/#encryption): TLS encryption using node SecretKey/PublicKey pairs
+- [Relay Servers](https://docs.rs/iroh/latest/iroh/#relay-servers): How relay servers ensure connectivity and assist with hole punching
+- [Connections and Streams](https://docs.rs/iroh/latest/iroh/#connections-and-streams): QUIC streams, ALPNs, and connection management
+- [Node Discovery](https://docs.rs/iroh/latest/iroh/#node-discovery): DNS-based discovery services for finding nodes
+
+## Core API
+
+- [Endpoint](https://docs.rs/iroh/latest/iroh/endpoint/struct.Endpoint.html): Central struct for managing an iroh node and creating connections
+- [NodeAddr](https://docs.rs/iroh/latest/iroh/struct.NodeAddr.html): Network addressing information combining NodeId, relay URLs, and direct addresses
+- [Connection](https://docs.rs/iroh/latest/iroh/endpoint/struct.Connection.html): QUIC connection with bi-directional and uni-directional stream support
+- [SecretKey/PublicKey](https://docs.rs/iroh/latest/iroh/struct.SecretKey.html): Cryptographic keys for node identity and authentication
+
+## Protocols & Extensions
+
+Protocols are listed at https://iroh.computer/proto.
+
+- [iroh-blobs](https://github.com/n0-computer/iroh-blobs): Content-addressed blob transfer using BLAKE3 hashing
+- [iroh-gossip](https://github.com/n0-computer/iroh-gossip): Publish-subscribe overlay networks
+- [iroh-docs](https://github.com/n0-computer/iroh-docs): Eventually-consistent key-value store
+- [iroh-willow](https://github.com/n0-computer/iroh-willow): Implementation of the Willow protocol
+- [Protocol Router](https://docs.rs/iroh/latest/iroh/protocol/): Tools for routing incoming requests to appropriate protocol handlers
+
+## Examples & Tutorials
+
+- [Echo Example](https://github.com/n0-computer/iroh/blob/main/iroh/examples/echo.rs): Simple bidirectional communication example
+- [Examples Directory](https://github.com/n0-computer/iroh/tree/main/iroh/examples): Collection of usage examples
+- [Tour](https://www.iroh.computer/docs/tour): High-level architectural overview
+- [Layers](https://www.iroh.computer/docs/layers): Understanding iroh's distributed systems toolkit
+
+## Development & Integration
+
+- [Quickstart Tutorial](https://www.iroh.computer/docs/quickstart): Build a file transfer tool step-by-step
+- [Wasm/Browser Support](https://www.iroh.computer/docs/wasm-browser-support): WebAssembly and browser compatibility
+- [iroh-ffi](https://github.com/n0-computer/iroh-ffi): FFI bindings for other languages
+- [Test Utils](https://docs.rs/iroh/latest/iroh/test_utils/): Internal utilities for testing iroh applications
+
+## Infrastructure & Ecosystem
+
+- [Relay Server](https://github.com/n0-computer/iroh/tree/main/iroh-relay): Production relay server implementation
+- [DNS Server](https://github.com/n0-computer/iroh/tree/main/iroh-dns-server): DNS discovery service running at dns.iroh.link
+- [Network Report](https://docs.rs/iroh/latest/iroh/net_report/): Network condition analysis and NAT detection
+- [Performance Monitoring](https://perf.iroh.computer): Continuous performance measurement
+
+## Reference Materials
+
+- [FAQ](https://www.iroh.computer/docs/faq): Frequently asked questions
+- [Roadmap](https://www.iroh.computer/roadmap): Future development plans
+- [Protocol Registry](https://www.iroh.computer/proto): Directory of iroh protocols
+
+## Community & Resources
+
+- [GitHub Repository](https://github.com/n0-computer/iroh): Source code and issue tracking
+- [Awesome Iroh](https://github.com/n0-computer/awesome-iroh): Community projects and resources
+- [License](https://github.com/n0-computer/iroh/blob/main/LICENSE-APACHE): Apache 2.0 / MIT dual license
