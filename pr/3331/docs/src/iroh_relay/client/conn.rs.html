@@ -21,7 +21,7 @@
 <a href=#21 id=21 data-nosnippet>21</a>    protos::{
 <a href=#22 id=22 data-nosnippet>22</a>        handshake,
 <a href=#23 id=23 data-nosnippet>23</a>        send_recv::{
-<a href=#24 id=24 data-nosnippet>24</a>            ClientToServerMsg, Error <span class="kw">as </span>RecvRelayError, ServerToClientMsg, MAX_PAYLOAD_SIZE,
+<a href=#24 id=24 data-nosnippet>24</a>            ClientToRelayMsg, Error <span class="kw">as </span>RecvRelayError, RelayToClientMsg, MAX_PAYLOAD_SIZE,
 <a href=#25 id=25 data-nosnippet>25</a>        },
 <a href=#26 id=26 data-nosnippet>26</a>        streams::WsBytesFramed,
 <a href=#27 id=27 data-nosnippet>27</a>    },
@@ -74,8 +74,8 @@
 <a href=#74 id=74 data-nosnippet>74</a>///
 <a href=#75 id=75 data-nosnippet>75</a>/// This holds a connection to a relay server.  It is:
 <a href=#76 id=76 data-nosnippet>76</a>///
-<a href=#77 id=77 data-nosnippet>77</a>/// - A [`Stream`] for [`ServerToClientMsg`] to receive from the server.
-<a href=#78 id=78 data-nosnippet>78</a>/// - A [`Sink`] for [`ClientToServerMsg`] to send to the server.
+<a href=#77 id=77 data-nosnippet>77</a>/// - A [`Stream`] for [`RelayToClientMsg`] to receive from the server.
+<a href=#78 id=78 data-nosnippet>78</a>/// - A [`Sink`] for [`ClientToRelayMsg`] to send to the server.
 <a href=#79 id=79 data-nosnippet>79</a></span><span class="attr">#[derive(derive_more::Debug)]
 <a href=#80 id=80 data-nosnippet>80</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>Conn {
 <a href=#81 id=81 data-nosnippet>81</a>    <span class="attr">#[debug(<span class="string">"tokio_websockets::WebSocketStream"</span>)]
@@ -124,13 +124,13 @@
 <a href=#124 id=124 data-nosnippet>124</a>}
 <a href=#125 id=125 data-nosnippet>125</a>
 <a href=#126 id=126 data-nosnippet>126</a><span class="kw">impl </span>Stream <span class="kw">for </span>Conn {
-<a href=#127 id=127 data-nosnippet>127</a>    <span class="kw">type </span>Item = <span class="prelude-ty">Result</span>&lt;ServerToClientMsg, RecvError&gt;;
+<a href=#127 id=127 data-nosnippet>127</a>    <span class="kw">type </span>Item = <span class="prelude-ty">Result</span>&lt;RelayToClientMsg, RecvError&gt;;
 <a href=#128 id=128 data-nosnippet>128</a>
 <a href=#129 id=129 data-nosnippet>129</a>    <span class="kw">fn </span>poll_next(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt;&gt; {
 <a href=#130 id=130 data-nosnippet>130</a>        <span class="kw">let </span>msg = <span class="macro">ready!</span>(Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.conn).poll_next(cx));
 <a href=#131 id=131 data-nosnippet>131</a>        <span class="kw">match </span>msg {
 <a href=#132 id=132 data-nosnippet>132</a>            <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(msg)) =&gt; {
-<a href=#133 id=133 data-nosnippet>133</a>                <span class="kw">let </span>message = ServerToClientMsg::from_bytes(msg, <span class="kw-2">&amp;</span><span class="self">self</span>.key_cache);
+<a href=#133 id=133 data-nosnippet>133</a>                <span class="kw">let </span>message = RelayToClientMsg::from_bytes(msg, <span class="kw-2">&amp;</span><span class="self">self</span>.key_cache);
 <a href=#134 id=134 data-nosnippet>134</a>                Poll::Ready(<span class="prelude-val">Some</span>(message.map_err(Into::into)))
 <a href=#135 id=135 data-nosnippet>135</a>            }
 <a href=#136 id=136 data-nosnippet>136</a>            <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(e)) =&gt; Poll::Ready(<span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(e.into()))),
@@ -139,15 +139,15 @@
 <a href=#139 id=139 data-nosnippet>139</a>    }
 <a href=#140 id=140 data-nosnippet>140</a>}
 <a href=#141 id=141 data-nosnippet>141</a>
-<a href=#142 id=142 data-nosnippet>142</a><span class="kw">impl </span>Sink&lt;ClientToServerMsg&gt; <span class="kw">for </span>Conn {
+<a href=#142 id=142 data-nosnippet>142</a><span class="kw">impl </span>Sink&lt;ClientToRelayMsg&gt; <span class="kw">for </span>Conn {
 <a href=#143 id=143 data-nosnippet>143</a>    <span class="kw">type </span>Error = SendError;
 <a href=#144 id=144 data-nosnippet>144</a>
 <a href=#145 id=145 data-nosnippet>145</a>    <span class="kw">fn </span>poll_ready(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt;&gt; {
 <a href=#146 id=146 data-nosnippet>146</a>        Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.conn).poll_ready(cx).map_err(Into::into)
 <a href=#147 id=147 data-nosnippet>147</a>    }
 <a href=#148 id=148 data-nosnippet>148</a>
-<a href=#149 id=149 data-nosnippet>149</a>    <span class="kw">fn </span>start_send(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, frame: ClientToServerMsg) -&gt; <span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt; {
-<a href=#150 id=150 data-nosnippet>150</a>        <span class="kw">if let </span>ClientToServerMsg::SendDatagrams { datagrams, .. } = <span class="kw-2">&amp;</span>frame {
+<a href=#149 id=149 data-nosnippet>149</a>    <span class="kw">fn </span>start_send(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, frame: ClientToRelayMsg) -&gt; <span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt; {
+<a href=#150 id=150 data-nosnippet>150</a>        <span class="kw">if let </span>ClientToRelayMsg::Datagrams { datagrams, .. } = <span class="kw-2">&amp;</span>frame {
 <a href=#151 id=151 data-nosnippet>151</a>            <span class="kw">let </span>size = datagrams.contents.len();
 <a href=#152 id=152 data-nosnippet>152</a>            <span class="macro">snafu::ensure!</span>(size &lt;= MAX_PAYLOAD_SIZE, ExceedsMaxPacketSizeSnafu { size });
 <a href=#153 id=153 data-nosnippet>153</a>        }

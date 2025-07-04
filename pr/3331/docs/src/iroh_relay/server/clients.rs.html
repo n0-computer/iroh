@@ -201,17 +201,17 @@
 <a href=#201 id=201 data-nosnippet>201</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
 <a href=#202 id=202 data-nosnippet>202</a>    <span class="kw">use crate</span>::{
 <a href=#203 id=203 data-nosnippet>203</a>        client::conn::Conn,
-<a href=#204 id=204 data-nosnippet>204</a>        protos::{relay::FrameType, send_recv::ServerToClientMsg},
+<a href=#204 id=204 data-nosnippet>204</a>        protos::{relay::FrameType, send_recv::RelayToClientMsg},
 <a href=#205 id=205 data-nosnippet>205</a>        server::streams::RelayedStream,
 <a href=#206 id=206 data-nosnippet>206</a>    };
 <a href=#207 id=207 data-nosnippet>207</a>
 <a href=#208 id=208 data-nosnippet>208</a>    <span class="kw">async fn </span>recv_frame&lt;
 <a href=#209 id=209 data-nosnippet>209</a>        E: snafu::Error + Sync + Send + <span class="lifetime">'static</span>,
-<a href=#210 id=210 data-nosnippet>210</a>        S: Stream&lt;Item = <span class="prelude-ty">Result</span>&lt;ServerToClientMsg, E&gt;&gt; + Unpin,
+<a href=#210 id=210 data-nosnippet>210</a>        S: Stream&lt;Item = <span class="prelude-ty">Result</span>&lt;RelayToClientMsg, E&gt;&gt; + Unpin,
 <a href=#211 id=211 data-nosnippet>211</a>    &gt;(
 <a href=#212 id=212 data-nosnippet>212</a>        frame_type: FrameType,
 <a href=#213 id=213 data-nosnippet>213</a>        <span class="kw-2">mut </span>stream: S,
-<a href=#214 id=214 data-nosnippet>214</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;ServerToClientMsg&gt; {
+<a href=#214 id=214 data-nosnippet>214</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;RelayToClientMsg&gt; {
 <a href=#215 id=215 data-nosnippet>215</a>        <span class="kw">match </span>stream.next().<span class="kw">await </span>{
 <a href=#216 id=216 data-nosnippet>216</a>            <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(frame)) =&gt; {
 <a href=#217 id=217 data-nosnippet>217</a>                <span class="kw">if </span>frame_type != frame.typ() {
@@ -258,7 +258,7 @@
 <a href=#258 id=258 data-nosnippet>258</a>        <span class="kw">let </span>frame = recv_frame(FrameType::RecvDatagrams, <span class="kw-2">&amp;mut </span>a_rw).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#259 id=259 data-nosnippet>259</a>        <span class="macro">assert_eq!</span>(
 <a href=#260 id=260 data-nosnippet>260</a>            frame,
-<a href=#261 id=261 data-nosnippet>261</a>            ServerToClientMsg::ReceivedDatagrams {
+<a href=#261 id=261 data-nosnippet>261</a>            RelayToClientMsg::Datagrams {
 <a href=#262 id=262 data-nosnippet>262</a>                remote_node_id: b_key,
 <a href=#263 id=263 data-nosnippet>263</a>                datagrams: data.to_vec().into(),
 <a href=#264 id=264 data-nosnippet>264</a>            }
@@ -269,7 +269,7 @@
 <a href=#269 id=269 data-nosnippet>269</a>        <span class="kw">let </span>frame = recv_frame(FrameType::RecvDatagrams, <span class="kw-2">&amp;mut </span>a_rw).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#270 id=270 data-nosnippet>270</a>        <span class="macro">assert_eq!</span>(
 <a href=#271 id=271 data-nosnippet>271</a>            frame,
-<a href=#272 id=272 data-nosnippet>272</a>            ServerToClientMsg::ReceivedDatagrams {
+<a href=#272 id=272 data-nosnippet>272</a>            RelayToClientMsg::Datagrams {
 <a href=#273 id=273 data-nosnippet>273</a>                remote_node_id: b_key,
 <a href=#274 id=274 data-nosnippet>274</a>                datagrams: data.to_vec().into(),
 <a href=#275 id=275 data-nosnippet>275</a>            }

@@ -766,7 +766,7 @@
 <a href=#766 id=766 data-nosnippet>766</a>        dns::DnsResolver,
 <a href=#767 id=767 data-nosnippet>767</a>        protos::{
 <a href=#768 id=768 data-nosnippet>768</a>            handshake,
-<a href=#769 id=769 data-nosnippet>769</a>            send_recv::{ClientToServerMsg, Datagrams, ServerToClientMsg},
+<a href=#769 id=769 data-nosnippet>769</a>            send_recv::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
 <a href=#770 id=770 data-nosnippet>770</a>        },
 <a href=#771 id=771 data-nosnippet>771</a>    };
 <a href=#772 id=772 data-nosnippet>772</a>
@@ -791,11 +791,11 @@
 <a href=#791 id=791 data-nosnippet>791</a>        client_b: <span class="kw-2">&amp;mut </span><span class="kw">crate</span>::client::Client,
 <a href=#792 id=792 data-nosnippet>792</a>        b_key: NodeId,
 <a href=#793 id=793 data-nosnippet>793</a>        msg: Datagrams,
-<a href=#794 id=794 data-nosnippet>794</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;ServerToClientMsg&gt; {
+<a href=#794 id=794 data-nosnippet>794</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;RelayToClientMsg&gt; {
 <a href=#795 id=795 data-nosnippet>795</a>        <span class="comment">// try resend 10 times
 <a href=#796 id=796 data-nosnippet>796</a>        </span><span class="kw">for _ in </span><span class="number">0</span>..<span class="number">10 </span>{
 <a href=#797 id=797 data-nosnippet>797</a>            client_a
-<a href=#798 id=798 data-nosnippet>798</a>                .send(ClientToServerMsg::SendDatagrams {
+<a href=#798 id=798 data-nosnippet>798</a>                .send(ClientToRelayMsg::Datagrams {
 <a href=#799 id=799 data-nosnippet>799</a>                    dst_node_id: b_key,
 <a href=#800 id=800 data-nosnippet>800</a>                    datagrams: msg.clone(),
 <a href=#801 id=801 data-nosnippet>801</a>                })
@@ -913,7 +913,7 @@
 <a href=#913 id=913 data-nosnippet>913</a>        <span class="comment">// send message from a to b
 <a href=#914 id=914 data-nosnippet>914</a>        </span><span class="kw">let </span>msg = Datagrams::from(<span class="string">"hello, b"</span>);
 <a href=#915 id=915 data-nosnippet>915</a>        <span class="kw">let </span>res = try_send_recv(<span class="kw-2">&amp;mut </span>client_a, <span class="kw-2">&amp;mut </span>client_b, b_key, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#916 id=916 data-nosnippet>916</a>        <span class="kw">let </span>ServerToClientMsg::ReceivedDatagrams {
+<a href=#916 id=916 data-nosnippet>916</a>        <span class="kw">let </span>RelayToClientMsg::Datagrams {
 <a href=#917 id=917 data-nosnippet>917</a>            remote_node_id,
 <a href=#918 id=918 data-nosnippet>918</a>            datagrams,
 <a href=#919 id=919 data-nosnippet>919</a>        } = res
@@ -929,7 +929,7 @@
 <a href=#929 id=929 data-nosnippet>929</a>        </span><span class="kw">let </span>msg = Datagrams::from(<span class="string">"howdy, a"</span>);
 <a href=#930 id=930 data-nosnippet>930</a>        <span class="kw">let </span>res = try_send_recv(<span class="kw-2">&amp;mut </span>client_b, <span class="kw-2">&amp;mut </span>client_a, a_key, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#931 id=931 data-nosnippet>931</a>
-<a href=#932 id=932 data-nosnippet>932</a>        <span class="kw">let </span>ServerToClientMsg::ReceivedDatagrams {
+<a href=#932 id=932 data-nosnippet>932</a>        <span class="kw">let </span>RelayToClientMsg::Datagrams {
 <a href=#933 id=933 data-nosnippet>933</a>            remote_node_id,
 <a href=#934 id=934 data-nosnippet>934</a>            datagrams,
 <a href=#935 id=935 data-nosnippet>935</a>        } = res
@@ -1013,7 +1013,7 @@
 <a href=#1013 id=1013 data-nosnippet>1013</a>        </span><span class="kw">let </span>msg = Datagrams::from(<span class="string">"hello, c"</span>);
 <a href=#1014 id=1014 data-nosnippet>1014</a>        <span class="kw">let </span>res = try_send_recv(<span class="kw-2">&amp;mut </span>client_b, <span class="kw-2">&amp;mut </span>client_c, c_key, msg.clone()).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#1015 id=1015 data-nosnippet>1015</a>
-<a href=#1016 id=1016 data-nosnippet>1016</a>        <span class="kw">if let </span>ServerToClientMsg::ReceivedDatagrams {
+<a href=#1016 id=1016 data-nosnippet>1016</a>        <span class="kw">if let </span>RelayToClientMsg::Datagrams {
 <a href=#1017 id=1017 data-nosnippet>1017</a>            remote_node_id,
 <a href=#1018 id=1018 data-nosnippet>1018</a>            datagrams,
 <a href=#1019 id=1019 data-nosnippet>1019</a>        } = res
@@ -1054,7 +1054,7 @@
 <a href=#1054 id=1054 data-nosnippet>1054</a>        </span><span class="kw">let </span>msg = Datagrams::from(<span class="string">"hello, b"</span>);
 <a href=#1055 id=1055 data-nosnippet>1055</a>        <span class="kw">for </span>_i <span class="kw">in </span><span class="number">0</span>..<span class="number">1000 </span>{
 <a href=#1056 id=1056 data-nosnippet>1056</a>            client_a
-<a href=#1057 id=1057 data-nosnippet>1057</a>                .send(ClientToServerMsg::SendDatagrams {
+<a href=#1057 id=1057 data-nosnippet>1057</a>                .send(ClientToRelayMsg::Datagrams {
 <a href=#1058 id=1058 data-nosnippet>1058</a>                    dst_node_id: b_key,
 <a href=#1059 id=1059 data-nosnippet>1059</a>                    datagrams: msg.clone(),
 <a href=#1060 id=1060 data-nosnippet>1060</a>                })

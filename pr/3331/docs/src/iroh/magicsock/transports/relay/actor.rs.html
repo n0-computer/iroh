@@ -42,7 +42,7 @@
 <a href=#42 id=42 data-nosnippet>42</a><span class="kw">use </span>iroh_relay::{
 <a href=#43 id=43 data-nosnippet>43</a>    <span class="self">self </span><span class="kw">as </span>relay,
 <a href=#44 id=44 data-nosnippet>44</a>    client::{Client, ConnectError, RecvError, SendError},
-<a href=#45 id=45 data-nosnippet>45</a>    protos::send_recv::{ClientToServerMsg, Datagrams, ServerToClientMsg},
+<a href=#45 id=45 data-nosnippet>45</a>    protos::send_recv::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
 <a href=#46 id=46 data-nosnippet>46</a>    PingTracker,
 <a href=#47 id=47 data-nosnippet>47</a>};
 <a href=#48 id=48 data-nosnippet>48</a><span class="kw">use </span>n0_future::{
@@ -543,7 +543,7 @@
 <a href=#543 id=543 data-nosnippet>543</a>
 <a href=#544 id=544 data-nosnippet>544</a>        <span class="kw">let </span>res = <span class="kw">loop </span>{
 <a href=#545 id=545 data-nosnippet>545</a>            <span class="kw">if let </span><span class="prelude-val">Some</span>(data) = state.pong_pending.take() {
-<a href=#546 id=546 data-nosnippet>546</a>                <span class="kw">let </span>fut = client_sink.send(ClientToServerMsg::Pong(data));
+<a href=#546 id=546 data-nosnippet>546</a>                <span class="kw">let </span>fut = client_sink.send(ClientToRelayMsg::Pong(data));
 <a href=#547 id=547 data-nosnippet>547</a>                <span class="self">self</span>.run_sending(fut, <span class="kw-2">&amp;mut </span>state, <span class="kw-2">&amp;mut </span>client_stream)
 <a href=#548 id=548 data-nosnippet>548</a>                    .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#549 id=549 data-nosnippet>549</a>            }
@@ -570,7 +570,7 @@
 <a href=#570 id=570 data-nosnippet>570</a>                }
 <a href=#571 id=571 data-nosnippet>571</a>                <span class="kw">_ </span>= ping_interval.tick() =&gt; {
 <a href=#572 id=572 data-nosnippet>572</a>                    <span class="kw">let </span>data = state.ping_tracker.new_ping();
-<a href=#573 id=573 data-nosnippet>573</a>                    <span class="kw">let </span>fut = client_sink.send(ClientToServerMsg::Ping(data));
+<a href=#573 id=573 data-nosnippet>573</a>                    <span class="kw">let </span>fut = client_sink.send(ClientToRelayMsg::Ping(data));
 <a href=#574 id=574 data-nosnippet>574</a>                    <span class="self">self</span>.run_sending(fut, <span class="kw-2">&amp;mut </span>state, <span class="kw-2">&amp;mut </span>client_stream).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#575 id=575 data-nosnippet>575</a>                }
 <a href=#576 id=576 data-nosnippet>576</a>                msg = <span class="self">self</span>.inbox.recv() =&gt; {
@@ -586,7 +586,7 @@
 <a href=#586 id=586 data-nosnippet>586</a>                            <span class="kw">match </span>client_stream.local_addr() {
 <a href=#587 id=587 data-nosnippet>587</a>                                <span class="prelude-val">Some</span>(addr) <span class="kw">if </span>local_ips.contains(<span class="kw-2">&amp;</span>addr.ip()) =&gt; {
 <a href=#588 id=588 data-nosnippet>588</a>                                    <span class="kw">let </span>data = state.ping_tracker.new_ping();
-<a href=#589 id=589 data-nosnippet>589</a>                                    <span class="kw">let </span>fut = client_sink.send(ClientToServerMsg::Ping(data));
+<a href=#589 id=589 data-nosnippet>589</a>                                    <span class="kw">let </span>fut = client_sink.send(ClientToRelayMsg::Ping(data));
 <a href=#590 id=590 data-nosnippet>590</a>                                    <span class="self">self</span>.run_sending(fut, <span class="kw-2">&amp;mut </span>state, <span class="kw-2">&amp;mut </span>client_stream).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#591 id=591 data-nosnippet>591</a>                                }
 <a href=#592 id=592 data-nosnippet>592</a>                                <span class="prelude-val">Some</span>(<span class="kw">_</span>) =&gt; <span class="kw">break </span><span class="prelude-val">Err</span>(LocalIpInvalidSnafu.build()),
@@ -602,7 +602,7 @@
 <a href=#602 id=602 data-nosnippet>602</a>                        </span>ActiveRelayMessage::PingServer(sender) =&gt; {
 <a href=#603 id=603 data-nosnippet>603</a>                            <span class="kw">let </span>data = rand::random();
 <a href=#604 id=604 data-nosnippet>604</a>                            state.test_pong = <span class="prelude-val">Some</span>((data, sender));
-<a href=#605 id=605 data-nosnippet>605</a>                            <span class="kw">let </span>fut = client_sink.send(ClientToServerMsg::Ping(data));
+<a href=#605 id=605 data-nosnippet>605</a>                            <span class="kw">let </span>fut = client_sink.send(ClientToRelayMsg::Ping(data));
 <a href=#606 id=606 data-nosnippet>606</a>                            <span class="self">self</span>.run_sending(fut, <span class="kw-2">&amp;mut </span>state, <span class="kw-2">&amp;mut </span>client_stream).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#607 id=607 data-nosnippet>607</a>                        }
 <a href=#608 id=608 data-nosnippet>608</a>                    }
@@ -625,10 +625,10 @@
 <a href=#625 id=625 data-nosnippet>625</a>                    <span class="comment">// TODO(frando): can we avoid the clone here?
 <a href=#626 id=626 data-nosnippet>626</a>                    </span><span class="kw">let </span>metrics = <span class="self">self</span>.metrics.clone();
 <a href=#627 id=627 data-nosnippet>627</a>                    <span class="kw">let </span>packet_iter = batch.into_iter().map(|item| {
-<a href=#628 id=628 data-nosnippet>628</a>                            <span class="prelude-val">Ok</span>(ClientToServerMsg::SendDatagrams { dst_node_id: item.remote_node, datagrams: item.datagrams })
+<a href=#628 id=628 data-nosnippet>628</a>                            <span class="prelude-val">Ok</span>(ClientToRelayMsg::Datagrams { dst_node_id: item.remote_node, datagrams: item.datagrams })
 <a href=#629 id=629 data-nosnippet>629</a>                        });
 <a href=#630 id=630 data-nosnippet>630</a>                    <span class="kw">let </span><span class="kw-2">mut </span>packet_stream = n0_future::stream::iter(packet_iter).inspect(|m| {
-<a href=#631 id=631 data-nosnippet>631</a>                        <span class="kw">if let </span><span class="prelude-val">Ok</span>(ClientToServerMsg::SendDatagrams { dst_node_id: _node_id, datagrams }) = m {
+<a href=#631 id=631 data-nosnippet>631</a>                        <span class="kw">if let </span><span class="prelude-val">Ok</span>(ClientToRelayMsg::Datagrams { dst_node_id: _node_id, datagrams }) = m {
 <a href=#632 id=632 data-nosnippet>632</a>                            metrics.send_relay.inc_by(datagrams.contents.len() <span class="kw">as _</span>);
 <a href=#633 id=633 data-nosnippet>633</a>                        }
 <a href=#634 id=634 data-nosnippet>634</a>                    });
@@ -664,9 +664,9 @@
 <a href=#664 id=664 data-nosnippet>664</a>        res.map_err(|err| state.map_err(err))
 <a href=#665 id=665 data-nosnippet>665</a>    }
 <a href=#666 id=666 data-nosnippet>666</a>
-<a href=#667 id=667 data-nosnippet>667</a>    <span class="kw">fn </span>handle_relay_msg(<span class="kw-2">&amp;mut </span><span class="self">self</span>, msg: ServerToClientMsg, state: <span class="kw-2">&amp;mut </span>ConnectedRelayState) {
+<a href=#667 id=667 data-nosnippet>667</a>    <span class="kw">fn </span>handle_relay_msg(<span class="kw-2">&amp;mut </span><span class="self">self</span>, msg: RelayToClientMsg, state: <span class="kw-2">&amp;mut </span>ConnectedRelayState) {
 <a href=#668 id=668 data-nosnippet>668</a>        <span class="kw">match </span>msg {
-<a href=#669 id=669 data-nosnippet>669</a>            ServerToClientMsg::ReceivedDatagrams {
+<a href=#669 id=669 data-nosnippet>669</a>            RelayToClientMsg::Datagrams {
 <a href=#670 id=670 data-nosnippet>670</a>                remote_node_id,
 <a href=#671 id=671 data-nosnippet>671</a>                datagrams,
 <a href=#672 id=672 data-nosnippet>672</a>            } =&gt; {
@@ -690,11 +690,11 @@
 <a href=#690 id=690 data-nosnippet>690</a>                    <span class="macro">warn!</span>(<span class="string">"Dropping received relay packet: {err:#}"</span>);
 <a href=#691 id=691 data-nosnippet>691</a>                }
 <a href=#692 id=692 data-nosnippet>692</a>            }
-<a href=#693 id=693 data-nosnippet>693</a>            ServerToClientMsg::NodeGone(node_id) =&gt; {
+<a href=#693 id=693 data-nosnippet>693</a>            RelayToClientMsg::NodeGone(node_id) =&gt; {
 <a href=#694 id=694 data-nosnippet>694</a>                state.nodes_present.remove(<span class="kw-2">&amp;</span>node_id);
 <a href=#695 id=695 data-nosnippet>695</a>            }
-<a href=#696 id=696 data-nosnippet>696</a>            ServerToClientMsg::Ping(data) =&gt; state.pong_pending = <span class="prelude-val">Some</span>(data),
-<a href=#697 id=697 data-nosnippet>697</a>            ServerToClientMsg::Pong(data) =&gt; {
+<a href=#696 id=696 data-nosnippet>696</a>            RelayToClientMsg::Ping(data) =&gt; state.pong_pending = <span class="prelude-val">Some</span>(data),
+<a href=#697 id=697 data-nosnippet>697</a>            RelayToClientMsg::Pong(data) =&gt; {
 <a href=#698 id=698 data-nosnippet>698</a>                <span class="attr">#[cfg(test)]
 <a href=#699 id=699 data-nosnippet>699</a>                </span>{
 <a href=#700 id=700 data-nosnippet>700</a>                    <span class="kw">if let </span><span class="prelude-val">Some</span>((expected_data, sender)) = state.test_pong.take() {
@@ -708,10 +708,10 @@
 <a href=#708 id=708 data-nosnippet>708</a>                state.ping_tracker.pong_received(data);
 <a href=#709 id=709 data-nosnippet>709</a>                state.established = <span class="bool-val">true</span>;
 <a href=#710 id=710 data-nosnippet>710</a>            }
-<a href=#711 id=711 data-nosnippet>711</a>            ServerToClientMsg::Health { problem } =&gt; {
+<a href=#711 id=711 data-nosnippet>711</a>            RelayToClientMsg::Health { problem } =&gt; {
 <a href=#712 id=712 data-nosnippet>712</a>                <span class="macro">warn!</span>(<span class="string">"Relay server reports problem: {problem}"</span>);
 <a href=#713 id=713 data-nosnippet>713</a>            }
-<a href=#714 id=714 data-nosnippet>714</a>            ServerToClientMsg::Restarting { .. } =&gt; {
+<a href=#714 id=714 data-nosnippet>714</a>            RelayToClientMsg::Restarting { .. } =&gt; {
 <a href=#715 id=715 data-nosnippet>715</a>                <span class="macro">trace!</span>(<span class="string">"Ignoring {msg:?}"</span>)
 <a href=#716 id=716 data-nosnippet>716</a>            }
 <a href=#717 id=717 data-nosnippet>717</a>        }
