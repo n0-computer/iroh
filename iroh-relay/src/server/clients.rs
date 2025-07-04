@@ -9,16 +9,18 @@ use std::{
     },
 };
 
-use bytes::Bytes;
 use dashmap::DashMap;
 use iroh_base::NodeId;
 use tokio::sync::mpsc::error::TrySendError;
 use tracing::{debug, trace};
 
 use super::client::{Client, Config, ForwardPacketError};
-use crate::server::{
-    client::{PacketScope, SendError},
-    metrics::Metrics,
+use crate::{
+    protos::relay::Datagrams,
+    server::{
+        client::{PacketScope, SendError},
+        metrics::Metrics,
+    },
 };
 
 /// Manages the connections to all currently connected clients.
@@ -108,7 +110,7 @@ impl Clients {
     pub(super) fn send_packet(
         &self,
         dst: NodeId,
-        data: Bytes,
+        data: Datagrams,
         src: NodeId,
         metrics: &Metrics,
     ) -> Result<(), ForwardPacketError> {
@@ -148,7 +150,7 @@ impl Clients {
     pub(super) fn send_disco_packet(
         &self,
         dst: NodeId,
-        data: Bytes,
+        data: Datagrams,
         src: NodeId,
         metrics: &Metrics,
     ) -> Result<(), ForwardPacketError> {
@@ -192,32 +194,50 @@ impl Clients {
 mod tests {
     use std::time::Duration;
 
-    use bytes::Bytes;
     use iroh_base::SecretKey;
+    use n0_future::{Stream, StreamExt};
     use n0_snafu::{Result, ResultExt};
-    use tokio::io::DuplexStream;
-    use tokio_util::codec::{Framed, FramedRead};
 
     use super::*;
     use crate::{
-        protos::relay::{recv_frame, Frame, FrameType, RelayCodec},
-        server::streams::{MaybeTlsStream, RelayedStream},
+        client::conn::Conn,
+        protos::{common::FrameType, relay::RelayToClientMsg},
+        server::streams::RelayedStream,
     };
 
-    fn test_client_builder(key: NodeId) -> (Config, FramedRead<DuplexStream, RelayCodec>) {
-        let (test_io, io) = tokio::io::duplex(1024);
+    async fn recv_frame<
+        E: snafu::Error + Sync + Send + 'static,
+        S: Stream<Item = Result<RelayToClientMsg, E>> + Unpin,
+    >(
+        frame_type: FrameType,
+        mut stream: S,
+    ) -> Result<RelayToClientMsg> {
+        match stream.next().await {
+            Some(Ok(frame)) => {
+                if frame_type != frame.typ() {
+                    snafu::whatever!(
+                        "Unepxected frame, got {}, but expected {}",
+                        frame.typ(),
+                        frame_type
+                    );
+                }
+                Ok(frame)
+            }
+            Some(Err(err)) => Err(err).e(),
+            None => snafu::whatever!("Unexpected EOF, expected frame {frame_type}"),
+        }
+    }
+
+    fn test_client_builder(key: NodeId) -> (Config, Conn) {
+        let (server, client) = tokio::io::duplex(1024);
         (
             Config {
                 node_id: key,
-                stream: RelayedStream::Relay(Framed::new(
-                    MaybeTlsStream::Test(io),
-                    RelayCodec::test(),
-                )),
+                stream: RelayedStream::test(server),
                 write_timeout: Duration::from_secs(1),
                 channel_capacity: 10,
-                rate_limit: None,
             },
-            FramedRead::new(test_io, RelayCodec::test()),
+            Conn::test(client),
         )
     }
 
@@ -234,24 +254,24 @@ mod tests {
 
         // send packet
         let data = b"hello world!";
-        clients.send_packet(a_key, Bytes::from(&data[..]), b_key, &metrics)?;
-        let frame = recv_frame(FrameType::RecvPacket, &mut a_rw).await?;
+        clients.send_packet(a_key, Datagrams::from(&data[..]), b_key, &metrics)?;
+        let frame = recv_frame(FrameType::RelayToClientDatagrams, &mut a_rw).await?;
         assert_eq!(
             frame,
-            Frame::RecvPacket {
-                src_key: b_key,
-                content: data.to_vec().into(),
+            RelayToClientMsg::Datagrams {
+                remote_node_id: b_key,
+                datagrams: data.to_vec().into(),
             }
         );
 
         // send disco packet
-        clients.send_disco_packet(a_key, Bytes::from(&data[..]), b_key, &metrics)?;
-        let frame = recv_frame(FrameType::RecvPacket, &mut a_rw).await?;
+        clients.send_disco_packet(a_key, Datagrams::from(&data[..]), b_key, &metrics)?;
+        let frame = recv_frame(FrameType::RelayToClientDatagrams, &mut a_rw).await?;
         assert_eq!(
             frame,
-            Frame::RecvPacket {
-                src_key: b_key,
-                content: data.to_vec().into(),
+            RelayToClientMsg::Datagrams {
+                remote_node_id: b_key,
+                datagrams: data.to_vec().into(),
             }
         );
 
