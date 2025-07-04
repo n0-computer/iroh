@@ -10,7 +10,7 @@
 //!
 //! One way is via an explicitly sent challenge:
 //!
-//! 1. Once a websocket connection is opened, a client recieves a challenge (the [`ServerChallenge`] frame)
+//! 1. Once a websocket connection is opened, a client receives a challenge (the [`ServerChallenge`] frame)
 //! 2. The client sends back what is essentially a signature of that challenge with their secret key
 //!    that matches the NodeId they have, as well as the NodeId (the [`ClientAuth`] frame)
 //!

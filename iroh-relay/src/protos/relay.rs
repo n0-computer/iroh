@@ -1,6 +1,6 @@
 //! Common types between the [`super::handshake`] and [`super::send_recv`] protocols.
 //!
-//! Hosts the [`FrameType`] enum to make sure we're not accidentally re-using frame type
+//! Hosts the [`FrameType`] enum to make sure we're not accidentally reusing frame type
 //! integers for different frames.
 
 use bytes::{BufMut, Bytes};

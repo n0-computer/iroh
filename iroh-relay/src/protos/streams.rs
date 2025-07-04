@@ -1,4 +1,4 @@
-//! Implements logic for abstracing over a websocket stream that allows sending only [`Bytes`]-based
+//! Implements logic for abstracting over a websocket stream that allows sending only [`Bytes`]-based
 //! messages.
 use std::{
     pin::Pin,
