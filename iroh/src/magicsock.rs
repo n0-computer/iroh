@@ -2624,10 +2624,12 @@ mod tests {
         info!("stats: {:#?}", stats);
         // TODO: ensure panics in this function are reported ok
         if matches!(loss, ExpectedLoss::AlmostNone) {
-            assert!(
-                stats.path.lost_packets < 10,
-                "[receiver] should not loose many packets",
-            );
+            for (id, path) in &stats.paths {
+                assert!(
+                    path.lost_packets < 10,
+                    "[receiver] path {id:?} should not loose many packets",
+                );
+            }
         }
 
         info!("close");
@@ -2675,10 +2677,12 @@ mod tests {
         let stats = conn.stats();
         info!("stats: {:#?}", stats);
         if matches!(loss, ExpectedLoss::AlmostNone) {
-            assert!(
-                stats.path.lost_packets < 10,
-                "[sender] should not loose many packets",
-            );
+            for (id, path) in &stats.paths {
+                assert!(
+                    path.lost_packets < 10,
+                    "[sender] path {id:?} should not loose many packets",
+                );
+            }
         }
 
         info!("close");
