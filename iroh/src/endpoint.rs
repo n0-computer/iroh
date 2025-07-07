@@ -896,8 +896,7 @@ impl Endpoint {
     ///
     /// ```no_run
     /// # async fn wrapper() -> n0_snafu::Result {
-    /// use iroh::Endpoint;
-    /// use n0_watcher::Watcher;
+    /// use iroh::{Endpoint, Watcher};
     ///
     /// let endpoint = Endpoint::builder()
     ///     .alpns(vec![b"my-alpn".to_vec()])
@@ -966,9 +965,7 @@ impl Endpoint {
     ///
     /// To wait for a home relay connection to be established, use [`Watcher::initialized`]:
     /// ```no_run
-    /// use iroh::Endpoint;
-    /// use n0_future::StreamExt;
-    /// use n0_watcher::Watcher as _;
+    /// use iroh::{Endpoint, Watcher};
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
@@ -1003,14 +1000,12 @@ impl Endpoint {
     ///
     /// To get the first set of direct addresses use [`Watcher::initialized`]:
     /// ```no_run
-    /// use iroh::Endpoint;
-    /// use n0_future::StreamExt;
-    /// use n0_watcher::Watcher as _;
+    /// use iroh::{Endpoint, Watcher as _};
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
-    /// let mep = Endpoint::builder().bind().await.unwrap();
-    /// let _addrs = mep.direct_addresses().initialized().await.unwrap();
+    /// let ep = Endpoint::builder().bind().await.unwrap();
+    /// let _addrs = ep.direct_addresses().initialized().await.unwrap();
     /// # });
     /// ```
     ///
@@ -1039,9 +1034,7 @@ impl Endpoint {
     ///
     /// To get the first report use [`Watcher::initialized`]:
     /// ```no_run
-    /// use iroh::Endpoint;
-    /// use n0_future::StreamExt;
-    /// use n0_watcher::Watcher as _;
+    /// use iroh::{Endpoint, Watcher as _};
     ///
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
