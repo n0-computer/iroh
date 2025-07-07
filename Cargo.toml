@@ -40,3 +40,8 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(iroh_docsrs)", "cfg(iroh_l
 
 [workspace.lints.clippy]
 unused-async = "warn"
+
+
+[patch.crates-io]
+rustls = { git = "https://github.com/n0-computer/rustls", rev = "be02113e7837df60953d02c2bdd0f4634fef3a80" }
+netwatch = { git = "https://github.com/n0-computer/net-tools", branch = "feat-multipath" }
