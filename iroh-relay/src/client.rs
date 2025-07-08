@@ -249,7 +249,8 @@ impl ClientBuilder {
                 }
                 .build()
             })?
-            .limits(tokio_websockets::Limits::default().max_payload_len(Some(MAX_FRAME_SIZE)));
+            .limits(tokio_websockets::Limits::default().max_payload_len(Some(MAX_FRAME_SIZE)))
+            .config(tokio_websockets::Config::default().flush_threshold(usize::MAX));
         if let Some(client_auth) = KeyMaterialClientAuth::new(&self.secret_key, &stream) {
             debug!("Using TLS key export for relay client authentication");
             builder = builder
