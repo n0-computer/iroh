@@ -22,8 +22,8 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     pin::Pin,
     sync::{
-        Arc, Mutex, RwLock,
         atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, Mutex, RwLock,
     },
     task::{Context, Poll},
 };
@@ -33,24 +33,24 @@ use data_encoding::HEXLOWER;
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_relay::RelayMap;
 use n0_future::{
-    StreamExt,
     boxed::BoxStream,
     task::{self, AbortOnDropHandle},
     time::{self, Duration, Instant},
+    StreamExt,
 };
 use n0_watcher::{self, Watchable, Watcher};
 use nested_enum_utils::common_fields;
 use netwatch::netmon;
 #[cfg(not(wasm_browser))]
-use netwatch::{UdpSocket, ip::LocalAddresses};
-use quinn::{AsyncUdpSocket, ServerConfig};
+use netwatch::{ip::LocalAddresses, UdpSocket};
+use quinn::{AsyncUdpSocket, ServerConfig, WeakConnectionHandle};
 use rand::Rng;
 use smallvec::SmallVec;
 use snafu::{ResultExt, Snafu};
-use tokio::sync::{Mutex as AsyncMutex, mpsc};
+use tokio::sync::{mpsc, Mutex as AsyncMutex};
 use tokio_util::sync::CancellationToken;
 use tracing::{
-    Instrument, Level, debug, error, event, info, info_span, instrument, trace, trace_span, warn,
+    debug, error, event, info, info_span, instrument, trace, trace_span, warn, Instrument, Level,
 };
 use transports::LocalAddrsWatch;
 use url::Url;
@@ -72,7 +72,7 @@ use crate::{
     defaults::timeouts::NET_REPORT_TIMEOUT,
     disco::{self, SendAddr},
     discovery::{Discovery, DiscoveryItem, DiscoverySubscribers, NodeData, UserData},
-    key::{DecryptionError, SharedSecret, public_ed_box, secret_ed_box},
+    key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
     metrics::EndpointMetrics,
     net_report::{self, IfStateDetails, IpMappedAddresses, Report},
 };
@@ -195,6 +195,9 @@ pub(crate) struct MagicSock {
     ipv6_reported: Arc<AtomicBool>,
     /// Tracks the networkmap node entity for each node discovery key.
     node_map: NodeMap,
+    /// Tracks existing connections
+    connection_map: ConnectionMap,
+
     /// Tracks the mapped IP addresses
     ip_mapped_addrs: IpMappedAddresses,
     /// Local addresses
@@ -219,6 +222,22 @@ pub(crate) struct MagicSock {
 
     /// Metrics
     pub(crate) metrics: EndpointMetrics,
+}
+
+#[derive(Default, Debug)]
+struct ConnectionMap {
+    map: std::sync::Mutex<BTreeMap<NodeId, Vec<WeakConnectionHandle>>>,
+}
+
+impl ConnectionMap {
+    fn insert(&self, remote: NodeId, handle: WeakConnectionHandle) {
+        self.map
+            .lock()
+            .expect("poisoned")
+            .entry(remote)
+            .or_default()
+            .push(handle);
+    }
 }
 
 #[allow(missing_docs)]
@@ -269,6 +288,10 @@ impl MagicSock {
     /// Get the cached version of addresses.
     pub(crate) fn local_addr(&self) -> Vec<transports::Addr> {
         self.local_addrs_watch.get().expect("disconnected")
+    }
+
+    pub(crate) fn register_connection(&self, remote: NodeId, conn: WeakConnectionHandle) {
+        self.connection_map.insert(remote, conn);
     }
 
     #[cfg(not(wasm_browser))]
@@ -393,8 +416,45 @@ impl MagicSock {
             }
         }
         if !addr.is_empty() {
+            // Add addr to the internal NodeMap
             self.node_map
-                .add_node_addr(addr, source, &self.metrics.magicsock);
+                .add_node_addr(addr.clone(), source, &self.metrics.magicsock);
+
+            // Add paths to the existing connections
+            {
+                let mut map = self.connection_map.map.lock().expect("poisoned");
+                let mut to_delete = Vec::new();
+                if let Some(conns) = map.get_mut(&addr.node_id) {
+                    for (i, conn) in conns.into_iter().enumerate() {
+                        if let Some(conn) = conn.upgrade() {
+                            for addr in addr.direct_addresses() {
+                                let conn = conn.clone();
+                                let addr = *addr;
+                                task::spawn(async move {
+                                    if let Err(err) = conn
+                                        .open_path(addr, quinn_proto::PathStatus::Available)
+                                        .await
+                                    {
+                                        warn!("failed to open path {:?}", err);
+                                    }
+                                });
+                            }
+                            // TODO: add relay path as mapped addr
+                        } else {
+                            to_delete.push(i);
+                        }
+                    }
+                    // cleanup dead connections
+                    let mut i = 0;
+                    conns.retain(|_| {
+                        let remove = to_delete.contains(&i);
+                        i += 1;
+
+                        !remove
+                    });
+                }
+            }
+
             Ok(())
         } else if pruned != 0 {
             Err(EmptyPrunedSnafu { pruned }.build())
@@ -505,8 +565,8 @@ impl MagicSock {
         let mut active_paths = SmallVec::<[_; 3]>::new();
 
         match MappedAddr::from(transmit.destination) {
-            MappedAddr::None(dest) => {
-                error!(%dest, "Cannot convert to a mapped address.");
+            MappedAddr::None(addr) => {
+                active_paths.push(transports::Addr::from(addr));
             }
             MappedAddr::NodeId(dest) => {
                 trace!(
@@ -523,15 +583,14 @@ impl MagicSock {
                     self.ipv6_reported.load(Ordering::Relaxed),
                     &self.metrics.magicsock,
                 ) {
-                    Some((node_id, udp_addr, relay_url, ping_actions)) => {
+                    Some((node_id, _udp_addr, relay_url, ping_actions)) => {
                         if !ping_actions.is_empty() {
                             self.actor_sender
                                 .try_send(ActorMessage::PingActions(ping_actions))
                                 .ok();
                         }
-                        if let Some(addr) = udp_addr {
-                            active_paths.push(transports::Addr::from(addr));
-                        }
+                        // NodeId mapped addrs are only used for relays, currently.
+                        // IP based addrs will have been added as individual paths
                         if let Some(url) = relay_url {
                             active_paths.push(transports::Addr::Relay(url, node_id));
                         }
@@ -1293,6 +1352,7 @@ impl Handle {
             actor_sender: actor_sender.clone(),
             ipv6_reported,
             node_map,
+            connection_map: Default::default(),
             ip_mapped_addrs: ip_mapped_addrs.clone(),
             discovery,
             discovery_user_data: RwLock::new(discovery_user_data),
@@ -2411,23 +2471,22 @@ mod tests {
 
     use data_encoding::HEXLOWER;
     use iroh_base::{NodeAddr, NodeId, PublicKey};
-    use n0_future::{StreamExt, time};
+    use n0_future::{time, StreamExt};
     use n0_snafu::{Result, ResultExt};
     use n0_watcher::Watcher;
     use quinn::ServerConfig;
     use rand::{Rng, RngCore};
     use tokio::task::JoinSet;
     use tokio_util::task::AbortOnDropHandle;
-    use tracing::{Instrument, error, info, info_span, instrument};
+    use tracing::{error, info, info_span, instrument, Instrument};
     use tracing_test::traced_test;
 
     use super::{NodeIdMappedAddr, Options};
     use crate::{
-        Endpoint, RelayMap, RelayMode, SecretKey,
         dns::DnsResolver,
         endpoint::{DirectAddr, PathSelection, Source},
-        magicsock::{Handle, MagicSock, node_map},
-        tls,
+        magicsock::{node_map, Handle, MagicSock},
+        tls, Endpoint, RelayMap, RelayMode, SecretKey,
     };
 
     const ALPN: &[u8] = b"n0/test/1";
@@ -3273,11 +3332,10 @@ mod tests {
             .magic_sock()
             .add_node_addr(empty_addr, node_map::Source::App)
             .unwrap_err();
-        assert!(
-            err.to_string()
-                .to_lowercase()
-                .contains("empty addressing info")
-        );
+        assert!(err
+            .to_string()
+            .to_lowercase()
+            .contains("empty addressing info"));
 
         // relay url only
         let addr = NodeAddr {
