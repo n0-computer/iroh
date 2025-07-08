@@ -772,15 +772,13 @@ impl Endpoint {
             client_config
         };
 
+        // TODO: race available addresses, this is currently only using the relay addr to connect
+        let dest_addr = mapped_addr.private_socket_addr();
         let server_name = &tls::name::encode(node_id);
         let connect = self
             .msock
             .endpoint()
-            .connect_with(
-                client_config,
-                mapped_addr.private_socket_addr(),
-                server_name,
-            )
+            .connect_with(client_config, dest_addr, server_name)
             .context(QuinnSnafu)?;
 
         Ok(Connecting {
