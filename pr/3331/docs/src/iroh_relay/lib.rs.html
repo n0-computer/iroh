@@ -49,18 +49,31 @@
 <a href=#49 id=49 data-nosnippet>49</a><span class="kw">pub mod </span>node_info;
 <a href=#50 id=50 data-nosnippet>50</a>
 <a href=#51 id=51 data-nosnippet>51</a><span class="kw">pub use </span>protos::relay::MAX_PACKET_SIZE;
-<a href=#52 id=52 data-nosnippet>52</a>
-<a href=#53 id=53 data-nosnippet>53</a><span class="kw">pub use </span><span class="self">self</span>::{
-<a href=#54 id=54 data-nosnippet>54</a>    ping_tracker::PingTracker,
-<a href=#55 id=55 data-nosnippet>55</a>    relay_map::{RelayMap, RelayNode, RelayQuicConfig},
-<a href=#56 id=56 data-nosnippet>56</a>};
-<a href=#57 id=57 data-nosnippet>57</a>
-<a href=#58 id=58 data-nosnippet>58</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">trait </span>ExportKeyingMaterial {
-<a href=#59 id=59 data-nosnippet>59</a>    <span class="attr">#[cfg_attr(wasm_browser, allow(unused))]
-<a href=#60 id=60 data-nosnippet>60</a>    </span><span class="kw">fn </span>export_keying_material&lt;T: AsMut&lt;[u8]&gt;&gt;(
-<a href=#61 id=61 data-nosnippet>61</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#62 id=62 data-nosnippet>62</a>        output: T,
-<a href=#63 id=63 data-nosnippet>63</a>        label: <span class="kw-2">&amp;</span>[u8],
-<a href=#64 id=64 data-nosnippet>64</a>        context: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>[u8]&gt;,
-<a href=#65 id=65 data-nosnippet>65</a>    ) -&gt; <span class="prelude-ty">Option</span>&lt;T&gt;;
-<a href=#66 id=66 data-nosnippet>66</a>}</code></pre></div></section></main></body></html>
+<a href=#52 id=52 data-nosnippet>52</a><span class="kw">use </span>tokio::io::{AsyncWrite, BufWriter};
+<a href=#53 id=53 data-nosnippet>53</a>
+<a href=#54 id=54 data-nosnippet>54</a><span class="kw">pub use </span><span class="self">self</span>::{
+<a href=#55 id=55 data-nosnippet>55</a>    ping_tracker::PingTracker,
+<a href=#56 id=56 data-nosnippet>56</a>    relay_map::{RelayMap, RelayNode, RelayQuicConfig},
+<a href=#57 id=57 data-nosnippet>57</a>};
+<a href=#58 id=58 data-nosnippet>58</a>
+<a href=#59 id=59 data-nosnippet>59</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">trait </span>ExportKeyingMaterial {
+<a href=#60 id=60 data-nosnippet>60</a>    <span class="attr">#[cfg_attr(wasm_browser, allow(unused))]
+<a href=#61 id=61 data-nosnippet>61</a>    </span><span class="kw">fn </span>export_keying_material&lt;T: AsMut&lt;[u8]&gt;&gt;(
+<a href=#62 id=62 data-nosnippet>62</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#63 id=63 data-nosnippet>63</a>        output: T,
+<a href=#64 id=64 data-nosnippet>64</a>        label: <span class="kw-2">&amp;</span>[u8],
+<a href=#65 id=65 data-nosnippet>65</a>        context: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>[u8]&gt;,
+<a href=#66 id=66 data-nosnippet>66</a>    ) -&gt; <span class="prelude-ty">Option</span>&lt;T&gt;;
+<a href=#67 id=67 data-nosnippet>67</a>}
+<a href=#68 id=68 data-nosnippet>68</a>
+<a href=#69 id=69 data-nosnippet>69</a><span class="kw">impl</span>&lt;IO: ExportKeyingMaterial + AsyncWrite&gt; ExportKeyingMaterial <span class="kw">for </span>BufWriter&lt;IO&gt; {
+<a href=#70 id=70 data-nosnippet>70</a>    <span class="kw">fn </span>export_keying_material&lt;T: AsMut&lt;[u8]&gt;&gt;(
+<a href=#71 id=71 data-nosnippet>71</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#72 id=72 data-nosnippet>72</a>        output: T,
+<a href=#73 id=73 data-nosnippet>73</a>        label: <span class="kw-2">&amp;</span>[u8],
+<a href=#74 id=74 data-nosnippet>74</a>        context: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>[u8]&gt;,
+<a href=#75 id=75 data-nosnippet>75</a>    ) -&gt; <span class="prelude-ty">Option</span>&lt;T&gt; {
+<a href=#76 id=76 data-nosnippet>76</a>        <span class="self">self</span>.get_ref()
+<a href=#77 id=77 data-nosnippet>77</a>            .export_keying_material(output, label, context)
+<a href=#78 id=78 data-nosnippet>78</a>    }
+<a href=#79 id=79 data-nosnippet>79</a>}</code></pre></div></section></main></body></html>
