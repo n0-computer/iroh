@@ -442,11 +442,20 @@ impl MagicSock {
                         let conn = conn.clone();
                         let addr = *addr;
                         task::spawn(async move {
-                            if let Err(err) = conn
+                            match conn
                                 .open_path(addr, quinn_proto::PathStatus::Available)
                                 .await
                             {
-                                warn!("failed to open path {:?}", err);
+                                Ok(path) => {
+                                    path.set_max_idle_timeout(Some(
+                                        ENDPOINTS_FRESH_ENOUGH_DURATION,
+                                    ))
+                                    .ok();
+                                    path.set_keep_alive_interval(Some(HEARTBEAT_INTERVAL)).ok();
+                                }
+                                Err(err) => {
+                                    warn!("failed to open path {:?}", err);
+                                }
                             }
                         });
                     }
