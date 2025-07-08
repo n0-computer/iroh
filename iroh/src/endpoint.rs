@@ -1771,6 +1771,17 @@ impl Future for Connecting {
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
             Poll::Ready(Ok(inner)) => {
                 let conn = Connection { inner };
+
+                // Grab the remote identity and register this connection
+
+                if let Some(remote) = *this.remote_node_id {
+                    let weak_handle = conn.inner.weak_handle();
+                    this.ep.msock.register_connection(remote, weak_handle);
+                } else if let Ok(remote) = conn.remote_node_id() {
+                    let weak_handle = conn.inner.weak_handle();
+                    this.ep.msock.register_connection(remote, weak_handle);
+                }
+
                 try_send_rtt_msg(&conn, this.ep, *this.remote_node_id);
                 Poll::Ready(Ok(conn))
             }
