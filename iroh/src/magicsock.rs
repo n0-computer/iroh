@@ -43,7 +43,7 @@ use nested_enum_utils::common_fields;
 use netwatch::netmon;
 #[cfg(not(wasm_browser))]
 use netwatch::{UdpSocket, ip::LocalAddresses};
-use quinn::{AsyncUdpSocket, ServerConfig};
+use quinn::{AsyncUdpSocket, ServerConfig, WeakConnectionHandle};
 use rand::Rng;
 use smallvec::SmallVec;
 use snafu::{ResultExt, Snafu};
@@ -195,6 +195,9 @@ pub(crate) struct MagicSock {
     ipv6_reported: Arc<AtomicBool>,
     /// Tracks the networkmap node entity for each node discovery key.
     node_map: NodeMap,
+    /// Tracks existing connections
+    connection_map: ConnectionMap,
+
     /// Tracks the mapped IP addresses
     ip_mapped_addrs: IpMappedAddresses,
     /// Local addresses
@@ -219,6 +222,22 @@ pub(crate) struct MagicSock {
 
     /// Metrics
     pub(crate) metrics: EndpointMetrics,
+}
+
+#[derive(Default, Debug)]
+struct ConnectionMap {
+    map: std::sync::Mutex<BTreeMap<NodeId, Vec<WeakConnectionHandle>>>,
+}
+
+impl ConnectionMap {
+    fn insert(&self, remote: NodeId, handle: WeakConnectionHandle) {
+        self.map
+            .lock()
+            .expect("poisoned")
+            .entry(remote)
+            .or_default()
+            .push(handle);
+    }
 }
 
 #[allow(missing_docs)]
@@ -269,6 +288,10 @@ impl MagicSock {
     /// Get the cached version of addresses.
     pub(crate) fn local_addr(&self) -> Vec<transports::Addr> {
         self.local_addrs_watch.clone().get()
+    }
+
+    pub(crate) fn register_connection(&self, remote: NodeId, conn: WeakConnectionHandle) {
+        self.connection_map.insert(remote, conn);
     }
 
     #[cfg(not(wasm_browser))]
@@ -393,8 +416,45 @@ impl MagicSock {
             }
         }
         if !addr.is_empty() {
+            // Add addr to the internal NodeMap
             self.node_map
-                .add_node_addr(addr, source, &self.metrics.magicsock);
+                .add_node_addr(addr.clone(), source, &self.metrics.magicsock);
+
+            // Add paths to the existing connections
+            {
+                let mut map = self.connection_map.map.lock().expect("poisoned");
+                let mut to_delete = Vec::new();
+                if let Some(conns) = map.get_mut(&addr.node_id) {
+                    for (i, conn) in conns.into_iter().enumerate() {
+                        if let Some(conn) = conn.upgrade() {
+                            for addr in addr.direct_addresses() {
+                                let conn = conn.clone();
+                                let addr = *addr;
+                                task::spawn(async move {
+                                    if let Err(err) = conn
+                                        .open_path(addr, quinn_proto::PathStatus::Available)
+                                        .await
+                                    {
+                                        warn!("failed to open path {:?}", err);
+                                    }
+                                });
+                            }
+                            // TODO: add relay path as mapped addr
+                        } else {
+                            to_delete.push(i);
+                        }
+                    }
+                    // cleanup dead connections
+                    let mut i = 0;
+                    conns.retain(|_| {
+                        let remove = to_delete.contains(&i);
+                        i += 1;
+
+                        !remove
+                    });
+                }
+            }
+
             Ok(())
         } else if pruned != 0 {
             Err(EmptyPrunedSnafu { pruned }.build())
@@ -505,8 +565,8 @@ impl MagicSock {
         let mut active_paths = SmallVec::<[_; 3]>::new();
 
         match MappedAddr::from(transmit.destination) {
-            MappedAddr::None(dest) => {
-                error!(%dest, "Cannot convert to a mapped address.");
+            MappedAddr::None(addr) => {
+                active_paths.push(transports::Addr::from(addr));
             }
             MappedAddr::NodeId(dest) => {
                 trace!(
@@ -523,15 +583,14 @@ impl MagicSock {
                     self.ipv6_reported.load(Ordering::Relaxed),
                     &self.metrics.magicsock,
                 ) {
-                    Some((node_id, udp_addr, relay_url, ping_actions)) => {
+                    Some((node_id, _udp_addr, relay_url, ping_actions)) => {
                         if !ping_actions.is_empty() {
                             self.actor_sender
                                 .try_send(ActorMessage::PingActions(ping_actions))
                                 .ok();
                         }
-                        if let Some(addr) = udp_addr {
-                            active_paths.push(transports::Addr::from(addr));
-                        }
+                        // NodeId mapped addrs are only used for relays, currently.
+                        // IP based addrs will have been added as individual paths
                         if let Some(url) = relay_url {
                             active_paths.push(transports::Addr::Relay(url, node_id));
                         }
@@ -1298,6 +1357,7 @@ impl Handle {
             actor_sender: actor_sender.clone(),
             ipv6_reported,
             node_map,
+            connection_map: Default::default(),
             ip_mapped_addrs: ip_mapped_addrs.clone(),
             discovery,
             discovery_user_data: RwLock::new(discovery_user_data),
