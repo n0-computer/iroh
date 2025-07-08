@@ -421,45 +421,48 @@ impl MagicSock {
                 .add_node_addr(addr.clone(), source, &self.metrics.magicsock);
 
             // Add paths to the existing connections
-            {
-                let mut map = self.connection_map.map.lock().expect("poisoned");
-                let mut to_delete = Vec::new();
-                if let Some(conns) = map.get_mut(&addr.node_id) {
-                    for (i, conn) in conns.into_iter().enumerate() {
-                        if let Some(conn) = conn.upgrade() {
-                            for addr in addr.direct_addresses() {
-                                let conn = conn.clone();
-                                let addr = *addr;
-                                task::spawn(async move {
-                                    if let Err(err) = conn
-                                        .open_path(addr, quinn_proto::PathStatus::Available)
-                                        .await
-                                    {
-                                        warn!("failed to open path {:?}", err);
-                                    }
-                                });
-                            }
-                            // TODO: add relay path as mapped addr
-                        } else {
-                            to_delete.push(i);
-                        }
-                    }
-                    // cleanup dead connections
-                    let mut i = 0;
-                    conns.retain(|_| {
-                        let remove = to_delete.contains(&i);
-                        i += 1;
-
-                        !remove
-                    });
-                }
-            }
+            self.add_paths(addr);
 
             Ok(())
         } else if pruned != 0 {
             Err(EmptyPrunedSnafu { pruned }.build())
         } else {
             Err(EmptySnafu.build())
+        }
+    }
+
+    /// Adds all available addresses in the given `addr` as paths
+    fn add_paths(&self, addr: NodeAddr) {
+        let mut map = self.connection_map.map.lock().expect("poisoned");
+        let mut to_delete = Vec::new();
+        if let Some(conns) = map.get_mut(&addr.node_id) {
+            for (i, conn) in conns.into_iter().enumerate() {
+                if let Some(conn) = conn.upgrade() {
+                    for addr in addr.direct_addresses() {
+                        let conn = conn.clone();
+                        let addr = *addr;
+                        task::spawn(async move {
+                            if let Err(err) = conn
+                                .open_path(addr, quinn_proto::PathStatus::Available)
+                                .await
+                            {
+                                warn!("failed to open path {:?}", err);
+                            }
+                        });
+                    }
+                    // TODO: add relay path as mapped addr
+                } else {
+                    to_delete.push(i);
+                }
+            }
+            // cleanup dead connections
+            let mut i = 0;
+            conns.retain(|_| {
+                let remove = to_delete.contains(&i);
+                i += 1;
+
+                !remove
+            });
         }
     }
 
@@ -873,9 +876,18 @@ impl MagicSock {
                         return;
                     }
                 }
+
+                // Add new addresses as paths
+                self.add_paths(NodeAddr {
+                    node_id: sender,
+                    relay_url: None,
+                    direct_addresses: cm.my_numbers.iter().copied().collect(),
+                });
+
                 let ping_actions =
                     self.node_map
                         .handle_call_me_maybe(sender, cm, &self.metrics.magicsock);
+
                 for action in ping_actions {
                     match action {
                         PingAction::SendCallMeMaybe { .. } => {
