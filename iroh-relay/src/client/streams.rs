@@ -87,6 +87,15 @@ impl AsyncWrite for MaybeTlsStreamChained {
             Self::Mem(stream) => Pin::new(stream).poll_write_vectored(cx, bufs),
         }
     }
+
+    fn is_write_vectored(&self) -> bool {
+        match self {
+            Self::Raw(stream) => stream.get_ref().1.is_write_vectored(),
+            Self::Tls(stream) => stream.get_ref().1.is_write_vectored(),
+            #[cfg(all(test, feature = "server"))]
+            Self::Mem(stream) => stream.is_write_vectored(),
+        }
+    }
 }
 
 pub fn downcast_upgrade(upgraded: Upgraded) -> Option<MaybeTlsStreamChained> {
@@ -250,6 +259,7 @@ impl<IO: AsyncRead + AsyncWrite + Unpin> AsyncWrite for MaybeTlsStream<IO> {
             Self::Tls(stream) => Pin::new(stream).poll_shutdown(cx),
         }
     }
+
     fn poll_write_vectored(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -259,21 +269,12 @@ impl<IO: AsyncRead + AsyncWrite + Unpin> AsyncWrite for MaybeTlsStream<IO> {
             Self::Raw(stream) => Pin::new(stream).poll_write_vectored(cx, bufs),
             Self::Tls(stream) => Pin::new(stream).poll_write_vectored(cx, bufs),
         }
-        }
     }
 
-impl MaybeTlsStream<TcpStream> {
-    pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
+    fn is_write_vectored(&self) -> bool {
         match self {
-            Self::Raw(s) => s.local_addr(),
-            Self::Tls(s) => s.get_ref().0.local_addr(),
-        }
-    }
-
-    pub fn peer_addr(&self) -> std::io::Result<SocketAddr> {
-        match self {
-            Self::Raw(s) => s.peer_addr(),
-            Self::Tls(s) => s.get_ref().0.peer_addr(),
+            Self::Raw(stream) => stream.is_write_vectored(),
+            Self::Tls(stream) => stream.is_write_vectored(),
         }
     }
 }

@@ -190,4 +190,13 @@ impl AsyncWrite for MaybeTlsStream {
             MaybeTlsStream::Test(ref mut s) => Pin::new(s).poll_write_vectored(cx, bufs),
         }
     }
+
+    fn is_write_vectored(&self) -> bool {
+        match self {
+            MaybeTlsStream::Plain(s) => s.is_write_vectored(),
+            MaybeTlsStream::Tls(s) => s.is_write_vectored(),
+            #[cfg(test)]
+            MaybeTlsStream::Test(s) => s.is_write_vectored(),
+        }
+    }
 }
