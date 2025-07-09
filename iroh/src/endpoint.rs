@@ -119,6 +119,7 @@ pub struct Builder {
     addr_v6: Option<SocketAddrV6>,
     #[cfg(any(test, feature = "test-utils"))]
     path_selection: PathSelection,
+    metrics: EndpointMetrics,
 }
 
 impl Default for Builder {
@@ -144,6 +145,7 @@ impl Default for Builder {
             addr_v6: None,
             #[cfg(any(test, feature = "test-utils"))]
             path_selection: PathSelection::default(),
+            metrics: EndpointMetrics::default(),
         }
     }
 }
@@ -188,8 +190,6 @@ impl Builder {
             }
         };
 
-        let metrics = EndpointMetrics::default();
-
         let msock_opts = magicsock::Options {
             addr_v4: self.addr_v4,
             addr_v6: self.addr_v6,
@@ -207,7 +207,7 @@ impl Builder {
             insecure_skip_relay_cert_verify: self.insecure_skip_relay_cert_verify,
             #[cfg(any(test, feature = "test-utils"))]
             path_selection: self.path_selection,
-            metrics,
+            metrics: self.metrics,
         };
 
         Endpoint::bind(static_config, msock_opts).await
@@ -488,6 +488,12 @@ impl Builder {
     #[cfg(any(test, feature = "test-utils"))]
     pub fn path_selection(mut self, path_selection: PathSelection) -> Self {
         self.path_selection = path_selection;
+        self
+    }
+
+    /// TODO(matheus23): Talk about setting the metrics struct for common metrics aggregation
+    pub fn metrics(mut self, metrics: EndpointMetrics) -> Self {
+        self.metrics = metrics;
         self
     }
 }

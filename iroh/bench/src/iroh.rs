@@ -6,6 +6,7 @@ use std::{
 use bytes::Bytes;
 use iroh::{
     endpoint::{Connection, ConnectionError, RecvStream, SendStream, TransportConfig},
+    metrics::EndpointMetrics,
     Endpoint, NodeAddr, RelayMode, RelayUrl,
 };
 use n0_snafu::{Result, ResultExt};
@@ -23,6 +24,7 @@ pub fn server_endpoint(
     rt: &tokio::runtime::Runtime,
     relay_url: &Option<RelayUrl>,
     opt: &Opt,
+    metrics: EndpointMetrics,
 ) -> (NodeAddr, Endpoint) {
     let _guard = rt.enter();
     rt.block_on(async move {
@@ -46,6 +48,7 @@ pub fn server_endpoint(
             .then_some(iroh::RelayProtocol::Websocket)
             .unwrap_or(iroh::RelayProtocol::Relay);
         let ep = builder
+            .metrics(metrics)
             .alpns(vec![ALPN.to_vec()])
             .relay_mode(relay_mode)
             .relay_conn_protocol(protocol)
@@ -73,9 +76,10 @@ pub async fn client(
     server_addr: NodeAddr,
     relay_url: Option<RelayUrl>,
     opt: Opt,
+    metrics: EndpointMetrics,
 ) -> Result<ClientStats> {
     let client_start = std::time::Instant::now();
-    let (endpoint, connection) = connect_client(server_addr, relay_url, opt).await?;
+    let (endpoint, connection) = connect_client(server_addr, relay_url, opt, metrics).await?;
     let client_connect_time = client_start.elapsed();
     let mut res = client_handler(
         EndpointSelector::Iroh(endpoint),
@@ -92,6 +96,7 @@ pub async fn connect_client(
     server_addr: NodeAddr,
     relay_url: Option<RelayUrl>,
     opt: Opt,
+    metrics: EndpointMetrics,
 ) -> Result<(Endpoint, Connection)> {
     let relay_mode = relay_url
         .clone()
@@ -112,6 +117,7 @@ pub async fn connect_client(
         .then_some(iroh::RelayProtocol::Websocket)
         .unwrap_or(iroh::RelayProtocol::Relay);
     let endpoint = builder
+        .metrics(metrics)
         .alpns(vec![ALPN.to_vec()])
         .relay_mode(relay_mode)
         .relay_conn_protocol(protocol)
