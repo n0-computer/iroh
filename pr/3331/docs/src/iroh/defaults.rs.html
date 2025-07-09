@@ -86,48 +86,46 @@
 <a href=#86 id=86 data-nosnippet>86</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
 <a href=#87 id=87 data-nosnippet>87</a>
 <a href=#88 id=88 data-nosnippet>88</a>    <span class="doccomment">/// Hostname of the default NA relay.
-<a href=#89 id=89 data-nosnippet>89</a>    </span><span class="comment">// TODO(ramfox): for `0.91` release, make sure we have canary staging relays
-<a href=#90 id=90 data-nosnippet>90</a>    </span><span class="kw">pub const </span>NA_RELAY_HOSTNAME: <span class="kw-2">&amp;</span>str = <span class="string">"use1-1.relay.n0.iroh-canary.iroh.link."</span>;
-<a href=#91 id=91 data-nosnippet>91</a>    <span class="doccomment">/// Hostname of the default EU relay.
-<a href=#92 id=92 data-nosnippet>92</a>    </span><span class="comment">// TODO(ramfox): for `0.91` release, make sure we have canary staging relays
-<a href=#93 id=93 data-nosnippet>93</a>    </span><span class="kw">pub const </span>EU_RELAY_HOSTNAME: <span class="kw-2">&amp;</span>str = <span class="string">"euc1-1.relay.n0.iroh-canary.iroh.link."</span>;
-<a href=#94 id=94 data-nosnippet>94</a>
-<a href=#95 id=95 data-nosnippet>95</a>    <span class="doccomment">/// Get the default [`RelayMap`].
-<a href=#96 id=96 data-nosnippet>96</a>    </span><span class="kw">pub fn </span>default_relay_map() -&gt; RelayMap {
-<a href=#97 id=97 data-nosnippet>97</a>        RelayMap::from_iter([default_na_relay_node(), default_eu_relay_node()])
-<a href=#98 id=98 data-nosnippet>98</a>    }
-<a href=#99 id=99 data-nosnippet>99</a>
-<a href=#100 id=100 data-nosnippet>100</a>    <span class="doccomment">/// Get the default [`RelayNode`] for NA.
-<a href=#101 id=101 data-nosnippet>101</a>    </span><span class="kw">pub fn </span>default_na_relay_node() -&gt; RelayNode {
-<a href=#102 id=102 data-nosnippet>102</a>        <span class="comment">// The default NA relay server run by number0.
-<a href=#103 id=103 data-nosnippet>103</a>        </span><span class="kw">let </span>url: Url = <span class="macro">format!</span>(<span class="string">"https://{NA_RELAY_HOSTNAME}"</span>)
-<a href=#104 id=104 data-nosnippet>104</a>            .parse()
-<a href=#105 id=105 data-nosnippet>105</a>            .expect(<span class="string">"default url"</span>);
-<a href=#106 id=106 data-nosnippet>106</a>        RelayNode {
-<a href=#107 id=107 data-nosnippet>107</a>            url: url.into(),
-<a href=#108 id=108 data-nosnippet>108</a>            quic: <span class="prelude-val">Some</span>(RelayQuicConfig::default()),
-<a href=#109 id=109 data-nosnippet>109</a>        }
-<a href=#110 id=110 data-nosnippet>110</a>    }
-<a href=#111 id=111 data-nosnippet>111</a>
-<a href=#112 id=112 data-nosnippet>112</a>    <span class="doccomment">/// Get the default [`RelayNode`] for EU.
-<a href=#113 id=113 data-nosnippet>113</a>    </span><span class="kw">pub fn </span>default_eu_relay_node() -&gt; RelayNode {
-<a href=#114 id=114 data-nosnippet>114</a>        <span class="comment">// The default EU relay server run by number0.
-<a href=#115 id=115 data-nosnippet>115</a>        </span><span class="kw">let </span>url: Url = <span class="macro">format!</span>(<span class="string">"https://{EU_RELAY_HOSTNAME}"</span>)
-<a href=#116 id=116 data-nosnippet>116</a>            .parse()
-<a href=#117 id=117 data-nosnippet>117</a>            .expect(<span class="string">"default_url"</span>);
-<a href=#118 id=118 data-nosnippet>118</a>        RelayNode {
-<a href=#119 id=119 data-nosnippet>119</a>            url: url.into(),
-<a href=#120 id=120 data-nosnippet>120</a>            quic: <span class="prelude-val">Some</span>(RelayQuicConfig::default()),
-<a href=#121 id=121 data-nosnippet>121</a>        }
-<a href=#122 id=122 data-nosnippet>122</a>    }
-<a href=#123 id=123 data-nosnippet>123</a>}
-<a href=#124 id=124 data-nosnippet>124</a>
-<a href=#125 id=125 data-nosnippet>125</a><span class="doccomment">/// Contains all timeouts that we use in `iroh`.
-<a href=#126 id=126 data-nosnippet>126</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>timeouts {
-<a href=#127 id=127 data-nosnippet>127</a>    <span class="kw">use </span>n0_future::time::Duration;
+<a href=#89 id=89 data-nosnippet>89</a>    </span><span class="kw">pub const </span>NA_RELAY_HOSTNAME: <span class="kw-2">&amp;</span>str = <span class="string">"staging-use1-1.relay.iroh.network."</span>;
+<a href=#90 id=90 data-nosnippet>90</a>    <span class="doccomment">/// Hostname of the default EU relay.
+<a href=#91 id=91 data-nosnippet>91</a>    </span><span class="kw">pub const </span>EU_RELAY_HOSTNAME: <span class="kw-2">&amp;</span>str = <span class="string">"staging-euw1-1.relay.iroh.network."</span>;
+<a href=#92 id=92 data-nosnippet>92</a>
+<a href=#93 id=93 data-nosnippet>93</a>    <span class="doccomment">/// Get the default [`RelayMap`].
+<a href=#94 id=94 data-nosnippet>94</a>    </span><span class="kw">pub fn </span>default_relay_map() -&gt; RelayMap {
+<a href=#95 id=95 data-nosnippet>95</a>        RelayMap::from_iter([default_na_relay_node(), default_eu_relay_node()])
+<a href=#96 id=96 data-nosnippet>96</a>    }
+<a href=#97 id=97 data-nosnippet>97</a>
+<a href=#98 id=98 data-nosnippet>98</a>    <span class="doccomment">/// Get the default [`RelayNode`] for NA.
+<a href=#99 id=99 data-nosnippet>99</a>    </span><span class="kw">pub fn </span>default_na_relay_node() -&gt; RelayNode {
+<a href=#100 id=100 data-nosnippet>100</a>        <span class="comment">// The default NA relay server run by number0.
+<a href=#101 id=101 data-nosnippet>101</a>        </span><span class="kw">let </span>url: Url = <span class="macro">format!</span>(<span class="string">"https://{NA_RELAY_HOSTNAME}"</span>)
+<a href=#102 id=102 data-nosnippet>102</a>            .parse()
+<a href=#103 id=103 data-nosnippet>103</a>            .expect(<span class="string">"default url"</span>);
+<a href=#104 id=104 data-nosnippet>104</a>        RelayNode {
+<a href=#105 id=105 data-nosnippet>105</a>            url: url.into(),
+<a href=#106 id=106 data-nosnippet>106</a>            quic: <span class="prelude-val">Some</span>(RelayQuicConfig::default()),
+<a href=#107 id=107 data-nosnippet>107</a>        }
+<a href=#108 id=108 data-nosnippet>108</a>    }
+<a href=#109 id=109 data-nosnippet>109</a>
+<a href=#110 id=110 data-nosnippet>110</a>    <span class="doccomment">/// Get the default [`RelayNode`] for EU.
+<a href=#111 id=111 data-nosnippet>111</a>    </span><span class="kw">pub fn </span>default_eu_relay_node() -&gt; RelayNode {
+<a href=#112 id=112 data-nosnippet>112</a>        <span class="comment">// The default EU relay server run by number0.
+<a href=#113 id=113 data-nosnippet>113</a>        </span><span class="kw">let </span>url: Url = <span class="macro">format!</span>(<span class="string">"https://{EU_RELAY_HOSTNAME}"</span>)
+<a href=#114 id=114 data-nosnippet>114</a>            .parse()
+<a href=#115 id=115 data-nosnippet>115</a>            .expect(<span class="string">"default_url"</span>);
+<a href=#116 id=116 data-nosnippet>116</a>        RelayNode {
+<a href=#117 id=117 data-nosnippet>117</a>            url: url.into(),
+<a href=#118 id=118 data-nosnippet>118</a>            quic: <span class="prelude-val">Some</span>(RelayQuicConfig::default()),
+<a href=#119 id=119 data-nosnippet>119</a>        }
+<a href=#120 id=120 data-nosnippet>120</a>    }
+<a href=#121 id=121 data-nosnippet>121</a>}
+<a href=#122 id=122 data-nosnippet>122</a>
+<a href=#123 id=123 data-nosnippet>123</a><span class="doccomment">/// Contains all timeouts that we use in `iroh`.
+<a href=#124 id=124 data-nosnippet>124</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>timeouts {
+<a href=#125 id=125 data-nosnippet>125</a>    <span class="kw">use </span>n0_future::time::Duration;
+<a href=#126 id=126 data-nosnippet>126</a>
+<a href=#127 id=127 data-nosnippet>127</a>    <span class="comment">// Timeouts for net_report
 <a href=#128 id=128 data-nosnippet>128</a>
-<a href=#129 id=129 data-nosnippet>129</a>    <span class="comment">// Timeouts for net_report
-<a href=#130 id=130 data-nosnippet>130</a>
-<a href=#131 id=131 data-nosnippet>131</a>    </span><span class="doccomment">/// Maximum duration to wait for a net_report.
-<a href=#132 id=132 data-nosnippet>132</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>NET_REPORT_TIMEOUT: Duration = Duration::from_secs(<span class="number">10</span>);
-<a href=#133 id=133 data-nosnippet>133</a>}</code></pre></div></section></main></body></html>
+<a href=#129 id=129 data-nosnippet>129</a>    </span><span class="doccomment">/// Maximum duration to wait for a net_report.
+<a href=#130 id=130 data-nosnippet>130</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">const </span>NET_REPORT_TIMEOUT: Duration = Duration::from_secs(<span class="number">10</span>);
+<a href=#131 id=131 data-nosnippet>131</a>}</code></pre></div></section></main></body></html>
