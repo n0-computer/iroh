@@ -459,7 +459,28 @@ impl MagicSock {
                             }
                         });
                     }
-                    // TODO: add relay path as mapped addr
+                    // Insert the relay addr
+                    if let Some(addr) = self.get_mapping_addr(addr.node_id) {
+                        let conn = conn.clone();
+                        let addr = addr.private_socket_addr();
+                        task::spawn(async move {
+                            match conn
+                                .open_path(addr, quinn_proto::PathStatus::Available)
+                                .await
+                            {
+                                Ok(path) => {
+                                    path.set_max_idle_timeout(Some(
+                                        ENDPOINTS_FRESH_ENOUGH_DURATION,
+                                    ))
+                                    .ok();
+                                    path.set_keep_alive_interval(Some(HEARTBEAT_INTERVAL)).ok();
+                                }
+                                Err(err) => {
+                                    warn!("failed to open path {:?}", err);
+                                }
+                            }
+                        });
+                    }
                 } else {
                     to_delete.push(i);
                 }
