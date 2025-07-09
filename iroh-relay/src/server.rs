@@ -748,7 +748,7 @@ impl hyper::service::Service<Request<Incoming>> for CaptivePortalService {
 
 #[cfg(test)]
 mod tests {
-    use std::{net::Ipv4Addr, time::Duration};
+    use std::{net::Ipv4Addr, sync::Arc, time::Duration};
 
     use bytes::Bytes;
     use http::{header::UPGRADE, StatusCode};
@@ -763,7 +763,7 @@ mod tests {
         NO_CONTENT_CHALLENGE_HEADER, NO_CONTENT_RESPONSE_HEADER,
     };
     use crate::{
-        client::{conn::ReceivedMessage, ClientBuilder, SendMessage},
+        client::{conn::ReceivedMessage, ClientBuilder, Metrics, SendMessage},
         dns::DnsResolver,
         http::{Protocol, HTTP_UPGRADE_PROTOCOL},
     };
@@ -907,16 +907,26 @@ mod tests {
         let a_secret_key = SecretKey::generate(rand::thread_rng());
         let a_key = a_secret_key.public();
         let resolver = dns_resolver();
-        let mut client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver.clone())
-            .connect()
-            .await?;
+        let mut client_a = ClientBuilder::new(
+            relay_url.clone(),
+            a_secret_key,
+            Arc::new(Metrics::default()),
+            resolver.clone(),
+        )
+        .connect()
+        .await?;
 
         // set up client b
         let b_secret_key = SecretKey::generate(rand::thread_rng());
         let b_key = b_secret_key.public();
-        let mut client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver.clone())
-            .connect()
-            .await?;
+        let mut client_b = ClientBuilder::new(
+            relay_url.clone(),
+            b_secret_key,
+            Arc::new(Metrics::default()),
+            resolver.clone(),
+        )
+        .connect()
+        .await?;
 
         // send message from a to b
         let msg = Bytes::from("hello, b");
@@ -961,19 +971,29 @@ mod tests {
         let a_key = a_secret_key.public();
         let resolver = dns_resolver();
         info!("client a build & connect");
-        let mut client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver.clone())
-            .protocol(Protocol::Websocket)
-            .connect()
-            .await?;
+        let mut client_a = ClientBuilder::new(
+            relay_url.clone(),
+            a_secret_key,
+            Arc::new(Metrics::default()),
+            resolver.clone(),
+        )
+        .protocol(Protocol::Websocket)
+        .connect()
+        .await?;
 
         // set up client b
         let b_secret_key = SecretKey::generate(rand::thread_rng());
         let b_key = b_secret_key.public();
         info!("client b build & connect");
-        let mut client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver.clone())
-            .protocol(Protocol::Websocket) // another websocket client
-            .connect()
-            .await?;
+        let mut client_b = ClientBuilder::new(
+            relay_url.clone(),
+            b_secret_key,
+            Arc::new(Metrics::default()),
+            resolver.clone(),
+        )
+        .protocol(Protocol::Websocket) // another websocket client
+        .connect()
+        .await?;
 
         info!("sending a -> b");
 
@@ -1022,18 +1042,28 @@ mod tests {
         let a_secret_key = SecretKey::generate(rand::thread_rng());
         let a_key = a_secret_key.public();
         let resolver = dns_resolver();
-        let mut client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver)
-            .connect()
-            .await?;
+        let mut client_a = ClientBuilder::new(
+            relay_url.clone(),
+            a_secret_key,
+            Arc::new(Metrics::default()),
+            resolver,
+        )
+        .connect()
+        .await?;
 
         // set up client b
         let b_secret_key = SecretKey::generate(rand::thread_rng());
         let b_key = b_secret_key.public();
         let resolver = dns_resolver();
-        let mut client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver)
-            .protocol(Protocol::Websocket) // Use websockets
-            .connect()
-            .await?;
+        let mut client_b = ClientBuilder::new(
+            relay_url.clone(),
+            b_secret_key,
+            Arc::new(Metrics::default()),
+            resolver,
+        )
+        .protocol(Protocol::Websocket) // Use websockets
+        .connect()
+        .await?;
 
         // send message from a to b
         let msg = Bytes::from("hello, b");
@@ -1104,9 +1134,14 @@ mod tests {
 
         // set up client a
         let resolver = dns_resolver();
-        let mut client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver)
-            .connect()
-            .await?;
+        let mut client_a = ClientBuilder::new(
+            relay_url.clone(),
+            a_secret_key,
+            Arc::new(Metrics::default()),
+            resolver,
+        )
+        .connect()
+        .await?;
 
         // the next message should be the rejection of the connection
         tokio::time::timeout(Duration::from_millis(500), async move {
@@ -1129,18 +1164,28 @@ mod tests {
         let b_key = b_secret_key.public();
 
         let resolver = dns_resolver();
-        let mut client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver)
-            .connect()
-            .await?;
+        let mut client_b = ClientBuilder::new(
+            relay_url.clone(),
+            b_secret_key,
+            Arc::new(Metrics::default()),
+            resolver,
+        )
+        .connect()
+        .await?;
 
         // set up client c
         let c_secret_key = SecretKey::generate(rand::thread_rng());
         let c_key = c_secret_key.public();
 
         let resolver = dns_resolver();
-        let mut client_c = ClientBuilder::new(relay_url.clone(), c_secret_key, resolver)
-            .connect()
-            .await?;
+        let mut client_c = ClientBuilder::new(
+            relay_url.clone(),
+            c_secret_key,
+            Arc::new(Metrics::default()),
+            resolver,
+        )
+        .connect()
+        .await?;
 
         // send message from b to c
         let msg = Bytes::from("hello, c");
@@ -1170,16 +1215,26 @@ mod tests {
         // set up client a
         let a_secret_key = SecretKey::generate(rand::thread_rng());
         let resolver = dns_resolver();
-        let mut client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver.clone())
-            .connect()
-            .await?;
+        let mut client_a = ClientBuilder::new(
+            relay_url.clone(),
+            a_secret_key,
+            Arc::new(Metrics::default()),
+            resolver.clone(),
+        )
+        .connect()
+        .await?;
 
         // set up client b
         let b_secret_key = SecretKey::generate(rand::thread_rng());
         let b_key = b_secret_key.public();
-        let _client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver.clone())
-            .connect()
-            .await?;
+        let _client_b = ClientBuilder::new(
+            relay_url.clone(),
+            b_secret_key,
+            Arc::new(Metrics::default()),
+            resolver.clone(),
+        )
+        .connect()
+        .await?;
 
         // send messages from a to b, without b receiving anything.
         // we should still keep succeeding to send, even if the packet won't be forwarded

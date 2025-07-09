@@ -974,8 +974,13 @@ mod tests {
         server_url: Url,
     ) -> Result<(PublicKey, Client), ConnectError> {
         let public_key = key.public();
-        let client =
-            ClientBuilder::new(server_url, key, DnsResolver::new()).insecure_skip_cert_verify(true);
+        let client = ClientBuilder::new(
+            server_url,
+            key,
+            Arc::new(crate::client::Metrics::default()),
+            DnsResolver::new(),
+        )
+        .insecure_skip_cert_verify(true);
         let client = client.connect().await?;
 
         Ok((public_key, client))

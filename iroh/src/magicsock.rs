@@ -1278,7 +1278,7 @@ impl Handle {
             ipv6_reported: ipv6_reported.clone(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify,
-            metrics: metrics.magicsock.clone(),
+            metrics: metrics.clone(),
             protocol: relay_protocol,
         });
         let relay_transports = vec![relay_transport];

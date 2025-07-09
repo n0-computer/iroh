@@ -11,6 +11,7 @@ use std::{
 
 use conn::Conn;
 use iroh_base::{RelayUrl, SecretKey};
+use iroh_metrics::{Counter, MetricsGroup};
 use n0_future::{
     split::{split, SplitSink, SplitStream},
     time, Sink, Stream,
@@ -139,6 +140,8 @@ pub struct ClientBuilder {
     dns_resolver: DnsResolver,
     /// Cache for public keys of remote nodes.
     key_cache: KeyCache,
+    /// Stream metrics
+    metrics: Arc<Metrics>,
 }
 
 impl ClientBuilder {
@@ -146,6 +149,7 @@ impl ClientBuilder {
     pub fn new(
         url: impl Into<RelayUrl>,
         secret_key: SecretKey,
+        metrics: Arc<Metrics>,
         #[cfg(not(wasm_browser))] dns_resolver: DnsResolver,
     ) -> Self {
         ClientBuilder {
@@ -164,6 +168,7 @@ impl ClientBuilder {
             #[cfg(not(wasm_browser))]
             dns_resolver,
             key_cache: KeyCache::new(128),
+            metrics,
         }
     }
 
@@ -450,4 +455,19 @@ impl rustls::client::danger::ServerCertVerifier for NoCertVerifier {
             .signature_verification_algorithms
             .supported_schemes()
     }
+}
+
+/// Metrics tracked for the relay client
+#[derive(Debug, Default, serde::Serialize, serde::Deserialize, MetricsGroup)]
+#[metrics(name = "relayclient")]
+pub struct Metrics {
+    /// Bytes sent from a `FrameType::SendPacket`
+    #[metrics(help = "Number of bytes sent.")]
+    pub tcp_bytes_sent: Counter,
+    /// Bytes received from a `FrameType::SendPacket`
+    #[metrics(help = "Number of bytes received.")]
+    pub tcp_bytes_recv: Counter,
+    /// Number of calls to `poll_write` or `poll_write_vectored`
+    #[metrics(help = "Number of calls to `poll_write` or `poll_write_vectored`.")]
+    pub tcp_write_calls: Counter,
 }

@@ -122,8 +122,8 @@ pub fn downcast_upgrade(upgraded: Upgraded) -> Option<MaybeTlsStreamChained> {
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
 pub enum ProxyStream {
-    Raw(TcpStream),
-    Proxied(util::Chain<std::io::Cursor<Bytes>, MaybeTlsStream<TcpStream>>),
+    Raw(WithMetrics<TcpStream>),
+    Proxied(util::Chain<std::io::Cursor<Bytes>, MaybeTlsStream<WithMetrics<TcpStream>>>),
 }
 
 impl AsyncRead for ProxyStream {
@@ -170,6 +170,7 @@ impl AsyncWrite for ProxyStream {
             Self::Proxied(stream) => Pin::new(stream.get_mut().1).poll_shutdown(cx),
         }
     }
+
     fn poll_write_vectored(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -186,14 +187,14 @@ impl ProxyStream {
     pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
         match self {
             Self::Raw(s) => s.local_addr(),
-            Self::Proxied(s) => s.get_ref().1.local_addr(),
+            Self::Proxied(s) => s.get_ref().1.as_ref().local_addr(),
         }
     }
 
     pub fn peer_addr(&self) -> std::io::Result<SocketAddr> {
         match self {
             Self::Raw(s) => s.peer_addr(),
-            Self::Proxied(s) => s.get_ref().1.peer_addr(),
+            Self::Proxied(s) => s.get_ref().1.as_ref().peer_addr(),
         }
     }
 }
@@ -258,8 +259,8 @@ impl<IO: AsyncRead + AsyncWrite + Unpin> AsyncWrite for MaybeTlsStream<IO> {
             Self::Raw(stream) => Pin::new(stream).poll_write_vectored(cx, bufs),
             Self::Tls(stream) => Pin::new(stream).poll_write_vectored(cx, bufs),
         }
+        }
     }
-}
 
 impl MaybeTlsStream<TcpStream> {
     pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
@@ -283,5 +284,93 @@ impl<IO> AsRef<IO> for MaybeTlsStream<IO> {
             Self::Raw(s) => s,
             Self::Tls(s) => s.get_ref().0,
         }
+    }
+}
+
+#[derive(Debug)]
+pub struct WithMetrics<IO> {
+    inner: IO,
+    metrics: std::sync::Arc<crate::client::Metrics>,
+}
+
+impl<IO> WithMetrics<IO> {
+    pub fn new(inner: IO, metrics: std::sync::Arc<crate::client::Metrics>) -> Self {
+        Self { inner, metrics }
+    }
+}
+
+impl<IO> std::ops::Deref for WithMetrics<IO> {
+    type Target = IO;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl<IO> std::ops::DerefMut for WithMetrics<IO> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
+}
+
+impl<IO: AsyncRead + Unpin> AsyncRead for WithMetrics<IO> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        let before = buf.remaining();
+        let result = std::task::ready!(Pin::new(&mut self.inner).poll_read(cx, buf));
+        if let Ok(_) = &result {
+            let bytes_recv = before - buf.remaining();
+            self.metrics.tcp_bytes_recv.inc_by(bytes_recv as u64);
+        }
+        Poll::Ready(result)
+    }
+}
+
+impl<IO: AsyncWrite + Unpin> AsyncWrite for WithMetrics<IO> {
+    fn poll_write_vectored(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[std::io::IoSlice<'_>],
+    ) -> Poll<Result<usize, std::io::Error>> {
+        let result = std::task::ready!(Pin::new(&mut self.inner).poll_write_vectored(cx, bufs));
+        if let Ok(bytes) = &result {
+            self.metrics.tcp_bytes_sent.inc_by(*bytes as u64);
+            self.metrics.tcp_write_calls.inc();
+        }
+        Poll::Ready(result)
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.inner.is_write_vectored()
+    }
+
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<Result<usize, std::io::Error>> {
+        let result = std::task::ready!(Pin::new(&mut self.inner).poll_write(cx, buf));
+        if let Ok(bytes) = &result {
+            self.metrics.tcp_bytes_sent.inc_by(*bytes as u64);
+            self.metrics.tcp_write_calls.inc();
+        }
+        Poll::Ready(result)
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<(), std::io::Error>> {
+        Pin::new(&mut self.inner).poll_shutdown(cx)
     }
 }

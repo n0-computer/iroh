@@ -26,6 +26,7 @@ use hyper::{
 use n0_future::{task, time};
 use rustls::client::Resumption;
 use snafu::{OptionExt, ResultExt};
+use streams::WithMetrics;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::{error, info_span, Instrument};
 
@@ -39,6 +40,7 @@ use crate::defaults::timeouts::*;
 pub struct MaybeTlsStreamBuilder {
     url: Url,
     dns_resolver: DnsResolver,
+    metrics: Arc<Metrics>,
     proxy_url: Option<Url>,
     prefer_ipv6: bool,
     #[cfg(any(test, feature = "test-utils"))]
@@ -46,10 +48,11 @@ pub struct MaybeTlsStreamBuilder {
 }
 
 impl MaybeTlsStreamBuilder {
-    pub fn new(url: Url, dns_resolver: DnsResolver) -> Self {
+    pub fn new(url: Url, dns_resolver: DnsResolver, metrics: Arc<Metrics>) -> Self {
         Self {
             url,
             dns_resolver,
+            metrics,
             proxy_url: None,
             prefer_ipv6: false,
             #[cfg(any(test, feature = "test-utils"))]
@@ -146,7 +149,10 @@ impl MaybeTlsStreamBuilder {
             Ok(ProxyStream::Proxied(stream))
         } else {
             let stream = self.dial_url_direct().await?;
-            Ok(ProxyStream::Raw(stream))
+            Ok(ProxyStream::Raw(WithMetrics::new(
+                stream,
+                self.metrics.clone(),
+            )))
         }
     }
 
@@ -177,8 +183,10 @@ impl MaybeTlsStreamBuilder {
         &self,
         proxy_url: Url,
         tls_connector: &tokio_rustls::TlsConnector,
-    ) -> Result<util::Chain<std::io::Cursor<Bytes>, MaybeTlsStream<tokio::net::TcpStream>>, DialError>
-    {
+    ) -> Result<
+        util::Chain<std::io::Cursor<Bytes>, MaybeTlsStream<WithMetrics<tokio::net::TcpStream>>>,
+        DialError,
+    > {
         use hyper_util::rt::TokioIo;
         use tokio::net::TcpStream;
         debug!(%self.url, %proxy_url, "dial url via proxy");
@@ -200,6 +208,8 @@ impl MaybeTlsStreamBuilder {
         .await??;
 
         tcp_stream.set_nodelay(true)?;
+
+        let tcp_stream = WithMetrics::new(tcp_stream, self.metrics.clone());
 
         // Setup TLS if necessary
         let io = if proxy_url.scheme() == "http" {
@@ -272,7 +282,7 @@ impl MaybeTlsStreamBuilder {
 
         let upgraded = hyper::upgrade::on(res).await.context(ProxyConnectSnafu)?;
         let Parts { io, read_buf, .. } = upgraded
-            .downcast::<TokioIo<MaybeTlsStream<tokio::net::TcpStream>>>()
+            .downcast::<TokioIo<MaybeTlsStream<WithMetrics<tokio::net::TcpStream>>>>()
             .expect("only this upgrade used");
 
         let res = util::chain(std::io::Cursor::new(read_buf), io.into_inner());
@@ -288,10 +298,13 @@ impl ClientBuilder {
     /// [`HTTP_UPGRADE_PROTOCOL`]: crate::http::HTTP_UPGRADE_PROTOCOL
     pub(super) async fn connect_relay(&self) -> Result<(Conn, SocketAddr), ConnectError> {
         #[allow(unused_mut)]
-        let mut builder =
-            MaybeTlsStreamBuilder::new(self.url.clone().into(), self.dns_resolver.clone())
-                .prefer_ipv6(self.prefer_ipv6())
-                .proxy_url(self.proxy_url.clone());
+        let mut builder = MaybeTlsStreamBuilder::new(
+            self.url.clone().into(),
+            self.dns_resolver.clone(),
+            self.metrics.clone(),
+        )
+        .prefer_ipv6(self.prefer_ipv6())
+        .proxy_url(self.proxy_url.clone());
 
         #[cfg(any(test, feature = "test-utils"))]
         if self.insecure_skip_cert_verify {
@@ -344,9 +357,13 @@ impl ClientBuilder {
         debug!(%dial_url, "Dialing relay by websocket");
 
         #[allow(unused_mut)]
-        let mut builder = MaybeTlsStreamBuilder::new(dial_url.clone(), self.dns_resolver.clone())
-            .prefer_ipv6(self.prefer_ipv6())
-            .proxy_url(self.proxy_url.clone());
+        let mut builder = MaybeTlsStreamBuilder::new(
+            dial_url.clone(),
+            self.dns_resolver.clone(),
+            self.metrics.clone(),
+        )
+        .prefer_ipv6(self.prefer_ipv6())
+        .proxy_url(self.proxy_url.clone());
 
         #[cfg(any(test, feature = "test-utils"))]
         if self.insecure_skip_cert_verify {

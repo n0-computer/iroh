@@ -62,7 +62,8 @@ use url::Url;
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
 use crate::{
-    magicsock::{Metrics as MagicsockMetrics, RelayContents},
+    magicsock::RelayContents,
+    metrics::{EndpointMetrics, RelayClientMetrics},
     net_report::Report,
     util::MaybeFuture,
 };
@@ -159,7 +160,7 @@ struct ActiveRelayActor {
     inactive_timeout: Pin<Box<time::Sleep>>,
     /// Token indicating the [`ActiveRelayActor`] should stop.
     stop_token: CancellationToken,
-    metrics: Arc<MagicsockMetrics>,
+    metrics: EndpointMetrics,
 }
 
 #[derive(Debug)]
@@ -202,7 +203,7 @@ struct ActiveRelayActorOptions {
     relay_datagrams_recv: mpsc::Sender<RelayRecvDatagram>,
     connection_opts: RelayConnectionOptions,
     stop_token: CancellationToken,
-    metrics: Arc<MagicsockMetrics>,
+    metrics: EndpointMetrics,
 }
 
 /// Configuration needed to create a connection to a relay server.
@@ -288,7 +289,8 @@ impl ActiveRelayActor {
             stop_token,
             metrics,
         } = opts;
-        let relay_client_builder = Self::create_relay_builder(url.clone(), connection_opts);
+        let relay_client_builder =
+            Self::create_relay_builder(url.clone(), connection_opts, metrics.relay_client.clone());
         ActiveRelayActor {
             prio_inbox,
             inbox,
@@ -306,6 +308,7 @@ impl ActiveRelayActor {
     fn create_relay_builder(
         url: RelayUrl,
         opts: RelayConnectionOptions,
+        metrics: Arc<RelayClientMetrics>,
     ) -> relay::client::ClientBuilder {
         let RelayConnectionOptions {
             secret_key,
@@ -321,6 +324,7 @@ impl ActiveRelayActor {
         let mut builder = relay::client::ClientBuilder::new(
             url,
             secret_key,
+            metrics,
             #[cfg(not(wasm_browser))]
             dns_resolver,
         )
@@ -645,7 +649,7 @@ impl ActiveRelayActor {
                     });
                     let mut packet_stream = n0_future::stream::iter(packet_iter).inspect(|m| {
                         if let Ok(SendMessage::SendPacket(_node_id, payload)) = m {
-                            metrics.send_relay.inc_by(payload.len() as _);
+                            metrics.magicsock.send_relay.inc_by(payload.len() as _);
                         }
                     });
                     let fut = client_sink.send_all(&mut packet_stream);
@@ -884,7 +888,7 @@ pub struct Config {
     pub ipv6_reported: Arc<AtomicBool>,
     #[cfg(any(test, feature = "test-utils"))]
     pub insecure_skip_relay_cert_verify: bool,
-    pub metrics: Arc<MagicsockMetrics>,
+    pub metrics: EndpointMetrics,
     pub protocol: iroh_relay::http::Protocol,
 }
 
@@ -1021,7 +1025,7 @@ impl RelayActor {
             .unwrap_or_else(|e| e);
 
         if let Some(relay_url) = report.preferred_relay {
-            self.config.metrics.relay_home_change.inc();
+            self.config.metrics.magicsock.relay_home_change.inc();
 
             // On change, notify all currently connected relay servers and
             // start connecting to our home relay if we are not already.
