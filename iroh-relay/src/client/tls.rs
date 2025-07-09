@@ -13,6 +13,7 @@ use hyper::{upgrade::Parts, Request};
 use n0_future::{task, time};
 use rustls::client::Resumption;
 use snafu::{OptionExt, ResultExt};
+use streams::WithMetrics;
 
 use super::{
     streams::{MaybeTlsStream, ProxyStream},
@@ -23,6 +24,7 @@ use crate::defaults::timeouts::*;
 #[derive(Debug, Clone)]
 pub struct MaybeTlsStreamBuilder {
     url: Url,
+    metrics: Arc<crate::client::Metrics>,
     dns_resolver: DnsResolver,
     proxy_url: Option<Url>,
     prefer_ipv6: bool,
@@ -31,9 +33,10 @@ pub struct MaybeTlsStreamBuilder {
 }
 
 impl MaybeTlsStreamBuilder {
-    pub fn new(url: Url, dns_resolver: DnsResolver) -> Self {
+    pub fn new(url: Url, dns_resolver: DnsResolver, metrics: Arc<crate::client::Metrics>) -> Self {
         Self {
             url,
+            metrics,
             dns_resolver,
             proxy_url: None,
             prefer_ipv6: false,
@@ -131,7 +134,10 @@ impl MaybeTlsStreamBuilder {
             Ok(ProxyStream::Proxied(stream))
         } else {
             let stream = self.dial_url_direct().await?;
-            Ok(ProxyStream::Raw(stream))
+            Ok(ProxyStream::Raw(WithMetrics::new(
+                stream,
+                self.metrics.clone(),
+            )))
         }
     }
 
@@ -162,8 +168,10 @@ impl MaybeTlsStreamBuilder {
         &self,
         proxy_url: Url,
         tls_connector: &tokio_rustls::TlsConnector,
-    ) -> Result<util::Chain<std::io::Cursor<Bytes>, MaybeTlsStream<tokio::net::TcpStream>>, DialError>
-    {
+    ) -> Result<
+        util::Chain<std::io::Cursor<Bytes>, MaybeTlsStream<WithMetrics<tokio::net::TcpStream>>>,
+        DialError,
+    > {
         use hyper_util::rt::TokioIo;
         use tokio::net::TcpStream;
         debug!(%self.url, %proxy_url, "dial url via proxy");
@@ -185,6 +193,8 @@ impl MaybeTlsStreamBuilder {
         .await??;
 
         tcp_stream.set_nodelay(true)?;
+
+        let tcp_stream = WithMetrics::new(tcp_stream, self.metrics.clone());
 
         // Setup TLS if necessary
         let io = if proxy_url.scheme() == "http" {
@@ -257,7 +267,7 @@ impl MaybeTlsStreamBuilder {
 
         let upgraded = hyper::upgrade::on(res).await.context(ProxyConnectSnafu)?;
         let Parts { io, read_buf, .. } = upgraded
-            .downcast::<TokioIo<MaybeTlsStream<tokio::net::TcpStream>>>()
+            .downcast::<TokioIo<MaybeTlsStream<WithMetrics<tokio::net::TcpStream>>>>()
             .expect("only this upgrade used");
 
         let res = util::chain(std::io::Cursor::new(read_buf), io.into_inner());

@@ -61,7 +61,11 @@ use url::Url;
 
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
-use crate::{magicsock::Metrics as MagicsockMetrics, net_report::Report, util::MaybeFuture};
+use crate::{
+    metrics::{EndpointMetrics, RelayClientMetrics},
+    net_report::Report,
+    util::MaybeFuture,
+};
 
 /// How long a non-home relay connection needs to be idle (last written to) before we close it.
 const RELAY_INACTIVE_CLEANUP_TIME: Duration = Duration::from_secs(60);
@@ -152,7 +156,7 @@ struct ActiveRelayActor {
     inactive_timeout: Pin<Box<time::Sleep>>,
     /// Token indicating the [`ActiveRelayActor`] should stop.
     stop_token: CancellationToken,
-    metrics: Arc<MagicsockMetrics>,
+    metrics: EndpointMetrics,
 }
 
 #[derive(Debug)]
@@ -195,7 +199,7 @@ struct ActiveRelayActorOptions {
     relay_datagrams_recv: mpsc::Sender<RelayRecvDatagram>,
     connection_opts: RelayConnectionOptions,
     stop_token: CancellationToken,
-    metrics: Arc<MagicsockMetrics>,
+    metrics: EndpointMetrics,
 }
 
 /// Configuration needed to create a connection to a relay server.
@@ -280,7 +284,8 @@ impl ActiveRelayActor {
             stop_token,
             metrics,
         } = opts;
-        let relay_client_builder = Self::create_relay_builder(url.clone(), connection_opts);
+        let relay_client_builder =
+            Self::create_relay_builder(url.clone(), connection_opts, metrics.relay_client.clone());
         ActiveRelayActor {
             prio_inbox,
             inbox,
@@ -298,6 +303,7 @@ impl ActiveRelayActor {
     fn create_relay_builder(
         url: RelayUrl,
         opts: RelayConnectionOptions,
+        metrics: Arc<RelayClientMetrics>,
     ) -> relay::client::ClientBuilder {
         let RelayConnectionOptions {
             secret_key,
@@ -312,6 +318,7 @@ impl ActiveRelayActor {
         let mut builder = relay::client::ClientBuilder::new(
             url,
             secret_key,
+            metrics,
             #[cfg(not(wasm_browser))]
             dns_resolver,
         )
@@ -623,7 +630,7 @@ impl ActiveRelayActor {
                         Vec::with_capacity(SEND_DATAGRAM_BATCH_SIZE),
                     );
                     // TODO(frando): can we avoid the clone here?
-                    let metrics = self.metrics.clone();
+                    let metrics = self.metrics.magicsock.clone();
                     let packet_iter = batch.into_iter().map(|item| {
                         metrics.send_relay.inc_by(item.datagrams.contents.len() as _);
                         Ok(ClientToRelayMsg::Datagrams {
@@ -865,7 +872,7 @@ pub struct Config {
     pub ipv6_reported: Arc<AtomicBool>,
     #[cfg(any(test, feature = "test-utils"))]
     pub insecure_skip_relay_cert_verify: bool,
-    pub metrics: Arc<MagicsockMetrics>,
+    pub metrics: EndpointMetrics,
 }
 
 impl RelayActor {
@@ -1001,7 +1008,7 @@ impl RelayActor {
             .unwrap_or_else(|e| e);
 
         if let Some(relay_url) = report.preferred_relay {
-            self.config.metrics.relay_home_change.inc();
+            self.config.metrics.magicsock.relay_home_change.inc();
 
             // On change, notify all currently connected relay servers and
             // start connecting to our home relay if we are not already.

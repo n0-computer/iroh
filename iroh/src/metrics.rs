@@ -2,6 +2,7 @@
 use std::sync::Arc;
 
 use iroh_metrics::MetricsGroupSet;
+pub use iroh_relay::client::Metrics as RelayClientMetrics;
 #[cfg(feature = "test-utils")]
 pub use iroh_relay::server::Metrics as RelayMetrics;
 #[cfg(not(wasm_browser))]
@@ -19,6 +20,8 @@ pub use crate::{magicsock::Metrics as MagicsockMetrics, net_report::Metrics as N
 pub struct EndpointMetrics {
     /// Metrics collected by the endpoint's socket.
     pub magicsock: Arc<MagicsockMetrics>,
+    /// Metrics collected by the relay connection client
+    pub relay_client: Arc<RelayClientMetrics>,
     /// Metrics collected by net reports.
     pub net_report: Arc<NetReportMetrics>,
     /// Metrics collected by the portmapper service.

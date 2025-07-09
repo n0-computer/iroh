@@ -90,6 +90,7 @@ pub fn run_iroh(opt: Opt) -> Result<()> {
         // print metrics
         println!("\nMetrics:");
         collect_and_print("MagicsockMetrics", &*endpoint_metrics.magicsock);
+        collect_and_print("RelayClientMetrics", &*endpoint_metrics.relay_client);
         collect_and_print("NetReportMetrics", &*endpoint_metrics.net_report);
         collect_and_print("PortmapMetrics", &*endpoint_metrics.portmapper);
         #[cfg(feature = "local-relay")]
