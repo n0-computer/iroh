@@ -41,9 +41,14 @@ pub fn server_endpoint(
             };
             builder = builder.path_selection(path_selection);
         }
+        let protocol = opt
+            .use_ws
+            .then_some(iroh::RelayProtocol::Websocket)
+            .unwrap_or(iroh::RelayProtocol::Relay);
         let ep = builder
             .alpns(vec![ALPN.to_vec()])
             .relay_mode(relay_mode)
+            .relay_conn_protocol(protocol)
             .transport_config(transport_config(opt.max_streams, opt.initial_mtu))
             .bind()
             .await
@@ -102,9 +107,14 @@ pub async fn connect_client(
         };
         builder = builder.path_selection(path_selection);
     }
+    let protocol = opt
+        .use_ws
+        .then_some(iroh::RelayProtocol::Websocket)
+        .unwrap_or(iroh::RelayProtocol::Relay);
     let endpoint = builder
         .alpns(vec![ALPN.to_vec()])
         .relay_mode(relay_mode)
+        .relay_conn_protocol(protocol)
         .transport_config(transport_config(opt.max_streams, opt.initial_mtu))
         .bind()
         .await

@@ -74,6 +74,9 @@ pub struct Opt {
     #[cfg(feature = "local-relay")]
     #[clap(long, default_value_t = false)]
     pub only_relay: bool,
+    /// Whether to use websockets for the relay connectio protocol
+    #[clap(long, default_value_t = false)]
+    pub use_ws: bool,
 }
 
 pub enum EndpointSelector {
