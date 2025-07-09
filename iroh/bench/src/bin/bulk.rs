@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use ::iroh::metrics::EndpointMetrics;
 use clap::Parser;
 #[cfg(not(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd")))]
 use iroh_bench::quinn;
@@ -47,12 +48,12 @@ pub fn run_iroh(opt: Opt) -> Result<()> {
     #[cfg(not(feature = "local-relay"))]
     let relay_url = None;
 
+    let metrics = EndpointMetrics::default();
+
     let (server_addr, endpoint) = {
         let _guard = server_span.enter();
-        iroh::server_endpoint(&runtime, &relay_url, &opt)
+        iroh::server_endpoint(&runtime, &relay_url, &opt, metrics.clone())
     };
-
-    let endpoint_metrics = endpoint.metrics().clone();
 
     let server_thread = std::thread::spawn(move || {
         let _guard = server_span.entered();
@@ -65,10 +66,11 @@ pub fn run_iroh(opt: Opt) -> Result<()> {
     for id in 0..opt.clients {
         let server_addr = server_addr.clone();
         let relay_url = relay_url.clone();
+        let metrics = metrics.clone();
         handles.push(std::thread::spawn(move || {
             let _guard = tracing::error_span!("client", id).entered();
             let runtime = rt();
-            match runtime.block_on(iroh::client(server_addr, relay_url.clone(), opt)) {
+            match runtime.block_on(iroh::client(server_addr, relay_url.clone(), opt, metrics)) {
                 Ok(stats) => Ok(stats),
                 Err(e) => {
                     eprintln!("client failed: {e:#}");
@@ -89,10 +91,10 @@ pub fn run_iroh(opt: Opt) -> Result<()> {
     if opt.metrics {
         // print metrics
         println!("\nMetrics:");
-        collect_and_print("MagicsockMetrics", &*endpoint_metrics.magicsock);
-        collect_and_print("RelayClientMetrics", &*endpoint_metrics.relay_client);
-        collect_and_print("NetReportMetrics", &*endpoint_metrics.net_report);
-        collect_and_print("PortmapMetrics", &*endpoint_metrics.portmapper);
+        collect_and_print("MagicsockMetrics", &*metrics.magicsock);
+        collect_and_print("RelayClientMetrics", &*metrics.relay_client);
+        collect_and_print("NetReportMetrics", &*metrics.net_report);
+        collect_and_print("PortmapMetrics", &*metrics.portmapper);
         #[cfg(feature = "local-relay")]
         if let Some(relay_server) = relay_server.as_ref() {
             collect_and_print("RelayServerMetrics", &*relay_server.metrics().server);
