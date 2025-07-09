@@ -217,6 +217,15 @@ impl AsyncWrite for MaybeTlsStream {
             MaybeTlsStream::Test(ref mut s) => Pin::new(s).poll_write_vectored(cx, bufs),
         }
     }
+
+    fn is_write_vectored(&self) -> bool {
+        match self {
+            MaybeTlsStream::Plain(s) => s.is_write_vectored(),
+            MaybeTlsStream::Tls(s) => s.is_write_vectored(),
+            #[cfg(test)]
+            MaybeTlsStream::Test(s) => s.is_write_vectored(),
+        }
+    }
 }
 
 /// Rate limiter for reading from a [`RelayedStream`].
@@ -430,6 +439,18 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for RateLimited<S> {
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Result<(), std::io::Error>> {
         Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        self.inner.is_write_vectored()
+    }
+
+    fn poll_write_vectored(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        bufs: &[std::io::IoSlice<'_>],
+    ) -> Poll<Result<usize, std::io::Error>> {
+        Pin::new(&mut self.inner).poll_write_vectored(cx, bufs)
     }
 }
 

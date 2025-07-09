@@ -64,6 +64,7 @@ impl AsyncWrite for ProxyStream {
             Self::Proxied(stream) => Pin::new(stream.get_mut().1).poll_shutdown(cx),
         }
     }
+
     fn poll_write_vectored(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -72,6 +73,13 @@ impl AsyncWrite for ProxyStream {
         match &mut *self {
             Self::Raw(stream) => Pin::new(stream).poll_write_vectored(cx, bufs),
             Self::Proxied(stream) => Pin::new(stream.get_mut().1).poll_write_vectored(cx, bufs),
+        }
+    }
+
+    fn is_write_vectored(&self) -> bool {
+        match self {
+            ProxyStream::Raw(stream) => stream.is_write_vectored(),
+            ProxyStream::Proxied(stream) => stream.get_ref().1.is_write_vectored(),
         }
     }
 }
@@ -170,6 +178,7 @@ impl<IO: AsyncRead + AsyncWrite + Unpin> AsyncWrite for MaybeTlsStream<IO> {
             Self::Test(stream) => Pin::new(stream).poll_shutdown(cx),
         }
     }
+
     fn poll_write_vectored(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -180,26 +189,15 @@ impl<IO: AsyncRead + AsyncWrite + Unpin> AsyncWrite for MaybeTlsStream<IO> {
             Self::Tls(stream) => Pin::new(stream).poll_write_vectored(cx, bufs),
             #[cfg(test)]
             Self::Test(stream) => Pin::new(stream).poll_write_vectored(cx, bufs),
-        }
     }
 }
 
-impl MaybeTlsStream<TcpStream> {
-    pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
+    fn is_write_vectored(&self) -> bool {
         match self {
-            Self::Raw(s) => s.local_addr(),
-            Self::Tls(s) => s.get_ref().0.local_addr(),
+            Self::Raw(stream) => stream.is_write_vectored(),
+            Self::Tls(stream) => stream.is_write_vectored(),
             #[cfg(test)]
-            Self::Test(_) => Ok(SocketAddr::new(std::net::Ipv4Addr::LOCALHOST.into(), 1337)),
-        }
-    }
-
-    pub fn peer_addr(&self) -> std::io::Result<SocketAddr> {
-        match self {
-            Self::Raw(s) => s.peer_addr(),
-            Self::Tls(s) => s.get_ref().0.peer_addr(),
-            #[cfg(test)]
-            Self::Test(_) => Ok(SocketAddr::new(std::net::Ipv4Addr::LOCALHOST.into(), 1337)),
+            Self::Test(stream) => stream.is_write_vectored(),
         }
     }
 }
