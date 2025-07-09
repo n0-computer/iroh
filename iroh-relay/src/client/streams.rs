@@ -88,14 +88,14 @@ impl ProxyStream {
     pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
         match self {
             Self::Raw(s) => s.local_addr(),
-            Self::Proxied(s) => s.get_ref().1.local_addr(),
+            Self::Proxied(s) => s.get_ref().1.as_ref().local_addr(),
         }
     }
 
     pub fn peer_addr(&self) -> std::io::Result<SocketAddr> {
         match self {
             Self::Raw(s) => s.peer_addr(),
-            Self::Proxied(s) => s.get_ref().1.peer_addr(),
+            Self::Proxied(s) => s.get_ref().1.as_ref().peer_addr(),
         }
     }
 }
@@ -189,8 +189,8 @@ impl<IO: AsyncRead + AsyncWrite + Unpin> AsyncWrite for MaybeTlsStream<IO> {
             Self::Tls(stream) => Pin::new(stream).poll_write_vectored(cx, bufs),
             #[cfg(test)]
             Self::Test(stream) => Pin::new(stream).poll_write_vectored(cx, bufs),
+        }
     }
-}
 
     fn is_write_vectored(&self) -> bool {
         match self {
