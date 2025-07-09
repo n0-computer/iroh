@@ -42,4 +42,5 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(iroh_docsrs)", "cfg(iroh_l
 unused-async = "warn"
 
 [patch.crates-io]
-tokio-websockets = { path = "../tokio-websockets" }
+# TODO(matheus23): need to wait for a release
+tokio-websockets = { git = "https://github.com/Gelbpunkt/tokio-websockets.git", branch = "frame-queue-buf" }
