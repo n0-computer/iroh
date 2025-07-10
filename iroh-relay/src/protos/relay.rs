@@ -316,37 +316,6 @@ impl Frame {
         }
     }
 
-    /// Serialized length (without the frame header)
-    #[cfg(not(wasm_browser))] // Not needed with websocket framing - thus not needed in browsers
-    pub(crate) fn len(&self) -> usize {
-        match self {
-            Frame::ClientInfo {
-                client_public_key: _,
-                message,
-                signature: _,
-            } => MAGIC.len() + PublicKey::LENGTH + message.len() + Signature::BYTE_SIZE,
-            Frame::SendPacket { dst_key: _, packet } => PublicKey::LENGTH + packet.len(),
-            Frame::RecvPacket {
-                src_key: _,
-                content,
-            } => PublicKey::LENGTH + content.len(),
-            Frame::KeepAlive => 0,
-            Frame::NotePreferred { .. } => 1,
-            Frame::NodeGone { .. } => PublicKey::LENGTH,
-            Frame::Ping { .. } => 8,
-            Frame::Pong { .. } => 8,
-            Frame::Health { problem } => problem.len(),
-            Frame::Restarting { .. } => 4 + 4,
-        }
-    }
-
-    /// Serialized length with frame header.
-    #[cfg(feature = "server")]
-    pub(crate) fn len_with_header(&self) -> usize {
-        const HEADER_LEN: usize = 5; // TODO(matheus23): This is used with the rate-limiter. It really shouldn't be. The websocket frames work on a different level!
-        self.len() + HEADER_LEN
-    }
-
     /// Writes it self to the given buffer.
     pub(crate) fn write_to<O: BufMut>(&self, mut dst: O) -> O {
         dst.put_u8(self.typ().into());

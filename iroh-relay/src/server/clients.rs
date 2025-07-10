@@ -210,7 +210,6 @@ mod tests {
                 stream: RelayedStream::test_client(client),
                 write_timeout: Duration::from_secs(1),
                 channel_capacity: 10,
-                rate_limit: None,
             },
             RelayedStream::test_server(server),
         )

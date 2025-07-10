@@ -22,6 +22,7 @@ use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, debug_span, error, info, info_span, trace, warn, Instrument};
 
 use super::{clients::Clients, streams::StreamError, AccessConfig, SpawnError};
+use crate::server::streams::RateLimited;
 use crate::{
     defaults::{timeouts::SERVER_WRITE_TIMEOUT, DEFAULT_KEY_CACHE_CAPACITY},
     http::{Protocol, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},
@@ -638,15 +639,15 @@ impl Inner {
     async fn accept(&self, protocol: Protocol, io: MaybeTlsStream) -> Result<(), AcceptError> {
         use snafu::ResultExt;
 
+        let io = RateLimited::from_cfg(self.rate_limit, io, self.metrics.clone());
+
         trace!(?protocol, "accept: start");
         self.metrics.accepts.inc();
-        // Since we already did the HTTP upgrade in the previous step,
-        // we use tokio-websockets to handle this connection
         // Create a server builder with default config
-        let builder = tokio_websockets::ServerBuilder::new()
-            .limits(tokio_websockets::Limits::default().max_payload_len(Some(MAX_FRAME_SIZE)));
-        // Serve will create a WebSocketStream on an already upgraded connection
-        let websocket = builder.serve(io);
+        let websocket = tokio_websockets::ServerBuilder::new()
+            .limits(tokio_websockets::Limits::default().max_payload_len(Some(MAX_FRAME_SIZE)))
+            // Serve will create a WebSocketStream on an already upgraded connection
+            .serve(io);
         let mut io = RelayedStream {
             inner: websocket,
             key_cache: self.key_cache.clone(),
@@ -679,7 +680,6 @@ impl Inner {
             stream: io,
             write_timeout: self.write_timeout,
             channel_capacity: PER_CLIENT_SEND_QUEUE_DEPTH,
-            rate_limit: self.rate_limit,
         };
         trace!("accept: create client");
         let node_id = client_conn_builder.node_id;
