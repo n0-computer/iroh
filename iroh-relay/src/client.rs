@@ -290,7 +290,7 @@ impl ClientBuilder {
 
     /// Establishes a new connection to the relay server.
     #[cfg(wasm_browser)]
-    async fn connect(&self) -> Result<Client, ConnectError> {
+    pub async fn connect(&self) -> Result<Client, ConnectError> {
         let mut dial_url = (*self.url).clone();
         dial_url.set_path(RELAY_PATH);
         // The relay URL is exchanged with the http(s) scheme in tickets and similar.

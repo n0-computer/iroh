@@ -262,7 +262,7 @@ where
     }
 }
 
-/// The frames in the [`RelayCodec`].
+/// The relay protocol frames.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Frame {
     ClientInfo {

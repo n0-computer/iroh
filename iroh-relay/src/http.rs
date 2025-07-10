@@ -1,5 +1,6 @@
 //! HTTP-specific constants for the relay server and client.
 
+#[cfg(not(wasm_browser))]
 pub(crate) const WEBSOCKET_UPGRADE_PROTOCOL: &str = "websocket";
 #[cfg(feature = "server")] // only used in the server for now
 pub(crate) const SUPPORTED_WEBSOCKET_VERSION: &str = "13";

@@ -24,19 +24,18 @@ use tracing::{debug, debug_span, error, info, info_span, trace, warn, Instrument
 use super::{clients::Clients, streams::StreamError, AccessConfig, SpawnError};
 use crate::{
     defaults::{timeouts::SERVER_WRITE_TIMEOUT, DEFAULT_KEY_CACHE_CAPACITY},
-    http::{RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},
+    http::{RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION, WEBSOCKET_UPGRADE_PROTOCOL},
     protos::relay::{
         recv_client_key, Frame, MAX_FRAME_SIZE, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
     },
     server::{
         client::Config,
         metrics::Metrics,
-        streams::{MaybeTlsStream, RelayedStream},
+        streams::{MaybeTlsStream, RateLimited, RelayedStream},
         BindTcpListenerSnafu, ClientRateLimit, NoLocalAddrSnafu,
     },
     KeyCache,
 };
-use crate::{http::WEBSOCKET_UPGRADE_PROTOCOL, server::streams::RateLimited};
 
 type BytesBody = http_body_util::Full<hyper::body::Bytes>;
 type HyperError = Box<dyn std::error::Error + Send + Sync>;

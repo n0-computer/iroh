@@ -9,12 +9,14 @@ use std::{
     task::{ready, Context, Poll},
 };
 
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
+#[cfg(not(wasm_browser))]
+use bytes::BytesMut;
 use iroh_base::{NodeId, SecretKey};
 use n0_future::{time::Duration, Sink, Stream};
 use nested_enum_utils::common_fields;
 use snafu::{Backtrace, ResultExt, Snafu};
-use tracing::debug;
+use tracing::{debug, warn};
 
 use super::KeyCache;
 #[cfg(not(wasm_browser))]
@@ -149,13 +151,15 @@ impl Stream for Conn {
                     return Poll::Ready(None);
                 }
                 if !msg.is_binary() {
-                    tracing::warn!(?msg, "Got websocket message of unsupported type, skipping.");
+                    warn!(?msg, "Got websocket message of unsupported type, skipping.");
                     return Poll::Pending;
                 }
                 let frame = Frame::from_bytes(msg.into_payload().into(), &self.key_cache)?;
                 let message = ReceivedMessage::try_from(frame);
                 Poll::Ready(Some(message))
             }
+            #[cfg(not(wasm_browser))]
+            Some(Err(e)) => Poll::Ready(Some(Err(e.into()))),
             #[cfg(wasm_browser)]
             Some(ws_stream_wasm::WsMessage::Binary(vec)) => {
                 let frame = Frame::from_bytes(Bytes::from(vec), &self.key_cache)?;
@@ -163,10 +167,9 @@ impl Stream for Conn {
             }
             #[cfg(wasm_browser)]
             Some(msg) => {
-                tracing::warn!(?msg, "Got websocket message of unsupported type, skipping.");
+                warn!(?msg, "Got websocket message of unsupported type, skipping.");
                 Poll::Pending
             }
-            Some(Err(e)) => Poll::Ready(Some(Err(e.into()))),
             None => Poll::Ready(None),
         }
     }
