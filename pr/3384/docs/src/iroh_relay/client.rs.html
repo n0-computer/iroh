@@ -290,7 +290,7 @@
 <a href=#290 id=290 data-nosnippet>290</a>
 <a href=#291 id=291 data-nosnippet>291</a>    <span class="doccomment">/// Establishes a new connection to the relay server.
 <a href=#292 id=292 data-nosnippet>292</a>    </span><span class="attr">#[cfg(wasm_browser)]
-<a href=#293 id=293 data-nosnippet>293</a>    </span><span class="kw">async fn </span>connect(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Client, ConnectError&gt; {
+<a href=#293 id=293 data-nosnippet>293</a>    </span><span class="kw">pub async fn </span>connect(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="prelude-ty">Result</span>&lt;Client, ConnectError&gt; {
 <a href=#294 id=294 data-nosnippet>294</a>        <span class="kw">let </span><span class="kw-2">mut </span>dial_url = (<span class="kw-2">*</span><span class="self">self</span>.url).clone();
 <a href=#295 id=295 data-nosnippet>295</a>        dial_url.set_path(RELAY_PATH);
 <a href=#296 id=296 data-nosnippet>296</a>        <span class="comment">// The relay URL is exchanged with the http(s) scheme in tickets and similar.
