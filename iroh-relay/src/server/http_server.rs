@@ -4,7 +4,10 @@ use std::{
 
 use bytes::Bytes;
 use derive_more::Debug;
-use http::{header::CONNECTION, response::Builder as ResponseBuilder};
+use http::{
+    header::{CONNECTION, SEC_WEBSOCKET_KEY, SEC_WEBSOCKET_PROTOCOL, SEC_WEBSOCKET_VERSION},
+    response::Builder as ResponseBuilder,
+};
 use hyper::{
     body::Incoming,
     header::{HeaderValue, SEC_WEBSOCKET_ACCEPT, UPGRADE},
@@ -12,9 +15,9 @@ use hyper::{
     upgrade::Upgraded,
     HeaderMap, Method, Request, Response, StatusCode,
 };
-use n0_future::{time::Elapsed, FutureExt};
+use n0_future::time::Elapsed;
 use nested_enum_utils::common_fields;
-use snafu::{Backtrace, ResultExt, Snafu};
+use snafu::{Backtrace, OptionExt, ResultExt, Snafu};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls_acme::AcmeAcceptor;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
@@ -35,7 +38,7 @@ use crate::{
     KeyCache,
 };
 use crate::{
-    http::{CLIENT_AUTH_HEADER, WEBSOCKET_UPGRADE_PROTOCOL},
+    http::{CLIENT_AUTH_HEADER, RELAY_PROTOCOL_VERSION, WEBSOCKET_UPGRADE_PROTOCOL},
     protos::{handshake, relay::MAX_FRAME_SIZE, streams::WsBytesFramed},
     server::streams::RateLimited,
 };
@@ -62,11 +65,6 @@ fn derive_accept_key(client_key: &HeaderValue) -> String {
     sha1.update(client_key.as_bytes());
     sha1.update(SEC_WEBSOCKET_ACCEPT_GUID);
     data_encoding::BASE64.encode(&sha1.finalize())
-}
-
-/// Creates a new [`BytesBody`] with no content.
-fn body_empty() -> BytesBody {
-    http_body_util::Full::new(hyper::body::Bytes::new())
 }
 
 /// Creates a new [`BytesBody`] with given content.
@@ -433,101 +431,134 @@ struct Inner {
     metrics: Arc<Metrics>,
 }
 
+#[derive(Debug, Snafu)]
+enum RelayUpgradeReqError {
+    #[snafu(display("missing header: {header}"))]
+    MissingHeader { header: http::HeaderName },
+    #[snafu(display("invalid header value for {header}: {details}"))]
+    InvalidHeader {
+        header: http::HeaderName,
+        details: String,
+    },
+    #[snafu(display(
+        "invalid header value for {SEC_WEBSOCKET_VERSION}: unsupported websocket version, only supporting {SUPPORTED_WEBSOCKET_VERSION}"
+    ))]
+    UnsupportedWebsocketVersion,
+    #[snafu(display(
+        "invalid header value for {SEC_WEBSOCKET_PROTOCOL}: unsupported relay version: we support {we_support} but you only provide {you_support}"
+    ))]
+    UnsupportedRelayVersion {
+        we_support: &'static str,
+        you_support: String,
+    },
+}
+
 impl RelayService {
+    fn build_response(&self) -> http::response::Builder {
+        let mut res = Response::builder();
+        for (key, value) in self.0.headers.iter() {
+            res = res.header(key, value);
+        }
+        res
+    }
+
     /// Upgrades the HTTP connection to the relay protocol, runs relay client.
-    fn call_client_conn(
+    async fn handle_relay_ws_upgrade(
         &self,
         mut req: Request<Incoming>,
-    ) -> Pin<Box<dyn Future<Output = Result<Response<BytesBody>, hyper::Error>> + Send>> {
-        // TODO: soooo much cloning. See if there is an alternative
-        let this = self.clone();
-        let mut builder = Response::builder();
-        for (key, value) in self.0.headers.iter() {
-            builder = builder.header(key, value);
+    ) -> Result<Response<BytesBody>, RelayUpgradeReqError> {
+        fn expect_header(
+            req: &Request<Incoming>,
+            header: http::HeaderName,
+        ) -> Result<&HeaderValue, RelayUpgradeReqError> {
+            req.headers()
+                .get(&header)
+                .context(MissingHeaderSnafu { header })
         }
 
-        async move {
-            {
-                // Send a 400 to any request that doesn't have an `Upgrade` header.
-                if req.headers().get(UPGRADE)
-                    != Some(&HeaderValue::from_static(WEBSOCKET_UPGRADE_PROTOCOL))
-                {
-                    return Ok(builder
-                        .status(StatusCode::BAD_REQUEST)
-                        .body(body_empty())
-                        .expect("valid body"));
-                };
-
-                let Some(key) = req.headers().get("Sec-WebSocket-Key").cloned() else {
-                    warn!("missing header Sec-WebSocket-Key for websocket relay protocol");
-                    return Ok(builder
-                        .status(StatusCode::BAD_REQUEST)
-                        .body(body_empty())
-                        .expect("valid body"));
-                };
-
-                let Some(version) = req.headers().get("Sec-WebSocket-Version").cloned() else {
-                    warn!("missing header Sec-WebSocket-Version for websocket relay protocol");
-                    return Ok(builder
-                        .status(StatusCode::BAD_REQUEST)
-                        .body(body_empty())
-                        .expect("valid body"));
-                };
-
-                if version.as_bytes() != SUPPORTED_WEBSOCKET_VERSION.as_bytes() {
-                    warn!("invalid header Sec-WebSocket-Version: {:?}", version);
-                    return Ok(builder
-                        .status(StatusCode::BAD_REQUEST)
-                        // It's convention to send back the version(s) we *do* support
-                        .header("Sec-WebSocket-Version", SUPPORTED_WEBSOCKET_VERSION)
-                        .body(body_empty())
-                        .expect("valid body"));
-                }
-
-                let client_auth_header = req.headers().get(CLIENT_AUTH_HEADER).cloned();
-
-                // Setup a future that will eventually receive the upgraded
-                // connection and talk a new protocol, and spawn the future
-                // into the runtime.
-                //
-                // Note: This can't possibly be fulfilled until the 101 response
-                // is returned below, so it's better to spawn this future instead
-                // waiting for it to complete to then return a response.
-                tokio::task::spawn(
-                    async move {
-                        match hyper::upgrade::on(&mut req).await {
-                            Ok(upgraded) => {
-                                if let Err(err) = this
-                                    .0
-                                    .relay_connection_handler(upgraded, client_auth_header)
-                                    .await
-                                {
-                                    warn!("error accepting upgraded connection: {err:#}",);
-                                } else {
-                                    debug!("upgraded connection completed");
-                                };
-                            }
-                            Err(err) => warn!("upgrade error: {err:#}"),
-                        }
-                    }
-                    .instrument(debug_span!("handler")),
-                );
-
-                // Now return a 101 Response saying we agree to the upgrade to the
-                // websocket upgrade protocol
-                builder = builder.status(StatusCode::SWITCHING_PROTOCOLS).header(
-                    UPGRADE,
-                    HeaderValue::from_static(WEBSOCKET_UPGRADE_PROTOCOL),
-                );
-
-                Ok(builder
-                    .header(SEC_WEBSOCKET_ACCEPT, derive_accept_key(&key))
-                    .header(CONNECTION, "upgrade")
-                    .body(body_full("switching to websocket protocol"))
-                    .expect("valid body"))
+        // Send a 400 to any request that doesn't have an `Upgrade` header.
+        let upgrade_header = expect_header(&req, UPGRADE)?;
+        snafu::ensure!(
+            upgrade_header == &HeaderValue::from_static(WEBSOCKET_UPGRADE_PROTOCOL),
+            InvalidHeaderSnafu {
+                header: UPGRADE,
+                details: format!("value must be {WEBSOCKET_UPGRADE_PROTOCOL}"),
             }
-        }
-        .boxed()
+        );
+
+        let key = expect_header(&req, SEC_WEBSOCKET_KEY)?.clone();
+        let version = expect_header(&req, SEC_WEBSOCKET_VERSION)?.clone();
+
+        snafu::ensure!(
+            version.as_bytes() == SUPPORTED_WEBSOCKET_VERSION.as_bytes(),
+            UnsupportedWebsocketVersionSnafu
+        );
+
+        let subprotocols = expect_header(&req, SEC_WEBSOCKET_PROTOCOL)?
+            .to_str()
+            .ok()
+            .context(InvalidHeaderSnafu {
+                header: SEC_WEBSOCKET_PROTOCOL,
+                details: format!("header value is not ascii"),
+            })?;
+        let supports_our_version = subprotocols
+            .split_whitespace()
+            .any(|p| p == RELAY_PROTOCOL_VERSION);
+        snafu::ensure!(
+            supports_our_version,
+            UnsupportedRelayVersionSnafu {
+                we_support: RELAY_PROTOCOL_VERSION,
+                you_support: subprotocols.to_string(),
+            }
+        );
+
+        let client_auth_header = req.headers().get(CLIENT_AUTH_HEADER).cloned();
+
+        // Setup a future that will eventually receive the upgraded
+        // connection and talk a new protocol, and spawn the future
+        // into the runtime.
+        //
+        // Note: This can't possibly be fulfilled until the 101 response
+        // is returned below, so it's better to spawn this future instead
+        // waiting for it to complete to then return a response.
+        tokio::task::spawn({
+            let this = self.clone();
+            async move {
+                match hyper::upgrade::on(&mut req).await {
+                    Ok(upgraded) => {
+                        if let Err(err) = this
+                            .0
+                            .relay_connection_handler(upgraded, client_auth_header)
+                            .await
+                        {
+                            warn!("error accepting upgraded connection: {err:#}",);
+                        } else {
+                            debug!("upgraded connection completed");
+                        };
+                    }
+                    Err(err) => warn!("upgrade error: {err:#}"),
+                }
+            }
+            .instrument(debug_span!("handler"))
+        });
+
+        // Now return a 101 Response saying we agree to the upgrade to the
+        // websocket upgrade protocol
+        Ok(self
+            .build_response()
+            .status(StatusCode::SWITCHING_PROTOCOLS)
+            .header(
+                UPGRADE,
+                HeaderValue::from_static(WEBSOCKET_UPGRADE_PROTOCOL),
+            )
+            .header(SEC_WEBSOCKET_ACCEPT, derive_accept_key(&key))
+            .header(
+                SEC_WEBSOCKET_PROTOCOL,
+                HeaderValue::from_static(RELAY_PROTOCOL_VERSION),
+            )
+            .header(CONNECTION, "upgrade")
+            .body(body_full("switching to websocket protocol"))
+            .expect("valid body"))
     }
 }
 
@@ -543,7 +574,22 @@ impl Service<Request<Incoming>> for RelayService {
             (&hyper::Method::GET, RELAY_PATH)
         ) {
             let this = self.clone();
-            return Box::pin(async move { this.call_client_conn(req).await.map_err(Into::into) });
+            return Box::pin(async move {
+                match this.handle_relay_ws_upgrade(req).await {
+                    Ok(response) => Ok(response),
+                    // It's convention to send back the version(s) we *do* support
+                    Err(e @ RelayUpgradeReqError::UnsupportedWebsocketVersion) => this
+                        .build_response()
+                        .status(StatusCode::BAD_REQUEST)
+                        .header(SEC_WEBSOCKET_VERSION, SUPPORTED_WEBSOCKET_VERSION)
+                        .body(body_full(e.to_string())),
+                    Err(e) => this
+                        .build_response()
+                        .status(StatusCode::BAD_REQUEST)
+                        .body(body_full(e.to_string())),
+                }
+                .map_err(Into::into)
+            });
         }
         // Otherwise handle the relay connection as normal.
 
