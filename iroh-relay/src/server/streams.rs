@@ -6,7 +6,6 @@ use std::{
     task::{Context, Poll},
 };
 
-use bytes::BytesMut;
 use n0_future::{ready, time, FutureExt, Sink, Stream};
 use snafu::{Backtrace, Snafu};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -83,7 +82,7 @@ impl Sink<RelayToClientMsg> for RelayedStream {
     }
 
     fn start_send(mut self: Pin<&mut Self>, item: RelayToClientMsg) -> Result<(), Self::Error> {
-        Pin::new(&mut self.inner).start_send(item.write_to(BytesMut::new()).freeze())
+        Pin::new(&mut self.inner).start_send(item.to_bytes().freeze())
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {

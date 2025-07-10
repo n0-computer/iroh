@@ -7,7 +7,7 @@
 //!  * server then sends [`FrameType::RelayToClientDatagrams`] to recipient
 //!  * server sends [`FrameType::NodeGone`] when the other client disconnects
 
-use bytes::{BufMut, Bytes};
+use bytes::{BufMut, Bytes, BytesMut};
 use iroh_base::{NodeId, SignatureError};
 use n0_future::time::{self, Duration};
 use nested_enum_utils::common_fields;
@@ -172,6 +172,12 @@ impl Datagrams {
         dst
     }
 
+    fn encoded_len(&self) -> usize {
+        1 // ECN byte
+        + 2 // segment size
+        + self.contents.len()
+    }
+
     fn from_bytes(bytes: Bytes) -> Result<Self, Error> {
         // 1 bytes ECN, 2 bytes segment size
         snafu::ensure!(bytes.len() > 3, InvalidFrameSnafu);
@@ -209,6 +215,10 @@ impl RelayToClientMsg {
         }
     }
 
+    pub(crate) fn to_bytes(&self) -> BytesMut {
+        self.write_to(BytesMut::with_capacity(self.encoded_len()))
+    }
+
     /// Encodes this frame for sending over websockets.
     ///
     /// Specifically meant for being put into a binary websocket message frame.
@@ -244,6 +254,24 @@ impl RelayToClientMsg {
             }
         }
         dst
+    }
+
+    pub(crate) fn encoded_len(&self) -> usize {
+        let payload_len = match self {
+            Self::Datagrams { datagrams, .. } => {
+                32 // nodeid
+                + datagrams.encoded_len()
+            }
+            Self::NodeGone(_) => 32,
+            Self::Health { problem } => problem.len(),
+            Self::Restarting { .. } => {
+                4 // u32
+                + 4 // u32
+            }
+            Self::Ping(_) | Self::Pong(_) => 8,
+        };
+        1 // frame type
+        + payload_len
     }
 
     /// Tries to decode a frame received over websockets.
@@ -332,6 +360,10 @@ impl ClientToRelayMsg {
         }
     }
 
+    pub(crate) fn to_bytes(&self) -> BytesMut {
+        self.write_to(BytesMut::with_capacity(self.encoded_len()))
+    }
+
     /// Encodes this frame for sending over websockets.
     ///
     /// Specifically meant for being put into a binary websocket message frame.
@@ -353,6 +385,17 @@ impl ClientToRelayMsg {
             }
         }
         dst
+    }
+
+    pub(crate) fn encoded_len(&self) -> usize {
+        match self {
+            Self::Ping(_) => 8,
+            Self::Pong(_) => 8,
+            Self::Datagrams { datagrams, .. } => {
+                32 // node id
+                + datagrams.encoded_len()
+            }
+        }
     }
 
     /// Tries to decode a frame received over websockets.
@@ -533,7 +576,6 @@ mod tests {
 #[cfg(test)]
 #[cfg(feature = "server")]
 mod proptests {
-    use bytes::BytesMut;
     use iroh_base::SecretKey;
     use proptest::prelude::*;
 
@@ -608,16 +650,30 @@ mod proptests {
     proptest! {
         #[test]
         fn server_client_frame_roundtrip(frame in server_client_frame()) {
-            let encoded = frame.clone().write_to(BytesMut::new()).freeze();
+            let encoded = frame.to_bytes().freeze();
             let decoded = RelayToClientMsg::from_bytes(encoded, &KeyCache::test()).unwrap();
             prop_assert_eq!(frame, decoded);
         }
 
         #[test]
         fn client_server_frame_roundtrip(frame in client_server_frame()) {
-            let encoded = frame.clone().write_to(BytesMut::new()).freeze();
+            let encoded = frame.to_bytes().freeze();
             let decoded = ClientToRelayMsg::from_bytes(encoded, &KeyCache::test()).unwrap();
             prop_assert_eq!(frame, decoded);
+        }
+
+        #[test]
+        fn server_client_frame_encoded_len(frame in server_client_frame()) {
+            let claimed_encoded_len = frame.encoded_len();
+            let actual_encoded_len = frame.to_bytes().len();
+            prop_assert_eq!(claimed_encoded_len, actual_encoded_len);
+        }
+
+        #[test]
+        fn client_server_frame_encoded_len(frame in client_server_frame()) {
+            let claimed_encoded_len = frame.encoded_len();
+            let actual_encoded_len = frame.to_bytes().len();
+            prop_assert_eq!(claimed_encoded_len, actual_encoded_len);
         }
     }
 }

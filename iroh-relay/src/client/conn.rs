@@ -7,7 +7,6 @@ use std::{
     task::{ready, Context, Poll},
 };
 
-use bytes::BytesMut;
 use iroh_base::SecretKey;
 use n0_future::{Sink, Stream};
 use nested_enum_utils::common_fields;
@@ -151,7 +150,7 @@ impl Sink<ClientToRelayMsg> for Conn {
         }
 
         Pin::new(&mut self.conn)
-            .start_send(frame.write_to(BytesMut::new()).freeze())
+            .start_send(frame.to_bytes().freeze())
             .map_err(Into::into)
     }
 
