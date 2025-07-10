@@ -463,7 +463,7 @@ impl RelayService {
     }
 
     /// Upgrades the HTTP connection to the relay protocol, runs relay client.
-    async fn handle_relay_ws_upgrade(
+    fn handle_relay_ws_upgrade(
         &self,
         mut req: Request<Incoming>,
     ) -> Result<Response<BytesBody>, RelayUpgradeReqError> {
@@ -479,7 +479,7 @@ impl RelayService {
         // Send a 400 to any request that doesn't have an `Upgrade` header.
         let upgrade_header = expect_header(&req, UPGRADE)?;
         snafu::ensure!(
-            upgrade_header == &HeaderValue::from_static(WEBSOCKET_UPGRADE_PROTOCOL),
+            upgrade_header == HeaderValue::from_static(WEBSOCKET_UPGRADE_PROTOCOL),
             InvalidHeaderSnafu {
                 header: UPGRADE,
                 details: format!("value must be {WEBSOCKET_UPGRADE_PROTOCOL}"),
@@ -499,7 +499,7 @@ impl RelayService {
             .ok()
             .context(InvalidHeaderSnafu {
                 header: SEC_WEBSOCKET_PROTOCOL,
-                details: format!("header value is not ascii"),
+                details: "header value is not ascii".to_string(),
             })?;
         let supports_our_version = subprotocols
             .split_whitespace()
@@ -573,23 +573,21 @@ impl Service<Request<Incoming>> for RelayService {
             (req.method(), req.uri().path()),
             (&hyper::Method::GET, RELAY_PATH)
         ) {
-            let this = self.clone();
-            return Box::pin(async move {
-                match this.handle_relay_ws_upgrade(req).await {
-                    Ok(response) => Ok(response),
-                    // It's convention to send back the version(s) we *do* support
-                    Err(e @ RelayUpgradeReqError::UnsupportedWebsocketVersion) => this
-                        .build_response()
-                        .status(StatusCode::BAD_REQUEST)
-                        .header(SEC_WEBSOCKET_VERSION, SUPPORTED_WEBSOCKET_VERSION)
-                        .body(body_full(e.to_string())),
-                    Err(e) => this
-                        .build_response()
-                        .status(StatusCode::BAD_REQUEST)
-                        .body(body_full(e.to_string())),
-                }
-                .map_err(Into::into)
-            });
+            let res = match self.handle_relay_ws_upgrade(req) {
+                Ok(response) => Ok(response),
+                // It's convention to send back the version(s) we *do* support
+                Err(e @ RelayUpgradeReqError::UnsupportedWebsocketVersion) => self
+                    .build_response()
+                    .status(StatusCode::BAD_REQUEST)
+                    .header(SEC_WEBSOCKET_VERSION, SUPPORTED_WEBSOCKET_VERSION)
+                    .body(body_full(e.to_string())),
+                Err(e) => self
+                    .build_response()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body(body_full(e.to_string())),
+            }
+            .map_err(Into::into);
+            return Box::pin(async move { res });
         }
         // Otherwise handle the relay connection as normal.
 
