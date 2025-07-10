@@ -18,15 +18,15 @@ use nested_enum_utils::common_fields;
 use snafu::{Backtrace, ResultExt, Snafu};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls_acme::AcmeAcceptor;
-use tokio_util::{codec::Framed, sync::CancellationToken, task::AbortOnDropHandle};
+use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, debug_span, error, info, info_span, trace, warn, Instrument};
 
 use super::{clients::Clients, streams::StreamError, AccessConfig, SpawnError};
 use crate::{
     defaults::{timeouts::SERVER_WRITE_TIMEOUT, DEFAULT_KEY_CACHE_CAPACITY},
-    http::{Protocol, LEGACY_RELAY_PATH, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},
+    http::{Protocol, RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},
     protos::relay::{
-        recv_client_key, Frame, RelayCodec, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
+        recv_client_key, Frame, MAX_FRAME_SIZE, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
     },
     server::{
         client::Config,
@@ -564,7 +564,7 @@ impl Service<Request<Incoming>> for RelayService {
         // Create a client if the request hits the relay endpoint.
         if matches!(
             (req.method(), req.uri().path()),
-            (&hyper::Method::GET, LEGACY_RELAY_PATH | RELAY_PATH)
+            (&hyper::Method::GET, RELAY_PATH)
         ) {
             let this = self.clone();
             return Box::pin(async move { this.call_client_conn(req).await.map_err(Into::into) });
@@ -639,21 +639,17 @@ impl Inner {
         use snafu::ResultExt;
 
         trace!(?protocol, "accept: start");
-        let mut io = match protocol {
-            Protocol::Relay => {
-                self.metrics.relay_accepts.inc();
-                RelayedStream::Relay(Framed::new(io, RelayCodec::new(self.key_cache.clone())))
-            }
-            Protocol::Websocket => {
-                self.metrics.websocket_accepts.inc();
-                // Since we already did the HTTP upgrade in the previous step,
-                // we use tokio-websockets to handle this connection
-                // Create a server builder with default config
-                let builder = tokio_websockets::ServerBuilder::new();
-                // Serve will create a WebSocketStream on an already upgraded connection
-                let websocket = builder.serve(io);
-                RelayedStream::Ws(websocket, self.key_cache.clone())
-            }
+        self.metrics.accepts.inc();
+        // Since we already did the HTTP upgrade in the previous step,
+        // we use tokio-websockets to handle this connection
+        // Create a server builder with default config
+        let builder = tokio_websockets::ServerBuilder::new()
+            .limits(tokio_websockets::Limits::default().max_payload_len(Some(MAX_FRAME_SIZE)));
+        // Serve will create a WebSocketStream on an already upgraded connection
+        let websocket = builder.serve(io);
+        let mut io = RelayedStream {
+            inner: websocket,
+            key_cache: self.key_cache.clone(),
         };
         trace!("accept: recv client key");
         let (client_key, info) = recv_client_key(&mut io).await.context(RecvClientKeySnafu)?;
@@ -869,7 +865,6 @@ mod tests {
     use crate::{
         client::{
             conn::{Conn, ReceivedMessage, SendMessage},
-            streams::MaybeTlsStreamChained,
             Client, ClientBuilder, ConnectError,
         },
         dns::DnsResolver,
@@ -1085,8 +1080,9 @@ mod tests {
     }
 
     async fn make_test_client(client: tokio::io::DuplexStream, key: &SecretKey) -> Result<Conn> {
-        let client = MaybeTlsStreamChained::Mem(client);
-        let client = Conn::new_relay(client, KeyCache::test(), key).await?;
+        let client = crate::client::streams::MaybeTlsStream::Test(client);
+        let client = tokio_websockets::ClientBuilder::new().take_over(client);
+        let client = Conn::new(client, KeyCache::test(), key).await?;
         Ok(client)
     }
 
@@ -1109,7 +1105,7 @@ mod tests {
         let (client_a, rw_a) = tokio::io::duplex(10);
         let s = service.clone();
         let handler_task = tokio::spawn(async move {
-            s.0.accept(Protocol::Relay, MaybeTlsStream::Test(rw_a))
+            s.0.accept(Protocol::Websocket, MaybeTlsStream::Test(rw_a))
                 .await
         });
         let mut client_a = make_test_client(client_a, &key_a).await?;
@@ -1121,7 +1117,7 @@ mod tests {
         let (client_b, rw_b) = tokio::io::duplex(10);
         let s = service.clone();
         let handler_task = tokio::spawn(async move {
-            s.0.accept(Protocol::Relay, MaybeTlsStream::Test(rw_b))
+            s.0.accept(Protocol::Websocket, MaybeTlsStream::Test(rw_b))
                 .await
         });
         let mut client_b = make_test_client(client_b, &key_b).await?;
@@ -1197,7 +1193,7 @@ mod tests {
         let (client_a, rw_a) = tokio::io::duplex(10);
         let s = service.clone();
         let handler_task = tokio::spawn(async move {
-            s.0.accept(Protocol::Relay, MaybeTlsStream::Test(rw_a))
+            s.0.accept(Protocol::Websocket, MaybeTlsStream::Test(rw_a))
                 .await
         });
         let mut client_a = make_test_client(client_a, &key_a).await?;
@@ -1209,7 +1205,7 @@ mod tests {
         let (client_b, rw_b) = tokio::io::duplex(10);
         let s = service.clone();
         let handler_task = tokio::spawn(async move {
-            s.0.accept(Protocol::Relay, MaybeTlsStream::Test(rw_b))
+            s.0.accept(Protocol::Websocket, MaybeTlsStream::Test(rw_b))
                 .await
         });
         let mut client_b = make_test_client(client_b, &key_b).await?;
@@ -1255,7 +1251,7 @@ mod tests {
         let (new_client_b, new_rw_b) = tokio::io::duplex(10);
         let s = service.clone();
         let handler_task = tokio::spawn(async move {
-            s.0.accept(Protocol::Relay, MaybeTlsStream::Test(new_rw_b))
+            s.0.accept(Protocol::Websocket, MaybeTlsStream::Test(new_rw_b))
                 .await
         });
         let mut new_client_b = make_test_client(new_client_b, &key_b).await?;

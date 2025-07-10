@@ -5,14 +5,14 @@ use std::{
     task::{Context, Poll},
 };
 
+use bytes::BytesMut;
 use n0_future::{Sink, Stream};
 use snafu::Snafu;
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio_util::codec::Framed;
 use tokio_websockets::WebSocketStream;
 
 use crate::{
-    protos::relay::{Frame, RecvError, RelayCodec},
+    protos::relay::{Frame, RecvError},
     KeyCache,
 };
 
@@ -20,9 +20,36 @@ use crate::{
 ///
 /// The stream receives message from the client while the sink sends them to the client.
 #[derive(Debug)]
-pub(crate) enum RelayedStream {
-    Relay(Framed<MaybeTlsStream, RelayCodec>),
-    Ws(WebSocketStream<MaybeTlsStream>, KeyCache),
+pub(crate) struct RelayedStream {
+    pub(crate) inner: WebSocketStream<MaybeTlsStream>,
+    pub(crate) key_cache: KeyCache,
+}
+
+#[cfg(test)]
+impl RelayedStream {
+    pub(crate) fn test_client(stream: tokio::io::DuplexStream) -> Self {
+        Self {
+            inner: tokio_websockets::ClientBuilder::new()
+                .limits(
+                    tokio_websockets::Limits::default()
+                        .max_payload_len(Some(crate::protos::relay::MAX_FRAME_SIZE)),
+                )
+                .take_over(MaybeTlsStream::Test(stream)),
+            key_cache: KeyCache::test(),
+        }
+    }
+
+    pub(crate) fn test_server(stream: tokio::io::DuplexStream) -> Self {
+        Self {
+            inner: tokio_websockets::ServerBuilder::new()
+                .limits(
+                    tokio_websockets::Limits::default()
+                        .max_payload_len(Some(crate::protos::relay::MAX_FRAME_SIZE)),
+                )
+                .serve(MaybeTlsStream::Test(stream)),
+            key_cache: KeyCache::test(),
+        }
+    }
 }
 
 fn ws_to_io_err(e: tokio_websockets::Error) -> std::io::Error {
@@ -36,35 +63,29 @@ impl Sink<Frame> for RelayedStream {
     type Error = std::io::Error;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        match *self {
-            Self::Relay(ref mut framed) => Pin::new(framed).poll_ready(cx),
-            Self::Ws(ref mut ws, _) => Pin::new(ws).poll_ready(cx).map_err(ws_to_io_err),
-        }
+        Pin::new(&mut self.inner)
+            .poll_ready(cx)
+            .map_err(ws_to_io_err)
     }
 
     fn start_send(mut self: Pin<&mut Self>, item: Frame) -> Result<(), Self::Error> {
-        match *self {
-            Self::Relay(ref mut framed) => Pin::new(framed).start_send(item),
-            Self::Ws(ref mut ws, _) => Pin::new(ws)
-                .start_send(tokio_websockets::Message::binary(
-                    tokio_websockets::Payload::from(item.encode_for_ws_msg()),
-                ))
-                .map_err(ws_to_io_err),
-        }
+        Pin::new(&mut self.inner)
+            .start_send(tokio_websockets::Message::binary(
+                tokio_websockets::Payload::from(item.write_to(BytesMut::new()).freeze()),
+            ))
+            .map_err(ws_to_io_err)
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        match *self {
-            Self::Relay(ref mut framed) => Pin::new(framed).poll_flush(cx),
-            Self::Ws(ref mut ws, _) => Pin::new(ws).poll_flush(cx).map_err(ws_to_io_err),
-        }
+        Pin::new(&mut self.inner)
+            .poll_flush(cx)
+            .map_err(ws_to_io_err)
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        match *self {
-            Self::Relay(ref mut framed) => Pin::new(framed).poll_close(cx),
-            Self::Ws(ref mut ws, _) => Pin::new(ws).poll_close(cx).map_err(ws_to_io_err),
-        }
+        Pin::new(&mut self.inner)
+            .poll_close(cx)
+            .map_err(ws_to_io_err)
     }
 }
 
@@ -82,30 +103,25 @@ impl Stream for RelayedStream {
     type Item = Result<Frame, StreamError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        match *self {
-            Self::Relay(ref mut framed) => Pin::new(framed).poll_next(cx).map_err(Into::into),
-            Self::Ws(ref mut ws, ref cache) => match Pin::new(ws).poll_next(cx) {
-                Poll::Ready(Some(Ok(msg))) => {
-                    if msg.is_close() {
-                        // Indicate the stream is done when we receive a close message.
-                        // Note: We don't have to poll the stream to completion for it to close gracefully.
-                        return Poll::Ready(None);
-                    }
-                    if !msg.is_binary() {
-                        tracing::warn!(
-                            ?msg,
-                            "Got websocket message of unsupported type, skipping."
-                        );
-                        return Poll::Pending;
-                    }
-                    let frame = Frame::decode_from_ws_msg(msg.into_payload().into(), cache)
-                        .map_err(Into::into);
-                    Poll::Ready(Some(frame))
+        match Pin::new(&mut self.inner).poll_next(cx) {
+            Poll::Ready(Some(Ok(msg))) => {
+                if msg.is_close() {
+                    // Indicate the stream is done when we receive a close message.
+                    // Note: We don't have to poll the stream to completion for it to close gracefully.
+                    return Poll::Ready(None);
                 }
-                Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e.into()))),
-                Poll::Ready(None) => Poll::Ready(None),
-                Poll::Pending => Poll::Pending,
-            },
+                if !msg.is_binary() {
+                    tracing::warn!(?msg, "Got websocket message of unsupported type, skipping.");
+                    return Poll::Pending;
+                }
+                Poll::Ready(Some(
+                    Frame::from_bytes(msg.into_payload().into(), &self.key_cache)
+                        .map_err(Into::into),
+                ))
+            }
+            Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e.into()))),
+            Poll::Ready(None) => Poll::Ready(None),
+            Poll::Pending => Poll::Pending,
         }
     }
 }

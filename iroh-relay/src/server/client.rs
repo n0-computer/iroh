@@ -755,15 +755,11 @@ mod tests {
     use bytes::Bytes;
     use iroh_base::SecretKey;
     use n0_snafu::{Result, ResultExt};
-    use tokio_util::codec::Framed;
     use tracing::info;
     use tracing_test::traced_test;
 
     use super::*;
-    use crate::{
-        protos::relay::{recv_frame, FrameType, RelayCodec},
-        server::streams::MaybeTlsStream,
-    };
+    use crate::protos::relay::{recv_frame, FrameType};
 
     #[tokio::test]
     #[traced_test]
@@ -774,9 +770,8 @@ mod tests {
 
         let node_id = SecretKey::generate(rand::thread_rng()).public();
         let (io, io_rw) = tokio::io::duplex(1024);
-        let mut io_rw = Framed::new(io_rw, RelayCodec::test());
-        let stream =
-            RelayedStream::Relay(Framed::new(MaybeTlsStream::Test(io), RelayCodec::test()));
+        let mut io_rw = RelayedStream::test_client(io_rw);
+        let stream = RelayedStream::test_server(io);
 
         let clients = Clients::default();
         let metrics = Arc::new(Metrics::default());
@@ -895,11 +890,8 @@ mod tests {
 
         // Build the rate limited stream.
         let (io_read, io_write) = tokio::io::duplex((LIMIT * MAX_FRAMES) as _);
-        let mut frame_writer = Framed::new(io_write, RelayCodec::test());
-        let stream = RelayedStream::Relay(Framed::new(
-            MaybeTlsStream::Test(io_read),
-            RelayCodec::test(),
-        ));
+        let mut frame_writer = RelayedStream::test_client(io_write);
+        let stream = RelayedStream::test_server(io_read);
         let mut stream = RateLimitedRelayedStream::new(stream, limiter, Default::default());
 
         // Prepare a frame to send, assert its size.
