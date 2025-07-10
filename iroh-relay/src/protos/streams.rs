@@ -150,7 +150,7 @@ impl Sink<Bytes> for WsBytesFramed {
     type Error = StreamError;
 
     fn start_send(mut self: Pin<&mut Self>, bytes: Bytes) -> Result<(), Self::Error> {
-        let msg = ws_stream_wasm::WsMessage::Binary(bytes.to_vec());
+        let msg = ws_stream_wasm::WsMessage::Binary(Vec::from(bytes));
         Pin::new(&mut self.io).start_send(msg).map_err(Into::into)
     }
 
