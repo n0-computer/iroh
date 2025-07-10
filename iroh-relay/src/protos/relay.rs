@@ -11,9 +11,9 @@ use bytes::{BufMut, Bytes};
 use iroh_base::{NodeId, SignatureError};
 use n0_future::time::{self, Duration};
 use nested_enum_utils::common_fields;
-use snafu::{Backtrace, OptionExt, ResultExt, Snafu};
+use snafu::{Backtrace, ResultExt, Snafu};
 
-use super::common::FrameType;
+use super::common::{FrameType, FrameTypeError};
 use crate::KeyCache;
 
 /// The maximum size of a packet sent over relay.
@@ -62,6 +62,8 @@ pub enum Error {
     Timeout { source: time::Elapsed },
     #[snafu(transparent)]
     SerDe { source: postcard::Error },
+    #[snafu(transparent)]
+    FrameTypeError { source: FrameTypeError },
     #[snafu(display("Invalid public key"))]
     InvalidPublicKey { source: SignatureError },
     #[snafu(display("Invalid frame encoding"))]
@@ -248,8 +250,8 @@ impl RelayToClientMsg {
     ///
     /// Specifically, bytes received from a binary websocket message frame.
     #[allow(clippy::result_large_err)]
-    pub(crate) fn from_bytes(bytes: Bytes, cache: &KeyCache) -> Result<Self, Error> {
-        let (frame_type, content) = FrameType::from_bytes(bytes).context(InvalidFrameSnafu)?;
+    pub(crate) fn from_bytes(mut content: Bytes, cache: &KeyCache) -> Result<Self, Error> {
+        let frame_type = FrameType::from_bytes(&mut content)?;
         let frame_len = content.len();
         snafu::ensure!(
             frame_len <= MAX_PACKET_SIZE,
@@ -358,8 +360,8 @@ impl ClientToRelayMsg {
     /// Specifically, bytes received from a binary websocket message frame.
     #[allow(clippy::result_large_err)]
     #[cfg(feature = "server")]
-    pub(crate) fn from_bytes(bytes: Bytes, cache: &KeyCache) -> Result<Self, Error> {
-        let (frame_type, content) = FrameType::from_bytes(bytes).context(InvalidFrameSnafu)?;
+    pub(crate) fn from_bytes(mut content: Bytes, cache: &KeyCache) -> Result<Self, Error> {
+        let frame_type = FrameType::from_bytes(&mut content)?;
         let frame_len = content.len();
         snafu::ensure!(
             frame_len <= MAX_PACKET_SIZE,

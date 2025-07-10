@@ -36,9 +36,13 @@ use n0_future::{
 use nested_enum_utils::common_fields;
 #[cfg(feature = "server")]
 use rand::{CryptoRng, RngCore};
-use snafu::{Backtrace, OptionExt, ResultExt, Snafu};
+use snafu::{Backtrace, ResultExt, Snafu};
+use tracing::trace;
 
-use super::{common::FrameType, streams::BytesStreamSink};
+use super::{
+    common::{FrameType, FrameTypeError},
+    streams::BytesStreamSink,
+};
 use crate::ExportKeyingMaterial;
 
 /// Authentication message from the client.
@@ -144,6 +148,8 @@ pub enum Error {
     Timeout { source: Elapsed },
     #[snafu(display("Handshake stream ended prematurely"))]
     UnexpectedEnd {},
+    #[snafu(transparent)]
+    FrameTypeError { source: FrameTypeError },
     #[snafu(display("The relay denied our authentication ({reason})"))]
     ServerDeniedAuth { reason: String },
     #[snafu(display("Unexpected tag, got {frame_type}, but expected one of {expected_types:?}"))]
@@ -363,7 +369,7 @@ pub(crate) async fn serverside(
             })?;
 
         if client_auth.verify(io) {
-            tracing::trace!(?client_auth.public_key, "authentication succeeded via keying material");
+            trace!(?client_auth.public_key, "authentication succeeded via keying material");
             return Ok(SuccessfulAuthentication {
                 client_key: client_auth.public_key,
                 mechanism: Mechanism::SignedKeyMaterial,
@@ -378,13 +384,13 @@ pub(crate) async fn serverside(
     let client_auth: ClientAuth = deserialize_frame(frame)?;
 
     if client_auth.verify(&challenge) {
-        tracing::trace!(?client_auth.public_key, "authentication succeeded via challenge");
+        trace!(?client_auth.public_key, "authentication succeeded via challenge");
         Ok(SuccessfulAuthentication {
             client_key: client_auth.public_key,
             mechanism: Mechanism::SignedChallenge,
         })
     } else {
-        tracing::trace!(?client_auth.public_key, "authentication failed");
+        trace!(?client_auth.public_key, "authentication failed");
         let denial = ServerDeniesAuth {
             reason: "signature invalid".into(),
         };
@@ -404,11 +410,11 @@ impl SuccessfulAuthentication {
         is_authorized: bool,
     ) -> Result<PublicKey, Error> {
         if is_authorized {
-            tracing::trace!("authorizing client");
+            trace!("authorizing client");
             write_frame(io, ServerConfirmsAuth).await?;
             Ok(self.client_key)
         } else {
-            tracing::trace!("denying client auth");
+            trace!("denying client auth");
             let denial = ServerDeniesAuth {
                 reason: "not authorized".into(),
             };
@@ -426,7 +432,7 @@ async fn write_frame<F: serde::Serialize + Frame>(
     frame: F,
 ) -> Result<(), Error> {
     let mut bytes = BytesMut::new();
-    tracing::trace!(frame_type = %F::TAG, "Writing frame");
+    trace!(frame_type = %F::TAG, "Writing frame");
     F::TAG.write_to(&mut bytes);
     let bytes = postcard::to_io(&frame, bytes.writer())
         .expect("serialization failed") // buffer can't become "full" without being a critical failure, datastructures shouldn't ever fail serialization
@@ -442,13 +448,13 @@ async fn read_frame(
     expected_types: &[FrameType],
     timeout: time::Duration,
 ) -> Result<(FrameType, Bytes), Error> {
-    let recv = time::timeout(timeout, io.try_next())
+    let mut payload = time::timeout(timeout, io.try_next())
         .await
         .context(TimeoutSnafu)??
         .ok_or_else(|| UnexpectedEndSnafu.build())?;
 
-    let (frame_type, payload) = FrameType::from_bytes(recv).context(UnexpectedEndSnafu)?;
-    tracing::trace!(%frame_type, "Reading frame");
+    let frame_type = FrameType::from_bytes(&mut payload)?;
+    trace!(%frame_type, "Reading frame");
     snafu::ensure!(
         expected_types.contains(&frame_type),
         UnexpectedFrameTypeSnafu {
