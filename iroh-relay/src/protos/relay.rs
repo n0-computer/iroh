@@ -384,7 +384,7 @@ impl Frame {
     pub(crate) fn encoded_len(&self) -> usize {
         let payload_len = match self {
             Self::ClientInfo { message, .. } => {
-                MAGIC.as_bytes().len()
+                MAGIC.len()
                 + 32 // node id
                 + 64 // signature
                 + message.len()
