@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["RELAY_PATH","RELAY_PROBE_PATH"],"enum":["Protocol"]};
+window.SIDEBAR_ITEMS = {"constant":["RELAY_PATH","RELAY_PROBE_PATH"]};
