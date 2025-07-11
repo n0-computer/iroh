@@ -4,11 +4,10 @@ use std::collections::{BTreeMap, HashMap};
 
 use iroh_base::NodeId;
 use n0_future::time::{Duration, Instant};
-use tracing::{Level, debug, event};
 
 use super::{
-    IpPort, PingRole, Source,
-    node_state::{ControlMsg, PongReply, SESSION_ACTIVE_TIMEOUT},
+    IpPort, Source,
+    node_state::{ControlMsg, SESSION_ACTIVE_TIMEOUT},
 };
 use crate::{
     disco::SendAddr,
@@ -52,6 +51,7 @@ pub(super) struct PathState {
     ///
     /// See [`PathValidity`] docs.
     pub(super) validity: PathValidity,
+
     /// When the last payload data was **received** via this path.
     ///
     /// This excludes DISCO messages.
@@ -100,54 +100,6 @@ impl PathState {
         }
     }
 
-    pub(super) fn with_ping(
-        node_id: NodeId,
-        path: SendAddr,
-        tx_id: stun_rs::TransactionId,
-        source: Source,
-        now: Instant,
-    ) -> Self {
-        let mut new = PathState::new(node_id, path, source, now);
-        new.handle_ping(tx_id, now);
-        new
-    }
-
-    pub(super) fn add_pong_reply(&mut self, r: PongReply) {
-        if let SendAddr::Udp(ref path) = self.path {
-            if self.validity.is_empty() {
-                event!(
-                    target: "iroh::_events::holepunched",
-                    Level::DEBUG,
-                    remote_node = %self.node_id.fmt_short(),
-                    path = ?path,
-                    direction = "outgoing",
-                );
-            }
-        }
-
-        self.validity = PathValidity::new(r.pong_at, r.latency);
-    }
-
-    pub(super) fn receive_payload(&mut self, now: Instant) {
-        self.last_payload_msg = Some(now);
-        self.validity
-            .receive_payload(now, path_validity::Source::QuicPayload);
-    }
-
-    #[cfg(test)]
-    pub(super) fn with_pong_reply(node_id: NodeId, r: PongReply) -> Self {
-        PathState {
-            node_id,
-            path: r.from.clone(),
-            last_ping: None,
-            last_got_ping: None,
-            call_me_maybe_time: None,
-            validity: PathValidity::new(r.pong_at, r.latency),
-            last_payload_msg: None,
-            sources: HashMap::new(),
-        }
-    }
-
     /// Check whether this path is considered active.
     ///
     /// Active means the path has received payload messages within the last
@@ -165,6 +117,12 @@ impl PathState {
     /// Returns the instant the last incoming ping was received.
     pub(super) fn last_incoming_ping(&self) -> Option<&Instant> {
         self.last_got_ping.as_ref().map(|(time, _tx_id)| time)
+    }
+
+    pub(super) fn receive_payload(&mut self, now: Instant) {
+        self.last_payload_msg = Some(now);
+        self.validity
+            .receive_payload(now, path_validity::Source::QuicPayload);
     }
 
     /// Reports the last instant this path was considered alive.
@@ -198,10 +156,6 @@ impl PathState {
     /// Returns the time elapsed since the last control message, and the type of control message.
     pub(super) fn last_control_msg(&self, now: Instant) -> Option<(Duration, ControlMsg)> {
         // get every control message and assign it its kind
-        let last_pong = self
-            .validity
-            .latest_pong()
-            .map(|pong_at| (pong_at, ControlMsg::Pong));
         let last_call_me_maybe = self
             .call_me_maybe_time
             .as_ref()
@@ -210,9 +164,8 @@ impl PathState {
             .last_incoming_ping()
             .map(|ping| (*ping, ControlMsg::Ping));
 
-        last_pong
+        last_call_me_maybe
             .into_iter()
-            .chain(last_call_me_maybe)
             .chain(last_ping)
             .max_by_key(|(instant, _kind)| *instant)
             .map(|(instant, kind)| (now.duration_since(instant), kind))
@@ -236,39 +189,6 @@ impl PathState {
                 //     debug!("ping is too new: {}ms", elapsed.as_millis());
                 // }
                 elapsed > DISCO_PING_INTERVAL
-            }
-        }
-    }
-
-    pub(super) fn handle_ping(&mut self, tx_id: stun_rs::TransactionId, now: Instant) -> PingRole {
-        if Some(&tx_id) == self.last_got_ping.as_ref().map(|(_t, tx_id)| tx_id) {
-            PingRole::Duplicate
-        } else {
-            let prev = self.last_got_ping.replace((now, tx_id));
-            let heartbeat_deadline = HEARTBEAT_INTERVAL + (HEARTBEAT_INTERVAL / 2);
-            match prev {
-                Some((prev_time, _tx)) if now.duration_since(prev_time) <= heartbeat_deadline => {
-                    PingRole::LikelyHeartbeat
-                }
-                Some((prev_time, _tx)) => {
-                    debug!(
-                        elapsed = ?now.duration_since(prev_time),
-                        "heartbeat missed, reactivating",
-                    );
-                    PingRole::Activate
-                }
-                None => {
-                    if let SendAddr::Udp(ref addr) = self.path {
-                        event!(
-                            target: "iroh::_events::holepunched",
-                            Level::DEBUG,
-                            remote_node = %self.node_id.fmt_short(),
-                            path = ?addr,
-                            direction = "incoming",
-                        );
-                    }
-                    PingRole::Activate
-                }
             }
         }
     }

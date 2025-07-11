@@ -7,7 +7,8 @@
 //! [`NodeState`]: super::node_state::NodeState
 use std::{collections::BTreeMap, net::SocketAddr};
 
-use n0_future::time::Instant;
+use n0_future::time::{Duration, Instant};
+use rand::seq::IteratorRandom;
 use tracing::{Level, event};
 
 use super::{IpPort, path_state::PathState};

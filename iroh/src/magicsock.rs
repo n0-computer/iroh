@@ -29,7 +29,6 @@ use std::{
 };
 
 use bytes::Bytes;
-use data_encoding::HEXLOWER;
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_relay::RelayMap;
 use n0_future::{
@@ -59,7 +58,7 @@ use url::Url;
 use self::transports::IpTransport;
 use self::{
     metrics::Metrics as MagicsockMetrics,
-    node_map::{NodeMap, PingAction, PingRole, SendPing},
+    node_map::{NodeMap, PingAction},
     transports::{RelayActorConfig, RelayTransport, Transports, UdpSender},
 };
 #[cfg(not(wasm_browser))]
@@ -876,13 +875,8 @@ impl MagicSock {
         let _guard = span.enter();
         trace!("receive disco message");
         match dm {
-            disco::Message::Ping(ping) => {
-                self.metrics.magicsock.recv_disco_ping.inc();
-                self.handle_ping(ping, sender, src);
-            }
-            disco::Message::Pong(pong) => {
-                self.metrics.magicsock.recv_disco_pong.inc();
-                self.node_map.handle_pong(sender, src, pong);
+            disco::Message::Ping(..) | disco::Message::Pong(..) => {
+                unreachable!("not used anymore");
             }
             disco::Message::CallMeMaybe(cm) => {
                 self.metrics.magicsock.recv_disco_call_me_maybe.inc();
@@ -909,99 +903,19 @@ impl MagicSock {
                     direct_addresses: cm.my_numbers.iter().copied().collect(),
                 });
 
-                let ping_actions =
-                    self.node_map
-                        .handle_call_me_maybe(sender, cm, &self.metrics.magicsock);
-
-                for action in ping_actions {
-                    match action {
-                        PingAction::SendCallMeMaybe { .. } => {
-                            warn!("Unexpected CallMeMaybe as response of handling a CallMeMaybe");
-                        }
-                        PingAction::SendPing(ping) => {
-                            self.send_ping_queued(ping);
-                        }
-                    }
-                }
+                self.node_map
+                    .handle_call_me_maybe(sender, cm, &self.metrics.magicsock);
             }
         }
         trace!("disco message handled");
     }
 
-    /// Handle a ping message.
-    fn handle_ping(&self, dm: disco::Ping, sender: NodeId, src: &transports::Addr) {
-        // Insert the ping into the node map, and return whether a ping with this tx_id was already
-        // received.
-        let addr: SendAddr = src.clone().into();
-        let handled = self.node_map.handle_ping(sender, addr.clone(), dm.tx_id);
-        match handled.role {
-            PingRole::Duplicate => {
-                debug!(?src, tx = %HEXLOWER.encode(&dm.tx_id), "received ping: path already confirmed, skip");
-                return;
-            }
-            PingRole::LikelyHeartbeat => {}
-            PingRole::NewPath => {
-                debug!(?src, tx = %HEXLOWER.encode(&dm.tx_id), "received ping: new path");
-            }
-            PingRole::Activate => {
-                debug!(?src, tx = %HEXLOWER.encode(&dm.tx_id), "received ping: path active");
-            }
-        }
-
-        // Send a pong.
-        debug!(tx = %HEXLOWER.encode(&dm.tx_id), %addr, dstkey = %sender.fmt_short(),
-               "sending pong");
-        let pong = disco::Message::Pong(disco::Pong {
-            tx_id: dm.tx_id,
-            ping_observed_addr: addr.clone(),
-        });
-        event!(
-            target: "iroh::_events::pong::sent",
-            Level::DEBUG,
-            remote_node = %sender.fmt_short(),
-            dst = ?addr,
-            txn = ?dm.tx_id,
-        );
-
-        if !self.disco.try_send(addr.clone(), sender, pong) {
-            warn!(%addr, "failed to queue pong");
-        }
-
-        if let Some(ping) = handled.needs_ping_back {
-            debug!(
-                %addr,
-                dstkey = %sender.fmt_short(),
-                "sending direct ping back",
-            );
-            self.send_ping_queued(ping);
-        }
-    }
-
-    fn send_ping_queued(&self, ping: SendPing) {
-        let SendPing {
-            id,
-            dst,
-            dst_node,
-            tx_id,
-            purpose,
-        } = ping;
-        let msg = disco::Message::Ping(disco::Ping {
-            tx_id,
-            node_key: self.public_key,
-        });
-        let sent = self.disco.try_send(dst.clone(), dst_node, msg);
-        if sent {
-            let msg_sender = self.actor_sender.clone();
-            trace!(%dst, tx = %HEXLOWER.encode(&tx_id), ?purpose, "ping sent (queued)");
-            self.node_map
-                .notify_ping_sent(id, dst, tx_id, purpose, msg_sender);
-        } else {
-            warn!(dst = ?dst, tx = %HEXLOWER.encode(&tx_id), ?purpose, "failed to send ping: queues full");
-        }
-    }
-
     /// Send the given ping actions out.
-    async fn send_ping_actions(&self, sender: &UdpSender, msgs: Vec<PingAction>) -> io::Result<()> {
+    async fn send_ping_actions(
+        &self,
+        _sender: &UdpSender,
+        msgs: Vec<PingAction>,
+    ) -> io::Result<()> {
         for msg in msgs {
             // Abort sending as soon as we know we are shutting down.
             if self.is_closing() || self.is_closed() {
@@ -1045,25 +959,6 @@ impl MagicSock {
                                 .ok();
                         }
                     }
-                }
-                PingAction::SendPing(SendPing {
-                    id,
-                    dst,
-                    dst_node,
-                    tx_id,
-                    purpose,
-                }) => {
-                    let msg = disco::Message::Ping(disco::Ping {
-                        tx_id,
-                        node_key: self.public_key,
-                    });
-
-                    self.send_disco_message(sender, dst.clone(), dst_node, msg)
-                        .await?;
-                    debug!(%dst, tx = %HEXLOWER.encode(&tx_id), ?purpose, "ping sent");
-                    let msg_sender = self.actor_sender.clone();
-                    self.node_map
-                        .notify_ping_sent(id, dst, tx_id, purpose, msg_sender);
                 }
             }
         }
@@ -1741,7 +1636,6 @@ impl AsyncUdpSocket for MagicUdpSocket {
 #[derive(Debug)]
 enum ActorMessage {
     PingActions(Vec<PingAction>),
-    EndpointPingExpired(usize, stun_rs::TransactionId),
     NetworkChange,
     ScheduleDirectAddrUpdate(UpdateReason, Option<(NodeId, RelayUrl)>),
     #[cfg(test)]
@@ -2036,9 +1930,6 @@ impl Actor {
     /// Returns `true` if it was a shutdown.
     async fn handle_actor_message(&mut self, msg: ActorMessage, sender: &UdpSender) {
         match msg {
-            ActorMessage::EndpointPingExpired(id, txid) => {
-                self.msock.node_map.notify_ping_timeout(id, txid);
-            }
             ActorMessage::NetworkChange => {
                 self.network_monitor.network_change().await.ok();
             }

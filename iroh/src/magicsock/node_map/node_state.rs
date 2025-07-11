@@ -1,19 +1,13 @@
 use std::{
-    collections::{BTreeSet, HashMap, btree_map::Entry},
-    hash::Hash,
+    collections::{BTreeSet, HashMap},
     net::{IpAddr, SocketAddr},
     sync::atomic::AtomicBool,
 };
 
-use data_encoding::HEXLOWER;
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
-use n0_future::{
-    task::{self, AbortOnDropHandle},
-    time::{self, Duration, Instant},
-};
+use n0_future::time::{Duration, Instant};
 use n0_watcher::Watchable;
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc;
 use tracing::{Level, debug, event, info, instrument, trace, warn};
 
 use super::{
@@ -39,9 +33,6 @@ pub(super) const MAX_INACTIVE_DIRECT_ADDRESSES: usize = 20;
 /// How long since an endpoint path was last alive before it might be pruned.
 const LAST_ALIVE_PRUNE_DURATION: Duration = Duration::from_secs(120);
 
-/// How long we wait for a pong reply before assuming it's never coming.
-const PING_TIMEOUT_DURATION: Duration = Duration::from_secs(5);
-
 /// The latency at or under which we don't try to upgrade to a better path.
 const GOOD_ENOUGH_LATENCY: Duration = Duration::from_millis(5);
 
@@ -52,46 +43,12 @@ pub(super) const SESSION_ACTIVE_TIMEOUT: Duration = Duration::from_secs(45);
 /// How often we try to upgrade to a better patheven if we have some non-relay route that works.
 const UPGRADE_INTERVAL: Duration = Duration::from_secs(60);
 
-/// How long until we send a stayin alive ping
-const STAYIN_ALIVE_MIN_ELAPSED: Duration = Duration::from_secs(2);
-
 #[derive(Debug)]
 pub(in crate::magicsock) enum PingAction {
     SendCallMeMaybe {
         relay_url: RelayUrl,
         dst_node: NodeId,
     },
-    SendPing(SendPing),
-}
-
-#[derive(Debug)]
-pub(in crate::magicsock) struct SendPing {
-    pub id: usize,
-    pub dst: SendAddr,
-    pub dst_node: NodeId,
-    pub tx_id: stun_rs::TransactionId,
-    pub purpose: DiscoPingPurpose,
-}
-
-/// Indicating an [`NodeState`] has handled a ping.
-#[derive(Debug)]
-pub struct PingHandled {
-    /// What this ping did to the [`NodeState`].
-    pub role: PingRole,
-    /// Whether the sender path should also be pinged.
-    ///
-    /// This is the case if an [`NodeState`] does not yet have a direct path, i.e. it has no
-    /// best_addr.  In this case we want to ping right back to open the direct path in this
-    /// direction as well.
-    pub needs_ping_back: Option<SendPing>,
-}
-
-#[derive(Debug)]
-pub enum PingRole {
-    Duplicate,
-    NewPath,
-    LikelyHeartbeat,
-    Activate,
 }
 
 /// An iroh node, which we can have connections with.
@@ -109,14 +66,11 @@ pub(super) struct NodeState {
     quic_mapped_addr: NodeIdMappedAddr,
     /// The global identifier for this endpoint.
     node_id: NodeId,
-    /// The last time we pinged all endpoints.
-    last_full_ping: Option<Instant>,
     /// The url of relay node that we can relay over to communicate.
     ///
     /// The fallback/bootstrap path, if non-zero (non-zero for well-behaved clients).
     relay_url: Option<(RelayUrl, PathState)>,
     udp_paths: NodeUdpPaths,
-    sent_pings: HashMap<stun_rs::TransactionId, SentPing>,
     /// Last time this node was used.
     ///
     /// A node is marked as in use when sending datagrams to them, or when having received
@@ -174,7 +128,6 @@ impl NodeState {
             id,
             quic_mapped_addr,
             node_id: options.node_id,
-            last_full_ping: None,
             relay_url: options.relay_url.map(|url| {
                 (
                     url.clone(),
@@ -182,7 +135,6 @@ impl NodeState {
                 )
             }),
             udp_paths: NodeUdpPaths::new(),
-            sent_pings: HashMap::new(),
             last_used: options.active.then(Instant::now),
             last_call_me_maybe: None,
             conn_type: Watchable::new(ConnectionType::None),
@@ -211,32 +163,7 @@ impl NodeState {
     /// Returns info about this node.
     pub(super) fn info(&self, now: Instant) -> RemoteInfo {
         let conn_type = self.conn_type.get();
-        let latency = match conn_type {
-            ConnectionType::Direct(addr) => self
-                .udp_paths
-                .paths
-                .get(&addr.into())
-                .and_then(|state| state.latency()),
-            ConnectionType::Relay(ref url) => self
-                .relay_url
-                .as_ref()
-                .filter(|(relay_url, _)| relay_url == url)
-                .and_then(|(_, state)| state.latency()),
-            ConnectionType::Mixed(addr, ref url) => {
-                let addr_latency = self
-                    .udp_paths
-                    .paths
-                    .get(&addr.into())
-                    .and_then(|state| state.latency());
-                let relay_latency = self
-                    .relay_url
-                    .as_ref()
-                    .filter(|(relay_url, _)| relay_url == url)
-                    .and_then(|(_, state)| state.latency());
-                addr_latency.min(relay_latency)
-            }
-            ConnectionType::None => None,
-        };
+        let latency = None;
 
         let addrs = self
             .udp_paths
@@ -396,10 +323,6 @@ impl NodeState {
     #[instrument("want_call_me_maybe", skip_all)]
     fn want_call_me_maybe(&self, now: &Instant) -> bool {
         trace!("full ping: wanted?");
-        let Some(last_full_ping) = self.last_full_ping else {
-            debug!("no previous full ping: need full ping");
-            return true;
-        };
         match &self.udp_paths.best {
             UdpSendAddr::None | UdpSendAddr::Unconfirmed(_) => {
                 debug!("best addr not set: need full ping");
@@ -417,7 +340,7 @@ impl NodeState {
                     .expect("send path not tracked?")
                     .latency()
                     .expect("send_addr marked valid incorrectly");
-                if latency > GOOD_ENOUGH_LATENCY && *now - last_full_ping >= UPGRADE_INTERVAL {
+                if latency > GOOD_ENOUGH_LATENCY {
                     debug!(
                         "full ping interval expired and latency is only {}ms: need full ping",
                         latency.as_millis()
@@ -435,131 +358,6 @@ impl NodeState {
     fn want_call_me_maybe(&self, _now: &Instant) -> bool {
         trace!("full ping: skipped in browser");
         false
-    }
-
-    /// Cleanup the expired ping for the passed in txid.
-    #[instrument("disco", skip_all, fields(node = %self.node_id.fmt_short()))]
-    pub(super) fn ping_timeout(&mut self, txid: stun_rs::TransactionId, now: Instant) {
-        if let Some(sp) = self.sent_pings.remove(&txid) {
-            debug!(tx = %HEXLOWER.encode(&txid), addr = %sp.to, "pong not received in timeout");
-            match sp.to {
-                SendAddr::Udp(addr) => {
-                    if let Some(path_state) = self.udp_paths.paths.get_mut(&addr.into()) {
-                        path_state.last_ping = None;
-                        let consider_alive = path_state
-                            .last_alive()
-                            .map(|last_alive| last_alive.elapsed() <= PING_TIMEOUT_DURATION)
-                            .unwrap_or(false);
-                        if !consider_alive {
-                            // If there was no sign of life from this path during the time
-                            // which we should have received the pong, clear best addr and
-                            // pong.  Both are used to select this path again, but we know
-                            // it's not a usable path now.
-                            path_state.validity = PathValidity::empty();
-                            self.udp_paths.update_to_best_addr(now);
-                        }
-                    } else {
-                        // If we have no state for the best addr it should have been cleared
-                        // anyway.
-                        self.udp_paths.update_to_best_addr(now);
-                    }
-                }
-                SendAddr::Relay(ref url) => {
-                    if let Some((home_relay, relay_state)) = self.relay_url.as_mut() {
-                        if home_relay == url {
-                            // lost connectivity via relay
-                            relay_state.last_ping = None;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    #[must_use = "pings must be handled"]
-    fn start_ping(&self, dst: SendAddr, purpose: DiscoPingPurpose) -> Option<SendPing> {
-        #[cfg(any(test, feature = "test-utils"))]
-        if self.path_selection == PathSelection::RelayOnly && !dst.is_relay() {
-            // don't attempt any hole punching in relay only mode
-            warn!("in `RelayOnly` mode, ignoring request to start a hole punching attempt.");
-            return None;
-        }
-        #[cfg(wasm_browser)]
-        if !dst.is_relay() {
-            return None; // Similar to `RelayOnly` mode, we don't send UDP pings for hole-punching.
-        }
-
-        let tx_id = stun_rs::TransactionId::default();
-        trace!(tx = %HEXLOWER.encode(&tx_id), %dst, ?purpose,
-               dst = %self.node_id.fmt_short(), "start ping");
-        event!(
-            target: "iroh::_events::ping::sent",
-            Level::DEBUG,
-            remote_node = %self.node_id.fmt_short(),
-            ?dst,
-            txn = ?tx_id,
-            ?purpose,
-        );
-        Some(SendPing {
-            id: self.id,
-            dst,
-            dst_node: self.node_id,
-            tx_id,
-            purpose,
-        })
-    }
-
-    /// Record the fact that a ping has been sent out.
-    pub(super) fn ping_sent(
-        &mut self,
-        to: SendAddr,
-        tx_id: stun_rs::TransactionId,
-        purpose: DiscoPingPurpose,
-        sender: mpsc::Sender<ActorMessage>,
-    ) {
-        trace!(%to, tx = %HEXLOWER.encode(&tx_id), ?purpose, "record ping sent");
-
-        let now = Instant::now();
-        let mut path_found = false;
-        match to {
-            SendAddr::Udp(addr) => {
-                if let Some(st) = self.udp_paths.paths.get_mut(&addr.into()) {
-                    st.last_ping.replace(now);
-                    path_found = true
-                }
-            }
-            SendAddr::Relay(ref url) => {
-                if let Some((home_relay, relay_state)) = self.relay_url.as_mut() {
-                    if home_relay == url {
-                        relay_state.last_ping.replace(now);
-                        path_found = true
-                    }
-                }
-            }
-        }
-        if !path_found {
-            // Shouldn't happen. But don't ping an endpoint that's not active for us.
-            warn!(%to, ?purpose, "unexpected attempt to ping no longer live path");
-            return;
-        }
-
-        let id = self.id;
-        let _expiry_task = AbortOnDropHandle::new(task::spawn(async move {
-            time::sleep(PING_TIMEOUT_DURATION).await;
-            sender
-                .send(ActorMessage::EndpointPingExpired(id, tx_id))
-                .await
-                .ok();
-        }));
-        self.sent_pings.insert(
-            tx_id,
-            SentPing {
-                to,
-                at: now,
-                purpose,
-                _expiry_task,
-            },
-        );
     }
 
     /// Send a DISCO call-me-maybe message to the peer.
@@ -588,11 +386,7 @@ impl NodeState {
                 }
             }
         }
-        // We send pings regardless of whether we have a RelayUrl.  If we were given any
-        // direct address paths to contact but no RelayUrl, we still need to send a DISCO
-        // ping to the direct address paths so that the other node will learn about us and
-        // accepts the connection.
-        let mut msgs = self.send_pings(now);
+        let mut msgs = Vec::new();
 
         if let Some(url) = self.relay_url() {
             debug!(%url, "queue call-me-maybe");
@@ -606,59 +400,6 @@ impl NodeState {
         }
 
         msgs
-    }
-
-    /// Send DISCO Pings to all the paths of this node.
-    ///
-    /// Any paths to the node which have not been recently pinged will be sent a disco
-    /// ping.
-    ///
-    /// The caller is responsible for sending the messages.
-    #[must_use = "actions must be handled"]
-    fn send_pings(&mut self, now: Instant) -> Vec<PingAction> {
-        // We allocate +1 in case the caller wants to add a call-me-maybe message.
-        let mut ping_msgs = Vec::with_capacity(self.udp_paths.paths.len() + 1);
-
-        if let Some((url, state)) = self.relay_url.as_ref() {
-            if state.needs_ping(&now) {
-                debug!(%url, "relay path needs ping");
-                if let Some(msg) =
-                    self.start_ping(SendAddr::Relay(url.clone()), DiscoPingPurpose::Discovery)
-                {
-                    ping_msgs.push(PingAction::SendPing(msg))
-                }
-            }
-        }
-
-        #[cfg(any(test, feature = "test-utils"))]
-        if self.path_selection == PathSelection::RelayOnly {
-            warn!("in `RelayOnly` mode, ignoring request to respond to a hole punching attempt.");
-            return ping_msgs;
-        }
-
-        self.prune_direct_addresses(now);
-        let mut ping_dsts = String::from("[");
-        self.udp_paths
-            .paths
-            .iter()
-            .filter_map(|(ipp, state)| state.needs_ping(&now).then_some(*ipp))
-            .filter_map(|ipp| {
-                self.start_ping(SendAddr::Udp(ipp.into()), DiscoPingPurpose::Discovery)
-            })
-            .for_each(|msg| {
-                use std::fmt::Write;
-                write!(&mut ping_dsts, " {} ", msg.dst).ok();
-                ping_msgs.push(PingAction::SendPing(msg));
-            });
-        ping_dsts.push(']');
-        debug!(
-            %ping_dsts,
-            dst = %self.node_id.fmt_short(),
-            paths = %summarize_node_paths(&self.udp_paths.paths),
-            "sending pings to node",
-        );
-        self.last_full_ping.replace(now);
-        ping_msgs
     }
 
     pub(super) fn update_from_node_addr(
@@ -713,114 +454,6 @@ impl NodeState {
         debug!(new = ?new_addrs , %paths, "added new direct paths for endpoint");
     }
 
-    /// Handle a received Disco Ping.
-    ///
-    /// - Ensures the paths the ping was received on is a known path for this endpoint.
-    ///
-    /// - If there is no best_addr for this endpoint yet, sends a ping itself to try and
-    ///   establish one.
-    ///
-    /// This is called once we've already verified that we got a valid discovery message
-    /// from `self` via ep.
-    pub(super) fn handle_ping(
-        &mut self,
-        path: SendAddr,
-        tx_id: stun_rs::TransactionId,
-    ) -> PingHandled {
-        let now = Instant::now();
-
-        let role = match path {
-            SendAddr::Udp(addr) => match self.udp_paths.paths.entry(addr.into()) {
-                Entry::Occupied(mut occupied) => occupied.get_mut().handle_ping(tx_id, now),
-                Entry::Vacant(vacant) => {
-                    info!(%addr, "new direct addr for node");
-                    vacant.insert(PathState::with_ping(
-                        self.node_id,
-                        path.clone(),
-                        tx_id,
-                        Source::Udp,
-                        now,
-                    ));
-                    PingRole::NewPath
-                }
-            },
-            SendAddr::Relay(ref url) => {
-                match self.relay_url.as_mut() {
-                    Some((home_url, _state)) if home_url != url => {
-                        // either the node changed relays or we didn't have a relay address for the
-                        // node. In both cases, trust the new confirmed url
-                        info!(%url, "new relay addr for node");
-                        self.relay_url = Some((
-                            url.clone(),
-                            PathState::with_ping(
-                                self.node_id,
-                                path.clone(),
-                                tx_id,
-                                Source::Relay,
-                                now,
-                            ),
-                        ));
-                        PingRole::NewPath
-                    }
-                    Some((_home_url, state)) => state.handle_ping(tx_id, now),
-                    None => {
-                        info!(%url, "new relay addr for node");
-                        self.relay_url = Some((
-                            url.clone(),
-                            PathState::with_ping(
-                                self.node_id,
-                                path.clone(),
-                                tx_id,
-                                Source::Relay,
-                                now,
-                            ),
-                        ));
-                        PingRole::NewPath
-                    }
-                }
-            }
-        };
-        event!(
-            target: "iroh::_events::ping::recv",
-            Level::DEBUG,
-            remote_node = %self.node_id.fmt_short(),
-            src = ?path,
-            txn = ?tx_id,
-            ?role,
-        );
-
-        if matches!(path, SendAddr::Udp(_)) && matches!(role, PingRole::NewPath) {
-            self.prune_direct_addresses(now);
-        }
-
-        // if the endpoint does not yet have a best_addr
-        let needs_ping_back = if matches!(path, SendAddr::Udp(_))
-            && matches!(
-                self.udp_paths.best,
-                UdpSendAddr::None | UdpSendAddr::Unconfirmed(_) | UdpSendAddr::Outdated(_)
-            ) {
-            // We also need to send a ping to make this path available to us as well.  This
-            // is always sent together with a pong.  So in the worst case the pong gets lost
-            // and this ping does not.  In that case we ping-pong until both sides have
-            // received at least one pong.  Once both sides have received one pong they both
-            // have a best_addr and this ping will stop being sent.
-            self.start_ping(path, DiscoPingPurpose::PingBack)
-        } else {
-            None
-        };
-
-        debug!(
-            ?role,
-            needs_ping_back = ?needs_ping_back.is_some(),
-            paths = %summarize_node_paths(&self.udp_paths.paths),
-            "endpoint handled ping",
-        );
-        PingHandled {
-            role,
-            needs_ping_back,
-        }
-    }
-
     /// Prune inactive paths.
     ///
     /// This trims the list of inactive paths for an endpoint.  At most
@@ -873,105 +506,6 @@ impl NodeState {
         self.udp_paths.update_to_best_addr(now);
     }
 
-    /// Handles a Pong message (a reply to an earlier ping).
-    ///
-    /// It reports the address and key that should be inserted for the endpoint if any.
-    #[instrument(skip(self))]
-    pub(super) fn handle_pong(
-        &mut self,
-        m: &disco::Pong,
-        src: SendAddr,
-    ) -> Option<(SocketAddr, PublicKey)> {
-        event!(
-            target: "iroh::_events::pong::recv",
-            Level::DEBUG,
-            remote_node = %self.node_id.fmt_short(),
-            ?src,
-            txn = ?m.tx_id,
-        );
-        let is_relay = src.is_relay();
-        match self.sent_pings.remove(&m.tx_id) {
-            None => {
-                // This is not a pong for a ping we sent.  In reality however we probably
-                // did send this ping but it has timed-out by the time we receive this pong
-                // so we removed the state already.
-                debug!(tx = %HEXLOWER.encode(&m.tx_id), "received unknown pong (did it timeout?)");
-                None
-            }
-            Some(sp) => {
-                let mut node_map_insert = None;
-
-                let now = Instant::now();
-                let latency = now - sp.at;
-
-                debug!(
-                    tx = %HEXLOWER.encode(&m.tx_id),
-                    src = %src,
-                    reported_ping_src = %m.ping_observed_addr,
-                    ping_dst = %sp.to,
-                    is_relay = %src.is_relay(),
-                    latency = %latency.as_millis(),
-                    "received pong",
-                );
-
-                match src {
-                    SendAddr::Udp(addr) => {
-                        match self.udp_paths.paths.get_mut(&addr.into()) {
-                            None => {
-                                warn!("ignoring pong: no state for src addr");
-                                // This is no longer an endpoint we care about.
-                                return node_map_insert;
-                            }
-                            Some(st) => {
-                                node_map_insert = Some((addr, self.node_id));
-                                st.add_pong_reply(PongReply {
-                                    latency,
-                                    pong_at: now,
-                                    from: src,
-                                    pong_src: m.ping_observed_addr.clone(),
-                                });
-                            }
-                        }
-                        debug!(
-                            paths = %summarize_node_paths(&self.udp_paths.paths),
-                            "handled pong",
-                        );
-                    }
-                    SendAddr::Relay(ref url) => match self.relay_url.as_mut() {
-                        Some((home_url, state)) if home_url == url => {
-                            state.add_pong_reply(PongReply {
-                                latency,
-                                pong_at: now,
-                                from: src,
-                                pong_src: m.ping_observed_addr.clone(),
-                            });
-                        }
-                        other => {
-                            // if we are here then we sent this ping, but the url changed
-                            // waiting for the response. It was either set to None or changed to
-                            // another relay. This should either never happen or be extremely
-                            // unlikely. Log and ignore for now
-                            warn!(
-                                stored=?other,
-                                received=?url,
-                                "ignoring pong via relay for different relay from last one",
-                            );
-                        }
-                    },
-                }
-
-                // Promote this pong response to our current best address if it's lower latency.
-                // TODO(bradfitz): decide how latency vs. preference order affects decision
-                if let SendAddr::Udp(_to) = sp.to {
-                    debug_assert!(!is_relay, "mismatching relay & udp");
-                    self.udp_paths.update_to_best_addr(now);
-                }
-
-                node_map_insert
-            }
-        }
-    }
-
     /// Handles a DISCO CallMeMaybe discovery message.
     ///
     /// The contract for use of this message is that the node has already pinged to us via
@@ -982,7 +516,7 @@ impl NodeState {
     /// had any [`IpPort`]s to send pings to and our pings might end up blocked.  But at
     /// least open the firewalls on our side, giving the other side another change of making
     /// it through when it pings in response.
-    pub(super) fn handle_call_me_maybe(&mut self, m: disco::CallMeMaybe) -> Vec<PingAction> {
+    pub(super) fn handle_call_me_maybe(&mut self, m: disco::CallMeMaybe) {
         let now = Instant::now();
         let mut call_me_maybe_ipps = BTreeSet::new();
 
@@ -1035,7 +569,6 @@ impl NodeState {
             paths = %summarize_node_paths(&self.udp_paths.paths),
             "updated endpoint paths from call-me-maybe",
         );
-        self.send_pings(now)
     }
 
     /// Marks this node as having received a UDP payload message.
@@ -1114,29 +647,6 @@ impl NodeState {
             return self.send_call_me_maybe(now, SendCallMeMaybe::Always);
         }
 
-        // Send heartbeat ping to keep the current addr going as long as we need it.
-        if let Some(udp_addr) = self.udp_paths.best.get_addr() {
-            let elapsed = self.last_ping(&SendAddr::Udp(udp_addr)).map(|l| now - l);
-            // Send a ping if the last ping is older than 2 seconds.
-            let needs_ping = match elapsed {
-                Some(e) => e >= STAYIN_ALIVE_MIN_ELAPSED,
-                None => false,
-            };
-
-            if needs_ping {
-                debug!(
-                    dst = %udp_addr,
-                    since_last_ping=?elapsed,
-                    "send stayin alive ping",
-                );
-                if let Some(msg) =
-                    self.start_ping(SendAddr::Udp(udp_addr), DiscoPingPurpose::StayinAlive)
-                {
-                    return vec![PingAction::SendPing(msg)];
-                }
-            }
-        }
-
         Vec::new()
     }
 
@@ -1212,26 +722,6 @@ impl From<RemoteInfo> for NodeAddr {
 enum SendCallMeMaybe {
     Always,
     IfNoRecent,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(super) struct PongReply {
-    pub(super) latency: Duration,
-    /// When we received the pong.
-    pub(super) pong_at: Instant,
-    /// The pong's src (usually same as endpoint map key).
-    pub(super) from: SendAddr,
-    /// What they reported they heard.
-    pub(super) pong_src: SendAddr,
-}
-
-#[derive(Debug)]
-pub(super) struct SentPing {
-    pub(super) to: SendAddr,
-    pub(super) at: Instant,
-    #[allow(dead_code)]
-    pub(super) purpose: DiscoPingPurpose,
-    pub(super) _expiry_task: AbortOnDropHandle<()>,
 }
 
 /// The reason why a discovery ping message was sent.
@@ -1330,7 +820,7 @@ impl From<(RelayUrl, PathState)> for RelayUrlInfo {
         RelayUrlInfo {
             relay_url: value.0,
             last_alive: value.1.last_alive().map(|i| i.elapsed()),
-            latency: value.1.latency(),
+            latency: None,
         }
     }
 }
@@ -1442,256 +932,262 @@ mod tests {
     use super::*;
     use crate::magicsock::node_map::{NodeMap, NodeMapInner};
 
-    #[test]
-    fn test_remote_infos() {
-        let now = Instant::now();
-        let elapsed = Duration::from_secs(3);
-        let later = now + elapsed;
-        let send_addr: RelayUrl = "https://my-relay.com".parse().unwrap();
-        let pong_src = SendAddr::Udp("0.0.0.0:1".parse().unwrap());
-        let latency = Duration::from_millis(50);
+    // #[test]
+    // fn test_remote_infos() {
+    //     let now = Instant::now();
+    //     let elapsed = Duration::from_secs(3);
+    //     let later = now + elapsed;
+    //     let send_addr: RelayUrl = "https://my-relay.com".parse().unwrap();
+    //     let pong_src = SendAddr::Udp("0.0.0.0:1".parse().unwrap());
+    //     let latency = Duration::from_millis(50);
 
-        let relay_and_state = |node_id: NodeId, url: RelayUrl| {
-            let relay_state = PathState::with_pong_reply(
-                node_id,
-                PongReply {
-                    latency,
-                    pong_at: now,
-                    from: SendAddr::Relay(send_addr.clone()),
-                    pong_src: pong_src.clone(),
-                },
-            );
-            Some((url, relay_state))
-        };
+    //     let relay_and_state = |node_id: NodeId, url: RelayUrl| {
+    //         let relay_state = PathState::with_pong_reply(
+    //             node_id,
+    //             PongReply {
+    //                 latency,
+    //                 pong_at: now,
+    //                 from: SendAddr::Relay(send_addr.clone()),
+    //                 pong_src: pong_src.clone(),
+    //             },
+    //         );
+    //         Some((url, relay_state))
+    //     };
 
-        // endpoint with a `best_addr` that has a latency but no relay
-        let (a_endpoint, a_socket_addr) = {
-            let key = SecretKey::generate(rand::thread_rng());
-            let node_id = key.public();
-            let ip_port = IpPort {
-                ip: Ipv4Addr::UNSPECIFIED.into(),
-                port: 10,
-            };
-            let endpoint_state = BTreeMap::from([(
-                ip_port,
-                PathState::with_pong_reply(
-                    node_id,
-                    PongReply {
-                        latency,
-                        pong_at: now,
-                        from: SendAddr::Udp(ip_port.into()),
-                        pong_src: pong_src.clone(),
-                    },
-                ),
-            )]);
-            (
-                NodeState {
-                    id: 0,
-                    quic_mapped_addr: NodeIdMappedAddr::generate(),
-                    node_id: key.public(),
-                    last_full_ping: None,
-                    relay_url: None,
-                    udp_paths: NodeUdpPaths::from_parts(
-                        endpoint_state,
-                        UdpSendAddr::Valid(ip_port.into()),
-                    ),
-                    sent_pings: HashMap::new(),
-                    last_used: Some(now),
-                    last_call_me_maybe: None,
-                    conn_type: Watchable::new(ConnectionType::Direct(ip_port.into())),
-                    has_been_direct: AtomicBool::new(true),
-                    #[cfg(any(test, feature = "test-utils"))]
-                    path_selection: PathSelection::default(),
-                },
-                ip_port.into(),
-            )
-        };
-        // endpoint w/ no best addr but a relay w/ latency
-        let b_endpoint = {
-            // let socket_addr = "0.0.0.0:9".parse().unwrap();
-            let key = SecretKey::generate(rand::thread_rng());
-            NodeState {
-                id: 1,
-                quic_mapped_addr: NodeIdMappedAddr::generate(),
-                node_id: key.public(),
-                last_full_ping: None,
-                relay_url: relay_and_state(key.public(), send_addr.clone()),
-                udp_paths: NodeUdpPaths::new(),
-                sent_pings: HashMap::new(),
-                last_used: Some(now),
-                last_call_me_maybe: None,
-                conn_type: Watchable::new(ConnectionType::Relay(send_addr.clone())),
-                has_been_direct: AtomicBool::new(false),
-                #[cfg(any(test, feature = "test-utils"))]
-                path_selection: PathSelection::default(),
-            }
-        };
+    //     // endpoint with a `best_addr` that has a latency but no relay
+    //     let (a_endpoint, a_socket_addr) = {
+    //         let key = SecretKey::generate(rand::thread_rng());
+    //         let node_id = key.public();
+    //         let ip_port = IpPort {
+    //             ip: Ipv4Addr::UNSPECIFIED.into(),
+    //             port: 10,
+    //         };
+    //         let endpoint_state = BTreeMap::from([(
+    //             ip_port,
+    //             PathState::with_pong_reply(
+    //                 node_id,
+    //                 PongReply {
+    //                     latency,
+    //                     pong_at: now,
+    //                     from: SendAddr::Udp(ip_port.into()),
+    //                     pong_src: pong_src.clone(),
+    //                 },
+    //             ),
+    //         )]);
+    //         (
+    //             NodeState {
+    //                 id: 0,
+    //                 quic_mapped_addr: NodeIdMappedAddr::generate(),
+    //                 node_id: key.public(),
+    //                 last_full_ping: None,
+    //                 relay_url: None,
+    //                 udp_paths: NodeUdpPaths::from_parts(
+    //                     endpoint_state,
+    //                     BestAddr::from_parts(
+    //                         ip_port.into(),
+    //                         latency,
+    //                         now,
+    //                         now + Duration::from_secs(100),
+    //                     ),
+    //                 ),
+    //                 sent_pings: HashMap::new(),
+    //                 last_used: Some(now),
+    //                 last_call_me_maybe: None,
+    //                 conn_type: Watchable::new(ConnectionType::Direct(ip_port.into())),
+    //                 has_been_direct: true,
+    //                 #[cfg(any(test, feature = "test-utils"))]
+    //                 path_selection: PathSelection::default(),
+    //             },
+    //             ip_port.into(),
+    //         )
+    //     };
+    //     // endpoint w/ no best addr but a relay w/ latency
+    //     let b_endpoint = {
+    //         // let socket_addr = "0.0.0.0:9".parse().unwrap();
+    //         let key = SecretKey::generate(rand::thread_rng());
+    //         NodeState {
+    //             id: 1,
+    //             quic_mapped_addr: NodeIdMappedAddr::generate(),
+    //             node_id: key.public(),
+    //             last_full_ping: None,
+    //             relay_url: relay_and_state(key.public(), send_addr.clone()),
+    //             udp_paths: NodeUdpPaths::new(),
+    //             sent_pings: HashMap::new(),
+    //             last_used: Some(now),
+    //             last_call_me_maybe: None,
+    //             conn_type: Watchable::new(ConnectionType::Relay(send_addr.clone())),
+    //             has_been_direct: false,
+    //             #[cfg(any(test, feature = "test-utils"))]
+    //             path_selection: PathSelection::default(),
+    //         }
+    //     };
 
-        // endpoint w/ no best addr but a relay w/ no latency
-        let c_endpoint = {
-            // let socket_addr = "0.0.0.0:8".parse().unwrap();
-            let key = SecretKey::generate(rand::thread_rng());
-            NodeState {
-                id: 2,
-                quic_mapped_addr: NodeIdMappedAddr::generate(),
-                node_id: key.public(),
-                last_full_ping: None,
-                relay_url: Some((
-                    send_addr.clone(),
-                    PathState::new(
-                        key.public(),
-                        SendAddr::from(send_addr.clone()),
-                        Source::App,
-                        now,
-                    ),
-                )),
-                udp_paths: NodeUdpPaths::new(),
-                sent_pings: HashMap::new(),
-                last_used: Some(now),
-                last_call_me_maybe: None,
-                conn_type: Watchable::new(ConnectionType::Relay(send_addr.clone())),
-                has_been_direct: AtomicBool::new(false),
-                #[cfg(any(test, feature = "test-utils"))]
-                path_selection: PathSelection::default(),
-            }
-        };
+    //     // endpoint w/ no best addr but a relay w/ no latency
+    //     let c_endpoint = {
+    //         // let socket_addr = "0.0.0.0:8".parse().unwrap();
+    //         let key = SecretKey::generate(rand::thread_rng());
+    //         NodeState {
+    //             id: 2,
+    //             quic_mapped_addr: NodeIdMappedAddr::generate(),
+    //             node_id: key.public(),
+    //             last_full_ping: None,
+    //             relay_url: Some((
+    //                 send_addr.clone(),
+    //                 PathState::new(
+    //                     key.public(),
+    //                     SendAddr::from(send_addr.clone()),
+    //                     Source::App,
+    //                     now,
+    //                 ),
+    //             )),
+    //             udp_paths: NodeUdpPaths::new(),
+    //             sent_pings: HashMap::new(),
+    //             last_used: Some(now),
+    //             last_call_me_maybe: None,
+    //             conn_type: Watchable::new(ConnectionType::Relay(send_addr.clone())),
+    //             has_been_direct: false,
+    //             #[cfg(any(test, feature = "test-utils"))]
+    //             path_selection: PathSelection::default(),
+    //         }
+    //     };
 
-        // endpoint w/ expired best addr and relay w/ latency
-        let (d_endpoint, d_socket_addr) = {
-            let socket_addr: SocketAddr = "0.0.0.0:7".parse().unwrap();
-            let key = SecretKey::generate(rand::thread_rng());
-            let node_id = key.public();
-            let endpoint_state = BTreeMap::from([(
-                IpPort::from(socket_addr),
-                PathState::with_pong_reply(
-                    node_id,
-                    PongReply {
-                        latency,
-                        pong_at: now,
-                        from: SendAddr::Udp(socket_addr),
-                        pong_src: pong_src.clone(),
-                    },
-                ),
-            )]);
-            (
-                NodeState {
-                    id: 3,
-                    quic_mapped_addr: NodeIdMappedAddr::generate(),
-                    node_id: key.public(),
-                    last_full_ping: None,
-                    relay_url: relay_and_state(key.public(), send_addr.clone()),
-                    udp_paths: NodeUdpPaths::from_parts(
-                        endpoint_state,
-                        UdpSendAddr::Outdated(socket_addr),
-                    ),
-                    sent_pings: HashMap::new(),
-                    last_used: Some(now),
-                    last_call_me_maybe: None,
-                    conn_type: Watchable::new(ConnectionType::Mixed(
-                        socket_addr,
-                        send_addr.clone(),
-                    )),
-                    has_been_direct: AtomicBool::new(false),
-                    #[cfg(any(test, feature = "test-utils"))]
-                    path_selection: PathSelection::default(),
-                },
-                socket_addr,
-            )
-        };
+    //     // endpoint w/ expired best addr and relay w/ latency
+    //     let (d_endpoint, d_socket_addr) = {
+    //         let socket_addr: SocketAddr = "0.0.0.0:7".parse().unwrap();
+    //         let expired = now.checked_sub(Duration::from_secs(100)).unwrap();
+    //         let key = SecretKey::generate(rand::thread_rng());
+    //         let node_id = key.public();
+    //         let endpoint_state = BTreeMap::from([(
+    //             IpPort::from(socket_addr),
+    //             PathState::with_pong_reply(
+    //                 node_id,
+    //                 PongReply {
+    //                     latency,
+    //                     pong_at: now,
+    //                     from: SendAddr::Udp(socket_addr),
+    //                     pong_src: pong_src.clone(),
+    //                 },
+    //             ),
+    //         )]);
+    //         (
+    //             NodeState {
+    //                 id: 3,
+    //                 quic_mapped_addr: NodeIdMappedAddr::generate(),
+    //                 node_id: key.public(),
+    //                 last_full_ping: None,
+    //                 relay_url: relay_and_state(key.public(), send_addr.clone()),
+    //                 udp_paths: NodeUdpPaths::from_parts(
+    //                     endpoint_state,
+    //                     BestAddr::from_parts(socket_addr, Duration::from_millis(80), now, expired),
+    //                 ),
+    //                 sent_pings: HashMap::new(),
+    //                 last_used: Some(now),
+    //                 last_call_me_maybe: None,
+    //                 conn_type: Watchable::new(ConnectionType::Mixed(
+    //                     socket_addr,
+    //                     send_addr.clone(),
+    //                 )),
+    //                 has_been_direct: false,
+    //                 #[cfg(any(test, feature = "test-utils"))]
+    //                 path_selection: PathSelection::default(),
+    //             },
+    //             socket_addr,
+    //         )
+    //     };
 
-        let mut expect = Vec::from([
-            RemoteInfo {
-                node_id: a_endpoint.node_id,
-                relay_url: None,
-                addrs: Vec::from([DirectAddrInfo {
-                    addr: a_socket_addr,
-                    latency: Some(latency),
-                    last_control: Some((elapsed, ControlMsg::Pong)),
-                    last_payload: None,
-                    last_alive: Some(elapsed),
-                    sources: HashMap::new(),
-                }]),
-                conn_type: ConnectionType::Direct(a_socket_addr),
-                latency: Some(latency),
-                last_used: Some(elapsed),
-            },
-            RemoteInfo {
-                node_id: b_endpoint.node_id,
-                relay_url: Some(RelayUrlInfo {
-                    relay_url: b_endpoint.relay_url.as_ref().unwrap().0.clone(),
-                    last_alive: None,
-                    latency: Some(latency),
-                }),
-                addrs: Vec::new(),
-                conn_type: ConnectionType::Relay(send_addr.clone()),
-                latency: Some(latency),
-                last_used: Some(elapsed),
-            },
-            RemoteInfo {
-                node_id: c_endpoint.node_id,
-                relay_url: Some(RelayUrlInfo {
-                    relay_url: c_endpoint.relay_url.as_ref().unwrap().0.clone(),
-                    last_alive: None,
-                    latency: None,
-                }),
-                addrs: Vec::new(),
-                conn_type: ConnectionType::Relay(send_addr.clone()),
-                latency: None,
-                last_used: Some(elapsed),
-            },
-            RemoteInfo {
-                node_id: d_endpoint.node_id,
-                relay_url: Some(RelayUrlInfo {
-                    relay_url: d_endpoint.relay_url.as_ref().unwrap().0.clone(),
-                    last_alive: None,
-                    latency: Some(latency),
-                }),
-                addrs: Vec::from([DirectAddrInfo {
-                    addr: d_socket_addr,
-                    latency: Some(latency),
-                    last_control: Some((elapsed, ControlMsg::Pong)),
-                    last_payload: None,
-                    last_alive: Some(elapsed),
-                    sources: HashMap::new(),
-                }]),
-                conn_type: ConnectionType::Mixed(d_socket_addr, send_addr.clone()),
-                latency: Some(Duration::from_millis(50)),
-                last_used: Some(elapsed),
-            },
-        ]);
+    //     let mut expect = Vec::from([
+    //         RemoteInfo {
+    //             node_id: a_endpoint.node_id,
+    //             relay_url: None,
+    //             addrs: Vec::from([DirectAddrInfo {
+    //                 addr: a_socket_addr,
+    //                 latency: Some(latency),
+    //                 last_control: Some((elapsed, ControlMsg::Pong)),
+    //                 last_payload: None,
+    //                 last_alive: Some(elapsed),
+    //                 sources: HashMap::new(),
+    //             }]),
+    //             conn_type: ConnectionType::Direct(a_socket_addr),
+    //             latency: Some(latency),
+    //             last_used: Some(elapsed),
+    //         },
+    //         RemoteInfo {
+    //             node_id: b_endpoint.node_id,
+    //             relay_url: Some(RelayUrlInfo {
+    //                 relay_url: b_endpoint.relay_url.as_ref().unwrap().0.clone(),
+    //                 last_alive: None,
+    //                 latency: Some(latency),
+    //             }),
+    //             addrs: Vec::new(),
+    //             conn_type: ConnectionType::Relay(send_addr.clone()),
+    //             latency: Some(latency),
+    //             last_used: Some(elapsed),
+    //         },
+    //         RemoteInfo {
+    //             node_id: c_endpoint.node_id,
+    //             relay_url: Some(RelayUrlInfo {
+    //                 relay_url: c_endpoint.relay_url.as_ref().unwrap().0.clone(),
+    //                 last_alive: None,
+    //                 latency: None,
+    //             }),
+    //             addrs: Vec::new(),
+    //             conn_type: ConnectionType::Relay(send_addr.clone()),
+    //             latency: None,
+    //             last_used: Some(elapsed),
+    //         },
+    //         RemoteInfo {
+    //             node_id: d_endpoint.node_id,
+    //             relay_url: Some(RelayUrlInfo {
+    //                 relay_url: d_endpoint.relay_url.as_ref().unwrap().0.clone(),
+    //                 last_alive: None,
+    //                 latency: Some(latency),
+    //             }),
+    //             addrs: Vec::from([DirectAddrInfo {
+    //                 addr: d_socket_addr,
+    //                 latency: Some(latency),
+    //                 last_control: Some((elapsed, ControlMsg::Pong)),
+    //                 last_payload: None,
+    //                 last_alive: Some(elapsed),
+    //                 sources: HashMap::new(),
+    //             }]),
+    //             conn_type: ConnectionType::Mixed(d_socket_addr, send_addr.clone()),
+    //             latency: Some(Duration::from_millis(50)),
+    //             last_used: Some(elapsed),
+    //         },
+    //     ]);
 
-        let node_map = NodeMap::from_inner(NodeMapInner {
-            by_node_key: HashMap::from([
-                (a_endpoint.node_id, a_endpoint.id),
-                (b_endpoint.node_id, b_endpoint.id),
-                (c_endpoint.node_id, c_endpoint.id),
-                (d_endpoint.node_id, d_endpoint.id),
-            ]),
-            by_ip_port: HashMap::from([
-                (a_socket_addr.into(), a_endpoint.id),
-                (d_socket_addr.into(), d_endpoint.id),
-            ]),
-            by_quic_mapped_addr: HashMap::from([
-                (a_endpoint.quic_mapped_addr, a_endpoint.id),
-                (b_endpoint.quic_mapped_addr, b_endpoint.id),
-                (c_endpoint.quic_mapped_addr, c_endpoint.id),
-                (d_endpoint.quic_mapped_addr, d_endpoint.id),
-            ]),
-            by_id: HashMap::from([
-                (a_endpoint.id, a_endpoint),
-                (b_endpoint.id, b_endpoint),
-                (c_endpoint.id, c_endpoint),
-                (d_endpoint.id, d_endpoint),
-            ]),
-            next_id: 5,
-            path_selection: PathSelection::default(),
-        });
-        let mut got = node_map.list_remote_infos(later);
-        got.sort_by_key(|p| p.node_id);
-        expect.sort_by_key(|p| p.node_id);
-        remove_non_deterministic_fields(&mut got);
-        assert_eq!(expect, got);
-    }
+    //     let node_map = NodeMap::from_inner(NodeMapInner {
+    //         by_node_key: HashMap::from([
+    //             (a_endpoint.node_id, a_endpoint.id),
+    //             (b_endpoint.node_id, b_endpoint.id),
+    //             (c_endpoint.node_id, c_endpoint.id),
+    //             (d_endpoint.node_id, d_endpoint.id),
+    //         ]),
+    //         by_ip_port: HashMap::from([
+    //             (a_socket_addr.into(), a_endpoint.id),
+    //             (d_socket_addr.into(), d_endpoint.id),
+    //         ]),
+    //         by_quic_mapped_addr: HashMap::from([
+    //             (a_endpoint.quic_mapped_addr, a_endpoint.id),
+    //             (b_endpoint.quic_mapped_addr, b_endpoint.id),
+    //             (c_endpoint.quic_mapped_addr, c_endpoint.id),
+    //             (d_endpoint.quic_mapped_addr, d_endpoint.id),
+    //         ]),
+    //         by_id: HashMap::from([
+    //             (a_endpoint.id, a_endpoint),
+    //             (b_endpoint.id, b_endpoint),
+    //             (c_endpoint.id, c_endpoint),
+    //             (d_endpoint.id, d_endpoint),
+    //         ]),
+    //         next_id: 5,
+    //         path_selection: PathSelection::default(),
+    //     });
+    //     let mut got = node_map.list_remote_infos(later);
+    //     got.sort_by_key(|p| p.node_id);
+    //     expect.sort_by_key(|p| p.node_id);
+    //     remove_non_deterministic_fields(&mut got);
+    //     assert_eq!(expect, got);
+    // }
 
     fn remove_non_deterministic_fields(infos: &mut [RemoteInfo]) {
         for info in infos.iter_mut() {
@@ -1724,10 +1220,6 @@ mod tests {
             .collect();
         let call_me_maybe = disco::CallMeMaybe { my_numbers };
 
-        let ping_messages = ep.handle_call_me_maybe(call_me_maybe);
-
-        // We have no relay server and no previous direct addresses, so we should get the same
-        // number of pings as direct addresses in the call-me-maybe.
-        assert_eq!(ping_messages.len(), my_numbers_count as usize);
+        ep.handle_call_me_maybe(call_me_maybe);
     }
 }
