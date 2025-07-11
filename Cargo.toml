@@ -51,6 +51,6 @@ netwatch = { git = "https://github.com/n0-computer/net-tools", branch = "feat-mu
 # iroh-quinn-proto = { path = "../iroh-quinn/quinn-proto" }
 # iroh-quinn-udp = { path = "../iroh-quinn/quinn-udp" }
 
-# iroh-quinn = { git = "https://github.com//n0-computer/quinn", branch = "multipath-misc" }
-# iroh-quinn-proto = { git = "https://github.com//n0-computer/quinn", branch = "multipath-misc" }
-# iroh-quinn-udp = { git = "https://github.com//n0-computer/quinn", branch = "multipath-misc" }
+# iroh-quinn = { git = "https://github.com//n0-computer/quinn", branch = "flub/quinn-path-events-status" }
+# iroh-quinn-proto = { git = "https://github.com//n0-computer/quinn", branch = "flub/quinn-path-events-status" }
+# iroh-quinn-udp = { git = "https://github.com//n0-computer/quinn", branch = "flub/quinn-path-events-status" }
