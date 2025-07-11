@@ -553,7 +553,7 @@ impl ClientCounter {
 
 #[cfg(test)]
 mod tests {
-    use bytes::{Bytes, BytesMut};
+    use bytes::Bytes;
     use iroh_base::SecretKey;
     use n0_snafu::{Result, ResultExt};
     use tracing::info;
@@ -698,7 +698,7 @@ mod tests {
             dst_key: target,
             packet: data.clone(),
         };
-        let frame_len = frame.clone().write_to(BytesMut::new()).freeze().len();
+        let frame_len = frame.to_bytes().len();
         assert_eq!(frame_len, LIMIT as usize);
 
         // Send a frame, it should arrive.

@@ -10,8 +10,6 @@ use std::{
 };
 
 use bytes::Bytes;
-#[cfg(not(wasm_browser))]
-use bytes::BytesMut;
 use iroh_base::{NodeId, SecretKey};
 use n0_future::{time::Duration, Sink, Stream};
 use nested_enum_utils::common_fields;
@@ -191,10 +189,10 @@ impl Sink<Frame> for Conn {
 
         #[cfg(not(wasm_browser))]
         let msg = tokio_websockets::Message::binary(tokio_websockets::Payload::from(
-            frame.write_to(BytesMut::new()).freeze(),
+            frame.to_bytes().freeze(),
         ));
         #[cfg(wasm_browser)]
-        let msg = ws_stream_wasm::WsMessage::Binary(frame.write_to(Vec::new()));
+        let msg = ws_stream_wasm::WsMessage::Binary(frame.to_vec());
 
         Pin::new(&mut self.conn).start_send(msg).map_err(Into::into)
     }
@@ -224,10 +222,10 @@ impl Sink<SendMessage> for Conn {
         let frame = Frame::from(item);
         #[cfg(not(wasm_browser))]
         let msg = tokio_websockets::Message::binary(tokio_websockets::Payload::from(
-            frame.write_to(BytesMut::new()).freeze(),
+            frame.to_bytes().freeze(),
         ));
         #[cfg(wasm_browser)]
-        let msg = ws_stream_wasm::WsMessage::Binary(frame.write_to(Vec::new()));
+        let msg = ws_stream_wasm::WsMessage::Binary(frame.to_vec());
 
         Pin::new(&mut self.conn).start_send(msg).map_err(Into::into)
     }

@@ -6,7 +6,6 @@ use std::{
     task::{Context, Poll},
 };
 
-use bytes::BytesMut;
 use n0_future::{ready, time, FutureExt, Sink, Stream};
 use snafu::Snafu;
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -97,7 +96,7 @@ impl Sink<Frame> for RelayedStream {
     fn start_send(mut self: Pin<&mut Self>, item: Frame) -> Result<(), Self::Error> {
         Pin::new(&mut self.inner)
             .start_send(tokio_websockets::Message::binary(
-                tokio_websockets::Payload::from(item.write_to(BytesMut::new()).freeze()),
+                tokio_websockets::Payload::from(item.to_bytes().freeze()),
             ))
             .map_err(ws_to_io_err)
     }

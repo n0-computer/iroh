@@ -12,6 +12,8 @@
 //!  * clients sends `FrameType::SendPacket`
 //!  * server then sends `FrameType::RecvPacket` to recipient
 
+#[cfg(not(wasm_browser))]
+use bytes::BytesMut;
 use bytes::{BufMut, Bytes};
 use iroh_base::{PublicKey, SecretKey, Signature, SignatureError};
 #[cfg(feature = "server")]
@@ -222,7 +224,7 @@ pub(crate) async fn send_client_key<S: Sink<Frame, Error = ConnSendError> + Unpi
 
 /// Reads the `FrameType::ClientInfo` frame from the client (its proof of identity)
 /// upon it's initial connection.
-#[cfg(any(test, feature = "server"))]
+#[cfg(feature = "server")]
 pub(crate) async fn recv_client_key<E, S: Stream<Item = Result<Frame, E>> + Unpin>(
     stream: S,
 ) -> Result<(PublicKey, ClientInfo), E>
@@ -316,6 +318,16 @@ impl Frame {
         }
     }
 
+    #[cfg(not(wasm_browser))]
+    pub(crate) fn to_bytes(&self) -> BytesMut {
+        self.write_to(BytesMut::with_capacity(self.encoded_len()))
+    }
+
+    #[cfg(wasm_browser)]
+    pub(crate) fn to_vec(&self) -> Vec<u8> {
+        self.write_to(Vec::with_capacity(self.encoded_len()))
+    }
+
     /// Writes it self to the given buffer.
     pub(crate) fn write_to<O: BufMut>(&self, mut dst: O) -> O {
         dst.put_u8(self.typ().into());
@@ -367,6 +379,36 @@ impl Frame {
             }
         }
         dst
+    }
+
+    pub(crate) fn encoded_len(&self) -> usize {
+        let payload_len = match self {
+            Self::ClientInfo { message, .. } => {
+                MAGIC.as_bytes().len()
+                + 32 // node id
+                + 64 // signature
+                + message.len()
+            }
+            Self::SendPacket { packet, .. } => {
+                32 // node id
+                + packet.len()
+            }
+            Self::RecvPacket { content, .. } => {
+                32 // node id
+                + content.len()
+            }
+            Self::KeepAlive => 0,
+            Self::NotePreferred { .. } => 1,
+            Self::NodeGone { .. } => 32,
+            Self::Ping { .. } | Self::Pong { .. } => 8,
+            Self::Health { problem } => problem.len(),
+            Self::Restarting { .. } => {
+                4 // u32
+                + 4 // u32
+            }
+        };
+        1 // frame type
+        + payload_len
     }
 
     #[allow(clippy::result_large_err)]
@@ -527,7 +569,6 @@ where
 
 #[cfg(all(test, feature = "server"))]
 mod tests {
-    use bytes::BytesMut;
     use data_encoding::HEXLOWER;
     use iroh_base::SecretKey;
     use n0_snafu::{Result, ResultExt};
@@ -630,7 +671,7 @@ mod tests {
         ];
 
         for (frame, expected_hex) in frames {
-            let bytes = frame.write_to(BytesMut::new()).freeze();
+            let bytes = frame.to_bytes().freeze();
             let stripped: Vec<u8> = expected_hex
                 .chars()
                 .filter_map(|s| {
@@ -651,7 +692,6 @@ mod tests {
 
 #[cfg(test)]
 mod proptests {
-    use bytes::BytesMut;
     use iroh_base::SecretKey;
     use proptest::prelude::*;
 
@@ -716,10 +756,17 @@ mod proptests {
 
     proptest! {
         #[test]
-        fn frame_ws_roundtrip(frame in frame()) {
-            let encoded = frame.write_to(BytesMut::new()).freeze();
+        fn frame_roundtrip(frame in frame()) {
+            let encoded = frame.to_bytes().freeze();
             let decoded = Frame::from_bytes(encoded, &KeyCache::test()).unwrap();
             prop_assert_eq!(frame, decoded);
+        }
+
+        #[test]
+        fn frame_encoded_len(frame in frame()) {
+            let claimed_encoded_len = frame.encoded_len();
+            let actual_encoded_len = frame.to_bytes().len();
+            prop_assert_eq!(claimed_encoded_len, actual_encoded_len);
         }
     }
 }
