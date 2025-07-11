@@ -553,7 +553,7 @@
 <a href=#553 id=553 data-nosnippet>553</a>
 <a href=#554 id=554 data-nosnippet>554</a><span class="attr">#[cfg(test)]
 <a href=#555 id=555 data-nosnippet>555</a></span><span class="kw">mod </span>tests {
-<a href=#556 id=556 data-nosnippet>556</a>    <span class="kw">use </span>bytes::{Bytes, BytesMut};
+<a href=#556 id=556 data-nosnippet>556</a>    <span class="kw">use </span>bytes::Bytes;
 <a href=#557 id=557 data-nosnippet>557</a>    <span class="kw">use </span>iroh_base::SecretKey;
 <a href=#558 id=558 data-nosnippet>558</a>    <span class="kw">use </span>n0_snafu::{<span class="prelude-ty">Result</span>, ResultExt};
 <a href=#559 id=559 data-nosnippet>559</a>    <span class="kw">use </span>tracing::info;
@@ -698,7 +698,7 @@
 <a href=#698 id=698 data-nosnippet>698</a>            dst_key: target,
 <a href=#699 id=699 data-nosnippet>699</a>            packet: data.clone(),
 <a href=#700 id=700 data-nosnippet>700</a>        };
-<a href=#701 id=701 data-nosnippet>701</a>        <span class="kw">let </span>frame_len = frame.clone().write_to(BytesMut::new()).freeze().len();
+<a href=#701 id=701 data-nosnippet>701</a>        <span class="kw">let </span>frame_len = frame.to_bytes().len();
 <a href=#702 id=702 data-nosnippet>702</a>        <span class="macro">assert_eq!</span>(frame_len, LIMIT <span class="kw">as </span>usize);
 <a href=#703 id=703 data-nosnippet>703</a>
 <a href=#704 id=704 data-nosnippet>704</a>        <span class="comment">// Send a frame, it should arrive.
