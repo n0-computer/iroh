@@ -689,7 +689,7 @@
 <a href=#689 id=689 data-nosnippet>689</a>        </span><span class="kw">let </span>(io_read, io_write) = tokio::io::duplex((LIMIT * MAX_FRAMES) <span class="kw">as _</span>);
 <a href=#690 id=690 data-nosnippet>690</a>        <span class="kw">let </span><span class="kw-2">mut </span>frame_writer = RelayedStream::test_client(io_write);
 <a href=#691 id=691 data-nosnippet>691</a>        <span class="comment">// Rate limiter allowing LIMIT bytes/s
-<a href=#692 id=692 data-nosnippet>692</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>stream = RelayedStream::test_server_limited(io_read, LIMIT / <span class="number">10</span>, LIMIT);
+<a href=#692 id=692 data-nosnippet>692</a>        </span><span class="kw">let </span><span class="kw-2">mut </span>stream = RelayedStream::test_server_limited(io_read, LIMIT / <span class="number">10</span>, LIMIT)<span class="question-mark">?</span>;
 <a href=#693 id=693 data-nosnippet>693</a>
 <a href=#694 id=694 data-nosnippet>694</a>        <span class="comment">// Prepare a frame to send, assert its size.
 <a href=#695 id=695 data-nosnippet>695</a>        </span><span class="kw">let </span>data = Bytes::from_static(<span class="string">b"hello world!!1elf"</span>);
