@@ -737,7 +737,7 @@ mod tests {
             dst_node_id: target,
             datagrams: data.clone(),
         };
-        let frame_len = frame.to_bytes().freeze().len();
+        let frame_len = frame.to_bytes().len();
         assert_eq!(frame_len, LIMIT as usize);
 
         // Send a frame, it should arrive.

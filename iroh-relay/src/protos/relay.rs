@@ -215,6 +215,7 @@ impl RelayToClientMsg {
         }
     }
 
+    #[cfg(feature = "server")]
     pub(crate) fn to_bytes(&self) -> BytesMut {
         self.write_to(BytesMut::with_capacity(self.encoded_len()))
     }

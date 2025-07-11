@@ -4987,8 +4987,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-websockets"
-version = "0.11.4"
-source = "git+https://github.com/Gelbpunkt/tokio-websockets.git?branch=frame-queue-buf#0d00440907a33e52ab1fa81469f23c007025605c"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f29ba084eb43becc9864ba514b4a64f5f65b82f9a6ffbafa5436c1c80605f03"
 dependencies = [
  "base64",
  "bytes",

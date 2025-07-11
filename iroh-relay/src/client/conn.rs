@@ -85,21 +85,6 @@ pub(crate) struct Conn {
 }
 
 impl Conn {
-    #[cfg(test)]
-    pub(crate) fn test(io: tokio::io::DuplexStream) -> Self {
-        use crate::protos::relay::MAX_FRAME_SIZE;
-        Self {
-            conn: WsBytesFramed {
-                io: tokio_websockets::ClientBuilder::new()
-                    .limits(
-                        tokio_websockets::Limits::default().max_payload_len(Some(MAX_FRAME_SIZE)),
-                    )
-                    .take_over(MaybeTlsStream::Test(io)),
-            },
-            key_cache: KeyCache::test(),
-        }
-    }
-
     /// Constructs a new websocket connection, including the initial server handshake.
     pub(crate) async fn new(
         #[cfg(not(wasm_browser))] io: tokio_websockets::WebSocketStream<
@@ -117,6 +102,21 @@ impl Conn {
         debug!("server_handshake: done");
 
         Ok(Self { conn, key_cache })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test(io: tokio::io::DuplexStream) -> Self {
+        use crate::protos::relay::MAX_FRAME_SIZE;
+        Self {
+            conn: WsBytesFramed {
+                io: tokio_websockets::ClientBuilder::new()
+                    .limits(
+                        tokio_websockets::Limits::default().max_payload_len(Some(MAX_FRAME_SIZE)),
+                    )
+                    .take_over(MaybeTlsStream::Test(io)),
+            },
+            key_cache: KeyCache::test(),
+        }
     }
 }
 

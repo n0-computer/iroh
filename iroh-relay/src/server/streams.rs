@@ -275,8 +275,9 @@ impl Bucket {
         refill_period: time::Duration,
     ) -> Result<Self, InvalidBucketConfig> {
         // milliseconds is the tokio timer resolution
+        let refill = bytes_per_second.saturating_mul(refill_period.as_millis() as i64) / 1000;
         snafu::ensure!(
-            max > 0 && bytes_per_second > 0 && refill_period.as_millis() != 0,
+            max > 0 && bytes_per_second > 0 && refill_period.as_millis() as u32 > 0 && refill > 0,
             InvalidBucketConfigSnafu {
                 max,
                 bytes_per_second,
@@ -288,12 +289,13 @@ impl Bucket {
             max,
             last_fill: time::Instant::now(),
             refill_period,
-            refill: bytes_per_second * refill_period.as_millis() as i64 / 1000,
+            refill,
         })
     }
 
     fn update_state(&mut self) {
         let now = time::Instant::now();
+        // div safety: self.refill_period.as_millis() is checked to be non-null in constructor
         let refill_periods = now.saturating_duration_since(self.last_fill).as_millis() as u32
             / self.refill_period.as_millis() as u32;
         if refill_periods == 0 {
@@ -301,25 +303,29 @@ impl Bucket {
             return;
         }
 
-        self.fill += refill_periods as i64 * self.refill;
+        self.fill = self
+            .fill
+            .saturating_add(refill_periods as i64 * self.refill);
         self.fill = std::cmp::min(self.fill, self.max);
         self.last_fill += self.refill_period * refill_periods;
     }
 
-    fn consume(&mut self, bytes: i64) -> Result<(), time::Instant> {
+    fn consume(&mut self, bytes: usize) -> Result<(), time::Instant> {
+        let bytes = i64::try_from(bytes).unwrap_or(i64::MAX);
         self.update_state();
 
-        self.fill -= bytes;
+        self.fill = self.fill.saturating_sub(bytes);
 
         if self.fill > 0 {
             return Ok(());
         }
 
-        let missing = -self.fill;
+        let missing = self.fill.saturating_neg();
 
         let periods_needed = (missing / self.refill) + 1;
+        let periods_needed = u32::try_from(periods_needed).unwrap_or(u32::MAX);
 
-        Err(self.last_fill + periods_needed as u32 * self.refill_period)
+        Err(self.last_fill + periods_needed * self.refill_period)
     }
 }
 
@@ -367,9 +373,7 @@ impl<S> RateLimited<S> {
             metrics,
         }
     }
-}
 
-impl<S> RateLimited<S> {
     /// Records metrics about being rate-limited.
     fn record_rate_limited(&mut self, bytes: usize) {
         // TODO: add a label for the frame type.
@@ -378,6 +382,17 @@ impl<S> RateLimited<S> {
             self.metrics.conns_rx_ratelimited_total.inc();
             self.limited_once = true;
         }
+    }
+}
+
+impl<S: ExportKeyingMaterial> ExportKeyingMaterial for RateLimited<S> {
+    fn export_keying_material<T: AsMut<[u8]>>(
+        &self,
+        output: T,
+        label: &[u8],
+        context: Option<&[u8]>,
+    ) -> Option<T> {
+        self.inner.export_keying_material(output, label, context)
     }
 }
 
@@ -408,7 +423,7 @@ impl<S: AsyncRead + Unpin> AsyncRead for RateLimited<S> {
         let bytes_read = bytes_before - buf.remaining();
 
         // Record how much we've read, rate limit accordingly, if need be.
-        if let Err(refill_time) = bucket.consume(bytes_read as i64) {
+        if let Err(refill_time) = bucket.consume(bytes_read) {
             this.record_rate_limited(bytes_read);
             this.bucket_refilled = Some(Box::pin(time::sleep_until(refill_time)));
         }
@@ -439,29 +454,6 @@ impl<S: AsyncWrite + Unpin> AsyncWrite for RateLimited<S> {
     ) -> Poll<Result<(), std::io::Error>> {
         Pin::new(&mut self.inner).poll_shutdown(cx)
     }
-
-    fn is_write_vectored(&self) -> bool {
-        self.inner.is_write_vectored()
-    }
-
-    fn poll_write_vectored(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-        bufs: &[std::io::IoSlice<'_>],
-    ) -> Poll<Result<usize, std::io::Error>> {
-        Pin::new(&mut self.inner).poll_write_vectored(cx, bufs)
-    }
-}
-
-impl<S: ExportKeyingMaterial> ExportKeyingMaterial for RateLimited<S> {
-    fn export_keying_material<T: AsMut<[u8]>>(
-        &self,
-        output: T,
-        label: &[u8],
-        context: Option<&[u8]>,
-    ) -> Option<T> {
-        self.inner.export_keying_material(output, label, context)
-    }
 }
 
 #[cfg(test)]
@@ -473,6 +465,7 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tracing_test::traced_test;
 
+    use super::Bucket;
     use crate::server::{streams::RateLimited, Metrics};
 
     #[tokio::test(start_paused = true)]
@@ -516,6 +509,36 @@ mod tests {
         let actual_bytes_per_second = send_total as f64 / duration.as_secs_f64();
         println!("{actual_bytes_per_second}");
         assert_eq!(actual_bytes_per_second.round() as u32, bytes_per_second);
+
+        Ok(())
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn test_bucket_high_refill() -> Result {
+        let bytes_per_second = i64::MAX;
+        let mut bucket = Bucket::new(i64::MAX, bytes_per_second, time::Duration::from_millis(100))?;
+        for _ in 0..100 {
+            time::sleep(time::Duration::from_millis(100)).await;
+            assert!(bucket.consume(1_000_000).is_ok());
+        }
+
+        Ok(())
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn smoke_test_bucket_high_consume() -> Result {
+        let bytes_per_second = 123_456;
+        let mut bucket = Bucket::new(
+            bytes_per_second / 10,
+            bytes_per_second,
+            time::Duration::from_millis(100),
+        )?;
+        for _ in 0..100 {
+            let Err(until) = bucket.consume(usize::MAX) else {
+                panic!("i64::MAX shouldn't be within limits");
+            };
+            time::sleep_until(until).await;
+        }
 
         Ok(())
     }

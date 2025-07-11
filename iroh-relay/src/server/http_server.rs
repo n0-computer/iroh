@@ -24,7 +24,6 @@ use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, debug_span, error, info, info_span, trace, warn, Instrument};
 
 use super::{clients::Clients, streams::InvalidBucketConfig, AccessConfig, SpawnError};
-#[allow(deprecated)]
 use crate::{
     defaults::{timeouts::SERVER_WRITE_TIMEOUT, DEFAULT_KEY_CACHE_CAPACITY},
     http::{RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},
@@ -32,7 +31,7 @@ use crate::{
     server::{
         client::Config,
         metrics::Metrics,
-        streams::{MaybeTlsStream, RelayedStream},
+        streams::{MaybeTlsStream, RateLimited, RelayedStream},
         BindTcpListenerSnafu, ClientRateLimit, NoLocalAddrSnafu,
     },
     KeyCache,
@@ -40,7 +39,6 @@ use crate::{
 use crate::{
     http::{CLIENT_AUTH_HEADER, RELAY_PROTOCOL_VERSION, WEBSOCKET_UPGRADE_PROTOCOL},
     protos::{handshake, relay::MAX_FRAME_SIZE, streams::WsBytesFramed},
-    server::streams::RateLimited,
 };
 
 type BytesBody = http_body_util::Full<hyper::body::Bytes>;
@@ -666,8 +664,6 @@ impl Inner {
             .context(RateLimitingMisconfiguredSnafu)?;
 
         self.metrics.accepts.inc();
-        // Since we already did the HTTP upgrade in the previous step,
-        // we use tokio-websockets to handle this connection
         // Create a server builder with default config
         let builder = tokio_websockets::ServerBuilder::new()
             .limits(tokio_websockets::Limits::default().max_payload_len(Some(MAX_FRAME_SIZE)));

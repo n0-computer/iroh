@@ -72,9 +72,6 @@ pub struct Metrics {
 
     /// Number of unique client keys per day
     pub unique_client_keys: Counter,
-
-    /// Number of accepted websocket connections
-    pub websocket_accepts: Counter,
     // TODO: enable when we can have multiple connections for one node id
     // pub duplicate_client_keys: Counter,
     // pub duplicate_client_conns: Counter,
