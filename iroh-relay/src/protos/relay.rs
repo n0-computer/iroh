@@ -7,7 +7,7 @@
 //!  * server then sends [`FrameType::RecvPacket`] to recipient
 //!  * server sends [`FrameType::NodeGone`] when the other client disconnects
 
-use bytes::{BufMut, Bytes, BytesMut};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 use iroh_base::{NodeId, SignatureError};
 use n0_future::time::{self, Duration};
 use nested_enum_utils::common_fields;
@@ -165,39 +165,46 @@ impl<T: AsRef<[u8]>> From<T> for Datagrams {
 impl Datagrams {
     fn write_to<O: BufMut>(&self, mut dst: O) -> O {
         let ecn = self.ecn.map_or(0, |ecn| ecn as u8);
-        let segment_size = self.segment_size.unwrap_or_default();
         dst.put_u8(ecn);
-        dst.put_u16(segment_size);
+        if let Some(segment_size) = self.segment_size {
+            dst.put_u16(segment_size);
+        }
         dst.put(self.contents.as_ref());
         dst
     }
 
     fn encoded_len(&self) -> usize {
         1 // ECN byte
-        + 2 // segment size
+        + self.segment_size.map_or(0, |_| 2) // segment size, when None, then a packed representation is assumed
         + self.contents.len()
     }
 
-    fn from_bytes(bytes: Bytes) -> Result<Self, Error> {
-        // 1 bytes ECN, 2 bytes segment size
-        snafu::ensure!(bytes.len() > 3, InvalidFrameSnafu);
+    fn from_bytes(mut bytes: Bytes, is_batch: bool) -> Result<Self, Error> {
+        if is_batch {
+            // 1 bytes ECN, 2 bytes segment size
+            snafu::ensure!(bytes.len() >= 3, InvalidFrameSnafu);
+        } else {
+            snafu::ensure!(bytes.len() >= 1, InvalidFrameSnafu);
+        }
 
-        let ecn_byte = bytes[0];
+        let ecn_byte = bytes.get_u8();
         let ecn = quinn_proto::EcnCodepoint::from_bits(ecn_byte);
 
-        let segment_size = u16::from_be_bytes(bytes[1..3].try_into().expect("length checked"));
-        let segment_size = if segment_size == 0 {
-            None
+        let segment_size = if is_batch {
+            let segment_size = bytes.get_u16(); // length checked above
+            if segment_size == 0 {
+                None
+            } else {
+                Some(segment_size)
+            }
         } else {
-            Some(segment_size)
+            None
         };
-
-        let contents = bytes.slice(3..);
 
         Ok(Self {
             ecn,
             segment_size,
-            contents,
+            contents: bytes,
         })
     }
 }
@@ -206,7 +213,13 @@ impl RelayToClientMsg {
     /// Returns this frame's corresponding frame type.
     pub fn typ(&self) -> FrameType {
         match self {
-            Self::Datagrams { .. } => FrameType::RelayToClientDatagrams,
+            Self::Datagrams { datagrams, .. } => {
+                if datagrams.segment_size.is_some() {
+                    FrameType::RelayToClientDatagrams
+                } else {
+                    FrameType::RelayToClientDatagram
+                }
+            }
             Self::NodeGone { .. } => FrameType::NodeGone,
             Self::Ping { .. } => FrameType::Ping,
             Self::Pong { .. } => FrameType::Pong,
@@ -289,13 +302,16 @@ impl RelayToClientMsg {
         );
 
         let res = match frame_type {
-            FrameType::RelayToClientDatagrams => {
+            FrameType::RelayToClientDatagram | FrameType::RelayToClientDatagrams => {
                 snafu::ensure!(content.len() >= NodeId::LENGTH, InvalidFrameSnafu);
 
                 let remote_node_id = cache
                     .key_from_slice(&content[..NodeId::LENGTH])
                     .context(InvalidPublicKeySnafu)?;
-                let datagrams = Datagrams::from_bytes(content.slice(NodeId::LENGTH..))?;
+                let datagrams = Datagrams::from_bytes(
+                    content.slice(NodeId::LENGTH..),
+                    frame_type == FrameType::RelayToClientDatagrams,
+                )?;
                 Self::Datagrams {
                     remote_node_id,
                     datagrams,
@@ -356,7 +372,13 @@ impl RelayToClientMsg {
 impl ClientToRelayMsg {
     pub(crate) fn typ(&self) -> FrameType {
         match self {
-            Self::Datagrams { .. } => FrameType::ClientToRelayDatagrams,
+            Self::Datagrams { datagrams, .. } => {
+                if datagrams.segment_size.is_some() {
+                    FrameType::ClientToRelayDatagrams
+                } else {
+                    FrameType::ClientToRelayDatagram
+                }
+            }
             Self::Ping { .. } => FrameType::Ping,
             Self::Pong { .. } => FrameType::Pong,
         }
@@ -415,11 +437,14 @@ impl ClientToRelayMsg {
         );
 
         let res = match frame_type {
-            FrameType::ClientToRelayDatagrams => {
+            FrameType::ClientToRelayDatagram | FrameType::ClientToRelayDatagrams => {
                 let dst_node_id = cache
                     .key_from_slice(&content[..NodeId::LENGTH])
                     .context(InvalidPublicKeySnafu)?;
-                let datagrams = Datagrams::from_bytes(content.slice(NodeId::LENGTH..))?;
+                let datagrams = Datagrams::from_bytes(
+                    content.slice(NodeId::LENGTH..),
+                    frame_type == FrameType::ClientToRelayDatagrams,
+                )?;
                 Self::Datagrams {
                     dst_node_id,
                     datagrams,
@@ -508,9 +533,39 @@ mod tests {
                     },
                 }
                 .write_to(Vec::new()),
-                "06 19 7f 6b 23 e1 6c 85 32 c6 ab c8 38 fa cd 5e
-                a7 89 be 0c 76 b2 92 03 34 03 9b fa 8b 3d 36 8d
-                61 48 65 6c 6c 6f 20 57 6f 72 6c 64 21",
+                // frame type
+                // public key first 16 bytes
+                // public key second 16 bytes
+                // ECN byte
+                // segment size
+                // hello world contents bytes
+                "07
+                19 7f 6b 23 e1 6c 85 32 c6 ab c8 38 fa cd 5e a7
+                89 be 0c 76 b2 92 03 34 03 9b fa 8b 3d 36 8d 61
+                03
+                00 06
+                48 65 6c 6c 6f 20 57 6f 72 6c 64 21",
+            ),
+            (
+                RelayToClientMsg::Datagrams {
+                    remote_node_id: client_key.public(),
+                    datagrams: Datagrams {
+                        ecn: Some(quinn::EcnCodepoint::Ce),
+                        segment_size: None,
+                        contents: "Hello World!".into(),
+                    },
+                }
+                .write_to(Vec::new()),
+                // frame type
+                // public key first 16 bytes
+                // public key second 16 bytes
+                // ECN byte
+                // hello world contents bytes
+                "06
+                19 7f 6b 23 e1 6c 85 32 c6 ab c8 38 fa cd 5e a7
+                89 be 0c 76 b2 92 03 34 03 9b fa 8b 3d 36 8d 61
+                03
+                48 65 6c 6c 6f 20 57 6f 72 6c 64 21",
             ),
             (
                 RelayToClientMsg::Restarting {
@@ -551,6 +606,27 @@ mod tests {
                 "04 19 7f 6b 23 e1 6c 85 32 c6 ab c8 38 fa cd 5e
                 a7 89 be 0c 76 b2 92 03 34 03 9b fa 8b 3d 36 8d
                 61 47 6f 6f 64 62 79 65 21",
+            ),
+            (
+                ClientToRelayMsg::Datagrams {
+                    dst_node_id: client_key.public(),
+                    datagrams: Datagrams {
+                        ecn: Some(quinn::EcnCodepoint::Ce),
+                        segment_size: None,
+                        contents: "Hello World!".into(),
+                    },
+                }
+                .write_to(Vec::new()),
+                // frame type
+                // public key first 16 bytes
+                // public key second 16 bytes
+                // ECN byte
+                // hello world contents
+                "04
+                19 7f 6b 23 e1 6c 85 32 c6 ab c8 38 fa cd 5e a7
+                89 be 0c 76 b2 92 03 34 03 9b fa 8b 3d 36 8d 61
+                03
+                48 65 6c 6c 6f 20 57 6f 72 6c 64 21",
             ),
         ]);
 

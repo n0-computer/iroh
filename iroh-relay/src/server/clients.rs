@@ -255,7 +255,7 @@ mod tests {
         // send packet
         let data = b"hello world!";
         clients.send_packet(a_key, Datagrams::from(&data[..]), b_key, &metrics)?;
-        let frame = recv_frame(FrameType::RelayToClientDatagrams, &mut a_rw).await?;
+        let frame = recv_frame(FrameType::RelayToClientDatagram, &mut a_rw).await?;
         assert_eq!(
             frame,
             RelayToClientMsg::Datagrams {
@@ -266,7 +266,7 @@ mod tests {
 
         // send disco packet
         clients.send_disco_packet(a_key, Datagrams::from(&data[..]), b_key, &metrics)?;
-        let frame = recv_frame(FrameType::RelayToClientDatagrams, &mut a_rw).await?;
+        let frame = recv_frame(FrameType::RelayToClientDatagram, &mut a_rw).await?;
         assert_eq!(
             frame,
             RelayToClientMsg::Datagrams {
