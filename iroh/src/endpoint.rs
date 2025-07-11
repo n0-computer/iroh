@@ -1771,13 +1771,20 @@ impl Future for Connecting {
                 let conn = Connection { inner };
 
                 // Grab the remote identity and register this connection
-
                 if let Some(remote) = *this.remote_node_id {
                     let weak_handle = conn.inner.weak_handle();
-                    this.ep.msock.register_connection(remote, weak_handle);
+                    let path_events = conn.inner.path_events();
+                    this.ep
+                        .msock
+                        .register_connection(remote, weak_handle, path_events);
                 } else if let Ok(remote) = conn.remote_node_id() {
                     let weak_handle = conn.inner.weak_handle();
-                    this.ep.msock.register_connection(remote, weak_handle);
+                    let path_events = conn.inner.path_events();
+                    this.ep
+                        .msock
+                        .register_connection(remote, weak_handle, path_events);
+                } else {
+                    warn!("unable to determine node id for the remote");
                 }
 
                 try_send_rtt_msg(&conn, this.ep, *this.remote_node_id);
