@@ -737,7 +737,7 @@
 <a href=#737 id=737 data-nosnippet>737</a>            dst_node_id: target,
 <a href=#738 id=738 data-nosnippet>738</a>            datagrams: data.clone(),
 <a href=#739 id=739 data-nosnippet>739</a>        };
-<a href=#740 id=740 data-nosnippet>740</a>        <span class="kw">let </span>frame_len = frame.to_bytes().freeze().len();
+<a href=#740 id=740 data-nosnippet>740</a>        <span class="kw">let </span>frame_len = frame.to_bytes().len();
 <a href=#741 id=741 data-nosnippet>741</a>        <span class="macro">assert_eq!</span>(frame_len, LIMIT <span class="kw">as </span>usize);
 <a href=#742 id=742 data-nosnippet>742</a>
 <a href=#743 id=743 data-nosnippet>743</a>        <span class="comment">// Send a frame, it should arrive.
