@@ -477,7 +477,6 @@ impl RelayService {
                 .context(MissingHeaderSnafu { header })
         }
 
-        // Send a 400 to any request that doesn't have an `Upgrade` header.
         let upgrade_header = expect_header(&req, UPGRADE)?;
         snafu::ensure!(
             upgrade_header == HeaderValue::from_static(WEBSOCKET_UPGRADE_PROTOCOL),
@@ -668,10 +667,10 @@ impl Inner {
 
         self.metrics.accepts.inc();
         // Create a server builder with default config
-        let builder = tokio_websockets::ServerBuilder::new()
-            .limits(tokio_websockets::Limits::default().max_payload_len(Some(MAX_FRAME_SIZE)));
-        // Serve will create a WebSocketStream on an already upgraded connection
-        let websocket = builder.serve(io);
+        let websocket = tokio_websockets::ServerBuilder::new()
+            .limits(tokio_websockets::Limits::default().max_payload_len(Some(MAX_FRAME_SIZE)))
+            // Serve will create a WebSocketStream on an already upgraded connection
+            .serve(io);
 
         let mut io = WsBytesFramed { io: websocket };
 
@@ -681,7 +680,7 @@ impl Inner {
         trace!(?authentication.mechanism, "accept: verified authentication");
 
         let is_authorized = self.access.is_allowed(authentication.client_key).await;
-        let client_key = authentication.authorize(&mut io, is_authorized).await?;
+        let client_key = authentication.authorize_if(is_authorized, &mut io).await?;
 
         trace!("accept: verified authorization");
 

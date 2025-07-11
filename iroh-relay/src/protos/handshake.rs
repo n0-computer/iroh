@@ -404,10 +404,10 @@ pub(crate) async fn serverside(
 
 #[cfg(feature = "server")]
 impl SuccessfulAuthentication {
-    pub async fn authorize(
+    pub async fn authorize_if(
         self,
-        io: &mut (impl BytesStreamSink + ExportKeyingMaterial),
         is_authorized: bool,
+        io: &mut (impl BytesStreamSink + ExportKeyingMaterial),
     ) -> Result<PublicKey, Error> {
         if is_authorized {
             trace!("authorizing client");
@@ -598,7 +598,7 @@ mod tests {
                         .context("serverside")?;
                 let mechanism = auth_n.mechanism;
                 let is_authorized = restricted_to.is_none_or(|key| key == auth_n.client_key);
-                let key = auth_n.authorize(&mut server_io, is_authorized).await?;
+                let key = auth_n.authorize_if(is_authorized, &mut server_io).await?;
                 Ok((key, mechanism))
             }
             .instrument(info_span!("serverside")),

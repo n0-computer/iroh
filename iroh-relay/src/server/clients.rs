@@ -216,7 +216,7 @@ mod tests {
             Some(Ok(frame)) => {
                 if frame_type != frame.typ() {
                     snafu::whatever!(
-                        "Unepxected frame, got {}, but expected {}",
+                        "Unexpected frame, got {}, but expected {}",
                         frame.typ(),
                         frame_type
                     );

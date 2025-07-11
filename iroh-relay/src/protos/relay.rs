@@ -265,12 +265,12 @@ impl RelayToClientMsg {
                 + datagrams.encoded_len()
             }
             Self::NodeGone(_) => 32,
+            Self::Ping(_) | Self::Pong(_) => 8,
             Self::Health { problem } => problem.len(),
             Self::Restarting { .. } => {
                 4 // u32
                 + 4 // u32
             }
-            Self::Ping(_) | Self::Pong(_) => 8,
         };
         1 // frame type
         + payload_len
@@ -391,8 +391,7 @@ impl ClientToRelayMsg {
 
     pub(crate) fn encoded_len(&self) -> usize {
         let payload_len = match self {
-            Self::Ping(_) => 8,
-            Self::Pong(_) => 8,
+            Self::Ping(_) | Self::Pong(_) => 8,
             Self::Datagrams { datagrams, .. } => {
                 32 // node id
                 + datagrams.encoded_len()
@@ -577,8 +576,7 @@ mod tests {
     }
 }
 
-#[cfg(test)]
-#[cfg(feature = "server")]
+#[cfg(all(test, feature = "server"))]
 mod proptests {
     use iroh_base::SecretKey;
     use proptest::prelude::*;

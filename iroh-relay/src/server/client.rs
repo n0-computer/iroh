@@ -24,7 +24,7 @@ use crate::{
     server::{
         clients::Clients,
         metrics::Metrics,
-        streams::{RecvError as StreamRecvError, RelayedStream},
+        streams::{RecvError, RelayedStream},
     },
     PingTracker,
 };
@@ -168,7 +168,7 @@ impl Client {
     }
 }
 
-/// Receive frame error
+/// Error for [`Actor::handle_frame`]
 #[common_fields({
     backtrace: Option<Backtrace>,
 })]
@@ -181,19 +181,19 @@ pub enum HandleFrameError {
     #[snafu(display("Stream terminated"))]
     StreamTerminated {},
     #[snafu(transparent)]
-    Recv { source: StreamRecvError },
+    Recv { source: RecvError },
     #[snafu(transparent)]
-    Send { source: SendFrameError },
+    Send { source: WriteFrameError },
 }
 
-/// Send frame error
+/// Error for [`Actor::write_frame`]
 #[common_fields({
     backtrace: Option<Backtrace>,
 })]
 #[allow(missing_docs)]
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
-pub enum SendFrameError {
+pub enum WriteFrameError {
     #[snafu(transparent)]
     Stream { source: StreamError },
     #[snafu(transparent)]
@@ -224,7 +224,7 @@ pub enum RunError {
     },
     #[snafu(display("Failed to send disco packet"))]
     DiscoPacketSend {
-        source: SendFrameError,
+        source: WriteFrameError,
         #[snafu(implicit)]
         span_trace: n0_snafu::SpanTrace,
     },
@@ -235,7 +235,7 @@ pub enum RunError {
     },
     #[snafu(display("Failed to send packet"))]
     PacketSend {
-        source: SendFrameError,
+        source: WriteFrameError,
         #[snafu(implicit)]
         span_trace: n0_snafu::SpanTrace,
     },
@@ -246,13 +246,13 @@ pub enum RunError {
     },
     #[snafu(display("NodeGone write frame failed"))]
     NodeGoneWriteFrame {
-        source: SendFrameError,
+        source: WriteFrameError,
         #[snafu(implicit)]
         span_trace: n0_snafu::SpanTrace,
     },
     #[snafu(display("Keep alive write frame failed"))]
     KeepAliveWriteFrame {
-        source: SendFrameError,
+        source: WriteFrameError,
         #[snafu(implicit)]
         span_trace: n0_snafu::SpanTrace,
     },
@@ -395,7 +395,7 @@ impl Actor {
     /// Writes the given frame to the connection.
     ///
     /// Errors if the send does not happen within the `timeout` duration
-    async fn write_frame(&mut self, frame: RelayToClientMsg) -> Result<(), SendFrameError> {
+    async fn write_frame(&mut self, frame: RelayToClientMsg) -> Result<(), WriteFrameError> {
         tokio::time::timeout(self.timeout, self.stream.send(frame)).await??;
         Ok(())
     }
@@ -404,7 +404,7 @@ impl Actor {
     ///
     /// Errors if the send does not happen within the `timeout` duration
     /// Does not flush.
-    async fn send_raw(&mut self, packet: Packet) -> Result<(), SendFrameError> {
+    async fn send_raw(&mut self, packet: Packet) -> Result<(), WriteFrameError> {
         let remote_node_id = packet.src;
         let datagrams = packet.data;
 
@@ -418,7 +418,7 @@ impl Actor {
         .await
     }
 
-    async fn send_packet(&mut self, packet: Packet) -> Result<(), SendFrameError> {
+    async fn send_packet(&mut self, packet: Packet) -> Result<(), WriteFrameError> {
         trace!("send packet");
         match self.send_raw(packet).await {
             Ok(()) => {
@@ -432,7 +432,7 @@ impl Actor {
         }
     }
 
-    async fn send_disco_packet(&mut self, packet: Packet) -> Result<(), SendFrameError> {
+    async fn send_disco_packet(&mut self, packet: Packet) -> Result<(), WriteFrameError> {
         trace!("send disco packet");
         match self.send_raw(packet).await {
             Ok(()) => {
@@ -449,7 +449,7 @@ impl Actor {
     /// Handles frame read results.
     async fn handle_frame(
         &mut self,
-        maybe_frame: Option<Result<ClientToRelayMsg, StreamRecvError>>,
+        maybe_frame: Option<Result<ClientToRelayMsg, RecvError>>,
     ) -> Result<(), HandleFrameError> {
         trace!(?maybe_frame, "handle incoming frame");
         let frame = match maybe_frame {
@@ -585,7 +585,7 @@ mod tests {
             Some(Ok(frame)) => {
                 if frame_type != frame.typ() {
                     snafu::whatever!(
-                        "Unepxected frame, got {}, but expected {}",
+                        "Unexpected frame, got {}, but expected {}",
                         frame.typ(),
                         frame_type
                     );

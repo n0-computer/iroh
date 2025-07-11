@@ -9,6 +9,7 @@ use bytes::Bytes;
 use n0_future::{ready, Sink, Stream};
 #[cfg(not(wasm_browser))]
 use tokio::io::{AsyncRead, AsyncWrite};
+use tracing::warn;
 
 use crate::ExportKeyingMaterial;
 
@@ -90,10 +91,7 @@ impl<T: AsyncRead + AsyncWrite + Unpin> Stream for WsBytesFramed<T> {
                         continue; // Responding appropriately to these is done inside of tokio_websockets/browser impls
                     }
                     if !msg.is_binary() {
-                        tracing::warn!(
-                            ?msg,
-                            "Got websocket message of unsupported type, skipping."
-                        );
+                        warn!(?msg, "Got websocket message of unsupported type, skipping.");
                         continue;
                     }
                     return Poll::Ready(Some(Ok(msg.into_payload().into())));
@@ -115,7 +113,7 @@ impl Stream for WsBytesFramed {
                     return Poll::Ready(Some(Ok(msg.into())))
                 }
                 Some(msg) => {
-                    tracing::warn!(?msg, "Got websocket message of unsupported type, skipping.");
+                    warn!(?msg, "Got websocket message of unsupported type, skipping.");
                     continue;
                 }
             }
