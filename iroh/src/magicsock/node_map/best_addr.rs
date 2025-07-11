@@ -32,7 +32,6 @@ impl BestAddrInner {
 
 #[derive(Debug)]
 pub(super) enum Source {
-    ReceivedPong,
     BestCandidate,
     Udp,
 }
@@ -40,7 +39,6 @@ pub(super) enum Source {
 impl Source {
     fn trust_until(&self, from: Instant) -> Instant {
         match self {
-            Source::ReceivedPong => from + TRUST_UDP_ADDR_DURATION,
             // TODO: Fix time
             Source::BestCandidate => from + Duration::from_secs(60 * 60),
             Source::Udp => from + TRUST_UDP_ADDR_DURATION,
@@ -58,7 +56,6 @@ pub(super) enum State<'a> {
 #[derive(Debug, Clone, Copy)]
 pub enum ClearReason {
     Inactive,
-    PongTimeout,
     MatchesOurLocalAddr,
 }
 

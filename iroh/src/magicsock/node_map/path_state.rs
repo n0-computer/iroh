@@ -7,13 +7,12 @@ use std::{
 
 use iroh_base::NodeId;
 use n0_future::time::{Duration, Instant};
-use tracing::{debug, event, Level};
 
 use super::{
-    node_state::{ControlMsg, PongReply, SESSION_ACTIVE_TIMEOUT},
-    IpPort, PingRole, Source,
+    node_state::{ControlMsg, SESSION_ACTIVE_TIMEOUT},
+    IpPort, Source,
 };
-use crate::{disco::SendAddr, magicsock::HEARTBEAT_INTERVAL};
+use crate::disco::SendAddr;
 
 /// The minimum time between pings to an endpoint.
 ///
@@ -43,11 +42,6 @@ pub(super) struct PathState {
     /// The time this endpoint was last advertised via a call-me-maybe DISCO message.
     pub(super) call_me_maybe_time: Option<Instant>,
 
-    /// The most recent [`PongReply`].
-    ///
-    /// Previous replies are cleared when they are no longer relevant to determine whether
-    /// this path can still be used to reach the remote node.
-    pub(super) recent_pong: Option<PongReply>,
     /// When the last payload data was **received** via this path.
     ///
     /// This excludes DISCO messages.
@@ -70,7 +64,6 @@ impl PathState {
             last_ping: None,
             last_got_ping: None,
             call_me_maybe_time: None,
-            recent_pong: None,
             last_payload_msg: None,
             sources,
         }
@@ -97,50 +90,8 @@ impl PathState {
             last_ping: None,
             last_got_ping: None,
             call_me_maybe_time: None,
-            recent_pong: None,
             last_payload_msg: Some(now),
             sources,
-        }
-    }
-
-    pub(super) fn with_ping(
-        node_id: NodeId,
-        path: SendAddr,
-        tx_id: stun_rs::TransactionId,
-        source: Source,
-        now: Instant,
-    ) -> Self {
-        let mut new = PathState::new(node_id, path, source, now);
-        new.handle_ping(tx_id, now);
-        new
-    }
-
-    pub(super) fn add_pong_reply(&mut self, r: PongReply) {
-        if let SendAddr::Udp(ref path) = self.path {
-            if self.recent_pong.is_none() {
-                event!(
-                    target: "iroh::_events::holepunched",
-                    Level::DEBUG,
-                    remote_node = %self.node_id.fmt_short(),
-                    path = ?path,
-                    direction = "outgoing",
-                );
-            }
-        }
-        self.recent_pong = Some(r);
-    }
-
-    #[cfg(test)]
-    pub(super) fn with_pong_reply(node_id: NodeId, r: PongReply) -> Self {
-        PathState {
-            node_id,
-            path: r.from.clone(),
-            last_ping: None,
-            last_got_ping: None,
-            call_me_maybe_time: None,
-            recent_pong: Some(r),
-            last_payload_msg: None,
-            sources: HashMap::new(),
         }
     }
 
@@ -175,11 +126,9 @@ impl PathState {
     /// - When the last payload transmission occurred.
     /// - when the last ping from them was received.
     pub(super) fn last_alive(&self) -> Option<Instant> {
-        self.recent_pong
+        self.last_payload_msg
             .as_ref()
-            .map(|pong| &pong.pong_at)
             .into_iter()
-            .chain(self.last_payload_msg.as_ref())
             .chain(self.call_me_maybe_time.as_ref())
             .chain(self.last_incoming_ping())
             .max()
@@ -196,10 +145,6 @@ impl PathState {
     /// Returns the time elapsed since the last control message, and the type of control message.
     pub(super) fn last_control_msg(&self, now: Instant) -> Option<(Duration, ControlMsg)> {
         // get every control message and assign it its kind
-        let last_pong = self
-            .recent_pong
-            .as_ref()
-            .map(|pong| (pong.pong_at, ControlMsg::Pong));
         let last_call_me_maybe = self
             .call_me_maybe_time
             .as_ref()
@@ -208,17 +153,11 @@ impl PathState {
             .last_incoming_ping()
             .map(|ping| (*ping, ControlMsg::Ping));
 
-        last_pong
+        last_call_me_maybe
             .into_iter()
-            .chain(last_call_me_maybe)
             .chain(last_ping)
             .max_by_key(|(instant, _kind)| *instant)
             .map(|(instant, kind)| (now.duration_since(instant), kind))
-    }
-
-    /// Returns the latency from the most recent pong, if available.
-    pub(super) fn latency(&self) -> Option<Duration> {
-        self.recent_pong.as_ref().map(|p| p.latency)
     }
 
     pub(super) fn needs_ping(&self, now: &Instant) -> bool {
@@ -238,39 +177,6 @@ impl PathState {
         }
     }
 
-    pub(super) fn handle_ping(&mut self, tx_id: stun_rs::TransactionId, now: Instant) -> PingRole {
-        if Some(&tx_id) == self.last_got_ping.as_ref().map(|(_t, tx_id)| tx_id) {
-            PingRole::Duplicate
-        } else {
-            let prev = self.last_got_ping.replace((now, tx_id));
-            let heartbeat_deadline = HEARTBEAT_INTERVAL + (HEARTBEAT_INTERVAL / 2);
-            match prev {
-                Some((prev_time, _tx)) if now.duration_since(prev_time) <= heartbeat_deadline => {
-                    PingRole::LikelyHeartbeat
-                }
-                Some((prev_time, _tx)) => {
-                    debug!(
-                        elapsed = ?now.duration_since(prev_time),
-                        "heartbeat missed, reactivating",
-                    );
-                    PingRole::Activate
-                }
-                None => {
-                    if let SendAddr::Udp(ref addr) = self.path {
-                        event!(
-                            target: "iroh::_events::holepunched",
-                            Level::DEBUG,
-                            remote_node = %self.node_id.fmt_short(),
-                            path = ?addr,
-                            direction = "incoming",
-                        );
-                    }
-                    PingRole::Activate
-                }
-            }
-        }
-    }
-
     pub(super) fn add_source(&mut self, source: Source, now: Instant) {
         self.sources.insert(source, now);
     }
@@ -279,16 +185,12 @@ impl PathState {
         self.last_ping = None;
         self.last_got_ping = None;
         self.call_me_maybe_time = None;
-        self.recent_pong = None;
     }
 
     fn summary(&self, mut w: impl std::fmt::Write) -> std::fmt::Result {
         write!(w, "{{ ")?;
         if self.is_active() {
             write!(w, "active ")?;
-        }
-        if let Some(ref pong) = self.recent_pong {
-            write!(w, "pong-received({:?} ago) ", pong.pong_at.elapsed())?;
         }
         if let Some(when) = self.last_incoming_ping() {
             write!(w, "ping-received({:?} ago) ", when.elapsed())?;
