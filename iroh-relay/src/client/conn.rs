@@ -104,7 +104,7 @@ impl Conn {
         Ok(Self { conn, key_cache })
     }
 
-    #[cfg(test)]
+    #[cfg(all(test, feature = "server"))]
     pub(crate) fn test(io: tokio::io::DuplexStream) -> Self {
         use crate::protos::relay::MAX_FRAME_SIZE;
         Self {

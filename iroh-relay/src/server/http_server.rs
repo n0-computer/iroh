@@ -26,8 +26,15 @@ use tracing::{debug, debug_span, error, info, info_span, trace, warn, Instrument
 use super::{clients::Clients, streams::InvalidBucketConfig, AccessConfig, SpawnError};
 use crate::{
     defaults::{timeouts::SERVER_WRITE_TIMEOUT, DEFAULT_KEY_CACHE_CAPACITY},
-    http::{RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION},
-    protos::relay::PER_CLIENT_SEND_QUEUE_DEPTH,
+    http::{
+        CLIENT_AUTH_HEADER, RELAY_PATH, RELAY_PROTOCOL_VERSION, SUPPORTED_WEBSOCKET_VERSION,
+        WEBSOCKET_UPGRADE_PROTOCOL,
+    },
+    protos::{
+        handshake,
+        relay::{MAX_FRAME_SIZE, PER_CLIENT_SEND_QUEUE_DEPTH},
+        streams::WsBytesFramed,
+    },
     server::{
         client::Config,
         metrics::Metrics,
@@ -35,10 +42,6 @@ use crate::{
         BindTcpListenerSnafu, ClientRateLimit, NoLocalAddrSnafu,
     },
     KeyCache,
-};
-use crate::{
-    http::{CLIENT_AUTH_HEADER, RELAY_PROTOCOL_VERSION, WEBSOCKET_UPGRADE_PROTOCOL},
-    protos::{handshake, relay::MAX_FRAME_SIZE, streams::WsBytesFramed},
 };
 
 type BytesBody = http_body_util::Full<hyper::body::Bytes>;

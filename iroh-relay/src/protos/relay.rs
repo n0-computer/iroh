@@ -257,6 +257,7 @@ impl RelayToClientMsg {
         dst
     }
 
+    #[cfg(feature = "server")]
     pub(crate) fn encoded_len(&self) -> usize {
         let payload_len = match self {
             Self::Datagrams { datagrams, .. } => {
@@ -389,14 +390,16 @@ impl ClientToRelayMsg {
     }
 
     pub(crate) fn encoded_len(&self) -> usize {
-        match self {
+        let payload_len = match self {
             Self::Ping(_) => 8,
             Self::Pong(_) => 8,
             Self::Datagrams { datagrams, .. } => {
                 32 // node id
                 + datagrams.encoded_len()
             }
-        }
+        };
+        1 // frame type (all frame types currently encode as 1 byte varint)
+        + payload_len
     }
 
     /// Tries to decode a frame received over websockets.
@@ -479,22 +482,22 @@ mod tests {
                     problem: "Hello? Yes this is dog.".into(),
                 }
                 .write_to(Vec::new()),
-                "11 48 65 6c 6c 6f 3f 20 59 65 73 20 74 68 69 73
+                "0a 48 65 6c 6c 6f 3f 20 59 65 73 20 74 68 69 73
                 20 69 73 20 64 6f 67 2e",
             ),
             (
                 RelayToClientMsg::NodeGone(client_key.public()).write_to(Vec::new()),
-                "0e 19 7f 6b 23 e1 6c 85 32 c6 ab c8 38 fa cd 5e
+                "07 19 7f 6b 23 e1 6c 85 32 c6 ab c8 38 fa cd 5e
                 a7 89 be 0c 76 b2 92 03 34 03 9b fa 8b 3d 36 8d
                 61",
             ),
             (
                 RelayToClientMsg::Ping([42u8; 8]).write_to(Vec::new()),
-                "0f 2a 2a 2a 2a 2a 2a 2a 2a",
+                "08 2a 2a 2a 2a 2a 2a 2a 2a",
             ),
             (
                 RelayToClientMsg::Pong([42u8; 8]).write_to(Vec::new()),
-                "10 2a 2a 2a 2a 2a 2a 2a 2a",
+                "09 2a 2a 2a 2a 2a 2a 2a 2a",
             ),
             (
                 RelayToClientMsg::Datagrams {
@@ -512,7 +515,7 @@ mod tests {
                 // ECN byte
                 // segment size
                 // hello world contents bytes
-                "0b
+                "06
                 19 7f 6b 23 e1 6c 85 32 c6 ab c8 38 fa cd 5e a7
                 89 be 0c 76 b2 92 03 34 03 9b fa 8b 3d 36 8d 61
                 03
@@ -525,7 +528,7 @@ mod tests {
                     try_for: Duration::from_millis(20),
                 }
                 .write_to(Vec::new()),
-                "12 00 00 00 0a 00 00 00 14",
+                "0b 00 00 00 0a 00 00 00 14",
             ),
         ]);
 
@@ -539,11 +542,11 @@ mod tests {
         check_expected_bytes(vec![
             (
                 ClientToRelayMsg::Ping([42u8; 8]).write_to(Vec::new()),
-                "0f 2a 2a 2a 2a 2a 2a 2a 2a",
+                "08 2a 2a 2a 2a 2a 2a 2a 2a",
             ),
             (
                 ClientToRelayMsg::Pong([42u8; 8]).write_to(Vec::new()),
-                "10 2a 2a 2a 2a 2a 2a 2a 2a",
+                "09 2a 2a 2a 2a 2a 2a 2a 2a",
             ),
             (
                 ClientToRelayMsg::Datagrams {
@@ -561,7 +564,7 @@ mod tests {
                 // ECN byte
                 // segment size
                 // hello world contents
-                "0a
+                "05
                 19 7f 6b 23 e1 6c 85 32 c6 ab c8 38 fa cd 5e a7
                 89 be 0c 76 b2 92 03 34 03 9b fa 8b 3d 36 8d 61
                 03
@@ -674,6 +677,13 @@ mod proptests {
         fn client_server_frame_encoded_len(frame in client_server_frame()) {
             let claimed_encoded_len = frame.encoded_len();
             let actual_encoded_len = frame.to_bytes().len();
+            prop_assert_eq!(claimed_encoded_len, actual_encoded_len);
+        }
+
+        #[test]
+        fn datagrams_encoded_len(datagrams in datagrams()) {
+            let claimed_encoded_len = datagrams.encoded_len();
+            let actual_encoded_len = datagrams.write_to(Vec::new()).len();
             prop_assert_eq!(claimed_encoded_len, actual_encoded_len);
         }
     }
