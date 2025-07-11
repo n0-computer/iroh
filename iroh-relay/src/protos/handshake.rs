@@ -10,9 +10,9 @@
 //!
 //! One way is via an explicitly sent challenge:
 //!
-//! 1. Once a websocket connection is opened, a client receives a challenge (the [`ServerChallenge`] frame)
+//! 1. Once a websocket connection is opened, a client receives a challenge (the `ServerChallenge` frame)
 //! 2. The client sends back what is essentially a signature of that challenge with their secret key
-//!    that matches the NodeId they have, as well as the NodeId (the [`ClientAuth`] frame)
+//!    that matches the NodeId they have, as well as the NodeId (the `ClientAuth` frame)
 //!
 //! The second way is very similar to the [Concealed HTTP Auth RFC], and involves send a header that
 //! contains a signature of some shared keying material extracted from TLS ([RFC 5705]).
@@ -46,8 +46,7 @@ use super::{
 use crate::ExportKeyingMaterial;
 
 /// Authentication message from the client.
-#[derive(derive_more::Debug, serde::Serialize)]
-#[cfg_attr(feature = "server", derive(serde::Deserialize))]
+#[derive(derive_more::Debug, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(wasm_browser, allow(unused))]
 pub(crate) struct KeyMaterialClientAuth {
     /// The client's public key
@@ -62,8 +61,7 @@ pub(crate) struct KeyMaterialClientAuth {
 }
 
 /// A challenge for the client to sign with their secret key for NodeId authentication.
-#[derive(derive_more::Debug, serde::Deserialize)]
-#[cfg_attr(feature = "server", derive(serde::Serialize))]
+#[derive(derive_more::Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ServerChallenge {
     /// The challenge to sign.
     /// Must be randomly generated with an RNG that is safe to use for crypto.
@@ -73,8 +71,7 @@ pub(crate) struct ServerChallenge {
 /// Authentication message from the client.
 ///
 /// Used when authentication via [`KeyMaterialClientAuth`] didn't work.
-#[derive(derive_more::Debug, serde::Serialize)]
-#[cfg_attr(feature = "server", derive(serde::Deserialize))]
+#[derive(derive_more::Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ClientAuth {
     /// The client's public key, a.k.a. the `NodeId`
     pub(crate) public_key: PublicKey,
@@ -86,13 +83,11 @@ pub(crate) struct ClientAuth {
 }
 
 /// Confirmation of successful connection.
-#[derive(derive_more::Debug, serde::Deserialize)]
-#[cfg_attr(feature = "server", derive(serde::Serialize))]
+#[derive(derive_more::Debug, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ServerConfirmsAuth;
 
 /// Denial of connection. The client couldn't be verified as authentic.
-#[derive(derive_more::Debug, Clone, serde::Deserialize)]
-#[cfg_attr(feature = "server", derive(serde::Serialize))]
+#[derive(derive_more::Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ServerDeniesAuth {
     reason: String,
 }
@@ -311,10 +306,10 @@ pub(crate) async fn clientside(
 /// This represents successful authentication for the client with the `client_key` public key
 /// via the authentication [`Mechanism`] `mechanism`.
 ///
-/// You must call [`SuccessfulAuthentication::authorize`] to finish the protocol.
+/// You must call [`SuccessfulAuthentication::authorize_if`] to finish the protocol.
 #[cfg(feature = "server")]
 #[derive(Debug)]
-#[must_use = "the protocol is not finished unless `authorize` is called"]
+#[must_use = "the protocol is not finished unless `authorize_if` is called"]
 pub(crate) struct SuccessfulAuthentication {
     pub(crate) client_key: PublicKey,
     pub(crate) mechanism: Mechanism,
@@ -342,7 +337,7 @@ pub(crate) enum Mechanism {
 /// If this fails, the protocol falls back to doing a normal extra round trip with a challenge.
 ///
 /// The return value [`SuccessfulAuthentication`] still needs to be resolved by calling
-/// [`SuccessfulAuthentication::authorize`] to finish the whole authorization protocol
+/// [`SuccessfulAuthentication::authorize_if`] to finish the whole authorization protocol
 /// (otherwise the client won't be notified about auth success or failure).
 #[cfg(feature = "server")]
 pub(crate) async fn serverside(
