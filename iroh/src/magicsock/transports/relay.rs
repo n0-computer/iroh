@@ -306,13 +306,7 @@ impl RelaySender {
     }
 }
 
-/// Split a transmit containing a GSO payload into individual packets.
-///
-/// This allocates the data.
-///
-/// If the transmit has a segment size it contains multiple GSO packets.  It will be split
-/// into multiple packets according to that segment size.  If it does not have a segment
-/// size, the contents will be sent as a single packet.
+/// Translate a UDP transmit to the `Datagrams` type for sending over the relay.
 // TODO: If quinn stayed on bytes this would probably be much cheaper, probably.  Need to
 // figure out where they allocate the Vec.
 fn datagrams_from_transmit(transmit: &Transmit<'_>) -> Datagrams {
