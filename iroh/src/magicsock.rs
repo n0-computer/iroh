@@ -43,6 +43,7 @@ use netwatch::netmon;
 #[cfg(not(wasm_browser))]
 use netwatch::{UdpSocket, ip::LocalAddresses};
 use quinn::{AsyncUdpSocket, ServerConfig, WeakConnectionHandle};
+use quinn_proto::PathEvent;
 use rand::Rng;
 use smallvec::SmallVec;
 use snafu::{ResultExt, Snafu};
@@ -289,8 +290,29 @@ impl MagicSock {
         self.local_addrs_watch.clone().get()
     }
 
-    pub(crate) fn register_connection(&self, remote: NodeId, conn: WeakConnectionHandle) {
+    pub(crate) fn register_connection(
+        &self,
+        remote: NodeId,
+        conn: WeakConnectionHandle,
+        mut path_events: tokio::sync::broadcast::Receiver<PathEvent>,
+    ) {
         self.connection_map.insert(remote, conn);
+
+        // TODO: track task
+        // TODO: find a good home for this
+        task::spawn(async move {
+            loop {
+                match path_events.recv().await {
+                    Ok(event) => {
+                        info!(remote = %remote, "path event: {:?}", event);
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        warn!("lagged path events");
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
+        });
     }
 
     #[cfg(not(wasm_browser))]

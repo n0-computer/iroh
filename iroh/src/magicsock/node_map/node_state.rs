@@ -549,7 +549,6 @@ impl NodeState {
         // it's been less than 5 seconds ago.  Also clear pongs for direct addresses not
         // included in the updated set.
         for (ipp, st) in self.udp_paths.paths.iter_mut() {
-            st.last_ping = None;
             if !call_me_maybe_ipps.contains(ipp) {
                 // TODO: This seems like a weird way to signal that the endpoint no longer
                 // thinks it has this IpPort as an available path.
@@ -605,21 +604,6 @@ impl NodeState {
             }
         }
         self.last_used = Some(now);
-    }
-
-    pub(super) fn last_ping(&self, addr: &SendAddr) -> Option<Instant> {
-        match addr {
-            SendAddr::Udp(addr) => self
-                .udp_paths
-                .paths
-                .get(&(*addr).into())
-                .and_then(|ep| ep.last_ping),
-            SendAddr::Relay(url) => self
-                .relay_url
-                .as_ref()
-                .filter(|(home_url, _state)| home_url == url)
-                .and_then(|(_home_url, state)| state.last_ping),
-        }
     }
 
     /// Checks if this `Endpoint` is currently actively being used.
