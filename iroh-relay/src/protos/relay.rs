@@ -532,9 +532,8 @@ mod tests {
     use iroh_base::SecretKey;
     use n0_snafu::{Result, ResultExt};
 
-    use crate::server::streams::RelayedStream;
-
     use super::*;
+    use crate::server::streams::RelayedStream;
 
     #[tokio::test]
     async fn test_send_recv_client_key() -> Result {
