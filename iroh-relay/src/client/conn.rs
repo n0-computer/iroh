@@ -19,7 +19,7 @@ use crate::client::streams::{MaybeTlsStream, ProxyStream};
 use crate::{
     protos::{
         handshake,
-        relay::{ClientToRelayMsg, Error as RecvRelayError, RelayToClientMsg, MAX_PAYLOAD_SIZE},
+        relay::{ClientToRelayMsg, Error as ProtoError, RelayToClientMsg, MAX_PAYLOAD_SIZE},
         streams::WsBytesFramed,
     },
     MAX_PACKET_SIZE,
@@ -57,7 +57,7 @@ pub enum SendError {
 #[non_exhaustive]
 pub enum RecvError {
     #[snafu(transparent)]
-    Protocol { source: RecvRelayError },
+    Protocol { source: ProtoError },
     #[snafu(transparent)]
     StreamError {
         #[cfg(not(wasm_browser))]
@@ -75,11 +75,11 @@ pub enum RecvError {
 /// - A [`Sink`] for [`ClientToRelayMsg`] to send to the server.
 #[derive(derive_more::Debug)]
 pub(crate) struct Conn {
-    #[debug("tokio_websockets::WebSocketStream")]
     #[cfg(not(wasm_browser))]
+    #[debug("tokio_websockets::WebSocketStream")]
     pub(crate) conn: WsBytesFramed<MaybeTlsStream<ProxyStream>>,
-    #[debug("ws_stream_wasm::WsStream")]
     #[cfg(wasm_browser)]
+    #[debug("ws_stream_wasm::WsStream")]
     pub(crate) conn: WsBytesFramed,
     pub(crate) key_cache: KeyCache,
 }
@@ -124,8 +124,7 @@ impl Stream for Conn {
     type Item = Result<RelayToClientMsg, RecvError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        let msg = ready!(Pin::new(&mut self.conn).poll_next(cx));
-        match msg {
+        match ready!(Pin::new(&mut self.conn).poll_next(cx)) {
             Some(Ok(msg)) => {
                 let message = RelayToClientMsg::from_bytes(msg, &self.key_cache);
                 Poll::Ready(Some(message.map_err(Into::into)))
