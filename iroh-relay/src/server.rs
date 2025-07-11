@@ -751,7 +751,7 @@ mod tests {
     use std::{net::Ipv4Addr, time::Duration};
 
     use bytes::Bytes;
-    use http::{header::UPGRADE, StatusCode};
+    use http::StatusCode;
     use iroh_base::{NodeId, RelayUrl, SecretKey};
     use n0_future::{FutureExt, SinkExt, StreamExt};
     use n0_snafu::{Result, ResultExt};
@@ -765,7 +765,6 @@ mod tests {
     use crate::{
         client::{conn::ReceivedMessage, ClientBuilder, SendMessage},
         dns::DnsResolver,
-        http::{Protocol, HTTP_UPGRADE_PROTOCOL},
     };
 
     async fn spawn_local_relay() -> std::result::Result<Server, SpawnError> {
@@ -880,77 +879,7 @@ mod tests {
 
     #[tokio::test]
     #[traced_test]
-    async fn test_relay_client_legacy_route() {
-        let server = spawn_local_relay().await.unwrap();
-        // We're testing the legacy endpoint at `/derp`
-        let endpoint_url = format!("http://{}/derp", server.http_addr().unwrap());
-
-        let client = reqwest::Client::new();
-        let result = client
-            .get(endpoint_url)
-            .header(UPGRADE, HTTP_UPGRADE_PROTOCOL)
-            .send()
-            .await
-            .unwrap();
-
-        assert_eq!(result.status(), StatusCode::SWITCHING_PROTOCOLS);
-    }
-
-    #[tokio::test]
-    #[traced_test]
-    async fn test_relay_clients_both_relay() -> Result<()> {
-        let server = spawn_local_relay().await.unwrap();
-        let relay_url = format!("http://{}", server.http_addr().unwrap());
-        let relay_url: RelayUrl = relay_url.parse().unwrap();
-
-        // set up client a
-        let a_secret_key = SecretKey::generate(rand::thread_rng());
-        let a_key = a_secret_key.public();
-        let resolver = dns_resolver();
-        let mut client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver.clone())
-            .connect()
-            .await?;
-
-        // set up client b
-        let b_secret_key = SecretKey::generate(rand::thread_rng());
-        let b_key = b_secret_key.public();
-        let mut client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver.clone())
-            .connect()
-            .await?;
-
-        // send message from a to b
-        let msg = Bytes::from("hello, b");
-        let res = try_send_recv(&mut client_a, &mut client_b, b_key, msg.clone()).await?;
-        if let ReceivedMessage::ReceivedPacket {
-            remote_node_id,
-            data,
-        } = res
-        {
-            assert_eq!(a_key, remote_node_id);
-            assert_eq!(msg, data);
-        } else {
-            panic!("client_b received unexpected message {res:?}");
-        }
-
-        // send message from b to a
-        let msg = Bytes::from("howdy, a");
-        let res = try_send_recv(&mut client_b, &mut client_a, a_key, msg.clone()).await?;
-        if let ReceivedMessage::ReceivedPacket {
-            remote_node_id,
-            data,
-        } = res
-        {
-            assert_eq!(b_key, remote_node_id);
-            assert_eq!(msg, data);
-        } else {
-            panic!("client_a received unexpected message {res:?}");
-        }
-        Ok(())
-    }
-
-    #[tokio::test]
-    #[traced_test]
-    async fn test_relay_clients_both_websockets() -> Result<()> {
+    async fn test_relay_clients() -> Result<()> {
         let server = spawn_local_relay().await?;
 
         let relay_url = format!("http://{}", server.http_addr().unwrap());
@@ -962,7 +891,6 @@ mod tests {
         let resolver = dns_resolver();
         info!("client a build & connect");
         let mut client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver.clone())
-            .protocol(Protocol::Websocket)
             .connect()
             .await?;
 
@@ -971,7 +899,6 @@ mod tests {
         let b_key = b_secret_key.public();
         info!("client b build & connect");
         let mut client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver.clone())
-            .protocol(Protocol::Websocket) // another websocket client
             .connect()
             .await?;
 
@@ -1007,62 +934,6 @@ mod tests {
         assert_eq!(b_key, remote_node_id);
         assert_eq!(msg, data);
 
-        Ok(())
-    }
-
-    #[tokio::test]
-    #[traced_test]
-    async fn test_relay_clients_websocket_and_relay() -> Result<()> {
-        let server = spawn_local_relay().await.unwrap();
-
-        let relay_url = format!("http://{}", server.http_addr().unwrap());
-        let relay_url: RelayUrl = relay_url.parse().unwrap();
-
-        // set up client a
-        let a_secret_key = SecretKey::generate(rand::thread_rng());
-        let a_key = a_secret_key.public();
-        let resolver = dns_resolver();
-        let mut client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver)
-            .connect()
-            .await?;
-
-        // set up client b
-        let b_secret_key = SecretKey::generate(rand::thread_rng());
-        let b_key = b_secret_key.public();
-        let resolver = dns_resolver();
-        let mut client_b = ClientBuilder::new(relay_url.clone(), b_secret_key, resolver)
-            .protocol(Protocol::Websocket) // Use websockets
-            .connect()
-            .await?;
-
-        // send message from a to b
-        let msg = Bytes::from("hello, b");
-        let res = try_send_recv(&mut client_a, &mut client_b, b_key, msg.clone()).await?;
-
-        if let ReceivedMessage::ReceivedPacket {
-            remote_node_id,
-            data,
-        } = res
-        {
-            assert_eq!(a_key, remote_node_id);
-            assert_eq!(msg, data);
-        } else {
-            panic!("client_b received unexpected message {res:?}");
-        }
-
-        // send message from b to a
-        let msg = Bytes::from("howdy, a");
-        let res = try_send_recv(&mut client_b, &mut client_a, a_key, msg.clone()).await?;
-        if let ReceivedMessage::ReceivedPacket {
-            remote_node_id,
-            data,
-        } = res
-        {
-            assert_eq!(b_key, remote_node_id);
-            assert_eq!(msg, data);
-        } else {
-            panic!("client_a received unexpected message {res:?}");
-        }
         Ok(())
     }
 

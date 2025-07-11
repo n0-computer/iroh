@@ -12,6 +12,8 @@
 //!  * clients sends `FrameType::SendPacket`
 //!  * server then sends `FrameType::RecvPacket` to recipient
 
+#[cfg(not(wasm_browser))]
+use bytes::BytesMut;
 use bytes::{BufMut, Bytes};
 use iroh_base::{PublicKey, SecretKey, Signature, SignatureError};
 #[cfg(feature = "server")]
@@ -35,7 +37,7 @@ pub const MAX_PACKET_SIZE: usize = 64 * 1024;
 ///
 /// This is also the minimum burst size that a rate-limiter has to accept.
 #[cfg(not(wasm_browser))]
-const MAX_FRAME_SIZE: usize = 1024 * 1024;
+pub(crate) const MAX_FRAME_SIZE: usize = 1024 * 1024;
 
 /// The Relay magic number, sent in the FrameType::ClientInfo frame upon initial connection.
 const MAGIC: &str = "RELAY🔑";
@@ -222,7 +224,7 @@ pub(crate) async fn send_client_key<S: Sink<Frame, Error = ConnSendError> + Unpi
 
 /// Reads the `FrameType::ClientInfo` frame from the client (its proof of identity)
 /// upon it's initial connection.
-#[cfg(any(test, feature = "server"))]
+#[cfg(feature = "server")]
 pub(crate) async fn recv_client_key<E, S: Stream<Item = Result<Frame, E>> + Unpin>(
     stream: S,
 ) -> Result<(PublicKey, ClientInfo), E>
@@ -262,31 +264,7 @@ where
     }
 }
 
-/// The protocol for the relay server.
-///
-/// This is a framed protocol, using [`tokio_util::codec`] to turn the streams of bytes into
-/// [`Frame`]s.
-#[cfg(not(wasm_browser))]
-#[derive(Debug, Clone)]
-pub(crate) struct RelayCodec {
-    cache: KeyCache,
-}
-
-#[cfg(not(wasm_browser))]
-impl RelayCodec {
-    #[cfg(test)]
-    pub fn test() -> Self {
-        Self {
-            cache: KeyCache::test(),
-        }
-    }
-
-    pub(crate) fn new(cache: KeyCache) -> Self {
-        Self { cache }
-    }
-}
-
-/// The frames in the [`RelayCodec`].
+/// The relay protocol frames.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Frame {
     ClientInfo {
@@ -340,61 +318,19 @@ impl Frame {
         }
     }
 
-    /// Serialized length (without the frame header)
-    #[cfg(not(wasm_browser))] // Not needed with websocket framing - thus not needed in browsers
-    pub(crate) fn len(&self) -> usize {
-        match self {
-            Frame::ClientInfo {
-                client_public_key: _,
-                message,
-                signature: _,
-            } => MAGIC.len() + PublicKey::LENGTH + message.len() + Signature::BYTE_SIZE,
-            Frame::SendPacket { dst_key: _, packet } => PublicKey::LENGTH + packet.len(),
-            Frame::RecvPacket {
-                src_key: _,
-                content,
-            } => PublicKey::LENGTH + content.len(),
-            Frame::KeepAlive => 0,
-            Frame::NotePreferred { .. } => 1,
-            Frame::NodeGone { .. } => PublicKey::LENGTH,
-            Frame::Ping { .. } => 8,
-            Frame::Pong { .. } => 8,
-            Frame::Health { problem } => problem.len(),
-            Frame::Restarting { .. } => 4 + 4,
-        }
+    #[cfg(not(wasm_browser))]
+    pub(crate) fn to_bytes(&self) -> BytesMut {
+        self.write_to(BytesMut::with_capacity(self.encoded_len()))
     }
 
-    /// Serialized length with frame header.
-    #[cfg(feature = "server")]
-    pub(crate) fn len_with_header(&self) -> usize {
-        self.len() + HEADER_LEN
-    }
-
-    /// Tries to decode a frame received over websockets.
-    ///
-    /// Specifically, bytes received from a binary websocket message frame.
-    #[allow(clippy::result_large_err)]
-    pub(crate) fn decode_from_ws_msg(bytes: Bytes, cache: &KeyCache) -> Result<Self, RecvError> {
-        if bytes.is_empty() {
-            return Err(TooSmallSnafu.build());
-        }
-        let typ = FrameType::from(bytes[0]);
-        let frame = Self::from_bytes(typ, bytes.slice(1..), cache)?;
-        Ok(frame)
-    }
-
-    /// Encodes this frame for sending over websockets.
-    ///
-    /// Specifically meant for being put into a binary websocket message frame.
-    pub(crate) fn encode_for_ws_msg(self) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        bytes.put_u8(self.typ().into());
-        self.write_to(&mut bytes);
-        bytes
+    #[cfg(wasm_browser)]
+    pub(crate) fn to_vec(&self) -> Vec<u8> {
+        self.write_to(Vec::with_capacity(self.encoded_len()))
     }
 
     /// Writes it self to the given buffer.
-    fn write_to(&self, dst: &mut impl BufMut) {
+    pub(crate) fn write_to<O: BufMut>(&self, mut dst: O) -> O {
+        dst.put_u8(self.typ().into());
         match self {
             Frame::ClientInfo {
                 client_public_key,
@@ -442,14 +378,46 @@ impl Frame {
                 dst.put_u32(*try_for);
             }
         }
+        dst
+    }
+
+    pub(crate) fn encoded_len(&self) -> usize {
+        let payload_len = match self {
+            Self::ClientInfo { message, .. } => {
+                MAGIC.len()
+                + 32 // node id
+                + 64 // signature
+                + message.len()
+            }
+            Self::SendPacket { packet, .. } => {
+                32 // node id
+                + packet.len()
+            }
+            Self::RecvPacket { content, .. } => {
+                32 // node id
+                + content.len()
+            }
+            Self::KeepAlive => 0,
+            Self::NotePreferred { .. } => 1,
+            Self::NodeGone { .. } => 32,
+            Self::Ping { .. } | Self::Pong { .. } => 8,
+            Self::Health { problem } => problem.len(),
+            Self::Restarting { .. } => {
+                4 // u32
+                + 4 // u32
+            }
+        };
+        1 // frame type
+        + payload_len
     }
 
     #[allow(clippy::result_large_err)]
-    fn from_bytes(
-        frame_type: FrameType,
-        content: Bytes,
-        cache: &KeyCache,
-    ) -> Result<Self, RecvError> {
+    pub(crate) fn from_bytes(bytes: Bytes, cache: &KeyCache) -> Result<Self, RecvError> {
+        if bytes.is_empty() {
+            return Err(TooSmallSnafu.build());
+        }
+        let frame_type = FrameType::from(bytes[0]);
+        let content = bytes.slice(1..);
         let res = match frame_type {
             FrameType::ClientInfo => {
                 if content.len() < PublicKey::LENGTH + Signature::BYTE_SIZE + MAGIC.len() {
@@ -568,89 +536,6 @@ impl Frame {
     }
 }
 
-// No need for framing when using websockets, thus this is cfg-ed out for browsers:
-#[cfg(not(wasm_browser))]
-// rustc doesn't figure out that the trait impls mean it's not unused
-#[cfg_attr(not(wasm_browser), allow(unused))]
-pub use framing::*;
-
-#[cfg(not(wasm_browser))]
-mod framing {
-    use bytes::{Buf, BytesMut};
-    use tokio_util::codec::{Decoder, Encoder};
-
-    use super::*;
-
-    pub(super) const HEADER_LEN: usize = 5;
-
-    impl Decoder for RelayCodec {
-        type Item = Frame;
-        type Error = RecvError;
-
-        fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-            // Need at least 5 bytes
-            if src.len() < HEADER_LEN {
-                return Ok(None);
-            }
-
-            // Can't use the `Buf::get_*` APIs, as that advances the buffer.
-            let Some(frame_type) = src.first().map(|b| FrameType::from(*b)) else {
-                return Ok(None); // Not enough bytes
-            };
-            let Some(frame_len) = src
-                .get(1..5)
-                .and_then(|s| TryInto::<[u8; 4]>::try_into(s).ok())
-                .map(u32::from_be_bytes)
-                .map(|l| l as usize)
-            else {
-                return Ok(None); // Not enough bytes
-            };
-
-            if frame_len > MAX_FRAME_SIZE {
-                return Err(FrameTooLargeSnafu { frame_len }.build());
-            }
-
-            if src.len() < HEADER_LEN + frame_len {
-                // Optimization: prereserve the buffer space
-                src.reserve(HEADER_LEN + frame_len - src.len());
-
-                return Ok(None);
-            }
-
-            // advance the header
-            src.advance(HEADER_LEN);
-
-            let content = src.split_to(frame_len).freeze();
-            let frame = Frame::from_bytes(frame_type, content, &self.cache)?;
-
-            Ok(Some(frame))
-        }
-    }
-
-    impl Encoder<Frame> for RelayCodec {
-        type Error = std::io::Error;
-
-        fn encode(&mut self, frame: Frame, dst: &mut BytesMut) -> Result<(), Self::Error> {
-            let frame_len: usize = frame.len();
-            if frame_len > MAX_FRAME_SIZE {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("Frame of length {frame_len} is too large."),
-                ));
-            }
-
-            let frame_len_u32 = u32::try_from(frame_len).expect("just checked");
-
-            dst.reserve(HEADER_LEN + frame_len);
-            dst.put_u8(frame.typ().into());
-            dst.put_u32(frame_len_u32);
-            frame.write_to(dst);
-
-            Ok(())
-        }
-    }
-}
-
 /// Receives the next frame and matches the frame type. If the correct type is found returns the content,
 /// otherwise an error.
 #[cfg(any(test, feature = "server"))]
@@ -682,41 +567,20 @@ where
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "server"))]
 mod tests {
     use data_encoding::HEXLOWER;
+    use iroh_base::SecretKey;
     use n0_snafu::{Result, ResultExt};
-    use tokio_util::codec::{FramedRead, FramedWrite};
 
     use super::*;
-
-    #[tokio::test]
-    #[cfg(feature = "server")]
-    async fn test_basic_read_write() -> Result {
-        let (reader, writer) = tokio::io::duplex(1024);
-        let mut reader = FramedRead::new(reader, RelayCodec::test());
-        let mut writer = FramedWrite::new(writer, RelayCodec::test());
-
-        let expect_buf = b"hello world!";
-        let expected_frame = Frame::Health {
-            problem: expect_buf.to_vec().into(),
-        };
-        write_frame(&mut writer, expected_frame.clone(), None).await?;
-        writer.flush().await.context("flush")?;
-        println!("{reader:?}");
-        let buf = recv_frame(FrameType::Health, &mut reader).await?;
-        assert_eq!(expect_buf.len(), buf.len());
-        assert_eq!(expected_frame, buf);
-
-        Ok(())
-    }
+    use crate::server::streams::RelayedStream;
 
     #[tokio::test]
     async fn test_send_recv_client_key() -> Result {
         let (reader, writer) = tokio::io::duplex(1024);
-        let mut reader = FramedRead::new(reader, RelayCodec::test());
-        let mut writer =
-            FramedWrite::new(writer, RelayCodec::test()).sink_map_err(ConnSendError::from);
+        let mut reader = RelayedStream::test_client(reader);
+        let mut writer = RelayedStream::test_server(writer).sink_err_into();
 
         let client_key = SecretKey::generate(rand::thread_rng());
         let client_info = ClientInfo {
@@ -807,7 +671,7 @@ mod tests {
         ];
 
         for (frame, expected_hex) in frames {
-            let bytes = frame.encode_for_ws_msg();
+            let bytes = frame.to_bytes().freeze();
             let stripped: Vec<u8> = expected_hex
                 .chars()
                 .filter_map(|s| {
@@ -828,9 +692,8 @@ mod tests {
 
 #[cfg(test)]
 mod proptests {
-    use bytes::BytesMut;
+    use iroh_base::SecretKey;
     use proptest::prelude::*;
-    use tokio_util::codec::{Decoder, Encoder};
 
     use super::*;
 
@@ -891,62 +754,19 @@ mod proptests {
         ]
     }
 
-    fn inject_error(buf: &mut BytesMut) {
-        fn is_fixed_size(tpe: FrameType) -> bool {
-            match tpe {
-                FrameType::KeepAlive
-                | FrameType::NotePreferred
-                | FrameType::Ping
-                | FrameType::Pong
-                | FrameType::Restarting
-                | FrameType::PeerGone => true,
-                FrameType::ClientInfo
-                | FrameType::Health
-                | FrameType::SendPacket
-                | FrameType::RecvPacket
-                | FrameType::Unknown => false,
-            }
-        }
-        let tpe: FrameType = buf[0].into();
-        let mut len = u32::from_be_bytes(buf[1..5].try_into().unwrap()) as usize;
-        if is_fixed_size(tpe) {
-            buf.put_u8(0);
-            len += 1;
-        } else {
-            buf.resize(MAX_FRAME_SIZE + 1, 0);
-            len = MAX_FRAME_SIZE + 1;
-        }
-        buf[1..5].copy_from_slice(&u32::to_be_bytes(len as u32));
-    }
-
     proptest! {
-
-        // Test that we can roundtrip a frame to bytes
         #[test]
         fn frame_roundtrip(frame in frame()) {
-            let mut buf = BytesMut::new();
-            let mut codec = RelayCodec::test();
-            codec.encode(frame.clone(), &mut buf).unwrap();
-            let decoded = codec.decode(&mut buf).unwrap().unwrap();
+            let encoded = frame.to_bytes().freeze();
+            let decoded = Frame::from_bytes(encoded, &KeyCache::test()).unwrap();
             prop_assert_eq!(frame, decoded);
         }
 
         #[test]
-        fn frame_ws_roundtrip(frame in frame()) {
-            let encoded = frame.clone().encode_for_ws_msg();
-            let decoded = Frame::decode_from_ws_msg(Bytes::from(encoded), &KeyCache::test()).unwrap();
-            prop_assert_eq!(frame, decoded);
-        }
-
-        // Test that typical invalid frames will result in an error
-        #[test]
-        fn broken_frame_handling(frame in frame()) {
-            let mut buf = BytesMut::new();
-            let mut codec = RelayCodec::test();
-            codec.encode(frame.clone(), &mut buf).unwrap();
-            inject_error(&mut buf);
-            let decoded = codec.decode(&mut buf);
-            prop_assert!(decoded.is_err(), "{:?}", decoded);
+        fn frame_encoded_len(frame in frame()) {
+            let claimed_encoded_len = frame.encoded_len();
+            let actual_encoded_len = frame.to_bytes().len();
+            prop_assert_eq!(claimed_encoded_len, actual_encoded_len);
         }
     }
 }

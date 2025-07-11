@@ -56,8 +56,8 @@ pub struct Metrics {
     #[metrics(help = "Number of unknown frames sent to this server.")]
     pub unknown_frames: Counter,
 
-    /// Number of frames received from client connection which have been rate-limited.
-    pub frames_rx_ratelimited_total: Counter,
+    /// Number of bytes received from client connection which have been rate-limited.
+    pub bytes_rx_ratelimited_total: Counter,
     /// Number of client connections which have had any frames rate-limited.
     pub conns_rx_ratelimited_total: Counter,
 
@@ -72,11 +72,6 @@ pub struct Metrics {
 
     /// Number of unique client keys per day
     pub unique_client_keys: Counter,
-
-    /// Number of accepted websocket connections
-    pub websocket_accepts: Counter,
-    /// Number of accepted 'iroh derp http' connection upgrades
-    pub relay_accepts: Counter,
     // TODO: enable when we can have multiple connections for one node id
     // pub duplicate_client_keys: Counter,
     // pub duplicate_client_conns: Counter,

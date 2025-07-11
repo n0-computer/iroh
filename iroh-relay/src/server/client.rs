@@ -1,13 +1,10 @@
 //! The server-side representation of an ongoing client relaying connection.
 
-use std::{
-    collections::HashSet, future::Future, num::NonZeroU32, pin::Pin, sync::Arc, task::Poll,
-    time::Duration,
-};
+use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use bytes::Bytes;
 use iroh_base::NodeId;
-use n0_future::{FutureExt, Sink, SinkExt, Stream, StreamExt};
+use n0_future::{SinkExt, StreamExt};
 use nested_enum_utils::common_fields;
 use rand::Rng;
 use snafu::{Backtrace, GenerateImplicitData, Snafu};
@@ -17,7 +14,7 @@ use tokio::{
     time::MissedTickBehavior,
 };
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
-use tracing::{debug, error, instrument, trace, warn, Instrument};
+use tracing::{debug, trace, warn, Instrument};
 
 use crate::{
     protos::{
@@ -28,7 +25,6 @@ use crate::{
         clients::Clients,
         metrics::Metrics,
         streams::{RelayedStream, StreamError},
-        ClientRateLimit,
     },
     PingTracker,
 };
@@ -49,7 +45,6 @@ pub(super) struct Config {
     pub(super) stream: RelayedStream,
     pub(super) write_timeout: Duration,
     pub(super) channel_capacity: usize,
-    pub(super) rate_limit: Option<ClientRateLimit>,
 }
 
 /// The [`Server`] side representation of a [`Client`]'s connection.
@@ -86,23 +81,10 @@ impl Client {
     ) -> Client {
         let Config {
             node_id,
-            stream: io,
+            stream,
             write_timeout,
             channel_capacity,
-            rate_limit,
         } = config;
-
-        let stream = match rate_limit {
-            Some(cfg) => {
-                let mut quota = governor::Quota::per_second(cfg.bytes_per_second);
-                if let Some(max_burst) = cfg.max_burst_bytes {
-                    quota = quota.allow_burst(max_burst);
-                }
-                let limiter = governor::RateLimiter::direct(quota);
-                RateLimitedRelayedStream::new(io, limiter, metrics.clone())
-            }
-            None => RateLimitedRelayedStream::unlimited(io, metrics.clone()),
-        };
 
         let done = CancellationToken::new();
         let (send_queue_s, send_queue_r) = mpsc::channel(channel_capacity);
@@ -296,7 +278,7 @@ pub enum RunError {
 #[derive(Debug)]
 struct Actor {
     /// IO Stream to talk to the client
-    stream: RateLimitedRelayedStream,
+    stream: RelayedStream,
     /// Maximum time we wait to complete a write to the client
     timeout: Duration,
     /// Packets queued to send to the client
@@ -328,7 +310,7 @@ impl Actor {
         }
         match self.run_inner(done).await {
             Err(e) => {
-                warn!("actor errored {e:#?}, exiting");
+                warn!("actor errored {e:#}, exiting");
             }
             Ok(()) => {
                 debug!("actor finished, exiting");
@@ -537,187 +519,6 @@ impl ForwardPacketError {
     }
 }
 
-/// Rate limiter for reading from a [`RelayedStream`].
-///
-/// The writes to the sink are not rate limited.
-///
-/// This potentially buffers one frame if the rate limiter does not allows this frame.
-/// While the frame is buffered the undernlying stream is no longer polled.
-#[derive(Debug)]
-struct RateLimitedRelayedStream {
-    inner: RelayedStream,
-    limiter: Option<Arc<governor::DefaultDirectRateLimiter>>,
-    state: State,
-    /// Keeps track if this stream was ever rate-limited.
-    limited_once: bool,
-    metrics: Arc<Metrics>,
-}
-
-#[derive(derive_more::Debug)]
-enum State {
-    #[debug("Blocked")]
-    Blocked {
-        /// Future which will complete when the item can be yielded.
-        delay: Pin<Box<dyn Future<Output = ()> + Send + Sync>>,
-        /// Item to yield when the `delay` future completes.
-        item: Result<Frame, StreamError>,
-    },
-    Ready,
-}
-
-impl RateLimitedRelayedStream {
-    fn new(
-        inner: RelayedStream,
-        limiter: governor::DefaultDirectRateLimiter,
-        metrics: Arc<Metrics>,
-    ) -> Self {
-        Self {
-            inner,
-            limiter: Some(Arc::new(limiter)),
-            state: State::Ready,
-            limited_once: false,
-            metrics,
-        }
-    }
-
-    fn unlimited(inner: RelayedStream, metrics: Arc<Metrics>) -> Self {
-        Self {
-            inner,
-            limiter: None,
-            state: State::Ready,
-            limited_once: false,
-            metrics,
-        }
-    }
-}
-
-impl RateLimitedRelayedStream {
-    /// Records metrics about being rate-limited.
-    fn record_rate_limited(&mut self) {
-        // TODO: add a label for the frame type.
-        self.metrics.frames_rx_ratelimited_total.inc();
-        if !self.limited_once {
-            self.metrics.conns_rx_ratelimited_total.inc();
-            self.limited_once = true;
-        }
-    }
-}
-
-impl Stream for RateLimitedRelayedStream {
-    type Item = Result<Frame, StreamError>;
-
-    #[instrument(name = "rate_limited_relayed_stream", skip_all)]
-    fn poll_next(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<Option<Self::Item>> {
-        let Some(ref limiter) = self.limiter else {
-            // If there is no rate-limiter directly poll the inner.
-            return Pin::new(&mut self.inner).poll_next(cx);
-        };
-        let limiter = limiter.clone();
-        loop {
-            match &mut self.state {
-                State::Ready => {
-                    // Poll inner for a new item.
-                    match Pin::new(&mut self.inner).poll_next(cx) {
-                        Poll::Ready(Some(item)) => {
-                            match &item {
-                                Ok(frame) => {
-                                    // How many bytes does this frame consume?
-                                    let Ok(frame_len) =
-                                        TryInto::<u32>::try_into(frame.len_with_header())
-                                            .and_then(TryInto::<NonZeroU32>::try_into)
-                                    else {
-                                        error!("frame len not NonZeroU32, is MAX_FRAME_SIZE too large?");
-                                        // Let this frame through so to not completely break.
-                                        return Poll::Ready(Some(item));
-                                    };
-
-                                    match limiter.check_n(frame_len) {
-                                        Ok(Ok(_)) => return Poll::Ready(Some(item)),
-                                        Ok(Err(_)) => {
-                                            // Item is rate-limited.
-                                            self.record_rate_limited();
-                                            let delay = Box::pin({
-                                                let limiter = limiter.clone();
-                                                async move {
-                                                    limiter.until_n_ready(frame_len).await.ok();
-                                                }
-                                            });
-                                            self.state = State::Blocked { delay, item };
-                                            continue;
-                                        }
-                                        Err(_insufficient_capacity) => {
-                                            error!(
-                                                "frame larger than bucket capacity: \
-                                                 configuration error: \
-                                                 max_burst_bytes < MAX_FRAME_SIZE?"
-                                            );
-                                            // Let this frame through so to not completely break.
-                                            return Poll::Ready(Some(item));
-                                        }
-                                    }
-                                }
-                                Err(_) => {
-                                    // Yielding errors is not rate-limited.
-                                    return Poll::Ready(Some(item));
-                                }
-                            }
-                        }
-                        Poll::Ready(None) => return Poll::Ready(None),
-                        Poll::Pending => return Poll::Pending,
-                    }
-                }
-                State::Blocked { delay, .. } => {
-                    match delay.poll(cx) {
-                        Poll::Ready(_) => {
-                            match std::mem::replace(&mut self.state, State::Ready) {
-                                State::Ready => unreachable!(),
-                                State::Blocked { item, .. } => {
-                                    // Yield the item directly, rate-limit has already been
-                                    // accounted for by awaiting the future.
-                                    return Poll::Ready(Some(item));
-                                }
-                            }
-                        }
-                        Poll::Pending => return Poll::Pending,
-                    }
-                }
-            }
-        }
-    }
-}
-
-impl Sink<Frame> for RateLimitedRelayedStream {
-    type Error = std::io::Error;
-
-    fn poll_ready(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<std::result::Result<(), Self::Error>> {
-        Pin::new(&mut self.inner).poll_ready(cx)
-    }
-
-    fn start_send(mut self: Pin<&mut Self>, item: Frame) -> std::result::Result<(), Self::Error> {
-        Pin::new(&mut self.inner).start_send(item)
-    }
-
-    fn poll_flush(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<std::result::Result<(), Self::Error>> {
-        Pin::new(&mut self.inner).poll_flush(cx)
-    }
-
-    fn poll_close(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<std::result::Result<(), Self::Error>> {
-        Pin::new(&mut self.inner).poll_close(cx)
-    }
-}
-
 /// Tracks how many unique nodes have been seen during the last day.
 #[derive(Debug)]
 struct ClientCounter {
@@ -755,15 +556,11 @@ mod tests {
     use bytes::Bytes;
     use iroh_base::SecretKey;
     use n0_snafu::{Result, ResultExt};
-    use tokio_util::codec::Framed;
     use tracing::info;
     use tracing_test::traced_test;
 
     use super::*;
-    use crate::{
-        protos::relay::{recv_frame, FrameType, RelayCodec},
-        server::streams::MaybeTlsStream,
-    };
+    use crate::protos::relay::{recv_frame, FrameType};
 
     #[tokio::test]
     #[traced_test]
@@ -774,14 +571,13 @@ mod tests {
 
         let node_id = SecretKey::generate(rand::thread_rng()).public();
         let (io, io_rw) = tokio::io::duplex(1024);
-        let mut io_rw = Framed::new(io_rw, RelayCodec::test());
-        let stream =
-            RelayedStream::Relay(Framed::new(MaybeTlsStream::Test(io), RelayCodec::test()));
+        let mut io_rw = RelayedStream::test_client(io_rw);
+        let stream = RelayedStream::test_server(io);
 
         let clients = Clients::default();
         let metrics = Arc::new(Metrics::default());
         let actor = Actor {
-            stream: RateLimitedRelayedStream::unlimited(stream, metrics.clone()),
+            stream,
             timeout: Duration::from_secs(1),
             send_queue: send_queue_r,
             disco_send_queue: disco_send_queue_r,
@@ -883,33 +679,26 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     #[traced_test]
     async fn test_rate_limit() -> Result {
         const LIMIT: u32 = 50;
         const MAX_FRAMES: u32 = 100;
 
-        // Rate limiter allowing LIMIT bytes/s
-        let quota = governor::Quota::per_second(NonZeroU32::try_from(LIMIT).unwrap());
-        let limiter = governor::RateLimiter::direct(quota);
-
         // Build the rate limited stream.
         let (io_read, io_write) = tokio::io::duplex((LIMIT * MAX_FRAMES) as _);
-        let mut frame_writer = Framed::new(io_write, RelayCodec::test());
-        let stream = RelayedStream::Relay(Framed::new(
-            MaybeTlsStream::Test(io_read),
-            RelayCodec::test(),
-        ));
-        let mut stream = RateLimitedRelayedStream::new(stream, limiter, Default::default());
+        let mut frame_writer = RelayedStream::test_client(io_write);
+        // Rate limiter allowing LIMIT bytes/s
+        let mut stream = RelayedStream::test_server_limited(io_read, LIMIT / 10, LIMIT)?;
 
         // Prepare a frame to send, assert its size.
-        let data = Bytes::from_static(b"hello world!!");
+        let data = Bytes::from_static(b"hello world!!1elf");
         let target = SecretKey::generate(rand::thread_rng()).public();
         let frame = Frame::SendPacket {
             dst_key: target,
             packet: data.clone(),
         };
-        let frame_len = frame.len_with_header();
+        let frame_len = frame.to_bytes().len();
         assert_eq!(frame_len, LIMIT as usize);
 
         // Send a frame, it should arrive.
