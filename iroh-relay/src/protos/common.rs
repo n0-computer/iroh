@@ -16,37 +16,41 @@ use snafu::{Backtrace, OptionExt, Snafu};
 // needs to be pub due to being exposed in error types
 pub enum FrameType {
     /// The server frame type for the challenge response
-    ServerChallenge = 1,
+    ServerChallenge = 0,
     /// The client frame type for the authentication frame
-    ClientAuth = 2,
+    ClientAuth = 1,
     /// The server frame type for authentication confirmation
-    ServerConfirmsAuth = 3,
+    ServerConfirmsAuth = 2,
     /// The server frame type for authentication denial
-    ServerDeniesAuth = 4,
+    ServerDeniesAuth = 3,
+    /// 32B dest pub key + ECN bytes + one datagram's content
+    ClientToRelayDatagram = 4,
     /// 32B dest pub key + ECN byte + segment size u16 + datagrams contents
     ClientToRelayDatagrams = 5,
+    /// 32B src pub key + ECN bytes + one datagram's content
+    RelayToClientDatagram = 6,
     /// 32B src pub key + ECN byte + segment size u16 + datagrams contents
-    RelayToClientDatagrams = 6,
+    RelayToClientDatagrams = 7,
     /// Sent from server to client to signal that a previous sender is no longer connected.
     ///
     /// That is, if A sent to B, and then if A disconnects, the server sends `FrameType::PeerGone`
     /// to B so B can forget that a reverse path exists on that connection to get back to A
     ///
     /// 32B pub key of peer that's gone
-    NodeGone = 7,
+    NodeGone = 8,
     /// Messages with these frames will be ignored.
     /// 8 byte ping payload, to be echoed back in FrameType::Pong
-    Ping = 8,
+    Ping = 9,
     /// 8 byte payload, the contents of ping being replied to
-    Pong = 9,
+    Pong = 10,
     /// Sent from server to client to tell the client if their connection is unhealthy somehow.
     /// Contains only UTF-8 bytes.
-    Health = 10,
+    Health = 11,
 
     /// Sent from server to client for the server to declare that it's restarting.
     /// Payload is two big endian u32 durations in milliseconds: when to reconnect,
     /// and how long to try total.
-    Restarting = 11,
+    Restarting = 12,
 }
 
 #[common_fields({

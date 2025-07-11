@@ -640,7 +640,7 @@ mod tests {
             data: Datagrams::from(&data[..]),
         };
         send_queue_s.send(packet.clone()).await.context("send")?;
-        let frame = recv_frame(FrameType::RelayToClientDatagrams, &mut io_rw)
+        let frame = recv_frame(FrameType::RelayToClientDatagram, &mut io_rw)
             .await
             .e()?;
         assert_eq!(
@@ -657,7 +657,7 @@ mod tests {
             .send(packet.clone())
             .await
             .context("send")?;
-        let frame = recv_frame(FrameType::RelayToClientDatagrams, &mut io_rw)
+        let frame = recv_frame(FrameType::RelayToClientDatagram, &mut io_rw)
             .await
             .e()?;
         assert_eq!(
@@ -731,7 +731,7 @@ mod tests {
         let mut stream = RelayedStream::test_limited(io_read, LIMIT / 10, LIMIT)?;
 
         // Prepare a frame to send, assert its size.
-        let data = Datagrams::from(b"hello world!!1");
+        let data = Datagrams::from(b"hello world!!!!!");
         let target = SecretKey::generate(rand::thread_rng()).public();
         let frame = ClientToRelayMsg::Datagrams {
             dst_node_id: target,
