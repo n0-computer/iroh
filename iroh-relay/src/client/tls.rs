@@ -13,6 +13,7 @@ use hyper::{upgrade::Parts, Request};
 use n0_future::{task, time};
 use rustls::client::Resumption;
 use snafu::{OptionExt, ResultExt};
+use tracing::error;
 
 use super::{
     streams::{MaybeTlsStream, ProxyStream},
@@ -243,7 +244,7 @@ impl MaybeTlsStreamBuilder {
             .context(ProxyConnectSnafu)?;
         task::spawn(async move {
             if let Err(err) = conn.with_upgrades().await {
-                tracing::error!("Proxy connection failed: {:?}", err);
+                error!("Proxy connection failed: {:?}", err);
             }
         });
 

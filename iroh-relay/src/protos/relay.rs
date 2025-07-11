@@ -525,14 +525,34 @@ where
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "server"))]
 mod tests {
     use bytes::BytesMut;
     use data_encoding::HEXLOWER;
     use iroh_base::SecretKey;
     use n0_snafu::{Result, ResultExt};
 
+    use crate::server::streams::RelayedStream;
+
     use super::*;
+
+    #[tokio::test]
+    async fn test_send_recv_client_key() -> Result {
+        let (reader, writer) = tokio::io::duplex(1024);
+        let mut reader = RelayedStream::test_client(reader);
+        let mut writer = RelayedStream::test_server(writer).sink_err_into();
+
+        let client_key = SecretKey::generate(rand::thread_rng());
+        let client_info = ClientInfo {
+            version: PROTOCOL_VERSION,
+        };
+        println!("client_key pub {:?}", client_key.public());
+        send_client_key(&mut writer, &client_key, &client_info).await?;
+        let (client_pub_key, got_client_info) = recv_client_key(&mut reader).await?;
+        assert_eq!(client_key.public(), client_pub_key);
+        assert_eq!(client_info, got_client_info);
+        Ok(())
+    }
 
     #[test]
     fn test_frame_snapshot() -> Result {
