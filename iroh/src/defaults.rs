@@ -86,11 +86,9 @@ pub mod staging {
     use super::*;
 
     /// Hostname of the default NA relay.
-    // TODO(ramfox): for `0.91` release, make sure we have canary staging relays
-    pub const NA_RELAY_HOSTNAME: &str = "use1-1.relay.n0.iroh-canary.iroh.link.";
+    pub const NA_RELAY_HOSTNAME: &str = "staging-use1-1.relay.iroh.network.";
     /// Hostname of the default EU relay.
-    // TODO(ramfox): for `0.91` release, make sure we have canary staging relays
-    pub const EU_RELAY_HOSTNAME: &str = "euc1-1.relay.n0.iroh-canary.iroh.link.";
+    pub const EU_RELAY_HOSTNAME: &str = "staging-euw1-1.relay.iroh.network.";
 
     /// Get the default [`RelayMap`].
     pub fn default_relay_map() -> RelayMap {

@@ -11,6 +11,7 @@ use tokio::{
 };
 
 use super::util;
+use crate::ExportKeyingMaterial;
 
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
@@ -63,6 +64,7 @@ impl AsyncWrite for ProxyStream {
             Self::Proxied(stream) => Pin::new(stream.get_mut().1).poll_shutdown(cx),
         }
     }
+
     fn poll_write_vectored(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -73,20 +75,27 @@ impl AsyncWrite for ProxyStream {
             Self::Proxied(stream) => Pin::new(stream.get_mut().1).poll_write_vectored(cx, bufs),
         }
     }
+
+    fn is_write_vectored(&self) -> bool {
+        match self {
+            ProxyStream::Raw(stream) => stream.is_write_vectored(),
+            ProxyStream::Proxied(stream) => stream.get_ref().1.is_write_vectored(),
+        }
+    }
 }
 
 impl ProxyStream {
     pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
         match self {
             Self::Raw(s) => s.local_addr(),
-            Self::Proxied(s) => s.get_ref().1.local_addr(),
+            Self::Proxied(s) => s.get_ref().1.as_ref().local_addr(),
         }
     }
 
     pub fn peer_addr(&self) -> std::io::Result<SocketAddr> {
         match self {
             Self::Raw(s) => s.peer_addr(),
-            Self::Proxied(s) => s.get_ref().1.peer_addr(),
+            Self::Proxied(s) => s.get_ref().1.as_ref().peer_addr(),
         }
     }
 }
@@ -98,6 +107,23 @@ pub enum MaybeTlsStream<IO> {
     Tls(tokio_rustls::client::TlsStream<IO>),
     #[cfg(test)]
     Test(tokio::io::DuplexStream),
+}
+
+impl<IO> ExportKeyingMaterial for MaybeTlsStream<IO> {
+    fn export_keying_material<T: AsMut<[u8]>>(
+        &self,
+        output: T,
+        label: &[u8],
+        context: Option<&[u8]>,
+    ) -> Option<T> {
+        let Self::Tls(ref tls) = self else {
+            return None;
+        };
+        tls.get_ref()
+            .1
+            .export_keying_material(output, label, context)
+            .ok()
+    }
 }
 
 impl<IO: AsyncRead + AsyncWrite + Unpin> AsyncRead for MaybeTlsStream<IO> {
@@ -152,6 +178,7 @@ impl<IO: AsyncRead + AsyncWrite + Unpin> AsyncWrite for MaybeTlsStream<IO> {
             Self::Test(stream) => Pin::new(stream).poll_shutdown(cx),
         }
     }
+
     fn poll_write_vectored(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -164,24 +191,13 @@ impl<IO: AsyncRead + AsyncWrite + Unpin> AsyncWrite for MaybeTlsStream<IO> {
             Self::Test(stream) => Pin::new(stream).poll_write_vectored(cx, bufs),
         }
     }
-}
 
-impl MaybeTlsStream<TcpStream> {
-    pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
+    fn is_write_vectored(&self) -> bool {
         match self {
-            Self::Raw(s) => s.local_addr(),
-            Self::Tls(s) => s.get_ref().0.local_addr(),
+            Self::Raw(stream) => stream.is_write_vectored(),
+            Self::Tls(stream) => stream.is_write_vectored(),
             #[cfg(test)]
-            Self::Test(_) => Ok(SocketAddr::new(std::net::Ipv4Addr::LOCALHOST.into(), 1337)),
-        }
-    }
-
-    pub fn peer_addr(&self) -> std::io::Result<SocketAddr> {
-        match self {
-            Self::Raw(s) => s.peer_addr(),
-            Self::Tls(s) => s.get_ref().0.peer_addr(),
-            #[cfg(test)]
-            Self::Test(_) => Ok(SocketAddr::new(std::net::Ipv4Addr::LOCALHOST.into(), 1337)),
+            Self::Test(stream) => stream.is_write_vectored(),
         }
     }
 }

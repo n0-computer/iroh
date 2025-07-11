@@ -750,11 +750,10 @@ impl hyper::service::Service<Request<Incoming>> for CaptivePortalService {
 mod tests {
     use std::{net::Ipv4Addr, time::Duration};
 
-    use bytes::Bytes;
     use http::StatusCode;
     use iroh_base::{NodeId, RelayUrl, SecretKey};
     use n0_future::{FutureExt, SinkExt, StreamExt};
-    use n0_snafu::{Result, ResultExt};
+    use n0_snafu::Result;
     use tracing::{info, instrument};
     use tracing_test::traced_test;
 
@@ -763,8 +762,12 @@ mod tests {
         NO_CONTENT_CHALLENGE_HEADER, NO_CONTENT_RESPONSE_HEADER,
     };
     use crate::{
-        client::{conn::ReceivedMessage, ClientBuilder, SendMessage},
+        client::{ClientBuilder, ConnectError},
         dns::DnsResolver,
+        protos::{
+            handshake,
+            relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
+        },
     };
 
     async fn spawn_local_relay() -> std::result::Result<Server, SpawnError> {
@@ -787,12 +790,15 @@ mod tests {
         client_a: &mut crate::client::Client,
         client_b: &mut crate::client::Client,
         b_key: NodeId,
-        msg: Bytes,
-    ) -> Result<ReceivedMessage> {
+        msg: Datagrams,
+    ) -> Result<RelayToClientMsg> {
         // try resend 10 times
         for _ in 0..10 {
             client_a
-                .send(SendMessage::SendPacket(b_key, msg.clone()))
+                .send(ClientToRelayMsg::Datagrams {
+                    dst_node_id: b_key,
+                    datagrams: msg.clone(),
+                })
                 .await?;
             let Ok(res) = tokio::time::timeout(Duration::from_millis(500), client_b.next()).await
             else {
@@ -905,34 +911,34 @@ mod tests {
         info!("sending a -> b");
 
         // send message from a to b
-        let msg = Bytes::from("hello, b");
+        let msg = Datagrams::from("hello, b");
         let res = try_send_recv(&mut client_a, &mut client_b, b_key, msg.clone()).await?;
-        let ReceivedMessage::ReceivedPacket {
+        let RelayToClientMsg::Datagrams {
             remote_node_id,
-            data,
+            datagrams,
         } = res
         else {
             panic!("client_b received unexpected message {res:?}");
         };
 
         assert_eq!(a_key, remote_node_id);
-        assert_eq!(msg, data);
+        assert_eq!(msg, datagrams);
 
         info!("sending b -> a");
         // send message from b to a
-        let msg = Bytes::from("howdy, a");
+        let msg = Datagrams::from("howdy, a");
         let res = try_send_recv(&mut client_b, &mut client_a, a_key, msg.clone()).await?;
 
-        let ReceivedMessage::ReceivedPacket {
+        let RelayToClientMsg::Datagrams {
             remote_node_id,
-            data,
+            datagrams,
         } = res
         else {
             panic!("client_a received unexpected message {res:?}");
         };
 
         assert_eq!(b_key, remote_node_id);
-        assert_eq!(msg, data);
+        assert_eq!(msg, datagrams);
 
         Ok(())
     }
@@ -975,23 +981,13 @@ mod tests {
 
         // set up client a
         let resolver = dns_resolver();
-        let mut client_a = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver)
+        let result = ClientBuilder::new(relay_url.clone(), a_secret_key, resolver)
             .connect()
-            .await?;
+            .await;
 
-        // the next message should be the rejection of the connection
-        tokio::time::timeout(Duration::from_millis(500), async move {
-            match client_a.next().await.unwrap().unwrap() {
-                ReceivedMessage::Health { problem } => {
-                    assert_eq!(problem, Some("not authenticated".to_string()));
-                }
-                msg => {
-                    panic!("other msg: {msg:?}");
-                }
-            }
-        })
-        .await
-        .context("timeout")?;
+        assert!(
+            matches!(result, Err(ConnectError::Handshake { source: handshake::Error::ServerDeniedAuth { reason, .. }, .. }) if reason == "not authorized")
+        );
 
         // test that another client has access
 
@@ -1014,16 +1010,16 @@ mod tests {
             .await?;
 
         // send message from b to c
-        let msg = Bytes::from("hello, c");
+        let msg = Datagrams::from("hello, c");
         let res = try_send_recv(&mut client_b, &mut client_c, c_key, msg.clone()).await?;
 
-        if let ReceivedMessage::ReceivedPacket {
+        if let RelayToClientMsg::Datagrams {
             remote_node_id,
-            data,
+            datagrams,
         } = res
         {
             assert_eq!(b_key, remote_node_id);
-            assert_eq!(msg, data);
+            assert_eq!(msg, datagrams);
         } else {
             panic!("client_c received unexpected message {res:?}");
         }
@@ -1055,10 +1051,13 @@ mod tests {
         // send messages from a to b, without b receiving anything.
         // we should still keep succeeding to send, even if the packet won't be forwarded
         // by the relay server because the server's send queue for b fills up.
-        let msg = Bytes::from("hello, b");
+        let msg = Datagrams::from("hello, b");
         for _i in 0..1000 {
             client_a
-                .send(SendMessage::SendPacket(b_key, msg.clone()))
+                .send(ClientToRelayMsg::Datagrams {
+                    dst_node_id: b_key,
+                    datagrams: msg.clone(),
+                })
                 .await?;
         }
         Ok(())
