@@ -24,7 +24,7 @@
 <a href=#24 id=24 data-nosnippet>24</a>    server::{
 <a href=#25 id=25 data-nosnippet>25</a>        clients::Clients,
 <a href=#26 id=26 data-nosnippet>26</a>        metrics::Metrics,
-<a href=#27 id=27 data-nosnippet>27</a>        streams::{RecvError <span class="kw">as </span>StreamRecvError, RelayedStream},
+<a href=#27 id=27 data-nosnippet>27</a>        streams::{RecvError, RelayedStream},
 <a href=#28 id=28 data-nosnippet>28</a>    },
 <a href=#29 id=29 data-nosnippet>29</a>    PingTracker,
 <a href=#30 id=30 data-nosnippet>30</a>};
@@ -168,7 +168,7 @@
 <a href=#168 id=168 data-nosnippet>168</a>    }
 <a href=#169 id=169 data-nosnippet>169</a>}
 <a href=#170 id=170 data-nosnippet>170</a>
-<a href=#171 id=171 data-nosnippet>171</a><span class="doccomment">/// Receive frame error
+<a href=#171 id=171 data-nosnippet>171</a><span class="doccomment">/// Error for [`Actor::handle_frame`]
 <a href=#172 id=172 data-nosnippet>172</a></span><span class="attr">#[common_fields({
 <a href=#173 id=173 data-nosnippet>173</a>    backtrace: <span class="prelude-ty">Option</span>&lt;Backtrace&gt;,
 <a href=#174 id=174 data-nosnippet>174</a>})]
@@ -181,19 +181,19 @@
 <a href=#181 id=181 data-nosnippet>181</a>    <span class="attr">#[snafu(display(<span class="string">"Stream terminated"</span>))]
 <a href=#182 id=182 data-nosnippet>182</a>    </span>StreamTerminated {},
 <a href=#183 id=183 data-nosnippet>183</a>    <span class="attr">#[snafu(transparent)]
-<a href=#184 id=184 data-nosnippet>184</a>    </span>Recv { source: StreamRecvError },
+<a href=#184 id=184 data-nosnippet>184</a>    </span>Recv { source: RecvError },
 <a href=#185 id=185 data-nosnippet>185</a>    <span class="attr">#[snafu(transparent)]
-<a href=#186 id=186 data-nosnippet>186</a>    </span>Send { source: SendFrameError },
+<a href=#186 id=186 data-nosnippet>186</a>    </span>Send { source: WriteFrameError },
 <a href=#187 id=187 data-nosnippet>187</a>}
 <a href=#188 id=188 data-nosnippet>188</a>
-<a href=#189 id=189 data-nosnippet>189</a><span class="doccomment">/// Send frame error
+<a href=#189 id=189 data-nosnippet>189</a><span class="doccomment">/// Error for [`Actor::write_frame`]
 <a href=#190 id=190 data-nosnippet>190</a></span><span class="attr">#[common_fields({
 <a href=#191 id=191 data-nosnippet>191</a>    backtrace: <span class="prelude-ty">Option</span>&lt;Backtrace&gt;,
 <a href=#192 id=192 data-nosnippet>192</a>})]
 <a href=#193 id=193 data-nosnippet>193</a>#[allow(missing_docs)]
 <a href=#194 id=194 data-nosnippet>194</a>#[derive(Debug, Snafu)]
 <a href=#195 id=195 data-nosnippet>195</a>#[non_exhaustive]
-<a href=#196 id=196 data-nosnippet>196</a></span><span class="kw">pub enum </span>SendFrameError {
+<a href=#196 id=196 data-nosnippet>196</a></span><span class="kw">pub enum </span>WriteFrameError {
 <a href=#197 id=197 data-nosnippet>197</a>    <span class="attr">#[snafu(transparent)]
 <a href=#198 id=198 data-nosnippet>198</a>    </span>Stream { source: StreamError },
 <a href=#199 id=199 data-nosnippet>199</a>    <span class="attr">#[snafu(transparent)]
@@ -224,7 +224,7 @@
 <a href=#224 id=224 data-nosnippet>224</a>    },
 <a href=#225 id=225 data-nosnippet>225</a>    <span class="attr">#[snafu(display(<span class="string">"Failed to send disco packet"</span>))]
 <a href=#226 id=226 data-nosnippet>226</a>    </span>DiscoPacketSend {
-<a href=#227 id=227 data-nosnippet>227</a>        source: SendFrameError,
+<a href=#227 id=227 data-nosnippet>227</a>        source: WriteFrameError,
 <a href=#228 id=228 data-nosnippet>228</a>        <span class="attr">#[snafu(implicit)]
 <a href=#229 id=229 data-nosnippet>229</a>        </span>span_trace: n0_snafu::SpanTrace,
 <a href=#230 id=230 data-nosnippet>230</a>    },
@@ -235,7 +235,7 @@
 <a href=#235 id=235 data-nosnippet>235</a>    },
 <a href=#236 id=236 data-nosnippet>236</a>    <span class="attr">#[snafu(display(<span class="string">"Failed to send packet"</span>))]
 <a href=#237 id=237 data-nosnippet>237</a>    </span>PacketSend {
-<a href=#238 id=238 data-nosnippet>238</a>        source: SendFrameError,
+<a href=#238 id=238 data-nosnippet>238</a>        source: WriteFrameError,
 <a href=#239 id=239 data-nosnippet>239</a>        <span class="attr">#[snafu(implicit)]
 <a href=#240 id=240 data-nosnippet>240</a>        </span>span_trace: n0_snafu::SpanTrace,
 <a href=#241 id=241 data-nosnippet>241</a>    },
@@ -246,13 +246,13 @@
 <a href=#246 id=246 data-nosnippet>246</a>    },
 <a href=#247 id=247 data-nosnippet>247</a>    <span class="attr">#[snafu(display(<span class="string">"NodeGone write frame failed"</span>))]
 <a href=#248 id=248 data-nosnippet>248</a>    </span>NodeGoneWriteFrame {
-<a href=#249 id=249 data-nosnippet>249</a>        source: SendFrameError,
+<a href=#249 id=249 data-nosnippet>249</a>        source: WriteFrameError,
 <a href=#250 id=250 data-nosnippet>250</a>        <span class="attr">#[snafu(implicit)]
 <a href=#251 id=251 data-nosnippet>251</a>        </span>span_trace: n0_snafu::SpanTrace,
 <a href=#252 id=252 data-nosnippet>252</a>    },
 <a href=#253 id=253 data-nosnippet>253</a>    <span class="attr">#[snafu(display(<span class="string">"Keep alive write frame failed"</span>))]
 <a href=#254 id=254 data-nosnippet>254</a>    </span>KeepAliveWriteFrame {
-<a href=#255 id=255 data-nosnippet>255</a>        source: SendFrameError,
+<a href=#255 id=255 data-nosnippet>255</a>        source: WriteFrameError,
 <a href=#256 id=256 data-nosnippet>256</a>        <span class="attr">#[snafu(implicit)]
 <a href=#257 id=257 data-nosnippet>257</a>        </span>span_trace: n0_snafu::SpanTrace,
 <a href=#258 id=258 data-nosnippet>258</a>    },
@@ -395,7 +395,7 @@
 <a href=#395 id=395 data-nosnippet>395</a>    <span class="doccomment">/// Writes the given frame to the connection.
 <a href=#396 id=396 data-nosnippet>396</a>    ///
 <a href=#397 id=397 data-nosnippet>397</a>    /// Errors if the send does not happen within the `timeout` duration
-<a href=#398 id=398 data-nosnippet>398</a>    </span><span class="kw">async fn </span>write_frame(<span class="kw-2">&amp;mut </span><span class="self">self</span>, frame: RelayToClientMsg) -&gt; <span class="prelude-ty">Result</span>&lt;(), SendFrameError&gt; {
+<a href=#398 id=398 data-nosnippet>398</a>    </span><span class="kw">async fn </span>write_frame(<span class="kw-2">&amp;mut </span><span class="self">self</span>, frame: RelayToClientMsg) -&gt; <span class="prelude-ty">Result</span>&lt;(), WriteFrameError&gt; {
 <a href=#399 id=399 data-nosnippet>399</a>        tokio::time::timeout(<span class="self">self</span>.timeout, <span class="self">self</span>.stream.send(frame)).<span class="kw">await</span><span class="question-mark">??</span>;
 <a href=#400 id=400 data-nosnippet>400</a>        <span class="prelude-val">Ok</span>(())
 <a href=#401 id=401 data-nosnippet>401</a>    }
@@ -404,7 +404,7 @@
 <a href=#404 id=404 data-nosnippet>404</a>    ///
 <a href=#405 id=405 data-nosnippet>405</a>    /// Errors if the send does not happen within the `timeout` duration
 <a href=#406 id=406 data-nosnippet>406</a>    /// Does not flush.
-<a href=#407 id=407 data-nosnippet>407</a>    </span><span class="kw">async fn </span>send_raw(<span class="kw-2">&amp;mut </span><span class="self">self</span>, packet: Packet) -&gt; <span class="prelude-ty">Result</span>&lt;(), SendFrameError&gt; {
+<a href=#407 id=407 data-nosnippet>407</a>    </span><span class="kw">async fn </span>send_raw(<span class="kw-2">&amp;mut </span><span class="self">self</span>, packet: Packet) -&gt; <span class="prelude-ty">Result</span>&lt;(), WriteFrameError&gt; {
 <a href=#408 id=408 data-nosnippet>408</a>        <span class="kw">let </span>remote_node_id = packet.src;
 <a href=#409 id=409 data-nosnippet>409</a>        <span class="kw">let </span>datagrams = packet.data;
 <a href=#410 id=410 data-nosnippet>410</a>
@@ -418,7 +418,7 @@
 <a href=#418 id=418 data-nosnippet>418</a>        .<span class="kw">await
 <a href=#419 id=419 data-nosnippet>419</a>    </span>}
 <a href=#420 id=420 data-nosnippet>420</a>
-<a href=#421 id=421 data-nosnippet>421</a>    <span class="kw">async fn </span>send_packet(<span class="kw-2">&amp;mut </span><span class="self">self</span>, packet: Packet) -&gt; <span class="prelude-ty">Result</span>&lt;(), SendFrameError&gt; {
+<a href=#421 id=421 data-nosnippet>421</a>    <span class="kw">async fn </span>send_packet(<span class="kw-2">&amp;mut </span><span class="self">self</span>, packet: Packet) -&gt; <span class="prelude-ty">Result</span>&lt;(), WriteFrameError&gt; {
 <a href=#422 id=422 data-nosnippet>422</a>        <span class="macro">trace!</span>(<span class="string">"send packet"</span>);
 <a href=#423 id=423 data-nosnippet>423</a>        <span class="kw">match </span><span class="self">self</span>.send_raw(packet).<span class="kw">await </span>{
 <a href=#424 id=424 data-nosnippet>424</a>            <span class="prelude-val">Ok</span>(()) =&gt; {
@@ -432,7 +432,7 @@
 <a href=#432 id=432 data-nosnippet>432</a>        }
 <a href=#433 id=433 data-nosnippet>433</a>    }
 <a href=#434 id=434 data-nosnippet>434</a>
-<a href=#435 id=435 data-nosnippet>435</a>    <span class="kw">async fn </span>send_disco_packet(<span class="kw-2">&amp;mut </span><span class="self">self</span>, packet: Packet) -&gt; <span class="prelude-ty">Result</span>&lt;(), SendFrameError&gt; {
+<a href=#435 id=435 data-nosnippet>435</a>    <span class="kw">async fn </span>send_disco_packet(<span class="kw-2">&amp;mut </span><span class="self">self</span>, packet: Packet) -&gt; <span class="prelude-ty">Result</span>&lt;(), WriteFrameError&gt; {
 <a href=#436 id=436 data-nosnippet>436</a>        <span class="macro">trace!</span>(<span class="string">"send disco packet"</span>);
 <a href=#437 id=437 data-nosnippet>437</a>        <span class="kw">match </span><span class="self">self</span>.send_raw(packet).<span class="kw">await </span>{
 <a href=#438 id=438 data-nosnippet>438</a>            <span class="prelude-val">Ok</span>(()) =&gt; {
@@ -449,7 +449,7 @@
 <a href=#449 id=449 data-nosnippet>449</a>    <span class="doccomment">/// Handles frame read results.
 <a href=#450 id=450 data-nosnippet>450</a>    </span><span class="kw">async fn </span>handle_frame(
 <a href=#451 id=451 data-nosnippet>451</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
-<a href=#452 id=452 data-nosnippet>452</a>        maybe_frame: <span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Result</span>&lt;ClientToRelayMsg, StreamRecvError&gt;&gt;,
+<a href=#452 id=452 data-nosnippet>452</a>        maybe_frame: <span class="prelude-ty">Option</span>&lt;<span class="prelude-ty">Result</span>&lt;ClientToRelayMsg, RecvError&gt;&gt;,
 <a href=#453 id=453 data-nosnippet>453</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;(), HandleFrameError&gt; {
 <a href=#454 id=454 data-nosnippet>454</a>        <span class="macro">trace!</span>(<span class="question-mark">?</span>maybe_frame, <span class="string">"handle incoming frame"</span>);
 <a href=#455 id=455 data-nosnippet>455</a>        <span class="kw">let </span>frame = <span class="kw">match </span>maybe_frame {
@@ -585,7 +585,7 @@
 <a href=#585 id=585 data-nosnippet>585</a>            <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(frame)) =&gt; {
 <a href=#586 id=586 data-nosnippet>586</a>                <span class="kw">if </span>frame_type != frame.typ() {
 <a href=#587 id=587 data-nosnippet>587</a>                    <span class="macro">snafu::whatever!</span>(
-<a href=#588 id=588 data-nosnippet>588</a>                        <span class="string">"Unepxected frame, got {}, but expected {}"</span>,
+<a href=#588 id=588 data-nosnippet>588</a>                        <span class="string">"Unexpected frame, got {}, but expected {}"</span>,
 <a href=#589 id=589 data-nosnippet>589</a>                        frame.typ(),
 <a href=#590 id=590 data-nosnippet>590</a>                        frame_type
 <a href=#591 id=591 data-nosnippet>591</a>                    );

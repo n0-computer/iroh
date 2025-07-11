@@ -19,7 +19,7 @@
 <a href=#19 id=19 data-nosnippet>19</a><span class="kw">use crate</span>::{
 <a href=#20 id=20 data-nosnippet>20</a>    protos::{
 <a href=#21 id=21 data-nosnippet>21</a>        handshake,
-<a href=#22 id=22 data-nosnippet>22</a>        relay::{ClientToRelayMsg, Error <span class="kw">as </span>RecvRelayError, RelayToClientMsg, MAX_PAYLOAD_SIZE},
+<a href=#22 id=22 data-nosnippet>22</a>        relay::{ClientToRelayMsg, Error <span class="kw">as </span>ProtoError, RelayToClientMsg, MAX_PAYLOAD_SIZE},
 <a href=#23 id=23 data-nosnippet>23</a>        streams::WsBytesFramed,
 <a href=#24 id=24 data-nosnippet>24</a>    },
 <a href=#25 id=25 data-nosnippet>25</a>    MAX_PACKET_SIZE,
@@ -57,7 +57,7 @@
 <a href=#57 id=57 data-nosnippet>57</a>#[non_exhaustive]
 <a href=#58 id=58 data-nosnippet>58</a></span><span class="kw">pub enum </span>RecvError {
 <a href=#59 id=59 data-nosnippet>59</a>    <span class="attr">#[snafu(transparent)]
-<a href=#60 id=60 data-nosnippet>60</a>    </span>Protocol { source: RecvRelayError },
+<a href=#60 id=60 data-nosnippet>60</a>    </span>Protocol { source: ProtoError },
 <a href=#61 id=61 data-nosnippet>61</a>    <span class="attr">#[snafu(transparent)]
 <a href=#62 id=62 data-nosnippet>62</a>    </span>StreamError {
 <a href=#63 id=63 data-nosnippet>63</a>        <span class="attr">#[cfg(not(wasm_browser))]
@@ -75,11 +75,11 @@
 <a href=#75 id=75 data-nosnippet>75</a>/// - A [`Sink`] for [`ClientToRelayMsg`] to send to the server.
 <a href=#76 id=76 data-nosnippet>76</a></span><span class="attr">#[derive(derive_more::Debug)]
 <a href=#77 id=77 data-nosnippet>77</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">struct </span>Conn {
-<a href=#78 id=78 data-nosnippet>78</a>    <span class="attr">#[debug(<span class="string">"tokio_websockets::WebSocketStream"</span>)]
-<a href=#79 id=79 data-nosnippet>79</a>    #[cfg(not(wasm_browser))]
+<a href=#78 id=78 data-nosnippet>78</a>    <span class="attr">#[cfg(not(wasm_browser))]
+<a href=#79 id=79 data-nosnippet>79</a>    #[debug(<span class="string">"tokio_websockets::WebSocketStream"</span>)]
 <a href=#80 id=80 data-nosnippet>80</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) conn: WsBytesFramed&lt;MaybeTlsStream&lt;ProxyStream&gt;&gt;,
-<a href=#81 id=81 data-nosnippet>81</a>    <span class="attr">#[debug(<span class="string">"ws_stream_wasm::WsStream"</span>)]
-<a href=#82 id=82 data-nosnippet>82</a>    #[cfg(wasm_browser)]
+<a href=#81 id=81 data-nosnippet>81</a>    <span class="attr">#[cfg(wasm_browser)]
+<a href=#82 id=82 data-nosnippet>82</a>    #[debug(<span class="string">"ws_stream_wasm::WsStream"</span>)]
 <a href=#83 id=83 data-nosnippet>83</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) conn: WsBytesFramed,
 <a href=#84 id=84 data-nosnippet>84</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) key_cache: KeyCache,
 <a href=#85 id=85 data-nosnippet>85</a>}
@@ -124,41 +124,40 @@
 <a href=#124 id=124 data-nosnippet>124</a>    <span class="kw">type </span>Item = <span class="prelude-ty">Result</span>&lt;RelayToClientMsg, RecvError&gt;;
 <a href=#125 id=125 data-nosnippet>125</a>
 <a href=#126 id=126 data-nosnippet>126</a>    <span class="kw">fn </span>poll_next(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Option</span>&lt;<span class="self">Self</span>::Item&gt;&gt; {
-<a href=#127 id=127 data-nosnippet>127</a>        <span class="kw">let </span>msg = <span class="macro">ready!</span>(Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.conn).poll_next(cx));
-<a href=#128 id=128 data-nosnippet>128</a>        <span class="kw">match </span>msg {
-<a href=#129 id=129 data-nosnippet>129</a>            <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(msg)) =&gt; {
-<a href=#130 id=130 data-nosnippet>130</a>                <span class="kw">let </span>message = RelayToClientMsg::from_bytes(msg, <span class="kw-2">&amp;</span><span class="self">self</span>.key_cache);
-<a href=#131 id=131 data-nosnippet>131</a>                Poll::Ready(<span class="prelude-val">Some</span>(message.map_err(Into::into)))
-<a href=#132 id=132 data-nosnippet>132</a>            }
-<a href=#133 id=133 data-nosnippet>133</a>            <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(e)) =&gt; Poll::Ready(<span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(e.into()))),
-<a href=#134 id=134 data-nosnippet>134</a>            <span class="prelude-val">None </span>=&gt; Poll::Ready(<span class="prelude-val">None</span>),
-<a href=#135 id=135 data-nosnippet>135</a>        }
-<a href=#136 id=136 data-nosnippet>136</a>    }
-<a href=#137 id=137 data-nosnippet>137</a>}
-<a href=#138 id=138 data-nosnippet>138</a>
-<a href=#139 id=139 data-nosnippet>139</a><span class="kw">impl </span>Sink&lt;ClientToRelayMsg&gt; <span class="kw">for </span>Conn {
-<a href=#140 id=140 data-nosnippet>140</a>    <span class="kw">type </span>Error = SendError;
-<a href=#141 id=141 data-nosnippet>141</a>
-<a href=#142 id=142 data-nosnippet>142</a>    <span class="kw">fn </span>poll_ready(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt;&gt; {
-<a href=#143 id=143 data-nosnippet>143</a>        Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.conn).poll_ready(cx).map_err(Into::into)
-<a href=#144 id=144 data-nosnippet>144</a>    }
-<a href=#145 id=145 data-nosnippet>145</a>
-<a href=#146 id=146 data-nosnippet>146</a>    <span class="kw">fn </span>start_send(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, frame: ClientToRelayMsg) -&gt; <span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt; {
-<a href=#147 id=147 data-nosnippet>147</a>        <span class="kw">if let </span>ClientToRelayMsg::Datagrams { datagrams, .. } = <span class="kw-2">&amp;</span>frame {
-<a href=#148 id=148 data-nosnippet>148</a>            <span class="kw">let </span>size = datagrams.contents.len();
-<a href=#149 id=149 data-nosnippet>149</a>            <span class="macro">snafu::ensure!</span>(size &lt;= MAX_PAYLOAD_SIZE, ExceedsMaxPacketSizeSnafu { size });
-<a href=#150 id=150 data-nosnippet>150</a>        }
-<a href=#151 id=151 data-nosnippet>151</a>
-<a href=#152 id=152 data-nosnippet>152</a>        Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.conn)
-<a href=#153 id=153 data-nosnippet>153</a>            .start_send(frame.to_bytes().freeze())
-<a href=#154 id=154 data-nosnippet>154</a>            .map_err(Into::into)
-<a href=#155 id=155 data-nosnippet>155</a>    }
-<a href=#156 id=156 data-nosnippet>156</a>
-<a href=#157 id=157 data-nosnippet>157</a>    <span class="kw">fn </span>poll_flush(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt;&gt; {
-<a href=#158 id=158 data-nosnippet>158</a>        Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.conn).poll_flush(cx).map_err(Into::into)
-<a href=#159 id=159 data-nosnippet>159</a>    }
-<a href=#160 id=160 data-nosnippet>160</a>
-<a href=#161 id=161 data-nosnippet>161</a>    <span class="kw">fn </span>poll_close(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt;&gt; {
-<a href=#162 id=162 data-nosnippet>162</a>        Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.conn).poll_close(cx).map_err(Into::into)
-<a href=#163 id=163 data-nosnippet>163</a>    }
-<a href=#164 id=164 data-nosnippet>164</a>}</code></pre></div></section></main></body></html>
+<a href=#127 id=127 data-nosnippet>127</a>        <span class="kw">match </span><span class="macro">ready!</span>(Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.conn).poll_next(cx)) {
+<a href=#128 id=128 data-nosnippet>128</a>            <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(msg)) =&gt; {
+<a href=#129 id=129 data-nosnippet>129</a>                <span class="kw">let </span>message = RelayToClientMsg::from_bytes(msg, <span class="kw-2">&amp;</span><span class="self">self</span>.key_cache);
+<a href=#130 id=130 data-nosnippet>130</a>                Poll::Ready(<span class="prelude-val">Some</span>(message.map_err(Into::into)))
+<a href=#131 id=131 data-nosnippet>131</a>            }
+<a href=#132 id=132 data-nosnippet>132</a>            <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(e)) =&gt; Poll::Ready(<span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(e.into()))),
+<a href=#133 id=133 data-nosnippet>133</a>            <span class="prelude-val">None </span>=&gt; Poll::Ready(<span class="prelude-val">None</span>),
+<a href=#134 id=134 data-nosnippet>134</a>        }
+<a href=#135 id=135 data-nosnippet>135</a>    }
+<a href=#136 id=136 data-nosnippet>136</a>}
+<a href=#137 id=137 data-nosnippet>137</a>
+<a href=#138 id=138 data-nosnippet>138</a><span class="kw">impl </span>Sink&lt;ClientToRelayMsg&gt; <span class="kw">for </span>Conn {
+<a href=#139 id=139 data-nosnippet>139</a>    <span class="kw">type </span>Error = SendError;
+<a href=#140 id=140 data-nosnippet>140</a>
+<a href=#141 id=141 data-nosnippet>141</a>    <span class="kw">fn </span>poll_ready(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt;&gt; {
+<a href=#142 id=142 data-nosnippet>142</a>        Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.conn).poll_ready(cx).map_err(Into::into)
+<a href=#143 id=143 data-nosnippet>143</a>    }
+<a href=#144 id=144 data-nosnippet>144</a>
+<a href=#145 id=145 data-nosnippet>145</a>    <span class="kw">fn </span>start_send(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, frame: ClientToRelayMsg) -&gt; <span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt; {
+<a href=#146 id=146 data-nosnippet>146</a>        <span class="kw">if let </span>ClientToRelayMsg::Datagrams { datagrams, .. } = <span class="kw-2">&amp;</span>frame {
+<a href=#147 id=147 data-nosnippet>147</a>            <span class="kw">let </span>size = datagrams.contents.len();
+<a href=#148 id=148 data-nosnippet>148</a>            <span class="macro">snafu::ensure!</span>(size &lt;= MAX_PAYLOAD_SIZE, ExceedsMaxPacketSizeSnafu { size });
+<a href=#149 id=149 data-nosnippet>149</a>        }
+<a href=#150 id=150 data-nosnippet>150</a>
+<a href=#151 id=151 data-nosnippet>151</a>        Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.conn)
+<a href=#152 id=152 data-nosnippet>152</a>            .start_send(frame.to_bytes().freeze())
+<a href=#153 id=153 data-nosnippet>153</a>            .map_err(Into::into)
+<a href=#154 id=154 data-nosnippet>154</a>    }
+<a href=#155 id=155 data-nosnippet>155</a>
+<a href=#156 id=156 data-nosnippet>156</a>    <span class="kw">fn </span>poll_flush(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt;&gt; {
+<a href=#157 id=157 data-nosnippet>157</a>        Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.conn).poll_flush(cx).map_err(Into::into)
+<a href=#158 id=158 data-nosnippet>158</a>    }
+<a href=#159 id=159 data-nosnippet>159</a>
+<a href=#160 id=160 data-nosnippet>160</a>    <span class="kw">fn </span>poll_close(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, cx: <span class="kw-2">&amp;mut </span>Context&lt;<span class="lifetime">'_</span>&gt;) -&gt; Poll&lt;<span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt;&gt; {
+<a href=#161 id=161 data-nosnippet>161</a>        Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.conn).poll_close(cx).map_err(Into::into)
+<a href=#162 id=162 data-nosnippet>162</a>    }
+<a href=#163 id=163 data-nosnippet>163</a>}</code></pre></div></section></main></body></html>

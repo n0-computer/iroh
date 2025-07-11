@@ -404,10 +404,10 @@
 <a href=#404 id=404 data-nosnippet>404</a>
 <a href=#405 id=405 data-nosnippet>405</a><span class="attr">#[cfg(feature = <span class="string">"server"</span>)]
 <a href=#406 id=406 data-nosnippet>406</a></span><span class="kw">impl </span>SuccessfulAuthentication {
-<a href=#407 id=407 data-nosnippet>407</a>    <span class="kw">pub async fn </span>authorize(
+<a href=#407 id=407 data-nosnippet>407</a>    <span class="kw">pub async fn </span>authorize_if(
 <a href=#408 id=408 data-nosnippet>408</a>        <span class="self">self</span>,
-<a href=#409 id=409 data-nosnippet>409</a>        io: <span class="kw-2">&amp;mut </span>(<span class="kw">impl </span>BytesStreamSink + ExportKeyingMaterial),
-<a href=#410 id=410 data-nosnippet>410</a>        is_authorized: bool,
+<a href=#409 id=409 data-nosnippet>409</a>        is_authorized: bool,
+<a href=#410 id=410 data-nosnippet>410</a>        io: <span class="kw-2">&amp;mut </span>(<span class="kw">impl </span>BytesStreamSink + ExportKeyingMaterial),
 <a href=#411 id=411 data-nosnippet>411</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;PublicKey, Error&gt; {
 <a href=#412 id=412 data-nosnippet>412</a>        <span class="kw">if </span>is_authorized {
 <a href=#413 id=413 data-nosnippet>413</a>            <span class="macro">trace!</span>(<span class="string">"authorizing client"</span>);
@@ -598,7 +598,7 @@
 <a href=#598 id=598 data-nosnippet>598</a>                        </span>.context(<span class="string">"serverside"</span>)<span class="question-mark">?</span>;
 <a href=#599 id=599 data-nosnippet>599</a>                <span class="kw">let </span>mechanism = auth_n.mechanism;
 <a href=#600 id=600 data-nosnippet>600</a>                <span class="kw">let </span>is_authorized = restricted_to.is_none_or(|key| key == auth_n.client_key);
-<a href=#601 id=601 data-nosnippet>601</a>                <span class="kw">let </span>key = auth_n.authorize(<span class="kw-2">&amp;mut </span>server_io, is_authorized).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#601 id=601 data-nosnippet>601</a>                <span class="kw">let </span>key = auth_n.authorize_if(is_authorized, <span class="kw-2">&amp;mut </span>server_io).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#602 id=602 data-nosnippet>602</a>                <span class="prelude-val">Ok</span>((key, mechanism))
 <a href=#603 id=603 data-nosnippet>603</a>            }
 <a href=#604 id=604 data-nosnippet>604</a>            .instrument(<span class="macro">info_span!</span>(<span class="string">"serverside"</span>)),
