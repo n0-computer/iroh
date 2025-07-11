@@ -21,7 +21,11 @@ use tokio_rustls_acme::AcmeAcceptor;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, debug_span, error, info, info_span, trace, warn, Instrument};
 
-use super::{clients::Clients, streams::StreamError, AccessConfig, SpawnError};
+use super::{
+    clients::Clients,
+    streams::{InvalidBucketConfig, StreamError},
+    AccessConfig, SpawnError,
+};
 use crate::{
     defaults::{timeouts::SERVER_WRITE_TIMEOUT, DEFAULT_KEY_CACHE_CAPACITY},
     http::{RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION, WEBSOCKET_UPGRADE_PROTOCOL},
@@ -230,6 +234,8 @@ pub enum AcceptError {
         #[snafu(implicit)]
         span_trace: n0_snafu::SpanTrace,
     },
+    #[snafu(display("rate limiting misconfigured"))]
+    RateLimitingMisconfigured { source: InvalidBucketConfig },
 }
 
 /// Server connection errors, includes errors that can happen on `accept`.
@@ -626,7 +632,9 @@ impl Inner {
 
         trace!("accept: start");
 
-        let io = RateLimited::from_cfg(self.rate_limit, io, self.metrics.clone());
+        let io = RateLimited::from_cfg(self.rate_limit, io, self.metrics.clone())
+            .context(RateLimitingMisconfiguredSnafu)?;
+
         self.metrics.accepts.inc();
         // Create a server builder with default config
         let websocket = tokio_websockets::ServerBuilder::new()

@@ -689,7 +689,7 @@ mod tests {
         let (io_read, io_write) = tokio::io::duplex((LIMIT * MAX_FRAMES) as _);
         let mut frame_writer = RelayedStream::test_client(io_write);
         // Rate limiter allowing LIMIT bytes/s
-        let mut stream = RelayedStream::test_server_limited(io_read, LIMIT / 10, LIMIT);
+        let mut stream = RelayedStream::test_server_limited(io_read, LIMIT / 10, LIMIT)?;
 
         // Prepare a frame to send, assert its size.
         let data = Bytes::from_static(b"hello world!!1elf");
