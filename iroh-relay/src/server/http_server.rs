@@ -887,7 +887,8 @@ mod tests {
 
         let cert = rcgen::generate_simple_self_signed(subject_alt_names).unwrap();
         let rustls_certificate = cert.cert.der().clone();
-        let rustls_key = rustls::pki_types::PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
+        let rustls_key =
+            rustls::pki_types::PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der());
         let config = rustls::ServerConfig::builder_with_provider(Arc::new(
             rustls::crypto::ring::default_provider(),
         ))
