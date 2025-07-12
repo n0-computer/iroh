@@ -8,15 +8,14 @@ use std::{
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
 use n0_future::time::Instant;
 use serde::{Deserialize, Serialize};
-use stun_rs::TransactionId;
 use tracing::{debug, info, instrument, trace, warn};
 
 use self::{
     best_addr::ClearReason,
-    node_state::{NodeState, Options, PingHandled},
+    node_state::{NodeState, Options},
 };
-use super::{metrics::Metrics, transports, ActorMessage, NodeIdMappedAddr};
-use crate::disco::{CallMeMaybe, Pong, SendAddr};
+use super::{metrics::Metrics, NodeIdMappedAddr};
+use crate::disco::CallMeMaybe;
 #[cfg(any(test, feature = "test-utils"))]
 use crate::endpoint::PathSelection;
 
@@ -25,8 +24,8 @@ mod node_state;
 mod path_state;
 mod udp_paths;
 
+pub(super) use node_state::PingAction;
 pub use node_state::{ConnectionType, ControlMsg, DirectAddrInfo, RemoteInfo};
-pub(super) use node_state::{DiscoPingPurpose, PingAction, PingRole, SendPing};
 
 /// Number of nodes that are inactive for which we keep info about. This limit is enforced
 /// periodically via [`NodeMap::prune_inactive`].
@@ -71,7 +70,6 @@ pub(super) struct NodeMapInner {
 /// have for the node.  These are all the keys the [`NodeMap`] can use.
 #[derive(Debug, Clone)]
 enum NodeStateKey {
-    Idx(usize),
     NodeId(NodeId),
     NodeIdMappedAddr(NodeIdMappedAddr),
     IpPort(IpPort),
@@ -171,35 +169,6 @@ impl NodeMap {
             .receive_relay(relay_url, src)
     }
 
-    pub(super) fn notify_ping_sent(
-        &self,
-        id: usize,
-        dst: SendAddr,
-        tx_id: stun_rs::TransactionId,
-        purpose: DiscoPingPurpose,
-        msg_sender: tokio::sync::mpsc::Sender<ActorMessage>,
-    ) {
-        if let Some(ep) = self
-            .inner
-            .lock()
-            .expect("poisoned")
-            .get_mut(NodeStateKey::Idx(id))
-        {
-            ep.ping_sent(dst, tx_id, purpose, msg_sender);
-        }
-    }
-
-    pub(super) fn notify_ping_timeout(&self, id: usize, tx_id: stun_rs::TransactionId) {
-        if let Some(ep) = self
-            .inner
-            .lock()
-            .expect("poisoned")
-            .get_mut(NodeStateKey::Idx(id))
-        {
-            ep.ping_timeout(tx_id);
-        }
-    }
-
     pub(super) fn get_quic_mapped_addr_for_node_key(
         &self,
         node_key: NodeId,
@@ -211,38 +180,25 @@ impl NodeMap {
             .map(|ep| *ep.quic_mapped_addr())
     }
 
-    /// Insert a received ping into the node map, and return whether a ping with this tx_id was already
-    /// received.
-    pub(super) fn handle_ping(
-        &self,
-        sender: PublicKey,
-        src: SendAddr,
-        tx_id: TransactionId,
-    ) -> PingHandled {
+    pub(super) fn get_direct_addrs(&self, node_key: NodeId) -> Vec<SocketAddr> {
         self.inner
             .lock()
             .expect("poisoned")
-            .handle_ping(sender, src, tx_id)
+            .get(NodeStateKey::NodeId(node_key))
+            .map(|ep| ep.direct_addresses().map(Into::into).collect())
+            .unwrap_or_default()
     }
 
-    pub(super) fn handle_pong(&self, sender: PublicKey, src: &transports::Addr, pong: Pong) {
-        self.inner
-            .lock()
-            .expect("poisoned")
-            .handle_pong(sender, src, pong)
-    }
-
-    #[must_use = "actions must be handled"]
     pub(super) fn handle_call_me_maybe(
         &self,
         sender: PublicKey,
         cm: CallMeMaybe,
         metrics: &Metrics,
-    ) -> Vec<PingAction> {
+    ) {
         self.inner
             .lock()
             .expect("poisoned")
-            .handle_call_me_maybe(sender, cm, metrics)
+            .handle_call_me_maybe(sender, cm, metrics);
     }
 
     #[allow(clippy::type_complexity)]
@@ -404,7 +360,6 @@ impl NodeMapInner {
 
     fn get_id(&self, id: NodeStateKey) -> Option<usize> {
         match id {
-            NodeStateKey::Idx(id) => Some(id),
             NodeStateKey::NodeId(node_key) => self.by_node_key.get(&node_key).copied(),
             NodeStateKey::NodeIdMappedAddr(addr) => self.by_quic_mapped_addr.get(&addr).copied(),
             NodeStateKey::IpPort(ipp) => self.by_ip_port.get(&ipp).copied(),
@@ -500,25 +455,7 @@ impl NodeMapInner {
             .map(|ep| ep.conn_type())
     }
 
-    fn handle_pong(&mut self, sender: NodeId, src: &transports::Addr, pong: Pong) {
-        if let Some(ns) = self.get_mut(NodeStateKey::NodeId(sender)).as_mut() {
-            let insert = ns.handle_pong(&pong, src.clone().into());
-            if let Some((src, key)) = insert {
-                self.set_node_key_for_ip_port(src, &key);
-            }
-            trace!(?insert, "received pong")
-        } else {
-            warn!("received pong: node unknown, ignore")
-        }
-    }
-
-    #[must_use = "actions must be handled"]
-    fn handle_call_me_maybe(
-        &mut self,
-        sender: NodeId,
-        cm: CallMeMaybe,
-        metrics: &Metrics,
-    ) -> Vec<PingAction> {
+    fn handle_call_me_maybe(&mut self, sender: NodeId, cm: CallMeMaybe, metrics: &Metrics) {
         let ns_id = NodeStateKey::NodeId(sender);
         if let Some(id) = self.get_id(ns_id.clone()) {
             for number in &cm.my_numbers {
@@ -530,43 +467,13 @@ impl NodeMapInner {
             None => {
                 debug!("received call-me-maybe: ignore, node is unknown");
                 metrics.recv_disco_call_me_maybe_bad_disco.inc();
-                vec![]
             }
             Some(ns) => {
                 debug!(endpoints = ?cm.my_numbers, "received call-me-maybe");
 
-                ns.handle_call_me_maybe(cm)
+                ns.handle_call_me_maybe(cm);
             }
         }
-    }
-
-    fn handle_ping(&mut self, sender: NodeId, src: SendAddr, tx_id: TransactionId) -> PingHandled {
-        #[cfg(any(test, feature = "test-utils"))]
-        let path_selection = self.path_selection;
-        let node_state = self.get_or_insert_with(NodeStateKey::NodeId(sender), || {
-            debug!("received ping: node unknown, add to node map");
-            let source = if src.is_relay() {
-                Source::Relay
-            } else {
-                Source::Udp
-            };
-            Options {
-                node_id: sender,
-                relay_url: src.relay_url(),
-                active: true,
-                source,
-                #[cfg(any(test, feature = "test-utils"))]
-                path_selection,
-            }
-        });
-
-        let handled = node_state.handle_ping(src.clone(), tx_id);
-        if let SendAddr::Udp(ref addr) = src {
-            if matches!(handled.role, PingRole::NewPath) {
-                self.set_node_key_for_ip_port(*addr, &sender);
-            }
-        }
-        handled
     }
 
     /// Inserts a new node into the [`NodeMap`].
@@ -704,6 +611,7 @@ mod tests {
     use tracing_test::traced_test;
 
     use super::{node_state::MAX_INACTIVE_DIRECT_ADDRESSES, *};
+    use crate::disco::SendAddr;
 
     impl NodeMap {
         #[track_caller]
@@ -836,7 +744,7 @@ mod tests {
             let txid = stun_rs::TransactionId::from([i as u8; 12]);
             // Note that this already invokes .prune_direct_addresses() because these are
             // new UDP paths.
-            endpoint.handle_ping(addr, txid);
+            // endpoint.handle_ping(addr, txid);
         }
 
         info!("Pruning addresses");
