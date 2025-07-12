@@ -472,7 +472,7 @@ mod tests {
         // Create a QAD server with a self-signed cert, all manually.
         let cert =
             rcgen::generate_simple_self_signed(vec!["localhost".into()]).context("self signed")?;
-        let key = PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
+        let key = PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der());
         let mut server_crypto = rustls::ServerConfig::builder()
             .with_no_client_auth()
             .with_single_cert(vec![cert.cert.into()], key.into())

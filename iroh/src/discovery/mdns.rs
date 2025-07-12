@@ -33,9 +33,9 @@
 use std::{
     collections::{BTreeSet, HashMap},
     net::{IpAddr, SocketAddr},
+    str::FromStr,
 };
 
-use derive_more::FromStr;
 use iroh_base::{NodeId, PublicKey};
 use n0_future::{
     boxed::BoxStream,
