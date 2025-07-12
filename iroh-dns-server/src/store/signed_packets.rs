@@ -151,7 +151,7 @@ impl Actor {
                             Message::Upsert { packet, res } => {
                                 let key = PublicKeyBytes::from_signed_packet(&packet);
                                 trace!("upsert {}", key);
-                                let replaced = if let Some(existing) = get_packet(&tables.signed_packets, &key)? {
+                                let replaced = match get_packet(&tables.signed_packets, &key)? { Some(existing) => {
                                     if existing.more_recent_than(&packet) {
                                         res.send(false).ok();
                                         continue;
@@ -160,9 +160,9 @@ impl Actor {
                                         tables.update_time.remove(&existing.timestamp().to_bytes(), key.as_bytes()).e()?;
                                         true
                                     }
-                                } else {
+                                } _ => {
                                     false
-                                };
+                                }};
                                 let value = packet.serialize();
                                 tables.signed_packets
                                     .insert(key.as_bytes(), &value[..]).e()?;
@@ -177,14 +177,14 @@ impl Actor {
                             }
                             Message::Remove { key, res } => {
                                 trace!("remove {}", key);
-                                let updated = if let Some(row) = tables.signed_packets.remove(key.as_bytes()).e()? {
+                                let updated = match tables.signed_packets.remove(key.as_bytes()).e()? { Some(row) => {
                                     let packet = SignedPacket::deserialize(row.value()).e()?;
                                     tables.update_time.remove(&packet.timestamp().to_bytes(), key.as_bytes()).e()?;
                                     self.metrics.store_packets_removed.inc();
                                     true
-                                } else {
+                                } _ => {
                                     false
-                                };
+                                }};
                                 res.send(updated).ok();
                             }
                             Message::Snapshot { res } => {
@@ -193,7 +193,7 @@ impl Actor {
                             }
                             Message::CheckExpired { key, time } => {
                                 trace!("check expired {} at {}", key, fmt_time(time));
-                                if let Some(packet) = get_packet(&tables.signed_packets, &key)? {
+                                match get_packet(&tables.signed_packets, &key)? { Some(packet) => {
                                     let expired = Timestamp::now() - expiry_us;
                                     if packet.timestamp() < expired {
                                         tables.update_time.remove(&time.to_bytes(), key.as_bytes()).e()?;
@@ -204,10 +204,10 @@ impl Actor {
                                         debug!("packet {key} is no longer expired, removing obsolete expiry entry");
                                         tables.update_time.remove(&time.to_bytes(), key.as_bytes()).e()?;
                                     }
-                                } else {
+                                } _ => {
                                     debug!("expired packet {key} not found, remove from expiry table");
                                     tables.update_time.remove(&time.to_bytes(), key.as_bytes()).e()?;
-                                }
+                                }}
                             }
                         }
                     }

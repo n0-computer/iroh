@@ -2,7 +2,7 @@ use std::{
     io::{self, IoSliceMut},
     net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6},
     pin::Pin,
-    sync::{atomic::AtomicUsize, Arc},
+    sync::{Arc, atomic::AtomicUsize},
     task::{Context, Poll},
 };
 
@@ -420,7 +420,7 @@ impl UdpSender {
         match destination {
             #[cfg(wasm_browser)]
             Addr::Ip(..) => {
-                return Poll::Ready(Err(io::Error::other("IP is unsupported in browser")))
+                return Poll::Ready(Err(io::Error::other("IP is unsupported in browser")));
             }
             #[cfg(not(wasm_browser))]
             Addr::Ip(addr) => {
