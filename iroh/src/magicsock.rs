@@ -276,7 +276,7 @@ impl MagicSock {
         &self.ip_bind_addrs
     }
 
-    fn ip_local_addrs(&self) -> impl Iterator<Item = SocketAddr> {
+    fn ip_local_addrs(&self) -> impl Iterator<Item = SocketAddr> + use<> {
         self.local_addr()
             .into_iter()
             .filter_map(|addr| addr.into_socket_addr())
@@ -332,7 +332,7 @@ impl MagicSock {
     ///
     /// [`Watcher`]: n0_watcher::Watcher
     /// [`Watcher::initialized`]: n0_watcher::Watcher::initialized
-    pub(crate) fn net_report(&self) -> impl Watcher<Value = Option<Report>> {
+    pub(crate) fn net_report(&self) -> impl Watcher<Value = Option<Report>> + use<> {
         self.net_report
             .watch()
             .map(|(r, _)| r)
@@ -343,7 +343,7 @@ impl MagicSock {
     ///
     /// Note that this can be used to wait for the initial home relay to be known using
     /// [`Watcher::initialized`].
-    pub(crate) fn home_relay(&self) -> impl Watcher<Value = Vec<RelayUrl>> {
+    pub(crate) fn home_relay(&self) -> impl Watcher<Value = Vec<RelayUrl>> + use<> {
         let res = self.local_addrs_watch.clone().map(|addrs| {
             addrs
                 .into_iter()
