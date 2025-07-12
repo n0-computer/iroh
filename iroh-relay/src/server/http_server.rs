@@ -518,10 +518,13 @@ impl RelayService {
                     async move {
                         match hyper::upgrade::on(&mut req).await {
                             Ok(upgraded) => {
-                                if let Err(err) = this.0.relay_connection_handler(upgraded).await {
-                                    warn!("error accepting upgraded connection: {err:#}",);
-                                } else {
-                                    debug!("upgraded connection completed");
+                                match this.0.relay_connection_handler(upgraded).await {
+                                    Err(err) => {
+                                        warn!("error accepting upgraded connection: {err:#}",);
+                                    }
+                                    _ => {
+                                        debug!("upgraded connection completed");
+                                    }
                                 };
                             }
                             Err(err) => warn!("upgrade error: {err:#}"),

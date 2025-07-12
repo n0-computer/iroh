@@ -908,7 +908,7 @@ impl Endpoint {
     /// # }
     /// ```
     #[cfg(not(wasm_browser))]
-    pub fn node_addr(&self) -> impl n0_watcher::Watcher<Value = Option<NodeAddr>> {
+    pub fn node_addr(&self) -> impl n0_watcher::Watcher<Value = Option<NodeAddr>> + use<> {
         let watch_addrs = self.direct_addresses();
         let watch_relay = self.home_relay();
         let node_id = self.node_id();
@@ -973,7 +973,7 @@ impl Endpoint {
     /// let _relay_url = mep.home_relay().initialized().await.unwrap();
     /// # });
     /// ```
-    pub fn home_relay(&self) -> impl n0_watcher::Watcher<Value = Vec<RelayUrl>> {
+    pub fn home_relay(&self) -> impl n0_watcher::Watcher<Value = Vec<RelayUrl>> + use<> {
         self.msock.home_relay()
     }
 
@@ -1043,7 +1043,7 @@ impl Endpoint {
     /// # });
     /// ```
     #[doc(hidden)]
-    pub fn net_report(&self) -> impl Watcher<Value = Option<Report>> {
+    pub fn net_report(&self) -> impl Watcher<Value = Option<Report>> + use<> {
         self.msock.net_report()
     }
 
@@ -1086,7 +1086,7 @@ impl Endpoint {
     /// connection was ever made or is even possible.
     ///
     /// See also [`Endpoint::remote_info`] to only retrieve information about a single node.
-    pub fn remote_info_iter(&self) -> impl Iterator<Item = RemoteInfo> {
+    pub fn remote_info_iter(&self) -> impl Iterator<Item = RemoteInfo> + use<> {
         self.msock.list_remote_infos().into_iter()
     }
 
@@ -1114,7 +1114,7 @@ impl Endpoint {
     ///
     /// [`MdnsDiscovery`]: crate::discovery::mdns::MdnsDiscovery
     /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
-    pub fn discovery_stream(&self) -> impl Stream<Item = Result<DiscoveryItem, Lagged>> {
+    pub fn discovery_stream(&self) -> impl Stream<Item = Result<DiscoveryItem, Lagged>> + use<> {
         self.msock.discovery_subscribers().subscribe()
     }
 

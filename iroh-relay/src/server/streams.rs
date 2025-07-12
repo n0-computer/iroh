@@ -173,10 +173,10 @@ impl AsyncRead for MaybeTlsStream {
         buf: &mut tokio::io::ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
         match &mut *self {
-            MaybeTlsStream::Plain(ref mut s) => Pin::new(s).poll_read(cx, buf),
-            MaybeTlsStream::Tls(ref mut s) => Pin::new(s).poll_read(cx, buf),
+            MaybeTlsStream::Plain(s) => Pin::new(s).poll_read(cx, buf),
+            MaybeTlsStream::Tls(s) => Pin::new(s).poll_read(cx, buf),
             #[cfg(test)]
-            MaybeTlsStream::Test(ref mut s) => Pin::new(s).poll_read(cx, buf),
+            MaybeTlsStream::Test(s) => Pin::new(s).poll_read(cx, buf),
         }
     }
 }
@@ -187,10 +187,10 @@ impl AsyncWrite for MaybeTlsStream {
         cx: &mut Context<'_>,
     ) -> Poll<std::result::Result<(), std::io::Error>> {
         match &mut *self {
-            MaybeTlsStream::Plain(ref mut s) => Pin::new(s).poll_flush(cx),
-            MaybeTlsStream::Tls(ref mut s) => Pin::new(s).poll_flush(cx),
+            MaybeTlsStream::Plain(s) => Pin::new(s).poll_flush(cx),
+            MaybeTlsStream::Tls(s) => Pin::new(s).poll_flush(cx),
             #[cfg(test)]
-            MaybeTlsStream::Test(ref mut s) => Pin::new(s).poll_flush(cx),
+            MaybeTlsStream::Test(s) => Pin::new(s).poll_flush(cx),
         }
     }
 
@@ -199,10 +199,10 @@ impl AsyncWrite for MaybeTlsStream {
         cx: &mut Context<'_>,
     ) -> Poll<std::result::Result<(), std::io::Error>> {
         match &mut *self {
-            MaybeTlsStream::Plain(ref mut s) => Pin::new(s).poll_shutdown(cx),
-            MaybeTlsStream::Tls(ref mut s) => Pin::new(s).poll_shutdown(cx),
+            MaybeTlsStream::Plain(s) => Pin::new(s).poll_shutdown(cx),
+            MaybeTlsStream::Tls(s) => Pin::new(s).poll_shutdown(cx),
             #[cfg(test)]
-            MaybeTlsStream::Test(ref mut s) => Pin::new(s).poll_shutdown(cx),
+            MaybeTlsStream::Test(s) => Pin::new(s).poll_shutdown(cx),
         }
     }
 
@@ -212,10 +212,10 @@ impl AsyncWrite for MaybeTlsStream {
         buf: &[u8],
     ) -> Poll<std::result::Result<usize, std::io::Error>> {
         match &mut *self {
-            MaybeTlsStream::Plain(ref mut s) => Pin::new(s).poll_write(cx, buf),
-            MaybeTlsStream::Tls(ref mut s) => Pin::new(s).poll_write(cx, buf),
+            MaybeTlsStream::Plain(s) => Pin::new(s).poll_write(cx, buf),
+            MaybeTlsStream::Tls(s) => Pin::new(s).poll_write(cx, buf),
             #[cfg(test)]
-            MaybeTlsStream::Test(ref mut s) => Pin::new(s).poll_write(cx, buf),
+            MaybeTlsStream::Test(s) => Pin::new(s).poll_write(cx, buf),
         }
     }
 
@@ -225,10 +225,10 @@ impl AsyncWrite for MaybeTlsStream {
         bufs: &[std::io::IoSlice<'_>],
     ) -> Poll<std::result::Result<usize, std::io::Error>> {
         match &mut *self {
-            MaybeTlsStream::Plain(ref mut s) => Pin::new(s).poll_write_vectored(cx, bufs),
-            MaybeTlsStream::Tls(ref mut s) => Pin::new(s).poll_write_vectored(cx, bufs),
+            MaybeTlsStream::Plain(s) => Pin::new(s).poll_write_vectored(cx, bufs),
+            MaybeTlsStream::Tls(s) => Pin::new(s).poll_write_vectored(cx, bufs),
             #[cfg(test)]
-            MaybeTlsStream::Test(ref mut s) => Pin::new(s).poll_write_vectored(cx, bufs),
+            MaybeTlsStream::Test(s) => Pin::new(s).poll_write_vectored(cx, bufs),
         }
     }
 }
