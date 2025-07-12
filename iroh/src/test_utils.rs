@@ -483,7 +483,7 @@ pub(crate) mod pkarr_dns_state {
         node_info: &NodeInfo,
         origin: &str,
         ttl: u32,
-    ) -> impl Iterator<Item = hickory_resolver::proto::rr::Record> + 'static {
+    ) -> impl Iterator<Item = hickory_resolver::proto::rr::Record> + 'static + use<> {
         let txt_strings = node_info.to_txt_strings();
         let records = to_hickory_records(txt_strings, node_info.node_id, origin, ttl);
         records.collect::<Vec<_>>().into_iter()

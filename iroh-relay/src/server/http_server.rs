@@ -518,10 +518,13 @@ impl RelayService {
                     async move {
                         match hyper::upgrade::on(&mut req).await {
                             Ok(upgraded) => {
-                                if let Err(err) = this.0.relay_connection_handler(upgraded).await {
-                                    warn!("error accepting upgraded connection: {err:#}",);
-                                } else {
-                                    debug!("upgraded connection completed");
+                                match this.0.relay_connection_handler(upgraded).await {
+                                    Err(err) => {
+                                        warn!("error accepting upgraded connection: {err:#}",);
+                                    }
+                                    _ => {
+                                        debug!("upgraded connection completed");
+                                    }
                                 };
                             }
                             Err(err) => warn!("upgrade error: {err:#}"),
@@ -868,7 +871,8 @@ mod tests {
 
         let cert = rcgen::generate_simple_self_signed(subject_alt_names).unwrap();
         let rustls_certificate = cert.cert.der().clone();
-        let rustls_key = rustls::pki_types::PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
+        let rustls_key =
+            rustls::pki_types::PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der());
         let config = rustls::ServerConfig::builder_with_provider(Arc::new(
             rustls::crypto::ring::default_provider(),
         ))
