@@ -177,6 +177,15 @@ impl NodeMap {
             .map(|ep| *ep.quic_mapped_addr())
     }
 
+    pub(super) fn get_direct_addrs(&self, node_key: NodeId) -> Vec<SocketAddr> {
+        self.inner
+            .lock()
+            .expect("poisoned")
+            .get(NodeStateKey::NodeId(node_key))
+            .map(|ep| ep.direct_addresses().map(Into::into).collect())
+            .unwrap_or_default()
+    }
+
     pub(super) fn handle_call_me_maybe(
         &self,
         sender: PublicKey,

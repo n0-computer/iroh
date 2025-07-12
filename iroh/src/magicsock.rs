@@ -295,8 +295,24 @@ impl MagicSock {
         remote: NodeId,
         conn: WeakConnectionHandle,
         mut path_events: tokio::sync::broadcast::Receiver<PathEvent>,
+        paths: Vec<SocketAddr>,
     ) {
         self.connection_map.insert(remote, conn);
+        task::spawn(async move {
+            let conn = conn.clone();
+            for addr in paths {
+                match conn.open_path(addr, quinn_proto::PathStatus::Backup).await {
+                    Ok(path) => {
+                        path.set_max_idle_timeout(Some(ENDPOINTS_FRESH_ENOUGH_DURATION))
+                            .ok();
+                        path.set_keep_alive_interval(Some(HEARTBEAT_INTERVAL)).ok();
+                    }
+                    Err(err) => {
+                        warn!("failed to open path {:?}", err);
+                    }
+                }
+            }
+        });
 
         // TODO: track task
         // TODO: find a good home for this
@@ -420,6 +436,10 @@ impl MagicSock {
     /// Returns the socket address which can be used by the QUIC layer to dial this node.
     pub(crate) fn get_mapping_addr(&self, node_id: NodeId) -> Option<NodeIdMappedAddr> {
         self.node_map.get_quic_mapped_addr_for_node_key(node_id)
+    }
+
+    pub(crate) fn get_direct_addrs(&self, node_id: NodeId) -> Vec<SocketAddr> {
+        self.node_map.get_direct_addrs(node_id)
     }
 
     /// Add addresses for a node to the magic socket's addresbook.
@@ -1051,6 +1071,40 @@ impl MagicSock {
 
             let data = NodeData::new(relay_url, direct_addrs).with_user_data(user_data);
             discovery.publish(&data);
+        }
+    }
+}
+
+/// Definies the translation of addresses in quinn land vs iroh land.
+///
+/// This is necessary, because quinn can only reason about `SocketAddr`s.
+#[derive(Clone, Debug)]
+pub(crate) enum MultipathMappedAddr {
+    /// Used for the initial connection.
+    /// - Only used for sending
+    /// - This means send on all known paths/transports
+    Mixed(NodeIdMappedAddr),
+    /// Relay based transport address
+    Relay(IpMappedAddr), // TODO: RelayMappedAddr?
+    /// IP based transport address
+    #[cfg(not(wasm_browser))]
+    Ip(SocketAddr),
+}
+
+impl From<SocketAddr> for MultipathMappedAddr {
+    fn from(value: SocketAddr) -> Self {
+        match value.ip() {
+            IpAddr::V4(_) => Self::Ip(value),
+            IpAddr::V6(addr) => {
+                if let Ok(node_id_mapped_addr) = NodeIdMappedAddr::try_from(addr) {
+                    return Self::Mixed(node_id_mapped_addr);
+                }
+                #[cfg(not(wasm_browser))]
+                if let Ok(ip_mapped_addr) = IpMappedAddr::try_from(addr) {
+                    return Self::Relay(ip_mapped_addr);
+                }
+                MappedAddr::Self(value)
+            }
         }
     }
 }
@@ -3188,17 +3242,18 @@ mod tests {
         let _accept_task = AbortOnDropHandle::new(accept_task);
 
         // Add an empty entry in the NodeMap of ep_1
-        msock_1.node_map.add_node_addr(
-            NodeAddr {
-                node_id: node_id_2,
-                relay_url: None,
-                direct_addresses: Default::default(),
-            },
-            Source::NamedApp {
-                name: "test".into(),
-            },
-            &msock_1.metrics.magicsock,
-        );
+        msock_1
+            .add_node_addr(
+                NodeAddr {
+                    node_id: node_id_2,
+                    relay_url: None,
+                    direct_addresses: Default::default(),
+                },
+                Source::NamedApp {
+                    name: "test".into(),
+                },
+            )
+            .unwrap();
         let addr_2 = msock_1.get_mapping_addr(node_id_2).unwrap();
 
         // Set a low max_idle_timeout so quinn gives up on this quickly and our test does
@@ -3225,23 +3280,24 @@ mod tests {
         info!("first connect timed out as expected");
 
         // Provide correct addressing information
-        msock_1.node_map.add_node_addr(
-            NodeAddr {
-                node_id: node_id_2,
-                relay_url: None,
-                direct_addresses: msock_2
-                    .direct_addresses()
-                    .initialized()
-                    .await
-                    .into_iter()
-                    .map(|x| x.addr)
-                    .collect(),
-            },
-            Source::NamedApp {
-                name: "test".into(),
-            },
-            &msock_1.metrics.magicsock,
-        );
+        msock_1
+            .add_node_addr(
+                NodeAddr {
+                    node_id: node_id_2,
+                    relay_url: None,
+                    direct_addresses: msock_2
+                        .direct_addresses()
+                        .initialized()
+                        .await
+                        .into_iter()
+                        .map(|x| x.addr)
+                        .collect(),
+                },
+                Source::NamedApp {
+                    name: "test".into(),
+                },
+            )
+            .unwrap();
 
         // We can now connect
         tokio::time::timeout(Duration::from_secs(10), async move {
