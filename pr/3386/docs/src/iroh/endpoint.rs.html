@@ -21,14 +21,14 @@
 <a href=#21 id=21 data-nosnippet>21</a>    task::Poll,
 <a href=#22 id=22 data-nosnippet>22</a>};
 <a href=#23 id=23 data-nosnippet>23</a>
-<a href=#24 id=24 data-nosnippet>24</a><span class="kw">use </span>ed25519_dalek::{pkcs8::DecodePublicKey, VerifyingKey};
+<a href=#24 id=24 data-nosnippet>24</a><span class="kw">use </span>ed25519_dalek::{VerifyingKey, pkcs8::DecodePublicKey};
 <a href=#25 id=25 data-nosnippet>25</a><span class="kw">use </span>iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
 <a href=#26 id=26 data-nosnippet>26</a><span class="kw">use </span>iroh_relay::RelayMap;
-<a href=#27 id=27 data-nosnippet>27</a><span class="kw">use </span>n0_future::{time::Duration, Stream};
+<a href=#27 id=27 data-nosnippet>27</a><span class="kw">use </span>n0_future::{Stream, time::Duration};
 <a href=#28 id=28 data-nosnippet>28</a><span class="kw">use </span>n0_watcher::Watcher;
 <a href=#29 id=29 data-nosnippet>29</a><span class="kw">use </span>nested_enum_utils::common_fields;
 <a href=#30 id=30 data-nosnippet>30</a><span class="kw">use </span>pin_project::pin_project;
-<a href=#31 id=31 data-nosnippet>31</a><span class="kw">use </span>snafu::{ensure, ResultExt, Snafu};
+<a href=#31 id=31 data-nosnippet>31</a><span class="kw">use </span>snafu::{ResultExt, Snafu, ensure};
 <a href=#32 id=32 data-nosnippet>32</a><span class="kw">use </span>tracing::{debug, instrument, trace, warn};
 <a href=#33 id=33 data-nosnippet>33</a><span class="kw">use </span>url::Url;
 <a href=#34 id=34 data-nosnippet>34</a>
@@ -38,9 +38,9 @@
 <a href=#38 id=38 data-nosnippet>38</a></span><span class="kw">use crate</span>::{discovery::dns::DnsDiscovery, dns::DnsResolver};
 <a href=#39 id=39 data-nosnippet>39</a><span class="kw">use crate</span>::{
 <a href=#40 id=40 data-nosnippet>40</a>    discovery::{
-<a href=#41 id=41 data-nosnippet>41</a>        pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryContext, DiscoveryError,
-<a href=#42 id=42 data-nosnippet>42</a>        DiscoveryItem, DiscoverySubscribers, DiscoveryTask, DynIntoDiscovery, IntoDiscovery,
-<a href=#43 id=43 data-nosnippet>43</a>        IntoDiscoveryError, Lagged, UserData,
+<a href=#41 id=41 data-nosnippet>41</a>        ConcurrentDiscovery, Discovery, DiscoveryContext, DiscoveryError, DiscoveryItem,
+<a href=#42 id=42 data-nosnippet>42</a>        DiscoverySubscribers, DiscoveryTask, DynIntoDiscovery, IntoDiscovery, IntoDiscoveryError,
+<a href=#43 id=43 data-nosnippet>43</a>        Lagged, UserData, pkarr::PkarrPublisher,
 <a href=#44 id=44 data-nosnippet>44</a>    },
 <a href=#45 id=45 data-nosnippet>45</a>    magicsock::{<span class="self">self</span>, Handle, NodeIdMappedAddr, OwnAddressSnafu},
 <a href=#46 id=46 data-nosnippet>46</a>    metrics::EndpointMetrics,
@@ -59,12 +59,12 @@
 <a href=#59 id=59 data-nosnippet>59</a>    WeakConnectionHandle, WriteError,
 <a href=#60 id=60 data-nosnippet>60</a>};
 <a href=#61 id=61 data-nosnippet>61</a><span class="kw">pub use </span>quinn_proto::{
-<a href=#62 id=62 data-nosnippet>62</a>    congestion::{Controller, ControllerFactory},
-<a href=#63 id=63 data-nosnippet>63</a>    crypto::{
-<a href=#64 id=64 data-nosnippet>64</a>        AeadKey, CryptoError, ExportKeyingMaterialError, HandshakeTokenKey,
-<a href=#65 id=65 data-nosnippet>65</a>        ServerConfig <span class="kw">as </span>CryptoServerConfig, UnsupportedVersion,
-<a href=#66 id=66 data-nosnippet>66</a>    },
-<a href=#67 id=67 data-nosnippet>67</a>    FrameStats, PathStats, TransportError, TransportErrorCode, UdpStats, Written,
+<a href=#62 id=62 data-nosnippet>62</a>    FrameStats, PathStats, TransportError, TransportErrorCode, UdpStats, Written,
+<a href=#63 id=63 data-nosnippet>63</a>    congestion::{Controller, ControllerFactory},
+<a href=#64 id=64 data-nosnippet>64</a>    crypto::{
+<a href=#65 id=65 data-nosnippet>65</a>        AeadKey, CryptoError, ExportKeyingMaterialError, HandshakeTokenKey,
+<a href=#66 id=66 data-nosnippet>66</a>        ServerConfig <span class="kw">as </span>CryptoServerConfig, UnsupportedVersion,
+<a href=#67 id=67 data-nosnippet>67</a>    },
 <a href=#68 id=68 data-nosnippet>68</a>};
 <a href=#69 id=69 data-nosnippet>69</a>
 <a href=#70 id=70 data-nosnippet>70</a><span class="kw">use </span><span class="self">self</span>::rtt_actor::RttMessage;
@@ -2250,19 +2250,19 @@
 <a href=#2250 id=2250 data-nosnippet>2250</a>    };
 <a href=#2251 id=2251 data-nosnippet>2251</a>
 <a href=#2252 id=2252 data-nosnippet>2252</a>    <span class="kw">use </span>iroh_base::{NodeAddr, NodeId, SecretKey};
-<a href=#2253 id=2253 data-nosnippet>2253</a>    <span class="kw">use </span>n0_future::{task::AbortOnDropHandle, StreamExt};
+<a href=#2253 id=2253 data-nosnippet>2253</a>    <span class="kw">use </span>n0_future::{StreamExt, task::AbortOnDropHandle};
 <a href=#2254 id=2254 data-nosnippet>2254</a>    <span class="kw">use </span>n0_snafu::{Error, <span class="prelude-ty">Result</span>, ResultExt};
 <a href=#2255 id=2255 data-nosnippet>2255</a>    <span class="kw">use </span>n0_watcher::Watcher;
 <a href=#2256 id=2256 data-nosnippet>2256</a>    <span class="kw">use </span>quinn::ConnectionError;
 <a href=#2257 id=2257 data-nosnippet>2257</a>    <span class="kw">use </span>rand::SeedableRng;
-<a href=#2258 id=2258 data-nosnippet>2258</a>    <span class="kw">use </span>tracing::{error_span, info, info_span, Instrument};
+<a href=#2258 id=2258 data-nosnippet>2258</a>    <span class="kw">use </span>tracing::{Instrument, error_span, info, info_span};
 <a href=#2259 id=2259 data-nosnippet>2259</a>    <span class="kw">use </span>tracing_test::traced_test;
 <a href=#2260 id=2260 data-nosnippet>2260</a>
 <a href=#2261 id=2261 data-nosnippet>2261</a>    <span class="kw">use </span><span class="kw">super</span>::Endpoint;
 <a href=#2262 id=2262 data-nosnippet>2262</a>    <span class="kw">use crate</span>::{
-<a href=#2263 id=2263 data-nosnippet>2263</a>        endpoint::{ConnectOptions, Connection, ConnectionType, RemoteInfo},
-<a href=#2264 id=2264 data-nosnippet>2264</a>        test_utils::{run_relay_server, run_relay_server_with},
-<a href=#2265 id=2265 data-nosnippet>2265</a>        RelayMode,
+<a href=#2263 id=2263 data-nosnippet>2263</a>        RelayMode,
+<a href=#2264 id=2264 data-nosnippet>2264</a>        endpoint::{ConnectOptions, Connection, ConnectionType, RemoteInfo},
+<a href=#2265 id=2265 data-nosnippet>2265</a>        test_utils::{run_relay_server, run_relay_server_with},
 <a href=#2266 id=2266 data-nosnippet>2266</a>    };
 <a href=#2267 id=2267 data-nosnippet>2267</a>
 <a href=#2268 id=2268 data-nosnippet>2268</a>    <span class="kw">const </span>TEST_ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"n0/iroh/test"</span>;

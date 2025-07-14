@@ -4,11 +4,11 @@
 <a href=#4 id=4 data-nosnippet>4</a><span class="kw">pub use </span>dns_and_pkarr_servers::DnsPkarrServer;
 <a href=#5 id=5 data-nosnippet>5</a><span class="kw">use </span>iroh_base::RelayUrl;
 <a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>iroh_relay::{
-<a href=#7 id=7 data-nosnippet>7</a>    server::{
-<a href=#8 id=8 data-nosnippet>8</a>        AccessConfig, CertConfig, QuicConfig, RelayConfig, Server, ServerConfig, SpawnError,
-<a href=#9 id=9 data-nosnippet>9</a>        TlsConfig,
-<a href=#10 id=10 data-nosnippet>10</a>    },
-<a href=#11 id=11 data-nosnippet>11</a>    RelayMap, RelayNode, RelayQuicConfig,
+<a href=#7 id=7 data-nosnippet>7</a>    RelayMap, RelayNode, RelayQuicConfig,
+<a href=#8 id=8 data-nosnippet>8</a>    server::{
+<a href=#9 id=9 data-nosnippet>9</a>        AccessConfig, CertConfig, QuicConfig, RelayConfig, Server, ServerConfig, SpawnError,
+<a href=#10 id=10 data-nosnippet>10</a>        TlsConfig,
+<a href=#11 id=11 data-nosnippet>11</a>    },
 <a href=#12 id=12 data-nosnippet>12</a>};
 <a href=#13 id=13 data-nosnippet>13</a><span class="kw">use </span>tokio::sync::oneshot;
 <a href=#14 id=14 data-nosnippet>14</a>
@@ -88,7 +88,7 @@
 <a href=#88 id=88 data-nosnippet>88</a>
 <a href=#89 id=89 data-nosnippet>89</a>    <span class="kw">use </span><span class="kw">super</span>::CleanupDropGuard;
 <a href=#90 id=90 data-nosnippet>90</a>    <span class="kw">use crate</span>::{
-<a href=#91 id=91 data-nosnippet>91</a>        discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery},
+<a href=#91 id=91 data-nosnippet>91</a>        discovery::{ConcurrentDiscovery, dns::DnsDiscovery, pkarr::PkarrPublisher},
 <a href=#92 id=92 data-nosnippet>92</a>        dns::DnsResolver,
 <a href=#93 id=93 data-nosnippet>93</a>        test_utils::{
 <a href=#94 id=94 data-nosnippet>94</a>            dns_server::run_dns_server, pkarr_dns_state::State, pkarr_relay::run_pkarr_relay,
@@ -169,7 +169,7 @@
 <a href=#169 id=169 data-nosnippet>169</a>    };
 <a href=#170 id=170 data-nosnippet>170</a>
 <a href=#171 id=171 data-nosnippet>171</a>    <span class="kw">use </span>hickory_resolver::proto::{
-<a href=#172 id=172 data-nosnippet>172</a>        op::{header::MessageType, Message},
+<a href=#172 id=172 data-nosnippet>172</a>        op::{Message, header::MessageType},
 <a href=#173 id=173 data-nosnippet>173</a>        serialize::binary::BinDecodable,
 <a href=#174 id=174 data-nosnippet>174</a>    };
 <a href=#175 id=175 data-nosnippet>175</a>    <span class="kw">use </span>n0_future::future::Boxed <span class="kw">as </span>BoxFuture;
@@ -266,10 +266,10 @@
 <a href=#266 id=266 data-nosnippet>266</a>    };
 <a href=#267 id=267 data-nosnippet>267</a>
 <a href=#268 id=268 data-nosnippet>268</a>    <span class="kw">use </span>axum::{
-<a href=#269 id=269 data-nosnippet>269</a>        extract::{Path, State},
-<a href=#270 id=270 data-nosnippet>270</a>        response::IntoResponse,
-<a href=#271 id=271 data-nosnippet>271</a>        routing::put,
-<a href=#272 id=272 data-nosnippet>272</a>        Router,
+<a href=#269 id=269 data-nosnippet>269</a>        Router,
+<a href=#270 id=270 data-nosnippet>270</a>        extract::{Path, State},
+<a href=#271 id=271 data-nosnippet>271</a>        response::IntoResponse,
+<a href=#272 id=272 data-nosnippet>272</a>        routing::put,
 <a href=#273 id=273 data-nosnippet>273</a>    };
 <a href=#274 id=274 data-nosnippet>274</a>    <span class="kw">use </span>bytes::Bytes;
 <a href=#275 id=275 data-nosnippet>275</a>    <span class="kw">use </span>tokio::sync::oneshot;
@@ -336,14 +336,14 @@
 <a href=#336 id=336 data-nosnippet>336</a>
 <a href=#337 id=337 data-nosnippet>337</a><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>pkarr_dns_state {
 <a href=#338 id=338 data-nosnippet>338</a>    <span class="kw">use </span>std::{
-<a href=#339 id=339 data-nosnippet>339</a>        collections::{hash_map, HashMap},
+<a href=#339 id=339 data-nosnippet>339</a>        collections::{HashMap, hash_map},
 <a href=#340 id=340 data-nosnippet>340</a>        future::Future,
 <a href=#341 id=341 data-nosnippet>341</a>        sync::{Arc, Mutex},
 <a href=#342 id=342 data-nosnippet>342</a>        time::Duration,
 <a href=#343 id=343 data-nosnippet>343</a>    };
 <a href=#344 id=344 data-nosnippet>344</a>
 <a href=#345 id=345 data-nosnippet>345</a>    <span class="kw">use </span>iroh_base::NodeId;
-<a href=#346 id=346 data-nosnippet>346</a>    <span class="kw">use </span>iroh_relay::node_info::{NodeIdExt, NodeInfo, IROH_TXT_NAME};
+<a href=#346 id=346 data-nosnippet>346</a>    <span class="kw">use </span>iroh_relay::node_info::{IROH_TXT_NAME, NodeIdExt, NodeInfo};
 <a href=#347 id=347 data-nosnippet>347</a>    <span class="kw">use </span>pkarr::SignedPacket;
 <a href=#348 id=348 data-nosnippet>348</a>    <span class="kw">use </span>tracing::debug;
 <a href=#349 id=349 data-nosnippet>349</a>
@@ -483,7 +483,7 @@
 <a href=#483 id=483 data-nosnippet>483</a>        node_info: <span class="kw-2">&amp;</span>NodeInfo,
 <a href=#484 id=484 data-nosnippet>484</a>        origin: <span class="kw-2">&amp;</span>str,
 <a href=#485 id=485 data-nosnippet>485</a>        ttl: u32,
-<a href=#486 id=486 data-nosnippet>486</a>    ) -&gt; <span class="kw">impl </span>Iterator&lt;Item = hickory_resolver::proto::rr::Record&gt; + <span class="lifetime">'static </span>+ <span class="kw">use</span>&lt;&gt; {
+<a href=#486 id=486 data-nosnippet>486</a>    ) -&gt; <span class="kw">impl </span>Iterator&lt;Item = hickory_resolver::proto::rr::Record&gt; + <span class="lifetime">'static </span>{
 <a href=#487 id=487 data-nosnippet>487</a>        <span class="kw">let </span>txt_strings = node_info.to_txt_strings();
 <a href=#488 id=488 data-nosnippet>488</a>        <span class="kw">let </span>records = to_hickory_records(txt_strings, node_info.node_id, origin, ttl);
 <a href=#489 id=489 data-nosnippet>489</a>        records.collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;().into_iter()

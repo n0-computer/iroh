@@ -7,11 +7,11 @@
 <a href=#7 id=7 data-nosnippet>7</a>    sync::Arc,
 <a href=#8 id=8 data-nosnippet>8</a>};
 <a href=#9 id=9 data-nosnippet>9</a>
-<a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span>hickory_resolver::{name_server::TokioConnectionProvider, TokioResolver};
+<a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span>hickory_resolver::{TokioResolver, name_server::TokioConnectionProvider};
 <a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span>iroh_base::NodeId;
 <a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>n0_future::{
-<a href=#13 id=13 data-nosnippet>13</a>    time::{<span class="self">self</span>, Duration},
-<a href=#14 id=14 data-nosnippet>14</a>    StreamExt,
+<a href=#13 id=13 data-nosnippet>13</a>    StreamExt,
+<a href=#14 id=14 data-nosnippet>14</a>    time::{<span class="self">self</span>, Duration},
 <a href=#15 id=15 data-nosnippet>15</a>};
 <a href=#16 id=16 data-nosnippet>16</a><span class="kw">use </span>nested_enum_utils::common_fields;
 <a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span>snafu::{Backtrace, GenerateImplicitData, OptionExt, Snafu};
@@ -169,9 +169,9 @@
 <a href=#169 id=169 data-nosnippet>169</a>    }
 <a href=#170 id=170 data-nosnippet>170</a>
 <a href=#171 id=171 data-nosnippet>171</a>    <span class="doccomment">/// Lookup a TXT record.
-<a href=#172 id=172 data-nosnippet>172</a>    </span><span class="kw">pub async fn </span>lookup_txt(
+<a href=#172 id=172 data-nosnippet>172</a>    </span><span class="kw">pub async fn </span>lookup_txt&lt;T: ToString&gt;(
 <a href=#173 id=173 data-nosnippet>173</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#174 id=174 data-nosnippet>174</a>        host: <span class="kw">impl </span>ToString,
+<a href=#174 id=174 data-nosnippet>174</a>        host: T,
 <a href=#175 id=175 data-nosnippet>175</a>        timeout: Duration,
 <a href=#176 id=176 data-nosnippet>176</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;TxtLookup, DnsError&gt; {
 <a href=#177 id=177 data-nosnippet>177</a>        <span class="kw">let </span>host = host.to_string();
@@ -181,11 +181,11 @@
 <a href=#181 id=181 data-nosnippet>181</a>    }
 <a href=#182 id=182 data-nosnippet>182</a>
 <a href=#183 id=183 data-nosnippet>183</a>    <span class="doccomment">/// Perform an ipv4 lookup with a timeout.
-<a href=#184 id=184 data-nosnippet>184</a>    </span><span class="kw">pub async fn </span>lookup_ipv4(
+<a href=#184 id=184 data-nosnippet>184</a>    </span><span class="kw">pub async fn </span>lookup_ipv4&lt;T: ToString&gt;(
 <a href=#185 id=185 data-nosnippet>185</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#186 id=186 data-nosnippet>186</a>        host: <span class="kw">impl </span>ToString,
+<a href=#186 id=186 data-nosnippet>186</a>        host: T,
 <a href=#187 id=187 data-nosnippet>187</a>        timeout: Duration,
-<a href=#188 id=188 data-nosnippet>188</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = IpAddr&gt;, DnsError&gt; {
+<a href=#188 id=188 data-nosnippet>188</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = IpAddr&gt; + <span class="kw">use</span>&lt;T&gt;, DnsError&gt; {
 <a href=#189 id=189 data-nosnippet>189</a>        <span class="kw">let </span>host = host.to_string();
 <a href=#190 id=190 data-nosnippet>190</a>        <span class="kw">let </span>this = <span class="self">self</span>.resolver.read().<span class="kw">await</span>;
 <a href=#191 id=191 data-nosnippet>191</a>        <span class="kw">let </span>addrs = time::timeout(timeout, this.ipv4_lookup(host)).<span class="kw">await</span><span class="question-mark">??</span>;
@@ -193,11 +193,11 @@
 <a href=#193 id=193 data-nosnippet>193</a>    }
 <a href=#194 id=194 data-nosnippet>194</a>
 <a href=#195 id=195 data-nosnippet>195</a>    <span class="doccomment">/// Perform an ipv6 lookup with a timeout.
-<a href=#196 id=196 data-nosnippet>196</a>    </span><span class="kw">pub async fn </span>lookup_ipv6(
+<a href=#196 id=196 data-nosnippet>196</a>    </span><span class="kw">pub async fn </span>lookup_ipv6&lt;T: ToString&gt;(
 <a href=#197 id=197 data-nosnippet>197</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#198 id=198 data-nosnippet>198</a>        host: <span class="kw">impl </span>ToString,
+<a href=#198 id=198 data-nosnippet>198</a>        host: T,
 <a href=#199 id=199 data-nosnippet>199</a>        timeout: Duration,
-<a href=#200 id=200 data-nosnippet>200</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = IpAddr&gt;, DnsError&gt; {
+<a href=#200 id=200 data-nosnippet>200</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = IpAddr&gt; + <span class="kw">use</span>&lt;T&gt;, DnsError&gt; {
 <a href=#201 id=201 data-nosnippet>201</a>        <span class="kw">let </span>host = host.to_string();
 <a href=#202 id=202 data-nosnippet>202</a>        <span class="kw">let </span>this = <span class="self">self</span>.resolver.read().<span class="kw">await</span>;
 <a href=#203 id=203 data-nosnippet>203</a>        <span class="kw">let </span>addrs = time::timeout(timeout, this.ipv6_lookup(host)).<span class="kw">await</span><span class="question-mark">??</span>;
@@ -209,11 +209,11 @@
 <a href=#209 id=209 data-nosnippet>209</a>    /// `LookupIpStrategy::Ipv4AndIpv6` will wait for ipv6 resolution timeout, even if it is
 <a href=#210 id=210 data-nosnippet>210</a>    /// not usable on the stack, so we manually query both lookups concurrently and time them out
 <a href=#211 id=211 data-nosnippet>211</a>    /// individually.
-<a href=#212 id=212 data-nosnippet>212</a>    </span><span class="kw">pub async fn </span>lookup_ipv4_ipv6(
+<a href=#212 id=212 data-nosnippet>212</a>    </span><span class="kw">pub async fn </span>lookup_ipv4_ipv6&lt;T: ToString&gt;(
 <a href=#213 id=213 data-nosnippet>213</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
-<a href=#214 id=214 data-nosnippet>214</a>        host: <span class="kw">impl </span>ToString,
+<a href=#214 id=214 data-nosnippet>214</a>        host: T,
 <a href=#215 id=215 data-nosnippet>215</a>        timeout: Duration,
-<a href=#216 id=216 data-nosnippet>216</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = IpAddr&gt;, DnsError&gt; {
+<a href=#216 id=216 data-nosnippet>216</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;<span class="kw">impl </span>Iterator&lt;Item = IpAddr&gt; + <span class="kw">use</span>&lt;T&gt;, DnsError&gt; {
 <a href=#217 id=217 data-nosnippet>217</a>        <span class="kw">let </span>host = host.to_string();
 <a href=#218 id=218 data-nosnippet>218</a>        <span class="kw">let </span>res = <span class="macro">tokio::join!</span>(
 <a href=#219 id=219 data-nosnippet>219</a>            <span class="self">self</span>.lookup_ipv4(host.clone(), timeout),

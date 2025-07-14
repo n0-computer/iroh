@@ -9,14 +9,14 @@
 <a href=#9 id=9 data-nosnippet>9</a>    accept::Accept,
 <a href=#10 id=10 data-nosnippet>10</a>    tls_rustls::{RustlsAcceptor, RustlsConfig},
 <a href=#11 id=11 data-nosnippet>11</a>};
-<a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>n0_future::{future::Boxed <span class="kw">as </span>BoxFuture, FutureExt};
+<a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>n0_future::{FutureExt, future::Boxed <span class="kw">as </span>BoxFuture};
 <a href=#13 id=13 data-nosnippet>13</a><span class="kw">use </span>n0_snafu::{<span class="prelude-ty">Result</span>, ResultExt};
 <a href=#14 id=14 data-nosnippet>14</a><span class="kw">use </span>serde::{Deserialize, Serialize};
 <a href=#15 id=15 data-nosnippet>15</a><span class="kw">use </span>snafu::whatever;
 <a href=#16 id=16 data-nosnippet>16</a><span class="kw">use </span>tokio::io::{AsyncRead, AsyncWrite};
-<a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span>tokio_rustls_acme::{axum::AxumAcceptor, caches::DirCache, AcmeConfig};
+<a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span>tokio_rustls_acme::{AcmeConfig, axum::AxumAcceptor, caches::DirCache};
 <a href=#18 id=18 data-nosnippet>18</a><span class="kw">use </span>tokio_stream::StreamExt;
-<a href=#19 id=19 data-nosnippet>19</a><span class="kw">use </span>tracing::{debug, error, info_span, Instrument};
+<a href=#19 id=19 data-nosnippet>19</a><span class="kw">use </span>tracing::{Instrument, debug, error, info_span};
 <a href=#20 id=20 data-nosnippet>20</a>
 <a href=#21 id=21 data-nosnippet>21</a><span class="doccomment">/// The mode how SSL certificates should be created.
 <a href=#22 id=22 data-nosnippet>22</a></span><span class="attr">#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, strum::Display)]

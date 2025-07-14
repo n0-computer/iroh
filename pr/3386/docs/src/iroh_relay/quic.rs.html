@@ -4,7 +4,7 @@
 <a href=#4 id=4 data-nosnippet>4</a>
 <a href=#5 id=5 data-nosnippet>5</a><span class="kw">use </span>n0_future::time::Duration;
 <a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>nested_enum_utils::common_fields;
-<a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>quinn::{crypto::rustls::QuicClientConfig, VarInt};
+<a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>quinn::{VarInt, crypto::rustls::QuicClientConfig};
 <a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>snafu::{Backtrace, Snafu};
 <a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>tokio::sync::watch;
 <a href=#10 id=10 data-nosnippet>10</a>
@@ -18,13 +18,13 @@
 <a href=#18 id=18 data-nosnippet>18</a><span class="attr">#[cfg(feature = <span class="string">"server"</span>)]
 <a href=#19 id=19 data-nosnippet>19</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">mod </span>server {
 <a href=#20 id=20 data-nosnippet>20</a>    <span class="kw">use </span>quinn::{
-<a href=#21 id=21 data-nosnippet>21</a>        crypto::rustls::{NoInitialCipherSuite, QuicServerConfig},
-<a href=#22 id=22 data-nosnippet>22</a>        ApplicationClose, ConnectionError,
+<a href=#21 id=21 data-nosnippet>21</a>        ApplicationClose, ConnectionError,
+<a href=#22 id=22 data-nosnippet>22</a>        crypto::rustls::{NoInitialCipherSuite, QuicServerConfig},
 <a href=#23 id=23 data-nosnippet>23</a>    };
 <a href=#24 id=24 data-nosnippet>24</a>    <span class="kw">use </span>snafu::ResultExt;
 <a href=#25 id=25 data-nosnippet>25</a>    <span class="kw">use </span>tokio::task::JoinSet;
 <a href=#26 id=26 data-nosnippet>26</a>    <span class="kw">use </span>tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
-<a href=#27 id=27 data-nosnippet>27</a>    <span class="kw">use </span>tracing::{debug, info, info_span, Instrument};
+<a href=#27 id=27 data-nosnippet>27</a>    <span class="kw">use </span>tracing::{Instrument, debug, info, info_span};
 <a href=#28 id=28 data-nosnippet>28</a>
 <a href=#29 id=29 data-nosnippet>29</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
 <a href=#30 id=30 data-nosnippet>30</a>    <span class="kw">pub use </span><span class="kw">crate</span>::server::QuicConfig;
@@ -364,7 +364,7 @@
 <a href=#364 id=364 data-nosnippet>364</a>    };
 <a href=#365 id=365 data-nosnippet>365</a>    <span class="kw">use </span>n0_snafu::{Error, <span class="prelude-ty">Result</span>, ResultExt};
 <a href=#366 id=366 data-nosnippet>366</a>    <span class="kw">use </span>quinn::crypto::rustls::QuicServerConfig;
-<a href=#367 id=367 data-nosnippet>367</a>    <span class="kw">use </span>tracing::{debug, info, info_span, Instrument};
+<a href=#367 id=367 data-nosnippet>367</a>    <span class="kw">use </span>tracing::{Instrument, debug, info, info_span};
 <a href=#368 id=368 data-nosnippet>368</a>    <span class="kw">use </span>tracing_test::traced_test;
 <a href=#369 id=369 data-nosnippet>369</a>    <span class="kw">use </span>webpki_types::PrivatePkcs8KeyDer;
 <a href=#370 id=370 data-nosnippet>370</a>

@@ -14,19 +14,19 @@
 <a href=#14 id=14 data-nosnippet>14</a>    time::MissedTickBehavior,
 <a href=#15 id=15 data-nosnippet>15</a>};
 <a href=#16 id=16 data-nosnippet>16</a><span class="kw">use </span>tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
-<a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span>tracing::{debug, trace, warn, Instrument};
+<a href=#17 id=17 data-nosnippet>17</a><span class="kw">use </span>tracing::{Instrument, debug, trace, warn};
 <a href=#18 id=18 data-nosnippet>18</a>
 <a href=#19 id=19 data-nosnippet>19</a><span class="kw">use crate</span>::{
-<a href=#20 id=20 data-nosnippet>20</a>    protos::{
-<a href=#21 id=21 data-nosnippet>21</a>        disco,
-<a href=#22 id=22 data-nosnippet>22</a>        relay::{write_frame, Frame, SendError <span class="kw">as </span>SendRelayError, PING_INTERVAL},
-<a href=#23 id=23 data-nosnippet>23</a>    },
-<a href=#24 id=24 data-nosnippet>24</a>    server::{
-<a href=#25 id=25 data-nosnippet>25</a>        clients::Clients,
-<a href=#26 id=26 data-nosnippet>26</a>        metrics::Metrics,
-<a href=#27 id=27 data-nosnippet>27</a>        streams::{RelayedStream, StreamError},
-<a href=#28 id=28 data-nosnippet>28</a>    },
-<a href=#29 id=29 data-nosnippet>29</a>    PingTracker,
+<a href=#20 id=20 data-nosnippet>20</a>    PingTracker,
+<a href=#21 id=21 data-nosnippet>21</a>    protos::{
+<a href=#22 id=22 data-nosnippet>22</a>        disco,
+<a href=#23 id=23 data-nosnippet>23</a>        relay::{Frame, PING_INTERVAL, SendError <span class="kw">as </span>SendRelayError, write_frame},
+<a href=#24 id=24 data-nosnippet>24</a>    },
+<a href=#25 id=25 data-nosnippet>25</a>    server::{
+<a href=#26 id=26 data-nosnippet>26</a>        clients::Clients,
+<a href=#27 id=27 data-nosnippet>27</a>        metrics::Metrics,
+<a href=#28 id=28 data-nosnippet>28</a>        streams::{RelayedStream, StreamError},
+<a href=#29 id=29 data-nosnippet>29</a>    },
 <a href=#30 id=30 data-nosnippet>30</a>};
 <a href=#31 id=31 data-nosnippet>31</a>
 <a href=#32 id=32 data-nosnippet>32</a><span class="doccomment">/// A request to write a dataframe to a Client
@@ -560,7 +560,7 @@
 <a href=#560 id=560 data-nosnippet>560</a>    <span class="kw">use </span>tracing_test::traced_test;
 <a href=#561 id=561 data-nosnippet>561</a>
 <a href=#562 id=562 data-nosnippet>562</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#563 id=563 data-nosnippet>563</a>    <span class="kw">use </span><span class="kw">crate</span>::protos::relay::{recv_frame, FrameType};
+<a href=#563 id=563 data-nosnippet>563</a>    <span class="kw">use </span><span class="kw">crate</span>::protos::relay::{FrameType, recv_frame};
 <a href=#564 id=564 data-nosnippet>564</a>
 <a href=#565 id=565 data-nosnippet>565</a>    <span class="attr">#[tokio::test]
 <a href=#566 id=566 data-nosnippet>566</a>    #[traced_test]

@@ -55,11 +55,11 @@
 <a href=#55 id=55 data-nosnippet>55</a>};
 <a href=#56 id=56 data-nosnippet>56</a><span class="kw">use </span>n0_watcher::{Disconnected, Watchable, Watcher <span class="kw">as _</span>};
 <a href=#57 id=57 data-nosnippet>57</a><span class="kw">use </span>pkarr::{
-<a href=#58 id=58 data-nosnippet>58</a>    errors::{PublicKeyError, SignedPacketVerifyError},
-<a href=#59 id=59 data-nosnippet>59</a>    SignedPacket,
+<a href=#58 id=58 data-nosnippet>58</a>    SignedPacket,
+<a href=#59 id=59 data-nosnippet>59</a>    errors::{PublicKeyError, SignedPacketVerifyError},
 <a href=#60 id=60 data-nosnippet>60</a>};
 <a href=#61 id=61 data-nosnippet>61</a><span class="kw">use </span>snafu::{ResultExt, Snafu};
-<a href=#62 id=62 data-nosnippet>62</a><span class="kw">use </span>tracing::{debug, error_span, warn, Instrument};
+<a href=#62 id=62 data-nosnippet>62</a><span class="kw">use </span>tracing::{Instrument, debug, error_span, warn};
 <a href=#63 id=63 data-nosnippet>63</a><span class="kw">use </span>url::Url;
 <a href=#64 id=64 data-nosnippet>64</a>
 <a href=#65 id=65 data-nosnippet>65</a><span class="kw">use super</span>::{DiscoveryContext, DiscoveryError, IntoDiscovery, IntoDiscoveryError};
