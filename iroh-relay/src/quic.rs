@@ -4,7 +4,7 @@ use std::{net::SocketAddr, sync::Arc};
 
 use n0_future::time::Duration;
 use nested_enum_utils::common_fields;
-use quinn::{crypto::rustls::QuicClientConfig, VarInt};
+use quinn::{VarInt, crypto::rustls::QuicClientConfig};
 use snafu::{Backtrace, Snafu};
 use tokio::sync::watch;
 
@@ -18,13 +18,13 @@ pub const QUIC_ADDR_DISC_CLOSE_REASON: &[u8] = b"finished";
 #[cfg(feature = "server")]
 pub(crate) mod server {
     use quinn::{
-        crypto::rustls::{NoInitialCipherSuite, QuicServerConfig},
         ApplicationClose, ConnectionError,
+        crypto::rustls::{NoInitialCipherSuite, QuicServerConfig},
     };
     use snafu::ResultExt;
     use tokio::task::JoinSet;
     use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
-    use tracing::{debug, info, info_span, Instrument};
+    use tracing::{Instrument, debug, info, info_span};
 
     use super::*;
     pub use crate::server::QuicConfig;
@@ -364,7 +364,7 @@ mod tests {
     };
     use n0_snafu::{Error, Result, ResultExt};
     use quinn::crypto::rustls::QuicServerConfig;
-    use tracing::{debug, info, info_span, Instrument};
+    use tracing::{Instrument, debug, info, info_span};
     use tracing_test::traced_test;
     use webpki_types::PrivatePkcs8KeyDer;
 

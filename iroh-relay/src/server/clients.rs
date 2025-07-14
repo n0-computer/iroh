@@ -4,8 +4,8 @@
 use std::{
     collections::HashSet,
     sync::{
-        atomic::{AtomicU64, Ordering},
         Arc,
+        atomic::{AtomicU64, Ordering},
     },
 };
 
@@ -73,8 +73,7 @@ impl Clients {
     pub(super) fn unregister(&self, connection_id: u64, node_id: NodeId) {
         trace!(
             node_id = node_id.fmt_short(),
-            connection_id,
-            "unregistering client"
+            connection_id, "unregistering client"
         );
 
         if let Some((_, client)) = self
@@ -198,7 +197,7 @@ mod tests {
 
     use super::*;
     use crate::{
-        protos::relay::{recv_frame, Frame, FrameType},
+        protos::relay::{Frame, FrameType, recv_frame},
         server::streams::RelayedStream,
     };
 

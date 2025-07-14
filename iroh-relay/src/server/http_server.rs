@@ -6,39 +6,39 @@ use bytes::Bytes;
 use derive_more::Debug;
 use http::{header::CONNECTION, response::Builder as ResponseBuilder};
 use hyper::{
+    HeaderMap, Method, Request, Response, StatusCode,
     body::Incoming,
     header::{HeaderValue, SEC_WEBSOCKET_ACCEPT, UPGRADE},
     service::Service,
     upgrade::Upgraded,
-    HeaderMap, Method, Request, Response, StatusCode,
 };
 use iroh_base::PublicKey;
-use n0_future::{time::Elapsed, FutureExt, SinkExt};
+use n0_future::{FutureExt, SinkExt, time::Elapsed};
 use nested_enum_utils::common_fields;
 use snafu::{Backtrace, ResultExt, Snafu};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls_acme::AcmeAcceptor;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
-use tracing::{debug, debug_span, error, info, info_span, trace, warn, Instrument};
+use tracing::{Instrument, debug, debug_span, error, info, info_span, trace, warn};
 
 use super::{
+    AccessConfig, SpawnError,
     clients::Clients,
     streams::{InvalidBucketConfig, StreamError},
-    AccessConfig, SpawnError,
 };
 use crate::{
-    defaults::{timeouts::SERVER_WRITE_TIMEOUT, DEFAULT_KEY_CACHE_CAPACITY},
+    KeyCache,
+    defaults::{DEFAULT_KEY_CACHE_CAPACITY, timeouts::SERVER_WRITE_TIMEOUT},
     http::{RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION, WEBSOCKET_UPGRADE_PROTOCOL},
     protos::relay::{
-        recv_client_key, Frame, MAX_FRAME_SIZE, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
+        Frame, MAX_FRAME_SIZE, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION, recv_client_key,
     },
     server::{
+        BindTcpListenerSnafu, ClientRateLimit, NoLocalAddrSnafu,
         client::Config,
         metrics::Metrics,
         streams::{MaybeTlsStream, RateLimited, RelayedStream},
-        BindTcpListenerSnafu, ClientRateLimit, NoLocalAddrSnafu,
     },
-    KeyCache,
 };
 
 type BytesBody = http_body_util::Full<hyper::body::Bytes>;
@@ -860,8 +860,8 @@ mod tests {
     use super::*;
     use crate::{
         client::{
-            conn::{Conn, ReceivedMessage, SendMessage},
             Client, ClientBuilder, ConnectError,
+            conn::{Conn, ReceivedMessage, SendMessage},
         },
         dns::DnsResolver,
     };

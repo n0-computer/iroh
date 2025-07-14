@@ -55,11 +55,11 @@ use n0_future::{
 };
 use n0_watcher::{Disconnected, Watchable, Watcher as _};
 use pkarr::{
-    errors::{PublicKeyError, SignedPacketVerifyError},
     SignedPacket,
+    errors::{PublicKeyError, SignedPacketVerifyError},
 };
 use snafu::{ResultExt, Snafu};
-use tracing::{debug, error_span, warn, Instrument};
+use tracing::{Instrument, debug, error_span, warn};
 use url::Url;
 
 use super::{DiscoveryContext, DiscoveryError, IntoDiscovery, IntoDiscoveryError};

@@ -10,18 +10,17 @@
 //! In the past we've hit relay rate-limits from all the tests in our CI, but I expect
 //! we won't hit these with only this integration test.
 use iroh::{
-    discovery::{pkarr::PkarrResolver, Discovery},
     Endpoint,
+    discovery::{Discovery, pkarr::PkarrResolver},
 };
 use n0_future::{
-    task,
+    StreamExt, task,
     time::{self, Duration},
-    StreamExt,
 };
 use n0_snafu::{Result, ResultExt};
 #[cfg(not(wasm_browser))]
 use tokio::test;
-use tracing::{info_span, Instrument};
+use tracing::{Instrument, info_span};
 #[cfg(wasm_browser)]
 use wasm_bindgen_test::wasm_bindgen_test as test;
 

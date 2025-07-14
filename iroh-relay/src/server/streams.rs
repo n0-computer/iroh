@@ -6,7 +6,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use n0_future::{ready, time, FutureExt, Sink, Stream};
+use n0_future::{FutureExt, Sink, Stream, ready, time};
 use snafu::{Backtrace, Snafu};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_websockets::WebSocketStream;
@@ -14,8 +14,8 @@ use tracing::instrument;
 
 use super::{ClientRateLimit, Metrics};
 use crate::{
-    protos::relay::{Frame, RecvError},
     KeyCache,
+    protos::relay::{Frame, RecvError},
 };
 
 /// A Stream and Sink for [`Frame`]s connected to a single relay client.
@@ -463,7 +463,7 @@ mod tests {
     use tracing_test::traced_test;
 
     use super::Bucket;
-    use crate::server::{streams::RateLimited, Metrics};
+    use crate::server::{Metrics, streams::RateLimited};
 
     #[tokio::test(start_paused = true)]
     #[traced_test]

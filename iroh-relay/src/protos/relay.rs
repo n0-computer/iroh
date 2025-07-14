@@ -18,7 +18,7 @@ use bytes::{BufMut, Bytes};
 use iroh_base::{PublicKey, SecretKey, Signature, SignatureError};
 #[cfg(feature = "server")]
 use n0_future::time::Duration;
-use n0_future::{time, Sink, SinkExt};
+use n0_future::{Sink, SinkExt, time};
 #[cfg(any(test, feature = "server"))]
 use n0_future::{Stream, StreamExt};
 use nested_enum_utils::common_fields;
@@ -26,7 +26,7 @@ use postcard::experimental::max_size::MaxSize;
 use serde::{Deserialize, Serialize};
 use snafu::{Backtrace, Snafu};
 
-use crate::{client::conn::SendError as ConnSendError, KeyCache};
+use crate::{KeyCache, client::conn::SendError as ConnSendError};
 
 /// The maximum size of a packet sent over relay.
 /// (This only includes the data bytes visible to magicsock, not

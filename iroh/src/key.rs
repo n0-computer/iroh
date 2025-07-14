@@ -4,7 +4,7 @@ use std::fmt::Debug;
 
 use aead::Buffer;
 use nested_enum_utils::common_fields;
-use snafu::{ensure, ResultExt, Snafu};
+use snafu::{ResultExt, Snafu, ensure};
 
 pub(crate) const NONCE_LEN: usize = 24;
 

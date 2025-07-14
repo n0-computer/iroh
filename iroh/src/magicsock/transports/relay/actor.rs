@@ -30,10 +30,10 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     future::Future,
     net::IpAddr,
-    pin::{pin, Pin},
+    pin::{Pin, pin},
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
 };
 
@@ -41,14 +41,13 @@ use backon::{Backoff, BackoffBuilder, ExponentialBuilder};
 use bytes::{Bytes, BytesMut};
 use iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_relay::{
-    self as relay,
+    self as relay, MAX_PACKET_SIZE, PingTracker,
     client::{Client, ConnectError, ReceivedMessage, RecvError, SendError, SendMessage},
-    PingTracker, MAX_PACKET_SIZE,
 };
 use n0_future::{
+    FuturesUnorderedBounded, SinkExt, StreamExt,
     task::JoinSet,
     time::{self, Duration, Instant, MissedTickBehavior},
-    FuturesUnorderedBounded, SinkExt, StreamExt,
 };
 use n0_watcher::Watchable;
 use nested_enum_utils::common_fields;
@@ -56,7 +55,7 @@ use netwatch::interfaces;
 use snafu::{IntoError, ResultExt, Snafu};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, event, info, info_span, instrument, trace, warn, Instrument, Level};
+use tracing::{Instrument, Level, debug, error, event, info, info_span, instrument, trace, warn};
 use url::Url;
 
 #[cfg(not(wasm_browser))]
@@ -1368,7 +1367,7 @@ impl Iterator for PacketSplitIter {
 #[cfg(test)]
 mod tests {
     use std::{
-        sync::{atomic::AtomicBool, Arc},
+        sync::{Arc, atomic::AtomicBool},
         time::Duration,
     };
 
@@ -1379,13 +1378,13 @@ mod tests {
     use smallvec::smallvec;
     use tokio::sync::{mpsc, oneshot};
     use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
-    use tracing::{info, info_span, Instrument};
+    use tracing::{Instrument, info, info_span};
     use tracing_test::traced_test;
 
     use super::{
         ActiveRelayActor, ActiveRelayActorOptions, ActiveRelayMessage, ActiveRelayPrioMessage,
-        PacketizeIter, RelayConnectionOptions, RelayRecvDatagram, RelaySendItem, MAX_PACKET_SIZE,
-        RELAY_INACTIVE_CLEANUP_TIME, UNDELIVERABLE_DATAGRAM_TIMEOUT,
+        MAX_PACKET_SIZE, PacketizeIter, RELAY_INACTIVE_CLEANUP_TIME, RelayConnectionOptions,
+        RelayRecvDatagram, RelaySendItem, UNDELIVERABLE_DATAGRAM_TIMEOUT,
     };
     use crate::{dns::DnsResolver, test_utils};
 

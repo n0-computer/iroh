@@ -12,20 +12,21 @@ use std::{
 use conn::Conn;
 use iroh_base::{RelayUrl, SecretKey};
 use n0_future::{
-    split::{split, SplitSink, SplitStream},
-    time, Sink, Stream,
+    Sink, Stream,
+    split::{SplitSink, SplitStream, split},
+    time,
 };
 use nested_enum_utils::common_fields;
 use snafu::{Backtrace, Snafu};
 #[cfg(any(test, feature = "test-utils"))]
 use tracing::warn;
-use tracing::{debug, event, trace, Level};
+use tracing::{Level, debug, event, trace};
 use url::Url;
 
 pub use self::conn::{ReceivedMessage, RecvError, SendError, SendMessage};
 #[cfg(not(wasm_browser))]
 use crate::dns::{DnsError, DnsResolver};
-use crate::{http::RELAY_PATH, protos::relay::SendError as SendRelayError, KeyCache};
+use crate::{KeyCache, http::RELAY_PATH, protos::relay::SendError as SendRelayError};
 
 pub(crate) mod conn;
 #[cfg(not(wasm_browser))]

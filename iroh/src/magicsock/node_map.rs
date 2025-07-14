@@ -1,5 +1,5 @@
 use std::{
-    collections::{hash_map::Entry, BTreeSet, HashMap},
+    collections::{BTreeSet, HashMap, hash_map::Entry},
     hash::Hash,
     net::{IpAddr, SocketAddr},
     sync::Mutex,
@@ -15,7 +15,7 @@ use self::{
     best_addr::ClearReason,
     node_state::{NodeState, Options, PingHandled},
 };
-use super::{metrics::Metrics, transports, ActorMessage, NodeIdMappedAddr};
+use super::{ActorMessage, NodeIdMappedAddr, metrics::Metrics, transports};
 use crate::disco::{CallMeMaybe, Pong, SendAddr};
 #[cfg(any(test, feature = "test-utils"))]
 use crate::endpoint::PathSelection;

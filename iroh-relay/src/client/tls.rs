@@ -9,7 +9,7 @@
 use bytes::Bytes;
 use data_encoding::BASE64URL;
 use http_body_util::Empty;
-use hyper::{upgrade::Parts, Request};
+use hyper::{Request, upgrade::Parts};
 use n0_future::{task, time};
 use rustls::client::Resumption;
 use snafu::{OptionExt, ResultExt};

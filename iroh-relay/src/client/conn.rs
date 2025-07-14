@@ -6,12 +6,12 @@ use std::{
     io,
     pin::Pin,
     str::Utf8Error,
-    task::{ready, Context, Poll},
+    task::{Context, Poll, ready},
 };
 
 use bytes::Bytes;
 use iroh_base::{NodeId, SecretKey};
-use n0_future::{time::Duration, Sink, Stream};
+use n0_future::{Sink, Stream, time::Duration};
 use nested_enum_utils::common_fields;
 use snafu::{Backtrace, ResultExt, Snafu};
 use tracing::{debug, warn};
@@ -20,11 +20,11 @@ use super::KeyCache;
 #[cfg(not(wasm_browser))]
 use crate::client::streams::{MaybeTlsStream, ProxyStream};
 use crate::{
-    protos::relay::{
-        ClientInfo, Frame, RecvError as RecvRelayError, SendError as SendRelayError,
-        PROTOCOL_VERSION,
-    },
     MAX_PACKET_SIZE,
+    protos::relay::{
+        ClientInfo, Frame, PROTOCOL_VERSION, RecvError as RecvRelayError,
+        SendError as SendRelayError,
+    },
 };
 
 /// Error for sending messages to the relay server.
