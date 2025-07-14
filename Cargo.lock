@@ -2976,8 +2976,9 @@ dependencies = [
 
 [[package]]
 name = "netwatch"
-version = "0.6.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=main#c3476f3ad4d6a59c3d777a66c3273ef9a4084002"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d0445cbbb4d6d1afe22f4d1c14da2a2eb598a98b83650f15f988050bceefea5"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -3473,8 +3474,9 @@ checksum = "f84267b20a16ea918e43c6a88433c2d54fa145c92a811b5b047ccbe153674483"
 
 [[package]]
 name = "portmapper"
-version = "0.6.1"
-source = "git+https://github.com/n0-computer/net-tools?branch=main#c3476f3ad4d6a59c3d777a66c3273ef9a4084002"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "abceb40595a7a1b65242013b497d031000c1c0e58505d4c5f7834951fd3800d4"
 dependencies = [
  "base64",
  "bytes",
@@ -5636,7 +5638,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
