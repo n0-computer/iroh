@@ -495,7 +495,7 @@ mod proptests {
     fn server_client_frame() -> impl Strategy<Value = RelayToClientMsg> {
         let recv_packet = (key(), data(32))
             .prop_map(|(src_key, content)| RelayToClientMsg::ReceivedPacket { src_key, content });
-        let node_gone = key().prop_map(|node_id| RelayToClientMsg::NodeGone(node_id));
+        let node_gone = key().prop_map(RelayToClientMsg::NodeGone);
         let ping = prop::array::uniform8(any::<u8>()).prop_map(RelayToClientMsg::Ping);
         let pong = prop::array::uniform8(any::<u8>()).prop_map(RelayToClientMsg::Pong);
         let health = ".{0,65536}"
