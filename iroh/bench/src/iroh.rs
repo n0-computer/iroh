@@ -5,15 +5,15 @@ use std::{
 
 use bytes::Bytes;
 use iroh::{
-    endpoint::{Connection, ConnectionError, RecvStream, SendStream, TransportConfig},
     Endpoint, NodeAddr, RelayMode, RelayUrl,
+    endpoint::{Connection, ConnectionError, RecvStream, SendStream, TransportConfig},
 };
 use n0_snafu::{Result, ResultExt};
 use n0_watcher::Watcher as _;
 use tracing::{trace, warn};
 
 use crate::{
-    client_handler, stats::TransferResult, ClientStats, ConnectionSelector, EndpointSelector, Opt,
+    ClientStats, ConnectionSelector, EndpointSelector, Opt, client_handler, stats::TransferResult,
 };
 
 pub const ALPN: &[u8] = b"n0/iroh-bench/0";

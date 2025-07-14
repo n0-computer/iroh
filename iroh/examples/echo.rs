@@ -7,9 +7,9 @@
 //!     cargo run --example echo --features=examples
 
 use iroh::{
+    Endpoint, NodeAddr,
     endpoint::Connection,
     protocol::{AcceptError, ProtocolHandler, Router},
-    Endpoint, NodeAddr,
 };
 use n0_snafu::{Result, ResultExt};
 use n0_watcher::Watcher as _;

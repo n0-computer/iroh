@@ -1,7 +1,7 @@
 [package]
 name = "iroh-relay"
 version = "0.90.0"
-edition = "2021"
+edition = "2024"
 readme = "README.md"
 description = "Iroh's relay server and client"
 license = "MIT OR Apache-2.0"

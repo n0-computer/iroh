@@ -14,7 +14,7 @@ use self::signed_packets::SignedPacketStore;
 use crate::{
     config::BootstrapOption,
     metrics::Metrics,
-    util::{signed_packet_to_hickory_records_without_origin, PublicKeyBytes},
+    util::{PublicKeyBytes, signed_packet_to_hickory_records_without_origin},
 };
 
 mod signed_packets;

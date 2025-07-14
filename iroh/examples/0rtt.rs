@@ -3,11 +3,11 @@ use std::{env, future::Future, str::FromStr, time::Instant};
 use clap::Parser;
 use data_encoding::HEXLOWER;
 use iroh::{
-    endpoint::{Connecting, Connection},
     SecretKey,
+    endpoint::{Connecting, Connection},
 };
 use iroh_base::ticket::NodeTicket;
-use n0_future::{future, StreamExt};
+use n0_future::{StreamExt, future};
 use n0_snafu::ResultExt;
 use n0_watcher::Watcher;
 use rand::thread_rng;

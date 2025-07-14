@@ -5,7 +5,7 @@
 //!     $ cargo run --example listen
 use std::time::Duration;
 
-use iroh::{endpoint::ConnectionError, Endpoint, RelayMode, SecretKey};
+use iroh::{Endpoint, RelayMode, SecretKey, endpoint::ConnectionError};
 use n0_snafu::ResultExt;
 use n0_watcher::Watcher as _;
 use tracing::{debug, info, warn};

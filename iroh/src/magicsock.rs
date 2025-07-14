@@ -22,8 +22,8 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     pin::Pin,
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex, RwLock,
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     task::{Context, Poll},
 };
@@ -33,24 +33,24 @@ use data_encoding::HEXLOWER;
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_relay::RelayMap;
 use n0_future::{
+    StreamExt,
     boxed::BoxStream,
     task::{self, AbortOnDropHandle},
     time::{self, Duration, Instant},
-    StreamExt,
 };
 use n0_watcher::{self, Watchable, Watcher};
 use nested_enum_utils::common_fields;
 use netwatch::netmon;
 #[cfg(not(wasm_browser))]
-use netwatch::{ip::LocalAddresses, UdpSocket};
+use netwatch::{UdpSocket, ip::LocalAddresses};
 use quinn::{AsyncUdpSocket, ServerConfig};
 use rand::Rng;
 use smallvec::SmallVec;
 use snafu::{ResultExt, Snafu};
-use tokio::sync::{mpsc, Mutex as AsyncMutex};
+use tokio::sync::{Mutex as AsyncMutex, mpsc};
 use tokio_util::sync::CancellationToken;
 use tracing::{
-    debug, error, event, info, info_span, instrument, trace, trace_span, warn, Instrument, Level,
+    Instrument, Level, debug, error, event, info, info_span, instrument, trace, trace_span, warn,
 };
 use transports::LocalAddrsWatch;
 use url::Url;
@@ -72,7 +72,7 @@ use crate::{
     defaults::timeouts::NET_REPORT_TIMEOUT,
     disco::{self, SendAddr},
     discovery::{Discovery, DiscoveryItem, DiscoverySubscribers, NodeData, UserData},
-    key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
+    key::{DecryptionError, SharedSecret, public_ed_box, secret_ed_box},
     metrics::EndpointMetrics,
     net_report::{self, IfStateDetails, IpMappedAddresses, Report},
 };
@@ -2415,22 +2415,23 @@ mod tests {
 
     use data_encoding::HEXLOWER;
     use iroh_base::{NodeAddr, NodeId, PublicKey};
-    use n0_future::{time, StreamExt};
+    use n0_future::{StreamExt, time};
     use n0_snafu::{Result, ResultExt};
     use n0_watcher::Watcher;
     use quinn::ServerConfig;
     use rand::{Rng, RngCore};
     use tokio::task::JoinSet;
     use tokio_util::task::AbortOnDropHandle;
-    use tracing::{error, info, info_span, instrument, Instrument};
+    use tracing::{Instrument, error, info, info_span, instrument};
     use tracing_test::traced_test;
 
     use super::{NodeIdMappedAddr, Options};
     use crate::{
+        Endpoint, RelayMap, RelayMode, SecretKey,
         dns::DnsResolver,
         endpoint::{DirectAddr, PathSelection, Source},
-        magicsock::{node_map, Handle, MagicSock},
-        tls, Endpoint, RelayMap, RelayMode, SecretKey,
+        magicsock::{Handle, MagicSock, node_map},
+        tls,
     };
 
     const ALPN: &[u8] = b"n0/test/1";
@@ -3272,10 +3273,11 @@ mod tests {
             .magic_sock()
             .add_node_addr(empty_addr, node_map::Source::App)
             .unwrap_err();
-        assert!(err
-            .to_string()
-            .to_lowercase()
-            .contains("empty addressing info"));
+        assert!(
+            err.to_string()
+                .to_lowercase()
+                .contains("empty addressing info")
+        );
 
         // relay url only
         let addr = NodeAddr {

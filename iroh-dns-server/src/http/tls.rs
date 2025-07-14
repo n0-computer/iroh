@@ -9,14 +9,14 @@ use axum_server::{
     accept::Accept,
     tls_rustls::{RustlsAcceptor, RustlsConfig},
 };
-use n0_future::{future::Boxed as BoxFuture, FutureExt};
+use n0_future::{FutureExt, future::Boxed as BoxFuture};
 use n0_snafu::{Result, ResultExt};
 use serde::{Deserialize, Serialize};
 use snafu::whatever;
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio_rustls_acme::{axum::AxumAcceptor, caches::DirCache, AcmeConfig};
+use tokio_rustls_acme::{AcmeConfig, axum::AxumAcceptor, caches::DirCache};
 use tokio_stream::StreamExt;
-use tracing::{debug, error, info_span, Instrument};
+use tracing::{Instrument, debug, error, info_span};
 
 /// The mode how SSL certificates should be created.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, strum::Display)]

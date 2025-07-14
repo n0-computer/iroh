@@ -1,5 +1,5 @@
 use std::{
-    collections::{btree_map::Entry, BTreeSet, HashMap},
+    collections::{BTreeSet, HashMap, btree_map::Entry},
     hash::Hash,
     net::{IpAddr, SocketAddr},
 };
@@ -13,19 +13,19 @@ use n0_future::{
 use n0_watcher::Watchable;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
-use tracing::{debug, event, info, instrument, trace, warn, Level};
+use tracing::{Level, debug, event, info, instrument, trace, warn};
 
 use super::{
-    best_addr::{self, ClearReason, Source as BestAddrSource},
-    path_state::{summarize_node_paths, PathState},
-    udp_paths::{NodeUdpPaths, UdpSendAddr},
     IpPort, Source,
+    best_addr::{self, ClearReason, Source as BestAddrSource},
+    path_state::{PathState, summarize_node_paths},
+    udp_paths::{NodeUdpPaths, UdpSendAddr},
 };
 #[cfg(any(test, feature = "test-utils"))]
 use crate::endpoint::PathSelection;
 use crate::{
     disco::{self, SendAddr},
-    magicsock::{ActorMessage, MagicsockMetrics, NodeIdMappedAddr, HEARTBEAT_INTERVAL},
+    magicsock::{ActorMessage, HEARTBEAT_INTERVAL, MagicsockMetrics, NodeIdMappedAddr},
 };
 
 /// Number of addresses that are not active that we keep around per node.

@@ -6,10 +6,10 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use n0_snafu::{format_err, Result, ResultExt};
+use n0_snafu::{Result, ResultExt, format_err};
 use pkarr::{SignedPacket, Timestamp};
 use redb::{
-    backends::InMemoryBackend, Database, MultimapTableDefinition, ReadableTable, TableDefinition,
+    Database, MultimapTableDefinition, ReadableTable, TableDefinition, backends::InMemoryBackend,
 };
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
@@ -365,7 +365,9 @@ fn get_packet(
             buf.extend(data);
             match SignedPacket::deserialize(&buf) {
                 Ok(packet) => Ok(Some(packet)),
-                Err(err2) => Err(format_err!("Failed to decode as pkarr v3: {err:#}. Also failed to decode as pkarr v2: {err2:#}"))
+                Err(err2) => Err(format_err!(
+                    "Failed to decode as pkarr v3: {err:#}. Also failed to decode as pkarr v2: {err2:#}"
+                )),
             }
         }
     }

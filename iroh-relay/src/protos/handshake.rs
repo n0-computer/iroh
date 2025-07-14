@@ -153,9 +153,7 @@ pub enum Error {
     FrameTypeError { source: FrameTypeError },
     #[snafu(display("The relay denied our authentication ({reason})"))]
     ServerDeniedAuth { reason: String },
-    #[snafu(display(
-        "Unexpected tag, got {frame_type:?}, but expected one of {expected_types:?}"
-    ))]
+    #[snafu(display("Unexpected tag, got {frame_type:?}, but expected one of {expected_types:?}"))]
     UnexpectedFrameType {
         frame_type: FrameType,
         expected_types: Vec<FrameType>,
@@ -175,12 +173,16 @@ pub enum Error {
 pub(crate) enum VerificationError {
     #[snafu(display("Couldn't export TLS keying material on our end"))]
     NoKeyingMaterial,
-    #[snafu(display("Client didn't extract the same keying material, the suffix mismatched: expected {expected:X?} but got {actual:X?}"))]
+    #[snafu(display(
+        "Client didn't extract the same keying material, the suffix mismatched: expected {expected:X?} but got {actual:X?}"
+    ))]
     MismatchedSuffix {
         expected: [u8; 16],
         actual: [u8; 16],
     },
-    #[snafu(display("Client signature {signature:X?} for message {message:X?} invalid for public key {public_key}"))]
+    #[snafu(display(
+        "Client signature {signature:X?} for message {message:X?} invalid for public key {public_key}"
+    ))]
     SignatureInvalid {
         source: iroh_base::SignatureError,
         message: Vec<u8>,
@@ -528,7 +530,7 @@ mod tests {
     use n0_future::{Sink, SinkExt, Stream, TryStreamExt};
     use n0_snafu::{Result, ResultExt};
     use tokio_util::codec::{Framed, LengthDelimitedCodec};
-    use tracing::{info_span, Instrument};
+    use tracing::{Instrument, info_span};
     use tracing_test::traced_test;
 
     use super::{

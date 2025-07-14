@@ -4,7 +4,7 @@
 
 use std::{
     pin::Pin,
-    task::{ready, Context, Poll},
+    task::{Context, Poll, ready},
 };
 
 use iroh_base::SecretKey;
@@ -17,12 +17,15 @@ use super::KeyCache;
 #[cfg(not(wasm_browser))]
 use crate::client::streams::{MaybeTlsStream, ProxyStream};
 use crate::{
+    MAX_PACKET_SIZE,
     protos::{
         handshake,
-        relay::{ClientToRelayMsg, Error as ProtoError, RelayToClientMsg},
+        relay::{
+            ClientInfo, ClientToRelayMsg, Error as ProtoError, Frame, PROTOCOL_VERSION,
+            RecvError as RecvRelayError, RelayToClientMsg, SendError as SendRelayError,
+        },
         streams::WsBytesFramed,
     },
-    MAX_PACKET_SIZE,
 };
 
 /// Error for sending messages to the relay server.

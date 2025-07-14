@@ -7,11 +7,11 @@ use std::{
 
 use iroh_base::NodeId;
 use n0_future::time::{Duration, Instant};
-use tracing::{debug, event, Level};
+use tracing::{Level, debug, event};
 
 use super::{
-    node_state::{ControlMsg, PongReply, SESSION_ACTIVE_TIMEOUT},
     IpPort, PingRole, Source,
+    node_state::{ControlMsg, PongReply, SESSION_ACTIVE_TIMEOUT},
 };
 use crate::{disco::SendAddr, magicsock::HEARTBEAT_INTERVAL};
 

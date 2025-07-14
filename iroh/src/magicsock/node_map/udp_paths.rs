@@ -12,10 +12,10 @@ use rand::seq::IteratorRandom;
 use tracing::warn;
 
 use super::{
+    IpPort,
     best_addr::{self, BestAddr},
     node_state::PongReply,
     path_state::PathState,
-    IpPort,
 };
 use crate::disco::SendAddr;
 

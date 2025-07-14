@@ -6,18 +6,18 @@ use std::{
     task::{Context, Poll},
 };
 
-use n0_future::{ready, time, FutureExt, Sink, Stream};
+use n0_future::{FutureExt, Sink, Stream, ready, time};
 use snafu::{Backtrace, Snafu};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::instrument;
 
 use super::{ClientRateLimit, Metrics};
 use crate::{
+    ExportKeyingMaterial, KeyCache, MAX_PACKET_SIZE,
     protos::{
         relay::{ClientToRelayMsg, Error as ProtoError, RelayToClientMsg},
         streams::{StreamError, WsBytesFramed},
     },
-    ExportKeyingMaterial, KeyCache, MAX_PACKET_SIZE,
 };
 
 /// The relay's connection to a client.
@@ -486,7 +486,7 @@ mod tests {
     use tracing_test::traced_test;
 
     use super::Bucket;
-    use crate::server::{streams::RateLimited, Metrics};
+    use crate::server::{Metrics, streams::RateLimited};
 
     #[tokio::test(start_paused = true)]
     #[traced_test]
