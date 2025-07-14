@@ -15,9 +15,8 @@ use tokio::sync::mpsc;
 use tokio_util::sync::PollSender;
 use tracing::{error, info_span, trace, warn, Instrument};
 
-use crate::magicsock::RelayContents;
-
 use super::{Addr, Transmit};
+use crate::magicsock::RelayContents;
 
 mod actor;
 
