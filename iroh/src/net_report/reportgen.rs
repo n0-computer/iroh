@@ -25,7 +25,7 @@ use std::{
 
 use http::StatusCode;
 use iroh_base::RelayUrl;
-use iroh_relay::{defaults::DEFAULT_RELAY_QUIC_PORT, http::RELAY_PROBE_PATH, RelayMap, RelayNode};
+use iroh_relay::{RelayMap, RelayNode, defaults::DEFAULT_RELAY_QUIC_PORT, http::RELAY_PROBE_PATH};
 #[cfg(not(wasm_browser))]
 use iroh_relay::{
     dns::{DnsError, DnsResolver, StaggeredError},
@@ -34,25 +34,25 @@ use iroh_relay::{
 #[cfg(wasm_browser)]
 use n0_future::future::Pending;
 use n0_future::{
+    StreamExt as _,
     task::{self, AbortOnDropHandle, JoinSet},
     time::{self, Duration, Instant},
-    StreamExt as _,
 };
 use rand::seq::IteratorRandom;
 use snafu::{IntoError, OptionExt, ResultExt, Snafu};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, debug_span, error, info_span, trace, warn, Instrument};
+use tracing::{Instrument, debug, debug_span, error, info_span, trace, warn};
 use url::Host;
 
 #[cfg(wasm_browser)]
 use super::portmapper; // We stub the library
+use super::{
+    Report,
+    probes::{Probe, ProbePlan},
+};
 #[cfg(not(wasm_browser))]
 use super::{defaults::timeouts::DNS_TIMEOUT, ip_mapped_addrs::IpMappedAddresses};
-use super::{
-    probes::{Probe, ProbePlan},
-    Report,
-};
 #[cfg(not(wasm_browser))]
 use crate::discovery::dns::DNS_STAGGERING_MS;
 use crate::net_report::defaults::timeouts::{

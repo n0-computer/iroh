@@ -16,8 +16,8 @@ use hickory_server::{
         self,
         op::ResponseCode,
         rr::{
-            rdata::{self},
             LowerName, Name, RData, Record, RecordSet, RecordType, RrKey,
+            rdata::{self},
         },
         serialize::{binary::BinEncoder, txt::RDataParser},
         xfer::Protocol,
@@ -25,7 +25,7 @@ use hickory_server::{
     server::{Request, RequestHandler, ResponseHandler, ResponseInfo},
     store::in_memory::InMemoryAuthority,
 };
-use n0_snafu::{format_err, Result, ResultExt};
+use n0_snafu::{Result, ResultExt, format_err};
 use serde::{Deserialize, Serialize};
 use tokio::{
     net::{TcpListener, UdpSocket},
