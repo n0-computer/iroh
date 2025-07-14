@@ -148,6 +148,10 @@ pub(crate) struct Options {
     pub(crate) metrics: EndpointMetrics,
 }
 
+/// Contents of a relay message. Use a SmallVec to avoid allocations for the very
+/// common case of a single packet.
+type RelayContents = SmallVec<[Bytes; 1]>;
+
 /// Handle for [`MagicSock`].
 ///
 /// Dereferences to [`MagicSock`], and handles closing.

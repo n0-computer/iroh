@@ -5,15 +5,17 @@ use std::{
 
 use bytes::Bytes;
 use iroh_base::{NodeId, RelayUrl};
-use iroh_relay::protos::relay::Datagrams;
 use n0_future::{
     ready,
     task::{self, AbortOnDropHandle},
 };
 use n0_watcher::{Watchable, Watcher as _};
+use smallvec::SmallVec;
 use tokio::sync::mpsc;
 use tokio_util::sync::PollSender;
 use tracing::{error, info_span, trace, warn, Instrument};
+
+use crate::magicsock::RelayContents;
 
 use super::{Addr, Transmit};
 
@@ -99,12 +101,9 @@ impl RelayTransport {
                 }
             };
 
-            buf_out[..dm.datagrams.contents.len()].copy_from_slice(&dm.datagrams.contents);
-            meta_out.len = dm.datagrams.contents.len();
-            meta_out.stride = dm
-                .datagrams
-                .segment_size
-                .map_or(dm.datagrams.contents.len(), |s| s as usize);
+            buf_out[..dm.buf.len()].copy_from_slice(&dm.buf);
+            meta_out.len = dm.buf.len();
+            meta_out.stride = dm.buf.len();
             meta_out.ecn = None;
             meta_out.dst_ip = None; // TODO: insert the relay url for this relay
 
@@ -188,7 +187,7 @@ impl RelaySender {
         dest_node: NodeId,
         transmit: &Transmit<'_>,
     ) -> io::Result<()> {
-        let contents = datagrams_from_transmit(transmit);
+        let contents = split_packets(transmit);
 
         let item = RelaySendItem {
             remote_node: dest_node,
@@ -230,7 +229,7 @@ impl RelaySender {
                 trace!(node = %dest_node.fmt_short(), relay_url = %dest_url,
                     "send relay: message queued");
 
-                let contents = datagrams_from_transmit(transmit);
+                let contents = split_packets(transmit);
                 let item = RelaySendItem {
                     remote_node: dest_node,
                     url: dest_url.clone(),
@@ -268,7 +267,7 @@ impl RelaySender {
         dest_node: NodeId,
         transmit: &Transmit<'_>,
     ) -> io::Result<()> {
-        let contents = datagrams_from_transmit(transmit);
+        let contents = split_packets(transmit);
 
         let item = RelaySendItem {
             remote_node: dest_node,
@@ -306,19 +305,26 @@ impl RelaySender {
     }
 }
 
-/// Translate a UDP transmit to the `Datagrams` type for sending over the relay.
+/// Split a transmit containing a GSO payload into individual packets.
+///
+/// This allocates the data.
+///
+/// If the transmit has a segment size it contains multiple GSO packets.  It will be split
+/// into multiple packets according to that segment size.  If it does not have a segment
+/// size, the contents will be sent as a single packet.
 // TODO: If quinn stayed on bytes this would probably be much cheaper, probably.  Need to
 // figure out where they allocate the Vec.
-fn datagrams_from_transmit(transmit: &Transmit<'_>) -> Datagrams {
-    Datagrams {
-        ecn: transmit.ecn.map(|ecn| match ecn {
-            quinn_udp::EcnCodepoint::Ect0 => quinn_proto::EcnCodepoint::Ect0,
-            quinn_udp::EcnCodepoint::Ect1 => quinn_proto::EcnCodepoint::Ect1,
-            quinn_udp::EcnCodepoint::Ce => quinn_proto::EcnCodepoint::Ce,
-        }),
-        segment_size: transmit.segment_size.map(|ss| ss as u16),
-        contents: Bytes::copy_from_slice(transmit.contents),
+fn split_packets(transmit: &Transmit<'_>) -> RelayContents {
+    let mut res = SmallVec::with_capacity(1);
+    let contents = transmit.contents;
+    if let Some(segment_size) = transmit.segment_size {
+        for chunk in contents.chunks(segment_size) {
+            res.push(Bytes::from(chunk.to_vec()));
+        }
+    } else {
+        res.push(Bytes::from(contents.to_vec()));
     }
+    res
 }
 
 #[cfg(test)]
@@ -345,7 +351,7 @@ mod tests {
                 let mut expected_msgs: BTreeSet<usize> = (0..capacity).collect();
                 while !expected_msgs.is_empty() {
                     let datagram: RelayRecvDatagram = receiver.recv().await.unwrap();
-                    let msg_num = usize::from_le_bytes(datagram.datagrams.contents.as_ref().try_into().unwrap());
+                    let msg_num = usize::from_le_bytes(datagram.buf.as_ref().try_into().unwrap());
                     debug!("Received {msg_num}");
 
                     if !expected_msgs.remove(&msg_num) {
@@ -365,7 +371,7 @@ mod tests {
                         .try_send(RelayRecvDatagram {
                             url,
                             src: NodeId::from_bytes(&[0u8; 32]).unwrap(),
-                            datagrams: Datagrams::from(&i.to_le_bytes()),
+                            buf: Bytes::copy_from_slice(&i.to_le_bytes()),
                         })
                         .unwrap();
                 }

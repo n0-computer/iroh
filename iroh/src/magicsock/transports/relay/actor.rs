@@ -38,12 +38,13 @@ use std::{
 };
 
 use backon::{Backoff, BackoffBuilder, ExponentialBuilder};
-use iroh_base::{NodeId, RelayUrl, SecretKey};
+use bytes::{Bytes, BytesMut};
+use iroh_base::{NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_relay::{
     self as relay,
     client::{Client, ConnectError, RecvError, SendError},
-    protos::relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
-    PingTracker,
+    protos::relay::{ClientToRelayMsg, RelayToClientMsg},
+    PingTracker, MAX_PACKET_SIZE,
 };
 use n0_future::{
     task::JoinSet,
@@ -61,10 +62,17 @@ use url::Url;
 
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
-use crate::{magicsock::Metrics as MagicsockMetrics, net_report::Report, util::MaybeFuture};
+use crate::{
+    magicsock::{Metrics as MagicsockMetrics, RelayContents},
+    net_report::Report,
+    util::MaybeFuture,
+};
 
 /// How long a non-home relay connection needs to be idle (last written to) before we close it.
 const RELAY_INACTIVE_CLEANUP_TIME: Duration = Duration::from_secs(60);
+
+/// Maximum size a datagram payload is allowed to be.
+const MAX_PAYLOAD_SIZE: usize = MAX_PACKET_SIZE - PublicKey::LENGTH;
 
 /// Interval in which we ping the relay server to ensure the connection is alive.
 ///
@@ -618,20 +626,26 @@ impl ActiveRelayActor {
                     self.reset_inactive_timeout();
                     // TODO: This allocation is *very* unfortunate.  But so is the
                     // allocation *inside* of PacketizeIter...
-                    let batch = std::mem::replace(
+                    let dgrams = std::mem::replace(
                         &mut send_datagrams_buf,
                         Vec::with_capacity(SEND_DATAGRAM_BATCH_SIZE),
                     );
                     // TODO(frando): can we avoid the clone here?
                     let metrics = self.metrics.clone();
-                    let packet_iter = batch.into_iter().map(|item| {
-                        metrics.send_relay.inc_by(item.datagrams.contents.len() as _);
-                        Ok(ClientToRelayMsg::Datagrams {
-                            dst_node_id: item.remote_node,
-                            datagrams: item.datagrams
+                    let packet_iter = dgrams.into_iter().flat_map(|datagrams| {
+                        PacketizeIter::<_, MAX_PAYLOAD_SIZE>::new(
+                            datagrams.remote_node,
+                            datagrams.datagrams.clone(),
+                        )
+                        .map(|p| {
+                            Ok(ClientToRelayMsg::SendPacket { dst_key: p.node_id, packet: p.payload })
                         })
                     });
-                    let mut packet_stream = n0_future::stream::iter(packet_iter);
+                    let mut packet_stream = n0_future::stream::iter(packet_iter).inspect(|m| {
+                        if let Ok(ClientToRelayMsg::SendPacket { dst_key: _node_id, packet: payload }) = m {
+                            metrics.send_relay.inc_by(payload.len() as _);
+                        }
+                    });
                     let fut = client_sink.send_all(&mut packet_stream);
                     self.run_sending(fut, &mut state, &mut client_stream).await?;
                 }
@@ -666,11 +680,11 @@ impl ActiveRelayActor {
 
     fn handle_relay_msg(&mut self, msg: RelayToClientMsg, state: &mut ConnectedRelayState) {
         match msg {
-            RelayToClientMsg::Datagrams {
-                remote_node_id,
-                datagrams,
+            RelayToClientMsg::ReceivedPacket {
+                src_key: remote_node_id,
+                content,
             } => {
-                trace!(len = %datagrams.contents.len(), "received msg");
+                trace!(len = %content.len(), "received msg");
                 // If this is a new sender, register a route for this peer.
                 if state
                     .last_packet_src
@@ -682,12 +696,14 @@ impl ActiveRelayActor {
                     state.last_packet_src = Some(remote_node_id);
                     state.nodes_present.insert(remote_node_id);
                 }
-                if let Err(err) = self.relay_datagrams_recv.try_send(RelayRecvDatagram {
-                    url: self.url.clone(),
-                    src: remote_node_id,
-                    datagrams,
-                }) {
-                    warn!("Dropping received relay packet: {err:#}");
+                for datagram in PacketSplitIter::new(self.url.clone(), remote_node_id, content) {
+                    let Ok(datagram) = datagram else {
+                        warn!("Invalid packet split");
+                        break;
+                    };
+                    if let Err(err) = self.relay_datagrams_recv.try_send(datagram) {
+                        warn!("Dropping received relay packet: {err:#}");
+                    }
                 }
             }
             RelayToClientMsg::NodeGone(node_id) => {
@@ -836,7 +852,7 @@ pub(crate) struct RelaySendItem {
     /// The home relay of the remote node.
     pub(crate) url: RelayUrl,
     /// One or more datagrams to send.
-    pub(crate) datagrams: Datagrams,
+    pub(crate) datagrams: RelayContents,
 }
 
 pub(super) struct RelayActor {
@@ -1216,6 +1232,18 @@ struct ActiveRelayHandle {
     datagrams_send_queue: mpsc::Sender<RelaySendItem>,
 }
 
+/// A packet to send over the relay.
+///
+/// This is nothing but a newtype, it should be constructed using [`PacketizeIter`].  This
+/// is a packet of one or more datagrams, each prefixed with a u16-be length.  This is what
+/// the `Frame::SendPacket` of the `DerpCodec` transports and is produced by
+/// [`PacketizeIter`] and transformed back into datagrams using [`PacketSplitIter`].
+#[derive(Debug, PartialEq, Eq)]
+struct RelaySendPacket {
+    node_id: NodeId,
+    payload: Bytes,
+}
+
 /// A single datagram received from a relay server.
 ///
 /// This could be either a QUIC or DISCO packet.
@@ -1223,9 +1251,116 @@ struct ActiveRelayHandle {
 pub(crate) struct RelayRecvDatagram {
     pub(crate) url: RelayUrl,
     pub(crate) src: NodeId,
-    pub(crate) datagrams: Datagrams,
+    pub(crate) buf: Bytes,
 }
 
+/// Combines datagrams into a single DISCO frame of at most MAX_PACKET_SIZE.
+///
+/// The disco `iroh_relay::protos::Frame::SendPacket` frame can contain more then a single
+/// datagram.  Each datagram in this frame is prefixed with a little-endian 2-byte length
+/// prefix.  This occurs when Quinn sends a GSO transmit containing more than one datagram,
+/// which are split using `split_packets`.
+///
+/// The [`PacketSplitIter`] does the inverse and splits such packets back into individual
+/// datagrams.
+struct PacketizeIter<I: Iterator, const N: usize> {
+    node_id: NodeId,
+    iter: std::iter::Peekable<I>,
+    buffer: BytesMut,
+}
+
+impl<I: Iterator, const N: usize> PacketizeIter<I, N> {
+    /// Create a new new PacketizeIter from something that can be turned into an
+    /// iterator of slices, like a `Vec<Bytes>`.
+    fn new(node_id: NodeId, iter: impl IntoIterator<IntoIter = I>) -> Self {
+        Self {
+            node_id,
+            iter: iter.into_iter().peekable(),
+            buffer: BytesMut::with_capacity(N),
+        }
+    }
+}
+
+impl<I: Iterator, const N: usize> Iterator for PacketizeIter<I, N>
+where
+    I::Item: AsRef<[u8]>,
+{
+    type Item = RelaySendPacket;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        use bytes::BufMut;
+        while let Some(next_bytes) = self.iter.peek() {
+            let next_bytes = next_bytes.as_ref();
+            assert!(next_bytes.len() + 2 <= N);
+            let next_length: u16 = next_bytes.len().try_into().expect("items < 64k size");
+            if self.buffer.len() + next_bytes.len() + 2 > N {
+                break;
+            }
+            self.buffer.put_u16_le(next_length);
+            self.buffer.put_slice(next_bytes);
+            self.iter.next();
+        }
+        if !self.buffer.is_empty() {
+            Some(RelaySendPacket {
+                node_id: self.node_id,
+                payload: self.buffer.split().freeze(),
+            })
+        } else {
+            None
+        }
+    }
+}
+
+/// Splits a single [`ServerToClientMsg::ReceivedPacket`] frame into datagrams.
+///
+/// This splits packets joined by [`PacketizeIter`] back into individual datagrams.  See
+/// that struct for more details.
+#[derive(Debug)]
+struct PacketSplitIter {
+    url: RelayUrl,
+    src: NodeId,
+    bytes: Bytes,
+}
+
+impl PacketSplitIter {
+    /// Create a new PacketSplitIter from a packet.
+    fn new(url: RelayUrl, src: NodeId, bytes: Bytes) -> Self {
+        Self { url, src, bytes }
+    }
+
+    fn fail(&mut self) -> Option<std::io::Result<RelayRecvDatagram>> {
+        self.bytes.clear();
+        Some(Err(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "",
+        )))
+    }
+}
+
+impl Iterator for PacketSplitIter {
+    type Item = std::io::Result<RelayRecvDatagram>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        use bytes::Buf;
+        if self.bytes.has_remaining() {
+            if self.bytes.remaining() < 2 {
+                return self.fail();
+            }
+            let len = self.bytes.get_u16_le() as usize;
+            if self.bytes.remaining() < len {
+                return self.fail();
+            }
+            let buf = self.bytes.split_to(len);
+            Some(Ok(RelayRecvDatagram {
+                url: self.url.clone(),
+                src: self.src,
+                buf,
+            }))
+        } else {
+            None
+        }
+    }
+}
 #[cfg(test)]
 mod tests {
     use std::{
@@ -1233,9 +1368,11 @@ mod tests {
         time::Duration,
     };
 
+    use bytes::Bytes;
     use iroh_base::{NodeId, RelayUrl, SecretKey};
-    use iroh_relay::{protos::relay::Datagrams, PingTracker};
+    use iroh_relay::PingTracker;
     use n0_snafu::{Error, Result, ResultExt};
+    use smallvec::smallvec;
     use tokio::sync::{mpsc, oneshot};
     use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
     use tracing::{info, info_span, Instrument};
@@ -1243,10 +1380,41 @@ mod tests {
 
     use super::{
         ActiveRelayActor, ActiveRelayActorOptions, ActiveRelayMessage, ActiveRelayPrioMessage,
-        RelayConnectionOptions, RelayRecvDatagram, RelaySendItem, RELAY_INACTIVE_CLEANUP_TIME,
-        UNDELIVERABLE_DATAGRAM_TIMEOUT,
+        PacketizeIter, RelayConnectionOptions, RelayRecvDatagram, RelaySendItem, MAX_PACKET_SIZE,
+        RELAY_INACTIVE_CLEANUP_TIME, UNDELIVERABLE_DATAGRAM_TIMEOUT,
     };
     use crate::{dns::DnsResolver, test_utils};
+
+    #[test]
+    fn test_packetize_iter() {
+        let node_id = SecretKey::generate(rand::thread_rng()).public();
+        let empty_vec: Vec<Bytes> = Vec::new();
+        let mut iter = PacketizeIter::<_, MAX_PACKET_SIZE>::new(node_id, empty_vec);
+        assert_eq!(None, iter.next());
+
+        let single_vec = vec!["Hello"];
+        let iter = PacketizeIter::<_, MAX_PACKET_SIZE>::new(node_id, single_vec);
+        let result = iter.collect::<Vec<_>>();
+        assert_eq!(1, result.len());
+        assert_eq!(
+            &[5, 0, b'H', b'e', b'l', b'l', b'o'],
+            &result[0].payload[..]
+        );
+
+        let spacer = vec![0u8; MAX_PACKET_SIZE - 10];
+        let multiple_vec = vec![&b"Hello"[..], &spacer, &b"World"[..]];
+        let iter = PacketizeIter::<_, MAX_PACKET_SIZE>::new(node_id, multiple_vec);
+        let result = iter.collect::<Vec<_>>();
+        assert_eq!(2, result.len());
+        assert_eq!(
+            &[5, 0, b'H', b'e', b'l', b'l', b'o'],
+            &result[0].payload[..7]
+        );
+        assert_eq!(
+            &[5, 0, b'W', b'o', b'r', b'l', b'd'],
+            &result[1].payload[..]
+        );
+    }
 
     /// Starts a new [`ActiveRelayActor`].
     #[allow(clippy::too_many_arguments)]
@@ -1308,16 +1476,12 @@ mod tests {
                 loop {
                     let datagram = recv_datagram_rx.recv().await;
                     if let Some(recv) = datagram {
-                        let RelayRecvDatagram {
-                            url: _,
-                            src,
-                            datagrams,
-                        } = recv;
+                        let RelayRecvDatagram { url: _, src, buf } = recv;
                         info!(from = src.fmt_short(), "Received datagram");
                         let send = RelaySendItem {
                             remote_node: src,
                             url: relay_url.clone(),
-                            datagrams,
+                            datagrams: smallvec![buf],
                         };
                         send_datagram_tx.send(send).await.ok();
                     }
@@ -1358,10 +1522,10 @@ mod tests {
                     let RelayRecvDatagram {
                         url: _,
                         src: _,
-                        datagrams,
+                        buf,
                     } = rx.recv().await.unwrap();
 
-                    assert_eq!(datagrams, item.datagrams);
+                    assert_eq!(buf.as_ref(), item.datagrams[0]);
 
                     Ok::<_, Error>(())
                 })
@@ -1404,7 +1568,7 @@ mod tests {
         let hello_send_item = RelaySendItem {
             remote_node: peer_node,
             url: relay_url.clone(),
-            datagrams: Datagrams::from(b"hello"),
+            datagrams: smallvec![Bytes::from_static(b"hello")],
         };
         send_recv_echo(
             hello_send_item.clone(),

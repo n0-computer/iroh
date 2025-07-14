@@ -19,7 +19,7 @@ use crate::client::streams::{MaybeTlsStream, ProxyStream};
 use crate::{
     protos::{
         handshake,
-        relay::{ClientToRelayMsg, Error as ProtoError, RelayToClientMsg, MAX_PAYLOAD_SIZE},
+        relay::{ClientToRelayMsg, Error as ProtoError, RelayToClientMsg},
         streams::WsBytesFramed,
     },
     MAX_PACKET_SIZE,
@@ -143,9 +143,9 @@ impl Sink<ClientToRelayMsg> for Conn {
     }
 
     fn start_send(mut self: Pin<&mut Self>, frame: ClientToRelayMsg) -> Result<(), Self::Error> {
-        if let ClientToRelayMsg::Datagrams { datagrams, .. } = &frame {
-            let size = datagrams.contents.len();
-            snafu::ensure!(size <= MAX_PAYLOAD_SIZE, ExceedsMaxPacketSizeSnafu { size });
+        if let ClientToRelayMsg::SendPacket { .. } = &frame {
+            let size = frame.encoded_len();
+            snafu::ensure!(size <= MAX_PACKET_SIZE, ExceedsMaxPacketSizeSnafu { size });
         }
 
         Pin::new(&mut self.conn)

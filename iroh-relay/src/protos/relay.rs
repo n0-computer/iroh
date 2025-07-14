@@ -21,12 +21,6 @@ use crate::KeyCache;
 /// including its on-wire framing overhead)
 pub const MAX_PACKET_SIZE: usize = 64 * 1024;
 
-/// Maximum size a datagram payload is allowed to be.
-///
-/// This is [`MAX_PACKET_SIZE`] minus the length of an encoded public key minus 3 bytes,
-/// one for ECN, and two for the segment size.
-pub const MAX_PAYLOAD_SIZE: usize = MAX_PACKET_SIZE - NodeId::LENGTH - 3;
-
 /// The maximum frame size.
 ///
 /// This is also the minimum burst size that a rate-limiter has to accept.
@@ -80,11 +74,12 @@ pub enum Error {
 #[derive(derive_more::Debug, Clone, PartialEq, Eq)]
 pub enum RelayToClientMsg {
     /// Represents datagrams sent from relays (originally sent to them by another client).
-    Datagrams {
+    ReceivedPacket {
         /// The [`NodeId`] of the original sender.
-        remote_node_id: NodeId,
-        /// The datagrams and related metadata.
-        datagrams: Datagrams,
+        src_key: NodeId,
+        /// The received packet bytes.
+        #[debug(skip)]
+        content: Bytes,
     },
     /// Indicates that the client identified by the underlying public key had previously sent you a
     /// packet but has now disconnected from the relay.
@@ -128,85 +123,19 @@ pub enum ClientToRelayMsg {
     /// with the payload sent previously in the ping.
     Pong([u8; 8]),
     /// Request from the client to relay datagrams to given remote node.
-    Datagrams {
+    SendPacket {
         /// The remote node to relay to.
-        dst_node_id: NodeId,
+        dst_key: NodeId,
         /// The datagrams and related metadata to relay.
-        datagrams: Datagrams,
+        packet: Bytes,
     },
-}
-
-/// One or multiple datagrams being transferred via the relay.
-///
-/// This type is modeled after [`quinn_proto::Transmit`]
-/// (or even more similarly `quinn_udp::Transmit`, but we don't depend on that library here).
-#[derive(derive_more::Debug, Clone, PartialEq, Eq)]
-pub struct Datagrams {
-    /// Explicit congestion notification bits
-    pub ecn: Option<quinn_proto::EcnCodepoint>,
-    /// The segment size if this transmission contains multiple datagrams.
-    /// This is `None` if the transmit only contains a single datagram
-    pub segment_size: Option<u16>,
-    /// The contents of the datagram(s)
-    #[debug(skip)]
-    pub contents: Bytes,
-}
-
-impl<T: AsRef<[u8]>> From<T> for Datagrams {
-    fn from(bytes: T) -> Self {
-        Self {
-            ecn: None,
-            segment_size: None,
-            contents: Bytes::copy_from_slice(bytes.as_ref()),
-        }
-    }
-}
-
-impl Datagrams {
-    fn write_to<O: BufMut>(&self, mut dst: O) -> O {
-        let ecn = self.ecn.map_or(0, |ecn| ecn as u8);
-        let segment_size = self.segment_size.unwrap_or_default();
-        dst.put_u8(ecn);
-        dst.put_u16(segment_size);
-        dst.put(self.contents.as_ref());
-        dst
-    }
-
-    fn encoded_len(&self) -> usize {
-        1 // ECN byte
-        + 2 // segment size
-        + self.contents.len()
-    }
-
-    fn from_bytes(bytes: Bytes) -> Result<Self, Error> {
-        // 1 bytes ECN, 2 bytes segment size
-        snafu::ensure!(bytes.len() > 3, InvalidFrameSnafu);
-
-        let ecn_byte = bytes[0];
-        let ecn = quinn_proto::EcnCodepoint::from_bits(ecn_byte);
-
-        let segment_size = u16::from_be_bytes(bytes[1..3].try_into().expect("length checked"));
-        let segment_size = if segment_size == 0 {
-            None
-        } else {
-            Some(segment_size)
-        };
-
-        let contents = bytes.slice(3..);
-
-        Ok(Self {
-            ecn,
-            segment_size,
-            contents,
-        })
-    }
 }
 
 impl RelayToClientMsg {
     /// Returns this frame's corresponding frame type.
     pub fn typ(&self) -> FrameType {
         match self {
-            Self::Datagrams { .. } => FrameType::RelayToClientDatagrams,
+            Self::ReceivedPacket { .. } => FrameType::RecvPacket,
             Self::NodeGone { .. } => FrameType::NodeGone,
             Self::Ping { .. } => FrameType::Ping,
             Self::Pong { .. } => FrameType::Pong,
@@ -227,12 +156,12 @@ impl RelayToClientMsg {
     pub(crate) fn write_to<O: BufMut>(&self, mut dst: O) -> O {
         dst = self.typ().write_to(dst);
         match self {
-            Self::Datagrams {
-                remote_node_id,
-                datagrams,
+            Self::ReceivedPacket {
+                src_key: remote_node_id,
+                content,
             } => {
                 dst.put(remote_node_id.as_ref());
-                dst = datagrams.write_to(dst);
+                dst.put(content.as_ref());
             }
             Self::NodeGone(node_id) => {
                 dst.put(node_id.as_ref());
@@ -260,9 +189,9 @@ impl RelayToClientMsg {
     #[cfg(feature = "server")]
     pub(crate) fn encoded_len(&self) -> usize {
         let payload_len = match self {
-            Self::Datagrams { datagrams, .. } => {
+            Self::ReceivedPacket { content, .. } => {
                 32 // nodeid
-                + datagrams.encoded_len()
+                + content.len()
             }
             Self::NodeGone(_) => 32,
             Self::Ping(_) | Self::Pong(_) => 8,
@@ -289,17 +218,14 @@ impl RelayToClientMsg {
         );
 
         let res = match frame_type {
-            FrameType::RelayToClientDatagrams => {
+            FrameType::RecvPacket => {
                 snafu::ensure!(content.len() >= NodeId::LENGTH, InvalidFrameSnafu);
 
-                let remote_node_id = cache
+                let src_key = cache
                     .key_from_slice(&content[..NodeId::LENGTH])
                     .context(InvalidPublicKeySnafu)?;
-                let datagrams = Datagrams::from_bytes(content.slice(NodeId::LENGTH..))?;
-                Self::Datagrams {
-                    remote_node_id,
-                    datagrams,
-                }
+                let content = content.slice(NodeId::LENGTH..);
+                Self::ReceivedPacket { src_key, content }
             }
             FrameType::NodeGone => {
                 snafu::ensure!(content.len() == NodeId::LENGTH, InvalidFrameSnafu);
@@ -356,7 +282,7 @@ impl RelayToClientMsg {
 impl ClientToRelayMsg {
     pub(crate) fn typ(&self) -> FrameType {
         match self {
-            Self::Datagrams { .. } => FrameType::ClientToRelayDatagrams,
+            Self::SendPacket { .. } => FrameType::SendPacket,
             Self::Ping { .. } => FrameType::Ping,
             Self::Pong { .. } => FrameType::Pong,
         }
@@ -372,12 +298,9 @@ impl ClientToRelayMsg {
     pub(crate) fn write_to<O: BufMut>(&self, mut dst: O) -> O {
         dst = self.typ().write_to(dst);
         match self {
-            Self::Datagrams {
-                dst_node_id,
-                datagrams,
-            } => {
-                dst.put(dst_node_id.as_ref());
-                dst = datagrams.write_to(dst);
+            Self::SendPacket { dst_key, packet } => {
+                dst.put(dst_key.as_ref());
+                dst.put(packet.as_ref());
             }
             Self::Ping(data) => {
                 dst.put(&data[..]);
@@ -392,9 +315,9 @@ impl ClientToRelayMsg {
     pub(crate) fn encoded_len(&self) -> usize {
         let payload_len = match self {
             Self::Ping(_) | Self::Pong(_) => 8,
-            Self::Datagrams { datagrams, .. } => {
+            Self::SendPacket { packet, .. } => {
                 32 // node id
-                + datagrams.encoded_len()
+                + packet.len()
             }
         };
         1 // frame type (all frame types currently encode as 1 byte varint)
@@ -415,15 +338,12 @@ impl ClientToRelayMsg {
         );
 
         let res = match frame_type {
-            FrameType::ClientToRelayDatagrams => {
-                let dst_node_id = cache
+            FrameType::SendPacket => {
+                let dst_key = cache
                     .key_from_slice(&content[..NodeId::LENGTH])
                     .context(InvalidPublicKeySnafu)?;
-                let datagrams = Datagrams::from_bytes(content.slice(NodeId::LENGTH..))?;
-                Self::Datagrams {
-                    dst_node_id,
-                    datagrams,
-                }
+                let packet = content.slice(NodeId::LENGTH..);
+                Self::SendPacket { dst_key, packet }
             }
             FrameType::Ping => {
                 snafu::ensure!(content.len() == 8, InvalidFrameSnafu);
@@ -499,13 +419,9 @@ mod tests {
                 "09 2a 2a 2a 2a 2a 2a 2a 2a",
             ),
             (
-                RelayToClientMsg::Datagrams {
-                    remote_node_id: client_key.public(),
-                    datagrams: Datagrams {
-                        ecn: Some(quinn::EcnCodepoint::Ce),
-                        segment_size: Some(6),
-                        contents: "Hello World!".into(),
-                    },
+                RelayToClientMsg::ReceivedPacket {
+                    src_key: client_key.public(),
+                    content: "Hello World!".into(),
                 }
                 .write_to(Vec::new()),
                 // frame type
@@ -548,13 +464,9 @@ mod tests {
                 "09 2a 2a 2a 2a 2a 2a 2a 2a",
             ),
             (
-                ClientToRelayMsg::Datagrams {
-                    dst_node_id: client_key.public(),
-                    datagrams: Datagrams {
-                        ecn: Some(quinn::EcnCodepoint::Ce),
-                        segment_size: Some(6),
-                        contents: "Hello World!".into(),
-                    },
+                ClientToRelayMsg::SendPacket {
+                    dst_key: client_key.public(),
+                    packet: "Hello World!".into(),
                 }
                 .write_to(Vec::new()),
                 // frame type
@@ -591,44 +503,22 @@ mod proptests {
         secret_key().prop_map(|key| key.public())
     }
 
-    fn ecn() -> impl Strategy<Value = Option<quinn_proto::EcnCodepoint>> {
-        (0..=3).prop_map(|n| match n {
-            1 => Some(quinn_proto::EcnCodepoint::Ce),
-            2 => Some(quinn_proto::EcnCodepoint::Ect0),
-            3 => Some(quinn_proto::EcnCodepoint::Ect1),
-            _ => None,
-        })
-    }
-
-    fn datagrams() -> impl Strategy<Value = Datagrams> {
-        (
-            ecn(),
-            prop::option::of(MAX_PAYLOAD_SIZE / 20..MAX_PAYLOAD_SIZE),
-            prop::collection::vec(any::<u8>(), 0..MAX_PAYLOAD_SIZE),
-        )
-            .prop_map(|(ecn, segment_size, data)| Datagrams {
-                ecn,
-                segment_size: segment_size.map(|ss| std::cmp::min(data.len(), ss) as u16),
-                contents: Bytes::from(data),
-            })
+    /// Generates random data, up to the maximum packet size minus the given number of bytes
+    fn data(consumed: usize) -> impl Strategy<Value = Bytes> {
+        let len = MAX_PACKET_SIZE - consumed;
+        prop::collection::vec(any::<u8>(), 0..len).prop_map(Bytes::from)
     }
 
     /// Generates a random valid frame
     fn server_client_frame() -> impl Strategy<Value = RelayToClientMsg> {
-        let recv_packet = (key(), datagrams()).prop_map(|(remote_node_id, datagrams)| {
-            RelayToClientMsg::Datagrams {
-                remote_node_id,
-                datagrams,
-            }
-        });
-        let node_gone = key().prop_map(RelayToClientMsg::NodeGone);
+        let recv_packet = (key(), data(32))
+            .prop_map(|(src_key, content)| RelayToClientMsg::ReceivedPacket { src_key, content });
+        let node_gone = key().prop_map(|node_id| RelayToClientMsg::NodeGone(node_id));
         let ping = prop::array::uniform8(any::<u8>()).prop_map(RelayToClientMsg::Ping);
         let pong = prop::array::uniform8(any::<u8>()).prop_map(RelayToClientMsg::Pong);
-        let health = ".{0,65536}"
-            .prop_filter("exceeds MAX_PAYLOAD_SIZE", |s| {
-                s.len() < MAX_PAYLOAD_SIZE // a single unicode character can match a regex "." but take up multiple bytes
-            })
-            .prop_map(|problem| RelayToClientMsg::Health { problem });
+        let health = data(0).prop_map(|_problem| RelayToClientMsg::Health {
+            problem: "".to_string(),
+        });
         let restarting = (any::<u32>(), any::<u32>()).prop_map(|(reconnect_in, try_for)| {
             RelayToClientMsg::Restarting {
                 reconnect_in: Duration::from_millis(reconnect_in.into()),
@@ -639,11 +529,8 @@ mod proptests {
     }
 
     fn client_server_frame() -> impl Strategy<Value = ClientToRelayMsg> {
-        let send_packet =
-            (key(), datagrams()).prop_map(|(dst_node_id, datagrams)| ClientToRelayMsg::Datagrams {
-                dst_node_id,
-                datagrams,
-            });
+        let send_packet = (key(), data(32))
+            .prop_map(|(dst_key, packet)| ClientToRelayMsg::SendPacket { dst_key, packet });
         let ping = prop::array::uniform8(any::<u8>()).prop_map(ClientToRelayMsg::Ping);
         let pong = prop::array::uniform8(any::<u8>()).prop_map(ClientToRelayMsg::Pong);
         prop_oneof![send_packet, ping, pong]
@@ -675,13 +562,6 @@ mod proptests {
         fn client_server_frame_encoded_len(frame in client_server_frame()) {
             let claimed_encoded_len = frame.encoded_len();
             let actual_encoded_len = frame.to_bytes().len();
-            prop_assert_eq!(claimed_encoded_len, actual_encoded_len);
-        }
-
-        #[test]
-        fn datagrams_encoded_len(datagrams in datagrams()) {
-            let claimed_encoded_len = datagrams.encoded_len();
-            let actual_encoded_len = datagrams.write_to(Vec::new()).len();
             prop_assert_eq!(claimed_encoded_len, actual_encoded_len);
         }
     }
