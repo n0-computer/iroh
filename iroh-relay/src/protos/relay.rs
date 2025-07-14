@@ -603,9 +603,18 @@ mod tests {
                     },
                 }
                 .write_to(Vec::new()),
-                "04 19 7f 6b 23 e1 6c 85 32 c6 ab c8 38 fa cd 5e
-                a7 89 be 0c 76 b2 92 03 34 03 9b fa 8b 3d 36 8d
-                61 47 6f 6f 64 62 79 65 21",
+                // frame type
+                // public key first 16 bytes
+                // public key second 16 bytes
+                // ECN byte
+                // Segment size
+                // hello world contents
+                "05
+                19 7f 6b 23 e1 6c 85 32 c6 ab c8 38 fa cd 5e a7
+                89 be 0c 76 b2 92 03 34 03 9b fa 8b 3d 36 8d 61
+                03
+                00 06
+                48 65 6c 6c 6f 20 57 6f 72 6c 64 21",
             ),
             (
                 ClientToRelayMsg::Datagrams {
