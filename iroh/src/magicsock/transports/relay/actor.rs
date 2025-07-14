@@ -1311,7 +1311,7 @@ where
     }
 }
 
-/// Splits a single [`ServerToClientMsg::ReceivedPacket`] frame into datagrams.
+/// Splits a single [`RelayToClientMsg::ReceivedPacket`] frame into datagrams.
 ///
 /// This splits packets joined by [`PacketizeIter`] back into individual datagrams.  See
 /// that struct for more details.
