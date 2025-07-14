@@ -24,9 +24,9 @@ pub enum FrameType {
     /// The server frame type for authentication denial
     ServerDeniesAuth = 3,
     /// 32B dest pub key + ECN byte + segment size u16 + datagrams contents
-    SendPacket = 4,
+    ClientToRelayDatagrams = 4,
     /// 32B src pub key + ECN byte + segment size u16 + datagrams contents
-    RecvPacket = 6,
+    RelayToClientDatagrams = 6,
     /// Sent from server to client to signal that a previous sender is no longer connected.
     ///
     /// That is, if A sent to B, and then if A disconnects, the server sends `FrameType::PeerGone`
