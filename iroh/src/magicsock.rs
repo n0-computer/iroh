@@ -45,6 +45,7 @@ use netwatch::{UdpSocket, ip::LocalAddresses};
 use quinn::{AsyncUdpSocket, ServerConfig, WeakConnectionHandle};
 use quinn_proto::PathEvent;
 use rand::Rng;
+use relay_mapped_addrs::RelayMappedAddresses;
 use smallvec::SmallVec;
 use snafu::{ResultExt, Snafu};
 use tokio::sync::{Mutex as AsyncMutex, mpsc};
@@ -79,6 +80,7 @@ use crate::{
 
 mod metrics;
 mod node_map;
+mod relay_mapped_addrs;
 
 pub(crate) mod transports;
 
@@ -200,6 +202,8 @@ pub(crate) struct MagicSock {
 
     /// Tracks the mapped IP addresses
     ip_mapped_addrs: IpMappedAddresses,
+    /// Tracks the mapped IP addresses
+    relay_mapped_addrs: RelayMappedAddresses,
     /// Local addresses
     local_addrs_watch: LocalAddrsWatch,
     /// Currently bound IP addresses of all sockets
@@ -295,25 +299,10 @@ impl MagicSock {
         remote: NodeId,
         conn: WeakConnectionHandle,
         mut path_events: tokio::sync::broadcast::Receiver<PathEvent>,
-        paths: Vec<SocketAddr>,
     ) {
         self.connection_map.insert(remote, conn);
-        task::spawn(async move {
-            let conn = conn.clone();
-            for addr in paths {
-                match conn.open_path(addr, quinn_proto::PathStatus::Backup).await {
-                    Ok(path) => {
-                        path.set_max_idle_timeout(Some(ENDPOINTS_FRESH_ENOUGH_DURATION))
-                            .ok();
-                        path.set_keep_alive_interval(Some(HEARTBEAT_INTERVAL)).ok();
-                    }
-                    Err(err) => {
-                        warn!("failed to open path {:?}", err);
-                    }
-                }
-            }
-        });
 
+        // TODO: open additional paths
         // TODO: track task
         // TODO: find a good home for this
         task::spawn(async move {
@@ -460,6 +449,11 @@ impl MagicSock {
             // Add addr to the internal NodeMap
             self.node_map
                 .add_node_addr(addr.clone(), source, &self.metrics.magicsock);
+
+            if let Some(url) = addr.relay_url() {
+                self.relay_mapped_addrs
+                    .get_or_register(url.clone(), addr.node_id);
+            }
 
             // Add paths to the existing connections
             self.add_paths(addr);
@@ -633,11 +627,8 @@ impl MagicSock {
 
         let mut active_paths = SmallVec::<[_; 3]>::new();
 
-        match MappedAddr::from(transmit.destination) {
-            MappedAddr::None(addr) => {
-                active_paths.push(transports::Addr::from(addr));
-            }
-            MappedAddr::NodeId(dest) => {
+        match MultipathMappedAddr::from(transmit.destination) {
+            MultipathMappedAddr::Mixed(dest) => {
                 trace!(
                     dst = %dest,
                     src = ?transmit.src_ip,
@@ -670,7 +661,10 @@ impl MagicSock {
                 }
             }
             #[cfg(not(wasm_browser))]
-            MappedAddr::Ip(dest) => {
+            MultipathMappedAddr::Ip(addr) => {
+                active_paths.push(transports::Addr::Ip(addr));
+            }
+            MultipathMappedAddr::Relay(dest) => {
                 trace!(
                     dst = %dest,
                     src = ?transmit.src_ip,
@@ -680,9 +674,9 @@ impl MagicSock {
 
                 // Check if this is a known IpMappedAddr, and if so, send over UDP
                 // Get the socket addr
-                match self.ip_mapped_addrs.get_ip_addr(&dest) {
-                    Some(addr) => {
-                        active_paths.push(transports::Addr::from(addr));
+                match self.relay_mapped_addrs.get_url(&dest) {
+                    Some((relay, node_id)) => {
+                        active_paths.push(transports::Addr::Relay(relay, node_id));
                     }
                     None => {
                         error!(%dest, "unknown mapped address");
@@ -1103,33 +1097,7 @@ impl From<SocketAddr> for MultipathMappedAddr {
                 if let Ok(ip_mapped_addr) = IpMappedAddr::try_from(addr) {
                     return Self::Relay(ip_mapped_addr);
                 }
-                MappedAddr::Self(value)
-            }
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
-enum MappedAddr {
-    NodeId(NodeIdMappedAddr),
-    #[cfg(not(wasm_browser))]
-    Ip(IpMappedAddr),
-    None(SocketAddr),
-}
-
-impl From<SocketAddr> for MappedAddr {
-    fn from(value: SocketAddr) -> Self {
-        match value.ip() {
-            IpAddr::V4(_) => MappedAddr::None(value),
-            IpAddr::V6(addr) => {
-                if let Ok(node_id_mapped_addr) = NodeIdMappedAddr::try_from(addr) {
-                    return MappedAddr::NodeId(node_id_mapped_addr);
-                }
-                #[cfg(not(wasm_browser))]
-                if let Ok(ip_mapped_addr) = IpMappedAddr::try_from(addr) {
-                    return MappedAddr::Ip(ip_mapped_addr);
-                }
-                MappedAddr::None(value)
+                Self::Ip(value)
             }
         }
     }
@@ -1318,6 +1286,7 @@ impl Handle {
             bind_ip(addr_v4, addr_v6, &metrics).context(BindSocketsSnafu)?;
 
         let ip_mapped_addrs = IpMappedAddresses::default();
+        let relay_mapped_addrs = RelayMappedAddresses::default();
 
         let (actor_sender, actor_receiver) = mpsc::channel(256);
 
@@ -1367,6 +1336,7 @@ impl Handle {
             node_map,
             connection_map: Default::default(),
             ip_mapped_addrs: ip_mapped_addrs.clone(),
+            relay_mapped_addrs,
             discovery,
             discovery_user_data: RwLock::new(discovery_user_data),
             direct_addrs: Default::default(),

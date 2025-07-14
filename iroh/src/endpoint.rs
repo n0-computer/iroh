@@ -34,9 +34,8 @@ use url::Url;
 
 #[cfg(wasm_browser)]
 use crate::discovery::pkarr::PkarrResolver;
-#[cfg(not(wasm_browser))]
-use crate::{discovery::dns::DnsDiscovery, dns::DnsResolver};
 use crate::{
+    RelayProtocol,
     discovery::{
         ConcurrentDiscovery, Discovery, DiscoveryContext, DiscoveryError, DiscoveryItem,
         DiscoverySubscribers, DiscoveryTask, DynIntoDiscovery, IntoDiscovery, IntoDiscoveryError,
@@ -47,6 +46,8 @@ use crate::{
     net_report::Report,
     tls,
 };
+#[cfg(not(wasm_browser))]
+use crate::{discovery::dns::DnsDiscovery, dns::DnsResolver};
 
 mod rtt_actor;
 
@@ -735,13 +736,12 @@ impl Endpoint {
             self.add_node_addr(node_addr.clone())?;
         }
         let node_id = node_addr.node_id;
-        let relay_url = node_addr.relay_url.clone();
 
         // Get the mapped IPv6 address from the magic socket. Quinn will connect to this
         // address.  Start discovery for this node if it's enabled and we have no valid or
         // verified address information for this node.  Dropping the discovery cancels any
         // still running task.
-        let (mapped_addr, direct_addresses, _discovery_drop_guard) = self
+        let (mapped_addr, _discovery_drop_guard) = self
             .get_mapping_addr_and_maybe_start_discovery(node_addr)
             .await
             .context(NoAddressSnafu)?;
@@ -753,12 +753,7 @@ impl Endpoint {
         // Start connecting via quinn. This will time out after 10 seconds if no reachable
         // address is available.
 
-        debug!(
-            ?mapped_addr,
-            ?direct_addresses,
-            ?relay_url,
-            "Attempting connection..."
-        );
+        debug!(?mapped_addr, "Attempting connection...");
         let client_config = {
             let mut alpn_protocols = vec![alpn.to_vec()];
             alpn_protocols.extend(options.additional_alpns);
@@ -771,12 +766,7 @@ impl Endpoint {
             client_config
         };
 
-        // TODO: race available addresses, this is currently only using the relay addr to connect
-        let dest_addr = if relay_url.is_none() && !direct_addresses.is_empty() {
-            direct_addresses[0]
-        } else {
-            mapped_addr.private_socket_addr()
-        };
+        let dest_addr = mapped_addr.private_socket_addr();
         let server_name = &tls::name::encode(node_id);
         let connect = self
             .msock
@@ -784,14 +774,10 @@ impl Endpoint {
             .connect_with(client_config, dest_addr, server_name)
             .context(QuinnSnafu)?;
 
-        let mut paths = direct_addresses;
-        paths.push(mapped_addr.private_socket_addr());
-
         Ok(Connecting {
             inner: connect,
             ep: self.clone(),
             remote_node_id: Some(node_id),
-            paths,
             _discovery_drop_guard,
         })
     }
@@ -1386,20 +1372,18 @@ impl Endpoint {
     async fn get_mapping_addr_and_maybe_start_discovery(
         &self,
         node_addr: NodeAddr,
-    ) -> Result<(NodeIdMappedAddr, Vec<SocketAddr>, Option<DiscoveryTask>), GetMappingAddressError>
-    {
+    ) -> Result<(NodeIdMappedAddr, Option<DiscoveryTask>), GetMappingAddressError> {
         let node_id = node_addr.node_id;
 
         // Only return a mapped addr if we have some way of dialing this node, in other
         // words, we have either a relay URL or at least one direct address.
         let addr = if self.msock.has_send_address(node_id) {
-            let maddr = self.msock.get_mapping_addr(node_id);
-            maddr.map(|maddr| (maddr, self.msock.get_direct_addrs(node_id)))
+            self.msock.get_mapping_addr(node_id)
         } else {
             None
         };
         match addr {
-            Some((maddr, direct)) => {
+            Some(maddr) => {
                 // We have some way of dialing this node, but that doesn't actually mean
                 // we can actually connect to any of these addresses.
                 // Therefore, we will invoke the discovery service if we haven't received from the
@@ -1411,7 +1395,7 @@ impl Endpoint {
                 let discovery = DiscoveryTask::maybe_start_after_delay(self, node_id, delay)
                     .ok()
                     .flatten();
-                Ok((maddr, direct, discovery))
+                Ok((maddr, discovery))
             }
 
             None => {
@@ -1426,8 +1410,7 @@ impl Endpoint {
                     .await
                     .context(get_mapping_address_error::DiscoverSnafu)?;
                 if let Some(addr) = self.msock.get_mapping_addr(node_id) {
-                    let direct = self.msock.get_direct_addrs(node_id);
-                    Ok((addr, direct, Some(discovery)))
+                    Ok((addr, Some(discovery)))
                 } else {
                     Err(get_mapping_address_error::NoAddressSnafu.build())
                 }
@@ -1656,8 +1639,6 @@ pub struct Connecting {
     inner: quinn::Connecting,
     ep: Endpoint,
     remote_node_id: Option<NodeId>,
-    /// Additional paths to open once a connection is created
-    paths: Vec<SocketAddr>,
     /// We run discovery as long as we haven't established a connection yet.
     #[debug("Option<DiscoveryTask>")]
     _discovery_drop_guard: Option<DiscoveryTask>,
@@ -1786,21 +1767,15 @@ impl Future for Connecting {
                 if let Some(remote) = *this.remote_node_id {
                     let weak_handle = conn.inner.weak_handle();
                     let path_events = conn.inner.path_events();
-                    this.ep.msock.register_connection(
-                        remote,
-                        weak_handle,
-                        path_events,
-                        this.paths.clone(),
-                    );
+                    this.ep
+                        .msock
+                        .register_connection(remote, weak_handle, path_events);
                 } else if let Ok(remote) = conn.remote_node_id() {
                     let weak_handle = conn.inner.weak_handle();
                     let path_events = conn.inner.path_events();
-                    this.ep.msock.register_connection(
-                        remote,
-                        weak_handle,
-                        path_events,
-                        this.paths.clone(),
-                    );
+                    this.ep
+                        .msock
+                        .register_connection(remote, weak_handle, path_events);
                 } else {
                     warn!("unable to determine node id for the remote");
                 }
@@ -2287,6 +2262,7 @@ mod tests {
     };
 
     use iroh_base::{NodeAddr, NodeId, SecretKey};
+    use iroh_relay::http::Protocol;
     use n0_future::{StreamExt, task::AbortOnDropHandle};
     use n0_snafu::{Error, Result, ResultExt};
     use n0_watcher::Watcher;

@@ -38,7 +38,7 @@ impl IpMappedAddr {
     ///
     /// This generates a new IPv6 address in the Unique Local Address range (RFC 4193)
     /// which is recognised by iroh as an IP mapped address.
-    pub(super) fn generate() -> Self {
+    pub(crate) fn generate() -> Self {
         let mut addr = [0u8; 16];
         addr[0] = Self::ADDR_PREFIXL;
         addr[1..6].copy_from_slice(&Self::ADDR_GLOBAL_ID);
