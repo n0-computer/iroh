@@ -401,22 +401,22 @@ mod tests {
                     problem: "Hello? Yes this is dog.".into(),
                 }
                 .write_to(Vec::new()),
-                "0a 48 65 6c 6c 6f 3f 20 59 65 73 20 74 68 69 73
+                "0b 48 65 6c 6c 6f 3f 20 59 65 73 20 74 68 69 73
                 20 69 73 20 64 6f 67 2e",
             ),
             (
                 RelayToClientMsg::NodeGone(client_key.public()).write_to(Vec::new()),
-                "07 19 7f 6b 23 e1 6c 85 32 c6 ab c8 38 fa cd 5e
+                "08 19 7f 6b 23 e1 6c 85 32 c6 ab c8 38 fa cd 5e
                 a7 89 be 0c 76 b2 92 03 34 03 9b fa 8b 3d 36 8d
                 61",
             ),
             (
                 RelayToClientMsg::Ping([42u8; 8]).write_to(Vec::new()),
-                "08 2a 2a 2a 2a 2a 2a 2a 2a",
+                "09 2a 2a 2a 2a 2a 2a 2a 2a",
             ),
             (
                 RelayToClientMsg::Pong([42u8; 8]).write_to(Vec::new()),
-                "09 2a 2a 2a 2a 2a 2a 2a 2a",
+                "0a 2a 2a 2a 2a 2a 2a 2a 2a",
             ),
             (
                 RelayToClientMsg::ReceivedPacket {
@@ -424,18 +424,9 @@ mod tests {
                     content: "Hello World!".into(),
                 }
                 .write_to(Vec::new()),
-                // frame type
-                // public key first 16 bytes
-                // public key second 16 bytes
-                // ECN byte
-                // segment size
-                // hello world contents bytes
-                "06
-                19 7f 6b 23 e1 6c 85 32 c6 ab c8 38 fa cd 5e a7
-                89 be 0c 76 b2 92 03 34 03 9b fa 8b 3d 36 8d 61
-                03
-                00 06
-                48 65 6c 6c 6f 20 57 6f 72 6c 64 21",
+                "06 19 7f 6b 23 e1 6c 85 32 c6 ab c8 38 fa cd 5e
+                a7 89 be 0c 76 b2 92 03 34 03 9b fa 8b 3d 36 8d
+                61 48 65 6c 6c 6f 20 57 6f 72 6c 64 21",
             ),
             (
                 RelayToClientMsg::Restarting {
@@ -443,7 +434,7 @@ mod tests {
                     try_for: Duration::from_millis(20),
                 }
                 .write_to(Vec::new()),
-                "0b 00 00 00 0a 00 00 00 14",
+                "0c 00 00 00 0a 00 00 00 14",
             ),
         ]);
 
@@ -457,30 +448,21 @@ mod tests {
         check_expected_bytes(vec![
             (
                 ClientToRelayMsg::Ping([42u8; 8]).write_to(Vec::new()),
-                "08 2a 2a 2a 2a 2a 2a 2a 2a",
+                "09 2a 2a 2a 2a 2a 2a 2a 2a",
             ),
             (
                 ClientToRelayMsg::Pong([42u8; 8]).write_to(Vec::new()),
-                "09 2a 2a 2a 2a 2a 2a 2a 2a",
+                "0a 2a 2a 2a 2a 2a 2a 2a 2a",
             ),
             (
                 ClientToRelayMsg::SendPacket {
                     dst_key: client_key.public(),
-                    packet: "Hello World!".into(),
+                    packet: "Goodbye!".into(),
                 }
                 .write_to(Vec::new()),
-                // frame type
-                // public key first 16 bytes
-                // public key second 16 bytes
-                // ECN byte
-                // segment size
-                // hello world contents
-                "05
-                19 7f 6b 23 e1 6c 85 32 c6 ab c8 38 fa cd 5e a7
-                89 be 0c 76 b2 92 03 34 03 9b fa 8b 3d 36 8d 61
-                03
-                00 06
-                48 65 6c 6c 6f 20 57 6f 72 6c 64 21",
+                "04 19 7f 6b 23 e1 6c 85 32 c6 ab c8 38 fa cd 5e
+                a7 89 be 0c 76 b2 92 03 34 03 9b fa 8b 3d 36 8d
+                61 47 6f 6f 64 62 79 65 21",
             ),
         ]);
 
@@ -516,9 +498,11 @@ mod proptests {
         let node_gone = key().prop_map(|node_id| RelayToClientMsg::NodeGone(node_id));
         let ping = prop::array::uniform8(any::<u8>()).prop_map(RelayToClientMsg::Ping);
         let pong = prop::array::uniform8(any::<u8>()).prop_map(RelayToClientMsg::Pong);
-        let health = data(0).prop_map(|_problem| RelayToClientMsg::Health {
-            problem: "".to_string(),
-        });
+        let health = ".{0,65536}"
+            .prop_filter("exceeds max payload size", |s| {
+                s.len() < 65536 // a single unicode character can match a regex "." but take up multiple bytes
+            })
+            .prop_map(|problem| RelayToClientMsg::Health { problem });
         let restarting = (any::<u32>(), any::<u32>()).prop_map(|(reconnect_in, try_for)| {
             RelayToClientMsg::Restarting {
                 reconnect_in: Duration::from_millis(reconnect_in.into()),

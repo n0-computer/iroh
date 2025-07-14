@@ -718,7 +718,7 @@ mod tests {
         let mut stream = RelayedStream::test_limited(io_read, LIMIT / 10, LIMIT)?;
 
         // Prepare a frame to send, assert its size.
-        let data = Bytes::from_static(b"hello world!!1");
+        let data = Bytes::from_static(b"hello world!1eins");
         let target = SecretKey::generate(rand::thread_rng()).public();
         let frame = ClientToRelayMsg::SendPacket {
             dst_key: target,
