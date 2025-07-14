@@ -495,7 +495,7 @@
 <a href=#495 id=495 data-nosnippet>495</a>    </span><span class="kw">fn </span>server_client_frame() -&gt; <span class="kw">impl </span>Strategy&lt;Value = RelayToClientMsg&gt; {
 <a href=#496 id=496 data-nosnippet>496</a>        <span class="kw">let </span>recv_packet = (key(), data(<span class="number">32</span>))
 <a href=#497 id=497 data-nosnippet>497</a>            .prop_map(|(src_key, content)| RelayToClientMsg::ReceivedPacket { src_key, content });
-<a href=#498 id=498 data-nosnippet>498</a>        <span class="kw">let </span>node_gone = key().prop_map(|node_id| RelayToClientMsg::NodeGone(node_id));
+<a href=#498 id=498 data-nosnippet>498</a>        <span class="kw">let </span>node_gone = key().prop_map(RelayToClientMsg::NodeGone);
 <a href=#499 id=499 data-nosnippet>499</a>        <span class="kw">let </span>ping = prop::array::uniform8(any::&lt;u8&gt;()).prop_map(RelayToClientMsg::Ping);
 <a href=#500 id=500 data-nosnippet>500</a>        <span class="kw">let </span>pong = prop::array::uniform8(any::&lt;u8&gt;()).prop_map(RelayToClientMsg::Pong);
 <a href=#501 id=501 data-nosnippet>501</a>        <span class="kw">let </span>health = <span class="string">".{0,65536}"
