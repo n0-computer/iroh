@@ -3,8 +3,8 @@
 //! Protocol flow:
 //!  * server occasionally sends [`FrameType::Ping`]
 //!  * client responds to any [`FrameType::Ping`] with a [`FrameType::Pong`]
-//!  * clients sends [`FrameType::ClientToRelayDatagrams`]
-//!  * server then sends [`FrameType::RelayToClientDatagrams`] to recipient
+//!  * clients sends [`FrameType::SendPacket`]
+//!  * server then sends [`FrameType::RecvPacket`] to recipient
 //!  * server sends [`FrameType::NodeGone`] when the other client disconnects
 
 use bytes::{BufMut, Bytes, BytesMut};
