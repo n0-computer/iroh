@@ -29,7 +29,7 @@ use data_encoding::BASE32HEX_NOPAD as HEX;
 use http::HeaderValue;
 #[cfg(feature = "server")]
 use iroh_base::Signature;
-use iroh_base::{PublicKey, SecretKey, SignatureError};
+use iroh_base::{PublicKey, SecretKey};
 use n0_future::{
     time::{self, Elapsed},
     SinkExt, TryStreamExt,
@@ -173,6 +173,7 @@ pub enum Error {
     ClientAuthHeaderInvalid { value: HeaderValue },
 }
 
+#[cfg(feature = "server")]
 #[derive(Debug, Snafu)]
 pub(crate) enum VerificationError {
     #[snafu(display("Couldn't export TLS keying material on our end"))]
@@ -184,7 +185,7 @@ pub(crate) enum VerificationError {
     },
     #[snafu(display("Client signature {signature:X?} for message {message:X?} invalid for public key {public_key}"))]
     SignatureInvalid {
-        source: SignatureError,
+        source: iroh_base::SignatureError,
         message: Vec<u8>,
         signature: [u8; 64],
         public_key: PublicKey,
