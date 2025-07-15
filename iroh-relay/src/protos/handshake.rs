@@ -226,7 +226,7 @@ impl ClientAuth {
 
     /// Verifies this client's authentication given the challenge this was sent in response to.
     #[cfg(feature = "server")]
-    pub(crate) fn verify(&self, challenge: &ServerChallenge) -> Result<(), VerificationError> {
+    pub(crate) fn verify(&self, challenge: &ServerChallenge) -> Result<(), Box<VerificationError>> {
         let message = challenge.message_to_sign();
         self.public_key
             .verify(&message, &Signature::from_bytes(&self.signature))
@@ -235,6 +235,7 @@ impl ClientAuth {
                 signature: self.signature,
                 public_key: self.public_key,
             })
+            .map_err(Box::new)
     }
 }
 
@@ -276,7 +277,10 @@ impl KeyMaterialClientAuth {
     ///    This situation is detected when the key material suffix mismatches.
     /// 2. The signature itself doesn't verify.
     #[cfg(feature = "server")]
-    pub(crate) fn verify(&self, io: &impl ExportKeyingMaterial) -> Result<(), VerificationError> {
+    pub(crate) fn verify(
+        &self,
+        io: &impl ExportKeyingMaterial,
+    ) -> Result<(), Box<VerificationError>> {
         use snafu::OptionExt;
 
         let key_material = io
@@ -313,6 +317,7 @@ impl KeyMaterialClientAuth {
                 public_key: self.public_key,
                 signature: self.signature,
             })
+            .map_err(Box::new)
     }
 }
 
