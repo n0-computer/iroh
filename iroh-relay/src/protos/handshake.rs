@@ -1,4 +1,4 @@
-//! Implements the handshake protocol that iroh's relays and iroh clients that connect to it go through.
+//! Implements the handshake protocol that authenticates and authorizes clients connecting to the relays.
 //!
 //! The purpose of the handshake is to
 //! 1. Inform the relay of the client's NodeId
@@ -25,10 +25,11 @@
 //! [Concealed HTTP Auth RFC]: https://datatracker.ietf.org/doc/rfc9729/
 //! [RFC 5705]: https://datatracker.ietf.org/doc/html/rfc5705
 use bytes::{BufMut, Bytes, BytesMut};
+use data_encoding::BASE32HEX_NOPAD as HEX;
 use http::HeaderValue;
 #[cfg(feature = "server")]
 use iroh_base::Signature;
-use iroh_base::{PublicKey, SecretKey};
+use iroh_base::{PublicKey, SecretKey, SignatureError};
 use n0_future::{
     time::{self, Elapsed},
     SinkExt, TryStreamExt,
@@ -45,6 +46,12 @@ use super::{
 };
 use crate::ExportKeyingMaterial;
 
+/// Domain separation string for the [`ServerChallenge`] signature
+const DOMAIN_SEP_CHALLENGE: &str = "iroh-relay handshake v1 challenge signature";
+
+/// Domain separation label for [`KeyMaterialClientAuth`]'s use of [`ExportKeyingMaterial`]
+const DOMAIN_SEP_TLS_EXPORT_LABEL: &[u8] = b"iroh-relay handshake v1";
+
 /// Authentication message from the client.
 #[derive(derive_more::Debug, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(wasm_browser, allow(unused))]
@@ -53,10 +60,12 @@ pub(crate) struct KeyMaterialClientAuth {
     pub(crate) public_key: PublicKey,
     /// A signature of (a hash of) extracted key material.
     #[serde(with = "serde_bytes")]
+    #[debug("{}", HEX.encode(signature))]
     pub(crate) signature: [u8; 64],
     /// Part of the extracted key material.
     ///
     /// Allows making sure we have the same underlying key material.
+    #[debug("{}", HEX.encode(key_material_suffix))]
     pub(crate) key_material_suffix: [u8; 16],
 }
 
@@ -65,6 +74,7 @@ pub(crate) struct KeyMaterialClientAuth {
 pub(crate) struct ServerChallenge {
     /// The challenge to sign.
     /// Must be randomly generated with an RNG that is safe to use for crypto.
+    #[debug("{}", HEX.encode(challenge))]
     pub(crate) challenge: [u8; 16],
 }
 
@@ -79,6 +89,7 @@ pub(crate) struct ClientAuth {
     ///
     /// This is what provides the authentication.
     #[serde(with = "serde_bytes")]
+    #[debug("{}", HEX.encode(signature))]
     pub(crate) signature: [u8; 64],
 }
 
@@ -87,7 +98,7 @@ pub(crate) struct ClientAuth {
 pub(crate) struct ServerConfirmsAuth;
 
 /// Denial of connection. The client couldn't be verified as authentic.
-#[derive(derive_more::Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub(crate) struct ServerDeniesAuth {
     reason: String,
 }
@@ -162,6 +173,24 @@ pub enum Error {
     ClientAuthHeaderInvalid { value: HeaderValue },
 }
 
+#[derive(Debug, Snafu)]
+pub(crate) enum VerificationError {
+    #[snafu(display("Couldn't export TLS keying material on our end"))]
+    NoKeyingMaterial,
+    #[snafu(display("Client didn't extract the same keying material, the suffix mismatched: expected {expected:X?} but got {actual:X?}"))]
+    MismatchedSuffix {
+        expected: [u8; 16],
+        actual: [u8; 16],
+    },
+    #[snafu(display("Client signature {signature:X?} for message {message:X?} invalid for public key {public_key}"))]
+    SignatureInvalid {
+        source: SignatureError,
+        message: Vec<u8>,
+        signature: [u8; 64],
+        public_key: PublicKey,
+    },
+}
+
 impl ServerChallenge {
     /// Generates a new challenge.
     #[cfg(feature = "server")]
@@ -173,15 +202,20 @@ impl ServerChallenge {
 
     /// The actual message bytes to sign (and verify against) for this challenge.
     fn message_to_sign(&self) -> [u8; 32] {
-        blake3::derive_key(
-            "iroh-relay handshake v1 challenge signature",
-            &self.challenge,
-        )
+        // We're signing a key instead of the direct challenge.
+        // This gives us domain separation protecting from multiple possible attacks,
+        // but especially this one:
+        // Assume a malicious relay. If the protocol required the client to sign the
+        // challenge directly, this would allow the relay to obtain an arbitrary 16-byte
+        // signature, if it maliciously choses the challenge instead of generating it
+        // randomly.
+        // Deriving a key to sign instead mitigates this attack.
+        blake3::derive_key(DOMAIN_SEP_CHALLENGE, &self.challenge)
     }
 }
 
 impl ClientAuth {
-    /// Generates a signature for given challenge from the server.
+    /// Generates a signature for the given challenge from the server.
     pub(crate) fn new(secret_key: &SecretKey, challenge: &ServerChallenge) -> Self {
         Self {
             public_key: secret_key.public(),
@@ -191,17 +225,19 @@ impl ClientAuth {
 
     /// Verifies this client's authentication given the challenge this was sent in response to.
     #[cfg(feature = "server")]
-    pub(crate) fn verify(&self, challenge: &ServerChallenge) -> bool {
+    pub(crate) fn verify(&self, challenge: &ServerChallenge) -> Result<(), VerificationError> {
+        let message = challenge.message_to_sign();
         self.public_key
-            .verify(
-                &challenge.message_to_sign(),
-                &Signature::from_bytes(&self.signature),
-            )
-            .is_ok()
+            .verify(&message, &Signature::from_bytes(&self.signature))
+            .with_context(|_| SignatureInvalidSnafu {
+                message: message.to_vec(),
+                signature: self.signature,
+                public_key: self.public_key,
+            })
     }
 }
 
-#[cfg_attr(wasm_browser, allow(unused))]
+#[cfg(not(wasm_browser))]
 impl KeyMaterialClientAuth {
     /// Generates a client's authentication, similar to [`ClientAuth`], but by using TLS keying material
     /// instead of a received challenge.
@@ -209,13 +245,16 @@ impl KeyMaterialClientAuth {
         let public_key = secret_key.public();
         let key_material = io.export_keying_material(
             [0u8; 32],
-            b"iroh-relay handshake v1",
+            DOMAIN_SEP_TLS_EXPORT_LABEL,
             Some(secret_key.public().as_bytes()),
         )?;
+        // We split the export and only sign the first 16 bytes, and
+        // pass through the last 16 bytes. See also the note in [Self::verify].
+        let (message, suffix) = key_material.split_at(16);
         Some(Self {
             public_key,
-            signature: secret_key.sign(&key_material[..16]).to_bytes(),
-            key_material_suffix: key_material[16..].try_into().expect("split right"),
+            signature: secret_key.sign(message).to_bytes(),
+            key_material_suffix: suffix.try_into().expect("hardcoded length"),
         })
     }
 
@@ -236,20 +275,43 @@ impl KeyMaterialClientAuth {
     ///    This situation is detected when the key material suffix mismatches.
     /// 2. The signature itself doesn't verify.
     #[cfg(feature = "server")]
-    pub(crate) fn verify(&self, io: &impl ExportKeyingMaterial) -> bool {
-        let Some(key_material) = io.export_keying_material(
-            [0u8; 32],
-            b"iroh-relay handshake v1",
-            Some(self.public_key.as_bytes()),
-        ) else {
-            return false;
-        };
+    pub(crate) fn verify(&self, io: &impl ExportKeyingMaterial) -> Result<(), VerificationError> {
+        use snafu::OptionExt;
 
-        key_material[16..] == self.key_material_suffix
-            && self
-                .public_key
-                .verify(&key_material[..16], &Signature::from_bytes(&self.signature))
-                .is_ok()
+        let key_material = io
+            .export_keying_material(
+                [0u8; 32],
+                DOMAIN_SEP_TLS_EXPORT_LABEL,
+                Some(self.public_key.as_bytes()),
+            )
+            .context(NoKeyingMaterialSnafu)?;
+        // We split the export and only sign the first 16 bytes, and
+        // pass through the last 16 bytes.
+        // Passing on the suffix helps the verifying end figure out what
+        // went wrong: If there's a suffix mismatch, then the exported keying
+        // material on both ends wasn't the same - so perhaps there was a
+        // TLS proxy in between or similar.
+        // If the suffix does match, but the signature doesn't verify, then
+        // there must be something wrong with the client's secret key or signature.
+        let (message, suffix) = key_material.split_at(16);
+        let suffix: [u8; 16] = suffix.try_into().expect("hardcoded length");
+        snafu::ensure!(
+            suffix == self.key_material_suffix,
+            MismatchedSuffixSnafu {
+                expected: self.key_material_suffix,
+                actual: suffix
+            }
+        );
+        // NOTE: We don't blake3-hash here as we do it in [`ServerChallenge::message_to_sign`],
+        // because we already have a domain separation string and keyed hashing step in
+        // the TLS export keying material above.
+        self.public_key
+            .verify(message, &Signature::from_bytes(&self.signature))
+            .with_context(|_| SignatureInvalidSnafu {
+                message: message.to_vec(),
+                public_key: self.public_key,
+                signature: self.signature,
+            })
     }
 }
 
@@ -363,13 +425,15 @@ pub(crate) async fn serverside(
                 .build()
             })?;
 
-        if client_auth.verify(io) {
+        if let Ok(()) = client_auth.verify(io) {
             trace!(?client_auth.public_key, "authentication succeeded via keying material");
             return Ok(SuccessfulAuthentication {
                 client_key: client_auth.public_key,
                 mechanism: Mechanism::SignedKeyMaterial,
             });
         }
+        // Verification not succeeding is part of normal operation: The TLS exporter isn't required to match.
+        // We'll fall back to verification that takes another round trip more time.
     }
 
     let challenge = ServerChallenge::new(rng);
@@ -378,22 +442,22 @@ pub(crate) async fn serverside(
     let (_, frame) = read_frame(io, &[ClientAuth::TAG], time::Duration::from_secs(10)).await?;
     let client_auth: ClientAuth = deserialize_frame(frame)?;
 
-    if client_auth.verify(&challenge) {
+    if let Err(err) = client_auth.verify(&challenge) {
+        trace!(?client_auth.public_key, ?err, "authentication failed");
+        let denial = ServerDeniesAuth {
+            reason: "signature invalid".into(),
+        };
+        write_frame(io, denial.clone()).await?;
+        ServerDeniedAuthSnafu {
+            reason: denial.reason,
+        }
+        .fail()
+    } else {
         trace!(?client_auth.public_key, "authentication succeeded via challenge");
         Ok(SuccessfulAuthentication {
             client_key: client_auth.public_key,
             mechanism: Mechanism::SignedChallenge,
         })
-    } else {
-        trace!(?client_auth.public_key, "authentication failed");
-        let denial = ServerDeniesAuth {
-            reason: "signature invalid".into(),
-        };
-        write_frame(io, denial.clone()).await?;
-        Err(ServerDeniedAuthSnafu {
-            reason: denial.reason,
-        }
-        .build())
     }
 }
 
@@ -414,10 +478,10 @@ impl SuccessfulAuthentication {
                 reason: "not authorized".into(),
             };
             write_frame(io, denial.clone()).await?;
-            Err(ServerDeniedAuthSnafu {
+            ServerDeniedAuthSnafu {
                 reason: denial.reason,
             }
-            .build())
+            .fail()
         }
     }
 }
@@ -730,7 +794,7 @@ mod tests {
         let secret_key = SecretKey::generate(rand::rngs::OsRng);
         let challenge = ServerChallenge::new(rand::rngs::OsRng);
         let client_auth = ClientAuth::new(&secret_key, &challenge);
-        assert!(client_auth.verify(&challenge));
+        assert!(client_auth.verify(&challenge).is_ok());
 
         Ok(())
     }
@@ -743,7 +807,7 @@ mod tests {
             shared_secret: Some(42),
         };
         let client_auth = KeyMaterialClientAuth::new(&secret_key, &io).e()?;
-        assert!(client_auth.verify(&io));
+        assert!(client_auth.verify(&io).is_ok());
 
         Ok(())
     }
