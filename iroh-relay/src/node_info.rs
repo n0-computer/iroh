@@ -41,7 +41,7 @@ use std::{
 };
 
 #[cfg(not(wasm_browser))]
-use hickory_resolver::{proto::ProtoError, Name};
+use hickory_resolver::{Name, proto::ProtoError};
 use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey, SignatureError};
 use nested_enum_utils::common_fields;
 use snafu::{Backtrace, ResultExt, Snafu};
@@ -740,15 +740,15 @@ mod tests {
     use std::{collections::BTreeSet, str::FromStr, sync::Arc};
 
     use hickory_resolver::{
+        Name,
         lookup::Lookup,
         proto::{
             op::Query,
             rr::{
-                rdata::{A, TXT},
                 RData, Record, RecordType,
+                rdata::{A, TXT},
             },
         },
-        Name,
     };
     use iroh_base::{NodeId, SecretKey};
     use n0_snafu::{Result, ResultExt};
@@ -825,7 +825,7 @@ mod tests {
                 .context("name")?,
                 30,
                 RData::TXT(TXT::new(vec![
-                    "relay=https://euw1-1.relay.iroh.network./".to_string()
+                    "relay=https://euw1-1.relay.iroh.network./".to_string(),
                 ])),
             ),
             // Test a record with a completely different name
@@ -833,14 +833,14 @@ mod tests {
                 Name::from_utf8("dns.iroh.link.").context("name")?,
                 30,
                 RData::TXT(TXT::new(vec![
-                    "relay=https://euw1-1.relay.iroh.network./".to_string()
+                    "relay=https://euw1-1.relay.iroh.network./".to_string(),
                 ])),
             ),
             Record::from_rdata(
                 name.clone(),
                 30,
                 RData::TXT(TXT::new(vec![
-                    "relay=https://euw1-1.relay.iroh.network./".to_string()
+                    "relay=https://euw1-1.relay.iroh.network./".to_string(),
                 ])),
             ),
         ];

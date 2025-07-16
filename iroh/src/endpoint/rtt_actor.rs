@@ -4,11 +4,11 @@ use std::{pin::Pin, sync::Arc, task::Poll};
 
 use iroh_base::NodeId;
 use n0_future::{
-    task::{self, AbortOnDropHandle},
     MergeUnbounded, Stream, StreamExt,
+    task::{self, AbortOnDropHandle},
 };
 use tokio::sync::mpsc;
-use tracing::{debug, info_span, Instrument};
+use tracing::{Instrument, debug, info_span};
 
 use crate::{magicsock::ConnectionType, metrics::MagicsockMetrics};
 

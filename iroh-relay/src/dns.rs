@@ -7,11 +7,11 @@ use std::{
     sync::Arc,
 };
 
-use hickory_resolver::{name_server::TokioConnectionProvider, TokioResolver};
+use hickory_resolver::{TokioResolver, name_server::TokioConnectionProvider};
 use iroh_base::NodeId;
 use n0_future::{
-    time::{self, Duration},
     StreamExt,
+    time::{self, Duration},
 };
 use nested_enum_utils::common_fields;
 use snafu::{Backtrace, GenerateImplicitData, OptionExt, Snafu};
@@ -169,9 +169,9 @@ impl DnsResolver {
     }
 
     /// Lookup a TXT record.
-    pub async fn lookup_txt(
+    pub async fn lookup_txt<T: ToString>(
         &self,
-        host: impl ToString,
+        host: T,
         timeout: Duration,
     ) -> Result<TxtLookup, DnsError> {
         let host = host.to_string();
@@ -181,11 +181,11 @@ impl DnsResolver {
     }
 
     /// Perform an ipv4 lookup with a timeout.
-    pub async fn lookup_ipv4(
+    pub async fn lookup_ipv4<T: ToString>(
         &self,
-        host: impl ToString,
+        host: T,
         timeout: Duration,
-    ) -> Result<impl Iterator<Item = IpAddr>, DnsError> {
+    ) -> Result<impl Iterator<Item = IpAddr> + use<T>, DnsError> {
         let host = host.to_string();
         let this = self.resolver.read().await;
         let addrs = time::timeout(timeout, this.ipv4_lookup(host)).await??;
@@ -193,11 +193,11 @@ impl DnsResolver {
     }
 
     /// Perform an ipv6 lookup with a timeout.
-    pub async fn lookup_ipv6(
+    pub async fn lookup_ipv6<T: ToString>(
         &self,
-        host: impl ToString,
+        host: T,
         timeout: Duration,
-    ) -> Result<impl Iterator<Item = IpAddr>, DnsError> {
+    ) -> Result<impl Iterator<Item = IpAddr> + use<T>, DnsError> {
         let host = host.to_string();
         let this = self.resolver.read().await;
         let addrs = time::timeout(timeout, this.ipv6_lookup(host)).await??;
@@ -209,11 +209,11 @@ impl DnsResolver {
     /// `LookupIpStrategy::Ipv4AndIpv6` will wait for ipv6 resolution timeout, even if it is
     /// not usable on the stack, so we manually query both lookups concurrently and time them out
     /// individually.
-    pub async fn lookup_ipv4_ipv6(
+    pub async fn lookup_ipv4_ipv6<T: ToString>(
         &self,
-        host: impl ToString,
+        host: T,
         timeout: Duration,
-    ) -> Result<impl Iterator<Item = IpAddr>, DnsError> {
+    ) -> Result<impl Iterator<Item = IpAddr> + use<T>, DnsError> {
         let host = host.to_string();
         let res = tokio::join!(
             self.lookup_ipv4(host.clone(), timeout),

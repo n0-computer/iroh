@@ -4,11 +4,11 @@ use std::net::Ipv4Addr;
 pub use dns_and_pkarr_servers::DnsPkarrServer;
 use iroh_base::RelayUrl;
 use iroh_relay::{
+    RelayMap, RelayNode, RelayQuicConfig,
     server::{
         AccessConfig, CertConfig, QuicConfig, RelayConfig, Server, ServerConfig, SpawnError,
         TlsConfig,
     },
-    RelayMap, RelayNode, RelayQuicConfig,
 };
 use tokio::sync::oneshot;
 
@@ -88,7 +88,7 @@ pub(crate) mod dns_and_pkarr_servers {
 
     use super::CleanupDropGuard;
     use crate::{
-        discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher, ConcurrentDiscovery},
+        discovery::{ConcurrentDiscovery, dns::DnsDiscovery, pkarr::PkarrPublisher},
         dns::DnsResolver,
         test_utils::{
             dns_server::run_dns_server, pkarr_dns_state::State, pkarr_relay::run_pkarr_relay,
@@ -169,7 +169,7 @@ pub(crate) mod dns_server {
     };
 
     use hickory_resolver::proto::{
-        op::{header::MessageType, Message},
+        op::{Message, header::MessageType},
         serialize::binary::BinDecodable,
     };
     use n0_future::future::Boxed as BoxFuture;
@@ -266,10 +266,10 @@ pub(crate) mod pkarr_relay {
     };
 
     use axum::{
+        Router,
         extract::{Path, State},
         response::IntoResponse,
         routing::put,
-        Router,
     };
     use bytes::Bytes;
     use tokio::sync::oneshot;
@@ -336,14 +336,14 @@ pub(crate) mod pkarr_relay {
 
 pub(crate) mod pkarr_dns_state {
     use std::{
-        collections::{hash_map, HashMap},
+        collections::{HashMap, hash_map},
         future::Future,
         sync::{Arc, Mutex},
         time::Duration,
     };
 
     use iroh_base::NodeId;
-    use iroh_relay::node_info::{NodeIdExt, NodeInfo, IROH_TXT_NAME};
+    use iroh_relay::node_info::{IROH_TXT_NAME, NodeIdExt, NodeInfo};
     use pkarr::SignedPacket;
     use tracing::debug;
 

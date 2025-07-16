@@ -4,17 +4,17 @@
 // https://github.com/fission-codes/fission-server/blob/main/fission-server/src/routes/doh.rs
 
 use axum::{
+    Json,
     extract::State,
     response::{IntoResponse, Response},
-    Json,
 };
 use hickory_server::proto::{
     serialize::binary::BinDecodable,
     {self},
 };
 use http::{
-    header::{CACHE_CONTROL, CONTENT_TYPE},
     HeaderValue, StatusCode,
+    header::{CACHE_CONTROL, CONTENT_TYPE},
 };
 use n0_snafu::ResultExt;
 

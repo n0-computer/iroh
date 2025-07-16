@@ -8,13 +8,13 @@ use clap::{Parser, Subcommand};
 use data_encoding::HEXLOWER;
 use indicatif::HumanBytes;
 use iroh::{
+    Endpoint, NodeAddr, NodeId, RelayMap, RelayMode, RelayUrl, SecretKey,
     discovery::{
         dns::DnsDiscovery,
-        pkarr::{PkarrPublisher, N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING},
+        pkarr::{N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING, PkarrPublisher},
     },
     dns::{DnsResolver, N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING},
     endpoint::ConnectionError,
-    Endpoint, NodeAddr, NodeId, RelayMap, RelayMode, RelayUrl, SecretKey,
 };
 use iroh_base::ticket::NodeTicket;
 use n0_future::task::AbortOnDropHandle;

@@ -19,9 +19,9 @@ use url::Url;
 
 use crate::{
     discovery::{
-        pkarr::{DEFAULT_PKARR_TTL, N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING},
         Discovery, DiscoveryContext, DiscoveryError, DiscoveryItem, IntoDiscovery,
         IntoDiscoveryError, NodeData,
+        pkarr::{DEFAULT_PKARR_TTL, N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING},
     },
     node_info::NodeInfo,
 };

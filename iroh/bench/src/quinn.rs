@@ -7,16 +7,16 @@ use std::{
 use bytes::Bytes;
 use n0_snafu::{Result, ResultExt};
 use quinn::{
-    crypto::rustls::QuicClientConfig, Connection, Endpoint, RecvStream, SendStream, TransportConfig,
+    Connection, Endpoint, RecvStream, SendStream, TransportConfig, crypto::rustls::QuicClientConfig,
 };
 use rustls::{
-    pki_types::{CertificateDer, PrivateKeyDer},
     RootCertStore,
+    pki_types::{CertificateDer, PrivateKeyDer},
 };
 use tracing::{trace, warn};
 
 use crate::{
-    client_handler, stats::TransferResult, ClientStats, ConnectionSelector, EndpointSelector, Opt,
+    ClientStats, ConnectionSelector, EndpointSelector, Opt, client_handler, stats::TransferResult,
 };
 
 pub const ALPN: &[u8] = b"n0/quinn-bench/0";

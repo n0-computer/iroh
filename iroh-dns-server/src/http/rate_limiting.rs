@@ -3,9 +3,9 @@ use std::{sync::Arc, time::Duration};
 use governor::{clock::QuantaInstant, middleware::NoOpMiddleware};
 use serde::{Deserialize, Serialize};
 use tower_governor::{
+    GovernorLayer,
     governor::GovernorConfigBuilder,
     key_extractor::{PeerIpKeyExtractor, SmartIpKeyExtractor},
-    GovernorLayer,
 };
 
 /// Config for http server rate limit.
@@ -71,10 +71,12 @@ pub fn create(
     // The governor needs a background task for garbage collection (to clear expired records)
     let gc_interval = Duration::from_secs(60);
     let governor_limiter = governor_conf.limiter().clone();
-    std::thread::spawn(move || loop {
-        std::thread::sleep(gc_interval);
-        tracing::debug!("rate limiting storage size: {}", governor_limiter.len());
-        governor_limiter.retain_recent();
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(gc_interval);
+            tracing::debug!("rate limiting storage size: {}", governor_limiter.len());
+            governor_limiter.retain_recent();
+        }
     });
 
     Some(GovernorLayer {

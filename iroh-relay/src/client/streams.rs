@@ -116,7 +116,7 @@ impl<IO> ExportKeyingMaterial for MaybeTlsStream<IO> {
         label: &[u8],
         context: Option<&[u8]>,
     ) -> Option<T> {
-        let Self::Tls(ref tls) = self else {
+        let Self::Tls(tls) = self else {
             return None;
         };
         tls.get_ref()

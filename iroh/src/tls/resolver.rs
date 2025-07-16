@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use ed25519_dalek::pkcs8::{spki::der::pem::LineEnding, EncodePrivateKey};
+use ed25519_dalek::pkcs8::{EncodePrivateKey, spki::der::pem::LineEnding};
 use iroh_base::SecretKey;
 use nested_enum_utils::common_fields;
 use snafu::Snafu;
-use webpki_types::{pem::PemObject, CertificateDer, PrivatePkcs8KeyDer};
+use webpki_types::{CertificateDer, PrivatePkcs8KeyDer, pem::PemObject};
 
 #[derive(Debug)]
 pub(super) struct AlwaysResolvesCert {

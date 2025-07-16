@@ -1,6 +1,6 @@
 use core::fmt;
 use std::{
-    collections::{btree_map, BTreeMap},
+    collections::{BTreeMap, btree_map},
     str::FromStr,
     sync::Arc,
 };
@@ -8,8 +8,8 @@ use std::{
 use hickory_server::proto::{
     op::Message,
     rr::{
-        domain::{IntoLabel, Label},
         Name, Record, RecordSet, RecordType, RrKey,
+        domain::{IntoLabel, Label},
     },
     serialize::binary::BinDecodable,
 };
