@@ -20,10 +20,7 @@ use crate::{
     MAX_PACKET_SIZE,
     protos::{
         handshake,
-        relay::{
-            ClientInfo, ClientToRelayMsg, Error as ProtoError, Frame, PROTOCOL_VERSION,
-            RecvError as RecvRelayError, RelayToClientMsg, SendError as SendRelayError,
-        },
+        relay::{ClientToRelayMsg, Error as ProtoError, RelayToClientMsg},
         streams::WsBytesFramed,
     },
 };
