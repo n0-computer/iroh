@@ -297,7 +297,7 @@
 <a href=#297 id=297 data-nosnippet>297</a>    /// and estimated latency of the connection.
 <a href=#298 id=298 data-nosnippet>298</a>    ///
 <a href=#299 id=299 data-nosnippet>299</a>    /// Consumes and gracefully closes the connection.
-<a href=#300 id=300 data-nosnippet>300</a>    </span><span class="attr">#[cfg(test)]
+<a href=#300 id=300 data-nosnippet>300</a>    </span><span class="attr">#[cfg(all(test, feature = <span class="string">"server"</span>))]
 <a href=#301 id=301 data-nosnippet>301</a>    </span><span class="kw">async fn </span>get_addr_and_latency(
 <a href=#302 id=302 data-nosnippet>302</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
 <a href=#303 id=303 data-nosnippet>303</a>        server_addr: SocketAddr,
@@ -368,14 +368,14 @@
 <a href=#368 id=368 data-nosnippet>368</a>    <span class="kw">use </span>tracing_test::traced_test;
 <a href=#369 id=369 data-nosnippet>369</a>    <span class="kw">use </span>webpki_types::PrivatePkcs8KeyDer;
 <a href=#370 id=370 data-nosnippet>370</a>
-<a href=#371 id=371 data-nosnippet>371</a>    <span class="kw">use super</span>::{
-<a href=#372 id=372 data-nosnippet>372</a>        server::{QuicConfig, QuicServer},
-<a href=#373 id=373 data-nosnippet>373</a>        <span class="kw-2">*</span>,
-<a href=#374 id=374 data-nosnippet>374</a>    };
-<a href=#375 id=375 data-nosnippet>375</a>
-<a href=#376 id=376 data-nosnippet>376</a>    <span class="attr">#[tokio::test]
-<a href=#377 id=377 data-nosnippet>377</a>    #[traced_test]
-<a href=#378 id=378 data-nosnippet>378</a>    </span><span class="kw">async fn </span>quic_endpoint_basic() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#371 id=371 data-nosnippet>371</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#372 id=372 data-nosnippet>372</a>
+<a href=#373 id=373 data-nosnippet>373</a>    <span class="attr">#[tokio::test]
+<a href=#374 id=374 data-nosnippet>374</a>    #[traced_test]
+<a href=#375 id=375 data-nosnippet>375</a>    #[cfg(feature = <span class="string">"test-utils"</span>)]
+<a href=#376 id=376 data-nosnippet>376</a>    </span><span class="kw">async fn </span>quic_endpoint_basic() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#377 id=377 data-nosnippet>377</a>        <span class="kw">use </span><span class="kw">super</span>::server::{QuicConfig, QuicServer};
+<a href=#378 id=378 data-nosnippet>378</a>
 <a href=#379 id=379 data-nosnippet>379</a>        <span class="kw">let </span>host: Ipv4Addr = <span class="string">"127.0.0.1"</span>.parse().unwrap();
 <a href=#380 id=380 data-nosnippet>380</a>        <span class="comment">// create a server config with self signed certificates
 <a href=#381 id=381 data-nosnippet>381</a>        </span><span class="kw">let </span>(<span class="kw">_</span>, server_config) = <span class="kw">super</span>::<span class="kw">super</span>::server::testing::self_signed_tls_certs_and_config();

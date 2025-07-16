@@ -337,89 +337,52 @@
 <a href=#337 id=337 data-nosnippet>337</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
 <a href=#338 id=338 data-nosnippet>338</a>    <span class="kw">use </span><span class="kw">crate</span>::defaults::staging;
 <a href=#339 id=339 data-nosnippet>339</a>
-<a href=#340 id=340 data-nosnippet>340</a>    <span class="attr">#[test]
-<a href=#341 id=341 data-nosnippet>341</a>    </span><span class="kw">fn </span>test_split_packets() {
-<a href=#342 id=342 data-nosnippet>342</a>        <span class="kw">fn </span>mk_transmit(contents: <span class="kw-2">&amp;</span>[u8], segment_size: <span class="prelude-ty">Option</span>&lt;usize&gt;) -&gt; Transmit&lt;<span class="lifetime">'_</span>&gt; {
-<a href=#343 id=343 data-nosnippet>343</a>            Transmit {
-<a href=#344 id=344 data-nosnippet>344</a>                ecn: <span class="prelude-val">None</span>,
-<a href=#345 id=345 data-nosnippet>345</a>                contents,
-<a href=#346 id=346 data-nosnippet>346</a>                segment_size,
-<a href=#347 id=347 data-nosnippet>347</a>            }
-<a href=#348 id=348 data-nosnippet>348</a>        }
-<a href=#349 id=349 data-nosnippet>349</a>        <span class="kw">fn </span>mk_expected(parts: <span class="kw">impl </span>IntoIterator&lt;Item = <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str&gt;) -&gt; RelayContents {
-<a href=#350 id=350 data-nosnippet>350</a>            parts
-<a href=#351 id=351 data-nosnippet>351</a>                .into_iter()
-<a href=#352 id=352 data-nosnippet>352</a>                .map(|p| p.as_bytes().to_vec().into())
-<a href=#353 id=353 data-nosnippet>353</a>                .collect()
-<a href=#354 id=354 data-nosnippet>354</a>        }
-<a href=#355 id=355 data-nosnippet>355</a>        <span class="comment">// no split
-<a href=#356 id=356 data-nosnippet>356</a>        </span><span class="macro">assert_eq!</span>(
-<a href=#357 id=357 data-nosnippet>357</a>            split_packets(<span class="kw-2">&amp;</span>mk_transmit(<span class="string">b"hello"</span>, <span class="prelude-val">None</span>)),
-<a href=#358 id=358 data-nosnippet>358</a>            mk_expected([<span class="string">"hello"</span>])
-<a href=#359 id=359 data-nosnippet>359</a>        );
-<a href=#360 id=360 data-nosnippet>360</a>        <span class="comment">// split without rest
-<a href=#361 id=361 data-nosnippet>361</a>        </span><span class="macro">assert_eq!</span>(
-<a href=#362 id=362 data-nosnippet>362</a>            split_packets(<span class="kw-2">&amp;</span>mk_transmit(<span class="string">b"helloworld"</span>, <span class="prelude-val">Some</span>(<span class="number">5</span>))),
-<a href=#363 id=363 data-nosnippet>363</a>            mk_expected([<span class="string">"hello"</span>, <span class="string">"world"</span>])
-<a href=#364 id=364 data-nosnippet>364</a>        );
-<a href=#365 id=365 data-nosnippet>365</a>        <span class="comment">// split with rest and second transmit
-<a href=#366 id=366 data-nosnippet>366</a>        </span><span class="macro">assert_eq!</span>(
-<a href=#367 id=367 data-nosnippet>367</a>            split_packets(<span class="kw-2">&amp;</span>mk_transmit(<span class="string">b"hello world"</span>, <span class="prelude-val">Some</span>(<span class="number">5</span>))),
-<a href=#368 id=368 data-nosnippet>368</a>            mk_expected([<span class="string">"hello"</span>, <span class="string">" worl"</span>, <span class="string">"d"</span>]) <span class="comment">// spellchecker:disable-line
-<a href=#369 id=369 data-nosnippet>369</a>        </span>);
-<a href=#370 id=370 data-nosnippet>370</a>        <span class="comment">// split that results in 1 packet
-<a href=#371 id=371 data-nosnippet>371</a>        </span><span class="macro">assert_eq!</span>(
-<a href=#372 id=372 data-nosnippet>372</a>            split_packets(<span class="kw-2">&amp;</span>mk_transmit(<span class="string">b"hello world"</span>, <span class="prelude-val">Some</span>(<span class="number">1000</span>))),
-<a href=#373 id=373 data-nosnippet>373</a>            mk_expected([<span class="string">"hello world"</span>])
-<a href=#374 id=374 data-nosnippet>374</a>        );
-<a href=#375 id=375 data-nosnippet>375</a>    }
-<a href=#376 id=376 data-nosnippet>376</a>
-<a href=#377 id=377 data-nosnippet>377</a>    <span class="attr">#[tokio::test(flavor = <span class="string">"multi_thread"</span>)]
-<a href=#378 id=378 data-nosnippet>378</a>    </span><span class="kw">async fn </span>test_relay_datagram_queue() {
-<a href=#379 id=379 data-nosnippet>379</a>        <span class="kw">let </span>capacity = <span class="number">16</span>;
-<a href=#380 id=380 data-nosnippet>380</a>        <span class="kw">let </span>(sender, <span class="kw-2">mut </span>receiver) = mpsc::channel(capacity);
-<a href=#381 id=381 data-nosnippet>381</a>        <span class="kw">let </span>url = staging::default_na_relay_node().url;
-<a href=#382 id=382 data-nosnippet>382</a>
-<a href=#383 id=383 data-nosnippet>383</a>        <span class="kw">let </span><span class="kw-2">mut </span>tasks = JoinSet::new();
-<a href=#384 id=384 data-nosnippet>384</a>
-<a href=#385 id=385 data-nosnippet>385</a>        tasks.spawn({
-<a href=#386 id=386 data-nosnippet>386</a>            <span class="kw">async move </span>{
-<a href=#387 id=387 data-nosnippet>387</a>                <span class="kw">let </span><span class="kw-2">mut </span>expected_msgs: BTreeSet&lt;usize&gt; = (<span class="number">0</span>..capacity).collect();
-<a href=#388 id=388 data-nosnippet>388</a>                <span class="kw">while </span>!expected_msgs.is_empty() {
-<a href=#389 id=389 data-nosnippet>389</a>                    <span class="kw">let </span>datagram: RelayRecvDatagram = receiver.recv().<span class="kw">await</span>.unwrap();
-<a href=#390 id=390 data-nosnippet>390</a>                    <span class="kw">let </span>msg_num = usize::from_le_bytes(datagram.buf.as_ref().try_into().unwrap());
-<a href=#391 id=391 data-nosnippet>391</a>                    <span class="macro">debug!</span>(<span class="string">"Received {msg_num}"</span>);
-<a href=#392 id=392 data-nosnippet>392</a>
-<a href=#393 id=393 data-nosnippet>393</a>                    <span class="kw">if </span>!expected_msgs.remove(<span class="kw-2">&amp;</span>msg_num) {
-<a href=#394 id=394 data-nosnippet>394</a>                        <span class="macro">panic!</span>(<span class="string">"Received message number {msg_num} twice or more, but expected it only exactly once."</span>);
-<a href=#395 id=395 data-nosnippet>395</a>                    }
-<a href=#396 id=396 data-nosnippet>396</a>                }
-<a href=#397 id=397 data-nosnippet>397</a>            }
-<a href=#398 id=398 data-nosnippet>398</a>        });
-<a href=#399 id=399 data-nosnippet>399</a>
-<a href=#400 id=400 data-nosnippet>400</a>        <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..capacity {
-<a href=#401 id=401 data-nosnippet>401</a>            tasks.spawn({
-<a href=#402 id=402 data-nosnippet>402</a>                <span class="kw">let </span>sender = sender.clone();
-<a href=#403 id=403 data-nosnippet>403</a>                <span class="kw">let </span>url = url.clone();
-<a href=#404 id=404 data-nosnippet>404</a>                <span class="kw">async move </span>{
-<a href=#405 id=405 data-nosnippet>405</a>                    <span class="macro">debug!</span>(<span class="string">"Sending {i}"</span>);
-<a href=#406 id=406 data-nosnippet>406</a>                    sender
-<a href=#407 id=407 data-nosnippet>407</a>                        .try_send(RelayRecvDatagram {
-<a href=#408 id=408 data-nosnippet>408</a>                            url,
-<a href=#409 id=409 data-nosnippet>409</a>                            src: NodeId::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">0u8</span>; <span class="number">32</span>]).unwrap(),
-<a href=#410 id=410 data-nosnippet>410</a>                            buf: Bytes::copy_from_slice(<span class="kw-2">&amp;</span>i.to_le_bytes()),
-<a href=#411 id=411 data-nosnippet>411</a>                        })
-<a href=#412 id=412 data-nosnippet>412</a>                        .unwrap();
-<a href=#413 id=413 data-nosnippet>413</a>                }
-<a href=#414 id=414 data-nosnippet>414</a>            });
-<a href=#415 id=415 data-nosnippet>415</a>        }
-<a href=#416 id=416 data-nosnippet>416</a>
-<a href=#417 id=417 data-nosnippet>417</a>        <span class="comment">// We expect all of this work to be done in 10 seconds max.
-<a href=#418 id=418 data-nosnippet>418</a>        </span><span class="kw">if </span>tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), tasks.join_all())
-<a href=#419 id=419 data-nosnippet>419</a>            .<span class="kw">await
-<a href=#420 id=420 data-nosnippet>420</a>            </span>.is_err()
-<a href=#421 id=421 data-nosnippet>421</a>        {
-<a href=#422 id=422 data-nosnippet>422</a>            <span class="macro">panic!</span>(<span class="string">"Timeout - not all messages between 0 and {capacity} received."</span>);
-<a href=#423 id=423 data-nosnippet>423</a>        }
-<a href=#424 id=424 data-nosnippet>424</a>    }
-<a href=#425 id=425 data-nosnippet>425</a>}</code></pre></div></section></main></body></html>
+<a href=#340 id=340 data-nosnippet>340</a>    <span class="attr">#[tokio::test(flavor = <span class="string">"multi_thread"</span>)]
+<a href=#341 id=341 data-nosnippet>341</a>    </span><span class="kw">async fn </span>test_relay_datagram_queue() {
+<a href=#342 id=342 data-nosnippet>342</a>        <span class="kw">let </span>capacity = <span class="number">16</span>;
+<a href=#343 id=343 data-nosnippet>343</a>        <span class="kw">let </span>(sender, <span class="kw-2">mut </span>receiver) = mpsc::channel(capacity);
+<a href=#344 id=344 data-nosnippet>344</a>        <span class="kw">let </span>url = staging::default_na_relay_node().url;
+<a href=#345 id=345 data-nosnippet>345</a>
+<a href=#346 id=346 data-nosnippet>346</a>        <span class="kw">let </span><span class="kw-2">mut </span>tasks = JoinSet::new();
+<a href=#347 id=347 data-nosnippet>347</a>
+<a href=#348 id=348 data-nosnippet>348</a>        tasks.spawn({
+<a href=#349 id=349 data-nosnippet>349</a>            <span class="kw">async move </span>{
+<a href=#350 id=350 data-nosnippet>350</a>                <span class="kw">let </span><span class="kw-2">mut </span>expected_msgs: BTreeSet&lt;usize&gt; = (<span class="number">0</span>..capacity).collect();
+<a href=#351 id=351 data-nosnippet>351</a>                <span class="kw">while </span>!expected_msgs.is_empty() {
+<a href=#352 id=352 data-nosnippet>352</a>                    <span class="kw">let </span>datagram: RelayRecvDatagram = receiver.recv().<span class="kw">await</span>.unwrap();
+<a href=#353 id=353 data-nosnippet>353</a>                    <span class="kw">let </span>msg_num = usize::from_le_bytes(datagram.buf.as_ref().try_into().unwrap());
+<a href=#354 id=354 data-nosnippet>354</a>                    <span class="macro">debug!</span>(<span class="string">"Received {msg_num}"</span>);
+<a href=#355 id=355 data-nosnippet>355</a>
+<a href=#356 id=356 data-nosnippet>356</a>                    <span class="kw">if </span>!expected_msgs.remove(<span class="kw-2">&amp;</span>msg_num) {
+<a href=#357 id=357 data-nosnippet>357</a>                        <span class="macro">panic!</span>(<span class="string">"Received message number {msg_num} twice or more, but expected it only exactly once."</span>);
+<a href=#358 id=358 data-nosnippet>358</a>                    }
+<a href=#359 id=359 data-nosnippet>359</a>                }
+<a href=#360 id=360 data-nosnippet>360</a>            }
+<a href=#361 id=361 data-nosnippet>361</a>        });
+<a href=#362 id=362 data-nosnippet>362</a>
+<a href=#363 id=363 data-nosnippet>363</a>        <span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..capacity {
+<a href=#364 id=364 data-nosnippet>364</a>            tasks.spawn({
+<a href=#365 id=365 data-nosnippet>365</a>                <span class="kw">let </span>sender = sender.clone();
+<a href=#366 id=366 data-nosnippet>366</a>                <span class="kw">let </span>url = url.clone();
+<a href=#367 id=367 data-nosnippet>367</a>                <span class="kw">async move </span>{
+<a href=#368 id=368 data-nosnippet>368</a>                    <span class="macro">debug!</span>(<span class="string">"Sending {i}"</span>);
+<a href=#369 id=369 data-nosnippet>369</a>                    sender
+<a href=#370 id=370 data-nosnippet>370</a>                        .try_send(RelayRecvDatagram {
+<a href=#371 id=371 data-nosnippet>371</a>                            url,
+<a href=#372 id=372 data-nosnippet>372</a>                            src: NodeId::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">0u8</span>; <span class="number">32</span>]).unwrap(),
+<a href=#373 id=373 data-nosnippet>373</a>                            buf: Bytes::copy_from_slice(<span class="kw-2">&amp;</span>i.to_le_bytes()),
+<a href=#374 id=374 data-nosnippet>374</a>                        })
+<a href=#375 id=375 data-nosnippet>375</a>                        .unwrap();
+<a href=#376 id=376 data-nosnippet>376</a>                }
+<a href=#377 id=377 data-nosnippet>377</a>            });
+<a href=#378 id=378 data-nosnippet>378</a>        }
+<a href=#379 id=379 data-nosnippet>379</a>
+<a href=#380 id=380 data-nosnippet>380</a>        <span class="comment">// We expect all of this work to be done in 10 seconds max.
+<a href=#381 id=381 data-nosnippet>381</a>        </span><span class="kw">if </span>tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), tasks.join_all())
+<a href=#382 id=382 data-nosnippet>382</a>            .<span class="kw">await
+<a href=#383 id=383 data-nosnippet>383</a>            </span>.is_err()
+<a href=#384 id=384 data-nosnippet>384</a>        {
+<a href=#385 id=385 data-nosnippet>385</a>            <span class="macro">panic!</span>(<span class="string">"Timeout - not all messages between 0 and {capacity} received."</span>);
+<a href=#386 id=386 data-nosnippet>386</a>        }
+<a href=#387 id=387 data-nosnippet>387</a>    }
+<a href=#388 id=388 data-nosnippet>388</a>}</code></pre></div></section></main></body></html>
