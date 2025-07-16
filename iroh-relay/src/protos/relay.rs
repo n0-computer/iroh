@@ -216,7 +216,7 @@ impl RelayToClientMsg {
 
         let res = match frame_type {
             FrameType::RecvPacket => {
-                snafu::ensure!(content.len() >= NodeId::LENGTH, InvalidFrameSnafu);
+                snafu::ensure!(content.len() > NodeId::LENGTH, InvalidFrameSnafu);
 
                 let src_key = cache
                     .key_from_slice(&content[..NodeId::LENGTH])
@@ -335,6 +335,7 @@ impl ClientToRelayMsg {
 
         let res = match frame_type {
             FrameType::SendPacket => {
+                snafu::ensure!(content.len() > NodeId::LENGTH, InvalidFrameSnafu);
                 let dst_key = cache
                     .key_from_slice(&content[..NodeId::LENGTH])
                     .context(InvalidPublicKeySnafu)?;

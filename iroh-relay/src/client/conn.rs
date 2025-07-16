@@ -44,6 +44,8 @@ pub enum SendError {
     },
     #[snafu(display("Exceeds max packet size ({MAX_PACKET_SIZE}): {size}"))]
     ExceedsMaxPacketSize { size: usize },
+    #[snafu(display("Attempted to send empty packet"))]
+    EmptyPacket {},
 }
 
 /// Errors when receiving messages from the relay server.
@@ -143,9 +145,10 @@ impl Sink<ClientToRelayMsg> for Conn {
     }
 
     fn start_send(mut self: Pin<&mut Self>, frame: ClientToRelayMsg) -> Result<(), Self::Error> {
-        if let ClientToRelayMsg::SendPacket { .. } = &frame {
-            let size = frame.encoded_len();
+        if let ClientToRelayMsg::SendPacket { packet, .. } = &frame {
+            let size = packet.len();
             snafu::ensure!(size <= MAX_PACKET_SIZE, ExceedsMaxPacketSizeSnafu { size });
+            snafu::ensure!(size != 0, EmptyPacketSnafu);
         }
 
         Pin::new(&mut self.conn)
