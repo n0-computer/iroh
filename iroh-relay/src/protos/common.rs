@@ -23,9 +23,9 @@ pub enum FrameType {
     ServerConfirmsAuth = 2,
     /// The server frame type for authentication denial
     ServerDeniesAuth = 3,
-    /// 32B dest pub key + ECN byte + segment size u16 + datagrams contents
+    /// 32B dest pub key + content
     SendPacket = 4,
-    /// 32B src pub key + ECN byte + segment size u16 + datagrams contents
+    /// 32B src pub key + content
     RecvPacket = 6,
     /// Sent from server to client to signal that a previous sender is no longer connected.
     ///
@@ -62,12 +62,6 @@ pub enum FrameTypeError {
     UnexpectedEnd {},
     #[snafu(display("frame type unknown"))]
     UnknownFrameType { tag: VarInt },
-}
-
-impl std::fmt::Display for FrameType {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{self:?}")
-    }
 }
 
 impl FrameType {

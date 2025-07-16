@@ -30,10 +30,7 @@ use http::HeaderValue;
 #[cfg(feature = "server")]
 use iroh_base::Signature;
 use iroh_base::{PublicKey, SecretKey};
-use n0_future::{
-    time::{self, Elapsed},
-    SinkExt, TryStreamExt,
-};
+use n0_future::{SinkExt, TryStreamExt};
 use nested_enum_utils::common_fields;
 #[cfg(feature = "server")]
 use rand::{CryptoRng, RngCore};
@@ -150,20 +147,20 @@ pub enum Error {
         #[cfg(wasm_browser)]
         source: ws_stream_wasm::WsErr,
     },
-    #[snafu(display("Handshake timeout reached"))]
-    Timeout { source: Elapsed },
     #[snafu(display("Handshake stream ended prematurely"))]
     UnexpectedEnd {},
     #[snafu(transparent)]
     FrameTypeError { source: FrameTypeError },
     #[snafu(display("The relay denied our authentication ({reason})"))]
     ServerDeniedAuth { reason: String },
-    #[snafu(display("Unexpected tag, got {frame_type}, but expected one of {expected_types:?}"))]
+    #[snafu(display(
+        "Unexpected tag, got {frame_type:?}, but expected one of {expected_types:?}"
+    ))]
     UnexpectedFrameType {
         frame_type: FrameType,
         expected_types: Vec<FrameType>,
     },
-    #[snafu(display("Handshake failed while deserializing {frame_type} frame"))]
+    #[snafu(display("Handshake failed while deserializing {frame_type:?} frame"))]
     DeserializationError {
         frame_type: FrameType,
         source: postcard::Error,
@@ -332,12 +329,7 @@ pub(crate) async fn clientside(
     io: &mut (impl BytesStreamSink + ExportKeyingMaterial),
     secret_key: &SecretKey,
 ) -> Result<ServerConfirmsAuth, Error> {
-    let (tag, frame) = read_frame(
-        io,
-        &[ServerChallenge::TAG, ServerConfirmsAuth::TAG],
-        time::Duration::from_secs(30),
-    )
-    .await?;
+    let (tag, frame) = read_frame(io, &[ServerChallenge::TAG, ServerConfirmsAuth::TAG]).await?;
 
     let (tag, frame) = if tag == ServerChallenge::TAG {
         let challenge: ServerChallenge = deserialize_frame(frame)?;
@@ -345,12 +337,7 @@ pub(crate) async fn clientside(
         let client_info = ClientAuth::new(secret_key, &challenge);
         write_frame(io, client_info).await?;
 
-        read_frame(
-            io,
-            &[ServerConfirmsAuth::TAG, ServerDeniesAuth::TAG],
-            time::Duration::from_secs(30),
-        )
-        .await?
+        read_frame(io, &[ServerConfirmsAuth::TAG, ServerDeniesAuth::TAG]).await?
     } else {
         (tag, frame)
     };
@@ -445,7 +432,7 @@ pub(crate) async fn serverside(
     let challenge = ServerChallenge::new(rng);
     write_frame(io, &challenge).await?;
 
-    let (_, frame) = read_frame(io, &[ClientAuth::TAG], time::Duration::from_secs(10)).await?;
+    let (_, frame) = read_frame(io, &[ClientAuth::TAG]).await?;
     let client_auth: ClientAuth = deserialize_frame(frame)?;
 
     if let Err(err) = client_auth.verify(&challenge) {
@@ -497,7 +484,7 @@ async fn write_frame<F: serde::Serialize + Frame>(
     frame: F,
 ) -> Result<(), Error> {
     let mut bytes = BytesMut::new();
-    trace!(frame_type = %F::TAG, "Writing frame");
+    trace!(frame_type = ?F::TAG, "Writing frame");
     F::TAG.write_to(&mut bytes);
     let bytes = postcard::to_io(&frame, bytes.writer())
         .expect("serialization failed") // buffer can't become "full" without being a critical failure, datastructures shouldn't ever fail serialization
@@ -511,15 +498,14 @@ async fn write_frame<F: serde::Serialize + Frame>(
 async fn read_frame(
     io: &mut impl BytesStreamSink,
     expected_types: &[FrameType],
-    timeout: time::Duration,
 ) -> Result<(FrameType, Bytes), Error> {
-    let mut payload = time::timeout(timeout, io.try_next())
-        .await
-        .context(TimeoutSnafu)??
+    let mut payload = io
+        .try_next()
+        .await?
         .ok_or_else(|| UnexpectedEndSnafu.build())?;
 
     let frame_type = FrameType::from_bytes(&mut payload)?;
-    trace!(%frame_type, "Reading frame");
+    trace!(?frame_type, "Reading frame");
     snafu::ensure!(
         expected_types.contains(&frame_type),
         UnexpectedFrameTypeSnafu {

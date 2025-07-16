@@ -576,7 +576,7 @@ mod tests {
             Some(Ok(frame)) => {
                 if frame_type != frame.typ() {
                     snafu::whatever!(
-                        "Unexpected frame, got {}, but expected {}",
+                        "Unexpected frame, got {:?}, but expected {:?}",
                         frame.typ(),
                         frame_type
                     );
@@ -584,7 +584,7 @@ mod tests {
                 Ok(frame)
             }
             Some(Err(err)) => Err(err).e(),
-            None => snafu::whatever!("Unexpected EOF, expected frame {frame_type}"),
+            None => snafu::whatever!("Unexpected EOF, expected frame {frame_type:?}"),
         }
     }
 

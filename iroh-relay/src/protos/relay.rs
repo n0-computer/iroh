@@ -9,7 +9,7 @@
 
 use bytes::{BufMut, Bytes, BytesMut};
 use iroh_base::{NodeId, SignatureError};
-use n0_future::time::{self, Duration};
+use n0_future::time::Duration;
 use nested_enum_utils::common_fields;
 use snafu::{Backtrace, ResultExt, Snafu};
 
@@ -48,12 +48,10 @@ pub(crate) const PER_CLIENT_SEND_QUEUE_DEPTH: usize = 512;
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
 pub enum Error {
-    #[snafu(display("unexpected frame: got {got}, expected {expected}"))]
+    #[snafu(display("unexpected frame: got {got:?}, expected {expected:?}"))]
     UnexpectedFrame { got: FrameType, expected: FrameType },
     #[snafu(display("Frame is too large, has {frame_len} bytes"))]
     FrameTooLarge { frame_len: usize },
-    #[snafu(transparent)]
-    Timeout { source: time::Elapsed },
     #[snafu(transparent)]
     SerDe { source: postcard::Error },
     #[snafu(transparent)]
@@ -62,7 +60,7 @@ pub enum Error {
     InvalidPublicKey { source: SignatureError },
     #[snafu(display("Invalid frame encoding"))]
     InvalidFrame {},
-    #[snafu(display("Invalid frame type: {frame_type}"))]
+    #[snafu(display("Invalid frame type: {frame_type:?}"))]
     InvalidFrameType { frame_type: FrameType },
     #[snafu(display("Invalid protocol message encoding"))]
     InvalidProtocolMessageEncoding { source: std::str::Utf8Error },
