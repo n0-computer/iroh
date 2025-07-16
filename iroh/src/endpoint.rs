@@ -973,7 +973,7 @@ impl Endpoint {
     /// let _relay_url = mep.home_relay().initialized().await.unwrap();
     /// # });
     /// ```
-    pub fn home_relay(&self) -> impl n0_watcher::Watcher<Value = Vec<RelayUrl>> + use<> {
+    pub fn home_relay(&self) -> impl n0_watcher::Watcher<Value = Vec<RelayUrl>> + 'static {
         self.msock.home_relay()
     }
 
@@ -1043,7 +1043,7 @@ impl Endpoint {
     /// # });
     /// ```
     #[doc(hidden)]
-    pub fn net_report(&self) -> impl Watcher<Value = Option<Report>> + use<> {
+    pub fn net_report(&self) -> impl Watcher<Value = Option<Report>> + 'static {
         self.msock.net_report()
     }
 
@@ -1086,7 +1086,7 @@ impl Endpoint {
     /// connection was ever made or is even possible.
     ///
     /// See also [`Endpoint::remote_info`] to only retrieve information about a single node.
-    pub fn remote_info_iter(&self) -> impl Iterator<Item = RemoteInfo> + use<> {
+    pub fn remote_info_iter(&self) -> impl Iterator<Item = RemoteInfo> + 'static {
         self.msock.list_remote_infos().into_iter()
     }
 
