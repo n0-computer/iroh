@@ -199,8 +199,7 @@ impl RelayToClientMsg {
                 + 4 // u32
             }
         };
-        1 // frame type
-        + payload_len
+        self.typ().encoded_len() + payload_len
     }
 
     /// Tries to decode a frame received over websockets.
@@ -318,8 +317,7 @@ impl ClientToRelayMsg {
                 + packet.len()
             }
         };
-        1 // frame type (all frame types currently encode as 1 byte varint)
-        + payload_len
+        self.typ().encoded_len() + payload_len
     }
 
     /// Tries to decode a frame received over websockets.
