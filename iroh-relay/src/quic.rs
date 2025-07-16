@@ -297,7 +297,7 @@ impl QuicClient {
     /// and estimated latency of the connection.
     ///
     /// Consumes and gracefully closes the connection.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "server"))]
     async fn get_addr_and_latency(
         &self,
         server_addr: SocketAddr,
@@ -368,14 +368,14 @@ mod tests {
     use tracing_test::traced_test;
     use webpki_types::PrivatePkcs8KeyDer;
 
-    use super::{
-        server::{QuicConfig, QuicServer},
-        *,
-    };
+    use super::*;
 
     #[tokio::test]
     #[traced_test]
+    #[cfg(feature = "test-utils")]
     async fn quic_endpoint_basic() -> Result {
+        use super::server::{QuicConfig, QuicServer};
+
         let host: Ipv4Addr = "127.0.0.1".parse().unwrap();
         // create a server config with self signed certificates
         let (_, server_config) = super::super::server::testing::self_signed_tls_certs_and_config();

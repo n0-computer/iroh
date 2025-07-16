@@ -4,7 +4,10 @@ use std::{
 
 use bytes::Bytes;
 use derive_more::Debug;
-use http::{header::CONNECTION, response::Builder as ResponseBuilder};
+use http::{
+    header::{CONNECTION, SEC_WEBSOCKET_KEY, SEC_WEBSOCKET_PROTOCOL, SEC_WEBSOCKET_VERSION},
+    response::Builder as ResponseBuilder,
+};
 use hyper::{
     body::Incoming,
     header::{HeaderValue, SEC_WEBSOCKET_ACCEPT, UPGRADE},
@@ -12,25 +15,25 @@ use hyper::{
     upgrade::Upgraded,
     HeaderMap, Method, Request, Response, StatusCode,
 };
-use iroh_base::PublicKey;
-use n0_future::{time::Elapsed, FutureExt, SinkExt};
+use n0_future::time::Elapsed;
 use nested_enum_utils::common_fields;
-use snafu::{Backtrace, ResultExt, Snafu};
+use snafu::{Backtrace, OptionExt, ResultExt, Snafu};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls_acme::AcmeAcceptor;
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 use tracing::{debug, debug_span, error, info, info_span, trace, warn, Instrument};
 
-use super::{
-    clients::Clients,
-    streams::{InvalidBucketConfig, StreamError},
-    AccessConfig, SpawnError,
-};
+use super::{clients::Clients, streams::InvalidBucketConfig, AccessConfig, SpawnError};
 use crate::{
     defaults::{timeouts::SERVER_WRITE_TIMEOUT, DEFAULT_KEY_CACHE_CAPACITY},
-    http::{RELAY_PATH, SUPPORTED_WEBSOCKET_VERSION, WEBSOCKET_UPGRADE_PROTOCOL},
-    protos::relay::{
-        recv_client_key, Frame, MAX_FRAME_SIZE, PER_CLIENT_SEND_QUEUE_DEPTH, PROTOCOL_VERSION,
+    http::{
+        CLIENT_AUTH_HEADER, RELAY_PATH, RELAY_PROTOCOL_VERSION, SUPPORTED_WEBSOCKET_VERSION,
+        WEBSOCKET_UPGRADE_PROTOCOL,
+    },
+    protos::{
+        handshake,
+        relay::{MAX_FRAME_SIZE, PER_CLIENT_SEND_QUEUE_DEPTH},
+        streams::WsBytesFramed,
     },
     server::{
         client::Config,
@@ -63,11 +66,6 @@ fn derive_accept_key(client_key: &HeaderValue) -> String {
     sha1.update(client_key.as_bytes());
     sha1.update(SEC_WEBSOCKET_ACCEPT_GUID);
     data_encoding::BASE64.encode(&sha1.finalize())
-}
-
-/// Creates a new [`BytesBody`] with no content.
-fn body_empty() -> BytesBody {
-    http_body_util::Full::new(hyper::body::Bytes::new())
 }
 
 /// Creates a new [`BytesBody`] with given content.
@@ -161,7 +159,7 @@ pub(super) struct TlsConfig {
 #[non_exhaustive]
 pub enum ServeConnectionError {
     #[snafu(display("TLS[acme] handshake"))]
-    Handshake {
+    TlsHandshake {
         source: std::io::Error,
         #[snafu(implicit)]
         span_trace: n0_snafu::SpanTrace,
@@ -212,28 +210,8 @@ pub enum ServeConnectionError {
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
 pub enum AcceptError {
-    #[snafu(display("Unable to receive client information"))]
-    RecvClientKey {
-        #[allow(clippy::result_large_err)]
-        source: StreamError,
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
-    },
-    #[snafu(display("Unexpected client version {version}, expected {expected_version}"))]
-    UnexpectedClientVersion {
-        version: usize,
-        expected_version: usize,
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
-    },
     #[snafu(transparent)]
-    Io { source: std::io::Error },
-    #[snafu(display("Client not authenticated: {key:?}"))]
-    ClientNotAuthenticated {
-        key: PublicKey,
-        #[snafu(implicit)]
-        span_trace: n0_snafu::SpanTrace,
-    },
+    Handshake { source: handshake::Error },
     #[snafu(display("rate limiting misconfigured"))]
     RateLimitingMisconfigured { source: InvalidBucketConfig },
 }
@@ -454,97 +432,133 @@ struct Inner {
     metrics: Arc<Metrics>,
 }
 
+#[derive(Debug, Snafu)]
+enum RelayUpgradeReqError {
+    #[snafu(display("missing header: {header}"))]
+    MissingHeader { header: http::HeaderName },
+    #[snafu(display("invalid header value for {header}: {details}"))]
+    InvalidHeader {
+        header: http::HeaderName,
+        details: String,
+    },
+    #[snafu(display(
+        "invalid header value for {SEC_WEBSOCKET_VERSION}: unsupported websocket version, only supporting {SUPPORTED_WEBSOCKET_VERSION}"
+    ))]
+    UnsupportedWebsocketVersion,
+    #[snafu(display(
+        "invalid header value for {SEC_WEBSOCKET_PROTOCOL}: unsupported relay version: we support {we_support} but you only provide {you_support}"
+    ))]
+    UnsupportedRelayVersion {
+        we_support: &'static str,
+        you_support: String,
+    },
+}
+
 impl RelayService {
+    fn build_response(&self) -> http::response::Builder {
+        let mut res = Response::builder();
+        for (key, value) in self.0.headers.iter() {
+            res = res.header(key, value);
+        }
+        res
+    }
+
     /// Upgrades the HTTP connection to the relay protocol, runs relay client.
-    fn call_client_conn(
+    fn handle_relay_ws_upgrade(
         &self,
         mut req: Request<Incoming>,
-    ) -> Pin<Box<dyn Future<Output = Result<Response<BytesBody>, hyper::Error>> + Send>> {
-        // TODO: soooo much cloning. See if there is an alternative
-        let this = self.clone();
-        let mut builder = Response::builder();
-        for (key, value) in self.0.headers.iter() {
-            builder = builder.header(key, value);
+    ) -> Result<Response<BytesBody>, RelayUpgradeReqError> {
+        fn expect_header(
+            req: &Request<Incoming>,
+            header: http::HeaderName,
+        ) -> Result<&HeaderValue, RelayUpgradeReqError> {
+            req.headers()
+                .get(&header)
+                .context(MissingHeaderSnafu { header })
         }
 
-        async move {
-            {
-                // Send a 400 to any request that doesn't have an `Upgrade` header.
-                if req.headers().get(UPGRADE)
-                    != Some(&HeaderValue::from_static(WEBSOCKET_UPGRADE_PROTOCOL))
-                {
-                    return Ok(builder
-                        .status(StatusCode::BAD_REQUEST)
-                        .body(body_empty())
-                        .expect("valid body"));
-                };
-
-                let Some(key) = req.headers().get("Sec-WebSocket-Key").cloned() else {
-                    warn!("missing header Sec-WebSocket-Key for websocket relay protocol");
-                    return Ok(builder
-                        .status(StatusCode::BAD_REQUEST)
-                        .body(body_empty())
-                        .expect("valid body"));
-                };
-
-                let Some(version) = req.headers().get("Sec-WebSocket-Version").cloned() else {
-                    warn!("missing header Sec-WebSocket-Version for websocket relay protocol");
-                    return Ok(builder
-                        .status(StatusCode::BAD_REQUEST)
-                        .body(body_empty())
-                        .expect("valid body"));
-                };
-
-                if version.as_bytes() != SUPPORTED_WEBSOCKET_VERSION.as_bytes() {
-                    warn!("invalid header Sec-WebSocket-Version: {:?}", version);
-                    return Ok(builder
-                        .status(StatusCode::BAD_REQUEST)
-                        // It's convention to send back the version(s) we *do* support
-                        .header("Sec-WebSocket-Version", SUPPORTED_WEBSOCKET_VERSION)
-                        .body(body_empty())
-                        .expect("valid body"));
-                }
-
-                debug!("upgrading connection");
-
-                // Setup a future that will eventually receive the upgraded
-                // connection and talk a new protocol, and spawn the future
-                // into the runtime.
-                //
-                // Note: This can't possibly be fulfilled until the 101 response
-                // is returned below, so it's better to spawn this future instead
-                // waiting for it to complete to then return a response.
-                tokio::task::spawn(
-                    async move {
-                        match hyper::upgrade::on(&mut req).await {
-                            Ok(upgraded) => {
-                                if let Err(err) = this.0.relay_connection_handler(upgraded).await {
-                                    warn!("error accepting upgraded connection: {err:#}",);
-                                } else {
-                                    debug!("upgraded connection completed");
-                                };
-                            }
-                            Err(err) => warn!("upgrade error: {err:#}"),
-                        }
-                    }
-                    .instrument(debug_span!("handler")),
-                );
-
-                // Now return a 101 Response saying we agree to the upgrade to the
-                // websocket upgrade protocol
-                builder = builder.status(StatusCode::SWITCHING_PROTOCOLS).header(
-                    UPGRADE,
-                    HeaderValue::from_static(WEBSOCKET_UPGRADE_PROTOCOL),
-                );
-
-                Ok(builder
-                    .header(SEC_WEBSOCKET_ACCEPT, derive_accept_key(&key))
-                    .header(CONNECTION, "upgrade")
-                    .body(body_full("switching to websocket protocol"))
-                    .expect("valid body"))
+        let upgrade_header = expect_header(&req, UPGRADE)?;
+        snafu::ensure!(
+            upgrade_header == HeaderValue::from_static(WEBSOCKET_UPGRADE_PROTOCOL),
+            InvalidHeaderSnafu {
+                header: UPGRADE,
+                details: format!("value must be {WEBSOCKET_UPGRADE_PROTOCOL}"),
             }
-        }
-        .boxed()
+        );
+
+        let key = expect_header(&req, SEC_WEBSOCKET_KEY)?.clone();
+        let version = expect_header(&req, SEC_WEBSOCKET_VERSION)?.clone();
+
+        snafu::ensure!(
+            version.as_bytes() == SUPPORTED_WEBSOCKET_VERSION.as_bytes(),
+            UnsupportedWebsocketVersionSnafu
+        );
+
+        let subprotocols = expect_header(&req, SEC_WEBSOCKET_PROTOCOL)?
+            .to_str()
+            .ok()
+            .context(InvalidHeaderSnafu {
+                header: SEC_WEBSOCKET_PROTOCOL,
+                details: "header value is not ascii".to_string(),
+            })?;
+        let supports_our_version = subprotocols
+            .split_whitespace()
+            .any(|p| p == RELAY_PROTOCOL_VERSION);
+        snafu::ensure!(
+            supports_our_version,
+            UnsupportedRelayVersionSnafu {
+                we_support: RELAY_PROTOCOL_VERSION,
+                you_support: subprotocols.to_string(),
+            }
+        );
+
+        let client_auth_header = req.headers().get(CLIENT_AUTH_HEADER).cloned();
+
+        // Setup a future that will eventually receive the upgraded
+        // connection and talk a new protocol, and spawn the future
+        // into the runtime.
+        //
+        // Note: This can't possibly be fulfilled until the 101 response
+        // is returned below, so it's better to spawn this future instead
+        // waiting for it to complete to then return a response.
+        tokio::task::spawn({
+            let this = self.clone();
+            async move {
+                match hyper::upgrade::on(&mut req).await {
+                    Ok(upgraded) => {
+                        if let Err(err) = this
+                            .0
+                            .relay_connection_handler(upgraded, client_auth_header)
+                            .await
+                        {
+                            warn!("error accepting upgraded connection: {err:#}",);
+                        } else {
+                            debug!("upgraded connection completed");
+                        };
+                    }
+                    Err(err) => warn!("upgrade error: {err:#}"),
+                }
+            }
+            .instrument(debug_span!("handler"))
+        });
+
+        // Now return a 101 Response saying we agree to the upgrade to the
+        // websocket upgrade protocol
+        Ok(self
+            .build_response()
+            .status(StatusCode::SWITCHING_PROTOCOLS)
+            .header(
+                UPGRADE,
+                HeaderValue::from_static(WEBSOCKET_UPGRADE_PROTOCOL),
+            )
+            .header(SEC_WEBSOCKET_ACCEPT, derive_accept_key(&key))
+            .header(
+                SEC_WEBSOCKET_PROTOCOL,
+                HeaderValue::from_static(RELAY_PROTOCOL_VERSION),
+            )
+            .header(CONNECTION, "upgrade")
+            .body(body_full("switching to websocket protocol"))
+            .expect("valid body"))
     }
 }
 
@@ -559,8 +573,21 @@ impl Service<Request<Incoming>> for RelayService {
             (req.method(), req.uri().path()),
             (&hyper::Method::GET, RELAY_PATH)
         ) {
-            let this = self.clone();
-            return Box::pin(async move { this.call_client_conn(req).await.map_err(Into::into) });
+            let res = match self.handle_relay_ws_upgrade(req) {
+                Ok(response) => Ok(response),
+                // It's convention to send back the version(s) we *do* support
+                Err(e @ RelayUpgradeReqError::UnsupportedWebsocketVersion) => self
+                    .build_response()
+                    .status(StatusCode::BAD_REQUEST)
+                    .header(SEC_WEBSOCKET_VERSION, SUPPORTED_WEBSOCKET_VERSION)
+                    .body(body_full(e.to_string())),
+                Err(e) => self
+                    .build_response()
+                    .status(StatusCode::BAD_REQUEST)
+                    .body(body_full(e.to_string())),
+            }
+            .map_err(Into::into);
+            return Box::pin(async move { res });
         }
         // Otherwise handle the relay connection as normal.
 
@@ -606,6 +633,7 @@ impl Inner {
     async fn relay_connection_handler(
         &self,
         upgraded: Upgraded,
+        client_auth_header: Option<HeaderValue>,
     ) -> Result<(), ConnectionHandlerError> {
         debug!("relay_connection upgraded");
         let (io, read_buf) = downcast_upgrade(upgraded)?;
@@ -613,7 +641,7 @@ impl Inner {
             return Err(BufferNotEmptySnafu { buf: read_buf }.build());
         }
 
-        self.accept(io).await?;
+        self.accept(io, client_auth_header).await?;
         Ok(())
     }
 
@@ -627,9 +655,11 @@ impl Inner {
     ///
     /// [`AsyncRead`]: tokio::io::AsyncRead
     /// [`AsyncWrite`]: tokio::io::AsyncWrite
-    async fn accept(&self, io: MaybeTlsStream) -> Result<(), AcceptError> {
-        use snafu::ResultExt;
-
+    async fn accept(
+        &self,
+        io: MaybeTlsStream,
+        client_auth_header: Option<HeaderValue>,
+    ) -> Result<(), AcceptError> {
         trace!("accept: start");
 
         let io = RateLimited::from_cfg(self.rate_limit, io, self.metrics.clone())
@@ -641,31 +671,23 @@ impl Inner {
             .limits(tokio_websockets::Limits::default().max_payload_len(Some(MAX_FRAME_SIZE)))
             // Serve will create a WebSocketStream on an already upgraded connection
             .serve(io);
-        let mut io = RelayedStream {
-            inner: websocket,
+
+        let mut io = WsBytesFramed { io: websocket };
+
+        let authentication =
+            handshake::serverside(&mut io, client_auth_header, rand::rngs::OsRng).await?;
+
+        trace!(?authentication.mechanism, "accept: verified authentication");
+
+        let is_authorized = self.access.is_allowed(authentication.client_key).await;
+        let client_key = authentication.authorize_if(is_authorized, &mut io).await?;
+
+        trace!("accept: verified authorization");
+
+        let io = RelayedStream {
+            inner: io,
             key_cache: self.key_cache.clone(),
         };
-        trace!("accept: recv client key");
-        let (client_key, info) = recv_client_key(&mut io).await.context(RecvClientKeySnafu)?;
-
-        trace!("accept: checking access: {:?}", self.access);
-        if !self.access.is_allowed(client_key).await {
-            io.send(Frame::Health {
-                problem: Bytes::from_static(b"not authenticated"),
-            })
-            .await?;
-            io.flush().await?;
-
-            return Err(ClientNotAuthenticatedSnafu { key: client_key }.build());
-        }
-
-        if info.version != PROTOCOL_VERSION {
-            return Err(UnexpectedClientVersionSnafu {
-                version: info.version,
-                expected_version: PROTOCOL_VERSION,
-            }
-            .build());
-        }
 
         trace!("accept: build client conn");
         let client_conn_builder = Config {
@@ -780,7 +802,7 @@ impl RelayService {
                         let tls_stream = start_handshake
                             .into_stream(config)
                             .await
-                            .context(HandshakeSnafu)?;
+                            .context(TlsHandshakeSnafu)?;
                         self.serve_connection(MaybeTlsStream::Tls(tls_stream))
                             .await
                             .context(HttpsSnafu)?;
@@ -845,7 +867,6 @@ impl std::ops::DerefMut for Handlers {
 mod tests {
     use std::sync::Arc;
 
-    use bytes::Bytes;
     use iroh_base::{PublicKey, SecretKey};
     use n0_future::{SinkExt, StreamExt};
     use n0_snafu::{Result, ResultExt};
@@ -856,11 +877,9 @@ mod tests {
 
     use super::*;
     use crate::{
-        client::{
-            conn::{Conn, ReceivedMessage, SendMessage},
-            Client, ClientBuilder, ConnectError,
-        },
+        client::{conn::Conn, Client, ClientBuilder, ConnectError},
         dns::DnsResolver,
+        protos::relay::{ClientToRelayMsg, RelayToClientMsg},
     };
 
     pub(crate) fn make_tls_config() -> TlsConfig {
@@ -918,19 +937,22 @@ mod tests {
         info!("created client {b_key:?}");
 
         info!("ping a");
-        client_a.send(SendMessage::Ping([1u8; 8])).await?;
+        client_a.send(ClientToRelayMsg::Ping([1u8; 8])).await?;
         let pong = client_a.next().await.expect("eos")?;
-        assert!(matches!(pong, ReceivedMessage::Pong(_)));
+        assert!(matches!(pong, RelayToClientMsg::Pong { .. }));
 
         info!("ping b");
-        client_b.send(SendMessage::Ping([2u8; 8])).await?;
+        client_b.send(ClientToRelayMsg::Ping([2u8; 8])).await?;
         let pong = client_b.next().await.expect("eos")?;
-        assert!(matches!(pong, ReceivedMessage::Pong(_)));
+        assert!(matches!(pong, RelayToClientMsg::Pong { .. }));
 
         info!("sending message from a to b");
         let msg = Bytes::from_static(b"hi there, client b!");
         client_a
-            .send(SendMessage::SendPacket(b_key, msg.clone()))
+            .send(ClientToRelayMsg::SendPacket {
+                dst_key: b_key,
+                packet: msg.clone(),
+            })
             .await?;
         info!("waiting for message from a on b");
         let (got_key, got_msg) =
@@ -941,7 +963,10 @@ mod tests {
         info!("sending message from b to a");
         let msg = Bytes::from_static(b"right back at ya, client b!");
         client_b
-            .send(SendMessage::SendPacket(a_key, msg.clone()))
+            .send(ClientToRelayMsg::SendPacket {
+                dst_key: a_key,
+                packet: msg.clone(),
+            })
             .await?;
         info!("waiting for message b on a");
         let (got_key, got_msg) =
@@ -970,7 +995,7 @@ mod tests {
     }
 
     fn process_msg(
-        msg: Option<Result<ReceivedMessage, crate::client::RecvError>>,
+        msg: Option<Result<RelayToClientMsg, crate::client::RecvError>>,
     ) -> Option<(PublicKey, Bytes)> {
         match msg {
             Some(Err(e)) => {
@@ -979,12 +1004,12 @@ mod tests {
             }
             Some(Ok(msg)) => {
                 info!("got message on: {msg:?}");
-                if let ReceivedMessage::ReceivedPacket {
-                    remote_node_id: source,
-                    data,
+                if let RelayToClientMsg::ReceivedPacket {
+                    src_key: source,
+                    content,
                 } = msg
                 {
-                    Some((source, data))
+                    Some((source, content))
                 } else {
                     None
                 }
@@ -1032,19 +1057,22 @@ mod tests {
         info!("created client {b_key:?}");
 
         info!("ping a");
-        client_a.send(SendMessage::Ping([1u8; 8])).await?;
+        client_a.send(ClientToRelayMsg::Ping([1u8; 8])).await?;
         let pong = client_a.next().await.expect("eos")?;
-        assert!(matches!(pong, ReceivedMessage::Pong(_)));
+        assert!(matches!(pong, RelayToClientMsg::Pong { .. }));
 
         info!("ping b");
-        client_b.send(SendMessage::Ping([2u8; 8])).await?;
+        client_b.send(ClientToRelayMsg::Ping([2u8; 8])).await?;
         let pong = client_b.next().await.expect("eos")?;
-        assert!(matches!(pong, ReceivedMessage::Pong(_)));
+        assert!(matches!(pong, RelayToClientMsg::Pong { .. }));
 
         info!("sending message from a to b");
         let msg = Bytes::from_static(b"hi there, client b!");
         client_a
-            .send(SendMessage::SendPacket(b_key, msg.clone()))
+            .send(ClientToRelayMsg::SendPacket {
+                dst_key: b_key,
+                packet: msg.clone(),
+            })
             .await?;
         info!("waiting for message from a on b");
         let (got_key, got_msg) =
@@ -1055,7 +1083,10 @@ mod tests {
         info!("sending message from b to a");
         let msg = Bytes::from_static(b"right back at ya, client b!");
         client_b
-            .send(SendMessage::SendPacket(a_key, msg.clone()))
+            .send(ClientToRelayMsg::SendPacket {
+                dst_key: a_key,
+                packet: msg.clone(),
+            })
             .await?;
         info!("waiting for message b on a");
         let (got_key, got_msg) =
@@ -1098,7 +1129,7 @@ mod tests {
         let (client_a, rw_a) = tokio::io::duplex(10);
         let s = service.clone();
         let handler_task =
-            tokio::spawn(async move { s.0.accept(MaybeTlsStream::Test(rw_a)).await });
+            tokio::spawn(async move { s.0.accept(MaybeTlsStream::Test(rw_a), None).await });
         let mut client_a = make_test_client(client_a, &key_a).await?;
         handler_task.await.context("join")??;
 
@@ -1108,43 +1139,43 @@ mod tests {
         let (client_b, rw_b) = tokio::io::duplex(10);
         let s = service.clone();
         let handler_task =
-            tokio::spawn(async move { s.0.accept(MaybeTlsStream::Test(rw_b)).await });
+            tokio::spawn(async move { s.0.accept(MaybeTlsStream::Test(rw_b), None).await });
         let mut client_b = make_test_client(client_b, &key_b).await?;
         handler_task.await.context("join")??;
 
         info!("Send message from A to B.");
         let msg = Bytes::from_static(b"hello client b!!");
         client_a
-            .send(SendMessage::SendPacket(public_key_b, msg.clone()))
+            .send(ClientToRelayMsg::SendPacket {
+                dst_key: public_key_b,
+                packet: msg.clone(),
+            })
             .await?;
         match client_b.next().await.unwrap()? {
-            ReceivedMessage::ReceivedPacket {
-                remote_node_id,
-                data,
-            } => {
-                assert_eq!(public_key_a, remote_node_id);
-                assert_eq!(&msg[..], data);
+            RelayToClientMsg::ReceivedPacket { src_key, content } => {
+                assert_eq!(public_key_a, src_key);
+                assert_eq!(msg, content);
             }
             msg => {
-                whatever!("expected ReceivedPacket msg, got {msg:?}");
+                whatever!("expected ReceivedDatagrams msg, got {msg:?}");
             }
         }
 
         info!("Send message from B to A.");
         let msg = Bytes::from_static(b"nice to meet you client a!!");
         client_b
-            .send(SendMessage::SendPacket(public_key_a, msg.clone()))
+            .send(ClientToRelayMsg::SendPacket {
+                dst_key: public_key_a,
+                packet: msg.clone(),
+            })
             .await?;
         match client_a.next().await.unwrap()? {
-            ReceivedMessage::ReceivedPacket {
-                remote_node_id,
-                data,
-            } => {
-                assert_eq!(public_key_b, remote_node_id);
-                assert_eq!(&msg[..], data);
+            RelayToClientMsg::ReceivedPacket { src_key, content } => {
+                assert_eq!(public_key_b, src_key);
+                assert_eq!(msg, content);
             }
             msg => {
-                whatever!("expected ReceivedPacket msg, got {msg:?}");
+                whatever!("expected ReceivedDatagrams msg, got {msg:?}");
             }
         }
 
@@ -1154,10 +1185,10 @@ mod tests {
 
         info!("Fail to send message from A to B.");
         let res = client_a
-            .send(SendMessage::SendPacket(
-                public_key_b,
-                Bytes::from_static(b"try to send"),
-            ))
+            .send(ClientToRelayMsg::SendPacket {
+                dst_key: public_key_b,
+                packet: Bytes::from_static(b"try to send"),
+            })
             .await;
         assert!(res.is_err());
         assert!(client_b.next().await.is_none());
@@ -1182,7 +1213,7 @@ mod tests {
         let (client_a, rw_a) = tokio::io::duplex(10);
         let s = service.clone();
         let handler_task =
-            tokio::spawn(async move { s.0.accept(MaybeTlsStream::Test(rw_a)).await });
+            tokio::spawn(async move { s.0.accept(MaybeTlsStream::Test(rw_a), None).await });
         let mut client_a = make_test_client(client_a, &key_a).await?;
         handler_task.await.context("join")??;
 
@@ -1192,43 +1223,43 @@ mod tests {
         let (client_b, rw_b) = tokio::io::duplex(10);
         let s = service.clone();
         let handler_task =
-            tokio::spawn(async move { s.0.accept(MaybeTlsStream::Test(rw_b)).await });
+            tokio::spawn(async move { s.0.accept(MaybeTlsStream::Test(rw_b), None).await });
         let mut client_b = make_test_client(client_b, &key_b).await?;
         handler_task.await.context("join")??;
 
         info!("Send message from A to B.");
         let msg = Bytes::from_static(b"hello client b!!");
         client_a
-            .send(SendMessage::SendPacket(public_key_b, msg.clone()))
+            .send(ClientToRelayMsg::SendPacket {
+                dst_key: public_key_b,
+                packet: msg.clone(),
+            })
             .await?;
         match client_b.next().await.expect("eos")? {
-            ReceivedMessage::ReceivedPacket {
-                remote_node_id,
-                data,
-            } => {
-                assert_eq!(public_key_a, remote_node_id);
-                assert_eq!(&msg[..], data);
+            RelayToClientMsg::ReceivedPacket { src_key, content } => {
+                assert_eq!(public_key_a, src_key);
+                assert_eq!(msg, content);
             }
             msg => {
-                whatever!("expected ReceivedPacket msg, got {msg:?}");
+                whatever!("expected ReceivedDatagrams msg, got {msg:?}");
             }
         }
 
         info!("Send message from B to A.");
         let msg = Bytes::from_static(b"nice to meet you client a!!");
         client_b
-            .send(SendMessage::SendPacket(public_key_a, msg.clone()))
+            .send(ClientToRelayMsg::SendPacket {
+                dst_key: public_key_a,
+                packet: msg.clone(),
+            })
             .await?;
         match client_a.next().await.expect("eos")? {
-            ReceivedMessage::ReceivedPacket {
-                remote_node_id,
-                data,
-            } => {
-                assert_eq!(public_key_b, remote_node_id);
-                assert_eq!(&msg[..], data);
+            RelayToClientMsg::ReceivedPacket { src_key, content } => {
+                assert_eq!(public_key_b, src_key);
+                assert_eq!(msg, content);
             }
             msg => {
-                whatever!("expected ReceivedPacket msg, got {msg:?}");
+                whatever!("expected ReceivedDatagrams msg, got {msg:?}");
             }
         }
 
@@ -1236,7 +1267,7 @@ mod tests {
         let (new_client_b, new_rw_b) = tokio::io::duplex(10);
         let s = service.clone();
         let handler_task =
-            tokio::spawn(async move { s.0.accept(MaybeTlsStream::Test(new_rw_b)).await });
+            tokio::spawn(async move { s.0.accept(MaybeTlsStream::Test(new_rw_b), None).await });
         let mut new_client_b = make_test_client(new_client_b, &key_b).await?;
         handler_task.await.context("join")??;
 
@@ -1245,36 +1276,36 @@ mod tests {
         info!("Send message from A to B.");
         let msg = Bytes::from_static(b"are you still there, b?!");
         client_a
-            .send(SendMessage::SendPacket(public_key_b, msg.clone()))
+            .send(ClientToRelayMsg::SendPacket {
+                dst_key: public_key_b,
+                packet: msg.clone(),
+            })
             .await?;
         match new_client_b.next().await.expect("eos")? {
-            ReceivedMessage::ReceivedPacket {
-                remote_node_id,
-                data,
-            } => {
-                assert_eq!(public_key_a, remote_node_id);
-                assert_eq!(&msg[..], data);
+            RelayToClientMsg::ReceivedPacket { src_key, content } => {
+                assert_eq!(public_key_a, src_key);
+                assert_eq!(msg, content);
             }
             msg => {
-                whatever!("expected ReceivedPacket msg, got {msg:?}");
+                whatever!("expected ReceivedDatagrams msg, got {msg:?}");
             }
         }
 
         info!("Send message from B to A.");
         let msg = Bytes::from_static(b"just had a spot of trouble but I'm back now,a!!");
         new_client_b
-            .send(SendMessage::SendPacket(public_key_a, msg.clone()))
+            .send(ClientToRelayMsg::SendPacket {
+                dst_key: public_key_a,
+                packet: msg.clone(),
+            })
             .await?;
         match client_a.next().await.expect("eos")? {
-            ReceivedMessage::ReceivedPacket {
-                remote_node_id,
-                data,
-            } => {
-                assert_eq!(public_key_b, remote_node_id);
-                assert_eq!(&msg[..], data);
+            RelayToClientMsg::ReceivedPacket { src_key, content } => {
+                assert_eq!(public_key_b, src_key);
+                assert_eq!(msg, content);
             }
             msg => {
-                whatever!("expected ReceivedPacket msg, got {msg:?}");
+                whatever!("expected ReceivedDatagrams msg, got {msg:?}");
             }
         }
 
@@ -1283,10 +1314,10 @@ mod tests {
 
         info!("Sending message from A to B fails");
         let res = client_a
-            .send(SendMessage::SendPacket(
-                public_key_b,
-                Bytes::from_static(b"try to send"),
-            ))
+            .send(ClientToRelayMsg::SendPacket {
+                dst_key: public_key_b,
+                packet: Bytes::from_static(b"try to send"),
+            })
             .await;
         assert!(res.is_err());
         assert!(new_client_b.next().await.is_none());

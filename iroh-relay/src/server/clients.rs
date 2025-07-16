@@ -192,26 +192,50 @@ impl Clients {
 mod tests {
     use std::time::Duration;
 
-    use bytes::Bytes;
     use iroh_base::SecretKey;
+    use n0_future::{Stream, StreamExt};
     use n0_snafu::{Result, ResultExt};
 
     use super::*;
     use crate::{
-        protos::relay::{recv_frame, Frame, FrameType},
+        client::conn::Conn,
+        protos::{common::FrameType, relay::RelayToClientMsg},
         server::streams::RelayedStream,
     };
 
-    fn test_client_builder(key: NodeId) -> (Config, RelayedStream) {
+    async fn recv_frame<
+        E: snafu::Error + Sync + Send + 'static,
+        S: Stream<Item = Result<RelayToClientMsg, E>> + Unpin,
+    >(
+        frame_type: FrameType,
+        mut stream: S,
+    ) -> Result<RelayToClientMsg> {
+        match stream.next().await {
+            Some(Ok(frame)) => {
+                if frame_type != frame.typ() {
+                    snafu::whatever!(
+                        "Unexpected frame, got {:?}, but expected {:?}",
+                        frame.typ(),
+                        frame_type
+                    );
+                }
+                Ok(frame)
+            }
+            Some(Err(err)) => Err(err).e(),
+            None => snafu::whatever!("Unexpected EOF, expected frame {frame_type:?}"),
+        }
+    }
+
+    fn test_client_builder(key: NodeId) -> (Config, Conn) {
         let (server, client) = tokio::io::duplex(1024);
         (
             Config {
                 node_id: key,
-                stream: RelayedStream::test_client(client),
+                stream: RelayedStream::test(server),
                 write_timeout: Duration::from_secs(1),
                 channel_capacity: 10,
             },
-            RelayedStream::test_server(server),
+            Conn::test(client),
         )
     }
 
@@ -228,22 +252,22 @@ mod tests {
 
         // send packet
         let data = b"hello world!";
-        clients.send_packet(a_key, Bytes::from(&data[..]), b_key, &metrics)?;
+        clients.send_packet(a_key, Bytes::from_static(&data[..]), b_key, &metrics)?;
         let frame = recv_frame(FrameType::RecvPacket, &mut a_rw).await?;
         assert_eq!(
             frame,
-            Frame::RecvPacket {
+            RelayToClientMsg::ReceivedPacket {
                 src_key: b_key,
                 content: data.to_vec().into(),
             }
         );
 
         // send disco packet
-        clients.send_disco_packet(a_key, Bytes::from(&data[..]), b_key, &metrics)?;
+        clients.send_disco_packet(a_key, Bytes::from_static(&data[..]), b_key, &metrics)?;
         let frame = recv_frame(FrameType::RecvPacket, &mut a_rw).await?;
         assert_eq!(
             frame,
-            Frame::RecvPacket {
+            RelayToClientMsg::ReceivedPacket {
                 src_key: b_key,
                 content: data.to_vec().into(),
             }

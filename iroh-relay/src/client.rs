@@ -22,10 +22,17 @@ use tracing::warn;
 use tracing::{debug, event, trace, Level};
 use url::Url;
 
-pub use self::conn::{ReceivedMessage, RecvError, SendError, SendMessage};
+pub use self::conn::{RecvError, SendError};
 #[cfg(not(wasm_browser))]
 use crate::dns::{DnsError, DnsResolver};
-use crate::{http::RELAY_PATH, protos::relay::SendError as SendRelayError, KeyCache};
+use crate::{
+    http::RELAY_PATH,
+    protos::{
+        handshake,
+        relay::{ClientToRelayMsg, RelayToClientMsg},
+    },
+    KeyCache,
+};
 
 pub(crate) mod conn;
 #[cfg(not(wasm_browser))]
@@ -60,7 +67,7 @@ pub enum ConnectError {
         source: ws_stream_wasm::WsErr,
     },
     #[snafu(transparent)]
-    Handshake { source: SendRelayError },
+    Handshake { source: handshake::Error },
     #[snafu(transparent)]
     Dial { source: DialError },
     #[snafu(display("Unexpected status during upgrade: {code}"))]
@@ -117,8 +124,6 @@ pub struct ClientBuilder {
     /// Default is None
     #[debug("address family selector callback")]
     address_family_selector: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
-    /// Default is false
-    is_prober: bool,
     /// Server url.
     url: RelayUrl,
     /// Allow self-signed certificates from relay servers
@@ -144,7 +149,6 @@ impl ClientBuilder {
     ) -> Self {
         ClientBuilder {
             address_family_selector: None,
-            is_prober: false,
             url: url.into(),
 
             #[cfg(any(test, feature = "test-utils"))]
@@ -172,12 +176,6 @@ impl ClientBuilder {
         self
     }
 
-    /// Indicates this client is a prober
-    pub fn is_prober(mut self, is: bool) -> Self {
-        self.is_prober = is;
-        self
-    }
-
     /// Skip the verification of the relay server's SSL certificates.
     ///
     /// May only be used in tests.
@@ -202,9 +200,13 @@ impl ClientBuilder {
     /// Establishes a new connection to the relay server.
     #[cfg(not(wasm_browser))]
     pub async fn connect(&self) -> Result<Client, ConnectError> {
+        use http::header::SEC_WEBSOCKET_PROTOCOL;
         use tls::MaybeTlsStreamBuilder;
 
-        use crate::protos::relay::MAX_FRAME_SIZE;
+        use crate::{
+            http::{CLIENT_AUTH_HEADER, RELAY_PROTOCOL_VERSION},
+            protos::{handshake::KeyMaterialClientAuth, relay::MAX_FRAME_SIZE},
+        };
 
         let mut dial_url = (*self.url).clone();
         dial_url.set_path(RELAY_PATH);
@@ -240,7 +242,7 @@ impl ClientBuilder {
             .as_ref()
             .local_addr()
             .map_err(|_| NoLocalAddrSnafu.build())?;
-        let (conn, response) = tokio_websockets::ClientBuilder::new()
+        let mut builder = tokio_websockets::ClientBuilder::new()
             .uri(dial_url.as_str())
             .map_err(|_| {
                 InvalidRelayUrlSnafu {
@@ -248,9 +250,25 @@ impl ClientBuilder {
                 }
                 .build()
             })?
+            .add_header(
+                SEC_WEBSOCKET_PROTOCOL,
+                http::HeaderValue::from_static(RELAY_PROTOCOL_VERSION),
+            )
+            .expect("valid header name and value")
             .limits(tokio_websockets::Limits::default().max_payload_len(Some(MAX_FRAME_SIZE)))
-            .connect_on(stream)
-            .await?;
+            // We turn off automatic flushing after a threshold (the default would be after 8KB).
+            // This means we need to flush manually, which we do by calling `Sink::send_all` or
+            // `Sink::send` (which calls `Sink::flush`) in the `ActiveRelayActor`.
+            .config(tokio_websockets::Config::default().flush_threshold(usize::MAX));
+        if let Some(client_auth) = KeyMaterialClientAuth::new(&self.secret_key, &stream) {
+            debug!("Using TLS key export for relay client authentication");
+            builder = builder
+                .add_header(CLIENT_AUTH_HEADER, client_auth.into_header_value())
+                .expect(
+                    "impossible: CLIENT_AUTH_HEADER isn't a disallowed header value for websockets",
+                );
+        }
+        let (conn, response) = builder.connect_on(stream).await?;
 
         if response.status() != hyper::StatusCode::SWITCHING_PROTOCOLS {
             UnexpectedUpgradeStatusSnafu {
@@ -291,6 +309,8 @@ impl ClientBuilder {
     /// Establishes a new connection to the relay server.
     #[cfg(wasm_browser)]
     pub async fn connect(&self) -> Result<Client, ConnectError> {
+        use crate::http::RELAY_PROTOCOL_VERSION;
+
         let mut dial_url = (*self.url).clone();
         dial_url.set_path(RELAY_PATH);
         // The relay URL is exchanged with the http(s) scheme in tickets and similar.
@@ -310,7 +330,9 @@ impl ClientBuilder {
 
         debug!(%dial_url, "Dialing relay by websocket");
 
-        let (_, ws_stream) = ws_stream_wasm::WsMeta::connect(dial_url.as_str(), None).await?;
+        let (_, ws_stream) =
+            ws_stream_wasm::WsMeta::connect(dial_url.as_str(), Some(vec![RELAY_PROTOCOL_VERSION]))
+                .await?;
         let conn = Conn::new(ws_stream, self.key_cache.clone(), &self.secret_key).await?;
 
         event!(
@@ -350,24 +372,24 @@ impl Client {
 }
 
 impl Stream for Client {
-    type Item = Result<ReceivedMessage, RecvError>;
+    type Item = Result<RelayToClientMsg, RecvError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Option<Self::Item>> {
         Pin::new(&mut self.conn).poll_next(cx)
     }
 }
 
-impl Sink<SendMessage> for Client {
+impl Sink<ClientToRelayMsg> for Client {
     type Error = SendError;
 
     fn poll_ready(
         mut self: Pin<&mut Self>,
         cx: &mut task::Context<'_>,
     ) -> Poll<Result<(), Self::Error>> {
-        <Conn as Sink<SendMessage>>::poll_ready(Pin::new(&mut self.conn), cx)
+        Pin::new(&mut self.conn).poll_ready(cx)
     }
 
-    fn start_send(mut self: Pin<&mut Self>, item: SendMessage) -> Result<(), Self::Error> {
+    fn start_send(mut self: Pin<&mut Self>, item: ClientToRelayMsg) -> Result<(), Self::Error> {
         Pin::new(&mut self.conn).start_send(item)
     }
 
@@ -375,24 +397,24 @@ impl Sink<SendMessage> for Client {
         mut self: Pin<&mut Self>,
         cx: &mut task::Context<'_>,
     ) -> Poll<Result<(), Self::Error>> {
-        <Conn as Sink<SendMessage>>::poll_flush(Pin::new(&mut self.conn), cx)
+        Pin::new(&mut self.conn).poll_flush(cx)
     }
 
     fn poll_close(
         mut self: Pin<&mut Self>,
         cx: &mut task::Context<'_>,
     ) -> Poll<Result<(), Self::Error>> {
-        <Conn as Sink<SendMessage>>::poll_close(Pin::new(&mut self.conn), cx)
+        Pin::new(&mut self.conn).poll_close(cx)
     }
 }
 
 /// The send half of a relay client.
 #[derive(Debug)]
 pub struct ClientSink {
-    sink: SplitSink<Conn, SendMessage>,
+    sink: SplitSink<Conn, ClientToRelayMsg>,
 }
 
-impl Sink<SendMessage> for ClientSink {
+impl Sink<ClientToRelayMsg> for ClientSink {
     type Error = SendError;
 
     fn poll_ready(
@@ -402,7 +424,7 @@ impl Sink<SendMessage> for ClientSink {
         Pin::new(&mut self.sink).poll_ready(cx)
     }
 
-    fn start_send(mut self: Pin<&mut Self>, item: SendMessage) -> Result<(), Self::Error> {
+    fn start_send(mut self: Pin<&mut Self>, item: ClientToRelayMsg) -> Result<(), Self::Error> {
         Pin::new(&mut self.sink).start_send(item)
     }
 
@@ -436,7 +458,7 @@ impl ClientStream {
 }
 
 impl Stream for ClientStream {
-    type Item = Result<ReceivedMessage, RecvError>;
+    type Item = Result<RelayToClientMsg, RecvError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut task::Context<'_>) -> Poll<Option<Self::Item>> {
         Pin::new(&mut self.stream).poll_next(cx)

@@ -337,43 +337,6 @@ mod tests {
     use super::*;
     use crate::defaults::staging;
 
-    #[test]
-    fn test_split_packets() {
-        fn mk_transmit(contents: &[u8], segment_size: Option<usize>) -> Transmit<'_> {
-            Transmit {
-                ecn: None,
-                contents,
-                segment_size,
-            }
-        }
-        fn mk_expected(parts: impl IntoIterator<Item = &'static str>) -> RelayContents {
-            parts
-                .into_iter()
-                .map(|p| p.as_bytes().to_vec().into())
-                .collect()
-        }
-        // no split
-        assert_eq!(
-            split_packets(&mk_transmit(b"hello", None)),
-            mk_expected(["hello"])
-        );
-        // split without rest
-        assert_eq!(
-            split_packets(&mk_transmit(b"helloworld", Some(5))),
-            mk_expected(["hello", "world"])
-        );
-        // split with rest and second transmit
-        assert_eq!(
-            split_packets(&mk_transmit(b"hello world", Some(5))),
-            mk_expected(["hello", " worl", "d"]) // spellchecker:disable-line
-        );
-        // split that results in 1 packet
-        assert_eq!(
-            split_packets(&mk_transmit(b"hello world", Some(1000))),
-            mk_expected(["hello world"])
-        );
-    }
-
     #[tokio::test(flavor = "multi_thread")]
     async fn test_relay_datagram_queue() {
         let capacity = 16;

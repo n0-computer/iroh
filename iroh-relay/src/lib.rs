@@ -54,3 +54,31 @@ pub use self::{
     ping_tracker::PingTracker,
     relay_map::{RelayMap, RelayNode, RelayQuicConfig},
 };
+
+/// This trait allows anything that ends up potentially
+/// wrapping a TLS stream use the underlying [`export_keying_material`]
+/// function.
+///
+/// [`export_keying_material`]: rustls::ConnectionCommon::export_keying_material
+pub(crate) trait ExportKeyingMaterial {
+    /// If this type ends up wrapping a TLS stream, then this tries
+    /// to export keying material by calling the underlying [`export_keying_material`]
+    /// function.
+    ///
+    /// However unlike that function, this returns `Option`, in case the
+    /// underlying stream might not be wrapping TLS, e.g. as in the case of
+    /// [`MaybeTlsStream`].
+    ///
+    /// For more information on what this function does, see the
+    /// [`export_keying_material`] documentation.
+    ///
+    /// [`export_keying_material`]: rustls::ConnectionCommon::export_keying_material
+    /// [`MaybeTlsStream`]: crate::client::streams::MaybeTlsStream
+    #[cfg_attr(wasm_browser, allow(unused))]
+    fn export_keying_material<T: AsMut<[u8]>>(
+        &self,
+        output: T,
+        label: &[u8],
+        context: Option<&[u8]>,
+    ) -> Option<T>;
+}
