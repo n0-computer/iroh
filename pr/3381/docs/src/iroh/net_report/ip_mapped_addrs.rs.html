@@ -38,7 +38,7 @@
 <a href=#38 id=38 data-nosnippet>38</a>    ///
 <a href=#39 id=39 data-nosnippet>39</a>    /// This generates a new IPv6 address in the Unique Local Address range (RFC 4193)
 <a href=#40 id=40 data-nosnippet>40</a>    /// which is recognised by iroh as an IP mapped address.
-<a href=#41 id=41 data-nosnippet>41</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>generate() -&gt; <span class="self">Self </span>{
+<a href=#41 id=41 data-nosnippet>41</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>generate() -&gt; <span class="self">Self </span>{
 <a href=#42 id=42 data-nosnippet>42</a>        <span class="kw">let </span><span class="kw-2">mut </span>addr = [<span class="number">0u8</span>; <span class="number">16</span>];
 <a href=#43 id=43 data-nosnippet>43</a>        addr[<span class="number">0</span>] = <span class="self">Self</span>::ADDR_PREFIXL;
 <a href=#44 id=44 data-nosnippet>44</a>        addr[<span class="number">1</span>..<span class="number">6</span>].copy_from_slice(<span class="kw-2">&amp;</span><span class="self">Self</span>::ADDR_GLOBAL_ID);

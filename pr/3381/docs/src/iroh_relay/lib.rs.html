@@ -53,4 +53,32 @@
 <a href=#53 id=53 data-nosnippet>53</a><span class="kw">pub use </span><span class="self">self</span>::{
 <a href=#54 id=54 data-nosnippet>54</a>    ping_tracker::PingTracker,
 <a href=#55 id=55 data-nosnippet>55</a>    relay_map::{RelayMap, RelayNode, RelayQuicConfig},
-<a href=#56 id=56 data-nosnippet>56</a>};</code></pre></div></section></main></body></html>
+<a href=#56 id=56 data-nosnippet>56</a>};
+<a href=#57 id=57 data-nosnippet>57</a>
+<a href=#58 id=58 data-nosnippet>58</a><span class="doccomment">/// This trait allows anything that ends up potentially
+<a href=#59 id=59 data-nosnippet>59</a>/// wrapping a TLS stream use the underlying [`export_keying_material`]
+<a href=#60 id=60 data-nosnippet>60</a>/// function.
+<a href=#61 id=61 data-nosnippet>61</a>///
+<a href=#62 id=62 data-nosnippet>62</a>/// [`export_keying_material`]: rustls::ConnectionCommon::export_keying_material
+<a href=#63 id=63 data-nosnippet>63</a></span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">trait </span>ExportKeyingMaterial {
+<a href=#64 id=64 data-nosnippet>64</a>    <span class="doccomment">/// If this type ends up wrapping a TLS stream, then this tries
+<a href=#65 id=65 data-nosnippet>65</a>    /// to export keying material by calling the underlying [`export_keying_material`]
+<a href=#66 id=66 data-nosnippet>66</a>    /// function.
+<a href=#67 id=67 data-nosnippet>67</a>    ///
+<a href=#68 id=68 data-nosnippet>68</a>    /// However unlike that function, this returns `Option`, in case the
+<a href=#69 id=69 data-nosnippet>69</a>    /// underlying stream might not be wrapping TLS, e.g. as in the case of
+<a href=#70 id=70 data-nosnippet>70</a>    /// [`MaybeTlsStream`].
+<a href=#71 id=71 data-nosnippet>71</a>    ///
+<a href=#72 id=72 data-nosnippet>72</a>    /// For more information on what this function does, see the
+<a href=#73 id=73 data-nosnippet>73</a>    /// [`export_keying_material`] documentation.
+<a href=#74 id=74 data-nosnippet>74</a>    ///
+<a href=#75 id=75 data-nosnippet>75</a>    /// [`export_keying_material`]: rustls::ConnectionCommon::export_keying_material
+<a href=#76 id=76 data-nosnippet>76</a>    /// [`MaybeTlsStream`]: crate::client::streams::MaybeTlsStream
+<a href=#77 id=77 data-nosnippet>77</a>    </span><span class="attr">#[cfg_attr(wasm_browser, allow(unused))]
+<a href=#78 id=78 data-nosnippet>78</a>    </span><span class="kw">fn </span>export_keying_material&lt;T: AsMut&lt;[u8]&gt;&gt;(
+<a href=#79 id=79 data-nosnippet>79</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
+<a href=#80 id=80 data-nosnippet>80</a>        output: T,
+<a href=#81 id=81 data-nosnippet>81</a>        label: <span class="kw-2">&amp;</span>[u8],
+<a href=#82 id=82 data-nosnippet>82</a>        context: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>[u8]&gt;,
+<a href=#83 id=83 data-nosnippet>83</a>    ) -&gt; <span class="prelude-ty">Option</span>&lt;T&gt;;
+<a href=#84 id=84 data-nosnippet>84</a>}</code></pre></div></section></main></body></html>
