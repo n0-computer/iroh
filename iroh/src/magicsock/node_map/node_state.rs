@@ -292,6 +292,7 @@ impl NodeState {
             UdpSendAddr::Valid(addr) => {
                 // If we have a valid address we use it.
                 trace!(%addr, "UdpSendAddr is valid, use it");
+                metrics.send_on_valid.inc();
                 (Some(addr), None)
             }
             UdpSendAddr::Outdated(addr) => {
@@ -299,10 +300,12 @@ impl NodeState {
                 // We also send disco pings so that it will become valid again if it still
                 // works (i.e. we don't need to holepunch again).
                 trace!(%addr, "UdpSendAddr is outdated, use it together with relay");
+                metrics.send_on_outdated.inc();
                 (Some(addr), self.relay_url())
             }
             UdpSendAddr::Unconfirmed(addr) => {
                 trace!(%addr, "UdpSendAddr is unconfirmed, use it together with relay");
+                metrics.send_on_unconfirmed.inc();
                 (Some(addr), self.relay_url())
             }
             UdpSendAddr::None => {

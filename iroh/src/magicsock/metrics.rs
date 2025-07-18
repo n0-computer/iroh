@@ -17,6 +17,11 @@ pub struct Metrics {
     pub send_relay: Counter,
     pub send_relay_error: Counter,
 
+    // Send types
+    pub send_on_valid: Counter,
+    pub send_on_outdated: Counter,
+    pub send_on_unconfirmed: Counter,
+
     // Data packets (non-disco)
     pub send_data: Counter,
     pub send_data_network_down: Counter,

@@ -139,14 +139,7 @@ impl BestAddr {
             if state.addr.addr == addr {
                 state.confirmed_at = confirmed_at;
                 state.trust_until = Some(confirmed_at + source.trust_duration());
-            } else {
-                println!(
-                    "Not reconfirming this shit: {} != {addr:?} {source:?} {confirmed_at:?}",
-                    state.addr.addr
-                );
             }
-        } else {
-            println!("Can't reconfirm! {addr:?} {source:?} {confirmed_at:?}");
         }
     }
 
