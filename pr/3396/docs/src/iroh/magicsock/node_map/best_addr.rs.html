@@ -281,8 +281,7 @@
 <a href="#280" id="280">280</a>
 <a href="#281" id="281">281</a>
 <a href="#282" id="282">282</a>
-<a href="#283" id="283">283</a>
-<a href="#284" id="284">284</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`BestAddr`] is the currently active best address for UDP sends.
+<a href="#283" id="283">283</a></pre></div><pre class="rust"><code><span class="doccomment">//! The [`BestAddr`] is the currently active best address for UDP sends.
 
 </span><span class="kw">use </span>std::net::SocketAddr;
 
@@ -479,7 +478,6 @@
                 </span><span class="kw">if </span>!state.is_trusted(now + TRUST_UDP_ADDR_SOON_OUTDATED)
                     &amp;&amp; state.confirmed_at &lt; confirmed_at
                 {
-                    <span class="macro">println!</span>(<span class="string">"best addr will soon not be trusted, let's switch"</span>);
                     <span class="self">self</span>.insert(addr, latency, source, confirmed_at);
                 } <span class="kw">else if </span>state.addr.addr == addr {
                     state.confirmed_at = confirmed_at;
