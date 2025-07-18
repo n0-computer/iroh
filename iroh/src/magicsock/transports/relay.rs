@@ -307,8 +307,6 @@ impl RelaySender {
 }
 
 /// Translate a UDP transmit to the `Datagrams` type for sending over the relay.
-// TODO: If quinn stayed on bytes this would probably be much cheaper, probably.  Need to
-// figure out where they allocate the Vec.
 fn datagrams_from_transmit(transmit: &Transmit<'_>) -> Datagrams {
     Datagrams {
         ecn: transmit.ecn.map(|ecn| match ecn {

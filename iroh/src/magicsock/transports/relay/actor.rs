@@ -670,7 +670,7 @@ impl ActiveRelayActor {
                 remote_node_id,
                 datagrams,
             } => {
-                trace!(len = %datagrams.contents.len(), "received msg");
+                trace!(len = datagrams.contents.len(), "received msg");
                 // If this is a new sender, register a route for this peer.
                 if state
                     .last_packet_src

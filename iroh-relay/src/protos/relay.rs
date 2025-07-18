@@ -213,7 +213,7 @@ impl RelayToClientMsg {
         match self {
             Self::Datagrams { datagrams, .. } => {
                 if datagrams.segment_size.is_some() {
-                    FrameType::RelayToClientDatagrams
+                    FrameType::RelayToClientDatagramBatch
                 } else {
                     FrameType::RelayToClientDatagram
                 }
@@ -299,7 +299,7 @@ impl RelayToClientMsg {
         );
 
         let res = match frame_type {
-            FrameType::RelayToClientDatagram | FrameType::RelayToClientDatagrams => {
+            FrameType::RelayToClientDatagram | FrameType::RelayToClientDatagramBatch => {
                 snafu::ensure!(content.len() >= NodeId::LENGTH, InvalidFrameSnafu);
 
                 let remote_node_id = cache
@@ -307,7 +307,7 @@ impl RelayToClientMsg {
                     .context(InvalidPublicKeySnafu)?;
                 let datagrams = Datagrams::from_bytes(
                     content.slice(NodeId::LENGTH..),
-                    frame_type == FrameType::RelayToClientDatagrams,
+                    frame_type == FrameType::RelayToClientDatagramBatch,
                 )?;
                 Self::Datagrams {
                     remote_node_id,
@@ -371,7 +371,7 @@ impl ClientToRelayMsg {
         match self {
             Self::Datagrams { datagrams, .. } => {
                 if datagrams.segment_size.is_some() {
-                    FrameType::ClientToRelayDatagrams
+                    FrameType::ClientToRelayDatagramBatch
                 } else {
                     FrameType::ClientToRelayDatagram
                 }
@@ -434,13 +434,13 @@ impl ClientToRelayMsg {
         );
 
         let res = match frame_type {
-            FrameType::ClientToRelayDatagram | FrameType::ClientToRelayDatagrams => {
+            FrameType::ClientToRelayDatagram | FrameType::ClientToRelayDatagramBatch => {
                 let dst_node_id = cache
                     .key_from_slice(&content[..NodeId::LENGTH])
                     .context(InvalidPublicKeySnafu)?;
                 let datagrams = Datagrams::from_bytes(
                     content.slice(NodeId::LENGTH..),
-                    frame_type == FrameType::ClientToRelayDatagrams,
+                    frame_type == FrameType::ClientToRelayDatagramBatch,
                 )?;
                 Self::Datagrams {
                     dst_node_id,
