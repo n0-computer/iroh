@@ -264,6 +264,8 @@ pub(crate) struct MagicSock {
     discovery_subscribers: DiscoverySubscribers,
 
     pub(crate) metrics: EndpointMetrics,
+
+    startup: Instant,
 }
 
 /// Sockets and related state, grouped together so we can cfg them out for browsers.
@@ -920,11 +922,17 @@ impl MagicSock {
                     datagram[0] = 0u8;
                 } else if let Some((sender, sealed_box)) = disco::source_and_box(datagram) {
                     trace!(src = %meta.addr, len = %meta.stride, "UDP recv: disco packet");
-                    self.handle_disco_message(
-                        sender,
-                        sealed_box,
-                        DiscoMessageSource::Udp(meta.addr),
-                    );
+                    let elapsed = self.startup.elapsed();
+                    if Duration::from_secs(5) < elapsed && elapsed < Duration::from_secs(10) {
+                        trace!("simulating a dropped DISCO packet");
+                        // simulate dropping packets
+                    } else {
+                        self.handle_disco_message(
+                            sender,
+                            sealed_box,
+                            DiscoMessageSource::Udp(meta.addr),
+                        );
+                    }
                     datagram[0] = 0u8;
                 } else {
                     trace!(src = %meta.addr, len = %meta.stride, "UDP recv: quic packet");
@@ -1794,6 +1802,7 @@ impl Handle {
             insecure_skip_relay_cert_verify,
             discovery_subscribers: DiscoverySubscribers::new(),
             metrics,
+            startup: Instant::now(),
         });
 
         let mut endpoint_config = quinn::EndpointConfig::default();

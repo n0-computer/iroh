@@ -6,13 +6,15 @@
 //!
 //!     cargo run --example echo --features=examples
 
+use std::time::{Duration, Instant};
+
 use anyhow::Result;
 use iroh::{
     endpoint::Connection,
     protocol::{ProtocolHandler, Router},
     Endpoint, NodeAddr,
 };
-use n0_future::boxed::BoxFuture;
+use n0_future::{boxed::BoxFuture, StreamExt};
 
 /// Each protocol is identified by its ALPN string.
 ///
@@ -36,21 +38,49 @@ async fn main() -> Result<()> {
 async fn connect_side(addr: NodeAddr) -> Result<()> {
     let endpoint = Endpoint::builder().discovery_n0().bind().await?;
 
+    let node_id = addr.node_id;
+
     // Open a connection to the accepting node
     let conn = endpoint.connect(addr, ALPN).await?;
+
+    tokio::spawn({
+        let endpoint = endpoint.clone();
+        async move {
+            let start = Instant::now();
+            let mut conn_type = endpoint.conn_type(node_id).unwrap().stream();
+            while let Some(typ) = conn_type.next().await {
+                println!("Connection type changed: {typ:?} ({:?})", start.elapsed());
+            }
+        }
+    });
 
     // Open a bidirectional QUIC stream
     let (mut send, mut recv) = conn.open_bi().await?;
 
-    // Send some data to be echoed
-    send.write_all(b"Hello, world!").await?;
+    let payload = b"Hello, world!";
+    let iters = 10_000;
 
-    // Signal the end of data for this particular stream
-    send.finish()?;
+    n0_future::future::try_zip(
+        async {
+            for _ in 0..iters {
+                // Send some data to be echoed
+                send.write_all(payload).await?;
+                // wait a bit
+                tokio::time::sleep(Duration::from_millis(2)).await;
+            }
 
-    // Receive the echo, but limit reading up to maximum 1000 bytes
-    let response = recv.read_to_end(1000).await?;
-    assert_eq!(&response, b"Hello, world!");
+            // Signal the end of data for this particular stream
+            send.finish()?;
+
+            anyhow::Ok(())
+        },
+        async {
+            let _response = recv.read_to_end(iters * payload.len()).await?;
+
+            anyhow::Ok(())
+        },
+    )
+    .await?;
 
     // Explicitly close the whole connection.
     conn.close(0u32.into(), b"bye!");
