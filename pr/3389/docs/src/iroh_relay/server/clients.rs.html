@@ -216,7 +216,7 @@
 <a href=#216 id=216 data-nosnippet>216</a>            <span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(frame)) =&gt; {
 <a href=#217 id=217 data-nosnippet>217</a>                <span class="kw">if </span>frame_type != frame.typ() {
 <a href=#218 id=218 data-nosnippet>218</a>                    <span class="macro">snafu::whatever!</span>(
-<a href=#219 id=219 data-nosnippet>219</a>                        <span class="string">"Unexpected frame, got {}, but expected {}"</span>,
+<a href=#219 id=219 data-nosnippet>219</a>                        <span class="string">"Unexpected frame, got {:?}, but expected {:?}"</span>,
 <a href=#220 id=220 data-nosnippet>220</a>                        frame.typ(),
 <a href=#221 id=221 data-nosnippet>221</a>                        frame_type
 <a href=#222 id=222 data-nosnippet>222</a>                    );
@@ -224,7 +224,7 @@
 <a href=#224 id=224 data-nosnippet>224</a>                <span class="prelude-val">Ok</span>(frame)
 <a href=#225 id=225 data-nosnippet>225</a>            }
 <a href=#226 id=226 data-nosnippet>226</a>            <span class="prelude-val">Some</span>(<span class="prelude-val">Err</span>(err)) =&gt; <span class="prelude-val">Err</span>(err).e(),
-<a href=#227 id=227 data-nosnippet>227</a>            <span class="prelude-val">None </span>=&gt; <span class="macro">snafu::whatever!</span>(<span class="string">"Unexpected EOF, expected frame {frame_type}"</span>),
+<a href=#227 id=227 data-nosnippet>227</a>            <span class="prelude-val">None </span>=&gt; <span class="macro">snafu::whatever!</span>(<span class="string">"Unexpected EOF, expected frame {frame_type:?}"</span>),
 <a href=#228 id=228 data-nosnippet>228</a>        }
 <a href=#229 id=229 data-nosnippet>229</a>    }
 <a href=#230 id=230 data-nosnippet>230</a>

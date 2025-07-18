@@ -105,7 +105,7 @@
 <a href=#105 id=105 data-nosnippet>105</a></span><span class="kw">pub enum </span>MaybeTlsStream&lt;IO&gt; {
 <a href=#106 id=106 data-nosnippet>106</a>    Raw(IO),
 <a href=#107 id=107 data-nosnippet>107</a>    Tls(tokio_rustls::client::TlsStream&lt;IO&gt;),
-<a href=#108 id=108 data-nosnippet>108</a>    <span class="attr">#[cfg(test)]
+<a href=#108 id=108 data-nosnippet>108</a>    <span class="attr">#[cfg(all(test, feature = <span class="string">"server"</span>))]
 <a href=#109 id=109 data-nosnippet>109</a>    </span>Test(tokio::io::DuplexStream),
 <a href=#110 id=110 data-nosnippet>110</a>}
 <a href=#111 id=111 data-nosnippet>111</a>
@@ -135,7 +135,7 @@
 <a href=#135 id=135 data-nosnippet>135</a>        <span class="kw">match </span><span class="kw-2">&amp;mut *</span><span class="self">self </span>{
 <a href=#136 id=136 data-nosnippet>136</a>            <span class="self">Self</span>::Raw(stream) =&gt; Pin::new(stream).poll_read(cx, buf),
 <a href=#137 id=137 data-nosnippet>137</a>            <span class="self">Self</span>::Tls(stream) =&gt; Pin::new(stream).poll_read(cx, buf),
-<a href=#138 id=138 data-nosnippet>138</a>            <span class="attr">#[cfg(test)]
+<a href=#138 id=138 data-nosnippet>138</a>            <span class="attr">#[cfg(all(test, feature = <span class="string">"server"</span>))]
 <a href=#139 id=139 data-nosnippet>139</a>            </span><span class="self">Self</span>::Test(stream) =&gt; Pin::new(stream).poll_read(cx, buf),
 <a href=#140 id=140 data-nosnippet>140</a>        }
 <a href=#141 id=141 data-nosnippet>141</a>    }
@@ -150,7 +150,7 @@
 <a href=#150 id=150 data-nosnippet>150</a>        <span class="kw">match </span><span class="kw-2">&amp;mut *</span><span class="self">self </span>{
 <a href=#151 id=151 data-nosnippet>151</a>            <span class="self">Self</span>::Raw(stream) =&gt; Pin::new(stream).poll_write(cx, buf),
 <a href=#152 id=152 data-nosnippet>152</a>            <span class="self">Self</span>::Tls(stream) =&gt; Pin::new(stream).poll_write(cx, buf),
-<a href=#153 id=153 data-nosnippet>153</a>            <span class="attr">#[cfg(test)]
+<a href=#153 id=153 data-nosnippet>153</a>            <span class="attr">#[cfg(all(test, feature = <span class="string">"server"</span>))]
 <a href=#154 id=154 data-nosnippet>154</a>            </span><span class="self">Self</span>::Test(stream) =&gt; Pin::new(stream).poll_write(cx, buf),
 <a href=#155 id=155 data-nosnippet>155</a>        }
 <a href=#156 id=156 data-nosnippet>156</a>    }
@@ -162,7 +162,7 @@
 <a href=#162 id=162 data-nosnippet>162</a>        <span class="kw">match </span><span class="kw-2">&amp;mut *</span><span class="self">self </span>{
 <a href=#163 id=163 data-nosnippet>163</a>            <span class="self">Self</span>::Raw(stream) =&gt; Pin::new(stream).poll_flush(cx),
 <a href=#164 id=164 data-nosnippet>164</a>            <span class="self">Self</span>::Tls(stream) =&gt; Pin::new(stream).poll_flush(cx),
-<a href=#165 id=165 data-nosnippet>165</a>            <span class="attr">#[cfg(test)]
+<a href=#165 id=165 data-nosnippet>165</a>            <span class="attr">#[cfg(all(test, feature = <span class="string">"server"</span>))]
 <a href=#166 id=166 data-nosnippet>166</a>            </span><span class="self">Self</span>::Test(stream) =&gt; Pin::new(stream).poll_flush(cx),
 <a href=#167 id=167 data-nosnippet>167</a>        }
 <a href=#168 id=168 data-nosnippet>168</a>    }
@@ -174,7 +174,7 @@
 <a href=#174 id=174 data-nosnippet>174</a>        <span class="kw">match </span><span class="kw-2">&amp;mut *</span><span class="self">self </span>{
 <a href=#175 id=175 data-nosnippet>175</a>            <span class="self">Self</span>::Raw(stream) =&gt; Pin::new(stream).poll_shutdown(cx),
 <a href=#176 id=176 data-nosnippet>176</a>            <span class="self">Self</span>::Tls(stream) =&gt; Pin::new(stream).poll_shutdown(cx),
-<a href=#177 id=177 data-nosnippet>177</a>            <span class="attr">#[cfg(test)]
+<a href=#177 id=177 data-nosnippet>177</a>            <span class="attr">#[cfg(all(test, feature = <span class="string">"server"</span>))]
 <a href=#178 id=178 data-nosnippet>178</a>            </span><span class="self">Self</span>::Test(stream) =&gt; Pin::new(stream).poll_shutdown(cx),
 <a href=#179 id=179 data-nosnippet>179</a>        }
 <a href=#180 id=180 data-nosnippet>180</a>    }
@@ -187,7 +187,7 @@
 <a href=#187 id=187 data-nosnippet>187</a>        <span class="kw">match </span><span class="kw-2">&amp;mut *</span><span class="self">self </span>{
 <a href=#188 id=188 data-nosnippet>188</a>            <span class="self">Self</span>::Raw(stream) =&gt; Pin::new(stream).poll_write_vectored(cx, bufs),
 <a href=#189 id=189 data-nosnippet>189</a>            <span class="self">Self</span>::Tls(stream) =&gt; Pin::new(stream).poll_write_vectored(cx, bufs),
-<a href=#190 id=190 data-nosnippet>190</a>            <span class="attr">#[cfg(test)]
+<a href=#190 id=190 data-nosnippet>190</a>            <span class="attr">#[cfg(all(test, feature = <span class="string">"server"</span>))]
 <a href=#191 id=191 data-nosnippet>191</a>            </span><span class="self">Self</span>::Test(stream) =&gt; Pin::new(stream).poll_write_vectored(cx, bufs),
 <a href=#192 id=192 data-nosnippet>192</a>        }
 <a href=#193 id=193 data-nosnippet>193</a>    }
@@ -196,7 +196,7 @@
 <a href=#196 id=196 data-nosnippet>196</a>        <span class="kw">match </span><span class="self">self </span>{
 <a href=#197 id=197 data-nosnippet>197</a>            <span class="self">Self</span>::Raw(stream) =&gt; stream.is_write_vectored(),
 <a href=#198 id=198 data-nosnippet>198</a>            <span class="self">Self</span>::Tls(stream) =&gt; stream.is_write_vectored(),
-<a href=#199 id=199 data-nosnippet>199</a>            <span class="attr">#[cfg(test)]
+<a href=#199 id=199 data-nosnippet>199</a>            <span class="attr">#[cfg(all(test, feature = <span class="string">"server"</span>))]
 <a href=#200 id=200 data-nosnippet>200</a>            </span><span class="self">Self</span>::Test(stream) =&gt; stream.is_write_vectored(),
 <a href=#201 id=201 data-nosnippet>201</a>        }
 <a href=#202 id=202 data-nosnippet>202</a>    }
@@ -207,7 +207,7 @@
 <a href=#207 id=207 data-nosnippet>207</a>        <span class="kw">match </span><span class="self">self </span>{
 <a href=#208 id=208 data-nosnippet>208</a>            <span class="self">Self</span>::Raw(s) =&gt; s,
 <a href=#209 id=209 data-nosnippet>209</a>            <span class="self">Self</span>::Tls(s) =&gt; s.get_ref().<span class="number">0</span>,
-<a href=#210 id=210 data-nosnippet>210</a>            <span class="attr">#[cfg(test)]
+<a href=#210 id=210 data-nosnippet>210</a>            <span class="attr">#[cfg(all(test, feature = <span class="string">"server"</span>))]
 <a href=#211 id=211 data-nosnippet>211</a>            </span><span class="self">Self</span>::Test(<span class="kw">_</span>) =&gt; <span class="macro">unimplemented!</span>(<span class="string">"can't grab underlying IO in MaybeTlsStream::Test"</span>),
 <a href=#212 id=212 data-nosnippet>212</a>        }
 <a href=#213 id=213 data-nosnippet>213</a>    }

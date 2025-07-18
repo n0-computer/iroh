@@ -670,7 +670,7 @@
 <a href=#670 id=670 data-nosnippet>670</a>                remote_node_id,
 <a href=#671 id=671 data-nosnippet>671</a>                datagrams,
 <a href=#672 id=672 data-nosnippet>672</a>            } =&gt; {
-<a href=#673 id=673 data-nosnippet>673</a>                <span class="macro">trace!</span>(len = %datagrams.contents.len(), <span class="string">"received msg"</span>);
+<a href=#673 id=673 data-nosnippet>673</a>                <span class="macro">trace!</span>(len = datagrams.contents.len(), <span class="string">"received msg"</span>);
 <a href=#674 id=674 data-nosnippet>674</a>                <span class="comment">// If this is a new sender, register a route for this peer.
 <a href=#675 id=675 data-nosnippet>675</a>                </span><span class="kw">if </span>state
 <a href=#676 id=676 data-nosnippet>676</a>                    .last_packet_src
@@ -1225,350 +1225,349 @@
 <a href=#1225 id=1225 data-nosnippet>1225</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) src: NodeId,
 <a href=#1226 id=1226 data-nosnippet>1226</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) datagrams: Datagrams,
 <a href=#1227 id=1227 data-nosnippet>1227</a>}
-<a href=#1228 id=1228 data-nosnippet>1228</a>
-<a href=#1229 id=1229 data-nosnippet>1229</a><span class="attr">#[cfg(test)]
-<a href=#1230 id=1230 data-nosnippet>1230</a></span><span class="kw">mod </span>tests {
-<a href=#1231 id=1231 data-nosnippet>1231</a>    <span class="kw">use </span>std::{
-<a href=#1232 id=1232 data-nosnippet>1232</a>        sync::{atomic::AtomicBool, Arc},
-<a href=#1233 id=1233 data-nosnippet>1233</a>        time::Duration,
-<a href=#1234 id=1234 data-nosnippet>1234</a>    };
-<a href=#1235 id=1235 data-nosnippet>1235</a>
-<a href=#1236 id=1236 data-nosnippet>1236</a>    <span class="kw">use </span>iroh_base::{NodeId, RelayUrl, SecretKey};
-<a href=#1237 id=1237 data-nosnippet>1237</a>    <span class="kw">use </span>iroh_relay::{protos::relay::Datagrams, PingTracker};
-<a href=#1238 id=1238 data-nosnippet>1238</a>    <span class="kw">use </span>n0_snafu::{Error, <span class="prelude-ty">Result</span>, ResultExt};
-<a href=#1239 id=1239 data-nosnippet>1239</a>    <span class="kw">use </span>tokio::sync::{mpsc, oneshot};
-<a href=#1240 id=1240 data-nosnippet>1240</a>    <span class="kw">use </span>tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
-<a href=#1241 id=1241 data-nosnippet>1241</a>    <span class="kw">use </span>tracing::{info, info_span, Instrument};
-<a href=#1242 id=1242 data-nosnippet>1242</a>    <span class="kw">use </span>tracing_test::traced_test;
-<a href=#1243 id=1243 data-nosnippet>1243</a>
-<a href=#1244 id=1244 data-nosnippet>1244</a>    <span class="kw">use super</span>::{
-<a href=#1245 id=1245 data-nosnippet>1245</a>        ActiveRelayActor, ActiveRelayActorOptions, ActiveRelayMessage, ActiveRelayPrioMessage,
-<a href=#1246 id=1246 data-nosnippet>1246</a>        RelayConnectionOptions, RelayRecvDatagram, RelaySendItem, RELAY_INACTIVE_CLEANUP_TIME,
-<a href=#1247 id=1247 data-nosnippet>1247</a>        UNDELIVERABLE_DATAGRAM_TIMEOUT,
-<a href=#1248 id=1248 data-nosnippet>1248</a>    };
-<a href=#1249 id=1249 data-nosnippet>1249</a>    <span class="kw">use crate</span>::{dns::DnsResolver, test_utils};
-<a href=#1250 id=1250 data-nosnippet>1250</a>
-<a href=#1251 id=1251 data-nosnippet>1251</a>    <span class="doccomment">/// Starts a new [`ActiveRelayActor`].
-<a href=#1252 id=1252 data-nosnippet>1252</a>    </span><span class="attr">#[allow(clippy::too_many_arguments)]
-<a href=#1253 id=1253 data-nosnippet>1253</a>    </span><span class="kw">fn </span>start_active_relay_actor(
-<a href=#1254 id=1254 data-nosnippet>1254</a>        secret_key: SecretKey,
-<a href=#1255 id=1255 data-nosnippet>1255</a>        stop_token: CancellationToken,
-<a href=#1256 id=1256 data-nosnippet>1256</a>        url: RelayUrl,
-<a href=#1257 id=1257 data-nosnippet>1257</a>        prio_inbox_rx: mpsc::Receiver&lt;ActiveRelayPrioMessage&gt;,
-<a href=#1258 id=1258 data-nosnippet>1258</a>        inbox_rx: mpsc::Receiver&lt;ActiveRelayMessage&gt;,
-<a href=#1259 id=1259 data-nosnippet>1259</a>        relay_datagrams_send: mpsc::Receiver&lt;RelaySendItem&gt;,
-<a href=#1260 id=1260 data-nosnippet>1260</a>        relay_datagrams_recv: mpsc::Sender&lt;RelayRecvDatagram&gt;,
-<a href=#1261 id=1261 data-nosnippet>1261</a>        span: tracing::Span,
-<a href=#1262 id=1262 data-nosnippet>1262</a>    ) -&gt; AbortOnDropHandle&lt;()&gt; {
-<a href=#1263 id=1263 data-nosnippet>1263</a>        <span class="kw">let </span>opts = ActiveRelayActorOptions {
-<a href=#1264 id=1264 data-nosnippet>1264</a>            url,
-<a href=#1265 id=1265 data-nosnippet>1265</a>            prio_inbox_: prio_inbox_rx,
-<a href=#1266 id=1266 data-nosnippet>1266</a>            inbox: inbox_rx,
-<a href=#1267 id=1267 data-nosnippet>1267</a>            relay_datagrams_send,
-<a href=#1268 id=1268 data-nosnippet>1268</a>            relay_datagrams_recv,
-<a href=#1269 id=1269 data-nosnippet>1269</a>            connection_opts: RelayConnectionOptions {
-<a href=#1270 id=1270 data-nosnippet>1270</a>                secret_key,
-<a href=#1271 id=1271 data-nosnippet>1271</a>                dns_resolver: DnsResolver::new(),
-<a href=#1272 id=1272 data-nosnippet>1272</a>                proxy_url: <span class="prelude-val">None</span>,
-<a href=#1273 id=1273 data-nosnippet>1273</a>                prefer_ipv6: Arc::new(AtomicBool::new(<span class="bool-val">true</span>)),
-<a href=#1274 id=1274 data-nosnippet>1274</a>                insecure_skip_cert_verify: <span class="bool-val">true</span>,
-<a href=#1275 id=1275 data-nosnippet>1275</a>            },
-<a href=#1276 id=1276 data-nosnippet>1276</a>            stop_token,
-<a href=#1277 id=1277 data-nosnippet>1277</a>            metrics: Default::default(),
-<a href=#1278 id=1278 data-nosnippet>1278</a>        };
-<a href=#1279 id=1279 data-nosnippet>1279</a>        <span class="kw">let </span>task = tokio::spawn(ActiveRelayActor::new(opts).run().instrument(span));
-<a href=#1280 id=1280 data-nosnippet>1280</a>        AbortOnDropHandle::new(task)
-<a href=#1281 id=1281 data-nosnippet>1281</a>    }
-<a href=#1282 id=1282 data-nosnippet>1282</a>
-<a href=#1283 id=1283 data-nosnippet>1283</a>    <span class="doccomment">/// Starts an [`ActiveRelayActor`] as an "iroh echo node".
-<a href=#1284 id=1284 data-nosnippet>1284</a>    ///
-<a href=#1285 id=1285 data-nosnippet>1285</a>    /// This actor will connect to the relay server, pretending to be an iroh node, and echo
-<a href=#1286 id=1286 data-nosnippet>1286</a>    /// back any datagram it receives from the relay.  This is used by the
-<a href=#1287 id=1287 data-nosnippet>1287</a>    /// [`ActiveRelayNode`] under test to check connectivity works.
-<a href=#1288 id=1288 data-nosnippet>1288</a>    </span><span class="kw">fn </span>start_echo_node(relay_url: RelayUrl) -&gt; (NodeId, AbortOnDropHandle&lt;()&gt;) {
-<a href=#1289 id=1289 data-nosnippet>1289</a>        <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">8u8</span>; <span class="number">32</span>]);
-<a href=#1290 id=1290 data-nosnippet>1290</a>        <span class="kw">let </span>(recv_datagram_tx, <span class="kw-2">mut </span>recv_datagram_rx) = mpsc::channel(<span class="number">16</span>);
-<a href=#1291 id=1291 data-nosnippet>1291</a>        <span class="kw">let </span>(send_datagram_tx, send_datagram_rx) = mpsc::channel(<span class="number">16</span>);
-<a href=#1292 id=1292 data-nosnippet>1292</a>        <span class="kw">let </span>(prio_inbox_tx, prio_inbox_rx) = mpsc::channel(<span class="number">8</span>);
-<a href=#1293 id=1293 data-nosnippet>1293</a>        <span class="kw">let </span>(inbox_tx, inbox_rx) = mpsc::channel(<span class="number">16</span>);
-<a href=#1294 id=1294 data-nosnippet>1294</a>        <span class="kw">let </span>cancel_token = CancellationToken::new();
-<a href=#1295 id=1295 data-nosnippet>1295</a>        <span class="kw">let </span>actor_task = start_active_relay_actor(
-<a href=#1296 id=1296 data-nosnippet>1296</a>            secret_key.clone(),
-<a href=#1297 id=1297 data-nosnippet>1297</a>            cancel_token.clone(),
-<a href=#1298 id=1298 data-nosnippet>1298</a>            relay_url.clone(),
-<a href=#1299 id=1299 data-nosnippet>1299</a>            prio_inbox_rx,
-<a href=#1300 id=1300 data-nosnippet>1300</a>            inbox_rx,
-<a href=#1301 id=1301 data-nosnippet>1301</a>            send_datagram_rx,
-<a href=#1302 id=1302 data-nosnippet>1302</a>            recv_datagram_tx,
-<a href=#1303 id=1303 data-nosnippet>1303</a>            <span class="macro">info_span!</span>(<span class="string">"echo-node"</span>),
-<a href=#1304 id=1304 data-nosnippet>1304</a>        );
-<a href=#1305 id=1305 data-nosnippet>1305</a>        <span class="kw">let </span>echo_task = tokio::spawn({
-<a href=#1306 id=1306 data-nosnippet>1306</a>            <span class="kw">let </span>relay_url = relay_url.clone();
-<a href=#1307 id=1307 data-nosnippet>1307</a>            <span class="kw">async move </span>{
-<a href=#1308 id=1308 data-nosnippet>1308</a>                <span class="kw">loop </span>{
-<a href=#1309 id=1309 data-nosnippet>1309</a>                    <span class="kw">let </span>datagram = recv_datagram_rx.recv().<span class="kw">await</span>;
-<a href=#1310 id=1310 data-nosnippet>1310</a>                    <span class="kw">if let </span><span class="prelude-val">Some</span>(recv) = datagram {
-<a href=#1311 id=1311 data-nosnippet>1311</a>                        <span class="kw">let </span>RelayRecvDatagram {
-<a href=#1312 id=1312 data-nosnippet>1312</a>                            url: <span class="kw">_</span>,
-<a href=#1313 id=1313 data-nosnippet>1313</a>                            src,
-<a href=#1314 id=1314 data-nosnippet>1314</a>                            datagrams,
-<a href=#1315 id=1315 data-nosnippet>1315</a>                        } = recv;
-<a href=#1316 id=1316 data-nosnippet>1316</a>                        <span class="macro">info!</span>(from = src.fmt_short(), <span class="string">"Received datagram"</span>);
-<a href=#1317 id=1317 data-nosnippet>1317</a>                        <span class="kw">let </span>send = RelaySendItem {
-<a href=#1318 id=1318 data-nosnippet>1318</a>                            remote_node: src,
-<a href=#1319 id=1319 data-nosnippet>1319</a>                            url: relay_url.clone(),
-<a href=#1320 id=1320 data-nosnippet>1320</a>                            datagrams,
-<a href=#1321 id=1321 data-nosnippet>1321</a>                        };
-<a href=#1322 id=1322 data-nosnippet>1322</a>                        send_datagram_tx.send(send).<span class="kw">await</span>.ok();
-<a href=#1323 id=1323 data-nosnippet>1323</a>                    }
-<a href=#1324 id=1324 data-nosnippet>1324</a>                }
-<a href=#1325 id=1325 data-nosnippet>1325</a>            }
-<a href=#1326 id=1326 data-nosnippet>1326</a>            .instrument(<span class="macro">info_span!</span>(<span class="string">"echo-task"</span>))
-<a href=#1327 id=1327 data-nosnippet>1327</a>        });
-<a href=#1328 id=1328 data-nosnippet>1328</a>        <span class="kw">let </span>echo_task = AbortOnDropHandle::new(echo_task);
-<a href=#1329 id=1329 data-nosnippet>1329</a>        <span class="kw">let </span>supervisor_task = tokio::spawn(<span class="kw">async move </span>{
-<a href=#1330 id=1330 data-nosnippet>1330</a>            <span class="kw">let </span>_guard = cancel_token.drop_guard();
-<a href=#1331 id=1331 data-nosnippet>1331</a>            <span class="comment">// move the inboxes here so it is not dropped, as this stops the actor.
-<a href=#1332 id=1332 data-nosnippet>1332</a>            </span><span class="kw">let </span>_prio_inbox_tx = prio_inbox_tx;
-<a href=#1333 id=1333 data-nosnippet>1333</a>            <span class="kw">let </span>_inbox_tx = inbox_tx;
-<a href=#1334 id=1334 data-nosnippet>1334</a>            <span class="macro">tokio::select!</span> {
-<a href=#1335 id=1335 data-nosnippet>1335</a>                biased;
-<a href=#1336 id=1336 data-nosnippet>1336</a>                <span class="kw">_ </span>= actor_task =&gt; (),
-<a href=#1337 id=1337 data-nosnippet>1337</a>                <span class="kw">_ </span>= echo_task =&gt; (),
-<a href=#1338 id=1338 data-nosnippet>1338</a>            };
-<a href=#1339 id=1339 data-nosnippet>1339</a>        });
-<a href=#1340 id=1340 data-nosnippet>1340</a>        <span class="kw">let </span>supervisor_task = AbortOnDropHandle::new(supervisor_task);
-<a href=#1341 id=1341 data-nosnippet>1341</a>        (secret_key.public(), supervisor_task)
-<a href=#1342 id=1342 data-nosnippet>1342</a>    }
-<a href=#1343 id=1343 data-nosnippet>1343</a>
-<a href=#1344 id=1344 data-nosnippet>1344</a>    <span class="doccomment">/// Sends a message to the echo node, receives the response.
-<a href=#1345 id=1345 data-nosnippet>1345</a>    ///
-<a href=#1346 id=1346 data-nosnippet>1346</a>    /// This takes care of retry and timeout.  Because we don't know when both the
-<a href=#1347 id=1347 data-nosnippet>1347</a>    /// node-under-test and the echo node will be ready and datagrams aren't queued to send
-<a href=#1348 id=1348 data-nosnippet>1348</a>    /// forever, we have to retry a few times.
-<a href=#1349 id=1349 data-nosnippet>1349</a>    </span><span class="kw">async fn </span>send_recv_echo(
-<a href=#1350 id=1350 data-nosnippet>1350</a>        item: RelaySendItem,
-<a href=#1351 id=1351 data-nosnippet>1351</a>        tx: <span class="kw-2">&amp;</span>mpsc::Sender&lt;RelaySendItem&gt;,
-<a href=#1352 id=1352 data-nosnippet>1352</a>        rx: <span class="kw-2">&amp;mut </span>mpsc::Receiver&lt;RelayRecvDatagram&gt;,
-<a href=#1353 id=1353 data-nosnippet>1353</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#1354 id=1354 data-nosnippet>1354</a>        tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), <span class="kw">async move </span>{
-<a href=#1355 id=1355 data-nosnippet>1355</a>            <span class="kw">loop </span>{
-<a href=#1356 id=1356 data-nosnippet>1356</a>                <span class="kw">let </span>res = tokio::time::timeout(UNDELIVERABLE_DATAGRAM_TIMEOUT, <span class="kw">async </span>{
-<a href=#1357 id=1357 data-nosnippet>1357</a>                    tx.send(item.clone()).<span class="kw">await</span>.context(<span class="string">"send item"</span>)<span class="question-mark">?</span>;
-<a href=#1358 id=1358 data-nosnippet>1358</a>                    <span class="kw">let </span>RelayRecvDatagram {
-<a href=#1359 id=1359 data-nosnippet>1359</a>                        url: <span class="kw">_</span>,
-<a href=#1360 id=1360 data-nosnippet>1360</a>                        src: <span class="kw">_</span>,
-<a href=#1361 id=1361 data-nosnippet>1361</a>                        datagrams,
-<a href=#1362 id=1362 data-nosnippet>1362</a>                    } = rx.recv().<span class="kw">await</span>.unwrap();
-<a href=#1363 id=1363 data-nosnippet>1363</a>
-<a href=#1364 id=1364 data-nosnippet>1364</a>                    <span class="macro">assert_eq!</span>(datagrams, item.datagrams);
-<a href=#1365 id=1365 data-nosnippet>1365</a>
-<a href=#1366 id=1366 data-nosnippet>1366</a>                    <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, Error&gt;(())
-<a href=#1367 id=1367 data-nosnippet>1367</a>                })
-<a href=#1368 id=1368 data-nosnippet>1368</a>                .<span class="kw">await</span>;
-<a href=#1369 id=1369 data-nosnippet>1369</a>                <span class="kw">if </span>res.is_ok() {
-<a href=#1370 id=1370 data-nosnippet>1370</a>                    <span class="kw">break</span>;
-<a href=#1371 id=1371 data-nosnippet>1371</a>                }
-<a href=#1372 id=1372 data-nosnippet>1372</a>            }
-<a href=#1373 id=1373 data-nosnippet>1373</a>        })
-<a href=#1374 id=1374 data-nosnippet>1374</a>        .<span class="kw">await
-<a href=#1375 id=1375 data-nosnippet>1375</a>        </span>.expect(<span class="string">"overall timeout exceeded"</span>);
-<a href=#1376 id=1376 data-nosnippet>1376</a>        <span class="prelude-val">Ok</span>(())
-<a href=#1377 id=1377 data-nosnippet>1377</a>    }
-<a href=#1378 id=1378 data-nosnippet>1378</a>
-<a href=#1379 id=1379 data-nosnippet>1379</a>    <span class="attr">#[tokio::test]
-<a href=#1380 id=1380 data-nosnippet>1380</a>    #[traced_test]
-<a href=#1381 id=1381 data-nosnippet>1381</a>    </span><span class="kw">async fn </span>test_active_relay_reconnect() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#1382 id=1382 data-nosnippet>1382</a>        <span class="kw">let </span>(_relay_map, relay_url, _server) = test_utils::run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#1383 id=1383 data-nosnippet>1383</a>        <span class="kw">let </span>(peer_node, _echo_node_task) = start_echo_node(relay_url.clone());
-<a href=#1384 id=1384 data-nosnippet>1384</a>
-<a href=#1385 id=1385 data-nosnippet>1385</a>        <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">1u8</span>; <span class="number">32</span>]);
-<a href=#1386 id=1386 data-nosnippet>1386</a>        <span class="kw">let </span>(datagram_recv_tx, <span class="kw-2">mut </span>datagram_recv_rx) = mpsc::channel(<span class="number">16</span>);
-<a href=#1387 id=1387 data-nosnippet>1387</a>        <span class="kw">let </span>(send_datagram_tx, send_datagram_rx) = mpsc::channel(<span class="number">16</span>);
-<a href=#1388 id=1388 data-nosnippet>1388</a>        <span class="kw">let </span>(_prio_inbox_tx, prio_inbox_rx) = mpsc::channel(<span class="number">8</span>);
-<a href=#1389 id=1389 data-nosnippet>1389</a>        <span class="kw">let </span>(inbox_tx, inbox_rx) = mpsc::channel(<span class="number">16</span>);
-<a href=#1390 id=1390 data-nosnippet>1390</a>        <span class="kw">let </span>cancel_token = CancellationToken::new();
-<a href=#1391 id=1391 data-nosnippet>1391</a>        <span class="kw">let </span>task = start_active_relay_actor(
-<a href=#1392 id=1392 data-nosnippet>1392</a>            secret_key,
-<a href=#1393 id=1393 data-nosnippet>1393</a>            cancel_token.clone(),
-<a href=#1394 id=1394 data-nosnippet>1394</a>            relay_url.clone(),
-<a href=#1395 id=1395 data-nosnippet>1395</a>            prio_inbox_rx,
-<a href=#1396 id=1396 data-nosnippet>1396</a>            inbox_rx,
-<a href=#1397 id=1397 data-nosnippet>1397</a>            send_datagram_rx,
-<a href=#1398 id=1398 data-nosnippet>1398</a>            datagram_recv_tx.clone(),
-<a href=#1399 id=1399 data-nosnippet>1399</a>            <span class="macro">info_span!</span>(<span class="string">"actor-under-test"</span>),
-<a href=#1400 id=1400 data-nosnippet>1400</a>        );
-<a href=#1401 id=1401 data-nosnippet>1401</a>
-<a href=#1402 id=1402 data-nosnippet>1402</a>        <span class="comment">// Send a datagram to our echo node.
-<a href=#1403 id=1403 data-nosnippet>1403</a>        </span><span class="macro">info!</span>(<span class="string">"first echo"</span>);
-<a href=#1404 id=1404 data-nosnippet>1404</a>        <span class="kw">let </span>hello_send_item = RelaySendItem {
-<a href=#1405 id=1405 data-nosnippet>1405</a>            remote_node: peer_node,
-<a href=#1406 id=1406 data-nosnippet>1406</a>            url: relay_url.clone(),
-<a href=#1407 id=1407 data-nosnippet>1407</a>            datagrams: Datagrams::from(<span class="string">b"hello"</span>),
-<a href=#1408 id=1408 data-nosnippet>1408</a>        };
-<a href=#1409 id=1409 data-nosnippet>1409</a>        send_recv_echo(
-<a href=#1410 id=1410 data-nosnippet>1410</a>            hello_send_item.clone(),
-<a href=#1411 id=1411 data-nosnippet>1411</a>            <span class="kw-2">&amp;</span>send_datagram_tx,
-<a href=#1412 id=1412 data-nosnippet>1412</a>            <span class="kw-2">&amp;mut </span>datagram_recv_rx,
-<a href=#1413 id=1413 data-nosnippet>1413</a>        )
-<a href=#1414 id=1414 data-nosnippet>1414</a>        .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#1415 id=1415 data-nosnippet>1415</a>
-<a href=#1416 id=1416 data-nosnippet>1416</a>        <span class="comment">// Now ask to check the connection, triggering a ping but no reconnect.
-<a href=#1417 id=1417 data-nosnippet>1417</a>        </span><span class="kw">let </span>(tx, rx) = oneshot::channel();
-<a href=#1418 id=1418 data-nosnippet>1418</a>        inbox_tx
-<a href=#1419 id=1419 data-nosnippet>1419</a>            .send(ActiveRelayMessage::GetLocalAddr(tx))
-<a href=#1420 id=1420 data-nosnippet>1420</a>            .<span class="kw">await
-<a href=#1421 id=1421 data-nosnippet>1421</a>            </span>.context(<span class="string">"send get local addr msg"</span>)<span class="question-mark">?</span>;
-<a href=#1422 id=1422 data-nosnippet>1422</a>
-<a href=#1423 id=1423 data-nosnippet>1423</a>        <span class="kw">let </span>local_addr = rx
-<a href=#1424 id=1424 data-nosnippet>1424</a>            .<span class="kw">await
-<a href=#1425 id=1425 data-nosnippet>1425</a>            </span>.context(<span class="string">"wait for local addr msg"</span>)<span class="question-mark">?
-<a href=#1426 id=1426 data-nosnippet>1426</a>            </span>.context(<span class="string">"no local addr"</span>)<span class="question-mark">?</span>;
-<a href=#1427 id=1427 data-nosnippet>1427</a>        <span class="macro">info!</span>(<span class="question-mark">?</span>local_addr, <span class="string">"check connection with addr"</span>);
-<a href=#1428 id=1428 data-nosnippet>1428</a>        inbox_tx
-<a href=#1429 id=1429 data-nosnippet>1429</a>            .send(ActiveRelayMessage::CheckConnection(<span class="macro">vec!</span>[local_addr.ip()]))
-<a href=#1430 id=1430 data-nosnippet>1430</a>            .<span class="kw">await
-<a href=#1431 id=1431 data-nosnippet>1431</a>            </span>.context(<span class="string">"send check connection message"</span>)<span class="question-mark">?</span>;
-<a href=#1432 id=1432 data-nosnippet>1432</a>
-<a href=#1433 id=1433 data-nosnippet>1433</a>        <span class="comment">// Sync the ActiveRelayActor. Ping blocks it and we want to be sure it has handled
-<a href=#1434 id=1434 data-nosnippet>1434</a>        // another inbox message before continuing.
-<a href=#1435 id=1435 data-nosnippet>1435</a>        </span><span class="kw">let </span>(tx, rx) = oneshot::channel();
-<a href=#1436 id=1436 data-nosnippet>1436</a>        inbox_tx
-<a href=#1437 id=1437 data-nosnippet>1437</a>            .send(ActiveRelayMessage::GetLocalAddr(tx))
-<a href=#1438 id=1438 data-nosnippet>1438</a>            .<span class="kw">await
-<a href=#1439 id=1439 data-nosnippet>1439</a>            </span>.context(<span class="string">"send get local addr msg"</span>)<span class="question-mark">?</span>;
-<a href=#1440 id=1440 data-nosnippet>1440</a>        rx.<span class="kw">await</span>.context(<span class="string">"recv send local addr msg"</span>)<span class="question-mark">?</span>;
-<a href=#1441 id=1441 data-nosnippet>1441</a>
-<a href=#1442 id=1442 data-nosnippet>1442</a>        <span class="comment">// Echo should still work.
-<a href=#1443 id=1443 data-nosnippet>1443</a>        </span><span class="macro">info!</span>(<span class="string">"second echo"</span>);
-<a href=#1444 id=1444 data-nosnippet>1444</a>        send_recv_echo(
-<a href=#1445 id=1445 data-nosnippet>1445</a>            hello_send_item.clone(),
-<a href=#1446 id=1446 data-nosnippet>1446</a>            <span class="kw-2">&amp;</span>send_datagram_tx,
-<a href=#1447 id=1447 data-nosnippet>1447</a>            <span class="kw-2">&amp;mut </span>datagram_recv_rx,
-<a href=#1448 id=1448 data-nosnippet>1448</a>        )
-<a href=#1449 id=1449 data-nosnippet>1449</a>        .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#1450 id=1450 data-nosnippet>1450</a>
-<a href=#1451 id=1451 data-nosnippet>1451</a>        <span class="comment">// Now ask to check the connection, this will reconnect without pinging because we
-<a href=#1452 id=1452 data-nosnippet>1452</a>        // do not supply any "valid" local IP addresses.
-<a href=#1453 id=1453 data-nosnippet>1453</a>        </span><span class="macro">info!</span>(<span class="string">"check connection"</span>);
-<a href=#1454 id=1454 data-nosnippet>1454</a>        inbox_tx
-<a href=#1455 id=1455 data-nosnippet>1455</a>            .send(ActiveRelayMessage::CheckConnection(Vec::new()))
-<a href=#1456 id=1456 data-nosnippet>1456</a>            .<span class="kw">await
-<a href=#1457 id=1457 data-nosnippet>1457</a>            </span>.context(<span class="string">"send check connection msg"</span>)<span class="question-mark">?</span>;
-<a href=#1458 id=1458 data-nosnippet>1458</a>
-<a href=#1459 id=1459 data-nosnippet>1459</a>        <span class="comment">// Give some time to reconnect, mostly to sort logs rather than functional.
-<a href=#1460 id=1460 data-nosnippet>1460</a>        </span>tokio::time::sleep(Duration::from_millis(<span class="number">10</span>)).<span class="kw">await</span>;
-<a href=#1461 id=1461 data-nosnippet>1461</a>
-<a href=#1462 id=1462 data-nosnippet>1462</a>        <span class="comment">// Echo should still work.
-<a href=#1463 id=1463 data-nosnippet>1463</a>        </span><span class="macro">info!</span>(<span class="string">"third echo"</span>);
-<a href=#1464 id=1464 data-nosnippet>1464</a>        send_recv_echo(
-<a href=#1465 id=1465 data-nosnippet>1465</a>            hello_send_item.clone(),
-<a href=#1466 id=1466 data-nosnippet>1466</a>            <span class="kw-2">&amp;</span>send_datagram_tx,
-<a href=#1467 id=1467 data-nosnippet>1467</a>            <span class="kw-2">&amp;mut </span>datagram_recv_rx,
-<a href=#1468 id=1468 data-nosnippet>1468</a>        )
-<a href=#1469 id=1469 data-nosnippet>1469</a>        .<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#1470 id=1470 data-nosnippet>1470</a>
-<a href=#1471 id=1471 data-nosnippet>1471</a>        <span class="comment">// Shut down the actor.
-<a href=#1472 id=1472 data-nosnippet>1472</a>        </span>cancel_token.cancel();
-<a href=#1473 id=1473 data-nosnippet>1473</a>        task.<span class="kw">await</span>.context(<span class="string">"wait for task to finish"</span>)<span class="question-mark">?</span>;
-<a href=#1474 id=1474 data-nosnippet>1474</a>
-<a href=#1475 id=1475 data-nosnippet>1475</a>        <span class="prelude-val">Ok</span>(())
-<a href=#1476 id=1476 data-nosnippet>1476</a>    }
-<a href=#1477 id=1477 data-nosnippet>1477</a>
-<a href=#1478 id=1478 data-nosnippet>1478</a>    <span class="attr">#[tokio::test]
-<a href=#1479 id=1479 data-nosnippet>1479</a>    #[traced_test]
-<a href=#1480 id=1480 data-nosnippet>1480</a>    </span><span class="kw">async fn </span>test_active_relay_inactive() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#1481 id=1481 data-nosnippet>1481</a>        <span class="kw">let </span>(_relay_map, relay_url, _server) = test_utils::run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#1482 id=1482 data-nosnippet>1482</a>
-<a href=#1483 id=1483 data-nosnippet>1483</a>        <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">1u8</span>; <span class="number">32</span>]);
-<a href=#1484 id=1484 data-nosnippet>1484</a>        <span class="kw">let </span>(datagram_recv_tx, _datagram_recv_rx) = mpsc::channel(<span class="number">16</span>);
-<a href=#1485 id=1485 data-nosnippet>1485</a>        <span class="kw">let </span>(_send_datagram_tx, send_datagram_rx) = mpsc::channel(<span class="number">16</span>);
-<a href=#1486 id=1486 data-nosnippet>1486</a>        <span class="kw">let </span>(_prio_inbox_tx, prio_inbox_rx) = mpsc::channel(<span class="number">8</span>);
-<a href=#1487 id=1487 data-nosnippet>1487</a>        <span class="kw">let </span>(inbox_tx, inbox_rx) = mpsc::channel(<span class="number">16</span>);
-<a href=#1488 id=1488 data-nosnippet>1488</a>        <span class="kw">let </span>cancel_token = CancellationToken::new();
-<a href=#1489 id=1489 data-nosnippet>1489</a>        <span class="kw">let </span><span class="kw-2">mut </span>task = start_active_relay_actor(
-<a href=#1490 id=1490 data-nosnippet>1490</a>            secret_key,
-<a href=#1491 id=1491 data-nosnippet>1491</a>            cancel_token.clone(),
-<a href=#1492 id=1492 data-nosnippet>1492</a>            relay_url,
-<a href=#1493 id=1493 data-nosnippet>1493</a>            prio_inbox_rx,
-<a href=#1494 id=1494 data-nosnippet>1494</a>            inbox_rx,
-<a href=#1495 id=1495 data-nosnippet>1495</a>            send_datagram_rx,
-<a href=#1496 id=1496 data-nosnippet>1496</a>            datagram_recv_tx,
-<a href=#1497 id=1497 data-nosnippet>1497</a>            <span class="macro">info_span!</span>(<span class="string">"actor-under-test"</span>),
-<a href=#1498 id=1498 data-nosnippet>1498</a>        );
-<a href=#1499 id=1499 data-nosnippet>1499</a>
-<a href=#1500 id=1500 data-nosnippet>1500</a>        <span class="comment">// Wait until the actor is connected to the relay server.
-<a href=#1501 id=1501 data-nosnippet>1501</a>        </span>tokio::time::timeout(Duration::from_millis(<span class="number">200</span>), <span class="kw">async </span>{
-<a href=#1502 id=1502 data-nosnippet>1502</a>            <span class="kw">loop </span>{
-<a href=#1503 id=1503 data-nosnippet>1503</a>                <span class="kw">let </span>(tx, rx) = oneshot::channel();
-<a href=#1504 id=1504 data-nosnippet>1504</a>                inbox_tx.send(ActiveRelayMessage::PingServer(tx)).<span class="kw">await</span>.ok();
-<a href=#1505 id=1505 data-nosnippet>1505</a>                <span class="kw">if </span>tokio::time::timeout(Duration::from_millis(<span class="number">100</span>), rx)
-<a href=#1506 id=1506 data-nosnippet>1506</a>                    .<span class="kw">await
-<a href=#1507 id=1507 data-nosnippet>1507</a>                    </span>.map(|resp| resp.is_ok())
-<a href=#1508 id=1508 data-nosnippet>1508</a>                    .unwrap_or_default()
-<a href=#1509 id=1509 data-nosnippet>1509</a>                {
-<a href=#1510 id=1510 data-nosnippet>1510</a>                    <span class="kw">break</span>;
-<a href=#1511 id=1511 data-nosnippet>1511</a>                }
-<a href=#1512 id=1512 data-nosnippet>1512</a>            }
-<a href=#1513 id=1513 data-nosnippet>1513</a>        })
-<a href=#1514 id=1514 data-nosnippet>1514</a>        .<span class="kw">await
-<a href=#1515 id=1515 data-nosnippet>1515</a>        </span>.context(<span class="string">"timeout"</span>)<span class="question-mark">?</span>;
-<a href=#1516 id=1516 data-nosnippet>1516</a>
-<a href=#1517 id=1517 data-nosnippet>1517</a>        <span class="comment">// From now on, we pause time
-<a href=#1518 id=1518 data-nosnippet>1518</a>        </span>tokio::time::pause();
-<a href=#1519 id=1519 data-nosnippet>1519</a>        <span class="comment">// We now have an idling ActiveRelayActor.  If we advance time just a little it
-<a href=#1520 id=1520 data-nosnippet>1520</a>        // should stay alive.
-<a href=#1521 id=1521 data-nosnippet>1521</a>        </span><span class="macro">info!</span>(<span class="string">"Stepping time forwards by RELAY_INACTIVE_CLEANUP_TIME / 2"</span>);
-<a href=#1522 id=1522 data-nosnippet>1522</a>        tokio::time::advance(RELAY_INACTIVE_CLEANUP_TIME / <span class="number">2</span>).<span class="kw">await</span>;
-<a href=#1523 id=1523 data-nosnippet>1523</a>
-<a href=#1524 id=1524 data-nosnippet>1524</a>        <span class="macro">assert!</span>(
-<a href=#1525 id=1525 data-nosnippet>1525</a>            tokio::time::timeout(Duration::from_millis(<span class="number">100</span>), <span class="kw-2">&amp;mut </span>task)
-<a href=#1526 id=1526 data-nosnippet>1526</a>                .<span class="kw">await
-<a href=#1527 id=1527 data-nosnippet>1527</a>                </span>.is_err(),
-<a href=#1528 id=1528 data-nosnippet>1528</a>            <span class="string">"actor task terminated"
-<a href=#1529 id=1529 data-nosnippet>1529</a>        </span>);
-<a href=#1530 id=1530 data-nosnippet>1530</a>
-<a href=#1531 id=1531 data-nosnippet>1531</a>        <span class="comment">// If we advance time a lot it should finish.
-<a href=#1532 id=1532 data-nosnippet>1532</a>        </span><span class="macro">info!</span>(<span class="string">"Stepping time forwards by RELAY_INACTIVE_CLEANUP_TIME"</span>);
-<a href=#1533 id=1533 data-nosnippet>1533</a>        tokio::time::advance(RELAY_INACTIVE_CLEANUP_TIME).<span class="kw">await</span>;
-<a href=#1534 id=1534 data-nosnippet>1534</a>        <span class="macro">assert!</span>(
-<a href=#1535 id=1535 data-nosnippet>1535</a>            tokio::time::timeout(Duration::from_millis(<span class="number">100</span>), task)
-<a href=#1536 id=1536 data-nosnippet>1536</a>                .<span class="kw">await
-<a href=#1537 id=1537 data-nosnippet>1537</a>                </span>.is_ok(),
-<a href=#1538 id=1538 data-nosnippet>1538</a>            <span class="string">"actor task still running"
-<a href=#1539 id=1539 data-nosnippet>1539</a>        </span>);
-<a href=#1540 id=1540 data-nosnippet>1540</a>
-<a href=#1541 id=1541 data-nosnippet>1541</a>        cancel_token.cancel();
-<a href=#1542 id=1542 data-nosnippet>1542</a>
-<a href=#1543 id=1543 data-nosnippet>1543</a>        <span class="prelude-val">Ok</span>(())
-<a href=#1544 id=1544 data-nosnippet>1544</a>    }
-<a href=#1545 id=1545 data-nosnippet>1545</a>
-<a href=#1546 id=1546 data-nosnippet>1546</a>    <span class="attr">#[tokio::test]
-<a href=#1547 id=1547 data-nosnippet>1547</a>    </span><span class="kw">async fn </span>test_ping_tracker() {
-<a href=#1548 id=1548 data-nosnippet>1548</a>        tokio::time::pause();
-<a href=#1549 id=1549 data-nosnippet>1549</a>        <span class="kw">let </span><span class="kw-2">mut </span>tracker = PingTracker::default();
-<a href=#1550 id=1550 data-nosnippet>1550</a>
-<a href=#1551 id=1551 data-nosnippet>1551</a>        <span class="kw">let </span>ping0 = tracker.new_ping();
-<a href=#1552 id=1552 data-nosnippet>1552</a>
-<a href=#1553 id=1553 data-nosnippet>1553</a>        <span class="kw">let </span>res = tokio::time::timeout(Duration::from_secs(<span class="number">1</span>), tracker.timeout()).<span class="kw">await</span>;
-<a href=#1554 id=1554 data-nosnippet>1554</a>        <span class="macro">assert!</span>(res.is_err(), <span class="string">"no ping timeout has elapsed yet"</span>);
-<a href=#1555 id=1555 data-nosnippet>1555</a>
-<a href=#1556 id=1556 data-nosnippet>1556</a>        tracker.pong_received(ping0);
-<a href=#1557 id=1557 data-nosnippet>1557</a>        <span class="kw">let </span>res = tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), tracker.timeout()).<span class="kw">await</span>;
-<a href=#1558 id=1558 data-nosnippet>1558</a>        <span class="macro">assert!</span>(res.is_err(), <span class="string">"ping completed before timeout"</span>);
-<a href=#1559 id=1559 data-nosnippet>1559</a>
-<a href=#1560 id=1560 data-nosnippet>1560</a>        <span class="kw">let </span>_ping1 = tracker.new_ping();
-<a href=#1561 id=1561 data-nosnippet>1561</a>
-<a href=#1562 id=1562 data-nosnippet>1562</a>        <span class="kw">let </span>res = tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), tracker.timeout()).<span class="kw">await</span>;
-<a href=#1563 id=1563 data-nosnippet>1563</a>        <span class="macro">assert!</span>(res.is_ok(), <span class="string">"ping timeout should have happened"</span>);
-<a href=#1564 id=1564 data-nosnippet>1564</a>
-<a href=#1565 id=1565 data-nosnippet>1565</a>        <span class="kw">let </span>_ping2 = tracker.new_ping();
-<a href=#1566 id=1566 data-nosnippet>1566</a>
-<a href=#1567 id=1567 data-nosnippet>1567</a>        tokio::time::sleep(Duration::from_secs(<span class="number">10</span>)).<span class="kw">await</span>;
-<a href=#1568 id=1568 data-nosnippet>1568</a>        <span class="kw">let </span>res = tokio::time::timeout(Duration::from_millis(<span class="number">1</span>), tracker.timeout()).<span class="kw">await</span>;
-<a href=#1569 id=1569 data-nosnippet>1569</a>        <span class="macro">assert!</span>(res.is_ok(), <span class="string">"ping timeout happened in the past"</span>);
-<a href=#1570 id=1570 data-nosnippet>1570</a>
-<a href=#1571 id=1571 data-nosnippet>1571</a>        <span class="kw">let </span>res = tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), tracker.timeout()).<span class="kw">await</span>;
-<a href=#1572 id=1572 data-nosnippet>1572</a>        <span class="macro">assert!</span>(res.is_err(), <span class="string">"ping timeout should only happen once"</span>);
-<a href=#1573 id=1573 data-nosnippet>1573</a>    }
-<a href=#1574 id=1574 data-nosnippet>1574</a>}</code></pre></div></section></main></body></html>
+<a href=#1228 id=1228 data-nosnippet>1228</a><span class="attr">#[cfg(test)]
+<a href=#1229 id=1229 data-nosnippet>1229</a></span><span class="kw">mod </span>tests {
+<a href=#1230 id=1230 data-nosnippet>1230</a>    <span class="kw">use </span>std::{
+<a href=#1231 id=1231 data-nosnippet>1231</a>        sync::{atomic::AtomicBool, Arc},
+<a href=#1232 id=1232 data-nosnippet>1232</a>        time::Duration,
+<a href=#1233 id=1233 data-nosnippet>1233</a>    };
+<a href=#1234 id=1234 data-nosnippet>1234</a>
+<a href=#1235 id=1235 data-nosnippet>1235</a>    <span class="kw">use </span>iroh_base::{NodeId, RelayUrl, SecretKey};
+<a href=#1236 id=1236 data-nosnippet>1236</a>    <span class="kw">use </span>iroh_relay::{protos::relay::Datagrams, PingTracker};
+<a href=#1237 id=1237 data-nosnippet>1237</a>    <span class="kw">use </span>n0_snafu::{Error, <span class="prelude-ty">Result</span>, ResultExt};
+<a href=#1238 id=1238 data-nosnippet>1238</a>    <span class="kw">use </span>tokio::sync::{mpsc, oneshot};
+<a href=#1239 id=1239 data-nosnippet>1239</a>    <span class="kw">use </span>tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
+<a href=#1240 id=1240 data-nosnippet>1240</a>    <span class="kw">use </span>tracing::{info, info_span, Instrument};
+<a href=#1241 id=1241 data-nosnippet>1241</a>    <span class="kw">use </span>tracing_test::traced_test;
+<a href=#1242 id=1242 data-nosnippet>1242</a>
+<a href=#1243 id=1243 data-nosnippet>1243</a>    <span class="kw">use super</span>::{
+<a href=#1244 id=1244 data-nosnippet>1244</a>        ActiveRelayActor, ActiveRelayActorOptions, ActiveRelayMessage, ActiveRelayPrioMessage,
+<a href=#1245 id=1245 data-nosnippet>1245</a>        RelayConnectionOptions, RelayRecvDatagram, RelaySendItem, RELAY_INACTIVE_CLEANUP_TIME,
+<a href=#1246 id=1246 data-nosnippet>1246</a>        UNDELIVERABLE_DATAGRAM_TIMEOUT,
+<a href=#1247 id=1247 data-nosnippet>1247</a>    };
+<a href=#1248 id=1248 data-nosnippet>1248</a>    <span class="kw">use crate</span>::{dns::DnsResolver, test_utils};
+<a href=#1249 id=1249 data-nosnippet>1249</a>
+<a href=#1250 id=1250 data-nosnippet>1250</a>    <span class="doccomment">/// Starts a new [`ActiveRelayActor`].
+<a href=#1251 id=1251 data-nosnippet>1251</a>    </span><span class="attr">#[allow(clippy::too_many_arguments)]
+<a href=#1252 id=1252 data-nosnippet>1252</a>    </span><span class="kw">fn </span>start_active_relay_actor(
+<a href=#1253 id=1253 data-nosnippet>1253</a>        secret_key: SecretKey,
+<a href=#1254 id=1254 data-nosnippet>1254</a>        stop_token: CancellationToken,
+<a href=#1255 id=1255 data-nosnippet>1255</a>        url: RelayUrl,
+<a href=#1256 id=1256 data-nosnippet>1256</a>        prio_inbox_rx: mpsc::Receiver&lt;ActiveRelayPrioMessage&gt;,
+<a href=#1257 id=1257 data-nosnippet>1257</a>        inbox_rx: mpsc::Receiver&lt;ActiveRelayMessage&gt;,
+<a href=#1258 id=1258 data-nosnippet>1258</a>        relay_datagrams_send: mpsc::Receiver&lt;RelaySendItem&gt;,
+<a href=#1259 id=1259 data-nosnippet>1259</a>        relay_datagrams_recv: mpsc::Sender&lt;RelayRecvDatagram&gt;,
+<a href=#1260 id=1260 data-nosnippet>1260</a>        span: tracing::Span,
+<a href=#1261 id=1261 data-nosnippet>1261</a>    ) -&gt; AbortOnDropHandle&lt;()&gt; {
+<a href=#1262 id=1262 data-nosnippet>1262</a>        <span class="kw">let </span>opts = ActiveRelayActorOptions {
+<a href=#1263 id=1263 data-nosnippet>1263</a>            url,
+<a href=#1264 id=1264 data-nosnippet>1264</a>            prio_inbox_: prio_inbox_rx,
+<a href=#1265 id=1265 data-nosnippet>1265</a>            inbox: inbox_rx,
+<a href=#1266 id=1266 data-nosnippet>1266</a>            relay_datagrams_send,
+<a href=#1267 id=1267 data-nosnippet>1267</a>            relay_datagrams_recv,
+<a href=#1268 id=1268 data-nosnippet>1268</a>            connection_opts: RelayConnectionOptions {
+<a href=#1269 id=1269 data-nosnippet>1269</a>                secret_key,
+<a href=#1270 id=1270 data-nosnippet>1270</a>                dns_resolver: DnsResolver::new(),
+<a href=#1271 id=1271 data-nosnippet>1271</a>                proxy_url: <span class="prelude-val">None</span>,
+<a href=#1272 id=1272 data-nosnippet>1272</a>                prefer_ipv6: Arc::new(AtomicBool::new(<span class="bool-val">true</span>)),
+<a href=#1273 id=1273 data-nosnippet>1273</a>                insecure_skip_cert_verify: <span class="bool-val">true</span>,
+<a href=#1274 id=1274 data-nosnippet>1274</a>            },
+<a href=#1275 id=1275 data-nosnippet>1275</a>            stop_token,
+<a href=#1276 id=1276 data-nosnippet>1276</a>            metrics: Default::default(),
+<a href=#1277 id=1277 data-nosnippet>1277</a>        };
+<a href=#1278 id=1278 data-nosnippet>1278</a>        <span class="kw">let </span>task = tokio::spawn(ActiveRelayActor::new(opts).run().instrument(span));
+<a href=#1279 id=1279 data-nosnippet>1279</a>        AbortOnDropHandle::new(task)
+<a href=#1280 id=1280 data-nosnippet>1280</a>    }
+<a href=#1281 id=1281 data-nosnippet>1281</a>
+<a href=#1282 id=1282 data-nosnippet>1282</a>    <span class="doccomment">/// Starts an [`ActiveRelayActor`] as an "iroh echo node".
+<a href=#1283 id=1283 data-nosnippet>1283</a>    ///
+<a href=#1284 id=1284 data-nosnippet>1284</a>    /// This actor will connect to the relay server, pretending to be an iroh node, and echo
+<a href=#1285 id=1285 data-nosnippet>1285</a>    /// back any datagram it receives from the relay.  This is used by the
+<a href=#1286 id=1286 data-nosnippet>1286</a>    /// [`ActiveRelayNode`] under test to check connectivity works.
+<a href=#1287 id=1287 data-nosnippet>1287</a>    </span><span class="kw">fn </span>start_echo_node(relay_url: RelayUrl) -&gt; (NodeId, AbortOnDropHandle&lt;()&gt;) {
+<a href=#1288 id=1288 data-nosnippet>1288</a>        <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">8u8</span>; <span class="number">32</span>]);
+<a href=#1289 id=1289 data-nosnippet>1289</a>        <span class="kw">let </span>(recv_datagram_tx, <span class="kw-2">mut </span>recv_datagram_rx) = mpsc::channel(<span class="number">16</span>);
+<a href=#1290 id=1290 data-nosnippet>1290</a>        <span class="kw">let </span>(send_datagram_tx, send_datagram_rx) = mpsc::channel(<span class="number">16</span>);
+<a href=#1291 id=1291 data-nosnippet>1291</a>        <span class="kw">let </span>(prio_inbox_tx, prio_inbox_rx) = mpsc::channel(<span class="number">8</span>);
+<a href=#1292 id=1292 data-nosnippet>1292</a>        <span class="kw">let </span>(inbox_tx, inbox_rx) = mpsc::channel(<span class="number">16</span>);
+<a href=#1293 id=1293 data-nosnippet>1293</a>        <span class="kw">let </span>cancel_token = CancellationToken::new();
+<a href=#1294 id=1294 data-nosnippet>1294</a>        <span class="kw">let </span>actor_task = start_active_relay_actor(
+<a href=#1295 id=1295 data-nosnippet>1295</a>            secret_key.clone(),
+<a href=#1296 id=1296 data-nosnippet>1296</a>            cancel_token.clone(),
+<a href=#1297 id=1297 data-nosnippet>1297</a>            relay_url.clone(),
+<a href=#1298 id=1298 data-nosnippet>1298</a>            prio_inbox_rx,
+<a href=#1299 id=1299 data-nosnippet>1299</a>            inbox_rx,
+<a href=#1300 id=1300 data-nosnippet>1300</a>            send_datagram_rx,
+<a href=#1301 id=1301 data-nosnippet>1301</a>            recv_datagram_tx,
+<a href=#1302 id=1302 data-nosnippet>1302</a>            <span class="macro">info_span!</span>(<span class="string">"echo-node"</span>),
+<a href=#1303 id=1303 data-nosnippet>1303</a>        );
+<a href=#1304 id=1304 data-nosnippet>1304</a>        <span class="kw">let </span>echo_task = tokio::spawn({
+<a href=#1305 id=1305 data-nosnippet>1305</a>            <span class="kw">let </span>relay_url = relay_url.clone();
+<a href=#1306 id=1306 data-nosnippet>1306</a>            <span class="kw">async move </span>{
+<a href=#1307 id=1307 data-nosnippet>1307</a>                <span class="kw">loop </span>{
+<a href=#1308 id=1308 data-nosnippet>1308</a>                    <span class="kw">let </span>datagram = recv_datagram_rx.recv().<span class="kw">await</span>;
+<a href=#1309 id=1309 data-nosnippet>1309</a>                    <span class="kw">if let </span><span class="prelude-val">Some</span>(recv) = datagram {
+<a href=#1310 id=1310 data-nosnippet>1310</a>                        <span class="kw">let </span>RelayRecvDatagram {
+<a href=#1311 id=1311 data-nosnippet>1311</a>                            url: <span class="kw">_</span>,
+<a href=#1312 id=1312 data-nosnippet>1312</a>                            src,
+<a href=#1313 id=1313 data-nosnippet>1313</a>                            datagrams,
+<a href=#1314 id=1314 data-nosnippet>1314</a>                        } = recv;
+<a href=#1315 id=1315 data-nosnippet>1315</a>                        <span class="macro">info!</span>(from = src.fmt_short(), <span class="string">"Received datagram"</span>);
+<a href=#1316 id=1316 data-nosnippet>1316</a>                        <span class="kw">let </span>send = RelaySendItem {
+<a href=#1317 id=1317 data-nosnippet>1317</a>                            remote_node: src,
+<a href=#1318 id=1318 data-nosnippet>1318</a>                            url: relay_url.clone(),
+<a href=#1319 id=1319 data-nosnippet>1319</a>                            datagrams,
+<a href=#1320 id=1320 data-nosnippet>1320</a>                        };
+<a href=#1321 id=1321 data-nosnippet>1321</a>                        send_datagram_tx.send(send).<span class="kw">await</span>.ok();
+<a href=#1322 id=1322 data-nosnippet>1322</a>                    }
+<a href=#1323 id=1323 data-nosnippet>1323</a>                }
+<a href=#1324 id=1324 data-nosnippet>1324</a>            }
+<a href=#1325 id=1325 data-nosnippet>1325</a>            .instrument(<span class="macro">info_span!</span>(<span class="string">"echo-task"</span>))
+<a href=#1326 id=1326 data-nosnippet>1326</a>        });
+<a href=#1327 id=1327 data-nosnippet>1327</a>        <span class="kw">let </span>echo_task = AbortOnDropHandle::new(echo_task);
+<a href=#1328 id=1328 data-nosnippet>1328</a>        <span class="kw">let </span>supervisor_task = tokio::spawn(<span class="kw">async move </span>{
+<a href=#1329 id=1329 data-nosnippet>1329</a>            <span class="kw">let </span>_guard = cancel_token.drop_guard();
+<a href=#1330 id=1330 data-nosnippet>1330</a>            <span class="comment">// move the inboxes here so it is not dropped, as this stops the actor.
+<a href=#1331 id=1331 data-nosnippet>1331</a>            </span><span class="kw">let </span>_prio_inbox_tx = prio_inbox_tx;
+<a href=#1332 id=1332 data-nosnippet>1332</a>            <span class="kw">let </span>_inbox_tx = inbox_tx;
+<a href=#1333 id=1333 data-nosnippet>1333</a>            <span class="macro">tokio::select!</span> {
+<a href=#1334 id=1334 data-nosnippet>1334</a>                biased;
+<a href=#1335 id=1335 data-nosnippet>1335</a>                <span class="kw">_ </span>= actor_task =&gt; (),
+<a href=#1336 id=1336 data-nosnippet>1336</a>                <span class="kw">_ </span>= echo_task =&gt; (),
+<a href=#1337 id=1337 data-nosnippet>1337</a>            };
+<a href=#1338 id=1338 data-nosnippet>1338</a>        });
+<a href=#1339 id=1339 data-nosnippet>1339</a>        <span class="kw">let </span>supervisor_task = AbortOnDropHandle::new(supervisor_task);
+<a href=#1340 id=1340 data-nosnippet>1340</a>        (secret_key.public(), supervisor_task)
+<a href=#1341 id=1341 data-nosnippet>1341</a>    }
+<a href=#1342 id=1342 data-nosnippet>1342</a>
+<a href=#1343 id=1343 data-nosnippet>1343</a>    <span class="doccomment">/// Sends a message to the echo node, receives the response.
+<a href=#1344 id=1344 data-nosnippet>1344</a>    ///
+<a href=#1345 id=1345 data-nosnippet>1345</a>    /// This takes care of retry and timeout.  Because we don't know when both the
+<a href=#1346 id=1346 data-nosnippet>1346</a>    /// node-under-test and the echo node will be ready and datagrams aren't queued to send
+<a href=#1347 id=1347 data-nosnippet>1347</a>    /// forever, we have to retry a few times.
+<a href=#1348 id=1348 data-nosnippet>1348</a>    </span><span class="kw">async fn </span>send_recv_echo(
+<a href=#1349 id=1349 data-nosnippet>1349</a>        item: RelaySendItem,
+<a href=#1350 id=1350 data-nosnippet>1350</a>        tx: <span class="kw-2">&amp;</span>mpsc::Sender&lt;RelaySendItem&gt;,
+<a href=#1351 id=1351 data-nosnippet>1351</a>        rx: <span class="kw-2">&amp;mut </span>mpsc::Receiver&lt;RelayRecvDatagram&gt;,
+<a href=#1352 id=1352 data-nosnippet>1352</a>    ) -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#1353 id=1353 data-nosnippet>1353</a>        tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), <span class="kw">async move </span>{
+<a href=#1354 id=1354 data-nosnippet>1354</a>            <span class="kw">loop </span>{
+<a href=#1355 id=1355 data-nosnippet>1355</a>                <span class="kw">let </span>res = tokio::time::timeout(UNDELIVERABLE_DATAGRAM_TIMEOUT, <span class="kw">async </span>{
+<a href=#1356 id=1356 data-nosnippet>1356</a>                    tx.send(item.clone()).<span class="kw">await</span>.context(<span class="string">"send item"</span>)<span class="question-mark">?</span>;
+<a href=#1357 id=1357 data-nosnippet>1357</a>                    <span class="kw">let </span>RelayRecvDatagram {
+<a href=#1358 id=1358 data-nosnippet>1358</a>                        url: <span class="kw">_</span>,
+<a href=#1359 id=1359 data-nosnippet>1359</a>                        src: <span class="kw">_</span>,
+<a href=#1360 id=1360 data-nosnippet>1360</a>                        datagrams,
+<a href=#1361 id=1361 data-nosnippet>1361</a>                    } = rx.recv().<span class="kw">await</span>.unwrap();
+<a href=#1362 id=1362 data-nosnippet>1362</a>
+<a href=#1363 id=1363 data-nosnippet>1363</a>                    <span class="macro">assert_eq!</span>(datagrams, item.datagrams);
+<a href=#1364 id=1364 data-nosnippet>1364</a>
+<a href=#1365 id=1365 data-nosnippet>1365</a>                    <span class="prelude-val">Ok</span>::&lt;<span class="kw">_</span>, Error&gt;(())
+<a href=#1366 id=1366 data-nosnippet>1366</a>                })
+<a href=#1367 id=1367 data-nosnippet>1367</a>                .<span class="kw">await</span>;
+<a href=#1368 id=1368 data-nosnippet>1368</a>                <span class="kw">if </span>res.is_ok() {
+<a href=#1369 id=1369 data-nosnippet>1369</a>                    <span class="kw">break</span>;
+<a href=#1370 id=1370 data-nosnippet>1370</a>                }
+<a href=#1371 id=1371 data-nosnippet>1371</a>            }
+<a href=#1372 id=1372 data-nosnippet>1372</a>        })
+<a href=#1373 id=1373 data-nosnippet>1373</a>        .<span class="kw">await
+<a href=#1374 id=1374 data-nosnippet>1374</a>        </span>.expect(<span class="string">"overall timeout exceeded"</span>);
+<a href=#1375 id=1375 data-nosnippet>1375</a>        <span class="prelude-val">Ok</span>(())
+<a href=#1376 id=1376 data-nosnippet>1376</a>    }
+<a href=#1377 id=1377 data-nosnippet>1377</a>
+<a href=#1378 id=1378 data-nosnippet>1378</a>    <span class="attr">#[tokio::test]
+<a href=#1379 id=1379 data-nosnippet>1379</a>    #[traced_test]
+<a href=#1380 id=1380 data-nosnippet>1380</a>    </span><span class="kw">async fn </span>test_active_relay_reconnect() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#1381 id=1381 data-nosnippet>1381</a>        <span class="kw">let </span>(_relay_map, relay_url, _server) = test_utils::run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#1382 id=1382 data-nosnippet>1382</a>        <span class="kw">let </span>(peer_node, _echo_node_task) = start_echo_node(relay_url.clone());
+<a href=#1383 id=1383 data-nosnippet>1383</a>
+<a href=#1384 id=1384 data-nosnippet>1384</a>        <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">1u8</span>; <span class="number">32</span>]);
+<a href=#1385 id=1385 data-nosnippet>1385</a>        <span class="kw">let </span>(datagram_recv_tx, <span class="kw-2">mut </span>datagram_recv_rx) = mpsc::channel(<span class="number">16</span>);
+<a href=#1386 id=1386 data-nosnippet>1386</a>        <span class="kw">let </span>(send_datagram_tx, send_datagram_rx) = mpsc::channel(<span class="number">16</span>);
+<a href=#1387 id=1387 data-nosnippet>1387</a>        <span class="kw">let </span>(_prio_inbox_tx, prio_inbox_rx) = mpsc::channel(<span class="number">8</span>);
+<a href=#1388 id=1388 data-nosnippet>1388</a>        <span class="kw">let </span>(inbox_tx, inbox_rx) = mpsc::channel(<span class="number">16</span>);
+<a href=#1389 id=1389 data-nosnippet>1389</a>        <span class="kw">let </span>cancel_token = CancellationToken::new();
+<a href=#1390 id=1390 data-nosnippet>1390</a>        <span class="kw">let </span>task = start_active_relay_actor(
+<a href=#1391 id=1391 data-nosnippet>1391</a>            secret_key,
+<a href=#1392 id=1392 data-nosnippet>1392</a>            cancel_token.clone(),
+<a href=#1393 id=1393 data-nosnippet>1393</a>            relay_url.clone(),
+<a href=#1394 id=1394 data-nosnippet>1394</a>            prio_inbox_rx,
+<a href=#1395 id=1395 data-nosnippet>1395</a>            inbox_rx,
+<a href=#1396 id=1396 data-nosnippet>1396</a>            send_datagram_rx,
+<a href=#1397 id=1397 data-nosnippet>1397</a>            datagram_recv_tx.clone(),
+<a href=#1398 id=1398 data-nosnippet>1398</a>            <span class="macro">info_span!</span>(<span class="string">"actor-under-test"</span>),
+<a href=#1399 id=1399 data-nosnippet>1399</a>        );
+<a href=#1400 id=1400 data-nosnippet>1400</a>
+<a href=#1401 id=1401 data-nosnippet>1401</a>        <span class="comment">// Send a datagram to our echo node.
+<a href=#1402 id=1402 data-nosnippet>1402</a>        </span><span class="macro">info!</span>(<span class="string">"first echo"</span>);
+<a href=#1403 id=1403 data-nosnippet>1403</a>        <span class="kw">let </span>hello_send_item = RelaySendItem {
+<a href=#1404 id=1404 data-nosnippet>1404</a>            remote_node: peer_node,
+<a href=#1405 id=1405 data-nosnippet>1405</a>            url: relay_url.clone(),
+<a href=#1406 id=1406 data-nosnippet>1406</a>            datagrams: Datagrams::from(<span class="string">b"hello"</span>),
+<a href=#1407 id=1407 data-nosnippet>1407</a>        };
+<a href=#1408 id=1408 data-nosnippet>1408</a>        send_recv_echo(
+<a href=#1409 id=1409 data-nosnippet>1409</a>            hello_send_item.clone(),
+<a href=#1410 id=1410 data-nosnippet>1410</a>            <span class="kw-2">&amp;</span>send_datagram_tx,
+<a href=#1411 id=1411 data-nosnippet>1411</a>            <span class="kw-2">&amp;mut </span>datagram_recv_rx,
+<a href=#1412 id=1412 data-nosnippet>1412</a>        )
+<a href=#1413 id=1413 data-nosnippet>1413</a>        .<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#1414 id=1414 data-nosnippet>1414</a>
+<a href=#1415 id=1415 data-nosnippet>1415</a>        <span class="comment">// Now ask to check the connection, triggering a ping but no reconnect.
+<a href=#1416 id=1416 data-nosnippet>1416</a>        </span><span class="kw">let </span>(tx, rx) = oneshot::channel();
+<a href=#1417 id=1417 data-nosnippet>1417</a>        inbox_tx
+<a href=#1418 id=1418 data-nosnippet>1418</a>            .send(ActiveRelayMessage::GetLocalAddr(tx))
+<a href=#1419 id=1419 data-nosnippet>1419</a>            .<span class="kw">await
+<a href=#1420 id=1420 data-nosnippet>1420</a>            </span>.context(<span class="string">"send get local addr msg"</span>)<span class="question-mark">?</span>;
+<a href=#1421 id=1421 data-nosnippet>1421</a>
+<a href=#1422 id=1422 data-nosnippet>1422</a>        <span class="kw">let </span>local_addr = rx
+<a href=#1423 id=1423 data-nosnippet>1423</a>            .<span class="kw">await
+<a href=#1424 id=1424 data-nosnippet>1424</a>            </span>.context(<span class="string">"wait for local addr msg"</span>)<span class="question-mark">?
+<a href=#1425 id=1425 data-nosnippet>1425</a>            </span>.context(<span class="string">"no local addr"</span>)<span class="question-mark">?</span>;
+<a href=#1426 id=1426 data-nosnippet>1426</a>        <span class="macro">info!</span>(<span class="question-mark">?</span>local_addr, <span class="string">"check connection with addr"</span>);
+<a href=#1427 id=1427 data-nosnippet>1427</a>        inbox_tx
+<a href=#1428 id=1428 data-nosnippet>1428</a>            .send(ActiveRelayMessage::CheckConnection(<span class="macro">vec!</span>[local_addr.ip()]))
+<a href=#1429 id=1429 data-nosnippet>1429</a>            .<span class="kw">await
+<a href=#1430 id=1430 data-nosnippet>1430</a>            </span>.context(<span class="string">"send check connection message"</span>)<span class="question-mark">?</span>;
+<a href=#1431 id=1431 data-nosnippet>1431</a>
+<a href=#1432 id=1432 data-nosnippet>1432</a>        <span class="comment">// Sync the ActiveRelayActor. Ping blocks it and we want to be sure it has handled
+<a href=#1433 id=1433 data-nosnippet>1433</a>        // another inbox message before continuing.
+<a href=#1434 id=1434 data-nosnippet>1434</a>        </span><span class="kw">let </span>(tx, rx) = oneshot::channel();
+<a href=#1435 id=1435 data-nosnippet>1435</a>        inbox_tx
+<a href=#1436 id=1436 data-nosnippet>1436</a>            .send(ActiveRelayMessage::GetLocalAddr(tx))
+<a href=#1437 id=1437 data-nosnippet>1437</a>            .<span class="kw">await
+<a href=#1438 id=1438 data-nosnippet>1438</a>            </span>.context(<span class="string">"send get local addr msg"</span>)<span class="question-mark">?</span>;
+<a href=#1439 id=1439 data-nosnippet>1439</a>        rx.<span class="kw">await</span>.context(<span class="string">"recv send local addr msg"</span>)<span class="question-mark">?</span>;
+<a href=#1440 id=1440 data-nosnippet>1440</a>
+<a href=#1441 id=1441 data-nosnippet>1441</a>        <span class="comment">// Echo should still work.
+<a href=#1442 id=1442 data-nosnippet>1442</a>        </span><span class="macro">info!</span>(<span class="string">"second echo"</span>);
+<a href=#1443 id=1443 data-nosnippet>1443</a>        send_recv_echo(
+<a href=#1444 id=1444 data-nosnippet>1444</a>            hello_send_item.clone(),
+<a href=#1445 id=1445 data-nosnippet>1445</a>            <span class="kw-2">&amp;</span>send_datagram_tx,
+<a href=#1446 id=1446 data-nosnippet>1446</a>            <span class="kw-2">&amp;mut </span>datagram_recv_rx,
+<a href=#1447 id=1447 data-nosnippet>1447</a>        )
+<a href=#1448 id=1448 data-nosnippet>1448</a>        .<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#1449 id=1449 data-nosnippet>1449</a>
+<a href=#1450 id=1450 data-nosnippet>1450</a>        <span class="comment">// Now ask to check the connection, this will reconnect without pinging because we
+<a href=#1451 id=1451 data-nosnippet>1451</a>        // do not supply any "valid" local IP addresses.
+<a href=#1452 id=1452 data-nosnippet>1452</a>        </span><span class="macro">info!</span>(<span class="string">"check connection"</span>);
+<a href=#1453 id=1453 data-nosnippet>1453</a>        inbox_tx
+<a href=#1454 id=1454 data-nosnippet>1454</a>            .send(ActiveRelayMessage::CheckConnection(Vec::new()))
+<a href=#1455 id=1455 data-nosnippet>1455</a>            .<span class="kw">await
+<a href=#1456 id=1456 data-nosnippet>1456</a>            </span>.context(<span class="string">"send check connection msg"</span>)<span class="question-mark">?</span>;
+<a href=#1457 id=1457 data-nosnippet>1457</a>
+<a href=#1458 id=1458 data-nosnippet>1458</a>        <span class="comment">// Give some time to reconnect, mostly to sort logs rather than functional.
+<a href=#1459 id=1459 data-nosnippet>1459</a>        </span>tokio::time::sleep(Duration::from_millis(<span class="number">10</span>)).<span class="kw">await</span>;
+<a href=#1460 id=1460 data-nosnippet>1460</a>
+<a href=#1461 id=1461 data-nosnippet>1461</a>        <span class="comment">// Echo should still work.
+<a href=#1462 id=1462 data-nosnippet>1462</a>        </span><span class="macro">info!</span>(<span class="string">"third echo"</span>);
+<a href=#1463 id=1463 data-nosnippet>1463</a>        send_recv_echo(
+<a href=#1464 id=1464 data-nosnippet>1464</a>            hello_send_item.clone(),
+<a href=#1465 id=1465 data-nosnippet>1465</a>            <span class="kw-2">&amp;</span>send_datagram_tx,
+<a href=#1466 id=1466 data-nosnippet>1466</a>            <span class="kw-2">&amp;mut </span>datagram_recv_rx,
+<a href=#1467 id=1467 data-nosnippet>1467</a>        )
+<a href=#1468 id=1468 data-nosnippet>1468</a>        .<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#1469 id=1469 data-nosnippet>1469</a>
+<a href=#1470 id=1470 data-nosnippet>1470</a>        <span class="comment">// Shut down the actor.
+<a href=#1471 id=1471 data-nosnippet>1471</a>        </span>cancel_token.cancel();
+<a href=#1472 id=1472 data-nosnippet>1472</a>        task.<span class="kw">await</span>.context(<span class="string">"wait for task to finish"</span>)<span class="question-mark">?</span>;
+<a href=#1473 id=1473 data-nosnippet>1473</a>
+<a href=#1474 id=1474 data-nosnippet>1474</a>        <span class="prelude-val">Ok</span>(())
+<a href=#1475 id=1475 data-nosnippet>1475</a>    }
+<a href=#1476 id=1476 data-nosnippet>1476</a>
+<a href=#1477 id=1477 data-nosnippet>1477</a>    <span class="attr">#[tokio::test]
+<a href=#1478 id=1478 data-nosnippet>1478</a>    #[traced_test]
+<a href=#1479 id=1479 data-nosnippet>1479</a>    </span><span class="kw">async fn </span>test_active_relay_inactive() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#1480 id=1480 data-nosnippet>1480</a>        <span class="kw">let </span>(_relay_map, relay_url, _server) = test_utils::run_relay_server().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#1481 id=1481 data-nosnippet>1481</a>
+<a href=#1482 id=1482 data-nosnippet>1482</a>        <span class="kw">let </span>secret_key = SecretKey::from_bytes(<span class="kw-2">&amp;</span>[<span class="number">1u8</span>; <span class="number">32</span>]);
+<a href=#1483 id=1483 data-nosnippet>1483</a>        <span class="kw">let </span>(datagram_recv_tx, _datagram_recv_rx) = mpsc::channel(<span class="number">16</span>);
+<a href=#1484 id=1484 data-nosnippet>1484</a>        <span class="kw">let </span>(_send_datagram_tx, send_datagram_rx) = mpsc::channel(<span class="number">16</span>);
+<a href=#1485 id=1485 data-nosnippet>1485</a>        <span class="kw">let </span>(_prio_inbox_tx, prio_inbox_rx) = mpsc::channel(<span class="number">8</span>);
+<a href=#1486 id=1486 data-nosnippet>1486</a>        <span class="kw">let </span>(inbox_tx, inbox_rx) = mpsc::channel(<span class="number">16</span>);
+<a href=#1487 id=1487 data-nosnippet>1487</a>        <span class="kw">let </span>cancel_token = CancellationToken::new();
+<a href=#1488 id=1488 data-nosnippet>1488</a>        <span class="kw">let </span><span class="kw-2">mut </span>task = start_active_relay_actor(
+<a href=#1489 id=1489 data-nosnippet>1489</a>            secret_key,
+<a href=#1490 id=1490 data-nosnippet>1490</a>            cancel_token.clone(),
+<a href=#1491 id=1491 data-nosnippet>1491</a>            relay_url,
+<a href=#1492 id=1492 data-nosnippet>1492</a>            prio_inbox_rx,
+<a href=#1493 id=1493 data-nosnippet>1493</a>            inbox_rx,
+<a href=#1494 id=1494 data-nosnippet>1494</a>            send_datagram_rx,
+<a href=#1495 id=1495 data-nosnippet>1495</a>            datagram_recv_tx,
+<a href=#1496 id=1496 data-nosnippet>1496</a>            <span class="macro">info_span!</span>(<span class="string">"actor-under-test"</span>),
+<a href=#1497 id=1497 data-nosnippet>1497</a>        );
+<a href=#1498 id=1498 data-nosnippet>1498</a>
+<a href=#1499 id=1499 data-nosnippet>1499</a>        <span class="comment">// Wait until the actor is connected to the relay server.
+<a href=#1500 id=1500 data-nosnippet>1500</a>        </span>tokio::time::timeout(Duration::from_millis(<span class="number">200</span>), <span class="kw">async </span>{
+<a href=#1501 id=1501 data-nosnippet>1501</a>            <span class="kw">loop </span>{
+<a href=#1502 id=1502 data-nosnippet>1502</a>                <span class="kw">let </span>(tx, rx) = oneshot::channel();
+<a href=#1503 id=1503 data-nosnippet>1503</a>                inbox_tx.send(ActiveRelayMessage::PingServer(tx)).<span class="kw">await</span>.ok();
+<a href=#1504 id=1504 data-nosnippet>1504</a>                <span class="kw">if </span>tokio::time::timeout(Duration::from_millis(<span class="number">100</span>), rx)
+<a href=#1505 id=1505 data-nosnippet>1505</a>                    .<span class="kw">await
+<a href=#1506 id=1506 data-nosnippet>1506</a>                    </span>.map(|resp| resp.is_ok())
+<a href=#1507 id=1507 data-nosnippet>1507</a>                    .unwrap_or_default()
+<a href=#1508 id=1508 data-nosnippet>1508</a>                {
+<a href=#1509 id=1509 data-nosnippet>1509</a>                    <span class="kw">break</span>;
+<a href=#1510 id=1510 data-nosnippet>1510</a>                }
+<a href=#1511 id=1511 data-nosnippet>1511</a>            }
+<a href=#1512 id=1512 data-nosnippet>1512</a>        })
+<a href=#1513 id=1513 data-nosnippet>1513</a>        .<span class="kw">await
+<a href=#1514 id=1514 data-nosnippet>1514</a>        </span>.context(<span class="string">"timeout"</span>)<span class="question-mark">?</span>;
+<a href=#1515 id=1515 data-nosnippet>1515</a>
+<a href=#1516 id=1516 data-nosnippet>1516</a>        <span class="comment">// From now on, we pause time
+<a href=#1517 id=1517 data-nosnippet>1517</a>        </span>tokio::time::pause();
+<a href=#1518 id=1518 data-nosnippet>1518</a>        <span class="comment">// We now have an idling ActiveRelayActor.  If we advance time just a little it
+<a href=#1519 id=1519 data-nosnippet>1519</a>        // should stay alive.
+<a href=#1520 id=1520 data-nosnippet>1520</a>        </span><span class="macro">info!</span>(<span class="string">"Stepping time forwards by RELAY_INACTIVE_CLEANUP_TIME / 2"</span>);
+<a href=#1521 id=1521 data-nosnippet>1521</a>        tokio::time::advance(RELAY_INACTIVE_CLEANUP_TIME / <span class="number">2</span>).<span class="kw">await</span>;
+<a href=#1522 id=1522 data-nosnippet>1522</a>
+<a href=#1523 id=1523 data-nosnippet>1523</a>        <span class="macro">assert!</span>(
+<a href=#1524 id=1524 data-nosnippet>1524</a>            tokio::time::timeout(Duration::from_millis(<span class="number">100</span>), <span class="kw-2">&amp;mut </span>task)
+<a href=#1525 id=1525 data-nosnippet>1525</a>                .<span class="kw">await
+<a href=#1526 id=1526 data-nosnippet>1526</a>                </span>.is_err(),
+<a href=#1527 id=1527 data-nosnippet>1527</a>            <span class="string">"actor task terminated"
+<a href=#1528 id=1528 data-nosnippet>1528</a>        </span>);
+<a href=#1529 id=1529 data-nosnippet>1529</a>
+<a href=#1530 id=1530 data-nosnippet>1530</a>        <span class="comment">// If we advance time a lot it should finish.
+<a href=#1531 id=1531 data-nosnippet>1531</a>        </span><span class="macro">info!</span>(<span class="string">"Stepping time forwards by RELAY_INACTIVE_CLEANUP_TIME"</span>);
+<a href=#1532 id=1532 data-nosnippet>1532</a>        tokio::time::advance(RELAY_INACTIVE_CLEANUP_TIME).<span class="kw">await</span>;
+<a href=#1533 id=1533 data-nosnippet>1533</a>        <span class="macro">assert!</span>(
+<a href=#1534 id=1534 data-nosnippet>1534</a>            tokio::time::timeout(Duration::from_millis(<span class="number">100</span>), task)
+<a href=#1535 id=1535 data-nosnippet>1535</a>                .<span class="kw">await
+<a href=#1536 id=1536 data-nosnippet>1536</a>                </span>.is_ok(),
+<a href=#1537 id=1537 data-nosnippet>1537</a>            <span class="string">"actor task still running"
+<a href=#1538 id=1538 data-nosnippet>1538</a>        </span>);
+<a href=#1539 id=1539 data-nosnippet>1539</a>
+<a href=#1540 id=1540 data-nosnippet>1540</a>        cancel_token.cancel();
+<a href=#1541 id=1541 data-nosnippet>1541</a>
+<a href=#1542 id=1542 data-nosnippet>1542</a>        <span class="prelude-val">Ok</span>(())
+<a href=#1543 id=1543 data-nosnippet>1543</a>    }
+<a href=#1544 id=1544 data-nosnippet>1544</a>
+<a href=#1545 id=1545 data-nosnippet>1545</a>    <span class="attr">#[tokio::test]
+<a href=#1546 id=1546 data-nosnippet>1546</a>    </span><span class="kw">async fn </span>test_ping_tracker() {
+<a href=#1547 id=1547 data-nosnippet>1547</a>        tokio::time::pause();
+<a href=#1548 id=1548 data-nosnippet>1548</a>        <span class="kw">let </span><span class="kw-2">mut </span>tracker = PingTracker::default();
+<a href=#1549 id=1549 data-nosnippet>1549</a>
+<a href=#1550 id=1550 data-nosnippet>1550</a>        <span class="kw">let </span>ping0 = tracker.new_ping();
+<a href=#1551 id=1551 data-nosnippet>1551</a>
+<a href=#1552 id=1552 data-nosnippet>1552</a>        <span class="kw">let </span>res = tokio::time::timeout(Duration::from_secs(<span class="number">1</span>), tracker.timeout()).<span class="kw">await</span>;
+<a href=#1553 id=1553 data-nosnippet>1553</a>        <span class="macro">assert!</span>(res.is_err(), <span class="string">"no ping timeout has elapsed yet"</span>);
+<a href=#1554 id=1554 data-nosnippet>1554</a>
+<a href=#1555 id=1555 data-nosnippet>1555</a>        tracker.pong_received(ping0);
+<a href=#1556 id=1556 data-nosnippet>1556</a>        <span class="kw">let </span>res = tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), tracker.timeout()).<span class="kw">await</span>;
+<a href=#1557 id=1557 data-nosnippet>1557</a>        <span class="macro">assert!</span>(res.is_err(), <span class="string">"ping completed before timeout"</span>);
+<a href=#1558 id=1558 data-nosnippet>1558</a>
+<a href=#1559 id=1559 data-nosnippet>1559</a>        <span class="kw">let </span>_ping1 = tracker.new_ping();
+<a href=#1560 id=1560 data-nosnippet>1560</a>
+<a href=#1561 id=1561 data-nosnippet>1561</a>        <span class="kw">let </span>res = tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), tracker.timeout()).<span class="kw">await</span>;
+<a href=#1562 id=1562 data-nosnippet>1562</a>        <span class="macro">assert!</span>(res.is_ok(), <span class="string">"ping timeout should have happened"</span>);
+<a href=#1563 id=1563 data-nosnippet>1563</a>
+<a href=#1564 id=1564 data-nosnippet>1564</a>        <span class="kw">let </span>_ping2 = tracker.new_ping();
+<a href=#1565 id=1565 data-nosnippet>1565</a>
+<a href=#1566 id=1566 data-nosnippet>1566</a>        tokio::time::sleep(Duration::from_secs(<span class="number">10</span>)).<span class="kw">await</span>;
+<a href=#1567 id=1567 data-nosnippet>1567</a>        <span class="kw">let </span>res = tokio::time::timeout(Duration::from_millis(<span class="number">1</span>), tracker.timeout()).<span class="kw">await</span>;
+<a href=#1568 id=1568 data-nosnippet>1568</a>        <span class="macro">assert!</span>(res.is_ok(), <span class="string">"ping timeout happened in the past"</span>);
+<a href=#1569 id=1569 data-nosnippet>1569</a>
+<a href=#1570 id=1570 data-nosnippet>1570</a>        <span class="kw">let </span>res = tokio::time::timeout(Duration::from_secs(<span class="number">10</span>), tracker.timeout()).<span class="kw">await</span>;
+<a href=#1571 id=1571 data-nosnippet>1571</a>        <span class="macro">assert!</span>(res.is_err(), <span class="string">"ping timeout should only happen once"</span>);
+<a href=#1572 id=1572 data-nosnippet>1572</a>    }
+<a href=#1573 id=1573 data-nosnippet>1573</a>}</code></pre></div></section></main></body></html>
