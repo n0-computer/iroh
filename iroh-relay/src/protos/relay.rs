@@ -411,8 +411,7 @@ impl ClientToRelayMsg {
                 + datagrams.encoded_len()
             }
         };
-        1 // frame type (all frame types currently encode as 1 byte varint)
-        + payload_len
+        self.typ().encoded_len() + payload_len
     }
 
     /// Tries to decode a frame received over websockets.
