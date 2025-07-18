@@ -94,10 +94,10 @@ impl Sink<RelayToClientMsg> for RelayedStream {
     }
 
     fn start_send(mut self: Pin<&mut Self>, item: RelayToClientMsg) -> Result<(), Self::Error> {
-        if let RelayToClientMsg::ReceivedPacket { content, .. } = &item {
-            let size = content.len();
-            snafu::ensure!(size <= MAX_PACKET_SIZE, ExceedsMaxPacketSizeSnafu { size });
-            snafu::ensure!(size != 0, EmptyPacketSnafu);
+        let size = item.encoded_len();
+        snafu::ensure!(size <= MAX_PACKET_SIZE, ExceedsMaxPacketSizeSnafu { size });
+        if let RelayToClientMsg::Datagrams { datagrams, .. } = &item {
+            snafu::ensure!(!datagrams.contents.is_empty(), EmptyPacketSnafu);
         }
 
         Pin::new(&mut self.inner)

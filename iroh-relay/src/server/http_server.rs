@@ -879,7 +879,7 @@ mod tests {
     use crate::{
         client::{conn::Conn, Client, ClientBuilder, ConnectError},
         dns::DnsResolver,
-        protos::relay::{ClientToRelayMsg, RelayToClientMsg},
+        protos::relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
     };
 
     pub(crate) fn make_tls_config() -> TlsConfig {
@@ -947,11 +947,11 @@ mod tests {
         assert!(matches!(pong, RelayToClientMsg::Pong { .. }));
 
         info!("sending message from a to b");
-        let msg = Bytes::from_static(b"hi there, client b!");
+        let msg = Datagrams::from(b"hi there, client b!");
         client_a
-            .send(ClientToRelayMsg::SendPacket {
-                dst_key: b_key,
-                packet: msg.clone(),
+            .send(ClientToRelayMsg::Datagrams {
+                dst_node_id: b_key,
+                datagrams: msg.clone(),
             })
             .await?;
         info!("waiting for message from a on b");
@@ -961,11 +961,11 @@ mod tests {
         assert_eq!(msg, got_msg);
 
         info!("sending message from b to a");
-        let msg = Bytes::from_static(b"right back at ya, client b!");
+        let msg = Datagrams::from(b"right back at ya, client b!");
         client_b
-            .send(ClientToRelayMsg::SendPacket {
-                dst_key: a_key,
-                packet: msg.clone(),
+            .send(ClientToRelayMsg::Datagrams {
+                dst_node_id: a_key,
+                datagrams: msg.clone(),
             })
             .await?;
         info!("waiting for message b on a");
@@ -996,7 +996,7 @@ mod tests {
 
     fn process_msg(
         msg: Option<Result<RelayToClientMsg, crate::client::RecvError>>,
-    ) -> Option<(PublicKey, Bytes)> {
+    ) -> Option<(PublicKey, Datagrams)> {
         match msg {
             Some(Err(e)) => {
                 info!("client `recv` error {e}");
@@ -1004,12 +1004,12 @@ mod tests {
             }
             Some(Ok(msg)) => {
                 info!("got message on: {msg:?}");
-                if let RelayToClientMsg::ReceivedPacket {
-                    src_key: source,
-                    content,
+                if let RelayToClientMsg::Datagrams {
+                    remote_node_id: source,
+                    datagrams,
                 } = msg
                 {
-                    Some((source, content))
+                    Some((source, datagrams))
                 } else {
                     None
                 }
@@ -1067,11 +1067,11 @@ mod tests {
         assert!(matches!(pong, RelayToClientMsg::Pong { .. }));
 
         info!("sending message from a to b");
-        let msg = Bytes::from_static(b"hi there, client b!");
+        let msg = Datagrams::from(b"hi there, client b!");
         client_a
-            .send(ClientToRelayMsg::SendPacket {
-                dst_key: b_key,
-                packet: msg.clone(),
+            .send(ClientToRelayMsg::Datagrams {
+                dst_node_id: b_key,
+                datagrams: msg.clone(),
             })
             .await?;
         info!("waiting for message from a on b");
@@ -1081,11 +1081,11 @@ mod tests {
         assert_eq!(msg, got_msg);
 
         info!("sending message from b to a");
-        let msg = Bytes::from_static(b"right back at ya, client b!");
+        let msg = Datagrams::from(b"right back at ya, client b!");
         client_b
-            .send(ClientToRelayMsg::SendPacket {
-                dst_key: a_key,
-                packet: msg.clone(),
+            .send(ClientToRelayMsg::Datagrams {
+                dst_node_id: a_key,
+                datagrams: msg.clone(),
             })
             .await?;
         info!("waiting for message b on a");
@@ -1144,17 +1144,20 @@ mod tests {
         handler_task.await.context("join")??;
 
         info!("Send message from A to B.");
-        let msg = Bytes::from_static(b"hello client b!!");
+        let msg = Datagrams::from(b"hello client b!!");
         client_a
-            .send(ClientToRelayMsg::SendPacket {
-                dst_key: public_key_b,
-                packet: msg.clone(),
+            .send(ClientToRelayMsg::Datagrams {
+                dst_node_id: public_key_b,
+                datagrams: msg.clone(),
             })
             .await?;
         match client_b.next().await.unwrap()? {
-            RelayToClientMsg::ReceivedPacket { src_key, content } => {
-                assert_eq!(public_key_a, src_key);
-                assert_eq!(msg, content);
+            RelayToClientMsg::Datagrams {
+                remote_node_id,
+                datagrams,
+            } => {
+                assert_eq!(public_key_a, remote_node_id);
+                assert_eq!(msg, datagrams);
             }
             msg => {
                 whatever!("expected ReceivedDatagrams msg, got {msg:?}");
@@ -1162,17 +1165,20 @@ mod tests {
         }
 
         info!("Send message from B to A.");
-        let msg = Bytes::from_static(b"nice to meet you client a!!");
+        let msg = Datagrams::from(b"nice to meet you client a!!");
         client_b
-            .send(ClientToRelayMsg::SendPacket {
-                dst_key: public_key_a,
-                packet: msg.clone(),
+            .send(ClientToRelayMsg::Datagrams {
+                dst_node_id: public_key_a,
+                datagrams: msg.clone(),
             })
             .await?;
         match client_a.next().await.unwrap()? {
-            RelayToClientMsg::ReceivedPacket { src_key, content } => {
-                assert_eq!(public_key_b, src_key);
-                assert_eq!(msg, content);
+            RelayToClientMsg::Datagrams {
+                remote_node_id,
+                datagrams,
+            } => {
+                assert_eq!(public_key_b, remote_node_id);
+                assert_eq!(msg, datagrams);
             }
             msg => {
                 whatever!("expected ReceivedDatagrams msg, got {msg:?}");
@@ -1185,9 +1191,9 @@ mod tests {
 
         info!("Fail to send message from A to B.");
         let res = client_a
-            .send(ClientToRelayMsg::SendPacket {
-                dst_key: public_key_b,
-                packet: Bytes::from_static(b"try to send"),
+            .send(ClientToRelayMsg::Datagrams {
+                dst_node_id: public_key_b,
+                datagrams: Datagrams::from(b"try to send"),
             })
             .await;
         assert!(res.is_err());
@@ -1228,17 +1234,20 @@ mod tests {
         handler_task.await.context("join")??;
 
         info!("Send message from A to B.");
-        let msg = Bytes::from_static(b"hello client b!!");
+        let msg = Datagrams::from(b"hello client b!!");
         client_a
-            .send(ClientToRelayMsg::SendPacket {
-                dst_key: public_key_b,
-                packet: msg.clone(),
+            .send(ClientToRelayMsg::Datagrams {
+                dst_node_id: public_key_b,
+                datagrams: msg.clone(),
             })
             .await?;
         match client_b.next().await.expect("eos")? {
-            RelayToClientMsg::ReceivedPacket { src_key, content } => {
-                assert_eq!(public_key_a, src_key);
-                assert_eq!(msg, content);
+            RelayToClientMsg::Datagrams {
+                remote_node_id,
+                datagrams,
+            } => {
+                assert_eq!(public_key_a, remote_node_id);
+                assert_eq!(msg, datagrams);
             }
             msg => {
                 whatever!("expected ReceivedDatagrams msg, got {msg:?}");
@@ -1246,17 +1255,20 @@ mod tests {
         }
 
         info!("Send message from B to A.");
-        let msg = Bytes::from_static(b"nice to meet you client a!!");
+        let msg = Datagrams::from(b"nice to meet you client a!!");
         client_b
-            .send(ClientToRelayMsg::SendPacket {
-                dst_key: public_key_a,
-                packet: msg.clone(),
+            .send(ClientToRelayMsg::Datagrams {
+                dst_node_id: public_key_a,
+                datagrams: msg.clone(),
             })
             .await?;
         match client_a.next().await.expect("eos")? {
-            RelayToClientMsg::ReceivedPacket { src_key, content } => {
-                assert_eq!(public_key_b, src_key);
-                assert_eq!(msg, content);
+            RelayToClientMsg::Datagrams {
+                remote_node_id,
+                datagrams,
+            } => {
+                assert_eq!(public_key_b, remote_node_id);
+                assert_eq!(msg, datagrams);
             }
             msg => {
                 whatever!("expected ReceivedDatagrams msg, got {msg:?}");
@@ -1274,17 +1286,20 @@ mod tests {
         // assert!(client_b.recv().await.is_err());
 
         info!("Send message from A to B.");
-        let msg = Bytes::from_static(b"are you still there, b?!");
+        let msg = Datagrams::from(b"are you still there, b?!");
         client_a
-            .send(ClientToRelayMsg::SendPacket {
-                dst_key: public_key_b,
-                packet: msg.clone(),
+            .send(ClientToRelayMsg::Datagrams {
+                dst_node_id: public_key_b,
+                datagrams: msg.clone(),
             })
             .await?;
         match new_client_b.next().await.expect("eos")? {
-            RelayToClientMsg::ReceivedPacket { src_key, content } => {
-                assert_eq!(public_key_a, src_key);
-                assert_eq!(msg, content);
+            RelayToClientMsg::Datagrams {
+                remote_node_id,
+                datagrams,
+            } => {
+                assert_eq!(public_key_a, remote_node_id);
+                assert_eq!(msg, datagrams);
             }
             msg => {
                 whatever!("expected ReceivedDatagrams msg, got {msg:?}");
@@ -1292,17 +1307,20 @@ mod tests {
         }
 
         info!("Send message from B to A.");
-        let msg = Bytes::from_static(b"just had a spot of trouble but I'm back now,a!!");
+        let msg = Datagrams::from(b"just had a spot of trouble but I'm back now,a!!");
         new_client_b
-            .send(ClientToRelayMsg::SendPacket {
-                dst_key: public_key_a,
-                packet: msg.clone(),
+            .send(ClientToRelayMsg::Datagrams {
+                dst_node_id: public_key_a,
+                datagrams: msg.clone(),
             })
             .await?;
         match client_a.next().await.expect("eos")? {
-            RelayToClientMsg::ReceivedPacket { src_key, content } => {
-                assert_eq!(public_key_b, src_key);
-                assert_eq!(msg, content);
+            RelayToClientMsg::Datagrams {
+                remote_node_id,
+                datagrams,
+            } => {
+                assert_eq!(public_key_b, remote_node_id);
+                assert_eq!(msg, datagrams);
             }
             msg => {
                 whatever!("expected ReceivedDatagrams msg, got {msg:?}");
@@ -1314,9 +1332,9 @@ mod tests {
 
         info!("Sending message from A to B fails");
         let res = client_a
-            .send(ClientToRelayMsg::SendPacket {
-                dst_key: public_key_b,
-                packet: Bytes::from_static(b"try to send"),
+            .send(ClientToRelayMsg::Datagrams {
+                dst_node_id: public_key_b,
+                datagrams: Datagrams::from(b"try to send"),
             })
             .await;
         assert!(res.is_err());

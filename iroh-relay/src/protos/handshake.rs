@@ -418,7 +418,7 @@ pub(crate) async fn serverside(
                 .build()
             })?;
 
-        if let Ok(()) = client_auth.verify(io) {
+        if client_auth.verify(io).is_ok() {
             trace!(?client_auth.public_key, "authentication succeeded via keying material");
             return Ok(SuccessfulAuthentication {
                 client_key: client_auth.public_key,
