@@ -45,7 +45,7 @@ use crate::{
     magicsock::{self, Handle, NodeIdMappedAddr, OwnAddressSnafu},
     metrics::EndpointMetrics,
     net_report::Report,
-    tls, RelayProtocol,
+    tls,
 };
 
 mod rtt_actor;
@@ -2261,7 +2261,6 @@ mod tests {
     };
 
     use iroh_base::{NodeAddr, NodeId, SecretKey};
-    use iroh_relay::http::Protocol;
     use n0_future::{task::AbortOnDropHandle, StreamExt};
     use n0_snafu::{Error, Result, ResultExt};
     use n0_watcher::Watcher;
