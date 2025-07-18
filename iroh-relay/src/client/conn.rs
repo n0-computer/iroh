@@ -145,10 +145,10 @@ impl Sink<ClientToRelayMsg> for Conn {
     }
 
     fn start_send(mut self: Pin<&mut Self>, frame: ClientToRelayMsg) -> Result<(), Self::Error> {
+        let size = frame.encoded_len();
+        snafu::ensure!(size <= MAX_PACKET_SIZE, ExceedsMaxPacketSizeSnafu { size });
         if let ClientToRelayMsg::Datagrams { datagrams, .. } = &frame {
-            let size = datagrams.contents.len();
-            snafu::ensure!(size <= MAX_PACKET_SIZE, ExceedsMaxPacketSizeSnafu { size });
-            snafu::ensure!(size != 0, EmptyPacketSnafu);
+            snafu::ensure!(!datagrams.contents.is_empty(), EmptyPacketSnafu);
         }
 
         Pin::new(&mut self.conn)

@@ -21,12 +21,6 @@ use crate::KeyCache;
 /// including its on-wire framing overhead)
 pub const MAX_PACKET_SIZE: usize = 64 * 1024;
 
-/// Maximum size a datagram payload is allowed to be.
-///
-/// This is [`MAX_PACKET_SIZE`] minus the length of an encoded public key minus 3 bytes,
-/// one for ECN, and two for the segment size.
-pub const MAX_PAYLOAD_SIZE: usize = MAX_PACKET_SIZE - NodeId::LENGTH - 3;
-
 /// The maximum frame size.
 ///
 /// This is also the minimum burst size that a rate-limiter has to accept.
@@ -665,6 +659,8 @@ mod proptests {
     }
 
     fn datagrams() -> impl Strategy<Value = Datagrams> {
+        // The max payload size (conservatively, since with segment_size = 0 we'd have slightly more space)
+        const MAX_PAYLOAD_SIZE: usize = MAX_PACKET_SIZE - NodeId::LENGTH - 1 /* ECN bytes */ - 2 /* segment size */;
         (
             ecn(),
             prop::option::of(MAX_PAYLOAD_SIZE / 20..MAX_PAYLOAD_SIZE),
@@ -689,8 +685,8 @@ mod proptests {
         let ping = prop::array::uniform8(any::<u8>()).prop_map(RelayToClientMsg::Ping);
         let pong = prop::array::uniform8(any::<u8>()).prop_map(RelayToClientMsg::Pong);
         let health = ".{0,65536}"
-            .prop_filter("exceeds MAX_PAYLOAD_SIZE", |s| {
-                s.len() < MAX_PAYLOAD_SIZE // a single unicode character can match a regex "." but take up multiple bytes
+            .prop_filter("exceeds MAX_PACKET_SIZE", |s| {
+                s.len() < MAX_PACKET_SIZE // a single unicode character can match a regex "." but take up multiple bytes
             })
             .prop_map(|problem| RelayToClientMsg::Health { problem });
         let restarting = (any::<u32>(), any::<u32>()).prop_map(|(reconnect_in, try_for)| {
