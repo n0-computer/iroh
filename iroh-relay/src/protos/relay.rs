@@ -9,7 +9,7 @@
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use iroh_base::{NodeId, SignatureError};
-use n0_future::time::{self, Duration};
+use n0_future::time::Duration;
 use nested_enum_utils::common_fields;
 use snafu::{Backtrace, ResultExt, Snafu};
 
@@ -54,12 +54,10 @@ pub(crate) const PER_CLIENT_SEND_QUEUE_DEPTH: usize = 512;
 #[derive(Debug, Snafu)]
 #[non_exhaustive]
 pub enum Error {
-    #[snafu(display("unexpected frame: got {got}, expected {expected}"))]
+    #[snafu(display("unexpected frame: got {got:?}, expected {expected:?}"))]
     UnexpectedFrame { got: FrameType, expected: FrameType },
     #[snafu(display("Frame is too large, has {frame_len} bytes"))]
     FrameTooLarge { frame_len: usize },
-    #[snafu(transparent)]
-    Timeout { source: time::Elapsed },
     #[snafu(transparent)]
     SerDe { source: postcard::Error },
     #[snafu(transparent)]
@@ -68,7 +66,7 @@ pub enum Error {
     InvalidPublicKey { source: SignatureError },
     #[snafu(display("Invalid frame encoding"))]
     InvalidFrame {},
-    #[snafu(display("Invalid frame type: {frame_type}"))]
+    #[snafu(display("Invalid frame type: {frame_type:?}"))]
     InvalidFrameType { frame_type: FrameType },
     #[snafu(display("Invalid protocol message encoding"))]
     InvalidProtocolMessageEncoding { source: std::str::Utf8Error },
@@ -77,7 +75,7 @@ pub enum Error {
 }
 
 /// The messages that a relay sends to clients or the clients receive from the relay.
-#[derive(derive_more::Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RelayToClientMsg {
     /// Represents datagrams sent from relays (originally sent to them by another client).
     Datagrams {
@@ -285,8 +283,7 @@ impl RelayToClientMsg {
                 + 4 // u32
             }
         };
-        1 // frame type
-        + payload_len
+        self.typ().encoded_len() + payload_len
     }
 
     /// Tries to decode a frame received over websockets.

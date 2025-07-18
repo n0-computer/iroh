@@ -68,17 +68,26 @@ pub enum FrameTypeError {
     UnknownFrameType { tag: VarInt },
 }
 
-impl std::fmt::Display for FrameType {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{self:?}")
-    }
-}
-
 impl FrameType {
     /// Writes the frame type to the buffer (as a QUIC-encoded varint).
     pub(crate) fn write_to<O: BufMut>(&self, mut dst: O) -> O {
         VarInt::from(*self).encode(&mut dst);
         dst
+    }
+
+    /// Returns the amount of bytes that [`Self::write_to`] would write.
+    pub(crate) fn encoded_len(&self) -> usize {
+        // Copied implementation from `VarInt::size`
+        let x: u32 = (*self).into();
+        if x < 2u32.pow(6) {
+            1 // this will pretty much always be the case
+        } else if x < 2u32.pow(14) {
+            2
+        } else if x < 2u32.pow(30) {
+            4
+        } else {
+            unreachable!("Impossible FrameType primitive representation")
+        }
     }
 
     /// Parses the frame type (as a QUIC-encoded varint) from the first couple of bytes given

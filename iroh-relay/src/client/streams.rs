@@ -105,7 +105,7 @@ impl ProxyStream {
 pub enum MaybeTlsStream<IO> {
     Raw(IO),
     Tls(tokio_rustls::client::TlsStream<IO>),
-    #[cfg(test)]
+    #[cfg(all(test, feature = "server"))]
     Test(tokio::io::DuplexStream),
 }
 
@@ -135,7 +135,7 @@ impl<IO: AsyncRead + AsyncWrite + Unpin> AsyncRead for MaybeTlsStream<IO> {
         match &mut *self {
             Self::Raw(stream) => Pin::new(stream).poll_read(cx, buf),
             Self::Tls(stream) => Pin::new(stream).poll_read(cx, buf),
-            #[cfg(test)]
+            #[cfg(all(test, feature = "server"))]
             Self::Test(stream) => Pin::new(stream).poll_read(cx, buf),
         }
     }
@@ -150,7 +150,7 @@ impl<IO: AsyncRead + AsyncWrite + Unpin> AsyncWrite for MaybeTlsStream<IO> {
         match &mut *self {
             Self::Raw(stream) => Pin::new(stream).poll_write(cx, buf),
             Self::Tls(stream) => Pin::new(stream).poll_write(cx, buf),
-            #[cfg(test)]
+            #[cfg(all(test, feature = "server"))]
             Self::Test(stream) => Pin::new(stream).poll_write(cx, buf),
         }
     }
@@ -162,7 +162,7 @@ impl<IO: AsyncRead + AsyncWrite + Unpin> AsyncWrite for MaybeTlsStream<IO> {
         match &mut *self {
             Self::Raw(stream) => Pin::new(stream).poll_flush(cx),
             Self::Tls(stream) => Pin::new(stream).poll_flush(cx),
-            #[cfg(test)]
+            #[cfg(all(test, feature = "server"))]
             Self::Test(stream) => Pin::new(stream).poll_flush(cx),
         }
     }
@@ -174,7 +174,7 @@ impl<IO: AsyncRead + AsyncWrite + Unpin> AsyncWrite for MaybeTlsStream<IO> {
         match &mut *self {
             Self::Raw(stream) => Pin::new(stream).poll_shutdown(cx),
             Self::Tls(stream) => Pin::new(stream).poll_shutdown(cx),
-            #[cfg(test)]
+            #[cfg(all(test, feature = "server"))]
             Self::Test(stream) => Pin::new(stream).poll_shutdown(cx),
         }
     }
@@ -187,7 +187,7 @@ impl<IO: AsyncRead + AsyncWrite + Unpin> AsyncWrite for MaybeTlsStream<IO> {
         match &mut *self {
             Self::Raw(stream) => Pin::new(stream).poll_write_vectored(cx, bufs),
             Self::Tls(stream) => Pin::new(stream).poll_write_vectored(cx, bufs),
-            #[cfg(test)]
+            #[cfg(all(test, feature = "server"))]
             Self::Test(stream) => Pin::new(stream).poll_write_vectored(cx, bufs),
         }
     }
@@ -196,7 +196,7 @@ impl<IO: AsyncRead + AsyncWrite + Unpin> AsyncWrite for MaybeTlsStream<IO> {
         match self {
             Self::Raw(stream) => stream.is_write_vectored(),
             Self::Tls(stream) => stream.is_write_vectored(),
-            #[cfg(test)]
+            #[cfg(all(test, feature = "server"))]
             Self::Test(stream) => stream.is_write_vectored(),
         }
     }
@@ -207,7 +207,7 @@ impl<IO> AsRef<IO> for MaybeTlsStream<IO> {
         match self {
             Self::Raw(s) => s,
             Self::Tls(s) => s.get_ref().0,
-            #[cfg(test)]
+            #[cfg(all(test, feature = "server"))]
             Self::Test(_) => unimplemented!("can't grab underlying IO in MaybeTlsStream::Test"),
         }
     }

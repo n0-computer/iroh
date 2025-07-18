@@ -17,7 +17,7 @@ use crate::{
         relay::{ClientToRelayMsg, Error as ProtoError, RelayToClientMsg},
         streams::{StreamError, WsBytesFramed},
     },
-    ExportKeyingMaterial, KeyCache,
+    ExportKeyingMaterial, KeyCache, MAX_PACKET_SIZE,
 };
 
 /// The relay's connection to a client.
@@ -74,23 +74,43 @@ impl RelayedStream {
     }
 }
 
+/// Relay send errors
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+pub enum SendError {
+    #[snafu(transparent)]
+    StreamError { source: StreamError },
+    #[snafu(display("Packet exceeds max packet size"))]
+    ExceedsMaxPacketSize { size: usize },
+    #[snafu(display("Attempted to send empty packet"))]
+    EmptyPacket {},
+}
+
 impl Sink<RelayToClientMsg> for RelayedStream {
-    type Error = StreamError;
+    type Error = SendError;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Pin::new(&mut self.inner).poll_ready(cx)
+        Pin::new(&mut self.inner).poll_ready(cx).map_err(Into::into)
     }
 
     fn start_send(mut self: Pin<&mut Self>, item: RelayToClientMsg) -> Result<(), Self::Error> {
-        Pin::new(&mut self.inner).start_send(item.to_bytes().freeze())
+        if let RelayToClientMsg::Datagrams { datagrams, .. } = &item {
+            let size = datagrams.contents.len();
+            snafu::ensure!(size <= MAX_PACKET_SIZE, ExceedsMaxPacketSizeSnafu { size });
+            snafu::ensure!(size != 0, EmptyPacketSnafu);
+        }
+
+        Pin::new(&mut self.inner)
+            .start_send(item.to_bytes().freeze())
+            .map_err(Into::into)
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Pin::new(&mut self.inner).poll_flush(cx)
+        Pin::new(&mut self.inner).poll_flush(cx).map_err(Into::into)
     }
 
     fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Pin::new(&mut self.inner).poll_close(cx)
+        Pin::new(&mut self.inner).poll_close(cx).map_err(Into::into)
     }
 }
 

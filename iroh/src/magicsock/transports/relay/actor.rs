@@ -1225,7 +1225,6 @@ pub(crate) struct RelayRecvDatagram {
     pub(crate) src: NodeId,
     pub(crate) datagrams: Datagrams,
 }
-
 #[cfg(test)]
 mod tests {
     use std::{

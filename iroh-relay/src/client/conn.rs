@@ -19,7 +19,7 @@ use crate::client::streams::{MaybeTlsStream, ProxyStream};
 use crate::{
     protos::{
         handshake,
-        relay::{ClientToRelayMsg, Error as ProtoError, RelayToClientMsg, MAX_PAYLOAD_SIZE},
+        relay::{ClientToRelayMsg, Error as ProtoError, RelayToClientMsg},
         streams::WsBytesFramed,
     },
     MAX_PACKET_SIZE,
@@ -44,6 +44,8 @@ pub enum SendError {
     },
     #[snafu(display("Exceeds max packet size ({MAX_PACKET_SIZE}): {size}"))]
     ExceedsMaxPacketSize { size: usize },
+    #[snafu(display("Attempted to send empty packet"))]
+    EmptyPacket {},
 }
 
 /// Errors when receiving messages from the relay server.
@@ -145,7 +147,8 @@ impl Sink<ClientToRelayMsg> for Conn {
     fn start_send(mut self: Pin<&mut Self>, frame: ClientToRelayMsg) -> Result<(), Self::Error> {
         if let ClientToRelayMsg::Datagrams { datagrams, .. } = &frame {
             let size = datagrams.contents.len();
-            snafu::ensure!(size <= MAX_PAYLOAD_SIZE, ExceedsMaxPacketSizeSnafu { size });
+            snafu::ensure!(size <= MAX_PACKET_SIZE, ExceedsMaxPacketSizeSnafu { size });
+            snafu::ensure!(size != 0, EmptyPacketSnafu);
         }
 
         Pin::new(&mut self.conn)

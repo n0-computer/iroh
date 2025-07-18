@@ -19,12 +19,11 @@ use crate::{
     protos::{
         disco,
         relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg, PING_INTERVAL},
-        streams::StreamError,
     },
     server::{
         clients::Clients,
         metrics::Metrics,
-        streams::{RecvError, RelayedStream},
+        streams::{RecvError as RelayRecvError, RelayedStream, SendError as RelaySendError},
     },
     PingTracker,
 };
@@ -181,7 +180,7 @@ pub enum HandleFrameError {
     #[snafu(display("Stream terminated"))]
     StreamTerminated {},
     #[snafu(transparent)]
-    Recv { source: RecvError },
+    Recv { source: RelayRecvError },
     #[snafu(transparent)]
     Send { source: WriteFrameError },
 }
@@ -195,7 +194,7 @@ pub enum HandleFrameError {
 #[non_exhaustive]
 pub enum WriteFrameError {
     #[snafu(transparent)]
-    Stream { source: StreamError },
+    Stream { source: RelaySendError },
     #[snafu(transparent)]
     Timeout { source: tokio::time::error::Elapsed },
 }
@@ -449,7 +448,7 @@ impl Actor {
     /// Handles frame read results.
     async fn handle_frame(
         &mut self,
-        maybe_frame: Option<Result<ClientToRelayMsg, RecvError>>,
+        maybe_frame: Option<Result<ClientToRelayMsg, RelayRecvError>>,
     ) -> Result<(), HandleFrameError> {
         trace!(?maybe_frame, "handle incoming frame");
         let frame = match maybe_frame {
@@ -585,7 +584,7 @@ mod tests {
             Some(Ok(frame)) => {
                 if frame_type != frame.typ() {
                     snafu::whatever!(
-                        "Unexpected frame, got {}, but expected {}",
+                        "Unexpected frame, got {:?}, but expected {:?}",
                         frame.typ(),
                         frame_type
                     );
@@ -593,7 +592,7 @@ mod tests {
                 Ok(frame)
             }
             Some(Err(err)) => Err(err).e(),
-            None => snafu::whatever!("Unexpected EOF, expected frame {frame_type}"),
+            None => snafu::whatever!("Unexpected EOF, expected frame {frame_type:?}"),
         }
     }
 
