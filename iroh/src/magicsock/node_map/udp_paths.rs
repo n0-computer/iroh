@@ -9,15 +9,12 @@ use std::{collections::BTreeMap, net::SocketAddr};
 
 use n0_future::time::{Duration, Instant};
 use rand::seq::IteratorRandom;
-use tracing::warn;
 
 use super::{
     best_addr::{self, BestAddr},
-    node_state::PongReply,
     path_state::PathState,
     IpPort,
 };
-use crate::disco::SendAddr;
 
 /// The address on which to send datagrams over UDP.
 ///
@@ -147,34 +144,33 @@ impl NodeUdpPaths {
         // The highest acceptable latency for an endpoint path.  If the latency is higher
         // then this the path will be ignored.
         const MAX_LATENCY: Duration = Duration::from_secs(60 * 60);
-        let best_pong = self.paths.iter().fold(None, |best_pong, (ipp, state)| {
-            let best_latency = best_pong
-                .map(|p: &PongReply| p.latency)
-                .unwrap_or(MAX_LATENCY);
-            match state.recent_pong {
-                // This pong is better if it has a lower latency, or if it has the same
-                // latency but on an IPv6 path.
-                Some(ref pong)
-                    if pong.latency < best_latency
-                        || (pong.latency == best_latency && ipp.ip().is_ipv6()) =>
-                {
-                    Some(pong)
-                }
-                _ => best_pong,
-            }
-        });
+
+        // let best_pong = self.paths.iter().fold(None, |best_pong, (ipp, state)| {
+        //     let best_latency = todo!();
+        // match state.recent_pong {
+        //     // This pong is better if it has a lower latency, or if it has the same
+        //     // latency but on an IPv6 path.
+        //     Some(ref pong)
+        //         if pong.latency < best_latency
+        //             || (pong.latency == best_latency && ipp.ip().is_ipv6()) =>
+        //     {
+        //         Some(pong)
+        //     }
+        //     _ => best_pong,
+        // }
+        // });
 
         // If we found a candidate, set to best addr
-        if let Some(pong) = best_pong {
-            if let SendAddr::Udp(addr) = pong.from {
-                warn!(%addr, "No best_addr was set, choose candidate with lowest latency");
-                self.best_addr.insert_if_better_or_reconfirm(
-                    addr,
-                    pong.latency,
-                    best_addr::Source::BestCandidate,
-                    pong.pong_at,
-                )
-            }
-        }
+        // if let Some(pong) = best_pong {
+        //     if let SendAddr::Udp(addr) = pong.from {
+        //         warn!(%addr, "No best_addr was set, choose candidate with lowest latency");
+        //         self.best_addr.insert_if_better_or_reconfirm(
+        //             addr,
+        //             pong.latency,
+        //             best_addr::Source::BestCandidate,
+        //             pong.pong_at,
+        //         )
+        //     }
+        // }
     }
 }

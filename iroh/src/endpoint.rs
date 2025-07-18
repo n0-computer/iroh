@@ -732,8 +732,6 @@ impl Endpoint {
             self.add_node_addr(node_addr.clone())?;
         }
         let node_id = node_addr.node_id;
-        let direct_addresses = node_addr.direct_addresses.clone();
-        let relay_url = node_addr.relay_url.clone();
 
         // Get the mapped IPv6 address from the magic socket. Quinn will connect to this
         // address.  Start discovery for this node if it's enabled and we have no valid or
@@ -751,12 +749,7 @@ impl Endpoint {
         // Start connecting via quinn. This will time out after 10 seconds if no reachable
         // address is available.
 
-        debug!(
-            ?mapped_addr,
-            ?direct_addresses,
-            ?relay_url,
-            "Attempting connection..."
-        );
+        debug!(?mapped_addr, "Attempting connection...");
         let client_config = {
             let mut alpn_protocols = vec![alpn.to_vec()];
             alpn_protocols.extend(options.additional_alpns);
@@ -769,15 +762,12 @@ impl Endpoint {
             client_config
         };
 
+        let dest_addr = mapped_addr.private_socket_addr();
         let server_name = &tls::name::encode(node_id);
         let connect = self
             .msock
             .endpoint()
-            .connect_with(
-                client_config,
-                mapped_addr.private_socket_addr(),
-                server_name,
-            )
+            .connect_with(client_config, dest_addr, server_name)
             .context(QuinnSnafu)?;
 
         Ok(Connecting {
@@ -1389,7 +1379,7 @@ impl Endpoint {
             None
         };
         match addr {
-            Some(addr) => {
+            Some(maddr) => {
                 // We have some way of dialing this node, but that doesn't actually mean
                 // we can actually connect to any of these addresses.
                 // Therefore, we will invoke the discovery service if we haven't received from the
@@ -1401,7 +1391,7 @@ impl Endpoint {
                 let discovery = DiscoveryTask::maybe_start_after_delay(self, node_id, delay)
                     .ok()
                     .flatten();
-                Ok((addr, discovery))
+                Ok((maddr, discovery))
             }
 
             None => {
@@ -1768,6 +1758,24 @@ impl Future for Connecting {
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
             Poll::Ready(Ok(inner)) => {
                 let conn = Connection { inner };
+
+                // Grab the remote identity and register this connection
+                if let Some(remote) = *this.remote_node_id {
+                    let weak_handle = conn.inner.weak_handle();
+                    let path_events = conn.inner.path_events();
+                    this.ep
+                        .msock
+                        .register_connection(remote, weak_handle, path_events);
+                } else if let Ok(remote) = conn.remote_node_id() {
+                    let weak_handle = conn.inner.weak_handle();
+                    let path_events = conn.inner.path_events();
+                    this.ep
+                        .msock
+                        .register_connection(remote, weak_handle, path_events);
+                } else {
+                    warn!("unable to determine node id for the remote");
+                }
+
                 try_send_rtt_msg(&conn, this.ep, *this.remote_node_id);
                 Poll::Ready(Ok(conn))
             }
