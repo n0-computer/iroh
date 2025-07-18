@@ -643,16 +643,19 @@ impl MagicSock {
                     self.ipv6_reported.load(Ordering::Relaxed),
                     &self.metrics.magicsock,
                 ) {
-                    Some((node_id, _udp_addr, relay_url, ping_actions)) => {
+                    Some((node_id, udp_addr, relay_url, ping_actions)) => {
                         if !ping_actions.is_empty() {
                             self.actor_sender
                                 .try_send(ActorMessage::PingActions(ping_actions))
                                 .ok();
                         }
-                        // NodeId mapped addrs are only used for relays, currently.
-                        // IP based addrs will have been added as individual paths
+                        // Mixed will send all available addrs
+
                         if let Some(url) = relay_url {
                             active_paths.push(transports::Addr::Relay(url, node_id));
+                        }
+                        if let Some(addr) = udp_addr {
+                            active_paths.push(transports::Addr::Ip(addr));
                         }
                     }
                     None => {
@@ -812,15 +815,16 @@ impl MagicSock {
                                     quic_packets_total += quic_datagram_count;
                                     quinn_meta.addr = ip_mapped_addr.private_socket_addr();
                                 } else {
-                                    warn!(
+                                    trace!(
                                         src = %addr,
                                         count = %quic_datagram_count,
                                         len = quinn_meta.len,
-                                        "UDP recv quic packets: no node state found, skipping",
+                                        "UDP recv quic packets: no node state found",
                                     );
-                                    // If we have no node state for the from addr, set len to 0 to make
-                                    // quinn skip the buf completely.
-                                    quinn_meta.len = 0;
+
+                                    // TODO: register in node map
+                                    quic_packets_total += quic_datagram_count;
+                                    quinn_meta.addr = *addr;
                                 }
                             }
                             Some((node_id, quic_mapped_addr)) => {

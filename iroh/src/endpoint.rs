@@ -2262,7 +2262,6 @@ mod tests {
     };
 
     use iroh_base::{NodeAddr, NodeId, SecretKey};
-    use iroh_relay::http::Protocol;
     use n0_future::{StreamExt, task::AbortOnDropHandle};
     use n0_snafu::{Error, Result, ResultExt};
     use n0_watcher::Watcher;
