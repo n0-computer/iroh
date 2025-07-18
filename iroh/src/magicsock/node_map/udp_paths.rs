@@ -98,7 +98,7 @@ impl NodeUdpPaths {
     /// it should be `&self` and not `&mut self`.  This is only possible once the state from
     /// [`NodeUdpPaths`] is no longer modified from outside.
     pub(super) fn send_addr(&mut self, now: Instant, have_ipv6: bool) -> UdpSendAddr {
-        self.assign_best_addr_from_candidates_if_empty();
+        self.assign_best_addr_from_candidates_if_empty(now);
         match self.best_addr.state(now) {
             best_addr::State::Valid(addr) => UdpSendAddr::Valid(addr.addr),
             best_addr::State::Outdated(addr) => UdpSendAddr::Outdated(addr.addr),
@@ -139,7 +139,7 @@ impl NodeUdpPaths {
     /// If somehow we end up in a state where we failed to set a best_addr, while we do have
     /// valid candidates, this will chose a candidate and set best_addr again.  Most likely
     /// this is a bug elsewhere though.
-    fn assign_best_addr_from_candidates_if_empty(&mut self) {
+    fn assign_best_addr_from_candidates_if_empty(&mut self, now: Instant) {
         if !self.best_addr.is_empty() {
             return;
         }
@@ -173,6 +173,7 @@ impl NodeUdpPaths {
                     pong.latency,
                     best_addr::Source::BestCandidate,
                     pong.pong_at,
+                    now,
                 )
             }
         }

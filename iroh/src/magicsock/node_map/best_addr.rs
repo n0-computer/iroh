@@ -6,7 +6,51 @@ use n0_future::time::{Duration, Instant};
 use tracing::{debug, info};
 
 /// How long we trust a UDP address as the exclusive path (without using relay) without having heard a Pong reply.
-const TRUST_UDP_ADDR_DURATION: Duration = Duration::from_millis(6500);
+pub(super) const TRUST_UDP_ADDR_DURATION: Duration = Duration::from_millis(6500);
+
+/// The grace period at which we consider switching away from our best addr
+/// to another address that we've received data on.
+///
+/// The trusted address lifecycle goes as follows:
+/// - A UDP DICSO pong is received, this validates that the path is for sure valid.
+/// - The disco path that seems to have the lowest latency is the path we use to send on.
+/// - We trust this path as a path to send on for at least TRUST_UDP_ADDR_DURATION.
+/// - This time is extended every time we receive a UDP DISCO pong on the address.
+/// - This time is *also* extended every time we receive *application* payloads on this
+///   address (i.e. QUIC datagrams).
+/// - If our best address becomes outdated (TRUST_UDP_ADDR_DURATION expires) without
+///   another pong or payload data, then we'll start sending over the relay, too!
+///   (we switch to ConnectionType::Mixed)
+///
+/// However, we might not get any UDP DISCO pongs because they're UDP packets and get
+/// lost under e.g. high load.
+///
+/// This is usually fine, because we also receive on the best addr, and that extends its
+/// "trust period" just as well.
+///
+/// However, if *additionally* we send on a different address than the one we receive on,
+/// then this extension doesn't happen.
+///
+/// To fix this, we also apply the same path validation logic to non-best addresses.
+/// I.e. we keep track of when they last received a pong, at which point we consider them
+/// validated, and then extend this validation period when we receive application data
+/// while they're valid (or when we receive another pong).
+///
+/// Now, when our best address becomes outdated, we need to switch to another valid path.
+///
+/// We could switch to another path once the best address becomes outdated, but then we'd
+/// already start sending on the relay for a couple of iterations!
+///
+/// So instead, we switch to another path when it looks like the best address becomes
+/// outdated.
+/// Not just any path, but the path that we're currently receiving from for this node.
+///
+/// Since we might not be receiving constantly from the remote side (e.g. if it's a
+/// one-sided transfer), we need to take care to do consider switching early enough.
+///
+/// So this duration is chosen as at least 1 keep alive interval (1s default in iroh atm)
+/// + at maximum 400ms of latency spike.
+const TRUST_UDP_ADDR_SOON_OUTDATED: Duration = Duration::from_millis(1400);
 
 #[derive(Debug, Default)]
 pub(super) struct BestAddr(Option<BestAddrInner>);
@@ -38,12 +82,12 @@ pub(super) enum Source {
 }
 
 impl Source {
-    fn trust_until(&self, from: Instant) -> Instant {
+    fn trust_duration(&self) -> Duration {
         match self {
-            Source::ReceivedPong => from + TRUST_UDP_ADDR_DURATION,
+            Source::ReceivedPong => TRUST_UDP_ADDR_DURATION,
             // TODO: Fix time
-            Source::BestCandidate => from + Duration::from_secs(60 * 60),
-            Source::Udp => from + TRUST_UDP_ADDR_DURATION,
+            Source::BestCandidate => Duration::from_secs(60 * 60),
+            Source::Udp => TRUST_UDP_ADDR_DURATION,
         }
     }
 }
@@ -115,6 +159,7 @@ impl BestAddr {
         latency: Duration,
         source: Source,
         confirmed_at: Instant,
+        now: Instant,
     ) {
         match self.0.as_mut() {
             None => {
@@ -122,23 +167,39 @@ impl BestAddr {
             }
             Some(state) => {
                 let candidate = AddrLatency { addr, latency };
-                if !state.is_trusted(confirmed_at) || candidate.is_better_than(&state.addr) {
+                if !state.is_trusted(now) || candidate.is_better_than(&state.addr) {
                     self.insert(addr, latency, source, confirmed_at);
                 } else if state.addr.addr == addr {
                     state.confirmed_at = confirmed_at;
-                    state.trust_until = Some(source.trust_until(confirmed_at));
+                    state.trust_until = Some(confirmed_at + source.trust_duration());
                 }
             }
         }
     }
 
-    /// Reset the expiry, if the passed in addr matches the currently used one.
-    #[cfg(not(wasm_browser))]
-    pub fn reconfirm_if_used(&mut self, addr: SocketAddr, source: Source, confirmed_at: Instant) {
-        if let Some(state) = self.0.as_mut() {
-            if state.addr.addr == addr {
-                state.confirmed_at = confirmed_at;
-                state.trust_until = Some(source.trust_until(confirmed_at));
+    pub fn insert_if_soon_outdated_or_reconfirm(
+        &mut self,
+        addr: SocketAddr,
+        latency: Duration,
+        source: Source,
+        confirmed_at: Instant,
+        now: Instant,
+    ) {
+        match self.0.as_mut() {
+            None => {
+                self.insert(addr, latency, source, confirmed_at);
+            }
+            Some(state) => {
+                // If the current best addr will soon be outdated
+                // and the given candidate will be trusted for longer
+                if !state.is_trusted(now + TRUST_UDP_ADDR_SOON_OUTDATED)
+                    && state.confirmed_at < confirmed_at
+                {
+                    self.insert(addr, latency, source, confirmed_at);
+                } else if state.addr.addr == addr {
+                    state.confirmed_at = confirmed_at;
+                    state.trust_until = Some(confirmed_at + source.trust_duration());
+                }
             }
         }
     }
@@ -150,7 +211,7 @@ impl BestAddr {
         source: Source,
         confirmed_at: Instant,
     ) {
-        let trust_until = source.trust_until(confirmed_at);
+        let trust_until = confirmed_at + source.trust_duration();
 
         if self
             .0
