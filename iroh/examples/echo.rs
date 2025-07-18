@@ -24,6 +24,10 @@ const ALPN: &[u8] = b"iroh-example/echo/0";
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
+
     let router = start_accept_side().await?;
     let node_addr = router.endpoint().node_addr().await?;
 

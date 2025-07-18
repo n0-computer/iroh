@@ -38,12 +38,12 @@ pub(super) enum Source {
 }
 
 impl Source {
-    fn trust_until(&self, from: Instant) -> Instant {
+    fn trust_duration(&self) -> Duration {
         match self {
-            Source::ReceivedPong => from + TRUST_UDP_ADDR_DURATION,
+            Source::ReceivedPong => TRUST_UDP_ADDR_DURATION,
             // TODO: Fix time
-            Source::BestCandidate => from + Duration::from_secs(60 * 60),
-            Source::Udp => from + TRUST_UDP_ADDR_DURATION,
+            Source::BestCandidate => Duration::from_secs(60 * 60),
+            Source::Udp => TRUST_UDP_ADDR_DURATION,
         }
     }
 }
@@ -126,7 +126,7 @@ impl BestAddr {
                     self.insert(addr, latency, source, confirmed_at);
                 } else if state.addr.addr == addr {
                     state.confirmed_at = confirmed_at;
-                    state.trust_until = Some(source.trust_until(confirmed_at));
+                    state.trust_until = Some(confirmed_at + source.trust_duration());
                 }
             }
         }
@@ -138,8 +138,15 @@ impl BestAddr {
         if let Some(state) = self.0.as_mut() {
             if state.addr.addr == addr {
                 state.confirmed_at = confirmed_at;
-                state.trust_until = Some(source.trust_until(confirmed_at));
+                state.trust_until = Some(confirmed_at + source.trust_duration());
+            } else {
+                println!(
+                    "Not reconfirming this shit: {} != {addr:?} {source:?} {confirmed_at:?}",
+                    state.addr.addr
+                );
             }
+        } else {
+            println!("Can't reconfirm! {addr:?} {source:?} {confirmed_at:?}");
         }
     }
 
@@ -150,7 +157,7 @@ impl BestAddr {
         source: Source,
         confirmed_at: Instant,
     ) {
-        let trust_until = source.trust_until(confirmed_at);
+        let trust_until = confirmed_at + source.trust_duration();
 
         if self
             .0
