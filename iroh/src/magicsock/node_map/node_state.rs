@@ -981,6 +981,7 @@ impl NodeState {
                         latency,
                         best_addr::Source::ReceivedPong,
                         now,
+                        now,
                     );
                 }
 
@@ -1067,18 +1068,26 @@ impl NodeState {
             debug_assert!(false, "node map inconsistency by_ip_port <-> direct addr");
             return;
         };
-        state.last_payload_msg = Some(now);
+        state.receive_payload(now);
         self.last_used = Some(now);
-        self.udp_paths
-            .best_addr
-            .reconfirm_if_used(addr.into(), BestAddrSource::Udp, now);
+        if let Some((latency, confirmed_at)) = state.valid_best_addr_candidate(now) {
+            self.udp_paths
+                .best_addr
+                .insert_if_soon_outdated_or_reconfirm(
+                    addr.into(),
+                    latency,
+                    BestAddrSource::Udp,
+                    confirmed_at,
+                    now,
+                );
+        }
     }
 
     pub(super) fn receive_relay(&mut self, url: &RelayUrl, src: NodeId, now: Instant) {
         match self.relay_url.as_mut() {
             Some((current_home, state)) if current_home == url => {
                 // We received on the expected url. update state.
-                state.last_payload_msg = Some(now);
+                state.receive_payload(now);
             }
             Some((_current_home, _state)) => {
                 // we have a different url. we only update on ping, not on receive_relay.

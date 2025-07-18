@@ -14,7 +14,10 @@ use super::{
     node_state::{ControlMsg, PongReply, SESSION_ACTIVE_TIMEOUT},
     IpPort, PingRole, Source,
 };
-use crate::{disco::SendAddr, magicsock::HEARTBEAT_INTERVAL};
+use crate::{
+    disco::SendAddr,
+    magicsock::{node_map::best_addr::TRUST_UDP_ADDR_DURATION, HEARTBEAT_INTERVAL},
+};
 
 /// The minimum time between pings to an endpoint.
 ///
@@ -53,6 +56,9 @@ pub(super) struct PathState {
     ///
     /// This excludes DISCO messages.
     pub(super) last_payload_msg: Option<Instant>,
+    /// Whether the last payload msg was within [`TRUST_UDP_ADDR_DURATION`] of either
+    /// the last trusted payload message or a recent pong.
+    pub(super) last_payload_trusted: bool,
     /// Sources is a map of [`Source`]s to [`Instant`]s, keeping track of all the ways we have
     /// learned about this path
     ///
@@ -73,6 +79,7 @@ impl PathState {
             call_me_maybe_time: None,
             recent_pong: None,
             last_payload_msg: None,
+            last_payload_trusted: false,
             sources,
         }
     }
@@ -100,6 +107,7 @@ impl PathState {
             call_me_maybe_time: None,
             recent_pong: None,
             last_payload_msg: Some(now),
+            last_payload_trusted: false,
             sources,
         }
     }
@@ -129,6 +137,26 @@ impl PathState {
             }
         }
         self.recent_pong = Some(r);
+
+        if let Some(last_payload_msg) = self.last_payload_msg {
+            self.last_payload_trusted = self.within_trusted_pong_duration(last_payload_msg);
+        }
+    }
+
+    fn within_trusted_pong_duration(&self, instant: Instant) -> bool {
+        if let Some(pong) = &self.recent_pong {
+            return pong.pong_at <= instant && instant < pong.pong_at + TRUST_UDP_ADDR_DURATION;
+        }
+
+        false
+    }
+
+    pub(super) fn receive_payload(&mut self, now: Instant) {
+        self.last_payload_msg = Some(now);
+
+        if self.within_trusted_pong_duration(now) {
+            self.last_payload_trusted = true;
+        }
     }
 
     #[cfg(test)]
@@ -141,6 +169,7 @@ impl PathState {
             call_me_maybe_time: None,
             recent_pong: Some(r),
             last_payload_msg: None,
+            last_payload_trusted: false,
             sources: HashMap::new(),
         }
     }
@@ -187,6 +216,21 @@ impl PathState {
             .copied()
     }
 
+    fn last_confirmed_at(&self) -> Option<Instant> {
+        let last_trusted_payload_msg = if self.last_payload_trusted {
+            self.last_payload_msg
+        } else {
+            None
+        };
+
+        self.recent_pong
+            .as_ref()
+            .map(|pong| pong.pong_at)
+            .into_iter()
+            .chain(last_trusted_payload_msg)
+            .max()
+    }
+
     /// The last control or DISCO message **about** this path.
     ///
     /// This is the most recent instant among:
@@ -220,6 +264,18 @@ impl PathState {
     /// Returns the latency from the most recent pong, if available.
     pub(super) fn latency(&self) -> Option<Duration> {
         self.recent_pong.as_ref().map(|p| p.latency)
+    }
+
+    /// Returns the latency and confirmed_at time if this path would make for a valid best addr `now`
+    pub(crate) fn valid_best_addr_candidate(&self, now: Instant) -> Option<(Duration, Instant)> {
+        let latency = self.recent_pong.as_ref()?.latency;
+        let confirmed_at = self.last_confirmed_at()?;
+
+        if confirmed_at <= now && now < confirmed_at + TRUST_UDP_ADDR_DURATION {
+            return Some((latency, confirmed_at));
+        }
+
+        None
     }
 
     pub(super) fn needs_ping(&self, now: &Instant) -> bool {

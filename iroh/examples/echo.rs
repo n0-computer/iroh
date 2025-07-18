@@ -53,7 +53,7 @@ async fn connect_side(addr: NodeAddr) -> Result<()> {
             let start = Instant::now();
             let mut conn_type = endpoint.conn_type(node_id).unwrap().stream();
             while let Some(typ) = conn_type.next().await {
-                println!("Connection type changed: {typ:?} ({:?})", start.elapsed());
+                println!("Client conn type changed: {typ:?} ({:?})", start.elapsed());
             }
         }
     });
@@ -104,13 +104,17 @@ async fn start_accept_side() -> Result<Router> {
     let endpoint = Endpoint::builder().discovery_n0().bind().await?;
 
     // Build our protocol handler and add our protocol, identified by its ALPN, and spawn the node.
-    let router = Router::builder(endpoint).accept(ALPN, Echo).spawn();
+    let router = Router::builder(endpoint.clone())
+        .accept(ALPN, Echo { endpoint })
+        .spawn();
 
     Ok(router)
 }
 
 #[derive(Debug, Clone)]
-struct Echo;
+struct Echo {
+    endpoint: Endpoint,
+}
 
 impl ProtocolHandler for Echo {
     /// The `accept` method is called for each incoming connection for our ALPN.
@@ -118,11 +122,20 @@ impl ProtocolHandler for Echo {
     /// The returned future runs on a newly spawned tokio task, so it can run as long as
     /// the connection lasts.
     fn accept(&self, connection: Connection) -> BoxFuture<Result<()>> {
+        let endpoint = self.endpoint.clone();
         // We have to return a boxed future from the handler.
         Box::pin(async move {
             // We can get the remote's node id from the connection.
             let node_id = connection.remote_node_id()?;
             println!("accepted connection from {node_id}");
+
+            tokio::spawn(async move {
+                let start = Instant::now();
+                let mut conn_type = endpoint.conn_type(node_id).unwrap().stream();
+                while let Some(typ) = conn_type.next().await {
+                    println!("Server conn type changed: {typ:?} ({:?})", start.elapsed());
+                }
+            });
 
             // Our protocol is a simple request-response protocol, so we expect the
             // connecting peer to open a single bi-directional stream.
