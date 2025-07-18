@@ -1068,8 +1068,8 @@ impl NodeState {
         state.receive_payload(now);
         self.last_used = Some(now);
         if let Some((latency, confirmed_at)) = state.valid_best_addr_candidate(now) {
-        self.udp_paths
-            .best_addr
+            self.udp_paths
+                .best_addr
                 .insert_if_soon_outdated_or_reconfirm(
                     addr.into(),
                     latency,
