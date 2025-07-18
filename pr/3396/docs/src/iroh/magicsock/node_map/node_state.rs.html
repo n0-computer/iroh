@@ -2837,8 +2837,8 @@
         state.receive_payload(now);
         <span class="self">self</span>.last_used = <span class="prelude-val">Some</span>(now);
         <span class="kw">if let </span><span class="prelude-val">Some</span>((latency, confirmed_at)) = state.valid_best_addr_candidate(now) {
-        <span class="self">self</span>.udp_paths
-            .best_addr
+            <span class="self">self</span>.udp_paths
+                .best_addr
                 .insert_if_soon_outdated_or_reconfirm(
                     addr.into(),
                     latency,
