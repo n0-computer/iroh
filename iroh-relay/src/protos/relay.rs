@@ -171,6 +171,7 @@ impl Datagrams {
         + self.contents.len()
     }
 
+    #[allow(clippy::len_zero)]
     fn from_bytes(mut bytes: Bytes, is_batch: bool) -> Result<Self, Error> {
         if is_batch {
             // 1 bytes ECN, 2 bytes segment size
