@@ -45,7 +45,7 @@ use netwatch::{UdpSocket, ip::LocalAddresses};
 use quinn::{AsyncUdpSocket, ServerConfig, WeakConnectionHandle};
 use quinn_proto::PathEvent;
 use rand::Rng;
-use relay_mapped_addrs::RelayMappedAddresses;
+use relay_mapped_addrs::{IpMappedAddr, RelayMappedAddresses};
 use smallvec::SmallVec;
 use snafu::{ResultExt, Snafu};
 use tokio::sync::{Mutex as AsyncMutex, mpsc};
@@ -68,14 +68,14 @@ use crate::dns::DnsResolver;
 #[cfg(any(test, feature = "test-utils"))]
 use crate::endpoint::PathSelection;
 #[cfg(not(wasm_browser))]
-use crate::net_report::{IpMappedAddr, QuicConfig};
+use crate::net_report::QuicConfig;
 use crate::{
     defaults::timeouts::NET_REPORT_TIMEOUT,
     disco::{self, SendAddr},
     discovery::{Discovery, DiscoveryItem, DiscoverySubscribers, NodeData, UserData},
     key::{DecryptionError, SharedSecret, public_ed_box, secret_ed_box},
     metrics::EndpointMetrics,
-    net_report::{self, IfStateDetails, IpMappedAddresses, Report},
+    net_report::{self, IfStateDetails, Report},
 };
 
 mod metrics;
@@ -200,8 +200,6 @@ pub(crate) struct MagicSock {
     /// Tracks existing connections
     connection_map: ConnectionMap,
 
-    /// Tracks the mapped IP addresses
-    ip_mapped_addrs: IpMappedAddresses,
     /// Tracks the mapped IP addresses
     relay_mapped_addrs: RelayMappedAddresses,
     /// Local addresses
@@ -802,30 +800,15 @@ impl MagicSock {
                         // Update the NodeMap and remap RecvMeta to the NodeIdMappedAddr.
                         match self.node_map.receive_udp(*addr) {
                             None => {
-                                // Check if this address is mapped to an IpMappedAddr
-                                if let Some(ip_mapped_addr) =
-                                    self.ip_mapped_addrs.get_mapped_addr(addr)
-                                {
-                                    trace!(
-                                        src = %addr,
-                                        count = %quic_datagram_count,
-                                        len = quinn_meta.len,
-                                        "UDP recv QUIC address discovery packets",
-                                    );
-                                    quic_packets_total += quic_datagram_count;
-                                    quinn_meta.addr = ip_mapped_addr.private_socket_addr();
-                                } else {
-                                    trace!(
-                                        src = %addr,
-                                        count = %quic_datagram_count,
-                                        len = quinn_meta.len,
-                                        "UDP recv quic packets: no node state found",
-                                    );
+                                trace!(
+                                    src = %addr,
+                                    count = %quic_datagram_count,
+                                    len = quinn_meta.len,
+                                    "UDP recv quic packets",
+                                );
 
-                                    // TODO: register in node map
-                                    quic_packets_total += quic_datagram_count;
-                                    quinn_meta.addr = *addr;
-                                }
+                                quic_packets_total += quic_datagram_count;
+                                quinn_meta.addr = *addr;
                             }
                             Some((node_id, quic_mapped_addr)) => {
                                 trace!(
@@ -1289,7 +1272,6 @@ impl Handle {
         let (ip_transports, port_mapper) =
             bind_ip(addr_v4, addr_v6, &metrics).context(BindSocketsSnafu)?;
 
-        let ip_mapped_addrs = IpMappedAddresses::default();
         let relay_mapped_addrs = RelayMappedAddresses::default();
 
         let (actor_sender, actor_receiver) = mpsc::channel(256);
@@ -1339,7 +1321,6 @@ impl Handle {
             ipv6_reported,
             node_map,
             connection_map: Default::default(),
-            ip_mapped_addrs: ip_mapped_addrs.clone(),
             relay_mapped_addrs,
             discovery,
             discovery_user_data: RwLock::new(discovery_user_data),
@@ -1412,7 +1393,6 @@ impl Handle {
             #[cfg(not(wasm_browser))]
             dns_resolver,
             #[cfg(not(wasm_browser))]
-            Some(ip_mapped_addrs),
             relay_map.clone(),
             net_report_config,
             metrics.net_report.clone(),

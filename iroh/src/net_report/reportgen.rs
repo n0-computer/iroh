@@ -45,14 +45,14 @@ use tokio_util::sync::CancellationToken;
 use tracing::{Instrument, debug, debug_span, error, info_span, trace, warn};
 use url::Host;
 
+#[cfg(not(wasm_browser))]
+use super::defaults::timeouts::DNS_TIMEOUT;
 #[cfg(wasm_browser)]
 use super::portmapper; // We stub the library
 use super::{
     Report,
     probes::{Probe, ProbePlan},
 };
-#[cfg(not(wasm_browser))]
-use super::{defaults::timeouts::DNS_TIMEOUT, ip_mapped_addrs::IpMappedAddresses};
 #[cfg(not(wasm_browser))]
 use crate::discovery::dns::DNS_STAGGERING_MS;
 use crate::net_report::defaults::timeouts::{
@@ -105,8 +105,6 @@ pub(crate) struct SocketState {
     pub(crate) quic_client: Option<QuicClient>,
     /// The DNS resolver to use for probes that need to resolve DNS records.
     pub(crate) dns_resolver: DnsResolver,
-    /// Optional [`IpMappedAddresses`] used to enable QAD in iroh
-    pub(crate) ip_mapped_addrs: Option<IpMappedAddresses>,
 }
 
 impl Client {
@@ -519,17 +517,6 @@ impl Probe {
 }
 
 #[cfg(not(wasm_browser))]
-pub(super) fn maybe_to_mapped_addr(
-    ip_mapped_addrs: Option<&IpMappedAddresses>,
-    addr: SocketAddr,
-) -> SocketAddr {
-    if let Some(ip_mapped_addrs) = ip_mapped_addrs {
-        return ip_mapped_addrs.get_or_register(addr).private_socket_addr();
-    }
-    addr
-}
-
-#[cfg(not(wasm_browser))]
 #[derive(Debug, Snafu)]
 #[snafu(module)]
 #[non_exhaustive]
@@ -874,7 +861,7 @@ mod tests {
         let quic_client = iroh_relay::quic::QuicClient::new(ep.clone(), client_config);
         let dns_resolver = DnsResolver::default();
 
-        let (report, conn) = super::super::run_probe_v4(None, relay, quic_client, dns_resolver)
+        let (report, conn) = super::super::run_probe_v4(relay, quic_client, dns_resolver)
             .await
             .unwrap();
 
