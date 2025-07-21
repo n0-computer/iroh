@@ -16,7 +16,10 @@ use super::{
 };
 use crate::{
     disco::SendAddr,
-    magicsock::{node_map::best_addr::TRUST_UDP_ADDR_DURATION, HEARTBEAT_INTERVAL},
+    magicsock::{
+        node_map::path_validity::{self, PathValidity},
+        HEARTBEAT_INTERVAL,
+    },
 };
 
 /// The minimum time between pings to an endpoint.
@@ -30,7 +33,7 @@ const DISCO_PING_INTERVAL: Duration = Duration::from_secs(5);
 /// This state is used for both the relay path and any direct UDP paths.
 ///
 /// [`NodeState`]: super::node_state::NodeState
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub(super) struct PathState {
     /// The node for which this path exists.
     node_id: NodeId,
@@ -47,18 +50,19 @@ pub(super) struct PathState {
     /// The time this endpoint was last advertised via a call-me-maybe DISCO message.
     pub(super) call_me_maybe_time: Option<Instant>,
 
-    /// The most recent [`PongReply`].
+    // /// The most recent [`PongReply`].
+    // ///
+    // /// Previous replies are cleared when they are no longer relevant to determine whether
+    // /// this path can still be used to reach the remote node.
+    // pub(super) recent_pong: Option<PongReply>,
+    /// Tracks whether this path is valid.
     ///
-    /// Previous replies are cleared when they are no longer relevant to determine whether
-    /// this path can still be used to reach the remote node.
-    pub(super) recent_pong: Option<PongReply>,
+    /// See [`PathValidity`] docs.
+    pub(super) validity: PathValidity,
     /// When the last payload data was **received** via this path.
     ///
     /// This excludes DISCO messages.
     pub(super) last_payload_msg: Option<Instant>,
-    /// Whether the last payload msg was within [`TRUST_UDP_ADDR_DURATION`] of either
-    /// the last trusted payload message or a recent pong.
-    pub(super) last_payload_trusted: bool,
     /// Sources is a map of [`Source`]s to [`Instant`]s, keeping track of all the ways we have
     /// learned about this path
     ///
@@ -77,9 +81,8 @@ impl PathState {
             last_ping: None,
             last_got_ping: None,
             call_me_maybe_time: None,
-            recent_pong: None,
+            validity: PathValidity::empty(),
             last_payload_msg: None,
-            last_payload_trusted: false,
             sources,
         }
     }
@@ -105,9 +108,8 @@ impl PathState {
             last_ping: None,
             last_got_ping: None,
             call_me_maybe_time: None,
-            recent_pong: None,
+            validity: PathValidity::empty(),
             last_payload_msg: Some(now),
-            last_payload_trusted: false,
             sources,
         }
     }
@@ -126,7 +128,7 @@ impl PathState {
 
     pub(super) fn add_pong_reply(&mut self, r: PongReply) {
         if let SendAddr::Udp(ref path) = self.path {
-            if self.recent_pong.is_none() {
+            if self.validity.is_empty() {
                 event!(
                     target: "iroh::_events::holepunched",
                     Level::DEBUG,
@@ -136,27 +138,16 @@ impl PathState {
                 );
             }
         }
-        self.recent_pong = Some(r);
 
-        if let Some(last_payload_msg) = self.last_payload_msg {
-            self.last_payload_trusted = self.within_trusted_pong_duration(last_payload_msg);
-        }
-    }
-
-    fn within_trusted_pong_duration(&self, instant: Instant) -> bool {
-        if let Some(pong) = &self.recent_pong {
-            return pong.pong_at <= instant && instant < pong.pong_at + TRUST_UDP_ADDR_DURATION;
-        }
-
-        false
+        self.validity = PathValidity::new(r);
     }
 
     pub(super) fn receive_payload(&mut self, now: Instant) {
         self.last_payload_msg = Some(now);
-
-        if self.within_trusted_pong_duration(now) {
-            self.last_payload_trusted = true;
-        }
+        // TODO(matheus23): It's not necessarily UDP. Kinda weird to have this thing
+        // Also, it all results in the same 6.5s timeout anyways, maybe we just remove it?
+        self.validity
+            .receive_payload(now, path_validity::Source::Udp);
     }
 
     #[cfg(test)]
@@ -167,9 +158,8 @@ impl PathState {
             last_ping: None,
             last_got_ping: None,
             call_me_maybe_time: None,
-            recent_pong: Some(r),
+            validity: PathValidity::new(r),
             last_payload_msg: None,
-            last_payload_trusted: false,
             sources: HashMap::new(),
         }
     }
@@ -205,8 +195,8 @@ impl PathState {
     /// - When the last payload transmission occurred.
     /// - when the last ping from them was received.
     pub(super) fn last_alive(&self) -> Option<Instant> {
-        self.recent_pong
-            .as_ref()
+        self.validity
+            .get_pong()
             .map(|pong| &pong.pong_at)
             .into_iter()
             .chain(self.last_payload_msg.as_ref())
@@ -214,21 +204,6 @@ impl PathState {
             .chain(self.last_incoming_ping())
             .max()
             .copied()
-    }
-
-    fn last_confirmed_at(&self) -> Option<Instant> {
-        let last_trusted_payload_msg = if self.last_payload_trusted {
-            self.last_payload_msg
-        } else {
-            None
-        };
-
-        self.recent_pong
-            .as_ref()
-            .map(|pong| pong.pong_at)
-            .into_iter()
-            .chain(last_trusted_payload_msg)
-            .max()
     }
 
     /// The last control or DISCO message **about** this path.
@@ -242,8 +217,8 @@ impl PathState {
     pub(super) fn last_control_msg(&self, now: Instant) -> Option<(Duration, ControlMsg)> {
         // get every control message and assign it its kind
         let last_pong = self
-            .recent_pong
-            .as_ref()
+            .validity
+            .get_pong()
             .map(|pong| (pong.pong_at, ControlMsg::Pong));
         let last_call_me_maybe = self
             .call_me_maybe_time
@@ -263,19 +238,7 @@ impl PathState {
 
     /// Returns the latency from the most recent pong, if available.
     pub(super) fn latency(&self) -> Option<Duration> {
-        self.recent_pong.as_ref().map(|p| p.latency)
-    }
-
-    /// Returns the latency and confirmed_at time if this path would make for a valid best addr `now`
-    pub(crate) fn valid_best_addr_candidate(&self, now: Instant) -> Option<(Duration, Instant)> {
-        let latency = self.recent_pong.as_ref()?.latency;
-        let confirmed_at = self.last_confirmed_at()?;
-
-        if confirmed_at <= now && now < confirmed_at + TRUST_UDP_ADDR_DURATION {
-            return Some((latency, confirmed_at));
-        }
-
-        None
+        self.validity.get_pong().map(|p| p.latency)
     }
 
     pub(super) fn needs_ping(&self, now: &Instant) -> bool {
@@ -336,7 +299,7 @@ impl PathState {
         self.last_ping = None;
         self.last_got_ping = None;
         self.call_me_maybe_time = None;
-        self.recent_pong = None;
+        self.validity = PathValidity::empty();
     }
 
     fn summary(&self, mut w: impl std::fmt::Write) -> std::fmt::Result {
@@ -344,7 +307,7 @@ impl PathState {
         if self.is_active() {
             write!(w, "active ")?;
         }
-        if let Some(ref pong) = self.recent_pong {
+        if let Some(pong) = self.validity.get_pong() {
             write!(w, "pong-received({:?} ago) ", pong.pong_at.elapsed())?;
         }
         if let Some(when) = self.last_incoming_ping() {

@@ -25,7 +25,10 @@ use super::{
 use crate::endpoint::PathSelection;
 use crate::{
     disco::{self, SendAddr},
-    magicsock::{ActorMessage, MagicsockMetrics, NodeIdMappedAddr, HEARTBEAT_INTERVAL},
+    magicsock::{
+        node_map::path_validity::PathValidity, ActorMessage, MagicsockMetrics, NodeIdMappedAddr,
+        HEARTBEAT_INTERVAL,
+    },
     watchable::{Watchable, Watcher},
 };
 
@@ -242,7 +245,7 @@ impl NodeState {
             .iter()
             .map(|(addr, path_state)| DirectAddrInfo {
                 addr: SocketAddr::from(*addr),
-                latency: path_state.recent_pong.as_ref().map(|pong| pong.latency),
+                latency: path_state.validity.get_pong().map(|pong| pong.latency),
                 last_control: path_state.last_control_msg(now),
                 last_payload: path_state
                     .last_payload_msg
@@ -445,7 +448,7 @@ impl NodeState {
                             // which we should have received the pong, clear best addr and
                             // pong.  Both are used to select this path again, but we know
                             // it's not a usable path now.
-                            path_state.recent_pong = None;
+                            path_state.validity = PathValidity::empty();
                             self.udp_paths.best_addr.clear_if_equals(
                                 addr,
                                 ClearReason::PongTimeout,
@@ -894,7 +897,7 @@ impl NodeState {
         event!(
             target: "iroh::_events::pong::recv",
             Level::DEBUG,
-            remote_node = self.node_id.fmt_short(),
+            remote_node = %self.node_id.fmt_short(),
             ?src,
             txn = ?m.tx_id,
         );
@@ -1034,9 +1037,9 @@ impl NodeState {
             if !call_me_maybe_ipps.contains(ipp) {
                 // TODO: This seems like a weird way to signal that the endpoint no longer
                 // thinks it has this IpPort as an available path.
-                if st.recent_pong.is_some() {
+                if !st.validity.is_empty() {
                     debug!(path=?ipp ,"clearing recent pong");
-                    st.recent_pong = None;
+                    st.validity = PathValidity::empty();
                 }
             }
         }
@@ -1067,7 +1070,9 @@ impl NodeState {
         };
         state.receive_payload(now);
         self.last_used = Some(now);
-        if let Some((latency, confirmed_at)) = state.valid_best_addr_candidate(now) {
+        if state.validity.is_valid(now) {
+            let confirmed_at = state.validity.confirmed_at().unwrap();
+            let latency = state.validity.get_pong().unwrap().latency;
             self.udp_paths
                 .best_addr
                 .insert_if_soon_outdated_or_reconfirm(
