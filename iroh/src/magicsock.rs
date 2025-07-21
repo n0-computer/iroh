@@ -825,8 +825,11 @@ impl MagicSock {
                     }
                     transports::Addr::Relay(src_url, src_node) => {
                         // Relay
-                        let quic_mapped_addr = self.node_map.receive_relay(src_url, *src_node);
-                        quinn_meta.addr = quic_mapped_addr.private_socket_addr();
+                        let _quic_mapped_addr = self.node_map.receive_relay(src_url, *src_node);
+                        let mapped_addr = self
+                            .relay_mapped_addrs
+                            .get_or_register(src_url.clone(), *src_node);
+                        quinn_meta.addr = mapped_addr.private_socket_addr();
                     }
                 }
             } else {
