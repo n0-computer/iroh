@@ -420,7 +420,7 @@
 <a href=#420 id=420 data-nosnippet>420</a>                .build()
 <a href=#421 id=421 data-nosnippet>421</a>            })<span class="question-mark">?</span>;
 <a href=#422 id=422 data-nosnippet>422</a>
-<a href=#423 id=423 data-nosnippet>423</a>        <span class="kw">if let </span><span class="prelude-val">Ok</span>(()) = client_auth.verify(io) {
+<a href=#423 id=423 data-nosnippet>423</a>        <span class="kw">if </span>client_auth.verify(io).is_ok() {
 <a href=#424 id=424 data-nosnippet>424</a>            <span class="macro">trace!</span>(<span class="question-mark">?</span>client_auth.public_key, <span class="string">"authentication succeeded via keying material"</span>);
 <a href=#425 id=425 data-nosnippet>425</a>            <span class="kw">return </span><span class="prelude-val">Ok</span>(SuccessfulAuthentication {
 <a href=#426 id=426 data-nosnippet>426</a>                client_key: client_auth.public_key,

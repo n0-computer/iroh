@@ -908,7 +908,7 @@
 <a href=#908 id=908 data-nosnippet>908</a>    /// # }
 <a href=#909 id=909 data-nosnippet>909</a>    /// ```
 <a href=#910 id=910 data-nosnippet>910</a>    </span><span class="attr">#[cfg(not(wasm_browser))]
-<a href=#911 id=911 data-nosnippet>911</a>    </span><span class="kw">pub fn </span>node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>n0_watcher::Watcher&lt;Value = <span class="prelude-ty">Option</span>&lt;NodeAddr&gt;&gt; + <span class="kw">use</span>&lt;&gt; {
+<a href=#911 id=911 data-nosnippet>911</a>    </span><span class="kw">pub fn </span>node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>n0_watcher::Watcher&lt;Value = <span class="prelude-ty">Option</span>&lt;NodeAddr&gt;&gt; + <span class="lifetime">'static </span>{
 <a href=#912 id=912 data-nosnippet>912</a>        <span class="kw">let </span>watch_addrs = <span class="self">self</span>.direct_addresses();
 <a href=#913 id=913 data-nosnippet>913</a>        <span class="kw">let </span>watch_relay = <span class="self">self</span>.home_relay();
 <a href=#914 id=914 data-nosnippet>914</a>        <span class="kw">let </span>node_id = <span class="self">self</span>.node_id();
@@ -973,7 +973,7 @@
 <a href=#973 id=973 data-nosnippet>973</a>    /// let _relay_url = mep.home_relay().initialized().await.unwrap();
 <a href=#974 id=974 data-nosnippet>974</a>    /// # });
 <a href=#975 id=975 data-nosnippet>975</a>    /// ```
-<a href=#976 id=976 data-nosnippet>976</a>    </span><span class="kw">pub fn </span>home_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>n0_watcher::Watcher&lt;Value = Vec&lt;RelayUrl&gt;&gt; + <span class="kw">use</span>&lt;&gt; {
+<a href=#976 id=976 data-nosnippet>976</a>    </span><span class="kw">pub fn </span>home_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>n0_watcher::Watcher&lt;Value = Vec&lt;RelayUrl&gt;&gt; + <span class="lifetime">'static </span>{
 <a href=#977 id=977 data-nosnippet>977</a>        <span class="self">self</span>.msock.home_relay()
 <a href=#978 id=978 data-nosnippet>978</a>    }
 <a href=#979 id=979 data-nosnippet>979</a>
@@ -1043,7 +1043,7 @@
 <a href=#1043 id=1043 data-nosnippet>1043</a>    /// # });
 <a href=#1044 id=1044 data-nosnippet>1044</a>    /// ```
 <a href=#1045 id=1045 data-nosnippet>1045</a>    </span><span class="attr">#[doc(hidden)]
-<a href=#1046 id=1046 data-nosnippet>1046</a>    </span><span class="kw">pub fn </span>net_report(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Watcher&lt;Value = <span class="prelude-ty">Option</span>&lt;Report&gt;&gt; + <span class="kw">use</span>&lt;&gt; {
+<a href=#1046 id=1046 data-nosnippet>1046</a>    </span><span class="kw">pub fn </span>net_report(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Watcher&lt;Value = <span class="prelude-ty">Option</span>&lt;Report&gt;&gt; + <span class="lifetime">'static </span>{
 <a href=#1047 id=1047 data-nosnippet>1047</a>        <span class="self">self</span>.msock.net_report()
 <a href=#1048 id=1048 data-nosnippet>1048</a>    }
 <a href=#1049 id=1049 data-nosnippet>1049</a>
@@ -1086,7 +1086,7 @@
 <a href=#1086 id=1086 data-nosnippet>1086</a>    /// connection was ever made or is even possible.
 <a href=#1087 id=1087 data-nosnippet>1087</a>    ///
 <a href=#1088 id=1088 data-nosnippet>1088</a>    /// See also [`Endpoint::remote_info`] to only retrieve information about a single node.
-<a href=#1089 id=1089 data-nosnippet>1089</a>    </span><span class="kw">pub fn </span>remote_info_iter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = RemoteInfo&gt; + <span class="kw">use</span>&lt;&gt; {
+<a href=#1089 id=1089 data-nosnippet>1089</a>    </span><span class="kw">pub fn </span>remote_info_iter(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = RemoteInfo&gt; + <span class="lifetime">'static </span>{
 <a href=#1090 id=1090 data-nosnippet>1090</a>        <span class="self">self</span>.msock.list_remote_infos().into_iter()
 <a href=#1091 id=1091 data-nosnippet>1091</a>    }
 <a href=#1092 id=1092 data-nosnippet>1092</a>
@@ -1114,7 +1114,7 @@
 <a href=#1114 id=1114 data-nosnippet>1114</a>    ///
 <a href=#1115 id=1115 data-nosnippet>1115</a>    /// [`MdnsDiscovery`]: crate::discovery::mdns::MdnsDiscovery
 <a href=#1116 id=1116 data-nosnippet>1116</a>    /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
-<a href=#1117 id=1117 data-nosnippet>1117</a>    </span><span class="kw">pub fn </span>discovery_stream(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Stream&lt;Item = <span class="prelude-ty">Result</span>&lt;DiscoveryItem, Lagged&gt;&gt; + <span class="kw">use</span>&lt;&gt; {
+<a href=#1117 id=1117 data-nosnippet>1117</a>    </span><span class="kw">pub fn </span>discovery_stream(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Stream&lt;Item = <span class="prelude-ty">Result</span>&lt;DiscoveryItem, Lagged&gt;&gt; + <span class="lifetime">'static </span>{
 <a href=#1118 id=1118 data-nosnippet>1118</a>        <span class="self">self</span>.msock.discovery_subscribers().subscribe()
 <a href=#1119 id=1119 data-nosnippet>1119</a>    }
 <a href=#1120 id=1120 data-nosnippet>1120</a>

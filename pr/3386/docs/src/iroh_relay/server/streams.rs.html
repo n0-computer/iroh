@@ -94,10 +94,10 @@
 <a href=#94 id=94 data-nosnippet>94</a>    }
 <a href=#95 id=95 data-nosnippet>95</a>
 <a href=#96 id=96 data-nosnippet>96</a>    <span class="kw">fn </span>start_send(<span class="kw-2">mut </span><span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, item: RelayToClientMsg) -&gt; <span class="prelude-ty">Result</span>&lt;(), <span class="self">Self</span>::Error&gt; {
-<a href=#97 id=97 data-nosnippet>97</a>        <span class="kw">if let </span>RelayToClientMsg::ReceivedPacket { content, .. } = <span class="kw-2">&amp;</span>item {
-<a href=#98 id=98 data-nosnippet>98</a>            <span class="kw">let </span>size = content.len();
-<a href=#99 id=99 data-nosnippet>99</a>            <span class="macro">snafu::ensure!</span>(size &lt;= MAX_PACKET_SIZE, ExceedsMaxPacketSizeSnafu { size });
-<a href=#100 id=100 data-nosnippet>100</a>            <span class="macro">snafu::ensure!</span>(size != <span class="number">0</span>, EmptyPacketSnafu);
+<a href=#97 id=97 data-nosnippet>97</a>        <span class="kw">let </span>size = item.encoded_len();
+<a href=#98 id=98 data-nosnippet>98</a>        <span class="macro">snafu::ensure!</span>(size &lt;= MAX_PACKET_SIZE, ExceedsMaxPacketSizeSnafu { size });
+<a href=#99 id=99 data-nosnippet>99</a>        <span class="kw">if let </span>RelayToClientMsg::Datagrams { datagrams, .. } = <span class="kw-2">&amp;</span>item {
+<a href=#100 id=100 data-nosnippet>100</a>            <span class="macro">snafu::ensure!</span>(!datagrams.contents.is_empty(), EmptyPacketSnafu);
 <a href=#101 id=101 data-nosnippet>101</a>        }
 <a href=#102 id=102 data-nosnippet>102</a>
 <a href=#103 id=103 data-nosnippet>103</a>        Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.inner)

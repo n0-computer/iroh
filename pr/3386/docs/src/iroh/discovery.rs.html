@@ -699,7 +699,7 @@
 <a href=#699 id=699 data-nosnippet>699</a>        }
 <a href=#700 id=700 data-nosnippet>700</a>    }
 <a href=#701 id=701 data-nosnippet>701</a>
-<a href=#702 id=702 data-nosnippet>702</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Stream&lt;Item = <span class="prelude-ty">Result</span>&lt;DiscoveryItem, Lagged&gt;&gt; + <span class="kw">use</span>&lt;&gt; {
+<a href=#702 id=702 data-nosnippet>702</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Stream&lt;Item = <span class="prelude-ty">Result</span>&lt;DiscoveryItem, Lagged&gt;&gt; + <span class="lifetime">'static </span>{
 <a href=#703 id=703 data-nosnippet>703</a>        <span class="kw">use </span>tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 <a href=#704 id=704 data-nosnippet>704</a>        <span class="kw">let </span>recv = <span class="self">self</span>.inner.subscribe();
 <a href=#705 id=705 data-nosnippet>705</a>        BroadcastStream::new(recv).map_err(|BroadcastStreamRecvError::Lagged(n)| Lagged { val: n })

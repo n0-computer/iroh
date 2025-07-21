@@ -1,1 +1,1 @@
-window.SIDEBAR_ITEMS = {"constant":["MAX_PACKET_SIZE"],"enum":["ClientToRelayMsg","Error","RelayToClientMsg"]};
+window.SIDEBAR_ITEMS = {"constant":["MAX_PACKET_SIZE"],"enum":["ClientToRelayMsg","Error","RelayToClientMsg"],"struct":["Datagrams"]};
