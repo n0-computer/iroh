@@ -1623,7 +1623,7 @@ impl Future for IncomingFuture {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
             Poll::Ready(Ok(inner)) => {
-                let conn = Connection { inner };
+                let conn = Connection::new(inner, None, &this.ep);
                 try_send_rtt_msg(&conn, this.ep, None);
                 Poll::Ready(Ok(conn))
             }
@@ -1711,11 +1711,12 @@ impl Connecting {
     pub fn into_0rtt(self) -> Result<(Connection, ZeroRttAccepted), Self> {
         match self.inner.into_0rtt() {
             Ok((inner, zrtt_accepted)) => {
-                let conn = Connection { inner };
+                let conn = Connection::new(inner, self.remote_node_id, &self.ep);
                 let zrtt_accepted = ZeroRttAccepted {
                     inner: zrtt_accepted,
                     _discovery_drop_guard: self._discovery_drop_guard,
                 };
+
                 // This call is why `self.remote_node_id` was introduced.
                 // When we `Connecting::into_0rtt`, then we don't yet have `handshake_data`
                 // in our `Connection`, thus `try_send_rtt_msg` won't be able to pick up
@@ -1761,24 +1762,7 @@ impl Future for Connecting {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
             Poll::Ready(Ok(inner)) => {
-                let conn = Connection { inner };
-
-                // Grab the remote identity and register this connection
-                if let Some(remote) = *this.remote_node_id {
-                    let weak_handle = conn.inner.weak_handle();
-                    let path_events = conn.inner.path_events();
-                    this.ep
-                        .msock
-                        .register_connection(remote, weak_handle, path_events);
-                } else if let Ok(remote) = conn.remote_node_id() {
-                    let weak_handle = conn.inner.weak_handle();
-                    let path_events = conn.inner.path_events();
-                    this.ep
-                        .msock
-                        .register_connection(remote, weak_handle, path_events);
-                } else {
-                    warn!("unable to determine node id for the remote");
-                }
+                let conn = Connection::new(inner, *this.remote_node_id, &this.ep);
 
                 try_send_rtt_msg(&conn, this.ep, *this.remote_node_id);
                 Poll::Ready(Ok(conn))
@@ -1838,6 +1822,27 @@ pub struct RemoteNodeIdError {
 }
 
 impl Connection {
+    fn new(inner: quinn::Connection, remote_id: Option<NodeId>, ep: &Endpoint) -> Self {
+        let conn = Connection { inner };
+
+        // Grab the remote identity and register this connection
+        if let Some(remote) = remote_id {
+            let weak_handle = conn.inner.weak_handle();
+            let path_events = conn.inner.path_events();
+            ep.msock
+                .register_connection(remote, weak_handle, path_events);
+        } else if let Ok(remote) = conn.remote_node_id() {
+            let weak_handle = conn.inner.weak_handle();
+            let path_events = conn.inner.path_events();
+            ep.msock
+                .register_connection(remote, weak_handle, path_events);
+        } else {
+            warn!("unable to determine node id for the remote");
+        }
+
+        conn
+    }
+
     /// Initiates a new outgoing unidirectional stream.
     ///
     /// Streams are cheap and instantaneous to open unless blocked by flow control. As a
