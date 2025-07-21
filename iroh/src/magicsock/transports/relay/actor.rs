@@ -40,7 +40,7 @@ use std::{
 use backon::{Backoff, BackoffBuilder, ExponentialBuilder};
 use iroh_base::{NodeId, RelayUrl, SecretKey};
 use iroh_relay::{
-    self as relay, MAX_PACKET_SIZE, PingTracker, PingTracker,
+    self as relay, PingTracker,
     client::{Client, ConnectError, RecvError, SendError},
     protos::relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
 };
