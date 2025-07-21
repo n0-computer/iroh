@@ -88,6 +88,9 @@ impl NodeUdpPaths {
             chosen_candidate: None,
         }
     }
+    pub(super) fn addrs(&self) -> Vec<SocketAddr> {
+        self.paths.keys().map(|ip| (*ip).into()).collect()
+    }
 
     /// Returns the current UDP address to send on.
     ///
