@@ -186,6 +186,14 @@ impl NodeMap {
             .unwrap_or_default()
     }
 
+    pub(super) fn get_current_addr(&self, node_key: NodeId) -> Option<NodeAddr> {
+        self.inner
+            .lock()
+            .expect("poisoned")
+            .get(NodeStateKey::NodeId(node_key))
+            .map(|ep| ep.get_current_addr())
+    }
+
     pub(super) fn handle_call_me_maybe(
         &self,
         sender: PublicKey,

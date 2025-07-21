@@ -1815,15 +1815,9 @@ impl Connection {
 
         // Grab the remote identity and register this connection
         if let Some(remote) = remote_id {
-            let weak_handle = conn.inner.weak_handle();
-            let path_events = conn.inner.path_events();
-            ep.msock
-                .register_connection(remote, weak_handle, path_events);
+            ep.msock.register_connection(remote, &conn.inner);
         } else if let Ok(remote) = conn.remote_node_id() {
-            let weak_handle = conn.inner.weak_handle();
-            let path_events = conn.inner.path_events();
-            ep.msock
-                .register_connection(remote, weak_handle, path_events);
+            ep.msock.register_connection(remote, &conn.inner);
         } else {
             warn!("unable to determine node id for the remote");
         }

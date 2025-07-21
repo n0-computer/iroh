@@ -667,6 +667,17 @@ impl NodeState {
         (udp_addr, relay_url, ping_msgs)
     }
 
+    pub(crate) fn get_current_addr(&self) -> NodeAddr {
+        // TODO: more selective?
+        let mut node_addr =
+            NodeAddr::new(self.node_id).with_direct_addresses(self.udp_paths.addrs());
+        if let Some((url, _)) = &self.relay_url {
+            node_addr = node_addr.with_relay_url(url.clone());
+        }
+
+        node_addr
+    }
+
     /// Get the direct addresses for this endpoint.
     pub(super) fn direct_addresses(&self) -> impl Iterator<Item = IpPort> + '_ {
         self.udp_paths.paths.keys().copied()

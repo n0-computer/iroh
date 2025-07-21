@@ -106,6 +106,9 @@ impl NodeUdpPaths {
             best,
         }
     }
+    pub(super) fn addrs(&self) -> Vec<SocketAddr> {
+        self.paths.keys().map(|ip| (*ip).into()).collect()
+    }
 
     /// Returns the current UDP address to send on.
     pub(super) fn send_addr(&self, have_ipv6: bool) -> &UdpSendAddr {

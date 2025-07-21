@@ -2489,7 +2489,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn"
 version = "0.14.0"
-source = "git+https://github.com/n0-computer/quinn?branch=multipath-quinn-0.11.x#0dc50edf689ee5c6cf21b4ee5c0fea6af548680d"
+source = "git+https://github.com/n0-computer/quinn?branch=multipath-quinn-0.11.x#89df901286301de17aac88d42adc2aa7de32bc18"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2508,7 +2508,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-proto"
 version = "0.13.0"
-source = "git+https://github.com/n0-computer/quinn?branch=multipath-quinn-0.11.x#0dc50edf689ee5c6cf21b4ee5c0fea6af548680d"
+source = "git+https://github.com/n0-computer/quinn?branch=multipath-quinn-0.11.x#89df901286301de17aac88d42adc2aa7de32bc18"
 dependencies = [
  "bytes",
  "fastbloom",

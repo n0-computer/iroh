@@ -43,7 +43,6 @@ use netwatch::netmon;
 #[cfg(not(wasm_browser))]
 use netwatch::{UdpSocket, ip::LocalAddresses};
 use quinn::{AsyncUdpSocket, ServerConfig, WeakConnectionHandle};
-use quinn_proto::PathEvent;
 use rand::Rng;
 use relay_mapped_addrs::{IpMappedAddr, RelayMappedAddresses};
 use smallvec::SmallVec;
@@ -292,18 +291,14 @@ impl MagicSock {
         self.local_addrs_watch.clone().get()
     }
 
-    pub(crate) fn register_connection(
-        &self,
-        remote: NodeId,
-        conn: WeakConnectionHandle,
-        mut path_events: tokio::sync::broadcast::Receiver<PathEvent>,
-    ) {
-        self.connection_map.insert(remote, conn);
+    pub(crate) fn register_connection(&self, remote: NodeId, conn: &quinn::Connection) {
+        let weak_handle = conn.weak_handle();
+        self.connection_map.insert(remote, weak_handle);
 
-        // TODO: open additional paths
         // TODO: track task
         // TODO: find a good home for this
-        task::spawn(async move {
+        let mut path_events = conn.path_events();
+        let _task = task::spawn(async move {
             loop {
                 match path_events.recv().await {
                     Ok(event) => {
@@ -316,6 +311,11 @@ impl MagicSock {
                 }
             }
         });
+
+        // open additional paths
+        if let Some(addr) = self.node_map.get_current_addr(remote) {
+            self.add_paths(addr);
+        }
     }
 
     #[cfg(not(wasm_browser))]
