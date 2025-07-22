@@ -12,8 +12,8 @@ use stun_rs::TransactionId;
 use tracing::{debug, info, instrument, trace, warn};
 
 use self::{
-    best_addr::ClearReason,
     node_state::{NodeState, Options, PingHandled},
+    path_validity::ClearReason,
 };
 use super::{metrics::Metrics, ActorMessage, DiscoMessageSource, NodeIdMappedAddr};
 #[cfg(any(test, feature = "test-utils"))]
@@ -23,7 +23,6 @@ use crate::{
     watchable::Watcher,
 };
 
-mod best_addr;
 mod node_state;
 mod path_state;
 mod path_validity;

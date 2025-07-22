@@ -17,8 +17,8 @@ use tokio::sync::mpsc;
 use tracing::{debug, event, info, instrument, trace, warn, Level};
 
 use super::{
-    best_addr::ClearReason,
     path_state::{summarize_node_paths, PathState},
+    path_validity::ClearReason,
     udp_paths::{NodeUdpPaths, UdpSendAddr},
     IpPort, Source,
 };

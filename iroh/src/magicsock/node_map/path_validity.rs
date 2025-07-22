@@ -28,6 +28,14 @@ pub(super) enum Source {
     Udp,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum ClearReason {
+    Reset,
+    Inactive,
+    PongTimeout,
+    MatchesOurLocalAddr,
+}
+
 impl Source {
     fn trust_duration(&self) -> Duration {
         match self {
