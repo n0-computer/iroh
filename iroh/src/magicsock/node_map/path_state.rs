@@ -1,9 +1,6 @@
 //! The state kept for each network path to a remote node.
 
-use std::{
-    collections::{BTreeMap, HashMap},
-    net::SocketAddr,
-};
+use std::collections::{BTreeMap, HashMap};
 
 use iroh_base::NodeId;
 use iroh_relay::protos::stun;
@@ -84,13 +81,6 @@ impl PathState {
             validity: PathValidity::empty(),
             last_payload_msg: None,
             sources,
-        }
-    }
-
-    pub(super) fn udp_addr(&self) -> Option<SocketAddr> {
-        match self.path {
-            SendAddr::Udp(addr) => Some(addr),
-            SendAddr::Relay(_) => None,
         }
     }
 

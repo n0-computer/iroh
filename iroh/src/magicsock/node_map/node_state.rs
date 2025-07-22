@@ -1511,12 +1511,6 @@ mod tests {
                     udp_paths: NodeUdpPaths::from_parts(
                         endpoint_state,
                         UdpSendAddr::Valid(ip_port.into()),
-                        // BestAddr::from_parts(
-                        //     ip_port.into(),
-                        //     latency,
-                        //     now,
-                        //     now + Duration::from_secs(100), //TODO(matheus23): Is the 100s validity needed for the test?
-                        // ),
                     ),
                     sent_pings: HashMap::new(),
                     last_used: Some(now),
@@ -1582,7 +1576,6 @@ mod tests {
         // endpoint w/ expired best addr and relay w/ latency
         let (d_endpoint, d_socket_addr) = {
             let socket_addr: SocketAddr = "0.0.0.0:7".parse().unwrap();
-            let expired = now.checked_sub(Duration::from_secs(100)).unwrap();
             let key = SecretKey::generate(rand::thread_rng());
             let node_id = key.public();
             let endpoint_state = BTreeMap::from([(
@@ -1607,8 +1600,6 @@ mod tests {
                     udp_paths: NodeUdpPaths::from_parts(
                         endpoint_state,
                         UdpSendAddr::Outdated(socket_addr),
-                        // TODO(matheus23): Test might need adjustments
-                        // BestAddr::from_parts(socket_addr, Duration::from_millis(80), now, expired),
                     ),
                     sent_pings: HashMap::new(),
                     last_used: Some(now),

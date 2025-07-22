@@ -2,7 +2,13 @@ use n0_future::time::{Duration, Instant};
 
 use crate::magicsock::node_map::node_state::PongReply;
 
-/// How long we trust a UDP address as the exclusive path (without using relay) without having heard a Pong reply.
+/// How long we trust a UDP address as the exclusive path (i.e. without also sending via the relay).
+///
+/// Trust for a UDP address begins when we receive a DISCO UDP pong on that address.
+/// It is then further extended by this duration every time we receive QUIC payload data while it's
+/// currently trusted.
+///
+/// If trust goes away, it can be brought back with another valid DISCO UDP pong.
 const TRUST_UDP_ADDR_DURATION: Duration = Duration::from_millis(6500);
 
 /// Tracks a path's validity.
@@ -30,9 +36,9 @@ pub(super) enum Source {
 
 #[derive(Debug, Clone, Copy)]
 pub enum ClearReason {
-    Reset,
+    // Reset, // TODO(matheus23): unused
     Inactive,
-    PongTimeout,
+    // PongTimeout,
     MatchesOurLocalAddr,
 }
 
@@ -117,9 +123,9 @@ impl PathValidity {
     }
 
     // TODO(matheus23): Use this to bias the choice of best outdated addr maybe?
-    pub(super) fn confirmed_at(&self) -> Option<Instant> {
-        self.0.as_ref().map(|inner| inner.confirmed_at)
-    }
+    // pub(super) fn confirmed_at(&self) -> Option<Instant> {
+    //     self.0.as_ref().map(|inner| inner.confirmed_at)
+    // }
 }
 
 impl Inner {

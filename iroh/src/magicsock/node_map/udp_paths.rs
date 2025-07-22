@@ -59,24 +59,6 @@ impl UdpSendAddr {
             UdpSendAddr::None => None,
         }
     }
-
-    pub fn is_better_than(&self, other: &Self) -> bool {
-        match (other, self) {
-            // Other being valid, we'll never be better
-            (UdpSendAddr::Valid(_), _) => false,
-            // Anything anything above outdated is better
-            (UdpSendAddr::Outdated(_), UdpSendAddr::Valid(_)) => true,
-            (UdpSendAddr::Outdated(_), _) => false,
-            // Anything above unconfirmed is better
-            (UdpSendAddr::Unconfirmed(_), UdpSendAddr::Valid(_)) => true,
-            (UdpSendAddr::Unconfirmed(_), UdpSendAddr::Outdated(_)) => true,
-            (UdpSendAddr::Unconfirmed(_), _) => false,
-            // None compared to none is equally bad
-            (UdpSendAddr::None, UdpSendAddr::None) => false,
-            // Anything above none is better
-            (UdpSendAddr::None, _) => true,
-        }
-    }
 }
 
 /// The UDP paths for a single node.
@@ -103,7 +85,10 @@ pub(super) struct NodeUdpPaths {
     ///   - the current send addr is not a validated path anymore or
     ///   - we received a pong with lower latency.
     pub(super) best: UdpSendAddr,
-    pub(super) best_non_ipv6: UdpSendAddr,
+    /// The current best address to send on from all IPv4 addresses we have available.
+    ///
+    /// Follows the same logic as `best` above, but doesn't include any IPv6 addresses.
+    pub(super) best_ipv4: UdpSendAddr,
 }
 
 impl NodeUdpPaths {
@@ -115,7 +100,7 @@ impl NodeUdpPaths {
     pub(super) fn from_parts(paths: BTreeMap<IpPort, PathState>, best: UdpSendAddr) -> Self {
         Self {
             paths,
-            best_non_ipv6: best,
+            best_ipv4: best, // we only use ipv4 addrs in tests
             best,
         }
     }
@@ -123,16 +108,13 @@ impl NodeUdpPaths {
     /// Returns the current UDP address to send on.
     pub(super) fn send_addr(&self, have_ipv6: bool) -> &UdpSendAddr {
         if !have_ipv6 {
-            return &self.best_non_ipv6;
-        }
-        if self.best_non_ipv6.is_better_than(&self.best) {
-            return &self.best_non_ipv6;
+            return &self.best_ipv4;
         }
         &self.best
     }
 
     pub(super) fn update_to_best_addr(&mut self, now: Instant) {
-        self.best_non_ipv6 = self.best_addr(false, now);
+        self.best_ipv4 = self.best_addr(false, now);
         self.best = self.best_addr(true, now);
     }
 
