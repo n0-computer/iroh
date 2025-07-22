@@ -258,12 +258,17 @@ impl DhtDiscovery {
     /// Periodically publishes the node address to the DHT and/or relay.
     async fn publish_loop(self, keypair: SecretKey, signed_packet: SignedPacket) {
         let this = self;
-        let public_key = pkarr::PublicKey::try_from(keypair.public().as_bytes())
-            .expect("valid public key");
+        let public_key =
+            pkarr::PublicKey::try_from(keypair.public().as_bytes()).expect("valid public key");
         let z32 = public_key.to_z32();
         loop {
             // If the task gets aborted while doing this lookup, we have not published yet.
-            let prev_timestamp = this.0.pkarr.resolve_most_recent(&public_key).await.map(|p| p.timestamp());
+            let prev_timestamp = this
+                .0
+                .pkarr
+                .resolve_most_recent(&public_key)
+                .await
+                .map(|p| p.timestamp());
             let res = this.0.pkarr.publish(&signed_packet, prev_timestamp).await;
             match res {
                 Ok(()) => {
