@@ -2489,7 +2489,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn"
 version = "0.14.0"
-source = "git+https://github.com/n0-computer/quinn?branch=multipath-quinn-0.11.x#89df901286301de17aac88d42adc2aa7de32bc18"
+source = "git+https://github.com//n0-computer/quinn?branch=flub%2Fopen-path-ensure#646e849d540886ee58e25e3da509d6021ec94430"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2508,7 +2508,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-proto"
 version = "0.13.0"
-source = "git+https://github.com/n0-computer/quinn?branch=multipath-quinn-0.11.x#89df901286301de17aac88d42adc2aa7de32bc18"
+source = "git+https://github.com//n0-computer/quinn?branch=flub%2Fopen-path-ensure#646e849d540886ee58e25e3da509d6021ec94430"
 dependencies = [
  "bytes",
  "fastbloom",
@@ -2544,7 +2544,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-udp"
 version = "0.5.12"
-source = "git+https://github.com/n0-computer/quinn?branch=multipath-quinn-0.11.x#79e3fcc710de68b40fd05be5421048bab658ddf4"
+source = "git+https://github.com//n0-computer/quinn?branch=flub%2Fopen-path-ensure#646e849d540886ee58e25e3da509d6021ec94430"
 dependencies = [
  "cfg_aliases",
  "libc",
