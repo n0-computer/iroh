@@ -31,10 +31,6 @@ use crate::{
 /// This is only for when the info does not change.  If the info changes, it will be
 /// published immediately.
 const REPUBLISH_DELAY: Duration = Duration::from_secs(60 * 60);
-/// Initial publish delay.
-///
-/// This is to avoid spamming the DHT when there are frequent network changes at startup.
-const INITIAL_PUBLISH_DELAY: Duration = Duration::from_millis(500);
 
 /// Pkarr Mainline DHT and relay server node discovery.
 ///
@@ -73,8 +69,6 @@ struct Inner {
     ttl: u32,
     /// True to include the direct addresses in the DNS packet.
     include_direct_addresses: bool,
-    /// Initial delay before the first publish.
-    initial_publish_delay: Duration,
     /// Republish delay for the DHT.
     republish_delay: Duration,
 }
@@ -121,7 +115,6 @@ pub struct Builder {
     pkarr_relay: Option<Url>,
     dht: bool,
     include_direct_addresses: bool,
-    initial_publish_delay: Duration,
     republish_delay: Duration,
     enable_publish: bool,
 }
@@ -135,7 +128,6 @@ impl Default for Builder {
             pkarr_relay: None,
             dht: true,
             include_direct_addresses: false,
-            initial_publish_delay: INITIAL_PUBLISH_DELAY,
             republish_delay: REPUBLISH_DELAY,
             enable_publish: true,
         }
@@ -194,12 +186,6 @@ impl Builder {
         self
     }
 
-    /// Sets the initial delay before the first publish.
-    pub fn initial_publish_delay(mut self, initial_publish_delay: Duration) -> Self {
-        self.initial_publish_delay = initial_publish_delay;
-        self
-    }
-
     /// Sets the republish delay for the DHT.
     pub fn republish_delay(mut self, republish_delay: Duration) -> Self {
         self.republish_delay = republish_delay;
@@ -248,7 +234,6 @@ impl Builder {
             relay_url: self.pkarr_relay,
             include_direct_addresses,
             secret_key,
-            initial_publish_delay: self.initial_publish_delay,
             republish_delay: self.republish_delay,
             task: Default::default(),
         })))
@@ -273,15 +258,18 @@ impl DhtDiscovery {
     /// Periodically publishes the node address to the DHT and/or relay.
     async fn publish_loop(self, keypair: SecretKey, signed_packet: SignedPacket) {
         let this = self;
-        let z32 = pkarr::PublicKey::try_from(keypair.public().as_bytes())
-            .expect("valid public key")
-            .to_z32();
-        // initial delay. If the task gets aborted before this delay is over,
-        // we have not published anything to the DHT yet.
-        time::sleep(this.0.initial_publish_delay).await;
+        let public_key =
+            pkarr::PublicKey::try_from(keypair.public().as_bytes()).expect("valid public key");
+        let z32 = public_key.to_z32();
         loop {
-            // TODO: publish takes a compare-and-swap timestamp, make use of that.
-            let res = this.0.pkarr.publish(&signed_packet, None).await;
+            // If the task gets aborted while doing this lookup, we have not published yet.
+            let prev_timestamp = this
+                .0
+                .pkarr
+                .resolve_most_recent(&public_key)
+                .await
+                .map(|p| p.timestamp());
+            let res = this.0.pkarr.publish(&signed_packet, prev_timestamp).await;
             match res {
                 Ok(()) => {
                     tracing::debug!("pkarr publish success. published under {z32}",);
@@ -307,6 +295,10 @@ impl Discovery for DhtDiscovery {
             tracing::debug!("no keypair set, not publishing");
             return;
         };
+        if data.relay_url().is_none() && data.direct_addresses().is_empty() {
+            tracing::debug!("no relay url or direct addresses in node data, not publishing");
+            return;
+        }
         tracing::debug!("publishing {data:?}");
         let mut info = NodeInfo::from_parts(keypair.public(), data.clone());
         if !self.0.include_direct_addresses {
@@ -360,7 +352,6 @@ mod tests {
             .e()?;
         let discovery = DhtDiscovery::builder()
             .secret_key(secret.clone())
-            .initial_publish_delay(Duration::ZERO)
             .client(client)
             .build()?;
 
