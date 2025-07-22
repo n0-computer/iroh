@@ -46,7 +46,7 @@ use n0_future::{
 };
 use snafu::{Backtrace, Snafu};
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info_span, trace, warn, Instrument};
+use tracing::{error, field::Empty, info_span, trace, warn, Instrument};
 
 use crate::{
     endpoint::{Connecting, Connection, RemoteNodeIdError},
@@ -447,9 +447,10 @@ impl RouterBuilder {
 
                         let protocols = protocols.clone();
                         let token = handler_cancel_token.child_token();
+                        let span = info_span!("router.accept", me=%endpoint.node_id().fmt_short(), remote=Empty, alpn=Empty);
                         join_set.spawn(async move {
                             token.run_until_cancelled(handle_connection(incoming, protocols)).await
-                        }.instrument(info_span!("router.accept")));
+                        }.instrument(span));
                     },
                 }
             }
@@ -471,7 +472,7 @@ impl RouterBuilder {
                 }
             }
         };
-        let task = task::spawn(run_loop_fut);
+        let task = task::spawn(run_loop_fut.instrument(tracing::Span::current()));
         let task = AbortOnDropHandle::new(task);
 
         Router {
@@ -497,12 +498,17 @@ async fn handle_connection(incoming: crate::endpoint::Incoming, protocols: Arc<P
             return;
         }
     };
+    tracing::Span::current().record("alpn", String::from_utf8_lossy(&alpn).to_string());
     let Some(handler) = protocols.get(&alpn) else {
         warn!("Ignoring connection: unsupported ALPN protocol");
         return;
     };
     match handler.on_connecting(connecting).await {
         Ok(connection) => {
+            if let Ok(remote) = connection.remote_node_id() {
+                tracing::Span::current()
+                    .record("remote", tracing::field::display(remote.fmt_short()));
+            };
             if let Err(err) = handler.accept(connection).await {
                 warn!("Handling incoming connection ended with error: {err}");
             }

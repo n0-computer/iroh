@@ -712,7 +712,7 @@ impl Endpoint {
     ///    establishing and maintaining direct connections.  Carefully test settings you use and
     ///    consider this currently as still rather experimental.
     #[instrument(name = "connect", skip_all, fields(
-        me = self.node_id().fmt_short(),
+        me = %self.node_id().fmt_short(),
         remote = tracing::field::Empty,
         alpn = String::from_utf8_lossy(alpn).to_string(),
     ))]
@@ -723,7 +723,10 @@ impl Endpoint {
         options: ConnectOptions,
     ) -> Result<Connecting, ConnectWithOptsError> {
         let node_addr: NodeAddr = node_addr.into();
-        tracing::Span::current().record("remote", node_addr.node_id.fmt_short());
+        tracing::Span::current().record(
+            "remote",
+            tracing::field::display(node_addr.node_id.fmt_short()),
+        );
 
         // Connecting to ourselves is not supported.
         ensure!(node_addr.node_id != self.node_id(), SelfConnectSnafu);

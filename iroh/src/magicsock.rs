@@ -1177,24 +1177,27 @@ impl DirectAddrUpdateState {
         let msock = self.msock.clone();
 
         let run_done = self.run_done.clone();
-        task::spawn(async move {
-            let fut = time::timeout(
-                NET_REPORT_TIMEOUT,
-                net_reporter.get_report(if_state, why.is_major()),
-            );
-            match fut.await {
-                Ok(report) => {
-                    msock.net_report.set((Some(report), why)).ok();
+        task::spawn(
+            async move {
+                let fut = time::timeout(
+                    NET_REPORT_TIMEOUT,
+                    net_reporter.get_report(if_state, why.is_major()),
+                );
+                match fut.await {
+                    Ok(report) => {
+                        msock.net_report.set((Some(report), why)).ok();
+                    }
+                    Err(time::Elapsed { .. }) => {
+                        warn!("net_report report timed out");
+                    }
                 }
-                Err(time::Elapsed { .. }) => {
-                    warn!("net_report report timed out");
-                }
-            }
 
-            // mark run as finished
-            debug!("direct addr update done ({:?})", why);
-            run_done.send(()).await.ok();
-        });
+                // mark run as finished
+                debug!("direct addr update done ({:?})", why);
+                run_done.send(()).await.ok();
+            }
+            .instrument(tracing::Span::current()),
+        );
     }
 }
 
