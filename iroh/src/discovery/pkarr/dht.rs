@@ -34,7 +34,7 @@ const REPUBLISH_DELAY: Duration = Duration::from_secs(60 * 60);
 /// Initial publish delay.
 ///
 /// This is to avoid spamming the DHT when there are frequent network changes at startup.
-const INITIAL_PUBLISH_DELAY: Duration = Duration::from_millis(500);
+const INITIAL_PUBLISH_DELAY: Duration = Duration::from_millis(1000);
 
 /// Pkarr Mainline DHT and relay server node discovery.
 ///
@@ -307,6 +307,10 @@ impl Discovery for DhtDiscovery {
             tracing::debug!("no keypair set, not publishing");
             return;
         };
+        if data.relay_url().is_none() && data.direct_addresses().is_empty() {
+            tracing::debug!("no relay url or direct addresses in node data, not publishing");
+            return;
+        }
         tracing::debug!("publishing {data:?}");
         let mut info = NodeInfo::from_parts(keypair.public(), data.clone());
         if !self.0.include_direct_addresses {
