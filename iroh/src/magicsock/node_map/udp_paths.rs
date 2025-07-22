@@ -7,17 +7,9 @@
 //! [`NodeState`]: super::node_state::NodeState
 use std::{collections::BTreeMap, net::SocketAddr};
 
-use n0_future::time::{Duration, Instant};
-use rand::seq::IteratorRandom;
-use tracing::warn;
+use n0_future::time::Instant;
 
-use super::{
-    best_addr::{self, BestAddr},
-    node_state::PongReply,
-    path_state::PathState,
-    IpPort,
-};
-use crate::disco::SendAddr;
+use super::{path_state::PathState, IpPort};
 
 /// The address on which to send datagrams over UDP.
 ///
@@ -32,7 +24,7 @@ use crate::disco::SendAddr;
 ///
 /// [`MagicSock`]: crate::magicsock::MagicSock
 /// [`NodeState`]: super::node_state::NodeState
-#[derive(Debug)]
+#[derive(Debug, Default, Clone, Copy)]
 pub(super) enum UdpSendAddr {
     /// The UDP address can be relied on to deliver data to the remote node.
     ///
@@ -54,7 +46,37 @@ pub(super) enum UdpSendAddr {
     /// establish a connection.
     Unconfirmed(SocketAddr),
     /// No known UDP path exists to the remote node.
+    #[default]
     None,
+}
+
+impl UdpSendAddr {
+    pub fn get_addr(&self) -> Option<SocketAddr> {
+        match self {
+            UdpSendAddr::Valid(addr)
+            | UdpSendAddr::Outdated(addr)
+            | UdpSendAddr::Unconfirmed(addr) => Some(*addr),
+            UdpSendAddr::None => None,
+        }
+    }
+
+    pub fn is_better_than(&self, other: &Self) -> bool {
+        match (other, self) {
+            // Other being valid, we'll never be better
+            (UdpSendAddr::Valid(_), _) => false,
+            // Anything anything above outdated is better
+            (UdpSendAddr::Outdated(_), UdpSendAddr::Valid(_)) => true,
+            (UdpSendAddr::Outdated(_), _) => false,
+            // Anything above unconfirmed is better
+            (UdpSendAddr::Unconfirmed(_), UdpSendAddr::Valid(_)) => true,
+            (UdpSendAddr::Unconfirmed(_), UdpSendAddr::Outdated(_)) => true,
+            (UdpSendAddr::Unconfirmed(_), _) => false,
+            // None compared to none is equally bad
+            (UdpSendAddr::None, UdpSendAddr::None) => false,
+            // Anything above none is better
+            (UdpSendAddr::None, _) => true,
+        }
+    }
 }
 
 /// The UDP paths for a single node.
@@ -72,10 +94,16 @@ pub(super) enum UdpSendAddr {
 pub(super) struct NodeUdpPaths {
     /// The state for each of this node's direct paths.
     pub(super) paths: BTreeMap<IpPort, PathState>,
-    /// Best UDP path currently selected.
-    pub(super) best_addr: BestAddr,
-    /// If we had to choose a path because we had no `best_addr` it is stored here.
-    chosen_candidate: Option<IpPort>,
+    /// The current address we use to send on.
+    ///
+    /// This is *almost* the same as going through `paths` and finding
+    /// the best one, except that this is
+    /// 1. Not updated in `send_addr`, but instead when there's changes to `paths`, so that `send_addr` can take `&self`.
+    /// 2. Slightly sticky: It only changes when
+    ///   - the current send addr is not a validated path anymore or
+    ///   - we received a pong with lower latency.
+    pub(super) best: UdpSendAddr,
+    pub(super) best_non_ipv6: UdpSendAddr,
 }
 
 impl NodeUdpPaths {
@@ -84,98 +112,78 @@ impl NodeUdpPaths {
     }
 
     #[cfg(test)]
-    pub(super) fn from_parts(paths: BTreeMap<IpPort, PathState>, best_addr: BestAddr) -> Self {
+    pub(super) fn from_parts(paths: BTreeMap<IpPort, PathState>, best: UdpSendAddr) -> Self {
         Self {
             paths,
-            best_addr,
-            chosen_candidate: None,
+            best_non_ipv6: best,
+            best,
         }
     }
 
     /// Returns the current UDP address to send on.
-    ///
-    /// TODO: The goal here is for this to simply return the already known send address, so
-    /// it should be `&self` and not `&mut self`.  This is only possible once the state from
-    /// [`NodeUdpPaths`] is no longer modified from outside.
-    pub(super) fn send_addr(&mut self, now: Instant, have_ipv6: bool) -> UdpSendAddr {
-        self.assign_best_addr_from_candidates_if_empty(now);
-        match self.best_addr.state(now) {
-            best_addr::State::Valid(addr) => UdpSendAddr::Valid(addr.addr),
-            best_addr::State::Outdated(addr) => UdpSendAddr::Outdated(addr.addr),
-            best_addr::State::Empty => {
-                // No direct connection has been used before.  If we know of any possible
-                // candidate addresses, randomly try to use one.  This path is most
-                // effective when folks use a NodeAddr with exactly one direct address which
-                // they know to work, effectively like using a traditional socket or QUIC
-                // endpoint.
-                let addr = self
-                    .chosen_candidate
-                    .and_then(|ipp| self.paths.get(&ipp))
-                    .and_then(|path| path.udp_addr())
-                    .filter(|addr| addr.is_ipv4() || have_ipv6)
-                    .or_else(|| {
-                        // Look for a new candidate in all the known paths.  This may look
-                        // like a RNG use on the hot-path but this is normally invoked at
-                        // most most once at startup.
-                        let addr = self
-                            .paths
-                            .values()
-                            .filter_map(|path| path.udp_addr())
-                            .filter(|addr| addr.is_ipv4() || have_ipv6)
-                            .choose(&mut rand::thread_rng());
-                        self.chosen_candidate = addr.map(IpPort::from);
-                        addr
-                    });
-                match addr {
-                    Some(addr) => UdpSendAddr::Unconfirmed(addr),
-                    None => UdpSendAddr::None,
-                }
-            }
+    pub(super) fn send_addr(&self, have_ipv6: bool) -> &UdpSendAddr {
+        if !have_ipv6 {
+            return &self.best_non_ipv6;
         }
+        if self.best_non_ipv6.is_better_than(&self.best) {
+            return &self.best_non_ipv6;
+        }
+        &self.best
     }
 
-    /// Fixup best_addr from candidates.
-    ///
-    /// If somehow we end up in a state where we failed to set a best_addr, while we do have
-    /// valid candidates, this will chose a candidate and set best_addr again.  Most likely
-    /// this is a bug elsewhere though.
-    fn assign_best_addr_from_candidates_if_empty(&mut self, now: Instant) {
-        if !self.best_addr.is_empty() {
-            return;
-        }
+    pub(super) fn update_to_best_addr(&mut self, now: Instant) {
+        self.best_non_ipv6 = self.best_addr(false, now);
+        self.best = self.best_addr(true, now);
+    }
 
-        // The highest acceptable latency for an endpoint path.  If the latency is higher
-        // then this the path will be ignored.
-        const MAX_LATENCY: Duration = Duration::from_secs(60 * 60);
-        let best_pong = self.paths.iter().fold(None, |best_pong, (ipp, state)| {
-            let best_latency = best_pong
-                .map(|p: &PongReply| p.latency)
-                .unwrap_or(MAX_LATENCY);
-            match state.validity.get_pong() {
-                // This pong is better if it has a lower latency, or if it has the same
-                // latency but on an IPv6 path.
-                Some(pong)
-                    if pong.latency < best_latency
-                        || (pong.latency == best_latency && ipp.ip().is_ipv6()) =>
-                {
-                    Some(pong)
+    pub(super) fn best_addr(&self, have_ipv6: bool, now: Instant) -> UdpSendAddr {
+        let Some((ipp, path)) = self
+            .paths
+            .iter()
+            .filter(|(ipp, _)| have_ipv6 || ipp.ip.is_ipv4())
+            .max_by_key(|(ipp, path)| {
+                // We find the best by sorting on a key of type (Option<ReverseOrd<Duration>>, Option<ReverseOrd<Duration>>, bool)
+                // where the first is set to Some(ReverseOrd(latency)) iff path.is_valid(now) and
+                // the second is set to Some(ReverseOrd(latency)) if path.is_outdated(now) and
+                // the third is set to whether the ipp is ipv6.
+                // This makes max_by_key sort for the lowest valid latency first, then sort for
+                // the lowest outdated latency second, and if latencies are equal, it'll sort IPv6 paths first.
+                let is_ipv6 = ipp.ip.is_ipv6();
+                if let Some(latency) = path.validity.latency_if_valid(now) {
+                    (Some(ReverseOrd(latency)), None, is_ipv6)
+                } else if let Some(latency) = path.validity.latency_if_outdated(now) {
+                    (None, Some(ReverseOrd(latency)), is_ipv6)
+                } else {
+                    (None, None, is_ipv6)
                 }
-                _ => best_pong,
-            }
-        });
+            })
+        else {
+            return UdpSendAddr::None;
+        };
 
-        // If we found a candidate, set to best addr
-        if let Some(pong) = best_pong {
-            if let SendAddr::Udp(addr) = pong.from {
-                warn!(%addr, "No best_addr was set, choose candidate with lowest latency");
-                self.best_addr.insert_if_better_or_reconfirm(
-                    addr,
-                    pong.latency,
-                    best_addr::Source::BestCandidate,
-                    pong.pong_at,
-                    now,
-                )
-            }
+        if path.validity.is_valid(now) {
+            UdpSendAddr::Valid((*ipp).into())
+        } else if path.validity.is_outdated(now) {
+            UdpSendAddr::Outdated((*ipp).into())
+        } else {
+            UdpSendAddr::Unconfirmed((*ipp).into())
         }
+    }
+}
+
+#[derive(PartialEq, Eq)]
+struct ReverseOrd<N: PartialOrd + Ord + PartialEq + Eq>(N);
+
+impl<N: PartialOrd + Ord + PartialEq + Eq> Ord for ReverseOrd<N> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.0.cmp(&other.0).reverse()
+    }
+}
+
+impl<N: PartialOrd + Ord + PartialEq + Eq> PartialOrd for ReverseOrd<N> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.0
+            .partial_cmp(&other.0)
+            .map(std::cmp::Ordering::reverse)
     }
 }

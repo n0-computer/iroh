@@ -64,6 +64,33 @@ impl PathValidity {
         state.is_valid(now)
     }
 
+    pub(super) fn latency_if_valid(&self, now: Instant) -> Option<Duration> {
+        let Some(state) = self.0.as_ref() else {
+            return None;
+        };
+
+        state.is_valid(now).then_some(state.recent_pong.latency)
+    }
+
+    pub(super) fn is_outdated(&self, now: Instant) -> bool {
+        let Some(state) = self.0.as_ref() else {
+            return false;
+        };
+
+        // We *used* to be valid, but are now outdated.
+        // This happens when we had a DISCO pong but didn't receive
+        // any payload data or further pongs for at least TRUST_UDP_ADDR_DURATION
+        state.is_outdated(now)
+    }
+
+    pub(super) fn latency_if_outdated(&self, now: Instant) -> Option<Duration> {
+        let Some(state) = self.0.as_ref() else {
+            return None;
+        };
+
+        state.is_outdated(now).then_some(state.recent_pong.latency)
+    }
+
     /// Reconfirms path validity, if a payload was received while the
     /// path was valid.
     pub(super) fn receive_payload(&mut self, now: Instant, source: Source) {
@@ -72,6 +99,7 @@ impl PathValidity {
         };
 
         if state.is_valid(now) {
+            state.confirmed_at = now;
             state.trust_until = now + source.trust_duration();
         }
     }
@@ -80,6 +108,7 @@ impl PathValidity {
         self.0.as_ref().map(|inner| &inner.recent_pong)
     }
 
+    // TODO(matheus23): Use this to bias the choice of best outdated addr maybe?
     pub(super) fn confirmed_at(&self) -> Option<Instant> {
         self.0.as_ref().map(|inner| inner.confirmed_at)
     }
@@ -88,5 +117,9 @@ impl PathValidity {
 impl Inner {
     fn is_valid(&self, now: Instant) -> bool {
         self.confirmed_at <= now && now < self.trust_until
+    }
+
+    fn is_outdated(&self, now: Instant) -> bool {
+        self.confirmed_at <= now && self.trust_until <= now
     }
 }
