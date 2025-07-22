@@ -30,25 +30,14 @@ struct Inner {
 #[derive(Debug)]
 pub(super) enum Source {
     ReceivedPong,
-    // BestCandidate,
-    Udp,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum ClearReason {
-    // Reset, // TODO(matheus23): unused
-    Inactive,
-    // PongTimeout,
-    MatchesOurLocalAddr,
+    QuicPayload,
 }
 
 impl Source {
     fn trust_duration(&self) -> Duration {
         match self {
             Source::ReceivedPong => TRUST_UDP_ADDR_DURATION,
-            // // TODO: Fix time
-            // Source::BestCandidate => Duration::from_secs(60 * 60),
-            Source::Udp => TRUST_UDP_ADDR_DURATION,
+            Source::QuicPayload => TRUST_UDP_ADDR_DURATION,
         }
     }
 }

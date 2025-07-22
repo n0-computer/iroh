@@ -47,12 +47,9 @@ pub(super) struct PathState {
     /// The time this endpoint was last advertised via a call-me-maybe DISCO message.
     pub(super) call_me_maybe_time: Option<Instant>,
 
-    // /// The most recent [`PongReply`].
-    // ///
-    // /// Previous replies are cleared when they are no longer relevant to determine whether
-    // /// this path can still be used to reach the remote node.
-    // pub(super) recent_pong: Option<PongReply>,
     /// Tracks whether this path is valid.
+    ///
+    /// Also stores the latest [`PongReply`], if there is one.
     ///
     /// See [`PathValidity`] docs.
     pub(super) validity: PathValidity,
@@ -134,10 +131,8 @@ impl PathState {
 
     pub(super) fn receive_payload(&mut self, now: Instant) {
         self.last_payload_msg = Some(now);
-        // TODO(matheus23): It's not necessarily UDP. Kinda weird to have this thing
-        // Also, it all results in the same 6.5s timeout anyways, maybe we just remove it?
         self.validity
-            .receive_payload(now, path_validity::Source::Udp);
+            .receive_payload(now, path_validity::Source::QuicPayload);
     }
 
     #[cfg(test)]

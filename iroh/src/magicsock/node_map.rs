@@ -11,10 +11,7 @@ use serde::{Deserialize, Serialize};
 use stun_rs::TransactionId;
 use tracing::{debug, info, instrument, trace, warn};
 
-use self::{
-    node_state::{NodeState, Options, PingHandled},
-    path_validity::ClearReason,
-};
+use self::node_state::{NodeState, Options, PingHandled};
 use super::{metrics::Metrics, ActorMessage, DiscoMessageSource, NodeIdMappedAddr};
 #[cfg(any(test, feature = "test-utils"))]
 use crate::endpoint::PathSelection;
@@ -395,22 +392,22 @@ impl NodeMapInner {
         now: Instant,
     ) {
         for addr in discovered {
-            self.remove_by_ipp(addr.into(), ClearReason::MatchesOurLocalAddr, now)
+            self.remove_by_ipp(addr.into(), now, "matches our local addr")
         }
     }
 
     /// Removes a direct address from a node.
-    fn remove_by_ipp(&mut self, ipp: IpPort, reason: ClearReason, now: Instant) {
+    fn remove_by_ipp(&mut self, ipp: IpPort, now: Instant, why: &'static str) {
         if let Some(id) = self.by_ip_port.remove(&ipp) {
             if let Entry::Occupied(mut entry) = self.by_id.entry(id) {
                 let node = entry.get_mut();
-                node.remove_direct_addr(&ipp, reason, now);
+                node.remove_direct_addr(&ipp, now, why);
                 if node.direct_addresses().count() == 0 {
                     let node_id = node.public_key();
                     let mapped_addr = node.quic_mapped_addr();
                     self.by_node_key.remove(node_id);
                     self.by_quic_mapped_addr.remove(mapped_addr);
-                    debug!(node_id=%node_id.fmt_short(), ?reason, "removing node");
+                    debug!(node_id=%node_id.fmt_short(), why, "removing node");
                     entry.remove();
                 }
             }

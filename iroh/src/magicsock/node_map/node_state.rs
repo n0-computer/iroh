@@ -18,7 +18,6 @@ use tracing::{debug, event, info, instrument, trace, warn, Level};
 
 use super::{
     path_state::{summarize_node_paths, PathState},
-    path_validity::ClearReason,
     udp_paths::{NodeUdpPaths, UdpSendAddr},
     IpPort, Source,
 };
@@ -372,19 +371,14 @@ impl NodeState {
     /// Removes a direct address for this node.
     ///
     /// If this is also the best address, it will be cleared as well.
-    pub(super) fn remove_direct_addr(
-        &mut self,
-        ip_port: &IpPort,
-        reason: ClearReason,
-        now: Instant,
-    ) {
+    pub(super) fn remove_direct_addr(&mut self, ip_port: &IpPort, now: Instant, why: &'static str) {
         let Some(state) = self.udp_paths.paths.remove(ip_port) else {
             return;
         };
 
         match state.last_alive().map(|instant| instant.elapsed()) {
-            Some(last_alive) => debug!(%ip_port, ?last_alive, ?reason, "pruning address"),
-            None => debug!(%ip_port, last_seen=%"never", ?reason, "pruning address"),
+            Some(last_alive) => debug!(%ip_port, ?last_alive, why, "pruning address"),
+            None => debug!(%ip_port, last_seen=%"never", why, "pruning address"),
         }
 
         self.udp_paths.update_to_best_addr(now);
@@ -873,7 +867,7 @@ impl NodeState {
         prune_candidates.sort_unstable_by_key(|(_ip_port, last_alive)| *last_alive);
         prune_candidates.truncate(prune_count);
         for (ip_port, _last_alive) in prune_candidates.into_iter() {
-            self.remove_direct_addr(&ip_port, ClearReason::Inactive, now);
+            self.remove_direct_addr(&ip_port, now, "inactive");
         }
         debug!(
             paths = %summarize_node_paths(&self.udp_paths.paths),
