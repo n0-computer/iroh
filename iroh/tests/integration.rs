@@ -36,8 +36,15 @@ const ECHO_ALPN: &[u8] = b"echo";
 async fn simple_node_id_based_connection_transfer() -> TestResult {
     setup_logging();
 
-    let client = Endpoint::builder().discovery_n0().bind().await?;
+    let relay_map = iroh::defaults::prod::default_relay_map();
+
+    let client = Endpoint::builder()
+        .relay_mode(iroh::RelayMode::Custom(relay_map.clone()))
+        .discovery_n0()
+        .bind()
+        .await?;
     let server = Endpoint::builder()
+        .relay_mode(iroh::RelayMode::Custom(relay_map))
         .discovery_n0()
         .alpns(vec![ECHO_ALPN.to_vec()])
         .bind()
