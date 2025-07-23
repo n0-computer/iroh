@@ -292,25 +292,29 @@ impl MagicSock {
     }
 
     pub(crate) fn register_connection(&self, remote: NodeId, conn: &quinn::Connection) {
+        debug!(%remote, "register connection");
         let weak_handle = conn.weak_handle();
         self.connection_map.insert(remote, weak_handle);
 
         // TODO: track task
         // TODO: find a good home for this
         let mut path_events = conn.path_events();
-        let _task = task::spawn(async move {
-            loop {
-                match path_events.recv().await {
-                    Ok(event) => {
-                        info!(remote = %remote, "path event: {:?}", event);
+        let _task = task::spawn(
+            async move {
+                loop {
+                    match path_events.recv().await {
+                        Ok(event) => {
+                            info!(remote = %remote, "path event: {:?}", event);
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                            warn!("lagged path events");
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                     }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                        warn!("lagged path events");
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
             }
-        });
+            .instrument(info_span!("path events", %remote)),
+        );
 
         // open additional paths
         if let Some(addr) = self.node_map.get_current_addr(remote) {
@@ -474,43 +478,51 @@ impl MagicSock {
                     for addr in addr.direct_addresses() {
                         let conn = conn.clone();
                         let addr = *addr;
-                        task::spawn(async move {
-                            match conn
-                                .open_path_ensure(addr, quinn_proto::PathStatus::Available)
-                                .await
-                            {
-                                Ok(path) => {
-                                    path.set_max_idle_timeout(Some(
-                                        ENDPOINTS_FRESH_ENOUGH_DURATION,
-                                    ))
-                                    .ok();
-                                    path.set_keep_alive_interval(Some(HEARTBEAT_INTERVAL)).ok();
-                                }
-                                Err(err) => {
-                                    warn!("failed to open path {:?}", err);
+                        task::spawn(
+                            async move {
+                                debug!(%addr, "open path IP");
+                                match conn
+                                    .open_path_ensure(addr, quinn_proto::PathStatus::Available)
+                                    .await
+                                {
+                                    Ok(path) => {
+                                        path.set_max_idle_timeout(Some(
+                                            ENDPOINTS_FRESH_ENOUGH_DURATION,
+                                        ))
+                                        .ok();
+                                        path.set_keep_alive_interval(Some(HEARTBEAT_INTERVAL)).ok();
+                                    }
+                                    Err(err) => {
+                                        warn!("failed to open path {:?}", err);
+                                    }
                                 }
                             }
-                        });
+                            .instrument(info_span!("open path IP")),
+                        );
                     }
                     // Insert the relay addr
                     if let Some(addr) = self.get_mapping_addr(addr.node_id) {
                         let conn = conn.clone();
                         let addr = addr.private_socket_addr();
-                        task::spawn(async move {
-                            match conn
-                                .open_path_ensure(addr, quinn_proto::PathStatus::Backup)
-                                .await
-                            {
-                                Ok(path) => {
-                                    // Keep the relay path open
-                                    path.set_max_idle_timeout(None).ok();
-                                    path.set_keep_alive_interval(None).ok();
-                                }
-                                Err(err) => {
-                                    warn!("failed to open path {:?}", err);
+                        task::spawn(
+                            async move {
+                                debug!(%addr, "open path relay");
+                                match conn
+                                    .open_path_ensure(addr, quinn_proto::PathStatus::Backup)
+                                    .await
+                                {
+                                    Ok(path) => {
+                                        // Keep the relay path open
+                                        path.set_max_idle_timeout(None).ok();
+                                        path.set_keep_alive_interval(None).ok();
+                                    }
+                                    Err(err) => {
+                                        warn!("failed to open path {:?}", err);
+                                    }
                                 }
                             }
-                        });
+                            .instrument(info_span!("open path relay")),
+                        );
                     }
                 } else {
                     to_delete.push(i);
@@ -644,19 +656,21 @@ impl MagicSock {
                     self.ipv6_reported.load(Ordering::Relaxed),
                     &self.metrics.magicsock,
                 ) {
-                    Some((node_id, udp_addr, relay_url, ping_actions)) => {
+                    Some((node_id, _udp_addr, _relay_url, ping_actions)) => {
                         if !ping_actions.is_empty() {
                             self.actor_sender
                                 .try_send(ActorMessage::PingActions(ping_actions))
                                 .ok();
                         }
-                        // Mixed will send all available addrs
 
-                        if let Some(url) = relay_url {
-                            active_paths.push(transports::Addr::Relay(url, node_id));
-                        }
-                        if let Some(addr) = udp_addr {
-                            active_paths.push(transports::Addr::Ip(addr));
+                        if let Some(addr) = self.node_map.get_current_addr(node_id) {
+                            // Mixed will send all available addrs
+                            if let Some(ref url) = addr.relay_url {
+                                active_paths.push(transports::Addr::Relay(url.clone(), node_id));
+                            }
+                            for ip in addr.direct_addresses() {
+                                active_paths.push(transports::Addr::Ip(*ip));
+                            }
                         }
                     }
                     None => {
@@ -3202,18 +3216,18 @@ mod tests {
         let _accept_task = AbortOnDropHandle::new(accept_task);
 
         // Add an empty entry in the NodeMap of ep_1
-        msock_1
-            .add_node_addr(
-                NodeAddr {
-                    node_id: node_id_2,
-                    relay_url: None,
-                    direct_addresses: Default::default(),
-                },
-                Source::NamedApp {
-                    name: "test".into(),
-                },
-            )
-            .unwrap();
+        msock_1.node_map.add_node_addr(
+            NodeAddr {
+                node_id: node_id_2,
+                relay_url: None,
+                direct_addresses: Default::default(),
+            },
+            Source::NamedApp {
+                name: "test".into(),
+            },
+            &msock_1.metrics.magicsock,
+        );
+
         let addr_2 = msock_1.get_mapping_addr(node_id_2).unwrap();
 
         // Set a low max_idle_timeout so quinn gives up on this quickly and our test does
