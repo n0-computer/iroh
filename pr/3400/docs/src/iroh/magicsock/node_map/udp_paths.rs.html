@@ -113,57 +113,74 @@
 <a href=#113 id=113 data-nosnippet>113</a>        <span class="kw-2">&amp;</span><span class="self">self</span>.best
 <a href=#114 id=114 data-nosnippet>114</a>    }
 <a href=#115 id=115 data-nosnippet>115</a>
-<a href=#116 id=116 data-nosnippet>116</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>update_to_best_addr(<span class="kw-2">&amp;mut </span><span class="self">self</span>, now: Instant) {
-<a href=#117 id=117 data-nosnippet>117</a>        <span class="self">self</span>.best_ipv4 = <span class="self">self</span>.best_addr(<span class="bool-val">false</span>, now);
-<a href=#118 id=118 data-nosnippet>118</a>        <span class="self">self</span>.best = <span class="self">self</span>.best_addr(<span class="bool-val">true</span>, now);
-<a href=#119 id=119 data-nosnippet>119</a>    }
-<a href=#120 id=120 data-nosnippet>120</a>
-<a href=#121 id=121 data-nosnippet>121</a>    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>best_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, have_ipv6: bool, now: Instant) -&gt; UdpSendAddr {
-<a href=#122 id=122 data-nosnippet>122</a>        <span class="kw">let </span><span class="prelude-val">Some</span>((ipp, path)) = <span class="self">self
-<a href=#123 id=123 data-nosnippet>123</a>            </span>.paths
-<a href=#124 id=124 data-nosnippet>124</a>            .iter()
-<a href=#125 id=125 data-nosnippet>125</a>            .filter(|(ipp, <span class="kw">_</span>)| have_ipv6 || ipp.ip.is_ipv4())
-<a href=#126 id=126 data-nosnippet>126</a>            .max_by_key(|(ipp, path)| {
-<a href=#127 id=127 data-nosnippet>127</a>                <span class="comment">// We find the best by sorting on a key of type (Option&lt;ReverseOrd&lt;Duration&gt;&gt;, Option&lt;ReverseOrd&lt;Duration&gt;&gt;, bool)
-<a href=#128 id=128 data-nosnippet>128</a>                // where the first is set to Some(ReverseOrd(latency)) iff path.is_valid(now) and
-<a href=#129 id=129 data-nosnippet>129</a>                // the second is set to Some(ReverseOrd(latency)) if path.is_outdated(now) and
-<a href=#130 id=130 data-nosnippet>130</a>                // the third is set to whether the ipp is ipv6.
-<a href=#131 id=131 data-nosnippet>131</a>                // This makes max_by_key sort for the lowest valid latency first, then sort for
-<a href=#132 id=132 data-nosnippet>132</a>                // the lowest outdated latency second, and if latencies are equal, it'll sort IPv6 paths first.
-<a href=#133 id=133 data-nosnippet>133</a>                </span><span class="kw">let </span>is_ipv6 = ipp.ip.is_ipv6();
-<a href=#134 id=134 data-nosnippet>134</a>                <span class="kw">if let </span><span class="prelude-val">Some</span>(latency) = path.validity.latency_if_valid(now) {
-<a href=#135 id=135 data-nosnippet>135</a>                    (<span class="prelude-val">Some</span>(ReverseOrd(latency)), <span class="prelude-val">None</span>, is_ipv6)
-<a href=#136 id=136 data-nosnippet>136</a>                } <span class="kw">else if let </span><span class="prelude-val">Some</span>(latency) = path.validity.latency_if_outdated(now) {
-<a href=#137 id=137 data-nosnippet>137</a>                    (<span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(ReverseOrd(latency)), is_ipv6)
-<a href=#138 id=138 data-nosnippet>138</a>                } <span class="kw">else </span>{
-<a href=#139 id=139 data-nosnippet>139</a>                    (<span class="prelude-val">None</span>, <span class="prelude-val">None</span>, is_ipv6)
-<a href=#140 id=140 data-nosnippet>140</a>                }
-<a href=#141 id=141 data-nosnippet>141</a>            })
-<a href=#142 id=142 data-nosnippet>142</a>        <span class="kw">else </span>{
-<a href=#143 id=143 data-nosnippet>143</a>            <span class="kw">return </span>UdpSendAddr::None;
-<a href=#144 id=144 data-nosnippet>144</a>        };
-<a href=#145 id=145 data-nosnippet>145</a>
-<a href=#146 id=146 data-nosnippet>146</a>        <span class="kw">if </span>path.validity.is_valid(now) {
-<a href=#147 id=147 data-nosnippet>147</a>            UdpSendAddr::Valid((<span class="kw-2">*</span>ipp).into())
-<a href=#148 id=148 data-nosnippet>148</a>        } <span class="kw">else if </span>path.validity.is_outdated(now) {
-<a href=#149 id=149 data-nosnippet>149</a>            UdpSendAddr::Outdated((<span class="kw-2">*</span>ipp).into())
-<a href=#150 id=150 data-nosnippet>150</a>        } <span class="kw">else </span>{
-<a href=#151 id=151 data-nosnippet>151</a>            UdpSendAddr::Unconfirmed((<span class="kw-2">*</span>ipp).into())
-<a href=#152 id=152 data-nosnippet>152</a>        }
-<a href=#153 id=153 data-nosnippet>153</a>    }
-<a href=#154 id=154 data-nosnippet>154</a>}
-<a href=#155 id=155 data-nosnippet>155</a>
-<a href=#156 id=156 data-nosnippet>156</a><span class="attr">#[derive(PartialEq, Eq)]
-<a href=#157 id=157 data-nosnippet>157</a></span><span class="kw">struct </span>ReverseOrd&lt;N: PartialOrd + Ord + PartialEq + Eq&gt;(N);
+<a href=#116 id=116 data-nosnippet>116</a>    <span class="doccomment">/// Change the current best address(es) to ones chosen as described in [`Self::best_addr`] docs.
+<a href=#117 id=117 data-nosnippet>117</a>    ///
+<a href=#118 id=118 data-nosnippet>118</a>    /// This should be called any time that `paths` is modified.
+<a href=#119 id=119 data-nosnippet>119</a>    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>update_to_best_addr(<span class="kw-2">&amp;mut </span><span class="self">self</span>, now: Instant) {
+<a href=#120 id=120 data-nosnippet>120</a>        <span class="self">self</span>.best_ipv4 = <span class="self">self</span>.best_addr(<span class="bool-val">false</span>, now);
+<a href=#121 id=121 data-nosnippet>121</a>        <span class="self">self</span>.best = <span class="self">self</span>.best_addr(<span class="bool-val">true</span>, now);
+<a href=#122 id=122 data-nosnippet>122</a>    }
+<a href=#123 id=123 data-nosnippet>123</a>
+<a href=#124 id=124 data-nosnippet>124</a>    <span class="doccomment">/// Returns the current best address of all available paths, ignoring
+<a href=#125 id=125 data-nosnippet>125</a>    /// the currently chosen best address.
+<a href=#126 id=126 data-nosnippet>126</a>    ///
+<a href=#127 id=127 data-nosnippet>127</a>    /// We try to find the lowest latency [`UdpSendAddr::Valid`], if one exists, otherwise
+<a href=#128 id=128 data-nosnippet>128</a>    /// we try to find the lowest latency [`UdpSendAddr::Outdated`], if one exists, otherwise
+<a href=#129 id=129 data-nosnippet>129</a>    /// we return essentially an arbitrary [`UdpSendAddr::Unconfirmed`].
+<a href=#130 id=130 data-nosnippet>130</a>    ///
+<a href=#131 id=131 data-nosnippet>131</a>    /// If we don't have any addresses, returns [`UdpSendAddr::None`].
+<a href=#132 id=132 data-nosnippet>132</a>    ///
+<a href=#133 id=133 data-nosnippet>133</a>    /// If `have_ipv6` is false, we only search among ipv4 candidates.
+<a href=#134 id=134 data-nosnippet>134</a>    </span><span class="kw">fn </span>best_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, have_ipv6: bool, now: Instant) -&gt; UdpSendAddr {
+<a href=#135 id=135 data-nosnippet>135</a>        <span class="kw">let </span><span class="prelude-val">Some</span>((ipp, path)) = <span class="self">self
+<a href=#136 id=136 data-nosnippet>136</a>            </span>.paths
+<a href=#137 id=137 data-nosnippet>137</a>            .iter()
+<a href=#138 id=138 data-nosnippet>138</a>            .filter(|(ipp, <span class="kw">_</span>)| have_ipv6 || ipp.ip.is_ipv4())
+<a href=#139 id=139 data-nosnippet>139</a>            .max_by_key(|(ipp, path)| {
+<a href=#140 id=140 data-nosnippet>140</a>                <span class="comment">// We find the best by sorting on a key of type (Option&lt;ReverseOrd&lt;Duration&gt;&gt;, Option&lt;ReverseOrd&lt;Duration&gt;&gt;, bool)
+<a href=#141 id=141 data-nosnippet>141</a>                // where the first is set to Some(ReverseOrd(latency)) iff path.is_valid(now) and
+<a href=#142 id=142 data-nosnippet>142</a>                // the second is set to Some(ReverseOrd(latency)) if path.is_outdated(now) and
+<a href=#143 id=143 data-nosnippet>143</a>                // the third is set to whether the ipp is ipv6.
+<a href=#144 id=144 data-nosnippet>144</a>                // This makes max_by_key sort for the lowest valid latency first, then sort for
+<a href=#145 id=145 data-nosnippet>145</a>                // the lowest outdated latency second, and if latencies are equal, it'll sort IPv6 paths first.
+<a href=#146 id=146 data-nosnippet>146</a>                </span><span class="kw">let </span>is_ipv6 = ipp.ip.is_ipv6();
+<a href=#147 id=147 data-nosnippet>147</a>                <span class="kw">if let </span><span class="prelude-val">Some</span>(latency) = path.validity.latency_if_valid(now) {
+<a href=#148 id=148 data-nosnippet>148</a>                    (<span class="prelude-val">Some</span>(ReverseOrd(latency)), <span class="prelude-val">None</span>, is_ipv6)
+<a href=#149 id=149 data-nosnippet>149</a>                } <span class="kw">else if let </span><span class="prelude-val">Some</span>(latency) = path.validity.latency_if_outdated(now) {
+<a href=#150 id=150 data-nosnippet>150</a>                    (<span class="prelude-val">None</span>, <span class="prelude-val">Some</span>(ReverseOrd(latency)), is_ipv6)
+<a href=#151 id=151 data-nosnippet>151</a>                } <span class="kw">else </span>{
+<a href=#152 id=152 data-nosnippet>152</a>                    (<span class="prelude-val">None</span>, <span class="prelude-val">None</span>, is_ipv6)
+<a href=#153 id=153 data-nosnippet>153</a>                }
+<a href=#154 id=154 data-nosnippet>154</a>            })
+<a href=#155 id=155 data-nosnippet>155</a>        <span class="kw">else </span>{
+<a href=#156 id=156 data-nosnippet>156</a>            <span class="kw">return </span>UdpSendAddr::None;
+<a href=#157 id=157 data-nosnippet>157</a>        };
 <a href=#158 id=158 data-nosnippet>158</a>
-<a href=#159 id=159 data-nosnippet>159</a><span class="kw">impl</span>&lt;N: PartialOrd + Ord + PartialEq + Eq&gt; Ord <span class="kw">for </span>ReverseOrd&lt;N&gt; {
-<a href=#160 id=160 data-nosnippet>160</a>    <span class="kw">fn </span>cmp(<span class="kw-2">&amp;</span><span class="self">self</span>, other: <span class="kw-2">&amp;</span><span class="self">Self</span>) -&gt; std::cmp::Ordering {
-<a href=#161 id=161 data-nosnippet>161</a>        <span class="self">self</span>.<span class="number">0</span>.cmp(<span class="kw-2">&amp;</span>other.<span class="number">0</span>).reverse()
-<a href=#162 id=162 data-nosnippet>162</a>    }
-<a href=#163 id=163 data-nosnippet>163</a>}
-<a href=#164 id=164 data-nosnippet>164</a>
-<a href=#165 id=165 data-nosnippet>165</a><span class="kw">impl</span>&lt;N: PartialOrd + Ord + PartialEq + Eq&gt; PartialOrd <span class="kw">for </span>ReverseOrd&lt;N&gt; {
-<a href=#166 id=166 data-nosnippet>166</a>    <span class="kw">fn </span>partial_cmp(<span class="kw-2">&amp;</span><span class="self">self</span>, other: <span class="kw-2">&amp;</span><span class="self">Self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;std::cmp::Ordering&gt; {
-<a href=#167 id=167 data-nosnippet>167</a>        <span class="prelude-val">Some</span>(<span class="self">self</span>.cmp(other))
-<a href=#168 id=168 data-nosnippet>168</a>    }
-<a href=#169 id=169 data-nosnippet>169</a>}</code></pre></div></section></main></body></html>
+<a href=#159 id=159 data-nosnippet>159</a>        <span class="kw">if </span>path.validity.is_valid(now) {
+<a href=#160 id=160 data-nosnippet>160</a>            UdpSendAddr::Valid((<span class="kw-2">*</span>ipp).into())
+<a href=#161 id=161 data-nosnippet>161</a>        } <span class="kw">else if </span>path.validity.is_outdated(now) {
+<a href=#162 id=162 data-nosnippet>162</a>            UdpSendAddr::Outdated((<span class="kw-2">*</span>ipp).into())
+<a href=#163 id=163 data-nosnippet>163</a>        } <span class="kw">else </span>{
+<a href=#164 id=164 data-nosnippet>164</a>            UdpSendAddr::Unconfirmed((<span class="kw-2">*</span>ipp).into())
+<a href=#165 id=165 data-nosnippet>165</a>        }
+<a href=#166 id=166 data-nosnippet>166</a>    }
+<a href=#167 id=167 data-nosnippet>167</a>}
+<a href=#168 id=168 data-nosnippet>168</a>
+<a href=#169 id=169 data-nosnippet>169</a><span class="doccomment">/// Implements the reverse [`Ord`] implementation for the wrapped type.
+<a href=#170 id=170 data-nosnippet>170</a>///
+<a href=#171 id=171 data-nosnippet>171</a>/// Literally calls [`std::cmp::Ordering::reverse`] on the inner value's
+<a href=#172 id=172 data-nosnippet>172</a>/// ordering.
+<a href=#173 id=173 data-nosnippet>173</a></span><span class="attr">#[derive(PartialEq, Eq)]
+<a href=#174 id=174 data-nosnippet>174</a></span><span class="kw">struct </span>ReverseOrd&lt;N: PartialOrd + Ord + PartialEq + Eq&gt;(N);
+<a href=#175 id=175 data-nosnippet>175</a>
+<a href=#176 id=176 data-nosnippet>176</a><span class="kw">impl</span>&lt;N: PartialOrd + Ord + PartialEq + Eq&gt; Ord <span class="kw">for </span>ReverseOrd&lt;N&gt; {
+<a href=#177 id=177 data-nosnippet>177</a>    <span class="kw">fn </span>cmp(<span class="kw-2">&amp;</span><span class="self">self</span>, other: <span class="kw-2">&amp;</span><span class="self">Self</span>) -&gt; std::cmp::Ordering {
+<a href=#178 id=178 data-nosnippet>178</a>        <span class="self">self</span>.<span class="number">0</span>.cmp(<span class="kw-2">&amp;</span>other.<span class="number">0</span>).reverse()
+<a href=#179 id=179 data-nosnippet>179</a>    }
+<a href=#180 id=180 data-nosnippet>180</a>}
+<a href=#181 id=181 data-nosnippet>181</a>
+<a href=#182 id=182 data-nosnippet>182</a><span class="kw">impl</span>&lt;N: PartialOrd + Ord + PartialEq + Eq&gt; PartialOrd <span class="kw">for </span>ReverseOrd&lt;N&gt; {
+<a href=#183 id=183 data-nosnippet>183</a>    <span class="kw">fn </span>partial_cmp(<span class="kw-2">&amp;</span><span class="self">self</span>, other: <span class="kw-2">&amp;</span><span class="self">Self</span>) -&gt; <span class="prelude-ty">Option</span>&lt;std::cmp::Ordering&gt; {
+<a href=#184 id=184 data-nosnippet>184</a>        <span class="prelude-val">Some</span>(<span class="self">self</span>.cmp(other))
+<a href=#185 id=185 data-nosnippet>185</a>    }
+<a href=#186 id=186 data-nosnippet>186</a>}</code></pre></div></section></main></body></html>
