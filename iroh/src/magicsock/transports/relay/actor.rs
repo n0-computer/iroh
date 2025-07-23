@@ -492,7 +492,7 @@ impl ActiveRelayActor {
     /// connections.  It currently does not ever return `Err` as the retries continue
     /// forever.
     // This is using `impl Future` to return a future without a reference to self.
-    fn dial_relay(&self) -> impl Future<Output = Result<Client, DialError>> + 'static {
+    fn dial_relay(&self) -> impl Future<Output = Result<Client, DialError>> + use<> {
         let client_builder = self.relay_client_builder.clone();
         async move {
             match time::timeout(CONNECT_TIMEOUT, client_builder.connect()).await {
@@ -967,7 +967,7 @@ impl RelayActor {
     async fn try_send_datagram(
         &mut self,
         item: RelaySendItem,
-    ) -> Option<impl Future<Output = ()> + 'static> {
+    ) -> Option<impl Future<Output = ()> + use<>> {
         let url = item.url.clone();
         let handle = self
             .active_relay_handle_for_node(&item.url, &item.remote_node)
@@ -1202,7 +1202,7 @@ impl RelayActor {
         });
     }
 
-    fn active_relay_sorted(&self) -> impl Iterator<Item = RelayUrl> + 'static {
+    fn active_relay_sorted(&self) -> impl Iterator<Item = RelayUrl> + use<> {
         let mut ids: Vec<_> = self.active_relays.keys().cloned().collect();
         ids.sort();
 

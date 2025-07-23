@@ -699,7 +699,7 @@ impl DiscoverySubscribers {
         }
     }
 
-    pub(crate) fn subscribe(&self) -> impl Stream<Item = Result<DiscoveryItem, Lagged>> + 'static {
+    pub(crate) fn subscribe(&self) -> impl Stream<Item = Result<DiscoveryItem, Lagged>> + use<> {
         use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
         let recv = self.inner.subscribe();
         BroadcastStream::new(recv).map_err(|BroadcastStreamRecvError::Lagged(n)| Lagged { val: n })

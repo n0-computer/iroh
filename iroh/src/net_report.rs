@@ -160,7 +160,7 @@ impl QadConns {
         reports
     }
 
-    fn watch_v4(&self) -> impl n0_future::Stream<Item = Option<QadProbeReport>> + Unpin + 'static {
+    fn watch_v4(&self) -> impl n0_future::Stream<Item = Option<QadProbeReport>> + Unpin + use<> {
         let watcher = self.v4.as_ref().map(|(_url, conn)| conn.observer.watch());
 
         if let Some(watcher) = watcher {
@@ -170,7 +170,7 @@ impl QadConns {
         }
     }
 
-    fn watch_v6(&self) -> impl n0_future::Stream<Item = Option<QadProbeReport>> + Unpin + 'static {
+    fn watch_v6(&self) -> impl n0_future::Stream<Item = Option<QadProbeReport>> + Unpin + use<> {
         let watcher = self.v6.as_ref().map(|(_url, conn)| conn.observer.watch());
         if let Some(watcher) = watcher {
             watcher.stream_updates_only().boxed()
