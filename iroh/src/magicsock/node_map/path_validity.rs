@@ -68,10 +68,7 @@ impl PathValidity {
     }
 
     pub(super) fn latency_if_valid(&self, now: Instant) -> Option<Duration> {
-        let Some(state) = self.0.as_ref() else {
-            return None;
-        };
-
+        let state = self.0.as_ref()?;
         state.is_valid(now).then_some(state.recent_pong.latency)
     }
 
@@ -87,10 +84,7 @@ impl PathValidity {
     }
 
     pub(super) fn latency_if_outdated(&self, now: Instant) -> Option<Duration> {
-        let Some(state) = self.0.as_ref() else {
-            return None;
-        };
-
+        let state = self.0.as_ref()?;
         state.is_outdated(now).then_some(state.recent_pong.latency)
     }
 
