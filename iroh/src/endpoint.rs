@@ -2298,43 +2298,44 @@ mod tests {
         let server_secret_key = SecretKey::generate(rand::thread_rng());
         let server_peer_id = server_secret_key.public();
 
-        let server = {
-            let relay_map = relay_map.clone();
-            tokio::spawn(
-                async move {
-                    let ep = Endpoint::builder()
-                        .secret_key(server_secret_key)
-                        .alpns(vec![TEST_ALPN.to_vec()])
-                        .relay_mode(RelayMode::Custom(relay_map))
-                        .insecure_skip_relay_cert_verify(true)
-                        .bind()
-                        .await?;
-                    info!("accepting connection");
-                    let incoming = ep.accept().await.e()?;
-                    let conn = incoming.await.e()?;
-                    let mut stream = conn.accept_uni().await.e()?;
-                    let mut buf = [0u8; 5];
-                    stream.read_exact(&mut buf).await.e()?;
-                    info!("Accepted 1 stream, received {buf:?}.  Closing now.");
-                    // close the connection
-                    conn.close(7u8.into(), b"bye");
+        // Wait for the endpoint to be started to make sure it's up before clients try to connect
+        let ep = Endpoint::builder()
+            .secret_key(server_secret_key)
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .relay_mode(RelayMode::Custom(relay_map.clone()))
+            .insecure_skip_relay_cert_verify(true)
+            .bind()
+            .await?;
+        // Wait for the endpoint to be reachable via relay
+        ep.home_relay().initialized().await?;
 
-                    let res = conn.accept_uni().await;
-                    assert_eq!(res.unwrap_err(), quinn::ConnectionError::LocallyClosed);
+        let server = tokio::spawn(
+            async move {
+                info!("accepting connection");
+                let incoming = ep.accept().await.e()?;
+                let conn = incoming.await.e()?;
+                let mut stream = conn.accept_uni().await.e()?;
+                let mut buf = [0u8; 5];
+                stream.read_exact(&mut buf).await.e()?;
+                info!("Accepted 1 stream, received {buf:?}.  Closing now.");
+                // close the connection
+                conn.close(7u8.into(), b"bye");
 
-                    let res = stream.read_to_end(10).await;
-                    assert_eq!(
-                        res.unwrap_err(),
-                        quinn::ReadToEndError::Read(quinn::ReadError::ConnectionLost(
-                            quinn::ConnectionError::LocallyClosed
-                        ))
-                    );
-                    info!("server test completed");
-                    Ok::<_, Error>(())
-                }
-                .instrument(info_span!("test-server")),
-            )
-        };
+                let res = conn.accept_uni().await;
+                assert_eq!(res.unwrap_err(), quinn::ConnectionError::LocallyClosed);
+
+                let res = stream.read_to_end(10).await;
+                assert_eq!(
+                    res.unwrap_err(),
+                    quinn::ReadToEndError::Read(quinn::ReadError::ConnectionLost(
+                        quinn::ConnectionError::LocallyClosed
+                    ))
+                );
+                info!("server test completed");
+                Ok::<_, Error>(())
+            }
+            .instrument(info_span!("test-server")),
+        );
 
         let client = tokio::spawn(
             async move {
