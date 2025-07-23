@@ -2489,7 +2489,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn"
 version = "0.14.0"
-source = "git+https://github.com//n0-computer/quinn?branch=flub%2Fopen-path-ensure#646e849d540886ee58e25e3da509d6021ec94430"
+source = "git+https://github.com//n0-computer/quinn?branch=server-migrations#bc86957aa4ccb72fad70e75a6ce9fc8198f09afc"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2508,7 +2508,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-proto"
 version = "0.13.0"
-source = "git+https://github.com//n0-computer/quinn?branch=flub%2Fopen-path-ensure#646e849d540886ee58e25e3da509d6021ec94430"
+source = "git+https://github.com//n0-computer/quinn?branch=server-migrations#bc86957aa4ccb72fad70e75a6ce9fc8198f09afc"
 dependencies = [
  "bytes",
  "fastbloom",
@@ -2544,7 +2544,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-udp"
 version = "0.5.12"
-source = "git+https://github.com//n0-computer/quinn?branch=flub%2Fopen-path-ensure#646e849d540886ee58e25e3da509d6021ec94430"
+source = "git+https://github.com//n0-computer/quinn?branch=server-migrations#bc86957aa4ccb72fad70e75a6ce9fc8198f09afc"
 dependencies = [
  "cfg_aliases",
  "libc",
