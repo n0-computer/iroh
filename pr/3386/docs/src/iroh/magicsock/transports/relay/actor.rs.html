@@ -492,7 +492,7 @@
 <a href=#492 id=492 data-nosnippet>492</a>    /// connections.  It currently does not ever return `Err` as the retries continue
 <a href=#493 id=493 data-nosnippet>493</a>    /// forever.
 <a href=#494 id=494 data-nosnippet>494</a>    </span><span class="comment">// This is using `impl Future` to return a future without a reference to self.
-<a href=#495 id=495 data-nosnippet>495</a>    </span><span class="kw">fn </span>dial_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;Client, DialError&gt;&gt; + <span class="lifetime">'static </span>{
+<a href=#495 id=495 data-nosnippet>495</a>    </span><span class="kw">fn </span>dial_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Future&lt;Output = <span class="prelude-ty">Result</span>&lt;Client, DialError&gt;&gt; + <span class="kw">use</span>&lt;&gt; {
 <a href=#496 id=496 data-nosnippet>496</a>        <span class="kw">let </span>client_builder = <span class="self">self</span>.relay_client_builder.clone();
 <a href=#497 id=497 data-nosnippet>497</a>        <span class="kw">async move </span>{
 <a href=#498 id=498 data-nosnippet>498</a>            <span class="kw">match </span>time::timeout(CONNECT_TIMEOUT, client_builder.connect()).<span class="kw">await </span>{
@@ -967,7 +967,7 @@
 <a href=#967 id=967 data-nosnippet>967</a>    </span><span class="kw">async fn </span>try_send_datagram(
 <a href=#968 id=968 data-nosnippet>968</a>        <span class="kw-2">&amp;mut </span><span class="self">self</span>,
 <a href=#969 id=969 data-nosnippet>969</a>        item: RelaySendItem,
-<a href=#970 id=970 data-nosnippet>970</a>    ) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw">impl </span>Future&lt;Output = ()&gt; + <span class="lifetime">'static</span>&gt; {
+<a href=#970 id=970 data-nosnippet>970</a>    ) -&gt; <span class="prelude-ty">Option</span>&lt;<span class="kw">impl </span>Future&lt;Output = ()&gt; + <span class="kw">use</span>&lt;&gt;&gt; {
 <a href=#971 id=971 data-nosnippet>971</a>        <span class="kw">let </span>url = item.url.clone();
 <a href=#972 id=972 data-nosnippet>972</a>        <span class="kw">let </span>handle = <span class="self">self
 <a href=#973 id=973 data-nosnippet>973</a>            </span>.active_relay_handle_for_node(<span class="kw-2">&amp;</span>item.url, <span class="kw-2">&amp;</span>item.remote_node)
@@ -1202,7 +1202,7 @@
 <a href=#1202 id=1202 data-nosnippet>1202</a>        });
 <a href=#1203 id=1203 data-nosnippet>1203</a>    }
 <a href=#1204 id=1204 data-nosnippet>1204</a>
-<a href=#1205 id=1205 data-nosnippet>1205</a>    <span class="kw">fn </span>active_relay_sorted(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = RelayUrl&gt; + <span class="lifetime">'static </span>{
+<a href=#1205 id=1205 data-nosnippet>1205</a>    <span class="kw">fn </span>active_relay_sorted(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Iterator&lt;Item = RelayUrl&gt; + <span class="kw">use</span>&lt;&gt; {
 <a href=#1206 id=1206 data-nosnippet>1206</a>        <span class="kw">let </span><span class="kw-2">mut </span>ids: Vec&lt;<span class="kw">_</span>&gt; = <span class="self">self</span>.active_relays.keys().cloned().collect();
 <a href=#1207 id=1207 data-nosnippet>1207</a>        ids.sort();
 <a href=#1208 id=1208 data-nosnippet>1208</a>

@@ -160,7 +160,7 @@
 <a href=#160 id=160 data-nosnippet>160</a>        reports
 <a href=#161 id=161 data-nosnippet>161</a>    }
 <a href=#162 id=162 data-nosnippet>162</a>
-<a href=#163 id=163 data-nosnippet>163</a>    <span class="kw">fn </span>watch_v4(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>n0_future::Stream&lt;Item = <span class="prelude-ty">Option</span>&lt;QadProbeReport&gt;&gt; + Unpin + <span class="lifetime">'static </span>{
+<a href=#163 id=163 data-nosnippet>163</a>    <span class="kw">fn </span>watch_v4(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>n0_future::Stream&lt;Item = <span class="prelude-ty">Option</span>&lt;QadProbeReport&gt;&gt; + Unpin + <span class="kw">use</span>&lt;&gt; {
 <a href=#164 id=164 data-nosnippet>164</a>        <span class="kw">let </span>watcher = <span class="self">self</span>.v4.as_ref().map(|(_url, conn)| conn.observer.watch());
 <a href=#165 id=165 data-nosnippet>165</a>
 <a href=#166 id=166 data-nosnippet>166</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(watcher) = watcher {
@@ -170,7 +170,7 @@
 <a href=#170 id=170 data-nosnippet>170</a>        }
 <a href=#171 id=171 data-nosnippet>171</a>    }
 <a href=#172 id=172 data-nosnippet>172</a>
-<a href=#173 id=173 data-nosnippet>173</a>    <span class="kw">fn </span>watch_v6(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>n0_future::Stream&lt;Item = <span class="prelude-ty">Option</span>&lt;QadProbeReport&gt;&gt; + Unpin + <span class="lifetime">'static </span>{
+<a href=#173 id=173 data-nosnippet>173</a>    <span class="kw">fn </span>watch_v6(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>n0_future::Stream&lt;Item = <span class="prelude-ty">Option</span>&lt;QadProbeReport&gt;&gt; + Unpin + <span class="kw">use</span>&lt;&gt; {
 <a href=#174 id=174 data-nosnippet>174</a>        <span class="kw">let </span>watcher = <span class="self">self</span>.v6.as_ref().map(|(_url, conn)| conn.observer.watch());
 <a href=#175 id=175 data-nosnippet>175</a>        <span class="kw">if let </span><span class="prelude-val">Some</span>(watcher) = watcher {
 <a href=#176 id=176 data-nosnippet>176</a>            watcher.stream_updates_only().boxed()
