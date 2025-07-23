@@ -164,8 +164,6 @@ impl<N: PartialOrd + Ord + PartialEq + Eq> Ord for ReverseOrd<N> {
 
 impl<N: PartialOrd + Ord + PartialEq + Eq> PartialOrd for ReverseOrd<N> {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.0
-            .partial_cmp(&other.0)
-            .map(std::cmp::Ordering::reverse)
+        Some(self.cmp(other))
     }
 }
