@@ -113,12 +113,25 @@ impl NodeUdpPaths {
         &self.best
     }
 
+    /// Change the current best address(es) to ones chosen as described in [`Self::best_addr`] docs.
+    ///
+    /// This should be called any time that `paths` is modified.
     pub(super) fn update_to_best_addr(&mut self, now: Instant) {
         self.best_ipv4 = self.best_addr(false, now);
         self.best = self.best_addr(true, now);
     }
 
-    pub(super) fn best_addr(&self, have_ipv6: bool, now: Instant) -> UdpSendAddr {
+    /// Returns the current best address of all available paths, ignoring
+    /// the currently chosen best address.
+    ///
+    /// We try to find the lowest latency [`UdpSendAddr::Valid`], if one exists, otherwise
+    /// we try to find the lowest latency [`UdpSendAddr::Outdated`], if one exists, otherwise
+    /// we return essentially an arbitrary [`UdpSendAddr::Unconfirmed`].
+    ///
+    /// If we don't have any addresses, returns [`UdpSendAddr::None`].
+    ///
+    /// If `have_ipv6` is false, we only search among ipv4 candidates.
+    fn best_addr(&self, have_ipv6: bool, now: Instant) -> UdpSendAddr {
         let Some((ipp, path)) = self
             .paths
             .iter()
@@ -153,6 +166,10 @@ impl NodeUdpPaths {
     }
 }
 
+/// Implements the reverse [`Ord`] implementation for the wrapped type.
+///
+/// Literally calls [`std::cmp::Ordering::reverse`] on the inner value's
+/// ordering.
 #[derive(PartialEq, Eq)]
 struct ReverseOrd<N: PartialOrd + Ord + PartialEq + Eq>(N);
 
