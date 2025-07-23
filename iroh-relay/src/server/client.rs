@@ -13,19 +13,19 @@ use tokio::{
     time::MissedTickBehavior,
 };
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
-use tracing::{debug, trace, warn, Instrument};
+use tracing::{Instrument, debug, trace, warn};
 
 use crate::{
+    PingTracker,
     protos::{
         disco,
-        relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg, PING_INTERVAL},
+        relay::{ClientToRelayMsg, Datagrams, PING_INTERVAL, RelayToClientMsg},
     },
     server::{
         clients::Clients,
         metrics::Metrics,
         streams::{RecvError as RelayRecvError, RelayedStream, SendError as RelaySendError},
     },
-    PingTracker,
 };
 
 /// A request to write a dataframe to a Client

@@ -20,21 +20,21 @@ use std::{
 use defaults::timeouts::PROBES_TIMEOUT;
 use iroh_base::RelayUrl;
 #[cfg(not(wasm_browser))]
+use iroh_relay::RelayNode;
+#[cfg(not(wasm_browser))]
 use iroh_relay::dns::DnsResolver;
 #[cfg(not(wasm_browser))]
 use iroh_relay::quic::QuicClient;
-#[cfg(not(wasm_browser))]
-use iroh_relay::RelayNode;
 use iroh_relay::{
-    quic::{QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON},
     RelayMap,
+    quic::{QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON},
 };
 #[cfg(not(wasm_browser))]
 use n0_future::task;
 use n0_future::{
+    StreamExt,
     task::AbortOnDropHandle,
     time::{self, Duration, Instant},
-    StreamExt,
 };
 use n0_watcher::{Watchable, Watcher};
 use tokio::task::JoinSet;
@@ -160,7 +160,7 @@ impl QadConns {
         reports
     }
 
-    fn watch_v4(&self) -> impl n0_future::Stream<Item = Option<QadProbeReport>> + Unpin {
+    fn watch_v4(&self) -> impl n0_future::Stream<Item = Option<QadProbeReport>> + Unpin + use<> {
         let watcher = self.v4.as_ref().map(|(_url, conn)| conn.observer.watch());
 
         if let Some(watcher) = watcher {
@@ -170,7 +170,7 @@ impl QadConns {
         }
     }
 
-    fn watch_v6(&self) -> impl n0_future::Stream<Item = Option<QadProbeReport>> + Unpin {
+    fn watch_v6(&self) -> impl n0_future::Stream<Item = Option<QadProbeReport>> + Unpin + use<> {
         let watcher = self.v6.as_ref().map(|(_url, conn)| conn.observer.watch());
         if let Some(watcher) = watcher {
             watcher.stream_updates_only().boxed()
@@ -395,7 +395,7 @@ impl Client {
         enough_relays: usize,
         do_full: bool,
     ) -> Vec<ProbeReport> {
-        use tracing::{info_span, Instrument};
+        use tracing::{Instrument, info_span};
 
         debug!("spawning QAD probes");
 
@@ -812,7 +812,7 @@ async fn run_probe_v6(
 mod test_utils {
     //! Creates a relay server against which to perform tests
 
-    use iroh_relay::{server, RelayNode, RelayQuicConfig};
+    use iroh_relay::{RelayNode, RelayQuicConfig, server};
 
     pub(crate) async fn relay() -> (server::Server, RelayNode) {
         let server = server::Server::spawn(server::testing::server_config())

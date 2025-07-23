@@ -15,7 +15,7 @@ use http::StatusCode;
 use iroh_base::NodeId;
 use iroh_relay::{
     defaults::{
-        DEFAULT_HTTPS_PORT, DEFAULT_HTTP_PORT, DEFAULT_METRICS_PORT, DEFAULT_RELAY_QUIC_PORT,
+        DEFAULT_HTTP_PORT, DEFAULT_HTTPS_PORT, DEFAULT_METRICS_PORT, DEFAULT_RELAY_QUIC_PORT,
     },
     server::{self as relay, ClientRateLimit, QuicConfig},
 };
@@ -23,9 +23,9 @@ use n0_future::FutureExt;
 use n0_snafu::{Error, Result, ResultExt};
 use serde::{Deserialize, Serialize};
 use snafu::whatever;
-use tokio_rustls_acme::{caches::DirCache, AcmeConfig};
+use tokio_rustls_acme::{AcmeConfig, caches::DirCache};
 use tracing::{debug, warn};
-use tracing_subscriber::{prelude::*, EnvFilter};
+use tracing_subscriber::{EnvFilter, prelude::*};
 use url::Url;
 
 /// The default `http_bind_port` when using `--dev`.
@@ -597,7 +597,7 @@ async fn maybe_load_tls(
         #[cfg(feature = "server")]
         CertMode::Reloading => {
             use rustls_cert_file_reader::FileReader;
-            use rustls_cert_reloadable_resolver::{key_provider::Dyn, CertifiedKeyLoader};
+            use rustls_cert_reloadable_resolver::{CertifiedKeyLoader, key_provider::Dyn};
             use webpki_types::{CertificateDer, PrivateKeyDer};
 
             let cert_path = tls.cert_path();
@@ -656,7 +656,9 @@ async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig<std::io::
                 bind_addr: tls.quic_bind_addr,
             });
         } else {
-            whatever!("Must have a valid TLS configuration to enable a QUIC server for QUIC address discovery")
+            whatever!(
+                "Must have a valid TLS configuration to enable a QUIC server for QUIC address discovery"
+            )
         }
     };
     let limits = match cfg.limits {

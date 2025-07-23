@@ -19,14 +19,14 @@ use std::{fmt, future::Future, net::SocketAddr, num::NonZeroU32, pin::Pin, sync:
 
 use derive_more::Debug;
 use http::{
-    header::InvalidHeaderValue, response::Builder as ResponseBuilder, HeaderMap, Method, Request,
-    Response, StatusCode,
+    HeaderMap, Method, Request, Response, StatusCode, header::InvalidHeaderValue,
+    response::Builder as ResponseBuilder,
 };
 use hyper::body::Incoming;
 use iroh_base::NodeId;
 #[cfg(feature = "test-utils")]
 use iroh_base::RelayUrl;
-use n0_future::{future::Boxed, StreamExt};
+use n0_future::{StreamExt, future::Boxed};
 use nested_enum_utils::common_fields;
 use snafu::{Backtrace, ResultExt, Snafu};
 use tokio::{
@@ -34,7 +34,7 @@ use tokio::{
     task::{JoinError, JoinSet},
 };
 use tokio_util::task::AbortOnDropHandle;
-use tracing::{debug, error, info, info_span, instrument, Instrument};
+use tracing::{Instrument, debug, error, info, info_span, instrument};
 
 use crate::{
     defaults::DEFAULT_KEY_CACHE_CAPACITY,
@@ -53,7 +53,7 @@ pub mod testing;
 
 pub use self::{
     metrics::{Metrics, RelayMetrics},
-    resolver::{ReloadingResolver, DEFAULT_CERT_RELOAD_INTERVAL},
+    resolver::{DEFAULT_CERT_RELOAD_INTERVAL, ReloadingResolver},
 };
 
 const NO_CONTENT_CHALLENGE_HEADER: &str = "X-Tailscale-Challenge";
@@ -758,8 +758,8 @@ mod tests {
     use tracing_test::traced_test;
 
     use super::{
-        Access, AccessConfig, RelayConfig, Server, ServerConfig, SpawnError,
-        NO_CONTENT_CHALLENGE_HEADER, NO_CONTENT_RESPONSE_HEADER,
+        Access, AccessConfig, NO_CONTENT_CHALLENGE_HEADER, NO_CONTENT_RESPONSE_HEADER, RelayConfig,
+        Server, ServerConfig, SpawnError,
     };
     use crate::{
         client::{ClientBuilder, ConnectError},

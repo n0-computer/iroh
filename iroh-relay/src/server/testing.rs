@@ -17,7 +17,7 @@ pub fn self_signed_tls_certs_and_config() -> (
     ])
     .expect("valid");
     let rustls_cert = cert.cert.der();
-    let private_key = rustls::pki_types::PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
+    let private_key = rustls::pki_types::PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der());
     let private_key = rustls::pki_types::PrivateKeyDer::from(private_key);
     let certs = vec![rustls_cert.clone()];
     let server_config = rustls::ServerConfig::builder_with_provider(std::sync::Arc::new(

@@ -30,25 +30,24 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     future::Future,
     net::IpAddr,
-    pin::{pin, Pin},
+    pin::{Pin, pin},
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
 };
 
 use backon::{Backoff, BackoffBuilder, ExponentialBuilder};
 use iroh_base::{NodeId, RelayUrl, SecretKey};
 use iroh_relay::{
-    self as relay,
+    self as relay, PingTracker,
     client::{Client, ConnectError, RecvError, SendError},
     protos::relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
-    PingTracker,
 };
 use n0_future::{
+    FuturesUnorderedBounded, SinkExt, StreamExt,
     task::JoinSet,
     time::{self, Duration, Instant, MissedTickBehavior},
-    FuturesUnorderedBounded, SinkExt, StreamExt,
 };
 use n0_watcher::Watchable;
 use nested_enum_utils::common_fields;
@@ -56,7 +55,7 @@ use netwatch::interfaces;
 use snafu::{IntoError, ResultExt, Snafu};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, event, info, info_span, instrument, trace, warn, Instrument, Level};
+use tracing::{Instrument, Level, debug, error, event, info, info_span, instrument, trace, warn};
 use url::Url;
 
 #[cfg(not(wasm_browser))]
@@ -493,7 +492,7 @@ impl ActiveRelayActor {
     /// connections.  It currently does not ever return `Err` as the retries continue
     /// forever.
     // This is using `impl Future` to return a future without a reference to self.
-    fn dial_relay(&self) -> impl Future<Output = Result<Client, DialError>> {
+    fn dial_relay(&self) -> impl Future<Output = Result<Client, DialError>> + use<> {
         let client_builder = self.relay_client_builder.clone();
         async move {
             match time::timeout(CONNECT_TIMEOUT, client_builder.connect()).await {
@@ -965,7 +964,10 @@ impl RelayActor {
     /// If the datagram can not be sent immediately, because the destination channel is
     /// full, a future is returned that will complete once the datagrams have been sent to
     /// the [`ActiveRelayActor`].
-    async fn try_send_datagram(&mut self, item: RelaySendItem) -> Option<impl Future<Output = ()>> {
+    async fn try_send_datagram(
+        &mut self,
+        item: RelaySendItem,
+    ) -> Option<impl Future<Output = ()> + use<>> {
         let url = item.url.clone();
         let handle = self
             .active_relay_handle_for_node(&item.url, &item.remote_node)
@@ -1200,7 +1202,7 @@ impl RelayActor {
         });
     }
 
-    fn active_relay_sorted(&self) -> impl Iterator<Item = RelayUrl> {
+    fn active_relay_sorted(&self) -> impl Iterator<Item = RelayUrl> + use<> {
         let mut ids: Vec<_> = self.active_relays.keys().cloned().collect();
         ids.sort();
 
@@ -1228,21 +1230,21 @@ pub(crate) struct RelayRecvDatagram {
 #[cfg(test)]
 mod tests {
     use std::{
-        sync::{atomic::AtomicBool, Arc},
+        sync::{Arc, atomic::AtomicBool},
         time::Duration,
     };
 
     use iroh_base::{NodeId, RelayUrl, SecretKey};
-    use iroh_relay::{protos::relay::Datagrams, PingTracker};
+    use iroh_relay::{PingTracker, protos::relay::Datagrams};
     use n0_snafu::{Error, Result, ResultExt};
     use tokio::sync::{mpsc, oneshot};
     use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
-    use tracing::{info, info_span, Instrument};
+    use tracing::{Instrument, info, info_span};
     use tracing_test::traced_test;
 
     use super::{
         ActiveRelayActor, ActiveRelayActorOptions, ActiveRelayMessage, ActiveRelayPrioMessage,
-        RelayConnectionOptions, RelayRecvDatagram, RelaySendItem, RELAY_INACTIVE_CLEANUP_TIME,
+        RELAY_INACTIVE_CLEANUP_TIME, RelayConnectionOptions, RelayRecvDatagram, RelaySendItem,
         UNDELIVERABLE_DATAGRAM_TIMEOUT,
     };
     use crate::{dns::DnsResolver, test_utils};

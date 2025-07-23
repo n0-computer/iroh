@@ -61,8 +61,8 @@
 //!
 //! ```no_run
 //! use iroh::{
-//!     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher},
 //!     Endpoint, SecretKey,
+//!     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher},
 //! };
 //!
 //! # async fn wrapper() -> n0_snafu::Result<()> {
@@ -113,16 +113,16 @@ use std::sync::Arc;
 
 use iroh_base::{NodeAddr, NodeId};
 use n0_future::{
+    Stream, TryStreamExt,
     boxed::BoxStream,
     stream::StreamExt,
     task::{self, AbortOnDropHandle},
     time::{self, Duration},
-    Stream, TryStreamExt,
 };
 use nested_enum_utils::common_fields;
-use snafu::{ensure, IntoError, Snafu};
+use snafu::{IntoError, Snafu, ensure};
 use tokio::sync::oneshot;
-use tracing::{debug, error_span, warn, Instrument};
+use tracing::{Instrument, debug, error_span, warn};
 
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
@@ -699,8 +699,8 @@ impl DiscoverySubscribers {
         }
     }
 
-    pub(crate) fn subscribe(&self) -> impl Stream<Item = Result<DiscoveryItem, Lagged>> {
-        use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
+    pub(crate) fn subscribe(&self) -> impl Stream<Item = Result<DiscoveryItem, Lagged>> + use<> {
+        use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
         let recv = self.inner.subscribe();
         BroadcastStream::new(recv).map_err(|BroadcastStreamRecvError::Lagged(n)| Lagged { val: n })
     }
@@ -730,7 +730,7 @@ mod tests {
     use tracing_test::traced_test;
 
     use super::*;
-    use crate::{endpoint::ConnectOptions, Endpoint, RelayMode};
+    use crate::{Endpoint, RelayMode, endpoint::ConnectOptions};
 
     type InfoStore = HashMap<NodeId, (NodeData, u64)>;
 
@@ -1091,20 +1091,20 @@ mod tests {
 #[cfg(test)]
 mod test_dns_pkarr {
     use iroh_base::{NodeAddr, SecretKey};
-    use iroh_relay::{node_info::UserData, RelayMap};
+    use iroh_relay::{RelayMap, node_info::UserData};
     use n0_future::time::Duration;
     use n0_snafu::{Error, Result, ResultExt};
     use tokio_util::task::AbortOnDropHandle;
     use tracing_test::traced_test;
 
     use crate::{
-        discovery::{pkarr::PkarrPublisher, NodeData},
+        Endpoint, RelayMode,
+        discovery::{NodeData, pkarr::PkarrPublisher},
         dns::DnsResolver,
         node_info::NodeInfo,
         test_utils::{
-            dns_server::run_dns_server, pkarr_dns_state::State, run_relay_server, DnsPkarrServer,
+            DnsPkarrServer, dns_server::run_dns_server, pkarr_dns_state::State, run_relay_server,
         },
-        Endpoint, RelayMode,
     };
 
     const PUBLISH_TIMEOUT: Duration = Duration::from_secs(10);

@@ -33,9 +33,9 @@
 use std::{
     collections::{BTreeSet, HashMap},
     net::{IpAddr, SocketAddr},
+    str::FromStr,
 };
 
-use derive_more::FromStr;
 use iroh_base::{NodeId, PublicKey};
 use n0_future::{
     boxed::BoxStream,
@@ -45,7 +45,7 @@ use n0_future::{
 use n0_watcher::{Watchable, Watcher as _};
 use swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
 use tokio::sync::mpsc::{self, error::TrySendError};
-use tracing::{debug, error, info_span, trace, warn, Instrument};
+use tracing::{Instrument, debug, error, info_span, trace, warn};
 
 use super::{DiscoveryContext, DiscoveryError, IntoDiscovery, IntoDiscoveryError};
 use crate::discovery::{Discovery, DiscoveryItem, NodeData, NodeInfo};

@@ -13,7 +13,7 @@ use n0_future::{
 use n0_watcher::{Watchable, Watcher as _};
 use tokio::sync::mpsc;
 use tokio_util::sync::PollSender;
-use tracing::{error, info_span, trace, warn, Instrument};
+use tracing::{Instrument, error, info_span, trace, warn};
 
 use super::{Addr, Transmit};
 

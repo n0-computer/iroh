@@ -21,14 +21,14 @@ use std::{
     task::Poll,
 };
 
-use ed25519_dalek::{pkcs8::DecodePublicKey, VerifyingKey};
+use ed25519_dalek::{VerifyingKey, pkcs8::DecodePublicKey};
 use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey};
 use iroh_relay::RelayMap;
-use n0_future::{time::Duration, Stream};
+use n0_future::{Stream, time::Duration};
 use n0_watcher::Watcher;
 use nested_enum_utils::common_fields;
 use pin_project::pin_project;
-use snafu::{ensure, ResultExt, Snafu};
+use snafu::{ResultExt, Snafu, ensure};
 use tracing::{debug, instrument, trace, warn};
 use url::Url;
 
@@ -38,9 +38,9 @@ use crate::discovery::pkarr::PkarrResolver;
 use crate::{discovery::dns::DnsDiscovery, dns::DnsResolver};
 use crate::{
     discovery::{
-        pkarr::PkarrPublisher, ConcurrentDiscovery, Discovery, DiscoveryContext, DiscoveryError,
-        DiscoveryItem, DiscoverySubscribers, DiscoveryTask, DynIntoDiscovery, IntoDiscovery,
-        IntoDiscoveryError, Lagged, UserData,
+        ConcurrentDiscovery, Discovery, DiscoveryContext, DiscoveryError, DiscoveryItem,
+        DiscoverySubscribers, DiscoveryTask, DynIntoDiscovery, IntoDiscovery, IntoDiscoveryError,
+        Lagged, UserData, pkarr::PkarrPublisher,
     },
     magicsock::{self, Handle, NodeIdMappedAddr, OwnAddressSnafu},
     metrics::EndpointMetrics,
@@ -59,12 +59,12 @@ pub use quinn::{
     WeakConnectionHandle, WriteError,
 };
 pub use quinn_proto::{
+    FrameStats, PathStats, TransportError, TransportErrorCode, UdpStats, Written,
     congestion::{Controller, ControllerFactory},
     crypto::{
         AeadKey, CryptoError, ExportKeyingMaterialError, HandshakeTokenKey,
         ServerConfig as CryptoServerConfig, UnsupportedVersion,
     },
-    FrameStats, PathStats, TransportError, TransportErrorCode, UdpStats, Written,
 };
 
 use self::rtt_actor::RttMessage;
@@ -911,7 +911,7 @@ impl Endpoint {
     /// # }
     /// ```
     #[cfg(not(wasm_browser))]
-    pub fn node_addr(&self) -> impl n0_watcher::Watcher<Value = Option<NodeAddr>> {
+    pub fn node_addr(&self) -> impl n0_watcher::Watcher<Value = Option<NodeAddr>> + use<> {
         let watch_addrs = self.direct_addresses();
         let watch_relay = self.home_relay();
         let node_id = self.node_id();
@@ -976,7 +976,7 @@ impl Endpoint {
     /// let _relay_url = mep.home_relay().initialized().await.unwrap();
     /// # });
     /// ```
-    pub fn home_relay(&self) -> impl n0_watcher::Watcher<Value = Vec<RelayUrl>> {
+    pub fn home_relay(&self) -> impl n0_watcher::Watcher<Value = Vec<RelayUrl>> + use<> {
         self.msock.home_relay()
     }
 
@@ -1046,7 +1046,7 @@ impl Endpoint {
     /// # });
     /// ```
     #[doc(hidden)]
-    pub fn net_report(&self) -> impl Watcher<Value = Option<Report>> {
+    pub fn net_report(&self) -> impl Watcher<Value = Option<Report>> + use<> {
         self.msock.net_report()
     }
 
@@ -1089,7 +1089,7 @@ impl Endpoint {
     /// connection was ever made or is even possible.
     ///
     /// See also [`Endpoint::remote_info`] to only retrieve information about a single node.
-    pub fn remote_info_iter(&self) -> impl Iterator<Item = RemoteInfo> {
+    pub fn remote_info_iter(&self) -> impl Iterator<Item = RemoteInfo> + use<> {
         self.msock.list_remote_infos().into_iter()
     }
 
@@ -1117,7 +1117,7 @@ impl Endpoint {
     ///
     /// [`MdnsDiscovery`]: crate::discovery::mdns::MdnsDiscovery
     /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
-    pub fn discovery_stream(&self) -> impl Stream<Item = Result<DiscoveryItem, Lagged>> {
+    pub fn discovery_stream(&self) -> impl Stream<Item = Result<DiscoveryItem, Lagged>> + use<> {
         self.msock.discovery_subscribers().subscribe()
     }
 
@@ -2253,19 +2253,19 @@ mod tests {
     };
 
     use iroh_base::{NodeAddr, NodeId, SecretKey};
-    use n0_future::{task::AbortOnDropHandle, StreamExt};
+    use n0_future::{StreamExt, task::AbortOnDropHandle};
     use n0_snafu::{Error, Result, ResultExt};
     use n0_watcher::Watcher;
     use quinn::ConnectionError;
     use rand::SeedableRng;
-    use tracing::{error_span, info, info_span, Instrument};
+    use tracing::{Instrument, error_span, info, info_span};
     use tracing_test::traced_test;
 
     use super::Endpoint;
     use crate::{
+        RelayMode,
         endpoint::{ConnectOptions, Connection, ConnectionType, RemoteInfo},
         test_utils::{run_relay_server, run_relay_server_with},
-        RelayMode,
     };
 
     const TEST_ALPN: &[u8] = b"n0/iroh/test";

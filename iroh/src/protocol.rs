@@ -46,11 +46,11 @@ use n0_future::{
 };
 use snafu::{Backtrace, Snafu};
 use tokio_util::sync::CancellationToken;
-use tracing::{error, field::Empty, info_span, trace, warn, Instrument};
+use tracing::{Instrument, error, field::Empty, info_span, trace, warn};
 
 use crate::{
-    endpoint::{Connecting, Connection, RemoteNodeIdError},
     Endpoint,
+    endpoint::{Connecting, Connection, RemoteNodeIdError},
 };
 
 /// The built router.
@@ -579,7 +579,7 @@ mod tests {
     use quinn::ApplicationClose;
 
     use super::*;
-    use crate::{endpoint::ConnectionError, RelayMode};
+    use crate::{RelayMode, endpoint::ConnectionError};
 
     #[tokio::test]
     async fn test_shutdown() -> Result {
