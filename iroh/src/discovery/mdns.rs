@@ -157,6 +157,12 @@ impl MdnsDiscoveryBuilder {
     }
 }
 
+impl Default for MdnsDiscoveryBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl IntoDiscovery for MdnsDiscoveryBuilder {
     fn into_discovery(
         self,
@@ -345,7 +351,7 @@ impl MdnsDiscovery {
         let handle = task::spawn(discovery_fut.instrument(info_span!("swarm-discovery.actor")));
         Ok(Self {
             handle: AbortOnDropHandle::new(handle),
-            advertise: advertise,
+            advertise,
             sender: send,
             local_addrs,
         })
