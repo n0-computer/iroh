@@ -51,6 +51,6 @@ netwatch = { git = "https://github.com/n0-computer/net-tools", branch = "feat-mu
 # iroh-quinn-proto = { path = "../iroh-quinn/quinn-proto" }
 # iroh-quinn-udp = { path = "../iroh-quinn/quinn-udp" }
 
-iroh-quinn = { git = "https://github.com//n0-computer/quinn", branch = "flub/open-path-ensure" }
-iroh-quinn-proto = { git = "https://github.com//n0-computer/quinn", branch = "flub/open-path-ensure" }
-iroh-quinn-udp = { git = "https://github.com//n0-computer/quinn", branch = "flub/open-path-ensure" }
+iroh-quinn = { git = "https://github.com//n0-computer/quinn", branch = "server-migrations" }
+iroh-quinn-proto = { git = "https://github.com//n0-computer/quinn", branch = "server-migrations" }
+iroh-quinn-udp = { git = "https://github.com//n0-computer/quinn", branch = "server-migrations" }
