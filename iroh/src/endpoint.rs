@@ -2439,7 +2439,6 @@ mod tests {
         Ok(())
     }
 
-    #[cfg_attr(windows, ignore = "flaky")]
     #[tokio::test]
     #[traced_test]
     async fn endpoint_relay_connect_loop() -> Result {
@@ -2452,65 +2451,63 @@ mod tests {
         let server_secret_key = SecretKey::generate(&mut rng);
         let server_node_id = server_secret_key.public();
 
+        // Make sure the server is bound before having clients connect to it:
+        let ep = Endpoint::builder()
+            .insecure_skip_relay_cert_verify(true)
+            .secret_key(server_secret_key)
+            .alpns(vec![TEST_ALPN.to_vec()])
+            .relay_mode(RelayMode::Custom(relay_map.clone()))
+            .bind()
+            .await?;
+        // Also make sure the server has a working relay connection
+        ep.home_relay().initialized().await?;
         // The server accepts the connections of the clients sequentially.
-        let server = {
-            let relay_map = relay_map.clone();
-            tokio::spawn(
-                async move {
-                    let ep = Endpoint::builder()
-                        .insecure_skip_relay_cert_verify(true)
-                        .secret_key(server_secret_key)
-                        .alpns(vec![TEST_ALPN.to_vec()])
-                        .relay_mode(RelayMode::Custom(relay_map))
-                        .bind()
-                        .await?;
-                    let eps = ep.bound_sockets();
+        let server = tokio::spawn(
+            async move {
+                let eps = ep.bound_sockets();
 
-                    info!(me = %ep.node_id().fmt_short(), eps = ?eps, "server listening on");
-                    for i in 0..n_clients {
-                        let round_start = Instant::now();
-                        info!("[server] round {i}");
-                        let incoming = ep.accept().await.e()?;
-                        let conn = incoming.await.e()?;
-                        let node_id = conn.remote_node_id()?;
-                        info!(%i, peer = %node_id.fmt_short(), "accepted connection");
-                        let (mut send, mut recv) = conn.accept_bi().await.e()?;
-                        let mut buf = vec![0u8; chunk_size];
-                        for _i in 0..n_chunks_per_client {
-                            recv.read_exact(&mut buf).await.e()?;
-                            send.write_all(&buf).await.e()?;
-                        }
-                        send.finish().e()?;
-                        send.stopped().await.e()?;
-                        recv.read_to_end(0).await.e()?;
-                        info!(%i, peer = %node_id.fmt_short(), "finished");
-                        info!("[server] round {i} done in {:?}", round_start.elapsed());
+                info!(me = %ep.node_id().fmt_short(), eps = ?eps, "server listening on");
+                for i in 0..n_clients {
+                    let round_start = Instant::now();
+                    info!("[server] round {i}");
+                    let incoming = ep.accept().await.e()?;
+                    let conn = incoming.await.e()?;
+                    let node_id = conn.remote_node_id()?;
+                    info!(%i, peer = %node_id.fmt_short(), "accepted connection");
+                    let (mut send, mut recv) = conn.accept_bi().await.e()?;
+                    let mut buf = vec![0u8; chunk_size];
+                    for _i in 0..n_chunks_per_client {
+                        recv.read_exact(&mut buf).await.e()?;
+                        send.write_all(&buf).await.e()?;
                     }
-                    Ok::<_, Error>(())
+                    send.finish().e()?;
+                    send.stopped().await.e()?;
+                    recv.read_to_end(0).await.e()?;
+                    info!(%i, peer = %node_id.fmt_short(), "finished");
+                    info!("[server] round {i} done in {:?}", round_start.elapsed());
                 }
-                .instrument(error_span!("server")),
-            )
-        };
+                Ok::<_, Error>(())
+            }
+            .instrument(error_span!("server")),
+        );
 
         for i in 0..n_clients {
             let round_start = Instant::now();
             info!("[client] round {}", i);
-            let relay_map = relay_map.clone();
             let client_secret_key = SecretKey::generate(&mut rng);
-            let relay_url = relay_url.clone();
             async {
                 info!("client binding");
                 let ep = Endpoint::builder()
                     .alpns(vec![TEST_ALPN.to_vec()])
                     .insecure_skip_relay_cert_verify(true)
-                    .relay_mode(RelayMode::Custom(relay_map))
+                    .relay_mode(RelayMode::Custom(relay_map.clone()))
                     .secret_key(client_secret_key)
                     .bind()
                     .await?;
                 let eps = ep.bound_sockets();
 
                 info!(me = %ep.node_id().fmt_short(), eps=?eps, "client bound");
-                let node_addr = NodeAddr::new(server_node_id).with_relay_url(relay_url);
+                let node_addr = NodeAddr::new(server_node_id).with_relay_url(relay_url.clone());
                 info!(to = ?node_addr, "client connecting");
                 let conn = ep.connect(node_addr, TEST_ALPN).await.e()?;
                 info!("client connected");
