@@ -138,12 +138,14 @@ pub struct MdnsDiscoveryBuilder {
 impl MdnsDiscoveryBuilder {
     /// See [`MdnsDiscovery::builder`].
     pub fn new() -> Self {
-        Self { advertise: true }
+        Self {
+            advertise: MDNS_ADVERTISE,
+        }
     }
 
     /// Sets whether this node should advertise its presence.
     ///
-    /// Default is [`DEFAULT_ADVERTISE`].
+    /// Default is [`MDNS_ADVERTISE`].
     pub fn advertise(mut self, advertise: bool) -> Self {
         self.advertise = advertise;
         self
