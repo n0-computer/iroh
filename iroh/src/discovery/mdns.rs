@@ -133,7 +133,7 @@ pub struct MdnsDiscoveryBuilder {
 }
 
 impl MdnsDiscoveryBuilder {
-    /// See [`MdnsDiscovery::builder`].
+    /// Creates a new [`MdnsDiscoveryBuilder`] with default settings.
     pub fn new() -> Self {
         Self { advertise: true }
     }
@@ -146,7 +146,7 @@ impl MdnsDiscoveryBuilder {
         self
     }
 
-    /// See [`MdnsDiscovery::new`].
+    /// Builds an [`MdnsDiscovery`] instance with the configured settings.
     pub fn build(self, node_id: NodeId) -> Result<MdnsDiscovery, IntoDiscoveryError> {
         MdnsDiscovery::new(node_id, self.advertise)
     }
