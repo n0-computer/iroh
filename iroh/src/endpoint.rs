@@ -2443,7 +2443,7 @@ mod tests {
     #[tokio::test]
     #[traced_test]
     async fn endpoint_relay_connect_loop() -> Result {
-        let start = Instant::now();
+        let test_start = Instant::now();
         let n_clients = 5;
         let n_chunks_per_client = 2;
         let chunk_size = 10;
@@ -2462,6 +2462,9 @@ mod tests {
             .await?;
         // Also make sure the server has a working relay connection
         ep.home_relay().initialized().await?;
+
+        info!(time = ?test_start.elapsed(), "test setup done");
+
         // The server accepts the connections of the clients sequentially.
         let server = tokio::spawn(
             async move {
@@ -2492,9 +2495,11 @@ mod tests {
             .instrument(error_span!("server")),
         );
 
+        let start = Instant::now();
+
         for i in 0..n_clients {
             let round_start = Instant::now();
-            info!("[client] round {}", i);
+            info!("[client] round {i}");
             let client_secret_key = SecretKey::generate(&mut rng);
             async {
                 info!("client binding");
