@@ -2485,8 +2485,7 @@ mod tests {
                         send.write_all(&buf).await.e()?;
                     }
                     send.finish().e()?;
-                    send.stopped().await.e()?;
-                    recv.read_to_end(0).await.e()?;
+                    conn.closed().await; // we're the last to receive data, so we wait for close
                     info!(%i, peer = %node_id.fmt_short(), "finished");
                     info!("[server] round {i} done in {:?}", round_start.elapsed());
                 }
@@ -2525,9 +2524,8 @@ mod tests {
                     recv.read_exact(&mut buf).await.e()?;
                     assert_eq!(buf, vec![i; chunk_size]);
                 }
-                send.finish().e()?;
-                send.stopped().await.e()?;
-                recv.read_to_end(0).await.e()?;
+                // we're the last to receive data, so we close
+                conn.close(0u32.into(), b"bye!");
                 info!("client finished");
                 ep.close().await;
                 info!("client closed");
