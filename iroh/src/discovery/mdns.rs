@@ -67,9 +67,6 @@ const USER_DATA_ATTRIBUTE: &str = "user-data";
 /// How long we will wait before we stop sending discovery items
 const DISCOVERY_DURATION: Duration = Duration::from_secs(10);
 
-/// Whether this node should advertise itself
-const MDNS_ADVERTISE: bool = true;
-
 /// Discovery using `swarm-discovery`, a variation on mdns
 #[derive(Debug)]
 pub struct MdnsDiscovery {
@@ -138,14 +135,12 @@ pub struct MdnsDiscoveryBuilder {
 impl MdnsDiscoveryBuilder {
     /// See [`MdnsDiscovery::builder`].
     pub fn new() -> Self {
-        Self {
-            advertise: MDNS_ADVERTISE,
-        }
+        Self { advertise: true }
     }
 
     /// Sets whether this node should advertise its presence.
     ///
-    /// Default is [`MDNS_ADVERTISE`].
+    /// Default is true.
     pub fn advertise(mut self, advertise: bool) -> Self {
         self.advertise = advertise;
         self
