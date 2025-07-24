@@ -6,3 +6,4 @@
 # everyone who runs the test benefits from these saved cases.
 cc 9295f5287162dfb180e5826e563c2cea08b477b803ef412ff8351eb5c3eb45ef # shrinks to frame = KeepAlive
 cc 753aabcf8ae2b4e4a52f451d58339aab85a4b61108afdf4b9600f97b3a33bf42 # shrinks to frame = Health { problem: None }
+cc 2b45ae945ff922d4c3dfbad31a5e57c535c0ee2739906272f21ed77f8b862528 # shrinks to frame = Datagrams { remote_node_id: PublicKey(3b6a27bcceb6a42d62a3a8d02a6f0d73653215771de243a63ac048a18b59da29), datagrams: Datagrams { ecn: None, segment_size: Some(0), .. } }

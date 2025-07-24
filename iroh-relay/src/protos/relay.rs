@@ -7,6 +7,8 @@
 //!  * server then sends [`FrameType::RelayToClientDatagram`] or [`FrameType::RelayToClientDatagramBatch`] to recipient
 //!  * server sends [`FrameType::NodeGone`] when the other client disconnects
 
+use std::num::NonZeroU16;
+
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use iroh_base::{NodeId, SignatureError};
 use n0_future::time::Duration;
@@ -138,7 +140,7 @@ pub struct Datagrams {
     pub ecn: Option<quinn_proto::EcnCodepoint>,
     /// The segment size if this transmission contains multiple datagrams.
     /// This is `None` if the transmit only contains a single datagram
-    pub segment_size: Option<u16>,
+    pub segment_size: Option<NonZeroU16>,
     /// The contents of the datagram(s)
     #[debug(skip)]
     pub contents: Bytes,
@@ -159,7 +161,7 @@ impl Datagrams {
         let ecn = self.ecn.map_or(0, |ecn| ecn as u8);
         dst.put_u8(ecn);
         if let Some(segment_size) = self.segment_size {
-            dst.put_u16(segment_size);
+            dst.put_u16(segment_size.into());
         }
         dst.put(self.contents.as_ref());
         dst
@@ -185,11 +187,7 @@ impl Datagrams {
 
         let segment_size = if is_batch {
             let segment_size = bytes.get_u16(); // length checked above
-            if segment_size == 0 {
-                None
-            } else {
-                Some(segment_size)
-            }
+            NonZeroU16::new(segment_size)
         } else {
             None
         };
@@ -519,7 +517,7 @@ mod tests {
                     remote_node_id: client_key.public(),
                     datagrams: Datagrams {
                         ecn: Some(quinn::EcnCodepoint::Ce),
-                        segment_size: Some(6),
+                        segment_size: NonZeroU16::new(6),
                         contents: "Hello World!".into(),
                     },
                 }
@@ -589,7 +587,7 @@ mod tests {
                     dst_node_id: client_key.public(),
                     datagrams: Datagrams {
                         ecn: Some(quinn::EcnCodepoint::Ce),
-                        segment_size: Some(6),
+                        segment_size: NonZeroU16::new(6),
                         contents: "Hello World!".into(),
                     },
                 }
@@ -668,7 +666,9 @@ mod proptests {
         )
             .prop_map(|(ecn, segment_size, data)| Datagrams {
                 ecn,
-                segment_size: segment_size.map(|ss| std::cmp::min(data.len(), ss) as u16),
+                segment_size: segment_size
+                    .map(|ss| std::cmp::min(data.len(), ss) as u16)
+                    .and_then(NonZeroU16::new),
                 contents: Bytes::from(data),
             })
     }

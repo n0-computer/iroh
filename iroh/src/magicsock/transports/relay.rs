@@ -1,5 +1,6 @@
 use std::{
     io,
+    num::NonZeroU16,
     task::{Context, Poll},
 };
 
@@ -104,7 +105,7 @@ impl RelayTransport {
             meta_out.stride = dm
                 .datagrams
                 .segment_size
-                .map_or(dm.datagrams.contents.len(), |s| s as usize);
+                .map_or(dm.datagrams.contents.len(), |s| u16::from(s) as usize);
             meta_out.ecn = None;
             meta_out.dst_ip = None; // TODO: insert the relay url for this relay
 
@@ -314,7 +315,10 @@ fn datagrams_from_transmit(transmit: &Transmit<'_>) -> Datagrams {
             quinn_udp::EcnCodepoint::Ect1 => quinn_proto::EcnCodepoint::Ect1,
             quinn_udp::EcnCodepoint::Ce => quinn_proto::EcnCodepoint::Ce,
         }),
-        segment_size: transmit.segment_size.map(|ss| ss as u16),
+        segment_size: transmit
+            .segment_size
+            .map(|ss| ss as u16)
+            .and_then(NonZeroU16::new),
         contents: Bytes::copy_from_slice(transmit.contents),
     }
 }
