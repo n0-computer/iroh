@@ -562,16 +562,24 @@ mod tests {
             let (_, discovery_a) = make_discoverer(false)?;
             let (node_id_b, discovery_b) = make_discoverer(false)?;
 
-            let node_data = NodeData::new(None, BTreeSet::from(["0.0.0.0:11111".parse().unwrap()]));
+            let (node_id_c, discovery_c) = make_discoverer(true)?;
+            let node_data_c =
+                NodeData::new(None, BTreeSet::from(["0.0.0.0:22222".parse().unwrap()]));
+            discovery_c.publish(&node_data_c);
 
-            discovery_b.publish(&node_data);
+            let node_data_b =
+                NodeData::new(None, BTreeSet::from(["0.0.0.0:11111".parse().unwrap()]));
+            discovery_b.publish(&node_data_b);
 
-            let mut stream = discovery_a.resolve(node_id_b).unwrap();
+            let mut stream_c = discovery_a.resolve(node_id_c).unwrap();
+            let result_c = tokio::time::timeout(Duration::from_secs(2), stream_c.next()).await;
+            assert!(result_c.is_ok(), "Advertising node should be discoverable");
 
-            let result = tokio::time::timeout(Duration::from_secs(2), stream.next()).await;
+            let mut stream_b = discovery_a.resolve(node_id_b).unwrap();
+            let result_b = tokio::time::timeout(Duration::from_secs(2), stream_b.next()).await;
             assert!(
-                result.is_err(),
-                "Expected timeout since node isn't advertising"
+                result_b.is_err(),
+                "Expected timeout since node b isn't advertising"
             );
 
             Ok(())
