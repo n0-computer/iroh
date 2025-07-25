@@ -349,10 +349,10 @@ impl PublisherService {
         let republish = time::sleep(Duration::MAX);
         tokio::pin!(republish);
         loop {
-            let Ok(info) = self.watcher.get() else {
-                break; // disconnected
-            };
-            if let Some(info) = info {
+            if !self.watcher.is_connected() {
+                break;
+            }
+            if let Some(info) = self.watcher.get() {
                 match self.publish_current(info).await {
                     Err(err) => {
                         failed_attempts += 1;

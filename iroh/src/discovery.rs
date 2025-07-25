@@ -872,7 +872,7 @@ mod tests {
         };
         let ep1_addr = NodeAddr::new(ep1.node_id());
         // wait for our address to be updated and thus published at least once
-        ep1.node_addr().initialized().await?;
+        ep1.node_addr().initialized().await;
         let _conn = ep2.connect(ep1_addr, TEST_ALPN).await?;
         Ok(())
     }
@@ -898,10 +898,7 @@ mod tests {
         };
         let ep1_addr = NodeAddr::new(ep1.node_id());
         // wait for out address to be updated and thus published at least once
-        ep1.node_addr()
-            .initialized()
-            .await
-            .context("waiting for NodeAddr")?;
+        ep1.node_addr().initialized().await;
         let _conn = ep2
             .connect(ep1_addr, TEST_ALPN)
             .await
@@ -933,7 +930,7 @@ mod tests {
             new_endpoint(secret, disco).await
         };
         // wait for out address to be updated and thus published at least once
-        ep1.node_addr().initialized().await?;
+        ep1.node_addr().initialized().await;
         let _conn = ep2.connect(ep1.node_id(), TEST_ALPN).await?;
         Ok(())
     }
@@ -955,7 +952,7 @@ mod tests {
             new_endpoint(secret, disco).await
         };
         // wait for out address to be updated and thus published at least once
-        ep1.node_addr().initialized().await?;
+        ep1.node_addr().initialized().await;
 
         // 10x faster test via a 3s idle timeout instead of the 30s default
         let mut config = TransportConfig::default();
@@ -988,7 +985,7 @@ mod tests {
             new_endpoint(secret, disco).await
         };
         // wait for out address to be updated and thus published at least once
-        ep1.node_addr().initialized().await?;
+        ep1.node_addr().initialized().await;
         let ep1_wrong_addr = NodeAddr {
             node_id: ep1.node_id(),
             relay_url: None,
@@ -1016,7 +1013,7 @@ mod tests {
         let mut stream = ep1.discovery_stream();
 
         // wait for ep2 node addr to be updated and connect from ep1 -> discovery via resolve
-        ep2.node_addr().initialized().await?;
+        ep2.node_addr().initialized().await;
         let _ = ep1.connect(ep2.node_id(), TEST_ALPN).await?;
 
         let item = tokio::time::timeout(Duration::from_secs(1), stream.next())
