@@ -258,7 +258,7 @@ enum RunError {
 })]
 #[derive(Debug, Snafu)]
 enum DialError {
-    #[snafu(display("timeout (>{timeout:?}) trying to establish a connection "))]
+    #[snafu(display("timeout (>{timeout:?}) trying to establish a connection"))]
     Timeout { timeout: Duration },
     #[snafu(display("unable to connect"))]
     Connect {
