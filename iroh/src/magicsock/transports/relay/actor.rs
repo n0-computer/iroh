@@ -258,8 +258,8 @@ enum RunError {
 })]
 #[derive(Debug, Snafu)]
 enum DialError {
-    #[snafu(display("timeout trying to establish a connection"))]
-    Timeout {},
+    #[snafu(display("timeout (>{timeout:?}) trying to establish a connection "))]
+    Timeout { timeout: Duration },
     #[snafu(display("unable to connect"))]
     Connect {
         #[snafu(source(from(ConnectError, Box::new)))]
@@ -498,7 +498,10 @@ impl ActiveRelayActor {
             match time::timeout(CONNECT_TIMEOUT, client_builder.connect()).await {
                 Ok(Ok(client)) => Ok(client),
                 Ok(Err(err)) => Err(ConnectSnafu.into_error(err)),
-                Err(_) => Err(TimeoutSnafu.build()),
+                Err(_) => Err(TimeoutSnafu {
+                    timeout: CONNECT_TIMEOUT,
+                }
+                .build()),
             }
         }
     }
