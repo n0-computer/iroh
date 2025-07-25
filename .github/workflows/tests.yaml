@@ -34,7 +34,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        name: [ubuntu-latest, macOS-arm-latest]
+        name: [ubuntu-latest, macOS-arm-latest, macOS-x64-latest]
         rust: ["${{ inputs.rust-version }}"]
         features: [all, none, default]
         include:
@@ -42,11 +42,19 @@ jobs:
             os: ubuntu-latest
             release-os: linux
             release-arch: amd64
+            cargo_targets: "x86_64-unknown-linux-musl"
             runner: [self-hosted, linux, X64]
           - name: macOS-arm-latest
             os: macOS-latest
             release-os: darwin
             release-arch: aarch64
+            cargo_targets: "aarch64-apple-darwin"
+            runner: [self-hosted, macOS, ARM64]
+          - name: macOS-x64-latest
+            os: macOS-latest
+            release-os: darwin
+            release-arch: x86_64
+            cargo_targets: "x86_64-apple-darwin"
             runner: [self-hosted, macOS, ARM64]
     env:
       # Using self-hosted runners so use local cache for sccache and
@@ -58,11 +66,16 @@ jobs:
         with:
           ref: ${{ inputs.git-ref }}
 
+      - name: Ensure musl support
+        if: ${{ contains(matrix.cargo_targets, '-musl') }}
+        run: sudo apt-get install musl-tools -y
+  
       - name: Install ${{ matrix.rust }} rust
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.rust }}
-
+          targets: ${{ matrix.cargo_targets }}
+      
       - name: Install cargo-nextest
         uses: taiki-e/install-action@v2
         with:
@@ -94,24 +107,26 @@ jobs:
           do
             echo "Checking $i $FEATURES"
             targets="--lib --bins"
-            echo cargo check -p $i $FEATURES $targets
-            cargo check -p $i $FEATURES $targets
+            # echo cargo check -p $i $FEATURES $targets
+            # cargo check -p $i $FEATURES $targets
+            echo "cargo check -p $i $FEATURES $targets --target ${{ matrix.cargo_targets }}"
+            cargo check -p $i $FEATURES $targets --target ${{ matrix.cargo_targets }}
           done
         env:
           RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG'}}
 
       - name: build tests
         run: |
-          cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests --no-run
+          cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests --no-run --target ${{ matrix.cargo_targets }}
 
       - name: list ignored tests
         run: |
-          cargo nextest list --workspace ${{ env.FEATURES }} --lib --bins --tests --run-ignored ignored-only
+          cargo nextest list --workspace ${{ env.FEATURES }} --lib --bins --tests --run-ignored ignored-only --target ${{ matrix.cargo_targets }}
 
       - name: run tests
         run: |
           mkdir -p output
-          cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests --profile ci --run-ignored ${{ inputs.flaky && 'all' || 'default' }} ${{ inputs.flaky && '--verbose' || '' }} --no-fail-fast --message-format ${{ inputs.flaky && 'libtest-json' || 'human' }} > output/${{ matrix.name }}_${{ matrix.features }}_${{ matrix.rust }}.json
+          cargo nextest run --workspace ${{ env.FEATURES }} --lib --bins --tests --profile ci --run-ignored ${{ inputs.flaky && 'all' || 'default' }} ${{ inputs.flaky && '--verbose' || '' }} --target ${{ matrix.cargo_targets }} --no-fail-fast --message-format ${{ inputs.flaky && 'libtest-json' || 'human' }} > output/${{ matrix.name }}_${{ matrix.features }}_${{ matrix.rust }}.json
         env:
           RUST_LOG: ${{ runner.debug && 'TRACE' || 'DEBUG'}}
           NEXTEST_EXPERIMENTAL_LIBTEST_JSON: 1
