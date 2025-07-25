@@ -2485,7 +2485,7 @@
 <a href=#2485 id=2485 data-nosnippet>2485</a>                        send.write_all(<span class="kw-2">&amp;</span>buf).<span class="kw">await</span>.e()<span class="question-mark">?</span>;
 <a href=#2486 id=2486 data-nosnippet>2486</a>                    }
 <a href=#2487 id=2487 data-nosnippet>2487</a>                    send.finish().e()<span class="question-mark">?</span>;
-<a href=#2488 id=2488 data-nosnippet>2488</a>                    conn.closed().<span class="kw">await</span>; <span class="comment">// we're the last to receive data, so we wait for close
+<a href=#2488 id=2488 data-nosnippet>2488</a>                    conn.closed().<span class="kw">await</span>; <span class="comment">// we're the last to send data, so we wait for the other side to close
 <a href=#2489 id=2489 data-nosnippet>2489</a>                    </span><span class="macro">info!</span>(%i, peer = %node_id.fmt_short(), <span class="string">"finished"</span>);
 <a href=#2490 id=2490 data-nosnippet>2490</a>                    <span class="macro">info!</span>(<span class="string">"[server] round {i} done in {:?}"</span>, round_start.elapsed());
 <a href=#2491 id=2491 data-nosnippet>2491</a>                }
