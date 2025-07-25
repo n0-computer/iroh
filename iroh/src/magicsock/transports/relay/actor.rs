@@ -615,15 +615,9 @@ impl ActiveRelayActor {
                         break Ok(());
                     };
                     self.reset_inactive_timeout();
-                    // TODO: This allocation is *very* unfortunate.  But so is the
-                    // allocation *inside* of PacketizeIter...
-                    let batch = std::mem::replace(
-                        &mut send_datagrams_buf,
-                        Vec::with_capacity(SEND_DATAGRAM_BATCH_SIZE),
-                    );
                     // TODO(frando): can we avoid the clone here?
                     let metrics = self.metrics.clone();
-                    let packet_iter = batch.into_iter().map(|item| {
+                    let packet_iter = send_datagrams_buf.drain(..).map(|item| {
                         metrics.send_relay.inc_by(item.datagrams.contents.len() as _);
                         Ok(ClientToRelayMsg::Datagrams {
                             dst_node_id: item.remote_node,
