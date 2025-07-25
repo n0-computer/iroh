@@ -767,30 +767,28 @@ async fn run_probe_v6(
     };
 
     let observer = Watchable::new(None);
-    let ob = observer.clone();
     let node = relay_node.url.clone();
-    let conn2 = conn.clone();
-    let handle = task::spawn(async move {
-        loop {
-            let val = *receiver.borrow();
-            // if we've sent to an ipv4 address, but received an observed address
-            // that is ivp6 then the address is an IPv4-Mapped IPv6 Addresses
-            let val = val.map(|val| SocketAddr::new(val.ip().to_canonical(), val.port()));
-            let latency = conn2.rtt();
-            trace!(?val, ?relay_addr, ?latency, "got addr V6");
-            if ob
-                .set(val.map(|addr| QadProbeReport {
-                    node: node.clone(),
-                    addr,
-                    latency,
-                }))
-                .is_err()
-            {
-                // cancel if the observer is gone
-                break;
-            }
-            if receiver.changed().await.is_err() {
-                break;
+    let handle = task::spawn({
+        let observer = observer.clone();
+        let conn = conn.clone();
+        async move {
+            loop {
+                let val = *receiver.borrow();
+                // if we've sent to an ipv4 address, but received an observed address
+                // that is ivp6 then the address is an [IPv4-Mapped IPv6 Addresses](https://doc.rust-lang.org/beta/std/net/struct.Ipv6Addr.html#ipv4-mapped-ipv6-addresses)
+                let val = val.map(|val| SocketAddr::new(val.ip().to_canonical(), val.port()));
+                let latency = conn.rtt();
+                trace!(?val, ?relay_addr, ?latency, "got addr V6");
+                observer
+                    .set(val.map(|addr| QadProbeReport {
+                        node: node.clone(),
+                        addr,
+                        latency,
+                    }))
+                    .ok();
+                if receiver.changed().await.is_err() {
+                    break;
+                }
             }
         }
     });
