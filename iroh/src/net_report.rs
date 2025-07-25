@@ -450,7 +450,7 @@ impl Client {
                             PROBES_TIMEOUT,
                             run_probe_v4(ip_mapped_addrs, relay_node, quic_client, dns_resolver),
                         ))
-                        .instrument(info_span!("QAD IPv4", %relay_url)),
+                        .instrument(info_span!("QAD-IPv4", %relay_url)),
                 );
             }
 
@@ -468,7 +468,7 @@ impl Client {
                             PROBES_TIMEOUT,
                             run_probe_v6(ip_mapped_addrs, relay_node, quic_client, dns_resolver),
                         ))
-                        .instrument(info_span!("QAD IPv6", %relay_url)),
+                        .instrument(info_span!("QAD-IPv6", %relay_url)),
                 );
             }
         }
