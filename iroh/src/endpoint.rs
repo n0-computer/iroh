@@ -2485,7 +2485,7 @@ mod tests {
                         send.write_all(&buf).await.e()?;
                     }
                     send.finish().e()?;
-                    conn.closed().await; // we're the last to receive data, so we wait for close
+                    conn.closed().await; // we're the last to send data, so we wait for the other side to close
                     info!(%i, peer = %node_id.fmt_short(), "finished");
                     info!("[server] round {i} done in {:?}", round_start.elapsed());
                 }
