@@ -154,8 +154,8 @@
 //! ## Node Discovery
 //!
 //! The need to know the [`RelayUrl`] *or* some direct addresses in addition to the
-//! [`NodeId`] to connect to an iroh node can be an obstacle.  To address this the
-//! [`endpoint::Builder`] allows to configure a [`discovery`] service.
+//! [`NodeId`] to connect to an iroh node can be an obstacle.  To address this, the
+//! [`endpoint::Builder`] allows you to configure a [`discovery`] service.
 //!
 //! The [`DnsDiscovery`] service is a discovery service which will publish the [`RelayUrl`]
 //! and direct addresses to a service publishing those as DNS records.  To connect it looks
