@@ -257,9 +257,8 @@ mod key;
 mod magicsock;
 mod tls;
 
+pub(crate) mod quinn_runtime;
 pub(crate) mod util;
-#[cfg(wasm_browser)]
-pub(crate) mod web_runtime;
 
 pub mod defaults;
 pub mod discovery;

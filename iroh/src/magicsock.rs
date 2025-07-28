@@ -75,6 +75,7 @@ use crate::{
     key::{DecryptionError, SharedSecret, public_ed_box, secret_ed_box},
     metrics::EndpointMetrics,
     net_report::{self, IfStateDetails, IpMappedAddresses, Report},
+    quinn_runtime::Runtime,
 };
 
 mod metrics;
@@ -155,12 +156,14 @@ pub(crate) struct Options {
 pub(crate) struct Handle {
     #[deref(forward)]
     msock: Arc<MagicSock>,
-    // empty when shutdown
+    /// empty when shutdown
     actor_task: Arc<Mutex<Option<AbortOnDropHandle<()>>>>,
     /// Token to cancel the actor task.
     actor_token: CancellationToken,
-    // quinn endpoint
+    /// quinn endpoint
     endpoint: quinn::Endpoint,
+    /// Runtime used by quinn
+    runtime: Arc<Runtime>,
 }
 
 /// Iroh connectivity layer.
@@ -1322,6 +1325,8 @@ impl Handle {
         let local_addrs_watch = transports.local_addrs_watch();
         let network_change_sender = transports.create_network_change_sender();
 
+        let runtime = Arc::new(Runtime::new());
+
         let endpoint = quinn::Endpoint::new_with_abstract_socket(
             endpoint_config,
             Some(server_config),
@@ -1329,10 +1334,7 @@ impl Handle {
                 socket: msock.clone(),
                 transports,
             }),
-            #[cfg(not(wasm_browser))]
-            Arc::new(quinn::TokioRuntime),
-            #[cfg(wasm_browser)]
-            Arc::new(crate::web_runtime::WebRuntime),
+            runtime.clone(),
         )
         .context(CreateQuinnEndpointSnafu)?;
 
@@ -1401,9 +1403,13 @@ impl Handle {
         let actor_token = CancellationToken::new();
         let token = actor_token.clone();
         let actor_task = task::spawn(
-            actor
-                .run(token, local_addrs_watch, sender)
-                .instrument(info_span!("actor")),
+            async move {
+                token
+                    .run_until_cancelled_owned(actor.run(local_addrs_watch, sender))
+                    .await;
+                debug!("shutting down");
+            }
+            .instrument(info_span!("actor")),
         );
 
         let actor_task = Arc::new(Mutex::new(Some(AbortOnDropHandle::new(actor_task))));
@@ -1413,6 +1419,7 @@ impl Handle {
             actor_task,
             endpoint,
             actor_token,
+            runtime,
         })
     }
 
@@ -1473,6 +1480,8 @@ impl Handle {
                 }
             }
         }
+
+        self.runtime.shutdown().await; // This waits for the EndpointDriver and all ConnectionDrivers to shut down
 
         self.msock.closed.store(true, Ordering::SeqCst);
 
@@ -1721,7 +1730,6 @@ fn bind_ip(
 impl Actor {
     async fn run(
         mut self,
-        shutdown_token: CancellationToken,
         mut watcher: impl Watcher<Value = Vec<transports::Addr>> + Send + Sync,
         sender: UdpSender,
     ) {
@@ -1767,10 +1775,6 @@ impl Actor {
             let direct_addr_heartbeat_timer_tick = n0_future::future::pending();
 
             tokio::select! {
-                _ = shutdown_token.cancelled() => {
-                    debug!("shutting down");
-                    return;
-                }
                 msg = self.msg_receiver.recv(), if !receiver_closed => {
                     let Some(msg) = msg else {
                         trace!("tick: magicsock receiver closed");
