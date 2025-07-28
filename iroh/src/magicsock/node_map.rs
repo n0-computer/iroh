@@ -11,18 +11,15 @@ use serde::{Deserialize, Serialize};
 use stun_rs::TransactionId;
 use tracing::{debug, info, instrument, trace, warn};
 
-use self::{
-    best_addr::ClearReason,
-    node_state::{NodeState, Options, PingHandled},
-};
+use self::node_state::{NodeState, Options, PingHandled};
 use super::{ActorMessage, NodeIdMappedAddr, metrics::Metrics, transports};
 use crate::disco::{CallMeMaybe, Pong, SendAddr};
 #[cfg(any(test, feature = "test-utils"))]
 use crate::endpoint::PathSelection;
 
-mod best_addr;
 mod node_state;
 mod path_state;
+mod path_validity;
 mod udp_paths;
 
 pub use node_state::{ConnectionType, ControlMsg, DirectAddrInfo, RemoteInfo};
@@ -196,7 +193,7 @@ impl NodeMap {
             .expect("poisoned")
             .get_mut(NodeStateKey::Idx(id))
         {
-            ep.ping_timeout(tx_id);
+            ep.ping_timeout(tx_id, Instant::now());
         }
     }
 
@@ -266,9 +263,10 @@ impl NodeMap {
     }
 
     pub(super) fn reset_node_states(&self) {
+        let now = Instant::now();
         let mut inner = self.inner.lock().expect("poisoned");
         for (_, ep) in inner.node_states_mut() {
-            ep.note_connectivity_change();
+            ep.note_connectivity_change(now);
         }
     }
 
@@ -317,7 +315,7 @@ impl NodeMap {
         self.inner
             .lock()
             .expect("poisoned")
-            .on_direct_addr_discovered(discovered);
+            .on_direct_addr_discovered(discovered, Instant::now());
     }
 }
 
@@ -378,24 +376,28 @@ impl NodeMapInner {
     }
 
     /// Prunes direct addresses from nodes that claim to share an address we know points to us.
-    pub(super) fn on_direct_addr_discovered(&mut self, discovered: BTreeSet<SocketAddr>) {
+    pub(super) fn on_direct_addr_discovered(
+        &mut self,
+        discovered: BTreeSet<SocketAddr>,
+        now: Instant,
+    ) {
         for addr in discovered {
-            self.remove_by_ipp(addr.into(), ClearReason::MatchesOurLocalAddr)
+            self.remove_by_ipp(addr.into(), now, "matches our local addr")
         }
     }
 
     /// Removes a direct address from a node.
-    fn remove_by_ipp(&mut self, ipp: IpPort, reason: ClearReason) {
+    fn remove_by_ipp(&mut self, ipp: IpPort, now: Instant, why: &'static str) {
         if let Some(id) = self.by_ip_port.remove(&ipp) {
             if let Entry::Occupied(mut entry) = self.by_id.entry(id) {
                 let node = entry.get_mut();
-                node.remove_direct_addr(&ipp, reason);
+                node.remove_direct_addr(&ipp, now, why);
                 if node.direct_addresses().count() == 0 {
                     let node_id = node.public_key();
                     let mapped_addr = node.quic_mapped_addr();
                     self.by_node_key.remove(node_id);
                     self.by_quic_mapped_addr.remove(mapped_addr);
-                    debug!(node_id=%node_id.fmt_short(), ?reason, "removing node");
+                    debug!(node_id=%node_id.fmt_short(), why, "removing node");
                     entry.remove();
                 }
             }
@@ -840,7 +842,7 @@ mod tests {
         }
 
         info!("Pruning addresses");
-        endpoint.prune_direct_addresses();
+        endpoint.prune_direct_addresses(Instant::now());
 
         // Half the offline addresses should have been pruned.  All the active and alive
         // addresses should have been kept.
