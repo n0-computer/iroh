@@ -973,7 +973,7 @@
 <a href=#973 id=973 data-nosnippet>973</a>    /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
 <a href=#974 id=974 data-nosnippet>974</a>    /// # rt.block_on(async move {
 <a href=#975 id=975 data-nosnippet>975</a>    /// let mep = Endpoint::builder().bind().await.unwrap();
-<a href=#976 id=976 data-nosnippet>976</a>    /// let _relay_url = mep.home_relay().initialized().await.unwrap();
+<a href=#976 id=976 data-nosnippet>976</a>    /// let _relay_url = mep.home_relay().initialized().await;
 <a href=#977 id=977 data-nosnippet>977</a>    /// # });
 <a href=#978 id=978 data-nosnippet>978</a>    /// ```
 <a href=#979 id=979 data-nosnippet>979</a>    </span><span class="kw">pub fn </span>home_relay(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>n0_watcher::Watcher&lt;Value = Vec&lt;RelayUrl&gt;&gt; + <span class="kw">use</span>&lt;&gt; {
@@ -1008,7 +1008,7 @@
 <a href=#1008 id=1008 data-nosnippet>1008</a>    /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
 <a href=#1009 id=1009 data-nosnippet>1009</a>    /// # rt.block_on(async move {
 <a href=#1010 id=1010 data-nosnippet>1010</a>    /// let ep = Endpoint::builder().bind().await.unwrap();
-<a href=#1011 id=1011 data-nosnippet>1011</a>    /// let _addrs = ep.direct_addresses().initialized().await.unwrap();
+<a href=#1011 id=1011 data-nosnippet>1011</a>    /// let _addrs = ep.direct_addresses().initialized().await;
 <a href=#1012 id=1012 data-nosnippet>1012</a>    /// # });
 <a href=#1013 id=1013 data-nosnippet>1013</a>    /// ```
 <a href=#1014 id=1014 data-nosnippet>1014</a>    ///
@@ -1042,7 +1042,7 @@
 <a href=#1042 id=1042 data-nosnippet>1042</a>    /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
 <a href=#1043 id=1043 data-nosnippet>1043</a>    /// # rt.block_on(async move {
 <a href=#1044 id=1044 data-nosnippet>1044</a>    /// let ep = Endpoint::builder().bind().await.unwrap();
-<a href=#1045 id=1045 data-nosnippet>1045</a>    /// let _report = ep.net_report().initialized().await.unwrap();
+<a href=#1045 id=1045 data-nosnippet>1045</a>    /// let _report = ep.net_report().initialized().await;
 <a href=#1046 id=1046 data-nosnippet>1046</a>    /// # });
 <a href=#1047 id=1047 data-nosnippet>1047</a>    /// ```
 <a href=#1048 id=1048 data-nosnippet>1048</a>    </span><span class="attr">#[doc(hidden)]

@@ -126,7 +126,7 @@ some time to connect to find and connect to the home relay server.</p>
 <div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>iroh::{Endpoint, Watcher};
 
 <span class="kw">let </span>mep = Endpoint::builder().bind().<span class="kw">await</span>.unwrap();
-<span class="kw">let </span>_relay_url = mep.home_relay().initialized().<span class="kw">await</span>.unwrap();</code></pre></div>
+<span class="kw">let </span>_relay_url = mep.home_relay().initialized().<span class="kw">await</span>;</code></pre></div>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.direct_addresses" class="method"><a class="src rightside" href="../../src/iroh/endpoint.rs.html#1016-1018">Source</a><h4 class="code-header">pub fn <a href="#method.direct_addresses" class="fn">direct_addresses</a>(&amp;self) -&gt; Direct&lt;<a class="enum" href="https://doc.rust-lang.org/nightly/core/option/enum.Option.html" title="enum core::option::Option">Option</a>&lt;<a class="struct" href="https://doc.rust-lang.org/nightly/alloc/collections/btree/set/struct.BTreeSet.html" title="struct alloc::collections::btree::set::BTreeSet">BTreeSet</a>&lt;<a class="struct" href="struct.DirectAddr.html" title="struct iroh::endpoint::DirectAddr">DirectAddr</a>&gt;&gt;&gt;</h4></section></summary><div class="docblock"><p>Returns a <a href="../trait.Watcher.html" title="trait iroh::Watcher"><code>Watcher</code></a> for the direct addresses of this <a href="struct.Endpoint.html" title="struct iroh::endpoint::Endpoint"><code>Endpoint</code></a>.</p>
 <p>The direct addresses of the <a href="struct.Endpoint.html" title="struct iroh::endpoint::Endpoint"><code>Endpoint</code></a> are those that could be used by other
 iroh nodes to establish direct connectivity, depending on the network
@@ -148,7 +148,7 @@ recently discovered direct addresses.</p>
 <div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>iroh::{Endpoint, Watcher <span class="kw">as _</span>};
 
 <span class="kw">let </span>ep = Endpoint::builder().bind().<span class="kw">await</span>.unwrap();
-<span class="kw">let </span>_addrs = ep.direct_addresses().initialized().<span class="kw">await</span>.unwrap();</code></pre></div>
+<span class="kw">let </span>_addrs = ep.direct_addresses().initialized().<span class="kw">await</span>;</code></pre></div>
 </div></details><details class="toggle method-toggle" open><summary><section id="method.bound_sockets" class="method"><a class="src rightside" href="../../src/iroh/endpoint.rs.html#1057-1063">Source</a><h4 class="code-header">pub fn <a href="#method.bound_sockets" class="fn">bound_sockets</a>(&amp;self) -&gt; <a class="struct" href="https://doc.rust-lang.org/nightly/alloc/vec/struct.Vec.html" title="struct alloc::vec::Vec">Vec</a>&lt;<a class="enum" href="https://doc.rust-lang.org/nightly/core/net/socket_addr/enum.SocketAddr.html" title="enum core::net::socket_addr::SocketAddr">SocketAddr</a>&gt;</h4></section></summary><div class="docblock"><p>Returns the local socket addresses on which the underlying sockets are bound.</p>
 <p>The <a href="struct.Endpoint.html" title="struct iroh::endpoint::Endpoint"><code>Endpoint</code></a> always binds on an IPv4 address and also tries to bind on an IPv6
 address if available.</p>
