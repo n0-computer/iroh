@@ -2307,7 +2307,7 @@
 <a href=#2307 id=2307 data-nosnippet>2307</a>            .bind()
 <a href=#2308 id=2308 data-nosnippet>2308</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#2309 id=2309 data-nosnippet>2309</a>        <span class="comment">// Wait for the endpoint to be reachable via relay
-<a href=#2310 id=2310 data-nosnippet>2310</a>        </span>ep.home_relay().initialized().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#2310 id=2310 data-nosnippet>2310</a>        </span>ep.home_relay().initialized().<span class="kw">await</span>;
 <a href=#2311 id=2311 data-nosnippet>2311</a>
 <a href=#2312 id=2312 data-nosnippet>2312</a>        <span class="kw">let </span>server = tokio::spawn(
 <a href=#2313 id=2313 data-nosnippet>2313</a>            <span class="kw">async move </span>{
@@ -2461,7 +2461,7 @@
 <a href=#2461 id=2461 data-nosnippet>2461</a>            .bind()
 <a href=#2462 id=2462 data-nosnippet>2462</a>            .<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#2463 id=2463 data-nosnippet>2463</a>        <span class="comment">// Also make sure the server has a working relay connection
-<a href=#2464 id=2464 data-nosnippet>2464</a>        </span>ep.home_relay().initialized().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#2464 id=2464 data-nosnippet>2464</a>        </span>ep.home_relay().initialized().<span class="kw">await</span>;
 <a href=#2465 id=2465 data-nosnippet>2465</a>
 <a href=#2466 id=2466 data-nosnippet>2466</a>        <span class="macro">info!</span>(time = <span class="question-mark">?</span>test_start.elapsed(), <span class="string">"test setup done"</span>);
 <a href=#2467 id=2467 data-nosnippet>2467</a>
