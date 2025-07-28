@@ -18,7 +18,6 @@ use tracing::{Level, debug, event, info, instrument, trace, warn};
 
 use super::{
     IpPort, Source,
-    best_addr::{self, ClearReason, Source as BestAddrSource},
     path_state::{PathState, summarize_node_paths},
     udp_paths::{NodeUdpPaths, UdpSendAddr},
 };
