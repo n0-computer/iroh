@@ -42,4 +42,4 @@ unexpected_cfgs = { level = "warn", check-cfg = ["cfg(iroh_docsrs)", "cfg(iroh_l
 unused-async = "warn"
 
 [patch.crates-io]
-netwatch = { git = "https://github.com/n0-computer/net-tools.git", branch = "matheus23/update-n0-watcher" }
+netwatch = { git = "https://github.com/n0-computer/net-tools.git", branch = "main" }

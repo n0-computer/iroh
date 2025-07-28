@@ -3009,7 +3009,7 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.7.0"
-source = "git+https://github.com/n0-computer/net-tools.git?branch=matheus23%2Fupdate-n0-watcher#a93b8cadfecc44677d864fd63f80441a11718bb7"
+source = "git+https://github.com/n0-computer/net-tools.git?branch=main#b9039269e3d8df121287ec7254cdb94476424372"
 dependencies = [
  "atomic-waker",
  "bytes",
