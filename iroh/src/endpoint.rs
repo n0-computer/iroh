@@ -38,7 +38,7 @@ use crate::discovery::pkarr::PkarrResolver;
 use crate::{discovery::dns::DnsDiscovery, dns::DnsResolver};
 use crate::{
     discovery::{
-        ConcurrentDiscovery, Discovery, DiscoveryContext, DiscoveryError, DiscoveryItem,
+        ConcurrentDiscovery, Discovery, DiscoveryContext, DiscoveryError, DiscoveryEvent,
         DiscoverySubscribers, DiscoveryTask, DynIntoDiscovery, IntoDiscovery, IntoDiscoveryError,
         Lagged, UserData, pkarr::PkarrPublisher,
     },
@@ -1117,7 +1117,7 @@ impl Endpoint {
     ///
     /// [`MdnsDiscovery`]: crate::discovery::mdns::MdnsDiscovery
     /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
-    pub fn discovery_stream(&self) -> impl Stream<Item = Result<DiscoveryItem, Lagged>> + use<> {
+    pub fn discovery_stream(&self) -> impl Stream<Item = Result<DiscoveryEvent, Lagged>> + use<> {
         self.msock.discovery_subscribers().subscribe()
     }
 

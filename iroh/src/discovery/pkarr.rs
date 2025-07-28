@@ -62,7 +62,7 @@ use snafu::{ResultExt, Snafu};
 use tracing::{Instrument, debug, error_span, warn};
 use url::Url;
 
-use super::{DiscoveryContext, DiscoveryError, IntoDiscovery, IntoDiscoveryError};
+use super::{DiscoveryContext, DiscoveryError, DiscoveryEvent, IntoDiscovery, IntoDiscoveryError};
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
 use crate::{
@@ -500,14 +500,17 @@ impl PkarrResolver {
 }
 
 impl Discovery for PkarrResolver {
-    fn resolve(&self, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
+    fn resolve(
+        &self,
+        node_id: NodeId,
+    ) -> Option<BoxStream<Result<DiscoveryEvent, DiscoveryError>>> {
         let pkarr_client = self.pkarr_client.clone();
         let fut = async move {
             let signed_packet = pkarr_client.resolve(node_id).await?;
             let info = NodeInfo::from_pkarr_signed_packet(&signed_packet)
                 .map_err(|err| DiscoveryError::from_err("pkarr", err))?;
             let item = DiscoveryItem::new(info, "pkarr", None);
-            Ok(item)
+            Ok(DiscoveryEvent::Discovered(item))
         };
         let stream = n0_future::stream::once_future(fut);
         Some(Box::pin(stream))

@@ -48,7 +48,7 @@ use tokio::sync::mpsc::{self, error::TrySendError};
 use tracing::{Instrument, debug, error, info_span, trace, warn};
 
 use super::{DiscoveryContext, DiscoveryError, IntoDiscovery, IntoDiscoveryError};
-use crate::discovery::{Discovery, DiscoveryItem, NodeData, NodeInfo};
+use crate::discovery::{Discovery, DiscoveryEvent, DiscoveryItem, NodeData, NodeInfo};
 
 /// The n0 local swarm node discovery name
 const N0_LOCAL_SWARM: &str = "iroh.local.swarm";
@@ -80,14 +80,14 @@ pub struct MdnsDiscovery {
 #[derive(Debug)]
 enum Message {
     Discovery(String, Peer),
-    Resolve(NodeId, mpsc::Sender<Result<DiscoveryItem, DiscoveryError>>),
+    Resolve(NodeId, mpsc::Sender<Result<DiscoveryEvent, DiscoveryError>>),
     Timeout(NodeId, usize),
-    Subscribe(mpsc::Sender<DiscoveryItem>),
+    Subscribe(mpsc::Sender<DiscoveryEvent>),
 }
 
 /// Manages the list of subscribers that are subscribed to this discovery service.
 #[derive(Debug)]
-struct Subscribers(Vec<mpsc::Sender<DiscoveryItem>>);
+struct Subscribers(Vec<mpsc::Sender<DiscoveryEvent>>);
 
 impl Subscribers {
     fn new() -> Self {
@@ -95,14 +95,14 @@ impl Subscribers {
     }
 
     /// Add the subscriber to the list of subscribers
-    fn push(&mut self, subscriber: mpsc::Sender<DiscoveryItem>) {
+    fn push(&mut self, subscriber: mpsc::Sender<DiscoveryEvent>) {
         self.0.push(subscriber);
     }
 
     /// Sends the `node_id` and `item` to each subscriber.
     ///
     /// Cleans up any subscribers that have been dropped.
-    fn send(&mut self, item: DiscoveryItem) {
+    fn send(&mut self, item: DiscoveryEvent) {
         let mut clean_up = vec![];
         for (i, subscriber) in self.0.iter().enumerate() {
             // assume subscriber was dropped
@@ -169,7 +169,7 @@ impl MdnsDiscovery {
             let mut last_id = 0;
             let mut senders: HashMap<
                 PublicKey,
-                HashMap<usize, mpsc::Sender<Result<DiscoveryItem, DiscoveryError>>>,
+                HashMap<usize, mpsc::Sender<Result<DiscoveryEvent, DiscoveryError>>>,
             > = HashMap::default();
             let mut timeouts = JoinSet::new();
             loop {
@@ -231,6 +231,7 @@ impl MdnsDiscovery {
                                 "removing node from MdnsDiscovery address book"
                             );
                             node_addrs.remove(&discovered_node_id);
+                            subscribers.send(DiscoveryEvent::Expired(discovered_node_id));
                             continue;
                         }
 
@@ -254,7 +255,10 @@ impl MdnsDiscovery {
                             trace!(?item, senders = senders.len(), "sending DiscoveryItem");
                             resolved = true;
                             for sender in senders.values() {
-                                sender.send(Ok(item.clone())).await.ok();
+                                sender
+                                    .send(Ok(DiscoveryEvent::Discovered(item.clone())))
+                                    .await
+                                    .ok();
                             }
                         }
                         entry.or_insert(peer_info);
@@ -263,7 +267,7 @@ impl MdnsDiscovery {
                         // in other words, nodes sent to the `subscribers` should only be the ones that
                         // have been "passively" discovered
                         if !resolved {
-                            subscribers.send(item);
+                            subscribers.send(DiscoveryEvent::Discovered(item));
                         }
                     }
                     Message::Resolve(node_id, sender) => {
@@ -273,7 +277,7 @@ impl MdnsDiscovery {
                         if let Some(peer_info) = node_addrs.get(&node_id) {
                             let item = peer_to_discovery_item(peer_info, &node_id);
                             debug!(?item, "sending DiscoveryItem");
-                            sender.send(Ok(item)).await.ok();
+                            sender.send(Ok(DiscoveryEvent::Discovered(item))).await.ok();
                         }
                         if let Some(senders_for_node_id) = senders.get_mut(&node_id) {
                             senders_for_node_id.insert(id, sender);
@@ -390,7 +394,10 @@ fn peer_to_discovery_item(peer: &Peer, node_id: &NodeId) -> DiscoveryItem {
 }
 
 impl Discovery for MdnsDiscovery {
-    fn resolve(&self, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
+    fn resolve(
+        &self,
+        node_id: NodeId,
+    ) -> Option<BoxStream<Result<DiscoveryEvent, DiscoveryError>>> {
         use futures_util::FutureExt;
 
         let (send, recv) = mpsc::channel(20);
@@ -409,7 +416,7 @@ impl Discovery for MdnsDiscovery {
         self.local_addrs.set(Some(data.clone())).ok();
     }
 
-    fn subscribe(&self) -> Option<BoxStream<DiscoveryItem>> {
+    fn subscribe(&self) -> Option<BoxStream<DiscoveryEvent>> {
         use futures_util::FutureExt;
 
         let (sender, recv) = mpsc::channel(20);
@@ -456,14 +463,22 @@ mod tests {
             tracing::debug!(?node_id_b, "Discovering node id b");
             // publish discovery_b's address
             discovery_b.publish(&node_data);
-            let s1_res = tokio::time::timeout(Duration::from_secs(5), s1.next())
-                .await
-                .context("timeout")?
-                .unwrap()?;
-            let s2_res = tokio::time::timeout(Duration::from_secs(5), s2.next())
-                .await
-                .context("timeout")?
-                .unwrap()?;
+            let DiscoveryEvent::Discovered(s1_res) =
+                tokio::time::timeout(Duration::from_secs(5), s1.next())
+                    .await
+                    .context("timeout")?
+                    .unwrap()?
+            else {
+                panic!("Received unexpected discovery event");
+            };
+            let DiscoveryEvent::Discovered(s2_res) =
+                tokio::time::timeout(Duration::from_secs(5), s2.next())
+                    .await
+                    .context("timeout")?
+                    .unwrap()?
+            else {
+                panic!("Received unexpected discovery event");
+            };
             assert_eq!(s1_res.node_info().data, node_data);
             assert_eq!(s2_res.node_info().data, node_data);
 
@@ -494,7 +509,7 @@ mod tests {
             let test = async move {
                 let mut got_ids = BTreeSet::new();
                 while got_ids.len() != num_nodes {
-                    if let Some(item) = events.next().await {
+                    if let Some(DiscoveryEvent::Discovered(item)) = events.next().await {
                         if node_ids.contains(&(item.node_id(), item.user_data())) {
                             got_ids.insert((item.node_id(), item.user_data()));
                         }

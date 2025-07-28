@@ -71,7 +71,7 @@ use crate::net_report::{IpMappedAddr, QuicConfig};
 use crate::{
     defaults::timeouts::NET_REPORT_TIMEOUT,
     disco::{self, SendAddr},
-    discovery::{Discovery, DiscoveryItem, DiscoverySubscribers, NodeData, UserData},
+    discovery::{Discovery, DiscoveryEvent, DiscoverySubscribers, NodeData, UserData},
     key::{DecryptionError, SharedSecret, public_ed_box, secret_ed_box},
     metrics::EndpointMetrics,
     net_report::{self, IfStateDetails, IpMappedAddresses, Report},
@@ -1741,7 +1741,7 @@ impl Actor {
             .port_mapper
             .watch_external_address();
 
-        let mut discovery_events: BoxStream<DiscoveryItem> = Box::pin(n0_future::stream::empty());
+        let mut discovery_events: BoxStream<DiscoveryEvent> = Box::pin(n0_future::stream::empty());
         if let Some(d) = self.msock.discovery() {
             if let Some(events) = d.subscribe() {
                 discovery_events = events;
@@ -1880,16 +1880,19 @@ impl Actor {
                 // forever like we do with the other branches that yield `Option`s
                 Some(discovery_item) = discovery_events.next() => {
                     trace!("tick: discovery event, address discovered: {discovery_item:?}");
-                    let provenance = discovery_item.provenance();
-                    let node_addr = discovery_item.to_node_addr();
-                    if let Err(e) = self.msock.add_node_addr(
-                        node_addr,
-                        Source::Discovery {
-                            name: provenance.to_string()
-                        }) {
+                    if let DiscoveryEvent::Discovered(discovery_item) = &discovery_item {
+                        let provenance = discovery_item.provenance();
                         let node_addr = discovery_item.to_node_addr();
-                        warn!(?node_addr, "unable to add discovered node address to the node map: {e:?}");
+                        if let Err(e) = self.msock.add_node_addr(
+                            node_addr,
+                            Source::Discovery {
+                                name: provenance.to_string()
+                            }) {
+                            let node_addr = discovery_item.to_node_addr();
+                            warn!(?node_addr, "unable to add discovered node address to the node map: {e:?}");
+                        }
                     }
+
                     // Send the discovery item to the subscribers of the discovery broadcast stream.
                     self.msock.discovery_subscribers.send(discovery_item);
                 }
