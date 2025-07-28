@@ -244,7 +244,7 @@ impl NodeState {
             .iter()
             .map(|(addr, path_state)| DirectAddrInfo {
                 addr: SocketAddr::from(*addr),
-                latency: path_state.validity.get_pong().map(|pong| pong.latency),
+                latency: path_state.validity.latency(),
                 last_control: path_state.last_control_msg(now),
                 last_payload: path_state
                     .last_payload_msg

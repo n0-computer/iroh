@@ -1,7 +1,5 @@
 use n0_future::time::{Duration, Instant};
 
-use crate::magicsock::node_map::node_state::PongReply;
-
 /// How long we trust a UDP address as the exclusive path (i.e. without also sending via the relay).
 ///
 /// Trust for a UDP address begins when we receive a DISCO UDP pong on that address.
@@ -22,8 +20,8 @@ pub(super) struct PathValidity(Option<Inner>);
 
 #[derive(Debug, Clone)]
 struct Inner {
-    recent_pong: PongReply,
-    confirmed_at: Instant,
+    latest_pong: Instant,
+    latency: Duration,
     trust_until: Instant,
 }
 
@@ -43,11 +41,11 @@ impl Source {
 }
 
 impl PathValidity {
-    pub(super) fn new(recent_pong: PongReply) -> Self {
+    pub(super) fn new(pong_at: Instant, latency: Duration) -> Self {
         Self(Some(Inner {
-            confirmed_at: recent_pong.pong_at,
-            trust_until: recent_pong.pong_at + Source::ReceivedPong.trust_duration(),
-            recent_pong,
+            trust_until: pong_at + Source::ReceivedPong.trust_duration(),
+            latest_pong: pong_at,
+            latency,
         }))
     }
 
@@ -69,7 +67,7 @@ impl PathValidity {
 
     pub(super) fn latency_if_valid(&self, now: Instant) -> Option<Duration> {
         let state = self.0.as_ref()?;
-        state.is_valid(now).then_some(state.recent_pong.latency)
+        state.is_valid(now).then_some(state.latency)
     }
 
     pub(super) fn is_outdated(&self, now: Instant) -> bool {
@@ -85,7 +83,7 @@ impl PathValidity {
 
     pub(super) fn latency_if_outdated(&self, now: Instant) -> Option<Duration> {
         let state = self.0.as_ref()?;
-        state.is_outdated(now).then_some(state.recent_pong.latency)
+        state.is_outdated(now).then_some(state.latency)
     }
 
     /// Reconfirms path validity, if a payload was received while the
@@ -96,27 +94,61 @@ impl PathValidity {
         };
 
         if state.is_valid(now) {
-            state.confirmed_at = now;
             state.trust_until = now + source.trust_duration();
         }
     }
 
-    pub(super) fn get_pong(&self) -> Option<&PongReply> {
-        self.0.as_ref().map(|inner| &inner.recent_pong)
+    pub(super) fn latency(&self) -> Option<Duration> {
+        Some(self.0.as_ref()?.latency)
     }
 
-    // TODO(matheus23): Use this to bias the choice of best outdated addr maybe?
-    // pub(super) fn confirmed_at(&self) -> Option<Instant> {
-    //     self.0.as_ref().map(|inner| inner.confirmed_at)
-    // }
+    pub(super) fn latest_pong(&self) -> Option<Instant> {
+        Some(self.0.as_ref()?.latest_pong)
+    }
 }
 
 impl Inner {
     fn is_valid(&self, now: Instant) -> bool {
-        self.confirmed_at <= now && now < self.trust_until
+        self.latest_pong <= now && now < self.trust_until
     }
 
     fn is_outdated(&self, now: Instant) -> bool {
-        self.confirmed_at <= now && self.trust_until <= now
+        self.latest_pong <= now && self.trust_until <= now
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use n0_future::time::{Duration, Instant};
+
+    use crate::magicsock::node_map::path_validity::TRUST_UDP_ADDR_DURATION;
+
+    use super::{PathValidity, Source};
+
+    #[tokio::test(start_paused = true)]
+    async fn test_basic_path_validity_lifetime() {
+        let mut validity = PathValidity(None);
+        assert!(!validity.is_valid(Instant::now()));
+        assert!(!validity.is_outdated(Instant::now()));
+
+        validity = PathValidity::new(Instant::now(), Duration::from_millis(20));
+        assert!(validity.is_valid(Instant::now()));
+        assert!(!validity.is_outdated(Instant::now()));
+
+        tokio::time::advance(TRUST_UDP_ADDR_DURATION / 2).await;
+        assert!(validity.is_valid(Instant::now()));
+        assert!(!validity.is_outdated(Instant::now()));
+
+        validity.receive_payload(Instant::now(), Source::QuicPayload);
+        assert!(validity.is_valid(Instant::now()));
+        assert!(!validity.is_outdated(Instant::now()));
+
+        tokio::time::advance(TRUST_UDP_ADDR_DURATION / 2).await;
+        assert!(validity.is_valid(Instant::now()));
+        assert!(!validity.is_outdated(Instant::now()));
+
+        tokio::time::advance(TRUST_UDP_ADDR_DURATION / 2).await;
+        assert!(!validity.is_valid(Instant::now()));
+        assert!(validity.is_outdated(Instant::now()));
     }
 }

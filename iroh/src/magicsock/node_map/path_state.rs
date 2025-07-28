@@ -125,7 +125,7 @@ impl PathState {
             }
         }
 
-        self.validity = PathValidity::new(r);
+        self.validity = PathValidity::new(r.pong_at, r.latency);
     }
 
     pub(super) fn receive_payload(&mut self, now: Instant) {
@@ -142,7 +142,7 @@ impl PathState {
             last_ping: None,
             last_got_ping: None,
             call_me_maybe_time: None,
-            validity: PathValidity::new(r),
+            validity: PathValidity::new(r.pong_at, r.latency),
             last_payload_msg: None,
             sources: HashMap::new(),
         }
@@ -180,14 +180,12 @@ impl PathState {
     /// - when the last ping from them was received.
     pub(super) fn last_alive(&self) -> Option<Instant> {
         self.validity
-            .get_pong()
-            .map(|pong| &pong.pong_at)
+            .latest_pong()
             .into_iter()
-            .chain(self.last_payload_msg.as_ref())
-            .chain(self.call_me_maybe_time.as_ref())
-            .chain(self.last_incoming_ping())
+            .chain(self.last_payload_msg.clone())
+            .chain(self.call_me_maybe_time.clone())
+            .chain(self.last_incoming_ping().cloned())
             .max()
-            .copied()
     }
 
     /// The last control or DISCO message **about** this path.
@@ -202,8 +200,8 @@ impl PathState {
         // get every control message and assign it its kind
         let last_pong = self
             .validity
-            .get_pong()
-            .map(|pong| (pong.pong_at, ControlMsg::Pong));
+            .latest_pong()
+            .map(|pong_at| (pong_at, ControlMsg::Pong));
         let last_call_me_maybe = self
             .call_me_maybe_time
             .as_ref()
@@ -222,7 +220,7 @@ impl PathState {
 
     /// Returns the latency from the most recent pong, if available.
     pub(super) fn latency(&self) -> Option<Duration> {
-        self.validity.get_pong().map(|p| p.latency)
+        self.validity.latency()
     }
 
     pub(super) fn needs_ping(&self, now: &Instant) -> bool {
@@ -291,8 +289,8 @@ impl PathState {
         if self.is_active() {
             write!(w, "active ")?;
         }
-        if let Some(pong) = self.validity.get_pong() {
-            write!(w, "pong-received({:?} ago) ", pong.pong_at.elapsed())?;
+        if let Some(pong_at) = self.validity.latest_pong() {
+            write!(w, "pong-received({:?} ago) ", pong_at.elapsed())?;
         }
         if let Some(when) = self.last_incoming_ping() {
             write!(w, "ping-received({:?} ago) ", when.elapsed())?;
