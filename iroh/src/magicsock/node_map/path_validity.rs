@@ -123,9 +123,7 @@ impl Inner {
 mod tests {
     use n0_future::time::{Duration, Instant};
 
-    use crate::magicsock::node_map::path_validity::TRUST_UDP_ADDR_DURATION;
-
-    use super::{PathValidity, Source};
+    use super::{PathValidity, Source, TRUST_UDP_ADDR_DURATION};
 
     #[tokio::test(start_paused = true)]
     async fn test_basic_path_validity_lifetime() {
