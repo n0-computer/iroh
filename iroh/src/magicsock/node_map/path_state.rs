@@ -182,8 +182,8 @@ impl PathState {
         self.validity
             .latest_pong()
             .into_iter()
-            .chain(self.last_payload_msg.clone())
-            .chain(self.call_me_maybe_time.clone())
+            .chain(self.last_payload_msg)
+            .chain(self.call_me_maybe_time)
             .chain(self.last_incoming_ping().cloned())
             .max()
     }
