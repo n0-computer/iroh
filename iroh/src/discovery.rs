@@ -360,7 +360,7 @@ pub trait Discovery: std::fmt::Debug + Send + Sync + 'static {
 impl<T: Discovery> Discovery for Arc<T> {}
 
 /// An event emitted from [`Discovery`] services.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum DiscoveryEvent {
     /// A peer was discovered or it's information was updated.
     Discovered(DiscoveryItem),
@@ -377,7 +377,7 @@ pub enum DiscoveryEvent {
 ///
 /// This struct derefs to [`NodeData`], so you can access the methods from [`NodeData`]
 /// directly from [`DiscoveryItem`].
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct DiscoveryItem {
     /// The node info for the node, as discovered by the the discovery service.
     node_info: NodeInfo,

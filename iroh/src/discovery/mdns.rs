@@ -487,6 +487,45 @@ mod tests {
 
         #[tokio::test]
         #[traced_test]
+        async fn mdns_expiry() -> Result {
+            let (_, discovery_a) = make_discoverer()?;
+            let (node_id_b, discovery_b) = make_discoverer()?;
+
+            // make addr info for discoverer b
+            let user_data: UserData = "foobar".parse()?;
+            let node_data = NodeData::new(None, BTreeSet::from(["0.0.0.0:11111".parse().unwrap()]))
+                .with_user_data(Some(user_data.clone()));
+            println!("info {node_data:?}");
+
+            // resolve twice to ensure we can create separate streams for the same node_id
+            let mut s1 = discovery_a.resolve(node_id_b).unwrap();
+
+            tracing::debug!(?node_id_b, "Discovering node id b");
+            // publish discovery_b's address
+            discovery_b.publish(&node_data);
+            let DiscoveryEvent::Discovered(s1_res) =
+                tokio::time::timeout(Duration::from_secs(5), s1.next())
+                    .await
+                    .context("timeout")?
+                    .unwrap()?
+            else {
+                panic!("Received unexpected discovery event");
+            };
+            assert_eq!(s1_res.node_info().data, node_data);
+
+            drop(discovery_b);
+
+            let result = tokio::time::timeout(Duration::from_secs(30), s1.next())
+                .await
+                .context("timeout")?
+                .unwrap()?;
+            assert_eq!(result, DiscoveryEvent::Expired(node_id_b));
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        #[traced_test]
         async fn mdns_subscribe() -> Result {
             let num_nodes = 5;
             let mut node_ids = BTreeSet::new();
