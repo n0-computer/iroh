@@ -973,7 +973,7 @@ impl Endpoint {
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
     /// let mep = Endpoint::builder().bind().await.unwrap();
-    /// let _relay_url = mep.home_relay().initialized().await.unwrap();
+    /// let _relay_url = mep.home_relay().initialized().await;
     /// # });
     /// ```
     pub fn home_relay(&self) -> impl n0_watcher::Watcher<Value = Vec<RelayUrl>> + use<> {
@@ -1008,7 +1008,7 @@ impl Endpoint {
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
     /// let ep = Endpoint::builder().bind().await.unwrap();
-    /// let _addrs = ep.direct_addresses().initialized().await.unwrap();
+    /// let _addrs = ep.direct_addresses().initialized().await;
     /// # });
     /// ```
     ///
@@ -1042,7 +1042,7 @@ impl Endpoint {
     /// # let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
     /// # rt.block_on(async move {
     /// let ep = Endpoint::builder().bind().await.unwrap();
-    /// let _report = ep.net_report().initialized().await.unwrap();
+    /// let _report = ep.net_report().initialized().await;
     /// # });
     /// ```
     #[doc(hidden)]
