@@ -268,7 +268,7 @@ impl MagicSock {
 
     /// Get the cached version of addresses.
     pub(crate) fn local_addr(&self) -> Vec<transports::Addr> {
-        self.local_addrs_watch.get().expect("disconnected")
+        self.local_addrs_watch.clone().get()
     }
 
     #[cfg(not(wasm_browser))]
@@ -460,7 +460,7 @@ impl MagicSock {
 
     #[cfg_attr(windows, allow(dead_code))]
     fn normalized_local_addr(&self) -> io::Result<SocketAddr> {
-        let addrs = self.local_addrs_watch.get().expect("disconnected");
+        let addrs = self.local_addrs_watch.clone().get();
 
         let mut ipv4_addr = None;
         for addr in addrs {
@@ -1730,7 +1730,7 @@ impl Actor {
         self.update_direct_addresses(None);
 
         // Setup network monitoring
-        let mut current_netmon_state = self.netmon_watcher.get().expect("missing network state");
+        let mut current_netmon_state = self.netmon_watcher.get();
 
         #[cfg(not(wasm_browser))]
         let mut direct_addr_heartbeat_timer = time::interval(HEARTBEAT_INTERVAL);
@@ -1820,7 +1820,7 @@ impl Actor {
                     match reason {
                         Some(()) => {
                             // check if a new run needs to be scheduled
-                            let state = self.netmon_watcher.get().expect("disconnected");
+                            let state = self.netmon_watcher.get();
                             self.direct_addr_update_state.try_run(state.into());
                         }
                         None => {
@@ -1920,7 +1920,7 @@ impl Actor {
     }
 
     fn re_stun(&mut self, why: UpdateReason) {
-        let state = self.netmon_watcher.get().expect("disconnected");
+        let state = self.netmon_watcher.get();
         self.direct_addr_update_state
             .schedule_run(why, state.into());
     }
@@ -1947,7 +1947,7 @@ impl Actor {
                 if let Some((node, url)) = data {
                     self.pending_call_me_maybes.insert(node, url);
                 }
-                let state = self.netmon_watcher.get().expect("disconnected");
+                let state = self.netmon_watcher.get();
                 self.direct_addr_update_state
                     .schedule_run(why, state.into());
             }
@@ -2056,11 +2056,7 @@ impl Actor {
             let LocalAddresses {
                 regular: mut ips,
                 loopback,
-            } = self
-                .netmon_watcher
-                .get()
-                .expect("netmon disconnected")
-                .local_addresses;
+            } = self.netmon_watcher.get().local_addresses;
             if ips.is_empty() && addrs.is_empty() {
                 // Include loopback addresses only if there are no other interfaces
                 // or public addresses, this allows testing offline.
@@ -2799,7 +2795,7 @@ mod tests {
         println!("first conn!");
         let conn = m1
             .endpoint
-            .connect(m2.endpoint.node_addr().initialized().await?, ALPN)
+            .connect(m2.endpoint.node_addr().initialized().await, ALPN)
             .await?;
         println!("Closing first conn");
         conn.close(0u32.into(), b"bye lolz");
@@ -2947,12 +2943,12 @@ mod tests {
         let ms = Handle::new(Default::default()).await.unwrap();
 
         // See if we can get endpoints.
-        let eps0 = ms.direct_addresses().initialized().await.unwrap();
+        let eps0 = ms.direct_addresses().initialized().await;
         println!("{eps0:?}");
         assert!(!eps0.is_empty());
 
         // Getting the endpoints again immediately should give the same results.
-        let eps1 = ms.direct_addresses().initialized().await.unwrap();
+        let eps1 = ms.direct_addresses().initialized().await;
         println!("{eps1:?}");
         assert_eq!(eps0, eps1);
     }
@@ -3111,7 +3107,6 @@ mod tests {
                 .direct_addresses()
                 .initialized()
                 .await
-                .expect("no direct addrs")
                 .into_iter()
                 .map(|x| x.addr)
                 .collect(),
@@ -3222,7 +3217,6 @@ mod tests {
                     .direct_addresses()
                     .initialized()
                     .await
-                    .expect("no direct addrs")
                     .into_iter()
                     .map(|x| x.addr)
                     .collect(),

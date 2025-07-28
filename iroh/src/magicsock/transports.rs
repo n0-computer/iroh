@@ -145,7 +145,7 @@ impl Transports {
     /// For IP based transports this is the [`SocketAddr`] of the socket,
     /// for relay transports, this is the home relay.
     pub(crate) fn local_addrs(&self) -> Vec<Addr> {
-        self.local_addrs_watch().get().expect("not disconnected")
+        self.local_addrs_watch().get()
     }
 
     /// Watch for all currently known local addresses.

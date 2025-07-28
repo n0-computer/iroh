@@ -2298,10 +2298,10 @@ dependencies = [
  "iroh-relay",
  "n0-future",
  "n0-snafu",
- "n0-watcher",
+ "n0-watcher 0.3.0",
  "nested_enum_utils",
  "netdev",
- "netwatch",
+ "netwatch 0.8.0",
  "parse-size",
  "pin-project",
  "pkarr",
@@ -2372,7 +2372,6 @@ dependencies = [
  "iroh-quinn",
  "n0-future",
  "n0-snafu",
- "n0-watcher",
  "rand 0.8.5",
  "rcgen 0.14.2",
  "rustls",
@@ -2899,6 +2898,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "n0-watcher"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c31462392a10d5ada4b945e840cbec2d5f3fee752b96c4b33eb41414d8f45c2a"
+dependencies = [
+ "derive_more 1.0.0",
+ "n0-future",
+ "snafu",
+]
+
+[[package]]
 name = "nested_enum_utils"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3021,7 +3031,42 @@ dependencies = [
  "js-sys",
  "libc",
  "n0-future",
- "n0-watcher",
+ "n0-watcher 0.2.0",
+ "nested_enum_utils",
+ "netdev",
+ "netlink-packet-core",
+ "netlink-packet-route 0.24.0",
+ "netlink-proto",
+ "netlink-sys",
+ "pin-project-lite",
+ "serde",
+ "snafu",
+ "socket2 0.6.0",
+ "time",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "web-sys",
+ "windows",
+ "windows-result",
+ "wmi",
+]
+
+[[package]]
+name = "netwatch"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8901dbb408894af3df3fc51420ba0c6faf3a7d896077b797c39b7001e2f787bd"
+dependencies = [
+ "atomic-waker",
+ "bytes",
+ "cfg_aliases",
+ "derive_more 2.0.1",
+ "iroh-quinn-udp",
+ "js-sys",
+ "libc",
+ "n0-future",
+ "n0-watcher 0.3.0",
  "nested_enum_utils",
  "netdev",
  "netlink-packet-core",
@@ -3521,7 +3566,7 @@ dependencies = [
  "iroh-metrics",
  "libc",
  "nested_enum_utils",
- "netwatch",
+ "netwatch 0.7.0",
  "num_enum",
  "rand 0.9.1",
  "serde",
