@@ -244,7 +244,7 @@
 <a href=#244 id=244 data-nosnippet>244</a>            .iter()
 <a href=#245 id=245 data-nosnippet>245</a>            .map(|(addr, path_state)| DirectAddrInfo {
 <a href=#246 id=246 data-nosnippet>246</a>                addr: SocketAddr::from(<span class="kw-2">*</span>addr),
-<a href=#247 id=247 data-nosnippet>247</a>                latency: path_state.validity.get_pong().map(|pong| pong.latency),
+<a href=#247 id=247 data-nosnippet>247</a>                latency: path_state.validity.latency(),
 <a href=#248 id=248 data-nosnippet>248</a>                last_control: path_state.last_control_msg(now),
 <a href=#249 id=249 data-nosnippet>249</a>                last_payload: path_state
 <a href=#250 id=250 data-nosnippet>250</a>                    .last_payload_msg
