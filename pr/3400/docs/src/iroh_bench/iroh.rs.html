@@ -5,15 +5,15 @@
 <a href=#5 id=5 data-nosnippet>5</a>
 <a href=#6 id=6 data-nosnippet>6</a><span class="kw">use </span>bytes::Bytes;
 <a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>iroh::{
-<a href=#8 id=8 data-nosnippet>8</a>    endpoint::{Connection, ConnectionError, RecvStream, SendStream, TransportConfig},
-<a href=#9 id=9 data-nosnippet>9</a>    Endpoint, NodeAddr, RelayMode, RelayUrl,
+<a href=#8 id=8 data-nosnippet>8</a>    Endpoint, NodeAddr, RelayMode, RelayUrl,
+<a href=#9 id=9 data-nosnippet>9</a>    endpoint::{Connection, ConnectionError, RecvStream, SendStream, TransportConfig},
 <a href=#10 id=10 data-nosnippet>10</a>};
 <a href=#11 id=11 data-nosnippet>11</a><span class="kw">use </span>n0_snafu::{<span class="prelude-ty">Result</span>, ResultExt};
 <a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>n0_watcher::Watcher <span class="kw">as _</span>;
 <a href=#13 id=13 data-nosnippet>13</a><span class="kw">use </span>tracing::{trace, warn};
 <a href=#14 id=14 data-nosnippet>14</a>
 <a href=#15 id=15 data-nosnippet>15</a><span class="kw">use crate</span>::{
-<a href=#16 id=16 data-nosnippet>16</a>    client_handler, stats::TransferResult, ClientStats, ConnectionSelector, EndpointSelector, Opt,
+<a href=#16 id=16 data-nosnippet>16</a>    ClientStats, ConnectionSelector, EndpointSelector, Opt, client_handler, stats::TransferResult,
 <a href=#17 id=17 data-nosnippet>17</a>};
 <a href=#18 id=18 data-nosnippet>18</a>
 <a href=#19 id=19 data-nosnippet>19</a><span class="kw">pub const </span>ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"n0/iroh-bench/0"</span>;

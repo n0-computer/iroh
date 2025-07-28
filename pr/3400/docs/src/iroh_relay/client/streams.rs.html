@@ -116,7 +116,7 @@
 <a href=#116 id=116 data-nosnippet>116</a>        label: <span class="kw-2">&amp;</span>[u8],
 <a href=#117 id=117 data-nosnippet>117</a>        context: <span class="prelude-ty">Option</span>&lt;<span class="kw-2">&amp;</span>[u8]&gt;,
 <a href=#118 id=118 data-nosnippet>118</a>    ) -&gt; <span class="prelude-ty">Option</span>&lt;T&gt; {
-<a href=#119 id=119 data-nosnippet>119</a>        <span class="kw">let </span><span class="self">Self</span>::Tls(<span class="kw-2">ref </span>tls) = <span class="self">self </span><span class="kw">else </span>{
+<a href=#119 id=119 data-nosnippet>119</a>        <span class="kw">let </span><span class="self">Self</span>::Tls(tls) = <span class="self">self </span><span class="kw">else </span>{
 <a href=#120 id=120 data-nosnippet>120</a>            <span class="kw">return </span><span class="prelude-val">None</span>;
 <a href=#121 id=121 data-nosnippet>121</a>        };
 <a href=#122 id=122 data-nosnippet>122</a>        tls.get_ref()

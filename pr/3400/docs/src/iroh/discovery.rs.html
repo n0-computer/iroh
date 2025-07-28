@@ -61,8 +61,8 @@
 <a href=#61 id=61 data-nosnippet>61</a>//!
 <a href=#62 id=62 data-nosnippet>62</a>//! ```no_run
 <a href=#63 id=63 data-nosnippet>63</a>//! use iroh::{
-<a href=#64 id=64 data-nosnippet>64</a>//!     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher},
-<a href=#65 id=65 data-nosnippet>65</a>//!     Endpoint, SecretKey,
+<a href=#64 id=64 data-nosnippet>64</a>//!     Endpoint, SecretKey,
+<a href=#65 id=65 data-nosnippet>65</a>//!     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher},
 <a href=#66 id=66 data-nosnippet>66</a>//! };
 <a href=#67 id=67 data-nosnippet>67</a>//!
 <a href=#68 id=68 data-nosnippet>68</a>//! # async fn wrapper() -&gt; n0_snafu::Result&lt;()&gt; {
@@ -113,16 +113,16 @@
 <a href=#113 id=113 data-nosnippet>113</a>
 <a href=#114 id=114 data-nosnippet>114</a><span class="kw">use </span>iroh_base::{NodeAddr, NodeId};
 <a href=#115 id=115 data-nosnippet>115</a><span class="kw">use </span>n0_future::{
-<a href=#116 id=116 data-nosnippet>116</a>    boxed::BoxStream,
-<a href=#117 id=117 data-nosnippet>117</a>    stream::StreamExt,
-<a href=#118 id=118 data-nosnippet>118</a>    task::{<span class="self">self</span>, AbortOnDropHandle},
-<a href=#119 id=119 data-nosnippet>119</a>    time::{<span class="self">self</span>, Duration},
-<a href=#120 id=120 data-nosnippet>120</a>    Stream, TryStreamExt,
+<a href=#116 id=116 data-nosnippet>116</a>    Stream, TryStreamExt,
+<a href=#117 id=117 data-nosnippet>117</a>    boxed::BoxStream,
+<a href=#118 id=118 data-nosnippet>118</a>    stream::StreamExt,
+<a href=#119 id=119 data-nosnippet>119</a>    task::{<span class="self">self</span>, AbortOnDropHandle},
+<a href=#120 id=120 data-nosnippet>120</a>    time::{<span class="self">self</span>, Duration},
 <a href=#121 id=121 data-nosnippet>121</a>};
 <a href=#122 id=122 data-nosnippet>122</a><span class="kw">use </span>nested_enum_utils::common_fields;
-<a href=#123 id=123 data-nosnippet>123</a><span class="kw">use </span>snafu::{ensure, IntoError, Snafu};
+<a href=#123 id=123 data-nosnippet>123</a><span class="kw">use </span>snafu::{IntoError, Snafu, ensure};
 <a href=#124 id=124 data-nosnippet>124</a><span class="kw">use </span>tokio::sync::oneshot;
-<a href=#125 id=125 data-nosnippet>125</a><span class="kw">use </span>tracing::{debug, error_span, warn, Instrument};
+<a href=#125 id=125 data-nosnippet>125</a><span class="kw">use </span>tracing::{Instrument, debug, error_span, warn};
 <a href=#126 id=126 data-nosnippet>126</a>
 <a href=#127 id=127 data-nosnippet>127</a><span class="attr">#[cfg(not(wasm_browser))]
 <a href=#128 id=128 data-nosnippet>128</a></span><span class="kw">use </span><span class="kw">crate</span>::dns::DnsResolver;
@@ -699,8 +699,8 @@
 <a href=#699 id=699 data-nosnippet>699</a>        }
 <a href=#700 id=700 data-nosnippet>700</a>    }
 <a href=#701 id=701 data-nosnippet>701</a>
-<a href=#702 id=702 data-nosnippet>702</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Stream&lt;Item = <span class="prelude-ty">Result</span>&lt;DiscoveryItem, Lagged&gt;&gt; {
-<a href=#703 id=703 data-nosnippet>703</a>        <span class="kw">use </span>tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
+<a href=#702 id=702 data-nosnippet>702</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>subscribe(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>Stream&lt;Item = <span class="prelude-ty">Result</span>&lt;DiscoveryItem, Lagged&gt;&gt; + <span class="kw">use</span>&lt;&gt; {
+<a href=#703 id=703 data-nosnippet>703</a>        <span class="kw">use </span>tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
 <a href=#704 id=704 data-nosnippet>704</a>        <span class="kw">let </span>recv = <span class="self">self</span>.inner.subscribe();
 <a href=#705 id=705 data-nosnippet>705</a>        BroadcastStream::new(recv).map_err(|BroadcastStreamRecvError::Lagged(n)| Lagged { val: n })
 <a href=#706 id=706 data-nosnippet>706</a>    }
@@ -730,7 +730,7 @@
 <a href=#730 id=730 data-nosnippet>730</a>    <span class="kw">use </span>tracing_test::traced_test;
 <a href=#731 id=731 data-nosnippet>731</a>
 <a href=#732 id=732 data-nosnippet>732</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#733 id=733 data-nosnippet>733</a>    <span class="kw">use crate</span>::{endpoint::ConnectOptions, Endpoint, RelayMode};
+<a href=#733 id=733 data-nosnippet>733</a>    <span class="kw">use crate</span>::{Endpoint, RelayMode, endpoint::ConnectOptions};
 <a href=#734 id=734 data-nosnippet>734</a>
 <a href=#735 id=735 data-nosnippet>735</a>    <span class="kw">type </span>InfoStore = HashMap&lt;NodeId, (NodeData, u64)&gt;;
 <a href=#736 id=736 data-nosnippet>736</a>
@@ -1091,20 +1091,20 @@
 <a href=#1091 id=1091 data-nosnippet>1091</a></span><span class="attr">#[cfg(test)]
 <a href=#1092 id=1092 data-nosnippet>1092</a></span><span class="kw">mod </span>test_dns_pkarr {
 <a href=#1093 id=1093 data-nosnippet>1093</a>    <span class="kw">use </span>iroh_base::{NodeAddr, SecretKey};
-<a href=#1094 id=1094 data-nosnippet>1094</a>    <span class="kw">use </span>iroh_relay::{node_info::UserData, RelayMap};
+<a href=#1094 id=1094 data-nosnippet>1094</a>    <span class="kw">use </span>iroh_relay::{RelayMap, node_info::UserData};
 <a href=#1095 id=1095 data-nosnippet>1095</a>    <span class="kw">use </span>n0_future::time::Duration;
 <a href=#1096 id=1096 data-nosnippet>1096</a>    <span class="kw">use </span>n0_snafu::{Error, <span class="prelude-ty">Result</span>, ResultExt};
 <a href=#1097 id=1097 data-nosnippet>1097</a>    <span class="kw">use </span>tokio_util::task::AbortOnDropHandle;
 <a href=#1098 id=1098 data-nosnippet>1098</a>    <span class="kw">use </span>tracing_test::traced_test;
 <a href=#1099 id=1099 data-nosnippet>1099</a>
 <a href=#1100 id=1100 data-nosnippet>1100</a>    <span class="kw">use crate</span>::{
-<a href=#1101 id=1101 data-nosnippet>1101</a>        discovery::{pkarr::PkarrPublisher, NodeData},
-<a href=#1102 id=1102 data-nosnippet>1102</a>        dns::DnsResolver,
-<a href=#1103 id=1103 data-nosnippet>1103</a>        node_info::NodeInfo,
-<a href=#1104 id=1104 data-nosnippet>1104</a>        test_utils::{
-<a href=#1105 id=1105 data-nosnippet>1105</a>            dns_server::run_dns_server, pkarr_dns_state::State, run_relay_server, DnsPkarrServer,
-<a href=#1106 id=1106 data-nosnippet>1106</a>        },
-<a href=#1107 id=1107 data-nosnippet>1107</a>        Endpoint, RelayMode,
+<a href=#1101 id=1101 data-nosnippet>1101</a>        Endpoint, RelayMode,
+<a href=#1102 id=1102 data-nosnippet>1102</a>        discovery::{NodeData, pkarr::PkarrPublisher},
+<a href=#1103 id=1103 data-nosnippet>1103</a>        dns::DnsResolver,
+<a href=#1104 id=1104 data-nosnippet>1104</a>        node_info::NodeInfo,
+<a href=#1105 id=1105 data-nosnippet>1105</a>        test_utils::{
+<a href=#1106 id=1106 data-nosnippet>1106</a>            DnsPkarrServer, dns_server::run_dns_server, pkarr_dns_state::State, run_relay_server,
+<a href=#1107 id=1107 data-nosnippet>1107</a>        },
 <a href=#1108 id=1108 data-nosnippet>1108</a>    };
 <a href=#1109 id=1109 data-nosnippet>1109</a>
 <a href=#1110 id=1110 data-nosnippet>1110</a>    <span class="kw">const </span>PUBLISH_TIMEOUT: Duration = Duration::from_secs(<span class="number">10</span>);

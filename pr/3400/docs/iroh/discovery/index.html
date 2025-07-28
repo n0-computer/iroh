@@ -56,8 +56,8 @@ implement <a href="trait.Discovery.html" title="trait iroh::discovery::Discovery
 <a href="pkarr/struct.PkarrPublisher.html" title="struct iroh::discovery::pkarr::PkarrPublisher"><code>PkarrPublisher</code></a> and <a href="dns/struct.DnsDiscovery.html" title="struct iroh::discovery::dns::DnsDiscovery"><code>DnsDiscovery</code></a>:</p>
 
 <div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>iroh::{
-    discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher},
     Endpoint, SecretKey,
+    discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher},
 };
 
 <span class="kw">let </span>ep = Endpoint::builder()

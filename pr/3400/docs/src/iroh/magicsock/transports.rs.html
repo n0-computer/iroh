@@ -2,7 +2,7 @@
 <a href=#2 id=2 data-nosnippet>2</a>    io::{<span class="self">self</span>, IoSliceMut},
 <a href=#3 id=3 data-nosnippet>3</a>    net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6},
 <a href=#4 id=4 data-nosnippet>4</a>    pin::Pin,
-<a href=#5 id=5 data-nosnippet>5</a>    sync::{atomic::AtomicUsize, Arc},
+<a href=#5 id=5 data-nosnippet>5</a>    sync::{Arc, atomic::AtomicUsize},
 <a href=#6 id=6 data-nosnippet>6</a>    task::{Context, Poll},
 <a href=#7 id=7 data-nosnippet>7</a>};
 <a href=#8 id=8 data-nosnippet>8</a>
@@ -420,7 +420,7 @@
 <a href=#420 id=420 data-nosnippet>420</a>        <span class="kw">match </span>destination {
 <a href=#421 id=421 data-nosnippet>421</a>            <span class="attr">#[cfg(wasm_browser)]
 <a href=#422 id=422 data-nosnippet>422</a>            </span>Addr::Ip(..) =&gt; {
-<a href=#423 id=423 data-nosnippet>423</a>                <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(io::Error::other(<span class="string">"IP is unsupported in browser"</span>)))
+<a href=#423 id=423 data-nosnippet>423</a>                <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Err</span>(io::Error::other(<span class="string">"IP is unsupported in browser"</span>)));
 <a href=#424 id=424 data-nosnippet>424</a>            }
 <a href=#425 id=425 data-nosnippet>425</a>            <span class="attr">#[cfg(not(wasm_browser))]
 <a href=#426 id=426 data-nosnippet>426</a>            </span>Addr::Ip(addr) =&gt; {

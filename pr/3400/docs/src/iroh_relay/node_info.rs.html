@@ -41,7 +41,7 @@
 <a href=#41 id=41 data-nosnippet>41</a>};
 <a href=#42 id=42 data-nosnippet>42</a>
 <a href=#43 id=43 data-nosnippet>43</a><span class="attr">#[cfg(not(wasm_browser))]
-<a href=#44 id=44 data-nosnippet>44</a></span><span class="kw">use </span>hickory_resolver::{proto::ProtoError, Name};
+<a href=#44 id=44 data-nosnippet>44</a></span><span class="kw">use </span>hickory_resolver::{Name, proto::ProtoError};
 <a href=#45 id=45 data-nosnippet>45</a><span class="kw">use </span>iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey, SignatureError};
 <a href=#46 id=46 data-nosnippet>46</a><span class="kw">use </span>nested_enum_utils::common_fields;
 <a href=#47 id=47 data-nosnippet>47</a><span class="kw">use </span>snafu::{Backtrace, ResultExt, Snafu};
@@ -740,15 +740,15 @@
 <a href=#740 id=740 data-nosnippet>740</a>    <span class="kw">use </span>std::{collections::BTreeSet, str::FromStr, sync::Arc};
 <a href=#741 id=741 data-nosnippet>741</a>
 <a href=#742 id=742 data-nosnippet>742</a>    <span class="kw">use </span>hickory_resolver::{
-<a href=#743 id=743 data-nosnippet>743</a>        lookup::Lookup,
-<a href=#744 id=744 data-nosnippet>744</a>        proto::{
-<a href=#745 id=745 data-nosnippet>745</a>            op::Query,
-<a href=#746 id=746 data-nosnippet>746</a>            rr::{
-<a href=#747 id=747 data-nosnippet>747</a>                rdata::{A, TXT},
+<a href=#743 id=743 data-nosnippet>743</a>        Name,
+<a href=#744 id=744 data-nosnippet>744</a>        lookup::Lookup,
+<a href=#745 id=745 data-nosnippet>745</a>        proto::{
+<a href=#746 id=746 data-nosnippet>746</a>            op::Query,
+<a href=#747 id=747 data-nosnippet>747</a>            rr::{
 <a href=#748 id=748 data-nosnippet>748</a>                RData, Record, RecordType,
-<a href=#749 id=749 data-nosnippet>749</a>            },
-<a href=#750 id=750 data-nosnippet>750</a>        },
-<a href=#751 id=751 data-nosnippet>751</a>        Name,
+<a href=#749 id=749 data-nosnippet>749</a>                rdata::{A, TXT},
+<a href=#750 id=750 data-nosnippet>750</a>            },
+<a href=#751 id=751 data-nosnippet>751</a>        },
 <a href=#752 id=752 data-nosnippet>752</a>    };
 <a href=#753 id=753 data-nosnippet>753</a>    <span class="kw">use </span>iroh_base::{NodeId, SecretKey};
 <a href=#754 id=754 data-nosnippet>754</a>    <span class="kw">use </span>n0_snafu::{<span class="prelude-ty">Result</span>, ResultExt};
@@ -825,7 +825,7 @@
 <a href=#825 id=825 data-nosnippet>825</a>                .context(<span class="string">"name"</span>)<span class="question-mark">?</span>,
 <a href=#826 id=826 data-nosnippet>826</a>                <span class="number">30</span>,
 <a href=#827 id=827 data-nosnippet>827</a>                RData::TXT(TXT::new(<span class="macro">vec!</span>[
-<a href=#828 id=828 data-nosnippet>828</a>                    <span class="string">"relay=https://euw1-1.relay.iroh.network./"</span>.to_string()
+<a href=#828 id=828 data-nosnippet>828</a>                    <span class="string">"relay=https://euw1-1.relay.iroh.network./"</span>.to_string(),
 <a href=#829 id=829 data-nosnippet>829</a>                ])),
 <a href=#830 id=830 data-nosnippet>830</a>            ),
 <a href=#831 id=831 data-nosnippet>831</a>            <span class="comment">// Test a record with a completely different name
@@ -833,14 +833,14 @@
 <a href=#833 id=833 data-nosnippet>833</a>                Name::from_utf8(<span class="string">"dns.iroh.link."</span>).context(<span class="string">"name"</span>)<span class="question-mark">?</span>,
 <a href=#834 id=834 data-nosnippet>834</a>                <span class="number">30</span>,
 <a href=#835 id=835 data-nosnippet>835</a>                RData::TXT(TXT::new(<span class="macro">vec!</span>[
-<a href=#836 id=836 data-nosnippet>836</a>                    <span class="string">"relay=https://euw1-1.relay.iroh.network./"</span>.to_string()
+<a href=#836 id=836 data-nosnippet>836</a>                    <span class="string">"relay=https://euw1-1.relay.iroh.network./"</span>.to_string(),
 <a href=#837 id=837 data-nosnippet>837</a>                ])),
 <a href=#838 id=838 data-nosnippet>838</a>            ),
 <a href=#839 id=839 data-nosnippet>839</a>            Record::from_rdata(
 <a href=#840 id=840 data-nosnippet>840</a>                name.clone(),
 <a href=#841 id=841 data-nosnippet>841</a>                <span class="number">30</span>,
 <a href=#842 id=842 data-nosnippet>842</a>                RData::TXT(TXT::new(<span class="macro">vec!</span>[
-<a href=#843 id=843 data-nosnippet>843</a>                    <span class="string">"relay=https://euw1-1.relay.iroh.network./"</span>.to_string()
+<a href=#843 id=843 data-nosnippet>843</a>                    <span class="string">"relay=https://euw1-1.relay.iroh.network./"</span>.to_string(),
 <a href=#844 id=844 data-nosnippet>844</a>                ])),
 <a href=#845 id=845 data-nosnippet>845</a>            ),
 <a href=#846 id=846 data-nosnippet>846</a>        ];

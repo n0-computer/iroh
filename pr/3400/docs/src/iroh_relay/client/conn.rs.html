@@ -4,7 +4,7 @@
 <a href=#4 id=4 data-nosnippet>4</a>
 <a href=#5 id=5 data-nosnippet>5</a></span><span class="kw">use </span>std::{
 <a href=#6 id=6 data-nosnippet>6</a>    pin::Pin,
-<a href=#7 id=7 data-nosnippet>7</a>    task::{ready, Context, Poll},
+<a href=#7 id=7 data-nosnippet>7</a>    task::{Context, Poll, ready},
 <a href=#8 id=8 data-nosnippet>8</a>};
 <a href=#9 id=9 data-nosnippet>9</a>
 <a href=#10 id=10 data-nosnippet>10</a><span class="kw">use </span>iroh_base::SecretKey;
@@ -17,12 +17,12 @@
 <a href=#17 id=17 data-nosnippet>17</a><span class="attr">#[cfg(not(wasm_browser))]
 <a href=#18 id=18 data-nosnippet>18</a></span><span class="kw">use </span><span class="kw">crate</span>::client::streams::{MaybeTlsStream, ProxyStream};
 <a href=#19 id=19 data-nosnippet>19</a><span class="kw">use crate</span>::{
-<a href=#20 id=20 data-nosnippet>20</a>    protos::{
-<a href=#21 id=21 data-nosnippet>21</a>        handshake,
-<a href=#22 id=22 data-nosnippet>22</a>        relay::{ClientToRelayMsg, Error <span class="kw">as </span>ProtoError, RelayToClientMsg},
-<a href=#23 id=23 data-nosnippet>23</a>        streams::WsBytesFramed,
-<a href=#24 id=24 data-nosnippet>24</a>    },
-<a href=#25 id=25 data-nosnippet>25</a>    MAX_PACKET_SIZE,
+<a href=#20 id=20 data-nosnippet>20</a>    MAX_PACKET_SIZE,
+<a href=#21 id=21 data-nosnippet>21</a>    protos::{
+<a href=#22 id=22 data-nosnippet>22</a>        handshake,
+<a href=#23 id=23 data-nosnippet>23</a>        relay::{ClientToRelayMsg, Error <span class="kw">as </span>ProtoError, RelayToClientMsg},
+<a href=#24 id=24 data-nosnippet>24</a>        streams::WsBytesFramed,
+<a href=#25 id=25 data-nosnippet>25</a>    },
 <a href=#26 id=26 data-nosnippet>26</a>};
 <a href=#27 id=27 data-nosnippet>27</a>
 <a href=#28 id=28 data-nosnippet>28</a><span class="doccomment">/// Error for sending messages to the relay server.
