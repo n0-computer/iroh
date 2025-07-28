@@ -2307,7 +2307,7 @@ mod tests {
             .bind()
             .await?;
         // Wait for the endpoint to be reachable via relay
-        ep.home_relay().initialized().await?;
+        ep.home_relay().initialized().await;
 
         let server = tokio::spawn(
             async move {
@@ -2461,7 +2461,7 @@ mod tests {
             .bind()
             .await?;
         // Also make sure the server has a working relay connection
-        ep.home_relay().initialized().await?;
+        ep.home_relay().initialized().await;
 
         info!(time = ?test_start.elapsed(), "test setup done");
 
