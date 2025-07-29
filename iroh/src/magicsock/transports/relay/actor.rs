@@ -618,8 +618,6 @@ impl ActiveRelayActor {
                     &mut send_datagrams_buf,
                     SEND_DATAGRAM_BATCH_SIZE,
                 ) => {
-                    use std::sync::atomic::Ordering::Relaxed;
-
                     if count == 0 {
                         warn!("Datagram inbox closed, shutdown");
                         break Ok(());
@@ -627,19 +625,11 @@ impl ActiveRelayActor {
                     self.reset_inactive_timeout();
                     // TODO(frando): can we avoid the clone here?
                     let metrics = self.metrics.clone();
-                    let max_segments = self.max_receive_segments.load(Relaxed);
-                    let packet_iter = send_datagrams_buf.drain(..).flat_map(|item| {
-                        let metrics = metrics.clone();
-                        let dst_node_id = item.remote_node;
-                        DatagramFragmenter {
-                            max_segments,
-                            datagram: item.datagrams,
-                        }.map(move |datagrams| {
-                            metrics.send_relay.inc_by(datagrams.contents.len() as _);
-                            Ok(ClientToRelayMsg::Datagrams {
-                                dst_node_id,
-                                datagrams
-                            })
+                    let packet_iter = send_datagrams_buf.drain(..).map(|item| {
+                        metrics.send_relay.inc_by(item.datagrams.contents.len() as _);
+                        Ok(ClientToRelayMsg::Datagrams {
+                            dst_node_id: item.remote_node,
+                            datagrams: item.datagrams,
                         })
                     });
                     let mut packet_stream = n0_future::stream::iter(packet_iter);
@@ -693,12 +683,28 @@ impl ActiveRelayActor {
                     state.last_packet_src = Some(remote_node_id);
                     state.nodes_present.insert(remote_node_id);
                 }
-                if let Err(err) = self.relay_datagrams_recv.try_send(RelayRecvDatagram {
-                    url: self.url.clone(),
-                    src: remote_node_id,
+
+                let max_segments = self
+                    .max_receive_segments
+                    .load(std::sync::atomic::Ordering::Relaxed);
+                // We might receive a datagram batch that's bigger than our magic socket's
+                // `AsyncUdpSocket::max_receive_segments`, if the other endpoint behind the relay
+                // has a higher `AsyncUdpSocket::max_transmit_segments` than we do.
+                // This happens e.g. when a linux machine (max transmit segments is usually 64)
+                // talks to a windows machine or a macos machine (max transmit segments is usually 1).
+                let re_batched = DatagramReBatcher {
+                    max_segments,
                     datagrams,
-                }) {
-                    warn!("Dropping received relay packet: {err:#}");
+                };
+                for datagrams in re_batched {
+                    if let Err(err) = self.relay_datagrams_recv.try_send(RelayRecvDatagram {
+                        url: self.url.clone(),
+                        src: remote_node_id,
+                        datagrams,
+                    }) {
+                        warn!("Dropping received relay packet: {err:#}");
+                        break; // No need to hot-loop in that case.
+                    }
                 }
             }
             RelayToClientMsg::NodeGone(node_id) => {
@@ -1243,16 +1249,19 @@ pub(crate) struct RelayRecvDatagram {
     pub(crate) datagrams: Datagrams,
 }
 
-struct DatagramFragmenter {
+/// Turns a datagrams batch into multiple datagram batches of maximum `max_segments` size.
+///
+/// If the given datagram isn't batched, it just returns that datagram once.
+struct DatagramReBatcher {
     max_segments: usize,
-    datagram: Datagrams,
+    datagrams: Datagrams,
 }
 
-impl Iterator for DatagramFragmenter {
+impl Iterator for DatagramReBatcher {
     type Item = Datagrams;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.datagram.take_segments(self.max_segments)
+        self.datagrams.take_segments(self.max_segments)
     }
 }
 
