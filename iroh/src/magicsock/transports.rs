@@ -32,6 +32,7 @@ pub(crate) struct Transports {
     ip: Vec<IpTransport>,
     relay: Vec<RelayTransport>,
 
+    max_receive_segments: Arc<AtomicUsize>,
     poll_recv_counter: AtomicUsize,
 }
 
@@ -61,11 +62,13 @@ impl Transports {
     pub(crate) fn new(
         #[cfg(not(wasm_browser))] ip: Vec<IpTransport>,
         relay: Vec<RelayTransport>,
+        max_receive_segments: Arc<AtomicUsize>,
     ) -> Self {
         Self {
             #[cfg(not(wasm_browser))]
             ip,
             relay,
+            max_receive_segments,
             poll_recv_counter: Default::default(),
         }
     }
@@ -196,6 +199,7 @@ impl Transports {
 
     #[cfg(not(wasm_browser))]
     pub(crate) fn max_receive_segments(&self) -> usize {
+        use std::sync::atomic::Ordering::Relaxed;
         // `max_receive_segments` controls the size of the `RecvMeta` buffer
         // that quinn creates. Having buffers slightly bigger than necessary
         // isn't terrible, and makes sure a single socket can read the maximum
@@ -204,7 +208,9 @@ impl Transports {
         // and it's impossible and unnecessary to be refactored that way.
 
         let res = self.ip.iter().map(|t| t.max_receive_segments()).max();
-        res.unwrap_or(1)
+        let segments = res.unwrap_or(1);
+        self.max_receive_segments.store(segments, Relaxed);
+        segments
     }
 
     #[cfg(wasm_browser)]

@@ -23,7 +23,7 @@ use std::{
     pin::Pin,
     sync::{
         Arc, Mutex, RwLock,
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
     task::{Context, Poll},
 };
@@ -1263,6 +1263,7 @@ impl Handle {
 
         let my_relay = Watchable::new(None);
         let ipv6_reported = Arc::new(AtomicBool::new(false));
+        let max_receive_segments = Arc::new(AtomicUsize::new(1));
 
         let relay_transport = RelayTransport::new(RelayActorConfig {
             my_relay: my_relay.clone(),
@@ -1271,6 +1272,7 @@ impl Handle {
             dns_resolver: dns_resolver.clone(),
             proxy_url: proxy_url.clone(),
             ipv6_reported: ipv6_reported.clone(),
+            max_receive_segments: max_receive_segments.clone(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify,
             metrics: metrics.magicsock.clone(),
@@ -1282,9 +1284,9 @@ impl Handle {
         let ipv6 = ip_transports.iter().any(|t| t.bind_addr().is_ipv6());
 
         #[cfg(not(wasm_browser))]
-        let transports = Transports::new(ip_transports, relay_transports);
+        let transports = Transports::new(ip_transports, relay_transports, max_receive_segments);
         #[cfg(wasm_browser)]
-        let transports = Transports::new(relay_transports);
+        let transports = Transports::new(relay_transports, max_receive_segments);
 
         let (disco, disco_receiver) = DiscoState::new(secret_encryption_key);
 

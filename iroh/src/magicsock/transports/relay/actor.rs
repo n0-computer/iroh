@@ -33,7 +33,7 @@ use std::{
     pin::{Pin, pin},
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
 
@@ -149,6 +149,8 @@ struct ActiveRelayActor {
     /// last datagram sent to the relay, received datagrams will trigger QUIC ACKs which is
     /// sufficient to keep active connections open.
     inactive_timeout: Pin<Box<time::Sleep>>,
+    /// The last known value for the magic socket's `AsyncUdpSocket::max_receive_segments`.
+    max_receive_segments: Arc<AtomicUsize>,
     /// Token indicating the [`ActiveRelayActor`] should stop.
     stop_token: CancellationToken,
     metrics: Arc<MagicsockMetrics>,
@@ -193,6 +195,7 @@ struct ActiveRelayActorOptions {
     relay_datagrams_send: mpsc::Receiver<RelaySendItem>,
     relay_datagrams_recv: mpsc::Sender<RelayRecvDatagram>,
     connection_opts: RelayConnectionOptions,
+    max_receive_segments: Arc<AtomicUsize>,
     stop_token: CancellationToken,
     metrics: Arc<MagicsockMetrics>,
 }
@@ -276,6 +279,7 @@ impl ActiveRelayActor {
             relay_datagrams_send,
             relay_datagrams_recv,
             connection_opts,
+            max_receive_segments,
             stop_token,
             metrics,
         } = opts;
@@ -289,6 +293,7 @@ impl ActiveRelayActor {
             relay_client_builder,
             is_home_relay: false,
             inactive_timeout: Box::pin(time::sleep(RELAY_INACTIVE_CLEANUP_TIME)),
+            max_receive_segments,
             stop_token,
             metrics,
         }
@@ -613,6 +618,8 @@ impl ActiveRelayActor {
                     &mut send_datagrams_buf,
                     SEND_DATAGRAM_BATCH_SIZE,
                 ) => {
+                    use std::sync::atomic::Ordering::Relaxed;
+
                     if count == 0 {
                         warn!("Datagram inbox closed, shutdown");
                         break Ok(());
@@ -620,11 +627,19 @@ impl ActiveRelayActor {
                     self.reset_inactive_timeout();
                     // TODO(frando): can we avoid the clone here?
                     let metrics = self.metrics.clone();
-                    let packet_iter = send_datagrams_buf.drain(..).map(|item| {
-                        metrics.send_relay.inc_by(item.datagrams.contents.len() as _);
-                        Ok(ClientToRelayMsg::Datagrams {
-                            dst_node_id: item.remote_node,
-                            datagrams: item.datagrams
+                    let max_segments = self.max_receive_segments.load(Relaxed);
+                    let packet_iter = send_datagrams_buf.drain(..).flat_map(|item| {
+                        let metrics = metrics.clone();
+                        let dst_node_id = item.remote_node;
+                        DatagramFragmenter {
+                            max_segments,
+                            datagram: item.datagrams,
+                        }.map(move |datagrams| {
+                            metrics.send_relay.inc_by(datagrams.contents.len() as _);
+                            Ok(ClientToRelayMsg::Datagrams {
+                                dst_node_id,
+                                datagrams
+                            })
                         })
                     });
                     let mut packet_stream = n0_future::stream::iter(packet_iter);
@@ -859,6 +874,8 @@ pub struct Config {
     pub proxy_url: Option<Url>,
     /// If the last net_report report, reports IPv6 to be available.
     pub ipv6_reported: Arc<AtomicBool>,
+    /// The last known return value of the magic socket's `AsyncUdpSocket::max_receive_segments` value
+    pub max_receive_segments: Arc<AtomicUsize>,
     #[cfg(any(test, feature = "test-utils"))]
     pub insecure_skip_relay_cert_verify: bool,
     pub metrics: Arc<MagicsockMetrics>,
@@ -1114,6 +1131,7 @@ impl RelayActor {
             relay_datagrams_send: send_datagram_rx,
             relay_datagrams_recv: self.relay_datagram_recv_queue.clone(),
             connection_opts,
+            max_receive_segments: self.config.max_receive_segments.clone(),
             stop_token: self.cancel_token.child_token(),
             metrics: self.config.metrics.clone(),
         };
@@ -1224,10 +1242,27 @@ pub(crate) struct RelayRecvDatagram {
     pub(crate) src: NodeId,
     pub(crate) datagrams: Datagrams,
 }
+
+struct DatagramFragmenter {
+    max_segments: usize,
+    datagram: Datagrams,
+}
+
+impl Iterator for DatagramFragmenter {
+    type Item = Datagrams;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.datagram.take_segments(self.max_segments)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
-        sync::{Arc, atomic::AtomicBool},
+        sync::{
+            Arc,
+            atomic::{AtomicBool, AtomicUsize},
+        },
         time::Duration,
     };
 
@@ -1271,6 +1306,7 @@ mod tests {
                 prefer_ipv6: Arc::new(AtomicBool::new(true)),
                 insecure_skip_cert_verify: true,
             },
+            max_receive_segments: Arc::new(AtomicUsize::new(1)),
             stop_token,
             metrics: Default::default(),
         };
