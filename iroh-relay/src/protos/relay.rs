@@ -164,8 +164,8 @@ impl Datagrams {
     /// will result in returning essentially `Some(self.clone())`, while making `self` empty afterwards.
     ///
     /// Calling this on a datagram batch with e.g. 15 datagrams with `num_segments == 10` will
-    /// result in returning `Some(datagram_batch)` where that `datagram_batch` contains 10 datagrams and
-    /// `self` contains 5 datagrams.
+    /// result in returning `Some(datagram_batch)` where that `datagram_batch` contains the first
+    /// 10 datagrams and `self` contains the remaining 5 datagrams.
     ///
     /// Calling this on a datagram batch that doesn't contain `num_segments` datagrams, but less
     /// will result in making `self` empty and returning essentially a clone of `self`.
