@@ -937,7 +937,7 @@
 <a href=#937 id=937 data-nosnippet>937</a>    /// with a [`NodeAddr`] that only contains a relay URL, but no direct addresses,
 <a href=#938 id=938 data-nosnippet>938</a>    /// as there are no APIs for directly using sockets in browsers.
 <a href=#939 id=939 data-nosnippet>939</a>    </span><span class="attr">#[cfg(wasm_browser)]
-<a href=#940 id=940 data-nosnippet>940</a>    </span><span class="kw">pub fn </span>node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>n0_watcher::Watcher&lt;Value = <span class="prelude-ty">Option</span>&lt;NodeAddr&gt;&gt; {
+<a href=#940 id=940 data-nosnippet>940</a>    </span><span class="kw">pub fn </span>node_addr(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; <span class="kw">impl </span>n0_watcher::Watcher&lt;Value = <span class="prelude-ty">Option</span>&lt;NodeAddr&gt;&gt; + <span class="kw">use</span>&lt;&gt; {
 <a href=#941 id=941 data-nosnippet>941</a>        <span class="comment">// In browsers, there will never be any direct addresses, so we wait
 <a href=#942 id=942 data-nosnippet>942</a>        // for the home relay instead. This makes the `NodeAddr` have *some* way
 <a href=#943 id=943 data-nosnippet>943</a>        // of connecting to us.
