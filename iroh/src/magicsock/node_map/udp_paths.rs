@@ -8,6 +8,7 @@
 use std::{collections::BTreeMap, net::SocketAddr};
 
 use n0_future::time::Instant;
+use tracing::debug;
 
 use super::{IpPort, path_state::PathState};
 
@@ -24,7 +25,7 @@ use super::{IpPort, path_state::PathState};
 ///
 /// [`MagicSock`]: crate::magicsock::MagicSock
 /// [`NodeState`]: super::node_state::NodeState
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy, Eq, PartialEq)]
 pub(super) enum UdpSendAddr {
     /// The UDP address can be relied on to deliver data to the remote node.
     ///
@@ -117,8 +118,16 @@ impl NodeUdpPaths {
     ///
     /// This should be called any time that `paths` is modified.
     pub(super) fn update_to_best_addr(&mut self, now: Instant) {
-        self.best_ipv4 = self.best_addr(false, now);
-        self.best = self.best_addr(true, now);
+        let best_ipv4 = self.best_addr(false, now);
+        let best = self.best_addr(true, now);
+        if best_ipv4 != self.best_ipv4 {
+            debug!(?best_ipv4, "update best addr (IPv4)");
+        }
+        if best != self.best {
+            debug!(?best, "update best addr (IPv4 or IPv6)");
+        }
+        self.best_ipv4 = best_ipv4;
+        self.best = best;
     }
 
     /// Returns the current best address of all available paths, ignoring
