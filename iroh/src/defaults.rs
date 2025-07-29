@@ -23,11 +23,11 @@ pub mod prod {
     use super::*;
 
     /// Hostname of the default NA relay.
-    pub const NA_RELAY_HOSTNAME: &str = "use1-1.relay.n0.iroh-canary.iroh.link.";
+    pub const NA_RELAY_HOSTNAME: &str = "use1-1.relay.n0.iroh.iroh.link.";
     /// Hostname of the default EU relay.
-    pub const EU_RELAY_HOSTNAME: &str = "euc1-1.relay.n0.iroh-canary.iroh.link.";
+    pub const EU_RELAY_HOSTNAME: &str = "euc1-1.relay.n0.iroh.iroh.link.";
     /// Hostname of the default Asia-Pacific relay.
-    pub const AP_RELAY_HOSTNAME: &str = "aps1-1.relay.n0.iroh-canary.iroh.link.";
+    pub const AP_RELAY_HOSTNAME: &str = "aps1-1.relay.n0.iroh.iroh.link.";
 
     /// Get the default [`RelayMap`].
     pub fn default_relay_map() -> RelayMap {
