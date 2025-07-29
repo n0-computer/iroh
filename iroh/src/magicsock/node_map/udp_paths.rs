@@ -8,7 +8,7 @@
 use std::{collections::BTreeMap, net::SocketAddr};
 
 use n0_future::time::Instant;
-use tracing::debug;
+use tracing::{Level, event};
 
 use super::{IpPort, path_state::PathState};
 
@@ -114,20 +114,34 @@ impl NodeUdpPaths {
         &self.best
     }
 
-    /// Change the current best address(es) to ones chosen as described in [`Self::best_addr`] docs.
+    /// Changes the current best address(es) to ones chosen as described in [`Self::best_addr`] docs.
+    ///
+    /// Returns whether one of the best addresses had to change.
     ///
     /// This should be called any time that `paths` is modified.
-    pub(super) fn update_to_best_addr(&mut self, now: Instant) {
+    pub(super) fn update_to_best_addr(&mut self, now: Instant) -> bool {
         let best_ipv4 = self.best_addr(false, now);
         let best = self.best_addr(true, now);
+        let mut changed = false;
         if best_ipv4 != self.best_ipv4 {
-            debug!(?best_ipv4, "update best addr (IPv4)");
+            event!(
+                target: "iroh::_events::udp::best_ipv4",
+                Level::DEBUG,
+                ?best_ipv4,
+            );
+            changed = true;
         }
         if best != self.best {
-            debug!(?best, "update best addr (IPv4 or IPv6)");
+            event!(
+                target: "iroh::_events::udp::best",
+                Level::DEBUG,
+                ?best,
+            );
+            changed = true;
         }
         self.best_ipv4 = best_ipv4;
         self.best = best;
+        changed
     }
 
     /// Returns the current best address of all available paths, ignoring
