@@ -475,19 +475,17 @@ impl Client {
 
         let mut reports = Vec::new();
 
-        // We set _did_start to true if at least one report was started for each category..
-        let ipv4_started = !v4_buf.is_empty();
-        let ipv6_started = !v6_buf.is_empty();
-        // If we did not start any report for either category, _did_finish is set to false right away
+        // We set _pending to true if at least one report was started for each category.
+        // If we did not start any report for either category, _pending is set to false right away
         // (it "completed" in the sense that nothing will ever run). If we did start at least one report,
-        // _did_finish is set to false, and will be set to true further down once the first task
+        // _pending is set to true, and will be set to false further down once the first task
         // completed.
-        let mut ipv4_did_finish = !ipv4_started;
-        let mut ipv6_did_finish = !ipv6_started;
+        let mut ipv4_pending = !v4_buf.is_empty();
+        let mut ipv6_pending = !v6_buf.is_empty();
         loop {
             // We early-abort the tasks once we have at least `enough_relays` reports,
             // and at least one ipv4 and one ipv6 report completed (if they were started, see comment above).
-            if reports.len() >= enough_relays && ipv4_did_finish && ipv6_did_finish {
+            if reports.len() >= enough_relays && !ipv4_pending && !ipv6_pending {
                 debug!("enough probes: {}", reports.len());
                 cancel_v4.cancel();
                 cancel_v6.cancel();
@@ -498,7 +496,7 @@ impl Client {
                 biased;
 
                 val = v4_buf.join_next(), if !v4_buf.is_empty() => {
-                    ipv4_did_finish = true;
+                    ipv4_pending = false;
                     match val {
                         Some(Ok(Some(Ok(res)))) => {
                             match res {
@@ -533,7 +531,7 @@ impl Client {
                     }
                 }
                 val = v6_buf.join_next(), if !v6_buf.is_empty() => {
-                    ipv6_did_finish = true;
+                    ipv6_pending = false;
                     match val {
                         Some(Ok(Some(Ok(res)))) => {
                             match res {
