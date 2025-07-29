@@ -1268,6 +1268,7 @@ impl Iterator for DatagramReBatcher {
 #[cfg(test)]
 mod tests {
     use std::{
+        num::NonZeroU16,
         sync::{
             Arc,
             atomic::{AtomicBool, AtomicUsize},
@@ -1275,6 +1276,7 @@ mod tests {
         time::Duration,
     };
 
+    use bytes::Bytes;
     use iroh_base::{NodeId, RelayUrl, SecretKey};
     use iroh_relay::{PingTracker, protos::relay::Datagrams};
     use n0_snafu::{Error, Result, ResultExt};
@@ -1288,7 +1290,9 @@ mod tests {
         RELAY_INACTIVE_CLEANUP_TIME, RelayConnectionOptions, RelayRecvDatagram, RelaySendItem,
         UNDELIVERABLE_DATAGRAM_TIMEOUT,
     };
-    use crate::{dns::DnsResolver, test_utils};
+    use crate::{
+        dns::DnsResolver, magicsock::transports::relay::actor::DatagramReBatcher, test_utils,
+    };
 
     /// Starts a new [`ActiveRelayActor`].
     #[allow(clippy::too_many_arguments)]
@@ -1613,5 +1617,40 @@ mod tests {
 
         let res = tokio::time::timeout(Duration::from_secs(10), tracker.timeout()).await;
         assert!(res.is_err(), "ping timeout should only happen once");
+    }
+
+    fn run_datagram_re_batcher(max_segments: usize, expected_lengths: Vec<usize>) {
+        let contents = Bytes::from_static(
+            b"Hello world! There's lots of stuff to talk about when you need a big buffer.",
+        );
+        let datagrams = Datagrams {
+            contents: contents.clone(),
+            ecn: None,
+            segment_size: NonZeroU16::new(10),
+        };
+
+        let re_batched_lengths = DatagramReBatcher {
+            datagrams,
+            max_segments,
+        }
+        .map(|d| d.contents.len())
+        .collect::<Vec<_>>();
+
+        assert_eq!(expected_lengths, re_batched_lengths);
+    }
+
+    #[test]
+    fn test_datagram_re_batcher_small_batches() {
+        run_datagram_re_batcher(3, vec![30, 30, 16]);
+    }
+
+    #[test]
+    fn test_datagram_re_batcher_batch_full() {
+        run_datagram_re_batcher(10, vec![76]);
+    }
+
+    #[test]
+    fn test_datagram_re_batcher_unbatch() {
+        run_datagram_re_batcher(1, vec![10, 10, 10, 10, 10, 10, 10, 6]);
     }
 }
