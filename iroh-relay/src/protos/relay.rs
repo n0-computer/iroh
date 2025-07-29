@@ -157,7 +157,8 @@ impl<T: AsRef<[u8]>> From<T> for Datagrams {
 }
 
 impl Datagrams {
-    /// Splits the current datagram into at maximum `num_segments` segments.
+    /// Splits the current datagram into at maximum `num_segments` segments, potentially returning
+    /// the batch with at most `num_segments` and leaving only the rest in `self`.
     ///
     /// Calling this on a datagram batch that only contains a single datagram (`segment_size == None`)
     /// will result in returning essentially `Some(self.clone())`, while making `self` empty afterwards.
@@ -190,10 +191,11 @@ impl Datagrams {
             .contents
             .split_to(std::cmp::min(max_content_len, self.contents.len()));
 
+        let is_datagram_batch = num_segments > 1 && usize_segment_size < contents.len();
+
         Some(Datagrams {
             ecn: self.ecn,
-            segment_size: (num_segments > 1 && usize_segment_size < contents.len())
-                .then_some(segment_size),
+            segment_size: is_datagram_batch.then_some(segment_size),
             contents,
         })
     }

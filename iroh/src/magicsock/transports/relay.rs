@@ -103,6 +103,12 @@ impl RelayTransport {
             if buf_out.len() < dm.datagrams.contents.len() {
                 // Our receive buffer isn't big enough to process this datagram.
                 // Continuing would cause a panic.
+                warn!(
+                    quinn_buf_len = buf_out.len(),
+                    datagram_len = dm.datagrams.contents.len(),
+                    segment_size = ?dm.datagrams.segment_size,
+                    "dropping received datagram: quinn buffer too small"
+                );
                 break;
                 // In theory we could put some logic in here to fragment the datagram in case
                 // we still have enough room in our `buf_out` left to fit a couple of
