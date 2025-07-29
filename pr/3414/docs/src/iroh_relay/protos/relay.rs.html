@@ -164,8 +164,8 @@
 <a href=#164 id=164 data-nosnippet>164</a>    /// will result in returning essentially `Some(self.clone())`, while making `self` empty afterwards.
 <a href=#165 id=165 data-nosnippet>165</a>    ///
 <a href=#166 id=166 data-nosnippet>166</a>    /// Calling this on a datagram batch with e.g. 15 datagrams with `num_segments == 10` will
-<a href=#167 id=167 data-nosnippet>167</a>    /// result in returning `Some(datagram_batch)` where that `datagram_batch` contains 10 datagrams and
-<a href=#168 id=168 data-nosnippet>168</a>    /// `self` contains 5 datagrams.
+<a href=#167 id=167 data-nosnippet>167</a>    /// result in returning `Some(datagram_batch)` where that `datagram_batch` contains the first
+<a href=#168 id=168 data-nosnippet>168</a>    /// 10 datagrams and `self` contains the remaining 5 datagrams.
 <a href=#169 id=169 data-nosnippet>169</a>    ///
 <a href=#170 id=170 data-nosnippet>170</a>    /// Calling this on a datagram batch that doesn't contain `num_segments` datagrams, but less
 <a href=#171 id=171 data-nosnippet>171</a>    /// will result in making `self` empty and returning essentially a clone of `self`.
