@@ -100,6 +100,19 @@ impl RelayTransport {
                 }
             };
 
+            if buf_out.len() < dm.datagrams.contents.len() {
+                // Our receive buffer isn't big enough to process this datagram.
+                // Continuing would cause a panic.
+                break;
+                // In theory we could put some logic in here to fragment the datagram in case
+                // we still have enough room in our `buf_out` left to fit a couple of
+                // `dm.datagrams.segment_size`es, but we *should* have cut those datagrams
+                // to appropriate sizes earlier in the pipeline (just before we put them
+                // into the `relay_datagram_recv_queue` in the `ActiveRelayActor`).
+                // So the only case in which this happens is we receive a datagram via the relay
+                // that's essentially bigger than our configured `max_udp_payload_size`.
+                // In that case we drop it and let MTU discovery take over.
+            }
             buf_out[..dm.datagrams.contents.len()].copy_from_slice(&dm.datagrams.contents);
             meta_out.len = dm.datagrams.contents.len();
             meta_out.stride = dm
