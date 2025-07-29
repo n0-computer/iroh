@@ -475,18 +475,25 @@ impl Client {
 
         let mut reports = Vec::new();
 
+        let ipv4_did_start = !v4_buf.is_empty();
+        let ipv6_did_start = !v6_buf.is_empty();
+        let mut ipv4_did_complete = !ipv4_did_start;
+        let mut ipv6_did_complete = !ipv6_did_start;
         loop {
             if reports.len() >= enough_relays {
-                debug!("enough probes: {}", reports.len());
-                cancel_v4.cancel();
-                cancel_v6.cancel();
-                break;
+                if ipv4_did_complete && ipv6_did_complete {
+                    debug!("enough probes: {}", reports.len());
+                    cancel_v4.cancel();
+                    cancel_v6.cancel();
+                    break;
+                }
             }
 
             tokio::select! {
                 biased;
 
                 val = v4_buf.join_next(), if !v4_buf.is_empty() => {
+                    ipv4_did_complete = true;
                     match val {
                         Some(Ok(Some(Ok(res)))) => {
                             match res {
@@ -521,6 +528,7 @@ impl Client {
                     }
                 }
                 val = v6_buf.join_next(), if !v6_buf.is_empty() => {
+                    ipv6_did_complete = true;
                     match val {
                         Some(Ok(Some(Ok(res)))) => {
                             match res {
