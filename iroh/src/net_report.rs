@@ -475,7 +475,7 @@ impl Client {
 
         let mut reports = Vec::new();
 
-        // We set _did_start to true if at least on report was started for each category..
+        // We set _did_start to true if at least one report was started for each category..
         let ipv4_started = !v4_buf.is_empty();
         let ipv6_started = !v6_buf.is_empty();
         // If we did not start any report for either category, _did_finish is set to false right away
