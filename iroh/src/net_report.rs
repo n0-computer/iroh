@@ -475,25 +475,30 @@ impl Client {
 
         let mut reports = Vec::new();
 
-        let ipv4_did_start = !v4_buf.is_empty();
-        let ipv6_did_start = !v6_buf.is_empty();
-        let mut ipv4_did_complete = !ipv4_did_start;
-        let mut ipv6_did_complete = !ipv6_did_start;
+        // We set _did_start to true if at least on report was started for each category..
+        let ipv4_started = !v4_buf.is_empty();
+        let ipv6_started = !v6_buf.is_empty();
+        // If we did not start any report for either category, _did_finish is set to false right away
+        // (it "completed" in the sense that nothing will ever run). If we did start at least one report,
+        // _did_finish is set to false, and will be set to true further down once the first task
+        // completed.
+        let mut ipv4_did_finish = !ipv4_started;
+        let mut ipv6_did_finish = !ipv6_started;
         loop {
-            if reports.len() >= enough_relays {
-                if ipv4_did_complete && ipv6_did_complete {
-                    debug!("enough probes: {}", reports.len());
-                    cancel_v4.cancel();
-                    cancel_v6.cancel();
-                    break;
-                }
+            // We early-abort the tasks once we have at least `enough_relays` reports,
+            // and at least one ipv4 and one ipv6 report completed (if they were started, see comment above).
+            if reports.len() >= enough_relays && ipv4_did_finish && ipv6_did_finish {
+                debug!("enough probes: {}", reports.len());
+                cancel_v4.cancel();
+                cancel_v6.cancel();
+                break;
             }
 
             tokio::select! {
                 biased;
 
                 val = v4_buf.join_next(), if !v4_buf.is_empty() => {
-                    ipv4_did_complete = true;
+                    ipv4_did_finish = true;
                     match val {
                         Some(Ok(Some(Ok(res)))) => {
                             match res {
@@ -528,7 +533,7 @@ impl Client {
                     }
                 }
                 val = v6_buf.join_next(), if !v6_buf.is_empty() => {
-                    ipv6_did_complete = true;
+                    ipv6_did_finish = true;
                     match val {
                         Some(Ok(Some(Ok(res)))) => {
                             match res {
