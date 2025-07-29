@@ -2298,10 +2298,10 @@ dependencies = [
  "iroh-relay",
  "n0-future",
  "n0-snafu",
- "n0-watcher 0.3.0",
+ "n0-watcher",
  "nested_enum_utils",
  "netdev",
- "netwatch 0.8.0",
+ "netwatch",
  "parse-size",
  "pin-project",
  "pkarr",
@@ -2888,17 +2888,6 @@ dependencies = [
 
 [[package]]
 name = "n0-watcher"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f216d4ebc5fcf9548244803cbb93f488a2ae160feba3706cd17040d69cf7a368"
-dependencies = [
- "derive_more 1.0.0",
- "n0-future",
- "snafu",
-]
-
-[[package]]
-name = "n0-watcher"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c31462392a10d5ada4b945e840cbec2d5f3fee752b96c4b33eb41414d8f45c2a"
@@ -3019,41 +3008,6 @@ dependencies = [
 
 [[package]]
 name = "netwatch"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d0445cbbb4d6d1afe22f4d1c14da2a2eb598a98b83650f15f988050bceefea5"
-dependencies = [
- "atomic-waker",
- "bytes",
- "cfg_aliases",
- "derive_more 2.0.1",
- "iroh-quinn-udp",
- "js-sys",
- "libc",
- "n0-future",
- "n0-watcher 0.2.0",
- "nested_enum_utils",
- "netdev",
- "netlink-packet-core",
- "netlink-packet-route 0.24.0",
- "netlink-proto",
- "netlink-sys",
- "pin-project-lite",
- "serde",
- "snafu",
- "socket2 0.6.0",
- "time",
- "tokio",
- "tokio-util",
- "tracing",
- "web-sys",
- "windows",
- "windows-result",
- "wmi",
-]
-
-[[package]]
-name = "netwatch"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8901dbb408894af3df3fc51420ba0c6faf3a7d896077b797c39b7001e2f787bd"
@@ -3066,7 +3020,7 @@ dependencies = [
  "js-sys",
  "libc",
  "n0-future",
- "n0-watcher 0.3.0",
+ "n0-watcher",
  "nested_enum_utils",
  "netdev",
  "netlink-packet-core",
@@ -3552,9 +3506,9 @@ checksum = "f84267b20a16ea918e43c6a88433c2d54fa145c92a811b5b047ccbe153674483"
 
 [[package]]
 name = "portmapper"
-version = "0.7.0"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "abceb40595a7a1b65242013b497d031000c1c0e58505d4c5f7834951fd3800d4"
+checksum = "62f1975debe62a70557e42b9ff9466e4890cf9d3d156d296408a711f1c5f642b"
 dependencies = [
  "base64",
  "bytes",
@@ -3566,7 +3520,7 @@ dependencies = [
  "iroh-metrics",
  "libc",
  "nested_enum_utils",
- "netwatch 0.7.0",
+ "netwatch",
  "num_enum",
  "rand 0.9.1",
  "serde",
