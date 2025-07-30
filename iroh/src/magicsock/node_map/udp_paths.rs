@@ -109,6 +109,11 @@ impl NodeUdpPaths {
     /// Returns the current UDP address to send on.
     pub(super) fn send_addr(&self, have_ipv6: bool) -> &UdpSendAddr {
         if !have_ipv6 {
+            // If it's a valid address, it doesn't matter if our interface scan determined that we
+            // "probably" don't have IPv6, because we clearly were able to send and receive a ping/pong over IPv6.
+            if matches!(&self.best, UdpSendAddr::Valid(_)) {
+                return &self.best;
+            }
             return &self.best_ipv4;
         }
         &self.best
