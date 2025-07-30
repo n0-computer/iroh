@@ -169,7 +169,33 @@
 <a href="#168" id="168">168</a>
 <a href="#169" id="169">169</a>
 <a href="#170" id="170">170</a>
-<a href="#171" id="171">171</a></pre></div><pre class="rust"><code><span class="doccomment">//! Path state for UDP addresses of a single peer node.
+<a href="#171" id="171">171</a>
+<a href="#172" id="172">172</a>
+<a href="#173" id="173">173</a>
+<a href="#174" id="174">174</a>
+<a href="#175" id="175">175</a>
+<a href="#176" id="176">176</a>
+<a href="#177" id="177">177</a>
+<a href="#178" id="178">178</a>
+<a href="#179" id="179">179</a>
+<a href="#180" id="180">180</a>
+<a href="#181" id="181">181</a>
+<a href="#182" id="182">182</a>
+<a href="#183" id="183">183</a>
+<a href="#184" id="184">184</a>
+<a href="#185" id="185">185</a>
+<a href="#186" id="186">186</a>
+<a href="#187" id="187">187</a>
+<a href="#188" id="188">188</a>
+<a href="#189" id="189">189</a>
+<a href="#190" id="190">190</a>
+<a href="#191" id="191">191</a>
+<a href="#192" id="192">192</a>
+<a href="#193" id="193">193</a>
+<a href="#194" id="194">194</a>
+<a href="#195" id="195">195</a>
+<a href="#196" id="196">196</a>
+<a href="#197" id="197">197</a></pre></div><pre class="rust"><code><span class="doccomment">//! Path state for UDP addresses of a single peer node.
 //!
 //! This started as simply moving the [`NodeState`]'s `direct_addresses` and `best_addr`
 //! into one place together.  The aim is for external places to not directly interact with
@@ -179,6 +205,7 @@
 </span><span class="kw">use </span>std::{collections::BTreeMap, net::SocketAddr};
 
 <span class="kw">use </span>n0_future::time::Instant;
+<span class="kw">use </span>tracing::{event, Level};
 
 <span class="kw">use super</span>::{path_state::PathState, IpPort};
 
@@ -195,7 +222,7 @@
 ///
 /// [`MagicSock`]: crate::magicsock::MagicSock
 /// [`NodeState`]: super::node_state::NodeState
-</span><span class="attr">#[derive(Debug, Default, Clone, Copy)]
+</span><span class="attr">#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">enum </span>UdpSendAddr {
     <span class="doccomment">/// The UDP address can be relied on to deliver data to the remote node.
     ///
@@ -284,9 +311,34 @@
         <span class="kw-2">&amp;</span><span class="self">self</span>.best
     }
 
-    <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>update_to_best_addr(<span class="kw-2">&amp;mut </span><span class="self">self</span>, now: Instant) {
-        <span class="self">self</span>.best_ipv4 = <span class="self">self</span>.best_addr(<span class="bool-val">false</span>, now);
-        <span class="self">self</span>.best = <span class="self">self</span>.best_addr(<span class="bool-val">true</span>, now);
+    <span class="doccomment">/// Changes the current best address(es) to ones chosen as described in [`Self::best_addr`] docs.
+    ///
+    /// Returns whether one of the best addresses had to change.
+    ///
+    /// This should be called any time that `paths` is modified.
+    </span><span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>update_to_best_addr(<span class="kw-2">&amp;mut </span><span class="self">self</span>, now: Instant) -&gt; bool {
+        <span class="kw">let </span>best_ipv4 = <span class="self">self</span>.best_addr(<span class="bool-val">false</span>, now);
+        <span class="kw">let </span>best = <span class="self">self</span>.best_addr(<span class="bool-val">true</span>, now);
+        <span class="kw">let </span><span class="kw-2">mut </span>changed = <span class="bool-val">false</span>;
+        <span class="kw">if </span>best_ipv4 != <span class="self">self</span>.best_ipv4 {
+            <span class="macro">event!</span>(
+                target: <span class="string">"iroh::_events::udp::best_ipv4"</span>,
+                Level::DEBUG,
+                <span class="question-mark">?</span>best_ipv4,
+            );
+            changed = <span class="bool-val">true</span>;
+        }
+        <span class="kw">if </span>best != <span class="self">self</span>.best {
+            <span class="macro">event!</span>(
+                target: <span class="string">"iroh::_events::udp::best"</span>,
+                Level::DEBUG,
+                <span class="question-mark">?</span>best,
+            );
+            changed = <span class="bool-val">true</span>;
+        }
+        <span class="self">self</span>.best_ipv4 = best_ipv4;
+        <span class="self">self</span>.best = best;
+        changed
     }
 
     <span class="kw">pub</span>(<span class="kw">super</span>) <span class="kw">fn </span>best_addr(<span class="kw-2">&amp;</span><span class="self">self</span>, have_ipv6: bool, now: Instant) -&gt; UdpSendAddr {

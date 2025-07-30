@@ -1742,7 +1742,9 @@
 <a href="#1741" id="1741">1741</a>
 <a href="#1742" id="1742">1742</a>
 <a href="#1743" id="1743">1743</a>
-<a href="#1744" id="1744">1744</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#1744" id="1744">1744</a>
+<a href="#1745" id="1745">1745</a>
+<a href="#1746" id="1746">1746</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{btree_map::Entry, BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
@@ -2781,10 +2783,12 @@
                 }
             }
         }
-        <span class="comment">// Clear trust on our best_addr if it is not included in the updated set.  Also
-        // clear the last call-me-maybe send time so we will send one again.
-        </span><span class="self">self</span>.udp_paths.update_to_best_addr(now);
-        <span class="self">self</span>.last_call_me_maybe = <span class="prelude-val">None</span>;
+        <span class="comment">// Clear trust on our best_addr if it is not included in the updated set.
+        </span><span class="kw">let </span>changed = <span class="self">self</span>.udp_paths.update_to_best_addr(now);
+        <span class="kw">if </span>changed {
+            <span class="comment">// Clear the last call-me-maybe send time so we will send one again.
+            </span><span class="self">self</span>.last_call_me_maybe = <span class="prelude-val">None</span>;
+        }
         <span class="macro">debug!</span>(
             paths = %summarize_node_paths(<span class="kw-2">&amp;</span><span class="self">self</span>.udp_paths.paths),
             <span class="string">"updated endpoint paths from call-me-maybe"</span>,
