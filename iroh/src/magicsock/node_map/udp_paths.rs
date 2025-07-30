@@ -8,6 +8,7 @@
 use std::{collections::BTreeMap, net::SocketAddr};
 
 use n0_future::time::Instant;
+use tracing::{event, Level};
 
 use super::{path_state::PathState, IpPort};
 
@@ -24,7 +25,7 @@ use super::{path_state::PathState, IpPort};
 ///
 /// [`MagicSock`]: crate::magicsock::MagicSock
 /// [`NodeState`]: super::node_state::NodeState
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(super) enum UdpSendAddr {
     /// The UDP address can be relied on to deliver data to the remote node.
     ///
@@ -113,9 +114,34 @@ impl NodeUdpPaths {
         &self.best
     }
 
-    pub(super) fn update_to_best_addr(&mut self, now: Instant) {
-        self.best_ipv4 = self.best_addr(false, now);
-        self.best = self.best_addr(true, now);
+    /// Changes the current best address(es) to ones chosen as described in [`Self::best_addr`] docs.
+    ///
+    /// Returns whether one of the best addresses had to change.
+    ///
+    /// This should be called any time that `paths` is modified.
+    pub(super) fn update_to_best_addr(&mut self, now: Instant) -> bool {
+        let best_ipv4 = self.best_addr(false, now);
+        let best = self.best_addr(true, now);
+        let mut changed = false;
+        if best_ipv4 != self.best_ipv4 {
+            event!(
+                target: "iroh::_events::udp::best_ipv4",
+                Level::DEBUG,
+                ?best_ipv4,
+            );
+            changed = true;
+        }
+        if best != self.best {
+            event!(
+                target: "iroh::_events::udp::best",
+                Level::DEBUG,
+                ?best,
+            );
+            changed = true;
+        }
+        self.best_ipv4 = best_ipv4;
+        self.best = best;
+        changed
     }
 
     pub(super) fn best_addr(&self, have_ipv6: bool, now: Instant) -> UdpSendAddr {
