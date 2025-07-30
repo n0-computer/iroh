@@ -1025,10 +1025,12 @@ impl NodeState {
                 }
             }
         }
-        // Clear trust on our best_addr if it is not included in the updated set.  Also
-        // clear the last call-me-maybe send time so we will send one again.
-        self.udp_paths.update_to_best_addr(now);
-        self.last_call_me_maybe = None;
+        // Clear trust on our best_addr if it is not included in the updated set.
+        let changed = self.udp_paths.update_to_best_addr(now);
+        if changed {
+            // Clear the last call-me-maybe send time so we will send one again.
+            self.last_call_me_maybe = None;
+        }
         debug!(
             paths = %summarize_node_paths(&self.udp_paths.paths),
             "updated endpoint paths from call-me-maybe",
