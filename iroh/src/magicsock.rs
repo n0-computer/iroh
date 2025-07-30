@@ -1731,9 +1731,6 @@ impl Actor {
         #[cfg(not(wasm_browser))]
         self.update_direct_addresses(None);
 
-        // Setup network monitoring
-        let mut current_netmon_state = self.netmon_watcher.get();
-
         #[cfg(not(wasm_browser))]
         let mut direct_addr_heartbeat_timer = time::interval(HEARTBEAT_INTERVAL);
 
@@ -1871,9 +1868,13 @@ impl Actor {
                         self.msock.metrics.magicsock.actor_tick_other.inc();
                         continue;
                     };
-                    let is_major = state.is_major_change(&current_netmon_state);
-                    current_netmon_state = state;
-                    trace!("tick: link change {}", is_major);
+                    let is_major = state.is_major_change(&state);
+                    event!(
+                        target: "iroh::_events::link_change",
+                        Level::DEBUG,
+                        ?state,
+                        is_major
+                    );
                     self.msock.metrics.magicsock.actor_link_change.inc();
                     self.handle_network_change(is_major).await;
                 }
