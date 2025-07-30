@@ -156,10 +156,10 @@ jobs:
       - name: Checkout sources
         uses: actions/checkout@v4
 
-      - name: Setup node.js version 22.5 # needed for browser-like websocket API support in node.js
+      - name: Setup node.js version 22.17 # needed for browser-like websocket API support in node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 22.5
+          node-version: 22.17
 
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@stable

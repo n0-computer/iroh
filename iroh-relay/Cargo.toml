@@ -33,7 +33,7 @@ hyper = { version = "1", features = ["server", "client", "http1"] }
 hyper-util = "0.1.1"
 iroh-base = { version = "0.90.0", path = "../iroh-base", default-features = false, features = ["key", "relay"] }
 iroh-metrics = { version = "0.35", default-features = false }
-n0-future = "0.1.2"
+n0-future = "0.2.0"
 num_enum = "0.7"
 pin-project = "1"
 pkarr = { version = "3.7", default-features = false, features = ["signed_packet"] }
@@ -66,10 +66,10 @@ tokio-util = { version = "0.7", features = ["io-util", "io", "codec", "rt"] }
 tracing = "0.1"
 url = { version = "2.5.3", features = ["serde"] }
 webpki = { package = "rustls-webpki", version = "0.103" }
-webpki-roots = "0.26"
+webpki-roots = "1.0"
 webpki_types = { package = "rustls-pki-types", version = "1.12" }
 data-encoding = "2.6.0"
-lru = "0.13"
+lru = "0.16"
 z32 = "1.0.3"
 snafu = { version = "0.8.5", features = ["rust_1_81"] }
 n0-snafu = "0.2.0"
