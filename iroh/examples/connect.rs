@@ -55,19 +55,13 @@ async fn main() -> Result<()> {
     let me = endpoint.node_id();
     println!("node id: {me}");
     println!("node listening addresses:");
-    for local_endpoint in endpoint
-        .direct_addresses()
-        .initialized()
-        .await
-        .context("no direct addresses")?
-    {
+    for local_endpoint in endpoint.direct_addresses().initialized().await {
         println!("\t{}", local_endpoint.addr)
     }
 
     let relay_url = endpoint
         .home_relay()
         .get()
-        .unwrap()
         .first()
         .cloned()
         .expect("should be connected to a relay server, try calling `endpoint.local_endpoints()` or `endpoint.connect()` first, to ensure the endpoint has actually attempted a connection before checking for the connected relay server");
