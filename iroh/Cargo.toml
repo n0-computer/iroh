@@ -39,7 +39,7 @@ ed25519-dalek = { version = "2.1.1", features = ["serde", "rand_core", "zeroize"
 http = "1"
 iroh-base = { version = "0.90.0", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
 iroh-relay = { version = "0.90", path = "../iroh-relay", default-features = false }
-n0-future = "0.1.2"
+n0-future = "0.2.0"
 n0-snafu = "0.2.1"
 n0-watcher = "0.3"
 nested_enum_utils = "0.2.1"
@@ -56,7 +56,6 @@ reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls",
     "stream",
 ] }
-ring = "0.17"
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 serde = { version = "1.0.219", features = ["derive", "rc"] }
 smallvec = "1.11.1"
@@ -75,7 +74,7 @@ tracing = "0.1"
 url = { version = "2.5", features = ["serde"] }
 webpki = { package = "rustls-webpki", version = "0.103", features = ["ring"] }
 webpki_types = { package = "rustls-pki-types", version = "1.12" }
-webpki-roots = "0.26"
+webpki-roots = "1.0"
 z32 = "1.0.3"
 
 # fix minimal versions
