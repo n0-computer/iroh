@@ -104,16 +104,19 @@ impl RelayTransport {
             };
 
             // This *tries* to make the datagrams fit into our buffer by re-batching them.
-            let num_segments =
-                buf_out.len() / dm.datagrams.segment_size.map_or(0, u16::from) as usize;
+            let num_segments = dm
+                .datagrams
+                .segment_size
+                .map_or(1, |ss| buf_out.len() / u16::from(ss) as usize);
             let datagrams = dm.datagrams.take_segments(num_segments);
+            let empty_after = dm.datagrams.contents.is_empty();
             let dm = RelayRecvDatagram {
                 datagrams,
                 src: dm.src,
                 url: dm.url.clone(),
             };
             // take_segments can leave `self.pending_item` empty, in that case we clear it
-            if dm.datagrams.contents.is_empty() {
+            if empty_after {
                 self.pending_item = None;
             }
 
