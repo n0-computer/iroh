@@ -76,50 +76,6 @@ impl RelayTransport {
         }
     }
 
-    pub(super) fn poll_recv_item(
-        &mut self,
-        buf_size: usize,
-        cx: &mut Context,
-    ) -> Poll<Option<RelayRecvDatagram>> {
-        if self.pending_item.is_none() {
-            match self.relay_datagram_recv_queue.poll_recv(cx) {
-                Poll::Ready(Some(recv)) => {
-                    self.pending_item = Some(recv);
-                }
-                pending_or_err => return pending_or_err,
-            }
-        }
-
-        let pending_item = self.pending_item.as_mut().expect("checked above");
-
-        // If it's not batched or fits our buffer size as a whole anyways, just return
-        if pending_item.datagrams.segment_size.is_none()
-            || pending_item.datagrams.contents.len() <= buf_size
-        {
-            return Poll::Ready(Some(self.pending_item.take().expect("checked above")));
-        }
-
-        // If it doesn't fit, we need to split
-        let num_segments =
-            buf_size / pending_item.datagrams.segment_size.map_or(0, u16::from) as usize;
-        let datagrams = pending_item
-            .datagrams
-            .take_segments(num_segments)
-            .expect("cannot be empty");
-
-        if pending_item.datagrams.contents.is_empty() {
-            let mut item = self.pending_item.take().expect("checked above");
-            item.datagrams = datagrams;
-            Poll::Ready(Some(item))
-        } else {
-            Poll::Ready(Some(RelayRecvDatagram {
-                datagrams,
-                src: pending_item.src,
-                url: pending_item.url.clone(),
-            }))
-        }
-    }
-
     pub(super) fn poll_recv(
         &mut self,
         cx: &mut Context,
@@ -133,7 +89,7 @@ impl RelayTransport {
             .zip(metas.iter_mut())
             .zip(source_addrs.iter_mut())
         {
-            let dm = match self.poll_recv_item(buf_out.len(), cx) {
+            let dm = match self.poll_recv_queue(cx) {
                 Poll::Ready(Some(recv)) => recv,
                 Poll::Ready(None) => {
                     error!("relay_recv_channel closed");
@@ -146,6 +102,20 @@ impl RelayTransport {
                     break;
                 }
             };
+
+            // This *tries* to make the datagrams fit into our buffer by re-batching them.
+            let num_segments =
+                buf_out.len() / dm.datagrams.segment_size.map_or(0, u16::from) as usize;
+            let datagrams = dm.datagrams.take_segments(num_segments);
+            let dm = RelayRecvDatagram {
+                datagrams,
+                src: dm.src,
+                url: dm.url.clone(),
+            };
+            // take_segments can leave `self.pending_item` empty, in that case we clear it
+            if dm.datagrams.contents.is_empty() {
+                self.pending_item = None;
+            }
 
             if buf_out.len() < dm.datagrams.contents.len() {
                 // Our receive buffer isn't big enough to process this datagram.
@@ -166,6 +136,7 @@ impl RelayTransport {
                 // that's essentially bigger than our configured `max_udp_payload_size`.
                 // In that case we drop it and let MTU discovery take over.
             }
+
             buf_out[..dm.datagrams.contents.len()].copy_from_slice(&dm.datagrams.contents);
             meta_out.len = dm.datagrams.contents.len();
             meta_out.stride = dm
@@ -202,6 +173,28 @@ impl RelayTransport {
         RelayNetworkChangeSender {
             sender: self.actor_sender.clone(),
         }
+    }
+
+    /// Makes sure we have a pending item stored, if not, it'll poll a new one from the queue.
+    ///
+    /// Returns a mutable reference to the stored pending item.
+    #[inline]
+    fn poll_recv_queue<'a>(
+        &'a mut self,
+        cx: &mut Context,
+    ) -> Poll<Option<&'a mut RelayRecvDatagram>> {
+        // Borrow checker doesn't quite understand an if let Some(_)... here
+        if self.pending_item.is_some() {
+            return Poll::Ready(self.pending_item.as_mut());
+        }
+
+        let item = match self.relay_datagram_recv_queue.poll_recv(cx) {
+            Poll::Ready(Some(item)) => item,
+            Poll::Ready(None) => return Poll::Ready(None),
+            Poll::Pending => return Poll::Pending,
+        };
+
+        Poll::Ready(Some(self.pending_item.insert(item)))
     }
 }
 
