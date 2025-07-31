@@ -14,7 +14,7 @@ the batch with at most <code>num_segments</code> and leaving only the rest in <c
 <p>Calling this on a datagram batch that only contains a single datagram (<code>segment_size == None</code>)
 will result in returning essentially a clone of <code>self</code>, while making <code>self</code> empty afterwards.</p>
 <p>Calling this on a datagram batch with e.g. 15 datagrams with <code>num_segments == 10</code> will
-result in returning a datagram batch taht contains the first 10 datagrams and leave <code>self</code>
+result in returning a datagram batch that contains the first 10 datagrams and leave <code>self</code>
 containing the remaining 5 datagrams.</p>
 <p>Calling this on a datagram batch with less than <code>num_segments</code> datagrams will result in
 making <code>self</code> empty and returning essentially a clone of <code>self</code>.</p>
