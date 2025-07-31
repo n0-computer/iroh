@@ -39,7 +39,7 @@ use std::{
 use iroh_base::{NodeId, PublicKey};
 use n0_future::{
     boxed::BoxStream,
-    task::{self, AbortOnDropHandle, JoinSet},
+    task::{self, JoinSet},
     time::{self, Duration},
 };
 use n0_watcher::{Watchable, Watcher as _};
@@ -70,9 +70,8 @@ const DISCOVERY_DURATION: Duration = Duration::from_secs(10);
 /// Discovery using `swarm-discovery`, a variation on mdns
 #[derive(Debug)]
 pub struct MdnsDiscovery {
-    #[allow(dead_code)]
-    handle: AbortOnDropHandle<()>,
     sender: mpsc::Sender<Message>,
+    shutdown: mpsc::Sender<()>,
     /// When `local_addrs` changes, we re-publish our info.
     local_addrs: Watchable<Option<NodeData>>,
 }
@@ -156,6 +155,7 @@ impl MdnsDiscovery {
     pub fn new(node_id: NodeId) -> Result<Self, IntoDiscoveryError> {
         debug!("Creating new MdnsDiscovery service");
         let (send, mut recv) = mpsc::channel(64);
+        let (shutdown_tx, mut shutdown_rx) = mpsc::channel(1);
         let task_sender = send.clone();
         let rt = tokio::runtime::Handle::current();
         let discovery =
@@ -193,12 +193,21 @@ impl MdnsDiscovery {
                         }
                         continue;
                     }
+                    _ = shutdown_rx.recv() => {
+                        error!("MdnsDiscovery channel closed");
+                        error!("closing MdnsDiscovery");
+                        timeouts.abort_all();
+
+                        return;
+                    }
                 };
                 let msg = match msg {
                     None => {
                         error!("MdnsDiscovery channel closed");
                         error!("closing MdnsDiscovery");
                         timeouts.abort_all();
+                        discovery.remove_all();
+
                         return;
                     }
                     Some(msg) => msg,
@@ -312,10 +321,10 @@ impl MdnsDiscovery {
                 }
             }
         };
-        let handle = task::spawn(discovery_fut.instrument(info_span!("swarm-discovery.actor")));
+        task::spawn(discovery_fut.instrument(info_span!("swarm-discovery.actor")));
         Ok(Self {
-            handle: AbortOnDropHandle::new(handle),
             sender: send,
+            shutdown: shutdown_tx,
             local_addrs,
         })
     }
@@ -365,6 +374,12 @@ impl MdnsDiscovery {
                 .or_insert(vec![socketaddr.ip()]);
         }
         addrs
+    }
+}
+
+impl Drop for MdnsDiscovery {
+    fn drop(&mut self) {
+        self.shutdown.try_send(()).ok();
     }
 }
 
@@ -454,7 +469,6 @@ mod tests {
             let user_data: UserData = "foobar".parse()?;
             let node_data = NodeData::new(None, BTreeSet::from(["0.0.0.0:11111".parse().unwrap()]))
                 .with_user_data(Some(user_data.clone()));
-            println!("info {node_data:?}");
 
             // resolve twice to ensure we can create separate streams for the same node_id
             let mut s1 = discovery_a.resolve(node_id_b).unwrap();
@@ -487,39 +501,51 @@ mod tests {
 
         #[tokio::test]
         #[traced_test]
-        async fn mdns_expiry() -> Result {
+        async fn mdns_publish_expire() -> Result {
             let (_, discovery_a) = make_discoverer()?;
             let (node_id_b, discovery_b) = make_discoverer()?;
 
-            // make addr info for discoverer b
-            let user_data: UserData = "foobar".parse()?;
-            let node_data = NodeData::new(None, BTreeSet::from(["0.0.0.0:11111".parse().unwrap()]))
-                .with_user_data(Some(user_data.clone()));
-            println!("info {node_data:?}");
-
-            // resolve twice to ensure we can create separate streams for the same node_id
-            let mut s1 = discovery_a.resolve(node_id_b).unwrap();
-
-            tracing::debug!(?node_id_b, "Discovering node id b");
             // publish discovery_b's address
+            let node_data = NodeData::new(None, BTreeSet::from(["0.0.0.0:11111".parse().unwrap()]))
+                .with_user_data(Some("".parse()?));
             discovery_b.publish(&node_data);
-            let DiscoveryEvent::Discovered(s1_res) =
-                tokio::time::timeout(Duration::from_secs(5), s1.next())
+
+            let mut s1 = discovery_a.subscribe().unwrap();
+            tracing::debug!(?node_id_b, "Discovering node id b");
+
+            // Wait for the specific node to be discovered
+            loop {
+                let event = tokio::time::timeout(Duration::from_secs(5), s1.next())
                     .await
                     .context("timeout")?
-                    .unwrap()?
-            else {
-                panic!("Received unexpected discovery event");
-            };
-            assert_eq!(s1_res.node_info().data, node_data);
+                    .expect("Stream should not be closed");
 
+                match event {
+                    DiscoveryEvent::Discovered(item) if item.node_info().node_id == node_id_b => {
+                        break;
+                    }
+                    _ => continue, // Ignore other discovery events
+                }
+            }
+
+            // Shutdown node B
             drop(discovery_b);
+            tokio::time::sleep(Duration::from_secs(5)).await;
 
-            let result = tokio::time::timeout(Duration::from_secs(30), s1.next())
-                .await
-                .context("timeout")?
-                .unwrap()?;
-            assert_eq!(result, DiscoveryEvent::Expired(node_id_b));
+            // Wait for the expiration event for the specific node
+            loop {
+                let event = tokio::time::timeout(Duration::from_secs(10), s1.next())
+                    .await
+                    .context("timeout waiting for expiration event")?
+                    .expect("Stream should not be closed");
+
+                match event {
+                    DiscoveryEvent::Expired(expired_node_id) if expired_node_id == node_id_b => {
+                        break;
+                    }
+                    _ => continue, // Ignore other events
+                }
+            }
 
             Ok(())
         }
