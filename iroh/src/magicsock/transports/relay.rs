@@ -29,6 +29,8 @@ pub(crate) struct RelayTransport {
     relay_datagram_recv_queue: mpsc::Receiver<RelayRecvDatagram>,
     /// Channel on which to send datagrams via a relay server.
     relay_datagram_send_channel: mpsc::Sender<RelaySendItem>,
+    /// A datagram from the last poll_recv that didn't quite fit our buffers.
+    pending_item: Option<RelayRecvDatagram>,
     actor_sender: mpsc::Sender<RelayActorMessage>,
     _actor_handle: AbortOnDropHandle<()>,
     my_relay: Watchable<Option<RelayUrl>>,
@@ -60,6 +62,7 @@ impl RelayTransport {
         Self {
             relay_datagram_recv_queue: relay_datagram_recv_rx,
             relay_datagram_send_channel: relay_datagram_send_tx,
+            pending_item: None,
             actor_sender,
             _actor_handle: actor_handle,
             my_relay,
@@ -70,6 +73,50 @@ impl RelayTransport {
     pub(crate) fn create_sender(&self) -> RelaySender {
         RelaySender {
             sender: PollSender::new(self.relay_datagram_send_channel.clone()),
+        }
+    }
+
+    pub(super) fn poll_recv_item(
+        &mut self,
+        buf_size: usize,
+        cx: &mut Context,
+    ) -> Poll<Option<RelayRecvDatagram>> {
+        if self.pending_item.is_none() {
+            match self.relay_datagram_recv_queue.poll_recv(cx) {
+                Poll::Ready(Some(recv)) => {
+                    self.pending_item = Some(recv);
+                }
+                pending_or_err => return pending_or_err,
+            }
+        }
+
+        let pending_item = self.pending_item.as_mut().expect("checked above");
+
+        // If it's not batched or fits our buffer size as a whole anyways, just return
+        if pending_item.datagrams.segment_size.is_none()
+            || pending_item.datagrams.contents.len() <= buf_size
+        {
+            return Poll::Ready(Some(self.pending_item.take().expect("checked above")));
+        }
+
+        // If it doesn't fit, we need to split
+        let num_segments =
+            buf_size / pending_item.datagrams.segment_size.map_or(0, u16::from) as usize;
+        let datagrams = pending_item
+            .datagrams
+            .take_segments(num_segments)
+            .expect("cannot be empty");
+
+        if pending_item.datagrams.contents.is_empty() {
+            let mut item = self.pending_item.take().expect("checked above");
+            item.datagrams = datagrams;
+            Poll::Ready(Some(item))
+        } else {
+            Poll::Ready(Some(RelayRecvDatagram {
+                datagrams,
+                src: pending_item.src,
+                url: pending_item.url.clone(),
+            }))
         }
     }
 
@@ -86,7 +133,7 @@ impl RelayTransport {
             .zip(metas.iter_mut())
             .zip(source_addrs.iter_mut())
         {
-            let dm = match self.relay_datagram_recv_queue.poll_recv(cx) {
+            let dm = match self.poll_recv_item(buf_out.len(), cx) {
                 Poll::Ready(Some(recv)) => recv,
                 Poll::Ready(None) => {
                     error!("relay_recv_channel closed");
