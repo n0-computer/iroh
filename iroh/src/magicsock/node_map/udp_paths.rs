@@ -85,7 +85,7 @@ pub(super) struct NodeUdpPaths {
     /// 2. Slightly sticky: It only changes when
     ///   - the current send addr is not a validated path anymore or
     ///   - we received a pong with lower latency.
-    pub(super) best: UdpSendAddr,
+    best: UdpSendAddr,
     /// The current best address to send on from all IPv4 addresses we have available.
     ///
     /// Follows the same logic as `best` above, but doesn't include any IPv6 addresses.

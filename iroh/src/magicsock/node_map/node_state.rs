@@ -392,13 +392,13 @@ impl NodeState {
     /// of the endpoint.  The [`NodeState::send_call_me_maybe`] function takes care of this.
     #[cfg(not(wasm_browser))]
     #[instrument("want_call_me_maybe", skip_all)]
-    fn want_call_me_maybe(&self, now: &Instant) -> bool {
+    fn want_call_me_maybe(&self, now: &Instant, have_ipv6: bool) -> bool {
         trace!("full ping: wanted?");
         let Some(last_full_ping) = self.last_full_ping else {
             debug!("no previous full ping: need full ping");
             return true;
         };
-        match &self.udp_paths.best {
+        match &self.udp_paths.send_addr(have_ipv6) {
             UdpSendAddr::None | UdpSendAddr::Unconfirmed(_) => {
                 debug!("best addr not set: need full ping");
                 true
@@ -661,10 +661,11 @@ impl NodeState {
         new_relay_url: Option<&RelayUrl>,
         new_addrs: &BTreeSet<SocketAddr>,
         source: super::Source,
+        have_ipv6: bool,
         metrics: &MagicsockMetrics,
     ) {
         if matches!(
-            self.udp_paths.best,
+            self.udp_paths.send_addr(have_ipv6),
             UdpSendAddr::None | UdpSendAddr::Unconfirmed(_)
         ) {
             // we do not have a direct connection, so changing the relay information may
@@ -795,7 +796,7 @@ impl NodeState {
         // if the endpoint does not yet have a best_addr
         let needs_ping_back = if matches!(path, SendAddr::Udp(_))
             && matches!(
-                self.udp_paths.best,
+                self.udp_paths.send_addr(true),
                 UdpSendAddr::None | UdpSendAddr::Unconfirmed(_) | UdpSendAddr::Outdated(_)
             ) {
             // We also need to send a ping to make this path available to us as well.  This
@@ -1099,7 +1100,7 @@ impl NodeState {
     /// Send a heartbeat to the node to keep the connection alive, or trigger a full ping
     /// if necessary.
     #[instrument("stayin_alive", skip_all, fields(node = %self.node_id.fmt_short()))]
-    pub(super) fn stayin_alive(&mut self) -> Vec<PingAction> {
+    pub(super) fn stayin_alive(&mut self, have_ipv6: bool) -> Vec<PingAction> {
         trace!("stayin_alive");
         let now = Instant::now();
         if !self.is_active(&now) {
@@ -1108,13 +1109,13 @@ impl NodeState {
         }
 
         // If we do not have an optimal addr, send pings to all known places.
-        if self.want_call_me_maybe(&now) {
+        if self.want_call_me_maybe(&now, have_ipv6) {
             debug!("sending a call-me-maybe");
             return self.send_call_me_maybe(now, SendCallMeMaybe::Always);
         }
 
         // Send heartbeat ping to keep the current addr going as long as we need it.
-        if let Some(udp_addr) = self.udp_paths.best.get_addr() {
+        if let Some(udp_addr) = self.udp_paths.send_addr(have_ipv6).get_addr() {
             let elapsed = self.last_ping(&SendAddr::Udp(udp_addr)).map(|l| now - l);
             // Send a ping if the last ping is older than 2 seconds.
             let needs_ping = match elapsed {
@@ -1158,7 +1159,7 @@ impl NodeState {
         }
         let (udp_addr, relay_url) = self.addr_for_send(have_ipv6, metrics);
 
-        let ping_msgs = if self.want_call_me_maybe(&now) {
+        let ping_msgs = if self.want_call_me_maybe(&now, have_ipv6) {
             self.send_call_me_maybe(now, SendCallMeMaybe::IfNoRecent)
         } else {
             Vec::new()
