@@ -430,7 +430,7 @@ impl NodeState {
     }
 
     #[cfg(wasm_browser)]
-    fn want_call_me_maybe(&self, _now: &Instant) -> bool {
+    fn want_call_me_maybe(&self, _now: &Instant, _have_ipv6: bool) -> bool {
         trace!("full ping: skipped in browser");
         false
     }
@@ -1026,7 +1026,6 @@ impl NodeState {
                 }
             }
         }
-        // Clear trust on our best_addr if it is not included in the updated set.
         if guard.has_best_addr_changed() {
             // Clear the last call-me-maybe send time so we will send one again.
             self.last_call_me_maybe = None;
