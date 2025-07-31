@@ -513,7 +513,7 @@ impl quinn::UdpSender for UdpSender {
             // come back at any time or missing should be transient so chooses to let
             // these kind of errors time out.  See test_try_send_no_send_addr to try
             // this out.
-            error!("no paths available for node, voiding transmit");
+            error!("poll_send: no paths available for node, voiding transmit");
             return Poll::Ready(Ok(()));
         }
 
@@ -564,7 +564,7 @@ impl quinn::UdpSender for UdpSender {
             // come back at any time or missing should be transient so chooses to let
             // these kind of errors time out.  See test_try_send_no_send_addr to try
             // this out.
-            error!("no paths available for node, voiding transmit");
+            error!("try_send: no paths available for node, voiding transmit");
             return Ok(());
         }
 
