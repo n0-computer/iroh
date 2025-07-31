@@ -164,7 +164,7 @@ impl Datagrams {
     /// will result in returning essentially a clone of `self`, while making `self` empty afterwards.
     ///
     /// Calling this on a datagram batch with e.g. 15 datagrams with `num_segments == 10` will
-    /// result in returning a datagram batch taht contains the first 10 datagrams and leave `self`
+    /// result in returning a datagram batch that contains the first 10 datagrams and leave `self`
     /// containing the remaining 5 datagrams.
     ///
     /// Calling this on a datagram batch with less than `num_segments` datagrams will result in
