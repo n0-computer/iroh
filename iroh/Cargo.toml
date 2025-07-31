@@ -1,6 +1,6 @@
 [package]
 name = "iroh"
-version = "0.90.0"
+version = "0.91.0"
 edition = "2024"
 readme = "README.md"
 description = "p2p quic connections dialed by public key"
@@ -37,8 +37,8 @@ derive_more = { version = "2.0.1", features = [
 ] }
 ed25519-dalek = { version = "2.1.1", features = ["serde", "rand_core", "zeroize", "pkcs8", "pem"] }
 http = "1"
-iroh-base = { version = "0.90.0", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
-iroh-relay = { version = "0.90", path = "../iroh-relay", default-features = false }
+iroh-base = { version = "0.91.0", default-features = false, features = ["key", "relay"], path = "../iroh-base" }
+iroh-relay = { version = "0.91", path = "../iroh-relay", default-features = false }
 n0-future = "0.1.2"
 n0-snafu = "0.2.1"
 n0-watcher = "0.3"
