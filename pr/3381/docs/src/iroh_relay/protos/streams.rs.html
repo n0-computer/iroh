@@ -6,7 +6,7 @@
 <a href=#6 id=6 data-nosnippet>6</a>};
 <a href=#7 id=7 data-nosnippet>7</a>
 <a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>bytes::Bytes;
-<a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>n0_future::{ready, Sink, Stream};
+<a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>n0_future::{Sink, Stream, ready};
 <a href=#10 id=10 data-nosnippet>10</a><span class="attr">#[cfg(not(wasm_browser))]
 <a href=#11 id=11 data-nosnippet>11</a></span><span class="kw">use </span>tokio::io::{AsyncRead, AsyncWrite};
 <a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>tracing::warn;
@@ -110,7 +110,7 @@
 <a href=#110 id=110 data-nosnippet>110</a>            <span class="kw">match </span><span class="macro">ready!</span>(Pin::new(<span class="kw-2">&amp;mut </span><span class="self">self</span>.io).poll_next(cx)) {
 <a href=#111 id=111 data-nosnippet>111</a>                <span class="prelude-val">None </span>=&gt; <span class="kw">return </span>Poll::Ready(<span class="prelude-val">None</span>),
 <a href=#112 id=112 data-nosnippet>112</a>                <span class="prelude-val">Some</span>(ws_stream_wasm::WsMessage::Binary(msg)) =&gt; {
-<a href=#113 id=113 data-nosnippet>113</a>                    <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(msg.into())))
+<a href=#113 id=113 data-nosnippet>113</a>                    <span class="kw">return </span>Poll::Ready(<span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(msg.into())));
 <a href=#114 id=114 data-nosnippet>114</a>                }
 <a href=#115 id=115 data-nosnippet>115</a>                <span class="prelude-val">Some</span>(msg) =&gt; {
 <a href=#116 id=116 data-nosnippet>116</a>                    <span class="macro">warn!</span>(<span class="question-mark">?</span>msg, <span class="string">"Got websocket message of unsupported type, skipping."</span>);

@@ -3,9 +3,9 @@
 <a href=#3 id=3 data-nosnippet>3</a><span class="kw">use </span>governor::{clock::QuantaInstant, middleware::NoOpMiddleware};
 <a href=#4 id=4 data-nosnippet>4</a><span class="kw">use </span>serde::{Deserialize, Serialize};
 <a href=#5 id=5 data-nosnippet>5</a><span class="kw">use </span>tower_governor::{
-<a href=#6 id=6 data-nosnippet>6</a>    governor::GovernorConfigBuilder,
-<a href=#7 id=7 data-nosnippet>7</a>    key_extractor::{PeerIpKeyExtractor, SmartIpKeyExtractor},
-<a href=#8 id=8 data-nosnippet>8</a>    GovernorLayer,
+<a href=#6 id=6 data-nosnippet>6</a>    GovernorLayer,
+<a href=#7 id=7 data-nosnippet>7</a>    governor::GovernorConfigBuilder,
+<a href=#8 id=8 data-nosnippet>8</a>    key_extractor::{PeerIpKeyExtractor, SmartIpKeyExtractor},
 <a href=#9 id=9 data-nosnippet>9</a>};
 <a href=#10 id=10 data-nosnippet>10</a>
 <a href=#11 id=11 data-nosnippet>11</a><span class="doccomment">/// Config for http server rate limit.
@@ -71,13 +71,15 @@
 <a href=#71 id=71 data-nosnippet>71</a>    <span class="comment">// The governor needs a background task for garbage collection (to clear expired records)
 <a href=#72 id=72 data-nosnippet>72</a>    </span><span class="kw">let </span>gc_interval = Duration::from_secs(<span class="number">60</span>);
 <a href=#73 id=73 data-nosnippet>73</a>    <span class="kw">let </span>governor_limiter = governor_conf.limiter().clone();
-<a href=#74 id=74 data-nosnippet>74</a>    std::thread::spawn(<span class="kw">move </span>|| <span class="kw">loop </span>{
-<a href=#75 id=75 data-nosnippet>75</a>        std::thread::sleep(gc_interval);
-<a href=#76 id=76 data-nosnippet>76</a>        <span class="macro">tracing::debug!</span>(<span class="string">"rate limiting storage size: {}"</span>, governor_limiter.len());
-<a href=#77 id=77 data-nosnippet>77</a>        governor_limiter.retain_recent();
-<a href=#78 id=78 data-nosnippet>78</a>    });
-<a href=#79 id=79 data-nosnippet>79</a>
-<a href=#80 id=80 data-nosnippet>80</a>    <span class="prelude-val">Some</span>(GovernorLayer {
-<a href=#81 id=81 data-nosnippet>81</a>        config: governor_conf,
-<a href=#82 id=82 data-nosnippet>82</a>    })
-<a href=#83 id=83 data-nosnippet>83</a>}</code></pre></div></section></main></body></html>
+<a href=#74 id=74 data-nosnippet>74</a>    std::thread::spawn(<span class="kw">move </span>|| {
+<a href=#75 id=75 data-nosnippet>75</a>        <span class="kw">loop </span>{
+<a href=#76 id=76 data-nosnippet>76</a>            std::thread::sleep(gc_interval);
+<a href=#77 id=77 data-nosnippet>77</a>            <span class="macro">tracing::debug!</span>(<span class="string">"rate limiting storage size: {}"</span>, governor_limiter.len());
+<a href=#78 id=78 data-nosnippet>78</a>            governor_limiter.retain_recent();
+<a href=#79 id=79 data-nosnippet>79</a>        }
+<a href=#80 id=80 data-nosnippet>80</a>    });
+<a href=#81 id=81 data-nosnippet>81</a>
+<a href=#82 id=82 data-nosnippet>82</a>    <span class="prelude-val">Some</span>(GovernorLayer {
+<a href=#83 id=83 data-nosnippet>83</a>        config: governor_conf,
+<a href=#84 id=84 data-nosnippet>84</a>    })
+<a href=#85 id=85 data-nosnippet>85</a>}</code></pre></div></section></main></body></html>

@@ -7,16 +7,16 @@
 <a href=#7 id=7 data-nosnippet>7</a><span class="kw">use </span>bytes::Bytes;
 <a href=#8 id=8 data-nosnippet>8</a><span class="kw">use </span>n0_snafu::{<span class="prelude-ty">Result</span>, ResultExt};
 <a href=#9 id=9 data-nosnippet>9</a><span class="kw">use </span>quinn::{
-<a href=#10 id=10 data-nosnippet>10</a>    crypto::rustls::QuicClientConfig, Connection, Endpoint, RecvStream, SendStream, TransportConfig,
+<a href=#10 id=10 data-nosnippet>10</a>    Connection, Endpoint, RecvStream, SendStream, TransportConfig, crypto::rustls::QuicClientConfig,
 <a href=#11 id=11 data-nosnippet>11</a>};
 <a href=#12 id=12 data-nosnippet>12</a><span class="kw">use </span>rustls::{
-<a href=#13 id=13 data-nosnippet>13</a>    pki_types::{CertificateDer, PrivateKeyDer},
-<a href=#14 id=14 data-nosnippet>14</a>    RootCertStore,
+<a href=#13 id=13 data-nosnippet>13</a>    RootCertStore,
+<a href=#14 id=14 data-nosnippet>14</a>    pki_types::{CertificateDer, PrivateKeyDer},
 <a href=#15 id=15 data-nosnippet>15</a>};
 <a href=#16 id=16 data-nosnippet>16</a><span class="kw">use </span>tracing::{trace, warn};
 <a href=#17 id=17 data-nosnippet>17</a>
 <a href=#18 id=18 data-nosnippet>18</a><span class="kw">use crate</span>::{
-<a href=#19 id=19 data-nosnippet>19</a>    client_handler, stats::TransferResult, ClientStats, ConnectionSelector, EndpointSelector, Opt,
+<a href=#19 id=19 data-nosnippet>19</a>    ClientStats, ConnectionSelector, EndpointSelector, Opt, client_handler, stats::TransferResult,
 <a href=#20 id=20 data-nosnippet>20</a>};
 <a href=#21 id=21 data-nosnippet>21</a>
 <a href=#22 id=22 data-nosnippet>22</a><span class="kw">pub const </span>ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"n0/quinn-bench/0"</span>;
