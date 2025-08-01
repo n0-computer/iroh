@@ -2316,7 +2316,7 @@ dependencies = [
  "iroh-metrics",
  "iroh-quinn",
  "iroh-quinn-proto",
- "iroh-quinn-udp 0.5.12",
+ "iroh-quinn-udp",
  "iroh-relay",
  "n0-future",
  "n0-snafu",
@@ -2494,7 +2494,7 @@ dependencies = [
  "bytes",
  "cfg_aliases",
  "iroh-quinn-proto",
- "iroh-quinn-udp 0.5.12",
+ "iroh-quinn-udp",
  "pin-project-lite",
  "rustc-hash",
  "rustls",
@@ -2525,20 +2525,6 @@ dependencies = [
  "tinyvec",
  "tracing",
  "web-time",
-]
-
-[[package]]
-name = "iroh-quinn-udp"
-version = "0.5.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c53afaa1049f7c83ea1331f5ebb9e6ebc5fdd69c468b7a22dd598b02c9bcc973"
-dependencies = [
- "cfg_aliases",
- "libc",
- "once_cell",
- "socket2 0.5.10",
- "tracing",
- "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -3044,14 +3030,13 @@ dependencies = [
 [[package]]
 name = "netwatch"
 version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8901dbb408894af3df3fc51420ba0c6faf3a7d896077b797c39b7001e2f787bd"
+source = "git+https://github.com/n0-computer/net-tools?branch=feat-multipath#e824fd0fb03839c4523c18cd3ab861d6b3e66a16"
 dependencies = [
  "atomic-waker",
  "bytes",
  "cfg_aliases",
  "derive_more 2.0.1",
- "iroh-quinn-udp 0.5.7",
+ "iroh-quinn-udp",
  "js-sys",
  "libc",
  "n0-future",
@@ -5719,7 +5704,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
@@ -6449,8 +6434,3 @@ dependencies = [
  "quote",
  "syn 2.0.101",
 ]
-
-[[patch.unused]]
-name = "netwatch"
-version = "0.7.0"
-source = "git+https://github.com/n0-computer/net-tools?branch=feat-multipath#5196858f5754f906e6d205a3f3623831c9236965"
