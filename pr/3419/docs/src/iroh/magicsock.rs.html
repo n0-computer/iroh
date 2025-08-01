@@ -1910,7 +1910,7 @@
 <a href=#1910 id=1910 data-nosnippet>1910</a>    }
 <a href=#1911 id=1911 data-nosnippet>1911</a>
 <a href=#1912 id=1912 data-nosnippet>1912</a>    <span class="kw">async fn </span>handle_network_change(<span class="kw-2">&amp;mut </span><span class="self">self</span>, is_major: bool) {
-<a href=#1913 id=1913 data-nosnippet>1913</a>        <span class="macro">debug!</span>(<span class="string">"link change detected: major? {is_major}"</span>);
+<a href=#1913 id=1913 data-nosnippet>1913</a>        <span class="macro">debug!</span>(is_major, <span class="string">"link change detected"</span>);
 <a href=#1914 id=1914 data-nosnippet>1914</a>
 <a href=#1915 id=1915 data-nosnippet>1915</a>        <span class="kw">if </span>is_major {
 <a href=#1916 id=1916 data-nosnippet>1916</a>            <span class="kw">if let </span><span class="prelude-val">Err</span>(err) = <span class="self">self</span>.network_change_sender.rebind() {
