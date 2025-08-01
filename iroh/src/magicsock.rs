@@ -1879,8 +1879,13 @@ impl Actor {
                         continue;
                     };
                     let is_major = state.is_major_change(&current_netmon_state);
+                    event!(
+                        target: "iroh::_events::link_change",
+                        Level::DEBUG,
+                        ?state,
+                        is_major
+                    );
                     current_netmon_state = state;
-                    trace!("tick: link change {}", is_major);
                     self.msock.metrics.magicsock.actor_link_change.inc();
                     self.handle_network_change(is_major).await;
                 }
@@ -1912,11 +1917,11 @@ impl Actor {
     }
 
     async fn handle_network_change(&mut self, is_major: bool) {
-        debug!("link change detected: major? {}", is_major);
+        debug!(is_major, "link change detected");
 
         if is_major {
             if let Err(err) = self.network_change_sender.rebind() {
-                warn!("failed to rebind transports: {:?}", err);
+                warn!("failed to rebind transports: {err:?}");
             }
 
             #[cfg(not(wasm_browser))]

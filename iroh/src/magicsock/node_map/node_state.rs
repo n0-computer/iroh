@@ -294,22 +294,22 @@ impl NodeState {
         let (best_addr, relay_url) = match self.udp_paths.send_addr(have_ipv6) {
             UdpSendAddr::Valid(addr) => {
                 // If we have a valid address we use it.
-                trace!(%addr, "UdpSendAddr is valid, use it");
+                trace!(%addr, ?have_ipv6, "UdpSendAddr is valid, use it");
                 (Some(*addr), None)
             }
             UdpSendAddr::Outdated(addr) => {
                 // If the address is outdated we use it, but send via relay at the same time.
                 // We also send disco pings so that it will become valid again if it still
                 // works (i.e. we don't need to holepunch again).
-                trace!(%addr, "UdpSendAddr is outdated, use it together with relay");
+                trace!(%addr, ?have_ipv6, "UdpSendAddr is outdated, use it together with relay");
                 (Some(*addr), self.relay_url())
             }
             UdpSendAddr::Unconfirmed(addr) => {
-                trace!(%addr, "UdpSendAddr is unconfirmed, use it together with relay");
+                trace!(%addr, ?have_ipv6, "UdpSendAddr is unconfirmed, use it together with relay");
                 (Some(*addr), self.relay_url())
             }
             UdpSendAddr::None => {
-                trace!("No UdpSendAddr, use relay");
+                trace!(?have_ipv6, "No UdpSendAddr, use relay");
                 (None, self.relay_url())
             }
         };
