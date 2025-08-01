@@ -709,6 +709,7 @@ impl NodeState {
                     PathState::new(self.node_id, SendAddr::from(addr), source.clone(), now)
                 });
         }
+        self.udp_paths.update_to_best_addr(now);
         let paths = summarize_node_paths(&self.udp_paths.paths);
         debug!(new = ?new_addrs , %paths, "added new direct paths for endpoint");
     }
