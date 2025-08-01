@@ -7,6 +7,7 @@ use std::{
     },
 };
 
+use iroh_base::{NodeId, RelayUrl};
 use snafu::Snafu;
 
 /// Can occur when converting a [`SocketAddr`] to an [`IpMappedAddr`]
@@ -38,7 +39,7 @@ impl IpMappedAddr {
     ///
     /// This generates a new IPv6 address in the Unique Local Address range (RFC 4193)
     /// which is recognised by iroh as an IP mapped address.
-    pub(super) fn generate() -> Self {
+    pub(crate) fn generate() -> Self {
         let mut addr = [0u8; 16];
         addr[0] = Self::ADDR_PREFIXL;
         addr[1..6].copy_from_slice(&Self::ADDR_GLOBAL_ID);
@@ -83,52 +84,50 @@ impl std::fmt::Display for IpMappedAddr {
     }
 }
 
-/// A Map of [`IpMappedAddresses`] to [`SocketAddr`].
-// TODO(ramfox): before this is ready to be used beyond QAD, we should add
-// mechanisms for keeping track of "aliveness" and pruning address, as we do
-// with the `NodeMap`
+/// Can occur when converting a [`SocketAddr`] to an [`RelayMappedAddr`]
+#[derive(Debug, Snafu)]
+#[snafu(display("Failed to convert"))]
+pub struct RelayMappedAddrError;
+
+/// A Map of [`RelayMappedAddresses`] to [`SocketAddr`].
 #[derive(Debug, Clone, Default)]
-pub(crate) struct IpMappedAddresses(Arc<std::sync::Mutex<Inner>>);
+pub(crate) struct RelayMappedAddresses(Arc<std::sync::Mutex<Inner>>);
 
 #[derive(Debug, Default)]
 pub(super) struct Inner {
-    by_mapped_addr: BTreeMap<IpMappedAddr, SocketAddr>,
-    /// Because [`std::net::SocketAddrV6`] contains extra fields besides the IP
-    /// address and port (ie, flow_info and scope_id), the a [`std::net::SocketAddrV6`]
-    /// with the same IP addr and port might Hash to something different.
-    /// So to get a hashable key for the map, we are using `(IpAddr, u6)`.
-    by_ip_port: BTreeMap<(IpAddr, u16), IpMappedAddr>,
+    by_mapped_addr: BTreeMap<IpMappedAddr, (RelayUrl, NodeId)>,
+    by_url: BTreeMap<(RelayUrl, NodeId), IpMappedAddr>,
 }
 
-impl IpMappedAddresses {
-    /// Adds a [`SocketAddr`] to the map and returns the generated [`IpMappedAddr`].
+impl RelayMappedAddresses {
+    /// Adds a [`RelayUrl`] to the map and returns the generated [`IpMappedAddr`].
     ///
-    /// If this [`SocketAddr`] already exists in the map, it returns its
+    /// If this [`RelayUrl`] already exists in the map, it returns its
     /// associated [`IpMappedAddr`].
     ///
     /// Otherwise a new [`IpMappedAddr`] is generated for it and returned.
-    pub(super) fn get_or_register(&self, socket_addr: SocketAddr) -> IpMappedAddr {
-        let ip_port = (socket_addr.ip(), socket_addr.port());
+    pub(super) fn get_or_register(&self, relay: RelayUrl, node: NodeId) -> IpMappedAddr {
         let mut inner = self.0.lock().expect("poisoned");
-        if let Some(mapped_addr) = inner.by_ip_port.get(&ip_port) {
+        if let Some(mapped_addr) = inner.by_url.get(&(relay.clone(), node)) {
             return *mapped_addr;
         }
         let ip_mapped_addr = IpMappedAddr::generate();
-        inner.by_mapped_addr.insert(ip_mapped_addr, socket_addr);
-        inner.by_ip_port.insert(ip_port, ip_mapped_addr);
+        inner
+            .by_mapped_addr
+            .insert(ip_mapped_addr, (relay.clone(), node));
+        inner.by_url.insert((relay, node), ip_mapped_addr);
         ip_mapped_addr
     }
 
-    /// Returns the [`IpMappedAddr`] for the given [`SocketAddr`].
-    pub(crate) fn get_mapped_addr(&self, socket_addr: &SocketAddr) -> Option<IpMappedAddr> {
-        let ip_port = (socket_addr.ip(), socket_addr.port());
+    /// Returns the [`IpMappedAddr`] for the given [`RelayUrl`].
+    pub(crate) fn get_mapped_addr(&self, relay: RelayUrl, node: NodeId) -> Option<IpMappedAddr> {
         let inner = self.0.lock().expect("poisoned");
-        inner.by_ip_port.get(&ip_port).copied()
+        inner.by_url.get(&(relay, node)).copied()
     }
 
-    /// Returns the [`SocketAddr`] for the given [`IpMappedAddr`].
-    pub(crate) fn get_ip_addr(&self, mapped_addr: &IpMappedAddr) -> Option<SocketAddr> {
+    /// Returns the [`RelayUrl`] for the given [`IpMappedAddr`].
+    pub(crate) fn get_url(&self, mapped_addr: &IpMappedAddr) -> Option<(RelayUrl, NodeId)> {
         let inner = self.0.lock().expect("poisoned");
-        inner.by_mapped_addr.get(mapped_addr).copied()
+        inner.by_mapped_addr.get(mapped_addr).cloned()
     }
 }

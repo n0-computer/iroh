@@ -126,7 +126,7 @@ impl RelayTransport {
                 .segment_size
                 .map_or(dm.datagrams.contents.len(), |s| u16::from(s) as usize);
             meta_out.ecn = None;
-            meta_out.dst_ip = None; // TODO: insert the relay url for this relay
+            meta_out.dst_ip = None;
 
             *addr = (dm.url, dm.src).into();
             num_msgs += 1;

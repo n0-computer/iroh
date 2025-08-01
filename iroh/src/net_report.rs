@@ -46,7 +46,6 @@ use self::reportgen::QadProbeReport;
 use self::reportgen::{ProbeFinished, ProbeReport};
 
 mod defaults;
-mod ip_mapped_addrs;
 mod metrics;
 mod probes;
 mod report;
@@ -72,8 +71,6 @@ pub(crate) mod portmapper {
         pub nat_pmp: bool,
     }
 }
-
-pub(crate) use ip_mapped_addrs::{IpMappedAddr, IpMappedAddresses};
 
 pub(crate) use self::reportgen::IfStateDetails;
 #[cfg(not(wasm_browser))]
@@ -215,7 +212,6 @@ impl Client {
     /// Creates a new net_report client.
     pub(crate) fn new(
         #[cfg(not(wasm_browser))] dns_resolver: DnsResolver,
-        #[cfg(not(wasm_browser))] ip_mapped_addrs: Option<IpMappedAddresses>,
         relay_map: RelayMap,
         opts: Options,
         metrics: Arc<Metrics>,
@@ -233,7 +229,6 @@ impl Client {
         let socket_state = SocketState {
             quic_client,
             dns_resolver,
-            ip_mapped_addrs,
         };
 
         Client {
@@ -438,7 +433,6 @@ impl Client {
         for relay_node in self.relay_map.nodes().take(MAX_RELAYS) {
             if if_state.have_v4 {
                 debug!(?relay_node.url, "v4 QAD probe");
-                let ip_mapped_addrs = self.socket_state.ip_mapped_addrs.clone();
                 let relay_node = relay_node.clone();
                 let dns_resolver = self.socket_state.dns_resolver.clone();
                 let quic_client = quic_client.clone();
@@ -448,7 +442,7 @@ impl Client {
                         .child_token()
                         .run_until_cancelled_owned(time::timeout(
                             PROBES_TIMEOUT,
-                            run_probe_v4(ip_mapped_addrs, relay_node, quic_client, dns_resolver),
+                            run_probe_v4(relay_node, quic_client, dns_resolver),
                         ))
                         .instrument(info_span!("QAD-IPv4", %relay_url)),
                 );
@@ -456,7 +450,6 @@ impl Client {
 
             if if_state.have_v6 {
                 debug!(?relay_node.url, "v6 QAD probe");
-                let ip_mapped_addrs = self.socket_state.ip_mapped_addrs.clone();
                 let relay_node = relay_node.clone();
                 let dns_resolver = self.socket_state.dns_resolver.clone();
                 let quic_client = quic_client.clone();
@@ -466,7 +459,7 @@ impl Client {
                         .child_token()
                         .run_until_cancelled_owned(time::timeout(
                             PROBES_TIMEOUT,
-                            run_probe_v6(ip_mapped_addrs, relay_node, quic_client, dns_resolver),
+                            run_probe_v6(relay_node, quic_client, dns_resolver),
                         ))
                         .instrument(info_span!("QAD-IPv6", %relay_url)),
                 );
@@ -682,20 +675,17 @@ impl Client {
 
 #[cfg(not(wasm_browser))]
 async fn run_probe_v4(
-    ip_mapped_addrs: Option<IpMappedAddresses>,
     relay_node: Arc<RelayNode>,
     quic_client: QuicClient,
     dns_resolver: DnsResolver,
 ) -> n0_snafu::Result<(QadProbeReport, QadConn)> {
     use n0_snafu::ResultExt;
 
-    let relay_addr_orig = reportgen::get_relay_addr_ipv4(&dns_resolver, &relay_node).await?;
-    let relay_addr =
-        reportgen::maybe_to_mapped_addr(ip_mapped_addrs.as_ref(), relay_addr_orig.into());
+    let relay_addr = reportgen::get_relay_addr_ipv4(&dns_resolver, &relay_node).await?;
 
-    debug!(?relay_addr_orig, ?relay_addr, "relay addr v4");
+    debug!(?relay_addr, "relay addr v4");
     let host = relay_node.url.host_str().context("missing host url")?;
-    let conn = quic_client.create_conn(relay_addr, host).await?;
+    let conn = quic_client.create_conn(relay_addr.into(), host).await?;
     let mut receiver = conn.observed_external_addr();
 
     // wait for an addr
@@ -750,19 +740,16 @@ async fn run_probe_v4(
 
 #[cfg(not(wasm_browser))]
 async fn run_probe_v6(
-    ip_mapped_addrs: Option<IpMappedAddresses>,
     relay_node: Arc<RelayNode>,
     quic_client: QuicClient,
     dns_resolver: DnsResolver,
 ) -> n0_snafu::Result<(QadProbeReport, QadConn)> {
     use n0_snafu::ResultExt;
-    let relay_addr_orig = reportgen::get_relay_addr_ipv6(&dns_resolver, &relay_node).await?;
-    let relay_addr =
-        reportgen::maybe_to_mapped_addr(ip_mapped_addrs.as_ref(), relay_addr_orig.into());
+    let relay_addr = reportgen::get_relay_addr_ipv6(&dns_resolver, &relay_node).await?;
 
-    debug!(?relay_addr_orig, ?relay_addr, "relay addr v6");
+    debug!(?relay_addr, "relay addr v6");
     let host = relay_node.url.host_str().context("missing host url")?;
-    let conn = quic_client.create_conn(relay_addr, host).await?;
+    let conn = quic_client.create_conn(relay_addr.into(), host).await?;
     let mut receiver = conn.observed_external_addr();
 
     // wait for an addr
@@ -885,7 +872,6 @@ mod tests {
             .insecure_skip_relay_cert_verify(true);
         let mut client = Client::new(
             resolver.clone(),
-            None,
             relay_map.clone(),
             opts.clone(),
             Default::default(),
@@ -1086,8 +1072,7 @@ mod tests {
             println!("test: {}", tt.name);
             let relay_map = RelayMap::empty();
             let opts = Options::default();
-            let mut client =
-                Client::new(resolver.clone(), None, relay_map, opts, Default::default());
+            let mut client = Client::new(resolver.clone(), relay_map, opts, Default::default());
             for s in &mut tt.steps {
                 // trigger the timer
                 tokio::time::advance(Duration::from_secs(s.after)).await;

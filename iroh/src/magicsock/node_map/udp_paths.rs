@@ -7,7 +7,8 @@
 //! [`NodeState`]: super::node_state::NodeState
 use std::{collections::BTreeMap, net::SocketAddr};
 
-use n0_future::time::Instant;
+use n0_future::time::{Duration, Instant};
+use rand::seq::IteratorRandom;
 use tracing::{Level, event};
 
 use super::{IpPort, path_state::PathState};
@@ -104,6 +105,9 @@ impl NodeUdpPaths {
             best_ipv4: best, // we only use ipv4 addrs in tests
             best,
         }
+    }
+    pub(super) fn addrs(&self) -> Vec<SocketAddr> {
+        self.paths.keys().map(|ip| (*ip).into()).collect()
     }
 
     /// Returns the current UDP address to send on.

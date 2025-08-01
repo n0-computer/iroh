@@ -48,9 +48,9 @@ pin-project = "1"
 pkarr = { version = "3.7", default-features = false, features = [
     "relays",
 ] }
-quinn = { package = "iroh-quinn", version = "0.14.0", default-features = false, features = ["rustls-ring"] }
-quinn-proto = { package = "iroh-quinn-proto", version = "0.13.0" }
-quinn-udp = { package = "iroh-quinn-udp", version = "0.5.7" }
+quinn = { package = "iroh-quinn", git = "https://github.com/n0-computer/quinn", branch = "multipath-quinn-0.11.x", default-features = false, features = ["rustls-ring"] }
+quinn-proto = { package = "iroh-quinn-proto", git = "https://github.com/n0-computer/quinn", branch = "multipath-quinn-0.11.x" }
+quinn-udp = { package = "iroh-quinn-udp", git = "https://github.com/n0-computer/quinn", branch = "multipath-quinn-0.11.x" }
 rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = [
     "rustls-tls",
@@ -109,7 +109,7 @@ hickory-resolver = "0.25.1"
 igd-next = { version = "0.16", features = ["aio_tokio"] }
 netdev = { version = "0.36.0" }
 portmapper = { version = "0.8", default-features = false }
-quinn = { package = "iroh-quinn", version = "0.14.0", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
+quinn = { package = "iroh-quinn", git = "https://github.com/n0-computer/quinn", branch = "multipath-quinn-0.11.x", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 tokio = { version = "1", features = [
     "io-util",
     "macros",

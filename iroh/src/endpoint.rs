@@ -28,28 +28,6 @@ use n0_future::{Stream, time::Duration};
 use n0_watcher::Watcher;
 use nested_enum_utils::common_fields;
 use pin_project::pin_project;
-use snafu::{ResultExt, Snafu, ensure};
-use tracing::{debug, instrument, trace, warn};
-use url::Url;
-
-#[cfg(wasm_browser)]
-use crate::discovery::pkarr::PkarrResolver;
-#[cfg(not(wasm_browser))]
-use crate::{discovery::dns::DnsDiscovery, dns::DnsResolver};
-use crate::{
-    discovery::{
-        ConcurrentDiscovery, Discovery, DiscoveryContext, DiscoveryError, DiscoveryItem,
-        DiscoverySubscribers, DiscoveryTask, DynIntoDiscovery, IntoDiscovery, IntoDiscoveryError,
-        Lagged, UserData, pkarr::PkarrPublisher,
-    },
-    magicsock::{self, Handle, NodeIdMappedAddr, OwnAddressSnafu},
-    metrics::EndpointMetrics,
-    net_report::Report,
-    tls,
-};
-
-mod rtt_actor;
-
 // Missing still: SendDatagram and ConnectionClose::frame_type's Type.
 pub use quinn::{
     AcceptBi, AcceptUni, AckFrequencyConfig, ApplicationClose, Chunk, ClosedStream,
@@ -66,11 +44,28 @@ pub use quinn_proto::{
         ServerConfig as CryptoServerConfig, UnsupportedVersion,
     },
 };
+use snafu::{ResultExt, Snafu, ensure};
+use tracing::{debug, instrument, trace, warn};
+use url::Url;
 
-use self::rtt_actor::RttMessage;
 pub use super::magicsock::{
     AddNodeAddrError, ConnectionType, ControlMsg, DirectAddr, DirectAddrInfo, DirectAddrType,
     RemoteInfo, Source,
+};
+#[cfg(wasm_browser)]
+use crate::discovery::pkarr::PkarrResolver;
+#[cfg(not(wasm_browser))]
+use crate::{discovery::dns::DnsDiscovery, dns::DnsResolver};
+use crate::{
+    discovery::{
+        ConcurrentDiscovery, Discovery, DiscoveryContext, DiscoveryError, DiscoveryItem,
+        DiscoverySubscribers, DiscoveryTask, DynIntoDiscovery, IntoDiscovery, IntoDiscoveryError,
+        Lagged, UserData, pkarr::PkarrPublisher,
+    },
+    magicsock::{self, Handle, NodeIdMappedAddr, OwnAddressSnafu},
+    metrics::EndpointMetrics,
+    net_report::Report,
+    tls,
 };
 
 /// The delay to fall back to discovery when direct addresses fail.
@@ -526,8 +521,6 @@ impl StaticConfig {
 pub struct Endpoint {
     /// Handle to the magicsocket/actor
     msock: Handle,
-    /// Handle to the actor that resets the quinn RTT estimator
-    rtt_actor: Arc<rtt_actor::RttHandle>,
     /// Configuration structs for quinn, holds the transport config, certificate setup, secret key etc.
     static_config: Arc<StaticConfig>,
 }
@@ -637,7 +630,6 @@ impl Endpoint {
         let metrics = msock.metrics.magicsock.clone();
         let ep = Self {
             msock,
-            rtt_actor: Arc::new(rtt_actor::RttHandle::new(metrics)),
             static_config: Arc::new(static_config),
         };
         Ok(ep)
@@ -735,8 +727,6 @@ impl Endpoint {
             self.add_node_addr(node_addr.clone())?;
         }
         let node_id = node_addr.node_id;
-        let direct_addresses = node_addr.direct_addresses.clone();
-        let relay_url = node_addr.relay_url.clone();
 
         // Get the mapped IPv6 address from the magic socket. Quinn will connect to this
         // address.  Start discovery for this node if it's enabled and we have no valid or
@@ -754,12 +744,7 @@ impl Endpoint {
         // Start connecting via quinn. This will time out after 10 seconds if no reachable
         // address is available.
 
-        debug!(
-            ?mapped_addr,
-            ?direct_addresses,
-            ?relay_url,
-            "Attempting connection..."
-        );
+        debug!(?mapped_addr, "Attempting connection...");
         let client_config = {
             let mut alpn_protocols = vec![alpn.to_vec()];
             alpn_protocols.extend(options.additional_alpns);
@@ -772,15 +757,12 @@ impl Endpoint {
             client_config
         };
 
+        let dest_addr = mapped_addr.private_socket_addr();
         let server_name = &tls::name::encode(node_id);
         let connect = self
             .msock
             .endpoint()
-            .connect_with(
-                client_config,
-                mapped_addr.private_socket_addr(),
-                server_name,
-            )
+            .connect_with(client_config, dest_addr, server_name)
             .context(QuinnSnafu)?;
 
         Ok(Connecting {
@@ -1392,7 +1374,7 @@ impl Endpoint {
             None
         };
         match addr {
-            Some(addr) => {
+            Some(maddr) => {
                 // We have some way of dialing this node, but that doesn't actually mean
                 // we can actually connect to any of these addresses.
                 // Therefore, we will invoke the discovery service if we haven't received from the
@@ -1404,7 +1386,7 @@ impl Endpoint {
                 let discovery = DiscoveryTask::maybe_start_after_delay(self, node_id, delay)
                     .ok()
                     .flatten();
-                Ok((addr, discovery))
+                Ok((maddr, discovery))
             }
 
             None => {
@@ -1632,8 +1614,7 @@ impl Future for IncomingFuture {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
             Poll::Ready(Ok(inner)) => {
-                let conn = Connection { inner };
-                try_send_rtt_msg(&conn, this.ep, None);
+                let conn = Connection::new(inner, None, &this.ep);
                 Poll::Ready(Ok(conn))
             }
         }
@@ -1720,18 +1701,18 @@ impl Connecting {
     pub fn into_0rtt(self) -> Result<(Connection, ZeroRttAccepted), Self> {
         match self.inner.into_0rtt() {
             Ok((inner, zrtt_accepted)) => {
-                let conn = Connection { inner };
+                // This call is why `self.remote_node_id` was introduced.
+                // When we `Connecting::into_0rtt`, then we don't yet have `handshake_data`
+                // in our `Connection`, thus we won't be able to pick up
+                // `Connection::remote_node_id`.
+                // Instead, we provide `self.remote_node_id` here - we know it in advance,
+                // after all.
+                let conn = Connection::new(inner, self.remote_node_id, &self.ep);
                 let zrtt_accepted = ZeroRttAccepted {
                     inner: zrtt_accepted,
                     _discovery_drop_guard: self._discovery_drop_guard,
                 };
-                // This call is why `self.remote_node_id` was introduced.
-                // When we `Connecting::into_0rtt`, then we don't yet have `handshake_data`
-                // in our `Connection`, thus `try_send_rtt_msg` won't be able to pick up
-                // `Connection::remote_node_id`.
-                // Instead, we provide `self.remote_node_id` here - we know it in advance,
-                // after all.
-                try_send_rtt_msg(&conn, &self.ep, self.remote_node_id);
+
                 Ok((conn, zrtt_accepted))
             }
             Err(inner) => Err(Self {
@@ -1770,8 +1751,7 @@ impl Future for Connecting {
             Poll::Pending => Poll::Pending,
             Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
             Poll::Ready(Ok(inner)) => {
-                let conn = Connection { inner };
-                try_send_rtt_msg(&conn, this.ep, *this.remote_node_id);
+                let conn = Connection::new(inner, *this.remote_node_id, &this.ep);
                 Poll::Ready(Ok(conn))
             }
         }
@@ -1829,6 +1809,21 @@ pub struct RemoteNodeIdError {
 }
 
 impl Connection {
+    fn new(inner: quinn::Connection, remote_id: Option<NodeId>, ep: &Endpoint) -> Self {
+        let conn = Connection { inner };
+
+        // Grab the remote identity and register this connection
+        if let Some(remote) = remote_id {
+            ep.msock.register_connection(remote, &conn.inner);
+        } else if let Ok(remote) = conn.remote_node_id() {
+            ep.msock.register_connection(remote, &conn.inner);
+        } else {
+            warn!("unable to determine node id for the remote");
+        }
+
+        conn
+    }
+
     /// Initiates a new outgoing unidirectional stream.
     ///
     /// Streams are cheap and instantaneous to open unless blocked by flow control. As a
@@ -2122,30 +2117,6 @@ impl Connection {
     #[inline]
     pub fn set_max_concurrent_bi_streams(&self, count: VarInt) {
         self.inner.set_max_concurrent_bi_streams(count)
-    }
-}
-
-/// Try send a message to the rtt-actor.
-///
-/// If we can't notify the actor that will impact performance a little, but we can still
-/// function.
-fn try_send_rtt_msg(conn: &Connection, magic_ep: &Endpoint, remote_node_id: Option<NodeId>) {
-    // If we can't notify the rtt-actor that's not great but not critical.
-    let Some(node_id) = remote_node_id.or_else(|| conn.remote_node_id().ok()) else {
-        warn!(?conn, "failed to get remote node id");
-        return;
-    };
-    let Some(conn_type_changes) = magic_ep.conn_type(node_id) else {
-        warn!(?conn, "failed to create conn_type stream");
-        return;
-    };
-    let rtt_msg = RttMessage::NewConnection {
-        connection: conn.inner.weak_handle(),
-        conn_type_changes: conn_type_changes.stream(),
-        node_id,
-    };
-    if let Err(err) = magic_ep.rtt_actor.msg_tx.try_send(rtt_msg) {
-        warn!(?conn, "rtt-actor not reachable: {err:#}");
     }
 }
 
