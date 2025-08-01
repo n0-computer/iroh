@@ -1744,7 +1744,8 @@
 <a href="#1743" id="1743">1743</a>
 <a href="#1744" id="1744">1744</a>
 <a href="#1745" id="1745">1745</a>
-<a href="#1746" id="1746">1746</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
+<a href="#1746" id="1746">1746</a>
+<a href="#1747" id="1747">1747</a></pre></div><pre class="rust"><code><span class="kw">use </span>std::{
     collections::{btree_map::Entry, BTreeSet, HashMap},
     hash::Hash,
     net::{IpAddr, SocketAddr},
@@ -2455,6 +2456,7 @@
                     PathState::new(<span class="self">self</span>.node_id, SendAddr::from(addr), source.clone(), now)
                 });
         }
+        <span class="self">self</span>.udp_paths.update_to_best_addr(now);
         <span class="kw">let </span>paths = summarize_node_paths(<span class="kw-2">&amp;</span><span class="self">self</span>.udp_paths.paths);
         <span class="macro">debug!</span>(new = <span class="question-mark">?</span>new_addrs , %paths, <span class="string">"added new direct paths for endpoint"</span>);
     }
