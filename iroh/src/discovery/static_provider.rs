@@ -22,7 +22,7 @@ use n0_future::{
     time::SystemTime,
 };
 
-use super::{Discovery, DiscoveryError, DiscoveryItem, NodeData, NodeInfo};
+use super::{Discovery, DiscoveryError, DiscoveryEvent, DiscoveryItem, NodeData, NodeInfo};
 
 /// A static node discovery to manually add node addressing information.
 ///
@@ -184,7 +184,7 @@ impl Discovery for StaticProvider {
     fn resolve(
         &self,
         node_id: NodeId,
-    ) -> Option<BoxStream<Result<super::DiscoveryItem, DiscoveryError>>> {
+    ) -> Option<BoxStream<Result<super::DiscoveryEvent, DiscoveryError>>> {
         let guard = self.nodes.read().expect("poisoned");
         let info = guard.get(&node_id);
         match info {
@@ -199,7 +199,7 @@ impl Discovery for StaticProvider {
                     Self::PROVENANCE,
                     Some(last_updated),
                 );
-                Some(stream::iter(Some(Ok(item))).boxed())
+                Some(stream::iter(Some(Ok(DiscoveryEvent::Discovered(item)))).boxed())
             }
             None => None,
         }
