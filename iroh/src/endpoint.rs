@@ -1096,7 +1096,7 @@ impl Endpoint {
     /// Returns a stream of all remote nodes discovered through the endpoint's discovery services.
     ///
     /// Whenever a node is discovered via the endpoint's discovery service, the corresponding
-    /// [`DiscoveryItem`] is yielded from this stream. This includes nodes discovered actively
+    /// [`DiscoveryEvent`] is yielded from this stream. This includes nodes discovered actively
     /// through [`Discovery::resolve`], which is invoked automatically when calling
     /// [`Endpoint::connect`] for a [`NodeId`] unknown to the endpoint. It also includes
     /// nodes that the endpoint discovers passively from discovery services that implement
