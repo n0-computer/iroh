@@ -76,7 +76,7 @@ impl UdpSendAddr {
 #[derive(Debug, Default)]
 pub(super) struct NodeUdpPaths {
     /// The state for each of this node's direct paths.
-    pub(super) paths: BTreeMap<IpPort, PathState>,
+    paths: BTreeMap<IpPort, PathState>,
     /// The current address we use to send on.
     ///
     /// This is *almost* the same as going through `paths` and finding
@@ -85,11 +85,34 @@ pub(super) struct NodeUdpPaths {
     /// 2. Slightly sticky: It only changes when
     ///   - the current send addr is not a validated path anymore or
     ///   - we received a pong with lower latency.
-    pub(super) best: UdpSendAddr,
+    best: UdpSendAddr,
     /// The current best address to send on from all IPv4 addresses we have available.
     ///
     /// Follows the same logic as `best` above, but doesn't include any IPv6 addresses.
-    pub(super) best_ipv4: UdpSendAddr,
+    best_ipv4: UdpSendAddr,
+}
+
+pub(super) struct MutAccess<'a> {
+    now: Instant,
+    inner: &'a mut NodeUdpPaths,
+}
+
+impl<'a> MutAccess<'a> {
+    pub fn paths(&mut self) -> &mut BTreeMap<IpPort, PathState> {
+        &mut self.inner.paths
+    }
+
+    pub fn has_best_addr_changed(self) -> bool {
+        let changed = self.inner.update_to_best_addr(self.now);
+        std::mem::forget(self); // don't run drop
+        changed
+    }
+}
+
+impl Drop for MutAccess<'_> {
+    fn drop(&mut self) {
+        self.inner.update_to_best_addr(self.now);
+    }
 }
 
 impl NodeUdpPaths {
@@ -109,9 +132,26 @@ impl NodeUdpPaths {
     /// Returns the current UDP address to send on.
     pub(super) fn send_addr(&self, have_ipv6: bool) -> &UdpSendAddr {
         if !have_ipv6 {
+            // If it's a valid address, it doesn't matter if our interface scan determined that we
+            // "probably" don't have IPv6, because we clearly were able to send and receive a ping/pong over IPv6.
+            if matches!(&self.best, UdpSendAddr::Valid(_)) {
+                return &self.best;
+            }
             return &self.best_ipv4;
         }
         &self.best
+    }
+
+    /// Returns a guard for accessing the inner paths mutably.
+    ///
+    /// This guard ensures that [`Self::send_addr`] will be updated on drop.
+    pub(super) fn access_mut(&mut self, now: Instant) -> MutAccess<'_> {
+        MutAccess { now, inner: self }
+    }
+
+    /// Returns immutable access to the inner paths.
+    pub(super) fn paths(&self) -> &BTreeMap<IpPort, PathState> {
+        &self.paths
     }
 
     /// Changes the current best address(es) to ones chosen as described in [`Self::best_addr`] docs.
@@ -119,7 +159,7 @@ impl NodeUdpPaths {
     /// Returns whether one of the best addresses had to change.
     ///
     /// This should be called any time that `paths` is modified.
-    pub(super) fn update_to_best_addr(&mut self, now: Instant) -> bool {
+    fn update_to_best_addr(&mut self, now: Instant) -> bool {
         let best_ipv4 = self.best_addr(false, now);
         let best = self.best_addr(true, now);
         let mut changed = false;
