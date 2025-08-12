@@ -28,7 +28,7 @@ jobs:
             RUST_BACKTRACE: full
             RUSTV: stable
         steps:
-        - uses: actions/checkout@v4
+        - uses: actions/checkout@v5
         - name: Install rust stable
           uses: dtolnay/rust-toolchain@stable
         - name: Install sccache
@@ -64,7 +64,7 @@ jobs:
         if: github.ref_name=='main'
         needs: build_relay_server
         steps:
-        - uses: actions/checkout@v4
+        - uses: actions/checkout@v5
         - name: Run Staging Deploy Playbook
           uses: arqu/action-ansible-playbook@master
           with:
