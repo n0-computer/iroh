@@ -2,7 +2,58 @@
 
 All notable changes to iroh will be documented in this file.
 
-## [0.90.0](https://github.com/n0-computer/iroh/compare/v0.35.0..0.90.0) - 2025-06-26
+## [0.91.1](https://github.com/n0-computer/iroh/compare/v0.91.0..0.91.1) - 2025-08-04
+
+### 🐛 Bug Fixes
+
+- *(iroh)* Always update the best addr after changes ([#3422](https://github.com/n0-computer/iroh/issues/3422)) - ([36842d5](https://github.com/n0-computer/iroh/commit/36842d5c601c66fd1c06a17b4195170020d0c05d))
+- *(iroh)* Use valid available IPv6 address, ignoring `have_ipv6` ([#3419](https://github.com/n0-computer/iroh/issues/3419)) - ([fe7240d](https://github.com/n0-computer/iroh/commit/fe7240dd971b791c39354cd9621b7d23edaf5b7b))
+
+### 📚 Documentation
+
+- Grammar nitpick ([#3383](https://github.com/n0-computer/iroh/issues/3383)) - ([026dffc](https://github.com/n0-computer/iroh/commit/026dffc6cc5229411599188bd7d6e24df7dae9d3))
+
+## [0.91.0](https://github.com/n0-computer/iroh/compare/v0.90.0..v0.91.0) - 2025-07-30
+
+### ⛰️  Features
+
+- *(iroh)* Update to new relay servers ([#3412](https://github.com/n0-computer/iroh/issues/3412)) - ([f3e4307](https://github.com/n0-computer/iroh/commit/f3e430718a3316dffe191498fd3d0adddb92f2b4))
+- *(iroh,iroh-relay)* [**breaking**] Use stride instead of custom split protocol, send ECN bits ([#3389](https://github.com/n0-computer/iroh/issues/3389)) - ([f3fd988](https://github.com/n0-computer/iroh/commit/f3fd988adfcab26023d7987f2fa6bf60975beb3c))
+- *(iroh-relay)* [**breaking**] Implement new handshake protocol, refactor frame types ([#3331](https://github.com/n0-computer/iroh/issues/3331)) - ([3a1592a](https://github.com/n0-computer/iroh/commit/3a1592ac752bff2b71b85a7be8afb71edc92d6be))
+- [**breaking**] Update to edition 2024 and update deps to latest ([#3386](https://github.com/n0-computer/iroh/issues/3386)) - ([e2cfde7](https://github.com/n0-computer/iroh/commit/e2cfde779cf3d04b15aafe5d193c171454463220))
+- Add the timeout duration to the relay dial error ([#3406](https://github.com/n0-computer/iroh/issues/3406)) - ([db36c65](https://github.com/n0-computer/iroh/commit/db36c659a9d8725e44ef6751b85d2f604ec2f379))
+
+### 🐛 Bug Fixes
+
+- *(iroh)* Use std Mutex instead of tokio Mutex ([#3374](https://github.com/n0-computer/iroh/issues/3374)) - ([eb383a6](https://github.com/n0-computer/iroh/commit/eb383a61db4ca3645a445fcf0424fd516cd32c3f))
+- *(iroh)* Track path validity for all paths and replace `BestAddr` with `PathValidity` ([#3400](https://github.com/n0-computer/iroh/issues/3400)) - ([a3187ca](https://github.com/n0-computer/iroh/commit/a3187caee475e83c2f6ad8cb57bbfd3825a7c917))
+- *(iroh)* Re-batch received relay datagram batches in case they exceed `max_receive_segments` ([#3414](https://github.com/n0-computer/iroh/issues/3414)) - ([a8485ad](https://github.com/n0-computer/iroh/commit/a8485ad101c30babda1cb76343d5d242447bf049))
+- *(iroh)* Only clear `last_call_me_maybe` when the best addr became invalid ([#3415](https://github.com/n0-computer/iroh/issues/3415)) - ([bcb60d4](https://github.com/n0-computer/iroh/commit/bcb60d42fecd79fcc5e4d064f410367a3f7aa0b2))
+- *(iroh-relay)* Fix proptests, make `Datagrams::segment_size` be an `Option<NonZeroU16>` ([#3404](https://github.com/n0-computer/iroh/issues/3404)) - ([75fd57c](https://github.com/n0-computer/iroh/commit/75fd57c8e0fb2e47ed424f0926d3bb816cc4018b))
+- Fix dht publishing at startup ([#3397](https://github.com/n0-computer/iroh/issues/3397)) - ([dd1d692](https://github.com/n0-computer/iroh/commit/dd1d692661b3ba6ee133b7d80500837444482385))
+- Better tracing spans ([#3399](https://github.com/n0-computer/iroh/issues/3399)) - ([f8f7f95](https://github.com/n0-computer/iroh/commit/f8f7f959cb6f5e6273ab0c57fe23a7c6b326fa0a))
+- Add missing use<> for wasm_browser ([#3411](https://github.com/n0-computer/iroh/issues/3411)) - ([91c2e63](https://github.com/n0-computer/iroh/commit/91c2e636c6d248857418ad918df63d7a667735ee))
+- Wait for at least one ipv6 and ipv4 qad report ([#3413](https://github.com/n0-computer/iroh/issues/3413)) - ([b755db4](https://github.com/n0-computer/iroh/commit/b755db460d77c3b9b8eb2c6e25f1841a7236a89d))
+
+### 🚜 Refactor
+
+- *(iroh,iroh-relay)* Remove legacy relay path, make websocket connections default ([#3384](https://github.com/n0-computer/iroh/issues/3384)) - ([0776687](https://github.com/n0-computer/iroh/commit/0776687e982050c7a7c46e8d430b350a24481718))
+
+### 📚 Documentation
+
+- *(iroh)* Use `iroh::Watcher` reexport in docs ([#3375](https://github.com/n0-computer/iroh/issues/3375)) - ([9c023bf](https://github.com/n0-computer/iroh/commit/9c023bf4d7d1c3c10a9cc3b10df7e1a22c6ab7a4))
+
+### 🧪 Testing
+
+- *(iroh)* Make `endpoint_relay_connect_loop` not flaky ([#3402](https://github.com/n0-computer/iroh/issues/3402)) - ([8426241](https://github.com/n0-computer/iroh/commit/84262418d7597d0435b9e5f437dac119598880f2))
+
+### ⚙️ Miscellaneous Tasks
+
+- *(iroh)* Update `n0-watcher` ([#3405](https://github.com/n0-computer/iroh/issues/3405)) - ([2ce6a73](https://github.com/n0-computer/iroh/commit/2ce6a73412ec8a0343696a11fa531601bc5a76a1))
+- *(iroh)* Update portmapper ([#3410](https://github.com/n0-computer/iroh/issues/3410)) - ([ee08341](https://github.com/n0-computer/iroh/commit/ee08341b3e621f3ff311f7d77cc6d73e49c70bd7))
+- Release - ([36ddb5b](https://github.com/n0-computer/iroh/commit/36ddb5bfc5805085efab667630721ea755d96654))
+
+## [0.90.0](https://github.com/n0-computer/iroh/compare/v0.35.0..v0.90.0) - 2025-06-26
 
 ### ⛰️  Features
 
@@ -42,6 +93,7 @@ All notable changes to iroh will be documented in this file.
 - *(iroh-relay)* Fix cargo check warning ([#3346](https://github.com/n0-computer/iroh/issues/3346)) - ([c7cf08d](https://github.com/n0-computer/iroh/commit/c7cf08da74ce547c87601a05b309d5e3110d8161))
 - Make clippy 1.87 happy ([#3318](https://github.com/n0-computer/iroh/issues/3318)) - ([02acba9](https://github.com/n0-computer/iroh/commit/02acba96985808d6243036965a37021180bf1515))
 - Update project_sync workflow ([#3325](https://github.com/n0-computer/iroh/issues/3325)) - ([518400b](https://github.com/n0-computer/iroh/commit/518400b0d7fa1851b49da3598995ff9f0aeece3b))
+- Release - ([ac2a3f2](https://github.com/n0-computer/iroh/commit/ac2a3f29cec9a933965cfb3c4ea8f543ccf7a706))
 
 ### Bugfix
 

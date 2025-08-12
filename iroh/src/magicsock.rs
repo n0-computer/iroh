@@ -393,8 +393,9 @@ impl MagicSock {
             }
         }
         if !addr.is_empty() {
+            let have_ipv6 = self.ipv6_reported.load(Ordering::Relaxed);
             self.node_map
-                .add_node_addr(addr, source, &self.metrics.magicsock);
+                .add_node_addr(addr, source, have_ipv6, &self.metrics.magicsock);
             Ok(())
         } else if pruned != 0 {
             Err(EmptyPrunedSnafu { pruned }.build())
@@ -1254,15 +1255,20 @@ impl Handle {
 
         let (actor_sender, actor_receiver) = mpsc::channel(256);
 
+        let ipv6_reported = false;
+
         // load the node data
         let node_map = node_map.unwrap_or_default();
-        #[cfg(any(test, feature = "test-utils"))]
-        let node_map = NodeMap::load_from_vec(node_map, path_selection, &metrics.magicsock);
-        #[cfg(not(any(test, feature = "test-utils")))]
-        let node_map = NodeMap::load_from_vec(node_map, &metrics.magicsock);
+        let node_map = NodeMap::load_from_vec(
+            node_map,
+            #[cfg(any(test, feature = "test-utils"))]
+            path_selection,
+            ipv6_reported,
+            &metrics.magicsock,
+        );
 
         let my_relay = Watchable::new(None);
-        let ipv6_reported = Arc::new(AtomicBool::new(false));
+        let ipv6_reported = Arc::new(AtomicBool::new(ipv6_reported));
         let max_receive_segments = Arc::new(AtomicUsize::new(1));
 
         let relay_transport = RelayTransport::new(RelayActorConfig {
@@ -1861,7 +1867,8 @@ impl Actor {
                         // TODO: this might trigger too many packets at once, pace this
 
                         self.msock.node_map.prune_inactive();
-                        let msgs = self.msock.node_map.nodes_stayin_alive();
+                        let have_v6 = self.netmon_watcher.clone().get().have_v6;
+                        let msgs = self.msock.node_map.nodes_stayin_alive(have_v6);
                         self.handle_ping_actions(&sender, msgs).await;
                     }
                 }
@@ -1872,8 +1879,13 @@ impl Actor {
                         continue;
                     };
                     let is_major = state.is_major_change(&current_netmon_state);
+                    event!(
+                        target: "iroh::_events::link_change",
+                        Level::DEBUG,
+                        ?state,
+                        is_major
+                    );
                     current_netmon_state = state;
-                    trace!("tick: link change {}", is_major);
                     self.msock.metrics.magicsock.actor_link_change.inc();
                     self.handle_network_change(is_major).await;
                 }
@@ -1905,11 +1917,11 @@ impl Actor {
     }
 
     async fn handle_network_change(&mut self, is_major: bool) {
-        debug!("link change detected: major? {}", is_major);
+        debug!(is_major, "link change detected");
 
         if is_major {
             if let Err(err) = self.network_change_sender.rebind() {
-                warn!("failed to rebind transports: {:?}", err);
+                warn!("failed to rebind transports: {err:?}");
             }
 
             #[cfg(not(wasm_browser))]
@@ -3183,6 +3195,7 @@ mod tests {
             Source::NamedApp {
                 name: "test".into(),
             },
+            true,
             &msock_1.metrics.magicsock,
         );
         let addr_2 = msock_1.get_mapping_addr(node_id_2).unwrap();
@@ -3226,6 +3239,7 @@ mod tests {
             Source::NamedApp {
                 name: "test".into(),
             },
+            true,
             &msock_1.metrics.magicsock,
         );
 
