@@ -127,7 +127,7 @@ impl MaybeTlsStreamBuilder {
         }
     }
 
-    fn tls_servername(&self) -> Option<rustls::pki_types::ServerName> {
+    fn tls_servername(&self) -> Option<rustls::pki_types::ServerName<'_>> {
         self.url
             .host_str()
             .and_then(|s| rustls::pki_types::ServerName::try_from(s).ok())

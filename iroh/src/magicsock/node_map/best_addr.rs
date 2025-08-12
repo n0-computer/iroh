@@ -180,7 +180,7 @@ impl BestAddr {
         self.0 = Some(inner);
     }
 
-    pub fn state(&self, now: Instant) -> State {
+    pub fn state(&self, now: Instant) -> State<'_> {
         match &self.0 {
             None => State::Empty,
             Some(state) => match state.trust_until {

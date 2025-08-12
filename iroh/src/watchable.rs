@@ -131,7 +131,7 @@ impl<T: Clone + Eq> Watcher<T> {
     /// # Cancel Safety
     ///
     /// The returned future is cancel-safe.
-    pub fn updated(&mut self) -> WatchNextFut<T> {
+    pub fn updated(&mut self) -> WatchNextFut<'_, T> {
         WatchNextFut { watcher: self }
     }
 
@@ -180,7 +180,7 @@ impl<T: Clone + Eq> Watcher<Option<T>> {
     ///
     /// This is a utility for the common case of storing an [`Option`] inside a
     /// [`Watchable`].
-    pub fn initialized(&mut self) -> WatchInitializedFut<T> {
+    pub fn initialized(&mut self) -> WatchInitializedFut<'_, T> {
         self.epoch = PRE_INITIAL_EPOCH;
         WatchInitializedFut { watcher: self }
     }
