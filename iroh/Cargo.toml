@@ -86,7 +86,7 @@ futures-buffered = "0.2.11"
 spki = { version = "0.7.3", features = ["std"] }
 
 # metrics
-iroh-metrics = { version = "0.34", default-features = false }
+iroh-metrics = { version = "0.35", default-features = false }
 
 # local-swarm-discovery
 swarm-discovery = { version = "0.3.1", optional = true }
@@ -108,7 +108,7 @@ parse-size = { version = "=1.0.0", optional = true } # pinned version to avoid b
 hickory-resolver = "0.25.1"
 igd-next = { version = "0.16", features = ["aio_tokio"] }
 netdev = { version = "0.31.0" }
-portmapper = { version = "0.5.0", default-features = false }
+portmapper = { version = "0.6.1", default-features = false }
 quinn = { package = "iroh-quinn", version = "0.13.0", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
 tokio = { version = "1", features = [
     "io-util",
