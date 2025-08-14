@@ -5,7 +5,7 @@
 
 use bytes::{Buf, BufMut};
 use nested_enum_utils::common_fields;
-use quinn_proto::{coding::Codec, VarInt};
+use quinn_proto::{VarInt, coding::Codec};
 use snafu::{Backtrace, OptionExt, Snafu};
 
 /// Possible frame types during handshaking

@@ -1,7 +1,7 @@
 [package]
 name = "iroh-relay"
-version = "0.90.0"
-edition = "2021"
+version = "0.91.1"
+edition = "2024"
 readme = "README.md"
 description = "Iroh's relay server and client"
 license = "MIT OR Apache-2.0"
@@ -20,7 +20,7 @@ workspace = true
 
 [dependencies]
 bytes = "1.7"
-derive_more = { version = "1.0.0", features = [
+derive_more = { version = "2.0.1", features = [
     "debug",
     "display",
     "from",
@@ -31,7 +31,7 @@ http = "1"
 http-body-util = "0.1.0"
 hyper = { version = "1", features = ["server", "client", "http1"] }
 hyper-util = "0.1.1"
-iroh-base = { version = "0.90.0", path = "../iroh-base", default-features = false, features = ["key", "relay"] }
+iroh-base = { version = "0.91.1", path = "../iroh-base", default-features = false, features = ["key", "relay"] }
 iroh-metrics = { version = "0.35", default-features = false }
 n0-future = "0.1.2"
 num_enum = "0.7"
@@ -50,7 +50,7 @@ reqwest = { version = "0.12", default-features = false, features = [
 ] }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 serde = { version = "1", features = ["derive", "rc"] }
-strum = { version = "0.26", features = ["derive"] }
+strum = { version = "0.27", features = ["derive"] }
 tokio = { version = "1", features = [
     "io-util",
     "macros",
@@ -81,7 +81,7 @@ dashmap = { version = "6.1.0", optional = true }
 ahash = { version = "0.8.11", optional = true } # minimal version fix
 governor = { version = "0.8.0", optional = true }
 hickory-proto = { version = "0.25.1", default-features = false, optional = true }
-rcgen = { version = "0.13", optional = true }
+rcgen = { version = "0.14", optional = true }
 regex = { version = "1.7.1", optional = true }
 reloadable-state = { version = "0.1", optional = true }
 rustls-cert-reloadable-resolver = { version = "0.7.1", optional = true }
@@ -91,7 +91,7 @@ time = { version = "0.3.37", optional = true }
 tokio-rustls-acme = { version = "0.7.1", optional = true }
 tokio-websockets = { version = "0.12", features = ["rustls-bring-your-own-connector", "ring", "getrandom", "rand", "server"], optional = true } # server-side websocket implementation
 simdutf8 = { version = "0.1.5", optional = true } # minimal version fix
-toml = { version = "0.8", optional = true }
+toml = { version = "0.9", optional = true }
 tracing-subscriber = { version = "0.3", features = [
     "env-filter",
 ], optional = true }

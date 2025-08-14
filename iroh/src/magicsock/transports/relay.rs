@@ -1,5 +1,6 @@
 use std::{
     io,
+    num::NonZeroU16,
     task::{Context, Poll},
 };
 
@@ -13,7 +14,7 @@ use n0_future::{
 use n0_watcher::{Watchable, Watcher as _};
 use tokio::sync::mpsc;
 use tokio_util::sync::PollSender;
-use tracing::{error, info_span, trace, warn, Instrument};
+use tracing::{Instrument, error, info_span, trace, warn};
 
 use super::{Addr, Transmit};
 
@@ -99,12 +100,31 @@ impl RelayTransport {
                 }
             };
 
+            if buf_out.len() < dm.datagrams.contents.len() {
+                // Our receive buffer isn't big enough to process this datagram.
+                // Continuing would cause a panic.
+                warn!(
+                    quinn_buf_len = buf_out.len(),
+                    datagram_len = dm.datagrams.contents.len(),
+                    segment_size = ?dm.datagrams.segment_size,
+                    "dropping received datagram: quinn buffer too small"
+                );
+                break;
+                // In theory we could put some logic in here to fragment the datagram in case
+                // we still have enough room in our `buf_out` left to fit a couple of
+                // `dm.datagrams.segment_size`es, but we *should* have cut those datagrams
+                // to appropriate sizes earlier in the pipeline (just before we put them
+                // into the `relay_datagram_recv_queue` in the `ActiveRelayActor`).
+                // So the only case in which this happens is we receive a datagram via the relay
+                // that's essentially bigger than our configured `max_udp_payload_size`.
+                // In that case we drop it and let MTU discovery take over.
+            }
             buf_out[..dm.datagrams.contents.len()].copy_from_slice(&dm.datagrams.contents);
             meta_out.len = dm.datagrams.contents.len();
             meta_out.stride = dm
                 .datagrams
                 .segment_size
-                .map_or(dm.datagrams.contents.len(), |s| s as usize);
+                .map_or(dm.datagrams.contents.len(), |s| u16::from(s) as usize);
             meta_out.ecn = None;
             meta_out.dst_ip = None; // TODO: insert the relay url for this relay
 
@@ -314,7 +334,10 @@ fn datagrams_from_transmit(transmit: &Transmit<'_>) -> Datagrams {
             quinn_udp::EcnCodepoint::Ect1 => quinn_proto::EcnCodepoint::Ect1,
             quinn_udp::EcnCodepoint::Ce => quinn_proto::EcnCodepoint::Ce,
         }),
-        segment_size: transmit.segment_size.map(|ss| ss as u16),
+        segment_size: transmit
+            .segment_size
+            .map(|ss| ss as u16)
+            .and_then(NonZeroU16::new),
         contents: Bytes::copy_from_slice(transmit.contents),
     }
 }

@@ -2,7 +2,7 @@ use std::{
     io::{self, IoSliceMut},
     net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6},
     pin::Pin,
-    sync::{atomic::AtomicUsize, Arc},
+    sync::{Arc, atomic::AtomicUsize},
     task::{Context, Poll},
 };
 
@@ -32,6 +32,7 @@ pub(crate) struct Transports {
     ip: Vec<IpTransport>,
     relay: Vec<RelayTransport>,
 
+    max_receive_segments: Arc<AtomicUsize>,
     poll_recv_counter: AtomicUsize,
 }
 
@@ -61,11 +62,13 @@ impl Transports {
     pub(crate) fn new(
         #[cfg(not(wasm_browser))] ip: Vec<IpTransport>,
         relay: Vec<RelayTransport>,
+        max_receive_segments: Arc<AtomicUsize>,
     ) -> Self {
         Self {
             #[cfg(not(wasm_browser))]
             ip,
             relay,
+            max_receive_segments,
             poll_recv_counter: Default::default(),
         }
     }
@@ -145,7 +148,7 @@ impl Transports {
     /// For IP based transports this is the [`SocketAddr`] of the socket,
     /// for relay transports, this is the home relay.
     pub(crate) fn local_addrs(&self) -> Vec<Addr> {
-        self.local_addrs_watch().get().expect("not disconnected")
+        self.local_addrs_watch().get()
     }
 
     /// Watch for all currently known local addresses.
@@ -196,6 +199,7 @@ impl Transports {
 
     #[cfg(not(wasm_browser))]
     pub(crate) fn max_receive_segments(&self) -> usize {
+        use std::sync::atomic::Ordering::Relaxed;
         // `max_receive_segments` controls the size of the `RecvMeta` buffer
         // that quinn creates. Having buffers slightly bigger than necessary
         // isn't terrible, and makes sure a single socket can read the maximum
@@ -204,7 +208,9 @@ impl Transports {
         // and it's impossible and unnecessary to be refactored that way.
 
         let res = self.ip.iter().map(|t| t.max_receive_segments()).max();
-        res.unwrap_or(1)
+        let segments = res.unwrap_or(1);
+        self.max_receive_segments.store(segments, Relaxed);
+        segments
     }
 
     #[cfg(wasm_browser)]
@@ -420,7 +426,7 @@ impl UdpSender {
         match destination {
             #[cfg(wasm_browser)]
             Addr::Ip(..) => {
-                return Poll::Ready(Err(io::Error::other("IP is unsupported in browser")))
+                return Poll::Ready(Err(io::Error::other("IP is unsupported in browser")));
             }
             #[cfg(not(wasm_browser))]
             Addr::Ip(addr) => {

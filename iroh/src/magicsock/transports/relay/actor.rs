@@ -30,25 +30,24 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     future::Future,
     net::IpAddr,
-    pin::{pin, Pin},
+    pin::{Pin, pin},
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
 
 use backon::{Backoff, BackoffBuilder, ExponentialBuilder};
 use iroh_base::{NodeId, RelayUrl, SecretKey};
 use iroh_relay::{
-    self as relay,
+    self as relay, PingTracker,
     client::{Client, ConnectError, RecvError, SendError},
     protos::relay::{ClientToRelayMsg, Datagrams, RelayToClientMsg},
-    PingTracker,
 };
 use n0_future::{
+    FuturesUnorderedBounded, SinkExt, StreamExt,
     task::JoinSet,
     time::{self, Duration, Instant, MissedTickBehavior},
-    FuturesUnorderedBounded, SinkExt, StreamExt,
 };
 use n0_watcher::Watchable;
 use nested_enum_utils::common_fields;
@@ -56,7 +55,7 @@ use netwatch::interfaces;
 use snafu::{IntoError, ResultExt, Snafu};
 use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
-use tracing::{debug, error, event, info, info_span, instrument, trace, warn, Instrument, Level};
+use tracing::{Instrument, Level, debug, error, event, info, info_span, instrument, trace, warn};
 use url::Url;
 
 #[cfg(not(wasm_browser))]
@@ -150,6 +149,8 @@ struct ActiveRelayActor {
     /// last datagram sent to the relay, received datagrams will trigger QUIC ACKs which is
     /// sufficient to keep active connections open.
     inactive_timeout: Pin<Box<time::Sleep>>,
+    /// The last known value for the magic socket's `AsyncUdpSocket::max_receive_segments`.
+    max_receive_segments: Arc<AtomicUsize>,
     /// Token indicating the [`ActiveRelayActor`] should stop.
     stop_token: CancellationToken,
     metrics: Arc<MagicsockMetrics>,
@@ -194,6 +195,7 @@ struct ActiveRelayActorOptions {
     relay_datagrams_send: mpsc::Receiver<RelaySendItem>,
     relay_datagrams_recv: mpsc::Sender<RelayRecvDatagram>,
     connection_opts: RelayConnectionOptions,
+    max_receive_segments: Arc<AtomicUsize>,
     stop_token: CancellationToken,
     metrics: Arc<MagicsockMetrics>,
 }
@@ -259,8 +261,8 @@ enum RunError {
 })]
 #[derive(Debug, Snafu)]
 enum DialError {
-    #[snafu(display("timeout trying to establish a connection"))]
-    Timeout {},
+    #[snafu(display("timeout (>{timeout:?}) trying to establish a connection"))]
+    Timeout { timeout: Duration },
     #[snafu(display("unable to connect"))]
     Connect {
         #[snafu(source(from(ConnectError, Box::new)))]
@@ -277,6 +279,7 @@ impl ActiveRelayActor {
             relay_datagrams_send,
             relay_datagrams_recv,
             connection_opts,
+            max_receive_segments,
             stop_token,
             metrics,
         } = opts;
@@ -290,6 +293,7 @@ impl ActiveRelayActor {
             relay_client_builder,
             is_home_relay: false,
             inactive_timeout: Box::pin(time::sleep(RELAY_INACTIVE_CLEANUP_TIME)),
+            max_receive_segments,
             stop_token,
             metrics,
         }
@@ -493,13 +497,16 @@ impl ActiveRelayActor {
     /// connections.  It currently does not ever return `Err` as the retries continue
     /// forever.
     // This is using `impl Future` to return a future without a reference to self.
-    fn dial_relay(&self) -> impl Future<Output = Result<Client, DialError>> {
+    fn dial_relay(&self) -> impl Future<Output = Result<Client, DialError>> + use<> {
         let client_builder = self.relay_client_builder.clone();
         async move {
             match time::timeout(CONNECT_TIMEOUT, client_builder.connect()).await {
                 Ok(Ok(client)) => Ok(client),
                 Ok(Err(err)) => Err(ConnectSnafu.into_error(err)),
-                Err(_) => Err(TimeoutSnafu.build()),
+                Err(_) => Err(TimeoutSnafu {
+                    timeout: CONNECT_TIMEOUT,
+                }
+                .build()),
             }
         }
     }
@@ -616,19 +623,13 @@ impl ActiveRelayActor {
                         break Ok(());
                     };
                     self.reset_inactive_timeout();
-                    // TODO: This allocation is *very* unfortunate.  But so is the
-                    // allocation *inside* of PacketizeIter...
-                    let batch = std::mem::replace(
-                        &mut send_datagrams_buf,
-                        Vec::with_capacity(SEND_DATAGRAM_BATCH_SIZE),
-                    );
                     // TODO(frando): can we avoid the clone here?
                     let metrics = self.metrics.clone();
-                    let packet_iter = batch.into_iter().map(|item| {
+                    let packet_iter = send_datagrams_buf.drain(..).map(|item| {
                         metrics.send_relay.inc_by(item.datagrams.contents.len() as _);
                         Ok(ClientToRelayMsg::Datagrams {
                             dst_node_id: item.remote_node,
-                            datagrams: item.datagrams
+                            datagrams: item.datagrams,
                         })
                     });
                     let mut packet_stream = n0_future::stream::iter(packet_iter);
@@ -682,12 +683,28 @@ impl ActiveRelayActor {
                     state.last_packet_src = Some(remote_node_id);
                     state.nodes_present.insert(remote_node_id);
                 }
-                if let Err(err) = self.relay_datagrams_recv.try_send(RelayRecvDatagram {
-                    url: self.url.clone(),
-                    src: remote_node_id,
+
+                let max_segments = self
+                    .max_receive_segments
+                    .load(std::sync::atomic::Ordering::Relaxed);
+                // We might receive a datagram batch that's bigger than our magic socket's
+                // `AsyncUdpSocket::max_receive_segments`, if the other endpoint behind the relay
+                // has a higher `AsyncUdpSocket::max_transmit_segments` than we do.
+                // This happens e.g. when a linux machine (max transmit segments is usually 64)
+                // talks to a windows machine or a macos machine (max transmit segments is usually 1).
+                let re_batched = DatagramReBatcher {
+                    max_segments,
                     datagrams,
-                }) {
-                    warn!("Dropping received relay packet: {err:#}");
+                };
+                for datagrams in re_batched {
+                    if let Err(err) = self.relay_datagrams_recv.try_send(RelayRecvDatagram {
+                        url: self.url.clone(),
+                        src: remote_node_id,
+                        datagrams,
+                    }) {
+                        warn!("Dropping received relay packet: {err:#}");
+                        break; // No need to hot-loop in that case.
+                    }
                 }
             }
             RelayToClientMsg::NodeGone(node_id) => {
@@ -863,6 +880,8 @@ pub struct Config {
     pub proxy_url: Option<Url>,
     /// If the last net_report report, reports IPv6 to be available.
     pub ipv6_reported: Arc<AtomicBool>,
+    /// The last known return value of the magic socket's `AsyncUdpSocket::max_receive_segments` value
+    pub max_receive_segments: Arc<AtomicUsize>,
     #[cfg(any(test, feature = "test-utils"))]
     pub insecure_skip_relay_cert_verify: bool,
     pub metrics: Arc<MagicsockMetrics>,
@@ -965,7 +984,10 @@ impl RelayActor {
     /// If the datagram can not be sent immediately, because the destination channel is
     /// full, a future is returned that will complete once the datagrams have been sent to
     /// the [`ActiveRelayActor`].
-    async fn try_send_datagram(&mut self, item: RelaySendItem) -> Option<impl Future<Output = ()>> {
+    async fn try_send_datagram(
+        &mut self,
+        item: RelaySendItem,
+    ) -> Option<impl Future<Output = ()> + use<>> {
         let url = item.url.clone();
         let handle = self
             .active_relay_handle_for_node(&item.url, &item.remote_node)
@@ -1115,6 +1137,7 @@ impl RelayActor {
             relay_datagrams_send: send_datagram_rx,
             relay_datagrams_recv: self.relay_datagram_recv_queue.clone(),
             connection_opts,
+            max_receive_segments: self.config.max_receive_segments.clone(),
             stop_token: self.cancel_token.child_token(),
             metrics: self.config.metrics.clone(),
         };
@@ -1200,7 +1223,7 @@ impl RelayActor {
         });
     }
 
-    fn active_relay_sorted(&self) -> impl Iterator<Item = RelayUrl> {
+    fn active_relay_sorted(&self) -> impl Iterator<Item = RelayUrl> + use<> {
         let mut ids: Vec<_> = self.active_relays.keys().cloned().collect();
         ids.sort();
 
@@ -1225,27 +1248,51 @@ pub(crate) struct RelayRecvDatagram {
     pub(crate) src: NodeId,
     pub(crate) datagrams: Datagrams,
 }
+
+/// Turns a datagrams batch into multiple datagram batches of maximum `max_segments` size.
+///
+/// If the given datagram isn't batched, it just returns that datagram once.
+struct DatagramReBatcher {
+    max_segments: usize,
+    datagrams: Datagrams,
+}
+
+impl Iterator for DatagramReBatcher {
+    type Item = Datagrams;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.datagrams.take_segments(self.max_segments)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::{
-        sync::{atomic::AtomicBool, Arc},
+        num::NonZeroU16,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, AtomicUsize},
+        },
         time::Duration,
     };
 
+    use bytes::Bytes;
     use iroh_base::{NodeId, RelayUrl, SecretKey};
-    use iroh_relay::{protos::relay::Datagrams, PingTracker};
+    use iroh_relay::{PingTracker, protos::relay::Datagrams};
     use n0_snafu::{Error, Result, ResultExt};
     use tokio::sync::{mpsc, oneshot};
     use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
-    use tracing::{info, info_span, Instrument};
+    use tracing::{Instrument, info, info_span};
     use tracing_test::traced_test;
 
     use super::{
         ActiveRelayActor, ActiveRelayActorOptions, ActiveRelayMessage, ActiveRelayPrioMessage,
-        RelayConnectionOptions, RelayRecvDatagram, RelaySendItem, RELAY_INACTIVE_CLEANUP_TIME,
+        RELAY_INACTIVE_CLEANUP_TIME, RelayConnectionOptions, RelayRecvDatagram, RelaySendItem,
         UNDELIVERABLE_DATAGRAM_TIMEOUT,
     };
-    use crate::{dns::DnsResolver, test_utils};
+    use crate::{
+        dns::DnsResolver, magicsock::transports::relay::actor::DatagramReBatcher, test_utils,
+    };
 
     /// Starts a new [`ActiveRelayActor`].
     #[allow(clippy::too_many_arguments)]
@@ -1272,6 +1319,7 @@ mod tests {
                 prefer_ipv6: Arc::new(AtomicBool::new(true)),
                 insecure_skip_cert_verify: true,
             },
+            max_receive_segments: Arc::new(AtomicUsize::new(1)),
             stop_token,
             metrics: Default::default(),
         };
@@ -1569,5 +1617,40 @@ mod tests {
 
         let res = tokio::time::timeout(Duration::from_secs(10), tracker.timeout()).await;
         assert!(res.is_err(), "ping timeout should only happen once");
+    }
+
+    fn run_datagram_re_batcher(max_segments: usize, expected_lengths: Vec<usize>) {
+        let contents = Bytes::from_static(
+            b"Hello world! There's lots of stuff to talk about when you need a big buffer.",
+        );
+        let datagrams = Datagrams {
+            contents: contents.clone(),
+            ecn: None,
+            segment_size: NonZeroU16::new(10),
+        };
+
+        let re_batched_lengths = DatagramReBatcher {
+            datagrams,
+            max_segments,
+        }
+        .map(|d| d.contents.len())
+        .collect::<Vec<_>>();
+
+        assert_eq!(expected_lengths, re_batched_lengths);
+    }
+
+    #[test]
+    fn test_datagram_re_batcher_small_batches() {
+        run_datagram_re_batcher(3, vec![30, 30, 16]);
+    }
+
+    #[test]
+    fn test_datagram_re_batcher_batch_full() {
+        run_datagram_re_batcher(10, vec![76]);
+    }
+
+    #[test]
+    fn test_datagram_re_batcher_unbatch() {
+        run_datagram_re_batcher(1, vec![10, 10, 10, 10, 10, 10, 10, 6]);
     }
 }

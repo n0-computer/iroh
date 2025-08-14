@@ -5,15 +5,14 @@ use std::{
 
 use bytes::Bytes;
 use iroh::{
+    Endpoint, NodeAddr, RelayMode, RelayUrl, Watcher as _,
     endpoint::{Connection, ConnectionError, RecvStream, SendStream, TransportConfig},
-    Endpoint, NodeAddr, RelayMode, RelayUrl,
 };
 use n0_snafu::{Result, ResultExt};
-use n0_watcher::Watcher as _;
 use tracing::{trace, warn};
 
 use crate::{
-    client_handler, stats::TransferResult, ClientStats, ConnectionSelector, EndpointSelector, Opt,
+    ClientStats, ConnectionSelector, EndpointSelector, Opt, client_handler, stats::TransferResult,
 };
 
 pub const ALPN: &[u8] = b"n0/iroh-bench/0";
@@ -50,7 +49,7 @@ pub fn server_endpoint(
             .unwrap();
 
         if relay_url.is_some() {
-            ep.home_relay().initialized().await.unwrap();
+            ep.home_relay().initialized().await;
         }
 
         let addr = ep.bound_sockets();
@@ -111,7 +110,7 @@ pub async fn connect_client(
         .unwrap();
 
     if relay_url.is_some() {
-        endpoint.home_relay().initialized().await?;
+        endpoint.home_relay().initialized().await;
     }
 
     // TODO: We don't support passing client transport config currently

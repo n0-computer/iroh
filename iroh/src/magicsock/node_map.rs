@@ -1,5 +1,5 @@
 use std::{
-    collections::{hash_map::Entry, BTreeSet, HashMap},
+    collections::{BTreeSet, HashMap, hash_map::Entry},
     hash::Hash,
     net::{IpAddr, SocketAddr},
     sync::Mutex,
@@ -11,18 +11,15 @@ use serde::{Deserialize, Serialize};
 use stun_rs::TransactionId;
 use tracing::{debug, info, instrument, trace, warn};
 
-use self::{
-    best_addr::ClearReason,
-    node_state::{NodeState, Options, PingHandled},
-};
-use super::{metrics::Metrics, transports, ActorMessage, NodeIdMappedAddr};
+use self::node_state::{NodeState, Options, PingHandled};
+use super::{ActorMessage, NodeIdMappedAddr, metrics::Metrics, transports};
 use crate::disco::{CallMeMaybe, Pong, SendAddr};
 #[cfg(any(test, feature = "test-utils"))]
 use crate::endpoint::PathSelection;
 
-mod best_addr;
 mod node_state;
 mod path_state;
+mod path_validity;
 mod udp_paths;
 
 pub use node_state::{ConnectionType, ControlMsg, DirectAddrInfo, RemoteInfo};
@@ -121,20 +118,20 @@ pub enum Source {
 }
 
 impl NodeMap {
-    #[cfg(not(any(test, feature = "test-utils")))]
-    /// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
-    pub(super) fn load_from_vec(nodes: Vec<NodeAddr>, metrics: &Metrics) -> Self {
-        Self::from_inner(NodeMapInner::load_from_vec(nodes, metrics))
-    }
-
-    #[cfg(any(test, feature = "test-utils"))]
     /// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
     pub(super) fn load_from_vec(
         nodes: Vec<NodeAddr>,
-        path_selection: PathSelection,
+        #[cfg(any(test, feature = "test-utils"))] path_selection: PathSelection,
+        have_ipv6: bool,
         metrics: &Metrics,
     ) -> Self {
-        Self::from_inner(NodeMapInner::load_from_vec(nodes, path_selection, metrics))
+        Self::from_inner(NodeMapInner::load_from_vec(
+            nodes,
+            #[cfg(any(test, feature = "test-utils"))]
+            path_selection,
+            have_ipv6,
+            metrics,
+        ))
     }
 
     fn from_inner(inner: NodeMapInner) -> Self {
@@ -144,11 +141,17 @@ impl NodeMap {
     }
 
     /// Add the contact information for a node.
-    pub(super) fn add_node_addr(&self, node_addr: NodeAddr, source: Source, metrics: &Metrics) {
+    pub(super) fn add_node_addr(
+        &self,
+        node_addr: NodeAddr,
+        source: Source,
+        have_v6: bool,
+        metrics: &Metrics,
+    ) {
         self.inner
             .lock()
             .expect("poisoned")
-            .add_node_addr(node_addr, source, metrics)
+            .add_node_addr(node_addr, source, have_v6, metrics)
     }
 
     /// Number of nodes currently listed.
@@ -196,7 +199,7 @@ impl NodeMap {
             .expect("poisoned")
             .get_mut(NodeStateKey::Idx(id))
         {
-            ep.ping_timeout(tx_id);
+            ep.ping_timeout(tx_id, Instant::now());
         }
     }
 
@@ -266,17 +269,18 @@ impl NodeMap {
     }
 
     pub(super) fn reset_node_states(&self) {
+        let now = Instant::now();
         let mut inner = self.inner.lock().expect("poisoned");
         for (_, ep) in inner.node_states_mut() {
-            ep.note_connectivity_change();
+            ep.note_connectivity_change(now);
         }
     }
 
-    pub(super) fn nodes_stayin_alive(&self) -> Vec<PingAction> {
+    pub(super) fn nodes_stayin_alive(&self, have_ipv6: bool) -> Vec<PingAction> {
         let mut inner = self.inner.lock().expect("poisoned");
         inner
             .node_states_mut()
-            .flat_map(|(_idx, node_state)| node_state.stayin_alive())
+            .flat_map(|(_idx, node_state)| node_state.stayin_alive(have_ipv6))
             .collect()
     }
 
@@ -317,41 +321,38 @@ impl NodeMap {
         self.inner
             .lock()
             .expect("poisoned")
-            .on_direct_addr_discovered(discovered);
+            .on_direct_addr_discovered(discovered, Instant::now());
     }
 }
 
 impl NodeMapInner {
-    #[cfg(not(any(test, feature = "test-utils")))]
-    /// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
-    fn load_from_vec(nodes: Vec<NodeAddr>, metrics: &Metrics) -> Self {
-        let mut me = Self::default();
-        for node_addr in nodes {
-            me.add_node_addr(node_addr, Source::Saved, metrics);
-        }
-        me
-    }
-
-    #[cfg(any(test, feature = "test-utils"))]
     /// Create a new [`NodeMap`] from a list of [`NodeAddr`]s.
     fn load_from_vec(
         nodes: Vec<NodeAddr>,
-        path_selection: PathSelection,
+        #[cfg(any(test, feature = "test-utils"))] path_selection: PathSelection,
+        have_ipv6: bool,
         metrics: &Metrics,
     ) -> Self {
         let mut me = Self {
+            #[cfg(any(test, feature = "test-utils"))]
             path_selection,
             ..Default::default()
         };
         for node_addr in nodes {
-            me.add_node_addr(node_addr, Source::Saved, metrics);
+            me.add_node_addr(node_addr, Source::Saved, have_ipv6, metrics);
         }
         me
     }
 
     /// Add the contact information for a node.
     #[instrument(skip_all, fields(node = %node_addr.node_id.fmt_short()))]
-    fn add_node_addr(&mut self, node_addr: NodeAddr, source: Source, metrics: &Metrics) {
+    fn add_node_addr(
+        &mut self,
+        node_addr: NodeAddr,
+        source: Source,
+        have_ipv6: bool,
+        metrics: &Metrics,
+    ) {
         let source0 = source.clone();
         let node_id = node_addr.node_id;
         let relay_url = node_addr.relay_url.clone();
@@ -369,6 +370,7 @@ impl NodeMapInner {
             node_addr.relay_url.as_ref(),
             &node_addr.direct_addresses,
             source0,
+            have_ipv6,
             metrics,
         );
         let id = node_state.id();
@@ -378,24 +380,28 @@ impl NodeMapInner {
     }
 
     /// Prunes direct addresses from nodes that claim to share an address we know points to us.
-    pub(super) fn on_direct_addr_discovered(&mut self, discovered: BTreeSet<SocketAddr>) {
+    pub(super) fn on_direct_addr_discovered(
+        &mut self,
+        discovered: BTreeSet<SocketAddr>,
+        now: Instant,
+    ) {
         for addr in discovered {
-            self.remove_by_ipp(addr.into(), ClearReason::MatchesOurLocalAddr)
+            self.remove_by_ipp(addr.into(), now, "matches our local addr")
         }
     }
 
     /// Removes a direct address from a node.
-    fn remove_by_ipp(&mut self, ipp: IpPort, reason: ClearReason) {
+    fn remove_by_ipp(&mut self, ipp: IpPort, now: Instant, why: &'static str) {
         if let Some(id) = self.by_ip_port.remove(&ipp) {
             if let Entry::Occupied(mut entry) = self.by_id.entry(id) {
                 let node = entry.get_mut();
-                node.remove_direct_addr(&ipp, reason);
+                node.remove_direct_addr(&ipp, now, why);
                 if node.direct_addresses().count() == 0 {
                     let node_id = node.public_key();
                     let mapped_addr = node.quic_mapped_addr();
                     self.by_node_key.remove(node_id);
                     self.by_quic_mapped_addr.remove(mapped_addr);
-                    debug!(node_id=%node_id.fmt_short(), ?reason, "removing node");
+                    debug!(node_id=%node_id.fmt_short(), why, "removing node");
                     entry.remove();
                 }
             }
@@ -713,6 +719,7 @@ mod tests {
                 Source::NamedApp {
                     name: "test".into(),
                 },
+                true,
                 &Default::default(),
             )
         }
@@ -759,8 +766,12 @@ mod tests {
                 Some(addr)
             })
             .collect();
-        let loaded_node_map =
-            NodeMap::load_from_vec(addrs.clone(), PathSelection::default(), &Default::default());
+        let loaded_node_map = NodeMap::load_from_vec(
+            addrs.clone(),
+            PathSelection::default(),
+            true,
+            &Default::default(),
+        );
 
         let mut loaded: Vec<NodeAddr> = loaded_node_map
             .list_remote_infos(Instant::now())
@@ -840,7 +851,7 @@ mod tests {
         }
 
         info!("Pruning addresses");
-        endpoint.prune_direct_addresses();
+        endpoint.prune_direct_addresses(Instant::now());
 
         // Half the offline addresses should have been pruned.  All the active and alive
         // addresses should have been kept.

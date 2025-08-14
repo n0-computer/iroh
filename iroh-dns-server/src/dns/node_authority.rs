@@ -19,7 +19,7 @@ use tracing::{debug, trace};
 
 use crate::{
     store::ZoneStore,
-    util::{record_set_append_origin, PublicKeyBytes},
+    util::{PublicKeyBytes, record_set_append_origin},
 };
 
 #[derive(derive_more::Debug)]

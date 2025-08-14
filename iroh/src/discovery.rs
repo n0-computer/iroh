@@ -61,8 +61,8 @@
 //!
 //! ```no_run
 //! use iroh::{
-//!     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher},
 //!     Endpoint, SecretKey,
+//!     discovery::{dns::DnsDiscovery, pkarr::PkarrPublisher},
 //! };
 //!
 //! # async fn wrapper() -> n0_snafu::Result<()> {
@@ -113,16 +113,16 @@ use std::sync::Arc;
 
 use iroh_base::{NodeAddr, NodeId};
 use n0_future::{
+    Stream, TryStreamExt,
     boxed::BoxStream,
     stream::StreamExt,
     task::{self, AbortOnDropHandle},
     time::{self, Duration},
-    Stream, TryStreamExt,
 };
 use nested_enum_utils::common_fields;
-use snafu::{ensure, IntoError, Snafu};
+use snafu::{IntoError, Snafu, ensure};
 use tokio::sync::oneshot;
-use tracing::{debug, error_span, warn, Instrument};
+use tracing::{Instrument, debug, error_span, warn};
 
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
@@ -699,8 +699,8 @@ impl DiscoverySubscribers {
         }
     }
 
-    pub(crate) fn subscribe(&self) -> impl Stream<Item = Result<DiscoveryItem, Lagged>> {
-        use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
+    pub(crate) fn subscribe(&self) -> impl Stream<Item = Result<DiscoveryItem, Lagged>> + use<> {
+        use tokio_stream::wrappers::{BroadcastStream, errors::BroadcastStreamRecvError};
         let recv = self.inner.subscribe();
         BroadcastStream::new(recv).map_err(|BroadcastStreamRecvError::Lagged(n)| Lagged { val: n })
     }
@@ -730,7 +730,7 @@ mod tests {
     use tracing_test::traced_test;
 
     use super::*;
-    use crate::{endpoint::ConnectOptions, Endpoint, RelayMode};
+    use crate::{Endpoint, RelayMode, endpoint::ConnectOptions};
 
     type InfoStore = HashMap<NodeId, (NodeData, u64)>;
 
@@ -872,7 +872,7 @@ mod tests {
         };
         let ep1_addr = NodeAddr::new(ep1.node_id());
         // wait for our address to be updated and thus published at least once
-        ep1.node_addr().initialized().await?;
+        ep1.node_addr().initialized().await;
         let _conn = ep2.connect(ep1_addr, TEST_ALPN).await?;
         Ok(())
     }
@@ -898,10 +898,7 @@ mod tests {
         };
         let ep1_addr = NodeAddr::new(ep1.node_id());
         // wait for out address to be updated and thus published at least once
-        ep1.node_addr()
-            .initialized()
-            .await
-            .context("waiting for NodeAddr")?;
+        ep1.node_addr().initialized().await;
         let _conn = ep2
             .connect(ep1_addr, TEST_ALPN)
             .await
@@ -933,7 +930,7 @@ mod tests {
             new_endpoint(secret, disco).await
         };
         // wait for out address to be updated and thus published at least once
-        ep1.node_addr().initialized().await?;
+        ep1.node_addr().initialized().await;
         let _conn = ep2.connect(ep1.node_id(), TEST_ALPN).await?;
         Ok(())
     }
@@ -955,7 +952,7 @@ mod tests {
             new_endpoint(secret, disco).await
         };
         // wait for out address to be updated and thus published at least once
-        ep1.node_addr().initialized().await?;
+        ep1.node_addr().initialized().await;
 
         // 10x faster test via a 3s idle timeout instead of the 30s default
         let mut config = TransportConfig::default();
@@ -988,7 +985,7 @@ mod tests {
             new_endpoint(secret, disco).await
         };
         // wait for out address to be updated and thus published at least once
-        ep1.node_addr().initialized().await?;
+        ep1.node_addr().initialized().await;
         let ep1_wrong_addr = NodeAddr {
             node_id: ep1.node_id(),
             relay_url: None,
@@ -1016,7 +1013,7 @@ mod tests {
         let mut stream = ep1.discovery_stream();
 
         // wait for ep2 node addr to be updated and connect from ep1 -> discovery via resolve
-        ep2.node_addr().initialized().await?;
+        ep2.node_addr().initialized().await;
         let _ = ep1.connect(ep2.node_id(), TEST_ALPN).await?;
 
         let item = tokio::time::timeout(Duration::from_secs(1), stream.next())
@@ -1091,20 +1088,20 @@ mod tests {
 #[cfg(test)]
 mod test_dns_pkarr {
     use iroh_base::{NodeAddr, SecretKey};
-    use iroh_relay::{node_info::UserData, RelayMap};
+    use iroh_relay::{RelayMap, node_info::UserData};
     use n0_future::time::Duration;
     use n0_snafu::{Error, Result, ResultExt};
     use tokio_util::task::AbortOnDropHandle;
     use tracing_test::traced_test;
 
     use crate::{
-        discovery::{pkarr::PkarrPublisher, NodeData},
+        Endpoint, RelayMode,
+        discovery::{NodeData, pkarr::PkarrPublisher},
         dns::DnsResolver,
         node_info::NodeInfo,
         test_utils::{
-            dns_server::run_dns_server, pkarr_dns_state::State, run_relay_server, DnsPkarrServer,
+            DnsPkarrServer, dns_server::run_dns_server, pkarr_dns_state::State, run_relay_server,
         },
-        Endpoint, RelayMode,
     };
 
     const PUBLISH_TIMEOUT: Duration = Duration::from_secs(10);

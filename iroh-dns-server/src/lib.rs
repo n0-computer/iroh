@@ -22,19 +22,19 @@ mod tests {
     };
 
     use iroh::{
-        discovery::pkarr::PkarrRelayClient, dns::DnsResolver, node_info::NodeInfo, RelayUrl,
-        SecretKey,
+        RelayUrl, SecretKey, discovery::pkarr::PkarrRelayClient, dns::DnsResolver,
+        node_info::NodeInfo,
     };
     use n0_snafu::{Result, ResultExt};
     use pkarr::{SignedPacket, Timestamp};
     use tracing_test::traced_test;
 
     use crate::{
+        ZoneStore,
         config::BootstrapOption,
         server::Server,
         store::{PacketSource, ZoneStoreOptions},
         util::PublicKeyBytes,
-        ZoneStore,
     };
 
     const DNS_TIMEOUT: Duration = Duration::from_secs(1);

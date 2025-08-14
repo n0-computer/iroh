@@ -6,7 +6,7 @@ use std::{
 };
 
 use bytes::Bytes;
-use n0_future::{ready, Sink, Stream};
+use n0_future::{Sink, Stream, ready};
 #[cfg(not(wasm_browser))]
 use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::warn;
@@ -110,7 +110,7 @@ impl Stream for WsBytesFramed {
             match ready!(Pin::new(&mut self.io).poll_next(cx)) {
                 None => return Poll::Ready(None),
                 Some(ws_stream_wasm::WsMessage::Binary(msg)) => {
-                    return Poll::Ready(Some(Ok(msg.into())))
+                    return Poll::Ready(Some(Ok(msg.into())));
                 }
                 Some(msg) => {
                     warn!(?msg, "Got websocket message of unsupported type, skipping.");

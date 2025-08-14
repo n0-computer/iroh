@@ -5,7 +5,7 @@
 //!     $ cargo run --example listen
 use std::time::Duration;
 
-use iroh::{endpoint::ConnectionError, Endpoint, RelayMode, SecretKey};
+use iroh::{Endpoint, RelayMode, SecretKey, endpoint::ConnectionError};
 use n0_snafu::ResultExt;
 use n0_watcher::Watcher as _;
 use tracing::{debug, info, warn};
@@ -42,7 +42,7 @@ async fn main() -> n0_snafu::Result<()> {
     let local_addrs = endpoint
         .direct_addresses()
         .initialized()
-        .await?
+        .await
         .into_iter()
         .map(|addr| {
             let addr = addr.addr.to_string();
@@ -51,7 +51,7 @@ async fn main() -> n0_snafu::Result<()> {
         })
         .collect::<Vec<_>>()
         .join(" ");
-    let relay_url = endpoint.home_relay().initialized().await?;
+    let relay_url = endpoint.home_relay().initialized().await;
     println!("node relay server url: {relay_url}");
     println!("\nin a separate terminal run:");
 

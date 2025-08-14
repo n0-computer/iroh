@@ -33,13 +33,13 @@ use std::{collections::BTreeSet, sync::Arc};
 
 use clap::Parser;
 use iroh::{
+    Endpoint, NodeId,
     endpoint::Connection,
     protocol::{AcceptError, ProtocolHandler, Router},
-    Endpoint, NodeId,
 };
 use n0_snafu::{Result, ResultExt};
 use tokio::sync::Mutex;
-use tracing_subscriber::{prelude::*, EnvFilter};
+use tracing_subscriber::{EnvFilter, prelude::*};
 
 #[derive(Debug, Parser)]
 pub struct Cli {

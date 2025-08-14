@@ -22,8 +22,8 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     pin::Pin,
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex, RwLock,
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
     task::{Context, Poll},
 };
@@ -33,24 +33,24 @@ use data_encoding::HEXLOWER;
 use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey};
 use iroh_relay::RelayMap;
 use n0_future::{
+    StreamExt,
     boxed::BoxStream,
     task::{self, AbortOnDropHandle},
     time::{self, Duration, Instant},
-    StreamExt,
 };
 use n0_watcher::{self, Watchable, Watcher};
 use nested_enum_utils::common_fields;
 use netwatch::netmon;
 #[cfg(not(wasm_browser))]
-use netwatch::{ip::LocalAddresses, UdpSocket};
+use netwatch::{UdpSocket, ip::LocalAddresses};
 use quinn::{AsyncUdpSocket, ServerConfig};
 use rand::Rng;
 use smallvec::SmallVec;
 use snafu::{ResultExt, Snafu};
-use tokio::sync::{mpsc, Mutex as AsyncMutex};
+use tokio::sync::{Mutex as AsyncMutex, mpsc};
 use tokio_util::sync::CancellationToken;
 use tracing::{
-    debug, error, event, info, info_span, instrument, trace, trace_span, warn, Instrument, Level,
+    Instrument, Level, debug, error, event, info, info_span, instrument, trace, trace_span, warn,
 };
 use transports::LocalAddrsWatch;
 use url::Url;
@@ -72,7 +72,7 @@ use crate::{
     defaults::timeouts::NET_REPORT_TIMEOUT,
     disco::{self, SendAddr},
     discovery::{Discovery, DiscoveryItem, DiscoverySubscribers, NodeData, UserData},
-    key::{public_ed_box, secret_ed_box, DecryptionError, SharedSecret},
+    key::{DecryptionError, SharedSecret, public_ed_box, secret_ed_box},
     metrics::EndpointMetrics,
     net_report::{self, IfStateDetails, IpMappedAddresses, Report},
 };
@@ -268,7 +268,7 @@ impl MagicSock {
 
     /// Get the cached version of addresses.
     pub(crate) fn local_addr(&self) -> Vec<transports::Addr> {
-        self.local_addrs_watch.get().expect("disconnected")
+        self.local_addrs_watch.clone().get()
     }
 
     #[cfg(not(wasm_browser))]
@@ -276,7 +276,7 @@ impl MagicSock {
         &self.ip_bind_addrs
     }
 
-    fn ip_local_addrs(&self) -> impl Iterator<Item = SocketAddr> {
+    fn ip_local_addrs(&self) -> impl Iterator<Item = SocketAddr> + use<> {
         self.local_addr()
             .into_iter()
             .filter_map(|addr| addr.into_socket_addr())
@@ -332,7 +332,7 @@ impl MagicSock {
     ///
     /// [`Watcher`]: n0_watcher::Watcher
     /// [`Watcher::initialized`]: n0_watcher::Watcher::initialized
-    pub(crate) fn net_report(&self) -> impl Watcher<Value = Option<Report>> {
+    pub(crate) fn net_report(&self) -> impl Watcher<Value = Option<Report>> + use<> {
         self.net_report
             .watch()
             .map(|(r, _)| r)
@@ -343,7 +343,7 @@ impl MagicSock {
     ///
     /// Note that this can be used to wait for the initial home relay to be known using
     /// [`Watcher::initialized`].
-    pub(crate) fn home_relay(&self) -> impl Watcher<Value = Vec<RelayUrl>> {
+    pub(crate) fn home_relay(&self) -> impl Watcher<Value = Vec<RelayUrl>> + use<> {
         let res = self.local_addrs_watch.clone().map(|addrs| {
             addrs
                 .into_iter()
@@ -393,8 +393,9 @@ impl MagicSock {
             }
         }
         if !addr.is_empty() {
+            let have_ipv6 = self.ipv6_reported.load(Ordering::Relaxed);
             self.node_map
-                .add_node_addr(addr, source, &self.metrics.magicsock);
+                .add_node_addr(addr, source, have_ipv6, &self.metrics.magicsock);
             Ok(())
         } else if pruned != 0 {
             Err(EmptyPrunedSnafu { pruned }.build())
@@ -460,7 +461,7 @@ impl MagicSock {
 
     #[cfg_attr(windows, allow(dead_code))]
     fn normalized_local_addr(&self) -> io::Result<SocketAddr> {
-        let addrs = self.local_addrs_watch.get().expect("disconnected");
+        let addrs = self.local_addrs_watch.clone().get();
 
         let mut ipv4_addr = None;
         for addr in addrs {
@@ -1177,24 +1178,27 @@ impl DirectAddrUpdateState {
         let msock = self.msock.clone();
 
         let run_done = self.run_done.clone();
-        task::spawn(async move {
-            let fut = time::timeout(
-                NET_REPORT_TIMEOUT,
-                net_reporter.get_report(if_state, why.is_major()),
-            );
-            match fut.await {
-                Ok(report) => {
-                    msock.net_report.set((Some(report), why)).ok();
+        task::spawn(
+            async move {
+                let fut = time::timeout(
+                    NET_REPORT_TIMEOUT,
+                    net_reporter.get_report(if_state, why.is_major()),
+                );
+                match fut.await {
+                    Ok(report) => {
+                        msock.net_report.set((Some(report), why)).ok();
+                    }
+                    Err(time::Elapsed { .. }) => {
+                        warn!("net_report report timed out");
+                    }
                 }
-                Err(time::Elapsed { .. }) => {
-                    warn!("net_report report timed out");
-                }
-            }
 
-            // mark run as finished
-            debug!("direct addr update done ({:?})", why);
-            run_done.send(()).await.ok();
-        });
+                // mark run as finished
+                debug!("direct addr update done ({:?})", why);
+                run_done.send(()).await.ok();
+            }
+            .instrument(tracing::Span::current()),
+        );
     }
 }
 
@@ -1251,15 +1255,21 @@ impl Handle {
 
         let (actor_sender, actor_receiver) = mpsc::channel(256);
 
+        let ipv6_reported = false;
+
         // load the node data
         let node_map = node_map.unwrap_or_default();
-        #[cfg(any(test, feature = "test-utils"))]
-        let node_map = NodeMap::load_from_vec(node_map, path_selection, &metrics.magicsock);
-        #[cfg(not(any(test, feature = "test-utils")))]
-        let node_map = NodeMap::load_from_vec(node_map, &metrics.magicsock);
+        let node_map = NodeMap::load_from_vec(
+            node_map,
+            #[cfg(any(test, feature = "test-utils"))]
+            path_selection,
+            ipv6_reported,
+            &metrics.magicsock,
+        );
 
         let my_relay = Watchable::new(None);
-        let ipv6_reported = Arc::new(AtomicBool::new(false));
+        let ipv6_reported = Arc::new(AtomicBool::new(ipv6_reported));
+        let max_receive_segments = Arc::new(AtomicUsize::new(1));
 
         let relay_transport = RelayTransport::new(RelayActorConfig {
             my_relay: my_relay.clone(),
@@ -1268,6 +1278,7 @@ impl Handle {
             dns_resolver: dns_resolver.clone(),
             proxy_url: proxy_url.clone(),
             ipv6_reported: ipv6_reported.clone(),
+            max_receive_segments: max_receive_segments.clone(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify,
             metrics: metrics.magicsock.clone(),
@@ -1279,9 +1290,9 @@ impl Handle {
         let ipv6 = ip_transports.iter().any(|t| t.bind_addr().is_ipv6());
 
         #[cfg(not(wasm_browser))]
-        let transports = Transports::new(ip_transports, relay_transports);
+        let transports = Transports::new(ip_transports, relay_transports, max_receive_segments);
         #[cfg(wasm_browser)]
-        let transports = Transports::new(relay_transports);
+        let transports = Transports::new(relay_transports, max_receive_segments);
 
         let (disco, disco_receiver) = DiscoState::new(secret_encryption_key);
 
@@ -1727,7 +1738,7 @@ impl Actor {
         self.update_direct_addresses(None);
 
         // Setup network monitoring
-        let mut current_netmon_state = self.netmon_watcher.get().expect("missing network state");
+        let mut current_netmon_state = self.netmon_watcher.get();
 
         #[cfg(not(wasm_browser))]
         let mut direct_addr_heartbeat_timer = time::interval(HEARTBEAT_INTERVAL);
@@ -1817,7 +1828,7 @@ impl Actor {
                     match reason {
                         Some(()) => {
                             // check if a new run needs to be scheduled
-                            let state = self.netmon_watcher.get().expect("disconnected");
+                            let state = self.netmon_watcher.get();
                             self.direct_addr_update_state.try_run(state.into());
                         }
                         None => {
@@ -1856,7 +1867,8 @@ impl Actor {
                         // TODO: this might trigger too many packets at once, pace this
 
                         self.msock.node_map.prune_inactive();
-                        let msgs = self.msock.node_map.nodes_stayin_alive();
+                        let have_v6 = self.netmon_watcher.clone().get().have_v6;
+                        let msgs = self.msock.node_map.nodes_stayin_alive(have_v6);
                         self.handle_ping_actions(&sender, msgs).await;
                     }
                 }
@@ -1867,8 +1879,13 @@ impl Actor {
                         continue;
                     };
                     let is_major = state.is_major_change(&current_netmon_state);
+                    event!(
+                        target: "iroh::_events::link_change",
+                        Level::DEBUG,
+                        ?state,
+                        is_major
+                    );
                     current_netmon_state = state;
-                    trace!("tick: link change {}", is_major);
                     self.msock.metrics.magicsock.actor_link_change.inc();
                     self.handle_network_change(is_major).await;
                 }
@@ -1900,11 +1917,11 @@ impl Actor {
     }
 
     async fn handle_network_change(&mut self, is_major: bool) {
-        debug!("link change detected: major? {}", is_major);
+        debug!(is_major, "link change detected");
 
         if is_major {
             if let Err(err) = self.network_change_sender.rebind() {
-                warn!("failed to rebind transports: {:?}", err);
+                warn!("failed to rebind transports: {err:?}");
             }
 
             #[cfg(not(wasm_browser))]
@@ -1917,7 +1934,7 @@ impl Actor {
     }
 
     fn re_stun(&mut self, why: UpdateReason) {
-        let state = self.netmon_watcher.get().expect("disconnected");
+        let state = self.netmon_watcher.get();
         self.direct_addr_update_state
             .schedule_run(why, state.into());
     }
@@ -1944,7 +1961,7 @@ impl Actor {
                 if let Some((node, url)) = data {
                     self.pending_call_me_maybes.insert(node, url);
                 }
-                let state = self.netmon_watcher.get().expect("disconnected");
+                let state = self.netmon_watcher.get();
                 self.direct_addr_update_state
                     .schedule_run(why, state.into());
             }
@@ -2053,11 +2070,7 @@ impl Actor {
             let LocalAddresses {
                 regular: mut ips,
                 loopback,
-            } = self
-                .netmon_watcher
-                .get()
-                .expect("netmon disconnected")
-                .local_addresses;
+            } = self.netmon_watcher.get().local_addresses;
             if ips.is_empty() && addrs.is_empty() {
                 // Include loopback addresses only if there are no other interfaces
                 // or public addresses, this allows testing offline.
@@ -2411,22 +2424,23 @@ mod tests {
 
     use data_encoding::HEXLOWER;
     use iroh_base::{NodeAddr, NodeId, PublicKey};
-    use n0_future::{time, StreamExt};
+    use n0_future::{StreamExt, time};
     use n0_snafu::{Result, ResultExt};
     use n0_watcher::Watcher;
     use quinn::ServerConfig;
     use rand::{Rng, RngCore};
     use tokio::task::JoinSet;
     use tokio_util::task::AbortOnDropHandle;
-    use tracing::{error, info, info_span, instrument, Instrument};
+    use tracing::{Instrument, error, info, info_span, instrument};
     use tracing_test::traced_test;
 
     use super::{NodeIdMappedAddr, Options};
     use crate::{
+        Endpoint, RelayMap, RelayMode, SecretKey,
         dns::DnsResolver,
         endpoint::{DirectAddr, PathSelection, Source},
-        magicsock::{node_map, Handle, MagicSock},
-        tls, Endpoint, RelayMap, RelayMode, SecretKey,
+        magicsock::{Handle, MagicSock, node_map},
+        tls,
     };
 
     const ALPN: &[u8] = b"n0/test/1";
@@ -2795,7 +2809,7 @@ mod tests {
         println!("first conn!");
         let conn = m1
             .endpoint
-            .connect(m2.endpoint.node_addr().initialized().await?, ALPN)
+            .connect(m2.endpoint.node_addr().initialized().await, ALPN)
             .await?;
         println!("Closing first conn");
         conn.close(0u32.into(), b"bye lolz");
@@ -2943,12 +2957,12 @@ mod tests {
         let ms = Handle::new(Default::default()).await.unwrap();
 
         // See if we can get endpoints.
-        let eps0 = ms.direct_addresses().initialized().await.unwrap();
+        let eps0 = ms.direct_addresses().initialized().await;
         println!("{eps0:?}");
         assert!(!eps0.is_empty());
 
         // Getting the endpoints again immediately should give the same results.
-        let eps1 = ms.direct_addresses().initialized().await.unwrap();
+        let eps1 = ms.direct_addresses().initialized().await;
         println!("{eps1:?}");
         assert_eq!(eps0, eps1);
     }
@@ -3107,7 +3121,6 @@ mod tests {
                 .direct_addresses()
                 .initialized()
                 .await
-                .expect("no direct addrs")
                 .into_iter()
                 .map(|x| x.addr)
                 .collect(),
@@ -3182,6 +3195,7 @@ mod tests {
             Source::NamedApp {
                 name: "test".into(),
             },
+            true,
             &msock_1.metrics.magicsock,
         );
         let addr_2 = msock_1.get_mapping_addr(node_id_2).unwrap();
@@ -3218,7 +3232,6 @@ mod tests {
                     .direct_addresses()
                     .initialized()
                     .await
-                    .expect("no direct addrs")
                     .into_iter()
                     .map(|x| x.addr)
                     .collect(),
@@ -3226,6 +3239,7 @@ mod tests {
             Source::NamedApp {
                 name: "test".into(),
             },
+            true,
             &msock_1.metrics.magicsock,
         );
 
@@ -3268,10 +3282,11 @@ mod tests {
             .magic_sock()
             .add_node_addr(empty_addr, node_map::Source::App)
             .unwrap_err();
-        assert!(err
-            .to_string()
-            .to_lowercase()
-            .contains("empty addressing info"));
+        assert!(
+            err.to_string()
+                .to_lowercase()
+                .contains("empty addressing info")
+        );
 
         // relay url only
         let addr = NodeAddr {

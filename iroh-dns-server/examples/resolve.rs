@@ -1,8 +1,8 @@
 use clap::{Parser, ValueEnum};
 use iroh::{
+    NodeId,
     discovery::dns::{N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING},
     dns::DnsResolver,
-    NodeId,
 };
 use n0_snafu::{Result, ResultExt};
 
