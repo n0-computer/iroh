@@ -3199,8 +3199,8 @@ mod tests {
 
     /// Test that peers are properly restored
     #[tokio::test]
-    // #[traced_test]
-    async fn connect_multi() -> Result {
+    #[traced_test]
+    async fn connect_multi_time() -> Result {
         let n = 32;
 
         const NOOP_ALPN: &[u8] = b"noop";
@@ -3266,12 +3266,7 @@ mod tests {
 
         println!("Round 0: {}s, {}s per connection", dt0, dt0 / (n as f64));
         println!("Round 1: {}s, {}s per connection", dt1, dt1 / (n as f64));
-        assert!(
-            dt0 / dt1 < 20.0,
-            "First round: {}s, second round {}s",
-            dt0,
-            dt1
-        );
+        assert!(dt0 / dt1 < 20.0, "First round: {dt0}s, second round {dt1}s");
         Ok(())
     }
 }

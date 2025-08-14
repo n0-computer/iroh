@@ -454,7 +454,7 @@ impl UdpSender {
     }
 
     /// Best effort sending
-    fn inner_try_send(
+    pub(crate) fn inner_try_send(
         &self,
         destination: &Addr,
         src: Option<IpAddr>,
@@ -504,7 +504,7 @@ impl quinn::UdpSender for UdpSender {
         transmit: &quinn_udp::Transmit,
         cx: &mut Context,
     ) -> Poll<io::Result<()>> {
-        let active_paths = self.msock.prepare_send(transmit)?;
+        let active_paths = self.msock.prepare_send(&self, transmit)?;
 
         if active_paths.is_empty() {
             // Returning Ok here means we let QUIC timeout.
@@ -556,7 +556,7 @@ impl quinn::UdpSender for UdpSender {
     }
 
     fn try_send(self: Pin<&mut Self>, transmit: &quinn_udp::Transmit) -> io::Result<()> {
-        let active_paths = self.msock.prepare_send(transmit)?;
+        let active_paths = self.msock.prepare_send(&self, transmit)?;
         if active_paths.is_empty() {
             // Returning Ok here means we let QUIC timeout.
             // Returning an error would immediately fail a connection.
