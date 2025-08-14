@@ -3197,7 +3197,11 @@ mod tests {
         Ok(())
     }
 
-    /// Test that peers are properly restored
+    /// Tests that initial connection establishment isn't extremely slow compared
+    /// to subsequent connections.
+    ///
+    /// This is a time based test, but uses a very large ratio to reduce flakiness.
+    /// It also does a number of connections to average out any anomalies.
     #[tokio::test]
     #[traced_test]
     async fn connect_multi_time() -> Result {
@@ -3264,8 +3268,6 @@ mod tests {
         }
         let dt1 = t1.elapsed().as_secs_f64();
 
-        println!("Round 0: {}s, {}s per connection", dt0, dt0 / (n as f64));
-        println!("Round 1: {}s, {}s per connection", dt1, dt1 / (n as f64));
         assert!(dt0 / dt1 < 20.0, "First round: {dt0}s, second round {dt1}s");
         Ok(())
     }
