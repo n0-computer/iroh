@@ -1080,8 +1080,6 @@ struct DirectAddrUpdateState {
     /// If set, start a new update as soon as the current one is finished.
     want_update: Option<UpdateReason>,
     msock: Arc<MagicSock>,
-    #[cfg(not(wasm_browser))]
-    port_mapper: portmapper::Client,
     /// The prober that discovers local network conditions, including the closest relay relay and NAT mappings.
     net_reporter: Arc<AsyncMutex<net_report::Client>>,
     relay_map: RelayMap,
@@ -1109,15 +1107,12 @@ impl UpdateReason {
 impl DirectAddrUpdateState {
     fn new(
         msock: Arc<MagicSock>,
-        #[cfg(not(wasm_browser))] port_mapper: portmapper::Client,
         net_reporter: Arc<AsyncMutex<net_report::Client>>,
         relay_map: RelayMap,
         run_done: mpsc::Sender<()>,
     ) -> Self {
         DirectAddrUpdateState {
             want_update: Default::default(),
-            #[cfg(not(wasm_browser))]
-            port_mapper,
             net_reporter,
             msock,
             relay_map,
@@ -1160,8 +1155,6 @@ impl DirectAddrUpdateState {
         mut net_reporter: tokio::sync::OwnedMutexGuard<net_report::Client>,
     ) {
         debug!("starting direct addr update ({:?})", why);
-        #[cfg(not(wasm_browser))]
-        self.port_mapper.procure_mapping();
         // Don't start a net report probe if we know
         // we are shutting down
         if self.msock.is_closing() || self.msock.is_closed() {
@@ -1248,7 +1241,7 @@ impl Handle {
         let addr_v4 = addr_v4.unwrap_or_else(|| SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0));
 
         #[cfg(not(wasm_browser))]
-        let (ip_transports, port_mapper) =
+        let ip_transports =
             bind_ip(addr_v4, addr_v6, &metrics).context(BindSocketsSnafu)?;
 
         let ip_mapped_addrs = IpMappedAddresses::default();
@@ -1385,8 +1378,6 @@ impl Handle {
         let (direct_addr_done_tx, direct_addr_done_rx) = mpsc::channel(8);
         let direct_addr_update_state = DirectAddrUpdateState::new(
             msock.clone(),
-            #[cfg(not(wasm_browser))]
-            port_mapper,
             Arc::new(AsyncMutex::new(net_reporter)),
             relay_map,
             direct_addr_done_tx,
@@ -1681,9 +1672,9 @@ fn bind_ip(
     addr_v4: SocketAddrV4,
     addr_v6: Option<SocketAddrV6>,
     metrics: &EndpointMetrics,
-) -> io::Result<(Vec<IpTransport>, portmapper::Client)> {
-    let port_mapper =
-        portmapper::Client::with_metrics(Default::default(), metrics.portmapper.clone());
+) -> io::Result<Vec<IpTransport>> {
+    // let port_mapper =
+    //     portmapper::Client::with_metrics(Default::default(), metrics.portmapper.clone());
 
     let v4 = Arc::new(bind_with_fallback(SocketAddr::V4(addr_v4))?);
     let ip4_port = v4.local_addr()?.port();
@@ -1716,14 +1707,14 @@ fn bind_ip(
     }
 
     // NOTE: we can end up with a zero port if `netwatch::UdpSocket::socket_addr` fails
-    match port.try_into() {
-        Ok(non_zero_port) => {
-            port_mapper.update_local_port(non_zero_port);
-        }
-        Err(_zero_port) => debug!("Skipping port mapping with zero local port"),
-    }
+    // match port.try_into() {
+    //     Ok(non_zero_port) => {
+    //         port_mapper.update_local_port(non_zero_port);
+    //     }
+    //     Err(_zero_port) => debug!("Skipping port mapping with zero local port"),
+    // }
 
-    Ok((ip, port_mapper))
+    Ok(ip)
 }
 
 impl Actor {
@@ -1743,12 +1734,6 @@ impl Actor {
         #[cfg(not(wasm_browser))]
         let mut direct_addr_heartbeat_timer = time::interval(HEARTBEAT_INTERVAL);
 
-        #[cfg(not(wasm_browser))]
-        let mut portmap_watcher = self
-            .direct_addr_update_state
-            .port_mapper
-            .watch_external_address();
-
         let mut discovery_events: BoxStream<DiscoveryItem> = Box::pin(n0_future::stream::empty());
         if let Some(d) = self.msock.discovery() {
             if let Some(events) = d.subscribe() {
@@ -1764,10 +1749,6 @@ impl Actor {
 
         loop {
             self.msock.metrics.magicsock.actor_tick_main.inc();
-            #[cfg(not(wasm_browser))]
-            let portmap_watcher_changed = portmap_watcher.changed();
-            #[cfg(wasm_browser)]
-            let portmap_watcher_changed = n0_future::future::pending();
 
             #[cfg(not(wasm_browser))]
             let direct_addr_heartbeat_timer_tick = direct_addr_heartbeat_timer.tick();
@@ -1836,26 +1817,6 @@ impl Actor {
                         }
                     }
                 }
-                change = portmap_watcher_changed, if !portmap_watcher_closed => {
-                    #[cfg(not(wasm_browser))]
-                    {
-                        if change.is_err() {
-                            trace!("tick: portmap watcher closed");
-                            self.msock.metrics.magicsock.actor_tick_other.inc();
-
-                            portmap_watcher_closed = true;
-                            continue;
-                        }
-
-                        trace!("tick: portmap changed");
-                        self.msock.metrics.magicsock.actor_tick_portmap_changed.inc();
-                        let new_external_address = *portmap_watcher.borrow();
-                        debug!("external address updated: {new_external_address:?}");
-                        self.re_stun(UpdateReason::PortmapUpdated);
-                    }
-                    #[cfg(wasm_browser)]
-                    let _unused_in_browsers = change;
-                },
                 _ = direct_addr_heartbeat_timer_tick => {
                     #[cfg(not(wasm_browser))]
                     {
@@ -1985,23 +1946,11 @@ impl Actor {
     /// - The local interfaces IP addresses.
     #[cfg(not(wasm_browser))]
     fn update_direct_addresses(&mut self, net_report_report: Option<&net_report::Report>) {
-        let portmap_watcher = self
-            .direct_addr_update_state
-            .port_mapper
-            .watch_external_address();
 
         // We only want to have one DirectAddr for each SocketAddr we have.  So we store
         // this as a map of SocketAddr -> DirectAddrType.  At the end we will construct a
         // DirectAddr from each entry.
         let mut addrs: BTreeMap<SocketAddr, DirectAddrType> = BTreeMap::new();
-
-        // First add PortMapper provided addresses.
-        let maybe_port_mapped = *portmap_watcher.borrow();
-        if let Some(portmap_ext) = maybe_port_mapped.map(SocketAddr::V4) {
-            addrs
-                .entry(portmap_ext)
-                .or_insert(DirectAddrType::Portmapped);
-        }
 
         // Next add STUN addresses from the net_report report.
         if let Some(net_report_report) = net_report_report {
