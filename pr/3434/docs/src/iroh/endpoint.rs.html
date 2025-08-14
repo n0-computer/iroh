@@ -3199,8 +3199,8 @@
 <a href=#3199 id=3199 data-nosnippet>3199</a>
 <a href=#3200 id=3200 data-nosnippet>3200</a>    <span class="doccomment">/// Test that peers are properly restored
 <a href=#3201 id=3201 data-nosnippet>3201</a>    </span><span class="attr">#[tokio::test]
-<a href=#3202 id=3202 data-nosnippet>3202</a>    </span><span class="comment">// #[traced_test]
-<a href=#3203 id=3203 data-nosnippet>3203</a>    </span><span class="kw">async fn </span>connect_multi() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#3202 id=3202 data-nosnippet>3202</a>    #[traced_test]
+<a href=#3203 id=3203 data-nosnippet>3203</a>    </span><span class="kw">async fn </span>connect_multi_time() -&gt; <span class="prelude-ty">Result</span> {
 <a href=#3204 id=3204 data-nosnippet>3204</a>        <span class="kw">let </span>n = <span class="number">32</span>;
 <a href=#3205 id=3205 data-nosnippet>3205</a>
 <a href=#3206 id=3206 data-nosnippet>3206</a>        <span class="kw">const </span>NOOP_ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"noop"</span>;
@@ -3266,12 +3266,7 @@
 <a href=#3266 id=3266 data-nosnippet>3266</a>
 <a href=#3267 id=3267 data-nosnippet>3267</a>        <span class="macro">println!</span>(<span class="string">"Round 0: {}s, {}s per connection"</span>, dt0, dt0 / (n <span class="kw">as </span>f64));
 <a href=#3268 id=3268 data-nosnippet>3268</a>        <span class="macro">println!</span>(<span class="string">"Round 1: {}s, {}s per connection"</span>, dt1, dt1 / (n <span class="kw">as </span>f64));
-<a href=#3269 id=3269 data-nosnippet>3269</a>        <span class="macro">assert!</span>(
-<a href=#3270 id=3270 data-nosnippet>3270</a>            dt0 / dt1 &lt; <span class="number">20.0</span>,
-<a href=#3271 id=3271 data-nosnippet>3271</a>            <span class="string">"First round: {}s, second round {}s"</span>,
-<a href=#3272 id=3272 data-nosnippet>3272</a>            dt0,
-<a href=#3273 id=3273 data-nosnippet>3273</a>            dt1
-<a href=#3274 id=3274 data-nosnippet>3274</a>        );
-<a href=#3275 id=3275 data-nosnippet>3275</a>        <span class="prelude-val">Ok</span>(())
-<a href=#3276 id=3276 data-nosnippet>3276</a>    }
-<a href=#3277 id=3277 data-nosnippet>3277</a>}</code></pre></div></section></main></body></html>
+<a href=#3269 id=3269 data-nosnippet>3269</a>        <span class="macro">assert!</span>(dt0 / dt1 &lt; <span class="number">20.0</span>, <span class="string">"First round: {dt0}s, second round {dt1}s"</span>);
+<a href=#3270 id=3270 data-nosnippet>3270</a>        <span class="prelude-val">Ok</span>(())
+<a href=#3271 id=3271 data-nosnippet>3271</a>    }
+<a href=#3272 id=3272 data-nosnippet>3272</a>}</code></pre></div></section></main></body></html>
