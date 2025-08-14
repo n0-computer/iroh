@@ -3197,76 +3197,78 @@
 <a href=#3197 id=3197 data-nosnippet>3197</a>        <span class="prelude-val">Ok</span>(())
 <a href=#3198 id=3198 data-nosnippet>3198</a>    }
 <a href=#3199 id=3199 data-nosnippet>3199</a>
-<a href=#3200 id=3200 data-nosnippet>3200</a>    <span class="doccomment">/// Test that peers are properly restored
-<a href=#3201 id=3201 data-nosnippet>3201</a>    </span><span class="attr">#[tokio::test]
-<a href=#3202 id=3202 data-nosnippet>3202</a>    #[traced_test]
-<a href=#3203 id=3203 data-nosnippet>3203</a>    </span><span class="kw">async fn </span>connect_multi_time() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#3204 id=3204 data-nosnippet>3204</a>        <span class="kw">let </span>n = <span class="number">32</span>;
-<a href=#3205 id=3205 data-nosnippet>3205</a>
-<a href=#3206 id=3206 data-nosnippet>3206</a>        <span class="kw">const </span>NOOP_ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"noop"</span>;
-<a href=#3207 id=3207 data-nosnippet>3207</a>
-<a href=#3208 id=3208 data-nosnippet>3208</a>        <span class="attr">#[derive(Debug, Clone)]
-<a href=#3209 id=3209 data-nosnippet>3209</a>        </span><span class="kw">struct </span>Noop;
-<a href=#3210 id=3210 data-nosnippet>3210</a>
-<a href=#3211 id=3211 data-nosnippet>3211</a>        <span class="kw">impl </span>ProtocolHandler <span class="kw">for </span>Noop {
-<a href=#3212 id=3212 data-nosnippet>3212</a>            <span class="kw">async fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, connection: Connection) -&gt; <span class="prelude-ty">Result</span>&lt;(), AcceptError&gt; {
-<a href=#3213 id=3213 data-nosnippet>3213</a>                connection.closed().<span class="kw">await</span>;
-<a href=#3214 id=3214 data-nosnippet>3214</a>                <span class="prelude-val">Ok</span>(())
-<a href=#3215 id=3215 data-nosnippet>3215</a>            }
-<a href=#3216 id=3216 data-nosnippet>3216</a>        }
-<a href=#3217 id=3217 data-nosnippet>3217</a>
-<a href=#3218 id=3218 data-nosnippet>3218</a>        <span class="kw">async fn </span>noop_server() -&gt; <span class="prelude-ty">Result</span>&lt;(Router, NodeAddr)&gt; {
-<a href=#3219 id=3219 data-nosnippet>3219</a>            <span class="kw">let </span>endpoint = Endpoint::builder()
-<a href=#3220 id=3220 data-nosnippet>3220</a>                .relay_mode(RelayMode::Disabled)
-<a href=#3221 id=3221 data-nosnippet>3221</a>                .bind()
-<a href=#3222 id=3222 data-nosnippet>3222</a>                .<span class="kw">await
-<a href=#3223 id=3223 data-nosnippet>3223</a>                </span>.e()<span class="question-mark">?</span>;
-<a href=#3224 id=3224 data-nosnippet>3224</a>            <span class="kw">let </span>addr = endpoint.node_addr().initialized().<span class="kw">await</span>;
-<a href=#3225 id=3225 data-nosnippet>3225</a>            <span class="kw">let </span>router = Router::builder(endpoint).accept(NOOP_ALPN, Noop).spawn();
-<a href=#3226 id=3226 data-nosnippet>3226</a>            <span class="prelude-val">Ok</span>((router, addr))
-<a href=#3227 id=3227 data-nosnippet>3227</a>        }
-<a href=#3228 id=3228 data-nosnippet>3228</a>
-<a href=#3229 id=3229 data-nosnippet>3229</a>        <span class="kw">let </span>routers = stream::iter(<span class="number">0</span>..n)
-<a href=#3230 id=3230 data-nosnippet>3230</a>            .map(|<span class="kw">_</span>| noop_server())
-<a href=#3231 id=3231 data-nosnippet>3231</a>            .buffered_unordered(<span class="number">32</span>)
-<a href=#3232 id=3232 data-nosnippet>3232</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
-<a href=#3233 id=3233 data-nosnippet>3233</a>            .<span class="kw">await
-<a href=#3234 id=3234 data-nosnippet>3234</a>            </span>.into_iter()
-<a href=#3235 id=3235 data-nosnippet>3235</a>            .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()
-<a href=#3236 id=3236 data-nosnippet>3236</a>            .e()<span class="question-mark">?</span>;
-<a href=#3237 id=3237 data-nosnippet>3237</a>
-<a href=#3238 id=3238 data-nosnippet>3238</a>        <span class="kw">let </span>addrs = routers
-<a href=#3239 id=3239 data-nosnippet>3239</a>            .iter()
-<a href=#3240 id=3240 data-nosnippet>3240</a>            .map(|(<span class="kw">_</span>, addr)| addr.clone())
-<a href=#3241 id=3241 data-nosnippet>3241</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#3242 id=3242 data-nosnippet>3242</a>        <span class="kw">let </span>ids = addrs.iter().map(|addr| addr.node_id).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
-<a href=#3243 id=3243 data-nosnippet>3243</a>        <span class="kw">let </span>discovery = StaticProvider::from_node_info(addrs);
-<a href=#3244 id=3244 data-nosnippet>3244</a>        <span class="kw">let </span>endpoint = Endpoint::builder()
-<a href=#3245 id=3245 data-nosnippet>3245</a>            .relay_mode(RelayMode::Disabled)
-<a href=#3246 id=3246 data-nosnippet>3246</a>            .discovery(discovery)
-<a href=#3247 id=3247 data-nosnippet>3247</a>            .bind()
-<a href=#3248 id=3248 data-nosnippet>3248</a>            .<span class="kw">await
-<a href=#3249 id=3249 data-nosnippet>3249</a>            </span>.e()<span class="question-mark">?</span>;
-<a href=#3250 id=3250 data-nosnippet>3250</a>        <span class="comment">// wait for the endpoint to be initialized. This should not be needed,
-<a href=#3251 id=3251 data-nosnippet>3251</a>        // but we don't want to measure endpoint init time but connection time
-<a href=#3252 id=3252 data-nosnippet>3252</a>        // from a fully initialized endpoint.
-<a href=#3253 id=3253 data-nosnippet>3253</a>        </span>endpoint.node_addr().initialized().<span class="kw">await</span>;
-<a href=#3254 id=3254 data-nosnippet>3254</a>        <span class="kw">let </span>t0 = Instant::now();
-<a href=#3255 id=3255 data-nosnippet>3255</a>        <span class="kw">for </span>id <span class="kw">in </span><span class="kw-2">&amp;</span>ids {
-<a href=#3256 id=3256 data-nosnippet>3256</a>            <span class="kw">let </span>conn = endpoint.connect(<span class="kw-2">*</span>id, NOOP_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#3257 id=3257 data-nosnippet>3257</a>            conn.close(<span class="number">0u32</span>.into(), <span class="string">b"done"</span>);
-<a href=#3258 id=3258 data-nosnippet>3258</a>        }
-<a href=#3259 id=3259 data-nosnippet>3259</a>        <span class="kw">let </span>dt0 = t0.elapsed().as_secs_f64();
-<a href=#3260 id=3260 data-nosnippet>3260</a>        <span class="kw">let </span>t1 = Instant::now();
-<a href=#3261 id=3261 data-nosnippet>3261</a>        <span class="kw">for </span>id <span class="kw">in </span><span class="kw-2">&amp;</span>ids {
-<a href=#3262 id=3262 data-nosnippet>3262</a>            <span class="kw">let </span>conn = endpoint.connect(<span class="kw-2">*</span>id, NOOP_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#3263 id=3263 data-nosnippet>3263</a>            conn.close(<span class="number">0u32</span>.into(), <span class="string">b"done"</span>);
-<a href=#3264 id=3264 data-nosnippet>3264</a>        }
-<a href=#3265 id=3265 data-nosnippet>3265</a>        <span class="kw">let </span>dt1 = t1.elapsed().as_secs_f64();
-<a href=#3266 id=3266 data-nosnippet>3266</a>
-<a href=#3267 id=3267 data-nosnippet>3267</a>        <span class="macro">println!</span>(<span class="string">"Round 0: {}s, {}s per connection"</span>, dt0, dt0 / (n <span class="kw">as </span>f64));
-<a href=#3268 id=3268 data-nosnippet>3268</a>        <span class="macro">println!</span>(<span class="string">"Round 1: {}s, {}s per connection"</span>, dt1, dt1 / (n <span class="kw">as </span>f64));
-<a href=#3269 id=3269 data-nosnippet>3269</a>        <span class="macro">assert!</span>(dt0 / dt1 &lt; <span class="number">20.0</span>, <span class="string">"First round: {dt0}s, second round {dt1}s"</span>);
-<a href=#3270 id=3270 data-nosnippet>3270</a>        <span class="prelude-val">Ok</span>(())
-<a href=#3271 id=3271 data-nosnippet>3271</a>    }
-<a href=#3272 id=3272 data-nosnippet>3272</a>}</code></pre></div></section></main></body></html>
+<a href=#3200 id=3200 data-nosnippet>3200</a>    <span class="doccomment">/// Tests that initial connection establishment isn't extremely slow compared
+<a href=#3201 id=3201 data-nosnippet>3201</a>    /// to subsequent connections.
+<a href=#3202 id=3202 data-nosnippet>3202</a>    ///
+<a href=#3203 id=3203 data-nosnippet>3203</a>    /// This is a time based test, but uses a very large ratio to reduce flakiness.
+<a href=#3204 id=3204 data-nosnippet>3204</a>    /// It also does a number of connections to average out any anomalies.
+<a href=#3205 id=3205 data-nosnippet>3205</a>    </span><span class="attr">#[tokio::test]
+<a href=#3206 id=3206 data-nosnippet>3206</a>    #[traced_test]
+<a href=#3207 id=3207 data-nosnippet>3207</a>    </span><span class="kw">async fn </span>connect_multi_time() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#3208 id=3208 data-nosnippet>3208</a>        <span class="kw">let </span>n = <span class="number">32</span>;
+<a href=#3209 id=3209 data-nosnippet>3209</a>
+<a href=#3210 id=3210 data-nosnippet>3210</a>        <span class="kw">const </span>NOOP_ALPN: <span class="kw-2">&amp;</span>[u8] = <span class="string">b"noop"</span>;
+<a href=#3211 id=3211 data-nosnippet>3211</a>
+<a href=#3212 id=3212 data-nosnippet>3212</a>        <span class="attr">#[derive(Debug, Clone)]
+<a href=#3213 id=3213 data-nosnippet>3213</a>        </span><span class="kw">struct </span>Noop;
+<a href=#3214 id=3214 data-nosnippet>3214</a>
+<a href=#3215 id=3215 data-nosnippet>3215</a>        <span class="kw">impl </span>ProtocolHandler <span class="kw">for </span>Noop {
+<a href=#3216 id=3216 data-nosnippet>3216</a>            <span class="kw">async fn </span>accept(<span class="kw-2">&amp;</span><span class="self">self</span>, connection: Connection) -&gt; <span class="prelude-ty">Result</span>&lt;(), AcceptError&gt; {
+<a href=#3217 id=3217 data-nosnippet>3217</a>                connection.closed().<span class="kw">await</span>;
+<a href=#3218 id=3218 data-nosnippet>3218</a>                <span class="prelude-val">Ok</span>(())
+<a href=#3219 id=3219 data-nosnippet>3219</a>            }
+<a href=#3220 id=3220 data-nosnippet>3220</a>        }
+<a href=#3221 id=3221 data-nosnippet>3221</a>
+<a href=#3222 id=3222 data-nosnippet>3222</a>        <span class="kw">async fn </span>noop_server() -&gt; <span class="prelude-ty">Result</span>&lt;(Router, NodeAddr)&gt; {
+<a href=#3223 id=3223 data-nosnippet>3223</a>            <span class="kw">let </span>endpoint = Endpoint::builder()
+<a href=#3224 id=3224 data-nosnippet>3224</a>                .relay_mode(RelayMode::Disabled)
+<a href=#3225 id=3225 data-nosnippet>3225</a>                .bind()
+<a href=#3226 id=3226 data-nosnippet>3226</a>                .<span class="kw">await
+<a href=#3227 id=3227 data-nosnippet>3227</a>                </span>.e()<span class="question-mark">?</span>;
+<a href=#3228 id=3228 data-nosnippet>3228</a>            <span class="kw">let </span>addr = endpoint.node_addr().initialized().<span class="kw">await</span>;
+<a href=#3229 id=3229 data-nosnippet>3229</a>            <span class="kw">let </span>router = Router::builder(endpoint).accept(NOOP_ALPN, Noop).spawn();
+<a href=#3230 id=3230 data-nosnippet>3230</a>            <span class="prelude-val">Ok</span>((router, addr))
+<a href=#3231 id=3231 data-nosnippet>3231</a>        }
+<a href=#3232 id=3232 data-nosnippet>3232</a>
+<a href=#3233 id=3233 data-nosnippet>3233</a>        <span class="kw">let </span>routers = stream::iter(<span class="number">0</span>..n)
+<a href=#3234 id=3234 data-nosnippet>3234</a>            .map(|<span class="kw">_</span>| noop_server())
+<a href=#3235 id=3235 data-nosnippet>3235</a>            .buffered_unordered(<span class="number">32</span>)
+<a href=#3236 id=3236 data-nosnippet>3236</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;()
+<a href=#3237 id=3237 data-nosnippet>3237</a>            .<span class="kw">await
+<a href=#3238 id=3238 data-nosnippet>3238</a>            </span>.into_iter()
+<a href=#3239 id=3239 data-nosnippet>3239</a>            .collect::&lt;<span class="prelude-ty">Result</span>&lt;Vec&lt;<span class="kw">_</span>&gt;, <span class="kw">_</span>&gt;&gt;()
+<a href=#3240 id=3240 data-nosnippet>3240</a>            .e()<span class="question-mark">?</span>;
+<a href=#3241 id=3241 data-nosnippet>3241</a>
+<a href=#3242 id=3242 data-nosnippet>3242</a>        <span class="kw">let </span>addrs = routers
+<a href=#3243 id=3243 data-nosnippet>3243</a>            .iter()
+<a href=#3244 id=3244 data-nosnippet>3244</a>            .map(|(<span class="kw">_</span>, addr)| addr.clone())
+<a href=#3245 id=3245 data-nosnippet>3245</a>            .collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#3246 id=3246 data-nosnippet>3246</a>        <span class="kw">let </span>ids = addrs.iter().map(|addr| addr.node_id).collect::&lt;Vec&lt;<span class="kw">_</span>&gt;&gt;();
+<a href=#3247 id=3247 data-nosnippet>3247</a>        <span class="kw">let </span>discovery = StaticProvider::from_node_info(addrs);
+<a href=#3248 id=3248 data-nosnippet>3248</a>        <span class="kw">let </span>endpoint = Endpoint::builder()
+<a href=#3249 id=3249 data-nosnippet>3249</a>            .relay_mode(RelayMode::Disabled)
+<a href=#3250 id=3250 data-nosnippet>3250</a>            .discovery(discovery)
+<a href=#3251 id=3251 data-nosnippet>3251</a>            .bind()
+<a href=#3252 id=3252 data-nosnippet>3252</a>            .<span class="kw">await
+<a href=#3253 id=3253 data-nosnippet>3253</a>            </span>.e()<span class="question-mark">?</span>;
+<a href=#3254 id=3254 data-nosnippet>3254</a>        <span class="comment">// wait for the endpoint to be initialized. This should not be needed,
+<a href=#3255 id=3255 data-nosnippet>3255</a>        // but we don't want to measure endpoint init time but connection time
+<a href=#3256 id=3256 data-nosnippet>3256</a>        // from a fully initialized endpoint.
+<a href=#3257 id=3257 data-nosnippet>3257</a>        </span>endpoint.node_addr().initialized().<span class="kw">await</span>;
+<a href=#3258 id=3258 data-nosnippet>3258</a>        <span class="kw">let </span>t0 = Instant::now();
+<a href=#3259 id=3259 data-nosnippet>3259</a>        <span class="kw">for </span>id <span class="kw">in </span><span class="kw-2">&amp;</span>ids {
+<a href=#3260 id=3260 data-nosnippet>3260</a>            <span class="kw">let </span>conn = endpoint.connect(<span class="kw-2">*</span>id, NOOP_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#3261 id=3261 data-nosnippet>3261</a>            conn.close(<span class="number">0u32</span>.into(), <span class="string">b"done"</span>);
+<a href=#3262 id=3262 data-nosnippet>3262</a>        }
+<a href=#3263 id=3263 data-nosnippet>3263</a>        <span class="kw">let </span>dt0 = t0.elapsed().as_secs_f64();
+<a href=#3264 id=3264 data-nosnippet>3264</a>        <span class="kw">let </span>t1 = Instant::now();
+<a href=#3265 id=3265 data-nosnippet>3265</a>        <span class="kw">for </span>id <span class="kw">in </span><span class="kw-2">&amp;</span>ids {
+<a href=#3266 id=3266 data-nosnippet>3266</a>            <span class="kw">let </span>conn = endpoint.connect(<span class="kw-2">*</span>id, NOOP_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#3267 id=3267 data-nosnippet>3267</a>            conn.close(<span class="number">0u32</span>.into(), <span class="string">b"done"</span>);
+<a href=#3268 id=3268 data-nosnippet>3268</a>        }
+<a href=#3269 id=3269 data-nosnippet>3269</a>        <span class="kw">let </span>dt1 = t1.elapsed().as_secs_f64();
+<a href=#3270 id=3270 data-nosnippet>3270</a>
+<a href=#3271 id=3271 data-nosnippet>3271</a>        <span class="macro">assert!</span>(dt0 / dt1 &lt; <span class="number">20.0</span>, <span class="string">"First round: {dt0}s, second round {dt1}s"</span>);
+<a href=#3272 id=3272 data-nosnippet>3272</a>        <span class="prelude-val">Ok</span>(())
+<a href=#3273 id=3273 data-nosnippet>3273</a>    }
+<a href=#3274 id=3274 data-nosnippet>3274</a>}</code></pre></div></section></main></body></html>
