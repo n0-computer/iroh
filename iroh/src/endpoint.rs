@@ -3256,22 +3256,21 @@ mod tests {
             let conn = endpoint.connect(*id, NOOP_ALPN).await?;
             conn.close(0u32.into(), b"done");
         }
-        let dt0 = t0.elapsed();
+        let dt0 = t0.elapsed().as_secs_f64();
         let t1 = Instant::now();
         for id in &ids {
             let conn = endpoint.connect(*id, NOOP_ALPN).await?;
             conn.close(0u32.into(), b"done");
         }
-        let dt1 = t1.elapsed();
-        println!(
-            "Round 0: {}s, {}s per connection",
-            dt0.as_secs_f64(),
-            dt0.as_secs_f64() / (n as f64)
-        );
-        println!(
-            "Round 1: {}s, {}s per connection",
-            dt1.as_secs_f64(),
-            dt1.as_secs_f64() / (n as f64)
+        let dt1 = t1.elapsed().as_secs_f64();
+
+        println!("Round 0: {}s, {}s per connection", dt0, dt0 / (n as f64));
+        println!("Round 1: {}s, {}s per connection", dt1, dt1 / (n as f64));
+        assert!(
+            dt0 / dt1 < 20.0,
+            "First round: {}s, second round {}s",
+            dt0,
+            dt1
         );
         Ok(())
     }
