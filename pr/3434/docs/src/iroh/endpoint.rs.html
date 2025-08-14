@@ -3256,24 +3256,22 @@
 <a href=#3256 id=3256 data-nosnippet>3256</a>            <span class="kw">let </span>conn = endpoint.connect(<span class="kw-2">*</span>id, NOOP_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#3257 id=3257 data-nosnippet>3257</a>            conn.close(<span class="number">0u32</span>.into(), <span class="string">b"done"</span>);
 <a href=#3258 id=3258 data-nosnippet>3258</a>        }
-<a href=#3259 id=3259 data-nosnippet>3259</a>        <span class="kw">let </span>dt0 = t0.elapsed();
+<a href=#3259 id=3259 data-nosnippet>3259</a>        <span class="kw">let </span>dt0 = t0.elapsed().as_secs_f64();
 <a href=#3260 id=3260 data-nosnippet>3260</a>        <span class="kw">let </span>t1 = Instant::now();
 <a href=#3261 id=3261 data-nosnippet>3261</a>        <span class="kw">for </span>id <span class="kw">in </span><span class="kw-2">&amp;</span>ids {
 <a href=#3262 id=3262 data-nosnippet>3262</a>            <span class="kw">let </span>conn = endpoint.connect(<span class="kw-2">*</span>id, NOOP_ALPN).<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#3263 id=3263 data-nosnippet>3263</a>            conn.close(<span class="number">0u32</span>.into(), <span class="string">b"done"</span>);
 <a href=#3264 id=3264 data-nosnippet>3264</a>        }
-<a href=#3265 id=3265 data-nosnippet>3265</a>        <span class="kw">let </span>dt1 = t1.elapsed();
-<a href=#3266 id=3266 data-nosnippet>3266</a>        <span class="macro">println!</span>(
-<a href=#3267 id=3267 data-nosnippet>3267</a>            <span class="string">"Round 0: {}s, {}s per connection"</span>,
-<a href=#3268 id=3268 data-nosnippet>3268</a>            dt0.as_secs_f64(),
-<a href=#3269 id=3269 data-nosnippet>3269</a>            dt0.as_secs_f64() / (n <span class="kw">as </span>f64)
-<a href=#3270 id=3270 data-nosnippet>3270</a>        );
-<a href=#3271 id=3271 data-nosnippet>3271</a>        <span class="macro">println!</span>(
-<a href=#3272 id=3272 data-nosnippet>3272</a>            <span class="string">"Round 1: {}s, {}s per connection"</span>,
-<a href=#3273 id=3273 data-nosnippet>3273</a>            dt1.as_secs_f64(),
-<a href=#3274 id=3274 data-nosnippet>3274</a>            dt1.as_secs_f64() / (n <span class="kw">as </span>f64)
-<a href=#3275 id=3275 data-nosnippet>3275</a>        );
-<a href=#3276 id=3276 data-nosnippet>3276</a>        <span class="macro">assert!</span>(dt0.as_secs_f64() / dt1.as_secs_f64() &lt; <span class="number">20.0</span>);
-<a href=#3277 id=3277 data-nosnippet>3277</a>        <span class="prelude-val">Ok</span>(())
-<a href=#3278 id=3278 data-nosnippet>3278</a>    }
-<a href=#3279 id=3279 data-nosnippet>3279</a>}</code></pre></div></section></main></body></html>
+<a href=#3265 id=3265 data-nosnippet>3265</a>        <span class="kw">let </span>dt1 = t1.elapsed().as_secs_f64();
+<a href=#3266 id=3266 data-nosnippet>3266</a>
+<a href=#3267 id=3267 data-nosnippet>3267</a>        <span class="macro">println!</span>(<span class="string">"Round 0: {}s, {}s per connection"</span>, dt0, dt0 / (n <span class="kw">as </span>f64));
+<a href=#3268 id=3268 data-nosnippet>3268</a>        <span class="macro">println!</span>(<span class="string">"Round 1: {}s, {}s per connection"</span>, dt1, dt1 / (n <span class="kw">as </span>f64));
+<a href=#3269 id=3269 data-nosnippet>3269</a>        <span class="macro">assert!</span>(
+<a href=#3270 id=3270 data-nosnippet>3270</a>            dt0 / dt1 &lt; <span class="number">20.0</span>,
+<a href=#3271 id=3271 data-nosnippet>3271</a>            <span class="string">"First round: {}s, second round {}s"</span>,
+<a href=#3272 id=3272 data-nosnippet>3272</a>            dt0,
+<a href=#3273 id=3273 data-nosnippet>3273</a>            dt1
+<a href=#3274 id=3274 data-nosnippet>3274</a>        );
+<a href=#3275 id=3275 data-nosnippet>3275</a>        <span class="prelude-val">Ok</span>(())
+<a href=#3276 id=3276 data-nosnippet>3276</a>    }
+<a href=#3277 id=3277 data-nosnippet>3277</a>}</code></pre></div></section></main></body></html>
