@@ -1115,13 +1115,14 @@ mod tests {
     #[traced_test]
     async fn test_server_basic() -> Result {
         info!("Create the server.");
+        let metrics = Arc::new(Metrics::default());
         let service = RelayService::new(
             Default::default(),
             Default::default(),
             None,
             KeyCache::test(),
             AccessConfig::Everyone,
-            Default::default(),
+            metrics.clone(),
         );
 
         info!("Create client A and connect it to the server.");
@@ -1199,6 +1200,14 @@ mod tests {
             .await;
         assert!(res.is_err());
         assert!(client_b.next().await.is_none());
+
+        drop(client_a);
+        drop(client_b);
+
+        service.shutdown().await;
+
+        assert_eq!(metrics.accepts.get(), metrics.disconnects.get());
+
         Ok(())
     }
 
