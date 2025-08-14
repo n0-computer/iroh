@@ -2250,7 +2250,7 @@ mod tests {
     };
 
     use iroh_base::{NodeAddr, NodeId, SecretKey};
-    use n0_future::{task::AbortOnDropHandle, StreamExt};
+    use n0_future::{stream, task::AbortOnDropHandle, BufferedStreamExt, StreamExt};
     use n0_snafu::{Error, Result, ResultExt};
     use n0_watcher::Watcher;
     use quinn::ConnectionError;
@@ -2260,7 +2260,9 @@ mod tests {
 
     use super::Endpoint;
     use crate::{
+        discovery::static_provider::StaticProvider,
         endpoint::{ConnectOptions, Connection, ConnectionType, RemoteInfo},
+        protocol::{AcceptError, ProtocolHandler, Router},
         test_utils::{run_relay_server, run_relay_server_with},
         RelayMode,
     };
@@ -3188,6 +3190,85 @@ mod tests {
         // can get a first report
         endpoint.net_report().updated().await?;
 
+        Ok(())
+    }
+
+    /// Test that peers are properly restored
+    #[tokio::test]
+    // #[traced_test]
+    async fn connect_multi() -> Result {
+        let n = 32;
+
+        const NOOP_ALPN: &[u8] = b"noop";
+
+        #[derive(Debug, Clone)]
+        struct Noop;
+
+        impl ProtocolHandler for Noop {
+            async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
+                connection.closed().await;
+                Ok(())
+            }
+        }
+
+        async fn noop_server() -> Result<(Router, NodeAddr)> {
+            let endpoint = Endpoint::builder()
+                .relay_mode(RelayMode::Disabled)
+                .bind()
+                .await
+                .e()?;
+            let addr = endpoint.node_addr().initialized().await.e()?;
+            let router = Router::builder(endpoint).accept(NOOP_ALPN, Noop).spawn();
+            Ok((router, addr))
+        }
+
+        let routers = stream::iter(0..n)
+            .map(|_| noop_server())
+            .buffered_unordered(32)
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .e()?;
+
+        let addrs = routers
+            .iter()
+            .map(|(_, addr)| addr.clone())
+            .collect::<Vec<_>>();
+        let ids = addrs.iter().map(|addr| addr.node_id).collect::<Vec<_>>();
+        let discovery = StaticProvider::from_node_info(addrs);
+        let endpoint = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .discovery(discovery)
+            .bind()
+            .await
+            .e()?;
+        // wait for the endpoint to be initialized. This should not be needed,
+        // but we don't want to measure endpoint init time but connection time
+        // from a fully initialized endpoint.
+        endpoint.node_addr().initialized().await.e()?;
+        let t0 = Instant::now();
+        for id in &ids {
+            let conn = endpoint.connect(*id, NOOP_ALPN).await?;
+            conn.close(0u32.into(), b"done");
+        }
+        let dt0 = t0.elapsed();
+        let t1 = Instant::now();
+        for id in &ids {
+            let conn = endpoint.connect(*id, NOOP_ALPN).await?;
+            conn.close(0u32.into(), b"done");
+        }
+        let dt1 = t1.elapsed();
+        println!(
+            "Round 0: {}s, {}s per connection",
+            dt0.as_secs_f64(),
+            dt0.as_secs_f64() / (n as f64)
+        );
+        println!(
+            "Round 1: {}s, {}s per connection",
+            dt1.as_secs_f64(),
+            dt1.as_secs_f64() / (n as f64)
+        );
         Ok(())
     }
 }
