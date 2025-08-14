@@ -665,7 +665,6 @@ impl Inner {
         let io = RateLimited::from_cfg(self.rate_limit, io, self.metrics.clone())
             .context(RateLimitingMisconfiguredSnafu)?;
 
-        self.metrics.accepts.inc();
         // Create a server builder with default config
         let websocket = tokio_websockets::ServerBuilder::new()
             .limits(tokio_websockets::Limits::default().max_payload_len(Some(MAX_FRAME_SIZE)))
