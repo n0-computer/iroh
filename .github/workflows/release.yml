@@ -66,7 +66,7 @@ jobs:
             echo "version is: ${{ env.RELEASE_VERSION }}"
           fi
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 1
       - name: Create GitHub release
@@ -135,13 +135,13 @@ jobs:
         steps:
         - name: Checkout
           if: inputs.base_hash == ''
-          uses: actions/checkout@v4
+          uses: actions/checkout@v5
           with:
             submodules: recursive
 
         - name: Checkout specified commit
           if: inputs.base_hash != ''
-          uses: actions/checkout@v4
+          uses: actions/checkout@v5
           with:
             ref: ${{ inputs.base_hash }}
             submodules: recursive
