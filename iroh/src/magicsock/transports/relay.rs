@@ -29,6 +29,8 @@ pub(crate) struct RelayTransport {
     relay_datagram_recv_queue: mpsc::Receiver<RelayRecvDatagram>,
     /// Channel on which to send datagrams via a relay server.
     relay_datagram_send_channel: mpsc::Sender<RelaySendItem>,
+    /// A datagram from the last poll_recv that didn't quite fit our buffers.
+    pending_item: Option<RelayRecvDatagram>,
     actor_sender: mpsc::Sender<RelayActorMessage>,
     _actor_handle: AbortOnDropHandle<()>,
     my_relay: Watchable<Option<RelayUrl>>,
@@ -60,6 +62,7 @@ impl RelayTransport {
         Self {
             relay_datagram_recv_queue: relay_datagram_recv_rx,
             relay_datagram_send_channel: relay_datagram_send_tx,
+            pending_item: None,
             actor_sender,
             _actor_handle: actor_handle,
             my_relay,
@@ -86,7 +89,7 @@ impl RelayTransport {
             .zip(metas.iter_mut())
             .zip(source_addrs.iter_mut())
         {
-            let dm = match self.relay_datagram_recv_queue.poll_recv(cx) {
+            let dm = match self.poll_recv_queue(cx) {
                 Poll::Ready(Some(recv)) => recv,
                 Poll::Ready(None) => {
                     error!("relay_recv_channel closed");
@@ -99,6 +102,23 @@ impl RelayTransport {
                     break;
                 }
             };
+
+            // This *tries* to make the datagrams fit into our buffer by re-batching them.
+            let num_segments = dm
+                .datagrams
+                .segment_size
+                .map_or(1, |ss| buf_out.len() / u16::from(ss) as usize);
+            let datagrams = dm.datagrams.take_segments(num_segments);
+            let empty_after = dm.datagrams.contents.is_empty();
+            let dm = RelayRecvDatagram {
+                datagrams,
+                src: dm.src,
+                url: dm.url.clone(),
+            };
+            // take_segments can leave `self.pending_item` empty, in that case we clear it
+            if empty_after {
+                self.pending_item = None;
+            }
 
             if buf_out.len() < dm.datagrams.contents.len() {
                 // Our receive buffer isn't big enough to process this datagram.
@@ -119,6 +139,7 @@ impl RelayTransport {
                 // that's essentially bigger than our configured `max_udp_payload_size`.
                 // In that case we drop it and let MTU discovery take over.
             }
+
             buf_out[..dm.datagrams.contents.len()].copy_from_slice(&dm.datagrams.contents);
             meta_out.len = dm.datagrams.contents.len();
             meta_out.stride = dm
@@ -155,6 +176,28 @@ impl RelayTransport {
         RelayNetworkChangeSender {
             sender: self.actor_sender.clone(),
         }
+    }
+
+    /// Makes sure we have a pending item stored, if not, it'll poll a new one from the queue.
+    ///
+    /// Returns a mutable reference to the stored pending item.
+    #[inline]
+    fn poll_recv_queue<'a>(
+        &'a mut self,
+        cx: &mut Context,
+    ) -> Poll<Option<&'a mut RelayRecvDatagram>> {
+        // Borrow checker doesn't quite understand an if let Some(_)... here
+        if self.pending_item.is_some() {
+            return Poll::Ready(self.pending_item.as_mut());
+        }
+
+        let item = match self.relay_datagram_recv_queue.poll_recv(cx) {
+            Poll::Ready(Some(item)) => item,
+            Poll::Ready(None) => return Poll::Ready(None),
+            Poll::Pending => return Poll::Pending,
+        };
+
+        Poll::Ready(Some(self.pending_item.insert(item)))
     }
 }
 
