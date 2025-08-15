@@ -5,6 +5,7 @@ use std::{
     cmp::{Ord, PartialOrd},
     fmt::{Debug, Display},
     hash::Hash,
+    ops::Deref,
     str::FromStr,
 };
 
@@ -26,6 +27,14 @@ pub struct PublicKey(CompressedEdwardsY);
 
 impl Borrow<[u8; 32]> for PublicKey {
     fn borrow(&self) -> &[u8; 32] {
+        self.as_bytes()
+    }
+}
+
+impl Deref for PublicKey {
+    type Target = [u8; 32];
+
+    fn deref(&self) -> &Self::Target {
         self.as_bytes()
     }
 }
