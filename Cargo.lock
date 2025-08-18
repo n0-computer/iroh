@@ -2268,7 +2268,7 @@ dependencies = [
 
 [[package]]
 name = "iroh"
-version = "0.91.1"
+version = "0.91.2"
 dependencies = [
  "aead",
  "axum",
@@ -2341,7 +2341,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-base"
-version = "0.91.1"
+version = "0.91.2"
 dependencies = [
  "curve25519-dalek",
  "data-encoding",
@@ -2362,7 +2362,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-bench"
-version = "0.91.1"
+version = "0.91.2"
 dependencies = [
  "bytes",
  "clap",
@@ -2382,7 +2382,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-dns-server"
-version = "0.91.1"
+version = "0.91.2"
 dependencies = [
  "async-trait",
  "axum",
@@ -2521,7 +2521,7 @@ dependencies = [
 
 [[package]]
 name = "iroh-relay"
-version = "0.91.1"
+version = "0.91.2"
 dependencies = [
  "ahash",
  "blake3",
@@ -4513,9 +4513,9 @@ dependencies = [
 
 [[package]]
 name = "slab"
-version = "0.4.10"
+version = "0.4.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "04dc19736151f35336d325007ac991178d504a119863a2fcb3758cdb5e52c50d"
+checksum = "7a2ae44ef20feb57a68b23d846850f861394c2e02dc425a50098ae8c90267589"
 
 [[package]]
 name = "smallvec"

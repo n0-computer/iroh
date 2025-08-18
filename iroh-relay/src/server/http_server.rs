@@ -665,7 +665,6 @@ impl Inner {
         let io = RateLimited::from_cfg(self.rate_limit, io, self.metrics.clone())
             .context(RateLimitingMisconfiguredSnafu)?;
 
-        self.metrics.accepts.inc();
         // Create a server builder with default config
         let websocket = tokio_websockets::ServerBuilder::new()
             .limits(tokio_websockets::Limits::default().max_payload_len(Some(MAX_FRAME_SIZE)))
@@ -1115,13 +1114,14 @@ mod tests {
     #[traced_test]
     async fn test_server_basic() -> Result {
         info!("Create the server.");
+        let metrics = Arc::new(Metrics::default());
         let service = RelayService::new(
             Default::default(),
             Default::default(),
             None,
             KeyCache::test(),
             AccessConfig::Everyone,
-            Default::default(),
+            metrics.clone(),
         );
 
         info!("Create client A and connect it to the server.");
@@ -1199,6 +1199,14 @@ mod tests {
             .await;
         assert!(res.is_err());
         assert!(client_b.next().await.is_none());
+
+        drop(client_a);
+        drop(client_b);
+
+        service.shutdown().await;
+
+        assert_eq!(metrics.accepts.get(), metrics.disconnects.get());
+
         Ok(())
     }
 
