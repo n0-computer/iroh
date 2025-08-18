@@ -216,7 +216,7 @@
 <a href=#216 id=216 data-nosnippet>216</a>                }
 <a href=#217 id=217 data-nosnippet>217</a>                <span class="kw">if let </span><span class="prelude-val">Some</span>(url) = <span class="kw-2">&amp;</span><span class="self">self</span>.pkarr_relay {
 <a href=#218 id=218 data-nosnippet>218</a>                    builder
-<a href=#219 id=219 data-nosnippet>219</a>                        .relays(<span class="kw-2">&amp;</span>[url.clone()])
+<a href=#219 id=219 data-nosnippet>219</a>                        .relays(std::slice::from_ref(url))
 <a href=#220 id=220 data-nosnippet>220</a>                        .map_err(|e| IntoDiscoveryError::from_err(<span class="string">"pkarr"</span>, e))<span class="question-mark">?</span>;
 <a href=#221 id=221 data-nosnippet>221</a>                }
 <a href=#222 id=222 data-nosnippet>222</a>                builder
