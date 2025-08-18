@@ -2,7 +2,33 @@
 
 All notable changes to iroh will be documented in this file.
 
-## [0.91.0](https://github.com/n0-computer/iroh/compare/v0.90.0..0.91.0) - 2025-07-30
+## [0.91.2](https://github.com/n0-computer/iroh/compare/v0.91.1..0.91.2) - 2025-08-18
+
+### ⛰️  Features
+
+- *(iroh-base)* Derive Hash for NodeAddr ([#3428](https://github.com/n0-computer/iroh/issues/3428)) - ([2308388](https://github.com/n0-computer/iroh/commit/2308388da774ea0c796e68ef920c586230704dbe))
+
+### 🐛 Bug Fixes
+
+- *(iroh)* Fix very slow initial connection establishment ([#3434](https://github.com/n0-computer/iroh/issues/3434)) - ([59d1432](https://github.com/n0-computer/iroh/commit/59d1432a10e6c6414f355947aecd0d8927b72b6c))
+- *(iroh-relay)* Don't double-count connection accepts ([#3436](https://github.com/n0-computer/iroh/issues/3436)) - ([8c558a1](https://github.com/n0-computer/iroh/commit/8c558a1c2e6d53ca0a20b0c2a4d78efe3beab45a))
+
+## [0.91.1](https://github.com/n0-computer/iroh/compare/v0.91.0..v0.91.1) - 2025-08-04
+
+### 🐛 Bug Fixes
+
+- *(iroh)* Always update the best addr after changes ([#3422](https://github.com/n0-computer/iroh/issues/3422)) - ([36842d5](https://github.com/n0-computer/iroh/commit/36842d5c601c66fd1c06a17b4195170020d0c05d))
+- *(iroh)* Use valid available IPv6 address, ignoring `have_ipv6` ([#3419](https://github.com/n0-computer/iroh/issues/3419)) - ([fe7240d](https://github.com/n0-computer/iroh/commit/fe7240dd971b791c39354cd9621b7d23edaf5b7b))
+
+### 📚 Documentation
+
+- Grammar nitpick ([#3383](https://github.com/n0-computer/iroh/issues/3383)) - ([026dffc](https://github.com/n0-computer/iroh/commit/026dffc6cc5229411599188bd7d6e24df7dae9d3))
+
+### ⚙️ Miscellaneous Tasks
+
+- Release - ([e30c788](https://github.com/n0-computer/iroh/commit/e30c788f968265bd9d181e5ca92d02eb61ef3d0d))
+
+## [0.91.0](https://github.com/n0-computer/iroh/compare/v0.90.0..v0.91.0) - 2025-07-30
 
 ### ⛰️  Features
 
@@ -40,6 +66,7 @@ All notable changes to iroh will be documented in this file.
 
 - *(iroh)* Update `n0-watcher` ([#3405](https://github.com/n0-computer/iroh/issues/3405)) - ([2ce6a73](https://github.com/n0-computer/iroh/commit/2ce6a73412ec8a0343696a11fa531601bc5a76a1))
 - *(iroh)* Update portmapper ([#3410](https://github.com/n0-computer/iroh/issues/3410)) - ([ee08341](https://github.com/n0-computer/iroh/commit/ee08341b3e621f3ff311f7d77cc6d73e49c70bd7))
+- Release - ([36ddb5b](https://github.com/n0-computer/iroh/commit/36ddb5bfc5805085efab667630721ea755d96654))
 
 ## [0.90.0](https://github.com/n0-computer/iroh/compare/v0.35.0..v0.90.0) - 2025-06-26
 

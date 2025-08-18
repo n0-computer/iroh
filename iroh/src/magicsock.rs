@@ -485,6 +485,7 @@ impl MagicSock {
     #[instrument(skip_all)]
     fn prepare_send(
         &self,
+        udp_sender: &UdpSender,
         transmit: &quinn_udp::Transmit,
     ) -> io::Result<SmallVec<[transports::Addr; 3]>> {
         self.metrics
@@ -526,9 +527,7 @@ impl MagicSock {
                 ) {
                     Some((node_id, udp_addr, relay_url, ping_actions)) => {
                         if !ping_actions.is_empty() {
-                            self.actor_sender
-                                .try_send(ActorMessage::PingActions(ping_actions))
-                                .ok();
+                            self.try_send_ping_actions(udp_sender, ping_actions).ok();
                         }
                         if let Some(addr) = udp_addr {
                             active_paths.push(transports::Addr::from(addr));
@@ -1006,6 +1005,118 @@ impl MagicSock {
 
         let dst2 = dst.clone();
         match sender.send(&dst2, None, &transmit).await {
+            Ok(()) => {
+                trace!(?dst, %msg, "sent disco message");
+                self.metrics.magicsock.sent_disco_udp.inc();
+                disco_message_sent(&msg, &self.metrics.magicsock);
+                Ok(())
+            }
+            Err(err) => {
+                warn!(?dst, ?msg, ?err, "failed to send disco message");
+                Err(err)
+            }
+        }
+    }
+    /// Tries to send out the given ping actions out.
+    fn try_send_ping_actions(&self, sender: &UdpSender, msgs: Vec<PingAction>) -> io::Result<()> {
+        for msg in msgs {
+            // Abort sending as soon as we know we are shutting down.
+            if self.is_closing() || self.is_closed() {
+                return Ok(());
+            }
+            match msg {
+                PingAction::SendCallMeMaybe {
+                    relay_url,
+                    dst_node,
+                } => {
+                    // Sends the call-me-maybe DISCO message, queuing if addresses are too stale.
+                    //
+                    // To send the call-me-maybe message, we need to know our current direct addresses.  If
+                    // this information is too stale, the call-me-maybe is queued while a net_report run is
+                    // scheduled.  Once this run finishes, the call-me-maybe will be sent.
+                    match self.direct_addrs.fresh_enough() {
+                        Ok(()) => {
+                            let msg = disco::Message::CallMeMaybe(
+                                self.direct_addrs.to_call_me_maybe_message(),
+                            );
+                            if !self.disco.try_send(
+                                SendAddr::Relay(relay_url.clone()),
+                                dst_node,
+                                msg.clone(),
+                            ) {
+                                warn!(dstkey = %dst_node.fmt_short(), %relay_url, "relay channel full, dropping call-me-maybe");
+                            } else {
+                                debug!(dstkey = %dst_node.fmt_short(), %relay_url, "call-me-maybe sent");
+                            }
+                        }
+                        Err(last_refresh_ago) => {
+                            debug!(
+                                ?last_refresh_ago,
+                                "want call-me-maybe but direct addrs stale; queuing after restun",
+                            );
+                            self.actor_sender
+                                .try_send(ActorMessage::ScheduleDirectAddrUpdate(
+                                    UpdateReason::RefreshForPeering,
+                                    Some((dst_node, relay_url)),
+                                ))
+                                .ok();
+                        }
+                    }
+                }
+                PingAction::SendPing(SendPing {
+                    id,
+                    dst,
+                    dst_node,
+                    tx_id,
+                    purpose,
+                }) => {
+                    let msg = disco::Message::Ping(disco::Ping {
+                        tx_id,
+                        node_key: self.public_key,
+                    });
+
+                    self.try_send_disco_message(sender, dst.clone(), dst_node, msg)?;
+                    debug!(%dst, tx = %HEXLOWER.encode(&tx_id), ?purpose, "ping sent");
+                    let msg_sender = self.actor_sender.clone();
+                    self.node_map
+                        .notify_ping_sent(id, dst, tx_id, purpose, msg_sender);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Tries to send out a disco message.
+    fn try_send_disco_message(
+        &self,
+        sender: &UdpSender,
+        dst: SendAddr,
+        dst_key: PublicKey,
+        msg: disco::Message,
+    ) -> io::Result<()> {
+        let dst = match dst {
+            SendAddr::Udp(addr) => transports::Addr::Ip(addr),
+            SendAddr::Relay(url) => transports::Addr::Relay(url, dst_key),
+        };
+
+        trace!(?dst, %msg, "send disco message (UDP)");
+        if self.is_closed() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotConnected,
+                "connection closed",
+            ));
+        }
+
+        let pkt = self.disco.encode_and_seal(self.public_key, dst_key, &msg);
+
+        let transmit = transports::Transmit {
+            contents: &pkt,
+            ecn: None,
+            segment_size: None,
+        };
+
+        let dst2 = dst.clone();
+        match sender.inner_try_send(&dst2, None, &transmit) {
             Ok(()) => {
                 trace!(?dst, %msg, "sent disco message");
                 self.metrics.magicsock.sent_disco_udp.inc();
@@ -1649,7 +1760,6 @@ impl AsyncUdpSocket for MagicUdpSocket {
 
 #[derive(Debug)]
 enum ActorMessage {
-    PingActions(Vec<PingAction>),
     EndpointPingExpired(usize, stun_rs::TransactionId),
     NetworkChange,
     ScheduleDirectAddrUpdate(UpdateReason, Option<(NodeId, RelayUrl)>),
@@ -1790,7 +1900,7 @@ impl Actor {
 
                     trace!(?msg, "tick: msg");
                     self.msock.metrics.magicsock.actor_tick_msg.inc();
-                    self.handle_actor_message(msg, &sender).await;
+                    self.handle_actor_message(msg).await;
                 }
                 tick = self.periodic_re_stun_timer.tick() => {
                     trace!("tick: re_stun {:?}", tick);
@@ -1952,7 +2062,7 @@ impl Actor {
     /// Processes an incoming actor message.
     ///
     /// Returns `true` if it was a shutdown.
-    async fn handle_actor_message(&mut self, msg: ActorMessage, sender: &UdpSender) {
+    async fn handle_actor_message(&mut self, msg: ActorMessage) {
         match msg {
             ActorMessage::EndpointPingExpired(id, txid) => {
                 self.msock.node_map.notify_ping_timeout(id, txid);
@@ -1971,9 +2081,6 @@ impl Actor {
             #[cfg(test)]
             ActorMessage::ForceNetworkChange(is_major) => {
                 self.handle_network_change(is_major).await;
-            }
-            ActorMessage::PingActions(ping_actions) => {
-                self.handle_ping_actions(sender, ping_actions).await;
             }
         }
     }
