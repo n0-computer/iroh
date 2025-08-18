@@ -15,6 +15,7 @@ use tracing::{error, trace, warn};
 #[cfg(not(wasm_browser))]
 mod ip;
 mod relay;
+mod webrtc;
 
 #[cfg(not(wasm_browser))]
 pub(crate) use self::ip::IpTransport;

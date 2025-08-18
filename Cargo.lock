@@ -2335,6 +2335,7 @@ dependencies = [
  "url",
  "wasm-bindgen-futures",
  "wasm-bindgen-test",
+ "web-sys",
  "webpki-roots 0.26.11",
  "z32",
 ]
