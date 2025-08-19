@@ -60,7 +60,7 @@ use self::transports::IpTransport;
 use self::{
     metrics::Metrics as MagicsockMetrics,
     node_map::{NodeMap, PingAction, PingRole, SendPing},
-    transports::{RelayActorConfig, RelayTransport, Transports, UdpSender},
+    transports::{RelayActorConfig, RelayTransport, Transports, UdpSender, webrtc::*},
 };
 #[cfg(not(wasm_browser))]
 use crate::dns::DnsResolver;
@@ -1332,6 +1332,8 @@ pub enum CreateHandleError {
     CreateNetmonMonitor { source: netmon::Error },
     #[snafu(display("Failed to subscribe netmon monitor"))]
     SubscribeNetmonMonitor { source: netmon::Error },
+    #[snafu(display("Failed to create webrtc endpoint"))]
+    CreateWebRtcEndpoint { source: WebRtcError },
 }
 
 impl Handle {
@@ -1395,15 +1397,27 @@ impl Handle {
             metrics: metrics.magicsock.clone(),
         });
         let relay_transports = vec![relay_transport];
+        let web_rtc_transport = WebRtcTransport::new(WebRtcActorConfig {
+            node_id: secret_key.clone().public(),
+        })
+        .await
+        .context(CreateWebRtcEndpointSnafu)?;
+        let web_rtc_transports = vec![web_rtc_transport];
 
         let secret_encryption_key = secret_ed_box(secret_key.secret());
         #[cfg(not(wasm_browser))]
         let ipv6 = ip_transports.iter().any(|t| t.bind_addr().is_ipv6());
 
         #[cfg(not(wasm_browser))]
-        let transports = Transports::new(ip_transports, relay_transports, max_receive_segments);
+        let transports = Transports::new(
+            ip_transports,
+            relay_transports,
+            web_rtc_transports,
+            max_receive_segments,
+        );
         #[cfg(wasm_browser)]
-        let transports = Transports::new(relay_transports, max_receive_segments);
+        let transports =
+            Transports::new(relay_transports, web_rtc_transports, max_receive_segments);
 
         let (disco, disco_receiver) = DiscoState::new(secret_encryption_key);
 

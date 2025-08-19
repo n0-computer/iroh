@@ -6,6 +6,7 @@ use std::{
     task::{Context, Poll},
 };
 
+use crate::magicsock::transports::webrtc::WebRtcTransport;
 use iroh_base::{NodeId, RelayUrl};
 use n0_watcher::Watcher;
 use relay::{RelayNetworkChangeSender, RelaySender};
@@ -15,7 +16,7 @@ use tracing::{error, trace, warn};
 #[cfg(not(wasm_browser))]
 mod ip;
 mod relay;
-mod webrtc;
+pub mod webrtc;
 
 #[cfg(not(wasm_browser))]
 pub(crate) use self::ip::IpTransport;
@@ -24,7 +25,6 @@ use self::ip::{IpNetworkChangeSender, IpSender};
 pub(crate) use self::relay::{RelayActorConfig, RelayTransport};
 use super::MagicSock;
 use crate::net_report::Report;
-
 /// Manages the different underlying data transports that the magicsock
 /// can support.
 #[derive(Debug)]
@@ -32,7 +32,7 @@ pub(crate) struct Transports {
     #[cfg(not(wasm_browser))]
     ip: Vec<IpTransport>,
     relay: Vec<RelayTransport>,
-
+    web_rtc: Vec<WebRtcTransport>,
     max_receive_segments: Arc<AtomicUsize>,
     poll_recv_counter: AtomicUsize,
 }
@@ -63,12 +63,14 @@ impl Transports {
     pub(crate) fn new(
         #[cfg(not(wasm_browser))] ip: Vec<IpTransport>,
         relay: Vec<RelayTransport>,
+        web_rtc: Vec<WebRtcTransport>,
         max_receive_segments: Arc<AtomicUsize>,
     ) -> Self {
         Self {
             #[cfg(not(wasm_browser))]
             ip,
             relay,
+            web_rtc,
             max_receive_segments,
             poll_recv_counter: Default::default(),
         }
