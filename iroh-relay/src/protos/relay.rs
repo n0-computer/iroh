@@ -187,6 +187,12 @@ impl Datagrams {
 
         let is_datagram_batch = num_segments > 1 && usize_segment_size < contents.len();
 
+        // If this left our batch with only one more datagram, then remove the segment size
+        // to uphold the invariant that single-datagram batches don't have a segment size set.
+        if self.contents.len() <= usize_segment_size {
+            self.segment_size = None;
+        }
+
         Datagrams {
             ecn: self.ecn,
             segment_size: is_datagram_batch.then_some(segment_size),
