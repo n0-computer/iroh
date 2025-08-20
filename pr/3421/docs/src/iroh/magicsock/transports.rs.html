@@ -448,7 +448,7 @@
 <a href=#448 id=448 data-nosnippet>448</a>    }
 <a href=#449 id=449 data-nosnippet>449</a>
 <a href=#450 id=450 data-nosnippet>450</a>    <span class="doccomment">/// Best effort sending
-<a href=#451 id=451 data-nosnippet>451</a>    </span><span class="kw">fn </span>inner_try_send(
+<a href=#451 id=451 data-nosnippet>451</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">fn </span>inner_try_send(
 <a href=#452 id=452 data-nosnippet>452</a>        <span class="kw-2">&amp;</span><span class="self">self</span>,
 <a href=#453 id=453 data-nosnippet>453</a>        destination: <span class="kw-2">&amp;</span>Addr,
 <a href=#454 id=454 data-nosnippet>454</a>        src: <span class="prelude-ty">Option</span>&lt;IpAddr&gt;,
@@ -498,7 +498,7 @@
 <a href=#498 id=498 data-nosnippet>498</a>        transmit: <span class="kw-2">&amp;</span>quinn_udp::Transmit,
 <a href=#499 id=499 data-nosnippet>499</a>        cx: <span class="kw-2">&amp;mut </span>Context,
 <a href=#500 id=500 data-nosnippet>500</a>    ) -&gt; Poll&lt;io::Result&lt;()&gt;&gt; {
-<a href=#501 id=501 data-nosnippet>501</a>        <span class="kw">let </span>active_paths = <span class="self">self</span>.msock.prepare_send(transmit)<span class="question-mark">?</span>;
+<a href=#501 id=501 data-nosnippet>501</a>        <span class="kw">let </span>active_paths = <span class="self">self</span>.msock.prepare_send(<span class="kw-2">&amp;</span><span class="self">self</span>, transmit)<span class="question-mark">?</span>;
 <a href=#502 id=502 data-nosnippet>502</a>
 <a href=#503 id=503 data-nosnippet>503</a>        <span class="kw">if </span>active_paths.is_empty() {
 <a href=#504 id=504 data-nosnippet>504</a>            <span class="comment">// Returning Ok here means we let QUIC timeout.
@@ -550,7 +550,7 @@
 <a href=#550 id=550 data-nosnippet>550</a>    }
 <a href=#551 id=551 data-nosnippet>551</a>
 <a href=#552 id=552 data-nosnippet>552</a>    <span class="kw">fn </span>try_send(<span class="self">self</span>: Pin&lt;<span class="kw-2">&amp;mut </span><span class="self">Self</span>&gt;, transmit: <span class="kw-2">&amp;</span>quinn_udp::Transmit) -&gt; io::Result&lt;()&gt; {
-<a href=#553 id=553 data-nosnippet>553</a>        <span class="kw">let </span>active_paths = <span class="self">self</span>.msock.prepare_send(transmit)<span class="question-mark">?</span>;
+<a href=#553 id=553 data-nosnippet>553</a>        <span class="kw">let </span>active_paths = <span class="self">self</span>.msock.prepare_send(<span class="kw-2">&amp;</span><span class="self">self</span>, transmit)<span class="question-mark">?</span>;
 <a href=#554 id=554 data-nosnippet>554</a>        <span class="kw">if </span>active_paths.is_empty() {
 <a href=#555 id=555 data-nosnippet>555</a>            <span class="comment">// Returning Ok here means we let QUIC timeout.
 <a href=#556 id=556 data-nosnippet>556</a>            // Returning an error would immediately fail a connection.
