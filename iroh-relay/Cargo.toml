@@ -1,6 +1,6 @@
 [package]
 name = "iroh-relay"
-version = "0.91.1"
+version = "0.91.2"
 edition = "2024"
 readme = "README.md"
 description = "Iroh's relay server and client"
@@ -31,7 +31,7 @@ http = "1"
 http-body-util = "0.1.0"
 hyper = { version = "1", features = ["server", "client", "http1"] }
 hyper-util = "0.1.1"
-iroh-base = { version = "0.91.1", path = "../iroh-base", default-features = false, features = ["key", "relay"] }
+iroh-base = { version = "0.91.2", path = "../iroh-base", default-features = false, features = ["key", "relay"] }
 iroh-metrics = { version = "0.35", default-features = false }
 n0-future = "0.1.2"
 num_enum = "0.7"
