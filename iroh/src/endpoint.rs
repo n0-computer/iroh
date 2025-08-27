@@ -481,6 +481,8 @@ impl Builder {
     ///
     /// Set this to a larger value if you want to do 0rtt connections to a large
     /// number of clients.
+    ///
+    /// The default is 256, taking about 150 KiB in memory.
     pub fn max_tls_tickets(mut self, n: usize) -> Self {
         self.max_tls_tickets = n;
         self
