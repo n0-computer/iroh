@@ -24,13 +24,14 @@ use std::{
 };
 
 use data_encoding::HEXLOWER;
-use iroh_base::{PublicKey, RelayUrl};
+use iroh_base::{NodeId, PublicKey, RelayUrl};
 use nested_enum_utils::common_fields;
 use serde::{Deserialize, Serialize};
 use snafu::{Snafu, ensure};
 use url::Url;
 
 use crate::magicsock::transports;
+use crate::magicsock::transports::Addr;
 
 // TODO: custom magicn
 /// The 6 byte header of all discovery messages.
@@ -143,6 +144,8 @@ pub enum SendAddr {
     Udp(SocketAddr),
     /// Relay Url.
     Relay(RelayUrl),
+    /// Node Id
+    NodeId(NodeId)
 }
 
 impl SendAddr {
@@ -165,6 +168,7 @@ impl From<transports::Addr> for SendAddr {
         match addr {
             transports::Addr::Ip(addr) => SendAddr::Udp(addr),
             transports::Addr::Relay(url, _) => SendAddr::Relay(url),
+            Addr::WebRtc(relay_url, dest_id, channel_id) => SendAddr::
         }
     }
 }

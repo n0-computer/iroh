@@ -657,6 +657,12 @@ impl MagicSock {
                                 .recv_data_relay
                                 .inc_by(datagram.len() as _);
                         }
+                        transports::Addr::WebRtc(..) => {
+                            self.metrics
+                                .magicsock
+                                .recv_data_webrtc
+                                .inc_by(datagram.len() as _);
+                        }
                     }
 
                     quic_datagram_count += 1;
@@ -718,6 +724,11 @@ impl MagicSock {
                         // Relay
                         let quic_mapped_addr = self.node_map.receive_relay(src_url, *src_node);
                         quinn_meta.addr = quic_mapped_addr.private_socket_addr();
+                    }
+                    transports::Addr::WebRtc(relay_url, node_id, channel_id) => {
+
+                    todo!("implemnet webrtc processing")
+
                     }
                 }
             } else {
