@@ -44,7 +44,7 @@ use netwatch::netmon;
 use netwatch::{UdpSocket, ip::LocalAddresses};
 use quinn::{AsyncUdpSocket, ServerConfig, WeakConnectionHandle};
 use rand::Rng;
-use relay_mapped_addrs::{IpMappedAddr, RelayMappedAddresses};
+use relay_mapped_addrs::{RelayAddrMap, RelayMappedAddr};
 use smallvec::SmallVec;
 use snafu::{ResultExt, Snafu};
 use tokio::sync::{Mutex as AsyncMutex, mpsc};
@@ -200,7 +200,7 @@ pub(crate) struct MagicSock {
     connection_map: ConnectionMap,
 
     /// Tracks the mapped IP addresses
-    relay_mapped_addrs: RelayMappedAddresses,
+    relay_mapped_addrs: RelayAddrMap,
     /// Local addresses
     local_addrs_watch: LocalAddrsWatch,
     /// Currently bound IP addresses of all sockets
@@ -291,6 +291,11 @@ impl MagicSock {
         self.local_addrs_watch.clone().get()
     }
 
+    /// Registers the connection in the connection map and opens additional paths.
+    ///
+    /// In addition to storing the connection reference this requests the current
+    /// [`NodeAddr`] for remote node from the [`NodeMap`] and adds all paths to the
+    /// connection.  It also listens and logs path events.
     pub(crate) fn register_connection(&self, remote: NodeId, conn: &quinn::Connection) {
         debug!(%remote, "register connection");
         let weak_handle = conn.weak_handle();
@@ -425,7 +430,7 @@ impl MagicSock {
     }
 
     /// Returns the socket address which can be used by the QUIC layer to dial this node.
-    pub(crate) fn get_mapping_addr(&self, node_id: NodeId) -> Option<NodeIdMappedAddr> {
+    pub(crate) fn get_mapping_addr(&self, node_id: NodeId) -> Option<AllPathsMappedAddr> {
         self.node_map.get_quic_mapped_addr_for_node_key(node_id)
     }
 
@@ -616,7 +621,11 @@ impl MagicSock {
         }
     }
 
-    /// Searches the `node_map` to determine the current transports to be used.
+    /// Returns the transport addresses for the [`quinn_udp::Transmit`]'s destination.
+    ///
+    /// Because Quinn does only know about IP transports we map other transports to private
+    /// IPv6 Unique Local Address ranges.  This extracts the transport addresses out of the
+    /// transmit's destination.
     #[instrument(skip_all)]
     fn prepare_send(
         &self,
@@ -646,7 +655,7 @@ impl MagicSock {
                     dst = %dest,
                     src = ?transmit.src_ip,
                     len = %transmit.contents.len(),
-                    "sending",
+                    "sending mixed",
                 );
 
                 // Get the node's relay address and best direct address, as well
@@ -680,6 +689,12 @@ impl MagicSock {
             }
             #[cfg(not(wasm_browser))]
             MultipathMappedAddr::Ip(addr) => {
+                trace!(
+                    dst = %addr,
+                    src = ?transmit.src_ip,
+                    len = %transmit.contents.len(),
+                    "sending IP",
+                );
                 active_paths.push(transports::Addr::Ip(addr));
             }
             MultipathMappedAddr::Relay(dest) => {
@@ -687,7 +702,7 @@ impl MagicSock {
                     dst = %dest,
                     src = ?transmit.src_ip,
                     len = %transmit.contents.len(),
-                    "sending",
+                    "sending relay",
                 );
 
                 // Check if this is a known IpMappedAddr, and if so, send over UDP
@@ -706,12 +721,12 @@ impl MagicSock {
         Ok(active_paths)
     }
 
-    /// Process datagrams received from UDP sockets.
+    /// Process datagrams received from all the transports.
     ///
     /// All the `bufs` and `metas` should have initialized packets in them.
     ///
-    /// This fixes up the datagrams to use the correct [`NodeIdMappedAddr`] and extracts DISCO
-    /// packets, processing them inside the magic socket.
+    /// This fixes up the datagrams to use the correct [`MultipathMappedAddr`] and extracts
+    /// DISCO packets, processing them inside the magic socket.
     fn process_datagrams(
         &self,
         bufs: &mut [io::IoSliceMut<'_>],
@@ -1084,9 +1099,9 @@ pub(crate) enum MultipathMappedAddr {
     /// Used for the initial connection.
     /// - Only used for sending
     /// - This means send on all known paths/transports
-    Mixed(NodeIdMappedAddr),
+    Mixed(AllPathsMappedAddr),
     /// Relay based transport address
-    Relay(IpMappedAddr), // TODO: RelayMappedAddr?
+    Relay(RelayMappedAddr),
     /// IP based transport address
     #[cfg(not(wasm_browser))]
     Ip(SocketAddr),
@@ -1097,11 +1112,11 @@ impl From<SocketAddr> for MultipathMappedAddr {
         match value.ip() {
             IpAddr::V4(_) => Self::Ip(value),
             IpAddr::V6(addr) => {
-                if let Ok(node_id_mapped_addr) = NodeIdMappedAddr::try_from(addr) {
+                if let Ok(node_id_mapped_addr) = AllPathsMappedAddr::try_from(addr) {
                     return Self::Mixed(node_id_mapped_addr);
                 }
                 #[cfg(not(wasm_browser))]
-                if let Ok(ip_mapped_addr) = IpMappedAddr::try_from(addr) {
+                if let Ok(ip_mapped_addr) = RelayMappedAddr::try_from(addr) {
                     return Self::Relay(ip_mapped_addr);
                 }
                 Self::Ip(value)
@@ -1292,7 +1307,7 @@ impl Handle {
         let (ip_transports, port_mapper) =
             bind_ip(addr_v4, addr_v6, &metrics).context(BindSocketsSnafu)?;
 
-        let relay_mapped_addrs = RelayMappedAddresses::default();
+        let relay_mapped_addrs = RelayAddrMap::default();
 
         let (actor_sender, actor_receiver) = mpsc::channel(256);
 
@@ -2293,21 +2308,17 @@ impl DiscoveredDirectAddrs {
     }
 }
 
-/// The fake address used by the QUIC layer to address a node.
+/// An address used by the QUIC layer to address a node on all paths.
 ///
-/// You can consider this as nothing more than a lookup key for a node the [`MagicSock`] knows
-/// about.
-///
-/// [`MagicSock`] can reach a node by several real socket addresses, or maybe even via the relay
-/// node.  The QUIC layer however needs to address a node by a stable [`SocketAddr`] so
-/// that normal socket APIs can function.  Thus when a new node is introduced to a [`MagicSock`]
-/// it is given a new fake address.  This is the type of that address.
+/// This is only used for initially connecting to a remote node.  We instruct Quinn to send
+/// to this address, and duplicate all packets for this address to send on all paths we know
+/// for the node.
 ///
 /// It is but a newtype.  And in our QUIC-facing socket APIs like [`AsyncUdpSocket`] it
 /// comes in as the inner [`Ipv6Addr`], in those interfaces we have to be careful to do
 /// the conversion to this type.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub(crate) struct NodeIdMappedAddr(Ipv6Addr);
+pub(crate) struct AllPathsMappedAddr(Ipv6Addr);
 
 /// Can occur when converting a [`SocketAddr`] to an [`NodeIdMappedAddr`]
 #[derive(Debug, Snafu)]
@@ -2317,7 +2328,7 @@ pub struct NodeIdMappedAddrError;
 /// Counter to always generate unique addresses for [`NodeIdMappedAddr`].
 static NODE_ID_ADDR_COUNTER: AtomicU64 = AtomicU64::new(1);
 
-impl NodeIdMappedAddr {
+impl AllPathsMappedAddr {
     /// The Prefix/L of our Unique Local Addresses.
     const ADDR_PREFIXL: u8 = 0xfd;
     /// The Global ID used in our Unique Local Addresses.
@@ -2355,7 +2366,7 @@ impl NodeIdMappedAddr {
     }
 }
 
-impl TryFrom<Ipv6Addr> for NodeIdMappedAddr {
+impl TryFrom<Ipv6Addr> for AllPathsMappedAddr {
     type Error = NodeIdMappedAddrError;
 
     fn try_from(value: Ipv6Addr) -> Result<Self, Self::Error> {
@@ -2370,7 +2381,7 @@ impl TryFrom<Ipv6Addr> for NodeIdMappedAddr {
     }
 }
 
-impl std::fmt::Display for NodeIdMappedAddr {
+impl std::fmt::Display for AllPathsMappedAddr {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         write!(f, "NodeIdMappedAddr({})", self.0)
     }
@@ -2460,7 +2471,7 @@ mod tests {
     use tracing::{Instrument, error, info, info_span, instrument};
     use tracing_test::traced_test;
 
-    use super::{NodeIdMappedAddr, Options};
+    use super::{AllPathsMappedAddr, Options};
     use crate::{
         Endpoint, RelayMap, RelayMode, SecretKey,
         dns::DnsResolver,
@@ -3037,7 +3048,7 @@ mod tests {
     async fn magicsock_connect(
         ep: &quinn::Endpoint,
         ep_secret_key: SecretKey,
-        addr: NodeIdMappedAddr,
+        addr: AllPathsMappedAddr,
         node_id: NodeId,
     ) -> Result<quinn::Connection> {
         // Endpoint::connect sets this, do the same to have similar behaviour.
@@ -3063,7 +3074,7 @@ mod tests {
     async fn magicsock_connect_with_transport_config(
         ep: &quinn::Endpoint,
         ep_secret_key: SecretKey,
-        mapped_addr: NodeIdMappedAddr,
+        mapped_addr: AllPathsMappedAddr,
         node_id: NodeId,
         transport_config: Arc<quinn::TransportConfig>,
     ) -> Result<quinn::Connection> {
@@ -3098,7 +3109,7 @@ mod tests {
         let msock_1 = magicsock_ep(secret_key_1.clone()).await.unwrap();
 
         // Generate an address not present in the NodeMap.
-        let bad_addr = NodeIdMappedAddr::generate();
+        let bad_addr = AllPathsMappedAddr::generate();
 
         // 500ms is rather fast here.  Running this locally it should always be the correct
         // timeout.  If this is too slow however the test will not become flaky as we are

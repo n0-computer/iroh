@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, info, instrument, trace, warn};
 
 use self::node_state::{NodeState, Options};
-use super::{ActorMessage, NodeIdMappedAddr, metrics::Metrics, transports};
+use super::{ActorMessage, AllPathsMappedAddr, metrics::Metrics, transports};
 use crate::disco::{CallMeMaybe, Pong, SendAddr};
 #[cfg(any(test, feature = "test-utils"))]
 use crate::endpoint::PathSelection;
@@ -54,7 +54,7 @@ pub(super) struct NodeMap {
 pub(super) struct NodeMapInner {
     by_node_key: HashMap<NodeId, usize>,
     by_ip_port: HashMap<IpPort, usize>,
-    by_quic_mapped_addr: HashMap<NodeIdMappedAddr, usize>,
+    by_quic_mapped_addr: HashMap<AllPathsMappedAddr, usize>,
     by_id: HashMap<usize, NodeState>,
     next_id: usize,
     #[cfg(any(test, feature = "test-utils"))]
@@ -68,7 +68,7 @@ pub(super) struct NodeMapInner {
 #[derive(Debug, Clone)]
 enum NodeStateKey {
     NodeId(NodeId),
-    NodeIdMappedAddr(NodeIdMappedAddr),
+    NodeIdMappedAddr(AllPathsMappedAddr),
     IpPort(IpPort),
 }
 
@@ -155,11 +155,11 @@ impl NodeMap {
     pub(super) fn receive_udp(
         &self,
         udp_addr: SocketAddr,
-    ) -> Option<(PublicKey, NodeIdMappedAddr)> {
+    ) -> Option<(PublicKey, AllPathsMappedAddr)> {
         self.inner.lock().expect("poisoned").receive_udp(udp_addr)
     }
 
-    pub(super) fn receive_relay(&self, relay_url: &RelayUrl, src: NodeId) -> NodeIdMappedAddr {
+    pub(super) fn receive_relay(&self, relay_url: &RelayUrl, src: NodeId) -> AllPathsMappedAddr {
         self.inner
             .lock()
             .expect("poisoned")
@@ -169,7 +169,7 @@ impl NodeMap {
     pub(super) fn get_quic_mapped_addr_for_node_key(
         &self,
         node_key: NodeId,
-    ) -> Option<NodeIdMappedAddr> {
+    ) -> Option<AllPathsMappedAddr> {
         self.inner
             .lock()
             .expect("poisoned")
@@ -186,6 +186,7 @@ impl NodeMap {
             .unwrap_or_default()
     }
 
+    /// Returns a [`NodeAddr`] with all the currently known direct addresses and the relay URL.
     pub(super) fn get_current_addr(&self, node_key: NodeId) -> Option<NodeAddr> {
         self.inner
             .lock()
@@ -209,7 +210,7 @@ impl NodeMap {
     #[allow(clippy::type_complexity)]
     pub(super) fn get_send_addrs(
         &self,
-        addr: NodeIdMappedAddr,
+        addr: AllPathsMappedAddr,
         have_ipv6: bool,
         metrics: &Metrics,
     ) -> Option<(
@@ -403,7 +404,7 @@ impl NodeMapInner {
 
     /// Marks the node we believe to be at `ipp` as recently used.
     #[cfg(not(wasm_browser))]
-    fn receive_udp(&mut self, udp_addr: SocketAddr) -> Option<(NodeId, NodeIdMappedAddr)> {
+    fn receive_udp(&mut self, udp_addr: SocketAddr) -> Option<(NodeId, AllPathsMappedAddr)> {
         let ip_port: IpPort = udp_addr.into();
         let Some(node_state) = self.get_mut(NodeStateKey::IpPort(ip_port)) else {
             trace!(src=%udp_addr, "receive_udp: no node_state found for addr, ignore");
@@ -414,7 +415,7 @@ impl NodeMapInner {
     }
 
     #[instrument(skip_all, fields(src = %src.fmt_short()))]
-    fn receive_relay(&mut self, relay_url: &RelayUrl, src: NodeId) -> NodeIdMappedAddr {
+    fn receive_relay(&mut self, relay_url: &RelayUrl, src: NodeId) -> AllPathsMappedAddr {
         #[cfg(any(test, feature = "test-utils"))]
         let path_selection = self.path_selection;
         let node_state = self.get_or_insert_with(NodeStateKey::NodeId(src), || {
