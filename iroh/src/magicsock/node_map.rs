@@ -166,7 +166,7 @@ impl NodeMap {
             .receive_relay(relay_url, src)
     }
 
-    pub(super) fn get_quic_mapped_addr_for_node_key(
+    pub(super) fn get_all_paths_add_for_node(
         &self,
         node_key: NodeId,
     ) -> Option<AllPathsMappedAddr> {
@@ -174,7 +174,7 @@ impl NodeMap {
             .lock()
             .expect("poisoned")
             .get(NodeStateKey::NodeId(node_key))
-            .map(|ep| *ep.quic_mapped_addr())
+            .map(|ep| *ep.all_paths_mapped_addr())
     }
 
     pub(super) fn get_direct_addrs(&self, node_key: NodeId) -> Vec<SocketAddr> {
@@ -359,7 +359,7 @@ impl NodeMapInner {
                 node.remove_direct_addr(&ipp, now, why);
                 if node.direct_addresses().count() == 0 {
                     let node_id = node.public_key();
-                    let mapped_addr = node.quic_mapped_addr();
+                    let mapped_addr = node.all_paths_mapped_addr();
                     self.by_node_key.remove(node_id);
                     self.by_quic_mapped_addr.remove(mapped_addr);
                     debug!(node_id=%node_id.fmt_short(), why, "removing node");
@@ -411,7 +411,10 @@ impl NodeMapInner {
             return None;
         };
         node_state.receive_udp(ip_port, Instant::now());
-        Some((*node_state.public_key(), *node_state.quic_mapped_addr()))
+        Some((
+            *node_state.public_key(),
+            *node_state.all_paths_mapped_addr(),
+        ))
     }
 
     #[instrument(skip_all, fields(src = %src.fmt_short()))]
@@ -430,7 +433,7 @@ impl NodeMapInner {
             }
         });
         node_state.receive_relay(relay_url, src, Instant::now());
-        *node_state.quic_mapped_addr()
+        *node_state.all_paths_mapped_addr()
     }
 
     fn node_states(&self) -> impl Iterator<Item = (&usize, &NodeState)> {
@@ -501,7 +504,7 @@ impl NodeMapInner {
 
         // update indices
         self.by_quic_mapped_addr
-            .insert(*node_state.quic_mapped_addr(), id);
+            .insert(*node_state.all_paths_mapped_addr(), id);
         self.by_node_key.insert(*node_state.public_key(), id);
 
         self.by_id.insert(id, node_state);
@@ -572,7 +575,7 @@ impl NodeMapInner {
                 self.by_ip_port.remove(&ip_port);
             }
 
-            self.by_quic_mapped_addr.remove(ep.quic_mapped_addr());
+            self.by_quic_mapped_addr.remove(ep.all_paths_mapped_addr());
         }
     }
 }

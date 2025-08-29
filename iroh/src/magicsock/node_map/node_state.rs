@@ -148,7 +148,7 @@ impl NodeState {
         &self.node_id
     }
 
-    pub(super) fn quic_mapped_addr(&self) -> &AllPathsMappedAddr {
+    pub(super) fn all_paths_mapped_addr(&self) -> &AllPathsMappedAddr {
         &self.quic_mapped_addr
     }
 

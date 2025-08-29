@@ -728,10 +728,11 @@ impl Endpoint {
         }
         let node_id = node_addr.node_id;
 
-        // Get the mapped IPv6 address from the magic socket. Quinn will connect to this
-        // address.  Start discovery for this node if it's enabled and we have no valid or
-        // verified address information for this node.  Dropping the discovery cancels any
-        // still running task.
+        // When we start a connection we want to send the QUIC Initial packets on all the
+        // known paths for the remote node.  For this we use an AllPathsMappedAddr as
+        // destination for Quinn.  Start discovery for this node if it's enabled and we have
+        // no valid or verified address information for this node.  Dropping the discovery
+        // cancels any still running task.
         let (mapped_addr, _discovery_drop_guard) = self
             .get_mapping_addr_and_maybe_start_discovery(node_addr)
             .await
