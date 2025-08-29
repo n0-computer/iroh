@@ -20,7 +20,7 @@ use crate::endpoint::PathSelection;
 use crate::{
     disco::{self, SendAddr},
     magicsock::{
-        ActorMessage, AllPathsMappedAddr, HEARTBEAT_INTERVAL, MagicsockMetrics,
+        AllPathsMappedAddr, HEARTBEAT_INTERVAL, MagicsockMetrics,
         node_map::path_validity::PathValidity,
     },
 };
@@ -921,12 +921,12 @@ pub enum ConnectionType {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, net::Ipv4Addr};
+    use std::net::Ipv4Addr;
 
     use iroh_base::SecretKey;
 
     use super::*;
-    use crate::magicsock::node_map::{NodeMap, NodeMapInner};
+    // use crate::magicsock::node_map::{NodeMap, NodeMapInner};
 
     // #[test]
     // fn test_remote_infos() {

@@ -94,7 +94,17 @@ pub use self::{
 /// expire at 30 seconds, so this is a few seconds shy of that.
 const ENDPOINTS_FRESH_ENOUGH_DURATION: Duration = Duration::from_secs(27);
 
+/// The duration in which we send keep-alives.
+///
+/// If a path is idle for this long, a PING frame will be sent to keep the connection
+/// alive.
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
+
+/// The maximum time a path can stay idle before being closed.
+///
+/// This is [`HEARTBEAT_INTERVAL`] + 1.5s.  This gives us a chance to send a PING frame and
+/// some retries.
+const MAX_IDLE_TIMEOUT: Duration = Duration::from_millis(6500);
 
 /// Contains options for `MagicSock::listen`.
 #[derive(derive_more::Debug)]
@@ -491,10 +501,7 @@ impl MagicSock {
                                     .await
                                 {
                                     Ok(path) => {
-                                        path.set_max_idle_timeout(Some(
-                                            ENDPOINTS_FRESH_ENOUGH_DURATION,
-                                        ))
-                                        .ok();
+                                        path.set_max_idle_timeout(Some(MAX_IDLE_TIMEOUT)).ok();
                                         path.set_keep_alive_interval(Some(HEARTBEAT_INTERVAL)).ok();
                                     }
                                     Err(err) => {

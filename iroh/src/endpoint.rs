@@ -627,7 +627,6 @@ impl Endpoint {
         trace!("created magicsock");
         debug!(version = env!("CARGO_PKG_VERSION"), "iroh Endpoint created");
 
-        let metrics = msock.metrics.magicsock.clone();
         let ep = Self {
             msock,
             static_config: Arc::new(static_config),

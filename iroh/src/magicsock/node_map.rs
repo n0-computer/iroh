@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 use tracing::{debug, info, instrument, trace, warn};
 
 use self::node_state::{NodeState, Options};
-use super::{ActorMessage, AllPathsMappedAddr, metrics::Metrics, transports};
-use crate::disco::{CallMeMaybe, Pong, SendAddr};
+use super::{AllPathsMappedAddr, metrics::Metrics};
+use crate::disco::CallMeMaybe;
 #[cfg(any(test, feature = "test-utils"))]
 use crate::endpoint::PathSelection;
 

@@ -11,10 +11,7 @@ use super::{
 };
 use crate::{
     disco::SendAddr,
-    magicsock::{
-        HEARTBEAT_INTERVAL,
-        node_map::path_validity::{self, PathValidity},
-    },
+    magicsock::node_map::path_validity::{self, PathValidity},
 };
 
 /// State about a particular path to another [`NodeState`].
