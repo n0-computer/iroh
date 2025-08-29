@@ -498,12 +498,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1628fb46dfa0b37568d12e5edd512553eccf6a22a78e8bde00bb4aed84d5bdbf"
 
 [[package]]
-name = "bytemuck"
-version = "1.23.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c76a5792e44e4abe34d3abf15636779261d45a7450612059293d1d2cfc63422"
-
-[[package]]
 name = "byteorder"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1236,14 +1230,13 @@ checksum = "2acce4a10f12dc2fb14a218589d4f1f62ef011b2d0cc4b3cb1bba8e94da14649"
 
 [[package]]
 name = "fastbloom"
-version = "0.9.0"
+version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "27cea6e7f512d43b098939ff4d5a5d6fe3db07971e1d05176fe26c642d33f5b8"
+checksum = "29ec576c163744bef8707859f6aeb322bcf56b8da61215d99f77d6e33160ff01"
 dependencies = [
  "getrandom 0.3.2",
  "rand 0.9.1",
  "siphasher",
- "wide",
 ]
 
 [[package]]
@@ -2489,7 +2482,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn"
 version = "0.14.0"
-source = "git+https://github.com//n0-computer/quinn?branch=server-migrations#bc86957aa4ccb72fad70e75a6ce9fc8198f09afc"
+source = "git+https://github.com/n0-computer/quinn?branch=multipath-quinn-0.11.x#a68cb468bb44b1ec83a1b6ba110b2e7ecae00d91"
 dependencies = [
  "bytes",
  "cfg_aliases",
@@ -2498,7 +2491,7 @@ dependencies = [
  "pin-project-lite",
  "rustc-hash",
  "rustls",
- "socket2 0.5.10",
+ "socket2 0.6.0",
  "thiserror 2.0.12",
  "tokio",
  "tracing",
@@ -2508,7 +2501,7 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-proto"
 version = "0.13.0"
-source = "git+https://github.com//n0-computer/quinn?branch=server-migrations#bc86957aa4ccb72fad70e75a6ce9fc8198f09afc"
+source = "git+https://github.com/n0-computer/quinn?branch=multipath-quinn-0.11.x#a68cb468bb44b1ec83a1b6ba110b2e7ecae00d91"
 dependencies = [
  "bytes",
  "fastbloom",
@@ -2530,12 +2523,12 @@ dependencies = [
 [[package]]
 name = "iroh-quinn-udp"
 version = "0.5.12"
-source = "git+https://github.com//n0-computer/quinn?branch=server-migrations#bc86957aa4ccb72fad70e75a6ce9fc8198f09afc"
+source = "git+https://github.com/n0-computer/quinn?branch=multipath-quinn-0.11.x#a68cb468bb44b1ec83a1b6ba110b2e7ecae00d91"
 dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.0",
  "tracing",
  "windows-sys 0.59.0",
 ]
@@ -4110,8 +4103,8 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.23.25"
-source = "git+https://github.com/n0-computer/rustls?rev=be02113e7837df60953d02c2bdd0f4634fef3a80#be02113e7837df60953d02c2bdd0f4634fef3a80"
+version = "0.23.27"
+source = "git+https://github.com/n0-computer/rustls?rev=c636f89ae00aee19ddd5e6df4150cec5c031fa31#c636f89ae00aee19ddd5e6df4150cec5c031fa31"
 dependencies = [
  "log",
  "once_cell",
@@ -4190,9 +4183,9 @@ dependencies = [
 
 [[package]]
 name = "rustls-platform-verifier"
-version = "0.5.2"
+version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4937d110d34408e9e5ad30ba0b0ca3b6a8a390f8db3636db60144ac4fa792750"
+checksum = "be59af91596cac372a6942530653ad0c3a246cdd491aaa9dcaee47f88d67d5a0"
 dependencies = [
  "core-foundation 0.10.0",
  "core-foundation-sys",
@@ -4205,7 +4198,7 @@ dependencies = [
  "rustls-webpki",
  "security-framework",
  "security-framework-sys",
- "webpki-root-certs 0.26.11",
+ "webpki-root-certs",
  "windows-sys 0.59.0",
 ]
 
@@ -4249,15 +4242,6 @@ name = "ryu"
 version = "1.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28d3b2b1366ec20994f1fd18c3c594f05c5dd4bc44d8bb0c1c632c8d6829481f"
-
-[[package]]
-name = "safe_arch"
-version = "0.7.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96b02de82ddbe1b636e6170c21be622223aea188ef2e139be0a5b219ec215323"
-dependencies = [
- "bytemuck",
-]
 
 [[package]]
 name = "salsa20"
@@ -5632,15 +5616,6 @@ dependencies = [
 
 [[package]]
 name = "webpki-root-certs"
-version = "0.26.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75c7f0ef91146ebfb530314f5f1d24528d7f0767efbfd31dce919275413e393e"
-dependencies = [
- "webpki-root-certs 1.0.0",
-]
-
-[[package]]
-name = "webpki-root-certs"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "01a83f7e1a9f8712695c03eabe9ed3fbca0feff0152f33f12593e5a6303cb1a4"
@@ -5664,16 +5639,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2853738d1cc4f2da3a225c18ec6c3721abb31961096e9dbf5ab35fa88b19cfdb"
 dependencies = [
  "rustls-pki-types",
-]
-
-[[package]]
-name = "wide"
-version = "0.7.33"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ce5da8ecb62bcd8ec8b7ea19f69a51275e91299be594ea5cc6ef7819e16cd03"
-dependencies = [
- "bytemuck",
- "safe_arch",
 ]
 
 [[package]]
@@ -5704,7 +5669,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

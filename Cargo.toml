@@ -43,14 +43,10 @@ unused-async = "warn"
 
 
 [patch.crates-io]
-rustls = { git = "https://github.com/n0-computer/rustls", rev = "be02113e7837df60953d02c2bdd0f4634fef3a80" }
+rustls = { git = "https://github.com/n0-computer/rustls", rev = "c636f89ae00aee19ddd5e6df4150cec5c031fa31" }
 netwatch = { git = "https://github.com/n0-computer/net-tools", branch = "feat-multipath" }
 
 [patch."https://github.com/n0-computer/quinn"]
 # iroh-quinn = { path = "../iroh-quinn/quinn" }
 # iroh-quinn-proto = { path = "../iroh-quinn/quinn-proto" }
 # iroh-quinn-udp = { path = "../iroh-quinn/quinn-udp" }
-
-iroh-quinn = { git = "https://github.com//n0-computer/quinn", branch = "server-migrations" }
-iroh-quinn-proto = { git = "https://github.com//n0-computer/quinn", branch = "server-migrations" }
-iroh-quinn-udp = { git = "https://github.com//n0-computer/quinn", branch = "server-migrations" }
