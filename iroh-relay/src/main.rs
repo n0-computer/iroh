@@ -47,9 +47,6 @@ struct Cli {
     #[clap(long, default_value_t = false)]
     dev: bool,
     /// Path to the configuration file.
-    ///
-    /// If provided and no configuration file exists the default configuration will be
-    /// written to the file.
     #[clap(long, short)]
     config_path: Option<PathBuf>,
 }
