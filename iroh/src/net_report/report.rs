@@ -6,12 +6,13 @@ use std::{
 };
 
 use iroh_base::RelayUrl;
+use serde::{Deserialize, Serialize};
 use tracing::warn;
 
 use super::{ProbeReport, probes::Probe};
 
 /// A net_report report.
-#[derive(Default, Debug, PartialEq, Eq, Clone)]
+#[derive(Default, Debug, Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub struct Report {
     /// A QAD IPv4 round trip completed.
     pub udp_v4: bool,
