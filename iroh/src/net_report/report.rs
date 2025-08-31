@@ -239,7 +239,7 @@ impl Report {
 }
 
 /// Latencies per relay node.
-#[derive(Debug, Default, PartialEq, Eq, Clone)]
+#[derive(Debug, Default, Serialize, Deserialize, PartialEq, Eq, Clone)]
 pub struct RelayLatencies {
     #[cfg(not(wasm_browser))]
     ipv4: BTreeMap<RelayUrl, Duration>,
