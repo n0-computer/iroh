@@ -103,7 +103,7 @@ pub(crate) mod server {
         pub(crate) fn spawn(mut quic_config: QuicConfig) -> Result<Self, QuicSpawnError> {
             quic_config.server_config.alpn_protocols =
                 vec![crate::quic::ALPN_QUIC_ADDR_DISC.to_vec()];
-            let server_config = QuicServerConfig::try_from(quic_config.server_config)?;
+            let server_config = QuicServerConfig::try_from(quic_config.server_config.clone())?;
             let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(server_config));
             let transport_config =
                 Arc::get_mut(&mut server_config.transport).expect("not used yet");
@@ -113,19 +113,57 @@ pub(crate) mod server {
                 // enable sending quic address discovery frames
                 .send_observed_address_reports(true);
 
-            let endpoint = quinn::Endpoint::server(server_config, quic_config.bind_addr)
+            // Spawn main QUIC server
+            let endpoint = quinn::Endpoint::server(server_config.clone(), quic_config.bind_addr)
                 .context(EndpointServerSnafu)?;
             let bind_addr = endpoint.local_addr().context(LocalAddrSnafu)?;
+
+            // Spawn port variation server (port + 1) for NAT testing
+            let port_variation_addr = match quic_config.bind_addr {
+                SocketAddr::V4(addr) => Some(SocketAddr::V4(std::net::SocketAddrV4::new(
+                    *addr.ip(),
+                    addr.port() + 1,
+                ))),
+                SocketAddr::V6(addr) => Some(SocketAddr::V6(std::net::SocketAddrV6::new(
+                    *addr.ip(),
+                    addr.port() + 1,
+                    0,
+                    0,
+                ))),
+            };
+
+            let port_variation_endpoint = if let Some(port_variation_addr) = port_variation_addr {
+                match quinn::Endpoint::server(server_config.clone(), port_variation_addr) {
+                    Ok(endpoint) => {
+                        info!(
+                            ?port_variation_addr,
+                            "QUIC port variation server listening on"
+                        );
+                        Some(endpoint)
+                    }
+                    Err(err) => {
+                        // Log the error but don't fail - port variation is optional
+                        tracing::warn!(
+                            ?port_variation_addr,
+                            ?err,
+                            "Failed to bind QUIC port variation server, continuing without it"
+                        );
+                        None
+                    }
+                }
+            } else {
+                None
+            };
 
             info!(?bind_addr, "QUIC server listening on");
 
             let cancel = CancellationToken::new();
             let cancel_accept_loop = cancel.clone();
 
-            let task = tokio::task::spawn(
+            let main_task = tokio::task::spawn(
                 async move {
                     let mut set = JoinSet::new();
-                    debug!("waiting for connections...");
+                    debug!("waiting for connections on main port...");
                     loop {
                         tokio::select! {
                             biased;
@@ -143,13 +181,16 @@ pub(crate) mod server {
                             }
                             res = endpoint.accept() => match res {
                                 Some(conn) => {
-                                     debug!("accepting connection");
+                                     debug!("accepting connection on main port");
                                      let remote_addr = conn.remote_address();
-                                     set.spawn(
-                                         handle_connection(conn).instrument(info_span!("qad-conn", %remote_addr))
-                                     );                                }
+                                     set.spawn(async move {
+                                         if let Err(err) = handle_connection(conn).await {
+                                             debug!("connection error: {err:#?}");
+                                         }
+                                     }.instrument(info_span!("qad-conn", %remote_addr)));
+                                }
                                 None => {
-                                    debug!("endpoint closed");
+                                    debug!("main endpoint closed");
                                     break;
                                 }
                             }
@@ -164,17 +205,82 @@ pub(crate) mod server {
                     // all connections, but await to ensure they are finished.
                     set.abort_all();
                     while !set.is_empty() {
-                        _ = set.join_next().await;
+                        set.join_next().await;
                     }
 
                     debug!("quic endpoint has been shutdown.");
                 }
                 .instrument(info_span!("quic-endpoint")),
             );
+
+            // Spawn separate task for port variation endpoint if it exists
+            let port_var_task = if let Some(port_var_endpoint) = port_variation_endpoint {
+                let port_var_cancel = cancel.child_token();
+                Some(tokio::task::spawn(
+                    async move {
+                        let mut set = JoinSet::new();
+                        debug!("waiting for connections on port variation port...");
+                        loop {
+                            tokio::select! {
+                                biased;
+                                _ = port_var_cancel.cancelled() => {
+                                    break;
+                                }
+                                Some(res) = set.join_next() => {
+                                    if let Err(err) = res {
+                                        if err.is_panic() {
+                                            panic!("port variation task panicked: {err:#?}");
+                                        } else {
+                                            debug!("error accepting port variation connection: {err:#?}");
+                                        }
+                                    }
+                                }
+                                res = port_var_endpoint.accept() => match res {
+                                    Some(conn) => {
+                                         debug!("accepting connection on port variation port");
+                                         let remote_addr = conn.remote_address();
+                                         set.spawn(async move {
+                                             if let Err(err) = handle_connection(conn).await {
+                                                 debug!("port variation connection error: {err:#?}");
+                                             }
+                                         }.instrument(info_span!("qad-conn-port-var", %remote_addr)));
+                                    }
+                                    None => {
+                                        debug!("port variation endpoint closed");
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        port_var_endpoint.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
+                        port_var_endpoint.wait_idle().await;
+
+                        set.abort_all();
+                        while !set.is_empty() {
+                            set.join_next().await;
+                        }
+
+                        debug!("port variation quic endpoint has been shutdown.");
+                    }
+                    .instrument(info_span!("quic-endpoint-port-var")),
+                ))
+            } else {
+                None
+            };
+
+            // Combine both tasks into a single handle
+            let combined_task = tokio::task::spawn(async move {
+                if let Some(port_var_task) = port_var_task {
+                    let _ = tokio::try_join!(main_task, port_var_task);
+                } else {
+                    let _ = main_task.await;
+                }
+            });
+
             Ok(Self {
                 bind_addr,
                 cancel,
-                handle: AbortOnDropHandle::new(task),
+                handle: AbortOnDropHandle::new(combined_task),
             })
         }
 

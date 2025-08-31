@@ -166,6 +166,7 @@ pub struct QuicConfig {
     /// The socket address on which the QUIC server should bind.
     ///
     /// Normally you'd chose port `7842`, see [`crate::defaults::DEFAULT_RELAY_QUIC_PORT`].
+    /// A second server will automatically be spawned on port + 1 for NAT port mapping variation testing.
     pub bind_addr: SocketAddr,
     /// The TLS server configuration for the QUIC server.
     ///

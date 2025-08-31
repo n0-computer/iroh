@@ -434,6 +434,10 @@ pub(super) struct QadProbeReport {
     pub(super) latency: Duration,
     /// The discovered public address.
     pub(super) addr: SocketAddr,
+    /// The destination port that was used for this probe
+    pub(super) dest_port: u16,
+    /// Whether hairpinning test succeeded (if attempted)
+    pub(super) hairpinning_works: Option<bool>,
 }
 
 #[derive(Debug, Clone)]
@@ -513,7 +517,10 @@ impl Probe {
                 }
             }
             #[cfg(not(wasm_browser))]
-            Probe::QadIpv4 | Probe::QadIpv6 => unreachable!("must not be used"),
+            Probe::QadIpv4
+            | Probe::QadIpv6
+            | Probe::QadIpv4PortVariation
+            | Probe::QadIpv6PortVariation => unreachable!("must not be used"),
         }
     }
 }
@@ -874,9 +881,10 @@ mod tests {
         let quic_client = iroh_relay::quic::QuicClient::new(ep.clone(), client_config);
         let dns_resolver = DnsResolver::default();
 
-        let (report, conn) = super::super::run_probe_v4(None, relay, quic_client, dns_resolver)
-            .await
-            .unwrap();
+        let (report, conn) =
+            super::super::run_probe_v4(None, relay, quic_client, dns_resolver, None)
+                .await
+                .unwrap();
 
         assert_eq!(report.addr, client_addr);
         drop(conn);

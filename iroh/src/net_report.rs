@@ -443,15 +443,47 @@ impl Client {
                 let dns_resolver = self.socket_state.dns_resolver.clone();
                 let quic_client = quic_client.clone();
                 let relay_url = relay_node.url.clone();
+
+                // Regular QAD probe
                 v4_buf.spawn(
                     cancel_v4
                         .child_token()
                         .run_until_cancelled_owned(time::timeout(
                             PROBES_TIMEOUT,
-                            run_probe_v4(ip_mapped_addrs, relay_node, quic_client, dns_resolver),
+                            run_probe_v4(
+                                ip_mapped_addrs.clone(),
+                                relay_node.clone(),
+                                quic_client.clone(),
+                                dns_resolver.clone(),
+                                None,
+                            ),
                         ))
                         .instrument(info_span!("QAD-IPv4", %relay_url)),
                 );
+
+                // Port variation probe (QUIC port + 1)
+                if let Ok(relay_addr) =
+                    reportgen::get_relay_addr_ipv4(&dns_resolver, &relay_node).await
+                {
+                    let port_variation = relay_addr.port() + 1;
+                    v4_buf.spawn(
+                        cancel_v4
+                            .child_token()
+                            .run_until_cancelled_owned(time::timeout(
+                                PROBES_TIMEOUT,
+                                run_probe_v4(
+                                    ip_mapped_addrs,
+                                    relay_node,
+                                    quic_client,
+                                    dns_resolver,
+                                    Some(port_variation),
+                                ),
+                            ))
+                            .instrument(
+                                info_span!("QAD-IPv4-PortVar", %relay_url, port = port_variation),
+                            ),
+                    );
+                }
             }
 
             if if_state.have_v6 {
@@ -461,15 +493,47 @@ impl Client {
                 let dns_resolver = self.socket_state.dns_resolver.clone();
                 let quic_client = quic_client.clone();
                 let relay_url = relay_node.url.clone();
+
+                // Regular QAD probe
                 v6_buf.spawn(
                     cancel_v6
                         .child_token()
                         .run_until_cancelled_owned(time::timeout(
                             PROBES_TIMEOUT,
-                            run_probe_v6(ip_mapped_addrs, relay_node, quic_client, dns_resolver),
+                            run_probe_v6(
+                                ip_mapped_addrs.clone(),
+                                relay_node.clone(),
+                                quic_client.clone(),
+                                dns_resolver.clone(),
+                                None,
+                            ),
                         ))
                         .instrument(info_span!("QAD-IPv6", %relay_url)),
                 );
+
+                // Port variation probe (QUIC port + 1)
+                if let Ok(relay_addr) =
+                    reportgen::get_relay_addr_ipv6(&dns_resolver, &relay_node).await
+                {
+                    let port_variation = relay_addr.port() + 1;
+                    v6_buf.spawn(
+                        cancel_v6
+                            .child_token()
+                            .run_until_cancelled_owned(time::timeout(
+                                PROBES_TIMEOUT,
+                                run_probe_v6(
+                                    ip_mapped_addrs,
+                                    relay_node,
+                                    quic_client,
+                                    dns_resolver,
+                                    Some(port_variation),
+                                ),
+                            ))
+                            .instrument(
+                                info_span!("QAD-IPv6-PortVar", %relay_url, port = port_variation),
+                            ),
+                    );
+                }
             }
         }
 
@@ -686,12 +750,18 @@ async fn run_probe_v4(
     relay_node: Arc<RelayNode>,
     quic_client: QuicClient,
     dns_resolver: DnsResolver,
+    port_override: Option<u16>,
 ) -> n0_snafu::Result<(QadProbeReport, QadConn)> {
     use n0_snafu::ResultExt;
 
     let relay_addr_orig = reportgen::get_relay_addr_ipv4(&dns_resolver, &relay_node).await?;
+    let relay_addr_with_port = if let Some(port) = port_override {
+        std::net::SocketAddrV4::new(*relay_addr_orig.ip(), port)
+    } else {
+        relay_addr_orig
+    };
     let relay_addr =
-        reportgen::maybe_to_mapped_addr(ip_mapped_addrs.as_ref(), relay_addr_orig.into());
+        reportgen::maybe_to_mapped_addr(ip_mapped_addrs.as_ref(), relay_addr_with_port.into());
 
     debug!(?relay_addr_orig, ?relay_addr, "relay addr v4");
     let host = relay_node.url.host_str().context("missing host url")?;
@@ -704,10 +774,20 @@ async fn run_probe_v4(
         .await
         .context("receiver dropped")?
         .expect("known");
+
+    // Test hairpinning by attempting to connect to our discovered external address.
+    // This is done once per probe (not in the continuous observer loop) since hairpinning
+    // behavior is a static NAT/firewall property that doesn't change during a session.
+    // Testing once is sufficient to determine if the NAT supports hairpinning.
+    let external_addr = SocketAddr::new(addr.ip().to_canonical(), addr.port());
+    let hairpinning_result = test_hairpinning(external_addr, &quic_client, &relay_node).await;
+
     let report = QadProbeReport {
         node: relay_node.url.clone(),
-        addr: SocketAddr::new(addr.ip().to_canonical(), addr.port()),
+        addr: external_addr,
         latency: conn.rtt(),
+        dest_port: relay_addr.port(),
+        hairpinning_works: Some(hairpinning_result),
     };
 
     let observer = Watchable::new(None);
@@ -728,6 +808,8 @@ async fn run_probe_v4(
                         node: node.clone(),
                         addr,
                         latency,
+                        dest_port: relay_addr.port(),
+                        hairpinning_works: None, // TODO: Implement hairpinning test
                     }))
                     .ok();
                 if receiver.changed().await.is_err() {
@@ -754,11 +836,17 @@ async fn run_probe_v6(
     relay_node: Arc<RelayNode>,
     quic_client: QuicClient,
     dns_resolver: DnsResolver,
+    port_override: Option<u16>,
 ) -> n0_snafu::Result<(QadProbeReport, QadConn)> {
     use n0_snafu::ResultExt;
     let relay_addr_orig = reportgen::get_relay_addr_ipv6(&dns_resolver, &relay_node).await?;
+    let relay_addr_with_port = if let Some(port) = port_override {
+        std::net::SocketAddrV6::new(*relay_addr_orig.ip(), port, 0, 0)
+    } else {
+        relay_addr_orig
+    };
     let relay_addr =
-        reportgen::maybe_to_mapped_addr(ip_mapped_addrs.as_ref(), relay_addr_orig.into());
+        reportgen::maybe_to_mapped_addr(ip_mapped_addrs.as_ref(), relay_addr_with_port.into());
 
     debug!(?relay_addr_orig, ?relay_addr, "relay addr v6");
     let host = relay_node.url.host_str().context("missing host url")?;
@@ -771,10 +859,20 @@ async fn run_probe_v6(
         .await
         .context("receiver dropped")?
         .expect("known");
+
+    // Test hairpinning by attempting to connect to our discovered external address.
+    // This is done once per probe (not in the continuous observer loop) since hairpinning
+    // behavior is a static NAT/firewall property that doesn't change during a session.
+    // Testing once is sufficient to determine if the NAT supports hairpinning.
+    let external_addr = SocketAddr::new(addr.ip().to_canonical(), addr.port());
+    let hairpinning_result = test_hairpinning(external_addr, &quic_client, &relay_node).await;
+
     let report = QadProbeReport {
         node: relay_node.url.clone(),
-        addr: SocketAddr::new(addr.ip().to_canonical(), addr.port()),
+        addr: external_addr,
         latency: conn.rtt(),
+        dest_port: relay_addr.port(),
+        hairpinning_works: Some(hairpinning_result),
     };
 
     let observer = Watchable::new(None);
@@ -795,6 +893,8 @@ async fn run_probe_v6(
                         node: node.clone(),
                         addr,
                         latency,
+                        dest_port: relay_addr.port(),
+                        hairpinning_works: None, // TODO: Implement hairpinning test
                     }))
                     .ok();
                 if receiver.changed().await.is_err() {
@@ -813,6 +913,47 @@ async fn run_probe_v6(
             _handle: handle,
         },
     ))
+}
+
+#[cfg(not(wasm_browser))]
+async fn test_hairpinning(
+    external_addr: SocketAddr,
+    quic_client: &QuicClient,
+    relay_node: &RelayNode,
+) -> bool {
+    let host = match relay_node.url.host_str() {
+        Some(host) => host,
+        None => {
+            debug!("No host available for hairpinning test");
+            return false;
+        }
+    };
+
+    debug!(?external_addr, "attempting hairpinning test");
+
+    match time::timeout(
+        Duration::from_millis(2000), // Short timeout for hairpinning test
+        quic_client.create_conn(external_addr, host),
+    )
+    .await
+    {
+        Ok(Ok(_conn)) => {
+            debug!(?external_addr, "hairpinning test succeeded");
+            true
+        }
+        Ok(Err(err)) => {
+            debug!(
+                ?external_addr,
+                ?err,
+                "hairpinning test failed - connection error"
+            );
+            false
+        }
+        Err(_) => {
+            debug!(?external_addr, "hairpinning test failed - timeout");
+            false
+        }
+    }
 }
 
 #[cfg(test)]
