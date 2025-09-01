@@ -16,6 +16,10 @@ assignees: ''
 **Expected behavior**
 <!-- A clear and concise description of what you expected to happen. -->
 
+**Iroh**
+- Version: [e.g. 0.90 and/or commit hash]
+- Endpoint configuration: [e.g. using `.n0_discovery()`]
+
 **Platform(s)**
 Desktop<!-- (please complete the following information) -->:
  - OS: [e.g. iOS]
