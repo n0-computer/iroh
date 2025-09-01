@@ -194,7 +194,13 @@ mod tests {
     }
 
     fn default_protocols() -> BTreeSet<Probe> {
-        BTreeSet::from([Probe::QadIpv4, Probe::QadIpv6, Probe::Https])
+        BTreeSet::from([
+            Probe::QadIpv4, 
+            Probe::QadIpv6, 
+            Probe::QadIpv4PortVariation,
+            Probe::QadIpv6PortVariation,
+            Probe::Https
+        ])
     }
 
     #[tokio::test]
