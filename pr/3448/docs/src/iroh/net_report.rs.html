@@ -461,7 +461,7 @@
 <a href=#461 id=461 data-nosnippet>461</a>                        .instrument(<span class="macro">info_span!</span>(<span class="string">"QAD-IPv4"</span>, %relay_url)),
 <a href=#462 id=462 data-nosnippet>462</a>                );
 <a href=#463 id=463 data-nosnippet>463</a>
-<a href=#464 id=464 data-nosnippet>464</a>                <span class="comment">// Port variation probe (QUIC port + 1) - disable IP mapping to avoid conflicts
+<a href=#464 id=464 data-nosnippet>464</a>                <span class="comment">// Port variation probe (QUIC port + 1)
 <a href=#465 id=465 data-nosnippet>465</a>                </span><span class="kw">if let </span><span class="prelude-val">Ok</span>(relay_addr) =
 <a href=#466 id=466 data-nosnippet>466</a>                    reportgen::get_relay_addr_ipv4(<span class="kw-2">&amp;</span>dns_resolver, <span class="kw-2">&amp;</span>relay_node).<span class="kw">await
 <a href=#467 id=467 data-nosnippet>467</a>                </span>{
@@ -472,8 +472,8 @@
 <a href=#472 id=472 data-nosnippet>472</a>                            .run_until_cancelled_owned(time::timeout(
 <a href=#473 id=473 data-nosnippet>473</a>                                PROBES_TIMEOUT,
 <a href=#474 id=474 data-nosnippet>474</a>                                run_probe_v4(
-<a href=#475 id=475 data-nosnippet>475</a>                                    <span class="prelude-val">None</span>, <span class="comment">// Disable IP mapping for port variation to avoid conflicts
-<a href=#476 id=476 data-nosnippet>476</a>                                    </span>relay_node,
+<a href=#475 id=475 data-nosnippet>475</a>                                    ip_mapped_addrs,
+<a href=#476 id=476 data-nosnippet>476</a>                                    relay_node,
 <a href=#477 id=477 data-nosnippet>477</a>                                    quic_client,
 <a href=#478 id=478 data-nosnippet>478</a>                                    dns_resolver,
 <a href=#479 id=479 data-nosnippet>479</a>                                    <span class="prelude-val">Some</span>(port_variation),
@@ -511,7 +511,7 @@
 <a href=#511 id=511 data-nosnippet>511</a>                        .instrument(<span class="macro">info_span!</span>(<span class="string">"QAD-IPv6"</span>, %relay_url)),
 <a href=#512 id=512 data-nosnippet>512</a>                );
 <a href=#513 id=513 data-nosnippet>513</a>
-<a href=#514 id=514 data-nosnippet>514</a>                <span class="comment">// Port variation probe (QUIC port + 1) - disable IP mapping to avoid conflicts
+<a href=#514 id=514 data-nosnippet>514</a>                <span class="comment">// Port variation probe (QUIC port + 1)
 <a href=#515 id=515 data-nosnippet>515</a>                </span><span class="kw">if let </span><span class="prelude-val">Ok</span>(relay_addr) =
 <a href=#516 id=516 data-nosnippet>516</a>                    reportgen::get_relay_addr_ipv6(<span class="kw-2">&amp;</span>dns_resolver, <span class="kw-2">&amp;</span>relay_node).<span class="kw">await
 <a href=#517 id=517 data-nosnippet>517</a>                </span>{
@@ -522,8 +522,8 @@
 <a href=#522 id=522 data-nosnippet>522</a>                            .run_until_cancelled_owned(time::timeout(
 <a href=#523 id=523 data-nosnippet>523</a>                                PROBES_TIMEOUT,
 <a href=#524 id=524 data-nosnippet>524</a>                                run_probe_v6(
-<a href=#525 id=525 data-nosnippet>525</a>                                    <span class="prelude-val">None</span>, <span class="comment">// Disable IP mapping for port variation to avoid conflicts
-<a href=#526 id=526 data-nosnippet>526</a>                                    </span>relay_node,
+<a href=#525 id=525 data-nosnippet>525</a>                                    ip_mapped_addrs,
+<a href=#526 id=526 data-nosnippet>526</a>                                    relay_node,
 <a href=#527 id=527 data-nosnippet>527</a>                                    quic_client,
 <a href=#528 id=528 data-nosnippet>528</a>                                    dns_resolver,
 <a href=#529 id=529 data-nosnippet>529</a>                                    <span class="prelude-val">Some</span>(port_variation),

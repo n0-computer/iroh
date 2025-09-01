@@ -197,86 +197,85 @@
 <a href=#197 id=197 data-nosnippet>197</a>        BTreeSet::from([
 <a href=#198 id=198 data-nosnippet>198</a>            Probe::QadIpv4, 
 <a href=#199 id=199 data-nosnippet>199</a>            Probe::QadIpv6, 
-<a href=#200 id=200 data-nosnippet>200</a>            <span class="comment">// TODO: Re-enable once IPv4-mapped IPv6 address conversion is fixed
-<a href=#201 id=201 data-nosnippet>201</a>            // Probe::QadIpv4PortVariation,
-<a href=#202 id=202 data-nosnippet>202</a>            // Probe::QadIpv6PortVariation,
-<a href=#203 id=203 data-nosnippet>203</a>            </span>Probe::Https
-<a href=#204 id=204 data-nosnippet>204</a>        ])
-<a href=#205 id=205 data-nosnippet>205</a>    }
-<a href=#206 id=206 data-nosnippet>206</a>
-<a href=#207 id=207 data-nosnippet>207</a>    <span class="attr">#[tokio::test]
-<a href=#208 id=208 data-nosnippet>208</a>    </span><span class="kw">async fn </span>test_initial_probeplan() {
-<a href=#209 id=209 data-nosnippet>209</a>        <span class="kw">let </span>(_servers, relay_map) = test_utils::relay_map(<span class="number">2</span>).<span class="kw">await</span>;
-<a href=#210 id=210 data-nosnippet>210</a>        <span class="kw">let </span>relay_node_1 = relay_map.nodes().next().unwrap();
-<a href=#211 id=211 data-nosnippet>211</a>        <span class="kw">let </span>relay_node_2 = relay_map.nodes().nth(<span class="number">1</span>).unwrap();
-<a href=#212 id=212 data-nosnippet>212</a>        <span class="kw">let </span>plan = ProbePlan::initial(<span class="kw-2">&amp;</span>relay_map, <span class="kw-2">&amp;</span>default_protocols());
-<a href=#213 id=213 data-nosnippet>213</a>
-<a href=#214 id=214 data-nosnippet>214</a>        <span class="kw">let </span>expected_plan: ProbePlan = [
-<a href=#215 id=215 data-nosnippet>215</a>            <span class="macro">probeset!</span> {
-<a href=#216 id=216 data-nosnippet>216</a>                proto: Probe::Https,
-<a href=#217 id=217 data-nosnippet>217</a>                relay: relay_node_1.clone(),
-<a href=#218 id=218 data-nosnippet>218</a>                delays: [
-<a href=#219 id=219 data-nosnippet>219</a>                    Duration::from_millis(<span class="number">200</span>),
-<a href=#220 id=220 data-nosnippet>220</a>                    Duration::from_millis(<span class="number">300</span>),
-<a href=#221 id=221 data-nosnippet>221</a>                    Duration::from_millis(<span class="number">400</span>)
-<a href=#222 id=222 data-nosnippet>222</a>                ],
-<a href=#223 id=223 data-nosnippet>223</a>            },
-<a href=#224 id=224 data-nosnippet>224</a>            <span class="macro">probeset!</span> {
-<a href=#225 id=225 data-nosnippet>225</a>                proto: Probe::Https,
-<a href=#226 id=226 data-nosnippet>226</a>                relay: relay_node_2.clone(),
-<a href=#227 id=227 data-nosnippet>227</a>                delays: [
-<a href=#228 id=228 data-nosnippet>228</a>                    Duration::from_millis(<span class="number">200</span>),
-<a href=#229 id=229 data-nosnippet>229</a>                    Duration::from_millis(<span class="number">300</span>),
-<a href=#230 id=230 data-nosnippet>230</a>                    Duration::from_millis(<span class="number">400</span>)
-<a href=#231 id=231 data-nosnippet>231</a>                ],
-<a href=#232 id=232 data-nosnippet>232</a>            },
-<a href=#233 id=233 data-nosnippet>233</a>        ]
-<a href=#234 id=234 data-nosnippet>234</a>        .into_iter()
-<a href=#235 id=235 data-nosnippet>235</a>        .collect();
-<a href=#236 id=236 data-nosnippet>236</a>
-<a href=#237 id=237 data-nosnippet>237</a>        <span class="macro">println!</span>(<span class="string">"expected:"</span>);
-<a href=#238 id=238 data-nosnippet>238</a>        <span class="macro">println!</span>(<span class="string">"{expected_plan}"</span>);
-<a href=#239 id=239 data-nosnippet>239</a>        <span class="macro">println!</span>(<span class="string">"actual:"</span>);
-<a href=#240 id=240 data-nosnippet>240</a>        <span class="macro">println!</span>(<span class="string">"{plan}"</span>);
-<a href=#241 id=241 data-nosnippet>241</a>        <span class="comment">// The readable error:
-<a href=#242 id=242 data-nosnippet>242</a>        </span><span class="macro">assert_eq!</span>(plan.to_string(), expected_plan.to_string());
-<a href=#243 id=243 data-nosnippet>243</a>        <span class="comment">// Just in case there's a bug in the Display impl:
-<a href=#244 id=244 data-nosnippet>244</a>        </span><span class="macro">assert_eq!</span>(plan, expected_plan);
-<a href=#245 id=245 data-nosnippet>245</a>    }
-<a href=#246 id=246 data-nosnippet>246</a>
-<a href=#247 id=247 data-nosnippet>247</a>    <span class="attr">#[tokio::test]
-<a href=#248 id=248 data-nosnippet>248</a>    </span><span class="kw">async fn </span>test_initial_probeplan_some_protocols() {
-<a href=#249 id=249 data-nosnippet>249</a>        <span class="kw">let </span>(_servers, relay_map) = test_utils::relay_map(<span class="number">2</span>).<span class="kw">await</span>;
-<a href=#250 id=250 data-nosnippet>250</a>        <span class="kw">let </span>relay_node_1 = relay_map.nodes().next().unwrap();
-<a href=#251 id=251 data-nosnippet>251</a>        <span class="kw">let </span>relay_node_2 = relay_map.nodes().nth(<span class="number">1</span>).unwrap();
-<a href=#252 id=252 data-nosnippet>252</a>        <span class="kw">let </span>plan = ProbePlan::initial(<span class="kw-2">&amp;</span>relay_map, <span class="kw-2">&amp;</span>BTreeSet::from([Probe::Https]));
-<a href=#253 id=253 data-nosnippet>253</a>
-<a href=#254 id=254 data-nosnippet>254</a>        <span class="kw">let </span>expected_plan: ProbePlan = [
-<a href=#255 id=255 data-nosnippet>255</a>            <span class="macro">probeset!</span> {
-<a href=#256 id=256 data-nosnippet>256</a>                proto: Probe::Https,
-<a href=#257 id=257 data-nosnippet>257</a>                relay: relay_node_1.clone(),
-<a href=#258 id=258 data-nosnippet>258</a>                delays: [Duration::from_millis(<span class="number">200</span>),
-<a href=#259 id=259 data-nosnippet>259</a>                         Duration::from_millis(<span class="number">300</span>),
-<a href=#260 id=260 data-nosnippet>260</a>                         Duration::from_millis(<span class="number">400</span>)],
-<a href=#261 id=261 data-nosnippet>261</a>            },
-<a href=#262 id=262 data-nosnippet>262</a>            <span class="macro">probeset!</span> {
-<a href=#263 id=263 data-nosnippet>263</a>                proto: Probe::Https,
-<a href=#264 id=264 data-nosnippet>264</a>                relay: relay_node_2.clone(),
-<a href=#265 id=265 data-nosnippet>265</a>                delays: [Duration::from_millis(<span class="number">200</span>),
-<a href=#266 id=266 data-nosnippet>266</a>                         Duration::from_millis(<span class="number">300</span>),
-<a href=#267 id=267 data-nosnippet>267</a>                         Duration::from_millis(<span class="number">400</span>)],
-<a href=#268 id=268 data-nosnippet>268</a>            },
-<a href=#269 id=269 data-nosnippet>269</a>        ]
-<a href=#270 id=270 data-nosnippet>270</a>        .into_iter()
-<a href=#271 id=271 data-nosnippet>271</a>        .collect();
-<a href=#272 id=272 data-nosnippet>272</a>
-<a href=#273 id=273 data-nosnippet>273</a>        <span class="macro">println!</span>(<span class="string">"expected:"</span>);
-<a href=#274 id=274 data-nosnippet>274</a>        <span class="macro">println!</span>(<span class="string">"{expected_plan}"</span>);
-<a href=#275 id=275 data-nosnippet>275</a>        <span class="macro">println!</span>(<span class="string">"actual:"</span>);
-<a href=#276 id=276 data-nosnippet>276</a>        <span class="macro">println!</span>(<span class="string">"{plan}"</span>);
-<a href=#277 id=277 data-nosnippet>277</a>        <span class="comment">// The readable error:
-<a href=#278 id=278 data-nosnippet>278</a>        </span><span class="macro">assert_eq!</span>(plan.to_string(), expected_plan.to_string());
-<a href=#279 id=279 data-nosnippet>279</a>        <span class="comment">// Just in case there's a bug in the Display impl:
-<a href=#280 id=280 data-nosnippet>280</a>        </span><span class="macro">assert_eq!</span>(plan, expected_plan);
-<a href=#281 id=281 data-nosnippet>281</a>    }
-<a href=#282 id=282 data-nosnippet>282</a>}</code></pre></div></section></main></body></html>
+<a href=#200 id=200 data-nosnippet>200</a>            Probe::QadIpv4PortVariation,
+<a href=#201 id=201 data-nosnippet>201</a>            Probe::QadIpv6PortVariation,
+<a href=#202 id=202 data-nosnippet>202</a>            Probe::Https
+<a href=#203 id=203 data-nosnippet>203</a>        ])
+<a href=#204 id=204 data-nosnippet>204</a>    }
+<a href=#205 id=205 data-nosnippet>205</a>
+<a href=#206 id=206 data-nosnippet>206</a>    <span class="attr">#[tokio::test]
+<a href=#207 id=207 data-nosnippet>207</a>    </span><span class="kw">async fn </span>test_initial_probeplan() {
+<a href=#208 id=208 data-nosnippet>208</a>        <span class="kw">let </span>(_servers, relay_map) = test_utils::relay_map(<span class="number">2</span>).<span class="kw">await</span>;
+<a href=#209 id=209 data-nosnippet>209</a>        <span class="kw">let </span>relay_node_1 = relay_map.nodes().next().unwrap();
+<a href=#210 id=210 data-nosnippet>210</a>        <span class="kw">let </span>relay_node_2 = relay_map.nodes().nth(<span class="number">1</span>).unwrap();
+<a href=#211 id=211 data-nosnippet>211</a>        <span class="kw">let </span>plan = ProbePlan::initial(<span class="kw-2">&amp;</span>relay_map, <span class="kw-2">&amp;</span>default_protocols());
+<a href=#212 id=212 data-nosnippet>212</a>
+<a href=#213 id=213 data-nosnippet>213</a>        <span class="kw">let </span>expected_plan: ProbePlan = [
+<a href=#214 id=214 data-nosnippet>214</a>            <span class="macro">probeset!</span> {
+<a href=#215 id=215 data-nosnippet>215</a>                proto: Probe::Https,
+<a href=#216 id=216 data-nosnippet>216</a>                relay: relay_node_1.clone(),
+<a href=#217 id=217 data-nosnippet>217</a>                delays: [
+<a href=#218 id=218 data-nosnippet>218</a>                    Duration::from_millis(<span class="number">200</span>),
+<a href=#219 id=219 data-nosnippet>219</a>                    Duration::from_millis(<span class="number">300</span>),
+<a href=#220 id=220 data-nosnippet>220</a>                    Duration::from_millis(<span class="number">400</span>)
+<a href=#221 id=221 data-nosnippet>221</a>                ],
+<a href=#222 id=222 data-nosnippet>222</a>            },
+<a href=#223 id=223 data-nosnippet>223</a>            <span class="macro">probeset!</span> {
+<a href=#224 id=224 data-nosnippet>224</a>                proto: Probe::Https,
+<a href=#225 id=225 data-nosnippet>225</a>                relay: relay_node_2.clone(),
+<a href=#226 id=226 data-nosnippet>226</a>                delays: [
+<a href=#227 id=227 data-nosnippet>227</a>                    Duration::from_millis(<span class="number">200</span>),
+<a href=#228 id=228 data-nosnippet>228</a>                    Duration::from_millis(<span class="number">300</span>),
+<a href=#229 id=229 data-nosnippet>229</a>                    Duration::from_millis(<span class="number">400</span>)
+<a href=#230 id=230 data-nosnippet>230</a>                ],
+<a href=#231 id=231 data-nosnippet>231</a>            },
+<a href=#232 id=232 data-nosnippet>232</a>        ]
+<a href=#233 id=233 data-nosnippet>233</a>        .into_iter()
+<a href=#234 id=234 data-nosnippet>234</a>        .collect();
+<a href=#235 id=235 data-nosnippet>235</a>
+<a href=#236 id=236 data-nosnippet>236</a>        <span class="macro">println!</span>(<span class="string">"expected:"</span>);
+<a href=#237 id=237 data-nosnippet>237</a>        <span class="macro">println!</span>(<span class="string">"{expected_plan}"</span>);
+<a href=#238 id=238 data-nosnippet>238</a>        <span class="macro">println!</span>(<span class="string">"actual:"</span>);
+<a href=#239 id=239 data-nosnippet>239</a>        <span class="macro">println!</span>(<span class="string">"{plan}"</span>);
+<a href=#240 id=240 data-nosnippet>240</a>        <span class="comment">// The readable error:
+<a href=#241 id=241 data-nosnippet>241</a>        </span><span class="macro">assert_eq!</span>(plan.to_string(), expected_plan.to_string());
+<a href=#242 id=242 data-nosnippet>242</a>        <span class="comment">// Just in case there's a bug in the Display impl:
+<a href=#243 id=243 data-nosnippet>243</a>        </span><span class="macro">assert_eq!</span>(plan, expected_plan);
+<a href=#244 id=244 data-nosnippet>244</a>    }
+<a href=#245 id=245 data-nosnippet>245</a>
+<a href=#246 id=246 data-nosnippet>246</a>    <span class="attr">#[tokio::test]
+<a href=#247 id=247 data-nosnippet>247</a>    </span><span class="kw">async fn </span>test_initial_probeplan_some_protocols() {
+<a href=#248 id=248 data-nosnippet>248</a>        <span class="kw">let </span>(_servers, relay_map) = test_utils::relay_map(<span class="number">2</span>).<span class="kw">await</span>;
+<a href=#249 id=249 data-nosnippet>249</a>        <span class="kw">let </span>relay_node_1 = relay_map.nodes().next().unwrap();
+<a href=#250 id=250 data-nosnippet>250</a>        <span class="kw">let </span>relay_node_2 = relay_map.nodes().nth(<span class="number">1</span>).unwrap();
+<a href=#251 id=251 data-nosnippet>251</a>        <span class="kw">let </span>plan = ProbePlan::initial(<span class="kw-2">&amp;</span>relay_map, <span class="kw-2">&amp;</span>BTreeSet::from([Probe::Https]));
+<a href=#252 id=252 data-nosnippet>252</a>
+<a href=#253 id=253 data-nosnippet>253</a>        <span class="kw">let </span>expected_plan: ProbePlan = [
+<a href=#254 id=254 data-nosnippet>254</a>            <span class="macro">probeset!</span> {
+<a href=#255 id=255 data-nosnippet>255</a>                proto: Probe::Https,
+<a href=#256 id=256 data-nosnippet>256</a>                relay: relay_node_1.clone(),
+<a href=#257 id=257 data-nosnippet>257</a>                delays: [Duration::from_millis(<span class="number">200</span>),
+<a href=#258 id=258 data-nosnippet>258</a>                         Duration::from_millis(<span class="number">300</span>),
+<a href=#259 id=259 data-nosnippet>259</a>                         Duration::from_millis(<span class="number">400</span>)],
+<a href=#260 id=260 data-nosnippet>260</a>            },
+<a href=#261 id=261 data-nosnippet>261</a>            <span class="macro">probeset!</span> {
+<a href=#262 id=262 data-nosnippet>262</a>                proto: Probe::Https,
+<a href=#263 id=263 data-nosnippet>263</a>                relay: relay_node_2.clone(),
+<a href=#264 id=264 data-nosnippet>264</a>                delays: [Duration::from_millis(<span class="number">200</span>),
+<a href=#265 id=265 data-nosnippet>265</a>                         Duration::from_millis(<span class="number">300</span>),
+<a href=#266 id=266 data-nosnippet>266</a>                         Duration::from_millis(<span class="number">400</span>)],
+<a href=#267 id=267 data-nosnippet>267</a>            },
+<a href=#268 id=268 data-nosnippet>268</a>        ]
+<a href=#269 id=269 data-nosnippet>269</a>        .into_iter()
+<a href=#270 id=270 data-nosnippet>270</a>        .collect();
+<a href=#271 id=271 data-nosnippet>271</a>
+<a href=#272 id=272 data-nosnippet>272</a>        <span class="macro">println!</span>(<span class="string">"expected:"</span>);
+<a href=#273 id=273 data-nosnippet>273</a>        <span class="macro">println!</span>(<span class="string">"{expected_plan}"</span>);
+<a href=#274 id=274 data-nosnippet>274</a>        <span class="macro">println!</span>(<span class="string">"actual:"</span>);
+<a href=#275 id=275 data-nosnippet>275</a>        <span class="macro">println!</span>(<span class="string">"{plan}"</span>);
+<a href=#276 id=276 data-nosnippet>276</a>        <span class="comment">// The readable error:
+<a href=#277 id=277 data-nosnippet>277</a>        </span><span class="macro">assert_eq!</span>(plan.to_string(), expected_plan.to_string());
+<a href=#278 id=278 data-nosnippet>278</a>        <span class="comment">// Just in case there's a bug in the Display impl:
+<a href=#279 id=279 data-nosnippet>279</a>        </span><span class="macro">assert_eq!</span>(plan, expected_plan);
+<a href=#280 id=280 data-nosnippet>280</a>    }
+<a href=#281 id=281 data-nosnippet>281</a>}</code></pre></div></section></main></body></html>
