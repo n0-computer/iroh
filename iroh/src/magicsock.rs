@@ -439,9 +439,9 @@ impl MagicSock {
         self.node_map.conn_type(node_id)
     }
 
-    /// Returns the socket address which can be used by the QUIC layer to dial this node.
+    /// Returns the socket address which can be used by the QUIC layer to *dial* this node.
     pub(crate) fn get_mapping_addr(&self, node_id: NodeId) -> Option<AllPathsMappedAddr> {
-        self.node_map.get_all_paths_add_for_node(node_id)
+        self.node_map.get_all_paths_addr_for_node(node_id)
     }
 
     pub(crate) fn get_direct_addrs(&self, node_id: NodeId) -> Vec<SocketAddr> {

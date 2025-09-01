@@ -166,7 +166,7 @@ impl NodeMap {
             .receive_relay(relay_url, src)
     }
 
-    pub(super) fn get_all_paths_add_for_node(
+    pub(super) fn get_all_paths_addr_for_node(
         &self,
         node_key: NodeId,
     ) -> Option<AllPathsMappedAddr> {
