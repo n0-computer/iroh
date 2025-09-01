@@ -779,8 +779,27 @@ async fn run_probe_v4(
     // This is done once per probe (not in the continuous observer loop) since hairpinning
     // behavior is a static NAT/firewall property that doesn't change during a session.
     // Testing once is sufficient to determine if the NAT supports hairpinning.
-    let external_addr = SocketAddr::new(addr.ip().to_canonical(), addr.port());
-    let hairpinning_result = test_hairpinning(external_addr, &quic_client, &relay_node).await;
+    let (external_addr, hairpinning_result) = match addr {
+        SocketAddr::V4(addr_v4) => {
+            // Use pure IPv4 address for hairpinning test
+            let external_addr = SocketAddr::V4(addr_v4);
+            let hairpinning_result = test_hairpinning(external_addr, &quic_client, &relay_node).await;
+            (external_addr, hairpinning_result)
+        }
+        SocketAddr::V6(addr_v6) => {
+            // For IPv6, check if it's an IPv4-mapped address and extract the IPv4 part
+            if let Some(ipv4) = addr_v6.ip().to_ipv4_mapped() {
+                let external_addr = SocketAddr::V4(std::net::SocketAddrV4::new(ipv4, addr_v6.port()));
+                let hairpinning_result = test_hairpinning(external_addr, &quic_client, &relay_node).await;
+                (external_addr, hairpinning_result)
+            } else {
+                // Pure IPv6 address
+                let external_addr = SocketAddr::V6(addr_v6);
+                let hairpinning_result = test_hairpinning(external_addr, &quic_client, &relay_node).await;
+                (external_addr, hairpinning_result)
+            }
+        }
+    };
 
     let report = QadProbeReport {
         node: relay_node.url.clone(),
@@ -864,8 +883,27 @@ async fn run_probe_v6(
     // This is done once per probe (not in the continuous observer loop) since hairpinning
     // behavior is a static NAT/firewall property that doesn't change during a session.
     // Testing once is sufficient to determine if the NAT supports hairpinning.
-    let external_addr = SocketAddr::new(addr.ip().to_canonical(), addr.port());
-    let hairpinning_result = test_hairpinning(external_addr, &quic_client, &relay_node).await;
+    let (external_addr, hairpinning_result) = match addr {
+        SocketAddr::V4(addr_v4) => {
+            // Use pure IPv4 address for hairpinning test
+            let external_addr = SocketAddr::V4(addr_v4);
+            let hairpinning_result = test_hairpinning(external_addr, &quic_client, &relay_node).await;
+            (external_addr, hairpinning_result)
+        }
+        SocketAddr::V6(addr_v6) => {
+            // For IPv6, check if it's an IPv4-mapped address and extract the IPv4 part
+            if let Some(ipv4) = addr_v6.ip().to_ipv4_mapped() {
+                let external_addr = SocketAddr::V4(std::net::SocketAddrV4::new(ipv4, addr_v6.port()));
+                let hairpinning_result = test_hairpinning(external_addr, &quic_client, &relay_node).await;
+                (external_addr, hairpinning_result)
+            } else {
+                // Pure IPv6 address
+                let external_addr = SocketAddr::V6(addr_v6);
+                let hairpinning_result = test_hairpinning(external_addr, &quic_client, &relay_node).await;
+                (external_addr, hairpinning_result)
+            }
+        }
+    };
 
     let report = QadProbeReport {
         node: relay_node.url.clone(),
