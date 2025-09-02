@@ -38,7 +38,7 @@ use crate::discovery::pkarr::PkarrResolver;
 use crate::{discovery::dns::DnsDiscovery, dns::DnsResolver};
 use crate::{
     discovery::{
-        ConcurrentDiscovery, Discovery, DiscoveryContext, DiscoveryError, DiscoveryItem,
+        ConcurrentDiscovery, Discovery, DiscoveryContext, DiscoveryError, DiscoveryEvent,
         DiscoverySubscribers, DiscoveryTask, DynIntoDiscovery, IntoDiscovery, IntoDiscoveryError,
         Lagged, UserData, pkarr::PkarrPublisher,
     },
@@ -1109,7 +1109,7 @@ impl Endpoint {
     /// Returns a stream of all remote nodes discovered through the endpoint's discovery services.
     ///
     /// Whenever a node is discovered via the endpoint's discovery service, the corresponding
-    /// [`DiscoveryItem`] is yielded from this stream. This includes nodes discovered actively
+    /// [`DiscoveryEvent`] is yielded from this stream. This includes nodes discovered actively
     /// through [`Discovery::resolve`], which is invoked automatically when calling
     /// [`Endpoint::connect`] for a [`NodeId`] unknown to the endpoint. It also includes
     /// nodes that the endpoint discovers passively from discovery services that implement
@@ -1130,7 +1130,7 @@ impl Endpoint {
     ///
     /// [`MdnsDiscovery`]: crate::discovery::mdns::MdnsDiscovery
     /// [`StaticProvider`]: crate::discovery::static_provider::StaticProvider
-    pub fn discovery_stream(&self) -> impl Stream<Item = Result<DiscoveryItem, Lagged>> + use<> {
+    pub fn discovery_stream(&self) -> impl Stream<Item = Result<DiscoveryEvent, Lagged>> + use<> {
         self.msock.discovery_subscribers().subscribe()
     }
 

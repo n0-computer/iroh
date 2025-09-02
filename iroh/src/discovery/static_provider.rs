@@ -22,7 +22,7 @@ use n0_future::{
     time::SystemTime,
 };
 
-use super::{Discovery, DiscoveryError, DiscoveryItem, NodeData, NodeInfo};
+use super::{Discovery, DiscoveryError, DiscoveryEvent, DiscoveryItem, NodeData, NodeInfo};
 
 /// A static node discovery to manually add node addressing information.
 ///
@@ -67,7 +67,7 @@ use super::{Discovery, DiscoveryError, DiscoveryItem, NodeData, NodeInfo};
 #[derive(Debug, Default, Clone)]
 #[repr(transparent)]
 pub struct StaticProvider {
-    nodes: Arc<RwLock<BTreeMap<NodeId, StoredNodeInfo>>>,
+    nodes: Arc<RwLock<BTreeMap<NodeId, Option<StoredNodeInfo>>>>,
 }
 
 #[derive(Debug)]
@@ -132,7 +132,7 @@ impl StaticProvider {
         let last_updated = SystemTime::now();
         let NodeInfo { node_id, data } = node_info.into();
         let mut guard = self.nodes.write().expect("poisoned");
-        let previous = guard.insert(node_id, StoredNodeInfo { data, last_updated });
+        let previous = guard.insert(node_id, Some(StoredNodeInfo { data, last_updated }));
         previous.map(|x| x.data)
     }
 
@@ -147,16 +147,19 @@ impl StaticProvider {
         let mut guard = self.nodes.write().expect("poisoned");
         match guard.entry(node_id) {
             Entry::Occupied(mut entry) => {
-                let existing = entry.get_mut();
-                existing
-                    .data
-                    .add_direct_addresses(data.direct_addresses().iter().copied());
-                existing.data.set_relay_url(data.relay_url().cloned());
-                existing.data.set_user_data(data.user_data().cloned());
-                existing.last_updated = last_updated;
+                if let Some(existing) = entry.get_mut() {
+                    existing
+                        .data
+                        .add_direct_addresses(data.direct_addresses().iter().copied());
+                    existing.data.set_relay_url(data.relay_url().cloned());
+                    existing.data.set_user_data(data.user_data().cloned());
+                    existing.last_updated = last_updated;
+                } else {
+                    entry.insert(Some(StoredNodeInfo { data, last_updated }));
+                }
             }
             Entry::Vacant(entry) => {
-                entry.insert(StoredNodeInfo { data, last_updated });
+                entry.insert(Some(StoredNodeInfo { data, last_updated }));
             }
         }
     }
@@ -164,7 +167,7 @@ impl StaticProvider {
     /// Returns node addressing information for the given node ID.
     pub fn get_node_info(&self, node_id: NodeId) -> Option<NodeInfo> {
         let guard = self.nodes.read().expect("poisoned");
-        let info = guard.get(&node_id)?;
+        let info = guard.get(&node_id)?.as_ref()?;
         Some(NodeInfo::from_parts(node_id, info.data.clone()))
     }
 
@@ -174,7 +177,7 @@ impl StaticProvider {
     pub fn remove_node_info(&self, node_id: NodeId) -> Option<NodeInfo> {
         let mut guard = self.nodes.write().expect("poisoned");
         let info = guard.remove(&node_id)?;
-        Some(NodeInfo::from_parts(node_id, info.data))
+        Some(NodeInfo::from_parts(node_id, info?.data))
     }
 }
 
@@ -184,11 +187,11 @@ impl Discovery for StaticProvider {
     fn resolve(
         &self,
         node_id: NodeId,
-    ) -> Option<BoxStream<Result<super::DiscoveryItem, DiscoveryError>>> {
+    ) -> Option<BoxStream<Result<super::DiscoveryEvent, DiscoveryError>>> {
         let guard = self.nodes.read().expect("poisoned");
         let info = guard.get(&node_id);
         match info {
-            Some(node_info) => {
+            Some(Some(node_info)) => {
                 let last_updated = node_info
                     .last_updated
                     .duration_since(SystemTime::UNIX_EPOCH)
@@ -199,8 +202,9 @@ impl Discovery for StaticProvider {
                     Self::PROVENANCE,
                     Some(last_updated),
                 );
-                Some(stream::iter(Some(Ok(item))).boxed())
+                Some(stream::iter(Some(Ok(DiscoveryEvent::Discovered(item)))).boxed())
             }
+            Some(None) => Some(stream::iter(Some(Ok(DiscoveryEvent::Expired(node_id)))).boxed()),
             None => None,
         }
     }
