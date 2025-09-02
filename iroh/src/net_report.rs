@@ -792,11 +792,12 @@ async fn run_probe_v4(
         node: relay_node.url.clone(),
         addr: external_addr,
         latency: conn.rtt(),
-        dest_port: relay_addr.port(),
+        dest_port: relay_addr_with_port.port(),
     };
 
     let observer = Watchable::new(None);
     let node = relay_node.url.clone();
+    let dest_port = relay_addr_with_port.port();
     let handle = task::spawn({
         let conn = conn.clone();
         let observer = observer.clone();
@@ -813,7 +814,7 @@ async fn run_probe_v4(
                         node: node.clone(),
                         addr,
                         latency,
-                        dest_port: relay_addr.port(),
+                        dest_port,
                     }))
                     .ok();
                 if receiver.changed().await.is_err() {
@@ -881,11 +882,12 @@ async fn run_probe_v6(
         node: relay_node.url.clone(),
         addr: external_addr,
         latency: conn.rtt(),
-        dest_port: relay_addr.port(),
+        dest_port: relay_addr_with_port.port(),
     };
 
     let observer = Watchable::new(None);
     let node = relay_node.url.clone();
+    let dest_port = relay_addr_with_port.port();
     let handle = task::spawn({
         let observer = observer.clone();
         let conn = conn.clone();
@@ -902,7 +904,7 @@ async fn run_probe_v6(
                         node: node.clone(),
                         addr,
                         latency,
-                        dest_port: relay_addr.port(),
+                        dest_port,
                     }))
                     .ok();
                 if receiver.changed().await.is_err() {
