@@ -17,8 +17,16 @@ assignees: ''
 <!-- A clear and concise description of what you expected to happen. -->
 
 **Iroh**
-- Version: [e.g. 0.90 and/or commit hash]
-- Endpoint configuration: [e.g. using `.n0_discovery()`]
+
+Version:<!-- (please complete the following information) -->
+
+```
+[paste output of `cargo tree -i -p iroh` here]
+```
+
+Endpoint configuration:<!-- (please complete the following information) -->
+
+[e.g. are you using `.n0_discovery()`, a custom relay map, etc]
 
 **Platform(s)**
 Desktop<!-- (please complete the following information) -->:
