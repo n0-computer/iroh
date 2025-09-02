@@ -18,11 +18,16 @@ assignees: ''
 
 **Iroh**
 
-Version:<!-- (please complete the following information) -->
+Version:
+
+<!-- If possible use cargo tree:
 
 ```
-[paste output of `cargo tree -i -p iroh` here]
+[paste output from `cargo tree -i -e features -p iroh` here]
 ```
+
+Otherwise, please list the iroh version and/or commit hash.
+-->
 
 Endpoint configuration:<!-- (please complete the following information) -->
 
