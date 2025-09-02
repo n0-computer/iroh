@@ -775,512 +775,441 @@
 <a href=#775 id=775 data-nosnippet>775</a>        </span>.context(<span class="string">"receiver dropped"</span>)<span class="question-mark">?
 <a href=#776 id=776 data-nosnippet>776</a>        </span>.expect(<span class="string">"known"</span>);
 <a href=#777 id=777 data-nosnippet>777</a>
-<a href=#778 id=778 data-nosnippet>778</a>    <span class="comment">// Test hairpinning by attempting to connect to our discovered external address.
-<a href=#779 id=779 data-nosnippet>779</a>    // This is done once per probe (not in the continuous observer loop) since hairpinning
-<a href=#780 id=780 data-nosnippet>780</a>    // behavior is a static NAT/firewall property that doesn't change during a session.
-<a href=#781 id=781 data-nosnippet>781</a>    // Testing once is sufficient to determine if the NAT supports hairpinning.
-<a href=#782 id=782 data-nosnippet>782</a>    </span><span class="kw">let </span>(external_addr, hairpinning_result) = <span class="kw">match </span>addr {
-<a href=#783 id=783 data-nosnippet>783</a>        SocketAddr::V4(addr_v4) =&gt; {
-<a href=#784 id=784 data-nosnippet>784</a>            <span class="comment">// Use pure IPv4 address for hairpinning test
-<a href=#785 id=785 data-nosnippet>785</a>            </span><span class="kw">let </span>external_addr = SocketAddr::V4(addr_v4);
-<a href=#786 id=786 data-nosnippet>786</a>            <span class="kw">let </span>hairpinning_result = test_hairpinning(external_addr, <span class="kw-2">&amp;</span>quic_client, <span class="kw-2">&amp;</span>relay_node).<span class="kw">await</span>;
-<a href=#787 id=787 data-nosnippet>787</a>            (external_addr, hairpinning_result)
+<a href=#778 id=778 data-nosnippet>778</a>    <span class="kw">let </span>external_addr = <span class="kw">match </span>addr {
+<a href=#779 id=779 data-nosnippet>779</a>        SocketAddr::V4(addr_v4) =&gt; SocketAddr::V4(addr_v4),
+<a href=#780 id=780 data-nosnippet>780</a>        SocketAddr::V6(addr_v6) =&gt; {
+<a href=#781 id=781 data-nosnippet>781</a>            <span class="comment">// For IPv6, check if it's an IPv4-mapped address and extract the IPv4 part
+<a href=#782 id=782 data-nosnippet>782</a>            </span><span class="kw">if let </span><span class="prelude-val">Some</span>(ipv4) = addr_v6.ip().to_ipv4_mapped() {
+<a href=#783 id=783 data-nosnippet>783</a>                SocketAddr::V4(std::net::SocketAddrV4::new(ipv4, addr_v6.port()))
+<a href=#784 id=784 data-nosnippet>784</a>            } <span class="kw">else </span>{
+<a href=#785 id=785 data-nosnippet>785</a>                <span class="comment">// Pure IPv6 address
+<a href=#786 id=786 data-nosnippet>786</a>                </span>SocketAddr::V6(addr_v6)
+<a href=#787 id=787 data-nosnippet>787</a>            }
 <a href=#788 id=788 data-nosnippet>788</a>        }
-<a href=#789 id=789 data-nosnippet>789</a>        SocketAddr::V6(addr_v6) =&gt; {
-<a href=#790 id=790 data-nosnippet>790</a>            <span class="comment">// For IPv6, check if it's an IPv4-mapped address and extract the IPv4 part
-<a href=#791 id=791 data-nosnippet>791</a>            </span><span class="kw">if let </span><span class="prelude-val">Some</span>(ipv4) = addr_v6.ip().to_ipv4_mapped() {
-<a href=#792 id=792 data-nosnippet>792</a>                <span class="kw">let </span>external_addr = SocketAddr::V4(std::net::SocketAddrV4::new(ipv4, addr_v6.port()));
-<a href=#793 id=793 data-nosnippet>793</a>                <span class="kw">let </span>hairpinning_result = test_hairpinning(external_addr, <span class="kw-2">&amp;</span>quic_client, <span class="kw-2">&amp;</span>relay_node).<span class="kw">await</span>;
-<a href=#794 id=794 data-nosnippet>794</a>                (external_addr, hairpinning_result)
-<a href=#795 id=795 data-nosnippet>795</a>            } <span class="kw">else </span>{
-<a href=#796 id=796 data-nosnippet>796</a>                <span class="comment">// Pure IPv6 address
-<a href=#797 id=797 data-nosnippet>797</a>                </span><span class="kw">let </span>external_addr = SocketAddr::V6(addr_v6);
-<a href=#798 id=798 data-nosnippet>798</a>                <span class="kw">let </span>hairpinning_result = test_hairpinning(external_addr, <span class="kw-2">&amp;</span>quic_client, <span class="kw-2">&amp;</span>relay_node).<span class="kw">await</span>;
-<a href=#799 id=799 data-nosnippet>799</a>                (external_addr, hairpinning_result)
-<a href=#800 id=800 data-nosnippet>800</a>            }
-<a href=#801 id=801 data-nosnippet>801</a>        }
-<a href=#802 id=802 data-nosnippet>802</a>    };
-<a href=#803 id=803 data-nosnippet>803</a>
-<a href=#804 id=804 data-nosnippet>804</a>    <span class="kw">let </span>report = QadProbeReport {
-<a href=#805 id=805 data-nosnippet>805</a>        node: relay_node.url.clone(),
-<a href=#806 id=806 data-nosnippet>806</a>        addr: external_addr,
-<a href=#807 id=807 data-nosnippet>807</a>        latency: conn.rtt(),
-<a href=#808 id=808 data-nosnippet>808</a>        dest_port: relay_addr.port(),
-<a href=#809 id=809 data-nosnippet>809</a>        hairpinning_works: <span class="prelude-val">Some</span>(hairpinning_result),
-<a href=#810 id=810 data-nosnippet>810</a>    };
-<a href=#811 id=811 data-nosnippet>811</a>
-<a href=#812 id=812 data-nosnippet>812</a>    <span class="kw">let </span>observer = Watchable::new(<span class="prelude-val">None</span>);
-<a href=#813 id=813 data-nosnippet>813</a>    <span class="kw">let </span>node = relay_node.url.clone();
-<a href=#814 id=814 data-nosnippet>814</a>    <span class="kw">let </span>handle = task::spawn({
-<a href=#815 id=815 data-nosnippet>815</a>        <span class="kw">let </span>conn = conn.clone();
-<a href=#816 id=816 data-nosnippet>816</a>        <span class="kw">let </span>observer = observer.clone();
-<a href=#817 id=817 data-nosnippet>817</a>        <span class="kw">async move </span>{
-<a href=#818 id=818 data-nosnippet>818</a>            <span class="kw">loop </span>{
-<a href=#819 id=819 data-nosnippet>819</a>                <span class="kw">let </span>val = <span class="kw-2">*</span>receiver.borrow();
-<a href=#820 id=820 data-nosnippet>820</a>                <span class="comment">// if we've sent to an ipv4 address, but received an observed address
-<a href=#821 id=821 data-nosnippet>821</a>                // that is ivp6 then the address is an [IPv4-Mapped IPv6 Addresses](https://doc.rust-lang.org/beta/std/net/struct.Ipv6Addr.html#ipv4-mapped-ipv6-addresses)
-<a href=#822 id=822 data-nosnippet>822</a>                </span><span class="kw">let </span>val = val.map(|val| SocketAddr::new(val.ip().to_canonical(), val.port()));
-<a href=#823 id=823 data-nosnippet>823</a>                <span class="kw">let </span>latency = conn.rtt();
-<a href=#824 id=824 data-nosnippet>824</a>                <span class="macro">trace!</span>(<span class="question-mark">?</span>val, <span class="question-mark">?</span>relay_addr, <span class="question-mark">?</span>latency, <span class="string">"got addr V4"</span>);
-<a href=#825 id=825 data-nosnippet>825</a>                observer
-<a href=#826 id=826 data-nosnippet>826</a>                    .set(val.map(|addr| QadProbeReport {
-<a href=#827 id=827 data-nosnippet>827</a>                        node: node.clone(),
-<a href=#828 id=828 data-nosnippet>828</a>                        addr,
-<a href=#829 id=829 data-nosnippet>829</a>                        latency,
-<a href=#830 id=830 data-nosnippet>830</a>                        dest_port: relay_addr.port(),
-<a href=#831 id=831 data-nosnippet>831</a>                        hairpinning_works: <span class="prelude-val">None</span>, <span class="comment">// TODO: Implement hairpinning test
-<a href=#832 id=832 data-nosnippet>832</a>                    </span>}))
-<a href=#833 id=833 data-nosnippet>833</a>                    .ok();
-<a href=#834 id=834 data-nosnippet>834</a>                <span class="kw">if </span>receiver.changed().<span class="kw">await</span>.is_err() {
-<a href=#835 id=835 data-nosnippet>835</a>                    <span class="kw">break</span>;
-<a href=#836 id=836 data-nosnippet>836</a>                }
-<a href=#837 id=837 data-nosnippet>837</a>            }
-<a href=#838 id=838 data-nosnippet>838</a>        }
-<a href=#839 id=839 data-nosnippet>839</a>    });
-<a href=#840 id=840 data-nosnippet>840</a>    <span class="kw">let </span>handle = AbortOnDropHandle::new(handle);
-<a href=#841 id=841 data-nosnippet>841</a>
-<a href=#842 id=842 data-nosnippet>842</a>    <span class="prelude-val">Ok</span>((
-<a href=#843 id=843 data-nosnippet>843</a>        report,
-<a href=#844 id=844 data-nosnippet>844</a>        QadConn {
-<a href=#845 id=845 data-nosnippet>845</a>            conn,
-<a href=#846 id=846 data-nosnippet>846</a>            observer,
-<a href=#847 id=847 data-nosnippet>847</a>            _handle: handle,
-<a href=#848 id=848 data-nosnippet>848</a>        },
-<a href=#849 id=849 data-nosnippet>849</a>    ))
-<a href=#850 id=850 data-nosnippet>850</a>}
-<a href=#851 id=851 data-nosnippet>851</a>
-<a href=#852 id=852 data-nosnippet>852</a><span class="attr">#[cfg(not(wasm_browser))]
-<a href=#853 id=853 data-nosnippet>853</a></span><span class="kw">async fn </span>run_probe_v6(
-<a href=#854 id=854 data-nosnippet>854</a>    ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddresses&gt;,
-<a href=#855 id=855 data-nosnippet>855</a>    relay_node: Arc&lt;RelayNode&gt;,
-<a href=#856 id=856 data-nosnippet>856</a>    quic_client: QuicClient,
-<a href=#857 id=857 data-nosnippet>857</a>    dns_resolver: DnsResolver,
-<a href=#858 id=858 data-nosnippet>858</a>    port_override: <span class="prelude-ty">Option</span>&lt;u16&gt;,
-<a href=#859 id=859 data-nosnippet>859</a>) -&gt; n0_snafu::Result&lt;(QadProbeReport, QadConn)&gt; {
-<a href=#860 id=860 data-nosnippet>860</a>    <span class="kw">use </span>n0_snafu::ResultExt;
-<a href=#861 id=861 data-nosnippet>861</a>    <span class="kw">let </span>relay_addr_orig = reportgen::get_relay_addr_ipv6(<span class="kw-2">&amp;</span>dns_resolver, <span class="kw-2">&amp;</span>relay_node).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#862 id=862 data-nosnippet>862</a>    <span class="kw">let </span>relay_addr_with_port = <span class="kw">if let </span><span class="prelude-val">Some</span>(port) = port_override {
-<a href=#863 id=863 data-nosnippet>863</a>        std::net::SocketAddrV6::new(<span class="kw-2">*</span>relay_addr_orig.ip(), port, <span class="number">0</span>, <span class="number">0</span>)
-<a href=#864 id=864 data-nosnippet>864</a>    } <span class="kw">else </span>{
-<a href=#865 id=865 data-nosnippet>865</a>        relay_addr_orig
-<a href=#866 id=866 data-nosnippet>866</a>    };
-<a href=#867 id=867 data-nosnippet>867</a>    <span class="kw">let </span>relay_addr =
-<a href=#868 id=868 data-nosnippet>868</a>        reportgen::maybe_to_mapped_addr(ip_mapped_addrs.as_ref(), relay_addr_with_port.into());
-<a href=#869 id=869 data-nosnippet>869</a>
-<a href=#870 id=870 data-nosnippet>870</a>    <span class="macro">debug!</span>(<span class="question-mark">?</span>relay_addr_orig, <span class="question-mark">?</span>relay_addr, <span class="string">"relay addr v6"</span>);
-<a href=#871 id=871 data-nosnippet>871</a>    <span class="kw">let </span>host = relay_node.url.host_str().context(<span class="string">"missing host url"</span>)<span class="question-mark">?</span>;
-<a href=#872 id=872 data-nosnippet>872</a>    <span class="kw">let </span>conn = quic_client.create_conn(relay_addr, host).<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#873 id=873 data-nosnippet>873</a>    <span class="kw">let </span><span class="kw-2">mut </span>receiver = conn.observed_external_addr();
-<a href=#874 id=874 data-nosnippet>874</a>
-<a href=#875 id=875 data-nosnippet>875</a>    <span class="comment">// wait for an addr
-<a href=#876 id=876 data-nosnippet>876</a>    </span><span class="kw">let </span>addr = receiver
-<a href=#877 id=877 data-nosnippet>877</a>        .wait_for(|addr| addr.is_some())
-<a href=#878 id=878 data-nosnippet>878</a>        .<span class="kw">await
-<a href=#879 id=879 data-nosnippet>879</a>        </span>.context(<span class="string">"receiver dropped"</span>)<span class="question-mark">?
-<a href=#880 id=880 data-nosnippet>880</a>        </span>.expect(<span class="string">"known"</span>);
-<a href=#881 id=881 data-nosnippet>881</a>
-<a href=#882 id=882 data-nosnippet>882</a>    <span class="comment">// Test hairpinning by attempting to connect to our discovered external address.
-<a href=#883 id=883 data-nosnippet>883</a>    // This is done once per probe (not in the continuous observer loop) since hairpinning
-<a href=#884 id=884 data-nosnippet>884</a>    // behavior is a static NAT/firewall property that doesn't change during a session.
-<a href=#885 id=885 data-nosnippet>885</a>    // Testing once is sufficient to determine if the NAT supports hairpinning.
-<a href=#886 id=886 data-nosnippet>886</a>    </span><span class="kw">let </span>(external_addr, hairpinning_result) = <span class="kw">match </span>addr {
-<a href=#887 id=887 data-nosnippet>887</a>        SocketAddr::V4(addr_v4) =&gt; {
-<a href=#888 id=888 data-nosnippet>888</a>            <span class="comment">// Use pure IPv4 address for hairpinning test
-<a href=#889 id=889 data-nosnippet>889</a>            </span><span class="kw">let </span>external_addr = SocketAddr::V4(addr_v4);
-<a href=#890 id=890 data-nosnippet>890</a>            <span class="kw">let </span>hairpinning_result = test_hairpinning(external_addr, <span class="kw-2">&amp;</span>quic_client, <span class="kw-2">&amp;</span>relay_node).<span class="kw">await</span>;
-<a href=#891 id=891 data-nosnippet>891</a>            (external_addr, hairpinning_result)
-<a href=#892 id=892 data-nosnippet>892</a>        }
-<a href=#893 id=893 data-nosnippet>893</a>        SocketAddr::V6(addr_v6) =&gt; {
-<a href=#894 id=894 data-nosnippet>894</a>            <span class="comment">// For IPv6, check if it's an IPv4-mapped address and extract the IPv4 part
-<a href=#895 id=895 data-nosnippet>895</a>            </span><span class="kw">if let </span><span class="prelude-val">Some</span>(ipv4) = addr_v6.ip().to_ipv4_mapped() {
-<a href=#896 id=896 data-nosnippet>896</a>                <span class="kw">let </span>external_addr = SocketAddr::V4(std::net::SocketAddrV4::new(ipv4, addr_v6.port()));
-<a href=#897 id=897 data-nosnippet>897</a>                <span class="kw">let </span>hairpinning_result = test_hairpinning(external_addr, <span class="kw-2">&amp;</span>quic_client, <span class="kw-2">&amp;</span>relay_node).<span class="kw">await</span>;
-<a href=#898 id=898 data-nosnippet>898</a>                (external_addr, hairpinning_result)
-<a href=#899 id=899 data-nosnippet>899</a>            } <span class="kw">else </span>{
-<a href=#900 id=900 data-nosnippet>900</a>                <span class="comment">// Pure IPv6 address
-<a href=#901 id=901 data-nosnippet>901</a>                </span><span class="kw">let </span>external_addr = SocketAddr::V6(addr_v6);
-<a href=#902 id=902 data-nosnippet>902</a>                <span class="kw">let </span>hairpinning_result = test_hairpinning(external_addr, <span class="kw-2">&amp;</span>quic_client, <span class="kw-2">&amp;</span>relay_node).<span class="kw">await</span>;
-<a href=#903 id=903 data-nosnippet>903</a>                (external_addr, hairpinning_result)
-<a href=#904 id=904 data-nosnippet>904</a>            }
-<a href=#905 id=905 data-nosnippet>905</a>        }
-<a href=#906 id=906 data-nosnippet>906</a>    };
-<a href=#907 id=907 data-nosnippet>907</a>
-<a href=#908 id=908 data-nosnippet>908</a>    <span class="kw">let </span>report = QadProbeReport {
-<a href=#909 id=909 data-nosnippet>909</a>        node: relay_node.url.clone(),
-<a href=#910 id=910 data-nosnippet>910</a>        addr: external_addr,
-<a href=#911 id=911 data-nosnippet>911</a>        latency: conn.rtt(),
-<a href=#912 id=912 data-nosnippet>912</a>        dest_port: relay_addr.port(),
-<a href=#913 id=913 data-nosnippet>913</a>        hairpinning_works: <span class="prelude-val">Some</span>(hairpinning_result),
-<a href=#914 id=914 data-nosnippet>914</a>    };
+<a href=#789 id=789 data-nosnippet>789</a>    };
+<a href=#790 id=790 data-nosnippet>790</a>
+<a href=#791 id=791 data-nosnippet>791</a>    <span class="kw">let </span>report = QadProbeReport {
+<a href=#792 id=792 data-nosnippet>792</a>        node: relay_node.url.clone(),
+<a href=#793 id=793 data-nosnippet>793</a>        addr: external_addr,
+<a href=#794 id=794 data-nosnippet>794</a>        latency: conn.rtt(),
+<a href=#795 id=795 data-nosnippet>795</a>        dest_port: relay_addr.port(),
+<a href=#796 id=796 data-nosnippet>796</a>    };
+<a href=#797 id=797 data-nosnippet>797</a>
+<a href=#798 id=798 data-nosnippet>798</a>    <span class="kw">let </span>observer = Watchable::new(<span class="prelude-val">None</span>);
+<a href=#799 id=799 data-nosnippet>799</a>    <span class="kw">let </span>node = relay_node.url.clone();
+<a href=#800 id=800 data-nosnippet>800</a>    <span class="kw">let </span>handle = task::spawn({
+<a href=#801 id=801 data-nosnippet>801</a>        <span class="kw">let </span>conn = conn.clone();
+<a href=#802 id=802 data-nosnippet>802</a>        <span class="kw">let </span>observer = observer.clone();
+<a href=#803 id=803 data-nosnippet>803</a>        <span class="kw">async move </span>{
+<a href=#804 id=804 data-nosnippet>804</a>            <span class="kw">loop </span>{
+<a href=#805 id=805 data-nosnippet>805</a>                <span class="kw">let </span>val = <span class="kw-2">*</span>receiver.borrow();
+<a href=#806 id=806 data-nosnippet>806</a>                <span class="comment">// if we've sent to an ipv4 address, but received an observed address
+<a href=#807 id=807 data-nosnippet>807</a>                // that is ivp6 then the address is an [IPv4-Mapped IPv6 Addresses](https://doc.rust-lang.org/beta/std/net/struct.Ipv6Addr.html#ipv4-mapped-ipv6-addresses)
+<a href=#808 id=808 data-nosnippet>808</a>                </span><span class="kw">let </span>val = val.map(|val| SocketAddr::new(val.ip().to_canonical(), val.port()));
+<a href=#809 id=809 data-nosnippet>809</a>                <span class="kw">let </span>latency = conn.rtt();
+<a href=#810 id=810 data-nosnippet>810</a>                <span class="macro">trace!</span>(<span class="question-mark">?</span>val, <span class="question-mark">?</span>relay_addr, <span class="question-mark">?</span>latency, <span class="string">"got addr V4"</span>);
+<a href=#811 id=811 data-nosnippet>811</a>                observer
+<a href=#812 id=812 data-nosnippet>812</a>                    .set(val.map(|addr| QadProbeReport {
+<a href=#813 id=813 data-nosnippet>813</a>                        node: node.clone(),
+<a href=#814 id=814 data-nosnippet>814</a>                        addr,
+<a href=#815 id=815 data-nosnippet>815</a>                        latency,
+<a href=#816 id=816 data-nosnippet>816</a>                        dest_port: relay_addr.port(),
+<a href=#817 id=817 data-nosnippet>817</a>                    }))
+<a href=#818 id=818 data-nosnippet>818</a>                    .ok();
+<a href=#819 id=819 data-nosnippet>819</a>                <span class="kw">if </span>receiver.changed().<span class="kw">await</span>.is_err() {
+<a href=#820 id=820 data-nosnippet>820</a>                    <span class="kw">break</span>;
+<a href=#821 id=821 data-nosnippet>821</a>                }
+<a href=#822 id=822 data-nosnippet>822</a>            }
+<a href=#823 id=823 data-nosnippet>823</a>        }
+<a href=#824 id=824 data-nosnippet>824</a>    });
+<a href=#825 id=825 data-nosnippet>825</a>    <span class="kw">let </span>handle = AbortOnDropHandle::new(handle);
+<a href=#826 id=826 data-nosnippet>826</a>
+<a href=#827 id=827 data-nosnippet>827</a>    <span class="prelude-val">Ok</span>((
+<a href=#828 id=828 data-nosnippet>828</a>        report,
+<a href=#829 id=829 data-nosnippet>829</a>        QadConn {
+<a href=#830 id=830 data-nosnippet>830</a>            conn,
+<a href=#831 id=831 data-nosnippet>831</a>            observer,
+<a href=#832 id=832 data-nosnippet>832</a>            _handle: handle,
+<a href=#833 id=833 data-nosnippet>833</a>        },
+<a href=#834 id=834 data-nosnippet>834</a>    ))
+<a href=#835 id=835 data-nosnippet>835</a>}
+<a href=#836 id=836 data-nosnippet>836</a>
+<a href=#837 id=837 data-nosnippet>837</a><span class="attr">#[cfg(not(wasm_browser))]
+<a href=#838 id=838 data-nosnippet>838</a></span><span class="kw">async fn </span>run_probe_v6(
+<a href=#839 id=839 data-nosnippet>839</a>    ip_mapped_addrs: <span class="prelude-ty">Option</span>&lt;IpMappedAddresses&gt;,
+<a href=#840 id=840 data-nosnippet>840</a>    relay_node: Arc&lt;RelayNode&gt;,
+<a href=#841 id=841 data-nosnippet>841</a>    quic_client: QuicClient,
+<a href=#842 id=842 data-nosnippet>842</a>    dns_resolver: DnsResolver,
+<a href=#843 id=843 data-nosnippet>843</a>    port_override: <span class="prelude-ty">Option</span>&lt;u16&gt;,
+<a href=#844 id=844 data-nosnippet>844</a>) -&gt; n0_snafu::Result&lt;(QadProbeReport, QadConn)&gt; {
+<a href=#845 id=845 data-nosnippet>845</a>    <span class="kw">use </span>n0_snafu::ResultExt;
+<a href=#846 id=846 data-nosnippet>846</a>    <span class="kw">let </span>relay_addr_orig = reportgen::get_relay_addr_ipv6(<span class="kw-2">&amp;</span>dns_resolver, <span class="kw-2">&amp;</span>relay_node).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#847 id=847 data-nosnippet>847</a>    <span class="kw">let </span>relay_addr_with_port = <span class="kw">if let </span><span class="prelude-val">Some</span>(port) = port_override {
+<a href=#848 id=848 data-nosnippet>848</a>        std::net::SocketAddrV6::new(<span class="kw-2">*</span>relay_addr_orig.ip(), port, <span class="number">0</span>, <span class="number">0</span>)
+<a href=#849 id=849 data-nosnippet>849</a>    } <span class="kw">else </span>{
+<a href=#850 id=850 data-nosnippet>850</a>        relay_addr_orig
+<a href=#851 id=851 data-nosnippet>851</a>    };
+<a href=#852 id=852 data-nosnippet>852</a>    <span class="kw">let </span>relay_addr =
+<a href=#853 id=853 data-nosnippet>853</a>        reportgen::maybe_to_mapped_addr(ip_mapped_addrs.as_ref(), relay_addr_with_port.into());
+<a href=#854 id=854 data-nosnippet>854</a>
+<a href=#855 id=855 data-nosnippet>855</a>    <span class="macro">debug!</span>(<span class="question-mark">?</span>relay_addr_orig, <span class="question-mark">?</span>relay_addr, <span class="string">"relay addr v6"</span>);
+<a href=#856 id=856 data-nosnippet>856</a>    <span class="kw">let </span>host = relay_node.url.host_str().context(<span class="string">"missing host url"</span>)<span class="question-mark">?</span>;
+<a href=#857 id=857 data-nosnippet>857</a>    <span class="kw">let </span>conn = quic_client.create_conn(relay_addr, host).<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#858 id=858 data-nosnippet>858</a>    <span class="kw">let </span><span class="kw-2">mut </span>receiver = conn.observed_external_addr();
+<a href=#859 id=859 data-nosnippet>859</a>
+<a href=#860 id=860 data-nosnippet>860</a>    <span class="comment">// wait for an addr
+<a href=#861 id=861 data-nosnippet>861</a>    </span><span class="kw">let </span>addr = receiver
+<a href=#862 id=862 data-nosnippet>862</a>        .wait_for(|addr| addr.is_some())
+<a href=#863 id=863 data-nosnippet>863</a>        .<span class="kw">await
+<a href=#864 id=864 data-nosnippet>864</a>        </span>.context(<span class="string">"receiver dropped"</span>)<span class="question-mark">?
+<a href=#865 id=865 data-nosnippet>865</a>        </span>.expect(<span class="string">"known"</span>);
+<a href=#866 id=866 data-nosnippet>866</a>
+<a href=#867 id=867 data-nosnippet>867</a>    <span class="kw">let </span>external_addr = <span class="kw">match </span>addr {
+<a href=#868 id=868 data-nosnippet>868</a>        SocketAddr::V4(addr_v4) =&gt; SocketAddr::V4(addr_v4),
+<a href=#869 id=869 data-nosnippet>869</a>        SocketAddr::V6(addr_v6) =&gt; {
+<a href=#870 id=870 data-nosnippet>870</a>            <span class="comment">// For IPv6, check if it's an IPv4-mapped address and extract the IPv4 part
+<a href=#871 id=871 data-nosnippet>871</a>            </span><span class="kw">if let </span><span class="prelude-val">Some</span>(ipv4) = addr_v6.ip().to_ipv4_mapped() {
+<a href=#872 id=872 data-nosnippet>872</a>                SocketAddr::V4(std::net::SocketAddrV4::new(ipv4, addr_v6.port()))
+<a href=#873 id=873 data-nosnippet>873</a>            } <span class="kw">else </span>{
+<a href=#874 id=874 data-nosnippet>874</a>                <span class="comment">// Pure IPv6 address
+<a href=#875 id=875 data-nosnippet>875</a>                </span>SocketAddr::V6(addr_v6)
+<a href=#876 id=876 data-nosnippet>876</a>            }
+<a href=#877 id=877 data-nosnippet>877</a>        }
+<a href=#878 id=878 data-nosnippet>878</a>    };
+<a href=#879 id=879 data-nosnippet>879</a>
+<a href=#880 id=880 data-nosnippet>880</a>    <span class="kw">let </span>report = QadProbeReport {
+<a href=#881 id=881 data-nosnippet>881</a>        node: relay_node.url.clone(),
+<a href=#882 id=882 data-nosnippet>882</a>        addr: external_addr,
+<a href=#883 id=883 data-nosnippet>883</a>        latency: conn.rtt(),
+<a href=#884 id=884 data-nosnippet>884</a>        dest_port: relay_addr.port(),
+<a href=#885 id=885 data-nosnippet>885</a>    };
+<a href=#886 id=886 data-nosnippet>886</a>
+<a href=#887 id=887 data-nosnippet>887</a>    <span class="kw">let </span>observer = Watchable::new(<span class="prelude-val">None</span>);
+<a href=#888 id=888 data-nosnippet>888</a>    <span class="kw">let </span>node = relay_node.url.clone();
+<a href=#889 id=889 data-nosnippet>889</a>    <span class="kw">let </span>handle = task::spawn({
+<a href=#890 id=890 data-nosnippet>890</a>        <span class="kw">let </span>observer = observer.clone();
+<a href=#891 id=891 data-nosnippet>891</a>        <span class="kw">let </span>conn = conn.clone();
+<a href=#892 id=892 data-nosnippet>892</a>        <span class="kw">async move </span>{
+<a href=#893 id=893 data-nosnippet>893</a>            <span class="kw">loop </span>{
+<a href=#894 id=894 data-nosnippet>894</a>                <span class="kw">let </span>val = <span class="kw-2">*</span>receiver.borrow();
+<a href=#895 id=895 data-nosnippet>895</a>                <span class="comment">// if we've sent to an ipv4 address, but received an observed address
+<a href=#896 id=896 data-nosnippet>896</a>                // that is ivp6 then the address is an [IPv4-Mapped IPv6 Addresses](https://doc.rust-lang.org/beta/std/net/struct.Ipv6Addr.html#ipv4-mapped-ipv6-addresses)
+<a href=#897 id=897 data-nosnippet>897</a>                </span><span class="kw">let </span>val = val.map(|val| SocketAddr::new(val.ip().to_canonical(), val.port()));
+<a href=#898 id=898 data-nosnippet>898</a>                <span class="kw">let </span>latency = conn.rtt();
+<a href=#899 id=899 data-nosnippet>899</a>                <span class="macro">trace!</span>(<span class="question-mark">?</span>val, <span class="question-mark">?</span>relay_addr, <span class="question-mark">?</span>latency, <span class="string">"got addr V6"</span>);
+<a href=#900 id=900 data-nosnippet>900</a>                observer
+<a href=#901 id=901 data-nosnippet>901</a>                    .set(val.map(|addr| QadProbeReport {
+<a href=#902 id=902 data-nosnippet>902</a>                        node: node.clone(),
+<a href=#903 id=903 data-nosnippet>903</a>                        addr,
+<a href=#904 id=904 data-nosnippet>904</a>                        latency,
+<a href=#905 id=905 data-nosnippet>905</a>                        dest_port: relay_addr.port(),
+<a href=#906 id=906 data-nosnippet>906</a>                    }))
+<a href=#907 id=907 data-nosnippet>907</a>                    .ok();
+<a href=#908 id=908 data-nosnippet>908</a>                <span class="kw">if </span>receiver.changed().<span class="kw">await</span>.is_err() {
+<a href=#909 id=909 data-nosnippet>909</a>                    <span class="kw">break</span>;
+<a href=#910 id=910 data-nosnippet>910</a>                }
+<a href=#911 id=911 data-nosnippet>911</a>            }
+<a href=#912 id=912 data-nosnippet>912</a>        }
+<a href=#913 id=913 data-nosnippet>913</a>    });
+<a href=#914 id=914 data-nosnippet>914</a>    <span class="kw">let </span>handle = AbortOnDropHandle::new(handle);
 <a href=#915 id=915 data-nosnippet>915</a>
-<a href=#916 id=916 data-nosnippet>916</a>    <span class="kw">let </span>observer = Watchable::new(<span class="prelude-val">None</span>);
-<a href=#917 id=917 data-nosnippet>917</a>    <span class="kw">let </span>node = relay_node.url.clone();
-<a href=#918 id=918 data-nosnippet>918</a>    <span class="kw">let </span>handle = task::spawn({
-<a href=#919 id=919 data-nosnippet>919</a>        <span class="kw">let </span>observer = observer.clone();
-<a href=#920 id=920 data-nosnippet>920</a>        <span class="kw">let </span>conn = conn.clone();
-<a href=#921 id=921 data-nosnippet>921</a>        <span class="kw">async move </span>{
-<a href=#922 id=922 data-nosnippet>922</a>            <span class="kw">loop </span>{
-<a href=#923 id=923 data-nosnippet>923</a>                <span class="kw">let </span>val = <span class="kw-2">*</span>receiver.borrow();
-<a href=#924 id=924 data-nosnippet>924</a>                <span class="comment">// if we've sent to an ipv4 address, but received an observed address
-<a href=#925 id=925 data-nosnippet>925</a>                // that is ivp6 then the address is an [IPv4-Mapped IPv6 Addresses](https://doc.rust-lang.org/beta/std/net/struct.Ipv6Addr.html#ipv4-mapped-ipv6-addresses)
-<a href=#926 id=926 data-nosnippet>926</a>                </span><span class="kw">let </span>val = val.map(|val| SocketAddr::new(val.ip().to_canonical(), val.port()));
-<a href=#927 id=927 data-nosnippet>927</a>                <span class="kw">let </span>latency = conn.rtt();
-<a href=#928 id=928 data-nosnippet>928</a>                <span class="macro">trace!</span>(<span class="question-mark">?</span>val, <span class="question-mark">?</span>relay_addr, <span class="question-mark">?</span>latency, <span class="string">"got addr V6"</span>);
-<a href=#929 id=929 data-nosnippet>929</a>                observer
-<a href=#930 id=930 data-nosnippet>930</a>                    .set(val.map(|addr| QadProbeReport {
-<a href=#931 id=931 data-nosnippet>931</a>                        node: node.clone(),
-<a href=#932 id=932 data-nosnippet>932</a>                        addr,
-<a href=#933 id=933 data-nosnippet>933</a>                        latency,
-<a href=#934 id=934 data-nosnippet>934</a>                        dest_port: relay_addr.port(),
-<a href=#935 id=935 data-nosnippet>935</a>                        hairpinning_works: <span class="prelude-val">None</span>, <span class="comment">// TODO: Implement hairpinning test
-<a href=#936 id=936 data-nosnippet>936</a>                    </span>}))
-<a href=#937 id=937 data-nosnippet>937</a>                    .ok();
-<a href=#938 id=938 data-nosnippet>938</a>                <span class="kw">if </span>receiver.changed().<span class="kw">await</span>.is_err() {
-<a href=#939 id=939 data-nosnippet>939</a>                    <span class="kw">break</span>;
-<a href=#940 id=940 data-nosnippet>940</a>                }
-<a href=#941 id=941 data-nosnippet>941</a>            }
-<a href=#942 id=942 data-nosnippet>942</a>        }
-<a href=#943 id=943 data-nosnippet>943</a>    });
-<a href=#944 id=944 data-nosnippet>944</a>    <span class="kw">let </span>handle = AbortOnDropHandle::new(handle);
-<a href=#945 id=945 data-nosnippet>945</a>
-<a href=#946 id=946 data-nosnippet>946</a>    <span class="prelude-val">Ok</span>((
-<a href=#947 id=947 data-nosnippet>947</a>        report,
-<a href=#948 id=948 data-nosnippet>948</a>        QadConn {
-<a href=#949 id=949 data-nosnippet>949</a>            conn,
-<a href=#950 id=950 data-nosnippet>950</a>            observer,
-<a href=#951 id=951 data-nosnippet>951</a>            _handle: handle,
-<a href=#952 id=952 data-nosnippet>952</a>        },
-<a href=#953 id=953 data-nosnippet>953</a>    ))
-<a href=#954 id=954 data-nosnippet>954</a>}
-<a href=#955 id=955 data-nosnippet>955</a>
-<a href=#956 id=956 data-nosnippet>956</a><span class="attr">#[cfg(not(wasm_browser))]
-<a href=#957 id=957 data-nosnippet>957</a></span><span class="kw">async fn </span>test_hairpinning(
-<a href=#958 id=958 data-nosnippet>958</a>    external_addr: SocketAddr,
-<a href=#959 id=959 data-nosnippet>959</a>    quic_client: <span class="kw-2">&amp;</span>QuicClient,
-<a href=#960 id=960 data-nosnippet>960</a>    relay_node: <span class="kw-2">&amp;</span>RelayNode,
-<a href=#961 id=961 data-nosnippet>961</a>) -&gt; bool {
-<a href=#962 id=962 data-nosnippet>962</a>    <span class="kw">let </span>host = <span class="kw">match </span>relay_node.url.host_str() {
-<a href=#963 id=963 data-nosnippet>963</a>        <span class="prelude-val">Some</span>(host) =&gt; host,
-<a href=#964 id=964 data-nosnippet>964</a>        <span class="prelude-val">None </span>=&gt; {
-<a href=#965 id=965 data-nosnippet>965</a>            <span class="macro">debug!</span>(<span class="string">"No host available for hairpinning test"</span>);
-<a href=#966 id=966 data-nosnippet>966</a>            <span class="kw">return </span><span class="bool-val">false</span>;
-<a href=#967 id=967 data-nosnippet>967</a>        }
-<a href=#968 id=968 data-nosnippet>968</a>    };
-<a href=#969 id=969 data-nosnippet>969</a>
-<a href=#970 id=970 data-nosnippet>970</a>    <span class="macro">debug!</span>(<span class="question-mark">?</span>external_addr, <span class="string">"attempting hairpinning test"</span>);
-<a href=#971 id=971 data-nosnippet>971</a>
-<a href=#972 id=972 data-nosnippet>972</a>    <span class="kw">match </span>time::timeout(
-<a href=#973 id=973 data-nosnippet>973</a>        Duration::from_millis(<span class="number">2000</span>), <span class="comment">// Short timeout for hairpinning test
-<a href=#974 id=974 data-nosnippet>974</a>        </span>quic_client.create_conn(external_addr, host),
-<a href=#975 id=975 data-nosnippet>975</a>    )
-<a href=#976 id=976 data-nosnippet>976</a>    .<span class="kw">await
-<a href=#977 id=977 data-nosnippet>977</a>    </span>{
-<a href=#978 id=978 data-nosnippet>978</a>        <span class="prelude-val">Ok</span>(<span class="prelude-val">Ok</span>(_conn)) =&gt; {
-<a href=#979 id=979 data-nosnippet>979</a>            <span class="macro">debug!</span>(<span class="question-mark">?</span>external_addr, <span class="string">"hairpinning test succeeded"</span>);
-<a href=#980 id=980 data-nosnippet>980</a>            <span class="bool-val">true
-<a href=#981 id=981 data-nosnippet>981</a>        </span>}
-<a href=#982 id=982 data-nosnippet>982</a>        <span class="prelude-val">Ok</span>(<span class="prelude-val">Err</span>(err)) =&gt; {
-<a href=#983 id=983 data-nosnippet>983</a>            <span class="macro">debug!</span>(
-<a href=#984 id=984 data-nosnippet>984</a>                <span class="question-mark">?</span>external_addr,
-<a href=#985 id=985 data-nosnippet>985</a>                <span class="question-mark">?</span>err,
-<a href=#986 id=986 data-nosnippet>986</a>                <span class="string">"hairpinning test failed - connection error"
-<a href=#987 id=987 data-nosnippet>987</a>            </span>);
-<a href=#988 id=988 data-nosnippet>988</a>            <span class="bool-val">false
-<a href=#989 id=989 data-nosnippet>989</a>        </span>}
-<a href=#990 id=990 data-nosnippet>990</a>        <span class="prelude-val">Err</span>(<span class="kw">_</span>) =&gt; {
-<a href=#991 id=991 data-nosnippet>991</a>            <span class="macro">debug!</span>(<span class="question-mark">?</span>external_addr, <span class="string">"hairpinning test failed - timeout"</span>);
-<a href=#992 id=992 data-nosnippet>992</a>            <span class="bool-val">false
-<a href=#993 id=993 data-nosnippet>993</a>        </span>}
-<a href=#994 id=994 data-nosnippet>994</a>    }
-<a href=#995 id=995 data-nosnippet>995</a>}
-<a href=#996 id=996 data-nosnippet>996</a>
-<a href=#997 id=997 data-nosnippet>997</a><span class="attr">#[cfg(test)]
-<a href=#998 id=998 data-nosnippet>998</a></span><span class="kw">mod </span>test_utils {
-<a href=#999 id=999 data-nosnippet>999</a>    <span class="doccomment">//! Creates a relay server against which to perform tests
-<a href=#1000 id=1000 data-nosnippet>1000</a>
-<a href=#1001 id=1001 data-nosnippet>1001</a>    </span><span class="kw">use </span>iroh_relay::{RelayNode, RelayQuicConfig, server};
+<a href=#916 id=916 data-nosnippet>916</a>    <span class="prelude-val">Ok</span>((
+<a href=#917 id=917 data-nosnippet>917</a>        report,
+<a href=#918 id=918 data-nosnippet>918</a>        QadConn {
+<a href=#919 id=919 data-nosnippet>919</a>            conn,
+<a href=#920 id=920 data-nosnippet>920</a>            observer,
+<a href=#921 id=921 data-nosnippet>921</a>            _handle: handle,
+<a href=#922 id=922 data-nosnippet>922</a>        },
+<a href=#923 id=923 data-nosnippet>923</a>    ))
+<a href=#924 id=924 data-nosnippet>924</a>}
+<a href=#925 id=925 data-nosnippet>925</a>
+<a href=#926 id=926 data-nosnippet>926</a><span class="attr">#[cfg(test)]
+<a href=#927 id=927 data-nosnippet>927</a></span><span class="kw">mod </span>test_utils {
+<a href=#928 id=928 data-nosnippet>928</a>    <span class="doccomment">//! Creates a relay server against which to perform tests
+<a href=#929 id=929 data-nosnippet>929</a>
+<a href=#930 id=930 data-nosnippet>930</a>    </span><span class="kw">use </span>iroh_relay::{RelayNode, RelayQuicConfig, server};
+<a href=#931 id=931 data-nosnippet>931</a>
+<a href=#932 id=932 data-nosnippet>932</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>relay() -&gt; (server::Server, RelayNode) {
+<a href=#933 id=933 data-nosnippet>933</a>        <span class="kw">let </span>server = server::Server::spawn(server::testing::server_config())
+<a href=#934 id=934 data-nosnippet>934</a>            .<span class="kw">await
+<a href=#935 id=935 data-nosnippet>935</a>            </span>.expect(<span class="string">"should serve relay"</span>);
+<a href=#936 id=936 data-nosnippet>936</a>        <span class="kw">let </span>quic = <span class="prelude-val">Some</span>(RelayQuicConfig {
+<a href=#937 id=937 data-nosnippet>937</a>            port: server.quic_addr().expect(<span class="string">"server should run quic"</span>).port(),
+<a href=#938 id=938 data-nosnippet>938</a>        });
+<a href=#939 id=939 data-nosnippet>939</a>        <span class="kw">let </span>node_desc = RelayNode {
+<a href=#940 id=940 data-nosnippet>940</a>            url: server.https_url().expect(<span class="string">"should work as relay"</span>),
+<a href=#941 id=941 data-nosnippet>941</a>            quic,
+<a href=#942 id=942 data-nosnippet>942</a>        };
+<a href=#943 id=943 data-nosnippet>943</a>
+<a href=#944 id=944 data-nosnippet>944</a>        (server, node_desc)
+<a href=#945 id=945 data-nosnippet>945</a>    }
+<a href=#946 id=946 data-nosnippet>946</a>
+<a href=#947 id=947 data-nosnippet>947</a>    <span class="doccomment">/// Create a [`crate::RelayMap`] of the given size.
+<a href=#948 id=948 data-nosnippet>948</a>    ///
+<a href=#949 id=949 data-nosnippet>949</a>    /// This function uses [`relay`]. Note that the returned map uses internal order that will
+<a href=#950 id=950 data-nosnippet>950</a>    /// often _not_ match the order of the servers.
+<a href=#951 id=951 data-nosnippet>951</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>relay_map(relays: usize) -&gt; (Vec&lt;server::Server&gt;, <span class="kw">crate</span>::RelayMap) {
+<a href=#952 id=952 data-nosnippet>952</a>        <span class="kw">let </span><span class="kw-2">mut </span>servers = Vec::with_capacity(relays);
+<a href=#953 id=953 data-nosnippet>953</a>        <span class="kw">let </span><span class="kw-2">mut </span>nodes = Vec::with_capacity(relays);
+<a href=#954 id=954 data-nosnippet>954</a>        <span class="kw">for _ in </span><span class="number">0</span>..relays {
+<a href=#955 id=955 data-nosnippet>955</a>            <span class="kw">let </span>(relay_server, node) = relay().<span class="kw">await</span>;
+<a href=#956 id=956 data-nosnippet>956</a>            servers.push(relay_server);
+<a href=#957 id=957 data-nosnippet>957</a>            nodes.push(node);
+<a href=#958 id=958 data-nosnippet>958</a>        }
+<a href=#959 id=959 data-nosnippet>959</a>        (servers, <span class="kw">crate</span>::RelayMap::from_iter(nodes))
+<a href=#960 id=960 data-nosnippet>960</a>    }
+<a href=#961 id=961 data-nosnippet>961</a>}
+<a href=#962 id=962 data-nosnippet>962</a>
+<a href=#963 id=963 data-nosnippet>963</a><span class="attr">#[cfg(test)]
+<a href=#964 id=964 data-nosnippet>964</a></span><span class="kw">mod </span>tests {
+<a href=#965 id=965 data-nosnippet>965</a>    <span class="kw">use </span>std::net::{Ipv4Addr, SocketAddr};
+<a href=#966 id=966 data-nosnippet>966</a>
+<a href=#967 id=967 data-nosnippet>967</a>    <span class="kw">use </span>iroh_base::RelayUrl;
+<a href=#968 id=968 data-nosnippet>968</a>    <span class="kw">use </span>iroh_relay::dns::DnsResolver;
+<a href=#969 id=969 data-nosnippet>969</a>    <span class="kw">use </span>n0_snafu::{<span class="prelude-ty">Result</span>, ResultExt};
+<a href=#970 id=970 data-nosnippet>970</a>    <span class="kw">use </span>tokio_util::sync::CancellationToken;
+<a href=#971 id=971 data-nosnippet>971</a>    <span class="kw">use </span>tracing_test::traced_test;
+<a href=#972 id=972 data-nosnippet>972</a>
+<a href=#973 id=973 data-nosnippet>973</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#974 id=974 data-nosnippet>974</a>    <span class="kw">use </span><span class="kw">crate</span>::net_report::probes::Probe;
+<a href=#975 id=975 data-nosnippet>975</a>
+<a href=#976 id=976 data-nosnippet>976</a>    <span class="attr">#[tokio::test(flavor = <span class="string">"multi_thread"</span>)]
+<a href=#977 id=977 data-nosnippet>977</a>    #[traced_test]
+<a href=#978 id=978 data-nosnippet>978</a>    </span><span class="kw">async fn </span>test_basic() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
+<a href=#979 id=979 data-nosnippet>979</a>        <span class="kw">let </span>(server, relay) = test_utils::relay().<span class="kw">await</span>;
+<a href=#980 id=980 data-nosnippet>980</a>        <span class="kw">let </span>client_config = iroh_relay::client::make_dangerous_client_config();
+<a href=#981 id=981 data-nosnippet>981</a>        <span class="kw">let </span>ep = quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), <span class="number">0</span>)).e()<span class="question-mark">?</span>;
+<a href=#982 id=982 data-nosnippet>982</a>        <span class="kw">let </span>quic_addr_disc = QuicConfig {
+<a href=#983 id=983 data-nosnippet>983</a>            ep: ep.clone(),
+<a href=#984 id=984 data-nosnippet>984</a>            client_config,
+<a href=#985 id=985 data-nosnippet>985</a>            ipv4: <span class="bool-val">true</span>,
+<a href=#986 id=986 data-nosnippet>986</a>            ipv6: <span class="bool-val">true</span>,
+<a href=#987 id=987 data-nosnippet>987</a>        };
+<a href=#988 id=988 data-nosnippet>988</a>        <span class="kw">let </span>relay_map = RelayMap::from(relay);
+<a href=#989 id=989 data-nosnippet>989</a>
+<a href=#990 id=990 data-nosnippet>990</a>        <span class="kw">let </span>resolver = DnsResolver::new();
+<a href=#991 id=991 data-nosnippet>991</a>        <span class="kw">let </span>opts = Options::default()
+<a href=#992 id=992 data-nosnippet>992</a>            .quic_config(<span class="prelude-val">Some</span>(quic_addr_disc.clone()))
+<a href=#993 id=993 data-nosnippet>993</a>            .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>);
+<a href=#994 id=994 data-nosnippet>994</a>        <span class="kw">let </span><span class="kw-2">mut </span>client = Client::new(
+<a href=#995 id=995 data-nosnippet>995</a>            resolver.clone(),
+<a href=#996 id=996 data-nosnippet>996</a>            <span class="prelude-val">None</span>,
+<a href=#997 id=997 data-nosnippet>997</a>            relay_map.clone(),
+<a href=#998 id=998 data-nosnippet>998</a>            opts.clone(),
+<a href=#999 id=999 data-nosnippet>999</a>            Default::default(),
+<a href=#1000 id=1000 data-nosnippet>1000</a>        );
+<a href=#1001 id=1001 data-nosnippet>1001</a>        <span class="kw">let </span>if_state = IfStateDetails::fake();
 <a href=#1002 id=1002 data-nosnippet>1002</a>
-<a href=#1003 id=1003 data-nosnippet>1003</a>    <span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>relay() -&gt; (server::Server, RelayNode) {
-<a href=#1004 id=1004 data-nosnippet>1004</a>        <span class="kw">let </span>server = server::Server::spawn(server::testing::server_config())
-<a href=#1005 id=1005 data-nosnippet>1005</a>            .<span class="kw">await
-<a href=#1006 id=1006 data-nosnippet>1006</a>            </span>.expect(<span class="string">"should serve relay"</span>);
-<a href=#1007 id=1007 data-nosnippet>1007</a>        <span class="kw">let </span>quic = <span class="prelude-val">Some</span>(RelayQuicConfig {
-<a href=#1008 id=1008 data-nosnippet>1008</a>            port: server.quic_addr().expect(<span class="string">"server should run quic"</span>).port(),
-<a href=#1009 id=1009 data-nosnippet>1009</a>        });
-<a href=#1010 id=1010 data-nosnippet>1010</a>        <span class="kw">let </span>node_desc = RelayNode {
-<a href=#1011 id=1011 data-nosnippet>1011</a>            url: server.https_url().expect(<span class="string">"should work as relay"</span>),
-<a href=#1012 id=1012 data-nosnippet>1012</a>            quic,
-<a href=#1013 id=1013 data-nosnippet>1013</a>        };
-<a href=#1014 id=1014 data-nosnippet>1014</a>
-<a href=#1015 id=1015 data-nosnippet>1015</a>        (server, node_desc)
-<a href=#1016 id=1016 data-nosnippet>1016</a>    }
-<a href=#1017 id=1017 data-nosnippet>1017</a>
-<a href=#1018 id=1018 data-nosnippet>1018</a>    <span class="doccomment">/// Create a [`crate::RelayMap`] of the given size.
-<a href=#1019 id=1019 data-nosnippet>1019</a>    ///
-<a href=#1020 id=1020 data-nosnippet>1020</a>    /// This function uses [`relay`]. Note that the returned map uses internal order that will
-<a href=#1021 id=1021 data-nosnippet>1021</a>    /// often _not_ match the order of the servers.
-<a href=#1022 id=1022 data-nosnippet>1022</a>    </span><span class="kw">pub</span>(<span class="kw">crate</span>) <span class="kw">async fn </span>relay_map(relays: usize) -&gt; (Vec&lt;server::Server&gt;, <span class="kw">crate</span>::RelayMap) {
-<a href=#1023 id=1023 data-nosnippet>1023</a>        <span class="kw">let </span><span class="kw-2">mut </span>servers = Vec::with_capacity(relays);
-<a href=#1024 id=1024 data-nosnippet>1024</a>        <span class="kw">let </span><span class="kw-2">mut </span>nodes = Vec::with_capacity(relays);
-<a href=#1025 id=1025 data-nosnippet>1025</a>        <span class="kw">for _ in </span><span class="number">0</span>..relays {
-<a href=#1026 id=1026 data-nosnippet>1026</a>            <span class="kw">let </span>(relay_server, node) = relay().<span class="kw">await</span>;
-<a href=#1027 id=1027 data-nosnippet>1027</a>            servers.push(relay_server);
-<a href=#1028 id=1028 data-nosnippet>1028</a>            nodes.push(node);
-<a href=#1029 id=1029 data-nosnippet>1029</a>        }
-<a href=#1030 id=1030 data-nosnippet>1030</a>        (servers, <span class="kw">crate</span>::RelayMap::from_iter(nodes))
-<a href=#1031 id=1031 data-nosnippet>1031</a>    }
-<a href=#1032 id=1032 data-nosnippet>1032</a>}
-<a href=#1033 id=1033 data-nosnippet>1033</a>
-<a href=#1034 id=1034 data-nosnippet>1034</a><span class="attr">#[cfg(test)]
-<a href=#1035 id=1035 data-nosnippet>1035</a></span><span class="kw">mod </span>tests {
-<a href=#1036 id=1036 data-nosnippet>1036</a>    <span class="kw">use </span>std::net::{Ipv4Addr, SocketAddr};
+<a href=#1003 id=1003 data-nosnippet>1003</a>        <span class="comment">// Note that the ProbePlan will change with each iteration.
+<a href=#1004 id=1004 data-nosnippet>1004</a>        </span><span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..<span class="number">5 </span>{
+<a href=#1005 id=1005 data-nosnippet>1005</a>            <span class="kw">let </span>cancel = CancellationToken::new();
+<a href=#1006 id=1006 data-nosnippet>1006</a>            <span class="macro">println!</span>(<span class="string">"--round {i}"</span>);
+<a href=#1007 id=1007 data-nosnippet>1007</a>            <span class="kw">let </span>r = client.get_report(if_state.clone(), <span class="bool-val">false</span>).<span class="kw">await</span>;
+<a href=#1008 id=1008 data-nosnippet>1008</a>
+<a href=#1009 id=1009 data-nosnippet>1009</a>            <span class="macro">assert!</span>(r.has_udp(), <span class="string">"want UDP"</span>);
+<a href=#1010 id=1010 data-nosnippet>1010</a>            <span class="macro">dbg!</span>(<span class="kw-2">&amp;</span>r);
+<a href=#1011 id=1011 data-nosnippet>1011</a>            <span class="macro">assert!</span>(
+<a href=#1012 id=1012 data-nosnippet>1012</a>                !r.relay_latency.is_empty(),
+<a href=#1013 id=1013 data-nosnippet>1013</a>                <span class="string">"expected at least 1 key in RelayLatency; got none"</span>,
+<a href=#1014 id=1014 data-nosnippet>1014</a>            );
+<a href=#1015 id=1015 data-nosnippet>1015</a>            <span class="macro">assert!</span>(
+<a href=#1016 id=1016 data-nosnippet>1016</a>                r.relay_latency.iter().next().is_some(),
+<a href=#1017 id=1017 data-nosnippet>1017</a>                <span class="string">"expected key 1 in RelayLatency; got {:?}"</span>,
+<a href=#1018 id=1018 data-nosnippet>1018</a>                r.relay_latency
+<a href=#1019 id=1019 data-nosnippet>1019</a>            );
+<a href=#1020 id=1020 data-nosnippet>1020</a>            <span class="macro">assert!</span>(r.global_v4.is_some(), <span class="string">"expected globalV4 set"</span>);
+<a href=#1021 id=1021 data-nosnippet>1021</a>            <span class="macro">assert!</span>(r.preferred_relay.is_some(),);
+<a href=#1022 id=1022 data-nosnippet>1022</a>            cancel.cancel();
+<a href=#1023 id=1023 data-nosnippet>1023</a>        }
+<a href=#1024 id=1024 data-nosnippet>1024</a>
+<a href=#1025 id=1025 data-nosnippet>1025</a>        drop(client);
+<a href=#1026 id=1026 data-nosnippet>1026</a>        ep.wait_idle().<span class="kw">await</span>;
+<a href=#1027 id=1027 data-nosnippet>1027</a>        server.shutdown().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#1028 id=1028 data-nosnippet>1028</a>
+<a href=#1029 id=1029 data-nosnippet>1029</a>        <span class="prelude-val">Ok</span>(())
+<a href=#1030 id=1030 data-nosnippet>1030</a>    }
+<a href=#1031 id=1031 data-nosnippet>1031</a>
+<a href=#1032 id=1032 data-nosnippet>1032</a>    <span class="attr">#[tokio::test(flavor = <span class="string">"current_thread"</span>, start_paused = <span class="bool-val">true</span>)]
+<a href=#1033 id=1033 data-nosnippet>1033</a>    </span><span class="kw">async fn </span>test_add_report_history_set_preferred_relay() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#1034 id=1034 data-nosnippet>1034</a>        <span class="kw">fn </span>relay_url(i: u16) -&gt; RelayUrl {
+<a href=#1035 id=1035 data-nosnippet>1035</a>            <span class="macro">format!</span>(<span class="string">"http://{i}.com"</span>).parse().unwrap()
+<a href=#1036 id=1036 data-nosnippet>1036</a>        }
 <a href=#1037 id=1037 data-nosnippet>1037</a>
-<a href=#1038 id=1038 data-nosnippet>1038</a>    <span class="kw">use </span>iroh_base::RelayUrl;
-<a href=#1039 id=1039 data-nosnippet>1039</a>    <span class="kw">use </span>iroh_relay::dns::DnsResolver;
-<a href=#1040 id=1040 data-nosnippet>1040</a>    <span class="kw">use </span>n0_snafu::{<span class="prelude-ty">Result</span>, ResultExt};
-<a href=#1041 id=1041 data-nosnippet>1041</a>    <span class="kw">use </span>tokio_util::sync::CancellationToken;
-<a href=#1042 id=1042 data-nosnippet>1042</a>    <span class="kw">use </span>tracing_test::traced_test;
-<a href=#1043 id=1043 data-nosnippet>1043</a>
-<a href=#1044 id=1044 data-nosnippet>1044</a>    <span class="kw">use super</span>::<span class="kw-2">*</span>;
-<a href=#1045 id=1045 data-nosnippet>1045</a>    <span class="kw">use </span><span class="kw">crate</span>::net_report::probes::Probe;
-<a href=#1046 id=1046 data-nosnippet>1046</a>
-<a href=#1047 id=1047 data-nosnippet>1047</a>    <span class="attr">#[tokio::test(flavor = <span class="string">"multi_thread"</span>)]
-<a href=#1048 id=1048 data-nosnippet>1048</a>    #[traced_test]
-<a href=#1049 id=1049 data-nosnippet>1049</a>    </span><span class="kw">async fn </span>test_basic() -&gt; <span class="prelude-ty">Result</span>&lt;()&gt; {
-<a href=#1050 id=1050 data-nosnippet>1050</a>        <span class="kw">let </span>(server, relay) = test_utils::relay().<span class="kw">await</span>;
-<a href=#1051 id=1051 data-nosnippet>1051</a>        <span class="kw">let </span>client_config = iroh_relay::client::make_dangerous_client_config();
-<a href=#1052 id=1052 data-nosnippet>1052</a>        <span class="kw">let </span>ep = quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), <span class="number">0</span>)).e()<span class="question-mark">?</span>;
-<a href=#1053 id=1053 data-nosnippet>1053</a>        <span class="kw">let </span>quic_addr_disc = QuicConfig {
-<a href=#1054 id=1054 data-nosnippet>1054</a>            ep: ep.clone(),
-<a href=#1055 id=1055 data-nosnippet>1055</a>            client_config,
-<a href=#1056 id=1056 data-nosnippet>1056</a>            ipv4: <span class="bool-val">true</span>,
-<a href=#1057 id=1057 data-nosnippet>1057</a>            ipv6: <span class="bool-val">true</span>,
-<a href=#1058 id=1058 data-nosnippet>1058</a>        };
-<a href=#1059 id=1059 data-nosnippet>1059</a>        <span class="kw">let </span>relay_map = RelayMap::from(relay);
-<a href=#1060 id=1060 data-nosnippet>1060</a>
-<a href=#1061 id=1061 data-nosnippet>1061</a>        <span class="kw">let </span>resolver = DnsResolver::new();
-<a href=#1062 id=1062 data-nosnippet>1062</a>        <span class="kw">let </span>opts = Options::default()
-<a href=#1063 id=1063 data-nosnippet>1063</a>            .quic_config(<span class="prelude-val">Some</span>(quic_addr_disc.clone()))
-<a href=#1064 id=1064 data-nosnippet>1064</a>            .insecure_skip_relay_cert_verify(<span class="bool-val">true</span>);
-<a href=#1065 id=1065 data-nosnippet>1065</a>        <span class="kw">let </span><span class="kw-2">mut </span>client = Client::new(
-<a href=#1066 id=1066 data-nosnippet>1066</a>            resolver.clone(),
-<a href=#1067 id=1067 data-nosnippet>1067</a>            <span class="prelude-val">None</span>,
-<a href=#1068 id=1068 data-nosnippet>1068</a>            relay_map.clone(),
-<a href=#1069 id=1069 data-nosnippet>1069</a>            opts.clone(),
-<a href=#1070 id=1070 data-nosnippet>1070</a>            Default::default(),
-<a href=#1071 id=1071 data-nosnippet>1071</a>        );
-<a href=#1072 id=1072 data-nosnippet>1072</a>        <span class="kw">let </span>if_state = IfStateDetails::fake();
-<a href=#1073 id=1073 data-nosnippet>1073</a>
-<a href=#1074 id=1074 data-nosnippet>1074</a>        <span class="comment">// Note that the ProbePlan will change with each iteration.
-<a href=#1075 id=1075 data-nosnippet>1075</a>        </span><span class="kw">for </span>i <span class="kw">in </span><span class="number">0</span>..<span class="number">5 </span>{
-<a href=#1076 id=1076 data-nosnippet>1076</a>            <span class="kw">let </span>cancel = CancellationToken::new();
-<a href=#1077 id=1077 data-nosnippet>1077</a>            <span class="macro">println!</span>(<span class="string">"--round {i}"</span>);
-<a href=#1078 id=1078 data-nosnippet>1078</a>            <span class="kw">let </span>r = client.get_report(if_state.clone(), <span class="bool-val">false</span>).<span class="kw">await</span>;
-<a href=#1079 id=1079 data-nosnippet>1079</a>
-<a href=#1080 id=1080 data-nosnippet>1080</a>            <span class="macro">assert!</span>(r.has_udp(), <span class="string">"want UDP"</span>);
-<a href=#1081 id=1081 data-nosnippet>1081</a>            <span class="macro">dbg!</span>(<span class="kw-2">&amp;</span>r);
-<a href=#1082 id=1082 data-nosnippet>1082</a>            <span class="macro">assert!</span>(
-<a href=#1083 id=1083 data-nosnippet>1083</a>                !r.relay_latency.is_empty(),
-<a href=#1084 id=1084 data-nosnippet>1084</a>                <span class="string">"expected at least 1 key in RelayLatency; got none"</span>,
-<a href=#1085 id=1085 data-nosnippet>1085</a>            );
-<a href=#1086 id=1086 data-nosnippet>1086</a>            <span class="macro">assert!</span>(
-<a href=#1087 id=1087 data-nosnippet>1087</a>                r.relay_latency.iter().next().is_some(),
-<a href=#1088 id=1088 data-nosnippet>1088</a>                <span class="string">"expected key 1 in RelayLatency; got {:?}"</span>,
-<a href=#1089 id=1089 data-nosnippet>1089</a>                r.relay_latency
-<a href=#1090 id=1090 data-nosnippet>1090</a>            );
-<a href=#1091 id=1091 data-nosnippet>1091</a>            <span class="macro">assert!</span>(r.global_v4.is_some(), <span class="string">"expected globalV4 set"</span>);
-<a href=#1092 id=1092 data-nosnippet>1092</a>            <span class="macro">assert!</span>(r.preferred_relay.is_some(),);
-<a href=#1093 id=1093 data-nosnippet>1093</a>            cancel.cancel();
-<a href=#1094 id=1094 data-nosnippet>1094</a>        }
-<a href=#1095 id=1095 data-nosnippet>1095</a>
-<a href=#1096 id=1096 data-nosnippet>1096</a>        drop(client);
-<a href=#1097 id=1097 data-nosnippet>1097</a>        ep.wait_idle().<span class="kw">await</span>;
-<a href=#1098 id=1098 data-nosnippet>1098</a>        server.shutdown().<span class="kw">await</span><span class="question-mark">?</span>;
-<a href=#1099 id=1099 data-nosnippet>1099</a>
-<a href=#1100 id=1100 data-nosnippet>1100</a>        <span class="prelude-val">Ok</span>(())
-<a href=#1101 id=1101 data-nosnippet>1101</a>    }
-<a href=#1102 id=1102 data-nosnippet>1102</a>
-<a href=#1103 id=1103 data-nosnippet>1103</a>    <span class="attr">#[tokio::test(flavor = <span class="string">"current_thread"</span>, start_paused = <span class="bool-val">true</span>)]
-<a href=#1104 id=1104 data-nosnippet>1104</a>    </span><span class="kw">async fn </span>test_add_report_history_set_preferred_relay() -&gt; <span class="prelude-ty">Result</span> {
-<a href=#1105 id=1105 data-nosnippet>1105</a>        <span class="kw">fn </span>relay_url(i: u16) -&gt; RelayUrl {
-<a href=#1106 id=1106 data-nosnippet>1106</a>            <span class="macro">format!</span>(<span class="string">"http://{i}.com"</span>).parse().unwrap()
-<a href=#1107 id=1107 data-nosnippet>1107</a>        }
-<a href=#1108 id=1108 data-nosnippet>1108</a>
-<a href=#1109 id=1109 data-nosnippet>1109</a>        <span class="comment">// report returns a *Report from (relay host, Duration)+ pairs.
-<a href=#1110 id=1110 data-nosnippet>1110</a>        </span><span class="kw">fn </span>report(a: <span class="kw">impl </span>IntoIterator&lt;Item = (<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str, u64)&gt;) -&gt; <span class="prelude-ty">Option</span>&lt;Report&gt; {
-<a href=#1111 id=1111 data-nosnippet>1111</a>            <span class="kw">let </span><span class="kw-2">mut </span>report = Report::default();
-<a href=#1112 id=1112 data-nosnippet>1112</a>            <span class="kw">for </span>(s, d) <span class="kw">in </span>a {
-<a href=#1113 id=1113 data-nosnippet>1113</a>                <span class="macro">assert!</span>(s.starts_with(<span class="string">'d'</span>), <span class="string">"invalid relay server key"</span>);
-<a href=#1114 id=1114 data-nosnippet>1114</a>                <span class="kw">let </span>id: u16 = s[<span class="number">1</span>..].parse().unwrap();
-<a href=#1115 id=1115 data-nosnippet>1115</a>                report.relay_latency.update_relay(
-<a href=#1116 id=1116 data-nosnippet>1116</a>                    relay_url(id),
-<a href=#1117 id=1117 data-nosnippet>1117</a>                    Duration::from_secs(d),
-<a href=#1118 id=1118 data-nosnippet>1118</a>                    Probe::QadIpv4,
-<a href=#1119 id=1119 data-nosnippet>1119</a>                );
-<a href=#1120 id=1120 data-nosnippet>1120</a>            }
-<a href=#1121 id=1121 data-nosnippet>1121</a>
-<a href=#1122 id=1122 data-nosnippet>1122</a>            <span class="prelude-val">Some</span>(report)
-<a href=#1123 id=1123 data-nosnippet>1123</a>        }
-<a href=#1124 id=1124 data-nosnippet>1124</a>        <span class="kw">struct </span>Step {
-<a href=#1125 id=1125 data-nosnippet>1125</a>            <span class="doccomment">/// Delay in seconds
-<a href=#1126 id=1126 data-nosnippet>1126</a>            </span>after: u64,
-<a href=#1127 id=1127 data-nosnippet>1127</a>            r: <span class="prelude-ty">Option</span>&lt;Report&gt;,
-<a href=#1128 id=1128 data-nosnippet>1128</a>        }
-<a href=#1129 id=1129 data-nosnippet>1129</a>        <span class="kw">struct </span>Test {
-<a href=#1130 id=1130 data-nosnippet>1130</a>            name: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
-<a href=#1131 id=1131 data-nosnippet>1131</a>            steps: Vec&lt;Step&gt;,
-<a href=#1132 id=1132 data-nosnippet>1132</a>            <span class="doccomment">/// want PreferredRelay on final step
-<a href=#1133 id=1133 data-nosnippet>1133</a>            </span>want_relay: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;,
-<a href=#1134 id=1134 data-nosnippet>1134</a>            <span class="comment">// wanted len(c.prev)
-<a href=#1135 id=1135 data-nosnippet>1135</a>            </span>want_prev_len: usize,
-<a href=#1136 id=1136 data-nosnippet>1136</a>        }
-<a href=#1137 id=1137 data-nosnippet>1137</a>
-<a href=#1138 id=1138 data-nosnippet>1138</a>        <span class="kw">let </span>tests = [
-<a href=#1139 id=1139 data-nosnippet>1139</a>            Test {
-<a href=#1140 id=1140 data-nosnippet>1140</a>                name: <span class="string">"first_reading"</span>,
-<a href=#1141 id=1141 data-nosnippet>1141</a>                steps: <span class="macro">vec!</span>[Step {
-<a href=#1142 id=1142 data-nosnippet>1142</a>                    after: <span class="number">0</span>,
-<a href=#1143 id=1143 data-nosnippet>1143</a>                    r: report([(<span class="string">"d1"</span>, <span class="number">2</span>), (<span class="string">"d2"</span>, <span class="number">3</span>)]),
-<a href=#1144 id=1144 data-nosnippet>1144</a>                }],
-<a href=#1145 id=1145 data-nosnippet>1145</a>                want_prev_len: <span class="number">1</span>,
-<a href=#1146 id=1146 data-nosnippet>1146</a>                want_relay: <span class="prelude-val">Some</span>(relay_url(<span class="number">1</span>)),
-<a href=#1147 id=1147 data-nosnippet>1147</a>            },
-<a href=#1148 id=1148 data-nosnippet>1148</a>            Test {
-<a href=#1149 id=1149 data-nosnippet>1149</a>                name: <span class="string">"with_two"</span>,
-<a href=#1150 id=1150 data-nosnippet>1150</a>                steps: <span class="macro">vec!</span>[
-<a href=#1151 id=1151 data-nosnippet>1151</a>                    Step {
-<a href=#1152 id=1152 data-nosnippet>1152</a>                        after: <span class="number">0</span>,
-<a href=#1153 id=1153 data-nosnippet>1153</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">2</span>), (<span class="string">"d2"</span>, <span class="number">3</span>)]),
-<a href=#1154 id=1154 data-nosnippet>1154</a>                    },
-<a href=#1155 id=1155 data-nosnippet>1155</a>                    Step {
-<a href=#1156 id=1156 data-nosnippet>1156</a>                        after: <span class="number">1</span>,
-<a href=#1157 id=1157 data-nosnippet>1157</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">4</span>), (<span class="string">"d2"</span>, <span class="number">3</span>)]),
-<a href=#1158 id=1158 data-nosnippet>1158</a>                    },
-<a href=#1159 id=1159 data-nosnippet>1159</a>                ],
-<a href=#1160 id=1160 data-nosnippet>1160</a>                want_prev_len: <span class="number">2</span>,
-<a href=#1161 id=1161 data-nosnippet>1161</a>                want_relay: <span class="prelude-val">Some</span>(relay_url(<span class="number">1</span>)), <span class="comment">// t0's d1 of 2 is still best
-<a href=#1162 id=1162 data-nosnippet>1162</a>            </span>},
-<a href=#1163 id=1163 data-nosnippet>1163</a>            Test {
-<a href=#1164 id=1164 data-nosnippet>1164</a>                name: <span class="string">"but_now_d1_gone"</span>,
-<a href=#1165 id=1165 data-nosnippet>1165</a>                steps: <span class="macro">vec!</span>[
-<a href=#1166 id=1166 data-nosnippet>1166</a>                    Step {
-<a href=#1167 id=1167 data-nosnippet>1167</a>                        after: <span class="number">0</span>,
-<a href=#1168 id=1168 data-nosnippet>1168</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">2</span>), (<span class="string">"d2"</span>, <span class="number">3</span>)]),
-<a href=#1169 id=1169 data-nosnippet>1169</a>                    },
-<a href=#1170 id=1170 data-nosnippet>1170</a>                    Step {
-<a href=#1171 id=1171 data-nosnippet>1171</a>                        after: <span class="number">1</span>,
-<a href=#1172 id=1172 data-nosnippet>1172</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">4</span>), (<span class="string">"d2"</span>, <span class="number">3</span>)]),
-<a href=#1173 id=1173 data-nosnippet>1173</a>                    },
-<a href=#1174 id=1174 data-nosnippet>1174</a>                    Step {
-<a href=#1175 id=1175 data-nosnippet>1175</a>                        after: <span class="number">2</span>,
-<a href=#1176 id=1176 data-nosnippet>1176</a>                        r: report([(<span class="string">"d2"</span>, <span class="number">3</span>)]),
-<a href=#1177 id=1177 data-nosnippet>1177</a>                    },
-<a href=#1178 id=1178 data-nosnippet>1178</a>                ],
-<a href=#1179 id=1179 data-nosnippet>1179</a>                want_prev_len: <span class="number">3</span>,
-<a href=#1180 id=1180 data-nosnippet>1180</a>                want_relay: <span class="prelude-val">Some</span>(relay_url(<span class="number">2</span>)), <span class="comment">// only option
-<a href=#1181 id=1181 data-nosnippet>1181</a>            </span>},
-<a href=#1182 id=1182 data-nosnippet>1182</a>            Test {
-<a href=#1183 id=1183 data-nosnippet>1183</a>                name: <span class="string">"d1_is_back"</span>,
-<a href=#1184 id=1184 data-nosnippet>1184</a>                steps: <span class="macro">vec!</span>[
-<a href=#1185 id=1185 data-nosnippet>1185</a>                    Step {
-<a href=#1186 id=1186 data-nosnippet>1186</a>                        after: <span class="number">0</span>,
-<a href=#1187 id=1187 data-nosnippet>1187</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">2</span>), (<span class="string">"d2"</span>, <span class="number">3</span>)]),
-<a href=#1188 id=1188 data-nosnippet>1188</a>                    },
-<a href=#1189 id=1189 data-nosnippet>1189</a>                    Step {
-<a href=#1190 id=1190 data-nosnippet>1190</a>                        after: <span class="number">1</span>,
-<a href=#1191 id=1191 data-nosnippet>1191</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">4</span>), (<span class="string">"d2"</span>, <span class="number">3</span>)]),
-<a href=#1192 id=1192 data-nosnippet>1192</a>                    },
-<a href=#1193 id=1193 data-nosnippet>1193</a>                    Step {
-<a href=#1194 id=1194 data-nosnippet>1194</a>                        after: <span class="number">2</span>,
-<a href=#1195 id=1195 data-nosnippet>1195</a>                        r: report([(<span class="string">"d2"</span>, <span class="number">3</span>)]),
-<a href=#1196 id=1196 data-nosnippet>1196</a>                    },
-<a href=#1197 id=1197 data-nosnippet>1197</a>                    Step {
-<a href=#1198 id=1198 data-nosnippet>1198</a>                        after: <span class="number">3</span>,
-<a href=#1199 id=1199 data-nosnippet>1199</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">4</span>), (<span class="string">"d2"</span>, <span class="number">3</span>)]),
-<a href=#1200 id=1200 data-nosnippet>1200</a>                    }, <span class="comment">// same as 2 seconds ago
-<a href=#1201 id=1201 data-nosnippet>1201</a>                </span>],
-<a href=#1202 id=1202 data-nosnippet>1202</a>                want_prev_len: <span class="number">4</span>,
-<a href=#1203 id=1203 data-nosnippet>1203</a>                want_relay: <span class="prelude-val">Some</span>(relay_url(<span class="number">1</span>)), <span class="comment">// t0's d1 of 2 is still best
-<a href=#1204 id=1204 data-nosnippet>1204</a>            </span>},
-<a href=#1205 id=1205 data-nosnippet>1205</a>            Test {
-<a href=#1206 id=1206 data-nosnippet>1206</a>                name: <span class="string">"things_clean_up"</span>,
-<a href=#1207 id=1207 data-nosnippet>1207</a>                steps: <span class="macro">vec!</span>[
-<a href=#1208 id=1208 data-nosnippet>1208</a>                    Step {
-<a href=#1209 id=1209 data-nosnippet>1209</a>                        after: <span class="number">0</span>,
-<a href=#1210 id=1210 data-nosnippet>1210</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">1</span>), (<span class="string">"d2"</span>, <span class="number">2</span>)]),
-<a href=#1211 id=1211 data-nosnippet>1211</a>                    },
-<a href=#1212 id=1212 data-nosnippet>1212</a>                    Step {
-<a href=#1213 id=1213 data-nosnippet>1213</a>                        after: <span class="number">1</span>,
-<a href=#1214 id=1214 data-nosnippet>1214</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">1</span>), (<span class="string">"d2"</span>, <span class="number">2</span>)]),
-<a href=#1215 id=1215 data-nosnippet>1215</a>                    },
-<a href=#1216 id=1216 data-nosnippet>1216</a>                    Step {
-<a href=#1217 id=1217 data-nosnippet>1217</a>                        after: <span class="number">2</span>,
-<a href=#1218 id=1218 data-nosnippet>1218</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">1</span>), (<span class="string">"d2"</span>, <span class="number">2</span>)]),
-<a href=#1219 id=1219 data-nosnippet>1219</a>                    },
-<a href=#1220 id=1220 data-nosnippet>1220</a>                    Step {
-<a href=#1221 id=1221 data-nosnippet>1221</a>                        after: <span class="number">3</span>,
-<a href=#1222 id=1222 data-nosnippet>1222</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">1</span>), (<span class="string">"d2"</span>, <span class="number">2</span>)]),
-<a href=#1223 id=1223 data-nosnippet>1223</a>                    },
-<a href=#1224 id=1224 data-nosnippet>1224</a>                    Step {
-<a href=#1225 id=1225 data-nosnippet>1225</a>                        after: <span class="number">10 </span>* <span class="number">60</span>,
-<a href=#1226 id=1226 data-nosnippet>1226</a>                        r: report([(<span class="string">"d3"</span>, <span class="number">3</span>)]),
-<a href=#1227 id=1227 data-nosnippet>1227</a>                    },
-<a href=#1228 id=1228 data-nosnippet>1228</a>                ],
-<a href=#1229 id=1229 data-nosnippet>1229</a>                want_prev_len: <span class="number">1</span>, <span class="comment">// t=[0123]s all gone. (too old, older than 10 min)
-<a href=#1230 id=1230 data-nosnippet>1230</a>                </span>want_relay: <span class="prelude-val">Some</span>(relay_url(<span class="number">3</span>)), <span class="comment">// only option
-<a href=#1231 id=1231 data-nosnippet>1231</a>            </span>},
-<a href=#1232 id=1232 data-nosnippet>1232</a>            Test {
-<a href=#1233 id=1233 data-nosnippet>1233</a>                name: <span class="string">"preferred_relay_hysteresis_no_switch"</span>,
-<a href=#1234 id=1234 data-nosnippet>1234</a>                steps: <span class="macro">vec!</span>[
-<a href=#1235 id=1235 data-nosnippet>1235</a>                    Step {
-<a href=#1236 id=1236 data-nosnippet>1236</a>                        after: <span class="number">0</span>,
-<a href=#1237 id=1237 data-nosnippet>1237</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">4</span>), (<span class="string">"d2"</span>, <span class="number">5</span>)]),
-<a href=#1238 id=1238 data-nosnippet>1238</a>                    },
-<a href=#1239 id=1239 data-nosnippet>1239</a>                    Step {
-<a href=#1240 id=1240 data-nosnippet>1240</a>                        after: <span class="number">1</span>,
-<a href=#1241 id=1241 data-nosnippet>1241</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">4</span>), (<span class="string">"d2"</span>, <span class="number">3</span>)]),
-<a href=#1242 id=1242 data-nosnippet>1242</a>                    },
-<a href=#1243 id=1243 data-nosnippet>1243</a>                ],
-<a href=#1244 id=1244 data-nosnippet>1244</a>                want_prev_len: <span class="number">2</span>,
-<a href=#1245 id=1245 data-nosnippet>1245</a>                want_relay: <span class="prelude-val">Some</span>(relay_url(<span class="number">1</span>)), <span class="comment">// 2 didn't get fast enough
-<a href=#1246 id=1246 data-nosnippet>1246</a>            </span>},
-<a href=#1247 id=1247 data-nosnippet>1247</a>            Test {
-<a href=#1248 id=1248 data-nosnippet>1248</a>                name: <span class="string">"preferred_relay_hysteresis_do_switch"</span>,
-<a href=#1249 id=1249 data-nosnippet>1249</a>                steps: <span class="macro">vec!</span>[
-<a href=#1250 id=1250 data-nosnippet>1250</a>                    Step {
-<a href=#1251 id=1251 data-nosnippet>1251</a>                        after: <span class="number">0</span>,
-<a href=#1252 id=1252 data-nosnippet>1252</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">4</span>), (<span class="string">"d2"</span>, <span class="number">5</span>)]),
-<a href=#1253 id=1253 data-nosnippet>1253</a>                    },
-<a href=#1254 id=1254 data-nosnippet>1254</a>                    Step {
-<a href=#1255 id=1255 data-nosnippet>1255</a>                        after: <span class="number">1</span>,
-<a href=#1256 id=1256 data-nosnippet>1256</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">4</span>), (<span class="string">"d2"</span>, <span class="number">1</span>)]),
-<a href=#1257 id=1257 data-nosnippet>1257</a>                    },
-<a href=#1258 id=1258 data-nosnippet>1258</a>                ],
-<a href=#1259 id=1259 data-nosnippet>1259</a>                want_prev_len: <span class="number">2</span>,
-<a href=#1260 id=1260 data-nosnippet>1260</a>                want_relay: <span class="prelude-val">Some</span>(relay_url(<span class="number">2</span>)), <span class="comment">// 2 got fast enough
-<a href=#1261 id=1261 data-nosnippet>1261</a>            </span>},
-<a href=#1262 id=1262 data-nosnippet>1262</a>        ];
-<a href=#1263 id=1263 data-nosnippet>1263</a>        <span class="kw">let </span>resolver = DnsResolver::new();
-<a href=#1264 id=1264 data-nosnippet>1264</a>        <span class="kw">for </span><span class="kw-2">mut </span>tt <span class="kw">in </span>tests {
-<a href=#1265 id=1265 data-nosnippet>1265</a>            <span class="macro">println!</span>(<span class="string">"test: {}"</span>, tt.name);
-<a href=#1266 id=1266 data-nosnippet>1266</a>            <span class="kw">let </span>relay_map = RelayMap::empty();
-<a href=#1267 id=1267 data-nosnippet>1267</a>            <span class="kw">let </span>opts = Options::default();
-<a href=#1268 id=1268 data-nosnippet>1268</a>            <span class="kw">let </span><span class="kw-2">mut </span>client =
-<a href=#1269 id=1269 data-nosnippet>1269</a>                Client::new(resolver.clone(), <span class="prelude-val">None</span>, relay_map, opts, Default::default());
-<a href=#1270 id=1270 data-nosnippet>1270</a>            <span class="kw">for </span>s <span class="kw">in </span><span class="kw-2">&amp;mut </span>tt.steps {
-<a href=#1271 id=1271 data-nosnippet>1271</a>                <span class="comment">// trigger the timer
-<a href=#1272 id=1272 data-nosnippet>1272</a>                </span>tokio::time::advance(Duration::from_secs(s.after)).<span class="kw">await</span>;
-<a href=#1273 id=1273 data-nosnippet>1273</a>                client.add_report_history_and_set_preferred_relay(s.r.as_mut().unwrap());
-<a href=#1274 id=1274 data-nosnippet>1274</a>            }
-<a href=#1275 id=1275 data-nosnippet>1275</a>            <span class="kw">let </span>last_report = tt.steps.last().unwrap().r.clone().unwrap();
-<a href=#1276 id=1276 data-nosnippet>1276</a>            <span class="kw">let </span>got = client.reports.prev.len();
-<a href=#1277 id=1277 data-nosnippet>1277</a>            <span class="kw">let </span>want = tt.want_prev_len;
-<a href=#1278 id=1278 data-nosnippet>1278</a>            <span class="macro">assert_eq!</span>(got, want, <span class="string">"prev length"</span>);
-<a href=#1279 id=1279 data-nosnippet>1279</a>            <span class="kw">let </span>got = <span class="kw-2">&amp;</span>last_report.preferred_relay;
-<a href=#1280 id=1280 data-nosnippet>1280</a>            <span class="kw">let </span>want = <span class="kw-2">&amp;</span>tt.want_relay;
-<a href=#1281 id=1281 data-nosnippet>1281</a>            <span class="macro">assert_eq!</span>(got, want, <span class="string">"preferred_relay"</span>);
-<a href=#1282 id=1282 data-nosnippet>1282</a>        }
-<a href=#1283 id=1283 data-nosnippet>1283</a>
-<a href=#1284 id=1284 data-nosnippet>1284</a>        <span class="prelude-val">Ok</span>(())
-<a href=#1285 id=1285 data-nosnippet>1285</a>    }
-<a href=#1286 id=1286 data-nosnippet>1286</a>}</code></pre></div></section></main></body></html>
+<a href=#1038 id=1038 data-nosnippet>1038</a>        <span class="comment">// report returns a *Report from (relay host, Duration)+ pairs.
+<a href=#1039 id=1039 data-nosnippet>1039</a>        </span><span class="kw">fn </span>report(a: <span class="kw">impl </span>IntoIterator&lt;Item = (<span class="kw-2">&amp;</span><span class="lifetime">'static </span>str, u64)&gt;) -&gt; <span class="prelude-ty">Option</span>&lt;Report&gt; {
+<a href=#1040 id=1040 data-nosnippet>1040</a>            <span class="kw">let </span><span class="kw-2">mut </span>report = Report::default();
+<a href=#1041 id=1041 data-nosnippet>1041</a>            <span class="kw">for </span>(s, d) <span class="kw">in </span>a {
+<a href=#1042 id=1042 data-nosnippet>1042</a>                <span class="macro">assert!</span>(s.starts_with(<span class="string">'d'</span>), <span class="string">"invalid relay server key"</span>);
+<a href=#1043 id=1043 data-nosnippet>1043</a>                <span class="kw">let </span>id: u16 = s[<span class="number">1</span>..].parse().unwrap();
+<a href=#1044 id=1044 data-nosnippet>1044</a>                report.relay_latency.update_relay(
+<a href=#1045 id=1045 data-nosnippet>1045</a>                    relay_url(id),
+<a href=#1046 id=1046 data-nosnippet>1046</a>                    Duration::from_secs(d),
+<a href=#1047 id=1047 data-nosnippet>1047</a>                    Probe::QadIpv4,
+<a href=#1048 id=1048 data-nosnippet>1048</a>                );
+<a href=#1049 id=1049 data-nosnippet>1049</a>            }
+<a href=#1050 id=1050 data-nosnippet>1050</a>
+<a href=#1051 id=1051 data-nosnippet>1051</a>            <span class="prelude-val">Some</span>(report)
+<a href=#1052 id=1052 data-nosnippet>1052</a>        }
+<a href=#1053 id=1053 data-nosnippet>1053</a>        <span class="kw">struct </span>Step {
+<a href=#1054 id=1054 data-nosnippet>1054</a>            <span class="doccomment">/// Delay in seconds
+<a href=#1055 id=1055 data-nosnippet>1055</a>            </span>after: u64,
+<a href=#1056 id=1056 data-nosnippet>1056</a>            r: <span class="prelude-ty">Option</span>&lt;Report&gt;,
+<a href=#1057 id=1057 data-nosnippet>1057</a>        }
+<a href=#1058 id=1058 data-nosnippet>1058</a>        <span class="kw">struct </span>Test {
+<a href=#1059 id=1059 data-nosnippet>1059</a>            name: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>str,
+<a href=#1060 id=1060 data-nosnippet>1060</a>            steps: Vec&lt;Step&gt;,
+<a href=#1061 id=1061 data-nosnippet>1061</a>            <span class="doccomment">/// want PreferredRelay on final step
+<a href=#1062 id=1062 data-nosnippet>1062</a>            </span>want_relay: <span class="prelude-ty">Option</span>&lt;RelayUrl&gt;,
+<a href=#1063 id=1063 data-nosnippet>1063</a>            <span class="comment">// wanted len(c.prev)
+<a href=#1064 id=1064 data-nosnippet>1064</a>            </span>want_prev_len: usize,
+<a href=#1065 id=1065 data-nosnippet>1065</a>        }
+<a href=#1066 id=1066 data-nosnippet>1066</a>
+<a href=#1067 id=1067 data-nosnippet>1067</a>        <span class="kw">let </span>tests = [
+<a href=#1068 id=1068 data-nosnippet>1068</a>            Test {
+<a href=#1069 id=1069 data-nosnippet>1069</a>                name: <span class="string">"first_reading"</span>,
+<a href=#1070 id=1070 data-nosnippet>1070</a>                steps: <span class="macro">vec!</span>[Step {
+<a href=#1071 id=1071 data-nosnippet>1071</a>                    after: <span class="number">0</span>,
+<a href=#1072 id=1072 data-nosnippet>1072</a>                    r: report([(<span class="string">"d1"</span>, <span class="number">2</span>), (<span class="string">"d2"</span>, <span class="number">3</span>)]),
+<a href=#1073 id=1073 data-nosnippet>1073</a>                }],
+<a href=#1074 id=1074 data-nosnippet>1074</a>                want_prev_len: <span class="number">1</span>,
+<a href=#1075 id=1075 data-nosnippet>1075</a>                want_relay: <span class="prelude-val">Some</span>(relay_url(<span class="number">1</span>)),
+<a href=#1076 id=1076 data-nosnippet>1076</a>            },
+<a href=#1077 id=1077 data-nosnippet>1077</a>            Test {
+<a href=#1078 id=1078 data-nosnippet>1078</a>                name: <span class="string">"with_two"</span>,
+<a href=#1079 id=1079 data-nosnippet>1079</a>                steps: <span class="macro">vec!</span>[
+<a href=#1080 id=1080 data-nosnippet>1080</a>                    Step {
+<a href=#1081 id=1081 data-nosnippet>1081</a>                        after: <span class="number">0</span>,
+<a href=#1082 id=1082 data-nosnippet>1082</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">2</span>), (<span class="string">"d2"</span>, <span class="number">3</span>)]),
+<a href=#1083 id=1083 data-nosnippet>1083</a>                    },
+<a href=#1084 id=1084 data-nosnippet>1084</a>                    Step {
+<a href=#1085 id=1085 data-nosnippet>1085</a>                        after: <span class="number">1</span>,
+<a href=#1086 id=1086 data-nosnippet>1086</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">4</span>), (<span class="string">"d2"</span>, <span class="number">3</span>)]),
+<a href=#1087 id=1087 data-nosnippet>1087</a>                    },
+<a href=#1088 id=1088 data-nosnippet>1088</a>                ],
+<a href=#1089 id=1089 data-nosnippet>1089</a>                want_prev_len: <span class="number">2</span>,
+<a href=#1090 id=1090 data-nosnippet>1090</a>                want_relay: <span class="prelude-val">Some</span>(relay_url(<span class="number">1</span>)), <span class="comment">// t0's d1 of 2 is still best
+<a href=#1091 id=1091 data-nosnippet>1091</a>            </span>},
+<a href=#1092 id=1092 data-nosnippet>1092</a>            Test {
+<a href=#1093 id=1093 data-nosnippet>1093</a>                name: <span class="string">"but_now_d1_gone"</span>,
+<a href=#1094 id=1094 data-nosnippet>1094</a>                steps: <span class="macro">vec!</span>[
+<a href=#1095 id=1095 data-nosnippet>1095</a>                    Step {
+<a href=#1096 id=1096 data-nosnippet>1096</a>                        after: <span class="number">0</span>,
+<a href=#1097 id=1097 data-nosnippet>1097</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">2</span>), (<span class="string">"d2"</span>, <span class="number">3</span>)]),
+<a href=#1098 id=1098 data-nosnippet>1098</a>                    },
+<a href=#1099 id=1099 data-nosnippet>1099</a>                    Step {
+<a href=#1100 id=1100 data-nosnippet>1100</a>                        after: <span class="number">1</span>,
+<a href=#1101 id=1101 data-nosnippet>1101</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">4</span>), (<span class="string">"d2"</span>, <span class="number">3</span>)]),
+<a href=#1102 id=1102 data-nosnippet>1102</a>                    },
+<a href=#1103 id=1103 data-nosnippet>1103</a>                    Step {
+<a href=#1104 id=1104 data-nosnippet>1104</a>                        after: <span class="number">2</span>,
+<a href=#1105 id=1105 data-nosnippet>1105</a>                        r: report([(<span class="string">"d2"</span>, <span class="number">3</span>)]),
+<a href=#1106 id=1106 data-nosnippet>1106</a>                    },
+<a href=#1107 id=1107 data-nosnippet>1107</a>                ],
+<a href=#1108 id=1108 data-nosnippet>1108</a>                want_prev_len: <span class="number">3</span>,
+<a href=#1109 id=1109 data-nosnippet>1109</a>                want_relay: <span class="prelude-val">Some</span>(relay_url(<span class="number">2</span>)), <span class="comment">// only option
+<a href=#1110 id=1110 data-nosnippet>1110</a>            </span>},
+<a href=#1111 id=1111 data-nosnippet>1111</a>            Test {
+<a href=#1112 id=1112 data-nosnippet>1112</a>                name: <span class="string">"d1_is_back"</span>,
+<a href=#1113 id=1113 data-nosnippet>1113</a>                steps: <span class="macro">vec!</span>[
+<a href=#1114 id=1114 data-nosnippet>1114</a>                    Step {
+<a href=#1115 id=1115 data-nosnippet>1115</a>                        after: <span class="number">0</span>,
+<a href=#1116 id=1116 data-nosnippet>1116</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">2</span>), (<span class="string">"d2"</span>, <span class="number">3</span>)]),
+<a href=#1117 id=1117 data-nosnippet>1117</a>                    },
+<a href=#1118 id=1118 data-nosnippet>1118</a>                    Step {
+<a href=#1119 id=1119 data-nosnippet>1119</a>                        after: <span class="number">1</span>,
+<a href=#1120 id=1120 data-nosnippet>1120</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">4</span>), (<span class="string">"d2"</span>, <span class="number">3</span>)]),
+<a href=#1121 id=1121 data-nosnippet>1121</a>                    },
+<a href=#1122 id=1122 data-nosnippet>1122</a>                    Step {
+<a href=#1123 id=1123 data-nosnippet>1123</a>                        after: <span class="number">2</span>,
+<a href=#1124 id=1124 data-nosnippet>1124</a>                        r: report([(<span class="string">"d2"</span>, <span class="number">3</span>)]),
+<a href=#1125 id=1125 data-nosnippet>1125</a>                    },
+<a href=#1126 id=1126 data-nosnippet>1126</a>                    Step {
+<a href=#1127 id=1127 data-nosnippet>1127</a>                        after: <span class="number">3</span>,
+<a href=#1128 id=1128 data-nosnippet>1128</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">4</span>), (<span class="string">"d2"</span>, <span class="number">3</span>)]),
+<a href=#1129 id=1129 data-nosnippet>1129</a>                    }, <span class="comment">// same as 2 seconds ago
+<a href=#1130 id=1130 data-nosnippet>1130</a>                </span>],
+<a href=#1131 id=1131 data-nosnippet>1131</a>                want_prev_len: <span class="number">4</span>,
+<a href=#1132 id=1132 data-nosnippet>1132</a>                want_relay: <span class="prelude-val">Some</span>(relay_url(<span class="number">1</span>)), <span class="comment">// t0's d1 of 2 is still best
+<a href=#1133 id=1133 data-nosnippet>1133</a>            </span>},
+<a href=#1134 id=1134 data-nosnippet>1134</a>            Test {
+<a href=#1135 id=1135 data-nosnippet>1135</a>                name: <span class="string">"things_clean_up"</span>,
+<a href=#1136 id=1136 data-nosnippet>1136</a>                steps: <span class="macro">vec!</span>[
+<a href=#1137 id=1137 data-nosnippet>1137</a>                    Step {
+<a href=#1138 id=1138 data-nosnippet>1138</a>                        after: <span class="number">0</span>,
+<a href=#1139 id=1139 data-nosnippet>1139</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">1</span>), (<span class="string">"d2"</span>, <span class="number">2</span>)]),
+<a href=#1140 id=1140 data-nosnippet>1140</a>                    },
+<a href=#1141 id=1141 data-nosnippet>1141</a>                    Step {
+<a href=#1142 id=1142 data-nosnippet>1142</a>                        after: <span class="number">1</span>,
+<a href=#1143 id=1143 data-nosnippet>1143</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">1</span>), (<span class="string">"d2"</span>, <span class="number">2</span>)]),
+<a href=#1144 id=1144 data-nosnippet>1144</a>                    },
+<a href=#1145 id=1145 data-nosnippet>1145</a>                    Step {
+<a href=#1146 id=1146 data-nosnippet>1146</a>                        after: <span class="number">2</span>,
+<a href=#1147 id=1147 data-nosnippet>1147</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">1</span>), (<span class="string">"d2"</span>, <span class="number">2</span>)]),
+<a href=#1148 id=1148 data-nosnippet>1148</a>                    },
+<a href=#1149 id=1149 data-nosnippet>1149</a>                    Step {
+<a href=#1150 id=1150 data-nosnippet>1150</a>                        after: <span class="number">3</span>,
+<a href=#1151 id=1151 data-nosnippet>1151</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">1</span>), (<span class="string">"d2"</span>, <span class="number">2</span>)]),
+<a href=#1152 id=1152 data-nosnippet>1152</a>                    },
+<a href=#1153 id=1153 data-nosnippet>1153</a>                    Step {
+<a href=#1154 id=1154 data-nosnippet>1154</a>                        after: <span class="number">10 </span>* <span class="number">60</span>,
+<a href=#1155 id=1155 data-nosnippet>1155</a>                        r: report([(<span class="string">"d3"</span>, <span class="number">3</span>)]),
+<a href=#1156 id=1156 data-nosnippet>1156</a>                    },
+<a href=#1157 id=1157 data-nosnippet>1157</a>                ],
+<a href=#1158 id=1158 data-nosnippet>1158</a>                want_prev_len: <span class="number">1</span>, <span class="comment">// t=[0123]s all gone. (too old, older than 10 min)
+<a href=#1159 id=1159 data-nosnippet>1159</a>                </span>want_relay: <span class="prelude-val">Some</span>(relay_url(<span class="number">3</span>)), <span class="comment">// only option
+<a href=#1160 id=1160 data-nosnippet>1160</a>            </span>},
+<a href=#1161 id=1161 data-nosnippet>1161</a>            Test {
+<a href=#1162 id=1162 data-nosnippet>1162</a>                name: <span class="string">"preferred_relay_hysteresis_no_switch"</span>,
+<a href=#1163 id=1163 data-nosnippet>1163</a>                steps: <span class="macro">vec!</span>[
+<a href=#1164 id=1164 data-nosnippet>1164</a>                    Step {
+<a href=#1165 id=1165 data-nosnippet>1165</a>                        after: <span class="number">0</span>,
+<a href=#1166 id=1166 data-nosnippet>1166</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">4</span>), (<span class="string">"d2"</span>, <span class="number">5</span>)]),
+<a href=#1167 id=1167 data-nosnippet>1167</a>                    },
+<a href=#1168 id=1168 data-nosnippet>1168</a>                    Step {
+<a href=#1169 id=1169 data-nosnippet>1169</a>                        after: <span class="number">1</span>,
+<a href=#1170 id=1170 data-nosnippet>1170</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">4</span>), (<span class="string">"d2"</span>, <span class="number">3</span>)]),
+<a href=#1171 id=1171 data-nosnippet>1171</a>                    },
+<a href=#1172 id=1172 data-nosnippet>1172</a>                ],
+<a href=#1173 id=1173 data-nosnippet>1173</a>                want_prev_len: <span class="number">2</span>,
+<a href=#1174 id=1174 data-nosnippet>1174</a>                want_relay: <span class="prelude-val">Some</span>(relay_url(<span class="number">1</span>)), <span class="comment">// 2 didn't get fast enough
+<a href=#1175 id=1175 data-nosnippet>1175</a>            </span>},
+<a href=#1176 id=1176 data-nosnippet>1176</a>            Test {
+<a href=#1177 id=1177 data-nosnippet>1177</a>                name: <span class="string">"preferred_relay_hysteresis_do_switch"</span>,
+<a href=#1178 id=1178 data-nosnippet>1178</a>                steps: <span class="macro">vec!</span>[
+<a href=#1179 id=1179 data-nosnippet>1179</a>                    Step {
+<a href=#1180 id=1180 data-nosnippet>1180</a>                        after: <span class="number">0</span>,
+<a href=#1181 id=1181 data-nosnippet>1181</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">4</span>), (<span class="string">"d2"</span>, <span class="number">5</span>)]),
+<a href=#1182 id=1182 data-nosnippet>1182</a>                    },
+<a href=#1183 id=1183 data-nosnippet>1183</a>                    Step {
+<a href=#1184 id=1184 data-nosnippet>1184</a>                        after: <span class="number">1</span>,
+<a href=#1185 id=1185 data-nosnippet>1185</a>                        r: report([(<span class="string">"d1"</span>, <span class="number">4</span>), (<span class="string">"d2"</span>, <span class="number">1</span>)]),
+<a href=#1186 id=1186 data-nosnippet>1186</a>                    },
+<a href=#1187 id=1187 data-nosnippet>1187</a>                ],
+<a href=#1188 id=1188 data-nosnippet>1188</a>                want_prev_len: <span class="number">2</span>,
+<a href=#1189 id=1189 data-nosnippet>1189</a>                want_relay: <span class="prelude-val">Some</span>(relay_url(<span class="number">2</span>)), <span class="comment">// 2 got fast enough
+<a href=#1190 id=1190 data-nosnippet>1190</a>            </span>},
+<a href=#1191 id=1191 data-nosnippet>1191</a>        ];
+<a href=#1192 id=1192 data-nosnippet>1192</a>        <span class="kw">let </span>resolver = DnsResolver::new();
+<a href=#1193 id=1193 data-nosnippet>1193</a>        <span class="kw">for </span><span class="kw-2">mut </span>tt <span class="kw">in </span>tests {
+<a href=#1194 id=1194 data-nosnippet>1194</a>            <span class="macro">println!</span>(<span class="string">"test: {}"</span>, tt.name);
+<a href=#1195 id=1195 data-nosnippet>1195</a>            <span class="kw">let </span>relay_map = RelayMap::empty();
+<a href=#1196 id=1196 data-nosnippet>1196</a>            <span class="kw">let </span>opts = Options::default();
+<a href=#1197 id=1197 data-nosnippet>1197</a>            <span class="kw">let </span><span class="kw-2">mut </span>client =
+<a href=#1198 id=1198 data-nosnippet>1198</a>                Client::new(resolver.clone(), <span class="prelude-val">None</span>, relay_map, opts, Default::default());
+<a href=#1199 id=1199 data-nosnippet>1199</a>            <span class="kw">for </span>s <span class="kw">in </span><span class="kw-2">&amp;mut </span>tt.steps {
+<a href=#1200 id=1200 data-nosnippet>1200</a>                <span class="comment">// trigger the timer
+<a href=#1201 id=1201 data-nosnippet>1201</a>                </span>tokio::time::advance(Duration::from_secs(s.after)).<span class="kw">await</span>;
+<a href=#1202 id=1202 data-nosnippet>1202</a>                client.add_report_history_and_set_preferred_relay(s.r.as_mut().unwrap());
+<a href=#1203 id=1203 data-nosnippet>1203</a>            }
+<a href=#1204 id=1204 data-nosnippet>1204</a>            <span class="kw">let </span>last_report = tt.steps.last().unwrap().r.clone().unwrap();
+<a href=#1205 id=1205 data-nosnippet>1205</a>            <span class="kw">let </span>got = client.reports.prev.len();
+<a href=#1206 id=1206 data-nosnippet>1206</a>            <span class="kw">let </span>want = tt.want_prev_len;
+<a href=#1207 id=1207 data-nosnippet>1207</a>            <span class="macro">assert_eq!</span>(got, want, <span class="string">"prev length"</span>);
+<a href=#1208 id=1208 data-nosnippet>1208</a>            <span class="kw">let </span>got = <span class="kw-2">&amp;</span>last_report.preferred_relay;
+<a href=#1209 id=1209 data-nosnippet>1209</a>            <span class="kw">let </span>want = <span class="kw-2">&amp;</span>tt.want_relay;
+<a href=#1210 id=1210 data-nosnippet>1210</a>            <span class="macro">assert_eq!</span>(got, want, <span class="string">"preferred_relay"</span>);
+<a href=#1211 id=1211 data-nosnippet>1211</a>        }
+<a href=#1212 id=1212 data-nosnippet>1212</a>
+<a href=#1213 id=1213 data-nosnippet>1213</a>        <span class="prelude-val">Ok</span>(())
+<a href=#1214 id=1214 data-nosnippet>1214</a>    }
+<a href=#1215 id=1215 data-nosnippet>1215</a>}</code></pre></div></section></main></body></html>
