@@ -20,14 +20,13 @@ assignees: ''
 
 Version:
 
-<!-- If possible use cargo tree:
+<!-- If possible use cargo tree: -->
 
 ```
 [paste output from `cargo tree -i -e features -p iroh` here]
 ```
 
-Otherwise, please list the iroh version and/or commit hash.
--->
+<!-- Otherwise, please list the iroh version and/or commit hash. -->
 
 Endpoint configuration:<!-- (please complete the following information) -->
 
