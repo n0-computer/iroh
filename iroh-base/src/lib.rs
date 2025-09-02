@@ -13,6 +13,8 @@ mod key;
 mod node_addr;
 #[cfg(feature = "relay")]
 mod relay_url;
+#[cfg(feature = "webrtc")]
+mod webrtc_port;
 
 #[cfg(feature = "key")]
 pub use self::key::{KeyParsingError, NodeId, PublicKey, SecretKey, Signature, SignatureError};
@@ -20,3 +22,5 @@ pub use self::key::{KeyParsingError, NodeId, PublicKey, SecretKey, Signature, Si
 pub use self::node_addr::NodeAddr;
 #[cfg(feature = "relay")]
 pub use self::relay_url::{RelayUrl, RelayUrlParseError};
+#[cfg(feature = "webrtc")]
+pub use self::webrtc_port::{WebRtcPort, ChannelId};

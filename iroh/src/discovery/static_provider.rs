@@ -228,6 +228,7 @@ mod tests {
             node_id: key.public(),
             relay_url: Some("https://example.com".parse()?),
             direct_addresses: Default::default(),
+            channel_id: None
         };
         let user_data = Some("foobar".parse().unwrap());
         let node_info = NodeInfo::from(addr.clone()).with_user_data(user_data.clone());

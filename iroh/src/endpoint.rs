@@ -153,7 +153,7 @@ impl Builder {
     // # The final constructor that everyone needs.
 
     /// Binds the magic endpoint.
-    pub async fn bind(self) -> Result<Endpoint, BindError> {
+    pub async fn bind(self, force_webrtc_only: bool) -> Result<Endpoint, BindError> {
         let relay_map = self.relay_mode.relay_map();
         let secret_key = self
             .secret_key
@@ -207,7 +207,7 @@ impl Builder {
             metrics,
         };
 
-        Endpoint::bind(static_config, msock_opts).await
+        Endpoint::bind(static_config, msock_opts, force_webrtc_only).await
     }
 
     // # The very common methods everyone basically needs.
@@ -629,8 +629,9 @@ impl Endpoint {
     async fn bind(
         static_config: StaticConfig,
         msock_opts: magicsock::Options,
+        force_webrtc_only: bool
     ) -> Result<Self, BindError> {
-        let msock = magicsock::MagicSock::spawn(msock_opts).await?;
+        let msock = magicsock::MagicSock::spawn(msock_opts, force_webrtc_only).await?;
         trace!("created magicsock");
         debug!(version = env!("CARGO_PKG_VERSION"), "iroh Endpoint created");
 

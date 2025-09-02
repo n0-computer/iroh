@@ -5,7 +5,7 @@ use std::{
     sync::Mutex,
 };
 
-use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl};
+use iroh_base::{NodeAddr, NodeId, PublicKey, RelayUrl, WebRtcPort};
 use n0_future::time::Instant;
 use serde::{Deserialize, Serialize};
 use stun_rs::TransactionId;
@@ -51,10 +51,12 @@ pub(super) struct NodeMap {
     inner: Mutex<NodeMapInner>,
 }
 
+
 #[derive(Default, Debug)]
 pub(super) struct NodeMapInner {
     by_node_key: HashMap<NodeId, usize>,
     by_ip_port: HashMap<IpPort, usize>,
+    by_webrtc_port: HashMap<WebRtcPort, usize>,
     by_quic_mapped_addr: HashMap<NodeIdMappedAddr, usize>,
     by_id: HashMap<usize, NodeState>,
     next_id: usize,
@@ -72,6 +74,7 @@ enum NodeStateKey {
     NodeId(NodeId),
     NodeIdMappedAddr(NodeIdMappedAddr),
     IpPort(IpPort),
+    WebRtcPort(WebRtcPort)
 }
 
 /// The origin or *source* through which an address associated with a remote node
@@ -115,6 +118,8 @@ pub enum Source {
         /// The name of the application that added the node
         name: String,
     },
+    /// A node communicated with us via webrtc
+    WebRtc,
 }
 
 impl NodeMap {
@@ -173,7 +178,14 @@ impl NodeMap {
             .expect("poisoned")
             .receive_relay(relay_url, src)
     }
+    pub(crate) fn receive_webrtc(&self, port: WebRtcPort) -> NodeIdMappedAddr {
 
+        self.inner
+        .lock()
+            .expect("poisoned")
+            .receive_webrtc(port)
+
+    }
     pub(super) fn notify_ping_sent(
         &self,
         id: usize,
@@ -356,11 +368,13 @@ impl NodeMapInner {
         let source0 = source.clone();
         let node_id = node_addr.node_id;
         let relay_url = node_addr.relay_url.clone();
+        let webrtc_channel = node_addr.channel_id.clone();
         #[cfg(any(test, feature = "test-utils"))]
         let path_selection = self.path_selection;
         let node_state = self.get_or_insert_with(NodeStateKey::NodeId(node_id), || Options {
             node_id,
             relay_url,
+            webrtc_channel,
             active: false,
             source,
             #[cfg(any(test, feature = "test-utils"))]
@@ -414,6 +428,7 @@ impl NodeMapInner {
             NodeStateKey::NodeId(node_key) => self.by_node_key.get(&node_key).copied(),
             NodeStateKey::NodeIdMappedAddr(addr) => self.by_quic_mapped_addr.get(&addr).copied(),
             NodeStateKey::IpPort(ipp) => self.by_ip_port.get(&ipp).copied(),
+            NodeStateKey::WebRtcPort(port) => self.by_webrtc_port.get(&port).copied(),
         }
     }
 
@@ -467,9 +482,38 @@ impl NodeMapInner {
                 source: Source::Relay,
                 #[cfg(any(test, feature = "test-utils"))]
                 path_selection,
+                webrtc_channel: None
             }
         });
         node_state.receive_relay(relay_url, src, Instant::now());
+        *node_state.quic_mapped_addr()
+    }
+
+    #[instrument(skip_all, fields(src = %port))]
+    fn receive_webrtc(&mut self, port: WebRtcPort) -> NodeIdMappedAddr {
+        #[cfg(any(test, feature = "test-utils"))]
+        let path_selection = self.path_selection;
+
+        let src_node = port.node_id;
+        let channel_id = port.channel_id;
+
+        // First, try to find existing node by NodeId
+        let node_state = self.get_or_insert_with(NodeStateKey::WebRtcPort(port), || {
+            trace!("WebRTC packets from unknown node, insert into node map");
+            Options {
+                node_id: src_node,
+                relay_url: None,
+                active: true,
+                source: Source::WebRtc,
+                #[cfg(any(test, feature="test-utils"))]
+                path_selection,
+                webrtc_channel: Some(channel_id)
+            }
+        });
+
+        node_state.receive_webrtc(port.clone(), Instant::now());
+
+
         *node_state.quic_mapped_addr()
     }
 
@@ -559,6 +603,7 @@ impl NodeMapInner {
             Options {
                 node_id: sender,
                 relay_url: src.relay_url(),
+                webrtc_channel:src.webrtc_channel(),
                 active: true,
                 source,
                 #[cfg(any(test, feature = "test-utils"))]
@@ -675,6 +720,7 @@ pub struct IpPort {
     ip: IpAddr,
     port: u16,
 }
+
 
 impl From<SocketAddr> for IpPort {
     fn from(socket_addr: SocketAddr) -> Self {
@@ -813,6 +859,7 @@ mod tests {
                     name: "test".into(),
                 },
                 path_selection: PathSelection::default(),
+                webrtc_channel: None
             })
             .id();
 

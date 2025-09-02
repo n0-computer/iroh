@@ -44,6 +44,7 @@ use netwatch::netmon;
 #[cfg(not(wasm_browser))]
 use netwatch::{UdpSocket, ip::LocalAddresses};
 use quinn::{AsyncUdpSocket, ServerConfig};
+use quinn_proto::Datagram;
 use rand::Rng;
 use smallvec::SmallVec;
 use snafu::{ResultExt, Snafu};
@@ -78,12 +79,14 @@ use crate::{
 };
 
 mod metrics;
-mod node_map;
+pub mod node_map;
+
 
 pub(crate) mod transports;
 
 pub use node_map::Source;
 
+use crate::magicsock::transports::webrtc::actor::WebRtcActorConfig;
 pub use self::{
     metrics::Metrics,
     node_map::{ConnectionType, ControlMsg, DirectAddrInfo, RemoteInfo},
@@ -241,10 +244,13 @@ pub enum AddNodeAddrError {
 
 impl MagicSock {
     /// Creates a magic [`MagicSock`] listening on [`Options::addr_v4`] and [`Options::addr_v6`].
-    pub(crate) async fn spawn(opts: Options) -> Result<Handle, CreateHandleError> {
-        Handle::new(opts).await
+    pub(crate) async fn spawn(opts: Options, force_webrtc_only: bool) -> Result<Handle, CreateHandleError> {
+        if force_webrtc_only {
+            Handle::new(opts).await
+        }else {
+            Handle::new_with_webrtc(opts).await
+        }
     }
-
     /// Returns the relay node we are connected to, that has the best latency.
     ///
     /// If `None`, then we are not connected to any relay nodes.
@@ -636,7 +642,9 @@ impl MagicSock {
                     trace!(src = ?source_addr, len = %quinn_meta.stride, "UDP recv: disco packet");
                     self.handle_disco_message(sender, sealed_box, source_addr);
                     datagram[0] = 0u8;
-                } else {
+                }
+
+                else {
                     trace!(src = ?source_addr, len = %quinn_meta.stride, "UDP recv: quic packet");
                     match source_addr {
                         transports::Addr::Ip(SocketAddr::V4(..)) => {
@@ -725,10 +733,10 @@ impl MagicSock {
                         let quic_mapped_addr = self.node_map.receive_relay(src_url, *src_node);
                         quinn_meta.addr = quic_mapped_addr.private_socket_addr();
                     }
-                    transports::Addr::WebRtc(relay_url, node_id, channel_id) => {
+                    transports::Addr::WebRtc(port) => {
 
-                    todo!("implemnet webrtc processing")
-
+                        let quic_mapped_addr = self.node_map.receive_webrtc(*port);
+                        quinn_meta.addr = quic_mapped_addr.private_socket_addr();
                     }
                 }
             } else {
@@ -996,6 +1004,7 @@ impl MagicSock {
         let dst = match dst {
             SendAddr::Udp(addr) => transports::Addr::Ip(addr),
             SendAddr::Relay(url) => transports::Addr::Relay(url, dst_key),
+            SendAddr::WebRtc(port) => transports::Addr::WebRtc(port)
         };
 
         trace!(?dst, %msg, "send disco message (UDP)");
@@ -1108,6 +1117,7 @@ impl MagicSock {
         let dst = match dst {
             SendAddr::Udp(addr) => transports::Addr::Ip(addr),
             SendAddr::Relay(url) => transports::Addr::Relay(url, dst_key),
+            SendAddr::WebRtc(port) => transports::Addr::WebRtc(port),
         };
 
         trace!(?dst, %msg, "send disco message (UDP)");
@@ -1162,6 +1172,31 @@ impl MagicSock {
             let data = NodeData::new(relay_url, direct_addrs).with_user_data(user_data);
             discovery.publish(&data);
         }
+    }
+}
+
+fn is_webrtc_packet(datagram: &[u8]) -> bool {
+    if datagram.is_empty() {
+        return false;
+    }
+
+    let first_byte = datagram[0];
+
+    // From RFC 9443 - WebRTC packets (DTLS/SRTP):
+    match first_byte {
+        // DTLS packets
+        20..=63 => true,    // DTLS range
+
+        // SRTP/SRTCP packets
+        128..=191 => true,  // RTP/RTCP range
+
+        // Not WebRTC
+        0..=3 => false,     // STUN
+        16..=19 => false,   // ZRTP
+        64..=79 => false,   // TURN Channel (or QUIC)
+        80..=127 => false,  // QUIC
+        192..=255 => false, // QUIC
+        _ => false
     }
 }
 
@@ -1408,17 +1443,12 @@ impl Handle {
             metrics: metrics.magicsock.clone(),
         });
         let relay_transports = vec![relay_transport];
-        let web_rtc_transport = WebRtcTransport::new(WebRtcActorConfig {
-            node_id: secret_key.clone().public(),
-        })
-        .await
-        .context(CreateWebRtcEndpointSnafu)?;
+        let web_rtc_transport = WebRtcTransport::new(WebRtcActorConfig::new(secret_key.clone(),addr_v4.into()));
         let web_rtc_transports = vec![web_rtc_transport];
 
         let secret_encryption_key = secret_ed_box(secret_key.secret());
         #[cfg(not(wasm_browser))]
-        let ipv6 = ip_transports.iter().any(|t| t.bind_addr().is_ipv6());
-
+        let ipv6 = ip_transports.iter().any(|t: &IpTransport| t.bind_addr().is_ipv6());
         #[cfg(not(wasm_browser))]
         let transports = Transports::new(
             ip_transports,
@@ -1559,6 +1589,219 @@ impl Handle {
             actor_token,
         })
     }
+
+
+    async fn new_with_webrtc(opts: Options) -> Result<Self, CreateHandleError> {
+        let Options {
+            addr_v4,
+            addr_v6,
+            secret_key,
+            relay_map,
+            node_map,
+            discovery,
+            discovery_user_data,
+            #[cfg(not(wasm_browser))]
+            dns_resolver,
+            proxy_url,
+            server_config,
+            #[cfg(any(test, feature = "test-utils"))]
+            insecure_skip_relay_cert_verify,
+            #[cfg(any(test, feature = "test-utils"))]
+            path_selection,
+            metrics,
+        } = opts;
+
+        let addr_v4 = addr_v4.unwrap_or_else(|| SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0));
+
+        // #[cfg(not(wasm_browser))]
+        // let (ip_transports, port_mapper) =
+        //     bind_ip(addr_v4, addr_v6, &metrics).context(BindSocketsSnafu)?;
+
+        let (webrtc_transports, port_mapper) = bind_webrtc(addr_v4, addr_v6, &metrics, secret_key.clone()).context(BindSocketsSnafu)?;
+
+        let ip_mapped_addrs = IpMappedAddresses::default();
+
+        let (actor_sender, actor_receiver) = mpsc::channel(256);
+
+        let ipv6_reported = false;
+
+        // load the node data
+        let node_map = node_map.unwrap_or_default();
+        let node_map = NodeMap::load_from_vec(
+            node_map,
+            #[cfg(any(test, feature = "test-utils"))]
+            path_selection,
+            ipv6_reported,
+            &metrics.magicsock,
+        );
+
+        let my_relay = Watchable::new(None);
+        let ipv6_reported = Arc::new(AtomicBool::new(ipv6_reported));
+        let max_receive_segments = Arc::new(AtomicUsize::new(1));
+
+        let relay_transport = RelayTransport::new(RelayActorConfig {
+            my_relay: my_relay.clone(),
+            secret_key: secret_key.clone(),
+            #[cfg(not(wasm_browser))]
+            dns_resolver: dns_resolver.clone(),
+            proxy_url: proxy_url.clone(),
+            ipv6_reported: ipv6_reported.clone(),
+            max_receive_segments: max_receive_segments.clone(),
+            #[cfg(any(test, feature = "test-utils"))]
+            insecure_skip_relay_cert_verify,
+            metrics: metrics.magicsock.clone(),
+        });
+        let relay_transports = vec![relay_transport];
+
+
+        let secret_encryption_key = secret_ed_box(secret_key.secret());
+        #[cfg(not(wasm_browser))]
+        let ipv6 = webrtc_transports.iter().any(|t| t.bind_addrs().is_ipv6());
+
+        let ip_transports = Vec::new();
+        let relay_transports = Vec::new();
+
+        #[cfg(not(wasm_browser))]
+        let transports = Transports::new(
+            ip_transports,
+            relay_transports,
+            webrtc_transports,
+            max_receive_segments,
+        );
+        #[cfg(wasm_browser)]
+        let transports =
+            Transports::new(relay_transports, web_rtc_transports, max_receive_segments);
+
+        let (disco, disco_receiver) = DiscoState::new(secret_encryption_key);
+
+        let msock = Arc::new(MagicSock {
+            public_key: secret_key.public(),
+            closing: AtomicBool::new(false),
+            closed: AtomicBool::new(false),
+            disco,
+            actor_sender: actor_sender.clone(),
+            ipv6_reported,
+            node_map,
+            ip_mapped_addrs: ip_mapped_addrs.clone(),
+            discovery,
+            discovery_user_data: RwLock::new(discovery_user_data),
+            direct_addrs: Default::default(),
+            net_report: Watchable::new((None, UpdateReason::None)),
+            #[cfg(not(wasm_browser))]
+            dns_resolver: dns_resolver.clone(),
+            discovery_subscribers: DiscoverySubscribers::new(),
+            metrics: metrics.clone(),
+            local_addrs_watch: transports.local_addrs_watch(),
+            #[cfg(not(wasm_browser))]
+            ip_bind_addrs: transports.ip_bind_addrs(),
+        });
+
+        let mut endpoint_config = quinn::EndpointConfig::default();
+        // Setting this to false means that quinn will ignore packets that have the QUIC fixed bit
+        // set to 0. The fixed bit is the 3rd bit of the first byte of a packet.
+        // For performance reasons and to not rewrite buffers we pass non-QUIC UDP packets straight
+        // through to quinn. We set the first byte of the packet to zero, which makes quinn ignore
+        // the packet if grease_quic_bit is set to false.
+        endpoint_config.grease_quic_bit(false);
+
+        let sender = transports.create_sender(msock.clone());
+        let local_addrs_watch = transports.local_addrs_watch();
+        let network_change_sender = transports.create_network_change_sender();
+
+        let endpoint = quinn::Endpoint::new_with_abstract_socket(
+            endpoint_config,
+            Some(server_config),
+            Box::new(MagicUdpSocket {
+                socket: msock.clone(),
+                transports,
+            }),
+            #[cfg(not(wasm_browser))]
+            Arc::new(quinn::TokioRuntime),
+            #[cfg(wasm_browser)]
+            Arc::new(crate::web_runtime::WebRuntime),
+        )
+            .context(CreateQuinnEndpointSnafu)?;
+
+        let network_monitor = netmon::Monitor::new()
+            .await
+            .context(CreateNetmonMonitorSnafu)?;
+
+        let qad_endpoint = endpoint.clone();
+
+        #[cfg(any(test, feature = "test-utils"))]
+        let client_config = if insecure_skip_relay_cert_verify {
+            iroh_relay::client::make_dangerous_client_config()
+        } else {
+            default_quic_client_config()
+        };
+        #[cfg(not(any(test, feature = "test-utils")))]
+        let client_config = default_quic_client_config();
+
+        let net_report_config = net_report::Options::default();
+        #[cfg(not(wasm_browser))]
+        let net_report_config = net_report_config.quic_config(Some(QuicConfig {
+            ep: qad_endpoint,
+            client_config,
+            ipv4: true,
+            ipv6,
+        }));
+
+        #[cfg(any(test, feature = "test-utils"))]
+        let net_report_config =
+            net_report_config.insecure_skip_relay_cert_verify(insecure_skip_relay_cert_verify);
+
+        let net_reporter = net_report::Client::new(
+            #[cfg(not(wasm_browser))]
+            dns_resolver,
+            #[cfg(not(wasm_browser))]
+            Some(ip_mapped_addrs),
+            relay_map.clone(),
+            net_report_config,
+            metrics.net_report.clone(),
+        );
+
+        let (direct_addr_done_tx, direct_addr_done_rx) = mpsc::channel(8);
+        let direct_addr_update_state = DirectAddrUpdateState::new(
+            msock.clone(),
+            #[cfg(not(wasm_browser))]
+            port_mapper,
+            Arc::new(AsyncMutex::new(net_reporter)),
+            relay_map,
+            direct_addr_done_tx,
+        );
+
+        let netmon_watcher = network_monitor.interface_state();
+        let actor = Actor {
+            msg_receiver: actor_receiver,
+            msock: msock.clone(),
+            periodic_re_stun_timer: new_re_stun_timer(false),
+            network_monitor,
+            netmon_watcher,
+            direct_addr_update_state,
+            network_change_sender,
+            direct_addr_done_rx,
+            pending_call_me_maybes: Default::default(),
+            disco_receiver,
+        };
+
+        let actor_token = CancellationToken::new();
+        let token = actor_token.clone();
+        let actor_task = task::spawn(
+            actor
+                .run(token, local_addrs_watch, sender)
+                .instrument(info_span!("actor")),
+        );
+
+        let actor_task = Arc::new(Mutex::new(Some(AbortOnDropHandle::new(actor_task))));
+
+        Ok(Handle {
+            msock,
+            actor_task,
+            endpoint,
+            actor_token,
+        })
+    }
+
 
     /// The underlying [`quinn::Endpoint`]
     pub fn endpoint(&self) -> &quinn::Endpoint {
@@ -1860,6 +2103,50 @@ fn bind_ip(
 
     Ok((ip, port_mapper))
 }
+
+#[cfg(not(wasm_browser))]
+fn bind_webrtc(
+    addr_v4: SocketAddrV4,
+    addr_v6: Option<SocketAddrV6>,
+    metrics: &EndpointMetrics,
+    secret_key: SecretKey
+) -> io::Result<(Vec<WebRtcTransport>, portmapper::Client)> {
+    let port_mapper =
+        portmapper::Client::with_metrics(Default::default(), metrics.portmapper.clone());
+
+    let v4 = Arc::new(bind_with_fallback(SocketAddr::V4(addr_v4))?);
+    let ip4_port = v4.local_addr()?.port();
+    let ip6_port = ip4_port.checked_add(1).unwrap_or(ip4_port - 1);
+
+    let addr_v6 =
+        addr_v6.unwrap_or_else(|| SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, ip6_port, 0, 0));
+
+    let v6 = match bind_with_fallback(SocketAddr::V6(addr_v6)) {
+        Ok(sock) => Some(Arc::new(sock)),
+        Err(err) => {
+            info!("bind ignoring IPv6 bind failure: {:?}", err);
+            None
+        }
+    };
+
+    let port = v4.local_addr().map_or(0, |p| p.port());
+
+
+    let web_rtc_transport = WebRtcTransport::new(WebRtcActorConfig::new(secret_key.clone(), addr_v4.into()));
+    let web_rtc_transports = vec![web_rtc_transport];
+
+
+    // NOTE: we can end up with a zero port if `netwatch::UdpSocket::socket_addr` fails
+    match port.try_into() {
+        Ok(non_zero_port) => {
+            port_mapper.update_local_port(non_zero_port);
+        }
+        Err(_zero_port) => debug!("Skipping port mapping with zero local port"),
+    }
+
+    Ok((web_rtc_transports, port_mapper))
+}
+
 
 impl Actor {
     async fn run(
@@ -2642,7 +2929,7 @@ mod tests {
                 .transport_config(transport_config)
                 .relay_mode(relay_mode)
                 .alpns(vec![ALPN.to_vec()])
-                .bind()
+                .bind(false)
                 .await
                 .unwrap();
 
@@ -2692,6 +2979,7 @@ mod tests {
                     node_id: me.public(),
                     relay_url: None,
                     direct_addresses: new_addrs.iter().map(|ep| ep.addr).collect(),
+                    channel_id: None
                 };
                 m.endpoint.magic_sock().add_test_addr(addr);
             }
@@ -3128,7 +3416,7 @@ mod tests {
             path_selection: PathSelection::default(),
             metrics: Default::default(),
         };
-        let msock = MagicSock::spawn(opts).await?;
+        let msock = MagicSock::spawn(opts, false).await?;
         Ok(msock)
     }
 
@@ -3256,6 +3544,7 @@ mod tests {
                 .into_iter()
                 .map(|x| x.addr)
                 .collect(),
+            channel_id: None
         };
         msock_1
             .add_node_addr(
@@ -3323,6 +3612,7 @@ mod tests {
                 node_id: node_id_2,
                 relay_url: None,
                 direct_addresses: Default::default(),
+                channel_id: None
             },
             Source::NamedApp {
                 name: "test".into(),
@@ -3367,6 +3657,7 @@ mod tests {
                     .into_iter()
                     .map(|x| x.addr)
                     .collect(),
+                channel_id: None
             },
             Source::NamedApp {
                 name: "test".into(),
@@ -3408,6 +3699,7 @@ mod tests {
             node_id: SecretKey::generate(&mut rng).public(),
             relay_url: None,
             direct_addresses: Default::default(),
+            channel_id: None
         };
         let err = stack
             .endpoint
@@ -3425,6 +3717,7 @@ mod tests {
             node_id: SecretKey::generate(&mut rng).public(),
             relay_url: Some("http://my-relay.com".parse().unwrap()),
             direct_addresses: Default::default(),
+            channel_id: None
         };
         stack
             .endpoint
@@ -3437,6 +3730,7 @@ mod tests {
             node_id: SecretKey::generate(&mut rng).public(),
             relay_url: None,
             direct_addresses: ["127.0.0.1:1234".parse().unwrap()].into_iter().collect(),
+            channel_id: None
         };
         stack
             .endpoint
@@ -3449,6 +3743,7 @@ mod tests {
             node_id: SecretKey::generate(&mut rng).public(),
             relay_url: Some("http://my-relay.com".parse().unwrap()),
             direct_addresses: ["127.0.0.1:1234".parse().unwrap()].into_iter().collect(),
+            channel_id: None
         };
         stack
             .endpoint

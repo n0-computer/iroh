@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use snafu::{Backtrace, Snafu};
 
 use crate::{key::NodeId, relay_url::RelayUrl};
+use crate::webrtc_port::ChannelId;
 
 mod node;
 
@@ -112,4 +113,5 @@ struct Variant0NodeAddr {
 struct Variant0AddrInfo {
     relay_url: Option<RelayUrl>,
     direct_addresses: BTreeSet<SocketAddr>,
+    channel_id: Option<ChannelId>,
 }
