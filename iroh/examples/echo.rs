@@ -6,6 +6,8 @@
 //!
 //!     cargo run --example echo --features=examples
 
+use std::time::Duration;
+
 use iroh::{
     Endpoint, NodeAddr,
     endpoint::Connection,
@@ -23,8 +25,24 @@ const ALPN: &[u8] = b"iroh-example/echo/0";
 #[tokio::main]
 async fn main() -> Result<()> {
     let router = start_accept_side().await?;
-    let node_addr = router.endpoint().node_addr().initialized().await;
 
+    // Wait for the server connectivity to be as good as possible.
+    tokio::time::timeout(Duration::from_secs(3), async {
+        router.endpoint().home_relay().initialized().await;
+        router.endpoint().direct_addresses().initialized().await;
+    })
+    .await
+    .ok();
+    let node_addr = router.endpoint().node_addr().initialized().await;
+    if node_addr.relay_url.is_none() {
+        println!("Did not connect to a home relay, connectivity may be degraded");
+    }
+    if node_addr.direct_addresses.is_empty() {
+        println!("Did not find local addresses, connectivity may be degraded");
+    }
+
+    // Connect from the client address.
+    let node_addr = router.endpoint().node_addr().initialized().await;
     connect_side(node_addr).await?;
 
     // This makes sure the endpoint in the router is closed properly and connections close gracefully
