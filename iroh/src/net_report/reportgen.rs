@@ -436,8 +436,6 @@ pub(super) struct QadProbeReport {
     pub(super) addr: SocketAddr,
     /// The destination port that was used for this probe
     pub(super) dest_port: u16,
-    /// Whether hairpinning test succeeded (if attempted)
-    pub(super) hairpinning_works: Option<bool>,
 }
 
 #[derive(Debug, Clone)]

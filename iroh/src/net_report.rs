@@ -775,28 +775,15 @@ async fn run_probe_v4(
         .context("receiver dropped")?
         .expect("known");
 
-    // Test hairpinning by attempting to connect to our discovered external address.
-    // This is done once per probe (not in the continuous observer loop) since hairpinning
-    // behavior is a static NAT/firewall property that doesn't change during a session.
-    // Testing once is sufficient to determine if the NAT supports hairpinning.
-    let (external_addr, hairpinning_result) = match addr {
-        SocketAddr::V4(addr_v4) => {
-            // Use pure IPv4 address for hairpinning test
-            let external_addr = SocketAddr::V4(addr_v4);
-            let hairpinning_result = test_hairpinning(external_addr, &quic_client, &relay_node).await;
-            (external_addr, hairpinning_result)
-        }
+    let external_addr = match addr {
+        SocketAddr::V4(addr_v4) => SocketAddr::V4(addr_v4),
         SocketAddr::V6(addr_v6) => {
             // For IPv6, check if it's an IPv4-mapped address and extract the IPv4 part
             if let Some(ipv4) = addr_v6.ip().to_ipv4_mapped() {
-                let external_addr = SocketAddr::V4(std::net::SocketAddrV4::new(ipv4, addr_v6.port()));
-                let hairpinning_result = test_hairpinning(external_addr, &quic_client, &relay_node).await;
-                (external_addr, hairpinning_result)
+                SocketAddr::V4(std::net::SocketAddrV4::new(ipv4, addr_v6.port()))
             } else {
                 // Pure IPv6 address
-                let external_addr = SocketAddr::V6(addr_v6);
-                let hairpinning_result = test_hairpinning(external_addr, &quic_client, &relay_node).await;
-                (external_addr, hairpinning_result)
+                SocketAddr::V6(addr_v6)
             }
         }
     };
@@ -806,7 +793,6 @@ async fn run_probe_v4(
         addr: external_addr,
         latency: conn.rtt(),
         dest_port: relay_addr.port(),
-        hairpinning_works: Some(hairpinning_result),
     };
 
     let observer = Watchable::new(None);
@@ -828,7 +814,6 @@ async fn run_probe_v4(
                         addr,
                         latency,
                         dest_port: relay_addr.port(),
-                        hairpinning_works: None, // TODO: Implement hairpinning test
                     }))
                     .ok();
                 if receiver.changed().await.is_err() {
@@ -879,28 +864,15 @@ async fn run_probe_v6(
         .context("receiver dropped")?
         .expect("known");
 
-    // Test hairpinning by attempting to connect to our discovered external address.
-    // This is done once per probe (not in the continuous observer loop) since hairpinning
-    // behavior is a static NAT/firewall property that doesn't change during a session.
-    // Testing once is sufficient to determine if the NAT supports hairpinning.
-    let (external_addr, hairpinning_result) = match addr {
-        SocketAddr::V4(addr_v4) => {
-            // Use pure IPv4 address for hairpinning test
-            let external_addr = SocketAddr::V4(addr_v4);
-            let hairpinning_result = test_hairpinning(external_addr, &quic_client, &relay_node).await;
-            (external_addr, hairpinning_result)
-        }
+    let external_addr = match addr {
+        SocketAddr::V4(addr_v4) => SocketAddr::V4(addr_v4),
         SocketAddr::V6(addr_v6) => {
             // For IPv6, check if it's an IPv4-mapped address and extract the IPv4 part
             if let Some(ipv4) = addr_v6.ip().to_ipv4_mapped() {
-                let external_addr = SocketAddr::V4(std::net::SocketAddrV4::new(ipv4, addr_v6.port()));
-                let hairpinning_result = test_hairpinning(external_addr, &quic_client, &relay_node).await;
-                (external_addr, hairpinning_result)
+                SocketAddr::V4(std::net::SocketAddrV4::new(ipv4, addr_v6.port()))
             } else {
                 // Pure IPv6 address
-                let external_addr = SocketAddr::V6(addr_v6);
-                let hairpinning_result = test_hairpinning(external_addr, &quic_client, &relay_node).await;
-                (external_addr, hairpinning_result)
+                SocketAddr::V6(addr_v6)
             }
         }
     };
@@ -910,7 +882,6 @@ async fn run_probe_v6(
         addr: external_addr,
         latency: conn.rtt(),
         dest_port: relay_addr.port(),
-        hairpinning_works: Some(hairpinning_result),
     };
 
     let observer = Watchable::new(None);
@@ -932,7 +903,6 @@ async fn run_probe_v6(
                         addr,
                         latency,
                         dest_port: relay_addr.port(),
-                        hairpinning_works: None, // TODO: Implement hairpinning test
                     }))
                     .ok();
                 if receiver.changed().await.is_err() {
@@ -951,47 +921,6 @@ async fn run_probe_v6(
             _handle: handle,
         },
     ))
-}
-
-#[cfg(not(wasm_browser))]
-async fn test_hairpinning(
-    external_addr: SocketAddr,
-    quic_client: &QuicClient,
-    relay_node: &RelayNode,
-) -> bool {
-    let host = match relay_node.url.host_str() {
-        Some(host) => host,
-        None => {
-            debug!("No host available for hairpinning test");
-            return false;
-        }
-    };
-
-    debug!(?external_addr, "attempting hairpinning test");
-
-    match time::timeout(
-        Duration::from_millis(2000), // Short timeout for hairpinning test
-        quic_client.create_conn(external_addr, host),
-    )
-    .await
-    {
-        Ok(Ok(_conn)) => {
-            debug!(?external_addr, "hairpinning test succeeded");
-            true
-        }
-        Ok(Err(err)) => {
-            debug!(
-                ?external_addr,
-                ?err,
-                "hairpinning test failed - connection error"
-            );
-            false
-        }
-        Err(_) => {
-            debug!(?external_addr, "hairpinning test failed - timeout");
-            false
-        }
-    }
 }
 
 #[cfg(test)]

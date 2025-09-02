@@ -26,10 +26,6 @@ pub struct Report {
     pub mapping_varies_by_dest_port_ipv4: Option<bool>,
     /// Whether the reported public port differs when probing different destination ports (on IPv6).
     pub mapping_varies_by_dest_port_ipv6: Option<bool>,
-    /// Whether hairpinning (sending to own external address) works for IPv4.
-    pub hairpinning_ipv4: Option<bool>,
-    /// Whether hairpinning (sending to own external address) works for IPv6.
-    pub hairpinning_ipv6: Option<bool>,
     /// Probe indicating the presence of port mapping protocols on the LAN.
     /// `None` for unknown
     pub preferred_relay: Option<RelayUrl>,
@@ -81,16 +77,6 @@ impl Report {
             self.mapping_varies_by_dest_port_ipv4,
             self.mapping_varies_by_dest_port_ipv6,
         ) {
-            (Some(v4), Some(v6)) => Some(v4 || v6),
-            (None, Some(v6)) => Some(v6),
-            (Some(v4), None) => Some(v4),
-            (None, None) => None,
-        }
-    }
-
-    /// Whether hairpinning (sending to own external address) works.
-    pub fn hairpinning(&self) -> Option<bool> {
-        match (self.hairpinning_ipv4, self.hairpinning_ipv6) {
             (Some(v4), Some(v6)) => Some(v4 || v6),
             (None, Some(v6)) => Some(v6),
             (Some(v4), None) => Some(v4),
@@ -165,10 +151,6 @@ impl Report {
                         }
                     }
                 }
-
-                if let Some(hairpinning_result) = report.hairpinning_works {
-                    self.hairpinning_ipv4 = Some(hairpinning_result);
-                }
             }
             #[cfg(not(wasm_browser))]
             ProbeReport::QadIpv6(report) => {
@@ -228,10 +210,6 @@ impl Report {
                             self.mapping_varies_by_dest_port_ipv6 = Some(false);
                         }
                     }
-                }
-
-                if let Some(hairpinning_result) = report.hairpinning_works {
-                    self.hairpinning_ipv6 = Some(hairpinning_result);
                 }
             }
         }
@@ -345,7 +323,6 @@ mod tests {
             latency: Duration::from_millis(50),
             addr: "203.0.113.42:54321".parse::<SocketAddr>().unwrap(),
             dest_port: 7842,
-            hairpinning_works: None,
         });
 
         let probe_port_7843 = ProbeReport::QadIpv4(QadProbeReport {
@@ -353,7 +330,6 @@ mod tests {
             latency: Duration::from_millis(52),
             addr: "203.0.113.42:54321".parse::<SocketAddr>().unwrap(), // Same public port
             dest_port: 7843,
-            hairpinning_works: None,
         });
 
         report.update(&probe_port_7842);
@@ -375,7 +351,6 @@ mod tests {
             latency: Duration::from_millis(48),
             addr: "203.0.113.42:54322".parse::<SocketAddr>().unwrap(), // Different public port
             dest_port: 7844,
-            hairpinning_works: None,
         });
 
         report.update(&probe_port_7844);
@@ -402,7 +377,6 @@ mod tests {
             latency: Duration::from_millis(45),
             addr: "[2001:db8::1]:54321".parse::<SocketAddr>().unwrap(),
             dest_port: 7842,
-            hairpinning_works: None,
         });
 
         let probe_v6_7843 = ProbeReport::QadIpv6(QadProbeReport {
@@ -410,7 +384,6 @@ mod tests {
             latency: Duration::from_millis(47),
             addr: "[2001:db8::1]:54399".parse::<SocketAddr>().unwrap(), // Different public port
             dest_port: 7843,
-            hairpinning_works: None,
         });
 
         report.update(&probe_v6_7842);
@@ -439,7 +412,6 @@ mod tests {
             latency: Duration::from_millis(50),
             addr: "203.0.113.42:54321".parse::<SocketAddr>().unwrap(),
             dest_port: 7842,
-            hairpinning_works: None,
         });
 
         let probe2 = ProbeReport::QadIpv4(QadProbeReport {
@@ -447,7 +419,6 @@ mod tests {
             latency: Duration::from_millis(52),
             addr: "203.0.113.42:54322".parse::<SocketAddr>().unwrap(), // Different public port for same dest port
             dest_port: 7842,
-            hairpinning_works: None,
         });
 
         report.update(&probe1);
@@ -458,78 +429,6 @@ mod tests {
             report.mapping_varies_by_dest_port_ipv4,
             Some(true),
             "Should detect unstable mapping for same dest port"
-        );
-    }
-
-    #[test]
-    fn test_hairpinning_detection() {
-        let mut report = Report::default();
-        let relay_url = RelayUrl::from(url::Url::parse("https://relay.example.com").unwrap());
-
-        // Test hairpinning works
-        let probe_hairpin_works = ProbeReport::QadIpv4(QadProbeReport {
-            node: relay_url.clone(),
-            latency: Duration::from_millis(50),
-            addr: "203.0.113.42:54321".parse::<SocketAddr>().unwrap(),
-            dest_port: 7842,
-            hairpinning_works: Some(true),
-        });
-
-        report.update(&probe_hairpin_works);
-        assert_eq!(report.hairpinning_ipv4, Some(true));
-
-        // Test hairpinning doesn't work (should override previous value)
-        let probe_hairpin_fails = ProbeReport::QadIpv4(QadProbeReport {
-            node: relay_url.clone(),
-            latency: Duration::from_millis(55),
-            addr: "203.0.113.42:54322".parse::<SocketAddr>().unwrap(),
-            dest_port: 7843,
-            hairpinning_works: Some(false),
-        });
-
-        report.update(&probe_hairpin_fails);
-        assert_eq!(
-            report.hairpinning_ipv4,
-            Some(false),
-            "Should update hairpinning result"
-        );
-    }
-
-    #[test]
-    fn test_combined_functionality() {
-        let mut report = Report::default();
-        let relay_url = RelayUrl::from(url::Url::parse("https://relay.example.com").unwrap());
-
-        // Test that the combined helper functions work correctly
-        let probe1 = ProbeReport::QadIpv4(QadProbeReport {
-            node: relay_url.clone(),
-            latency: Duration::from_millis(50),
-            addr: "203.0.113.42:54321".parse::<SocketAddr>().unwrap(),
-            dest_port: 7842,
-            hairpinning_works: Some(true),
-        });
-
-        let probe2 = ProbeReport::QadIpv6(QadProbeReport {
-            node: relay_url.clone(),
-            latency: Duration::from_millis(45),
-            addr: "[2001:db8::1]:54399".parse::<SocketAddr>().unwrap(),
-            dest_port: 7842,
-            hairpinning_works: Some(false),
-        });
-
-        report.update(&probe1);
-        report.update(&probe2);
-
-        // Test the combined helper functions
-        assert_eq!(
-            report.mapping_varies_by_dest_port(),
-            None,
-            "Should be None when only one dest port tested per IP version"
-        );
-        assert_eq!(
-            report.hairpinning(),
-            Some(true),
-            "Should be true if any IP version supports hairpinning"
         );
     }
 }
