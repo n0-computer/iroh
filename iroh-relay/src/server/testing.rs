@@ -71,6 +71,7 @@ pub fn quic_config() -> QuicConfig {
     QuicConfig {
         bind_addr: (Ipv4Addr::UNSPECIFIED, 0).into(),
         server_config,
+        alternate_port: Default::default(),
     }
 }
 
