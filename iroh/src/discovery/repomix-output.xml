@@ -1,0 +1,1964 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+pkarr/
+  dht.rs
+dns.rs
+mdns.rs
+pkarr.rs
+static_provider.rs
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="pkarr/dht.rs">
+//! Pkarr based node discovery for iroh, supporting both relay servers and the DHT.
+//!
+//! This module contains pkarr-based node discovery for iroh which can use both pkarr
+//! relay servers as well as the Mainline DHT directly.  See the [pkarr module] for an
+//! overview of pkarr.
+//!
+//! [pkarr module]: super
+use std::sync::{Arc, Mutex};
+
+use iroh_base::{NodeId, SecretKey};
+use n0_future::{
+    boxed::BoxStream,
+    stream::StreamExt,
+    task::{self, AbortOnDropHandle},
+    time::{self, Duration},
+};
+use pkarr::{Client as PkarrClient, SignedPacket};
+use url::Url;
+
+use crate::{
+    discovery::{
+        Discovery, DiscoveryContext, DiscoveryError, DiscoveryItem, IntoDiscovery,
+        IntoDiscoveryError, NodeData,
+        pkarr::{DEFAULT_PKARR_TTL, N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING},
+    },
+    node_info::NodeInfo,
+};
+
+/// Republish delay for the DHT.
+///
+/// This is only for when the info does not change.  If the info changes, it will be
+/// published immediately.
+const REPUBLISH_DELAY: Duration = Duration::from_secs(60 * 60);
+
+/// Pkarr Mainline DHT and relay server node discovery.
+///
+/// It stores node addresses in DNS records, signed by the node's private key, and publishes
+/// them to the BitTorrent Mainline DHT.  See the [pkarr module] for more details.
+///
+/// This implements the [`Discovery`] trait to be used as a node discovery service which can
+/// be used as both a publisher and resolver.  Calling [`DhtDiscovery::publish`] will start
+/// a background task that periodically publishes the node address.
+///
+/// [pkarr module]: super
+#[derive(Debug, Clone)]
+pub struct DhtDiscovery(Arc<Inner>);
+
+impl Default for DhtDiscovery {
+    fn default() -> Self {
+        Self::builder().build().expect("valid builder")
+    }
+}
+
+#[derive(derive_more::Debug)]
+struct Inner {
+    /// Pkarr client for interacting with the DHT.
+    pkarr: PkarrClient,
+    /// The background task that periodically publishes the node address.
+    ///
+    /// Due to [`AbortOnDropHandle`], this will be aborted when the discovery is dropped.
+    task: Mutex<Option<AbortOnDropHandle<()>>>,
+    /// Optional keypair for signing the DNS packets.
+    ///
+    /// If this is None, the node will not publish its address to the DHT.
+    secret_key: Option<SecretKey>,
+    /// Optional pkarr relay URL to use.
+    relay_url: Option<Url>,
+    /// Time-to-live value for the DNS packets.
+    ttl: u32,
+    /// True to include the direct addresses in the DNS packet.
+    include_direct_addresses: bool,
+    /// Republish delay for the DHT.
+    republish_delay: Duration,
+}
+
+impl Inner {
+    async fn resolve_pkarr(
+        &self,
+        key: pkarr::PublicKey,
+    ) -> Option<Result<DiscoveryItem, DiscoveryError>> {
+        tracing::info!(
+            "resolving {} from relay and DHT {:?}",
+            key.to_z32(),
+            self.relay_url
+        );
+
+        let maybe_packet = self.pkarr.resolve(&key).await;
+        match maybe_packet {
+            Some(signed_packet) => match NodeInfo::from_pkarr_signed_packet(&signed_packet) {
+                Ok(node_info) => {
+                    tracing::info!("discovered node info {:?}", node_info);
+                    Some(Ok(DiscoveryItem::new(node_info, "pkarr", None)))
+                }
+                Err(_err) => {
+                    tracing::debug!("failed to parse signed packet as node info");
+                    None
+                }
+            },
+            None => {
+                tracing::debug!("no signed packet found");
+                None
+            }
+        }
+    }
+}
+
+/// Builder for [`DhtDiscovery`].
+///
+/// By default, publishing to the DHT is enabled, and relay publishing is disabled.
+#[derive(Debug)]
+pub struct Builder {
+    client: Option<PkarrClient>,
+    secret_key: Option<SecretKey>,
+    ttl: Option<u32>,
+    pkarr_relay: Option<Url>,
+    dht: bool,
+    include_direct_addresses: bool,
+    republish_delay: Duration,
+    enable_publish: bool,
+}
+
+impl Default for Builder {
+    fn default() -> Self {
+        Self {
+            client: None,
+            secret_key: None,
+            ttl: None,
+            pkarr_relay: None,
+            dht: true,
+            include_direct_addresses: false,
+            republish_delay: REPUBLISH_DELAY,
+            enable_publish: true,
+        }
+    }
+}
+
+impl Builder {
+    /// Explicitly sets the pkarr client to use.
+    pub fn client(mut self, client: PkarrClient) -> Self {
+        self.client = Some(client);
+        self
+    }
+
+    /// Sets the secret key to use for signing the DNS packets.
+    ///
+    /// Without a secret key, the node will not publish its address to the DHT.
+    pub fn secret_key(mut self, secret_key: SecretKey) -> Self {
+        self.secret_key = Some(secret_key);
+        self
+    }
+
+    /// Sets the time-to-live value for the DNS packets.
+    pub fn ttl(mut self, ttl: u32) -> Self {
+        self.ttl = Some(ttl);
+        self
+    }
+
+    /// Sets the pkarr relay URL to use.
+    pub fn pkarr_relay(mut self, pkarr_relay: Url) -> Self {
+        self.pkarr_relay = Some(pkarr_relay);
+        self
+    }
+
+    /// Uses the default [number 0] pkarr relay URL.
+    ///
+    /// [number 0]: https://n0.computer
+    pub fn n0_dns_pkarr_relay(mut self) -> Self {
+        let url = if crate::endpoint::force_staging_infra() {
+            N0_DNS_PKARR_RELAY_STAGING
+        } else {
+            N0_DNS_PKARR_RELAY_PROD
+        };
+        self.pkarr_relay = Some(url.parse().expect("valid URL"));
+        self
+    }
+
+    /// Sets whether to publish to the Mainline DHT.
+    pub fn dht(mut self, dht: bool) -> Self {
+        self.dht = dht;
+        self
+    }
+
+    /// Sets whether to include the direct addresses in the DNS packet.
+    pub fn include_direct_addresses(mut self, include_direct_addresses: bool) -> Self {
+        self.include_direct_addresses = include_direct_addresses;
+        self
+    }
+
+    /// Sets the republish delay for the DHT.
+    pub fn republish_delay(mut self, republish_delay: Duration) -> Self {
+        self.republish_delay = republish_delay;
+        self
+    }
+
+    /// Disables publishing even if a secret key is set.
+    pub fn no_publish(mut self) -> Self {
+        self.enable_publish = false;
+        self
+    }
+
+    /// Builds the discovery mechanism.
+    pub fn build(self) -> Result<DhtDiscovery, IntoDiscoveryError> {
+        if !(self.dht || self.pkarr_relay.is_some()) {
+            return Err(IntoDiscoveryError::from_err(
+                "pkarr",
+                std::io::Error::other("at least one of DHT or relay must be enabled"),
+            ));
+        }
+        let pkarr = match self.client {
+            Some(client) => client,
+            None => {
+                let mut builder = PkarrClient::builder();
+                builder.no_default_network();
+                if self.dht {
+                    builder.dht(|x| x);
+                }
+                if let Some(url) = &self.pkarr_relay {
+                    builder
+                        .relays(std::slice::from_ref(url))
+                        .map_err(|e| IntoDiscoveryError::from_err("pkarr", e))?;
+                }
+                builder
+                    .build()
+                    .map_err(|e| IntoDiscoveryError::from_err("pkarr", e))?
+            }
+        };
+        let ttl = self.ttl.unwrap_or(DEFAULT_PKARR_TTL);
+        let include_direct_addresses = self.include_direct_addresses;
+        let secret_key = self.secret_key.filter(|_| self.enable_publish);
+
+        Ok(DhtDiscovery(Arc::new(Inner {
+            pkarr,
+            ttl,
+            relay_url: self.pkarr_relay,
+            include_direct_addresses,
+            secret_key,
+            republish_delay: self.republish_delay,
+            task: Default::default(),
+        })))
+    }
+}
+
+impl IntoDiscovery for Builder {
+    fn into_discovery(
+        self,
+        context: &DiscoveryContext,
+    ) -> Result<impl Discovery, IntoDiscoveryError> {
+        self.secret_key(context.secret_key().clone()).build()
+    }
+}
+
+impl DhtDiscovery {
+    /// Creates a new builder for [`DhtDiscovery`].
+    pub fn builder() -> Builder {
+        Builder::default()
+    }
+
+    /// Periodically publishes the node address to the DHT and/or relay.
+    async fn publish_loop(self, keypair: SecretKey, signed_packet: SignedPacket) {
+        let this = self;
+        let public_key =
+            pkarr::PublicKey::try_from(keypair.public().as_bytes()).expect("valid public key");
+        let z32 = public_key.to_z32();
+        loop {
+            // If the task gets aborted while doing this lookup, we have not published yet.
+            let prev_timestamp = this
+                .0
+                .pkarr
+                .resolve_most_recent(&public_key)
+                .await
+                .map(|p| p.timestamp());
+            let res = this.0.pkarr.publish(&signed_packet, prev_timestamp).await;
+            match res {
+                Ok(()) => {
+                    tracing::debug!("pkarr publish success. published under {z32}",);
+                }
+                Err(e) => {
+                    // we could do a smaller delay here, but in general DHT publish
+                    // not working is due to a network issue, and if the network changes
+                    // the task will be restarted anyway.
+                    //
+                    // Being unable to publish to the DHT is something that is expected
+                    // to happen from time to time, so this does not warrant a error log.
+                    tracing::warn!("pkarr publish error: {}", e);
+                }
+            }
+            time::sleep(this.0.republish_delay).await;
+        }
+    }
+}
+
+impl Discovery for DhtDiscovery {
+    fn publish(&self, data: &NodeData) {
+        let Some(keypair) = &self.0.secret_key else {
+            tracing::debug!("no keypair set, not publishing");
+            return;
+        };
+        if data.relay_url().is_none() && data.direct_addresses().is_empty() {
+            tracing::debug!("no relay url or direct addresses in node data, not publishing");
+            return;
+        }
+        tracing::debug!("publishing {data:?}");
+        let mut info = NodeInfo::from_parts(keypair.public(), data.clone());
+        if !self.0.include_direct_addresses {
+            info.clear_direct_addresses();
+        }
+        let Ok(signed_packet) = info.to_pkarr_signed_packet(keypair, self.0.ttl) else {
+            tracing::warn!("failed to create signed packet");
+            return;
+        };
+        let this = self.clone();
+        let curr = task::spawn(this.publish_loop(keypair.clone(), signed_packet));
+        let mut task = self.0.task.lock().expect("poisoned");
+        *task = Some(AbortOnDropHandle::new(curr));
+    }
+
+    fn resolve(&self, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
+        let pkarr_public_key =
+            pkarr::PublicKey::try_from(node_id.as_bytes()).expect("valid public key");
+        tracing::info!("resolving {} as {}", node_id, pkarr_public_key.to_z32());
+        let discovery = self.0.clone();
+        let stream = n0_future::stream::once_future(async move {
+            discovery.resolve_pkarr(pkarr_public_key).await
+        })
+        .filter_map(|x| x)
+        .boxed();
+        Some(stream)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use iroh_base::RelayUrl;
+    use n0_snafu::{Result, ResultExt};
+    use tracing_test::traced_test;
+
+    use super::*;
+    use crate::Endpoint;
+
+    #[tokio::test]
+    #[ignore = "flaky"]
+    #[traced_test]
+    async fn dht_discovery_smoke() -> Result {
+        let ep = Endpoint::builder().bind().await?;
+        let secret = ep.secret_key().clone();
+        let testnet = pkarr::mainline::Testnet::new_async(3).await.e()?;
+        let client = pkarr::Client::builder()
+            .dht(|builder| builder.bootstrap(&testnet.bootstrap))
+            .build()
+            .e()?;
+        let discovery = DhtDiscovery::builder()
+            .secret_key(secret.clone())
+            .client(client)
+            .build()?;
+
+        let relay_url: RelayUrl = Url::parse("https://example.com").e()?.into();
+
+        let data = NodeData::default().with_relay_url(Some(relay_url.clone()));
+        discovery.publish(&data);
+
+        // publish is fire and forget, so we have no way to wait until it is done.
+        tokio::time::timeout(Duration::from_secs(30), async move {
+            loop {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+                let mut found_relay_urls = BTreeSet::new();
+                let items = discovery
+                    .resolve(secret.public())
+                    .unwrap()
+                    .collect::<Vec<_>>()
+                    .await;
+                for item in items.into_iter().flatten() {
+                    if let Some(url) = item.relay_url() {
+                        found_relay_urls.insert(url.clone());
+                    }
+                }
+                if found_relay_urls.contains(&relay_url) {
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("timeout, relay_url not found on DHT");
+        Ok(())
+    }
+}
+</file>
+
+<file path="dns.rs">
+//! DNS node discovery for iroh
+
+use iroh_base::NodeId;
+use iroh_relay::dns::DnsResolver;
+pub use iroh_relay::dns::{N0_DNS_NODE_ORIGIN_PROD, N0_DNS_NODE_ORIGIN_STAGING};
+use n0_future::boxed::BoxStream;
+
+use super::{DiscoveryContext, DiscoveryError, IntoDiscovery, IntoDiscoveryError};
+use crate::{
+    discovery::{Discovery, DiscoveryItem},
+    endpoint::force_staging_infra,
+};
+
+pub(crate) const DNS_STAGGERING_MS: &[u64] = &[200, 300];
+
+/// DNS node discovery
+///
+/// When asked to resolve a [`NodeId`], this service performs a lookup in the Domain Name System (DNS).
+///
+/// It uses the [`Endpoint`]'s DNS resolver to query for `TXT` records under the domain
+/// `_iroh.<z32-node-id>.<origin-domain>`:
+///
+/// * `_iroh`: is the record name
+/// * `<z32-node-id>` is the [`NodeId`] encoded in [`z-base-32`] format
+/// * `<origin-domain>` is the node origin domain as set in [`DnsDiscovery::builder`].
+///
+/// Each TXT record returned from the query is expected to contain a string in the format `<name>=<value>`.
+/// If a TXT record contains multiple character strings, they are concatenated first.
+/// The supported attributes are:
+/// * `relay=<url>`: The URL of the home relay server of the node
+///
+/// The DNS resolver defaults to using the nameservers configured on the host system, but can be changed
+/// with [`crate::endpoint::Builder::dns_resolver`].
+///
+/// [z-base-32]: https://philzimmermann.com/docs/human-oriented-base-32-encoding.txt
+/// [`Endpoint`]: crate::Endpoint
+#[derive(Debug)]
+pub struct DnsDiscovery {
+    origin_domain: String,
+    dns_resolver: DnsResolver,
+}
+
+/// Builder for [`DnsDiscovery`].
+///
+/// See [`DnsDiscovery::builder`].
+#[derive(Debug)]
+pub struct DnsDiscoveryBuilder {
+    origin_domain: String,
+    dns_resolver: Option<DnsResolver>,
+}
+
+impl DnsDiscoveryBuilder {
+    /// Sets the DNS resolver to use.
+    pub fn dns_resolver(mut self, dns_resolver: DnsResolver) -> Self {
+        self.dns_resolver = Some(dns_resolver);
+        self
+    }
+
+    /// Builds a [`DnsDiscovery`] with the passed [`DnsResolver`].
+    pub fn build(self) -> DnsDiscovery {
+        DnsDiscovery {
+            dns_resolver: self.dns_resolver.unwrap_or_default(),
+            origin_domain: self.origin_domain,
+        }
+    }
+}
+
+impl DnsDiscovery {
+    /// Creates a [`DnsDiscoveryBuilder`] that implements [`IntoDiscovery`].
+    pub fn builder(origin_domain: String) -> DnsDiscoveryBuilder {
+        DnsDiscoveryBuilder {
+            origin_domain,
+            dns_resolver: None,
+        }
+    }
+
+    /// Creates a new DNS discovery using the `iroh.link` domain.
+    ///
+    /// This uses the [`N0_DNS_NODE_ORIGIN_PROD`] domain.
+    ///
+    /// # Usage during tests
+    ///
+    /// For testing it is possible to use the [`N0_DNS_NODE_ORIGIN_STAGING`] domain
+    /// with [`DnsDiscovery::builder`].  This would then use a hosted staging discovery
+    /// service for testing purposes.
+    pub fn n0_dns() -> DnsDiscoveryBuilder {
+        if force_staging_infra() {
+            Self::builder(N0_DNS_NODE_ORIGIN_STAGING.to_string())
+        } else {
+            Self::builder(N0_DNS_NODE_ORIGIN_PROD.to_string())
+        }
+    }
+}
+
+impl IntoDiscovery for DnsDiscoveryBuilder {
+    fn into_discovery(
+        mut self,
+        context: &DiscoveryContext,
+    ) -> Result<impl Discovery, IntoDiscoveryError> {
+        if self.dns_resolver.is_none() {
+            self.dns_resolver = Some(context.dns_resolver().clone());
+        }
+        Ok(self.build())
+    }
+}
+
+impl Discovery for DnsDiscovery {
+    fn resolve(&self, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
+        let resolver = self.dns_resolver.clone();
+        let origin_domain = self.origin_domain.clone();
+        let fut = async move {
+            let node_info = resolver
+                .lookup_node_by_id_staggered(&node_id, &origin_domain, DNS_STAGGERING_MS)
+                .await
+                .map_err(|e| DiscoveryError::from_err("dns", e))?;
+            Ok(DiscoveryItem::new(node_info, "dns", None))
+        };
+        let stream = n0_future::stream::once_future(fut);
+        Some(Box::pin(stream))
+    }
+}
+</file>
+
+<file path="mdns.rs">
+//! A discovery service that uses an mdns-like service to discover local nodes.
+//!
+//! This allows you to use an mdns-like swarm discovery service to find address information about nodes that are on your local network, no relay or outside internet needed.
+//! See the [`swarm-discovery`](https://crates.io/crates/swarm-discovery) crate for more details.
+//!
+//! When [`MdnsDiscovery`] is enabled, it's possible to get a list of the locally discovered nodes by filtering a list of `RemoteInfo`s.
+//!
+//! ```
+//! use std::time::Duration;
+//!
+//! use iroh::endpoint::{Endpoint, Source};
+//!
+//! #[tokio::main]
+//! async fn main() {
+//!     let recent = Duration::from_secs(600); // 10 minutes in seconds
+//!
+//!     let endpoint = Endpoint::builder().bind().await.unwrap();
+//!     let remotes = endpoint.remote_info_iter();
+//!     let locally_discovered: Vec<_> = remotes
+//!         .filter(|remote| {
+//!             remote.sources().iter().any(|(source, duration)| {
+//!                 if let Source::Discovery { name } = source {
+//!                     name == iroh::discovery::mdns::NAME && *duration <= recent
+//!                 } else {
+//!                     false
+//!                 }
+//!             })
+//!         })
+//!         .collect();
+//!     println!("locally discovered nodes: {locally_discovered:?}");
+//! }
+//! ```
+use std::{
+    collections::{BTreeSet, HashMap},
+    net::{IpAddr, SocketAddr},
+    str::FromStr,
+};
+
+use iroh_base::{NodeId, PublicKey};
+use n0_future::{
+    boxed::BoxStream,
+    task::{self, AbortOnDropHandle, JoinSet},
+    time::{self, Duration},
+};
+use n0_watcher::{Watchable, Watcher as _};
+use swarm_discovery::{Discoverer, DropGuard, IpClass, Peer};
+use tokio::sync::mpsc::{self, error::TrySendError};
+use tracing::{Instrument, debug, error, info_span, trace, warn};
+
+use super::{DiscoveryContext, DiscoveryError, IntoDiscovery, IntoDiscoveryError};
+use crate::discovery::{Discovery, DiscoveryItem, NodeData, NodeInfo};
+
+/// The n0 local swarm node discovery name
+const N0_LOCAL_SWARM: &str = "iroh.local.swarm";
+
+/// Name of this discovery service.
+///
+/// Used as the `provenance` field in [`DiscoveryItem`]s.
+///
+/// Used in the [`crate::endpoint::Source::Discovery`] enum variant as the `name`.
+pub const NAME: &str = "local.swarm.discovery";
+
+/// The key of the attribute under which the `UserData` is stored in
+/// the TXT record supported by swarm-discovery.
+const USER_DATA_ATTRIBUTE: &str = "user-data";
+
+/// How long we will wait before we stop sending discovery items
+const DISCOVERY_DURATION: Duration = Duration::from_secs(10);
+
+/// Discovery using `swarm-discovery`, a variation on mdns
+#[derive(Debug)]
+pub struct MdnsDiscovery {
+    #[allow(dead_code)]
+    handle: AbortOnDropHandle<()>,
+    sender: mpsc::Sender<Message>,
+    /// When `local_addrs` changes, we re-publish our info.
+    local_addrs: Watchable<Option<NodeData>>,
+}
+
+#[derive(Debug)]
+enum Message {
+    Discovery(String, Peer),
+    Resolve(NodeId, mpsc::Sender<Result<DiscoveryItem, DiscoveryError>>),
+    Timeout(NodeId, usize),
+    Subscribe(mpsc::Sender<DiscoveryItem>),
+}
+
+/// Manages the list of subscribers that are subscribed to this discovery service.
+#[derive(Debug)]
+struct Subscribers(Vec<mpsc::Sender<DiscoveryItem>>);
+
+impl Subscribers {
+    fn new() -> Self {
+        Self(vec![])
+    }
+
+    /// Add the subscriber to the list of subscribers
+    fn push(&mut self, subscriber: mpsc::Sender<DiscoveryItem>) {
+        self.0.push(subscriber);
+    }
+
+    /// Sends the `node_id` and `item` to each subscriber.
+    ///
+    /// Cleans up any subscribers that have been dropped.
+    fn send(&mut self, item: DiscoveryItem) {
+        let mut clean_up = vec![];
+        for (i, subscriber) in self.0.iter().enumerate() {
+            // assume subscriber was dropped
+            if let Err(err) = subscriber.try_send(item.clone()) {
+                match err {
+                    TrySendError::Full(_) => {
+                        warn!(
+                            ?item,
+                            idx = i,
+                            "local swarm discovery subscriber is blocked, dropping item"
+                        )
+                    }
+                    TrySendError::Closed(_) => clean_up.push(i),
+                }
+            }
+        }
+        for i in clean_up.into_iter().rev() {
+            self.0.swap_remove(i);
+        }
+    }
+}
+
+/// Builder for [`MdnsDiscovery`].
+#[derive(Debug)]
+pub struct MdnsDiscoveryBuilder;
+
+impl IntoDiscovery for MdnsDiscoveryBuilder {
+    fn into_discovery(
+        self,
+        context: &DiscoveryContext,
+    ) -> Result<impl Discovery, IntoDiscoveryError> {
+        MdnsDiscovery::new(context.node_id())
+    }
+}
+
+impl MdnsDiscovery {
+    /// Returns a [`MdnsDiscoveryBuilder`] that implements [`IntoDiscovery`].
+    pub fn builder() -> MdnsDiscoveryBuilder {
+        MdnsDiscoveryBuilder
+    }
+
+    /// Create a new [`MdnsDiscovery`] Service.
+    ///
+    /// This starts a [`Discoverer`] that broadcasts your addresses and receives addresses from other nodes in your local network.
+    ///
+    /// # Errors
+    /// Returns an error if the network does not allow ipv4 OR ipv6.
+    ///
+    /// # Panics
+    /// This relies on [`tokio::runtime::Handle::current`] and will panic if called outside of the context of a tokio runtime.
+    pub fn new(node_id: NodeId) -> Result<Self, IntoDiscoveryError> {
+        debug!("Creating new MdnsDiscovery service");
+        let (send, mut recv) = mpsc::channel(64);
+        let task_sender = send.clone();
+        let rt = tokio::runtime::Handle::current();
+        let discovery =
+            MdnsDiscovery::spawn_discoverer(node_id, task_sender.clone(), BTreeSet::new(), &rt)?;
+
+        let local_addrs: Watchable<Option<NodeData>> = Watchable::default();
+        let mut addrs_change = local_addrs.watch();
+        let discovery_fut = async move {
+            let mut node_addrs: HashMap<PublicKey, Peer> = HashMap::default();
+            let mut subscribers = Subscribers::new();
+            let mut last_id = 0;
+            let mut senders: HashMap<
+                PublicKey,
+                HashMap<usize, mpsc::Sender<Result<DiscoveryItem, DiscoveryError>>>,
+            > = HashMap::default();
+            let mut timeouts = JoinSet::new();
+            loop {
+                trace!(?node_addrs, "MdnsDiscovery Service loop tick");
+                let msg = tokio::select! {
+                    msg = recv.recv() => {
+                        msg
+                    }
+                    Ok(Some(data)) = addrs_change.updated() => {
+                        tracing::trace!(?data, "MdnsDiscovery address changed");
+                        discovery.remove_all();
+                        let addrs =
+                            MdnsDiscovery::socketaddrs_to_addrs(data.direct_addresses());
+                        for addr in addrs {
+                            discovery.add(addr.0, addr.1)
+                        }
+                        if let Some(user_data) = data.user_data() {
+                            if let Err(err) = discovery.set_txt_attribute(USER_DATA_ATTRIBUTE.to_string(), Some(user_data.to_string())) {
+                                warn!("Failed to set the user-defined data in local swarm discovery: {err:?}");
+                            }
+                        }
+                        continue;
+                    }
+                };
+                let msg = match msg {
+                    None => {
+                        error!("MdnsDiscovery channel closed");
+                        error!("closing MdnsDiscovery");
+                        timeouts.abort_all();
+                        return;
+                    }
+                    Some(msg) => msg,
+                };
+                match msg {
+                    Message::Discovery(discovered_node_id, peer_info) => {
+                        trace!(
+                            ?discovered_node_id,
+                            ?peer_info,
+                            "MdnsDiscovery Message::Discovery"
+                        );
+                        let discovered_node_id = match PublicKey::from_str(&discovered_node_id) {
+                            Ok(node_id) => node_id,
+                            Err(e) => {
+                                warn!(
+                                    discovered_node_id,
+                                    "couldn't parse node_id from mdns discovery service: {e:?}"
+                                );
+                                continue;
+                            }
+                        };
+
+                        if discovered_node_id == node_id {
+                            continue;
+                        }
+
+                        if peer_info.is_expiry() {
+                            trace!(
+                                ?discovered_node_id,
+                                "removing node from MdnsDiscovery address book"
+                            );
+                            node_addrs.remove(&discovered_node_id);
+                            continue;
+                        }
+
+                        let entry = node_addrs.entry(discovered_node_id);
+                        if let std::collections::hash_map::Entry::Occupied(ref entry) = entry {
+                            if entry.get() == &peer_info {
+                                // this is a republish we already know about
+                                continue;
+                            }
+                        }
+
+                        debug!(
+                            ?discovered_node_id,
+                            ?peer_info,
+                            "adding node to MdnsDiscovery address book"
+                        );
+
+                        let mut resolved = false;
+                        let item = peer_to_discovery_item(&peer_info, &discovered_node_id);
+                        if let Some(senders) = senders.get(&discovered_node_id) {
+                            trace!(?item, senders = senders.len(), "sending DiscoveryItem");
+                            resolved = true;
+                            for sender in senders.values() {
+                                sender.send(Ok(item.clone())).await.ok();
+                            }
+                        }
+                        entry.or_insert(peer_info);
+
+                        // only send nodes to the `subscriber` if they weren't explicitly resolved
+                        // in other words, nodes sent to the `subscribers` should only be the ones that
+                        // have been "passively" discovered
+                        if !resolved {
+                            subscribers.send(item);
+                        }
+                    }
+                    Message::Resolve(node_id, sender) => {
+                        let id = last_id + 1;
+                        last_id = id;
+                        trace!(?node_id, "MdnsDiscovery Message::SendAddrs");
+                        if let Some(peer_info) = node_addrs.get(&node_id) {
+                            let item = peer_to_discovery_item(peer_info, &node_id);
+                            debug!(?item, "sending DiscoveryItem");
+                            sender.send(Ok(item)).await.ok();
+                        }
+                        if let Some(senders_for_node_id) = senders.get_mut(&node_id) {
+                            senders_for_node_id.insert(id, sender);
+                        } else {
+                            let mut senders_for_node_id = HashMap::new();
+                            senders_for_node_id.insert(id, sender);
+                            senders.insert(node_id, senders_for_node_id);
+                        }
+                        let timeout_sender = task_sender.clone();
+                        timeouts.spawn(async move {
+                            time::sleep(DISCOVERY_DURATION).await;
+                            trace!(?node_id, "discovery timeout");
+                            timeout_sender
+                                .send(Message::Timeout(node_id, id))
+                                .await
+                                .ok();
+                        });
+                    }
+                    Message::Timeout(node_id, id) => {
+                        trace!(?node_id, "MdnsDiscovery Message::Timeout");
+                        if let Some(senders_for_node_id) = senders.get_mut(&node_id) {
+                            senders_for_node_id.remove(&id);
+                            if senders_for_node_id.is_empty() {
+                                senders.remove(&node_id);
+                            }
+                        }
+                    }
+                    Message::Subscribe(subscriber) => {
+                        trace!("MdnsDiscovery Message::Subscribe");
+                        subscribers.push(subscriber);
+                    }
+                }
+            }
+        };
+        let handle = task::spawn(discovery_fut.instrument(info_span!("swarm-discovery.actor")));
+        Ok(Self {
+            handle: AbortOnDropHandle::new(handle),
+            sender: send,
+            local_addrs,
+        })
+    }
+
+    fn spawn_discoverer(
+        node_id: PublicKey,
+        sender: mpsc::Sender<Message>,
+        socketaddrs: BTreeSet<SocketAddr>,
+        rt: &tokio::runtime::Handle,
+    ) -> Result<DropGuard, IntoDiscoveryError> {
+        let spawn_rt = rt.clone();
+        let callback = move |node_id: &str, peer: &Peer| {
+            trace!(
+                node_id,
+                ?peer,
+                "Received peer information from MdnsDiscovery"
+            );
+
+            let sender = sender.clone();
+            let node_id = node_id.to_string();
+            let peer = peer.clone();
+            spawn_rt.spawn(async move {
+                sender.send(Message::Discovery(node_id, peer)).await.ok();
+            });
+        };
+        let addrs = MdnsDiscovery::socketaddrs_to_addrs(&socketaddrs);
+        let node_id_str = data_encoding::BASE32_NOPAD
+            .encode(node_id.as_bytes())
+            .to_ascii_lowercase();
+        let mut discoverer = Discoverer::new_interactive(N0_LOCAL_SWARM.to_string(), node_id_str)
+            .with_callback(callback)
+            .with_ip_class(IpClass::Auto);
+        for addr in addrs {
+            discoverer = discoverer.with_addrs(addr.0, addr.1);
+        }
+        discoverer
+            .spawn(rt)
+            .map_err(|e| IntoDiscoveryError::from_err("mdns", e))
+    }
+
+    fn socketaddrs_to_addrs(socketaddrs: &BTreeSet<SocketAddr>) -> HashMap<u16, Vec<IpAddr>> {
+        let mut addrs: HashMap<u16, Vec<IpAddr>> = HashMap::default();
+        for socketaddr in socketaddrs {
+            addrs
+                .entry(socketaddr.port())
+                .and_modify(|a| a.push(socketaddr.ip()))
+                .or_insert(vec![socketaddr.ip()]);
+        }
+        addrs
+    }
+}
+
+fn peer_to_discovery_item(peer: &Peer, node_id: &NodeId) -> DiscoveryItem {
+    let direct_addresses: BTreeSet<SocketAddr> = peer
+        .addrs()
+        .iter()
+        .map(|(ip, port)| SocketAddr::new(*ip, *port))
+        .collect();
+    // Get the user-defined data from the resolved peer info. We expect an attribute with a value
+    // that parses as `UserData`. Otherwise, omit.
+    let user_data = if let Some(Some(user_data)) = peer.txt_attribute(USER_DATA_ATTRIBUTE) {
+        match user_data.parse() {
+            Err(err) => {
+                debug!("failed to parse user data from TXT attribute: {err}");
+                None
+            }
+            Ok(data) => Some(data),
+        }
+    } else {
+        None
+    };
+    let node_info = NodeInfo::new(*node_id)
+        .with_direct_addresses(direct_addresses)
+        .with_user_data(user_data);
+    DiscoveryItem::new(node_info, NAME, None)
+}
+
+impl Discovery for MdnsDiscovery {
+    fn resolve(&self, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
+        use futures_util::FutureExt;
+
+        let (send, recv) = mpsc::channel(20);
+        let discovery_sender = self.sender.clone();
+        let stream = async move {
+            discovery_sender
+                .send(Message::Resolve(node_id, send))
+                .await
+                .ok();
+            tokio_stream::wrappers::ReceiverStream::new(recv)
+        };
+        Some(Box::pin(stream.flatten_stream()))
+    }
+
+    fn publish(&self, data: &NodeData) {
+        self.local_addrs.set(Some(data.clone())).ok();
+    }
+
+    fn subscribe(&self) -> Option<BoxStream<DiscoveryItem>> {
+        use futures_util::FutureExt;
+
+        let (sender, recv) = mpsc::channel(20);
+        let discovery_sender = self.sender.clone();
+        let stream = async move {
+            discovery_sender.send(Message::Subscribe(sender)).await.ok();
+            tokio_stream::wrappers::ReceiverStream::new(recv)
+        };
+        Some(Box::pin(stream.flatten_stream()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    /// This module's name signals nextest to run test in a single thread (no other concurrent
+    /// tests)
+    mod run_in_isolation {
+        use iroh_base::SecretKey;
+        use n0_future::StreamExt;
+        use n0_snafu::{Error, Result, ResultExt};
+        use snafu::whatever;
+        use tracing_test::traced_test;
+
+        use super::super::*;
+        use crate::discovery::UserData;
+
+        #[tokio::test]
+        #[traced_test]
+        async fn mdns_publish_resolve() -> Result {
+            let (_, discovery_a) = make_discoverer()?;
+            let (node_id_b, discovery_b) = make_discoverer()?;
+
+            // make addr info for discoverer b
+            let user_data: UserData = "foobar".parse()?;
+            let node_data = NodeData::new(None, BTreeSet::from(["0.0.0.0:11111".parse().unwrap()]))
+                .with_user_data(Some(user_data.clone()));
+            println!("info {node_data:?}");
+
+            // resolve twice to ensure we can create separate streams for the same node_id
+            let mut s1 = discovery_a.resolve(node_id_b).unwrap();
+            let mut s2 = discovery_a.resolve(node_id_b).unwrap();
+
+            tracing::debug!(?node_id_b, "Discovering node id b");
+            // publish discovery_b's address
+            discovery_b.publish(&node_data);
+            let s1_res = tokio::time::timeout(Duration::from_secs(5), s1.next())
+                .await
+                .context("timeout")?
+                .unwrap()?;
+            let s2_res = tokio::time::timeout(Duration::from_secs(5), s2.next())
+                .await
+                .context("timeout")?
+                .unwrap()?;
+            assert_eq!(s1_res.node_info().data, node_data);
+            assert_eq!(s2_res.node_info().data, node_data);
+
+            Ok(())
+        }
+
+        #[tokio::test]
+        #[traced_test]
+        async fn mdns_subscribe() -> Result {
+            let num_nodes = 5;
+            let mut node_ids = BTreeSet::new();
+            let mut discoverers = vec![];
+
+            let (_, discovery) = make_discoverer()?;
+            let node_data = NodeData::new(None, BTreeSet::from(["0.0.0.0:11111".parse().unwrap()]));
+
+            for i in 0..num_nodes {
+                let (node_id, discovery) = make_discoverer()?;
+                let user_data: UserData = format!("node{i}").parse()?;
+                let node_data = node_data.clone().with_user_data(Some(user_data.clone()));
+                node_ids.insert((node_id, Some(user_data)));
+                discovery.publish(&node_data);
+                discoverers.push(discovery);
+            }
+
+            let mut events = discovery.subscribe().unwrap();
+
+            let test = async move {
+                let mut got_ids = BTreeSet::new();
+                while got_ids.len() != num_nodes {
+                    if let Some(item) = events.next().await {
+                        if node_ids.contains(&(item.node_id(), item.user_data())) {
+                            got_ids.insert((item.node_id(), item.user_data()));
+                        }
+                    } else {
+                        whatever!(
+                            "no more events, only got {} ids, expected {num_nodes}\n",
+                            got_ids.len()
+                        );
+                    }
+                }
+                assert_eq!(got_ids, node_ids);
+                Ok::<_, Error>(())
+            };
+            tokio::time::timeout(Duration::from_secs(5), test)
+                .await
+                .context("timeout")?
+        }
+
+        fn make_discoverer() -> Result<(PublicKey, MdnsDiscovery)> {
+            let node_id = SecretKey::generate(rand::thread_rng()).public();
+            Ok((node_id, MdnsDiscovery::new(node_id)?))
+        }
+    }
+}
+</file>
+
+<file path="pkarr.rs">
+//! A discovery service which publishes and resolves node information using a [pkarr] relay.
+//!
+//! Public-Key Addressable Resource Records, [pkarr], is a system which allows publishing
+//! [DNS Resource Records] owned by a particular [`SecretKey`] under a name derived from its
+//! corresponding [`PublicKey`], also known as the [`NodeId`].  Additionally this pkarr
+//! Resource Record is signed using the same [`SecretKey`], ensuring authenticity of the
+//! record.
+//!
+//! Pkarr normally stores these records on the [Mainline DHT], but also provides two bridges
+//! that do not require clients to directly interact with the DHT:
+//!
+//! - Resolvers are servers which expose the pkarr Resource Record under a domain name,
+//!   e.g. `o3dks..6uyy.dns.iroh.link`.  This allows looking up the pkarr Resource Records
+//!   using normal DNS clients.  These resolvers would normally perform lookups on the
+//!   Mainline DHT augmented with a local cache to improve performance.
+//!
+//! - Relays are servers which allow both publishing and looking up of the pkarr Resource
+//!   Records using HTTP PUT and GET requests.  They will usually perform the publishing to
+//!   the Mainline DHT on behalf on the client as well as cache lookups performed on the DHT
+//!   to improve performance.
+//!
+//! For node discovery in iroh the pkarr Resource Records contain the addressing information,
+//! providing nodes which retrieve the pkarr Resource Record with enough detail
+//! to contact the iroh node.
+//!
+//! There are several node discovery services built on top of pkarr, which can be composed
+//! to the application's needs:
+//!
+//! - [`PkarrPublisher`], which publishes to a pkarr relay server using HTTP.
+//!
+//! - [`PkarrResolver`], which resolves from a pkarr relay server using HTTP.
+//!
+//! - [`DnsDiscovery`], which resolves from a DNS server.
+//!
+//! - [`DhtDiscovery`], which resolves and publishes from both pkarr relay servers and well
+//!   as the Mainline DHT.
+//!
+//! [pkarr]: https://pkarr.org
+//! [DNS Resource Records]: https://en.wikipedia.org/wiki/Domain_Name_System#Resource_records
+//! [Mainline DHT]: https://en.wikipedia.org/wiki/Mainline_DHT
+//! [`SecretKey`]: crate::SecretKey
+//! [`PublicKey`]: crate::PublicKey
+//! [`NodeId`]: crate::NodeId
+//! [`DnsDiscovery`]: crate::discovery::dns::DnsDiscovery
+//! [`DhtDiscovery`]: dht::DhtDiscovery
+
+use std::sync::Arc;
+
+use iroh_base::{NodeId, RelayUrl, SecretKey};
+use iroh_relay::node_info::{EncodingError, NodeInfo};
+use n0_future::{
+    boxed::BoxStream,
+    task::{self, AbortOnDropHandle},
+    time::{self, Duration, Instant},
+};
+use n0_watcher::{Disconnected, Watchable, Watcher as _};
+use pkarr::{
+    SignedPacket,
+    errors::{PublicKeyError, SignedPacketVerifyError},
+};
+use snafu::{ResultExt, Snafu};
+use tracing::{Instrument, debug, error_span, warn};
+use url::Url;
+
+use super::{DiscoveryContext, DiscoveryError, IntoDiscovery, IntoDiscoveryError};
+#[cfg(not(wasm_browser))]
+use crate::dns::DnsResolver;
+use crate::{
+    discovery::{Discovery, DiscoveryItem, NodeData},
+    endpoint::force_staging_infra,
+};
+
+#[cfg(feature = "discovery-pkarr-dht")]
+pub mod dht;
+
+#[allow(missing_docs)]
+#[derive(Debug, Snafu)]
+#[non_exhaustive]
+pub enum PkarrError {
+    #[snafu(display("Invalid public key"))]
+    PublicKey { source: PublicKeyError },
+    #[snafu(display("Packet failed to verify"))]
+    Verify { source: SignedPacketVerifyError },
+    #[snafu(display("Invalid relay URL"))]
+    InvalidRelayUrl { url: RelayUrl },
+    #[snafu(display("Error sending http request"))]
+    HttpSend { source: reqwest::Error },
+    #[snafu(display("Error resolving http request"))]
+    HttpRequest { status: reqwest::StatusCode },
+    #[snafu(display("Http payload error"))]
+    HttpPayload { source: reqwest::Error },
+    #[snafu(display("EncodingError"))]
+    Encoding { source: EncodingError },
+}
+
+impl From<PkarrError> for DiscoveryError {
+    fn from(err: PkarrError) -> Self {
+        DiscoveryError::from_err("pkarr", err)
+    }
+}
+
+/// The production pkarr relay run by [number 0].
+///
+/// This server is both a pkarr relay server as well as a DNS resolver, see the [module
+/// documentation].  However it does not interact with the Mainline DHT, so is a more
+/// central service.  It is a reliable service to use for node discovery.
+///
+/// [number 0]: https://n0.computer
+/// [module documentation]: crate::discovery::pkarr
+pub const N0_DNS_PKARR_RELAY_PROD: &str = "https://dns.iroh.link/pkarr";
+/// The testing pkarr relay run by [number 0].
+///
+/// This server operates similarly to [`N0_DNS_PKARR_RELAY_PROD`] but is not as reliable.
+/// It is meant for more experimental use and testing purposes.
+///
+/// [number 0]: https://n0.computer
+pub const N0_DNS_PKARR_RELAY_STAGING: &str = "https://staging-dns.iroh.link/pkarr";
+
+/// Default TTL for the records in the pkarr signed packet.
+///
+/// The Time To Live (TTL) tells DNS caches how long to store a record. It is ignored by the
+/// `iroh-dns-server`, e.g. as running on [`N0_DNS_PKARR_RELAY_PROD`], as the home server
+/// keeps the records for the domain. When using the pkarr relay no DNS is involved and the
+/// setting is ignored.
+// TODO(flub): huh?
+pub const DEFAULT_PKARR_TTL: u32 = 30;
+
+/// Interval in which to republish the node info even if unchanged: 5 minutes.
+pub const DEFAULT_REPUBLISH_INTERVAL: Duration = Duration::from_secs(60 * 5);
+
+/// Builder for [`PkarrPublisher`].
+///
+/// See [`PkarrPublisher::builder`].
+#[derive(Debug)]
+pub struct PkarrPublisherBuilder {
+    pkarr_relay: Url,
+    ttl: u32,
+    republish_interval: Duration,
+    #[cfg(not(wasm_browser))]
+    dns_resolver: Option<DnsResolver>,
+}
+
+impl PkarrPublisherBuilder {
+    /// See [`PkarrPublisher::builder`].
+    fn new(pkarr_relay: Url) -> Self {
+        Self {
+            pkarr_relay,
+            ttl: DEFAULT_PKARR_TTL,
+            republish_interval: DEFAULT_REPUBLISH_INTERVAL,
+            #[cfg(not(wasm_browser))]
+            dns_resolver: None,
+        }
+    }
+
+    /// See [`PkarrPublisher::n0_dns`].
+    fn n0_dns() -> Self {
+        let pkarr_relay = match force_staging_infra() {
+            true => N0_DNS_PKARR_RELAY_STAGING,
+            false => N0_DNS_PKARR_RELAY_PROD,
+        };
+
+        let pkarr_relay: Url = pkarr_relay.parse().expect("url is valid");
+        Self::new(pkarr_relay)
+    }
+
+    /// Sets the TTL (time-to-live) for published packets.
+    ///
+    /// Default is [`DEFAULT_PKARR_TTL`].
+    pub fn ttl(mut self, ttl: u32) -> Self {
+        self.ttl = ttl;
+        self
+    }
+
+    /// Sets the interval after which packets are republished even if our node info did not change.
+    ///
+    /// Default is [`DEFAULT_REPUBLISH_INTERVAL`].
+    pub fn republish_interval(mut self, republish_interval: Duration) -> Self {
+        self.republish_interval = republish_interval;
+        self
+    }
+
+    /// Sets the DNS resolver to use for resolving the pkarr relay URL.
+    #[cfg(not(wasm_browser))]
+    pub fn dns_resolver(mut self, dns_resolver: DnsResolver) -> Self {
+        self.dns_resolver = Some(dns_resolver);
+        self
+    }
+
+    /// Builds the [`PkarrPublisher`] with the passed secret key for signing packets.
+    ///
+    /// This publisher will be able to publish [pkarr] records for [`SecretKey`].
+    pub fn build(self, secret_key: SecretKey) -> PkarrPublisher {
+        PkarrPublisher::new(
+            secret_key,
+            self.pkarr_relay,
+            self.ttl,
+            self.republish_interval,
+            #[cfg(not(wasm_browser))]
+            self.dns_resolver,
+        )
+    }
+}
+
+impl IntoDiscovery for PkarrPublisherBuilder {
+    fn into_discovery(
+        mut self,
+        context: &DiscoveryContext,
+    ) -> Result<impl Discovery, IntoDiscoveryError> {
+        #[cfg(not(wasm_browser))]
+        if self.dns_resolver.is_none() {
+            self.dns_resolver = Some(context.dns_resolver().clone());
+        }
+
+        Ok(self.build(context.secret_key().clone()))
+    }
+}
+
+/// Publisher of node discovery information to a [pkarr] relay.
+///
+/// This publisher uses HTTP to publish node discovery information to a pkarr relay
+/// server, see the [module docs] for details.
+///
+/// This implements the [`Discovery`] trait to be used as a node discovery service.  Note
+/// that it only publishes node discovery information, for the corresponding resolver use
+/// the [`PkarrResolver`] together with [`ConcurrentDiscovery`].
+///
+/// This publisher will **only** publish the [`RelayUrl`] if it is set, otherwise the *direct addresses* are published instead.
+///
+/// [pkarr]: https://pkarr.org
+/// [module docs]: crate::discovery::pkarr
+/// [`RelayUrl`]: crate::RelayUrl
+/// [`ConcurrentDiscovery`]: super::ConcurrentDiscovery
+#[derive(derive_more::Debug, Clone)]
+pub struct PkarrPublisher {
+    node_id: NodeId,
+    watchable: Watchable<Option<NodeInfo>>,
+    _drop_guard: Arc<AbortOnDropHandle<()>>,
+}
+
+impl PkarrPublisher {
+    /// Returns a [`PkarrPublisherBuilder`] that publishes node info to a [pkarr] relay at `pkarr_relay`.
+    ///
+    /// If no further options are set, the pkarr publisher  will use [`DEFAULT_PKARR_TTL`] as the
+    /// time-to-live value for the published packets, and it will republish discovery information
+    /// every [`DEFAULT_REPUBLISH_INTERVAL`], even if the information is unchanged.
+    ///
+    /// [`PkarrPublisherBuilder`] implements [`IntoDiscovery`], so it can be passed to [`add_discovery`].
+    /// It will then use the endpoint's secret key to sign published packets.
+    ///
+    /// [`add_discovery`]:  crate::endpoint::Builder::add_discovery
+    /// [pkarr]: https://pkarr.org
+    pub fn builder(pkarr_relay: Url) -> PkarrPublisherBuilder {
+        PkarrPublisherBuilder::new(pkarr_relay)
+    }
+
+    /// Creates a new [`PkarrPublisher`] with a custom TTL and republish intervals.
+    ///
+    /// This allows creating the publisher with custom time-to-live values of the
+    /// [`pkarr::SignedPacket`]s and well as a custom republish interval.
+    fn new(
+        secret_key: SecretKey,
+        pkarr_relay: Url,
+        ttl: u32,
+        republish_interval: Duration,
+        #[cfg(not(wasm_browser))] dns_resolver: Option<DnsResolver>,
+    ) -> Self {
+        debug!("creating pkarr publisher that publishes to {pkarr_relay}");
+        let node_id = secret_key.public();
+
+        #[cfg(wasm_browser)]
+        let pkarr_client = PkarrRelayClient::new(pkarr_relay);
+
+        #[cfg(not(wasm_browser))]
+        let pkarr_client = if let Some(dns_resolver) = dns_resolver {
+            PkarrRelayClient::with_dns_resolver(pkarr_relay, dns_resolver)
+        } else {
+            PkarrRelayClient::new(pkarr_relay)
+        };
+
+        let watchable = Watchable::default();
+        let service = PublisherService {
+            ttl,
+            watcher: watchable.watch(),
+            secret_key,
+            pkarr_client,
+            republish_interval,
+        };
+        let join_handle = task::spawn(
+            service
+                .run()
+                .instrument(error_span!("pkarr_publish", me=%node_id.fmt_short())),
+        );
+        Self {
+            watchable,
+            node_id,
+            _drop_guard: Arc::new(AbortOnDropHandle::new(join_handle)),
+        }
+    }
+
+    /// Creates a pkarr publisher which uses the [number 0] pkarr relay server.
+    ///
+    /// This uses the pkarr relay server operated by [number 0], at
+    /// [`N0_DNS_PKARR_RELAY_PROD`].
+    ///
+    /// When running with the environment variable
+    /// `IROH_FORCE_STAGING_RELAYS` set to any non empty value [`N0_DNS_PKARR_RELAY_STAGING`]
+    /// server is used instead.
+    ///
+    /// [number 0]: https://n0.computer
+    pub fn n0_dns() -> PkarrPublisherBuilder {
+        PkarrPublisherBuilder::n0_dns()
+    }
+
+    /// Publishes the addressing information about this node to a pkarr relay.
+    ///
+    /// This is a nonblocking function, the actual update is performed in the background.
+    pub fn update_node_data(&self, data: &NodeData) {
+        let mut data = data.clone();
+        if data.relay_url().is_some() {
+            // If relay url is set: only publish relay url, and no direct addrs.
+            data.clear_direct_addresses();
+        }
+        let info = NodeInfo::from_parts(self.node_id, data);
+        self.watchable.set(Some(info)).ok();
+    }
+}
+
+impl Discovery for PkarrPublisher {
+    fn publish(&self, data: &NodeData) {
+        self.update_node_data(data);
+    }
+}
+
+/// Publish node info to a pkarr relay.
+#[derive(derive_more::Debug, Clone)]
+struct PublisherService {
+    #[debug("SecretKey")]
+    secret_key: SecretKey,
+    #[debug("PkarrClient")]
+    pkarr_client: PkarrRelayClient,
+    watcher: n0_watcher::Direct<Option<NodeInfo>>,
+    ttl: u32,
+    republish_interval: Duration,
+}
+
+impl PublisherService {
+    async fn run(mut self) {
+        let mut failed_attempts = 0;
+        let republish = time::sleep(Duration::MAX);
+        tokio::pin!(republish);
+        loop {
+            if !self.watcher.is_connected() {
+                break;
+            }
+            if let Some(info) = self.watcher.get() {
+                match self.publish_current(info).await {
+                    Err(err) => {
+                        failed_attempts += 1;
+                        // Retry after increasing timeout
+                        let retry_after = Duration::from_secs(failed_attempts);
+                        republish.as_mut().reset(Instant::now() + retry_after);
+                        warn!(
+                            err = %format!("{err:#}"),
+                            url = %self.pkarr_client.pkarr_relay_url ,
+                            ?retry_after,
+                            %failed_attempts,
+                            "Failed to publish to pkarr",
+                        );
+                    }
+                    _ => {
+                        failed_attempts = 0;
+                        // Republish after fixed interval
+                        republish
+                            .as_mut()
+                            .reset(Instant::now() + self.republish_interval);
+                    }
+                }
+            }
+            // Wait until either the retry/republish timeout is reached, or the node info changed.
+            tokio::select! {
+                res = self.watcher.updated() => match res {
+                    Ok(_) => debug!("Publish node info to pkarr (info changed)"),
+                    Err(Disconnected { .. }) => break,
+                },
+                _ = &mut republish => debug!("Publish node info to pkarr (interval elapsed)"),
+            }
+        }
+    }
+
+    async fn publish_current(&self, info: NodeInfo) -> Result<(), PkarrError> {
+        debug!(
+            data = ?info.data,
+            pkarr_relay = %self.pkarr_client.pkarr_relay_url,
+            "Publish node info to pkarr"
+        );
+        let signed_packet = info
+            .to_pkarr_signed_packet(&self.secret_key, self.ttl)
+            .context(EncodingSnafu)?;
+        self.pkarr_client.publish(&signed_packet).await?;
+        Ok(())
+    }
+}
+
+/// Builder for [`PkarrResolver`].
+///
+/// See [`PkarrResolver::builder`].
+#[derive(Debug)]
+pub struct PkarrResolverBuilder {
+    pkarr_relay: Url,
+    #[cfg(not(wasm_browser))]
+    dns_resolver: Option<DnsResolver>,
+}
+
+impl PkarrResolverBuilder {
+    /// Sets the DNS resolver to use for resolving the pkarr relay URL.
+    #[cfg(not(wasm_browser))]
+    pub fn dns_resolver(mut self, dns_resolver: DnsResolver) -> Self {
+        self.dns_resolver = Some(dns_resolver);
+        self
+    }
+
+    /// Creates a [`PkarrResolver`] from this builder.
+    pub fn build(self) -> PkarrResolver {
+        #[cfg(wasm_browser)]
+        let pkarr_client = PkarrRelayClient::new(self.pkarr_relay);
+
+        #[cfg(not(wasm_browser))]
+        let pkarr_client = if let Some(dns_resolver) = self.dns_resolver {
+            PkarrRelayClient::with_dns_resolver(self.pkarr_relay, dns_resolver)
+        } else {
+            PkarrRelayClient::new(self.pkarr_relay)
+        };
+
+        PkarrResolver { pkarr_client }
+    }
+}
+
+impl IntoDiscovery for PkarrResolverBuilder {
+    fn into_discovery(
+        mut self,
+        context: &DiscoveryContext,
+    ) -> Result<impl Discovery, IntoDiscoveryError> {
+        #[cfg(not(wasm_browser))]
+        if self.dns_resolver.is_none() {
+            self.dns_resolver = Some(context.dns_resolver().clone());
+        }
+
+        Ok(self.build())
+    }
+}
+
+/// Resolver of node discovery information from a [pkarr] relay.
+///
+/// The resolver uses HTTP to query node discovery information from a pkarr relay server,
+/// see the [module docs] for details.
+///
+/// This implements the [`Discovery`] trait to be used as a node discovery service.  Note
+/// that it only resolves node discovery information, for the corresponding publisher use
+/// the [`PkarrPublisher`] together with [`ConcurrentDiscovery`].
+///
+/// [pkarr]: https://pkarr.org
+/// [module docs]: crate::discovery::pkarr
+/// [`ConcurrentDiscovery`]: super::ConcurrentDiscovery
+#[derive(derive_more::Debug, Clone)]
+pub struct PkarrResolver {
+    pkarr_client: PkarrRelayClient,
+}
+
+impl PkarrResolver {
+    /// Creates a new resolver builder using the pkarr relay server at the URL.
+    ///
+    /// The builder implements [`IntoDiscovery`].
+    pub fn builder(pkarr_relay: Url) -> PkarrResolverBuilder {
+        PkarrResolverBuilder {
+            pkarr_relay,
+            #[cfg(not(wasm_browser))]
+            dns_resolver: None,
+        }
+    }
+
+    /// Creates a pkarr resolver builder which uses the [number 0] pkarr relay server.
+    ///
+    /// This uses the pkarr relay server operated by [number 0] at
+    /// [`N0_DNS_PKARR_RELAY_PROD`].
+    ///
+    /// When running with the environment variable `IROH_FORCE_STAGING_RELAYS`
+    /// set to any non empty value [`N0_DNS_PKARR_RELAY_STAGING`]
+    /// server is used instead.
+    ///
+    /// [number 0]: https://n0.computer
+    pub fn n0_dns() -> PkarrResolverBuilder {
+        let pkarr_relay = match force_staging_infra() {
+            true => N0_DNS_PKARR_RELAY_STAGING,
+            false => N0_DNS_PKARR_RELAY_PROD,
+        };
+
+        let pkarr_relay: Url = pkarr_relay.parse().expect("url is valid");
+        Self::builder(pkarr_relay)
+    }
+}
+
+impl Discovery for PkarrResolver {
+    fn resolve(&self, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
+        let pkarr_client = self.pkarr_client.clone();
+        let fut = async move {
+            let signed_packet = pkarr_client.resolve(node_id).await?;
+            let info = NodeInfo::from_pkarr_signed_packet(&signed_packet)
+                .map_err(|err| DiscoveryError::from_err("pkarr", err))?;
+            let item = DiscoveryItem::new(info, "pkarr", None);
+            Ok(item)
+        };
+        let stream = n0_future::stream::once_future(fut);
+        Some(Box::pin(stream))
+    }
+}
+
+/// A [pkarr] client to publish [`pkarr::SignedPacket`]s to a pkarr relay.
+///
+/// [pkarr]: https://pkarr.org
+#[derive(Debug, Clone)]
+pub struct PkarrRelayClient {
+    http_client: reqwest::Client,
+    pkarr_relay_url: Url,
+}
+
+impl PkarrRelayClient {
+    /// Creates a new client.
+    pub fn new(pkarr_relay_url: Url) -> Self {
+        Self {
+            http_client: reqwest::Client::new(),
+            pkarr_relay_url,
+        }
+    }
+
+    /// Creates a new client while passing a DNS resolver to use.
+    #[cfg(not(wasm_browser))]
+    pub fn with_dns_resolver(pkarr_relay_url: Url, dns_resolver: crate::dns::DnsResolver) -> Self {
+        let http_client = reqwest::Client::builder()
+            .dns_resolver(Arc::new(dns_resolver))
+            .build()
+            .expect("failed to create request client");
+        Self {
+            http_client,
+            pkarr_relay_url,
+        }
+    }
+
+    /// Resolves a [`SignedPacket`] for the given [`NodeId`].
+    pub async fn resolve(&self, node_id: NodeId) -> Result<SignedPacket, DiscoveryError> {
+        // We map the error to string, as in browsers the error is !Send
+        let public_key = pkarr::PublicKey::try_from(node_id.as_bytes()).context(PublicKeySnafu)?;
+
+        let mut url = self.pkarr_relay_url.clone();
+        url.path_segments_mut()
+            .map_err(|_| {
+                InvalidRelayUrlSnafu {
+                    url: self.pkarr_relay_url.clone(),
+                }
+                .build()
+            })?
+            .push(&public_key.to_z32());
+
+        let response = self
+            .http_client
+            .get(url)
+            .send()
+            .await
+            .context(HttpSendSnafu)?;
+
+        if !response.status().is_success() {
+            return Err(HttpRequestSnafu {
+                status: response.status(),
+            }
+            .build()
+            .into());
+        }
+
+        let payload = response.bytes().await.context(HttpPayloadSnafu)?;
+        // We map the error to string, as in browsers the error is !Send
+        let packet =
+            SignedPacket::from_relay_payload(&public_key, &payload).context(VerifySnafu)?;
+        Ok(packet)
+    }
+
+    /// Publishes a [`SignedPacket`].
+    pub async fn publish(&self, signed_packet: &SignedPacket) -> Result<(), PkarrError> {
+        let mut url = self.pkarr_relay_url.clone();
+        url.path_segments_mut()
+            .map_err(|_| {
+                InvalidRelayUrlSnafu {
+                    url: self.pkarr_relay_url.clone(),
+                }
+                .build()
+            })?
+            .push(&signed_packet.public_key().to_z32());
+
+        let response = self
+            .http_client
+            .put(url)
+            .body(signed_packet.to_relay_payload())
+            .send()
+            .await
+            .context(HttpSendSnafu)?;
+
+        if !response.status().is_success() {
+            return Err(HttpRequestSnafu {
+                status: response.status(),
+            }
+            .build());
+        }
+
+        Ok(())
+    }
+}
+</file>
+
+<file path="static_provider.rs">
+//! A static node discovery to manually add node addressing information.
+//!
+//! Often an application might get node addressing information out-of-band in an
+//! application-specific way.  [`NodeTicket`]'s are one common way used to achieve this.
+//! This "static" addressing information is often only usable for a limited time so needs to
+//! be able to be removed again once know it is no longer useful.
+//!
+//! This is where the [`StaticProvider`] is useful: it allows applications to add and
+//! retract node addressing information that is otherwise out-of-band to iroh.
+//!
+//! [`NodeTicket`]: https://docs.rs/iroh-base/latest/iroh_base/ticket/struct.NodeTicket
+
+use std::{
+    collections::{BTreeMap, btree_map::Entry},
+    sync::{Arc, RwLock},
+};
+
+use iroh_base::NodeId;
+use n0_future::{
+    boxed::BoxStream,
+    stream::{self, StreamExt},
+    time::SystemTime,
+};
+
+use super::{Discovery, DiscoveryError, DiscoveryItem, NodeData, NodeInfo};
+
+/// A static node discovery to manually add node addressing information.
+///
+/// Often an application might get node addressing information out-of-band in an
+/// application-specific way.  [`NodeTicket`]'s are one common way used to achieve this.
+/// This "static" addressing information is often only usable for a limited time so needs to
+/// be able to be removed again once know it is no longer useful.
+///
+/// This is where the [`StaticProvider`] is useful: it allows applications to add and
+/// retract node addressing information that is otherwise out-of-band to iroh.
+///
+/// # Examples
+///
+/// ```rust
+/// use iroh::{Endpoint, NodeAddr, discovery::static_provider::StaticProvider};
+/// use iroh_base::SecretKey;
+///
+/// # #[tokio::main]
+/// # async fn main() -> n0_snafu::Result<()> {
+/// // Create the discovery service and endpoint.
+/// let discovery = StaticProvider::new();
+///
+/// let _ep = Endpoint::builder()
+///     .add_discovery(discovery.clone())
+///     .bind()
+///     .await?;
+///
+/// // Sometime later add a RelayUrl for a fake NodeId.
+/// let node_id = SecretKey::from_bytes(&[0u8; 32]).public(); // Do not use fake secret keys!
+/// // You can pass either `NodeInfo` or `NodeAddr` to `add_node_info`.
+/// discovery.add_node_info(NodeAddr {
+///     node_id,
+///     relay_url: Some("https://example.com".parse()?),
+///     direct_addresses: Default::default(),
+/// });
+///
+/// # Ok(())
+/// # }
+/// ```
+///
+/// [`NodeTicket`]: https://docs.rs/iroh-base/latest/iroh_base/ticket/struct.NodeTicket
+#[derive(Debug, Default, Clone)]
+#[repr(transparent)]
+pub struct StaticProvider {
+    nodes: Arc<RwLock<BTreeMap<NodeId, StoredNodeInfo>>>,
+}
+
+#[derive(Debug)]
+struct StoredNodeInfo {
+    data: NodeData,
+    last_updated: SystemTime,
+}
+
+impl StaticProvider {
+    /// The provenance string for this discovery implementation.
+    ///
+    /// This is mostly used for debugging information and allows understanding the origin of
+    /// addressing information used by an iroh [`Endpoint`].
+    ///
+    /// [`Endpoint`]: crate::Endpoint
+    pub const PROVENANCE: &'static str = "static_discovery";
+
+    /// Creates a new static discovery instance.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Creates a static discovery instance from node addresses.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use std::{net::SocketAddr, str::FromStr};
+    ///
+    /// use iroh::{Endpoint, NodeAddr, discovery::static_provider::StaticProvider};
+    ///
+    /// # fn get_addrs() -> Vec<NodeAddr> {
+    /// #     Vec::new()
+    /// # }
+    /// # #[tokio::main]
+    /// # async fn main() -> n0_snafu::Result<()> {
+    /// // get addrs from somewhere
+    /// let addrs = get_addrs();
+    ///
+    /// // create a StaticProvider from the list of addrs.
+    /// let discovery = StaticProvider::from_node_info(addrs);
+    /// // create an endpoint with the discovery
+    /// let endpoint = Endpoint::builder().add_discovery(discovery).bind().await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn from_node_info(infos: impl IntoIterator<Item = impl Into<NodeInfo>>) -> Self {
+        let res = Self::default();
+        for info in infos {
+            res.add_node_info(info);
+        }
+        res
+    }
+
+    /// Sets node addressing information for the given node ID.
+    ///
+    /// This will completely overwrite any existing info for the node.
+    ///
+    /// Returns the [`NodeData`] of the previous entry, or `None` if there was no previous
+    /// entry for this node ID.
+    pub fn set_node_info(&self, node_info: impl Into<NodeInfo>) -> Option<NodeData> {
+        let last_updated = SystemTime::now();
+        let NodeInfo { node_id, data } = node_info.into();
+        let mut guard = self.nodes.write().expect("poisoned");
+        let previous = guard.insert(node_id, StoredNodeInfo { data, last_updated });
+        previous.map(|x| x.data)
+    }
+
+    /// Augments node addressing information for the given node ID.
+    ///
+    /// The provided addressing information is combined with the existing info in the static
+    /// provider.  Any new direct addresses are added to those already present while the
+    /// relay URL is overwritten.
+    pub fn add_node_info(&self, node_info: impl Into<NodeInfo>) {
+        let last_updated = SystemTime::now();
+        let NodeInfo { node_id, data } = node_info.into();
+        let mut guard = self.nodes.write().expect("poisoned");
+        match guard.entry(node_id) {
+            Entry::Occupied(mut entry) => {
+                let existing = entry.get_mut();
+                existing
+                    .data
+                    .add_direct_addresses(data.direct_addresses().iter().copied());
+                existing.data.set_relay_url(data.relay_url().cloned());
+                existing.data.set_user_data(data.user_data().cloned());
+                existing.last_updated = last_updated;
+            }
+            Entry::Vacant(entry) => {
+                entry.insert(StoredNodeInfo { data, last_updated });
+            }
+        }
+    }
+
+    /// Returns node addressing information for the given node ID.
+    pub fn get_node_info(&self, node_id: NodeId) -> Option<NodeInfo> {
+        let guard = self.nodes.read().expect("poisoned");
+        let info = guard.get(&node_id)?;
+        Some(NodeInfo::from_parts(node_id, info.data.clone()))
+    }
+
+    /// Removes all node addressing information for the given node ID.
+    ///
+    /// Any removed information is returned.
+    pub fn remove_node_info(&self, node_id: NodeId) -> Option<NodeInfo> {
+        let mut guard = self.nodes.write().expect("poisoned");
+        let info = guard.remove(&node_id)?;
+        Some(NodeInfo::from_parts(node_id, info.data))
+    }
+}
+
+impl Discovery for StaticProvider {
+    fn publish(&self, _data: &NodeData) {}
+
+    fn resolve(
+        &self,
+        node_id: NodeId,
+    ) -> Option<BoxStream<Result<super::DiscoveryItem, DiscoveryError>>> {
+        let guard = self.nodes.read().expect("poisoned");
+        let info = guard.get(&node_id);
+        match info {
+            Some(node_info) => {
+                let last_updated = node_info
+                    .last_updated
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .expect("time drift")
+                    .as_micros() as u64;
+                let item = DiscoveryItem::new(
+                    NodeInfo::from_parts(node_id, node_info.data.clone()),
+                    Self::PROVENANCE,
+                    Some(last_updated),
+                );
+                Some(stream::iter(Some(Ok(item))).boxed())
+            }
+            None => None,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use iroh_base::{NodeAddr, SecretKey};
+    use n0_snafu::{Result, ResultExt};
+
+    use super::*;
+    use crate::Endpoint;
+
+    #[tokio::test]
+    async fn test_basic() -> Result {
+        let discovery = StaticProvider::new();
+
+        let _ep = Endpoint::builder()
+            .add_discovery(discovery.clone())
+            .bind()
+            .await?;
+
+        let key = SecretKey::from_bytes(&[0u8; 32]);
+        let addr = NodeAddr {
+            node_id: key.public(),
+            relay_url: Some("https://example.com".parse()?),
+            direct_addresses: Default::default(),
+            channel_id: None
+        };
+        let user_data = Some("foobar".parse().unwrap());
+        let node_info = NodeInfo::from(addr.clone()).with_user_data(user_data.clone());
+        discovery.add_node_info(node_info.clone());
+
+        let back = discovery.get_node_info(key.public()).context("no addr")?;
+
+        assert_eq!(back, node_info);
+        assert_eq!(back.user_data(), user_data.as_ref());
+        assert_eq!(back.into_node_addr(), addr);
+
+        let removed = discovery
+            .remove_node_info(key.public())
+            .context("nothing removed")?;
+        assert_eq!(removed, node_info);
+        let res = discovery.get_node_info(key.public());
+        assert!(res.is_none());
+
+        Ok(())
+    }
+}
+</file>
+
+</files>

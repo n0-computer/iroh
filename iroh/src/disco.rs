@@ -23,13 +23,13 @@ use std::{
     net::{IpAddr, SocketAddr},
 };
 
+use crate::magicsock::transports;
 use data_encoding::HEXLOWER;
 use iroh_base::{ChannelId, NodeId, PublicKey, RelayUrl, WebRtcPort};
 use nested_enum_utils::common_fields;
 use serde::{Deserialize, Serialize};
 use snafu::{Snafu, ensure};
 use url::Url;
-use crate::magicsock::transports;
 
 // TODO: custom magicn
 /// The 6 byte header of all discovery messages.
@@ -143,7 +143,7 @@ pub enum SendAddr {
     /// Relay Url.
     Relay(RelayUrl),
     /// Node Id
-    WebRtc(WebRtcPort)
+    WebRtc(WebRtcPort),
 }
 
 impl SendAddr {
@@ -163,13 +163,11 @@ impl SendAddr {
 
     /// Returns the `WebRtc(ChannelId)` if it is Webrtc channel
     pub fn webrtc_channel(&self) -> Option<ChannelId> {
-
         match self {
             Self::Relay(url) => None,
             Self::Udp(_) => None,
             Self::WebRtc(port) => Some(port.channel_id),
         }
-
     }
 }
 
@@ -178,7 +176,7 @@ impl From<transports::Addr> for SendAddr {
         match addr {
             transports::Addr::Ip(addr) => SendAddr::Udp(addr),
             transports::Addr::Relay(url, _) => SendAddr::Relay(url),
-            transports::Addr::WebRtc(port) => SendAddr::WebRtc(port)
+            transports::Addr::WebRtc(port) => SendAddr::WebRtc(port),
         }
     }
 }

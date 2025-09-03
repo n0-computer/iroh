@@ -4,8 +4,8 @@
 //! A WebRTC connection is uniquely identified by the combination of a [`NodeId`] and a
 //! [`ChannelId`], represented by the [`WebRtcPort`] type.
 
-use serde::{Deserialize, Serialize};
 use crate::NodeId;
+use serde::{Deserialize, Serialize};
 
 /// A unique identifier for a WebRTC connection.
 ///
@@ -47,7 +47,6 @@ impl PartialEq<WebRtcPort> for &mut WebRtcPort {
     }
 }
 
-
 impl WebRtcPort {
     /// Creates a new [`WebRtcPort`] from a node ID and channel ID.
     ///
@@ -66,7 +65,10 @@ impl WebRtcPort {
     /// let port = WebRtcPort::new(node_id, channel_id);
     /// ```
     pub fn new(node: NodeId, channel_id: ChannelId) -> Self {
-        Self { node_id: node, channel_id }
+        Self {
+            node_id: node,
+            channel_id,
+        }
     }
 
     /// Returns the node ID of this WebRTC connection.

@@ -1,10 +1,3 @@
-use std::{
-    collections::{BTreeSet, HashMap, btree_map::Entry},
-    hash::Hash,
-    net::{IpAddr, SocketAddr},
-    sync::atomic::AtomicBool,
-};
-use std::cmp::PartialEq;
 use data_encoding::HEXLOWER;
 use iroh_base::{ChannelId, NodeAddr, NodeId, PublicKey, RelayUrl, WebRtcPort};
 use n0_future::{
@@ -13,10 +6,21 @@ use n0_future::{
 };
 use n0_watcher::Watchable;
 use serde::{Deserialize, Serialize};
+use std::cmp::PartialEq;
+use std::{
+    collections::{BTreeSet, HashMap, btree_map::Entry},
+    hash::Hash,
+    net::{IpAddr, SocketAddr},
+    sync::atomic::AtomicBool,
+};
 use tokio::sync::mpsc;
 use tracing::{Level, debug, event, info, instrument, trace, warn};
 
-use super::{IpPort, Source, path_state::{PathState, summarize_node_paths}, udp_paths::{NodeUdpPaths, UdpSendAddr}};
+use super::{
+    IpPort, Source,
+    path_state::{PathState, summarize_node_paths},
+    udp_paths::{NodeUdpPaths, UdpSendAddr},
+};
 #[cfg(any(test, feature = "test-utils"))]
 use crate::endpoint::PathSelection;
 use crate::{
@@ -140,7 +144,6 @@ pub(super) struct NodeState {
     /// Configuration for what path selection to use
     #[cfg(any(test, feature = "test-utils"))]
     path_selection: PathSelection,
-
 }
 
 /// Options for creating a new [`NodeState`].
@@ -155,7 +158,6 @@ pub(super) struct Options {
     #[cfg(any(test, feature = "test-utils"))]
     pub(super) path_selection: PathSelection,
 }
-
 
 impl NodeState {
     pub(super) fn new(id: usize, options: Options) -> Self {
@@ -179,7 +181,12 @@ impl NodeState {
         let webrtc_channel = options.webrtc_channel.map(|channel_id| {
             (
                 channel_id.clone(),
-                PathState::new(options.node_id, SendAddr::WebRtc(WebRtcPort::new(options.node_id, channel_id)), source, now)
+                PathState::new(
+                    options.node_id,
+                    SendAddr::WebRtc(WebRtcPort::new(options.node_id, channel_id)),
+                    source,
+                    now,
+                ),
             )
         });
         NodeState {
@@ -276,7 +283,7 @@ impl NodeState {
             conn_type,
             latency,
             last_used: self.last_used.map(|instant| now.duration_since(instant)),
-            channel_id: None
+            channel_id: None,
         }
     }
 
@@ -477,18 +484,11 @@ impl NodeState {
                     }
                 }
                 SendAddr::WebRtc(port) => {
-
                     if let Some((home_channel_id, port_state)) = self.webrtc_channel.as_mut() {
-
                         if *home_channel_id == port.channel_id {
-
                             port_state.last_ping = None
-
                         }
-
-
                     }
-
                 }
             }
         }
@@ -556,14 +556,12 @@ impl NodeState {
             }
             SendAddr::WebRtc(port) => {
                 if let Some((home_channel_id, state)) = self.webrtc_channel.as_mut() {
-
                     if port.channel_id == *home_channel_id {
                         state.last_ping.replace(now);
                         path_found = true
                     }
                 }
             }
-
         }
         if !path_found {
             // Shouldn't happen. But don't ping an endpoint that's not active for us.
@@ -813,10 +811,9 @@ impl NodeState {
                 }
             }
             SendAddr::WebRtc(src_port) => {
-
                 let WebRtcPort {
                     node_id,
-                    channel_id
+                    channel_id,
                 } = src_port;
 
                 match self.webrtc_channel.as_mut() {
@@ -829,9 +826,9 @@ impl NodeState {
                                 path.clone(),
                                 tx_id,
                                 Source::WebRtc,
-                                now
+                                now,
                             ),
-                            ));
+                        ));
                         PingRole::NewPath
                     }
                     Some((_home_url, state)) => state.handle_ping(tx_id, now),
@@ -844,13 +841,12 @@ impl NodeState {
                                 path.clone(),
                                 tx_id,
                                 Source::WebRtc,
-                                now
+                                now,
                             ),
-                            ));
+                        ));
                         PingRole::NewPath
                     }
                 }
-
             }
         };
         event!(
@@ -1031,24 +1027,19 @@ impl NodeState {
                             );
                         }
                     },
-                    SendAddr::WebRtc(port) => {
-
-                        match self.webrtc_channel.as_mut(){
-                            None => {
-                                warn!(
-                                "ignoring pong via relay for different relay from last one",
-                            );
-                            }
-                            Some((home_port, state)) => {
-                                state.add_pong_reply(PongReply{
-                                    latency,
-                                    pong_at: now,
-                                    from: src,
-                                    pong_src: m.ping_observed_addr.clone(),
-                                });
-                            }
+                    SendAddr::WebRtc(port) => match self.webrtc_channel.as_mut() {
+                        None => {
+                            warn!("ignoring pong via relay for different relay from last one",);
                         }
-                    }
+                        Some((home_port, state)) => {
+                            state.add_pong_reply(PongReply {
+                                latency,
+                                pong_at: now,
+                                from: src,
+                                pong_src: m.ping_observed_addr.clone(),
+                            });
+                        }
+                    },
                 }
 
                 // Promote this pong response to our current best address if it's lower latency.
@@ -1165,8 +1156,7 @@ impl NodeState {
     }
 
     pub(super) fn receive_webrtc(&mut self, port: WebRtcPort, now: Instant) {
-
-        let WebRtcPort{
+        let WebRtcPort {
             node_id,
             channel_id,
         } = port;
@@ -1184,7 +1174,7 @@ impl NodeState {
                     channel_id,
                     PathState::with_last_payload(
                         node_id,
-                        SendAddr::WebRtc(WebRtcPort::new(node_id , channel_id)),
+                        SendAddr::WebRtc(WebRtcPort::new(node_id, channel_id)),
                         Source::WebRtc,
                         now,
                     ),
@@ -1210,7 +1200,7 @@ impl NodeState {
                 .webrtc_channel
                 .as_ref()
                 .filter(|(channel_id, _state)| node.channel_id == *channel_id)
-                .and_then(|(_addr, state)| state.last_ping)
+                .and_then(|(_addr, state)| state.last_ping),
         }
     }
 
@@ -1498,7 +1488,7 @@ pub struct RemoteInfo {
     pub last_used: Option<Duration>,
 
     /// Channel id
-    pub channel_id : Option<ChannelId>
+    pub channel_id: Option<ChannelId>,
 }
 
 impl RemoteInfo {
@@ -1747,7 +1737,7 @@ mod tests {
                 conn_type: ConnectionType::Direct(a_socket_addr),
                 latency: Some(latency),
                 last_used: Some(elapsed),
-                channel_id: None
+                channel_id: None,
             },
             RemoteInfo {
                 node_id: b_endpoint.node_id,
@@ -1760,7 +1750,7 @@ mod tests {
                 conn_type: ConnectionType::Relay(send_addr.clone()),
                 latency: Some(latency),
                 last_used: Some(elapsed),
-                channel_id: None
+                channel_id: None,
             },
             RemoteInfo {
                 node_id: c_endpoint.node_id,
@@ -1773,7 +1763,7 @@ mod tests {
                 conn_type: ConnectionType::Relay(send_addr.clone()),
                 latency: None,
                 last_used: Some(elapsed),
-                channel_id: None
+                channel_id: None,
             },
             RemoteInfo {
                 node_id: d_endpoint.node_id,
@@ -1793,7 +1783,7 @@ mod tests {
                 conn_type: ConnectionType::Mixed(d_socket_addr, send_addr.clone()),
                 latency: Some(Duration::from_millis(50)),
                 last_used: Some(elapsed),
-                channel_id: None
+                channel_id: None,
             },
         ]);
 

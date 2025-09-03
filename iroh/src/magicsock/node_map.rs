@@ -51,7 +51,6 @@ pub(super) struct NodeMap {
     inner: Mutex<NodeMapInner>,
 }
 
-
 #[derive(Default, Debug)]
 pub(super) struct NodeMapInner {
     by_node_key: HashMap<NodeId, usize>,
@@ -74,7 +73,7 @@ enum NodeStateKey {
     NodeId(NodeId),
     NodeIdMappedAddr(NodeIdMappedAddr),
     IpPort(IpPort),
-    WebRtcPort(WebRtcPort)
+    WebRtcPort(WebRtcPort),
 }
 
 /// The origin or *source* through which an address associated with a remote node
@@ -179,12 +178,7 @@ impl NodeMap {
             .receive_relay(relay_url, src)
     }
     pub(crate) fn receive_webrtc(&self, port: WebRtcPort) -> NodeIdMappedAddr {
-
-        self.inner
-        .lock()
-            .expect("poisoned")
-            .receive_webrtc(port)
-
+        self.inner.lock().expect("poisoned").receive_webrtc(port)
     }
     pub(super) fn notify_ping_sent(
         &self,
@@ -482,7 +476,7 @@ impl NodeMapInner {
                 source: Source::Relay,
                 #[cfg(any(test, feature = "test-utils"))]
                 path_selection,
-                webrtc_channel: None
+                webrtc_channel: None,
             }
         });
         node_state.receive_relay(relay_url, src, Instant::now());
@@ -505,14 +499,13 @@ impl NodeMapInner {
                 relay_url: None,
                 active: true,
                 source: Source::WebRtc,
-                #[cfg(any(test, feature="test-utils"))]
+                #[cfg(any(test, feature = "test-utils"))]
                 path_selection,
-                webrtc_channel: Some(channel_id)
+                webrtc_channel: Some(channel_id),
             }
         });
 
         node_state.receive_webrtc(port.clone(), Instant::now());
-
 
         *node_state.quic_mapped_addr()
     }
@@ -603,7 +596,7 @@ impl NodeMapInner {
             Options {
                 node_id: sender,
                 relay_url: src.relay_url(),
-                webrtc_channel:src.webrtc_channel(),
+                webrtc_channel: src.webrtc_channel(),
                 active: true,
                 source,
                 #[cfg(any(test, feature = "test-utils"))]
@@ -720,7 +713,6 @@ pub struct IpPort {
     ip: IpAddr,
     port: u16,
 }
-
 
 impl From<SocketAddr> for IpPort {
     fn from(socket_addr: SocketAddr) -> Self {
@@ -859,7 +851,7 @@ mod tests {
                     name: "test".into(),
                 },
                 path_selection: PathSelection::default(),
-                webrtc_channel: None
+                webrtc_channel: None,
             })
             .id();
 

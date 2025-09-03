@@ -23,4 +23,4 @@ pub use self::node_addr::NodeAddr;
 #[cfg(feature = "relay")]
 pub use self::relay_url::{RelayUrl, RelayUrlParseError};
 #[cfg(feature = "webrtc")]
-pub use self::webrtc_port::{WebRtcPort, ChannelId};
+pub use self::webrtc_port::{ChannelId, WebRtcPort};

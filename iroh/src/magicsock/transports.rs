@@ -9,8 +9,8 @@ use std::{
 use crate::magicsock::transports::webrtc::{WebRtcSender, WebRtcTransport};
 use iroh_base::{NodeId, RelayUrl, WebRtcPort};
 use n0_watcher::Watcher;
-use serde::{Deserialize, Serialize};
 use relay::{RelayNetworkChangeSender, RelaySender};
+use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use tracing::{error, trace, warn};
 
@@ -36,6 +36,16 @@ pub(crate) struct Transports {
     web_rtc: Vec<WebRtcTransport>,
     max_receive_segments: Arc<AtomicUsize>,
     poll_recv_counter: AtomicUsize,
+}
+
+///Transport Mode
+#[derive(Debug)]
+pub(crate) enum TransportMode {
+    UdpRelay,       // UDP + Relay (default)
+    RelayOnly,      // Relay only
+    UdpWebrtcRelay, // All three: UDP + WebRTC + Relay
+    WebrtcRelay,    // WebRTC + Relay (no direct UDP)
+    UdpWebrtc,      // UDP + WebRTC (no relay)
 }
 
 #[cfg(not(wasm_browser))]
@@ -135,11 +145,8 @@ impl Transports {
                 poll_transport!(transport);
             }
         } else {
-
             for transport in self.web_rtc.iter_mut().rev() {
-
                 poll_transport!(transport);
-
             }
 
             for transport in self.relay.iter_mut().rev() {
@@ -334,9 +341,8 @@ pub(crate) struct Transmit<'a> {
 pub(crate) enum Addr {
     Ip(SocketAddr),
     Relay(RelayUrl, NodeId),
-    WebRtc(WebRtcPort)
+    WebRtc(WebRtcPort),
 }
-
 
 impl Default for Addr {
     fn default() -> Self {
@@ -365,7 +371,6 @@ impl From<WebRtcPort> for Addr {
     fn from(port: WebRtcPort) -> Self {
         Self::WebRtc(port)
     }
-
 }
 
 impl Addr {
@@ -437,24 +442,23 @@ impl UdpSender {
                     }
                 }
             }
-           Addr::WebRtc(port) => {
+            Addr::WebRtc(port) => {
+                let WebRtcPort {
+                    node_id,
+                    channel_id,
+                } = port;
 
-               let WebRtcPort {
-                   node_id,
-                   channel_id,
-               } = port;
-
-               for sender in &self.webrtc {
-                   match sender.send(*node_id, transmit, channel_id).await{
-                       Ok(_) => {
-                           return Ok(());
-                       }
-                       Err(err) => {
-                           warn!("webrtc failed to send: {:?}", err);
-                       }
-                   }
-               }
-           }
+                for sender in &self.webrtc {
+                    match sender.send(*node_id, transmit, channel_id).await {
+                        Ok(_) => {
+                            return Ok(());
+                        }
+                        Err(err) => {
+                            warn!("webrtc failed to send: {:?}", err);
+                        }
+                    }
+                }
+            }
         }
         if any_match {
             Err(io::Error::other("all available transports failed"))
@@ -499,21 +503,18 @@ impl UdpSender {
                 }
             }
             Addr::WebRtc(port) => {
-
                 let WebRtcPort {
                     node_id,
                     channel_id,
                 } = *port;
 
                 for sender in &mut self.webrtc {
-                    match sender.poll_send(cx, node_id, transmit, &channel_id){
-                        Poll::Ready(res) => { return  Poll::Ready(res) },
+                    match sender.poll_send(cx, node_id, transmit, &channel_id) {
+                        Poll::Ready(res) => return Poll::Ready(res),
                         Poll::Pending => {}
                     }
                 }
-
             }
-
         }
         Poll::Pending
     }
@@ -556,19 +557,17 @@ impl UdpSender {
                 }
             }
             Addr::WebRtc(port) => {
-                let WebRtcPort{
+                let WebRtcPort {
                     node_id,
-                    channel_id
+                    channel_id,
                 } = *port;
                 for transport in &self.webrtc {
-
                     match transport.try_send(node_id, transmit, &channel_id) {
                         Ok(()) => return Ok(()),
                         Err(_err) => {
                             continue;
                         }
                     }
-
                 }
             }
         }

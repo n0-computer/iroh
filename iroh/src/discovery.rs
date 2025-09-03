@@ -990,7 +990,7 @@ mod tests {
             node_id: ep1.node_id(),
             relay_url: None,
             direct_addresses: BTreeSet::from(["240.0.0.1:1000".parse().unwrap()]),
-            channel_id: None
+            channel_id: None,
         };
         let _conn = ep2.connect(ep1_wrong_addr, TEST_ALPN).await?;
         Ok(())
@@ -1051,7 +1051,7 @@ mod tests {
             .discovery(disco)
             .relay_mode(RelayMode::Disabled)
             .alpns(vec![TEST_ALPN.to_vec()])
-            .bind()
+            .bind(false)
             .await
             .unwrap();
 
@@ -1168,7 +1168,7 @@ mod test_dns_pkarr {
             node_id,
             relay_url,
             direct_addresses: Default::default(),
-            channel_id: None
+            channel_id: None,
         };
 
         assert_eq!(resolved.to_node_addr(), expected_addr);
@@ -1210,7 +1210,7 @@ mod test_dns_pkarr {
             .alpns(vec![TEST_ALPN.to_vec()])
             .dns_resolver(dns_pkarr_server.dns_resolver())
             .discovery(dns_pkarr_server.discovery(secret_key))
-            .bind()
+            .bind(false)
             .await?;
 
         let handle = tokio::spawn({

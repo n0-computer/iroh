@@ -1,22 +1,22 @@
 pub mod actor;
 
 use crate::magicsock::transports::webrtc::actor::{
-    PlatformRtcConfig, WebRtcActor, WebRtcActorConfig, WebRtcActorMessage,
-    WebRtcData, WebRtcDeliveryMode, WebRtcRecvDatagrams, WebRtcSendItem
+    PlatformRtcConfig, WebRtcActor, WebRtcActorConfig, WebRtcActorMessage, WebRtcData,
+    WebRtcDeliveryMode, WebRtcRecvDatagrams, WebRtcSendItem,
 };
 use bytes::Bytes;
 use iroh_base::{ChannelId, NodeId, PublicKey, WebRtcPort};
+use n0_future::ready;
 use snafu::Snafu;
 use std::fmt::Debug;
 use std::io;
 use std::net::SocketAddr;
 use std::task::{Context, Poll};
-use n0_future::ready;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task;
 use tokio_util::sync::PollSender;
 use tokio_util::task::AbortOnDropHandle;
-use tracing::{error, info_span, trace, warn, Instrument};
+use tracing::{Instrument, error, info_span, trace, warn};
 
 #[cfg(wasm_browser)]
 use web_sys::{
@@ -276,11 +276,13 @@ impl WebRtcSender {
             }
             Err(mpsc::error::TrySendError::Full(_)) => {
                 warn!(node = %dest_node, "WebRTC try_send: channel full, message dropped");
-                Err(io::Error::new(io::ErrorKind::WouldBlock, "WebRTC send channel full"))
+                Err(io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    "WebRTC send channel full",
+                ))
             }
         }
     }
-
 }
 
 /// Main WebRTC transport interface
@@ -394,7 +396,7 @@ impl WebRtcTransport {
                     .run(actor_receiver, webrtc_datagram_send_rx)
                     .await;
             }
-                .instrument(info_span!("webrtc-actor")),
+            .instrument(info_span!("webrtc-actor")),
         ));
 
         Self {
@@ -404,7 +406,7 @@ impl WebRtcTransport {
             _actor_handle: actor_handle,
             my_node_id,
             #[cfg(not(wasm_browser))]
-            bind_addr
+            bind_addr,
         }
     }
 
@@ -443,13 +445,12 @@ impl WebRtcTransport {
     /// }
     /// ```
 
-
     pub fn poll_recv(
         &mut self,
         cx: &mut Context,
         bufs: &mut [io::IoSliceMut<'_>],
         metas: &mut [quinn_udp::RecvMeta],
-        source_addrs: &mut [Addr]
+        source_addrs: &mut [Addr],
     ) -> Poll<io::Result<usize>> {
         let mut num_msgs = 0;
 
@@ -632,7 +633,10 @@ impl WebRtcTransport {
         peer_node: NodeId,
         candidate: crate::magicsock::transports::webrtc::actor::PlatformCandidateIceType,
     ) -> Result<(), WebRtcError> {
-        let msg = WebRtcActorMessage::AddIceCandidate { peer_node, candidate };
+        let msg = WebRtcActorMessage::AddIceCandidate {
+            peer_node,
+            candidate,
+        };
 
         self.actor_sender.send(msg).await.map_err(Into::into)
     }

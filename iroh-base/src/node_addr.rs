@@ -67,10 +67,8 @@ impl NodeAddr {
 
     /// Adds a webrtc channel id
     pub fn with_channel_id(mut self, channel_id: ChannelId) -> Self {
-
         self.channel_id = Some(channel_id);
         self
-
     }
 
     /// Adds the given direct addresses.
@@ -104,15 +102,12 @@ impl NodeAddr {
         direct_addresses: impl IntoIterator<Item = SocketAddr>,
     ) -> Self {
         Self {
-
             node_id,
             relay_url,
             channel_id,
             direct_addresses: direct_addresses.into_iter().collect(),
-
         }
     }
-
 
     /// Returns true, if only a [`NodeId`] is present.
     pub fn is_empty(&self) -> bool {
