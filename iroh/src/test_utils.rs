@@ -49,6 +49,7 @@ pub async fn run_relay_server_with(quic: bool) -> Result<(RelayMap, RelayUrl, Se
         Some(QuicConfig {
             server_config: tls.server_config.clone(),
             bind_addr: tls.quic_bind_addr,
+            alternate_port: Default::default(),
         })
     } else {
         None
