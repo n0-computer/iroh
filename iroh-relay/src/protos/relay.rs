@@ -157,32 +157,26 @@ impl<T: AsRef<[u8]>> From<T> for Datagrams {
 }
 
 impl Datagrams {
-    /// Splits the current datagram into at maximum `num_segments` segments, potentially returning
+    /// Splits the current datagram into at maximum `num_segments` segments, returning
     /// the batch with at most `num_segments` and leaving only the rest in `self`.
     ///
     /// Calling this on a datagram batch that only contains a single datagram (`segment_size == None`)
-    /// will result in returning essentially `Some(self.clone())`, while making `self` empty afterwards.
+    /// will result in returning essentially a clone of `self`, while making `self` empty afterwards.
     ///
     /// Calling this on a datagram batch with e.g. 15 datagrams with `num_segments == 10` will
-    /// result in returning `Some(datagram_batch)` where that `datagram_batch` contains the first
-    /// 10 datagrams and `self` contains the remaining 5 datagrams.
+    /// result in returning a datagram batch that contains the first 10 datagrams and leave `self`
+    /// containing the remaining 5 datagrams.
     ///
-    /// Calling this on a datagram batch that doesn't contain `num_segments` datagrams, but less
-    /// will result in making `self` empty and returning essentially a clone of `self`.
-    ///
-    /// Calling this on an empty datagram batch (i.e. one where `contents.is_empty()`) will return `None`.
-    pub fn take_segments(&mut self, num_segments: usize) -> Option<Datagrams> {
-        if self.contents.is_empty() {
-            return None;
-        }
-
+    /// Calling this on a datagram batch with less than `num_segments` datagrams will result in
+    /// making `self` empty and returning essentially a clone of `self`.
+    pub fn take_segments(&mut self, num_segments: usize) -> Datagrams {
         let Some(segment_size) = self.segment_size else {
             let contents = std::mem::take(&mut self.contents);
-            return Some(Datagrams {
+            return Datagrams {
                 ecn: self.ecn,
                 segment_size: None,
                 contents,
-            });
+            };
         };
 
         let usize_segment_size = usize::from(u16::from(segment_size));
@@ -193,11 +187,17 @@ impl Datagrams {
 
         let is_datagram_batch = num_segments > 1 && usize_segment_size < contents.len();
 
-        Some(Datagrams {
+        // If this left our batch with only one more datagram, then remove the segment size
+        // to uphold the invariant that single-datagram batches don't have a segment size set.
+        if self.contents.len() <= usize_segment_size {
+            self.segment_size = None;
+        }
+
+        Datagrams {
             ecn: self.ecn,
             segment_size: is_datagram_batch.then_some(segment_size),
             contents,
-        })
+        }
     }
 
     fn write_to<O: BufMut>(&self, mut dst: O) -> O {

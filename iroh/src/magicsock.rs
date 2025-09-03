@@ -23,7 +23,7 @@ use std::{
     pin::Pin,
     sync::{
         Arc, Mutex, RwLock,
-        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     task::{Context, Poll},
 };
@@ -1435,7 +1435,6 @@ impl Handle {
 
         let my_relay = Watchable::new(None);
         let ipv6_reported = Arc::new(AtomicBool::new(ipv6_reported));
-        let max_receive_segments = Arc::new(AtomicUsize::new(1));
 
         let relay_transport = RelayTransport::new(RelayActorConfig {
             my_relay: my_relay.clone(),
@@ -1444,7 +1443,6 @@ impl Handle {
             dns_resolver: dns_resolver.clone(),
             proxy_url: proxy_url.clone(),
             ipv6_reported: ipv6_reported.clone(),
-            max_receive_segments: max_receive_segments.clone(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify,
             metrics: metrics.magicsock.clone(),
@@ -1460,16 +1458,9 @@ impl Handle {
             .iter()
             .any(|t: &IpTransport| t.bind_addr().is_ipv6());
         #[cfg(not(wasm_browser))]
-        let transports = Transports::new(
-            ip_transports,
-            relay_transports,
-            web_rtc_transports,
-            max_receive_segments,
-        );
+        let transports = Transports::new(ip_transports, relay_transports);
         #[cfg(wasm_browser)]
-        let transports =
-            Transports::new(relay_transports, web_rtc_transports, max_receive_segments);
-
+        let transports = Transports::new(relay_transports);
         let (disco, disco_receiver) = DiscoState::new(secret_encryption_key);
 
         let msock = Arc::new(MagicSock {
@@ -3703,7 +3694,7 @@ mod tests {
         dns::DnsResolver,
         endpoint::{DirectAddr, PathSelection, Source},
         magicsock::{Handle, MagicSock, node_map},
-        tls,
+        tls::{self, DEFAULT_MAX_TLS_TICKETS},
     };
 
     const ALPN: &[u8] = b"n0/test/1";
@@ -3735,7 +3726,8 @@ mod tests {
     /// Generate a server config with no ALPNS and a default transport configuration
     fn make_default_server_config(secret_key: &SecretKey) -> ServerConfig {
         let quic_server_config =
-            crate::tls::TlsConfig::new(secret_key.clone()).make_server_config(vec![], false);
+            crate::tls::TlsConfig::new(secret_key.clone(), DEFAULT_MAX_TLS_TICKETS)
+                .make_server_config(vec![], false);
         let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
         server_config.transport_config(Arc::new(quinn::TransportConfig::default()));
         server_config
@@ -4239,8 +4231,8 @@ mod tests {
     /// Use [`magicsock_connect`] to establish connections.
     #[instrument(name = "ep", skip_all, fields(me = secret_key.public().fmt_short()))]
     async fn magicsock_ep(secret_key: SecretKey) -> Result<Handle> {
-        let quic_server_config =
-            tls::TlsConfig::new(secret_key.clone()).make_server_config(vec![ALPN.to_vec()], true);
+        let quic_server_config = tls::TlsConfig::new(secret_key.clone(), DEFAULT_MAX_TLS_TICKETS)
+            .make_server_config(vec![ALPN.to_vec()], true);
         let mut server_config = ServerConfig::with_crypto(Arc::new(quic_server_config));
         server_config.transport_config(Arc::new(quinn::TransportConfig::default()));
 
@@ -4303,7 +4295,8 @@ mod tests {
     ) -> Result<quinn::Connection> {
         let alpns = vec![ALPN.to_vec()];
         let quic_client_config =
-            tls::TlsConfig::new(ep_secret_key.clone()).make_client_config(alpns, true);
+            tls::TlsConfig::new(ep_secret_key.clone(), DEFAULT_MAX_TLS_TICKETS)
+                .make_client_config(alpns, true);
         let mut client_config = quinn::ClientConfig::new(Arc::new(quic_client_config));
         client_config.transport_config(transport_config);
         let connect = ep

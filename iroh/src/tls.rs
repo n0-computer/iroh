@@ -25,7 +25,7 @@ mod verifier;
 /// So 8 * 32 * (200 + 387) = 150.272 bytes, assuming pointers to certificates
 /// are never aliased pointers (they're Arc'ed).
 /// I think 150KB is an acceptable default upper limit for such a cache.
-const MAX_TLS_TICKETS: usize = 8 * 32;
+pub(crate) const DEFAULT_MAX_TLS_TICKETS: usize = 8 * 32;
 
 /// Configuration for TLS.
 ///
@@ -44,7 +44,7 @@ pub(crate) struct TlsConfig {
 }
 
 impl TlsConfig {
-    pub(crate) fn new(secret_key: SecretKey) -> Self {
+    pub(crate) fn new(secret_key: SecretKey, max_tls_tickets: usize) -> Self {
         let cert_resolver = Arc::new(
             AlwaysResolvesCert::new(&secret_key).expect("Client cert key DER is valid; qed"),
         );
@@ -54,7 +54,7 @@ impl TlsConfig {
             server_verifier: Arc::new(verifier::ServerCertificateVerifier),
             client_verifier: Arc::new(verifier::ClientCertificateVerifier),
             session_store: Arc::new(rustls::client::ClientSessionMemoryCache::new(
-                MAX_TLS_TICKETS,
+                max_tls_tickets,
             )),
         }
     }
