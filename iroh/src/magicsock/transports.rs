@@ -6,15 +6,18 @@ use std::{
     task::{Context, Poll},
 };
 
-use iroh_base::{NodeId, RelayUrl};
+use crate::magicsock::transports::webrtc::{WebRtcSender, WebRtcTransport};
+use iroh_base::{NodeId, RelayUrl, WebRtcPort};
 use n0_watcher::Watcher;
 use relay::{RelayNetworkChangeSender, RelaySender};
+use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use tracing::{error, trace, warn};
 
 #[cfg(not(wasm_browser))]
 mod ip;
 mod relay;
+pub mod webrtc;
 
 #[cfg(not(wasm_browser))]
 pub(crate) use self::ip::IpTransport;
@@ -23,7 +26,6 @@ use self::ip::{IpNetworkChangeSender, IpSender};
 pub(crate) use self::relay::{RelayActorConfig, RelayTransport};
 use super::MagicSock;
 use crate::net_report::Report;
-
 /// Manages the different underlying data transports that the magicsock
 /// can support.
 #[derive(Debug)]
@@ -31,8 +33,19 @@ pub(crate) struct Transports {
     #[cfg(not(wasm_browser))]
     ip: Vec<IpTransport>,
     relay: Vec<RelayTransport>,
-
+    web_rtc: Vec<WebRtcTransport>,
+    max_receive_segments: Arc<AtomicUsize>,
     poll_recv_counter: AtomicUsize,
+}
+
+///Transport Mode
+#[derive(Debug)]
+pub(crate) enum TransportMode {
+    UdpRelay,       // UDP + Relay (default)
+    RelayOnly,      // Relay only
+    UdpWebrtcRelay, // All three: UDP + WebRTC + Relay
+    WebrtcRelay,    // WebRTC + Relay (no direct UDP)
+    UdpWebrtc,      // UDP + WebRTC (no relay)
 }
 
 #[cfg(not(wasm_browser))]
@@ -61,11 +74,15 @@ impl Transports {
     pub(crate) fn new(
         #[cfg(not(wasm_browser))] ip: Vec<IpTransport>,
         relay: Vec<RelayTransport>,
+        web_rtc: Vec<WebRtcTransport>,
+        max_receive_segments: Arc<AtomicUsize>,
     ) -> Self {
         Self {
             #[cfg(not(wasm_browser))]
             ip,
             relay,
+            web_rtc,
+            max_receive_segments,
             poll_recv_counter: Default::default(),
         }
     }
@@ -128,6 +145,10 @@ impl Transports {
                 poll_transport!(transport);
             }
         } else {
+            for transport in self.web_rtc.iter_mut().rev() {
+                poll_transport!(transport);
+            }
+
             for transport in self.relay.iter_mut().rev() {
                 poll_transport!(transport);
             }
@@ -180,7 +201,14 @@ impl Transports {
     /// Returns the bound addresses for IP based transports
     #[cfg(not(wasm_browser))]
     pub(crate) fn ip_bind_addrs(&self) -> Vec<SocketAddr> {
-        self.ip.iter().map(|t| t.bind_addr()).collect()
+        let mut addrs = Vec::new();
+        // IP transport addresses
+        addrs.extend(self.ip.iter().map(|t| t.bind_addr()));
+
+        // WebRTC virtual addresses
+        addrs.extend(self.web_rtc.iter().map(|t| t.bind_addrs()));
+
+        addrs
     }
 
     #[cfg(not(wasm_browser))]
@@ -226,6 +254,7 @@ impl Transports {
         #[cfg(not(wasm_browser))]
         let ip = self.ip.iter().map(|t| t.create_sender()).collect();
         let relay = self.relay.iter().map(|t| t.create_sender()).collect();
+        let webrtc = self.web_rtc.iter().map(|t| t.create_sender()).collect();
         let max_transmit_segments = self.max_transmit_segments();
 
         UdpSender {
@@ -233,6 +262,7 @@ impl Transports {
             ip,
             msock,
             relay,
+            webrtc,
             max_transmit_segments,
         }
     }
@@ -308,6 +338,7 @@ pub(crate) struct Transmit<'a> {
 pub(crate) enum Addr {
     Ip(SocketAddr),
     Relay(RelayUrl, NodeId),
+    WebRtc(WebRtcPort),
 }
 
 impl Default for Addr {
@@ -333,6 +364,12 @@ impl From<(RelayUrl, NodeId)> for Addr {
     }
 }
 
+impl From<WebRtcPort> for Addr {
+    fn from(port: WebRtcPort) -> Self {
+        Self::WebRtc(port)
+    }
+}
+
 impl Addr {
     pub(crate) fn is_relay(&self) -> bool {
         matches!(self, Self::Relay(..))
@@ -343,16 +380,18 @@ impl Addr {
         match self {
             Self::Ip(ip) => Some(ip),
             Self::Relay(..) => None,
+            Self::WebRtc(..) => None,
         }
     }
 }
 
 #[derive(Debug)]
 pub(crate) struct UdpSender {
-    msock: Arc<MagicSock>, // :(
+    msock: Arc<MagicSock>,
     #[cfg(not(wasm_browser))]
     ip: Vec<IpSender>,
     relay: Vec<RelaySender>,
+    webrtc: Vec<WebRtcSender>,
     max_transmit_segments: usize,
 }
 
@@ -400,6 +439,23 @@ impl UdpSender {
                     }
                 }
             }
+            Addr::WebRtc(port) => {
+                let WebRtcPort {
+                    node_id,
+                    channel_id,
+                } = port;
+
+                for sender in &self.webrtc {
+                    match sender.send(*node_id, transmit, channel_id).await {
+                        Ok(_) => {
+                            return Ok(());
+                        }
+                        Err(err) => {
+                            warn!("webrtc failed to send: {:?}", err);
+                        }
+                    }
+                }
+            }
         }
         if any_match {
             Err(io::Error::other("all available transports failed"))
@@ -443,6 +499,19 @@ impl UdpSender {
                     }
                 }
             }
+            Addr::WebRtc(port) => {
+                let WebRtcPort {
+                    node_id,
+                    channel_id,
+                } = *port;
+
+                for sender in &mut self.webrtc {
+                    match sender.poll_send(cx, node_id, transmit, &channel_id) {
+                        Poll::Ready(res) => return Poll::Ready(res),
+                        Poll::Pending => {}
+                    }
+                }
+            }
         }
         Poll::Pending
     }
@@ -480,6 +549,20 @@ impl UdpSender {
                             Err(_err) => {
                                 continue;
                             }
+                        }
+                    }
+                }
+            }
+            Addr::WebRtc(port) => {
+                let WebRtcPort {
+                    node_id,
+                    channel_id,
+                } = *port;
+                for transport in &self.webrtc {
+                    match transport.try_send(node_id, transmit, &channel_id) {
+                        Ok(()) => return Ok(()),
+                        Err(_err) => {
+                            continue;
                         }
                     }
                 }

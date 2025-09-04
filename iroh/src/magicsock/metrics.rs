@@ -20,6 +20,7 @@ pub struct Metrics {
     pub send_data: Counter,
     pub send_data_network_down: Counter,
     pub recv_data_relay: Counter,
+    pub recv_data_webrtc: Counter,
     pub recv_data_ipv4: Counter,
     pub recv_data_ipv6: Counter,
     /// Number of QUIC datagrams received.

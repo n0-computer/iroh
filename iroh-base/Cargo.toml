@@ -36,7 +36,7 @@ serde_test = "1"
 
 
 [features]
-default = ["ticket", "relay"]
+default = ["ticket", "relay","webrtc"]
 ticket = ["key", "dep:postcard", "dep:data-encoding"]
 key = [
   "dep:curve25519-dalek",
@@ -47,12 +47,14 @@ key = [
   "dep:data-encoding",
   "dep:rand_core",
   "relay",
+  "webrtc"
 ]
 relay = [
   "dep:url",
   "dep:derive_more",
   "dep:snafu",
 ]
+webrtc = []
 
 [package.metadata.docs.rs]
 all-features = true

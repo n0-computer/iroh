@@ -23,14 +23,13 @@ use std::{
     net::{IpAddr, SocketAddr},
 };
 
+use crate::magicsock::transports;
 use data_encoding::HEXLOWER;
-use iroh_base::{PublicKey, RelayUrl};
+use iroh_base::{ChannelId, NodeId, PublicKey, RelayUrl, WebRtcPort};
 use nested_enum_utils::common_fields;
 use serde::{Deserialize, Serialize};
 use snafu::{Snafu, ensure};
 use url::Url;
-
-use crate::magicsock::transports;
 
 // TODO: custom magicn
 /// The 6 byte header of all discovery messages.
@@ -143,6 +142,8 @@ pub enum SendAddr {
     Udp(SocketAddr),
     /// Relay Url.
     Relay(RelayUrl),
+    /// Node Id
+    WebRtc(WebRtcPort),
 }
 
 impl SendAddr {
@@ -156,6 +157,16 @@ impl SendAddr {
         match self {
             Self::Relay(url) => Some(url.clone()),
             Self::Udp(_) => None,
+            Self::WebRtc(..) => None,
+        }
+    }
+
+    /// Returns the `WebRtc(ChannelId)` if it is Webrtc channel
+    pub fn webrtc_channel(&self) -> Option<ChannelId> {
+        match self {
+            Self::Relay(url) => None,
+            Self::Udp(_) => None,
+            Self::WebRtc(port) => Some(port.channel_id),
         }
     }
 }
@@ -165,6 +176,7 @@ impl From<transports::Addr> for SendAddr {
         match addr {
             transports::Addr::Ip(addr) => SendAddr::Udp(addr),
             transports::Addr::Relay(url, _) => SendAddr::Relay(url),
+            transports::Addr::WebRtc(port) => SendAddr::WebRtc(port),
         }
     }
 }
@@ -186,6 +198,7 @@ impl PartialEq<SocketAddr> for SendAddr {
         match self {
             Self::Relay(_) => false,
             Self::Udp(addr) => addr.eq(other),
+            Self::WebRtc(node_id) => false,
         }
     }
 }
@@ -195,6 +208,7 @@ impl Display for SendAddr {
         match self {
             SendAddr::Relay(id) => write!(f, "Relay({id})"),
             SendAddr::Udp(addr) => write!(f, "UDP({addr})"),
+            SendAddr::WebRtc(node_id, ..) => write!(f, "WebRtc({node_id})"),
         }
     }
 }
@@ -281,6 +295,11 @@ fn send_addr_to_vec(addr: &SendAddr) -> Vec<u8> {
         SendAddr::Udp(ip) => {
             let mut out = vec![0u8];
             out.extend_from_slice(&socket_addr_as_bytes(ip));
+            out
+        }
+        SendAddr::WebRtc(node_id) => {
+            let mut out = vec![0u8];
+            out.extend_from_slice(node_id.to_string().as_bytes());
             out
         }
     }
