@@ -427,7 +427,7 @@ mod tests {
         let quic_server = QuicServer::spawn(QuicConfig {
             server_config,
             bind_addr,
-            alternate_port: Default::default(),
+            alternate_port: crate::server::AlternatePortConfig::Disabled,
         })?;
 
         // create a client-side endpoint
