@@ -223,7 +223,7 @@ impl Builder {
             .unwrap_or_else(|| SecretKey::generate(rand::rngs::OsRng));
         let static_config = StaticConfig {
             transport_config: Arc::new(self.transport_config),
-            tls_config: tls::TlsConfig::new(secret_key.clone()),
+            tls_config: tls::TlsConfig::new(secret_key.clone(), self.max_tls_tickets),
             keylog: self.keylog,
         };
         let server_config = static_config.create_server_config(self.alpn_protocols);

@@ -15,19 +15,6 @@
 //! from responding to any hole punching attempts. This node will still,
 //! however, read any packets that come off the UDP sockets.
 
-use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
-    fmt::Display,
-    io,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
-    pin::Pin,
-    sync::{
-        Arc, Mutex, RwLock,
-        atomic::{AtomicBool, AtomicU64, Ordering},
-    },
-    task::{Context, Poll},
-};
-
 use crate::magicsock::transports::TransportMode;
 use bytes::Bytes;
 use data_encoding::HEXLOWER;
@@ -49,6 +36,19 @@ use quinn_proto::Datagram;
 use rand::Rng;
 use smallvec::SmallVec;
 use snafu::{ResultExt, Snafu};
+use std::sync::atomic::AtomicUsize;
+use std::{
+    collections::{BTreeMap, BTreeSet, HashMap},
+    fmt::Display,
+    io,
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    pin::Pin,
+    sync::{
+        Arc, Mutex, RwLock,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+    },
+    task::{Context, Poll},
+};
 use tokio::sync::{Mutex as AsyncMutex, mpsc};
 use tokio_util::sync::CancellationToken;
 use tracing::{
@@ -1448,19 +1448,24 @@ impl Handle {
             metrics: metrics.magicsock.clone(),
         });
         let relay_transports = vec![relay_transport];
-        let web_rtc_transport =
-            WebRtcTransport::new(WebRtcActorConfig::new(secret_key.clone(), addr_v4.into()));
-        let web_rtc_transports = vec![web_rtc_transport];
+        let web_rtc_transports = Vec::new();
 
         let secret_encryption_key = secret_ed_box(secret_key.secret());
+        let max_receive_segments = Arc::new(AtomicUsize::new(1));
+
         #[cfg(not(wasm_browser))]
         let ipv6 = ip_transports
             .iter()
             .any(|t: &IpTransport| t.bind_addr().is_ipv6());
         #[cfg(not(wasm_browser))]
-        let transports = Transports::new(ip_transports, relay_transports);
+        let transports = Transports::new(
+            ip_transports,
+            relay_transports,
+            web_rtc_transports,
+            max_receive_segments,
+        );
         #[cfg(wasm_browser)]
-        let transports = Transports::new(relay_transports);
+        let transports = Transports::new(relay_transports, max_receive_segments);
         let (disco, disco_receiver) = DiscoState::new(secret_encryption_key);
 
         let msock = Arc::new(MagicSock {
@@ -1645,7 +1650,6 @@ impl Handle {
             dns_resolver: dns_resolver.clone(),
             proxy_url: proxy_url.clone(),
             ipv6_reported: ipv6_reported.clone(),
-            max_receive_segments: max_receive_segments.clone(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify,
             metrics: metrics.magicsock.clone(),
@@ -1855,7 +1859,6 @@ impl Handle {
             dns_resolver: dns_resolver.clone(),
             proxy_url: proxy_url.clone(),
             ipv6_reported: ipv6_reported.clone(),
-            max_receive_segments: max_receive_segments.clone(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify,
             metrics: metrics.magicsock.clone(),
@@ -2056,7 +2059,6 @@ impl Handle {
 
         let my_relay = Watchable::new(None);
         let ipv6_reported = Arc::new(AtomicBool::new(ipv6_reported));
-        let max_receive_segments = Arc::new(AtomicUsize::new(1));
 
         let relay_transport = RelayTransport::new(RelayActorConfig {
             my_relay: my_relay.clone(),
@@ -2065,7 +2067,6 @@ impl Handle {
             dns_resolver: dns_resolver.clone(),
             proxy_url: proxy_url.clone(),
             ipv6_reported: ipv6_reported.clone(),
-            max_receive_segments: max_receive_segments.clone(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify,
             metrics: metrics.magicsock.clone(),
@@ -2076,6 +2077,8 @@ impl Handle {
         let web_rtc_transports = vec![web_rtc_transport];
 
         let secret_encryption_key = secret_ed_box(secret_key.secret());
+        let max_receive_segments = Arc::new(AtomicUsize::new(1));
+
         #[cfg(not(wasm_browser))]
         let ipv6 = ip_transports
             .iter()
@@ -2267,6 +2270,7 @@ impl Handle {
         let my_relay = Watchable::new(None);
         let ipv6_reported = Arc::new(AtomicBool::new(ipv6_reported));
         let max_receive_segments = Arc::new(AtomicUsize::new(1));
+        let max_receive_segments = Arc::new(AtomicUsize::new(1));
 
         let relay_transport = RelayTransport::new(RelayActorConfig {
             my_relay: my_relay.clone(),
@@ -2275,7 +2279,6 @@ impl Handle {
             dns_resolver: dns_resolver.clone(),
             proxy_url: proxy_url.clone(),
             ipv6_reported: ipv6_reported.clone(),
-            max_receive_segments: max_receive_segments.clone(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify,
             metrics: metrics.magicsock.clone(),
@@ -2484,7 +2487,6 @@ impl Handle {
             dns_resolver: dns_resolver.clone(),
             proxy_url: proxy_url.clone(),
             ipv6_reported: ipv6_reported.clone(),
-            max_receive_segments: max_receive_segments.clone(),
             #[cfg(any(test, feature = "test-utils"))]
             insecure_skip_relay_cert_verify,
             metrics: metrics.magicsock.clone(),
@@ -3765,7 +3767,7 @@ mod tests {
                 .transport_config(transport_config)
                 .relay_mode(relay_mode)
                 .alpns(vec![ALPN.to_vec()])
-                .bind(false)
+                .bind()
                 .await
                 .unwrap();
 
@@ -4252,7 +4254,7 @@ mod tests {
             path_selection: PathSelection::default(),
             metrics: Default::default(),
         };
-        let msock = MagicSock::spawn(opts, false).await?;
+        let msock = MagicSock::spawn(opts).await?;
         Ok(msock)
     }
 
