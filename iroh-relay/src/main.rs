@@ -654,6 +654,7 @@ async fn build_relay_config(cfg: Config) -> Result<relay::ServerConfig<std::io::
             quic_config = Some(QuicConfig {
                 server_config: tls.server_config.clone(),
                 bind_addr: tls.quic_bind_addr,
+                alternate_port: Default::default(),
             });
         } else {
             whatever!(

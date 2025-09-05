@@ -166,12 +166,40 @@ pub struct QuicConfig {
     /// The socket address on which the QUIC server should bind.
     ///
     /// Normally you'd chose port `7842`, see [`crate::defaults::DEFAULT_RELAY_QUIC_PORT`].
+    /// A second server will automatically be spawned on port + 1 for NAT port mapping variation testing.
     pub bind_addr: SocketAddr,
     /// The TLS server configuration for the QUIC server.
     ///
     /// If this [`rustls::ServerConfig`] does not support TLS 1.3, the QUIC server will fail
     /// to spawn.
     pub server_config: rustls::ServerConfig,
+
+    /// Select an additional port to listen on.
+    ///
+    /// This may be used by nodes to check for NAT port binding variation.
+    pub alternate_port: AlternatePortConfig,
+}
+
+/// Configuration for the alternate listening port of the QUIC server.
+#[derive(Debug, Default, Copy, Clone)]
+pub enum AlternatePortConfig {
+    /// Don't listen on an additional port.
+    Disabled,
+    /// Use the port of the bind address + 1.
+    #[default]
+    Enabled,
+}
+
+impl AlternatePortConfig {
+    /// Returns the bind address for the alternate endpoint, or None if disabled.
+    pub(crate) fn get_bind_addr(self, main_addr: SocketAddr) -> Option<SocketAddr> {
+        match self {
+            AlternatePortConfig::Disabled => None,
+            AlternatePortConfig::Enabled => {
+                Some(SocketAddr::from((main_addr.ip(), main_addr.port() + 1)))
+            }
+        }
+    }
 }
 
 /// TLS configuration for Relay server.

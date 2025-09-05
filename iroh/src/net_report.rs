@@ -443,15 +443,45 @@ impl Client {
                 let dns_resolver = self.socket_state.dns_resolver.clone();
                 let quic_client = quic_client.clone();
                 let relay_url = relay_node.url.clone();
+
+                // Regular QAD probe
                 v4_buf.spawn(
                     cancel_v4
                         .child_token()
                         .run_until_cancelled_owned(time::timeout(
                             PROBES_TIMEOUT,
-                            run_probe_v4(ip_mapped_addrs, relay_node, quic_client, dns_resolver),
+                            run_probe_v4(
+                                ip_mapped_addrs.clone(),
+                                relay_node.clone(),
+                                quic_client.clone(),
+                                dns_resolver.clone(),
+                                None,
+                            ),
                         ))
                         .instrument(info_span!("QAD-IPv4", %relay_url)),
                 );
+
+                // Port variation probe
+                if let Some(quic_config) = &relay_node.quic {
+                    let alternate_port = quic_config.port + 1;
+                    v4_buf.spawn(
+                        cancel_v4
+                            .child_token()
+                            .run_until_cancelled_owned(time::timeout(
+                                PROBES_TIMEOUT,
+                                run_probe_v4(
+                                    ip_mapped_addrs,
+                                    relay_node,
+                                    quic_client,
+                                    dns_resolver,
+                                    Some(alternate_port),
+                                ),
+                            ))
+                            .instrument(
+                                info_span!("QAD-IPv4-PortVar", %relay_url, port = alternate_port),
+                            ),
+                    );
+                }
             }
 
             if if_state.have_v6 {
@@ -461,15 +491,45 @@ impl Client {
                 let dns_resolver = self.socket_state.dns_resolver.clone();
                 let quic_client = quic_client.clone();
                 let relay_url = relay_node.url.clone();
+
+                // Regular QAD probe
                 v6_buf.spawn(
                     cancel_v6
                         .child_token()
                         .run_until_cancelled_owned(time::timeout(
                             PROBES_TIMEOUT,
-                            run_probe_v6(ip_mapped_addrs, relay_node, quic_client, dns_resolver),
+                            run_probe_v6(
+                                ip_mapped_addrs.clone(),
+                                relay_node.clone(),
+                                quic_client.clone(),
+                                dns_resolver.clone(),
+                                None,
+                            ),
                         ))
                         .instrument(info_span!("QAD-IPv6", %relay_url)),
                 );
+
+                // Port variation probe
+                if let Some(quic_config) = &relay_node.quic {
+                    let alternate_port = quic_config.port + 1;
+                    v6_buf.spawn(
+                        cancel_v6
+                            .child_token()
+                            .run_until_cancelled_owned(time::timeout(
+                                PROBES_TIMEOUT,
+                                run_probe_v6(
+                                    ip_mapped_addrs,
+                                    relay_node,
+                                    quic_client,
+                                    dns_resolver,
+                                    Some(alternate_port),
+                                ),
+                            ))
+                            .instrument(
+                                info_span!("QAD-IPv6-PortVar", %relay_url, port = alternate_port),
+                            ),
+                    );
+                }
             }
         }
 
@@ -686,12 +746,18 @@ async fn run_probe_v4(
     relay_node: Arc<RelayNode>,
     quic_client: QuicClient,
     dns_resolver: DnsResolver,
+    port_override: Option<u16>,
 ) -> n0_snafu::Result<(QadProbeReport, QadConn)> {
     use n0_snafu::ResultExt;
 
     let relay_addr_orig = reportgen::get_relay_addr_ipv4(&dns_resolver, &relay_node).await?;
+    let relay_addr_with_port = if let Some(port) = port_override {
+        std::net::SocketAddrV4::new(*relay_addr_orig.ip(), port)
+    } else {
+        relay_addr_orig
+    };
     let relay_addr =
-        reportgen::maybe_to_mapped_addr(ip_mapped_addrs.as_ref(), relay_addr_orig.into());
+        reportgen::maybe_to_mapped_addr(ip_mapped_addrs.as_ref(), relay_addr_with_port.into());
 
     debug!(?relay_addr_orig, ?relay_addr, "relay addr v4");
     let host = relay_node.url.host_str().context("missing host url")?;
@@ -704,14 +770,30 @@ async fn run_probe_v4(
         .await
         .context("receiver dropped")?
         .expect("known");
+
+    let external_addr = match addr {
+        SocketAddr::V4(addr_v4) => SocketAddr::V4(addr_v4),
+        SocketAddr::V6(addr_v6) => {
+            // For IPv6, check if it's an IPv4-mapped address and extract the IPv4 part
+            if let Some(ipv4) = addr_v6.ip().to_ipv4_mapped() {
+                SocketAddr::V4(std::net::SocketAddrV4::new(ipv4, addr_v6.port()))
+            } else {
+                // Pure IPv6 address
+                SocketAddr::V6(addr_v6)
+            }
+        }
+    };
+
     let report = QadProbeReport {
         node: relay_node.url.clone(),
-        addr: SocketAddr::new(addr.ip().to_canonical(), addr.port()),
+        addr: external_addr,
         latency: conn.rtt(),
+        dest_port: relay_addr_with_port.port(),
     };
 
     let observer = Watchable::new(None);
     let node = relay_node.url.clone();
+    let dest_port = relay_addr_with_port.port();
     let handle = task::spawn({
         let conn = conn.clone();
         let observer = observer.clone();
@@ -728,6 +810,7 @@ async fn run_probe_v4(
                         node: node.clone(),
                         addr,
                         latency,
+                        dest_port,
                     }))
                     .ok();
                 if receiver.changed().await.is_err() {
@@ -754,11 +837,17 @@ async fn run_probe_v6(
     relay_node: Arc<RelayNode>,
     quic_client: QuicClient,
     dns_resolver: DnsResolver,
+    port_override: Option<u16>,
 ) -> n0_snafu::Result<(QadProbeReport, QadConn)> {
     use n0_snafu::ResultExt;
     let relay_addr_orig = reportgen::get_relay_addr_ipv6(&dns_resolver, &relay_node).await?;
+    let relay_addr_with_port = if let Some(port) = port_override {
+        std::net::SocketAddrV6::new(*relay_addr_orig.ip(), port, 0, 0)
+    } else {
+        relay_addr_orig
+    };
     let relay_addr =
-        reportgen::maybe_to_mapped_addr(ip_mapped_addrs.as_ref(), relay_addr_orig.into());
+        reportgen::maybe_to_mapped_addr(ip_mapped_addrs.as_ref(), relay_addr_with_port.into());
 
     debug!(?relay_addr_orig, ?relay_addr, "relay addr v6");
     let host = relay_node.url.host_str().context("missing host url")?;
@@ -771,14 +860,30 @@ async fn run_probe_v6(
         .await
         .context("receiver dropped")?
         .expect("known");
+
+    let external_addr = match addr {
+        SocketAddr::V4(addr_v4) => SocketAddr::V4(addr_v4),
+        SocketAddr::V6(addr_v6) => {
+            // For IPv6, check if it's an IPv4-mapped address and extract the IPv4 part
+            if let Some(ipv4) = addr_v6.ip().to_ipv4_mapped() {
+                SocketAddr::V4(std::net::SocketAddrV4::new(ipv4, addr_v6.port()))
+            } else {
+                // Pure IPv6 address
+                SocketAddr::V6(addr_v6)
+            }
+        }
+    };
+
     let report = QadProbeReport {
         node: relay_node.url.clone(),
-        addr: SocketAddr::new(addr.ip().to_canonical(), addr.port()),
+        addr: external_addr,
         latency: conn.rtt(),
+        dest_port: relay_addr_with_port.port(),
     };
 
     let observer = Watchable::new(None);
     let node = relay_node.url.clone();
+    let dest_port = relay_addr_with_port.port();
     let handle = task::spawn({
         let observer = observer.clone();
         let conn = conn.clone();
@@ -795,6 +900,7 @@ async fn run_probe_v6(
                         node: node.clone(),
                         addr,
                         latency,
+                        dest_port,
                     }))
                     .ok();
                 if receiver.changed().await.is_err() {
@@ -825,6 +931,28 @@ mod test_utils {
         let server = server::Server::spawn(server::testing::server_config())
             .await
             .expect("should serve relay");
+        let quic = Some(RelayQuicConfig {
+            port: server.quic_addr().expect("server should run quic").port(),
+        });
+        let node_desc = RelayNode {
+            url: server.https_url().expect("should work as relay"),
+            quic,
+        };
+
+        (server, node_desc)
+    }
+
+    /// Create a relay server with port variation explicitly enabled for testing
+    pub(crate) async fn relay_with_port_variation() -> (server::Server, RelayNode) {
+        let quic_config = server::testing::quic_config_with_port_variation();
+        let mut server_config = server::testing::server_config();
+
+        server_config.quic = Some(quic_config);
+
+        let server = server::Server::spawn(server_config)
+            .await
+            .expect("should serve relay with port variation");
+
         let quic = Some(RelayQuicConfig {
             port: server.quic_addr().expect("server should run quic").port(),
         });

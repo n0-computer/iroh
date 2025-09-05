@@ -6,8 +6,8 @@ use iroh_base::RelayUrl;
 use iroh_relay::{
     RelayMap, RelayNode, RelayQuicConfig,
     server::{
-        AccessConfig, CertConfig, QuicConfig, RelayConfig, Server, ServerConfig, SpawnError,
-        TlsConfig,
+        AccessConfig, AlternatePortConfig, CertConfig, QuicConfig, RelayConfig, Server,
+        ServerConfig, SpawnError, TlsConfig,
     },
 };
 use tokio::sync::oneshot;
@@ -49,6 +49,7 @@ pub async fn run_relay_server_with(quic: bool) -> Result<(RelayMap, RelayUrl, Se
         Some(QuicConfig {
             server_config: tls.server_config.clone(),
             bind_addr: tls.quic_bind_addr,
+            alternate_port: AlternatePortConfig::Disabled, // Disable to avoid port conflicts in tests
         })
     } else {
         None

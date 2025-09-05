@@ -17,6 +17,7 @@ pub const QUIC_ADDR_DISC_CLOSE_REASON: &[u8] = b"finished";
 
 #[cfg(feature = "server")]
 pub(crate) mod server {
+
     use quinn::{
         ApplicationClose, ConnectionError,
         crypto::rustls::{NoInitialCipherSuite, QuicServerConfig},
@@ -103,7 +104,7 @@ pub(crate) mod server {
         pub(crate) fn spawn(mut quic_config: QuicConfig) -> Result<Self, QuicSpawnError> {
             quic_config.server_config.alpn_protocols =
                 vec![crate::quic::ALPN_QUIC_ADDR_DISC.to_vec()];
-            let server_config = QuicServerConfig::try_from(quic_config.server_config)?;
+            let server_config = QuicServerConfig::try_from(quic_config.server_config.clone())?;
             let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(server_config));
             let transport_config =
                 Arc::get_mut(&mut server_config.transport).expect("not used yet");
@@ -113,64 +114,45 @@ pub(crate) mod server {
                 // enable sending quic address discovery frames
                 .send_observed_address_reports(true);
 
-            let endpoint = quinn::Endpoint::server(server_config, quic_config.bind_addr)
+            // Spawn main QUIC server
+            let endpoint = quinn::Endpoint::server(server_config.clone(), quic_config.bind_addr)
                 .context(EndpointServerSnafu)?;
             let bind_addr = endpoint.local_addr().context(LocalAddrSnafu)?;
+
+            // Spawn port variation server for NAT testing based on configuration
+            let port_variation_addr = quic_config
+                .alternate_port
+                .get_bind_addr(quic_config.bind_addr);
+            let port_variation_endpoint = match port_variation_addr {
+                None => None,
+                Some(addr) => {
+                    let endpoint = quinn::Endpoint::server(server_config, addr)
+                        .context(EndpointServerSnafu)?;
+                    let actual_addr = endpoint.local_addr().context(LocalAddrSnafu)?;
+                    info!(?actual_addr, "QUIC port variation server listening on");
+                    Some(endpoint)
+                }
+            };
 
             info!(?bind_addr, "QUIC server listening on");
 
             let cancel = CancellationToken::new();
-            let cancel_accept_loop = cancel.clone();
 
-            let task = tokio::task::spawn(
+            let task = tokio::task::spawn({
+                let cancel = cancel.child_token();
                 async move {
-                    let mut set = JoinSet::new();
-                    debug!("waiting for connections...");
-                    loop {
-                        tokio::select! {
-                            biased;
-                            _ = cancel_accept_loop.cancelled() => {
-                                break;
-                            }
-                            Some(res) = set.join_next() => {
-                                if let Err(err) = res {
-                                    if err.is_panic() {
-                                        panic!("task panicked: {err:#?}");
-                                    } else {
-                                        debug!("error accepting incoming connection: {err:#?}");
-                                    }
-                                }
-                            }
-                            res = endpoint.accept() => match res {
-                                Some(conn) => {
-                                     debug!("accepting connection");
-                                     let remote_addr = conn.remote_address();
-                                     set.spawn(
-                                         handle_connection(conn).instrument(info_span!("qad-conn", %remote_addr))
-                                     );                                }
-                                None => {
-                                    debug!("endpoint closed");
-                                    break;
-                                }
-                            }
+                    let main_fut = accept_loop(endpoint, cancel.clone())
+                        .instrument(info_span!("quic-endpoint"));
+                    let port_variation_fut = async move {
+                        if let Some(endpoint) = port_variation_endpoint {
+                            accept_loop(endpoint, cancel).await
                         }
                     }
-                    // close all connections and wait until they have all grace
-                    // fully closed.
-                    endpoint.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
-                    endpoint.wait_idle().await;
-
-                    // all tasks should be closed, since the endpoint has shutdown
-                    // all connections, but await to ensure they are finished.
-                    set.abort_all();
-                    while !set.is_empty() {
-                        _ = set.join_next().await;
-                    }
-
-                    debug!("quic endpoint has been shutdown.");
+                    .instrument(info_span!("quic-endpoint-alt-port"));
+                    let _ = tokio::join!(main_fut, port_variation_fut);
                 }
-                .instrument(info_span!("quic-endpoint")),
-            );
+            });
+
             Ok(Self {
                 bind_addr,
                 cancel,
@@ -188,6 +170,59 @@ pub(crate) mod server {
                 _ = self.task_handle().await;
             }
         }
+    }
+
+    async fn accept_loop(endpoint: quinn::Endpoint, cancel_accept_loop: CancellationToken) {
+        let mut set = JoinSet::new();
+        let local_addr = endpoint
+            .local_addr()
+            .unwrap_or_else(|_| "unknown".parse().unwrap());
+        debug!("waiting for connections on {local_addr}...");
+        loop {
+            tokio::select! {
+                biased;
+                _ = cancel_accept_loop.cancelled() => {
+                    break;
+                }
+                Some(res) = set.join_next() => {
+                    if let Err(err) = res {
+                        if err.is_panic() {
+                            panic!("task panicked: {err:#?}");
+                        } else {
+                            debug!("error accepting incoming connection: {err:#?}");
+                        }
+                    }
+                }
+                res = endpoint.accept() => match res {
+                    Some(conn) => {
+                         debug!("accepting connection on {local_addr}");
+                         let remote_addr = conn.remote_address();
+                         set.spawn(async move {
+                             if let Err(err) = handle_connection(conn).await {
+                                 debug!("connection error: {err:#?}");
+                             }
+                         }.instrument(info_span!("qad-conn", %remote_addr)));
+                    }
+                    None => {
+                        debug!("endpoint closed");
+                        break;
+                    }
+                }
+            }
+        }
+        // close all connections and wait until they have all grace
+        // fully closed.
+        endpoint.close(QUIC_ADDR_DISC_CLOSE_CODE, QUIC_ADDR_DISC_CLOSE_REASON);
+        endpoint.wait_idle().await;
+
+        // all tasks should be closed, since the endpoint has shutdown
+        // all connections, but await to ensure they are finished.
+        set.abort_all();
+        while !set.is_empty() {
+            set.join_next().await;
+        }
+
+        debug!("quic endpoint has been shutdown.");
     }
 
     /// A handle for the Server side of QUIC address discovery.
@@ -383,6 +418,7 @@ mod tests {
         let quic_server = QuicServer::spawn(QuicConfig {
             server_config,
             bind_addr,
+            alternate_port: crate::server::AlternatePortConfig::Disabled,
         })?;
 
         // create a client-side endpoint

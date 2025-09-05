@@ -30,6 +30,12 @@ pub enum Probe {
     /// QUIC Address Discovery Ipv6
     #[cfg(not(wasm_browser))]
     QadIpv6,
+    /// QUIC Address Discovery IPv4 with port mapping variation test (QUIC port + 1)
+    #[cfg(not(wasm_browser))]
+    QadIpv4PortVariation,
+    /// QUIC Address Discovery IPv6 with port mapping variation test (QUIC port + 1)
+    #[cfg(not(wasm_browser))]
+    QadIpv6PortVariation,
 }
 
 /// A probe set is a sequence of similar [`Probe`]s with delays between them.
@@ -188,7 +194,13 @@ mod tests {
     }
 
     fn default_protocols() -> BTreeSet<Probe> {
-        BTreeSet::from([Probe::QadIpv4, Probe::QadIpv6, Probe::Https])
+        BTreeSet::from([
+            Probe::QadIpv4,
+            Probe::QadIpv6,
+            Probe::QadIpv4PortVariation,
+            Probe::QadIpv6PortVariation,
+            Probe::Https,
+        ])
     }
 
     #[tokio::test]
