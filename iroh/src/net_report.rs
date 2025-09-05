@@ -461,11 +461,9 @@ impl Client {
                         .instrument(info_span!("QAD-IPv4", %relay_url)),
                 );
 
-                // Port variation probe (QUIC port + 1)
-                if let Ok(relay_addr) =
-                    reportgen::get_relay_addr_ipv4(&dns_resolver, &relay_node).await
-                {
-                    let port_variation = relay_addr.port() + 1;
+                // Port variation probe
+                if let Some(quic_config) = &relay_node.quic {
+                    let alternate_port = quic_config.port + 1;
                     v4_buf.spawn(
                         cancel_v4
                             .child_token()
@@ -476,11 +474,11 @@ impl Client {
                                     relay_node,
                                     quic_client,
                                     dns_resolver,
-                                    Some(port_variation),
+                                    Some(alternate_port),
                                 ),
                             ))
                             .instrument(
-                                info_span!("QAD-IPv4-PortVar", %relay_url, port = port_variation),
+                                info_span!("QAD-IPv4-PortVar", %relay_url, port = alternate_port),
                             ),
                     );
                 }
@@ -511,11 +509,9 @@ impl Client {
                         .instrument(info_span!("QAD-IPv6", %relay_url)),
                 );
 
-                // Port variation probe (QUIC port + 1)
-                if let Ok(relay_addr) =
-                    reportgen::get_relay_addr_ipv6(&dns_resolver, &relay_node).await
-                {
-                    let port_variation = relay_addr.port() + 1;
+                // Port variation probe
+                if let Some(quic_config) = &relay_node.quic {
+                    let alternate_port = quic_config.port + 1;
                     v6_buf.spawn(
                         cancel_v6
                             .child_token()
@@ -526,11 +522,11 @@ impl Client {
                                     relay_node,
                                     quic_client,
                                     dns_resolver,
-                                    Some(port_variation),
+                                    Some(alternate_port),
                                 ),
                             ))
                             .instrument(
-                                info_span!("QAD-IPv6-PortVar", %relay_url, port = port_variation),
+                                info_span!("QAD-IPv6-PortVar", %relay_url, port = alternate_port),
                             ),
                     );
                 }
@@ -935,6 +931,28 @@ mod test_utils {
         let server = server::Server::spawn(server::testing::server_config())
             .await
             .expect("should serve relay");
+        let quic = Some(RelayQuicConfig {
+            port: server.quic_addr().expect("server should run quic").port(),
+        });
+        let node_desc = RelayNode {
+            url: server.https_url().expect("should work as relay"),
+            quic,
+        };
+
+        (server, node_desc)
+    }
+
+    /// Create a relay server with port variation explicitly enabled for testing
+    pub(crate) async fn relay_with_port_variation() -> (server::Server, RelayNode) {
+        let quic_config = server::testing::quic_config_with_port_variation();
+        let mut server_config = server::testing::server_config();
+
+        server_config.quic = Some(quic_config);
+
+        let server = server::Server::spawn(server_config)
+            .await
+            .expect("should serve relay with port variation");
+
         let quic = Some(RelayQuicConfig {
             port: server.quic_addr().expect("server should run quic").port(),
         });

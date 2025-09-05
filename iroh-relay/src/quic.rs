@@ -17,7 +17,6 @@ pub const QUIC_ADDR_DISC_CLOSE_REASON: &[u8] = b"finished";
 
 #[cfg(feature = "server")]
 pub(crate) mod server {
-    use std::net::{SocketAddrV4, SocketAddrV6};
 
     use quinn::{
         ApplicationClose, ConnectionError,
@@ -120,28 +119,17 @@ pub(crate) mod server {
                 .context(EndpointServerSnafu)?;
             let bind_addr = endpoint.local_addr().context(LocalAddrSnafu)?;
 
-            // Spawn port variation server (port + 1) for NAT testing
-            let port_variation_addr = match quic_config.bind_addr {
-                SocketAddr::V4(addr) => {
-                    SocketAddr::V4(SocketAddrV4::new(*addr.ip(), addr.port() + 1))
-                }
-                SocketAddr::V6(addr) => {
-                    SocketAddr::V6(SocketAddrV6::new(*addr.ip(), addr.port() + 1, 0, 0))
-                }
-            };
-
+            // Spawn port variation server for NAT testing based on configuration
             let port_variation_addr = quic_config
                 .alternate_port
                 .get_bind_addr(quic_config.bind_addr);
             let port_variation_endpoint = match port_variation_addr {
                 None => None,
                 Some(addr) => {
-                    let endpoint = quinn::Endpoint::server(server_config.clone(), addr)
+                    let endpoint = quinn::Endpoint::server(server_config, addr)
                         .context(EndpointServerSnafu)?;
-                    info!(
-                        ?port_variation_addr,
-                        "QUIC port variation server listening on"
-                    );
+                    let actual_addr = endpoint.local_addr().context(LocalAddrSnafu)?;
+                    info!(?actual_addr, "QUIC port variation server listening on");
                     Some(endpoint)
                 }
             };
@@ -160,7 +148,7 @@ pub(crate) mod server {
                             accept_loop(endpoint, cancel).await
                         }
                     }
-                    .instrument(info_span!("quic-endpoint-port-var"));
+                    .instrument(info_span!("quic-endpoint-alt-port"));
                     let _ = tokio::join!(main_fut, port_variation_fut);
                 }
             });
@@ -186,7 +174,10 @@ pub(crate) mod server {
 
     async fn accept_loop(endpoint: quinn::Endpoint, cancel_accept_loop: CancellationToken) {
         let mut set = JoinSet::new();
-        debug!("waiting for connections on main port...");
+        let local_addr = endpoint
+            .local_addr()
+            .unwrap_or_else(|_| "unknown".parse().unwrap());
+        debug!("waiting for connections on {local_addr}...");
         loop {
             tokio::select! {
                 biased;
@@ -204,7 +195,7 @@ pub(crate) mod server {
                 }
                 res = endpoint.accept() => match res {
                     Some(conn) => {
-                         debug!("accepting connection on main port");
+                         debug!("accepting connection on {local_addr}");
                          let remote_addr = conn.remote_address();
                          set.spawn(async move {
                              if let Err(err) = handle_connection(conn).await {
@@ -213,7 +204,7 @@ pub(crate) mod server {
                          }.instrument(info_span!("qad-conn", %remote_addr)));
                     }
                     None => {
-                        debug!("main endpoint closed");
+                        debug!("endpoint closed");
                         break;
                     }
                 }

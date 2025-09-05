@@ -6,8 +6,8 @@ use iroh_base::RelayUrl;
 use iroh_relay::{
     RelayMap, RelayNode, RelayQuicConfig,
     server::{
-        AccessConfig, AlternatePortConfig, CertConfig, QuicConfig, RelayConfig, Server, ServerConfig, SpawnError,
-        TlsConfig,
+        AccessConfig, AlternatePortConfig, CertConfig, QuicConfig, RelayConfig, Server,
+        ServerConfig, SpawnError, TlsConfig,
     },
 };
 use tokio::sync::oneshot;

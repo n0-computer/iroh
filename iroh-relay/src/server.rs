@@ -187,9 +187,7 @@ pub enum AlternatePortConfig {
     Disabled,
     /// Use the port of the bind address + 1.
     #[default]
-    MainPortPlusOne,
-    /// Use the specified port.
-    Port(u16),
+    Enabled,
 }
 
 impl AlternatePortConfig {
@@ -197,10 +195,9 @@ impl AlternatePortConfig {
     pub(crate) fn get_bind_addr(self, main_addr: SocketAddr) -> Option<SocketAddr> {
         match self {
             AlternatePortConfig::Disabled => None,
-            AlternatePortConfig::MainPortPlusOne => {
+            AlternatePortConfig::Enabled => {
                 Some(SocketAddr::from((main_addr.ip(), main_addr.port() + 1)))
             }
-            AlternatePortConfig::Port(port) => Some(SocketAddr::from((main_addr.ip(), port))),
         }
     }
 }

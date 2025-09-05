@@ -1,7 +1,9 @@
 //! Exposes functions to quickly configure a server suitable for testing.
 use std::net::Ipv4Addr;
 
-use super::{AccessConfig, AlternatePortConfig, CertConfig, QuicConfig, RelayConfig, ServerConfig, TlsConfig};
+use super::{
+    AccessConfig, AlternatePortConfig, CertConfig, QuicConfig, RelayConfig, ServerConfig, TlsConfig,
+};
 
 /// Creates a [`rustls::ServerConfig`] and certificates suitable for testing.
 ///
@@ -76,10 +78,23 @@ pub fn quic_config() -> QuicConfig {
     }
 }
 
+/// Creates a [`QuicConfig`] with port variation enabled for testing port detection logic.
+///
+/// - Same as regular quic_config but with alternate port enabled
+/// - Uses OS-assigned port (0) with alternate port enabled (main_port + 1)
+pub fn quic_config_with_port_variation() -> QuicConfig {
+    let (_, server_config) = self_signed_tls_certs_and_config();
+    QuicConfig {
+        bind_addr: (Ipv4Addr::UNSPECIFIED, 0).into(), // Let OS assign port
+        server_config,
+        alternate_port: AlternatePortConfig::Enabled, // Enable alternate port (main + 1)
+    }
+}
+
 /// Creates a [`ServerConfig`] suitable for testing.
 ///
 /// - Relaying is enabled using [`relay_config`]
-/// - QUIC addr discovery is disabled.
+/// - QUIC addr discovery is enabled with disabled alternate port to avoid conflicts.
 /// - Metrics are not enabled.
 pub fn server_config() -> ServerConfig<()> {
     ServerConfig {

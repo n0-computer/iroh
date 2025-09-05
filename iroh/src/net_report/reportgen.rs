@@ -890,4 +890,82 @@ mod tests {
         server.shutdown().await?;
         Ok(())
     }
+
+    mod run_in_isolation {
+        use n0_snafu::ResultExt;
+
+        use super::*;
+        use crate::net_report::run_probe_v4;
+
+        #[tokio::test]
+        #[traced_test]
+        async fn test_port_variation_detection() -> Result {
+            use crate::net_report::test_utils;
+
+            let (server, relay_node) = test_utils::relay_with_port_variation().await;
+            let relay = Arc::new(relay_node);
+            let client_config = iroh_relay::client::make_dangerous_client_config();
+            let ep = quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), 0)).e()?;
+            let client_addr = ep.local_addr().e()?;
+
+            let quic_client = iroh_relay::quic::QuicClient::new(ep.clone(), client_config);
+            let dns_resolver = DnsResolver::default();
+
+            let (regular_report, regular_conn) = run_probe_v4(
+                None,
+                relay.clone(),
+                quic_client.clone(),
+                dns_resolver.clone(),
+                None,
+            )
+            .await
+            .unwrap();
+
+            // Run port variation probe (main port + 1)
+            let main_port = relay.quic.as_ref().unwrap().port;
+            let alternate_port = main_port + 1;
+            let (variation_report, variation_conn) = run_probe_v4(
+                None,
+                relay.clone(),
+                quic_client.clone(),
+                dns_resolver.clone(),
+                Some(alternate_port),
+            )
+            .await
+            .unwrap();
+
+            assert_eq!(
+                regular_report.addr, client_addr,
+                "Regular probe should get correct address"
+            );
+            assert_eq!(
+                variation_report.addr, client_addr,
+                "Port variation probe should get correct address"
+            );
+            assert_eq!(
+                regular_report.dest_port, main_port,
+                "Regular probe should target main port"
+            );
+            assert_eq!(
+                variation_report.dest_port, alternate_port,
+                "Variation probe should target alternate port"
+            );
+
+            let mut report = super::Report::default();
+            report.update(&ProbeReport::QadIpv4(regular_report));
+            report.update(&ProbeReport::QadIpv4(variation_report));
+
+            assert_eq!(
+                report.mapping_varies_by_dest_port_ipv4,
+                Some(false),
+                "Should detect no port variation when same external address is used"
+            );
+
+            drop(regular_conn);
+            drop(variation_conn);
+            ep.wait_idle().await;
+            server.shutdown().await?;
+            Ok(())
+        }
+    }
 }
