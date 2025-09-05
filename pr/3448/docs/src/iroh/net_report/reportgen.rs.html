@@ -890,4 +890,82 @@
 <a href=#890 id=890 data-nosnippet>890</a>        server.shutdown().<span class="kw">await</span><span class="question-mark">?</span>;
 <a href=#891 id=891 data-nosnippet>891</a>        <span class="prelude-val">Ok</span>(())
 <a href=#892 id=892 data-nosnippet>892</a>    }
-<a href=#893 id=893 data-nosnippet>893</a>}</code></pre></div></section></main></body></html>
+<a href=#893 id=893 data-nosnippet>893</a>
+<a href=#894 id=894 data-nosnippet>894</a>    <span class="kw">mod </span>run_in_isolation {
+<a href=#895 id=895 data-nosnippet>895</a>        <span class="kw">use </span>n0_snafu::ResultExt;
+<a href=#896 id=896 data-nosnippet>896</a>
+<a href=#897 id=897 data-nosnippet>897</a>        <span class="kw">use super</span>::<span class="kw-2">*</span>;
+<a href=#898 id=898 data-nosnippet>898</a>        <span class="kw">use </span><span class="kw">crate</span>::net_report::run_probe_v4;
+<a href=#899 id=899 data-nosnippet>899</a>
+<a href=#900 id=900 data-nosnippet>900</a>        <span class="attr">#[tokio::test]
+<a href=#901 id=901 data-nosnippet>901</a>        #[traced_test]
+<a href=#902 id=902 data-nosnippet>902</a>        </span><span class="kw">async fn </span>test_port_variation_detection() -&gt; <span class="prelude-ty">Result</span> {
+<a href=#903 id=903 data-nosnippet>903</a>            <span class="kw">use </span><span class="kw">crate</span>::net_report::test_utils;
+<a href=#904 id=904 data-nosnippet>904</a>
+<a href=#905 id=905 data-nosnippet>905</a>            <span class="kw">let </span>(server, relay_node) = test_utils::relay_with_port_variation().<span class="kw">await</span>;
+<a href=#906 id=906 data-nosnippet>906</a>            <span class="kw">let </span>relay = Arc::new(relay_node);
+<a href=#907 id=907 data-nosnippet>907</a>            <span class="kw">let </span>client_config = iroh_relay::client::make_dangerous_client_config();
+<a href=#908 id=908 data-nosnippet>908</a>            <span class="kw">let </span>ep = quinn::Endpoint::client(SocketAddr::new(Ipv4Addr::LOCALHOST.into(), <span class="number">0</span>)).e()<span class="question-mark">?</span>;
+<a href=#909 id=909 data-nosnippet>909</a>            <span class="kw">let </span>client_addr = ep.local_addr().e()<span class="question-mark">?</span>;
+<a href=#910 id=910 data-nosnippet>910</a>
+<a href=#911 id=911 data-nosnippet>911</a>            <span class="kw">let </span>quic_client = iroh_relay::quic::QuicClient::new(ep.clone(), client_config);
+<a href=#912 id=912 data-nosnippet>912</a>            <span class="kw">let </span>dns_resolver = DnsResolver::default();
+<a href=#913 id=913 data-nosnippet>913</a>
+<a href=#914 id=914 data-nosnippet>914</a>            <span class="kw">let </span>(regular_report, regular_conn) = run_probe_v4(
+<a href=#915 id=915 data-nosnippet>915</a>                <span class="prelude-val">None</span>,
+<a href=#916 id=916 data-nosnippet>916</a>                relay.clone(),
+<a href=#917 id=917 data-nosnippet>917</a>                quic_client.clone(),
+<a href=#918 id=918 data-nosnippet>918</a>                dns_resolver.clone(),
+<a href=#919 id=919 data-nosnippet>919</a>                <span class="prelude-val">None</span>,
+<a href=#920 id=920 data-nosnippet>920</a>            )
+<a href=#921 id=921 data-nosnippet>921</a>            .<span class="kw">await
+<a href=#922 id=922 data-nosnippet>922</a>            </span>.unwrap();
+<a href=#923 id=923 data-nosnippet>923</a>
+<a href=#924 id=924 data-nosnippet>924</a>            <span class="comment">// Run port variation probe (main port + 1)
+<a href=#925 id=925 data-nosnippet>925</a>            </span><span class="kw">let </span>main_port = relay.quic.as_ref().unwrap().port;
+<a href=#926 id=926 data-nosnippet>926</a>            <span class="kw">let </span>alternate_port = main_port + <span class="number">1</span>;
+<a href=#927 id=927 data-nosnippet>927</a>            <span class="kw">let </span>(variation_report, variation_conn) = run_probe_v4(
+<a href=#928 id=928 data-nosnippet>928</a>                <span class="prelude-val">None</span>,
+<a href=#929 id=929 data-nosnippet>929</a>                relay.clone(),
+<a href=#930 id=930 data-nosnippet>930</a>                quic_client.clone(),
+<a href=#931 id=931 data-nosnippet>931</a>                dns_resolver.clone(),
+<a href=#932 id=932 data-nosnippet>932</a>                <span class="prelude-val">Some</span>(alternate_port),
+<a href=#933 id=933 data-nosnippet>933</a>            )
+<a href=#934 id=934 data-nosnippet>934</a>            .<span class="kw">await
+<a href=#935 id=935 data-nosnippet>935</a>            </span>.unwrap();
+<a href=#936 id=936 data-nosnippet>936</a>
+<a href=#937 id=937 data-nosnippet>937</a>            <span class="macro">assert_eq!</span>(
+<a href=#938 id=938 data-nosnippet>938</a>                regular_report.addr, client_addr,
+<a href=#939 id=939 data-nosnippet>939</a>                <span class="string">"Regular probe should get correct address"
+<a href=#940 id=940 data-nosnippet>940</a>            </span>);
+<a href=#941 id=941 data-nosnippet>941</a>            <span class="macro">assert_eq!</span>(
+<a href=#942 id=942 data-nosnippet>942</a>                variation_report.addr, client_addr,
+<a href=#943 id=943 data-nosnippet>943</a>                <span class="string">"Port variation probe should get correct address"
+<a href=#944 id=944 data-nosnippet>944</a>            </span>);
+<a href=#945 id=945 data-nosnippet>945</a>            <span class="macro">assert_eq!</span>(
+<a href=#946 id=946 data-nosnippet>946</a>                regular_report.dest_port, main_port,
+<a href=#947 id=947 data-nosnippet>947</a>                <span class="string">"Regular probe should target main port"
+<a href=#948 id=948 data-nosnippet>948</a>            </span>);
+<a href=#949 id=949 data-nosnippet>949</a>            <span class="macro">assert_eq!</span>(
+<a href=#950 id=950 data-nosnippet>950</a>                variation_report.dest_port, alternate_port,
+<a href=#951 id=951 data-nosnippet>951</a>                <span class="string">"Variation probe should target alternate port"
+<a href=#952 id=952 data-nosnippet>952</a>            </span>);
+<a href=#953 id=953 data-nosnippet>953</a>
+<a href=#954 id=954 data-nosnippet>954</a>            <span class="kw">let </span><span class="kw-2">mut </span>report = <span class="kw">super</span>::Report::default();
+<a href=#955 id=955 data-nosnippet>955</a>            report.update(<span class="kw-2">&amp;</span>ProbeReport::QadIpv4(regular_report));
+<a href=#956 id=956 data-nosnippet>956</a>            report.update(<span class="kw-2">&amp;</span>ProbeReport::QadIpv4(variation_report));
+<a href=#957 id=957 data-nosnippet>957</a>
+<a href=#958 id=958 data-nosnippet>958</a>            <span class="macro">assert_eq!</span>(
+<a href=#959 id=959 data-nosnippet>959</a>                report.mapping_varies_by_dest_port_ipv4,
+<a href=#960 id=960 data-nosnippet>960</a>                <span class="prelude-val">Some</span>(<span class="bool-val">false</span>),
+<a href=#961 id=961 data-nosnippet>961</a>                <span class="string">"Should detect no port variation when same external address is used"
+<a href=#962 id=962 data-nosnippet>962</a>            </span>);
+<a href=#963 id=963 data-nosnippet>963</a>
+<a href=#964 id=964 data-nosnippet>964</a>            drop(regular_conn);
+<a href=#965 id=965 data-nosnippet>965</a>            drop(variation_conn);
+<a href=#966 id=966 data-nosnippet>966</a>            ep.wait_idle().<span class="kw">await</span>;
+<a href=#967 id=967 data-nosnippet>967</a>            server.shutdown().<span class="kw">await</span><span class="question-mark">?</span>;
+<a href=#968 id=968 data-nosnippet>968</a>            <span class="prelude-val">Ok</span>(())
+<a href=#969 id=969 data-nosnippet>969</a>        }
+<a href=#970 id=970 data-nosnippet>970</a>    }
+<a href=#971 id=971 data-nosnippet>971</a>}</code></pre></div></section></main></body></html>
