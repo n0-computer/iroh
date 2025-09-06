@@ -28,9 +28,8 @@ pub const N0_DNS_NODE_ORIGIN_PROD: &str = "dns.iroh.link";
 /// The n0 testing DNS node origin, for testing.
 pub const N0_DNS_NODE_ORIGIN_STAGING: &str = "staging-dns.iroh.link";
 
-/// Maximum jitter factor for staggered calls. The actual jitter is calculated as
-/// a random number in the range: delay +/- (delay * (((max_jitter_factor) / 10) / 2))
-const MAX_JITTER_FACTOR: u64 = 4;
+/// Percent of total delay to jitter. 0.4 means +/- 20% of delay.
+const MAX_JITTER_PERCENT: u64 = 20;
 
 /// Potential errors related to dns.
 #[common_fields({
@@ -82,14 +81,6 @@ impl<E: std::fmt::Debug + std::fmt::Display> StaggeredError<E> {
             span_trace: n0_snafu::SpanTrace::generate(),
         }
     }
-}
-
-/// Error returned in the remote chance that the jitter calculation produces an int overflow.
-#[allow(missing_docs)]
-#[derive(Debug, Snafu)]
-enum JitterCalcError {
-    #[snafu(display("Either delay or MAX_JITTER_FACTOR is too large"))]
-    Overflow,
 }
 
 /// The DNS resolver used throughout `iroh`.
@@ -515,8 +506,7 @@ async fn stagger_call<
     // NOTE: we add the 0 delay here to have a uniform set of futures. This is more performant than
     // using alternatives that allow futures of different types.
     for delay in std::iter::once(&0u64).chain(delays_ms) {
-        let jittered_delay = add_jitter(delay).unwrap_or(*delay);
-        let delay = Duration::from_millis(jittered_delay);
+        let delay = add_jitter(delay);
         let fut = f();
         let staggered_fut = async move {
             time::sleep(delay).await;
@@ -536,17 +526,19 @@ async fn stagger_call<
     Err(StaggeredError::new(errors))
 }
 
-fn add_jitter(delay: &u64) -> Result<u64, JitterCalcError> {
-    let max_jitter = delay
-        .checked_mul(MAX_JITTER_FACTOR).ok_or(JitterCalcError::Overflow)?
-        / 10;
-    let jitter = if max_jitter == 0 {
-        0
-    } else {
-        rand::random::<u64>() % max_jitter
-    };
-    Ok((delay.checked_mul(8).ok_or(JitterCalcError::Overflow)?
-        / 10).checked_add(jitter).ok_or(JitterCalcError::Overflow)?)
+fn add_jitter(delay: &u64) -> Duration {
+    // If delay is 0, return 0 immediately.
+    if *delay == 0 {
+        return Duration::ZERO
+    }
+
+    // Calculate jitter as a random value in the range of +/- MAX_JITTER_PERCENT of the delay.
+    let max_jitter = delay.saturating_mul(MAX_JITTER_PERCENT * 2) / 100;
+    let jitter = rand::random::<u64>() % max_jitter;
+
+    Duration::from_millis(
+        delay.saturating_sub(max_jitter / 2).saturating_add(jitter)
+    )
 }
 
 #[cfg(test)]
@@ -578,31 +570,27 @@ pub(crate) mod tests {
     #[tokio::test]
     #[traced_test]
     async fn jitter_test_zero() {
-        let jittered_delay = jitter_test_backend(0).await.unwrap();
-        assert_eq!(jittered_delay, 0);
+        let jittered_delay = add_jitter(&0);
+        assert_eq!(jittered_delay, Duration::from_secs(0));
     }
 
     //Sanity checks that I did the math right
-    #[tokio::test]
+    #[test]
     #[traced_test]
-    async fn jitter_test_nonzero_positive() {
+    fn jitter_test_nonzero_positive() {
         let delay: u64 = 300;
         for _ in 0..1000000{
-            assert!(jitter_test_backend(delay).await.unwrap() >= delay * 8 / 10);
+            assert!(add_jitter(&delay) >= Duration::from_millis(delay * 8 / 10));
         }
     }
 
-    #[tokio::test]
+    #[test]
     #[traced_test]
-    async fn jitter_test_nonzero_negative() {
+    fn jitter_test_nonzero_negative() {
         let delay: u64 = 300;
         for _ in 0..1000000{
-            assert!(jitter_test_backend(delay).await.unwrap() < delay * 12 / 10);
+            assert!(add_jitter(&delay) < Duration::from_millis(delay * 12 / 10));
         }
-    }
-
-    async fn jitter_test_backend(delay: u64) -> Result<u64, JitterCalcError> {
-        add_jitter(&delay)
     }
     
 }
