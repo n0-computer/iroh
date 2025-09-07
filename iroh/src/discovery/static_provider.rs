@@ -22,7 +22,7 @@ use n0_future::{
     time::SystemTime,
 };
 
-use super::{Discovery, DiscoveryError, DiscoveryEvent, DiscoveryItem, NodeData, NodeInfo};
+use super::{Discovery, DiscoveryError, DiscoveryItem, NodeData, NodeInfo};
 
 /// A static node discovery to manually add node addressing information.
 ///
@@ -133,7 +133,7 @@ impl StaticProvider {
         let NodeInfo { node_id, data } = node_info.into();
         let mut guard = self.nodes.write().expect("poisoned");
         let previous = guard.insert(node_id, Some(StoredNodeInfo { data, last_updated }));
-        previous.map(|x| x.data)
+        previous.and_then(|x| x.map(|x| x.data))
     }
 
     /// Augments node addressing information for the given node ID.
@@ -187,7 +187,7 @@ impl Discovery for StaticProvider {
     fn resolve(
         &self,
         node_id: NodeId,
-    ) -> Option<BoxStream<Result<super::DiscoveryEvent, DiscoveryError>>> {
+    ) -> Option<BoxStream<Result<super::DiscoveryItem, DiscoveryError>>> {
         let guard = self.nodes.read().expect("poisoned");
         let info = guard.get(&node_id);
         match info {
@@ -202,9 +202,9 @@ impl Discovery for StaticProvider {
                     Self::PROVENANCE,
                     Some(last_updated),
                 );
-                Some(stream::iter(Some(Ok(DiscoveryEvent::Discovered(item)))).boxed())
+                Some(stream::iter(Some(Ok(item))).boxed())
             }
-            Some(None) => Some(stream::iter(Some(Ok(DiscoveryEvent::Expired(node_id)))).boxed()),
+            Some(None) => Some(stream::iter(None).boxed()),
             None => None,
         }
     }

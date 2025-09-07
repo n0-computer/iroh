@@ -19,7 +19,7 @@ use url::Url;
 
 use crate::{
     discovery::{
-        Discovery, DiscoveryContext, DiscoveryError, DiscoveryEvent, DiscoveryItem, IntoDiscovery,
+        Discovery, DiscoveryContext, DiscoveryError, DiscoveryItem, IntoDiscovery,
         IntoDiscoveryError, NodeData,
         pkarr::{DEFAULT_PKARR_TTL, N0_DNS_PKARR_RELAY_PROD, N0_DNS_PKARR_RELAY_STAGING},
     },
@@ -314,10 +314,7 @@ impl Discovery for DhtDiscovery {
         *task = Some(AbortOnDropHandle::new(curr));
     }
 
-    fn resolve(
-        &self,
-        node_id: NodeId,
-    ) -> Option<BoxStream<Result<DiscoveryEvent, DiscoveryError>>> {
+    fn resolve(&self, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
         let pkarr_public_key =
             pkarr::PublicKey::try_from(node_id.as_bytes()).expect("valid public key");
         tracing::info!("resolving {} as {}", node_id, pkarr_public_key.to_z32());
@@ -326,7 +323,6 @@ impl Discovery for DhtDiscovery {
             discovery.resolve_pkarr(pkarr_public_key).await
         })
         .filter_map(|x| x)
-        .map(|x| x.map(DiscoveryEvent::Discovered))
         .boxed();
         Some(stream)
     }
@@ -375,10 +371,6 @@ mod tests {
                     .collect::<Vec<_>>()
                     .await;
                 for item in items.into_iter().flatten() {
-                    let DiscoveryEvent::Discovered(item) = item else {
-                        continue;
-                    };
-
                     if let Some(url) = item.relay_url() {
                         found_relay_urls.insert(url.clone());
                     }

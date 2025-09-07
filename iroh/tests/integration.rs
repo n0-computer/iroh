@@ -11,7 +11,7 @@
 //! we won't hit these with only this integration test.
 use iroh::{
     Endpoint, RelayMode,
-    discovery::{Discovery, DiscoveryEvent, pkarr::PkarrResolver},
+    discovery::{Discovery, pkarr::PkarrResolver},
 };
 use n0_future::{
     StreamExt, task,
@@ -87,7 +87,7 @@ async fn simple_node_id_based_connection_transfer() -> Result {
                 let Some(mut stream) = resolver.resolve(node_id) else {
                     continue;
                 };
-                let Ok(Some(DiscoveryEvent::Discovered(item))) = stream.try_next().await else {
+                let Ok(Some(item)) = stream.try_next().await else {
                     continue;
                 };
                 if item.relay_url().is_some() {

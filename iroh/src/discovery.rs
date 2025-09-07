@@ -326,7 +326,7 @@ pub trait Discovery: std::fmt::Debug + Send + Sync + 'static {
     fn resolve(
         &self,
         _node_id: NodeId,
-    ) -> Option<BoxStream<Result<DiscoveryEvent, DiscoveryError>>> {
+    ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
         None
     }
 
@@ -498,10 +498,7 @@ impl Discovery for ConcurrentDiscovery {
         }
     }
 
-    fn resolve(
-        &self,
-        node_id: NodeId,
-    ) -> Option<BoxStream<Result<DiscoveryEvent, DiscoveryError>>> {
+    fn resolve(&self, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
         let streams = self
             .services
             .iter()
@@ -605,7 +602,7 @@ impl DiscoveryTask {
     fn create_stream(
         ep: &Endpoint,
         node_id: NodeId,
-    ) -> Result<BoxStream<Result<DiscoveryEvent, DiscoveryError>>, DiscoveryError> {
+    ) -> Result<BoxStream<Result<DiscoveryItem, DiscoveryError>>, DiscoveryError> {
         let discovery = ep.discovery().ok_or(NoServiceConfiguredSnafu.build())?;
         let stream = discovery
             .resolve(node_id)
@@ -654,22 +651,21 @@ impl DiscoveryTask {
         loop {
             match stream.next().await {
                 Some(Ok(r)) => {
-                    if let DiscoveryEvent::Discovered(r) = &r {
-                        let provenance = r.provenance;
-                        let node_addr = r.to_node_addr();
-                        if node_addr.is_empty() {
-                            debug!(%provenance, "empty address found");
-                            continue;
-                        }
-                        debug!(%provenance, addr = ?node_addr, "new address found");
-                        ep.add_node_addr_with_source(node_addr, provenance).ok();
+                    let provenance = r.provenance;
+                    let node_addr = r.to_node_addr();
+                    if node_addr.is_empty() {
+                        debug!(%provenance, "empty address found");
+                        continue;
                     }
+                    debug!(%provenance, addr = ?node_addr, "new address found");
+                    ep.add_node_addr_with_source(node_addr, provenance).ok();
 
                     if let Some(tx) = on_first_tx.take() {
                         tx.send(Ok(())).ok();
                     }
                     // Send the discovery item to the subscribers of the discovery broadcast stream.
-                    ep.discovery_subscribers().send(r);
+                    ep.discovery_subscribers()
+                        .send(DiscoveryEvent::Discovered(r));
                 }
                 Some(Err(err)) => {
                     warn!(?err, "discovery service produced error");
@@ -816,7 +812,7 @@ mod tests {
         fn resolve(
             &self,
             node_id: NodeId,
-        ) -> Option<BoxStream<Result<DiscoveryEvent, DiscoveryError>>> {
+        ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
             let addr_info = if self.resolve_wrong {
                 let ts = system_time_now() - 100_000;
                 let port: u16 = rand::thread_rng().gen_range(10_000..20_000);
@@ -838,7 +834,7 @@ mod tests {
                     let fut = async move {
                         time::sleep(delay).await;
                         tracing::debug!("resolve: {} = {item:?}", node_id.fmt_short());
-                        Ok(DiscoveryEvent::Discovered(item))
+                        Ok(item)
                     };
                     n0_future::stream::once_future(fut).boxed()
                 }
@@ -864,7 +860,7 @@ mod tests {
         fn resolve(
             &self,
             _node_id: NodeId,
-        ) -> Option<BoxStream<Result<DiscoveryEvent, DiscoveryError>>> {
+        ) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
             Some(n0_future::stream::empty().boxed())
         }
     }

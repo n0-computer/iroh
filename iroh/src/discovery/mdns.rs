@@ -79,7 +79,7 @@ pub struct MdnsDiscovery {
 #[derive(Debug)]
 enum Message {
     Discovery(String, Peer),
-    Resolve(NodeId, mpsc::Sender<Result<DiscoveryEvent, DiscoveryError>>),
+    Resolve(NodeId, mpsc::Sender<Result<DiscoveryItem, DiscoveryError>>),
     Timeout(NodeId, usize),
     Subscribe(mpsc::Sender<DiscoveryEvent>),
 }
@@ -169,7 +169,7 @@ impl MdnsDiscovery {
             let mut last_id = 0;
             let mut senders: HashMap<
                 PublicKey,
-                HashMap<usize, mpsc::Sender<Result<DiscoveryEvent, DiscoveryError>>>,
+                HashMap<usize, mpsc::Sender<Result<DiscoveryItem, DiscoveryError>>>,
             > = HashMap::default();
             let mut timeouts = JoinSet::new();
             loop {
@@ -264,10 +264,7 @@ impl MdnsDiscovery {
                             trace!(?item, senders = senders.len(), "sending DiscoveryItem");
                             resolved = true;
                             for sender in senders.values() {
-                                sender
-                                    .send(Ok(DiscoveryEvent::Discovered(item.clone())))
-                                    .await
-                                    .ok();
+                                sender.send(Ok(item.clone())).await.ok();
                             }
                         }
                         entry.or_insert(peer_info);
@@ -286,7 +283,7 @@ impl MdnsDiscovery {
                         if let Some(peer_info) = node_addrs.get(&node_id) {
                             let item = peer_to_discovery_item(peer_info, &node_id);
                             debug!(?item, "sending DiscoveryItem");
-                            sender.send(Ok(DiscoveryEvent::Discovered(item))).await.ok();
+                            sender.send(Ok(item)).await.ok();
                         }
                         if let Some(senders_for_node_id) = senders.get_mut(&node_id) {
                             senders_for_node_id.insert(id, sender);
@@ -409,10 +406,7 @@ fn peer_to_discovery_item(peer: &Peer, node_id: &NodeId) -> DiscoveryItem {
 }
 
 impl Discovery for MdnsDiscovery {
-    fn resolve(
-        &self,
-        node_id: NodeId,
-    ) -> Option<BoxStream<Result<DiscoveryEvent, DiscoveryError>>> {
+    fn resolve(&self, node_id: NodeId) -> Option<BoxStream<Result<DiscoveryItem, DiscoveryError>>> {
         use futures_util::FutureExt;
 
         let (send, recv) = mpsc::channel(20);
@@ -471,8 +465,20 @@ mod tests {
                 .with_user_data(Some(user_data.clone()));
 
             // resolve twice to ensure we can create separate streams for the same node_id
-            let mut s1 = discovery_a.resolve(node_id_b).unwrap();
-            let mut s2 = discovery_a.resolve(node_id_b).unwrap();
+            let mut s1 = discovery_a
+                .subscribe()
+                .unwrap()
+                .filter(|event| match event {
+                    DiscoveryEvent::Discovered(event) => event.node_id() == node_id_b,
+                    _ => false,
+                });
+            let mut s2 = discovery_a
+                .subscribe()
+                .unwrap()
+                .filter(|event| match event {
+                    DiscoveryEvent::Discovered(event) => event.node_id() == node_id_b,
+                    _ => false,
+                });
 
             tracing::debug!(?node_id_b, "Discovering node id b");
             // publish discovery_b's address
@@ -481,7 +487,7 @@ mod tests {
                 tokio::time::timeout(Duration::from_secs(5), s1.next())
                     .await
                     .context("timeout")?
-                    .unwrap()?
+                    .unwrap()
             else {
                 panic!("Received unexpected discovery event");
             };
@@ -489,7 +495,7 @@ mod tests {
                 tokio::time::timeout(Duration::from_secs(5), s2.next())
                     .await
                     .context("timeout")?
-                    .unwrap()?
+                    .unwrap()
             else {
                 panic!("Received unexpected discovery event");
             };
