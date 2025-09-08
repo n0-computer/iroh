@@ -45,7 +45,7 @@ use crate::{
     magicsock::{self, Handle, NodeIdMappedAddr, OwnAddressSnafu},
     metrics::EndpointMetrics,
     net_report::Report,
-    tls,
+    tls::{self, DEFAULT_MAX_TLS_TICKETS},
 };
 
 mod rtt_actor;
@@ -118,6 +118,7 @@ pub struct Builder {
     addr_v6: Option<SocketAddrV6>,
     #[cfg(any(test, feature = "test-utils"))]
     path_selection: PathSelection,
+    max_tls_tickets: usize,
 }
 
 impl Default for Builder {
@@ -142,6 +143,7 @@ impl Default for Builder {
             addr_v6: None,
             #[cfg(any(test, feature = "test-utils"))]
             path_selection: PathSelection::default(),
+            max_tls_tickets: DEFAULT_MAX_TLS_TICKETS,
         }
     }
 }
@@ -160,7 +162,7 @@ impl Builder {
             .unwrap_or_else(|| SecretKey::generate(rand::rngs::OsRng));
         let static_config = StaticConfig {
             transport_config: Arc::new(self.transport_config),
-            tls_config: tls::TlsConfig::new(secret_key.clone()),
+            tls_config: tls::TlsConfig::new(secret_key.clone(), self.max_tls_tickets),
             keylog: self.keylog,
         };
         let server_config = static_config.create_server_config(self.alpn_protocols);
@@ -472,6 +474,17 @@ impl Builder {
     #[cfg(any(test, feature = "test-utils"))]
     pub fn path_selection(mut self, path_selection: PathSelection) -> Self {
         self.path_selection = path_selection;
+        self
+    }
+
+    /// Set the maximum number of TLS tickets to cache.
+    ///
+    /// Set this to a larger value if you want to do 0rtt connections to a large
+    /// number of clients.
+    ///
+    /// The default is 256, taking about 150 KiB in memory.
+    pub fn max_tls_tickets(mut self, n: usize) -> Self {
+        self.max_tls_tickets = n;
         self
     }
 }
