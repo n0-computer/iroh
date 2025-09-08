@@ -63,12 +63,10 @@ pub(in crate::magicsock) enum PingAction {
         dst_node: NodeId,
     },
     SendPing(SendPing),
-    InitiateWebRtc {
-        port: WebRtcPort
-    }
+    InitiateWebRtc(SendPing)
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(in crate::magicsock) struct SendPing {
     pub id: usize,
     pub dst: SendAddr,
@@ -622,6 +620,7 @@ impl NodeState {
         // direct address paths to contact but no RelayUrl, we still need to send a DISCO
         // ping to the direct address paths so that the other node will learn about us and
         // accepts the connection.
+        println!("----------- 625");
         let mut msgs = self.send_pings(now);
 
         if let Some(url) = self.relay_url() {
@@ -655,7 +654,8 @@ impl NodeState {
                 if let Some(msg) =
                     self.start_ping(SendAddr::Relay(url.clone()), DiscoPingPurpose::Discovery)
                 {
-                    ping_msgs.push(PingAction::SendPing(msg))
+                    ping_msgs.push(PingAction::SendPing(msg.clone()));
+                        ping_msgs.push(PingAction::InitiateWebRtc(msg));
                 }
             }
         }
@@ -678,7 +678,7 @@ impl NodeState {
             .for_each(|msg| {
                 use std::fmt::Write;
                 write!(&mut ping_dsts, " {} ", msg.dst).ok();
-                ping_msgs.push(PingAction::SendPing(msg));
+                ping_msgs.push(PingAction::SendPing(msg.clone()));
             });
         ping_dsts.push(']');
         debug!(
@@ -687,8 +687,15 @@ impl NodeState {
             paths = %summarize_node_paths(self.udp_paths.paths()),
             "sending pings to node",
         );
+
         self.last_full_ping.replace(now);
+
+
         ping_msgs
+    }
+
+    fn should_initiate_webrtc(&self, now: Instant) -> bool {
+        true
     }
 
     pub(super) fn update_from_node_addr(
@@ -1120,6 +1127,7 @@ impl NodeState {
             paths = %summarize_node_paths(self.udp_paths.paths()),
             "updated endpoint paths from call-me-maybe",
         );
+        println!("----------------1137");
         self.send_pings(now)
     }
 
@@ -1243,6 +1251,7 @@ impl NodeState {
         // If we do not have an optimal addr, send pings to all known places.
         if self.want_call_me_maybe(&now, have_ipv6) {
             debug!("sending a call-me-maybe");
+            println!("stayin_-alive=----------------------");
             return self.send_call_me_maybe(now, SendCallMeMaybe::Always);
         }
 

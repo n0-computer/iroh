@@ -32,7 +32,6 @@ use netwatch::netmon;
 #[cfg(not(wasm_browser))]
 use netwatch::{UdpSocket, ip::LocalAddresses};
 use quinn::{AsyncUdpSocket, ServerConfig};
-use quinn_proto::Datagram;
 use rand::Rng;
 use smallvec::SmallVec;
 use snafu::{ResultExt, Snafu};
@@ -850,10 +849,8 @@ impl MagicSock {
                         PingAction::SendPing(ping) => {
                             self.send_ping_queued(ping);
                         }
-                        PingAction::InitiateWebRtc { port } => {
-
-
-                            println!("Received disco webrtc message!");
+                        PingAction::InitiateWebRtc(ping) => {
+                            println!("Received disco webrtc message! {:?}", ping);
                         }
                     }
                 }
@@ -1007,20 +1004,26 @@ impl MagicSock {
                     self.node_map
                         .notify_ping_sent(id, dst, tx_id, purpose, msg_sender);
                 }
-                PingAction::InitiateWebRtc { port } => {
+                PingAction::InitiateWebRtc(SendPing {
+                                               id,
+                                               dst,
+                                               dst_node,
+                                               tx_id,
+                                               purpose,
+                                           }) => {
                     let candidate = "Hey! I am webrtc ice candidate!".to_string();
                     let msg = disco::Message::WebRtcIceCandidate(
                         WebRtcIce{
                             candidate
                         }
                     );
-                    let  send_addr = SendAddr::WebRtc(port);
-                    self.try_send_disco_message(
-                        sender,
-                        send_addr,
-                        port.node_id.clone(),
-                        msg
-                    )?;
+                    // let  send_addr = SendAddr::WebRtc(port);
+                    // self.try_send_disco_message(
+                    //     sender,
+                    //     send_addr,
+                    //     port.node_id.clone(),
+                    //     msg
+                    // )?;
                     println!("ice candidate sent!");
                 }
             }
@@ -1136,23 +1139,31 @@ impl MagicSock {
                     self.node_map
                         .notify_ping_sent(id, dst, tx_id, purpose, msg_sender);
                 }
-                PingAction::InitiateWebRtc {
-                    port
-                } => {
+                PingAction::InitiateWebRtc(SendPing{
+                       id,
+                       dst,
+                       dst_node,
+                       tx_id,
+                       purpose,
+                   })=> {
                     let candidate = "Hey! I am webrtc ice candidate!".to_string();
-                    let msg = disco::Message::WebRtcIceCandidate(
-                        WebRtcIce{
-                            candidate
-                        }
-                    );
-                    let  send_addr = SendAddr::WebRtc(port);
-                    self.try_send_disco_message(
-                        sender,
-                        send_addr,
-                        port.node_id.clone(),
-                        msg
-                    )?;
-                    println!("ice candidate sent!");
+                    let node_id = self.public_key;
+                    if let Ok(offer) = sender.create_offer(node_id){
+                        println!("Offer created is {}", offer);
+                        let msg = disco::Message::WebRtcIceCandidate(
+                            WebRtcIce{
+                                candidate: offer
+                            }
+                        );
+                        self.try_send_disco_message(
+                            sender,
+                            dst.clone(),
+                            dst_node,
+                            msg
+                        )?;
+
+
+                    };
 
 
 
@@ -2303,6 +2314,10 @@ impl Handle {
         let addr_v4 = addr_v4.unwrap_or_else(|| SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0));
 
         #[cfg(not(wasm_browser))]
+        let (ip_transports, port_mapper) =
+            bind_ip(addr_v4, addr_v6, &metrics).context(BindSocketsSnafu)?;
+
+        #[cfg(not(wasm_browser))]
         let (web_transports, port_mapper) =
             bind_webrtc(addr_v4, addr_v6, &metrics, secret_key.clone()).context(BindSocketsSnafu)?;
 
@@ -2338,25 +2353,24 @@ impl Handle {
             metrics: metrics.magicsock.clone(),
         });
         let relay_transports = vec![relay_transport];
-        let my_channel_id = Watchable::new(WebRtcPort::new(secret_key.public().clone(), ChannelId::default()));
+        // let my_channel_id = Watchable::new(WebRtcPort::new(secret_key.public().clone(), ChannelId::default()));
 
-        let web_rtc_transport =
-            WebRtcTransport::new(WebRtcActorConfig::new(secret_key.clone(), addr_v4.into(), my_channel_id));
-        let web_rtc_transports = vec![web_rtc_transport];
+        // let web_rtc_transport =
+        //     WebRtcTransport::new(WebRtcActorConfig::new(secret_key.clone(), addr_v4.into(), my_channel_id));
+        // let web_rtc_transports = vec![web_rtc_transport];
 
         let secret_encryption_key = secret_ed_box(secret_key.secret());
         #[cfg(not(wasm_browser))]
-        let ipv6 = web_rtc_transports
+        let ipv6 = web_transports
             .iter()
             .any(|t| t.bind_addr().is_ipv6());
 
-        let ip_transports = Vec::new();
 
         #[cfg(not(wasm_browser))]
         let transports = Transports::new(
             ip_transports,
             relay_transports,
-            web_rtc_transports,
+            web_transports,
             max_receive_segments,
         );
         #[cfg(wasm_browser)]
@@ -3884,6 +3898,7 @@ mod tests {
                     relay_url: None,
                     direct_addresses: new_addrs.iter().map(|ep| ep.addr).collect(),
                     channel_id: None,
+                    webrtc_info: None
                 };
                 m.endpoint.magic_sock().add_test_addr(addr);
             }
@@ -4450,6 +4465,7 @@ mod tests {
                 .map(|x| x.addr)
                 .collect(),
             channel_id: None,
+            webrtc_info: None
         };
         msock_1
             .add_node_addr(
@@ -4518,6 +4534,7 @@ mod tests {
                 relay_url: None,
                 direct_addresses: Default::default(),
                 channel_id: None,
+                webrtc_info: None
             },
             Source::NamedApp {
                 name: "test".into(),
@@ -4563,6 +4580,7 @@ mod tests {
                     .map(|x| x.addr)
                     .collect(),
                 channel_id: None,
+                webrtc_info: None
             },
             Source::NamedApp {
                 name: "test".into(),
@@ -4605,6 +4623,7 @@ mod tests {
             relay_url: None,
             direct_addresses: Default::default(),
             channel_id: None,
+            webrtc_info: None
         };
         let err = stack
             .endpoint
@@ -4623,6 +4642,7 @@ mod tests {
             relay_url: Some("http://my-relay.com".parse().unwrap()),
             direct_addresses: Default::default(),
             channel_id: None,
+            webrtc_info: None
         };
         stack
             .endpoint
@@ -4636,6 +4656,7 @@ mod tests {
             relay_url: None,
             direct_addresses: ["127.0.0.1:1234".parse().unwrap()].into_iter().collect(),
             channel_id: None,
+            webrtc_info: None
         };
         stack
             .endpoint
@@ -4649,6 +4670,7 @@ mod tests {
             relay_url: Some("http://my-relay.com".parse().unwrap()),
             direct_addresses: ["127.0.0.1:1234".parse().unwrap()].into_iter().collect(),
             channel_id: None,
+            webrtc_info: None
         };
         stack
             .endpoint

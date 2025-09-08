@@ -1,6 +1,5 @@
 //! Tickets for nodes.
 
-use std::mem::needs_drop;
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};

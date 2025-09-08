@@ -5,7 +5,7 @@ use crate::magicsock::transports::webrtc::actor::{
     WebRtcDeliveryMode, WebRtcRecvDatagrams, WebRtcSendItem,
 };
 use bytes::Bytes;
-use iroh_base::{WebRtcPort, NodeId, PublicKey, RelayUrl, ChannelId};
+use iroh_base::{WebRtcPort, NodeId, PublicKey, ChannelId};
 use n0_future::ready;
 use snafu::Snafu;
 use std::fmt::Debug;
@@ -18,7 +18,6 @@ use tokio::task;
 use tokio_util::sync::PollSender;
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{Instrument, error, info_span, trace, warn};
-use n0_watcher::Watcher;
 
 #[cfg(wasm_browser)]
 use web_sys::{
@@ -109,6 +108,8 @@ pub enum WebRtcError {
         #[snafu(source)]
         source: Box<dyn std::error::Error + Send + Sync>,
     },
+    #[snafu(display("No actor available"))]
+    NoActorAvailable,
 }
 
 /// High-level sender interface for WebRTC data transmission
@@ -673,5 +674,24 @@ impl WebRtcTransport {
 
     pub fn bind_addr(&self) -> SocketAddr {
         self.bind_addr
+    }
+
+    pub(super) fn create_network_change_sender(&self) -> WebRtcNetworkChangeSender {
+        WebRtcNetworkChangeSender {
+            sender: self.actor_sender.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct WebRtcNetworkChangeSender{
+    sender: mpsc::Sender<WebRtcActorMessage>,
+}
+
+impl WebRtcNetworkChangeSender {
+    pub fn sender(&self) -> &mpsc::Sender<WebRtcActorMessage>{
+
+        &self.sender
+
     }
 }

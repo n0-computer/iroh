@@ -3,7 +3,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::net::SocketAddr;
-use std::num::NonZeroU16;
 use std::sync::Arc;
 use n0_watcher::Watchable;
 use tokio::select;

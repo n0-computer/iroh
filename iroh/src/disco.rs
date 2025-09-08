@@ -25,12 +25,11 @@ use std::{
 
 use crate::magicsock::transports;
 use data_encoding::HEXLOWER;
-use iroh_base::{WebRtcPort, NodeId, PublicKey, RelayUrl, ChannelId};
+use iroh_base::{WebRtcPort, PublicKey, RelayUrl, ChannelId};
 use nested_enum_utils::common_fields;
 use serde::{Deserialize, Serialize};
 use snafu::{Snafu, ensure};
 use url::Url;
-use crate::magicsock::transports::webrtc::SignalingMessage::Candidate;
 
 // TODO: custom magicn
 /// The 6 byte header of all discovery messages.
@@ -70,6 +69,7 @@ impl TryFrom<u8> for MessageType {
             0x01 => Ok(MessageType::Ping),
             0x02 => Ok(MessageType::Pong),
             0x03 => Ok(MessageType::CallMeMaybe),
+            0x06 => Ok(MessageType::WebRtcIceCandidate),
             _ => Err(value),
         }
     }
@@ -132,9 +132,9 @@ impl WebRtcIce {
 
     fn as_bytes(&self) -> Vec<u8> {
         let header = msg_header(MessageType::WebRtcIceCandidate, V0);
-        let mut out = Vec::with_capacity(HEADER_LEN + self.candidate.len());
-        out.extend_from_slice(&header);
-        out.extend_from_slice(self.candidate.as_bytes());
+
+        let mut out = header.to_vec();
+        out.extend_from_slice(&self.candidate.as_bytes());
         out
     }
 }

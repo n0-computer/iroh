@@ -5,13 +5,19 @@ use std::{
     sync::{Arc, atomic::AtomicUsize},
     task::{Context, Poll},
 };
-use crate::magicsock::transports::webrtc::{WebRtcSender, WebRtcTransport};
+use std::sync::mpsc;
+use crate::magicsock::transports::webrtc::{WebRtcError, WebRtcNetworkChangeSender, WebRtcSender, WebRtcTransport};
 use iroh_base::{NodeId, RelayUrl, WebRtcPort};
 use n0_watcher::Watcher;
 use relay::{RelayNetworkChangeSender, RelaySender};
-use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
-use tracing::{error, trace, warn};
+use tokio::sync::oneshot;
+use tokio::sync::oneshot::error::RecvError;
+use tokio::task;
+use tokio::task::futures;
+use tracing::{error, info, trace, warn};
+use crate::magicsock::transports::webrtc::actor::{PlatformRtcConfig, WebRtcActorMessage};
+use std::future::Future;
 
 #[cfg(not(wasm_browser))]
 mod ip;
@@ -182,9 +188,9 @@ impl Transports {
         let relays = n0_watcher::Join::new(self.relay.iter().map(|t| t.local_addr_watch()));
         let webrtcs = n0_watcher::Join::new(self.webrtc.iter().map(|t| t.local_addr_watch()));
 
-        println!("ips {:?}", ips);
-        println!("relays {:?}", relays);
-        println!("webrtcs  {:?}", webrtcs);
+        // println!("ips {:?}", ips);
+        // println!("relays {:?}", relays);
+        // println!("webrtcs  {:?}", webrtcs);
 
 
         (ips, relays, webrtcs)
@@ -271,6 +277,7 @@ impl Transports {
         let ip = self.ip.iter().map(|t| t.create_sender()).collect();
         let relay = self.relay.iter().map(|t| t.create_sender()).collect();
         let webrtc = self.webrtc.iter().map(|t| t.create_sender()).collect();
+        let webrtc_actor_sender = self.create_webrtc_actor_sender();
         let max_transmit_segments = self.max_transmit_segments();
 
         UdpSender {
@@ -279,6 +286,7 @@ impl Transports {
             msock,
             relay,
             webrtc,
+            webrtc_actor_sender,
             max_transmit_segments,
         }
     }
@@ -297,7 +305,20 @@ impl Transports {
                 .iter()
                 .map(|t| t.create_network_change_sender())
                 .collect(),
+            webrtc: self
+                .webrtc
+                .iter()
+                .map(|t| t.create_network_change_sender())
+                .collect(),
         }
+    }
+
+    /// Get webrtc actor sender
+    pub(crate) fn create_webrtc_actor_sender(&self) -> Vec<WebRtcNetworkChangeSender> {
+
+        self.webrtc.iter().map(|t| t.create_network_change_sender()).collect()
+
+
     }
 }
 
@@ -306,6 +327,7 @@ pub(crate) struct NetworkChangeSender {
     #[cfg(not(wasm_browser))]
     ip: Vec<IpNetworkChangeSender>,
     relay: Vec<RelayNetworkChangeSender>,
+    webrtc: Vec<WebRtcNetworkChangeSender>
 }
 
 impl NetworkChangeSender {
@@ -396,7 +418,7 @@ impl Addr {
         match self {
             Self::Ip(ip) => Some(ip),
             Self::Relay(..) => None,
-            Self::WebRtc(..) => None,
+            Self::WebRtc(port) => None,
         }
     }
 }
@@ -409,6 +431,7 @@ pub(crate) struct UdpSender {
     relay: Vec<RelaySender>,
     webrtc: Vec<WebRtcSender>,
     max_transmit_segments: usize,
+    webrtc_actor_sender: Vec<WebRtcNetworkChangeSender>,
 }
 
 impl UdpSender {
@@ -588,6 +611,35 @@ impl UdpSender {
             io::ErrorKind::WouldBlock,
             "no transport ready",
         ))
+    }
+
+    ///  Generate Offer
+    pub(crate) fn create_offer(&self, peer_node: NodeId) -> Result<String, WebRtcError> {
+        let webrtc_actor_sender = self.webrtc_actor_sender.clone();
+
+        task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async move {
+                for actor_sender in &webrtc_actor_sender {
+                    let (sender, mut receiver) = oneshot::channel();
+                    let config = PlatformRtcConfig::default();
+
+                    if let Err(err) = actor_sender.sender().send(WebRtcActorMessage::CreateOffer {
+                        peer_node,
+                        config,
+                        response: sender
+                    }).await {
+                        info!("actor send failed {:?}", err);
+                        continue;
+                    };
+
+                    match receiver.await {
+                        Ok(result) => return result,
+                        Err(_) => continue,
+                    }
+                }
+                Err(WebRtcError::NoActorAvailable)
+            })
+        })
     }
 }
 

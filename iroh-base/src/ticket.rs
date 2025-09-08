@@ -9,7 +9,7 @@ use nested_enum_utils::common_fields;
 use serde::{Deserialize, Serialize};
 use snafu::{Backtrace, Snafu};
 
-use crate::webrtc_port::{ChannelId, WebRtcPort};
+use crate::webrtc_port::ChannelId;
 use crate::{key::NodeId, relay_url::RelayUrl};
 use crate::node_addr::WebRtcInfo;
 
