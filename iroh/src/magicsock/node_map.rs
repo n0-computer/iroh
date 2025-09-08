@@ -13,7 +13,7 @@ use tracing::{debug, info, instrument, trace, warn};
 
 use self::node_state::{NodeState, Options, PingHandled};
 use super::{ActorMessage, NodeIdMappedAddr, metrics::Metrics, transports};
-use crate::disco::{CallMeMaybe, Pong, SendAddr};
+use crate::disco::{CallMeMaybe, Pong, SendAddr, WebRtcIce};
 #[cfg(any(test, feature = "test-utils"))]
 use crate::endpoint::PathSelection;
 
@@ -24,6 +24,7 @@ mod udp_paths;
 
 pub use node_state::{ConnectionType, ControlMsg, DirectAddrInfo, RemoteInfo};
 pub(super) use node_state::{DiscoPingPurpose, PingAction, PingRole, SendPing};
+use crate::magicsock::transports::Addr;
 
 /// Number of nodes that are inactive for which we keep info about. This limit is enforced
 /// periodically via [`NodeMap::prune_inactive`].
@@ -254,6 +255,14 @@ impl NodeMap {
             .handle_call_me_maybe(sender, cm, metrics)
     }
 
+
+    pub(crate) fn handle_webrtc_ice(&self, sender: PublicKey, src: &Addr, ice: WebRtcIce) {
+        self.inner
+            .lock()
+            .expect("poisoned")
+            .handle_webrtc_ice(sender, src, ice)
+    }
+
     #[allow(clippy::type_complexity)]
     pub(super) fn get_send_addrs(
         &self,
@@ -329,6 +338,7 @@ impl NodeMap {
             .expect("poisoned")
             .on_direct_addr_discovered(discovered, Instant::now());
     }
+
 }
 
 impl NodeMapInner {
@@ -583,6 +593,28 @@ impl NodeMapInner {
         }
     }
 
+    pub(crate) fn handle_webrtc_ice(&mut self, sender: PublicKey, src: &Addr, ice: WebRtcIce) {
+        // This is the correct way to look up the NodeState for the peer that sent the message.
+        let node_key = NodeStateKey::NodeId(sender);
+
+        // Get the mutable reference to the NodeState.
+        // If the node isn't known yet, we can't process an ICE candidate for it, so we warn and ignore.
+        if let Some(node_state) = self.get_mut(node_key) {
+            // We have the state for the peer. Now, we need to tell it to handle this
+            // new ICE candidate. We will add a new method `handle_webrtc_ice` to NodeState.
+            // This keeps the logic cleanly separated.
+            trace!(sender = %sender.fmt_short(), candidate = %ice.candidate, "Passing ICE candidate to NodeState");
+            node_state.handle_webrtc_ice(ice);
+        } else {
+            // This might happen if an ICE candidate arrives before we've received a Ping
+            // or other message from the peer. It's usually safe to ignore.
+            warn!(
+            sender = %sender.fmt_short(),
+            "Received ICE candidate for unknown node, ignoring."
+        );
+        }
+    }
+
     fn handle_ping(&mut self, sender: NodeId, src: SendAddr, tx_id: TransactionId) -> PingHandled {
         #[cfg(any(test, feature = "test-utils"))]
         let path_selection = self.path_selection;
@@ -658,6 +690,13 @@ impl NodeMapInner {
         trace!(?ipp, ?id, "set endpoint for ip:port");
         self.by_ip_port.insert(ipp, id);
     }
+
+    fn set_node_state_for_webrtc_port(&mut self, port: WebRtcPort, id: usize) {
+
+        self.by_webrtc_port.insert(port, id);
+
+    }
+
 
     /// Prunes nodes without recent activity so that at most [`MAX_INACTIVE_NODES`] are kept.
     fn prune_inactive(&mut self) {

@@ -5,12 +5,13 @@ use std::fmt::Debug;
 use std::net::SocketAddr;
 use std::num::NonZeroU16;
 use std::sync::Arc;
+use n0_watcher::Watchable;
 use tokio::select;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{error, info, trace, warn};
 
 use crate::magicsock::transports::webrtc::WebRtcError;
-use iroh_base::{ChannelId, NodeId, SecretKey};
+use iroh_base::{WebRtcPort, NodeId, SecretKey, ChannelId};
 use webrtc::api::APIBuilder;
 use webrtc::data_channel::RTCDataChannel;
 use webrtc::ice_transport::ice_candidate::RTCIceCandidateInit;
@@ -779,18 +780,21 @@ pub struct WebRtcActorConfig {
     pub rtc_config: PlatformRtcConfig,
     #[cfg(not(wasm_browser))]
     pub bind_addr: SocketAddr,
+    pub port: Watchable<WebRtcPort>
 }
 
 impl WebRtcActorConfig {
     pub(crate) fn new(
         secret_key: SecretKey,
         #[cfg(not(wasm_browser))] bind_addr: SocketAddr,
+        port: Watchable<WebRtcPort>
     ) -> Self {
         Self {
             secret_key,
             rtc_config: Self::default_rtc_config(),
             #[cfg(not(wasm_browser))]
             bind_addr,
+            port
         }
     }
 
@@ -798,12 +802,14 @@ impl WebRtcActorConfig {
         secret_key: SecretKey,
         rtc_config: PlatformRtcConfig,
         #[cfg(not(wasm_browser))] bind_addr: SocketAddr,
+        channel_id: Watchable<WebRtcPort>
     ) -> Self {
         Self {
             secret_key,
             rtc_config,
             #[cfg(not(wasm_browser))]
             bind_addr,
+            port: channel_id
         }
     }
 

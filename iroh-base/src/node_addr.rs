@@ -10,7 +10,8 @@ use std::{collections::BTreeSet, net::SocketAddr};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{ChannelId, NodeId, PublicKey, RelayUrl};
+use crate::{NodeId, PublicKey, RelayUrl};
+use crate::webrtc_port::ChannelId;
 
 /// Network-level addressing information for an iroh node.
 ///
@@ -42,10 +43,18 @@ pub struct NodeAddr {
     pub node_id: NodeId,
     /// The node's home relay url.
     pub relay_url: Option<RelayUrl>,
-    /// The node's webrtc port
+    /// The node's channel_id port
     pub channel_id: Option<ChannelId>,
     /// Socket addresses where the peer might be reached directly.
     pub direct_addresses: BTreeSet<SocketAddr>,
+    /// Static Webrtc connection information for the node
+    pub webrtc_info: Option<WebRtcInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct WebRtcInfo{
+    /// The hash of the certificate, prefixed with the algorithm, e.g./ "sha-256, B1:....:4E"
+    pub cert_fingerprints: BTreeSet<String>
 }
 
 impl NodeAddr {
@@ -56,6 +65,7 @@ impl NodeAddr {
             relay_url: None,
             channel_id: None,
             direct_addresses: Default::default(),
+            webrtc_info: None,
         }
     }
 
@@ -91,6 +101,7 @@ impl NodeAddr {
             relay_url,
             direct_addresses: direct_addresses.into_iter().collect(),
             channel_id: None,
+            webrtc_info: None,
         }
     }
 
@@ -106,6 +117,22 @@ impl NodeAddr {
             relay_url,
             channel_id,
             direct_addresses: direct_addresses.into_iter().collect(),
+            webrtc_info: None,
+        }
+    }
+    /// Creates a new [`NodeAddr`] from its parts
+    pub fn from_parts_with_webrtc_info(
+        node_id: PublicKey,
+        relay_url: Option<RelayUrl>,
+        webrtc_info: Option<WebRtcInfo>,
+        direct_addresses: impl IntoIterator<Item = SocketAddr>,
+    ) -> Self {
+        Self {
+            node_id,
+            relay_url,
+            channel_id: None,
+            direct_addresses: direct_addresses.into_iter().collect(),
+            webrtc_info
         }
     }
 
@@ -128,6 +155,11 @@ impl NodeAddr {
     pub fn channel_id(&self) -> Option<&ChannelId> {
         self.channel_id.as_ref()
     }
+
+    /// Returns the WebRTC info
+    pub fn webrtc_info(&self) -> Option<&WebRtcInfo> {
+        self.webrtc_info.as_ref()
+    }
 }
 
 impl From<(PublicKey, Option<RelayUrl>, &[SocketAddr])> for NodeAddr {
@@ -138,6 +170,7 @@ impl From<(PublicKey, Option<RelayUrl>, &[SocketAddr])> for NodeAddr {
             relay_url,
             direct_addresses: direct_addresses_iter.iter().copied().collect(),
             channel_id: None,
+            webrtc_info: None,
         }
     }
 }

@@ -57,6 +57,7 @@ impl Ticket for NodeTicket {
                     relay_url: self.node.relay_url.clone(),
                     direct_addresses: self.node.direct_addresses.clone(),
                     channel_id: self.node.channel_id.clone(),
+                    webrtc_info: self.node.webrtc_info.clone()
                 },
             },
         });
@@ -72,6 +73,7 @@ impl Ticket for NodeTicket {
                 relay_url: node.info.relay_url,
                 direct_addresses: node.info.direct_addresses,
                 channel_id: node.info.channel_id,
+                webrtc_info: node.info.webrtc_info
             },
         })
     }

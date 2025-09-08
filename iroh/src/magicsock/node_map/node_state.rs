@@ -1,5 +1,5 @@
 use data_encoding::HEXLOWER;
-use iroh_base::{ChannelId, NodeAddr, NodeId, PublicKey, RelayUrl, WebRtcPort};
+use iroh_base::{WebRtcPort, NodeAddr, NodeId, PublicKey, RelayUrl, ChannelId};
 use n0_future::{
     task::{self, AbortOnDropHandle},
     time::{self, Duration, Instant},
@@ -30,6 +30,7 @@ use crate::{
         node_map::path_validity::PathValidity,
     },
 };
+use crate::disco::WebRtcIce;
 
 /// Number of addresses that are not active that we keep around per node.
 ///
@@ -62,6 +63,9 @@ pub(in crate::magicsock) enum PingAction {
         dst_node: NodeId,
     },
     SendPing(SendPing),
+    InitiateWebRtc {
+        port: WebRtcPort
+    }
 }
 
 #[derive(Debug)]
@@ -1184,6 +1188,19 @@ impl NodeState {
         self.last_used = Some(now);
     }
 
+
+    pub(super) fn handle_webrtc_ice(&mut self, ice: WebRtcIce) {
+
+
+        if let Some(tx) = &self.webrtc_channel{
+
+
+
+        }
+
+
+    }
+
     pub(super) fn last_ping(&self, addr: &SendAddr) -> Option<Instant> {
         match addr {
             SendAddr::Udp(addr) => self
@@ -1316,6 +1333,7 @@ impl From<RemoteInfo> for NodeAddr {
             relay_url: info.relay_url.map(Into::into),
             direct_addresses,
             channel_id: info.channel_id,
+            webrtc_info: None,
         }
     }
 }

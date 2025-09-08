@@ -5,7 +5,6 @@ use std::{
     sync::{Arc, atomic::AtomicUsize},
     task::{Context, Poll},
 };
-
 use crate::magicsock::transports::webrtc::{WebRtcSender, WebRtcTransport};
 use iroh_base::{NodeId, RelayUrl, WebRtcPort};
 use n0_watcher::Watcher;
@@ -33,19 +32,24 @@ pub(crate) struct Transports {
     #[cfg(not(wasm_browser))]
     ip: Vec<IpTransport>,
     relay: Vec<RelayTransport>,
-    web_rtc: Vec<WebRtcTransport>,
+    webrtc: Vec<WebRtcTransport>,
     max_receive_segments: Arc<AtomicUsize>,
     poll_recv_counter: AtomicUsize,
 }
 
 ///Transport Mode
 #[derive(Debug)]
-pub(crate) enum TransportMode {
-    UdpRelay,       // UDP + Relay (default)
-    RelayOnly,      // Relay only
-    UdpWebrtcRelay, // All three: UDP + WebRTC + Relay
-    WebrtcRelay,    // WebRTC + Relay (no direct UDP)
-    UdpWebrtc,      // UDP + WebRTC (no relay)
+pub enum TransportMode {
+    /// UDP + Relay (default)
+    UdpRelay,
+    /// Relay only
+    RelayOnly,
+    /// All three: UDP + WebRTC + Relay
+    UdpWebrtcRelay,
+    /// WebRTC + Relay (no direct UDP)
+    WebrtcRelay,
+    /// UDP + WebRTC (no relay)
+    UdpWebrtc,
 }
 
 #[cfg(not(wasm_browser))]
@@ -56,6 +60,8 @@ pub(crate) type LocalAddrsWatch = n0_watcher::Map<
             Option<(RelayUrl, NodeId)>,
             n0_watcher::Map<n0_watcher::Direct<Option<RelayUrl>>, Option<(RelayUrl, NodeId)>>,
         >,
+        n0_watcher::Join<WebRtcPort, n0_watcher::Direct<WebRtcPort>>,
+
     ),
     Vec<Addr>,
 >;
@@ -81,7 +87,7 @@ impl Transports {
             #[cfg(not(wasm_browser))]
             ip,
             relay,
-            web_rtc,
+            webrtc: web_rtc,
             max_receive_segments,
             poll_recv_counter: Default::default(),
         }
@@ -145,7 +151,7 @@ impl Transports {
                 poll_transport!(transport);
             }
         } else {
-            for transport in self.web_rtc.iter_mut().rev() {
+            for transport in self.webrtc.iter_mut().rev() {
                 poll_transport!(transport);
             }
 
@@ -174,9 +180,15 @@ impl Transports {
     pub(crate) fn local_addrs_watch(&self) -> LocalAddrsWatch {
         let ips = n0_watcher::Join::new(self.ip.iter().map(|t| t.local_addr_watch()));
         let relays = n0_watcher::Join::new(self.relay.iter().map(|t| t.local_addr_watch()));
+        let webrtcs = n0_watcher::Join::new(self.webrtc.iter().map(|t| t.local_addr_watch()));
 
-        (ips, relays)
-            .map(|(ips, relays)| {
+        println!("ips {:?}", ips);
+        println!("relays {:?}", relays);
+        println!("webrtcs  {:?}", webrtcs);
+
+
+        (ips, relays, webrtcs)
+            .map(|(ips, relays, webrtcs)| {
                 ips.into_iter()
                     .map(Addr::from)
                     .chain(
@@ -185,9 +197,13 @@ impl Transports {
                             .flatten()
                             .map(|(relay_url, node_id)| Addr::Relay(relay_url, node_id)),
                     )
+                    .chain(
+                        webrtcs
+                            .into_iter()
+                            .map(Addr::from)
+                    )
                     .collect()
             })
-            .expect("disconnected")
     }
 
     #[cfg(wasm_browser)]
@@ -206,7 +222,7 @@ impl Transports {
         addrs.extend(self.ip.iter().map(|t| t.bind_addr()));
 
         // WebRTC virtual addresses
-        addrs.extend(self.web_rtc.iter().map(|t| t.bind_addrs()));
+        addrs.extend(self.webrtc.iter().map(|t| t.bind_addr()));
 
         addrs
     }
@@ -254,7 +270,7 @@ impl Transports {
         #[cfg(not(wasm_browser))]
         let ip = self.ip.iter().map(|t| t.create_sender()).collect();
         let relay = self.relay.iter().map(|t| t.create_sender()).collect();
-        let webrtc = self.web_rtc.iter().map(|t| t.create_sender()).collect();
+        let webrtc = self.webrtc.iter().map(|t| t.create_sender()).collect();
         let max_transmit_segments = self.max_transmit_segments();
 
         UdpSender {

@@ -877,6 +877,8 @@ impl Endpoint {
             )
             .context(QuinnSnafu)?;
 
+        // signalling happens here
+
         Ok(Connecting {
             inner: connect,
             ep: self.clone(),
@@ -1022,7 +1024,6 @@ impl Endpoint {
                     NodeAddr::from_parts(node_id, Some(relay_url), std::iter::empty())
                 }),
             })
-            .expect("watchable is alive - cannot be disconnected yet")
     }
 
     /// Returns a [`Watcher`] for the current [`NodeAddr`] for this endpoint.

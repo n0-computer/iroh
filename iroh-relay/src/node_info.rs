@@ -42,7 +42,7 @@ use std::{
 
 #[cfg(not(wasm_browser))]
 use hickory_resolver::{Name, proto::ProtoError};
-use iroh_base::{ChannelId, NodeAddr, NodeId, RelayUrl, SecretKey, SignatureError};
+use iroh_base::{NodeAddr, NodeId, RelayUrl, SecretKey, SignatureError};
 use nested_enum_utils::common_fields;
 use snafu::{Backtrace, ResultExt, Snafu};
 #[cfg(not(wasm_browser))]
@@ -372,6 +372,7 @@ impl NodeInfo {
             relay_url: self.data.relay_url.clone(),
             direct_addresses: self.data.direct_addresses.clone(),
             channel_id: None,
+            webrtc_info: None
         }
     }
 
@@ -382,6 +383,7 @@ impl NodeInfo {
             relay_url: self.data.relay_url,
             direct_addresses: self.data.direct_addresses,
             channel_id: None,
+            webrtc_info: None
         }
     }
 

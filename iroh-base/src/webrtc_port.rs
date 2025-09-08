@@ -2,7 +2,7 @@
 //!
 //! This module provides types for uniquely identifying WebRTC connections in the iroh network.
 //! A WebRTC connection is uniquely identified by the combination of a [`NodeId`] and a
-//! [`ChannelId`], represented by the [`WebRtcPort`] type.
+//! [`WebRtcPort`], represented by the [`WebRtcPort`] type.
 
 use crate::NodeId;
 use serde::{Deserialize, Serialize};
@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// In the iroh network, WebRTC connections are established between nodes and need to be
 /// uniquely identified to handle multiple concurrent connections. A [`WebRtcPort`] combines
-/// a [`NodeId`] (which identifies the peer node) with a [`ChannelId`] (which identifies
+/// a [`NodeId`] (which identifies the peer node) with a [`WebRtcPort`] (which identifies
 /// the specific channel/connection to that node).
 ///
 /// This is particularly useful when:
@@ -22,11 +22,11 @@ use serde::{Deserialize, Serialize};
 /// # Examples
 ///
 /// ```rust
-/// use iroh_base::{NodeId, WebRtcPort, ChannelId};
+/// use iroh_base::{NodeId, WebRtcPort, WebRtcPort};
 ///
 /// // Create a new WebRTC port identifier
 /// let node_id = NodeId::from([1u8; 32]);
-/// let channel_id = ChannelId::from(42);
+/// let channel_id = WebRtcPort::from(42);
 /// let webrtc_port = WebRtcPort::new(node_id, channel_id);
 ///
 /// println!("WebRTC connection: {}", webrtc_port);
@@ -53,15 +53,15 @@ impl WebRtcPort {
     /// # Arguments
     ///
     /// * `node` - The [`NodeId`] of the peer node
-    /// * `channel_id` - The [`ChannelId`] identifying the specific channel
+    /// * `channel_id` - The [`WebRtcPort`] identifying the specific channel
     ///
     /// # Examples
     ///
     /// ```rust
-    /// use iroh_base::{NodeId, WebRtcPort, ChannelId};
+    /// use iroh_base::{NodeId, WebRtcPort, WebRtcPort};
     ///
     /// let node_id = NodeId::from([1u8; 32]);
-    /// let channel_id = ChannelId::from(42);
+    /// let channel_id = WebRtcPort::from(42);
     /// let port = WebRtcPort::new(node_id, channel_id);
     /// ```
     pub fn new(node: NodeId, channel_id: ChannelId) -> Self {
@@ -84,7 +84,7 @@ impl WebRtcPort {
 
 /// A unique identifier for a WebRTC channel.
 ///
-/// [`ChannelId`] is used to distinguish between multiple WebRTC data channels or connections
+/// [`WebRtcPort`] is used to distinguish between multiple WebRTC data channels or connections
 /// to the same peer node. It's a 16-bit unsigned integer, allowing for up to 65,536 unique
 /// channels per node pair.
 ///
@@ -96,22 +96,29 @@ impl WebRtcPort {
 /// # Examples
 ///
 /// ```rust
-/// use iroh_base::ChannelId;
+/// use iroh_base::WebRtcPort;
 ///
 /// // Create a channel ID
-/// let channel = ChannelId::from(1234);
+/// let channel = WebRtcPort::from(1234);
 /// println!("Channel: {}", channel); // Output: ChannelId(1234)
 ///
 /// // Channel IDs can be compared and ordered
-/// let channel_a = ChannelId::from(1);
-/// let channel_b = ChannelId::from(2);
+/// let channel_a = WebRtcPort::from(1);
+/// let channel_b = WebRtcPort::from(2);
 /// assert!(channel_a < channel_b);
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, Copy, PartialOrd, Ord)]
 pub struct ChannelId(u16);
 
+
+impl Default for ChannelId {
+
+    fn default() -> Self {
+        ChannelId(0)
+    }
+}
 impl ChannelId {
-    /// Creates a new [`ChannelId`] from a `u16` value.
+    /// Creates a new [`WebRtcPort`] from a `u16` value.
     ///
     /// # Arguments
     ///
@@ -120,9 +127,9 @@ impl ChannelId {
     /// # Examples
     ///
     /// ```rust
-    /// use iroh_base::ChannelId;
+    /// use iroh_base::WebRtcPort;
     ///
-    /// let channel = ChannelId::new(42);
+    /// let channel = WebRtcPort::new(42);
     /// assert_eq!(channel.as_u16(), 42);
     /// ```
     pub fn new(id: u16) -> Self {
@@ -134,9 +141,9 @@ impl ChannelId {
     /// # Examples
     ///
     /// ```rust
-    /// use iroh_base::ChannelId;
+    /// use iroh_base::WebRtcPort;
     ///
-    /// let channel = ChannelId::from(1234);
+    /// let channel = WebRtcPort::from(1234);
     /// assert_eq!(channel.as_u16(), 1234);
     /// ```
     pub fn as_u16(self) -> u16 {
@@ -145,14 +152,14 @@ impl ChannelId {
 }
 
 impl From<u16> for ChannelId {
-    /// Creates a [`ChannelId`] from a `u16` value.
+    /// Creates a [`WebRtcPort`] from a `u16` value.
     ///
     /// # Examples
     ///
     /// ```rust
-    /// use iroh_base::ChannelId;
+    /// use iroh_base::WebRtcPort;
     ///
-    /// let channel = ChannelId::from(42u16);
+    /// let channel = WebRtcPort::from(42u16);
     /// assert_eq!(channel.as_u16(), 42);
     /// ```
     fn from(id: u16) -> Self {
@@ -161,14 +168,14 @@ impl From<u16> for ChannelId {
 }
 
 impl From<ChannelId> for u16 {
-    /// Converts a [`ChannelId`] to its numeric `u16` value.
+    /// Converts a [`WebRtcPort`] to its numeric `u16` value.
     ///
     /// # Examples
     ///
     /// ```rust
-    /// use iroh_base::ChannelId;
+    /// use iroh_base::WebRtcPort;
     ///
-    /// let channel = ChannelId::from(42);
+    /// let channel = WebRtcPort::from(42);
     /// let id: u16 = channel.into();
     /// assert_eq!(id, 42);
     /// ```

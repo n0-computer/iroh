@@ -25,11 +25,12 @@ use std::{
 
 use crate::magicsock::transports;
 use data_encoding::HEXLOWER;
-use iroh_base::{ChannelId, NodeId, PublicKey, RelayUrl, WebRtcPort};
+use iroh_base::{WebRtcPort, NodeId, PublicKey, RelayUrl, ChannelId};
 use nested_enum_utils::common_fields;
 use serde::{Deserialize, Serialize};
 use snafu::{Snafu, ensure};
 use url::Url;
+use crate::magicsock::transports::webrtc::SignalingMessage::Candidate;
 
 // TODO: custom magicn
 /// The 6 byte header of all discovery messages.
@@ -56,7 +57,10 @@ pub enum MessageType {
     Ping = 0x01,
     Pong = 0x02,
     CallMeMaybe = 0x03,
+    WebRtcIceCandidate = 0x06
 }
+
+
 
 impl TryFrom<u8> for MessageType {
     type Error = u8;
@@ -110,6 +114,29 @@ pub enum Message {
     Ping(Ping),
     Pong(Pong),
     CallMeMaybe(CallMeMaybe),
+    WebRtcIceCandidate(WebRtcIce)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebRtcIce {
+    // Using a simple string for the candidate for now
+    pub candidate: String,
+}
+
+
+impl WebRtcIce {
+    fn from_bytes(p: &[u8]) -> Result<Self, ParseError> {
+        let candidate = std::str::from_utf8(p).map_err(|_| InvalidEncodingSnafu.build())?.to_string();
+        Ok(WebRtcIce { candidate })
+    }
+
+    fn as_bytes(&self) -> Vec<u8> {
+        let header = msg_header(MessageType::WebRtcIceCandidate, V0);
+        let mut out = Vec::with_capacity(HEADER_LEN + self.candidate.len());
+        out.extend_from_slice(&header);
+        out.extend_from_slice(self.candidate.as_bytes());
+        out
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -414,6 +441,10 @@ impl Message {
                 let cm = CallMeMaybe::from_bytes(p)?;
                 Ok(Message::CallMeMaybe(cm))
             }
+            MessageType::WebRtcIceCandidate => {
+                let candidate = WebRtcIce::from_bytes(p)?;
+                Ok(Message::WebRtcIceCandidate(candidate))
+            }
         }
     }
 
@@ -423,6 +454,7 @@ impl Message {
             Message::Ping(ping) => ping.as_bytes(),
             Message::Pong(pong) => pong.as_bytes(),
             Message::CallMeMaybe(cm) => cm.as_bytes(),
+            Message::WebRtcIceCandidate(candidate) => candidate.as_bytes(),
         }
     }
 }
@@ -438,6 +470,9 @@ impl Display for Message {
             }
             Message::CallMeMaybe(_) => {
                 write!(f, "CallMeMaybe")
+            }
+            Message::WebRtcIceCandidate(candidate) => {
+                write!(f, "WebRtcIceCandidate {:?}", candidate)
             }
         }
     }

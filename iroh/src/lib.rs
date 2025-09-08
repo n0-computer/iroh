@@ -270,6 +270,8 @@ pub mod metrics;
 pub mod net_report;
 pub mod protocol;
 
+pub use magicsock::transports::TransportMode;
+
 pub use endpoint::{Endpoint, RelayMode};
 pub use iroh_base::{
     KeyParsingError, NodeAddr, NodeId, PublicKey, RelayUrl, RelayUrlParseError, SecretKey,

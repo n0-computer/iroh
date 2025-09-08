@@ -9,8 +9,9 @@ use nested_enum_utils::common_fields;
 use serde::{Deserialize, Serialize};
 use snafu::{Backtrace, Snafu};
 
-use crate::webrtc_port::ChannelId;
+use crate::webrtc_port::{ChannelId, WebRtcPort};
 use crate::{key::NodeId, relay_url::RelayUrl};
+use crate::node_addr::WebRtcInfo;
 
 mod node;
 
@@ -114,4 +115,5 @@ struct Variant0AddrInfo {
     relay_url: Option<RelayUrl>,
     direct_addresses: BTreeSet<SocketAddr>,
     channel_id: Option<ChannelId>,
+    webrtc_info: Option<WebRtcInfo>
 }

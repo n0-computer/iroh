@@ -5,18 +5,20 @@ use crate::magicsock::transports::webrtc::actor::{
     WebRtcDeliveryMode, WebRtcRecvDatagrams, WebRtcSendItem,
 };
 use bytes::Bytes;
-use iroh_base::{ChannelId, NodeId, PublicKey, WebRtcPort};
+use iroh_base::{WebRtcPort, NodeId, PublicKey, RelayUrl, ChannelId};
 use n0_future::ready;
 use snafu::Snafu;
 use std::fmt::Debug;
 use std::io;
 use std::net::SocketAddr;
 use std::task::{Context, Poll};
+use n0_watcher::Watchable;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task;
 use tokio_util::sync::PollSender;
 use tokio_util::task::AbortOnDropHandle;
 use tracing::{Instrument, error, info_span, trace, warn};
+use n0_watcher::Watcher;
 
 #[cfg(wasm_browser)]
 use web_sys::{
@@ -334,6 +336,8 @@ pub(crate) struct WebRtcTransport {
     /// Bind addr
     #[cfg(not(wasm_browser))]
     bind_addr: SocketAddr,
+
+    my_port: Watchable<WebRtcPort>,
 }
 
 impl WebRtcTransport {
@@ -381,6 +385,8 @@ impl WebRtcTransport {
         #[cfg(not(wasm_browser))]
         let bind_addr = config.bind_addr;
 
+        let my_port = config.port.clone();
+
         // Create the WebRTC actor with the transmit side of the receive channel
         // The actor will use webrtc_datagram_recv_tx to send incoming data back to us
         let mut webrtc_actor = WebRtcActor::new(config, webrtc_datagram_recv_tx);
@@ -407,6 +413,7 @@ impl WebRtcTransport {
             my_node_id,
             #[cfg(not(wasm_browser))]
             bind_addr,
+            my_port
         }
     }
 
@@ -654,7 +661,17 @@ impl WebRtcTransport {
         self.actor_sender.send(msg).await.map_err(Into::into)
     }
 
-    pub fn bind_addrs(&self) -> SocketAddr {
+
+    pub(super) fn local_addr_watch(
+        &self
+    ) -> n0_watcher::Direct<WebRtcPort> {
+
+        self.my_port.watch()
+
+
+    }
+
+    pub fn bind_addr(&self) -> SocketAddr {
         self.bind_addr
     }
 }
