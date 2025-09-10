@@ -567,7 +567,7 @@ pub(crate) mod tests {
 
     #[test]
     #[traced_test]
-    async fn jitter_test_zero() {
+    fn jitter_test_zero() {
         let jittered_delay = add_jitter(&0);
         assert_eq!(jittered_delay, Duration::from_secs(0));
     }
