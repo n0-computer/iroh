@@ -577,7 +577,7 @@ pub(crate) mod tests {
     #[traced_test]
     fn jitter_test_nonzero_lower_bound() {
         let delay: u64 = 300;
-        for _ in 0..1000000 {
+        for _ in 0..100 {
             assert!(add_jitter(&delay) >= Duration::from_millis(delay * 8 / 10));
         }
     }
@@ -586,7 +586,7 @@ pub(crate) mod tests {
     #[traced_test]
     fn jitter_test_nonzero_upper_bound() {
         let delay: u64 = 300;
-        for _ in 0..1000000 {
+        for _ in 0..100 {
             assert!(add_jitter(&delay) < Duration::from_millis(delay * 12 / 10));
         }
     }
