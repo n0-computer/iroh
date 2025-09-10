@@ -565,7 +565,7 @@ pub(crate) mod tests {
         assert_eq!(result, 5)
     }
 
-    #[tokio::test]
+    #[test]
     #[traced_test]
     async fn jitter_test_zero() {
         let jittered_delay = add_jitter(&0);
