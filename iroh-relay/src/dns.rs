@@ -28,7 +28,7 @@ pub const N0_DNS_NODE_ORIGIN_PROD: &str = "dns.iroh.link";
 /// The n0 testing DNS node origin, for testing.
 pub const N0_DNS_NODE_ORIGIN_STAGING: &str = "staging-dns.iroh.link";
 
-/// Percent of total delay to jitter. 0.4 means +/- 20% of delay.
+/// Percent of total delay to jitter. 20 means +/- 20% of delay.
 const MAX_JITTER_PERCENT: u64 = 20;
 
 /// Potential errors related to dns.
@@ -529,16 +529,14 @@ async fn stagger_call<
 fn add_jitter(delay: &u64) -> Duration {
     // If delay is 0, return 0 immediately.
     if *delay == 0 {
-        return Duration::ZERO
+        return Duration::ZERO;
     }
 
     // Calculate jitter as a random value in the range of +/- MAX_JITTER_PERCENT of the delay.
     let max_jitter = delay.saturating_mul(MAX_JITTER_PERCENT * 2) / 100;
     let jitter = rand::random::<u64>() % max_jitter;
 
-    Duration::from_millis(
-        delay.saturating_sub(max_jitter / 2).saturating_add(jitter)
-    )
+    Duration::from_millis(delay.saturating_sub(max_jitter / 2).saturating_add(jitter))
 }
 
 #[cfg(test)]
@@ -577,20 +575,19 @@ pub(crate) mod tests {
     //Sanity checks that I did the math right
     #[test]
     #[traced_test]
-    fn jitter_test_nonzero_positive() {
+    fn jitter_test_nonzero_lower_bound() {
         let delay: u64 = 300;
-        for _ in 0..1000000{
+        for _ in 0..1000000 {
             assert!(add_jitter(&delay) >= Duration::from_millis(delay * 8 / 10));
         }
     }
 
     #[test]
     #[traced_test]
-    fn jitter_test_nonzero_negative() {
+    fn jitter_test_nonzero_upper_bound() {
         let delay: u64 = 300;
-        for _ in 0..1000000{
+        for _ in 0..1000000 {
             assert!(add_jitter(&delay) < Duration::from_millis(delay * 12 / 10));
         }
     }
-    
 }
