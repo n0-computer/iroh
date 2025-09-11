@@ -13,7 +13,7 @@ use tracing::{debug, info, instrument, trace, warn};
 
 use self::node_state::{NodeState, Options, PingHandled};
 use super::{ActorMessage, NodeIdMappedAddr, metrics::Metrics, transports};
-use crate::disco::{CallMeMaybe, Pong, SendAddr, WebRtcIce};
+use crate::disco::{CallMeMaybe, Pong, SendAddr, WebRtcOffer};
 #[cfg(any(test, feature = "test-utils"))]
 use crate::endpoint::PathSelection;
 
@@ -23,7 +23,7 @@ mod path_validity;
 mod udp_paths;
 
 pub use node_state::{ConnectionType, ControlMsg, DirectAddrInfo, RemoteInfo};
-pub(super) use node_state::{DiscoPingPurpose, PingAction, PingRole, SendPing};
+pub(super) use node_state::{DiscoPingPurpose, PingAction, PingRole, SendPing, ReceiveAnswer, ReceiveOffer};
 use crate::magicsock::transports::Addr;
 
 /// Number of nodes that are inactive for which we keep info about. This limit is enforced
@@ -255,13 +255,18 @@ impl NodeMap {
             .handle_call_me_maybe(sender, cm, metrics)
     }
 
-
-    pub(crate) fn handle_webrtc_ice(&self, sender: PublicKey, src: &Addr, ice: WebRtcIce) {
-        self.inner
-            .lock()
-            .expect("poisoned")
-            .handle_webrtc_ice(sender, src, ice)
+    #[must_use = "actions must be completed"]
+    pub(super) fn handle_webrtc_offer(
+        &self,
+        sender: PublicKey,
+        offer: WebRtcOffer,
+        metrics: &Metrics
+    ) -> Vec<PingAction> {
+        self.inner.lock().expect("poisoned")
+        .handle_webrtc_offer(sender, offer, metrics)
     }
+
+
 
     #[allow(clippy::type_complexity)]
     pub(super) fn get_send_addrs(
@@ -593,25 +598,27 @@ impl NodeMapInner {
         }
     }
 
-    pub(crate) fn handle_webrtc_ice(&mut self, sender: PublicKey, src: &Addr, ice: WebRtcIce) {
-        // This is the correct way to look up the NodeState for the peer that sent the message.
-        let node_key = NodeStateKey::NodeId(sender);
+    pub(crate) fn handle_webrtc_offer(
+        &mut self,
+        sender: NodeId,
+        offer: WebRtcOffer,
+        metrics: &Metrics,
+    ) -> Vec<PingAction> {
+          
+       let ns_id = NodeStateKey::NodeId(sender);
 
-        // Get the mutable reference to the NodeState.
-        // If the node isn't known yet, we can't process an ICE candidate for it, so we warn and ignore.
-        if let Some(node_state) = self.get_mut(node_key) {
-            // We have the state for the peer. Now, we need to tell it to handle this
-            // new ICE candidate. We will add a new method `handle_webrtc_ice` to NodeState.
-            // This keeps the logic cleanly separated.
-            trace!(sender = %sender.fmt_short(), candidate = %ice.candidate, "Passing ICE candidate to NodeState");
-            node_state.handle_webrtc_ice(ice);
-        } else {
-            // This might happen if an ICE candidate arrives before we've received a Ping
-            // or other message from the peer. It's usually safe to ignore.
-            warn!(
-            sender = %sender.fmt_short(),
-            "Received ICE candidate for unknown node, ignoring."
-        );
+       //for other transport we have updated the node state, I think we shall update cerficate of the node here
+        match self.get_mut(ns_id) {
+            None => {
+                println!("certificate for this does not exist: Unknown node");
+                metrics.recv_disco_webrtc_offer.inc();
+                vec![]
+            }
+            Some(ns) => {
+                // debug!(endpoints = ?cm.my_numbers, "received call-me-maybe");
+                println!("Certificate for this node already exists");
+                ns.handle_webrtc_offer(sender, offer)
+            }
         }
     }
 

@@ -618,7 +618,7 @@ impl WebRtcTransport {
 
         let msg = WebRtcActorMessage::CreateAnswer {
             peer_node,
-            offer_sdp,
+            offer: offer_sdp,
             response: tx,
             config,
         };

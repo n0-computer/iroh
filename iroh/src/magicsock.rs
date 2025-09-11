@@ -15,7 +15,7 @@
 //! from responding to any hole punching attempts. This node will still,
 //! however, read any packets that come off the UDP sockets.
 
-use crate::magicsock::transports::TransportMode;
+use crate::{disco::{Message, WebRtcAnswer}, magicsock::{node_map::{ReceiveAnswer, ReceiveOffer}, transports::TransportMode}};
 use bytes::Bytes;
 use data_encoding::HEXLOWER;
 use iroh_base::{ChannelId, NodeAddr, NodeId, PublicKey, RelayUrl, SecretKey, WebRtcPort};
@@ -84,7 +84,7 @@ pub mod node_map;
 pub(crate) mod transports;
 
 pub use node_map::Source;
-use crate::disco::WebRtcIce;
+use crate::disco::WebRtcOffer;
 pub use self::{
     metrics::Metrics,
     node_map::{ConnectionType, ControlMsg, DirectAddrInfo, RemoteInfo},
@@ -849,17 +849,51 @@ impl MagicSock {
                         PingAction::SendPing(ping) => {
                             self.send_ping_queued(ping);
                         }
-                        PingAction::InitiateWebRtc(ping) => {
+                        PingAction::ReceiveWebRtcOffer(ping) => {
                             println!("Received disco webrtc message! {:?}", ping);
+                        }
+                        PingAction::ReceiveWebRtcAnswer(ping) => {
+                            println!("Webrtc answer: But it shall be unreachable");
                         }
                     }
                 }
             }
-            disco::Message::WebRtcIceCandidate(ice) => {
+            disco::Message::ReceiveOffer(offer) => {
 
-                println!("------------->>>> Reached and now we have to deal wiht what to do with ice {:?}", ice);
+                println!("------------->>>> Reached and now we have to deal wiht what to do with ice {:?}", offer);
 
-                self.metrics.magicsock.recv_disco_webrtc_ice_candidate.inc();
+                let actions = self.node_map.handle_webrtc_offer(sender, offer, &self.metrics.magicsock);
+
+                for action in actions {
+
+                    match action {
+
+                        PingAction::SendCallMeMaybe { .. } => {
+                            warn!("Unexpected CallMeMaybe as response of handling a CallMeMaybe");
+                        }
+                        PingAction::SendPing(ping) => {
+                            warn!("Unexpected SendPing as response of handling a SendPing");
+                        }
+                        PingAction::ReceiveWebRtcOffer(offer) => {
+                            warn!("Unexpected InitiateWebRtcOffer as response of handling a InitiateWebRtcOffer");
+                        }
+                        PingAction::ReceiveWebRtcAnswer(answer) => {
+                            println!("Sending answer");
+                            let answer = 
+                            let msg = Message::ReceiveAnswer(
+                                WebRtcAnswer { answer
+                                 }
+                            )
+                            self.send_ping_queued(ping);
+
+                            self.send_webrtc_answer(ping);
+                        }
+                    }
+                }
+
+                //Now we need to generate answer and send back
+
+
                 // self.node_map.handle_ice_candidate(sender, src, ice);
                 
             }
@@ -923,6 +957,30 @@ impl MagicSock {
             dst_node,
             tx_id,
             purpose,
+        } = ping;
+        let msg = disco::Message::Ping(disco::Ping {
+            tx_id,
+            node_key: self.public_key,
+        });
+        let sent = self.disco.try_send(dst.clone(), dst_node, msg);
+        if sent {
+            let msg_sender = self.actor_sender.clone();
+            trace!(%dst, tx = %HEXLOWER.encode(&tx_id), ?purpose, "ping sent (queued)");
+            self.node_map
+                .notify_ping_sent(id, dst, tx_id, purpose, msg_sender);
+        } else {
+            warn!(dst = ?dst, tx = %HEXLOWER.encode(&tx_id), ?purpose, "failed to send ping: queues full");
+        }
+    }
+
+    fn send_answer_queued(&self, ping: ReceiveAnswer) {
+        let ReceiveAnswer {
+            id,
+            dst,
+            dst_node,
+            tx_id,
+            purpose,
+            answer
         } = ping;
         let msg = disco::Message::Ping(disco::Ping {
             tx_id,
@@ -1004,17 +1062,17 @@ impl MagicSock {
                     self.node_map
                         .notify_ping_sent(id, dst, tx_id, purpose, msg_sender);
                 }
-                PingAction::InitiateWebRtc(SendPing {
+                PingAction::ReceiveWebRtcOffer(ReceiveOffer {
                                                id,
                                                dst,
                                                dst_node,
                                                tx_id,
                                                purpose,
                                            }) => {
-                    let candidate = "Hey! I am webrtc ice candidate!".to_string();
-                    let msg = disco::Message::WebRtcIceCandidate(
-                        WebRtcIce{
-                            candidate
+                    let offer = "Hey! I am webrtc ice offer!".to_string();
+                    let msg = disco::Message::ReceiveOffer(
+                        WebRtcOffer{
+                            offer
                         }
                     );
                     // let  send_addr = SendAddr::WebRtc(port);
@@ -1024,8 +1082,38 @@ impl MagicSock {
                     //     port.node_id.clone(),
                     //     msg
                     // )?;
-                    println!("ice candidate sent!");
+                    println!("WebRtc Offer send!");
                 }
+                PingAction::ReceiveWebRtcAnswer(ReceiveAnswer {
+                                               id,
+                                               dst,
+                                               dst_node,
+                                               tx_id,
+                                               purpose,
+                                               offer
+                                           }) => {
+                                            
+                                            //we need to send webrtc answer!
+                                            let answer = "Hey! I am webrtc ice answer!".to_string();
+
+                            
+
+                                            let msg = disco::Message::ReceiveAnswer(
+                                                WebRtcAnswer {
+                                                    answer
+                                                }
+                                            );
+                                            self.send_webrtc_answer(
+                                                sender,
+                                                dst,
+                                                dst_node,
+                                                msg
+                                            );
+
+                                            println!("1078: WebRtc answer send");
+
+
+                                           }
             }
         }
         Ok(())
@@ -1139,7 +1227,7 @@ impl MagicSock {
                     self.node_map
                         .notify_ping_sent(id, dst, tx_id, purpose, msg_sender);
                 }
-                PingAction::InitiateWebRtc(SendPing{
+                PingAction::ReceiveWebRtcOffer(ReceiveOffer{
                        id,
                        dst,
                        dst_node,
@@ -1150,9 +1238,9 @@ impl MagicSock {
                     let node_id = self.public_key;
                     if let Ok(offer) = sender.create_offer(node_id){
                         println!("Offer created is {}", offer);
-                        let msg = disco::Message::WebRtcIceCandidate(
-                            WebRtcIce{
-                                candidate: offer
+                        let msg = disco::Message::ReceiveOffer(
+                            WebRtcOffer{
+                                offer
                             }
                         );
                         self.try_send_disco_message(
@@ -1161,10 +1249,32 @@ impl MagicSock {
                             dst_node,
                             msg
                         )?;
-
-
                     };
+                }
+                PingAction::ReceiveWebRtcAnswer(ReceiveAnswer {
 
+                       id,
+                       dst,
+                       dst_node,
+                       tx_id,
+                       purpose,
+                       offer
+    
+                }) => {
+
+                    let node_id = self.public_key;
+                    if let Ok(answer) = sender.create_answer(node_id, offer){
+                    println!("Answer created is {}", answer);
+                    let msg = disco::Message::ReceiveAnswer(
+                        WebRtcAnswer { answer}
+                    );
+                    self.try_send_disco_message(
+                        sender,
+                        dst.clone(),
+                        dst_node,
+                        msg
+                    )?;
+                };
 
 
                 }
@@ -1208,6 +1318,51 @@ impl MagicSock {
             Ok(()) => {
                 trace!(?dst, %msg, "sent disco message");
                 self.metrics.magicsock.sent_disco_udp.inc();
+                disco_message_sent(&msg, &self.metrics.magicsock);
+                Ok(())
+            }
+            Err(err) => {
+                warn!(?dst, ?msg, ?err, "failed to send disco message");
+                Err(err)
+            }
+        }
+    }
+
+    /// Tries to send out a webrtc answer.
+    fn send_webrtc_answer(
+        &self,
+        sender: &UdpSender,
+        dst: SendAddr,
+        dst_key: PublicKey,
+        msg: disco::Message,
+    ) -> io::Result<()> {
+        let dst = match dst {
+            SendAddr::Udp(addr) => transports::Addr::Ip(addr),
+            SendAddr::Relay(url) => transports::Addr::Relay(url, dst_key),
+            SendAddr::WebRtc(port) => transports::Addr::WebRtc(port),
+        };
+
+        trace!(?dst, %msg, "send webrtc answer (UDP)");
+        if self.is_closed() {
+            return Err(io::Error::new(
+                io::ErrorKind::NotConnected,
+                "connection closed",
+            ));
+        }
+
+        let pkt = self.disco.encode_and_seal(self.public_key, dst_key, &msg);
+
+        let transmit = transports::Transmit {
+            contents: &pkt,
+            ecn: None,
+            segment_size: None,
+        };
+
+        let dst2 = dst.clone();
+        match sender.inner_try_send(&dst2, None, &transmit) {
+            Ok(()) => {
+                trace!(?dst, %msg, "Sent WebRtc Answer");
+                self.metrics.magicsock.sent_disco_call_me_maybe.inc();
                 disco_message_sent(&msg, &self.metrics.magicsock);
                 Ok(())
             }
@@ -3694,8 +3849,11 @@ fn disco_message_sent(msg: &disco::Message, metrics: &MagicsockMetrics) {
         disco::Message::CallMeMaybe(_) => {
             metrics.sent_disco_call_me_maybe.inc();
         }
-        disco::Message::WebRtcIceCandidate(_) => {
-            metrics.send_disco_webrtc_ice_candidate.inc();
+        disco::Message::ReceiveOffer(_) => {
+            metrics.sent_disco_webrtc_offer.inc();
+        }
+        disco::Message::ReceiveAnswer(_) => {
+            metrics.sent_disco_webrtc_answer.inc();
         }
     }
 }

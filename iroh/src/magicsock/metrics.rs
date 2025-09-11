@@ -36,7 +36,8 @@ pub struct Metrics {
     pub sent_disco_ping: Counter,
     pub sent_disco_pong: Counter,
     pub sent_disco_call_me_maybe: Counter,
-    pub send_disco_webrtc_ice_candidate: Counter,
+    pub sent_disco_webrtc_answer: Counter,
+    pub sent_disco_webrtc_offer: Counter,
     pub recv_disco_bad_key: Counter,
     pub recv_disco_bad_parse: Counter,
 
@@ -46,7 +47,7 @@ pub struct Metrics {
     pub recv_disco_pong: Counter,
     pub recv_disco_call_me_maybe: Counter,
     pub recv_disco_call_me_maybe_bad_disco: Counter,
-    pub recv_disco_webrtc_ice_candidate: Counter,
+    pub recv_disco_webrtc_offer: Counter,
 
     // How many times our relay home node DI has changed from non-zero to a different non-zero.
     pub relay_home_change: Counter,

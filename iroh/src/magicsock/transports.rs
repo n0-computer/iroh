@@ -6,7 +6,7 @@ use std::{
     task::{Context, Poll},
 };
 use std::sync::mpsc;
-use crate::magicsock::transports::webrtc::{WebRtcError, WebRtcNetworkChangeSender, WebRtcSender, WebRtcTransport};
+use crate::{disco::WebRtcOffer, magicsock::transports::webrtc::{WebRtcError, WebRtcNetworkChangeSender, WebRtcSender, WebRtcTransport}};
 use iroh_base::{NodeId, RelayUrl, WebRtcPort};
 use n0_watcher::Watcher;
 use relay::{RelayNetworkChangeSender, RelaySender};
@@ -628,7 +628,7 @@ impl UdpSender {
                         config,
                         response: sender
                     }).await {
-                        info!("actor send failed {:?}", err);
+                        info!("actor send failed while creating offer {:?}", err);
                         continue;
                     };
 
@@ -641,7 +641,55 @@ impl UdpSender {
             })
         })
     }
+
+    /// Generate answer
+    pub(crate) fn create_answer(&self, peer_node: NodeId, offer: WebRtcOffer) -> Result<String, WebRtcError> {
+
+        let webrtc_actor_sender = self.webrtc_actor_sender.clone();
+
+        task::block_in_place(|| {
+
+            tokio::runtime::Handle::current().block_on(async move {
+
+                for actor_sender in &webrtc_actor_sender {
+
+                    let (sender, mut receiver) = oneshot::channel();
+
+                    let config = PlatformRtcConfig::default();
+
+                    if let Err(err) = actor_sender.sender().send(
+                            WebRtcActorMessage::CreateAnswer { 
+                                peer_node, 
+                                offer, 
+                                config, 
+                                response: sender }).await {
+
+                        info!("actor send failed while creating answer {:?}", err);
+                        continue;
+
+                    };
+
+                    match receiver.await {
+
+                        Ok(result) => return result,
+                        Err(_) => continue,
+
+                    }
+
+
+                }
+                Err(WebRtcError::NoActorAvailable)
+
+            })
+
+
+        })
+
+
+    }
+
 }
+
 
 impl quinn::UdpSender for UdpSender {
     fn poll_send(

@@ -56,7 +56,8 @@ pub enum MessageType {
     Ping = 0x01,
     Pong = 0x02,
     CallMeMaybe = 0x03,
-    WebRtcIceCandidate = 0x06
+    WebRtcOffer = 0x06,
+    WebRtcAnwser = 0x07
 }
 
 
@@ -69,7 +70,8 @@ impl TryFrom<u8> for MessageType {
             0x01 => Ok(MessageType::Ping),
             0x02 => Ok(MessageType::Pong),
             0x03 => Ok(MessageType::CallMeMaybe),
-            0x06 => Ok(MessageType::WebRtcIceCandidate),
+            0x06 => Ok(MessageType::WebRtcOffer),
+            0x07 => Ok(MessageType::WebRtcAnwser),
             _ => Err(value),
         }
     }
@@ -114,27 +116,53 @@ pub enum Message {
     Ping(Ping),
     Pong(Pong),
     CallMeMaybe(CallMeMaybe),
-    WebRtcIceCandidate(WebRtcIce)
+    ReceiveOffer(WebRtcOffer),
+    ReceiveAnswer(WebRtcAnswer),
+    SendOffer(WebRtcOffer),
+    SendAnswer(WebRtcAnswer)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WebRtcIce {
+pub struct WebRtcOffer {
     // Using a simple string for the candidate for now
-    pub candidate: String,
+    pub offer: String,
 }
 
 
-impl WebRtcIce {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebRtcAnswer {
+    // Using a simple string for the candidate for now
+    pub answer: String,
+}
+
+
+
+impl WebRtcOffer {
     fn from_bytes(p: &[u8]) -> Result<Self, ParseError> {
         let candidate = std::str::from_utf8(p).map_err(|_| InvalidEncodingSnafu.build())?.to_string();
-        Ok(WebRtcIce { candidate })
+        Ok(WebRtcOffer { offer: candidate })
     }
 
     fn as_bytes(&self) -> Vec<u8> {
-        let header = msg_header(MessageType::WebRtcIceCandidate, V0);
+        let header = msg_header(MessageType::WebRtcOffer, V0);
 
         let mut out = header.to_vec();
-        out.extend_from_slice(&self.candidate.as_bytes());
+        out.extend_from_slice(&self.offer.as_bytes());
+        out
+    }
+}
+
+impl WebRtcAnswer {
+    fn from_bytes(p: &[u8]) -> Result<Self, ParseError> {
+        let answer = std::str::from_utf8(p).map_err(|_| InvalidEncodingSnafu.build())?.to_string();
+        Ok(WebRtcAnswer{ answer })
+    }
+
+    fn as_bytes(&self) -> Vec<u8> {
+        let header = msg_header(MessageType::WebRtcAnwser, V0);
+
+        let mut out = header.to_vec();
+        out.extend_from_slice(&self.answer.as_bytes());
         out
     }
 }
@@ -441,9 +469,13 @@ impl Message {
                 let cm = CallMeMaybe::from_bytes(p)?;
                 Ok(Message::CallMeMaybe(cm))
             }
-            MessageType::WebRtcIceCandidate => {
-                let candidate = WebRtcIce::from_bytes(p)?;
-                Ok(Message::WebRtcIceCandidate(candidate))
+            MessageType::WebRtcOffer => {
+                let candidate = WebRtcOffer::from_bytes(p)?;
+                Ok(Message::ReceiveOffer(candidate))
+            }
+            MessageType::WebRtcAnwser => {
+                let answer = WebRtcAnswer::from_bytes(p)?;
+                Ok(Message::ReceiveAnswer(answer))
             }
         }
     }
@@ -454,7 +486,10 @@ impl Message {
             Message::Ping(ping) => ping.as_bytes(),
             Message::Pong(pong) => pong.as_bytes(),
             Message::CallMeMaybe(cm) => cm.as_bytes(),
-            Message::WebRtcIceCandidate(candidate) => candidate.as_bytes(),
+            Message::ReceiveOffer(offer) => offer.as_bytes(),
+            Message::ReceiveAnswer(answer) => answer.as_bytes(),
+            Message::SendOffer(offer) => offer.as_bytes(),
+            Message::SendAnswer(answer) => answer.as_bytes()
         }
     }
 }
@@ -471,8 +506,17 @@ impl Display for Message {
             Message::CallMeMaybe(_) => {
                 write!(f, "CallMeMaybe")
             }
-            Message::WebRtcIceCandidate(candidate) => {
-                write!(f, "WebRtcIceCandidate {:?}", candidate)
+            Message::ReceiveOffer(offer) => {
+                write!(f, "ReceiveOffer {:?}", offer)
+            }
+            Message::ReceiveAnswer(answer) => {
+                write!(f, "ReceiveAnswer {:?}", answer)
+            }
+                      Message::SendOffer(offer) => {
+                write!(f, "SendOffer {:?}", offer)
+            }
+            Message::SendAnswer(answer) => {
+                write!(f, "SendAnswer {:?}", answer)
             }
         }
     }

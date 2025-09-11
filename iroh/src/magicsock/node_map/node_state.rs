@@ -24,13 +24,12 @@ use super::{
 #[cfg(any(test, feature = "test-utils"))]
 use crate::endpoint::PathSelection;
 use crate::{
-    disco::{self, SendAddr},
+    disco::{self, SendAddr, WebRtcAnswer},
     magicsock::{
-        ActorMessage, HEARTBEAT_INTERVAL, MagicsockMetrics, NodeIdMappedAddr,
-        node_map::path_validity::PathValidity,
+        node_map::path_validity::PathValidity, ActorMessage, MagicsockMetrics, NodeIdMappedAddr, HEARTBEAT_INTERVAL
     },
 };
-use crate::disco::WebRtcIce;
+use crate::disco::WebRtcOffer;
 
 /// Number of addresses that are not active that we keep around per node.
 ///
@@ -63,7 +62,50 @@ pub(in crate::magicsock) enum PingAction {
         dst_node: NodeId,
     },
     SendPing(SendPing),
-    InitiateWebRtc(SendPing)
+    ReceiveWebRtcOffer(ReceiveOffer),
+    ReceiveWebRtcAnswer(ReceiveAnswer)
+}
+
+
+#[derive(Debug, Clone)]
+pub(in crate::magicsock) struct ReceiveAnswer {
+    pub id: usize,
+    pub dst: SendAddr,
+    pub dst_node: NodeId,
+    pub tx_id: stun_rs::TransactionId,
+    pub purpose: DiscoPingPurpose,
+    pub answer: WebRtcAnswer
+}
+
+#[derive(Debug, Clone)]
+pub(in crate::magicsock) struct SendAnswer {
+    pub id: usize,
+    pub dst: SendAddr,
+    pub dst_node: NodeId,
+    pub tx_id: stun_rs::TransactionId,
+    pub purpose: DiscoPingPurpose,
+    pub answer: WebRtcAnswer
+}
+
+#[derive(Debug, Clone)]
+pub(in crate::magicsock) struct ReceiveOffer {
+    pub id: usize,
+    pub dst: SendAddr,
+    pub dst_node: NodeId,
+    pub tx_id: stun_rs::TransactionId,
+    pub purpose: DiscoPingPurpose,
+    pub offer: WebRtcOffer
+}
+
+
+#[derive(Debug, Clone)]
+pub(in crate::magicsock) struct SendOffer {
+    pub id: usize,
+    pub dst: SendAddr,
+    pub dst_node: NodeId,
+    pub tx_id: stun_rs::TransactionId,
+    pub purpose: DiscoPingPurpose,
+    pub offer: WebRtcOffer
 }
 
 #[derive(Debug, Clone)]
@@ -620,7 +662,6 @@ impl NodeState {
         // direct address paths to contact but no RelayUrl, we still need to send a DISCO
         // ping to the direct address paths so that the other node will learn about us and
         // accepts the connection.
-        println!("----------- 625");
         let mut msgs = self.send_pings(now);
 
         if let Some(url) = self.relay_url() {
@@ -655,7 +696,7 @@ impl NodeState {
                     self.start_ping(SendAddr::Relay(url.clone()), DiscoPingPurpose::Discovery)
                 {
                     ping_msgs.push(PingAction::SendPing(msg.clone()));
-                        ping_msgs.push(PingAction::InitiateWebRtc(msg));
+                    ping_msgs.push(PingAction::ReceiveWebRtcOffer(msg));
                 }
             }
         }
@@ -1127,8 +1168,64 @@ impl NodeState {
             paths = %summarize_node_paths(self.udp_paths.paths()),
             "updated endpoint paths from call-me-maybe",
         );
-        println!("----------------1137");
         self.send_pings(now)
+    }
+
+
+    pub(crate) fn handle_webrtc_offer(
+        &mut self,
+        _sender: NodeId,
+        offer: WebRtcOffer
+    ) -> Vec<PingAction>{
+
+        let now = Instant::now();
+
+        self.send_webrtc_answer(now, offer)
+
+
+
+    }
+
+    pub(crate) fn send_webrtc_answer(
+        &mut self,
+        now: Instant,
+        offer: WebRtcOffer
+    ) -> Vec<PingAction> {
+        // We allocate +1 in case the caller wants to add a call-me-maybe message.
+        let mut ping_msgs = Vec::with_capacity(self.udp_paths.paths().len() + 1);
+
+        if let Some((url, state)) = self.relay_url.as_ref() {
+            if state.needs_ping(&now) {
+                debug!(%url, "relay path needs ping");
+                if let Some(msg) =
+                    self.start_ping(SendAddr::Relay(url.clone()), DiscoPingPurpose::Discovery)
+                {
+                        let msg = ReceiveAnswer { dst: msg.dst, dst_node: msg.dst_node, id: msg.id, offer, tx_id: msg.tx_id , purpose: msg.purpose};
+                        ping_msgs.push(PingAction::ReceiveWebRtcAnswer(msg));
+                }
+            }
+        }
+
+        #[cfg(any(test, feature = "test-utils"))]
+        if self.path_selection == PathSelection::RelayOnly {
+            warn!("in `RelayOnly` mode, ignoring request to respond to a hole punching attempt.");
+            return ping_msgs;
+        }
+
+        self.prune_direct_addresses(now);
+        let mut ping_dsts = String::from("[");
+        ping_dsts.push(']');
+        debug!(
+            %ping_dsts,
+            dst = %self.node_id.fmt_short(),
+            paths = %summarize_node_paths(self.udp_paths.paths()),
+            "sending pings to node",
+        );
+
+        self.last_full_ping.replace(now);
+
+        ping_msgs
+
     }
 
     /// Marks this node as having received a UDP payload message.
@@ -1197,17 +1294,6 @@ impl NodeState {
     }
 
 
-    pub(super) fn handle_webrtc_ice(&mut self, ice: WebRtcIce) {
-
-
-        if let Some(tx) = &self.webrtc_channel{
-
-
-
-        }
-
-
-    }
 
     pub(super) fn last_ping(&self, addr: &SendAddr) -> Option<Instant> {
         match addr {

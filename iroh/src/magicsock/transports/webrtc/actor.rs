@@ -9,6 +9,7 @@ use tokio::select;
 use tokio::sync::{mpsc, oneshot};
 use tracing::{error, info, trace, warn};
 
+use crate::disco::WebRtcOffer;
 use crate::magicsock::transports::webrtc::WebRtcError;
 use iroh_base::{WebRtcPort, NodeId, SecretKey, ChannelId};
 use webrtc::api::APIBuilder;
@@ -127,7 +128,7 @@ pub(crate) enum WebRtcActorMessage {
     },
     CreateAnswer {
         peer_node: NodeId,
-        offer_sdp: String,
+        offer: WebRtcOffer,
         config: PlatformRtcConfig,
         response: tokio::sync::oneshot::Sender<Result<String, WebRtcError>>,
     },
@@ -631,12 +632,12 @@ impl WebRtcActor {
             }
             WebRtcActorMessage::CreateAnswer {
                 peer_node,
-                offer_sdp,
+                offer,
                 config,
                 response,
             } => {
                 let result = self
-                    .create_answer_for_peer(peer_node, offer_sdp, config)
+                    .create_answer_for_peer(peer_node, offer, config)
                     .await;
                 let _ = response.send(result);
             }
