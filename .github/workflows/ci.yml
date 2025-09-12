@@ -157,7 +157,7 @@ jobs:
         uses: actions/checkout@v5
 
       - name: Setup node.js version 22.5 # needed for browser-like websocket API support in node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22.5
 
