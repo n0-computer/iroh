@@ -1,5 +1,6 @@
 pub mod actor;
 
+use crate::disco::WebRtcOffer;
 use crate::magicsock::transports::webrtc::actor::{
     PlatformRtcConfig, WebRtcActor, WebRtcActorConfig, WebRtcActorMessage, WebRtcData,
     WebRtcDeliveryMode, WebRtcRecvDatagrams, WebRtcSendItem,
@@ -611,7 +612,7 @@ impl WebRtcTransport {
     pub async fn create_answer(
         &self,
         peer_node: NodeId,
-        offer_sdp: String,
+        offer_sdp: WebRtcOffer,
         config: PlatformRtcConfig,
     ) -> Result<String, WebRtcError> {
         let (tx, rx) = oneshot::channel();

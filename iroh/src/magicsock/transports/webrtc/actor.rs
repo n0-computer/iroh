@@ -457,8 +457,9 @@ impl PeerConnectionState {
     }
 
     #[cfg(not(wasm_browser))]
-    pub async fn create_answer(&mut self, offer_sdp: String) -> Result<String, WebRtcError> {
+    pub async fn create_answer(&mut self, offer_sdp: WebRtcOffer) -> Result<String, WebRtcError> {
         // First set the remote description
+        let offer_sdp = offer_sdp.offer;
         let remote_desc = RTCSessionDescription::offer(offer_sdp)
             .map_err(|_| WebRtcError::OfferCreationFailed)?;
 
@@ -703,7 +704,7 @@ impl WebRtcActor {
     async fn create_answer_for_peer(
         &mut self,
         peer_node: NodeId,
-        offer_sdp: String,
+        offer_sdp: WebRtcOffer,
         config: PlatformRtcConfig,
     ) -> Result<String, WebRtcError> {
         info!("Creating answer for peer: {}", peer_node);

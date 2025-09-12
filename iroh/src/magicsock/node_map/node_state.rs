@@ -63,7 +63,9 @@ pub(in crate::magicsock) enum PingAction {
     },
     SendPing(SendPing),
     ReceiveWebRtcOffer(ReceiveOffer),
-    ReceiveWebRtcAnswer(ReceiveAnswer)
+    ReceiveWebRtcAnswer(ReceiveAnswer),
+    SendWebRtcOffer(SendOffer),
+    SendWebRtcAnswer(SendAnswer)
 }
 
 
@@ -84,7 +86,7 @@ pub(in crate::magicsock) struct SendAnswer {
     pub dst_node: NodeId,
     pub tx_id: stun_rs::TransactionId,
     pub purpose: DiscoPingPurpose,
-    pub answer: WebRtcAnswer
+    pub received_offer: WebRtcOffer
 }
 
 #[derive(Debug, Clone)]
@@ -105,7 +107,6 @@ pub(in crate::magicsock) struct SendOffer {
     pub dst_node: NodeId,
     pub tx_id: stun_rs::TransactionId,
     pub purpose: DiscoPingPurpose,
-    pub offer: WebRtcOffer
 }
 
 #[derive(Debug, Clone)]
@@ -696,7 +697,15 @@ impl NodeState {
                     self.start_ping(SendAddr::Relay(url.clone()), DiscoPingPurpose::Discovery)
                 {
                     ping_msgs.push(PingAction::SendPing(msg.clone()));
-                    ping_msgs.push(PingAction::ReceiveWebRtcOffer(msg));
+
+                    let offer = SendOffer {
+                        id: msg.id,
+                        dst: SendAddr::Relay(url.clone()),
+                        dst_node: msg.dst_node,
+                        tx_id: msg.tx_id,
+                        purpose: DiscoPingPurpose::Discovery,
+                    };
+                    ping_msgs.push(PingAction::SendWebRtcOffer(offer));
                 }
             }
         }
@@ -1175,12 +1184,13 @@ impl NodeState {
     pub(crate) fn handle_webrtc_offer(
         &mut self,
         _sender: NodeId,
-        offer: WebRtcOffer
+        answer: WebRtcOffer
     ) -> Vec<PingAction>{
 
         let now = Instant::now();
 
-        self.send_webrtc_answer(now, offer)
+        println!("1192: got webrtc offer: {:?}", answer);
+        self.send_webrtc_answer(now, answer)
 
 
 
@@ -1200,8 +1210,8 @@ impl NodeState {
                 if let Some(msg) =
                     self.start_ping(SendAddr::Relay(url.clone()), DiscoPingPurpose::Discovery)
                 {
-                        let msg = ReceiveAnswer { dst: msg.dst, dst_node: msg.dst_node, id: msg.id, offer, tx_id: msg.tx_id , purpose: msg.purpose};
-                        ping_msgs.push(PingAction::ReceiveWebRtcAnswer(msg));
+                        let msg = SendAnswer { id: msg.id, dst: msg.dst, dst_node: msg.dst_node, tx_id: msg.tx_id, purpose: msg.purpose, received_offer: offer };
+                        ping_msgs.push(PingAction::SendWebRtcAnswer(msg));
                 }
             }
         }

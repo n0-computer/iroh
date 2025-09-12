@@ -660,7 +660,7 @@ impl UdpSender {
                     if let Err(err) = actor_sender.sender().send(
                             WebRtcActorMessage::CreateAnswer { 
                                 peer_node, 
-                                offer, 
+                                offer: offer.clone(), 
                                 config, 
                                 response: sender }).await {
 

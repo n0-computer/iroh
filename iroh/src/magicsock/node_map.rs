@@ -23,7 +23,7 @@ mod path_validity;
 mod udp_paths;
 
 pub use node_state::{ConnectionType, ControlMsg, DirectAddrInfo, RemoteInfo};
-pub(super) use node_state::{DiscoPingPurpose, PingAction, PingRole, SendPing, ReceiveAnswer, ReceiveOffer};
+pub(super) use node_state::{DiscoPingPurpose, PingAction, PingRole, SendPing, ReceiveAnswer, ReceiveOffer, SendAnswer, SendOffer};
 use crate::magicsock::transports::Addr;
 
 /// Number of nodes that are inactive for which we keep info about. This limit is enforced
