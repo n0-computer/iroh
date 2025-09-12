@@ -2,7 +2,18 @@
 
 All notable changes to iroh will be documented in this file.
 
-## [0.91.1](https://github.com/n0-computer/iroh/compare/v0.91.0..0.91.1) - 2025-08-04
+## [0.91.2](https://github.com/n0-computer/iroh/compare/v0.91.1..0.91.2) - 2025-08-18
+
+### ⛰️  Features
+
+- *(iroh-base)* Derive Hash for NodeAddr ([#3428](https://github.com/n0-computer/iroh/issues/3428)) - ([2308388](https://github.com/n0-computer/iroh/commit/2308388da774ea0c796e68ef920c586230704dbe))
+
+### 🐛 Bug Fixes
+
+- *(iroh)* Fix very slow initial connection establishment ([#3434](https://github.com/n0-computer/iroh/issues/3434)) - ([59d1432](https://github.com/n0-computer/iroh/commit/59d1432a10e6c6414f355947aecd0d8927b72b6c))
+- *(iroh-relay)* Don't double-count connection accepts ([#3436](https://github.com/n0-computer/iroh/issues/3436)) - ([8c558a1](https://github.com/n0-computer/iroh/commit/8c558a1c2e6d53ca0a20b0c2a4d78efe3beab45a))
+
+## [0.91.1](https://github.com/n0-computer/iroh/compare/v0.91.0..v0.91.1) - 2025-08-04
 
 ### 🐛 Bug Fixes
 
@@ -12,6 +23,10 @@ All notable changes to iroh will be documented in this file.
 ### 📚 Documentation
 
 - Grammar nitpick ([#3383](https://github.com/n0-computer/iroh/issues/3383)) - ([026dffc](https://github.com/n0-computer/iroh/commit/026dffc6cc5229411599188bd7d6e24df7dae9d3))
+
+### ⚙️ Miscellaneous Tasks
+
+- Release - ([e30c788](https://github.com/n0-computer/iroh/commit/e30c788f968265bd9d181e5ca92d02eb61ef3d0d))
 
 ## [0.91.0](https://github.com/n0-computer/iroh/compare/v0.90.0..v0.91.0) - 2025-07-30
 

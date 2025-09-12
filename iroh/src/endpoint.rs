@@ -45,7 +45,7 @@ use crate::{
     magicsock::{self, Handle, NodeIdMappedAddr, OwnAddressSnafu},
     metrics::EndpointMetrics,
     net_report::Report,
-    tls,
+    tls::{self, DEFAULT_MAX_TLS_TICKETS},
 };
 
 mod rtt_actor;
@@ -118,6 +118,7 @@ pub struct Builder {
     addr_v6: Option<SocketAddrV6>,
     #[cfg(any(test, feature = "test-utils"))]
     path_selection: PathSelection,
+    max_tls_tickets: usize,
 }
 
 impl Default for Builder {
@@ -142,6 +143,7 @@ impl Default for Builder {
             addr_v6: None,
             #[cfg(any(test, feature = "test-utils"))]
             path_selection: PathSelection::default(),
+            max_tls_tickets: DEFAULT_MAX_TLS_TICKETS,
         }
     }
 }
@@ -160,7 +162,7 @@ impl Builder {
             .unwrap_or_else(|| SecretKey::generate(rand::rngs::OsRng));
         let static_config = StaticConfig {
             transport_config: Arc::new(self.transport_config),
-            tls_config: tls::TlsConfig::new(secret_key.clone()),
+            tls_config: tls::TlsConfig::new(secret_key.clone(), self.max_tls_tickets),
             keylog: self.keylog,
         };
         let server_config = static_config.create_server_config(self.alpn_protocols);
@@ -472,6 +474,17 @@ impl Builder {
     #[cfg(any(test, feature = "test-utils"))]
     pub fn path_selection(mut self, path_selection: PathSelection) -> Self {
         self.path_selection = path_selection;
+        self
+    }
+
+    /// Set the maximum number of TLS tickets to cache.
+    ///
+    /// Set this to a larger value if you want to do 0rtt connections to a large
+    /// number of clients.
+    ///
+    /// The default is 256, taking about 150 KiB in memory.
+    pub fn max_tls_tickets(mut self, n: usize) -> Self {
+        self.max_tls_tickets = n;
         self
     }
 }
@@ -2253,7 +2266,7 @@ mod tests {
     };
 
     use iroh_base::{NodeAddr, NodeId, SecretKey};
-    use n0_future::{StreamExt, task::AbortOnDropHandle};
+    use n0_future::{BufferedStreamExt, StreamExt, stream, task::AbortOnDropHandle};
     use n0_snafu::{Error, Result, ResultExt};
     use n0_watcher::Watcher;
     use quinn::ConnectionError;
@@ -2264,7 +2277,9 @@ mod tests {
     use super::Endpoint;
     use crate::{
         RelayMode,
+        discovery::static_provider::StaticProvider,
         endpoint::{ConnectOptions, Connection, ConnectionType, RemoteInfo},
+        protocol::{AcceptError, ProtocolHandler, Router},
         test_utils::{run_relay_server, run_relay_server_with},
     };
 
@@ -3192,6 +3207,81 @@ mod tests {
         // can get a first report
         endpoint.net_report().updated().await?;
 
+        Ok(())
+    }
+
+    /// Tests that initial connection establishment isn't extremely slow compared
+    /// to subsequent connections.
+    ///
+    /// This is a time based test, but uses a very large ratio to reduce flakiness.
+    /// It also does a number of connections to average out any anomalies.
+    #[tokio::test]
+    #[traced_test]
+    async fn connect_multi_time() -> Result {
+        let n = 32;
+
+        const NOOP_ALPN: &[u8] = b"noop";
+
+        #[derive(Debug, Clone)]
+        struct Noop;
+
+        impl ProtocolHandler for Noop {
+            async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
+                connection.closed().await;
+                Ok(())
+            }
+        }
+
+        async fn noop_server() -> Result<(Router, NodeAddr)> {
+            let endpoint = Endpoint::builder()
+                .relay_mode(RelayMode::Disabled)
+                .bind()
+                .await
+                .e()?;
+            let addr = endpoint.node_addr().initialized().await;
+            let router = Router::builder(endpoint).accept(NOOP_ALPN, Noop).spawn();
+            Ok((router, addr))
+        }
+
+        let routers = stream::iter(0..n)
+            .map(|_| noop_server())
+            .buffered_unordered(32)
+            .collect::<Vec<_>>()
+            .await
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()
+            .e()?;
+
+        let addrs = routers
+            .iter()
+            .map(|(_, addr)| addr.clone())
+            .collect::<Vec<_>>();
+        let ids = addrs.iter().map(|addr| addr.node_id).collect::<Vec<_>>();
+        let discovery = StaticProvider::from_node_info(addrs);
+        let endpoint = Endpoint::builder()
+            .relay_mode(RelayMode::Disabled)
+            .discovery(discovery)
+            .bind()
+            .await
+            .e()?;
+        // wait for the endpoint to be initialized. This should not be needed,
+        // but we don't want to measure endpoint init time but connection time
+        // from a fully initialized endpoint.
+        endpoint.node_addr().initialized().await;
+        let t0 = Instant::now();
+        for id in &ids {
+            let conn = endpoint.connect(*id, NOOP_ALPN).await?;
+            conn.close(0u32.into(), b"done");
+        }
+        let dt0 = t0.elapsed().as_secs_f64();
+        let t1 = Instant::now();
+        for id in &ids {
+            let conn = endpoint.connect(*id, NOOP_ALPN).await?;
+            conn.close(0u32.into(), b"done");
+        }
+        let dt1 = t1.elapsed().as_secs_f64();
+
+        assert!(dt0 / dt1 < 20.0, "First round: {dt0}s, second round {dt1}s");
         Ok(())
     }
 }
