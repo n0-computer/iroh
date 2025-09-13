@@ -71,6 +71,7 @@ impl TryFrom<u8> for MessageType {
             0x03 => Ok(MessageType::CallMeMaybe),
             0x06 => Ok(MessageType::WebRtcOffer),
             0x07 => Ok(MessageType::WebRtcAnwser),
+            0x08 => Ok(MessageType::WebRtcIceCandidate),
             _ => Err(value),
         }
     }
@@ -686,5 +687,42 @@ mod tests {
             .expect("failed to open seal_back");
         let msg_back = Message::from_bytes(&open_seal).unwrap();
         assert_eq!(msg_back, msg);
+    }
+
+    #[test]
+    fn test_ice_candidate_round_trip() {
+        // Test with a typical ICE candidate string
+        let original_candidate = "candidate:1 1 UDP 2130706431 192.168.1.100 54400 typ host";
+        let original_ice = IceCandidate {
+            candidate: original_candidate.to_string(),
+        };
+        let original_message = Message::WebRtcIceCandidate(original_ice.clone());
+
+        // Serialize to bytes
+        let serialized_bytes = original_message.as_bytes();
+
+        println!("Original candidate: {}", original_candidate);
+        println!("Serialized bytes length: {}", serialized_bytes.len());
+        // println!("Serialized bytes (hex): {}", hex::encode(&serialized_bytes));
+
+        // Deserialize back from bytes
+        let deserialized_message =
+            Message::from_bytes(&serialized_bytes).expect("Failed to deserialize message");
+
+        println!("Deserialized message: {:?}", deserialized_message);
+
+        // Extract the ice candidate from the deserialized message
+        let deserialized_ice = match deserialized_message {
+            Message::WebRtcIceCandidate(ice) => ice,
+            _ => panic!("Expected WebRtcIceCandidate, got different message type"),
+        };
+
+        // Compare original and deserialized
+        assert_eq!(original_ice, deserialized_ice);
+        assert_eq!(original_ice.candidate, deserialized_ice.candidate);
+
+        println!("Round-trip test PASSED");
+        println!("Original:     {}", original_ice.candidate);
+        println!("Deserialized: {}", deserialized_ice.candidate);
     }
 }

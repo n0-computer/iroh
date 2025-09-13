@@ -1218,7 +1218,7 @@ impl NodeState {
     ) -> Vec<PingAction> {
         let now = Instant::now();
 
-        println!("1192: got webrtc offer: {:?}", answer);
+        // println!("1192: got webrtc offer: {:?}", answer);
         self.send_webrtc_answer(now, answer)
     }
 
@@ -1229,10 +1229,10 @@ impl NodeState {
     ) -> Vec<PingAction> {
         let now = Instant::now();
 
-        println!(
-            "1207: got webrtc answer!! now wetup ice candidates: {:?}",
-            answer
-        );
+        // println!(
+        //     "1207: got webrtc answer!! now wetup ice candidates: {:?}",
+        //     answer
+        // );
 
         let action = PingAction::SetRemoteDescription;
 
